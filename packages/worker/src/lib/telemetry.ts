@@ -11,6 +11,7 @@ import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { isProxyTokenPath } from './registryProxy/tracePolicy.js';
 import type { WorkflowSpanTarget } from './workflowSpanSink.js';
 
 export function initTelemetry(serviceName: string): {
@@ -30,11 +31,12 @@ export function initTelemetry(serviceName: string): {
     // Undici is global `fetch`, which the AI SDK providers and Octokit call
     // through; `http` never sees it. It hooks diagnostics channels, so it needs
     // no module patching.
-    // The registry proxy's Go route carries its workspace token as a path segment (`/go/<token>/…`),
-    // and an inbound-request span records the path, so those requests are not traced at all.
+    // The registry proxy's Go route carries its workspace token as a path segment
+    // (`/go/<token>/…`), and an inbound-request span records the path, so those requests are not
+    // traced at all. The PyPI route (`/pypi/<id>/…`) holds no secret and is kept out beside it.
     instrumentations: [
       new HttpInstrumentation({
-        ignoreIncomingRequestHook: (req) => (req.url ?? '').startsWith('/go/'),
+        ignoreIncomingRequestHook: (req) => isProxyTokenPath(req.url),
       }),
       new UndiciInstrumentation(),
     ],

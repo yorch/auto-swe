@@ -27,6 +27,21 @@
  * The token segment is a secret: it is never part of what the allowlist, the cache key, a
  * denial report or a response sees.
  *
+ * A third route, `<baseUrl>/pypi/<registryId>/…`, serves Python packages from a PEP 503 /
+ * PEP 691 simple index (`pypiProxy.ts` holds the protocol): `simple/<project>/` is the project
+ * index and `files/<fileId>/<filename>` a download. Unlike Go it authenticates by HTTP Basic, the
+ * token being the password (the user name is ignored): pip and uv are configured with a URL whose
+ * userinfo carries it, both send it over plain http, and both redact userinfo in the files and
+ * error text they write — a token in the path would be written into `uv.lock` and
+ * `pyproject.toml`. A request with no or an unknown credential is a 401 carrying a Basic challenge,
+ * because pip and uv answer a challenge. Bearer is not read on this route, and Basic is read on no
+ * other. The index is re-rendered with every link pointing back here, so the upstream's file URLs
+ * (which may be on another host) are never given to the client; each is kept server-side under an
+ * opaque id and fetched only from there. The token is in no response, log, denial report or cache
+ * key. The registry credential goes to the index and to files on the index's own origin only; a
+ * file on another origin is fetched anonymously, over https, through a guard that does not inherit
+ * the registry's private-network opt-in.
+ *
  * Modelled on `agents/claudeCode/modelProxy.ts`.
  */
 import { AsyncResource } from 'node:async_hooks';
@@ -35,6 +50,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { gunzipSync } from 'node:zlib';
 import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
+import { isPypiAllowed, parsePypiFilename } from '@auto-swe/shared/lib/pypiAllowlist';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { TarballCache } from './cache.js';
 import {
@@ -45,6 +61,14 @@ import {
   goUpstreamPath,
   parseGoProxyPath,
 } from './goProxy.js';
+import {
+  fileCredentialPolicy,
+  fileIdFor,
+  filterAllowedFiles,
+  parsePypiPath,
+  parseSimpleIndex,
+  renderSimpleIndex,
+} from './pypiProxy.js';
 import { Semaphore } from './semaphore.js';
 
 export { TarballCache } from './cache.js';
@@ -54,6 +78,12 @@ const MAX_PACKUMENT_BYTES = 64 * 1024 * 1024;
 
 /** A Go module zip past this is cut off mid-stream, which makes the Go tool fail the download. */
 const MAX_GO_ZIP_BYTES = 512 * 1024 * 1024;
+
+/** A PyPI file past this is cut off mid-stream, which makes pip and uv fail the download. */
+const MAX_PYPI_FILE_BYTES = 512 * 1024 * 1024;
+
+/** The files one registration may have indexed at once; past it the index omits further files. */
+const MAX_PYPI_FILES = 100_000;
 
 /** What the Go tool is told each kind of answer is; fixed, never the upstream's own header. */
 const GO_CONTENT_TYPES: Record<GoProxyKind, string> = {
@@ -117,8 +147,11 @@ const MAX_PREFIX_SEGMENTS = 8;
 /** One upstream registry a registration fronts, with its decrypted credential. */
 export interface ResolvedRegistry {
   id: string;
-  /** Absent means `npm`. A `go` registry is reached only through `/go/<id>`. */
-  ecosystem?: 'npm' | 'go';
+  /**
+   * Absent means `npm`. A `go` registry is reached only through `/go/<token>/<id>`, a `pypi` one
+   * only through `/pypi/<id>`, the token being the Basic password.
+   */
+  ecosystem?: 'npm' | 'go' | 'pypi';
   name: string;
   upstreamUrl: string;
   authKind: 'bearer' | 'basic';
@@ -147,6 +180,11 @@ interface Registration {
   inFlight: Set<Promise<void>>;
   /** Bounds the registration's concurrent buffered (non-tarball) fetches. */
   buffered: Semaphore;
+  /**
+   * The only way a PyPI file URL can be fetched: an index the proxy served put it here under an
+   * opaque id, so a client can name a file the index listed and nothing else.
+   */
+  pypiFiles: Map<string, { registryId: string; url: string; filename: string }>;
 }
 
 export interface RegistryRegistration {
@@ -178,9 +216,9 @@ const digest = (token: string) => createHash('sha256').update(token).digest('hex
 
 /** A registration may hold registries of both ecosystems; npm routing sees only its own. */
 const npmRegistries = (reg: Registration): ResolvedRegistry[] =>
-  [...reg.registries.values()].filter((r) => r.ecosystem !== 'go');
+  [...reg.registries.values()].filter((r) => (r.ecosystem ?? 'npm') === 'npm');
 
-/** The npm default registry — never a go one, whatever `isDefault` says. */
+/** The npm default registry — never a go or pypi one, whatever `isDefault` says. */
 const npmDefault = (reg: Registration): ResolvedRegistry | undefined =>
   npmRegistries(reg).find((r) => r.isDefault);
 
@@ -203,6 +241,16 @@ function routeRegistry(reg: Registration, name: string): ResolvedRegistry | unde
 /** The token a request presents in its header: `Bearer <token>`. */
 function presentedToken(auth: string | undefined): string | undefined {
   return typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
+}
+
+/** The password of an HTTP Basic header (the username is ignored). */
+function basicPassword(auth: string | undefined): string | undefined {
+  if (typeof auth !== 'string' || !auth.startsWith('Basic ')) {
+    return undefined;
+  }
+  const decoded = Buffer.from(auth.slice(6), 'base64').toString('utf8');
+  const colon = decoded.indexOf(':');
+  return colon < 0 ? undefined : decoded.slice(colon + 1);
 }
 
 function sendJson(
@@ -609,6 +657,8 @@ export function createRegistryProxy(options: {
   queueWaitMs?: number;
   /** Largest Go module zip relayed (default 512 MiB); past it the response is cut off. */
   maxGoZipBytes?: number;
+  /** Largest PyPI file relayed (default 512 MiB); past it the response is cut off. */
+  maxPypiFileBytes?: number;
 }): RegistryProxy {
   const registrations = new Map<string, Registration>();
 
@@ -1205,6 +1255,319 @@ export function createRegistryProxy(options: {
     }
   }
 
+  const registryAuthorization = (registry: ResolvedRegistry): string | undefined =>
+    registry.token
+      ? registry.authKind === 'basic'
+        ? `Basic ${Buffer.from(registry.token).toString('base64')}`
+        : `Bearer ${registry.token}`
+      : undefined;
+
+  /**
+   * A PyPI project index. Lockfile mode refuses a project the lockfile does not name before any
+   * upstream call; the rest is a buffered fetch like a packument (one of the registration's slots,
+   * the upstream deadline, a hang-up gives the slot back). The answer is parsed, filtered to the
+   * pinned versions, and re-rendered with every file link pointing at this proxy: the upstream's
+   * file URLs are registered under opaque ids in `pypiFiles` and go no further.
+   */
+  async function servePypiIndex(
+    reg: Registration,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    registry: ResolvedRegistry,
+    project: string
+  ): Promise<void> {
+    const stored = reg.allowlists?.get(registry.id);
+    const allowlist = stored === null ? null : (stored ?? new Map<string, Set<string>>());
+    if (allowlist !== null && !allowlist.has(project)) {
+      reg.onDenied({ name: project, reason: 'not-in-lockfile', registryId: registry.id });
+      sendJson(res, 403, denyMessage(project, undefined));
+      return;
+    }
+    const slot = await reg.buffered.acquire();
+    if (slot === null) {
+      res.setHeader('retry-after', '5');
+      sendJson(res, 503, 'the registry proxy is busy; retry shortly');
+      return;
+    }
+    // The client may have hung up while it waited.
+    if (res.destroyed) {
+      slot();
+      return;
+    }
+    const indexUrl = `${registry.upstreamUrl}/${project}/`;
+    const headers: Record<string, string> = {
+      accept: 'application/vnd.pypi.simple.v1+json, text/html;q=0.1',
+      'accept-encoding': 'identity',
+    };
+    const authorization = registryAuthorization(registry);
+    if (authorization) {
+      headers.authorization = authorization;
+    }
+    const abort = new AbortController();
+    const deadline = setTimeout(
+      () => abort.abort(),
+      options.upstreamDeadlineMs ?? DEFAULT_UPSTREAM_DEADLINE_MS
+    );
+    const hangUp = () => abort.abort();
+    res.on('close', hangUp);
+    let status = 0;
+    let contentType = '';
+    let failure: string | undefined;
+    const chunks: Buffer[] = [];
+    let size = 0;
+    try {
+      const upstream = await upstreamFetchFor(registry)(indexUrl, {
+        headers,
+        method: 'GET',
+        redirect: 'error',
+        signal: abort.signal,
+      });
+      status = upstream.status;
+      contentType = upstream.headers.get('content-type') ?? '';
+      if (status !== 200) {
+        await upstream.body?.cancel().catch(() => {});
+      } else if (upstream.body) {
+        for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
+          size += chunk.length;
+          if (size > MAX_PACKUMENT_BYTES) {
+            failure = 'the upstream package index is too large to proxy';
+            break;
+          }
+          chunks.push(Buffer.from(chunk));
+        }
+      }
+    } catch {
+      failure = 'the upstream package index could not be reached';
+    } finally {
+      clearTimeout(deadline);
+      res.off('close', hangUp);
+      slot();
+    }
+    if (res.destroyed) {
+      return;
+    }
+    if (failure !== undefined) {
+      sendJson(res, 502, failure);
+      return;
+    }
+    if (status === 404 || status === 410) {
+      sendJson(res, 404, 'the upstream package index does not have this project');
+      return;
+    }
+    if (status !== 200) {
+      sendJson(res, 502, 'the upstream package index answered with an error');
+      return;
+    }
+    let files = parseSimpleIndex(Buffer.concat(chunks).toString('utf8'), contentType, indexUrl);
+    if (files === null) {
+      sendJson(res, 502, 'the upstream package index is not a simple index');
+      return;
+    }
+    if (allowlist !== null) {
+      files = filterAllowedFiles(files, allowlist, project).kept;
+      if (files.length === 0) {
+        reg.onDenied({ name: project, reason: 'no-versions', registryId: registry.id });
+        sendJson(res, 403, denyMessage(project, undefined));
+        return;
+      }
+    }
+    const rendered: Parameters<typeof renderSimpleIndex>[1] = [];
+    for (const f of files) {
+      const id = fileIdFor(registry.id, f.url);
+      const known = reg.pypiFiles.get(id);
+      if (known ? known.filename !== f.filename : reg.pypiFiles.size >= MAX_PYPI_FILES) {
+        continue;
+      }
+      reg.pypiFiles.set(id, { filename: f.filename, registryId: registry.id, url: f.url });
+      rendered.push({
+        filename: f.filename,
+        hash: f.hash,
+        href: `/pypi/${registry.id}/files/${id}/${f.filename}`,
+        requiresPython: f.requiresPython,
+        yanked: f.yanked,
+      });
+    }
+    const body = Buffer.from(renderSimpleIndex(project, rendered));
+    res.writeHead(200, {
+      'cache-control': 'no-store',
+      'content-length': String(body.length),
+      'content-type': 'text/html; charset=utf-8',
+    });
+    res.end(req.method === 'HEAD' ? undefined : body);
+  }
+
+  /**
+   * A PyPI file the proxy itself listed. The id must be in `pypiFiles` and the filename segment
+   * must be the one stored with it; in lockfile mode the pin is checked again here from the stored
+   * filename (the index filter is not the only gate), before the cache is read.
+   *
+   * The registry credential is sent only when the file is on the registry's own origin and under
+   * its path prefix (`fileCredentialPolicy`). A file elsewhere (PyPI serves files from another
+   * host), or on the same host outside that prefix, gets no credential and is fetched through a
+   * guard with the private-network opt-in OFF: an index merely names that URL, and the operator
+   * vouched for the registry's path, not for it. Another origin must also be https.
+   */
+  async function servePypiFile(
+    reg: Registration,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    registry: ResolvedRegistry,
+    fileId: string,
+    filename: string
+  ): Promise<void> {
+    const entry = reg.pypiFiles.get(fileId);
+    if (!entry || entry.registryId !== registry.id || entry.filename !== filename) {
+      sendJson(res, 404, 'unknown file');
+      return;
+    }
+    const stored = reg.allowlists?.get(registry.id);
+    const allowlist = stored === null ? null : (stored ?? new Map<string, Set<string>>());
+    if (allowlist !== null) {
+      const pin = parsePypiFilename(entry.filename);
+      if (pin === null) {
+        sendJson(res, 404, 'unknown file');
+        return;
+      }
+      if (!isPypiAllowed(allowlist, pin.name, pin.version)) {
+        reg.onDenied({
+          name: pin.name,
+          reason: 'not-in-lockfile',
+          registryId: registry.id,
+          version: pin.version,
+        });
+        sendJson(res, 403, denyMessage(pin.name, pin.version));
+        return;
+      }
+    }
+    let secure: boolean;
+    try {
+      secure = new URL(entry.url).protocol === 'https:';
+    } catch {
+      sendJson(res, 502, 'the upstream file could not be reached');
+      return;
+    }
+    const { credential, sameOrigin } = fileCredentialPolicy(registry.upstreamUrl, entry.url);
+    if (!sameOrigin && !secure) {
+      sendJson(res, 502, 'the upstream file is not on a permitted address');
+      return;
+    }
+
+    if (req.method === 'GET' && options.cache) {
+      const hit = await options.cache.get(registry.id, entry.url).catch(() => null);
+      if (hit) {
+        res.writeHead(200, { 'content-type': 'application/octet-stream' });
+        const stream = hit.createStream();
+        stream.on('error', () => res.destroy());
+        res.on('close', () => stream.destroy());
+        stream.pipe(res);
+        return;
+      }
+    }
+
+    const headers: Record<string, string> = { accept: '*/*', 'accept-encoding': 'identity' };
+    const authorization = credential ? registryAuthorization(registry) : undefined;
+    if (authorization) {
+      headers.authorization = authorization;
+    }
+    const fetchFile = credential
+      ? upstreamFetchFor(registry)
+      : (options.upstreamFetch ?? createGuardedFetch({ allowPrivate: false }));
+    const maxBytes = options.maxPypiFileBytes ?? MAX_PYPI_FILE_BYTES;
+
+    const abort = new AbortController();
+    const hangUp = () => abort.abort();
+    res.on('close', hangUp);
+    let cacheStream: Awaited<ReturnType<TarballCache['startWrite']>> | null = null;
+    try {
+      let upstream: Response;
+      try {
+        upstream = await fetchFile(entry.url, {
+          headers,
+          method: req.method ?? 'GET',
+          redirect: 'error',
+          signal: abort.signal,
+        });
+      } catch {
+        sendJson(res, 502, 'the upstream file could not be reached');
+        return;
+      }
+      if (upstream.status === 404 || upstream.status === 410) {
+        await upstream.body?.cancel().catch(() => {});
+        sendJson(res, 404, 'the upstream package index does not have this file');
+        return;
+      }
+      const declared = Number(upstream.headers.get('content-length'));
+      if (upstream.status !== 200 || (Number.isFinite(declared) && declared > maxBytes)) {
+        await upstream.body?.cancel().catch(() => {});
+        sendJson(
+          res,
+          502,
+          upstream.status === 200
+            ? 'the upstream file is too large to proxy'
+            : 'the upstream file answered with an error'
+        );
+        return;
+      }
+      res.writeHead(200, {
+        'content-type': 'application/octet-stream',
+        ...(Number.isFinite(declared) && upstream.headers.get('content-length')
+          ? { 'content-length': String(declared) }
+          : {}),
+      });
+      if (!upstream.body) {
+        res.end();
+        return;
+      }
+      cacheStream =
+        req.method === 'GET' && options.cache
+          ? await options.cache.startWrite(registry.id, entry.url).catch(() => null)
+          : null;
+      let size = 0;
+      for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
+        // A client that hung up never drains again; throwing leaves the loop, which cancels the
+        // upstream body, and the catch below aborts the cache write.
+        if (res.destroyed || res.writableEnded) {
+          throw new Error('client closed');
+        }
+        size += chunk.length;
+        if (size > maxBytes) {
+          // Cut the client and the upstream now rather than after the iterator's cleanup.
+          res.destroy();
+          abort.abort();
+          throw new Error('too large');
+        }
+        const wrote = cacheStream ? await cacheStream.write(chunk) : Promise.resolve();
+        const flushed = res.write(chunk);
+        await wrote;
+        if (!flushed && !res.destroyed) {
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              res.off('drain', done);
+              res.off('close', done);
+              resolve();
+            };
+            res.on('drain', done);
+            res.on('close', done);
+          });
+        }
+      }
+      res.end();
+      await cacheStream?.commit().catch(() => {});
+    } catch {
+      // Mid-stream (or past the size cap): the status line is gone, so cutting the connection
+      // is the only way left to make pip and uv fail the download.
+      abort.abort();
+      if (res.headersSent) {
+        res.destroy();
+      } else {
+        sendJson(res, 502, 'the upstream file could not be reached');
+      }
+      await cacheStream?.abort().catch(() => {});
+    } finally {
+      res.off('close', hangUp);
+    }
+  }
+
   const advertised = (): string => {
     if (typeof options.advertisedUrl === 'string') {
       return options.advertisedUrl;
@@ -1229,20 +1592,39 @@ export function createRegistryProxy(options: {
     // `/go/../npm/<id>/…` and `/go/%2e%2e/npm/<id>/…` normalise to an npm path and are then judged
     // as npm, so a path token cannot stand in for the Bearer header there.
     const url = new URL(req.url ?? '/', 'http://proxy');
-    const goMatch = /^\/go\/([^/]+)\/([^/]+)(\/.*)$/.exec(url.pathname);
-    const token = goMatch ? goMatch[1] : presentedToken(req.headers.authorization);
+    // PyPI alone reads a Basic header, and only on a normalised `/pypi/…` path: `/pypi/../npm/…`
+    // is an npm request and gets npm's Bearer-only judgement. The challenge comes before anything
+    // else because pip and uv send URL credentials only on the first request or after a 401.
+    const pypiRoute = /^\/pypi\/([^/]*)(\/.*)?$/.exec(url.pathname);
+    if (pypiRoute) {
+      const password = basicPassword(req.headers.authorization);
+      const pypiReg = password ? registrations.get(digest(password)) : undefined;
+      if (!pypiReg) {
+        res.setHeader('www-authenticate', 'Basic realm="registry"');
+        sendJson(res, 401, 'unknown or expired token');
+        return;
+      }
+      handlePypi(pypiReg, req, res, pypiRoute[1] ?? '', pypiRoute[2] ?? '');
+      return;
+    }
+    const goRoute = /^\/go\/([^/]+)\/([^/]+)(\/.*)$/.exec(url.pathname);
+    const token = goRoute ? goRoute[1] : presentedToken(req.headers.authorization);
     const reg = token ? registrations.get(digest(token)) : undefined;
     if (!reg) {
       sendJson(res, 401, 'unknown or expired token');
       return;
     }
-    if (goMatch) {
-      handleGo(reg, req, res, goMatch[2] ?? '', goMatch[3] ?? '');
+    if (goRoute) {
+      handleGo(reg, req, res, goRoute[2] ?? '', goRoute[3] ?? '');
       return;
     }
     const m = /^\/npm\/([^/]+)(\/.*)$/.exec(url.pathname);
     if (!m) {
-      sendJson(res, 404, 'only /npm/<registry>/… and /go/<token>/<registry>/… paths exist here');
+      sendJson(
+        res,
+        404,
+        'only /npm/<registry>/…, /go/<token>/<registry>/… and /pypi/<registry>/… paths exist here'
+      );
       return;
     }
     // The URL's <id> only proves membership — the caller may legitimately
@@ -1250,7 +1632,7 @@ export function createRegistryProxy(options: {
     // replace-registry-host keeps the default registry origin for every
     // resolved URL, scope or not). The upstream is picked by package name.
     const urlRegistry = reg.registries.get(m[1] ?? '');
-    if (!urlRegistry || urlRegistry.ecosystem === 'go') {
+    if (!urlRegistry || (urlRegistry.ecosystem ?? 'npm') !== 'npm') {
       sendJson(res, 404, 'unknown registry');
       return;
     }
@@ -1322,6 +1704,43 @@ export function createRegistryProxy(options: {
     void call.finally(() => reg.inFlight.delete(call));
   }
 
+  /** `/pypi/<registryId><rest>`: the Basic password is already verified and is not passed on. */
+  function handlePypi(
+    reg: Registration,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    registryId: string,
+    rest: string
+  ): void {
+    const registry = reg.registries.get(registryId);
+    if (registry?.ecosystem !== 'pypi') {
+      sendJson(res, 404, 'unknown registry');
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      sendJson(res, 405, 'read-only: GET and HEAD only');
+      return;
+    }
+    if (!reg.allowlists) {
+      sendJson(res, 503, 'the registry allowlist is not ready yet');
+      return;
+    }
+    const parsed = parsePypiPath(rest);
+    if (!parsed) {
+      sendJson(res, 404, 'unrecognized PyPI path');
+      return;
+    }
+    const call = (
+      parsed.kind === 'index'
+        ? servePypiIndex(reg, req, res, registry, parsed.project)
+        : servePypiFile(reg, req, res, registry, parsed.fileId, parsed.filename)
+    ).catch(() => {
+      sendJson(res, 502, 'the upstream package index could not be reached');
+    });
+    reg.inFlight.add(call);
+    void call.finally(() => reg.inFlight.delete(call));
+  }
+
   server.requestTimeout = 0;
   server.headersTimeout = 60_000;
 
@@ -1365,6 +1784,7 @@ export function createRegistryProxy(options: {
         ),
         inFlight: new Set(),
         onDenied: AsyncResource.bind(ws.onDenied),
+        pypiFiles: new Map(),
         registries: new Map(ws.registries.map((r) => [r.id, r])),
       };
       registrations.set(key, reg);
@@ -1374,6 +1794,7 @@ export function createRegistryProxy(options: {
         release: () => {
           released ??= (async () => {
             registrations.delete(key);
+            reg.pypiFiles.clear();
             // Requests still waiting for a slot are turned away rather than awaited.
             reg.buffered.close();
             await Promise.allSettled([...reg.inFlight]);

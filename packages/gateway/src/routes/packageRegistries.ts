@@ -1,7 +1,7 @@
 /**
- * Admin CRUD for `PackageRegistry` — the npm upstreams the worker's registry
- * proxy fronts. Tokens are write-only: sealed on the way in, and the API only
- * ever reports `hasToken`. Platform ADMIN only.
+ * Admin CRUD for `PackageRegistry` — the npm, Go and PyPI upstreams the worker's
+ * registry proxy fronts. Tokens are write-only: sealed on the way in, and the API
+ * only ever reports `hasToken`. Platform ADMIN only.
  */
 import { Prisma } from '@auto-swe/shared';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
@@ -9,6 +9,7 @@ import {
   PACKAGE_REGISTRY_ACCESS_MODES,
   PACKAGE_REGISTRY_AUTH_KINDS,
   PACKAGE_REGISTRY_ECOSYSTEMS,
+  type PackageRegistryEcosystem,
 } from '@auto-swe/shared/lib/packageRegistry';
 import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -106,16 +107,38 @@ function tokenColumns(token: string) {
   };
 }
 
-const GO_HAS_NO_SCOPES = 'A Go registry has no scopes: it serves every module for its team';
+/** Every ecosystem but npm: a Go or PyPI registry serves its whole team and takes no scopes. */
+type ScopelessEcosystem = Exclude<PackageRegistryEcosystem, 'npm'>;
 
-/** The Go proxy appends paths to the upstream, so it must be a bare base URL. */
-function goUrlProblem(url: string): string | null {
+/** A stored row's ecosystem is a plain string, so this narrows it once for every rule below. */
+function isScopeless(ecosystem: string): ecosystem is ScopelessEcosystem {
+  return ecosystem !== 'npm';
+}
+
+const SCOPELESS_NOUN: Record<ScopelessEcosystem, string> = {
+  go: 'Go registry',
+  pypi: 'PyPI registry',
+};
+
+const NO_SCOPES: Record<ScopelessEcosystem, string> = {
+  go: 'A Go registry has no scopes: it serves every module for its team',
+  pypi: 'A PyPI registry has no scopes: it serves every package for its team',
+};
+
+/** npm keeps the unqualified noun its messages have always used. */
+function registryNoun(ecosystem: string): string {
+  return isScopeless(ecosystem) ? SCOPELESS_NOUN[ecosystem] : 'registry';
+}
+
+/** The Go and PyPI proxies append paths to the upstream, so it must be a bare base URL. */
+function bareUrlProblem(ecosystem: ScopelessEcosystem, url: string): string | null {
   const parsed = new URL(url);
+  const noun = SCOPELESS_NOUN[ecosystem];
   if (parsed.username || parsed.password) {
-    return 'A Go registry URL must not carry credentials; put them in the token field';
+    return `A ${noun} URL must not carry credentials; put them in the token field`;
   }
   if (url.includes('?') || url.includes('#')) {
-    return 'A Go registry URL must not carry a query string or a fragment';
+    return `A ${noun} URL must not carry a query string or a fragment`;
   }
   return null;
 }
@@ -123,9 +146,8 @@ function goUrlProblem(url: string): string | null {
 /**
  * Write-time uniqueness, as a 409 problem string or null: among active rows
  * of one ecosystem and team group (null is its own group), at most one default
- * registry and each scope at most once. A Go registry has no scopes, so its
- * only key is the default one. `excludeId` keeps a PATCH from colliding with
- * itself.
+ * registry and each scope at most once. A scopeless registry's only key is the
+ * default one. `excludeId` keeps a PATCH from colliding with itself.
  */
 async function scopeProblem(
   prisma: { packageRegistry: { findMany: (a: unknown) => Promise<Row[]> } },
@@ -152,11 +174,8 @@ async function scopeProblem(
   for (const row of rows) {
     const rowKeys = row.npmScopes.length ? row.npmScopes : [''];
     const clash = candKeys.find((k) => rowKeys.includes(k));
-    if (clash === '' && candidate.ecosystem === 'go') {
-      return `an active default Go registry already exists for ${candidate.teamId ? 'this team' : 'all teams'} (${row.name})`;
-    }
     if (clash === '') {
-      return `an active default registry already exists for ${candidate.teamId ? 'this team' : 'all teams'} (${row.name})`;
+      return `an active default ${registryNoun(candidate.ecosystem)} already exists for ${candidate.teamId ? 'this team' : 'all teams'} (${row.name})`;
     }
     if (clash) {
       return `scope ${clash} is already claimed by ${row.name} for ${candidate.teamId ? 'this team' : 'all teams'}`;
@@ -197,11 +216,11 @@ export const packageRegistryRoutes: FastifyPluginAsync = async (fastify) => {
       if (!safety.ok) {
         return sendError(reply, 400, 'BASE_URL_REFUSED', safety.reason);
       }
-      if (body.ecosystem === 'go') {
+      if (isScopeless(body.ecosystem)) {
         if (body.npmScopes.length) {
-          return sendError(reply, 400, 'VALIDATION_ERROR', GO_HAS_NO_SCOPES);
+          return sendError(reply, 400, 'VALIDATION_ERROR', NO_SCOPES[body.ecosystem]);
         }
-        const urlProblem = goUrlProblem(upstreamUrl);
+        const urlProblem = bareUrlProblem(body.ecosystem, upstreamUrl);
         if (urlProblem) {
           return sendError(reply, 400, 'BASE_URL_REFUSED', urlProblem);
         }
@@ -270,11 +289,11 @@ export const packageRegistryRoutes: FastifyPluginAsync = async (fastify) => {
       if (!safety.ok) {
         return sendError(reply, 400, 'BASE_URL_REFUSED', safety.reason);
       }
-      if (existing.ecosystem === 'go') {
+      if (isScopeless(existing.ecosystem)) {
         if (body.npmScopes?.length) {
-          return sendError(reply, 400, 'VALIDATION_ERROR', GO_HAS_NO_SCOPES);
+          return sendError(reply, 400, 'VALIDATION_ERROR', NO_SCOPES[existing.ecosystem]);
         }
-        const urlProblem = goUrlProblem(nextUrl);
+        const urlProblem = bareUrlProblem(existing.ecosystem, nextUrl);
         if (urlProblem) {
           return sendError(reply, 400, 'BASE_URL_REFUSED', urlProblem);
         }

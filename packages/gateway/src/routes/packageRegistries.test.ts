@@ -18,6 +18,24 @@ const ID = '11111111-1111-4111-8111-111111111111';
 const AUTH = { authorization: 'Bearer fake-jwt' };
 const BASE = '/api/v1/admin/package-registries';
 
+/** What the scopeless cases differ on: the ecosystem, its upstream, and its refusal wording. */
+const SCOPELESS = [
+  {
+    ecosystem: 'go',
+    name: 'goproxy',
+    noScopes: 'A Go registry has no scopes: it serves every module for its team',
+    noun: 'Go',
+    upstreamUrl: 'https://proxy.golang.org',
+  },
+  {
+    ecosystem: 'pypi',
+    name: 'pypi-proxy',
+    noScopes: 'A PyPI registry has no scopes: it serves every package for its team',
+    noun: 'PyPI',
+    upstreamUrl: 'https://pypi.org/simple',
+  },
+];
+
 function row(over: Record<string, unknown> = {}) {
   return {
     accessMode: 'lockfile',
@@ -133,15 +151,74 @@ describe('packageRegistryRoutes', () => {
     }
   });
 
-  describe('go registries', () => {
-    const goPost = (payload: Record<string, unknown>) =>
+  it('filters the npm clash query by ecosystem too', async () => {
+    prisma.packageRegistry.findMany.mockClear();
+    await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { name: 'npmjs', upstreamUrl: 'https://registry.npmjs.org' },
+      url: BASE,
+    });
+    expect(
+      (prisma.packageRegistry.findMany.mock.calls.at(-1) as unknown as [{ where: object }])[0].where
+    ).toMatchObject({ ecosystem: 'npm' });
+  });
+
+  it('lets one team hold an npm, a go and a pypi default at once', async () => {
+    const teamId = '22222222-2222-4222-8222-222222222222';
+    // A stored default answers only the clash query of its own ecosystem and team.
+    const stored: ReturnType<typeof row>[] = [];
+    prisma.packageRegistry.findMany.mockImplementation((async (a: {
+      where: { ecosystem: string; teamId: string };
+    }) =>
+      stored.filter(
+        (r) => r.ecosystem === a.where.ecosystem && r.teamId === a.where.teamId
+      )) as never);
+    prisma.packageRegistry.create.mockImplementation((async (a: {
+      data: Record<string, unknown>;
+    }) => {
+      const created = row(a.data);
+      stored.push(created);
+      return created;
+    }) as never);
+    try {
+      const post = (payload: Record<string, unknown>) =>
+        app.inject({ headers: AUTH, method: 'POST', payload: { teamId, ...payload }, url: BASE });
+      const npm = await post({ name: 'team-npm', upstreamUrl: 'https://registry.npmjs.org' });
+      const go = await post({
+        ecosystem: 'go',
+        name: 'team-go',
+        upstreamUrl: 'https://proxy.golang.org',
+      });
+      const pypi = await post({
+        ecosystem: 'pypi',
+        name: 'team-pypi',
+        upstreamUrl: 'https://pypi.org/simple',
+      });
+      expect([npm.statusCode, go.statusCode, pypi.statusCode]).toEqual([201, 201, 201]);
+      const again = await post({
+        ecosystem: 'pypi',
+        name: 'second-pypi',
+        upstreamUrl: 'https://pypi.org/simple',
+      });
+      expect(again.statusCode).toBe(409);
+    } finally {
+      prisma.packageRegistry.findMany.mockImplementation((async () => []) as never);
+      prisma.packageRegistry.create.mockImplementation((async (a: {
+        data: Record<string, unknown>;
+      }) => row(a.data)) as never);
+    }
+  });
+
+  describe.each(SCOPELESS)('$noun registries', (entry) => {
+    const post = (payload: Record<string, unknown>) =>
       app.inject({
         headers: AUTH,
         method: 'POST',
         payload: {
-          ecosystem: 'go',
-          name: 'goproxy',
-          upstreamUrl: 'https://proxy.golang.org',
+          ecosystem: entry.ecosystem,
+          name: entry.name,
+          upstreamUrl: entry.upstreamUrl,
           ...payload,
         },
         url: BASE,
@@ -150,34 +227,32 @@ describe('packageRegistryRoutes', () => {
       (prisma.packageRegistry.findMany.mock.calls.at(-1) as unknown as [{ where: object }])[0]
         .where;
 
-    it('creates a go row, filtering the clash query by ecosystem', async () => {
+    it('creates a row, filtering the clash query by ecosystem', async () => {
       prisma.packageRegistry.findMany.mockClear();
-      const res = await goPost({});
+      const res = await post({});
       expect(res.statusCode).toBe(201);
-      expect(JSON.parse(res.payload).data.ecosystem).toBe('go');
-      expect(lastWhere()).toMatchObject({ ecosystem: 'go', isActive: true, teamId: null });
+      expect(JSON.parse(res.payload).data.ecosystem).toBe(entry.ecosystem);
+      expect(lastWhere()).toMatchObject({
+        ecosystem: entry.ecosystem,
+        isActive: true,
+        teamId: null,
+      });
       const audit = (prisma.configAuditLog.create.mock.calls.at(-1) as unknown as [unknown])[0] as {
         data: { afterJson: { ecosystem: string } };
       };
-      expect(audit.data.afterJson.ecosystem).toBe('go');
+      expect(audit.data.afterJson.ecosystem).toBe(entry.ecosystem);
     });
 
-    it('filters the npm clash query by ecosystem too', async () => {
-      await app.inject({
-        headers: AUTH,
-        method: 'POST',
-        payload: { name: 'npmjs', upstreamUrl: 'https://registry.npmjs.org' },
-        url: BASE,
-      });
-      expect(lastWhere()).toMatchObject({ ecosystem: 'npm' });
-    });
-
-    it('refuses scopes on a go row, on create and on PATCH', async () => {
-      const created = await goPost({ npmScopes: ['@acme'] });
+    it('refuses scopes, on create and on PATCH', async () => {
+      const created = await post({ npmScopes: ['@acme'] });
       expect(created.statusCode).toBe(400);
-      expect(JSON.parse(created.payload).error.code).toBe('VALIDATION_ERROR');
+      const createdErr = JSON.parse(created.payload).error;
+      expect(createdErr.code).toBe('VALIDATION_ERROR');
+      expect(createdErr.message).toBe(entry.noScopes);
 
-      prisma.packageRegistry.findUnique.mockResolvedValueOnce(row({ ecosystem: 'go' }) as never);
+      prisma.packageRegistry.findUnique.mockResolvedValueOnce(
+        row({ ecosystem: entry.ecosystem }) as never
+      );
       const patched = await app.inject({
         headers: AUTH,
         method: 'PATCH',
@@ -187,7 +262,9 @@ describe('packageRegistryRoutes', () => {
       expect(patched.statusCode).toBe(400);
       expect(JSON.parse(patched.payload).error.code).toBe('VALIDATION_ERROR');
 
-      prisma.packageRegistry.findUnique.mockResolvedValueOnce(row({ ecosystem: 'go' }) as never);
+      prisma.packageRegistry.findUnique.mockResolvedValueOnce(
+        row({ ecosystem: entry.ecosystem }) as never
+      );
       const cleared = await app.inject({
         headers: AUTH,
         method: 'PATCH',
@@ -197,15 +274,15 @@ describe('packageRegistryRoutes', () => {
       expect(cleared.statusCode).toBe(200);
     });
 
-    it('lets an npm default and a go default of one team coexist', async () => {
+    it(`lets an npm default and a ${entry.noun} default of one team coexist`, async () => {
       const teamId = '22222222-2222-4222-8222-222222222222';
-      // The clash query is ecosystem-filtered, so the npm default is never returned for a go candidate.
+      // The clash query is ecosystem-filtered, so the npm default is never returned for this candidate.
       prisma.packageRegistry.findMany.mockImplementation((async (a: {
         where: { ecosystem: string };
       }) => (a.where.ecosystem === 'npm' ? [row({ teamId })] : [])) as never);
       try {
-        const go = await goPost({ teamId });
-        expect(go.statusCode).toBe(201);
+        const scoped = await post({ teamId });
+        expect(scoped.statusCode).toBe(201);
         const npm = await app.inject({
           headers: AUTH,
           method: 'POST',
@@ -215,7 +292,10 @@ describe('packageRegistryRoutes', () => {
         expect(npm.statusCode).toBe(409);
         prisma.packageRegistry.findMany.mockImplementation((async (a: {
           where: { ecosystem: string };
-        }) => (a.where.ecosystem === 'go' ? [row({ ecosystem: 'go', teamId })] : [])) as never);
+        }) =>
+          a.where.ecosystem === entry.ecosystem
+            ? [row({ ecosystem: entry.ecosystem, teamId })]
+            : []) as never);
         const npmOk = await app.inject({
           headers: AUTH,
           method: 'POST',
@@ -228,62 +308,48 @@ describe('packageRegistryRoutes', () => {
       }
     });
 
-    it('rejects a second go default for one team with 409', async () => {
+    it(`rejects a second ${entry.noun} default for one team with 409`, async () => {
       prisma.packageRegistry.findMany.mockResolvedValueOnce([
-        row({ ecosystem: 'go', name: 'first-go' }),
+        row({ ecosystem: entry.ecosystem, name: `first-${entry.ecosystem}` }),
       ] as never);
-      const res = await goPost({ name: 'second-go' });
+      const res = await post({ name: `second-${entry.ecosystem}` });
       expect(res.statusCode).toBe(409);
       const err = JSON.parse(res.payload).error;
       expect(err.code).toBe('PACKAGE_REGISTRY_CLASH');
-      expect(err.message).toContain('default Go registry');
+      expect(err.message).toContain(`default ${entry.noun} registry`);
     });
 
-    it('lets a global go default and a team go default coexist', async () => {
+    it(`lets a global ${entry.noun} default and a team ${entry.noun} default coexist`, async () => {
       const teamId = '22222222-2222-4222-8222-222222222222';
       // The team query is scoped to that team, so the global row is not returned.
       prisma.packageRegistry.findMany.mockResolvedValueOnce([] as never);
-      const res = await goPost({ name: 'team-go', teamId });
+      const res = await post({ name: `team-${entry.ecosystem}`, teamId });
       expect(res.statusCode).toBe(201);
-      expect(lastWhere()).toMatchObject({ ecosystem: 'go', teamId });
+      expect(lastWhere()).toMatchObject({ ecosystem: entry.ecosystem, teamId });
     });
 
     it.each([
-      ['credentials', 'https://user:pw@proxy.golang.org'],
-      ['a query string', 'https://proxy.golang.org?x=1'],
-      ['a fragment', 'https://proxy.golang.org/#frag'],
-    ])('refuses a go URL with %s', async (_label, upstreamUrl) => {
-      const res = await goPost({ upstreamUrl });
+      ['credentials', entry.upstreamUrl.replace('https://', 'https://user:pw@')],
+      ['a query string', `${entry.upstreamUrl}?x=1`],
+      ['a fragment', `${entry.upstreamUrl}/#frag`],
+    ])('refuses a URL with %s', async (_label, upstreamUrl) => {
+      const res = await post({ upstreamUrl });
       expect(res.statusCode).toBe(400);
       expect(JSON.parse(res.payload).error.code).toBe('BASE_URL_REFUSED');
     });
 
-    it('refuses the same URL shapes on a go PATCH', async () => {
-      prisma.packageRegistry.findUnique.mockResolvedValueOnce(row({ ecosystem: 'go' }) as never);
+    it('refuses the same URL shapes on a PATCH', async () => {
+      prisma.packageRegistry.findUnique.mockResolvedValueOnce(
+        row({ ecosystem: entry.ecosystem }) as never
+      );
       const res = await app.inject({
         headers: AUTH,
         method: 'PATCH',
-        payload: { upstreamUrl: 'https://proxy.golang.org/?x=1' },
+        payload: { upstreamUrl: `${entry.upstreamUrl}/?x=1` },
         url: `${BASE}/${ID}`,
       });
       expect(res.statusCode).toBe(400);
       expect(JSON.parse(res.payload).error.code).toBe('BASE_URL_REFUSED');
-    });
-
-    it('still accepts those URL shapes for npm', async () => {
-      for (const upstreamUrl of [
-        'https://user:pw@registry.example.com',
-        'https://registry.example.com?x=1',
-        'https://registry.example.com/#frag',
-      ]) {
-        const res = await app.inject({
-          headers: AUTH,
-          method: 'POST',
-          payload: { name: 'npm-odd', upstreamUrl },
-          url: BASE,
-        });
-        expect(res.statusCode).toBe(201);
-      }
     });
 
     it('cannot change the ecosystem through PATCH', async () => {
@@ -291,7 +357,7 @@ describe('packageRegistryRoutes', () => {
       const res = await app.inject({
         headers: AUTH,
         method: 'PATCH',
-        payload: { ecosystem: 'go', name: 'renamed' },
+        payload: { ecosystem: entry.ecosystem, name: 'renamed' },
         url: `${BASE}/${ID}`,
       });
       expect(res.statusCode).toBe(200);
@@ -301,6 +367,22 @@ describe('packageRegistryRoutes', () => {
       expect(data).not.toHaveProperty('ecosystem');
       expect(lastWhere()).toMatchObject({ ecosystem: 'npm' });
     });
+  });
+
+  it('still accepts those URL shapes for npm', async () => {
+    for (const upstreamUrl of [
+      'https://user:pw@registry.example.com',
+      'https://registry.example.com?x=1',
+      'https://registry.example.com/#frag',
+    ]) {
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: { name: 'npm-odd', upstreamUrl },
+        url: BASE,
+      });
+      expect(res.statusCode).toBe(201);
+    }
   });
 
   it('is ADMIN only', async () => {

@@ -1,6 +1,6 @@
 # Package registries
 
-> Admin-managed npm and Go-module registries that agent workspaces install through a worker-side
+> Admin-managed npm, Go-module and PyPI registries that agent workspaces install through a worker-side
 > proxy. The upstream credential never enters the container; the workspace holds only a
 > per-workspace proxy token.
 
@@ -30,6 +30,9 @@ to a Go registry only when its repository's stored stack detection
 ([`repositories.md`](./repositories.md#detected-stack)) lists Go, or is unknown, so a repository
 detected as Node-only never receives a `GOPROXY` it has no use for.
 
+A PyPI registry is served on a third route (`/pypi/…`, §4 and §5), wired only into a workspace whose
+repository's detection lists Python, or is unknown.
+
 ## 2. Registries
 
 `PackageRegistry` rows are managed by platform admins in **Admin → Integrations → Package
@@ -41,16 +44,17 @@ upstreams — Artifactory is usually internal), an optional `teamId` (null = eve
 encrypted token (`hasToken`/`tokenLastFour` is all the API reports). Every change writes a config
 audit-log entry.
 
-A row's `ecosystem` is `npm` (the default) or `go`, and is fixed when the row is created. A `go` row
-has no scopes — it is the team's single Go registry — and its `upstreamUrl` may carry no userinfo,
-query string or fragment, because the proxy appends module paths to it. Resolution for the two
-ecosystems never mixes: an npm default and a Go registry coexist for one team, and a `go` row can
+A row's `ecosystem` is `npm` (the default), `go` or `pypi`, and is fixed when the row is created. A `go` or
+`pypi` row has no scopes — it is the team's single registry of its ecosystem — and its `upstreamUrl` may carry
+no userinfo, query string or fragment, because the proxy appends paths to it. A PyPI row's `upstreamUrl` is its
+**simple index** (`https://pypi.org/simple`, or `https://host/artifactory/api/pypi/<repo>/simple`). Resolution for the two
+ecosystems never mixes: an npm default, a Go registry and a PyPI registry coexist for one team, and a `go` or `pypi` row can
 never be taken for npm's default or claim an npm scope.
 
 Write-time uniqueness: among active rows of one ecosystem of one team group (null is its own group), at most one
 default registry and each scope at most once — clashes are refused with `409`. Resolution for a
 workspace of team T takes active rows where `teamId IN (T, null)`; per key (the default key and
-each scope; a Go registry has only the default) a team row beats a global one.
+each scope; a Go or PyPI registry has only the default) a team row beats a global one.
 
 ## 3. Access modes
 
@@ -67,6 +71,15 @@ For a **Go** registry the allowlist is every `go.sum` committed at the base ref,
 read the same way (a `go.work.sum` counts as one). A module version with a plain `go.sum` line may be fetched whole (`.info`,
 `.mod`, `.zip`); one with only a `/go.mod` line gets `.mod` and `.info` but no `.zip`. A repository
 with no `go.sum` gets an empty allowlist, so every module is denied.
+
+For a **PyPI** registry the allowlist is the `name==version` pairs in every Python lockfile committed at
+the base ref, at any depth: `uv.lock`, `poetry.lock`, `pylock.toml`, `Pipfile.lock` and
+`requirements*.txt` (only exact `==` pins count; `-r` includes are not followed; paths through
+`node_modules`, `.venv`, `venv`, `site-packages`, `.git`, `vendor` and `third_party` are skipped).
+Names are compared PEP 503-normalised and versions PEP 440-canonicalised (`1.0.0` is `1`); a version
+the parser cannot canonicalise is never allowed. Entries sourced from git, a path or a URL are not
+index packages and contribute nothing. With no lockfile the allowlist is empty and every project is
+denied.
 
 ## 4. How clients are configured
 
@@ -145,6 +158,19 @@ The suite is `registryProxy/goClient.docker.test.ts`, run in CI against the cura
 a real `go build` and `go get` through the proxy in both modes and shows the denial of a module
 outside `go.sum`.
 
+**PyPI.** A workspace wired to a PyPI registry carries, as `secretEnv` because the URL holds the token:
+`PIP_INDEX_URL`, `UV_DEFAULT_INDEX` and `UV_INDEX_URL`, each
+`http://token:<token>@<proxy host>/pypi/<registryId>/simple/`.
+In plain env it carries `PIP_TRUSTED_HOST` (pip ignores a plain-http index otherwise),
+`PIP_DISABLE_PIP_VERSION_CHECK=1` and empty `PIP_EXTRA_INDEX_URL` / `UV_EXTRA_INDEX_URL`, so a second
+index cannot be added from the environment. Unlike Go, the token travels as URL **userinfo**, because pip
+and uv send it over http and redact it in the files and messages they produce; a token in the path
+would be written into `uv.lock`. Only pip and uv are wired.
+
+The suite is `registryProxy/pypiClient.docker.test.ts`, run in CI against the curated Python image. It
+runs real `pip` and `uv` installs through the proxy in both modes, and shows a version, a project and a
+cross-origin file outside what the lockfile allows being refused.
+
 **Shell steps.** A `network: 'egress'` shell step gets the same wiring, with these differences:
 - Its container's root filesystem is read-only, so its `HOME` is `/workspace/.auto-swe/home` in
   the step volume, outside the checkout the finalize commits.
@@ -156,6 +182,26 @@ outside `go.sum`.
 - The token is revoked as soon as the command exits.
 
 ## 5. The proxy
+
+**PyPI route.** `<baseUrl>/pypi/<registryId>/simple/<project>/` serves a project index and
+`…/files/<fileId>/<filename>` a file, as `/pypi/<registryId>/…`; the credential is an HTTP Basic
+password equal to the token (the user name is ignored, a Bearer header is not accepted, and Basic is
+honoured only on this route, decided on the normalised path). A request without it gets 401 with a
+`WWW-Authenticate: Basic` challenge. The proxy asks the upstream for the project's index (JSON or HTML), parses it, and answers
+with its **own** PEP 503 page: only the files the allowlist admits (all of them in open mode), each link
+rewritten to the proxy's file route with its `sha256` fragment, `requires-python` and `yanked`
+attributes kept, and the PEP 658 metadata attributes dropped so a client downloads the wheel itself.
+Index requests buffer their body, so they take a slot in the per-registration limit like npm's.
+
+A file is fetchable only if an index the proxy served in this registration listed it, identified by an
+opaque id the proxy derived, never by a URL the client supplies; each file is re-checked against the
+allowlist before the cache is read. The index is upstream-controlled, so what a file URL may do is
+bounded: its last path segment must be the listed filename; the registry credential is sent only to a
+URL on the upstream's origin **under the registry's own path** (its `upstreamUrl` without the trailing
+`/simple`); any other URL is fetched anonymously, over https only unless it is same-origin, and through the
+SSRF guard **without** the registry's private-network opt-in. Redirects are refused. Files stream up to
+512 MiB and are cached like Go zips. The route is excluded from request tracing, deciding on the
+normalised path.
 
 **Go route.** `<baseUrl>/go/<token>/<registryId>/<GOPROXY path>`, authenticated only by the token
 in the path (a Bearer or Basic header is ignored). The protocol is five read-only requests:
@@ -271,8 +317,9 @@ under 90%. Cache errors fall through to the upstream.
 
 ## Limitations
 
-- **npm and Go modules only, and read-only.** PyPI and Maven are not served, and neither is
-  publishing. A Go registry has no audit endpoint, so `govulncheck` and similar reach their own
+- **npm, Go modules and PyPI only, and read-only.** Maven is not served, and neither is
+  publishing. PyPI has no audit relay (`pip-audit` reaches its own database directly or not at all).
+  A Go registry has no audit endpoint, so `govulncheck` and similar reach their own
   database directly or not at all.
 - **Open mode needs egress to the checksum database for new Go modules.** The proxy does not
   serve `/sumdb/…`, so a module whose hash is not yet in `go.sum` is verified by Go reaching
@@ -314,3 +361,33 @@ under 90%. Cache errors fall through to the upstream.
 - **The cache holds tarballs only**; packuments are always re-fetched.
 - **Denials have no dedicated UI.** They surface as 403s to the installer and as `logWarn`
   entries on the run's activity.
+- **PyPI is pip and uv only.** Poetry, PDM, Pipenv and Hatch read their index from project files the
+  environment does not override, so they reach whatever the project names. A Poetry or Pipenv
+  repository's lockfile still builds the allowlist, but nothing routes the install through the proxy.
+- **Source distributions need their build requirements.** In lockfile mode `setuptools`, `wheel`,
+  `hatchling` and the like are fetched through the same index and are denied unless the lockfile
+  pins them, so an sdist-only dependency fails to build unless its backend is in the lockfile. Wheels
+  are unaffected.
+- **An index that redirects downloads fails.** A PyPI upstream whose file URLs redirect to object
+  storage is refused like npm's, and a file whose URL does not end in its filename is dropped from
+  the index.
+- **No PEP 658 metadata.** Resolvers download whole wheels to read their metadata; large resolves are
+  slower than against a mirror.
+- **PyPI wiring follows the stored detection**, as Go's does; a Node-only detection gets no index.
+- **Shell steps get no PyPI wiring.**
+- **uv project mode writes the proxy's address into the repository.** `uv add`, `uv lock` and `uv sync`
+  record the index they resolved from — `http://<proxy host>/pypi/<registryId>/simple/` — in `uv.lock`
+  and, for `uv add`, in `pyproject.toml`'s `[[tool.uv.index]]`. The token is not written (it is
+  userinfo, which uv strips), but a lockfile committed from a workspace points at an address only that
+  deployment can reach. `uv pip` and pip write nothing. Review such a diff before it ships.
+- **A project can name its own index.** pip honours `--index-url`/`--extra-index-url` lines inside a
+  `requirements.txt`, and uv honours `[[tool.uv.index]]` and `tool.uv.sources` in `pyproject.toml`; both
+  win over the environment and reach that index directly, without the proxy or its allowlist. In a
+  lockfile-mode deployment, treat a diff that adds one as a change to review.
+- **The allowlist ignores which index a lockfile entry came from.** A `uv.lock` `registry` source,
+  a Poetry `legacy` source or a Pipfile `index` naming another index still allowlists `name==version`
+  against the one configured upstream, so a public package with the same name and version as an
+  internal one is served if the upstream carries it.
+- **The PyPI route needs the proxy at the root of its host.** File links in the rewritten index are
+  root-absolute paths (`/pypi/<registryId>/files/…`), so a `REGISTRY_PROXY_URL` with a path prefix
+  works for npm and Go but not for PyPI.

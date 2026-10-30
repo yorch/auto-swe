@@ -680,8 +680,10 @@ export async function createWorkspace(
     // the team configured one, and a Go module fetched around it would bypass the allowlist.
     const stacks = detectedStacks(options?.detectedStack);
     const wantGo = stacks === null || stacks.includes('go');
+    const wantPypi = stacks === null || stacks.includes('python');
     registry = await beginWorkspaceRegistries(options?.teamId ?? null, containerName, {
       go: wantGo,
+      pypi: wantPypi,
     });
   } catch (err) {
     // A resolution/registration failure fails workspace creation — a workspace
@@ -783,7 +785,7 @@ export async function createWorkspace(
     );
 
     if (registry) {
-      // A Go-only workspace has no npm registry, so it gets none of the npm client files.
+      // A workspace with no npm registry (go and/or pypi only) gets none of the npm client files.
       if (registry.registries.some((r) => r.ecosystem === 'npm')) {
         // npmrc via stdin: the token lands in a file, never on a command line.
         const npmrc = renderNpmrc(registry.registries, registry.baseUrl, registry.token);

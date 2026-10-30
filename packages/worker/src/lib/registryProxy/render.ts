@@ -6,15 +6,15 @@
 
 /** A registry as the renderers see it; an absent `ecosystem` is npm. */
 interface RenderedRegistry {
-  ecosystem?: 'npm' | 'go';
+  ecosystem?: 'npm' | 'go' | 'pypi';
   id: string;
   isDefault?: boolean;
   scopes: string[];
 }
 
-/** The npm entries of a mixed list: a go registry's id must never appear as an npm registry. */
+/** The npm entries of a mixed list: a go or pypi registry's id must never appear as an npm registry. */
 const npmOnly = (registries: RenderedRegistry[]): RenderedRegistry[] =>
-  registries.filter((r) => r.ecosystem !== 'go');
+  registries.filter((r) => r.ecosystem !== 'go' && r.ecosystem !== 'pypi');
 
 /** npmrc lines for every registry + scope, written to `NPM_CONFIG_USERCONFIG`. */
 export function renderNpmrc(
@@ -74,10 +74,11 @@ export function registryWorkspaceEnv(
 ): string[] {
   const npm = npmOnly(registries);
   const goRegistry = registries.find((r) => r.ecosystem === 'go');
+  const pypiRegistry = registries.find((r) => r.ecosystem === 'pypi');
   const env: string[] = [];
-  // A Go-only workspace gets no npm, Corepack or Yarn env at all. An empty list is not
-  // "go-only": it keeps the npm block, as it always has.
-  if (npm.length > 0 || !goRegistry) {
+  // A workspace wired only to go and/or pypi gets no npm, Corepack or Yarn env at all. An empty
+  // list is not that: it keeps the npm block, as it always has.
+  if (npm.length > 0 || registries.length === 0) {
     env.push(
       'NPM_CONFIG_USERCONFIG=/workspace/.auto-swe/npmrc',
       'NPM_CONFIG_REPLACE_REGISTRY_HOST=always',
@@ -109,11 +110,44 @@ export function registryWorkspaceEnv(
     // image has fails with Go's own clear message instead.
     env.push('GOTOOLCHAIN=local');
   }
+  if (pypiRegistry) {
+    // The token is the password of URL userinfo, unlike Go's path segment. pip and uv both send
+    // userinfo over plain http (Go refuses to), and both redact it in the files and error text
+    // they write; a token in the path would land in `uv.lock` and `pyproject.toml`. The user name
+    // is a placeholder the proxy ignores. The whole URL is a secret. `UV_INDEX_URL` is the older
+    // uv spelling of `UV_DEFAULT_INDEX`.
+    const url = new URL(baseUrl);
+    const indexUrl = new URL(url);
+    indexUrl.username = 'token';
+    indexUrl.password = token;
+    indexUrl.pathname = `${url.pathname.replace(/\/+$/, '')}/pypi/${pypiRegistry.id}/simple/`;
+    indexUrl.search = '';
+    indexUrl.hash = '';
+    const index = indexUrl.href;
+    env.push(
+      `PIP_INDEX_URL=${index}`,
+      `UV_DEFAULT_INDEX=${index}`,
+      `UV_INDEX_URL=${index}`,
+      // pip refuses an http index unless its host is trusted; its format is `host[:port]`.
+      `PIP_TRUSTED_HOST=${url.port ? `${url.hostname}:${url.port}` : url.hostname}`,
+      'PIP_DISABLE_PIP_VERSION_CHECK=1',
+      // Empty, so an extra index cannot be added through the environment.
+      'PIP_EXTRA_INDEX_URL=',
+      'UV_EXTRA_INDEX_URL='
+    );
+  }
   return env;
 }
 
 /** Registry env entries whose value is, or contains, the proxy token. */
-const TOKEN_ENV_NAMES = new Set(['COREPACK_NPM_TOKEN', 'GOPROXY', 'YARN_NPM_AUTH_TOKEN']);
+const TOKEN_ENV_NAMES = new Set([
+  'COREPACK_NPM_TOKEN',
+  'GOPROXY',
+  'PIP_INDEX_URL',
+  'UV_DEFAULT_INDEX',
+  'UV_INDEX_URL',
+  'YARN_NPM_AUTH_TOKEN',
+]);
 
 /**
  * {@link registryWorkspaceEnv} divided into what is safe on any object that
