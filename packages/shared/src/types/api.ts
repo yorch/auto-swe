@@ -237,6 +237,23 @@ export type RepoGateCommandKey = (typeof REPO_GATE_COMMAND_KEYS)[number];
 /** A repository's gate commands: only the gates it overrides, each a non-blank command. */
 export type RepoGateCommands = Partial<Record<RepoGateCommandKey, string>>;
 
+export type RunEvidenceKind = 'screenshot' | 'video' | 'trace' | 'log';
+
+export interface RunEvidenceDto {
+  id: string;
+  kind: RunEvidenceKind;
+  source: string;
+  caption: string | null;
+  pageUrl: string | null;
+  specNodeId: string | null;
+  stepAttempt: number | null;
+  width: number | null;
+  height: number | null;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
 /**
  * One check `POST /repositories/:id/executor-image/probe` reports for a
  * candidate executor image (docs/repositories.md — the image contract).

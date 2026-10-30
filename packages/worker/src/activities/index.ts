@@ -213,6 +213,8 @@ export type { PruneAutomationDecisionsResult } from './pruneAutomationDecisions.
 export { pruneAutomationDecisions } from './pruneAutomationDecisions.js';
 export type { PruneCallbackDeliveriesResult } from './pruneCallbackDeliveries.js';
 export { pruneCallbackDeliveries } from './pruneCallbackDeliveries.js';
+export type { PruneUiEvidenceResult } from './pruneUiEvidence.js';
+export { pruneUiEvidence } from './pruneUiEvidence.js';
 export type {
   PublishOutcomeInput,
   PublishOutcomeResult,

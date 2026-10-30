@@ -219,6 +219,8 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/workflow-runs/:id/autonomy-decisions': 'read',
   'GET /api/v1/workflow-runs/:id/callback-deliveries': 'read',
   'GET /api/v1/workflow-runs/:id/eval-results': 'read',
+  'GET /api/v1/workflow-runs/:id/evidence': 'read',
+  'GET /api/v1/workflow-runs/:id/evidence/:evidenceId/content': { never: 'secret' },
   'GET /api/v1/workflow-runs/:id/http-calls/:callId': { never: 'secret' },
   'GET /api/v1/workflow-runs/:id/lessons': 'read',
   'GET /api/v1/workflow-runs/:id/traces': 'read',
@@ -381,6 +383,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/work-requests': 'confirm',
   'POST /api/v1/work-requests/:id/retry': 'confirm',
   'POST /api/v1/workflow-runs/:id/cancel': 'confirm',
+  'POST /api/v1/workflow-runs/:id/evidence/:evidenceId/link': { never: 'secret' },
   'POST /api/v1/workflow-templates': 'confirm',
   'POST /api/v1/workflow-templates/:id/explain': {
     read: 'describes a template and stores nothing',

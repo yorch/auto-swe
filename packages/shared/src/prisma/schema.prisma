@@ -1908,6 +1908,7 @@ model WorkflowArtifact {
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
 
   transcriptParts AgentTranscriptPart[]
+  runEvidence     RunEvidence?
 
   @@index([runId])
   @@map("workflow_artifacts")
@@ -2101,6 +2102,7 @@ model WorkflowRun {
 
   steps             WorkflowStep[]
   artifacts         WorkflowArtifact[]
+  runEvidence       RunEvidence[]
   trustedKnowledgeEvidence TrustedKnowledgeEvidence[]
   traces            AgentTrace[]
   httpCalls         WorkflowHttpCall[]
@@ -2126,6 +2128,27 @@ model WorkflowRun {
   @@index([endedAt, startedAt])
   @@index([updatedAt, startedAt])
   @@map("workflow_runs")
+}
+
+model RunEvidence {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId       String           @map("run_id") @db.Uuid
+  run         WorkflowRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  artifactId  String           @unique @map("artifact_id") @db.Uuid
+  artifact    WorkflowArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  /// 'screenshot' | 'video' | 'trace' | 'log'
+  kind        String
+  /// 'uiVerify' | 'agent'
+  source      String
+  specNodeId  String?          @map("spec_node_id")
+  stepAttempt Int?             @map("step_attempt")
+  caption     String?
+  pageUrl     String?          @map("page_url")
+  width       Int?
+  height      Int?
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  @@index([runId, createdAt])
+  @@map("run_evidence")
 }
 
 /// Reporting-only daily aggregates derived from WorkflowRun data. These rows do not affect

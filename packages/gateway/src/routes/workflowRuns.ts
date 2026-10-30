@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import type { Prisma } from '@auto-swe/shared';
 import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import { getArtifact } from '@auto-swe/shared/lib/artifactStore';
@@ -5,14 +6,20 @@ import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
   CHANNEL_TASK_TEMPLATE_NAME,
 } from '@auto-swe/shared/lib/channelTask';
+import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import type { EvalResultDto } from '@auto-swe/shared/types/api';
+import type { EvalResultDto, RunEvidenceDto } from '@auto-swe/shared/types/api';
 import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import { listSteps } from '@auto-swe/shared/workflow';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import {
+  type EvidenceLinkClaims,
+  signEvidenceLink,
+  verifyEvidenceLink,
+} from '../lib/evidenceDownloadLink.js';
 import { sendError } from '../lib/httpErrors.js';
 import { assertMcpWriteAllowed, mcpWriteAuditHook, mcpWriteBegin } from '../lib/mcpWriteGuard.js';
 import { recordRunFinalized } from '../lib/metrics.js';
@@ -27,7 +34,15 @@ import {
   isTerminalSignalError,
   sendTemporalUnavailable,
 } from '../lib/temporalErrors.js';
-import { type RouteCaller, requireAuth, requireCaller, requireUser } from '../plugins/auth.js';
+import {
+  hasRole,
+  loadTokenUser,
+  RBAC_OPTIONS,
+  type RouteCaller,
+  requireAuth,
+  requireCaller,
+  requireUser,
+} from '../plugins/auth.js';
 import { requestWorkspaceRoutes } from './requestWorkspace.js';
 import { runActivityRoutes } from './runActivity.js';
 import {
@@ -41,6 +56,90 @@ import {
 
 const RunIdParam = z.object({ id: z.string().uuid() });
 const RunArtifactParams = z.object({ artifactId: z.string().uuid(), id: z.string().uuid() });
+const RunEvidenceParams = z.object({
+  evidenceId: z.string().uuid(),
+  id: z.string().uuid(),
+});
+const EvidenceListResponse = z.object({
+  data: z.array(
+    z.object({
+      caption: z.string().nullable(),
+      contentType: z.string(),
+      createdAt: z.string(),
+      height: z.number().int().nullable(),
+      id: z.string().uuid(),
+      kind: z.enum(['screenshot', 'video', 'trace', 'log']),
+      pageUrl: z.string().nullable(),
+      sizeBytes: z.number().int(),
+      source: z.string(),
+      specNodeId: z.string().nullable(),
+      stepAttempt: z.number().int().nullable(),
+      width: z.number().int().nullable(),
+    })
+  ),
+});
+const EvidenceLinkResponse = z.object({
+  data: z.object({ expiresAt: z.string(), url: z.string() }),
+});
+const EvidenceTokenQuery = z.object({ token: z.string().optional() });
+const evidenceLinks = new WeakMap<FastifyRequest, EvidenceLinkClaims>();
+const ALLOWED_EVIDENCE_CONTENT_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'video/webm',
+  'application/zip',
+  'text/plain; charset=utf-8',
+]);
+const EVIDENCE_EXTENSIONS: Record<string, string> = {
+  log: 'txt',
+  screenshot: 'png',
+  trace: 'zip',
+  video: 'webm',
+};
+
+function evidenceContentAuthHook() {
+  const fallback = { requiredRole: 'ENGINEER' as const };
+  const authenticate = requireAuth(fallback);
+  const hook = async (request: FastifyRequest, reply: FastifyReply) => {
+    const token = (request.query as { token?: unknown } | undefined)?.token;
+    if (token === undefined) {
+      return authenticate(request, reply);
+    }
+    const verified = typeof token === 'string' ? verifyEvidenceLink(token) : null;
+    if (verified?.ok === false && verified.reason === 'expired') {
+      return sendError(reply, 401, 'EVIDENCE_LINK_EXPIRED', 'This evidence link has expired');
+    }
+    if (!verified?.ok) {
+      return sendError(reply, 401, 'EVIDENCE_LINK_INVALID', 'This evidence link is not valid');
+    }
+    const { claims } = verified;
+    const params = request.params as { id?: string; evidenceId?: string };
+    if (claims.rid !== params.id || claims.eid !== params.evidenceId) {
+      return sendError(reply, 401, 'EVIDENCE_LINK_INVALID', 'This evidence link is not valid');
+    }
+    const user = await loadTokenUser(request.server.prisma, claims.sub);
+    if (!user?.isActive || !hasRole(user.role, 'ENGINEER')) {
+      return sendError(
+        reply,
+        401,
+        'EVIDENCE_LINK_INVALID',
+        'The user this evidence link was issued to can no longer use it'
+      );
+    }
+    evidenceLinks.set(request, claims);
+    request.user = {
+      exp: claims.exp,
+      iat: Math.floor(Date.now() / 1000),
+      role: user.role,
+      ...(user.slackId ? { slackId: user.slackId } : {}),
+      sub: claims.sub,
+    };
+    const gate = await resolveRepoAccessGateOrLastKnown();
+    request.repoAccessGate = gate ?? { mode: 'off', staleAfterHours: 0 };
+  };
+  return Object.assign(hook, { [RBAC_OPTIONS]: fallback });
+}
 
 /** The kind the worker gives a value it spills out of a finished run's context. */
 const CONTEXT_OVERFLOW_KIND = 'context-overflow';
@@ -292,6 +391,161 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   await fastify.register(requestWorkspaceRoutes);
   await fastify.register(runActivityRoutes);
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  // ── Run UI evidence ──
+  app.get(
+    '/:id/evidence',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: RunIdParam, response: { 200: EvidenceListResponse } },
+    },
+    async (request, reply) => {
+      const caller = requireCaller(request);
+      if (caller.kind !== 'user') {
+        return sendError(
+          reply,
+          403,
+          'EVIDENCE_NOT_AVAILABLE',
+          'Evidence is not available to service principals'
+        );
+      }
+      const run = await fastify.prisma.workflowRun.findFirst({
+        select: { id: true },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunVisibilityFilter(caller.user, request.repoAccessGate),
+        },
+      });
+      if (!run) {
+        return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
+      }
+      const rows = await fastify.prisma.runEvidence.findMany({
+        include: { artifact: true },
+        orderBy: { createdAt: 'asc' },
+        where: { runId: run.id },
+      });
+      const data: RunEvidenceDto[] = rows
+        .filter((row) => row.artifact.status === 'ready')
+        .map((row) => ({
+          caption: row.caption,
+          contentType: row.artifact.contentType,
+          createdAt: row.createdAt.toISOString(),
+          height: row.height,
+          id: row.id,
+          kind: row.kind as RunEvidenceDto['kind'],
+          pageUrl: row.pageUrl,
+          sizeBytes: row.artifact.sizeBytes,
+          source: row.source,
+          specNodeId: row.specNodeId,
+          stepAttempt: row.stepAttempt,
+          width: row.width,
+        }));
+      return { data };
+    }
+  );
+
+  app.post(
+    '/:id/evidence/:evidenceId/link',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { params: RunEvidenceParams, response: { 200: EvidenceLinkResponse } },
+    },
+    async (request, reply) => {
+      const caller = requireCaller(request);
+      if (caller.kind !== 'user') {
+        return sendError(
+          reply,
+          403,
+          'EVIDENCE_NOT_AVAILABLE',
+          'Evidence is not available to service principals'
+        );
+      }
+      const run = await fastify.prisma.workflowRun.findFirst({
+        select: { id: true },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunVisibilityFilter(caller.user, request.repoAccessGate),
+        },
+      });
+      if (!run) {
+        return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
+      }
+      const evidence = await fastify.prisma.runEvidence.findFirst({
+        include: { artifact: true },
+        where: { id: request.params.evidenceId, runId: run.id },
+      });
+      if (evidence?.artifact.status !== 'ready') {
+        return sendError(reply, 404, 'EVIDENCE_NOT_FOUND', 'Run evidence not found');
+      }
+      const { expiresAt, token } = signEvidenceLink({
+        eid: evidence.id,
+        rid: run.id,
+        sub: caller.user.sub,
+      });
+      return {
+        data: {
+          expiresAt: expiresAt.toISOString(),
+          url: `/api/v1/workflow-runs/${run.id}/evidence/${evidence.id}/content?token=${encodeURIComponent(token)}`,
+        },
+      };
+    }
+  );
+
+  app.get(
+    '/:id/evidence/:evidenceId/content',
+    {
+      onRequest: evidenceContentAuthHook(),
+      schema: {
+        params: RunEvidenceParams,
+        querystring: EvidenceTokenQuery,
+      },
+    },
+    async (request, reply) => {
+      const caller = requireCaller(request);
+      if (caller.kind !== 'user') {
+        return sendError(
+          reply,
+          403,
+          'EVIDENCE_NOT_AVAILABLE',
+          'Evidence is not available to service principals'
+        );
+      }
+      const run = await fastify.prisma.workflowRun.findFirst({
+        select: { id: true },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunVisibilityFilter(caller.user, request.repoAccessGate),
+        },
+      });
+      if (!run) {
+        return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
+      }
+      const evidence = await fastify.prisma.runEvidence.findFirst({
+        include: { artifact: true },
+        where: { id: request.params.evidenceId, runId: run.id },
+      });
+      if (evidence?.artifact.status !== 'ready') {
+        return sendError(reply, 404, 'EVIDENCE_NOT_FOUND', 'Run evidence not found');
+      }
+      const { body } = await getArtifact(evidence.artifactId);
+      const contentType = ALLOWED_EVIDENCE_CONTENT_TYPES.has(evidence.artifact.contentType)
+        ? evidence.artifact.contentType
+        : 'application/octet-stream';
+      const inline = evidence.kind === 'screenshot' || evidence.kind === 'video';
+      const filename = `${evidence.kind}-${evidence.id}.${EVIDENCE_EXTENSIONS[evidence.kind] ?? 'bin'}`;
+      return reply
+        .header('Content-Type', contentType)
+        .header(
+          'Content-Disposition',
+          `${inline ? 'inline' : 'attachment'}; filename="${filename}"`
+        )
+        .header('Content-Length', String(body.byteLength))
+        .header('X-Content-Type-Options', 'nosniff')
+        .header('Content-Security-Policy', "sandbox; default-src 'none'")
+        .header('Cache-Control', 'private, max-age=300')
+        .send(Readable.from([body]));
+    }
+  );
 
   // ── List runs ──
   app.get(
