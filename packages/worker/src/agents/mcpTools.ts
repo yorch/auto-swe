@@ -18,6 +18,7 @@
  *   (see `isMcpToolEnabled`) — any existing tool config disables MCP because
  *   the gateway enum does not yet accept `'mcp'`.
  */
+import { AsyncResource } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
 import { createOriginScopedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { fetchGuarded } from '@auto-swe/shared/lib/guardedFetch';
@@ -30,6 +31,7 @@ import { auditLog } from '../lib/activityLog.js';
 import { type AgentTracer, redactString } from '../lib/agentTracer.js';
 import type { McpConnectionTarget } from '../lib/config/mcpConnection.js';
 import { getErrorMessage } from '../lib/errors.js';
+import { capturingFetch } from '../lib/httpCapture.js';
 import { screenMcpResult } from './mcpScreen.js';
 
 /**
@@ -131,7 +133,9 @@ export function bearerFetch(
  * or transport request to any other origin resolves, checks and pins under the strict rules.
  */
 export function originScopedFetch(serverUrl: URL, allowPrivate: boolean): typeof fetch {
-  return createOriginScopedFetch(allowPrivate ? [serverUrl.origin] : []);
+  return AsyncResource.bind(
+    capturingFetch(createOriginScopedFetch(allowPrivate ? [serverUrl.origin] : []), 'mcp')
+  );
 }
 
 /**

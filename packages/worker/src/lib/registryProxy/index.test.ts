@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import http from 'node:http';
 import { tmpdir } from 'node:os';
@@ -65,6 +66,26 @@ async function startProxy(
   const port = await proxy.listen();
   return { base: `http://127.0.0.1:${port}`, proxy };
 }
+
+it('runs upstream requests in the registering activity context, not the server context', async () => {
+  const context = new AsyncLocalStorage<string>();
+  const seen: (string | undefined)[] = [];
+  const { base, proxy } = await startProxy(async () => {
+    seen.push(context.getStore());
+    return new Response(JSON.stringify({ versions: {} }));
+  });
+  try {
+    const reg = await context.run('activity-one', () =>
+      proxy.register({ onDenied: () => {}, registries: [REG] })
+    );
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect((await get(base, `/npm/${REG.id}/left-pad`, reg.token)).status).toBe(200);
+    expect(seen).toEqual(['activity-one']);
+    await reg.release();
+  } finally {
+    await proxy.close();
+  }
+});
 
 const get = (base: string, path: string, token?: string, method = 'GET') =>
   new Promise<{ body: string; headers: http.IncomingHttpHeaders; status: number }>((resolve) => {

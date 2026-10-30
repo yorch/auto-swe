@@ -125,6 +125,10 @@ vi.mock('@auto-swe/shared/db', () => ({
             : h.orphanArtifacts
       ),
     },
+    workflowHttpCall: {
+      deleteMany: vi.fn(async () => ({ count: 0 })),
+      findMany: vi.fn(async () => []),
+    },
   },
 }));
 
@@ -429,7 +433,7 @@ describe('pruneAgentTranscripts', () => {
     expect(result.more).toBe(true);
   });
 
-  it('reads and writes AgentTranscript only inside runUnscoped', async () => {
+  it('uses model-specific exemptions for transcript and HTTP retention', async () => {
     h.transcripts.push({
       createdAt: ago(30),
       id: 't',
@@ -441,8 +445,15 @@ describe('pruneAgentTranscripts', () => {
     });
     await pruneAgentTranscripts(NOW);
 
-    expect(h.unscopedCalls.length).toBeGreaterThanOrEqual(2);
-    for (const call of h.unscopedCalls) {
+    const transcriptCalls = h.unscopedCalls.filter((call) =>
+      call.models.includes('AgentTranscript')
+    );
+    const httpCalls = h.unscopedCalls.filter((call) => call.models.includes('WorkflowHttpCall'));
+    expect(transcriptCalls.length).toBeGreaterThanOrEqual(2);
+    expect(httpCalls).toHaveLength(1);
+    expect(httpCalls[0]?.models).toEqual(['WorkflowHttpCall']);
+    expect(h.unscopedCalls).toHaveLength(transcriptCalls.length + httpCalls.length);
+    for (const call of transcriptCalls) {
       expect(call.models).toEqual(['AgentTranscript']);
     }
   });

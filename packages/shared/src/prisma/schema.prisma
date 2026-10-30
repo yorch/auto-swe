@@ -2085,6 +2085,7 @@ model WorkflowRun {
   artifacts         WorkflowArtifact[]
   trustedKnowledgeEvidence TrustedKnowledgeEvidence[]
   traces            AgentTrace[]
+  httpCalls         WorkflowHttpCall[]
   memoryItems       MemoryItem[]
   humanSteps        WorkflowHumanStep[]
   evalResults       EvalResult[]
@@ -2484,6 +2485,58 @@ model EvalRubric {
 
   @@index([scope, slug])
   @@map("eval_rubrics")
+}
+
+/// One outbound HTTP exchange made during a workflow activity. Headers are never stored.
+model WorkflowHttpCall {
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// Null for workflows that keep no WorkflowRun row; workflowId still identifies them.
+  runId           String?      @map("run_id") @db.Uuid
+  run             WorkflowRun? @relation(fields: [runId], references: [id], onDelete: Cascade)
+  workflowId      String       @map("workflow_id")
+  temporalRunId   String?      @map("temporal_run_id")
+  activityType    String?      @map("activity_type")
+  /// Interpreter node identity, including fan-out branch path in recordingId.
+  specNodeId      String?      @map("spec_node_id")
+  recordingId     String?      @map("recording_id")
+  stepAttempt     Int?         @map("step_attempt")
+  /// Temporal's 1-based retry attempt, distinct from the interpreter attempt.
+  attempt         Int
+  /// "worker" | "egress_proxy"
+  source          String
+  /// "model" | "embedding" | "scm" | "connector" | "mcp" | "callback" | "egress" | "other"
+  purpose         String
+  method          String
+  scheme          String
+  host            String
+  port            Int?
+  /// Credential query parameters are removed before persistence.
+  path            String
+  status          Int?
+  durationMs      Int?         @map("duration_ms")
+  requestBytes    Int?         @map("request_bytes")
+  responseBytes   Int?         @map("response_bytes")
+  error           String?
+  blocked         Boolean      @default(false)
+  blockReason     String?      @map("block_reason")
+  requestBody     String?      @map("request_body")
+  responseBody    String?      @map("response_body")
+  bodiesTruncated Boolean      @default(false) @map("bodies_truncated")
+  /// No foreign key: model bodies live only in the independently retained transcript.
+  transcriptId    String?      @map("transcript_id") @db.Uuid
+  otelTraceId     String?      @map("otel_trace_id")
+  otelSpanId      String?      @map("otel_span_id")
+  /// Spend owner denormalized by currentSpendOwner, including runless workflows.
+  teamId          String?      @map("team_id") @db.Uuid
+  orgId           String?      @map("org_id") @db.Uuid
+  startedAt       DateTime     @map("started_at") @db.Timestamptz
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([runId, startedAt])
+  @@index([createdAt])
+  @@index([workflowId, temporalRunId])
+  @@index([teamId, createdAt])
+  @@map("workflow_http_calls")
 }
 
 /// One tool call, LLM response, or activity event captured during an agent activity execution.

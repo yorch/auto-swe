@@ -29,6 +29,7 @@ import {
 } from '../lib/temporalErrors.js';
 import { type RouteCaller, requireAuth, requireCaller, requireUser } from '../plugins/auth.js';
 import { requestWorkspaceRoutes } from './requestWorkspace.js';
+import { runActivityRoutes } from './runActivity.js';
 import {
   AutonomyDecisionSchema,
   projectAutonomyDecision,
@@ -289,6 +290,7 @@ function runVisibilityFor(
 
 export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   await fastify.register(requestWorkspaceRoutes);
+  await fastify.register(runActivityRoutes);
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   // ── List runs ──

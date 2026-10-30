@@ -35,6 +35,7 @@ import { checkProbeUrl, isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from '../githubAuth.js';
+import { capturingFetch } from '../httpCapture.js';
 import { currentRunLauncherId } from '../runLauncher.js';
 import { normalizeCiStatus, pickLogsUrl } from './ciStatus.js';
 import {
@@ -259,7 +260,11 @@ async function octokitFor(repo: RepoRef) {
   const token = await runToken(repo, ghConfig);
   const apiUrl =
     repo.apiUrl ?? (ghConfig.apiUrl !== 'https://api.github.com' ? ghConfig.apiUrl : undefined);
-  return new Octokit({ auth: token, ...(apiUrl && { baseUrl: apiUrl }) });
+  return new Octokit({
+    auth: token,
+    request: { fetch: capturingFetch(createGuardedFetch({ allowPrivate: true }), 'scm') },
+    ...(apiUrl && { baseUrl: apiUrl }),
+  });
 }
 
 /** Characters of a CI log kept: its end, where the failure is. */

@@ -4,6 +4,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { modelCallFetch } from '@auto-swe/shared/lib/modelDiscovery';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
+import { capturingFetch } from '../../lib/httpCapture.js';
 import { MAX_RECORD_BYTES } from '../../lib/transcriptRecorder.js';
 import type { UsageTotals } from '../harness/usage.js';
 
@@ -97,6 +98,7 @@ export interface ModelProxy {
 }
 
 interface Registration {
+  fetch: typeof fetch;
   upstreamBaseUrl: string;
   apiKey: string;
   onCall: (call: ProxiedCall) => void;
@@ -294,7 +296,7 @@ export function createModelProxy(options: {
       responseText: '',
     };
     try {
-      const upstream = await upstreamFetch(`${reg.upstreamBaseUrl}${path}${search}`, {
+      const upstream = await reg.fetch(`${reg.upstreamBaseUrl}${path}${search}`, {
         body,
         headers,
         method: 'POST',
@@ -421,6 +423,7 @@ export function createModelProxy(options: {
       const key = digest(token);
       const reg: Registration = {
         apiKey: turn.apiKey,
+        fetch: AsyncResource.bind(capturingFetch(upstreamFetch, 'model')),
         inFlight: new Set(),
         // Bound here so the debit it triggers runs in the registering activity's
         // context (its workflow id, its cancellation), not the server's.

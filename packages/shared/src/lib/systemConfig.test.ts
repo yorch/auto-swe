@@ -427,6 +427,9 @@ describe('systemConfig resolvers', () => {
       'HARNESS_MODEL_PROXY_PORT',
       'HARNESS_MODEL_PROXY_URL',
       'HARNESS_MODEL_PROXY_BIND',
+      'EGRESS_PROXY_PORT',
+      'EGRESS_PROXY_URL',
+      'EGRESS_PROXY_BIND',
       'WORKSPACE_NETWORK',
       'WORKSPACE_DNS',
       'WORKSPACE_BACKEND',
@@ -456,12 +459,42 @@ describe('systemConfig resolvers', () => {
       err.mockRestore();
     });
 
+    it('opts into the egress proxy with validated worker advertisement', () => {
+      expect(resolveWorkspaceInfra().egressProxy).toBeNull();
+      process.env.EGRESS_PROXY_PORT = '8792';
+      expect(resolveWorkspaceInfra().egressProxy).toEqual({
+        bindHost: '0.0.0.0',
+        port: 8792,
+        url: 'http://host.docker.internal:8792',
+      });
+      process.env.EGRESS_PROXY_URL = 'http://{hostname}:8792/';
+      expect(resolveWorkspaceInfra().egressProxy?.url).toBe(`http://${hostname()}:8792`);
+      for (const [key, value] of [
+        ['EGRESS_PROXY_PORT', '70000'],
+        ['EGRESS_PROXY_URL', 'file:///proxy'],
+        ['EGRESS_PROXY_URL', 'http://user:secret@proxy.invalid'],
+        ['EGRESS_PROXY_BIND', 'bad address'],
+      ]) {
+        const previous = process.env[key];
+        process.env[key] = value;
+        expect(validateWorkspaceInfraEnv().some((issue) => issue.includes(key))).toBe(true);
+        if (previous === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = previous;
+        }
+      }
+      delete process.env.EGRESS_PROXY_PORT;
+      delete process.env.EGRESS_PROXY_URL;
+    });
+
     it('returns the built-in defaults when nothing is set', () => {
       expect(resolveWorkspaceInfra()).toEqual({
         backend: 'docker',
         blockMetadata: true,
         cpus: 2,
         dns: ['1.1.1.1', '8.8.8.8'],
+        egressProxy: null,
         harnessModelProxy: null,
         image: 'node:24-alpine',
         kubernetes: {

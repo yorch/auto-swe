@@ -444,6 +444,10 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
     return unsupported('A sidecar');
   }
 
+  containerLogs(_name: string): Promise<CapturedResult> {
+    return unsupported('Detached container logs');
+  }
+
   /**
    * Whether a pod can resolve the proxy's host: anything but the Docker host
    * alias, which exists only on a Docker host. Reachability proper is the

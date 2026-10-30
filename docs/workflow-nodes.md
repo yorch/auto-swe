@@ -513,7 +513,10 @@ workspace volume cannot be created.
   example above reads a file and writes nothing, so it runs with the defaults.
 - The egress allowlist filters by name, not by address. With entries, the container's DNS answers
   only for the listed hosts; a connection to a literal IP address is not blocked. With an empty
-  allowlist, `"egress"` is unrestricted outbound access.
+  allowlist, `"egress"` permits unrestricted outbound access through that DNS policy. The optional
+  [audited egress proxy](./run-activity.md#container-egress-proxy) also enforces the allowlist and
+  rejects unsafe resolved addresses for HTTP/CONNECT traffic sent through it. Clients that ignore
+  proxy env and direct sockets bypass the proxy; the DNS filter remains.
 - `inputs.branch` is also where changes are pushed. When the branch does not exist yet, the run's
   base branch is checked out and any changes are pushed as the new branch.
 
@@ -543,6 +546,10 @@ JSON, and the container answers with JSON. Untrusted code runs in the same locke
 **Output.** `nodes.<id>.output.result` holds the parsed JSON result. With `"ndjson"`,
 `nodes.<id>.output.events` holds every line received, a line that is not JSON kept as
 `{ "type": "log", "log": … }`.
+
+Redacted stdout/stderr also lives in a `container.step` artifact. Shell and container execution
+emit `shell.exec` and `container.exec` activity events with output-artifact linkage; see
+[run activity](./run-activity.md).
 
 **Failure.** A non-zero exit, output that is not valid JSON, a sidecar that is never ready or
 answers with an error status, and an image that is not allowed all throw, under `onFail` (§4).

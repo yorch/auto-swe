@@ -459,6 +459,14 @@ applies to reads and writes is in [`work-views.md`](./work-views.md).
 
 ---
 
+## Run activity and container egress
+
+The optional container egress proxy is configured by worker bootstrap env: `EGRESS_PROXY_PORT`,
+`EGRESS_PROXY_URL`, and `EGRESS_PROXY_BIND`. Its networking, authentication and cooperative-proxy
+boundaries are described in [run activity](./run-activity.md#container-egress-proxy). HTTP capture
+and retention use `workflow.httpCaptureEnabled`, `workflow.httpCaptureBodyMaxBytes`, and
+`workflow.httpCaptureRetentionDays` in the setting registry; HTTP pruning shares the transcript sweep.
+
 ## Limitations
 
 - **Git identity is not pinned to a run.** The identity resolves when each workspace is created. A

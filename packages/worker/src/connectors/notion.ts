@@ -1,4 +1,5 @@
 import { ApplicationFailure } from '@temporalio/activity';
+import { capturingFetch } from '../lib/httpCapture.js';
 
 const NOTION_API_BASE = 'https://api.notion.com/v1';
 const NOTION_VERSION = '2022-06-28';
@@ -44,7 +45,7 @@ async function notionFetch<T>(
 ): Promise<T> {
   const url = `${NOTION_API_BASE}${path}`;
   const timeoutSignal = AbortSignal.timeout(NOTION_TIMEOUT_MS);
-  const response = await fetch(url, {
+  const response = await capturingFetch(globalThis.fetch, 'connector')(url, {
     ...init,
     headers: {
       ...notionHeaders(connection.apiToken),

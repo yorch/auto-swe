@@ -12,6 +12,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../lib/egressWiring.js', () => ({ beginWorkspaceEgress: vi.fn(async () => null) }));
+
+import { beginWorkspaceEgress } from '../lib/egressWiring.js';
+
 vi.mock('../lib/execUtils.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/execUtils.js')>();
   return {
@@ -297,6 +301,28 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     expect(startCmd).not.toContain(shellQuote('node:24-alpine'));
 
     await ws.destroy();
+  });
+
+  it('wires workspace proxy credentials as secrets and releases on teardown', async () => {
+    const release = vi.fn(async () => {});
+    vi.mocked(beginWorkspaceEgress).mockResolvedValueOnce({
+      env: ['NO_PROXY=localhost', 'no_proxy=localhost'],
+      registration: { release, token: 'proxy-secret', url: 'http://host.docker.internal:8792' },
+      secretEnv: {
+        HTTP_PROXY: 'http://egress:proxy-secret@host.docker.internal:8792',
+        HTTPS_PROXY: 'proxy',
+        http_proxy: 'proxy',
+        https_proxy: 'proxy',
+      },
+    });
+    const ws = await createWorkspace('https://github.com/acme/repo.git', 'auto/TICKET-1', 'main');
+    const commands = vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+    const start = commands.find((cmd) => cmd.includes('docker run -d --name'));
+    expect(start).toContain('--add-host=host.docker.internal:host-gateway');
+    expect(start).toContain('HTTP_PROXY');
+    expect(start).not.toContain('proxy-secret');
+    await ws.destroy();
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it('is best-effort: a failed metadata-block sidecar does not fail workspace creation', async () => {

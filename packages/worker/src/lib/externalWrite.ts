@@ -32,6 +32,25 @@
 import { prisma } from '@auto-swe/shared/db';
 import { Context } from '@temporalio/activity';
 import { ApplicationFailure } from '@temporalio/common';
+import { persistActivityTrace } from './activityContext.js';
+import { AgentTracer } from './agentTracer.js';
+
+async function recordWrite(
+  key: Partial<OutcomeKey>,
+  outcome: 'done' | 'replayed' | 'refused' | 'ambiguous'
+): Promise<void> {
+  try {
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({
+      inputJson: { connectionId: key.connectionId, nodeId: key.nodeId },
+      name: 'external_write',
+      outputJson: { outcome },
+    });
+    await persistActivityTrace(tracer, 'external-write');
+  } catch {
+    /* Best-effort audit. */
+  }
+}
 
 /** What the guards need to know about the current activity invocation. */
 export interface MutationScope {
@@ -86,6 +105,7 @@ export async function assertApprovalSatisfied(runId: string): Promise<void> {
     where: { createdAt: { gte: published.createdAt }, event: 'approve', runId },
   });
   if (!approved) {
+    await recordWrite({ runId }, 'refused');
     throw ApplicationFailure.nonRetryable(
       `refused: policy '${published.policyName ?? 'unknown'}' requires human approval for '${
         published.riskClass ?? 'this action'
@@ -133,6 +153,7 @@ export async function findRecordedOutcome<T>(key: OutcomeKey): Promise<T | undef
   // Anything that is not a completed effect refuses: an unknown state is a state we cannot read,
   // and acting on it is how one effect becomes two.
   if (existing.state !== 'DONE') {
+    await recordWrite(key, 'ambiguous');
     throw ApplicationFailure.nonRetryable(
       `refused: an earlier attempt of '${key.nodeId}' may already have reached the provider and ` +
         'did not record what it produced, so repeating it could act twice. Resolve it before ' +
@@ -140,6 +161,7 @@ export async function findRecordedOutcome<T>(key: OutcomeKey): Promise<T | undef
       'OUTCOME_AMBIGUOUS'
     );
   }
+  await recordWrite(key, 'replayed');
   return existing.result as T;
 }
 
@@ -194,7 +216,12 @@ export async function performOnce<T>(args: {
   dispatch: () => Promise<T>;
   key: OutcomeKey;
 }): Promise<T> {
-  await claimOutcome({ ...args.key, attempt: args.attempt });
+  try {
+    await claimOutcome({ ...args.key, attempt: args.attempt });
+  } catch (err) {
+    await recordWrite(args.key, 'ambiguous');
+    throw err;
+  }
   try {
     const result = await args.dispatch();
     await prisma.workflowOutcomeReference.updateMany({
@@ -205,11 +232,13 @@ export async function performOnce<T>(args: {
         runId: args.key.runId,
       },
     });
+    await recordWrite(args.key, 'done');
     return result;
   } catch (err) {
     if (definitelyNotSent(err)) {
       await releaseOutcome(args.key);
     }
+    await recordWrite(args.key, definitelyNotSent(err) ? 'refused' : 'ambiguous');
     throw err;
   }
 }

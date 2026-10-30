@@ -41,6 +41,7 @@ vi.mock('../lib/config/contextLookup.js', () => ({
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn().mockReturnValue('wf-1'),
   currentWorkflowRunId: vi.fn().mockResolvedValue('run-1'),
+  persistActivityTrace: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
   putArtifact: vi.fn().mockResolvedValue({ id: 'artifact-1' }),
@@ -102,6 +103,7 @@ vi.mock('../lib/gitIdentity.js', async (importOriginal) => ({
 
 import { prisma } from '@auto-swe/shared/db';
 import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 
 import { type GitIdentity, resolveGitIdentity } from '../lib/gitIdentity.js';
@@ -269,6 +271,7 @@ describe('runShellStep — token redaction', () => {
   });
 
   it('does not put the raw token into the persisted artifact body', async () => {
+    const event = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
     // `cloneIntoVolume` scrubs the credential out of `origin`, so a real
     // `git remote -v` no longer prints it. This asserts the defense-in-depth
     // layer: if a token reaches stdout by any route, it must never reach the
@@ -292,6 +295,17 @@ describe('runShellStep — token redaction', () => {
     const call = mockedPutArtifact.mock.calls[0]?.[0] as { body: string };
     expect(call.body).not.toContain(TOKEN);
     expect(call.body).not.toContain(CLONE_URL);
+    expect(event).toHaveBeenCalledWith(
+      expect.objectContaining({
+        inputJson: expect.objectContaining({
+          command: 'git remote -v',
+          image: 'alpine/git:latest',
+        }),
+        name: 'shell.exec',
+        outputJson: { artifactId: 'artifact-1', exitCode: 0 },
+      })
+    );
+    event.mockRestore();
   });
 
   it('fully redacts a token that straddles the 4000-byte truncation boundary', async () => {

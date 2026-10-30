@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { AgentTracer } from './agentTracer.js';
+
+vi.mock('./activityContext.js', () => ({
+  persistActivityTrace: vi.fn().mockResolvedValue(undefined),
+}));
+const audit = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
 
 interface StoredDecision {
   createdAt: Date;
@@ -132,6 +138,7 @@ function record(
 }
 
 beforeEach(() => {
+  audit.mockClear();
   decisions = [];
   ledger = [];
 });
@@ -185,10 +192,14 @@ describe('findRecordedOutcome', () => {
     ledger.push({ ...KEY, attempt: 1, result: { ok: 1 }, state: 'DONE' });
 
     await expect(findRecordedOutcome(KEY)).resolves.toEqual({ ok: 1 });
+    expect(audit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: 'external_write', outputJson: { outcome: 'replayed' } })
+    );
   });
 
   it('returns nothing for an effect nothing has recorded', async () => {
     await expect(findRecordedOutcome(KEY)).resolves.toBeUndefined();
+    expect(audit).not.toHaveBeenCalled();
   });
 
   it('refuses a claim whose outcome cannot be told', async () => {
@@ -223,6 +234,11 @@ describe('performOnce', () => {
 
     expect(stateDuringCall).toBe('PENDING');
     expect(result).toEqual({ ok: 1 });
+    expect(audit).toHaveBeenLastCalledWith({
+      inputJson: { connectionId: CONNECTION, nodeId: 'do' },
+      name: 'external_write',
+      outputJson: { outcome: 'done' },
+    });
     expect(ledger).toEqual([{ ...KEY, attempt: 1, result: { ok: 1 }, state: 'DONE' }]);
   });
 
@@ -240,6 +256,9 @@ describe('performOnce', () => {
     ).rejects.toThrow(/no text/);
 
     expect(ledger).toEqual([]);
+    expect(audit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: 'external_write', outputJson: { outcome: 'refused' } })
+    );
   });
 
   it('keeps the claim when the outcome is unknown', async () => {
@@ -254,6 +273,9 @@ describe('performOnce', () => {
     ).rejects.toThrow(/socket hang up/);
 
     expect(ledger.map((row) => row.state)).toEqual(['PENDING']);
+    expect(audit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: 'external_write', outputJson: { outcome: 'ambiguous' } })
+    );
   });
 
   it('refuses when another attempt already holds the claim', async () => {

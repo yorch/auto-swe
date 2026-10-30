@@ -1,4 +1,5 @@
 import { ApplicationFailure } from '@temporalio/activity';
+import { capturingFetch } from '../lib/httpCapture.js';
 
 const ZENDESK_TIMEOUT_MS = 30_000;
 const ZENDESK_SUBDOMAIN_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
@@ -40,7 +41,7 @@ async function zendeskFetch<T>(
 ): Promise<T> {
   const url = `${zendeskBaseUrl(connection)}${path}`;
   const timeoutSignal = AbortSignal.timeout(ZENDESK_TIMEOUT_MS);
-  const response = await fetch(url, {
+  const response = await capturingFetch(globalThis.fetch, 'connector')(url, {
     ...init,
     headers: {
       Authorization: `Basic ${zendeskAuth(connection)}`,

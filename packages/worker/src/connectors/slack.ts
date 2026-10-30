@@ -1,4 +1,5 @@
 import { ApplicationFailure } from '@temporalio/activity';
+import { capturingFetch } from '../lib/httpCapture.js';
 
 export interface SlackConnectionLike {
   apiToken: string;
@@ -13,7 +14,7 @@ async function slackFetch<T>(
 ): Promise<T> {
   const url = `https://slack.com/api${path}`;
   const timeoutSignal = AbortSignal.timeout(SLACK_TIMEOUT_MS);
-  const response = await fetch(url, {
+  const response = await capturingFetch(globalThis.fetch, 'connector')(url, {
     ...init,
     headers: {
       Authorization: `Bearer ${connection.apiToken}`,

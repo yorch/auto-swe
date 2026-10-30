@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
+import { beginWorkspaceEgress } from '../lib/egressWiring.js';
 import type { CapturedResult, OnTimeout } from '../lib/execUtils.js';
 import {
   type GitIdentity,
@@ -674,6 +675,7 @@ export async function createWorkspace(
   // as env on `docker run`, and the registration answers 503 until the
   // lockfile allowlist is set — a state the agent never reaches.
   let registry: WorkspaceRegistryAccess | null = null;
+  let egress: Awaited<ReturnType<typeof beginWorkspaceEgress>> = null;
   try {
     // A detected non-Go repository is not given a Go proxy it has no use for (a smaller
     // reach for the token). An unknown detection wires Go: the registry only exists when
@@ -697,6 +699,12 @@ export async function createWorkspace(
   let handle: WorkspaceHandle = backend.attach(containerName);
   try {
     const spec = agentWorkspaceSpec(containerName, effectiveImage, infra);
+    egress = await beginWorkspaceEgress(options?.teamId ?? null);
+    if (egress) {
+      spec.reachWorker = true;
+      spec.env = [...(spec.env ?? []), ...egress.env];
+      spec.secretEnv = { ...spec.secretEnv, ...egress.secretEnv };
+    }
     if (registry) {
       // The proxy token is a secret the container needs for its whole life
       // (Corepack and Yarn Berry read it from the environment of every
@@ -853,17 +861,19 @@ export async function createWorkspace(
     }
   } catch (err) {
     await registry?.registration.release().catch(() => {});
+    await egress?.registration.release().catch(() => {});
     await backend.remove(containerName);
     // A failed git command rejects with the full command line in
     // `error.message` (and stdout/stderr/cmd) — scrub the credential before
     // it reaches Temporal history or a log line.
-    redactExecError(err, [...cloneSecrets, registry?.token]);
+    redactExecError(err, [...cloneSecrets, registry?.token, egress?.registration.token]);
     throw err;
   }
 
   return {
     containerId: containerName,
     destroy: async () => {
+      await egress?.registration.release().catch(() => {});
       await registry?.registration.release().catch(() => {});
       await backend.remove(containerName);
     },

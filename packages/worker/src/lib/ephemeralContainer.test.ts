@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('./egressWiring.js', () => ({ beginEgressAccess: vi.fn(async () => null) }));
+
+import { beginEgressAccess } from './egressWiring.js';
+
 // `runSidecarContainer` shells out to docker and polls the sidecar over HTTP;
 // both boundaries are faked so the request-shaping can be asserted.
 vi.mock('./execUtils.js', async (importOriginal) => {
@@ -45,6 +49,28 @@ const BASE = {
 };
 
 describe('buildDockerArgs', () => {
+  it('wires proxy secrets and host reachability into egress shell/container execution and releases it', async () => {
+    const release = vi.fn(async () => {});
+    vi.mocked(beginEgressAccess).mockResolvedValueOnce({
+      env: ['NO_PROXY=localhost', 'no_proxy=localhost'],
+      registration: { release, token: 'secret', url: 'http://host.docker.internal:8792' },
+      secretEnv: {
+        HTTP_PROXY: 'http://egress:secret@host.docker.internal:8792',
+        HTTPS_PROXY: 'proxy',
+        http_proxy: 'proxy',
+        https_proxy: 'proxy',
+      },
+    });
+    vi.mocked(spawnCaptureAsync).mockClear();
+    await runEphemeralContainer({ ...BASE, egressAllowlist: ['example.com'], network: 'egress' });
+    const [, args, opts] = vi.mocked(spawnCaptureAsync).mock.calls[0] as unknown as SpawnCall;
+    expect(args).toContain('--add-host=host.docker.internal:host-gateway');
+    expect(args).toContain('HTTP_PROXY');
+    expect(args).not.toContain('secret');
+    expect(opts.env?.HTTP_PROXY).toContain('egress:secret@');
+    expect(release).toHaveBeenCalledOnce();
+    expect(beginEgressAccess).toHaveBeenLastCalledWith(['example.com']);
+  });
   it('emits the locked-down default flag set', () => {
     const args = buildDockerArgs(BASE, 'shellstep-deadbeef');
     expect(args).toContain('--rm');
@@ -328,7 +354,12 @@ describe('runSidecarContainer request timeouts (docker + fetch mocked)', () => {
       timeoutMs: 120_000,
       workspaceMount: 'cstep-abc',
     });
-    expect(out).toEqual({ result: { ok: true }, status: 200 });
+    expect(out).toEqual({ result: { ok: true }, status: 200, stderr: '', stdout: 'cid\n' });
+    expect(spawnCaptureAsync).toHaveBeenCalledWith(
+      'docker',
+      ['logs', expect.stringMatching(/^sidecar-/)],
+      expect.any(Object)
+    );
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const [readiness, request] = fetchMock.mock.calls as [string, RequestInit][];
     expect(readiness[0]).toBe('http://127.0.0.1:49162/');
@@ -336,6 +367,33 @@ describe('runSidecarContainer request timeouts (docker + fetch mocked)', () => {
     expect(readiness[1].signal).toBeInstanceOf(AbortSignal);
     expect(request[1].method).toBe('POST');
     expect(request[1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('gives sidecars the same proxy environment and releases their registration', async () => {
+    const release = vi.fn(async () => {});
+    vi.mocked(beginEgressAccess).mockResolvedValueOnce({
+      env: ['NO_PROXY=localhost', 'no_proxy=localhost'],
+      registration: { release, token: 'secret', url: 'http://host.docker.internal:8792' },
+      secretEnv: {
+        HTTP_PROXY: 'proxy-secret',
+        HTTPS_PROXY: 'proxy-secret',
+        http_proxy: 'proxy-secret',
+        https_proxy: 'proxy-secret',
+      },
+    });
+    vi.mocked(spawnCaptureAsync).mockClear();
+    await runSidecarContainer({
+      body: {},
+      image: 'node:24-alpine',
+      network: 'egress',
+      port: 8080,
+      workspaceMount: 'shellvol-abc',
+    });
+    const [, args, opts] = vi.mocked(spawnCaptureAsync).mock.calls[0] as unknown as SpawnCall;
+    expect(args).toContain('HTTP_PROXY');
+    expect(args).toContain('--add-host=host.docker.internal:host-gateway');
+    expect(opts.env?.HTTP_PROXY).toBe('proxy-secret');
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it('starts the detached container with a secret by name, its value in the child env', async () => {

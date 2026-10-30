@@ -11,10 +11,14 @@ vi.mock('../lib/ephemeralContainer.js', () => ({
   runSidecarContainer: vi.fn(),
 }));
 vi.mock('../lib/execUtils.js', () => ({ execShellAsync: vi.fn().mockResolvedValue({}) }));
+vi.mock('../lib/executionAudit.js', () => ({
+  executionAudit: vi.fn().mockResolvedValue(undefined),
+}));
 
 import { prisma } from '@auto-swe/shared/db';
 import { assertShellImageAllowed } from '@auto-swe/shared/workflow';
 import { runEphemeralContainer, runSidecarContainer } from '../lib/ephemeralContainer.js';
+import { executionAudit } from '../lib/executionAudit.js';
 import { runContainerStep } from './containerStep.js';
 
 const findUnique = vi.mocked(prisma.connection.findUnique);
@@ -37,6 +41,18 @@ describe('runContainerStep', () => {
     mockedRun.mockResolvedValue({ exitCode: 0, stderr: '', stdout: '{"ok":1}' } as never);
     const res = await runContainerStep({ ...base, command: 'node run.js', inputs: { q: 'x' } });
     expect(res).toEqual({ result: { ok: 1 } });
+    expect(executionAudit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'node run.js',
+        egressAllowlist: [],
+        exitCode: 0,
+        image: 'node:24-alpine',
+        name: 'container',
+        network: 'none',
+        stderr: '',
+        stdout: '{"ok":1}',
+      })
+    );
     expect(mockedAssert).toHaveBeenCalledWith('node:24-alpine', ['node:24-alpine']);
     expect(mockedRun).toHaveBeenCalledWith(
       expect.objectContaining({ secretEnv: { CONTAINER_STEP_INPUT: JSON.stringify({ q: 'x' }) } })
@@ -68,6 +84,18 @@ describe('runContainerStep', () => {
   it('throws on a non-zero exit', async () => {
     mockedRun.mockResolvedValue({ exitCode: 1, stderr: 'boom', stdout: '' } as never);
     await expect(runContainerStep({ ...base, command: 'x' })).rejects.toThrow(/exited 1/);
+    expect(executionAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ exitCode: 1, stderr: 'boom' })
+    );
+  });
+
+  it('audits a transport rejection without changing the failure', async () => {
+    const error = Object.assign(new Error('killed'), { stderr: 'timeout', stdout: 'partial' });
+    mockedRun.mockRejectedValueOnce(error);
+    await expect(runContainerStep({ ...base, command: 'x' })).rejects.toBe(error);
+    expect(executionAudit).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'Error: killed', stderr: 'timeout', stdout: 'partial' })
+    );
   });
 
   it('throws when stdout is not valid JSON', async () => {
@@ -113,7 +141,12 @@ describe('runContainerStep', () => {
 
   describe('sidecar transport', () => {
     it('POSTs inputs to the sidecar and binds the JSON response as the result', async () => {
-      mockedSidecar.mockResolvedValue({ result: { ok: true }, status: 200 } as never);
+      mockedSidecar.mockResolvedValue({
+        result: { ok: true },
+        status: 200,
+        stderr: 'warning',
+        stdout: 'server ready',
+      } as never);
       const res = await runContainerStep({
         ...base,
         inputs: { q: 'x' },
@@ -129,6 +162,9 @@ describe('runContainerStep', () => {
           requestPath: '/run',
           secretEnv: { CONTAINER_STEP_INPUT: JSON.stringify({ q: 'x' }) },
         })
+      );
+      expect(executionAudit).toHaveBeenCalledWith(
+        expect.objectContaining({ network: 'egress', stderr: 'warning', stdout: 'server ready' })
       );
       // No command is required for a sidecar.
       expect(mockedRun).not.toHaveBeenCalled();

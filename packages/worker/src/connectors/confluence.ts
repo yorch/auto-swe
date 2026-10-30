@@ -3,6 +3,7 @@ import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { adfToPlainText } from '@auto-swe/shared/lib/integrations/adf';
 import { resolveKnowledgeBaseOrigin } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
+import { capturingFetch } from '../lib/httpCapture.js';
 import { assertSafeConnectionBaseUrl } from './baseUrlGuard.js';
 
 const CONFLUENCE_TIMEOUT_MS = 30_000;
@@ -91,7 +92,7 @@ async function confluenceFetch<T>(
   // `redirect: 'error'` rejects a redirect the same way, so a redirecting endpoint
   // costs this activity's retries and then fails; the request is never followed,
   // which is what matters for the credential.
-  const response = await createGuardedFetch({ allowPrivate })(url, {
+  const response = await capturingFetch(createGuardedFetch({ allowPrivate }), 'connector')(url, {
     ...init,
     headers: {
       Authorization: `Basic ${Buffer.from(`${email}:${connection.apiToken}`).toString('base64')}`,

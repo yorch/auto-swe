@@ -1479,6 +1479,11 @@ Note: `Agent` (like `ProviderCredential`) uses partial unique indexes per scope 
 
 ## 8. Agent Observability (AgentTracer)
 
+The [run activity log](./run-activity.md) merges these traces with workflow/human-step transitions,
+worker HTTP exchanges, and container egress. Its Activity section uses the same node selection as
+the trace viewer. Model HTTP rows link to [transcripts](./transcripts.md); tool and execution events
+remain compact projections rather than full transcript content.
+
 **File:** `packages/worker/src/lib/agentTracer.ts`
 
 Every LLM-calling activity **must** use `AgentTracer` to record tool calls, LLM responses, and activity events. These are persisted as `AgentTrace` rows and power the `/runs/[id]` viewer. Every row written since the column was added carries its Temporal `workflowId`; `runId` links it to the `WorkflowRun` when one exists. Workflows that keep no run (workflow authoring and explaining, scheduled evals, lesson consolidation, repo-dependency inference, repo-access sync, epic planning) still persist their traces with a null `runId`, so their LLM spend is recorded rather than dropped.
