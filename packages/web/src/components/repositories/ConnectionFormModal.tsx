@@ -2,6 +2,7 @@
 
 import type { ConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
+import { uncoveredComponents } from '@auto-swe/shared/lib/stackDetection';
 import {
   type ExecutorImageProbeResult,
   REPO_GATE_COMMAND_KEYS,
@@ -76,6 +77,7 @@ export function ConnectionFormModal({
   const update = useUpdateRepository(mode.kind === 'edit' ? mode.repo.id : '');
 
   const initial = mode.kind === 'edit' ? mode.repo : null;
+  const uncovered = uncoveredComponents(initial?.detectedStack);
   const prefill = mode.kind === 'create' ? mode.prefill : undefined;
 
   const [connType, setConnType] = useState<ConnectionType>(initialConnectionType(initial?.type));
@@ -412,6 +414,17 @@ export function ConnectionFormModal({
                         .join('; ')}
                     </p>
                   )}
+                {uncovered.length > 0 && (
+                  <p className="mt-1 text-warning-400">
+                    Default gates cover the repository root only. Not covered:{' '}
+                    {uncovered
+                      .slice(0, 5)
+                      .map((c) => `${c.path} (${c.stacks.join(', ')})`)
+                      .join(', ')}
+                    {uncovered.length > 5 && `, and ${uncovered.length - 5} more`}. Set gate
+                    commands that <code>cd</code> into them.
+                  </p>
+                )}
                 {(initial.detectedStack.componentsTruncated ||
                   initial.detectedStack.treeTruncated) && (
                   <p className="mt-1 text-xs">

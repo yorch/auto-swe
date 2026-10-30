@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { detectStack } from '@auto-swe/shared/lib/stackDetection';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -159,5 +160,47 @@ describe('ConnectionFormModal gate commands', () => {
       await waitFor(() => expect(create.mutateAsync).toHaveBeenCalled());
       expect(create.mutateAsync.mock.calls[0]?.[0]).not.toHaveProperty('gateCommands');
     });
+  });
+});
+
+describe('ConnectionFormModal detected stack coverage', () => {
+  beforeAll(() => stubDialogPrototype());
+  beforeEach(() => {
+    auth.role = 'LEAD';
+    auth.teamRole = 'LEAD';
+  });
+
+  function renderWithDetection(files: string[]) {
+    const detectedStack = detectStack(files);
+    render(
+      <ConnectionFormModal
+        mode={{ kind: 'edit', repo: { ...repo, detectedStack } }}
+        onClose={() => {}}
+        open
+      />
+    );
+  }
+
+  it('says which components the default gates do not cover', () => {
+    renderWithDetection(['package.json', 'svc/requirements.txt']);
+    expect(screen.getByText(/Not covered: svc \(python\)\./)).toBeTruthy();
+    expect(screen.getByText(/Default gates cover the repository root only/)).toBeTruthy();
+  });
+
+  it('lists at most five, then counts the rest', () => {
+    renderWithDetection([
+      'package.json',
+      ...['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((p) => `${p}/requirements.txt`),
+    ]);
+    expect(
+      screen.getByText(
+        /a \(python\), b \(python\), c \(python\), d \(python\), e \(python\), and 2 more\./
+      )
+    ).toBeTruthy();
+  });
+
+  it('says nothing when the root covers every component', () => {
+    renderWithDetection(['package.json', 'packages/a/package.json']);
+    expect(screen.queryByText(/Not covered/)).toBeNull();
   });
 });

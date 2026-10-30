@@ -455,6 +455,52 @@ export function detectedGateDefaults(detected: unknown): RepoGateCommands | null
   ) as RepoGateCommands;
 }
 
+/** The most components {@link uncoveredComponents} lists; past it the list is capped, not an error. */
+const MAX_UNCOVERED_COMPONENTS = 20;
+
+/**
+ * The components a root target's default gates do not cover: every other valid component whose
+ * first stack differs from the root's, sorted by path, at most {@link MAX_UNCOVERED_COMPONENTS}.
+ * A component that shares the root's first stack (a workspace package under a Node root) is run
+ * by the root's own tooling and is not listed.
+ *
+ * Empty unless the target is the root. A single component or an ambiguous layout already runs its
+ * own gates or has nothing to say, and with no target there is nothing to measure against.
+ *
+ * Derived live from the stored detection, never stored. A truncated detection still lists the
+ * components it saw: a partial answer is more useful to an admin than silence, so the truncation
+ * flags are not consulted here, unlike {@link detectedStacks}.
+ */
+export function uncoveredComponents(detected: unknown): Array<{ path: string; stacks: Stack[] }> {
+  const { target } = resolveTarget(detected);
+  if (target === null || target === 'ambiguous' || target.dir !== '') {
+    return [];
+  }
+  const d = detected as Partial<DetectedStack>;
+  if (!Array.isArray(d.components)) {
+    return [];
+  }
+  const uncovered: Array<{ path: string; stacks: Stack[] }> = [];
+  for (const c of d.components) {
+    if (
+      !c ||
+      typeof c.path !== 'string' ||
+      c.path === '' ||
+      !Array.isArray(c.stacks) ||
+      !COMPONENT_PATH_RE.test(c.path)
+    ) {
+      continue;
+    }
+    const stacks = c.stacks.filter(isStack);
+    if (stacks[0] !== undefined && stacks[0] !== target.stack) {
+      uncovered.push({ path: c.path, stacks });
+    }
+  }
+  return uncovered
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    .slice(0, MAX_UNCOVERED_COMPONENTS);
+}
+
 /**
  * Detect a repository's stack(s) from the root files that are present —
  * `presentFiles` is a list of repo-root filenames (existence only; contents

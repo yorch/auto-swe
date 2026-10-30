@@ -1091,6 +1091,164 @@ export function createRegistryProxy(options: {
   }
 
   /**
+   * The streamed relay of one upstream file (a Go answer, a PyPI file) to the client. The cache is
+   * read first (a hit answers from disk and `fetchImpl` is never called), then the upstream is
+   * fetched with `redirect: 'error'`, under the client's hang-up and, when given, a deadline.
+   * A 404/410 is relayed (`relayGone: 'upstream'` keeps the status, `'as404'` always answers 404);
+   * any other outcome that is not a 200 within `maxBytes` is a 502. Every message is fixed: the
+   * upstream's body and error text never reach the client. The body is copied under the byte cap
+   * with backpressure, written to the cache when `cache.write` and the request is a GET; past the
+   * cap, on a hang-up or on an upstream failure mid-stream the connection is cut and the cache
+   * write aborted.
+   */
+  async function relayUpstream(
+    res: http.ServerResponse,
+    req: http.IncomingMessage,
+    args: {
+      registry: ResolvedRegistry;
+      /** The upstream file URL; also the cache key with `registry.id`. */
+      url: string;
+      accept: string;
+      /** Adds the registry's credential to the upstream request. */
+      withCredential: boolean;
+      /** Resolved only after a cache miss. */
+      fetchImpl: () => typeof fetch;
+      maxBytes: number;
+      /** Bounds the fetch; `undefined` lets the body stream for as long as it takes. */
+      deadlineMs: number | undefined;
+      cache: { read: boolean; write: boolean };
+      /** What the client is told the answer is; never the upstream's own header. */
+      contentType: string;
+      /** Whether a finite upstream `content-length` is passed on. */
+      passContentLength: boolean;
+      relayGone: 'upstream' | 'as404';
+      notFoundMessage: string;
+      badGatewayMessage: string;
+      tooLargeMessage: string;
+      errorMessage: string;
+    }
+  ): Promise<void> {
+    const { registry, url, maxBytes } = args;
+    if (args.cache.read && req.method === 'GET' && options.cache) {
+      const hit = await options.cache.get(registry.id, url).catch(() => null);
+      if (hit) {
+        res.writeHead(200, { 'content-type': args.contentType });
+        const stream = hit.createStream();
+        // An unhandled stream error would take the whole worker down, and a client that
+        // hangs up must not leave the file descriptor open.
+        stream.on('error', () => res.destroy());
+        res.on('close', () => stream.destroy());
+        stream.pipe(res);
+        return;
+      }
+    }
+
+    const headers: Record<string, string> = {
+      accept: args.accept,
+      'accept-encoding': 'identity',
+    };
+    const authorization = args.withCredential ? registryAuthorization(registry) : undefined;
+    if (authorization) {
+      headers.authorization = authorization;
+    }
+    const fetchImpl = args.fetchImpl();
+
+    const abort = new AbortController();
+    const hangUp = () => abort.abort();
+    res.on('close', hangUp);
+    const deadline =
+      args.deadlineMs === undefined ? undefined : setTimeout(() => abort.abort(), args.deadlineMs);
+    let cacheStream: Awaited<ReturnType<TarballCache['startWrite']>> | null = null;
+    try {
+      let upstream: Response;
+      try {
+        upstream = await fetchImpl(url, {
+          headers,
+          method: req.method ?? 'GET',
+          redirect: 'error',
+          signal: abort.signal,
+        });
+      } catch {
+        sendJson(res, 502, args.badGatewayMessage);
+        return;
+      }
+      if (upstream.status === 404 || upstream.status === 410) {
+        await upstream.body?.cancel().catch(() => {});
+        sendJson(res, args.relayGone === 'upstream' ? upstream.status : 404, args.notFoundMessage);
+        return;
+      }
+      const declared = Number(upstream.headers.get('content-length'));
+      if (upstream.status !== 200 || (Number.isFinite(declared) && declared > maxBytes)) {
+        await upstream.body?.cancel().catch(() => {});
+        sendJson(res, 502, upstream.status === 200 ? args.tooLargeMessage : args.errorMessage);
+        return;
+      }
+      res.writeHead(200, {
+        'content-type': args.contentType,
+        ...(args.passContentLength &&
+        Number.isFinite(declared) &&
+        upstream.headers.get('content-length')
+          ? { 'content-length': String(declared) }
+          : {}),
+      });
+      if (!upstream.body) {
+        res.end();
+        return;
+      }
+      cacheStream =
+        args.cache.write && req.method === 'GET' && options.cache
+          ? await options.cache.startWrite(registry.id, url).catch(() => null)
+          : null;
+      let size = 0;
+      for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
+        // A client that hung up never drains again; throwing leaves the loop, which cancels the
+        // upstream body, and the catch below aborts the cache write.
+        if (res.destroyed || res.writableEnded) {
+          throw new Error('client closed');
+        }
+        size += chunk.length;
+        if (size > maxBytes) {
+          // Cut the client and the upstream now rather than after the iterator's cleanup.
+          res.destroy();
+          abort.abort();
+          throw new Error('too large');
+        }
+        const wrote = cacheStream ? await cacheStream.write(chunk) : Promise.resolve();
+        const flushed = res.write(chunk);
+        await wrote;
+        if (!flushed && !res.destroyed) {
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              res.off('drain', done);
+              res.off('close', done);
+              resolve();
+            };
+            res.on('drain', done);
+            res.on('close', done);
+          });
+        }
+      }
+      res.end();
+      await cacheStream?.commit().catch(() => {});
+    } catch {
+      // Mid-stream (or past the size cap): the status line is gone, so cutting the connection
+      // is the only way left to make the client fail the download.
+      abort.abort();
+      if (res.headersSent) {
+        res.destroy();
+      } else {
+        sendJson(res, 502, args.badGatewayMessage);
+      }
+      await cacheStream?.abort().catch(() => {});
+    } finally {
+      if (deadline) {
+        clearTimeout(deadline);
+      }
+      res.off('close', hangUp);
+    }
+  }
+
+  /**
    * One Go proxy request, already parsed. Lockfile mode answers `list` from the allowlist and
    * refuses `latest` and anything `go.sum` does not name before any upstream call. Everything
    * else is a streamed relay: the upstream URL is built from the validated path, the registry
@@ -1132,129 +1290,24 @@ export function createRegistryProxy(options: {
 
     const upstreamPath = `${registry.upstreamUrl}${goUpstreamPath(p)}`;
     const isZip = p.kind === 'zip';
-    if (isZip && req.method === 'GET' && options.cache) {
-      const hit = await options.cache.get(registry.id, upstreamPath).catch(() => null);
-      if (hit) {
-        res.writeHead(200, { 'content-type': GO_CONTENT_TYPES.zip });
-        const stream = hit.createStream();
-        stream.on('error', () => res.destroy());
-        res.on('close', () => stream.destroy());
-        stream.pipe(res);
-        return;
-      }
-    }
-
-    const headers: Record<string, string> = {
+    await relayUpstream(res, req, {
       accept: GO_CONTENT_TYPES[p.kind],
-      'accept-encoding': 'identity',
-    };
-    if (registry.token) {
-      headers.authorization =
-        registry.authKind === 'basic'
-          ? `Basic ${Buffer.from(registry.token).toString('base64')}`
-          : `Bearer ${registry.token}`;
-    }
-    const maxBytes = isZip ? (options.maxGoZipBytes ?? MAX_GO_ZIP_BYTES) : MAX_PACKUMENT_BYTES;
-
-    const abort = new AbortController();
-    const hangUp = () => abort.abort();
-    res.on('close', hangUp);
-    // Zips stream for as long as they take; the small answers run under the upstream deadline.
-    const deadline = isZip
-      ? undefined
-      : setTimeout(() => abort.abort(), options.upstreamDeadlineMs ?? DEFAULT_UPSTREAM_DEADLINE_MS);
-    let cacheStream: Awaited<ReturnType<TarballCache['startWrite']>> | null = null;
-    try {
-      let upstream: Response;
-      try {
-        upstream = await upstreamFetchFor(registry)(upstreamPath, {
-          headers,
-          method: req.method ?? 'GET',
-          redirect: 'error',
-          signal: abort.signal,
-        });
-      } catch {
-        sendJson(res, 502, 'the upstream Go module proxy could not be reached');
-        return;
-      }
-      if (upstream.status === 404 || upstream.status === 410) {
-        await upstream.body?.cancel().catch(() => {});
-        sendJson(res, upstream.status, 'the upstream Go module proxy does not have this module');
-        return;
-      }
-      const declared = Number(upstream.headers.get('content-length'));
-      if (upstream.status !== 200 || (Number.isFinite(declared) && declared > maxBytes)) {
-        await upstream.body?.cancel().catch(() => {});
-        sendJson(
-          res,
-          502,
-          upstream.status === 200
-            ? 'the upstream Go module is too large to proxy'
-            : 'the upstream Go module proxy answered with an error'
-        );
-        return;
-      }
-      res.writeHead(200, {
-        'content-type': GO_CONTENT_TYPES[p.kind],
-        ...(isZip && Number.isFinite(declared) && upstream.headers.get('content-length')
-          ? { 'content-length': String(declared) }
-          : {}),
-      });
-      if (!upstream.body) {
-        res.end();
-        return;
-      }
-      cacheStream =
-        isZip && req.method === 'GET' && options.cache
-          ? await options.cache.startWrite(registry.id, upstreamPath).catch(() => null)
-          : null;
-      let size = 0;
-      for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
-        // A client that hung up never drains again; throwing leaves the loop, which cancels the
-        // upstream body, and the catch below aborts the cache write.
-        if (res.destroyed || res.writableEnded) {
-          throw new Error('client closed');
-        }
-        size += chunk.length;
-        if (size > maxBytes) {
-          // Cut the client and the upstream now rather than after the iterator's cleanup.
-          res.destroy();
-          abort.abort();
-          throw new Error('too large');
-        }
-        const wrote = cacheStream ? await cacheStream.write(chunk) : Promise.resolve();
-        const flushed = res.write(chunk);
-        await wrote;
-        if (!flushed && !res.destroyed) {
-          await new Promise<void>((resolve) => {
-            const done = () => {
-              res.off('drain', done);
-              res.off('close', done);
-              resolve();
-            };
-            res.on('drain', done);
-            res.on('close', done);
-          });
-        }
-      }
-      res.end();
-      await cacheStream?.commit().catch(() => {});
-    } catch {
-      // Mid-stream (or past the size cap): the status line is gone, so cutting the connection
-      // is the only way left to make the Go tool fail the download.
-      abort.abort();
-      if (res.headersSent) {
-        res.destroy();
-      } else {
-        sendJson(res, 502, 'the upstream Go module proxy could not be reached');
-      }
-      await cacheStream?.abort().catch(() => {});
-    } finally {
-      if (deadline) {
-        clearTimeout(deadline);
-      }
-      res.off('close', hangUp);
-    }
+      badGatewayMessage: 'the upstream Go module proxy could not be reached',
+      cache: { read: isZip, write: isZip },
+      contentType: GO_CONTENT_TYPES[p.kind],
+      // Zips stream for as long as they take; the small answers run under the upstream deadline.
+      deadlineMs: isZip ? undefined : (options.upstreamDeadlineMs ?? DEFAULT_UPSTREAM_DEADLINE_MS),
+      errorMessage: 'the upstream Go module proxy answered with an error',
+      fetchImpl: () => upstreamFetchFor(registry),
+      maxBytes: isZip ? (options.maxGoZipBytes ?? MAX_GO_ZIP_BYTES) : MAX_PACKUMENT_BYTES,
+      notFoundMessage: 'the upstream Go module proxy does not have this module',
+      passContentLength: isZip,
+      registry,
+      relayGone: 'upstream',
+      tooLargeMessage: 'the upstream Go module is too large to proxy',
+      url: upstreamPath,
+      withCredential: true,
+    });
   }
 
   const registryAuthorization = (registry: ResolvedRegistry): string | undefined =>
@@ -1454,120 +1507,27 @@ export function createRegistryProxy(options: {
       return;
     }
 
-    if (req.method === 'GET' && options.cache) {
-      const hit = await options.cache.get(registry.id, entry.url).catch(() => null);
-      if (hit) {
-        res.writeHead(200, { 'content-type': 'application/octet-stream' });
-        const stream = hit.createStream();
-        stream.on('error', () => res.destroy());
-        res.on('close', () => stream.destroy());
-        stream.pipe(res);
-        return;
-      }
-    }
-
-    const headers: Record<string, string> = { accept: '*/*', 'accept-encoding': 'identity' };
-    const authorization = credential ? registryAuthorization(registry) : undefined;
-    if (authorization) {
-      headers.authorization = authorization;
-    }
-    const fetchFile = credential
-      ? upstreamFetchFor(registry)
-      : (options.upstreamFetch ?? createGuardedFetch({ allowPrivate: false }));
-    const maxBytes = options.maxPypiFileBytes ?? MAX_PYPI_FILE_BYTES;
-
-    const abort = new AbortController();
-    const hangUp = () => abort.abort();
-    res.on('close', hangUp);
-    let cacheStream: Awaited<ReturnType<TarballCache['startWrite']>> | null = null;
-    try {
-      let upstream: Response;
-      try {
-        upstream = await fetchFile(entry.url, {
-          headers,
-          method: req.method ?? 'GET',
-          redirect: 'error',
-          signal: abort.signal,
-        });
-      } catch {
-        sendJson(res, 502, 'the upstream file could not be reached');
-        return;
-      }
-      if (upstream.status === 404 || upstream.status === 410) {
-        await upstream.body?.cancel().catch(() => {});
-        sendJson(res, 404, 'the upstream package index does not have this file');
-        return;
-      }
-      const declared = Number(upstream.headers.get('content-length'));
-      if (upstream.status !== 200 || (Number.isFinite(declared) && declared > maxBytes)) {
-        await upstream.body?.cancel().catch(() => {});
-        sendJson(
-          res,
-          502,
-          upstream.status === 200
-            ? 'the upstream file is too large to proxy'
-            : 'the upstream file answered with an error'
-        );
-        return;
-      }
-      res.writeHead(200, {
-        'content-type': 'application/octet-stream',
-        ...(Number.isFinite(declared) && upstream.headers.get('content-length')
-          ? { 'content-length': String(declared) }
-          : {}),
-      });
-      if (!upstream.body) {
-        res.end();
-        return;
-      }
-      cacheStream =
-        req.method === 'GET' && options.cache
-          ? await options.cache.startWrite(registry.id, entry.url).catch(() => null)
-          : null;
-      let size = 0;
-      for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
-        // A client that hung up never drains again; throwing leaves the loop, which cancels the
-        // upstream body, and the catch below aborts the cache write.
-        if (res.destroyed || res.writableEnded) {
-          throw new Error('client closed');
-        }
-        size += chunk.length;
-        if (size > maxBytes) {
-          // Cut the client and the upstream now rather than after the iterator's cleanup.
-          res.destroy();
-          abort.abort();
-          throw new Error('too large');
-        }
-        const wrote = cacheStream ? await cacheStream.write(chunk) : Promise.resolve();
-        const flushed = res.write(chunk);
-        await wrote;
-        if (!flushed && !res.destroyed) {
-          await new Promise<void>((resolve) => {
-            const done = () => {
-              res.off('drain', done);
-              res.off('close', done);
-              resolve();
-            };
-            res.on('drain', done);
-            res.on('close', done);
-          });
-        }
-      }
-      res.end();
-      await cacheStream?.commit().catch(() => {});
-    } catch {
-      // Mid-stream (or past the size cap): the status line is gone, so cutting the connection
-      // is the only way left to make pip and uv fail the download.
-      abort.abort();
-      if (res.headersSent) {
-        res.destroy();
-      } else {
-        sendJson(res, 502, 'the upstream file could not be reached');
-      }
-      await cacheStream?.abort().catch(() => {});
-    } finally {
-      res.off('close', hangUp);
-    }
+    await relayUpstream(res, req, {
+      accept: '*/*',
+      badGatewayMessage: 'the upstream file could not be reached',
+      cache: { read: true, write: true },
+      contentType: 'application/octet-stream',
+      deadlineMs: undefined,
+      errorMessage: 'the upstream file answered with an error',
+      // Built only after a cache miss, so a hit never constructs a guarded fetch.
+      fetchImpl: () =>
+        credential
+          ? upstreamFetchFor(registry)
+          : (options.upstreamFetch ?? createGuardedFetch({ allowPrivate: false })),
+      maxBytes: options.maxPypiFileBytes ?? MAX_PYPI_FILE_BYTES,
+      notFoundMessage: 'the upstream package index does not have this file',
+      passContentLength: true,
+      registry,
+      relayGone: 'as404',
+      tooLargeMessage: 'the upstream file is too large to proxy',
+      url: entry.url,
+      withCredential: credential,
+    });
   }
 
   const advertised = (): string => {

@@ -22,14 +22,24 @@ import { errMsg } from '@/lib/errors';
 
 const ECOSYSTEM_LABEL: Record<PackageRegistryBody['ecosystem'], string> = {
   go: 'Go',
+  maven: 'Maven',
   npm: 'npm',
   pypi: 'PyPI',
 };
 
-/** A Go or PyPI registry takes no scopes; each says what it serves in place of them. */
+/** A Go, PyPI or Maven registry takes no scopes; each says what it serves in place of them. */
 const SCOPELESS_NOTE: Record<Exclude<PackageRegistryBody['ecosystem'], 'npm'>, string> = {
   go: 'A Go registry has no scopes: it serves every module for its team.',
+  maven:
+    'A Maven registry serves every artifact for its team. Its upstream URL is the repository base, e.g. https://repo.maven.apache.org/maven2.',
   pypi: 'A PyPI registry has no scopes: it serves every package for its team. Its upstream URL is the simple index, e.g. https://pypi.org/simple.',
+};
+
+const UPSTREAM_PLACEHOLDER: Record<PackageRegistryBody['ecosystem'], string | undefined> = {
+  go: undefined,
+  maven: 'https://repo.maven.apache.org/maven2',
+  npm: undefined,
+  pypi: 'https://pypi.org/simple',
 };
 
 const EMPTY: PackageRegistryBody = {
@@ -52,7 +62,11 @@ function RegistryModal({
   onClose: () => void;
   registry?: PackageRegistryRow;
 }) {
-  const [form, setForm] = useState(initial);
+  // Maven has no lockfile, so it only ever serves open mode.
+  const [form, setForm] = useState<PackageRegistryBody>(
+    initial.ecosystem === 'maven' ? { ...initial, accessMode: 'open' } : initial
+  );
+  const isMaven = form.ecosystem === 'maven';
   const [error, setError] = useState<string | null>(null);
   const create = useCreatePackageRegistry();
   const update = useUpdatePackageRegistry(registry?.id ?? '');
@@ -94,6 +108,9 @@ function RegistryModal({
                 const ecosystem = e.target.value as PackageRegistryBody['ecosystem'];
                 setForm({
                   ...form,
+                  // Maven forces open; leaving it puts back the other ecosystems' default.
+                  accessMode:
+                    ecosystem === 'maven' ? 'open' : isMaven ? 'lockfile' : form.accessMode,
                   ecosystem,
                   npmScopes: ecosystem === 'npm' ? form.npmScopes : [],
                 });
@@ -103,6 +120,7 @@ function RegistryModal({
               <option value="npm">npm</option>
               <option value="go">Go</option>
               <option value="pypi">PyPI</option>
+              <option value="maven">Maven</option>
             </select>
           </label>
         )}
@@ -116,7 +134,7 @@ function RegistryModal({
           hint="The upstream the proxy forwards to, e.g. https://registry.npmjs.org or an internal Artifactory."
           label="Upstream URL"
           onChange={(e) => setForm({ ...form, upstreamUrl: e.target.value })}
-          placeholder={form.ecosystem === 'pypi' ? 'https://pypi.org/simple' : undefined}
+          placeholder={UPSTREAM_PLACEHOLDER[form.ecosystem]}
           required
           value={form.upstreamUrl}
         />
@@ -159,9 +177,16 @@ function RegistryModal({
               }
               value={form.accessMode}
             >
-              <option value="lockfile">lockfile</option>
+              <option disabled={isMaven} value="lockfile">
+                lockfile
+              </option>
               <option value="open">open</option>
             </select>
+            {isMaven && (
+              <span className="mt-1 block text-xs text-paper-400">
+                Open mode only: Maven has no lockfile.
+              </span>
+            )}
           </label>
           <label className="text-sm text-paper-300">
             Auth{' '}
@@ -230,8 +255,8 @@ export function PackageRegistriesTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-paper-400">
-          npm, Go and PyPI registries workspaces install through the worker's registry proxy. The
-          upstream credential stays in the worker; a workspace holds only its own proxy token.
+          npm, Go, PyPI and Maven registries workspaces install through the worker's registry proxy.
+          The upstream credential stays in the worker; a workspace holds only its own proxy token.
         </p>
         <Button onClick={() => setModal('create')}>Add registry</Button>
       </div>

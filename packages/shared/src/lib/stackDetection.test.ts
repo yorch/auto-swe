@@ -16,6 +16,7 @@ import {
   detectStack,
   inDir,
   PYTEST_NO_TESTS_STATUS,
+  uncoveredComponents,
   YARN_GATE_DEFAULTS,
 } from './stackDetection.js';
 
@@ -826,6 +827,119 @@ describe('detectedStacks', () => {
       })
     ).toEqual(['node']);
     expect(detectedStacks({ components: [{ path: '../etc', stacks: ['go'] }] })).toBeNull();
+  });
+});
+
+describe('uncoveredComponents', () => {
+  it('lists a component whose first stack differs from a Node root', () => {
+    expect(uncoveredComponents(detectStack(['package.json', 'svc/requirements.txt']))).toEqual([
+      { path: 'svc', stacks: ['python'] },
+    ]);
+  });
+
+  it('does not list workspace packages that share the Node root stack', () => {
+    expect(
+      uncoveredComponents(
+        detectStack(['package.json', 'packages/a/package.json', 'packages/b/package.json'])
+      )
+    ).toEqual([]);
+  });
+
+  it('lists every other component under a Python root, sorted by path', () => {
+    expect(
+      uncoveredComponents(
+        detectStack(['pyproject.toml', 'web/package.json', 'api/package.json', 'docs/package.json'])
+      )
+    ).toEqual([
+      { path: 'api', stacks: ['node'] },
+      { path: 'docs', stacks: ['node'] },
+      { path: 'web', stacks: ['node'] },
+    ]);
+  });
+
+  it("does not list a component whose first stack is the Node root's, however many it has", () => {
+    expect(
+      uncoveredComponents(
+        detectStack(['package.json', 'tools/package.json', 'tools/requirements.txt'])
+      )
+    ).toEqual([]);
+  });
+
+  it("lists a component whose first stack is not the Python root's, with all its stacks", () => {
+    expect(
+      uncoveredComponents(
+        detectStack(['pyproject.toml', 'tools/package.json', 'tools/requirements.txt'])
+      )
+    ).toEqual([{ path: 'tools', stacks: ['node', 'python'] }]);
+  });
+
+  it('is empty for an ambiguous layout, where no component is the root', () => {
+    expect(uncoveredComponents(detectStack(['svc/requirements.txt', 'web/package.json']))).toEqual(
+      []
+    );
+  });
+
+  it('ignores a stored component path that fails validation', () => {
+    expect(
+      uncoveredComponents({
+        components: [
+          { path: '', stacks: ['node'] },
+          { path: '../etc', stacks: ['python'] },
+          { path: '/abs', stacks: ['python'] },
+          { path: 'svc', stacks: ['python'] },
+        ],
+      })
+    ).toEqual([{ path: 'svc', stacks: ['python'] }]);
+  });
+
+  it('is empty when the detection is absent, unusable, or has no component list', () => {
+    for (const bad of [
+      null,
+      undefined,
+      'x',
+      7,
+      [],
+      {},
+      { components: 'no' },
+      { components: [null] },
+      { primary: 'python' },
+    ]) {
+      expect(uncoveredComponents(bad)).toEqual([]);
+    }
+  });
+
+  it('still lists the components a truncated detection saw', () => {
+    const components = [
+      { path: '', stacks: ['node'] },
+      { path: 'svc', stacks: ['python'] },
+    ];
+    const svc = [{ path: 'svc', stacks: ['python'] }];
+    expect(uncoveredComponents({ components, treeTruncated: true })).toEqual(svc);
+    expect(uncoveredComponents({ components, componentsTruncated: true })).toEqual(svc);
+  });
+
+  it('caps the list at 20 components', () => {
+    const files = [
+      'package.json',
+      ...Array.from({ length: 25 }, (_, i) => `pkg${String(i).padStart(2, '0')}/requirements.txt`),
+    ];
+    const listed = uncoveredComponents(detectStack(files));
+    expect(listed).toHaveLength(20);
+    expect(listed[0]?.path).toBe('pkg00');
+  });
+
+  it('leaves the Node root-only defaults unchanged beside a Python component', () => {
+    const d = detectStack(['package.json', 'package-lock.json', 'svc/requirements.txt']);
+    expect(detectedTarget(d)).toMatchObject({ dir: '', packageManager: 'npm', stack: 'node' });
+    expect(detectedTargetDir(d)).toBe('');
+    expect(detectedGateDefaults(d)).toEqual({
+      runBuild: 'npm run build',
+      runLint: 'npm run lint',
+      runTests: 'npm test',
+      runTypecheck: 'npm run typecheck',
+      runVulnScan: 'npm audit --audit-level=high',
+    });
+    expect(uncoveredComponents(d)).toEqual([{ path: 'svc', stacks: ['python'] }]);
   });
 });
 
