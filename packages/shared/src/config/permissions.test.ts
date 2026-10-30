@@ -89,6 +89,26 @@ describe('checkSettingWrite', () => {
     expect(result).toMatchObject({ allowed: false, code: 'ROLE_TOO_LOW' });
   });
 
+  it('requires platform ADMIN for the org-wide reporting opt-in despite an organization grant', () => {
+    const orgGrant = teamGrant({
+      keyPattern: 'analytics.orgWideReports',
+      orgId: ORG,
+      role: 'LEAD',
+      scope: 'ORGANIZATION',
+      teamId: null,
+    });
+    const result = checkSettingWrite(
+      lead,
+      {
+        key: 'analytics.orgWideReports',
+        scope: 'ORGANIZATION',
+        targetOrgId: ORG,
+      },
+      [orgGrant]
+    );
+    expect(result).toMatchObject({ allowed: false, code: 'ROLE_TOO_LOW' });
+  });
+
   it('denies a lead with no grant', () => {
     const result = checkSettingWrite(
       lead,

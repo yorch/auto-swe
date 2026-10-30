@@ -151,6 +151,17 @@ export const SETTING_DEFINITIONS = {
     schema: z.number().int().min(7).max(3650),
     unit: 'days',
   }),
+  'analytics.orgWideReports': defineSetting({
+    defaultValue: false,
+    description: 'Whether platform admins enable organization-wide reporting data and digests.',
+    group: 'analytics',
+    label: 'Organization-wide reports',
+    overridableAt: ['ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'analytics.uiEventsEnabled': defineSetting({
     defaultValue: false,
     description:

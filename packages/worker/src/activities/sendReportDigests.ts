@@ -1,3 +1,4 @@
+import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { orgMonthSpend } from '@auto-swe/shared/lib/billing';
 import { forecastMonthlyBudget } from '@auto-swe/shared/lib/budgetForecast';
@@ -21,6 +22,7 @@ type DigestErrorCode =
   | 'build_failed'
   | 'delivery_failed'
   | 'email_failed'
+  | 'org_wide_reports_disabled'
   | 'period_out_of_order'
   | 'period_too_soon'
   | 'rollup_incomplete'
@@ -142,6 +144,23 @@ export async function sendReportDigests(input: {
   let skipped = 0;
   for (const subscription of subscriptions) {
     heartbeat(`processing report digest subscription ${subscription.id}`);
+    if (
+      subscription.scope === 'ORGANIZATION' &&
+      !(await resolveSetting('analytics.orgWideReports', {
+        orgId: subscription.orgId ?? undefined,
+      }))
+    ) {
+      await recordDigestError(subscription.id, 'org_wide_reports_disabled');
+      logWarn(
+        'report digest subscription skipped because organization-wide reporting is disabled',
+        {
+          reason: 'org_wide_reports_disabled',
+          subscriptionId: subscription.id,
+        }
+      );
+      skipped++;
+      continue;
+    }
     let stage: 'build' | 'delivery' = 'build';
     try {
       if (!input.sendTest) {

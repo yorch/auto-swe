@@ -148,6 +148,10 @@ function buildApp(state: {
   };
   const prismaMock: PrismaMock = {
     $transaction: async (fn: (tx: PrismaMock) => Promise<unknown>) => fn(prismaMock),
+    activeWorkflow: {
+      findMany: async () => [],
+    },
+    connection: { findMany: async () => [] },
   };
 
   app.decorate(
@@ -2645,13 +2649,14 @@ describe('GET /workflow-templates/analytics', () => {
       orgAdminOrgIds: ['org-1'],
       runs: [
         {
-          attributedOrgId: 'org-1',
-          attributedTeamId: 'other-team',
+          attributedOrgId: null,
+          attributedTeamId: null,
           costUsdAccrued: 0,
           endedAt: startedAt,
           hadHumanStep: false,
           hasError: false,
           id: 'org-run',
+          launchedById: 'user-1',
           outcomeDomain: 'code',
           outcomeType: null,
           startedAt,
@@ -2836,6 +2841,22 @@ describe('GET /workflow-templates/analytics approval latency', () => {
     run: { template: { name }, templateId },
     status,
   });
+  const template = (id: string, name: string): FakeTemplate => ({
+    activeVersion: 1,
+    createdAt: t0,
+    description: '',
+    experimentSplit: null,
+    experimentVersion: null,
+    id,
+    isDefault: false,
+    name,
+    status: 'ACTIVE',
+    team: null,
+    teamId: null,
+    updatedAt: t0,
+    versions: [],
+    workspaceProvider: null,
+  });
   const get = (app: FastifyInstance) =>
     app.inject({
       headers: { authorization: 'Bearer x' },
@@ -2854,7 +2875,7 @@ describe('GET /workflow-templates/analytics approval latency', () => {
         step('PENDING', null),
       ],
       runs: [],
-      templates: [],
+      templates: [template('tpl-a', 'A'), template('tpl-b', 'B')],
       versions: new Map(),
     };
     const app = buildApp(state);
@@ -2887,12 +2908,14 @@ describe('GET /workflow-templates/analytics approval latency', () => {
     const where = state.humanStepWheres?.[0] as { requestedAt: object; run: object };
     expect(where.requestedAt).toHaveProperty('gte');
     expect(where.requestedAt).toHaveProperty('lt');
-    // Exactly the predicate the runs list uses for this caller, not merely some restriction.
     const caller = { exp: 9999999999, iat: 0, role: 'ENGINEER', sub: 'user-1' };
-    const expected = buildWorkflowRunVisibilityFilter(caller as never, undefined);
-    expect(Object.keys(expected)).toEqual(['OR']);
     expect(where.run).toEqual({
-      OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
+      OR: [
+        { attributedTeamId: { in: [] } },
+        { attributedOrgId: { in: [] } },
+        { attributedRepoId: { in: [] } },
+        { launchedById: caller.sub },
+      ],
     });
     await app.close();
   });

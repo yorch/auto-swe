@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => {
   const prismaMock = {
+    activeWorkflow: { findUnique: vi.fn() },
     agent: { findFirst: vi.fn(), findMany: vi.fn() },
     agentTrace: { aggregate: vi.fn() },
     channelThreadSession: { deleteMany: vi.fn(), upsert: vi.fn() },
@@ -53,6 +54,7 @@ const TEMPLATE = { activeVersion: 1, id: 'tmpl-channel' };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  p.activeWorkflow.findUnique.mockResolvedValue({ repoId: 'repo-1' });
   p.workflowTemplate.findFirst.mockResolvedValue(TEMPLATE);
   p.slackChannel.findUnique.mockResolvedValue({
     id: 'chan-1',
@@ -84,6 +86,7 @@ describe('startChannelRun', () => {
     expect(data.templateVersion).toBe(1);
     expect(data.attributedTeamId).toBe('team-1');
     expect(data.attributedOrgId).toBe('org-1');
+    expect(data.attributedRepoId).toBe('repo-1');
     expect(data.workRequestId).toBeNull();
     // Linked relationally so run visibility can reach the channel's team.
     expect(data.channelId).toBe('chan-1');
