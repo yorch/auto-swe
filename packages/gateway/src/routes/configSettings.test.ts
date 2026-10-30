@@ -769,16 +769,17 @@ describe('kill switches sweep armed pull requests', () => {
       url: `/api/v1/platform/config/settings/${key}`,
     });
 
-  it.each(['prEvaluation.enabled', 'prEvaluation.autoMergeAllowed'])(
-    'sweeps deployment-wide, capped, when %s is written false',
-    async (key) => {
-      const app = await buildApp();
-      expect((await put(app, key, false)).statusCode).toBe(200);
-      expect(sweep).toHaveBeenCalledTimes(1);
-      expect(sweep.mock.calls[0][2]).toEqual({ cap: 500 });
-      await app.close();
-    }
-  );
+  it.each([
+    'prEvaluation.enabled',
+    'prEvaluation.autoMergeAllowed',
+    'prEvaluation.botApprovalAllowed',
+  ])('sweeps deployment-wide, capped, when %s is written false', async (key) => {
+    const app = await buildApp();
+    expect((await put(app, key, false)).statusCode).toBe(200);
+    expect(sweep).toHaveBeenCalledTimes(1);
+    expect(sweep.mock.calls[0][2]).toEqual({ cap: 500 });
+    await app.close();
+  });
 
   it('does not sweep when the switch is written true, or for another setting', async () => {
     const app = await buildApp();
@@ -795,6 +796,83 @@ describe('kill switches sweep armed pull requests', () => {
       headers: auth('ADMIN'),
       method: 'DELETE',
       url: '/api/v1/platform/config/settings/prEvaluation.enabled',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sweep).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('does not sweep when botApprovalAllowed is written true, or at a non-GLOBAL scope', async () => {
+    const app = await buildApp();
+    await put(app, 'prEvaluation.botApprovalAllowed', true);
+    expect(sweep).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('sweeps when a stored botApprovalAllowed is cleared, because the default is off', async () => {
+    configSetting.findFirst.mockResolvedValue({ id: 'row-1', value: true } as never);
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ADMIN'),
+      method: 'DELETE',
+      url: '/api/v1/platform/config/settings/prEvaluation.botApprovalAllowed',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sweep).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('sweeps deployment-wide when the bot approval path allowlist is written, tightened or loosened', async () => {
+    const app = await buildApp();
+    expect((await put(app, 'prEvaluation.botApprovalPaths', ['docs/**'])).statusCode).toBe(200);
+    expect(sweep).toHaveBeenCalledTimes(1);
+    expect(sweep.mock.calls[0][2]).toEqual({ cap: 500 });
+    expect((await put(app, 'prEvaluation.botApprovalPaths', [])).statusCode).toBe(200);
+    expect(sweep).toHaveBeenCalledTimes(2);
+    await app.close();
+  });
+
+  it.each([
+    ['prEvaluation.botApprovalMaxLines', 10],
+    ['prEvaluation.botApprovalMaxFiles', 1],
+  ])('sweeps deployment-wide when %s is written', async (key, value) => {
+    const app = await buildApp();
+    expect((await put(app, key, value)).statusCode).toBe(200);
+    expect(sweep).toHaveBeenCalledTimes(1);
+    expect(sweep.mock.calls[0][2]).toEqual({ cap: 500 });
+    await app.close();
+  });
+
+  it.each(['prEvaluation.botApprovalMaxLines', 'prEvaluation.botApprovalMaxFiles'])(
+    'sweeps when a stored %s override is cleared',
+    async (key) => {
+      configSetting.findFirst.mockResolvedValue({ id: 'row-1', value: 5 } as never);
+      const app = await buildApp();
+      const res = await app.inject({
+        headers: auth('ADMIN'),
+        method: 'DELETE',
+        url: `/api/v1/platform/config/settings/${key}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(sweep).toHaveBeenCalledTimes(1);
+      await app.close();
+    }
+  );
+
+  it('does not sweep a refused allowlist write', async () => {
+    const app = await buildApp();
+    expect((await put(app, 'prEvaluation.botApprovalPaths', ['{unclosed'])).statusCode).toBe(400);
+    expect(sweep).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('sweeps when a stored bot approval path allowlist is cleared', async () => {
+    configSetting.findFirst.mockResolvedValue({ id: 'row-1', value: ['**'] } as never);
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ADMIN'),
+      method: 'DELETE',
+      url: '/api/v1/platform/config/settings/prEvaluation.botApprovalPaths',
     });
     expect(res.statusCode).toBe(200);
     expect(sweep).toHaveBeenCalledTimes(1);

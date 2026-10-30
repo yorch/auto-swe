@@ -58,7 +58,9 @@ activity calls an immediate-merge API, and no seeded template merges — the SWE
 parks, and a Temporal signal bridges the GitHub merge webhook back to the waiting workflow. The one
 sanctioned exception is opt-in per repository: in `auto` mode the pull-request evaluator calls
 `enablePullRequestAutoMerge`, which asks GitHub to merge later, once GitHub's own branch rules hold
-([pr-evaluation.md](./pr-evaluation.md)). See §10 for where the first part stops being a guarantee.
+([pr-evaluation.md](./pr-evaluation.md)), and with a second GitHub App configured and a repository's
+bot-approval switch on, a low-risk change within strict limits can merge with no human approval
+([pr-evaluation.md §16](./pr-evaluation.md#16-bot-approval)). See §10 for where the first part stops being a guarantee.
 
 ---
 
@@ -79,7 +81,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 109 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 110 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | The consolidated `20260618000000_init` baseline (generated from `schema.prisma`) plus the hand-written `20260618000001_custom_constraints_and_indexes` beside it; new changes append their own migration once the schema is deployed |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -740,7 +742,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 109 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 110 models.
 
 ```mermaid
 erDiagram
@@ -1299,7 +1301,7 @@ The load-bearing ones, with rationale:
 | Docker by default, Kubernetes pods optional | Docker needs no cluster and runs under Compose; `WORKSPACE_BACKEND=kubernetes` runs agent workspaces as hardened pods on a cluster that enforces NetworkPolicy |
 | Temporal for orchestration | Durable execution — runs survive crashes, wait days for human and CI signals, and replay deterministically |
 | pgvector for memory | Semantic retrieval surfaces relevant past lessons into agent context |
-| Human-governed merges | By default nothing merges a PR and a signal bridges the merge webhook (see §10); the one opt-in exception is `auto` mode's native auto-merge ([pr-evaluation.md](./pr-evaluation.md)) |
+| Human-governed merges | By default nothing merges a PR and a signal bridges the merge webhook (see §10); the opt-in exceptions are `auto` mode's native auto-merge and bot approval of low-risk changes ([pr-evaluation.md](./pr-evaluation.md)) |
 
 ---
 

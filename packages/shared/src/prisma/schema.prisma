@@ -360,6 +360,10 @@ model PrEvaluation {
   changedLines      Int?       @map("changed_lines")
   /// Distinct trusted approvals counted at the evaluated head, after the launcher exclusion.
   trustedApprovers  Int?       @map("trusted_approvers")
+  /// Whether the approver App's approval stood on `headSha` when this evaluation ended. Read by the
+  /// webhook and the sweep, so a switched-off or deactivated repository still gets its bot approval
+  /// withdrawn; never counted as evidence (`trustedApprovers` is human-only).
+  botApproved       Boolean    @default(false) @map("bot_approved")
   createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([connectionId, prNumber])
@@ -485,6 +489,12 @@ model Connection {
   /// "inherit `prEvaluation.defaultMode`", and it must stay NULL-able with NO column
   /// default: a default writes a literal into every row and shadows the registry value.
   prEvaluationMode     String?             @map("pr_evaluation_mode")
+  /// Whether the approver App may approve this repository's LOW pull requests, so they can merge
+  /// with no human approval. A separate, deliberate switch from `auto`: the CHECK
+  /// `connections_bot_approval_requires_auto_check` (hand-written migration DDL) keeps it false
+  /// unless `pr_evaluation_mode = 'auto'`. Changing the mode away from `auto` must write false in
+  /// the same update.
+  prEvaluationBotApproval Boolean          @default(false) @map("pr_evaluation_bot_approval")
   isActive             Boolean             @default(true) @map("is_active")
   consolidationEnabled Boolean             @default(true) @map("consolidation_enabled")
   /// Optional per-connection overrides for phase-2 quality-gate commands. Shape:
@@ -3189,6 +3199,36 @@ model GitHubConfig {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("github_config")
+}
+
+/// Singleton second GitHub App identity: the "approver App", whose only job is to submit an
+/// approving review on pull requests the platform opened. Deliberately separate from
+/// `GitHubConfig` (GitHub forbids self-approval, and the two identities must never be
+/// interchangeable). DB-only: it has no environment-variable fallback. One row (id = "default").
+model GitHubApproverApp {
+  id String @id @default("default")
+
+  /// GitHub App numeric ID; must differ from `GitHubConfig.appId`
+  appId String? @map("app_id")
+
+  /// The App's slug; its reviews are recognised as `<slug>[bot]`
+  appSlug String? @map("app_slug")
+
+  /// Slugs of Apps this row used to hold, lower-case, oldest first, at most 5. Not secret: they only
+  /// let an approval an earlier App gave be recognised and withdrawn after the App is removed or replaced.
+  retiredAppSlugs String[] @default([]) @map("retired_app_slugs")
+
+  /// Encrypted PEM private key used to sign the approver App's JWTs
+  privateKeyCiphertext Bytes?  @map("private_key_ciphertext")
+  privateKeyNonce      Bytes?  @map("private_key_nonce")
+  privateKeyAuthTag    Bytes?  @map("private_key_auth_tag")
+  privateKeyKeyVersion Int?    @map("private_key_key_version")
+  privateKeyLastFour   String? @map("private_key_last_four")
+
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  updatedById String?  @map("updated_by_id") @db.Uuid
+
+  @@map("github_approver_app")
 }
 
 /// Singleton Slack integration config. One row (id = "default").

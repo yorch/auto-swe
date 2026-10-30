@@ -270,7 +270,20 @@ export async function handlePrEvaluationDelivery(
               prNumber: payload.pull_request.number,
             },
           });
-          if (!armed) {
+          // Or an approval of the approver App still stands: it is withdrawn the same way.
+          const botApproved = armed
+            ? null
+            : await prisma.prEvaluation.findFirst({
+                select: { id: true },
+                where: {
+                  botApproved: true,
+                  closedAt: null,
+                  connectionId: connection.id,
+                  mergedAt: null,
+                  prNumber: payload.pull_request.number,
+                },
+              });
+          if (!armed && !botApproved) {
             continue;
           }
         }

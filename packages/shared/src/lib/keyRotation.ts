@@ -95,6 +95,7 @@ export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
   connectionCredential: [fieldsFor('token')],
   eventEndpoint: [fieldsFor('secret'), fieldsFor('previousSecret')],
   figmaConfig: [fieldsFor('apiToken')],
+  gitHubApproverApp: [fieldsFor('privateKey')],
   gitHubConfig: [
     fieldsFor('token'),
     fieldsFor('webhookSecret'),

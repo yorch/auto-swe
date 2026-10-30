@@ -535,6 +535,47 @@ every unmet condition.
 
 ---
 
+### UN-10. Pull-request evaluation: bot approval (migrations and the steps that turn it on)
+
+This entry is not a credential defect. It lists what an operator must do, on a deployment that ran
+earlier code, for bot approval ([`pr-evaluation.md`](./pr-evaluation.md) §16) to take effect. The
+approval is **not on** after the upgrade.
+
+**Affected.** Every deployment whose gateway and worker images are built from a commit that contains
+`BOT_APPROVAL_COMMIT`. A build before it has no approver App and no bot approval.
+
+**What changes.** Migrations add the singleton table
+`github_approver_app` (`github_approver_app`), the column `connections.pr_evaluation_bot_approval`
+(default false, with a CHECK that keeps it false unless the mode is `auto`,
+`pr_evaluation_bot_approval`), the column `pr_evaluations.bot_approved` (default false,
+`pr_evaluation_bot_approved`) and the column `github_approver_app.retired_app_slugs`
+(`github_approver_retired_slugs`). The normal migrate step applies them (`prisma migrate deploy`, which
+the gateway image runs before it starts); nothing is run by hand. Nothing else changes: no approver App
+is configured, `prEvaluation.botApprovalAllowed` is off, and every repository's bot approval flag is
+false, so the platform submits no approving review and no pull request merges on a bot approval.
+
+**Actions.**
+
+1. Apply the migrations with the normal migrate step.
+2. To use bot approval, follow the setup in [`pr-evaluation.md`](./pr-evaluation.md#166-operator-setup):
+   create a separate GitHub App with only *Pull requests: Read and write*, install it on selected
+   repositories only, save its credentials at `PUT /api/v1/integrations/github-approver-app`, set the
+   base branch's rules (the required status pinned to the platform App, at least one required review,
+   dismissal of stale approvals), and then turn on, in order, `prEvaluation.enabled`,
+   `prEvaluation.autoMergeAllowed`, `prEvaluation.botApprovalAllowed`, the repository's mode `auto` and
+   the repository's bot approval. Try it on a test repository first, and read the evidence a fresh
+   repository needs before it can reach `auto` in
+   [`pr-evaluation.md`](./pr-evaluation.md#166-operator-setup).
+3. Review `prEvaluation.botApprovalMaxLines`, `prEvaluation.botApprovalMaxFiles` and
+   `prEvaluation.botApprovalPaths` before turning it on: the defaults (50 lines, 3 files,
+   documentation and test paths) are the limits a change must meet.
+
+**Verify.** `auto-swe pr-policy status <repoId>` prints a `Bot approval:` line that reads `off for this
+repository (…)` for every repository until an admin turns it on (the parenthesis says whether the
+deployment allows it and whether an approver App is configured), and `GET /api/v1/integrations/github-approver-app` reports it unconfigured.
+
+---
+
 ### Device authorization codes require the new migration
 
 **Affected.** A deployment that enables `mcp.deviceFlowEnabled` on a database that has not applied

@@ -5,13 +5,19 @@ import {
   autoEvidenceAssessment,
   prEvaluationEvidence,
 } from '@auto-swe/shared/lib/prEvaluationEvidence';
+import {
+  resolveGitHubApproverAppConfig,
+  resolveGitHubConfig,
+} from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendConflict } from '../lib/conflict.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { REPOSITORY_SWEEP_CAP, sweepArmedPullRequests } from '../lib/prEvaluationSweep.js';
+import { isCheckConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -23,7 +29,11 @@ const EvaluationParams = z.object({ id: z.string().uuid() });
 const MODES = ['off', 'advisory', 'enforce', 'auto'] as const;
 const RISK_CLASSES = ['LOW', 'STANDARD', 'HIGH'] as const;
 
-const SetModeBody = z.object({ mode: z.enum(MODES).nullable() });
+const SetPolicyBody = z
+  .object({ botApproval: z.boolean().optional(), mode: z.enum(MODES).nullable().optional() })
+  .refine((body) => body.mode !== undefined || body.botApproval !== undefined, {
+    message: 'Provide mode, botApproval, or both',
+  });
 
 const ListQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
   /** Only evaluations whose pull request merged; omitted or `false` applies no merge filter. */
@@ -47,6 +57,7 @@ const POLICY_KEYS = [
   'prEvaluation.enabled',
   'prEvaluation.defaultMode',
   'prEvaluation.autoMergeAllowed',
+  'prEvaluation.botApprovalAllowed',
   'prEvaluation.autoMinEvidence',
   'prEvaluation.autoMinRepoEvidence',
   'prEvaluation.autoMinDistinctRequesters',
@@ -112,6 +123,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
       const repo = await fastify.prisma.connection.findFirst({
         select: {
           id: true,
+          prEvaluationBotApproval: true,
           prEvaluationMode: true,
           team: { select: { orgId: true } },
           teamId: true,
@@ -125,6 +137,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
       if (!repo) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
+      const approverApp = await resolveGitHubApproverAppConfig();
       const settings = await settingsFor(repo, POLICY_KEYS);
       const [last, evidence] = await Promise.all([
         fastify.prisma.prEvaluation.findFirst({
@@ -160,6 +173,12 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
       return {
         data: {
           autoMergeAllowed: settings['prEvaluation.autoMergeAllowed'],
+          // Booleans only: nothing here names the approver App.
+          botApproval: {
+            approverAppConfigured: approverApp !== null,
+            enabled: repo.prEvaluationBotApproval,
+            globalAllowed: settings['prEvaluation.botApprovalAllowed'],
+          },
           enabled: settings['prEvaluation.enabled'],
           // Counts and thresholds only: nothing here names a requester.
           evidence: {
@@ -188,12 +207,14 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
 
   // PUT /api/v1/repositories/:id/pr-evaluation — owning-team LEAD or platform ADMIN. `auto`
   // is the one mode that lets the platform act on its own judgement, so only a platform ADMIN
-  // may choose it, and only while every precondition holds.
+  // may choose it, and only while every precondition holds. Bot approval is a further, separate
+  // switch (the approver App approves LOW pull requests, so they merge with no human approval):
+  // turning it on is ADMIN-only and gated likewise, turning it off is open to the owning LEAD.
   app.put(
     '/repositories/:id/pr-evaluation',
     {
       onRequest: requireAuth({ requiredRole: Role.LEAD }),
-      schema: { body: SetModeBody, params: RepoParams },
+      schema: { body: SetPolicyBody, params: RepoParams },
     },
     async (request, reply) => {
       const user = requireUser(request);
@@ -202,6 +223,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
       const repo = await fastify.prisma.connection.findFirst({
         select: {
           id: true,
+          prEvaluationBotApproval: true,
           prEvaluationMode: true,
           team: { select: { orgId: true } },
           teamId: true,
@@ -218,7 +240,9 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
       if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
-      const { mode } = request.body;
+      const { botApproval, mode } = request.body;
+      const modeGiven = mode !== undefined;
+      const newMode = modeGiven ? mode : (repo.prEvaluationMode as (typeof MODES)[number] | null);
 
       if (mode === 'auto') {
         const reasons = await autoRefusals(fastify, user.role, repo);
@@ -232,25 +256,65 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
           );
         }
       }
+      if (botApproval === true) {
+        const reasons = await botApprovalRefusals(user.role, repo, newMode);
+        if (reasons.length > 0) {
+          return sendError(
+            reply,
+            400,
+            'BOT_APPROVAL_NOT_READY',
+            'Bot approval is not ready for this repository',
+            { reasons }
+          );
+        }
+      }
 
-      await fastify.prisma.connection.update({
-        data: { prEvaluationMode: mode },
-        select: { id: true },
-        where: { id: repo.id },
-      });
+      // The database refuses bot approval outside `auto`, so it never outlives the mode: any
+      // other mode writes false in the same update.
+      const newBotApproval =
+        newMode === 'auto' ? (botApproval ?? repo.prEvaluationBotApproval) : false;
+      try {
+        await fastify.prisma.connection.update({
+          data: {
+            ...(modeGiven ? { prEvaluationMode: mode } : {}),
+            ...(botApproval !== undefined || (modeGiven && mode !== 'auto')
+              ? { prEvaluationBotApproval: newBotApproval }
+              : {}),
+          },
+          select: { id: true },
+          where: { id: repo.id },
+        });
+      } catch (err) {
+        // Two writes that each read the other's old mode can together break the check that keeps
+        // bot approval inside `auto`; the loser changed nothing and is asked to look again.
+        if (isCheckConstraintError(err)) {
+          return sendConflict(
+            reply,
+            'PR_EVALUATION_CONFLICT',
+            'The repository evaluation settings changed at the same time; reload and try again'
+          );
+        }
+        throw err;
+      }
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,
-        after: { prEvaluationMode: mode },
-        before: { prEvaluationMode: repo.prEvaluationMode },
+        after: { prEvaluationBotApproval: newBotApproval, prEvaluationMode: newMode },
+        before: {
+          prEvaluationBotApproval: repo.prEvaluationBotApproval,
+          prEvaluationMode: repo.prEvaluationMode,
+        },
         entityId: repo.id,
         entityType: 'Connection',
       });
       // Anything but `auto` (`enforce` included) must not leave auto-merge armed on a pull
       // request an earlier `auto` armed: the worker's evaluation disarms what the policy no
-      // longer wants.
-      if (mode !== 'auto') {
+      // longer wants. Withdrawing bot approval re-evaluates every open pull request, armed or not,
+      // since an approval is withdrawn the same way.
+      const approvalWithdrawn = repo.prEvaluationBotApproval && !newBotApproval;
+      if ((modeGiven && mode !== 'auto') || approvalWithdrawn) {
         const swept = await sweepArmedPullRequests(fastify, request.log, {
+          allOpen: approvalWithdrawn,
           cap: REPOSITORY_SWEEP_CAP,
           connectionId: repo.id,
         });
@@ -264,8 +328,15 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
       }
-      const warnings = await enforceWarnings(fastify, repo, mode);
-      return { data: { mode, modeSource: mode === null ? 'default' : 'repository', warnings } };
+      const warnings = await enforceWarnings(fastify, repo, newMode);
+      return {
+        data: {
+          botApproval: newBotApproval,
+          mode: newMode,
+          modeSource: newMode === null ? 'default' : 'repository',
+          warnings,
+        },
+      };
     }
   );
 
@@ -473,6 +544,50 @@ async function autoRefusals(
     })) {
       reasons.push(`The latest evaluation shows ${refusal}.`);
     }
+  }
+  return reasons;
+}
+
+/**
+ * Every unmet precondition for turning bot approval on, as sentences an operator can act on: a
+ * platform admin, the resulting mode `auto`, both deployment switches, a configured approver App,
+ * and an approver App that is not the platform App (an approval by the App that publishes the
+ * required status would let one identity both vouch and approve). Never names an App id.
+ */
+async function botApprovalRefusals(
+  role: string,
+  repo: { id: string; team: { orgId: string | null } | null; teamId: string },
+  resultingMode: (typeof MODES)[number] | null
+): Promise<string[]> {
+  const reasons: string[] = [];
+  if (role !== Role.ADMIN) {
+    reasons.push('Only a platform admin may enable bot approval.');
+  }
+  if (resultingMode !== 'auto') {
+    reasons.push('Bot approval needs the repository in auto mode.');
+  }
+  const ctx = {
+    ...(repo.team?.orgId ? { orgId: repo.team.orgId } : {}),
+    teamId: repo.teamId,
+  };
+  const [autoMergeAllowed, botApprovalAllowed, approverApp, platformApp] = await Promise.all([
+    resolveSetting('prEvaluation.autoMergeAllowed', ctx),
+    resolveSetting('prEvaluation.botApprovalAllowed', ctx),
+    resolveGitHubApproverAppConfig(),
+    resolveGitHubConfig(),
+  ]);
+  if (!autoMergeAllowed) {
+    reasons.push('Auto-merge is not allowed on this deployment (prEvaluation.autoMergeAllowed).');
+  }
+  if (!botApprovalAllowed) {
+    reasons.push(
+      'Bot approval is not allowed on this deployment (prEvaluation.botApprovalAllowed).'
+    );
+  }
+  if (!approverApp) {
+    reasons.push('The approver GitHub App is not configured.');
+  } else if (platformApp.appId !== null && approverApp.appId === platformApp.appId) {
+    reasons.push('The approver GitHub App must be a different GitHub App from the platform App.');
   }
   return reasons;
 }

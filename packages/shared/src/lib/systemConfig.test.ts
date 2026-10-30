@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     figmaConfig: { findUnique: vi.fn() },
+    gitHubApproverApp: { findUnique: vi.fn() },
     gitHubConfig: { findUnique: vi.fn() },
     issueTrackerConfig: { findUnique: vi.fn() },
     knowledgeBaseConfig: { findUnique: vi.fn() },
@@ -17,6 +18,8 @@ import { encryptSecret } from './crypto.js';
 import {
   assertScheduledSweepsEnv,
   assertWorkspaceInfraEnv,
+  resolveApproverBotSlugs,
+  resolveGitHubApproverAppConfig,
   resolveGitHubBaseUrl,
   resolveGitHubConfig,
   resolveGoogleOAuthConfig,
@@ -33,6 +36,7 @@ import {
 } from './systemConfig.js';
 
 const findGitHub = vi.mocked(prisma.gitHubConfig.findUnique);
+const findApprover = vi.mocked(prisma.gitHubApproverApp.findUnique);
 const findWorkflowDefaults = vi.mocked(prisma.workflowDefaults.findUnique);
 const findKnowledgeBase = vi.mocked(prisma.knowledgeBaseConfig.findUnique);
 
@@ -97,6 +101,7 @@ describe('systemConfig resolvers', () => {
       delete process.env[key];
     }
     findGitHub.mockReset();
+    findApprover.mockReset();
     findWorkflowDefaults.mockReset();
     findKnowledgeBase.mockReset();
   });
@@ -115,6 +120,73 @@ describe('systemConfig resolvers', () => {
       }
     }
     vi.unstubAllEnvs();
+  });
+
+  describe('resolveGitHubApproverAppConfig', () => {
+    it('is null when no row exists', async () => {
+      findApprover.mockResolvedValue(null);
+      expect(await resolveGitHubApproverAppConfig()).toBeNull();
+    });
+
+    it('is null unless the id, the slug and the key are all set', async () => {
+      const key = encryptedColumns('privateKey', 'pem-body');
+      findApprover.mockResolvedValue({ appId: '7', appSlug: 'approver', ...{} } as never);
+      expect(await resolveGitHubApproverAppConfig()).toBeNull();
+      findApprover.mockResolvedValue({ appId: '7', appSlug: null, ...key } as never);
+      expect(await resolveGitHubApproverAppConfig()).toBeNull();
+      findApprover.mockResolvedValue({ appId: null, appSlug: 'approver', ...key } as never);
+      expect(await resolveGitHubApproverAppConfig()).toBeNull();
+    });
+
+    it('decrypts the private key when fully configured', async () => {
+      findApprover.mockResolvedValue({
+        appId: '7',
+        appSlug: 'approver',
+        ...encryptedColumns('privateKey', 'pem-body'),
+      } as never);
+      expect(await resolveGitHubApproverAppConfig()).toEqual({
+        appId: '7',
+        appSlug: 'approver',
+        privateKey: 'pem-body',
+      });
+    });
+
+    it('never falls back to the main App environment variables', async () => {
+      vi.stubEnv('GITHUB_APP_ID', '99');
+      vi.stubEnv('GITHUB_APP_PRIVATE_KEY', 'env-key');
+      findApprover.mockResolvedValue(null);
+      expect(await resolveGitHubApproverAppConfig()).toBeNull();
+      findApprover.mockResolvedValue({ appId: null, appSlug: 'approver' } as never);
+      expect(await resolveGitHubApproverAppConfig()).toBeNull();
+      expect(findGitHub).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('resolveApproverBotSlugs', () => {
+    it('is empty with no row, and reads the slugs without any key', async () => {
+      findApprover.mockResolvedValue(null);
+      expect(await resolveApproverBotSlugs()).toEqual({ active: null, retired: [] });
+      findApprover.mockResolvedValue({
+        appId: null,
+        appSlug: 'Approver',
+        retiredAppSlugs: ['Old-One', 'older'],
+      } as never);
+      expect(await resolveApproverBotSlugs()).toEqual({
+        active: 'approver',
+        retired: ['old-one', 'older'],
+      });
+      findApprover.mockResolvedValue({ appSlug: null, retiredAppSlugs: ['gone'] } as never);
+      expect(await resolveApproverBotSlugs()).toEqual({ active: null, retired: ['gone'] });
+    });
+
+    it('leaves the secret-bearing config null when unconfigured', async () => {
+      findApprover.mockResolvedValue({
+        appId: null,
+        appSlug: null,
+        retiredAppSlugs: ['gone'],
+      } as never);
+      expect(await resolveGitHubApproverAppConfig()).toBeNull();
+    });
   });
 
   describe('resolveGitHubBaseUrl', () => {

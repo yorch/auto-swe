@@ -195,6 +195,8 @@ export interface PullRequestFiles {
 
 /** One submitted review of a pull request. Reviews by deleted accounts are not listed. */
 export interface PullRequestReviewSummary {
+  /** The review's numeric host id as a string (what dismissing it needs); absent when the host gave none. */
+  id?: string;
   login: string;
   /** Upper-cased: `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED`, `PENDING`. */
   state: string;
@@ -236,6 +238,13 @@ export interface BranchRules {
   requiresReviews: boolean | 'unknown';
   requiredReviewCount: number | 'unknown';
   requiresCodeOwnerReview: boolean | 'unknown';
+  /**
+   * True only when every source answered, at least one has a review rule, and EVERY review rule
+   * dismisses an approval when a commit is pushed (`dismiss_stale_reviews` on classic protection,
+   * `dismiss_stale_reviews_on_push` in a ruleset). Without it GitHub keeps counting an approval of
+   * an older commit.
+   */
+  dismissStaleReviews: boolean | 'unknown';
   requiredStatusContexts: string[] | 'unknown';
   /**
    * True only when every source that requires the configured status context ties it to OUR
@@ -520,4 +529,16 @@ export interface ScmProvider {
   ): Promise<ScmActionResult>;
   /** Cancel a pending auto-merge (a push invalidated the evaluation that enabled it). */
   disableAutoMerge(repo: RepoRef, prNumber: number): Promise<ScmActionResult>;
+  /**
+   * Dismiss one submitted review, whoever wrote it, with a fixed message. It needs only write
+   * access, so the platform credential does it. Resolves `{ ok: false, reason }` with a fixed
+   * reason (`refused`, `not-found`, `unprocessable`, `invalid-input`) and never the host's text;
+   * other errors propagate.
+   */
+  dismissReview(
+    repo: RepoRef,
+    prNumber: number,
+    reviewId: string,
+    message: string
+  ): Promise<ScmActionResult>;
 }

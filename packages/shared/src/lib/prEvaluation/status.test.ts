@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { approvalState, statusFor } from './status.js';
-import type { Classification, PrEvaluationMode, PrReview } from './types.js';
+import { approvalState, hasHumanObjection, statusFor } from './status.js';
+import type { ApprovalState, Classification, PrEvaluationMode, PrReview } from './types.js';
 
 const HEAD = 'abc123';
 const review = (login: string, state: string, commitId = HEAD): PrReview => ({
@@ -217,5 +217,103 @@ describe('approvalState hardening regressions', () => {
       const state = approvalState([review('bob', 'APPROVED', sha)], 'alice', 1, sha);
       expect(state).toMatchObject({ approvers: [], satisfied: false });
     }
+  });
+});
+
+describe('statusFor: evaluatorApproved', () => {
+  const none: ApprovalState = { approvers: [], required: 1, satisfied: false };
+  const low = cls({ autoEligible: true, requiredApprovers: 1, riskClass: 'LOW' });
+
+  it('is a success for a LOW change in a mode that holds the status, with a fixed description', () => {
+    for (const mode of ['enforce', 'auto'] as const) {
+      const status = statusFor(low, none, mode, { evaluatorApproved: true });
+      expect(status?.state).toBe('success');
+      expect(status?.description).toBe(
+        mode === 'enforce'
+          ? 'enforce: LOW risk: approved by the evaluator, no human approval required'
+          : 'LOW risk: approved by the evaluator, no human approval required'
+      );
+      expect((status?.description ?? '').length).toBeLessThanOrEqual(140);
+    }
+  });
+
+  it.each(['STANDARD', 'HIGH'] as const)('is ignored for the %s class', (riskClass) => {
+    for (const mode of ['enforce', 'auto'] as const) {
+      const c = cls({ riskClass });
+      expect(statusFor(c, none, mode, { evaluatorApproved: true })).toEqual(
+        statusFor(c, none, mode)
+      );
+      expect(statusFor(c, none, mode, { evaluatorApproved: true })?.state).toBe('pending');
+    }
+  });
+
+  it('is ignored in advisory and off', () => {
+    expect(statusFor(low, none, 'advisory', { evaluatorApproved: true })).toEqual(
+      statusFor(low, none, 'advisory')
+    );
+    expect(statusFor(low, none, 'off', { evaluatorApproved: true })).toBeNull();
+  });
+
+  it('is ignored when false, undefined or not strictly true', () => {
+    for (const flag of [false, undefined, 'true' as unknown as boolean, 1 as unknown as boolean]) {
+      expect(statusFor(low, none, 'auto', { evaluatorApproved: flag })).toEqual(
+        statusFor(low, none, 'auto')
+      );
+    }
+    expect(statusFor(low, none, 'auto', {})).toEqual(statusFor(low, none, 'auto'));
+  });
+
+  it('cannot override an evaluation error', () => {
+    const errored = cls({
+      reasons: [{ code: 'evaluation-error', message: 'x', severity: 'raise' }],
+      riskClass: 'LOW',
+    });
+    for (const mode of ['enforce', 'auto'] as const) {
+      expect(statusFor(errored, none, mode, { evaluatorApproved: true })?.state).toBe('failure');
+    }
+  });
+
+  it('leaves an already satisfied approval count as it was', () => {
+    const ok: ApprovalState = { approvers: ['a'], required: 1, satisfied: true };
+    expect(statusFor(cls({ riskClass: 'HIGH' }), ok, 'auto', { evaluatorApproved: true })).toEqual(
+      statusFor(cls({ riskClass: 'HIGH' }), ok, 'auto')
+    );
+  });
+});
+
+describe('approvalState: bot reviews', () => {
+  it('never counts an APPROVED review by an App account, even one named in the eligible set', () => {
+    const reviews = [review('approver-app[bot]', 'APPROVED')];
+    expect(approvalState(reviews, 'platform-app[bot]', 1, HEAD).approvers).toEqual([]);
+    expect(
+      approvalState(reviews, 'platform-app[bot]', 1, HEAD, [], new Set(['approver-app[bot]']))
+        .satisfied
+    ).toBe(false);
+  });
+});
+
+describe('hasHumanObjection', () => {
+  const object = (login: string) => review(login, 'CHANGES_REQUESTED');
+  it('is true for a standing request for changes on any commit', () => {
+    expect(hasHumanObjection([object('bob')], 'alice')).toBe(true);
+    expect(hasHumanObjection([review('bob', 'CHANGES_REQUESTED', 'old')], 'alice')).toBe(true);
+  });
+  it('is false once the same person approves, or the request was dismissed', () => {
+    expect(hasHumanObjection([object('bob'), review('Bob', 'APPROVED')], 'alice')).toBe(false);
+    expect(hasHumanObjection([object('bob'), review('bob', 'DISMISSED')], 'alice')).toBe(false);
+  });
+  it('keeps a request standing past a later plain comment, as the host does', () => {
+    expect(hasHumanObjection([object('bob'), review('bob', 'COMMENTED')], 'alice')).toBe(true);
+  });
+  it('lets a later request override an earlier approval, per login', () => {
+    expect(hasHumanObjection([review('bob', 'APPROVED'), object('BOB')], 'alice')).toBe(true);
+  });
+  it('ignores the author and any bot account', () => {
+    expect(hasHumanObjection([object('Alice')], 'alice')).toBe(false);
+    expect(hasHumanObjection([object('review-bot[bot]')], 'alice')).toBe(false);
+  });
+  it('is false for no reviews and for approvals only', () => {
+    expect(hasHumanObjection([], 'alice')).toBe(false);
+    expect(hasHumanObjection([review('bob', 'APPROVED')], 'alice')).toBe(false);
   });
 });

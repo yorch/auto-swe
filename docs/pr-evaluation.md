@@ -2,7 +2,8 @@
 
 > How the platform judges the risk of a pull request it opened, tells reviewers where to look,
 > publishes a commit status, and, only where an admin opted a repository in, asks GitHub to
-> auto-merge a provably low-risk change. For the run that opens the pull request see
+> auto-merge a provably low-risk change, which a second GitHub App can approve with no human
+> approval (§16). For the run that opens the pull request see
 > [concepts.md](./concepts.md); for what happens on review feedback see
 > [pr-feedback.md](./pr-feedback.md); for the GitHub App that carries the credentials see
 > [github-app-setup.md](./github-app-setup.md).
@@ -21,12 +22,17 @@ For every pull request the platform opened, on a repository that has evaluation 
    can require (§5).
 4. **In `auto` mode only**, and only when every condition in §8 holds, asks GitHub to merge the pull
    request once GitHub's own branch rules are satisfied (§8).
+5. **With bot approval on**, a second GitHub App, the approver App, submits an approving review for
+   a `LOW` change that is within strict size and path limits, so it can merge with no human
+   approval (§16).
 
-By default nothing merges. The platform never calls an immediate-merge API. The one merge-capable
-call it makes is GitHub's `enablePullRequestAutoMerge`, which asks GitHub to merge later, when the
-branch rules it already enforces are met, and only for the head commit that was evaluated
-(`expectedHeadOid`). That call is reachable only from `auto` mode, which is per repository, set by a
-platform admin, and refused until the preconditions in §8 and §10 hold.
+By default nothing merges, and the platform submits no review. The platform never calls an
+immediate-merge API. The one merge-capable call it makes is GitHub's `enablePullRequestAutoMerge`,
+which asks GitHub to merge later, when the branch rules it already enforces are met, and only for the
+head commit that was evaluated (`expectedHeadOid`). That call is reachable only from `auto` mode,
+which is per repository, set by a platform admin, and refused until the preconditions in §8 and §10
+hold. The one case in which a pull request can then merge with no human approval at all is bot
+approval (§16), which is off by default and needs four admin-controlled switches.
 
 The feature is off until an admin sets `prEvaluation.enabled`. Evaluation is re-run on every push
 and review (§11), so the class, the status and the arming always describe the current head.
@@ -159,6 +165,7 @@ decides it:
 | `enforce`, `auto` | `failure` | The evaluation failed (a reason with code `evaluation-error`). |
 | `enforce`, `auto` | `pending` | The approval count the class requires is not yet met on this head. |
 | `enforce`, `auto` | `success` | The required number of approvals is met on this head. |
+| `auto` | `success` | A `LOW` change only: the approver App's approval stands on this head (§16). The description reads `LOW risk: approved by the evaluator, no human approval required`. |
 
 For `enforce` the description reads `enforce: <class> risk: waiting for <n>/<required> approvals` (or
 `enforce: <class> risk: <n>/<required> approvals` once met); for `auto` it has no mode prefix.
@@ -167,6 +174,12 @@ Approvals are counted by `approvalState`: distinct people whose **latest** revie
 the **exact head commit**. A later comment or change request withdraws an approval, an approval of
 an older commit is stale, the pull request's author never counts, and accounts ending in `[bot]`
 never count. One person with two logins cannot be detected.
+
+**An approval by the approver App (§16) is never a human approval.** It is an account ending in
+`[bot]`, so it is not counted here, it does not satisfy the trusted-approver count the evidence gate
+reads (§9), and a pull request that merges on a bot approval alone adds nothing to that gate. The
+bot's approval stands in for the approver count on a `LOW` change only, in the status of an `auto`
+repository, and never lifts any other class.
 
 **Whoever launched or requested the work never counts.** The platform's pull requests are authored
 by its own GitHub credential, so excluding the author alone would let the person who launched the
@@ -319,7 +332,8 @@ refusal is named in the evaluation's `auto-merge-blocked` reason.
 - The status context is a required check on the base branch, and that requirement is **pinned to the
   platform's own GitHub App**.
 - Either the branch requires reviews (GitHub then holds the merge until they are given), or the
-  approvals the class needs are already given on this head.
+  approvals the class needs are already given on this head, or the approver App's approval stands on
+  it (§16).
 - The commit status for this evaluation was accepted by GitHub.
 - The pull request is not a draft.
 - Everyone who launched a run of the work, and whoever requested it, is resolved to a linked GitHub
@@ -356,6 +370,10 @@ The platform cancels what it armed when:
 - an evaluation fails, or the head moves and the new head no longer qualifies.
 
 The sweeps only start re-evaluations; the worker's evaluation does the disarming (see Limitations).
+Bot approvals are withdrawn by the same evaluations (§16.5).
+
+Bot approval has its own section (§16): a repository with it on can have a `LOW` change approved by the
+approver App, and every disarming trigger above also withdraws that approval.
 
 ## 9. The evidence gate
 
@@ -422,6 +440,9 @@ detection is a title heuristic; and the rows of a repository are deleted with it
 | Read a repository's evaluation state and the evaluations of repositories you can reach | ENGINEER and above, for a repository you can reach |
 | Set a repository to `off`, `advisory`, `enforce` or `inherit` | Lead of the owning team, or platform admin |
 | Set a repository to `auto` | Platform admin only, and only while the preconditions below hold |
+| Turn bot approval on for a repository | Platform admin only, and only while the preconditions in §16 hold |
+| Turn bot approval off for a repository | Lead of the owning team, or platform admin |
+| Read, set or delete the approver App's credentials | Platform admin (§16.2) |
 | Change any `prEvaluation.*` setting | Platform admin |
 
 Choosing `auto` is refused with `400 AUTO_NOT_READY` and the list of reasons unless the feature and
@@ -447,15 +468,17 @@ the worker use the same lookup, `findPlatformPullRequest`.
 
 The workflow ID is derived from the delivery, so a redelivered webhook starts nothing a second time,
 while every new push or review is a new evaluation. With the feature off or the repository `off`, a
-delivery starts a workflow only for a pull request an earlier row recorded as armed, so the platform
-can disarm it. Evaluations are also started by the disarm sweeps (§8).
+delivery starts a workflow only for a pull request an earlier row recorded as armed or as holding a
+bot approval, so the platform can disarm it and withdraw the approval. Evaluations are also started by the disarm sweeps (§8).
 
 Each evaluation, in order: loads the connection and settings (at the repository's team and
 organization scope); checks the pull request is the platform's and open; reads the policy file from
 the base branch; lists the changed files and scans the diff; reads the review network's verdict for
 this head; classifies; reads the branch rules; **re-reads the pull request's head and reviews
 immediately before publishing** (a moved head is `superseded`: the newer head has its own
-evaluation); publishes the status; posts the brief; stores the row; and applies the arming decision.
+evaluation); decides bot approval and submits it when it qualifies (§16); publishes the status,
+withdrawing any approval that must not stand first (§16.5); posts the brief; stores the row; and
+applies the arming decision.
 
 ## 12. Settings
 
@@ -467,6 +490,10 @@ All are ADMIN-only registry settings in the `prEvaluation` group; see
 | `prEvaluation.enabled` | off | GLOBAL only | The kill switch. Off, nothing is evaluated and nothing is posted. |
 | `prEvaluation.defaultMode` | `advisory` | team, organization | Mode of a repository that has not chosen one: `off`, `advisory` or `enforce`. |
 | `prEvaluation.autoMergeAllowed` | off | GLOBAL only | Whether any repository may arm GitHub auto-merge. Off, `auto` keeps its status rules and arms nothing. |
+| `prEvaluation.botApprovalAllowed` | off | GLOBAL only | The second key for per-repository bot approval (§16): the approver App approves LOW pull requests of a repository that has it on. Needs `prEvaluation.autoMergeAllowed` and a configured approver App. Turning it off (or clearing it) starts the sweep that withdraws approvals. |
+| `prEvaluation.botApprovalMaxLines` | 50 | GLOBAL only | Most changed lines (added plus deleted, over every listed file) a change may carry and still be approved by the approver App; at most 400. Any change to it, or clearing it, starts the sweep that withdraws approvals. |
+| `prEvaluation.botApprovalMaxFiles` | 3 | GLOBAL only | Most files a change may touch and still be approved by the approver App; at most 15. Any change to it, or clearing it, starts the sweep that withdraws approvals. |
+| `prEvaluation.botApprovalPaths` | documentation and test globs (§16.3) | GLOBAL only | Globs every changed path (and a rename's previous path) must match for the approver App to approve; at most 50. An empty list means no path qualifies, so the bot never approves. Any change to it (or clearing it) starts the sweep that withdraws approvals. |
 | `prEvaluation.autoMinEvidence` | 150 | GLOBAL only | Counted low-risk merges in 90 days, deployment-wide, that `auto` needs, with no bad merge (§9). |
 | `prEvaluation.autoMinRepoEvidence` | 20 | GLOBAL only | Counted low-risk merges in 90 days in the repository itself that `auto` needs, with no bad merge there (§9). |
 | `prEvaluation.autoMinDistinctRequesters` | 3 | GLOBAL only | Different requesters the deployment-wide counted merges must come from (§9). |
@@ -485,17 +512,25 @@ All are ADMIN-only registry settings in the `prEvaluation` group; see
 
 | Route | Role | Purpose |
 |---|---|---|
-| `GET /api/v1/repositories/:id/pr-evaluation` | ENGINEER | Enabled flag, mode and where it came from, whether auto-merge is allowed, the status context, the thresholds in force, the evidence figures, and the repository's last evaluation |
-| `PUT /api/v1/repositories/:id/pr-evaluation` | LEAD of the owning team, or ADMIN | Body `{ "mode": "off" \| "advisory" \| "enforce" \| "auto" \| null }`; `null` inherits. `auto` is ADMIN-only and may answer `400 AUTO_NOT_READY`. The response carries `data.warnings`, non-empty for `enforce` when the status context is not shown to be a required check |
+| `GET /api/v1/repositories/:id/pr-evaluation` | ENGINEER | Enabled flag, mode and where it came from, whether auto-merge is allowed, the status context, the thresholds in force, the evidence figures, whether bot approval is on, allowed by the deployment and has an approver App to use (booleans only), and the repository's last evaluation |
+| `PUT /api/v1/repositories/:id/pr-evaluation` | LEAD of the owning team, or ADMIN | Body `{ "mode"?: "off" \| "advisory" \| "enforce" \| "auto" \| null, "botApproval"?: boolean }`, at least one; `null` inherits. `auto` is ADMIN-only and may answer `400 AUTO_NOT_READY`. `botApproval: true` is ADMIN-only, needs the resulting mode to be `auto`, and may answer `400 BOT_APPROVAL_NOT_READY` with every unmet reason (§16.1); any mode other than `auto` sets it false in the same update. Two writes that race on the same repository can answer `409 PR_EVALUATION_CONFLICT`: reload and retry. The response carries the resulting `mode`, `modeSource`, `botApproval` and `warnings` under `data` (`warnings` is non-empty for `enforce` when the status context is not shown to be a required check) |
 | `GET /api/v1/pr-evaluations` | ENGINEER | Evaluations, newest first, for repositories you can reach. Filters `repoId`, `riskClass`, `merged`; `limit` (default 50, at most 100) and `offset`. Each row reports whether a brief exists and its length, not the brief |
 | `GET /api/v1/pr-evaluations/:id` | ENGINEER | One evaluation in full: reasons, the brief, and the branch rules it read |
+| `GET /api/v1/integrations/github-approver-app` | ADMIN | Whether the approver App is configured, its App id and slug, the last four characters of its private key, and when it changed. The key is never returned |
+| `PUT /api/v1/integrations/github-approver-app` | ADMIN | Body `{ "appId"?, "appSlug"?, "privateKey"? }`. Checked against GitHub before anything is stored (§16.2). A blank `privateKey` keeps the stored one |
+| `DELETE /api/v1/integrations/github-approver-app` | ADMIN | Removes the App id, slug and key (`204`); the removed slug is kept so its approvals can still be withdrawn |
 
-A repository you cannot reach answers `404`. The CLI wraps the first two (§14).
+A repository you cannot reach answers `404`. The CLI wraps the first two (§14); the approver App
+routes have no CLI command and no admin page, and the in-app assistant may not call them (they are
+`never` in the assistant's route policy, because they carry a secret).
 
 ## 14. CLI
 
 `auto-swe pr-policy` is documented in [the CLI README](../packages/cli/README.md). `init` and
-`validate` run offline with no token; `status` and `mode` call the gateway.
+`validate` run offline with no token; `status`, `mode` and `bot-approval` call the gateway.
+`auto-swe pr-policy bot-approval <repoId> <on|off>` turns a repository's bot approval on or off (§16);
+`on` prints every unmet reason and exits 1 when refused, and `status` shows whether bot approval is on
+for the repository, allowed by the deployment, and has an approver App to use.
 
 ## 15. Security properties
 
@@ -514,19 +549,337 @@ A repository you cannot reach answers `404`. The CLI wraps the first two (§14).
   commit, refused unless GitHub holds the merge behind an App-pinned requirement, and disarmed by a
   fresh read of GitHub's real state, never by what a database row remembers.
 - **A refusal is not trusted.** A disarm that cannot be proven fails and is retried.
+- **The approver App is a separate identity with the least authority that works.** Its credentials are
+  database-only with no environment fallback, its installation must be on selected repositories and
+  hold nothing beyond pull requests (and metadata read), its token is minted for one repository with
+  `pull_requests: write` and revoked after the one call, and the code that uses it only submits an
+  approving review: it names no merge endpoint and no dismissal. An approval is withdrawn with the platform's credential, so the approver App's
+  credentials are never needed to take an approval back. Reasons, logs and the review text name no
+  login, id or free text (§16).
+
+## 16. Bot approval
+
+### 16.1 What it is, and the switches
+
+Bot approval lets a second GitHub App, the **approver App**, submit an approving review on a `LOW`
+pull request the platform opened. The review is bound to the head commit (`commit_id`), so GitHub
+treats it as an approval of that commit and nothing pushed later. Combined with `auto` mode (§8), a
+`LOW` change that is within the strict limits in §16.3 can therefore merge with **no human approval**:
+GitHub's own rules (the required status pinned to the platform App, the required review the bot
+supplies, dismissal of stale approvals) are what hold the merge until the evaluator is satisfied.
+
+It is off by default and needs every one of these, each set by a platform admin:
+
+| Switch | Where | Role to change |
+|---|---|---|
+| `prEvaluation.autoMergeAllowed` | Registry, GLOBAL | ADMIN |
+| `prEvaluation.botApprovalAllowed` | Registry, GLOBAL | ADMIN |
+| The repository's mode is `auto` | `PUT` on the route in §13 | ADMIN |
+| The repository's `botApproval` flag | `PUT` on the route in §13, or `auto-swe pr-policy bot-approval` | ADMIN to turn on; the owning team's lead or an ADMIN to turn off |
+
+and, as the global kill switch above them all, `prEvaluation.enabled`. An approver App must also be
+configured (§16.2). The database enforces that the per-repository flag cannot be true outside `auto`
+(`connections_bot_approval_requires_auto_check`): changing a repository's mode to anything but `auto`
+writes the flag false in the same update.
+
+Turning the flag on is refused with `400 BOT_APPROVAL_NOT_READY` and the full list of unmet reasons
+unless the caller is an ADMIN, the mode the update leaves is `auto`, both deployment switches are on,
+an approver App is configured, and that App is not the platform App. The evidence gate (§9) and the
+branch rules are not checked at that moment; they are conditions of every approval (§16.3).
+
+### 16.2 The approver App is a separate identity
+
+GitHub does not let an App approve a pull request it authored, and the platform's pull requests are
+authored by the platform's own credential. The approver App is therefore a **second, different GitHub
+App**, stored in its own table (`github_approver_app`) and never interchangeable with the platform App:
+
+- Saving an App id equal to the platform App's is refused (`400 APPROVER_APP_IS_MAIN_APP`), and at use
+  an approver App that is the platform App is refused.
+- It is database-only. There is no environment variable that supplies it, so an unset approver App
+  means no approver, never "use the platform App".
+- The private key is sealed on the way in (the same envelope as the platform App's) and never
+  returned; the route reports its last four characters.
+- A save that sets the id, the slug or the key is checked against GitHub once all three are set: the
+  platform signs a token with the key and asks GitHub who the App is, and the id and slug must match. A mismatch is
+  `400 APPROVER_APP_UNVERIFIED`; GitHub being unreachable is `502 APPROVER_APP_UNREACHABLE`; in either
+  case nothing is saved.
+- The check is repeated at every use: GitHub is asked for the App's slug each time, because its
+  reviews are recognised by `<slug>[bot]` and a wrong slug would make every approval unrecognisable.
+  The installation on the repository must exist, be on selected repositories (not `all`) and hold
+  nothing beyond `pull_requests` and `metadata: read`. The installation token is requested for that
+  one repository with `pull_requests: write` only, and revoked once the stage ends.
+- It works only on the instance's own GitHub host. A repository on another approved host has its own
+  platform credential (`GitHubHostCredential`) and never gets a bot approval.
+- Changing the id, the slug or the key, or deleting the App, starts a deployment-wide sweep (§16.5).
+  The slug of an App that was replaced or removed is kept (lower-case, the five newest, never a key)
+  so its approvals can still be recognised and withdrawn; saving a slug again as the active one
+  removes it from that list.
+
+### 16.3 When the evaluator approves
+
+An approval is submitted only when **every** condition holds for the head commit just evaluated; any
+unmet one withholds it. The conditions are `BOT_APPROVAL_CONDITIONS` in
+`packages/shared/src/lib/prEvaluation/botApproval.ts`, each failing closed (anything but the expected
+value counts as unmet).
+
+*Switches and App*
+
+- The repository's effective mode is `auto` (a repository whose `auto` is held back because auto-merge
+  is not allowed deployment-wide is `advisory` for this purpose).
+- `prEvaluation.autoMergeAllowed` is on.
+- `prEvaluation.botApprovalAllowed` is on.
+- The repository's `botApproval` flag is on.
+- An approver App is configured.
+- The approver App is usable on this repository: installed on it, on the instance's host, narrow, with
+  a valid key and the slug GitHub reports (§16.2).
+
+*The change*
+
+- The pull request is not a draft.
+- The class is `LOW`, the change is eligible for auto-merge, and it carries no hard exclusion (§2, §8).
+- The evidence gate is met, deployment-wide and for this repository (§9). A bot approval never adds to
+  it, so the bot cannot bootstrap its own record.
+- Everyone who launched or requested the work resolves to a linked GitHub account on the repository's
+  host (§5).
+- At most `prEvaluation.botApprovalMaxLines` changed lines (default 50, at most 400) and at most
+  `prEvaluation.botApprovalMaxFiles` files (default 3, at most 15), counted over every listed file.
+  These are separate from the `LOW` limits and the in-repo policy file cannot change them.
+- Every changed path, and a rename's previous path, matches `prEvaluation.botApprovalPaths`. The
+  default allows documentation and test files: `**/*.md`, `**/*.mdx`, `docs/**`, `**/*.test.*`,
+  `**/*.spec.*`, `**/__tests__/**`, `**/test/**`, `**/tests/**`. A sensitive path still makes the
+  change `HIGH` before this list is asked. Matching is case-insensitive. **An empty list means no path
+  qualifies, so the bot never approves**, and so does a truncated file list or a malformed glob.
+- No test file loses more lines than it gains, none is removed, and none is renamed out of the test
+  globs.
+- Only one approver is required for the change. A repository or deployment that asks for more than
+  one (`prEvaluation.lowApprovers` above 1, in the registry or in the policy file) is never overridden
+  by the bot: a bot approval stands in for the platform default of one approver and nothing stricter.
+
+*GitHub's rules on the base branch*
+
+- The repository provably allows auto-merge.
+- `auto-swe/pr-evaluation` (the value of `prEvaluation.requiredStatusContext`) is a required check.
+- That requirement is pinned to the platform's own GitHub App.
+- The base branch provably **dismisses stale approvals on a push** (classic `dismiss_stale_reviews`,
+  or a ruleset `pull_request` rule with `dismiss_stale_reviews_on_push`, every review rule agreeing).
+  An approval is bound to one commit, but GitHub keeps counting it after a later push unless that
+  rule is on.
+
+*Identity and people*
+
+- The approver is provably not the pull request's author.
+- The head commit is known.
+- No reviewer other than the author and a bot has a request for changes. The request is sticky: an
+  evaluation that sees it records `human-objection-seen`, and while any earlier row of the pull request
+  carries that reason the evaluator refuses, even after someone dismisses the request, until a person
+  other than the author and a bot has an approval of the **current head** standing. At most 500 rows are read; past that bound a dismissed review by a person
+  is taken as the request still standing.
+- No person has dismissed the evaluator's approval on this pull request. A dismissal of the evaluator's
+  approval on the current head beyond the withdrawals the platform itself recorded is a person's; the
+  evaluation records `bot-approval-suppressed`, and the evaluator never approves that pull request
+  again, on any later head.
+
+Whenever bot approval is on for a repository (or an approval of the App stands) and a condition is
+unmet, the row records `bot-approval-refused:<code>`, where the code is the first unmet condition (or
+`client-<reason>` when the App could not be used) and the text names every unmet one. The code is
+also `recheck-<condition>` or `recheck-changed` when the fresh reads taken just before the submit (or
+once more after it) found a condition no longer holding or the pull request moved, `submit-<reason>`
+when GitHub refused or failed the submit, and `not-confirmed` when the approval did not show in the
+review list afterwards. A submitted
+approval is recorded as `bot-approval-posted` (or `bot-approval-present` when it already stood on this
+head). Reasons never carry a login, an id or free text.
+
+The deployment switches, the repository flag and mode, the paths allowlist, and the pull request's
+head, base branch and draft flag are read again, uncached, immediately before the approval is
+submitted, and again once it is confirmed in the review list, before a `success` that rests on it is
+posted. Any difference withholds it, and the approval is then withdrawn.
+
+### 16.4 What the status says
+
+For a `LOW` change in an `auto` repository whose approval stands on the head, the status is `success`
+with the description `LOW risk: approved by the evaluator, no human approval required`. It is never
+`success` on a bot approval for another class, and an evaluation error is still `failure`. See §5 for
+why a bot approval is not a human approval and never counts as evidence.
+
+### 16.5 Withdrawal
+
+Whenever an approval must not stand, **every** approval of the approver App on the pull request is
+dismissed, whatever commit it names. This is checked on every evaluation. A skipped one (the repository
+`off`, the feature off, the repository inactive) reads the review list for the App's reviews directly,
+with or without a row recording the approval, but only runs when something starts it: the webhook
+starts an evaluation for such a repository only when a row of that pull request records an arming or
+a bot approval, and the sweeps select from evaluation rows (at most 200 pull requests for a
+repository, 500 deployment-wide). The per-repository sweep is also skipped when another sweep of that
+repository started in the last 60 seconds (`SWEEP_DEBOUNCE_MS`, per gateway process), so turning bot
+approval off within 60 seconds of another sweep of that repository starts no sweep of all its open
+pull requests; an approval is then withdrawn when its pull request next changes. A review is the App's when its
+author is the active slug or any retired slug.
+
+**Order.** The order keeps a merge from happening on a `success` that nobody earned:
+
+1. A status that is not `success` is posted first: the final status when it is not `success`,
+   otherwise a fixed `pending` (`Evaluation changed: waiting`, or `Evaluation is switched off: this
+   status is no longer maintained` when evaluation is off: nothing updates the status afterwards, even
+   when a human approves).
+2. Every approval is dismissed, through the **platform** credential, never the approver App's, so
+   deleting or rotating the approver App never strands an approval.
+3. Any auto-merge arming that must end is cancelled.
+4. Only then is the final status posted, which may be `success` (an `advisory` repository, say).
+
+**Triggers.** An approval is withdrawn when:
+
+- the repository's `botApproval` flag is turned off, or its mode is changed away from `auto`. The
+  route starts a re-evaluation of every open pull request of that repository, armed or not;
+- `prEvaluation.enabled`, `prEvaluation.autoMergeAllowed` or `prEvaluation.botApprovalAllowed` is set
+  to false, or its stored GLOBAL override is cleared. A deployment-wide sweep re-evaluates every open
+  pull request that has an armed row, a standing approval, or a repository with the flag on;
+- `prEvaluation.botApprovalPaths`, `prEvaluation.botApprovalMaxLines` or
+  `prEvaluation.botApprovalMaxFiles` is changed in any way, or its stored GLOBAL override is cleared
+  (the same sweep);
+- a repository is deactivated or set `off` (the update starts a sweep of that repository), or the
+  feature is disabled (the deployment-wide sweep above). A later webhook for a pull request with a
+  recorded approval also starts an evaluation that withdraws it;
+- the approver App's id, slug or key is changed, or the App is deleted (the same deployment-wide
+  sweep). The removed slug is kept first, so its approvals are still recognised;
+- an evaluation of a new head, or of a review, finds a condition in §16.3 no longer holds: the class,
+  the caps, the changed paths, a test deletion, a request for changes, a person's dismissal, or the
+  branch rules.
+
+**When it cannot dismiss.** A dismissal that GitHub refuses, cannot find, or cannot process, a review
+the host gave no id for, or a failure to read the review list, fails the activity with a retryable
+error, so Temporal retries it (at most four attempts). The non-success status was already posted, so
+nothing merges on the bot's account while the status context is a required check, but **the approval
+itself stands** on the pull request until a retry, a later evaluation or a person dismisses it. A
+status that cannot be posted fails the activity the same way, before any dismissal. With no slug known
+at all (the App never configured), the App's reviews cannot be told from anyone's and nothing is
+dismissed; the row records `bot-approval-credentials-missing`.
+
+### 16.6 Operator setup
+
+A repository cannot be a quick test bed: a fresh one reaches `auto`, and so bot approval, only after
+the evidence gate (§9) is met. That needs `prEvaluation.autoMinRepoEvidence` counted, human-approved
+`LOW` merges of its own, and the deployment-wide thresholds `prEvaluation.autoMinEvidence` and
+`prEvaluation.autoMinDistinctRequesters`. That evidence accumulates while the repository is in
+`advisory` or `enforce` mode. The thresholds are GLOBAL: lowering them for a test lowers them for
+every repository. Whether an App's approving review counts toward a branch's required reviews, and
+satisfies code-owner or allowed-reviewer restrictions, depends on your GitHub version and host's
+rules and has **not** been verified here against every host. Confirm it on a repository that already
+satisfies the gate, or with the thresholds temporarily lowered by an admin who understands that
+effect, before relying on it.
+
+1. **Create a separate GitHub App** for approving, not the platform App. Give it only the
+   repository permission *Pull requests: Read and write* (GitHub always adds *Metadata: Read-only*) and
+   no other permission. It needs no webhook, because the platform reads no events from it.
+2. **Install it on selected repositories only**, the ones that will use bot approval. An installation
+   on *All repositories*, or one holding any further permission, is refused when the platform tries to
+   use it.
+3. **Save its credentials** as an admin: the numeric App id, the slug (as in the App's URL, lowercase)
+   and a PEM RSA private key, at `PUT /api/v1/integrations/github-approver-app`. The platform checks
+   them against GitHub before storing anything.
+   ```bash
+   curl -X PUT "$GATEWAY/api/v1/integrations/github-approver-app" \
+     -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+     -d "{\"appId\":\"123456\",\"appSlug\":\"my-org-approver\",\"privateKey\":$(jq -Rs . < approver.pem)}"
+   ```
+4. **Allow the approver App's review on the base branch.** If the branch requires code-owner review or
+   restricts who may approve, make the approver App an allowed reviewer (a code-owner entry, or a ruleset
+   bypass or allowed actor, as your host supports).
+5. **Set the repository's branch protection or ruleset** for the base branch:
+   - require the status `auto-swe/pr-evaluation`, **pinned to the platform App** (not the approver App,
+     and not unpinned);
+   - require **at least one approving review**, so the bot's review is what satisfies it;
+   - turn on **dismiss stale pull request approvals when new commits are pushed**;
+   - allow auto-merge on the repository;
+   - if dismissal of reviews is restricted, include the platform App among those who may dismiss.
+6. **Turn it on, in this order**, as an admin, at `/admin/platform-settings` and then on the repository:
+   1. `prEvaluation.enabled`
+   2. `prEvaluation.autoMergeAllowed`
+   3. `prEvaluation.botApprovalAllowed`
+   4. the repository's mode `auto` (needs the evidence gate, §9)
+   5. the repository's bot approval on: `auto-swe pr-policy bot-approval <repoId> on`
+
+   Review `prEvaluation.botApprovalMaxLines`, `prEvaluation.botApprovalMaxFiles` and
+   `prEvaluation.botApprovalPaths` before step 3, because the defaults are the limits a change must
+   meet.
+
+Verify with `auto-swe pr-policy status <repoId>`, which shows the repository's bot approval flag,
+whether the deployment allows it, and whether an approver App is configured; then open a small
+documentation change as a platform pull request and read the evaluation's reasons
+(`GET /api/v1/pr-evaluations/:id`) for `bot-approval-posted` or `bot-approval-refused:<condition>`.
 
 ## Limitations
 
-- **The platform never submits an approving review.** It has no second App identity, so on a
-  repository whose branch rules require reviews, `auto` waits for a human approval before anything
-  merges. Where reviews are not required, the approvals the class needs must already be given.
+- **With bot approval, a `LOW` change merges with no human, on a deterministic judgement.** A change
+  within the caps and the path allowlist is approved and merged by GitHub with nobody reading it.
+  The classifier works from signals, not from understanding the change, so a semantic mistake
+  inside allowlisted paths is not caught by a person. A weakened or skipped test is mostly excluded
+  (a removed test, a net test deletion and an added skip marker all refuse), but a documentation or
+  test-only change can still be wrong. Keep `prEvaluation.botApprovalPaths` as narrow as the
+  deployment can bear, and the caps low.
+- **There is no quiet period.** The status turns green as soon as the evaluation ends, so a person has
+  no guaranteed window to object before a bot-approved change can merge. A request for changes stops
+  it only if it is posted before the merge, and it is read at the next evaluation, which a review
+  starts.
+- **A leaked approver App private key can approve any pull request in every repository the App is
+  installed on.** The installation's scope and permissions are what bound that, and the platform
+  refuses to approve through an installation on all repositories or with any permission beyond
+  `pull_requests` and metadata read, but it cannot stop a key holder using the installation directly.
+  Install the App only on the repositories that use bot approval, with only those permissions, and
+  replace the key by saving a new one. Such an approval is a GitHub review like any other: only the
+  required status, pinned to the platform App, and the branch's other rules stand between it and a
+  merge.
+- **On a branch that requires zero approving reviews, the pinned status is the only gate.** GitHub then
+  does not need the bot's review at all, so the evaluator's `success` alone holds or releases the
+  merge.
+- **A person's dismissal of the bot's review is recorded only if an evaluation runs while that head is
+  current.** The dismissal's own review event starts one, but a new head pushed first, or that
+  evaluation exhausting its retries, loses it, and the evaluator may then approve again. The
+  evaluator's reading of earlier rows is bounded at 500 (§16.3).
+- **The sticky request-for-changes rule needs an evaluation to have seen the request.** If the
+  request is dismissed before any evaluation observed it, it is forgotten. Once recorded, it is lifted
+  only by a trusted approval, from someone other than the author and the people who launched or
+  requested the work, of the current head.
+- **A withdrawal that cannot be recorded can suppress bot approval for good.** Recording the platform's
+  own dismissal is bookkeeping: its failure is logged, not retried. The next evaluation then counts
+  that dismissal as a person's and records `bot-approval-suppressed`, so the evaluator never approves
+  that pull request again. This fails towards a human.
+- **A raised `prEvaluation.lowApprovers` starts no sweep.** A standing bot approval remains until that
+  pull request's next evaluation, which then refuses because the change needs more than one approver.
+- **Concurrent evaluations of one pull request are not serialised.** Each re-reads the head, the
+  switches and the reviews just before publishing or approving, which narrows the window; two
+  evaluations that read the same head can still both publish, and a switch flipped after the last
+  read is withdrawn at the next evaluation, not before.
+- **Withdrawal can fail while the approval stands.** Dismissal restrictions on the base branch that
+  exclude the platform App make every withdrawal fail with a refusal. The status stays non-success, so
+  nothing merges while the context is required, but the approval remains on the pull request until
+  the restriction is lifted or a person dismisses it. After four failed attempts the evaluation ends
+  in error and the next trigger tries again.
+- **Bot approval cannot withdraw an approval it can no longer recognise.** Reviews are attributed by the
+  approver App's slug, and only the five most recent retired slugs are kept. An approval given by an
+  App replaced or removed more than five App changes ago stays on the pull request until a person
+  dismisses it (a stale approval alone cannot merge without the evaluation status being `success`). With
+  no slug known at all, none can be withdrawn.
+- **The approver App works only on the instance's own GitHub host.** A repository on another
+  approved host cannot get a bot approval, and the App has no per-host credential. The approver App has
+  no admin page and no CLI command, only the routes in §13.
+- **Whether an App's approval counts toward required reviews is not checked by the platform.** It
+  depends on the host's branch rules (code owners, allowed reviewers). The platform proves the
+  status, its pinning and stale-approval dismissal from the rules it reads; whether GitHub accepts the
+  bot's review as the required one is something you confirm on a test repository (§16.6).
+- **The sweeps are capped** (§8): 200 open pull requests for a repository, 500 for a deployment-wide
+  switch or an approver App change. Past the cap an approval is withdrawn when its pull request next
+  changes.
+- **Without bot approval the platform submits no approving review.** On a repository whose branch rules
+  require reviews, `auto` then waits for a human approval before anything merges. Where reviews are
+  not required, the approvals the class needs must already be given.
 - **The evidence gate is narrowed, not closed, against farming.** It counts only `LOW` rows with a
   recorded requester, at least `prEvaluation.autoEvidenceMinChangedLines` changed lines and a
   trusted approval, requires the repository's own merges as well as the deployment's, and wants
   several distinct requesters. Several colluding requesters, each rubber-stamped by a colleague,
   can still produce it. A bad merge is recognised only from GitHub's default revert text, within
   14 days; a revert written in other words is not seen. Meeting it does not by itself show that
-  unattended merging is safe. Rows evaluated before the three facts were recorded do not count.
+  unattended merging is safe, and bot-approved merges do not add to it. Rows evaluated before the three
+  facts were recorded do not count.
 - **Distinct requesters are platform users, not people.** One person with several accounts counts
   several times, and a deleted requester keeps counting, because `requester_id` has no foreign key.
 - **`changedLines` counts every listed file.** Generated files, lockfiles and whitespace-only
@@ -544,9 +897,6 @@ A repository you cannot reach answers `404`. The CLI wraps the first two (§14).
 - **The launcher exclusion matches the one GitHub account each person linked.** A person who also
   holds a second GitHub account can approve with it, and a run launched through a service principal
   cannot be attributed to anyone behind it.
-- **Concurrent evaluations of one pull request are not serialised.** Each re-reads the head and the
-  reviews just before publishing, which narrows the window; two evaluations that read the same head
-  can still both publish.
 - **Anyone who can write commit statuses can post this context**, unless the requirement is pinned
   to the GitHub App. A personal access token cannot be pinned, so `auto` is refused without App
   credentials.

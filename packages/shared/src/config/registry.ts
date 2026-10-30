@@ -2,6 +2,16 @@ import { z } from 'zod';
 import { AGENT_RUN_MAX_WALL_CLOCK_SECONDS } from '../lib/agentRun.js';
 import { GlobListSchema } from '../lib/ciTrigger.js';
 import { hasGitNameCharacter } from '../lib/gitIdentityName.js';
+import {
+  countGlobStars,
+  DEFAULT_BOT_APPROVAL_PATHS,
+  globCost,
+  isValidGlob,
+  MAX_BOT_APPROVAL_PATHS,
+  MAX_GLOB_LENGTH,
+  MAX_GLOB_STARS,
+} from '../lib/prEvaluation/paths.js';
+import { MAX_FILE_GLOB_COST } from '../lib/prEvaluation/policy.js';
 import { IMPLEMENTER_RUNTIMES } from '../types/api.js';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { MAX_FANOUT_CONCURRENCY } from '../workflow/spec.js';
@@ -50,6 +60,24 @@ const githubOrgLogin = z
 /// Extra sensitive-path globs: may be empty (the built-in list always applies), bounded in
 /// count and length so a stored value cannot become a regex-cost or payload problem.
 const prEvaluationSensitivePaths = z.array(z.string().trim().min(1).max(200)).max(100);
+/// The bot approval allowlist: each glob valid and bounded exactly as a repository policy file's
+/// globs are, few of them, and cheap enough together to run against every changed path. May be
+/// empty, which means no path qualifies.
+const prEvaluationBotApprovalPaths = z
+  .array(
+    z
+      .string()
+      .trim()
+      .min(1)
+      .max(MAX_GLOB_LENGTH)
+      .refine(isValidGlob, 'not a valid glob')
+      .refine((g) => countGlobStars(g) <= MAX_GLOB_STARS, `more than ${MAX_GLOB_STARS} * tokens`)
+  )
+  .max(MAX_BOT_APPROVAL_PATHS)
+  .refine(
+    (list) => list.reduce((sum, g) => sum + globCost(g), 0) <= MAX_FILE_GLOB_COST,
+    'globs are too expensive to evaluate together'
+  );
 /// A GitHub commit status context: printable, no whitespace edges, bounded.
 const prEvaluationStatusContext = z
   .string()
@@ -759,6 +787,56 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: positiveInt.max(10000),
     unit: 'pull requests',
+  }),
+  'prEvaluation.botApprovalAllowed': defineSetting({
+    defaultValue: false,
+    description:
+      'The second key for bot approval: whether the approver App may approve low-risk pull requests of a repository whose administrator has turned bot approval on, so they merge with no human approval. Requires prEvaluation.autoMergeAllowed and a configured approver App. Deployment-wide; turning it off withdraws approvals through a re-evaluation of open pull requests.',
+    group: 'prEvaluation',
+    label: 'Allow bot approval',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'prEvaluation.botApprovalMaxFiles': defineSetting({
+    defaultValue: 3,
+    description:
+      'Most files a pull request may change and still be approved by the approver App with no human. A hard cap beside the low-risk class, which allows more. Counts every listed file.',
+    group: 'prEvaluation',
+    label: 'Most files for bot approval',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(15),
+    unit: 'files',
+  }),
+  'prEvaluation.botApprovalMaxLines': defineSetting({
+    defaultValue: 50,
+    description:
+      'Most changed lines (added plus deleted, over every listed file) a pull request may carry and still be approved by the approver App with no human. A hard cap beside the low-risk class, which allows more.',
+    group: 'prEvaluation',
+    label: 'Most changed lines for bot approval',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(400),
+    unit: 'lines',
+  }),
+  'prEvaluation.botApprovalPaths': defineSetting({
+    defaultValue: [...DEFAULT_BOT_APPROVAL_PATHS],
+    description:
+      'Globs of the paths the approver App may approve: every changed path of a pull request (and the previous path of a rename) must match one, on top of the other bot approval conditions. A sensitive path still makes the change high risk first. An EMPTY list means no path qualifies, so the bot never approves (it fails closed). Matched case-insensitively on the repository-relative path; at most 50 globs. Deployment-wide; changing it withdraws approvals that no longer qualify through a re-evaluation of open pull requests.',
+    group: 'prEvaluation',
+    label: 'Paths the bot may approve',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: prEvaluationBotApprovalPaths,
   }),
   'prEvaluation.defaultMode': defineSetting({
     defaultValue: 'advisory',

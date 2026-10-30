@@ -4,6 +4,7 @@ export type ConflictCode =
   | 'REPO_EXISTS'
   | 'TEAM_EXISTS'
   | 'MEMBER_EXISTS'
+  | 'PR_EVALUATION_CONFLICT'
   | 'KNOWLEDGE_SOURCE_IN_USE';
 
 export function sendConflict(reply: FastifyReply, code: ConflictCode, message: string) {

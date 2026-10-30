@@ -166,6 +166,58 @@ export async function resolveGitHubConfig(_opts?: ResolveOpts): Promise<Resolved
   };
 }
 
+// ─── GitHub approver App ─────────────────────────────────────────────────────
+
+export interface ResolvedGitHubApproverAppConfig {
+  /// The approver App's numeric ID. Always different from `GitHubConfig.appId`.
+  appId: string;
+  /// The App's slug; its reviews are recognised as `<slug>[bot]`.
+  appSlug: string;
+  /// PEM private key used to sign the approver App's JWTs. Never log it.
+  privateKey: string;
+}
+
+/**
+ * The approver App: a second GitHub App identity whose only job is to approve pull requests the
+ * platform opened. DB-only — unlike `resolveGitHubConfig` there is no environment-variable
+ * fallback, so a deployment's main App credentials can never stand in for it. Null unless the id,
+ * the slug and the private key are all set.
+ */
+export async function resolveGitHubApproverAppConfig(
+  _opts?: ResolveOpts
+): Promise<ResolvedGitHubApproverAppConfig | null> {
+  const row = await (await db()).gitHubApproverApp.findUnique({ where: { id: 'default' } });
+  if (!(row?.appId && row.appSlug)) {
+    return null;
+  }
+  const privateKey = decryptOptional({
+    authTag: row.privateKeyAuthTag ?? null,
+    ciphertext: row.privateKeyCiphertext ?? null,
+    keyVersion: row.privateKeyKeyVersion ?? null,
+    nonce: row.privateKeyNonce ?? null,
+  });
+  if (!privateKey) {
+    return null;
+  }
+  return { appId: row.appId, appSlug: row.appSlug, privateKey };
+}
+
+/**
+ * The slugs under which the approver App's reviews are recognised: the active one, and those of
+ * Apps this row used to hold. Not secret and independent of the private key, so a withdrawal can
+ * still name an approval after the credentials were removed. Never throws for a missing row.
+ */
+export async function resolveApproverBotSlugs(): Promise<{
+  active: string | null;
+  retired: string[];
+}> {
+  const row = await (await db()).gitHubApproverApp.findUnique({ where: { id: 'default' } });
+  return {
+    active: row?.appSlug ? row.appSlug.toLowerCase() : null,
+    retired: (row?.retiredAppSlugs ?? []).map((slug) => slug.toLowerCase()),
+  };
+}
+
 // ─── Slack ────────────────────────────────────────────────────────────────────
 
 export interface ResolvedSlackConfig {

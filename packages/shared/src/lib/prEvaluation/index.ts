@@ -1,4 +1,5 @@
 export * from './arming.js';
+export * from './botApproval.js';
 export * from './brief.js';
 export * from './classify.js';
 export * from './paths.js';

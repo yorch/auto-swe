@@ -57,6 +57,7 @@ export type RoutePolicyEntry = 'read' | 'confirm' | { read: string } | { never: 
 export type AssistantAccess = 'read' | 'confirm' | 'never';
 
 export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> = {
+  'DELETE /api/v1/integrations/github-approver-app': { never: 'secret' },
   'DELETE /api/v1/report-digests/:id': 'confirm',
   'GET /api/v1/agent-runs/agents': 'read',
   'GET /api/v1/agent-runs/limits': 'read',
@@ -79,6 +80,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/human-steps': 'read',
   'GET /api/v1/human-steps/:id': 'read',
   'GET /api/v1/human-steps/stream': { never: 'stream' },
+  'GET /api/v1/integrations/github-approver-app': { never: 'secret' },
   'GET /api/v1/knowledge': 'read',
   'GET /api/v1/knowledge/:id': 'read',
   'GET /api/v1/knowledge/permissions': 'read',
@@ -390,6 +392,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/workflow-templates/generate': 'confirm',
   'POST /api/v1/workflow-templates/generate/jobs': 'confirm',
   'POST /api/v1/workflow-templates/validate': { read: 'checks a spec and stores nothing' },
+  'PUT /api/v1/integrations/github-approver-app': { never: 'secret' },
   'PUT /api/v1/knowledge/:id': 'confirm',
   'PUT /api/v1/platform/agent-library/:id': 'confirm',
   'PUT /api/v1/platform/config/canary': 'confirm',

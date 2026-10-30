@@ -17,6 +17,7 @@
  */
 import { createHash, createSign } from 'node:crypto';
 import { hostFamily } from './githubHostScope.js';
+import { createGuardedFetch } from './guardedDispatcher.js';
 import type { ResolvedGitHubConfig } from './systemConfig.js';
 
 export class GitHubTokenMissingError extends Error {
@@ -84,7 +85,7 @@ function credentialFingerprint(config: ResolvedGitHubConfig): string {
   return `${config.appId}|${keyDigest}`;
 }
 
-function createGitHubAppJwt(appId: string, privateKey: string): string {
+export function createGitHubAppJwt(appId: string, privateKey: string): string {
   const now = Math.floor(Date.now() / 1000);
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(
@@ -144,6 +145,68 @@ async function fetchInstallationToken(
     expiresAt: new Date(data.expires_at).getTime() - EXPIRY_SAFETY_MARGIN_MS,
     token: data.token,
   };
+}
+
+/** Who an App is, as GitHub itself says when asked with a JWT signed by the App's key. */
+export type GitHubAppIdentityResult =
+  | { ok: true; id: string; slug: string }
+  /** GitHub refused the JWT or answered something that is not an App. */
+  | { ok: false; reason: 'rejected' }
+  /** No answer was obtained: the host was unreachable, refused by the SSRF guard, or erred. */
+  | { ok: false; reason: 'unreachable' };
+
+/**
+ * `GET /app` with a JWT signed by `privateKey` for `appId`: proves the id and key belong together
+ * and returns the App's real id and slug. The key never leaves this function except as a signature,
+ * and nothing GitHub says other than the id and slug is returned. The request goes through the
+ * guarded fetch (a self-hosted host on a private address is allowed, loopback and metadata
+ * addresses never are) and follows no redirect.
+ */
+export async function fetchGitHubAppIdentity(input: {
+  appId: string;
+  privateKey: string;
+  apiUrl: string;
+  fetchImpl?: typeof fetch;
+}): Promise<GitHubAppIdentityResult> {
+  let jwt: string;
+  try {
+    jwt = createGitHubAppJwt(input.appId, input.privateKey);
+  } catch {
+    return { ok: false, reason: 'rejected' };
+  }
+  const base = input.apiUrl.replace(/\/$/, '');
+  const doFetch =
+    input.fetchImpl ?? createGuardedFetch({ allowPrivate: hostFamily(base) !== 'github.com' });
+  let res: Response;
+  try {
+    res = await doFetch(`${base}/app`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${jwt}`,
+        'User-Agent': 'auto-swe/1.0',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      redirect: 'error',
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return { ok: false, reason: 'unreachable' };
+  }
+  if (res.status === 401 || res.status === 403 || res.status === 404) {
+    return { ok: false, reason: 'rejected' };
+  }
+  if (!res.ok) {
+    return { ok: false, reason: 'unreachable' };
+  }
+  try {
+    const body = (await res.json()) as { id?: unknown; slug?: unknown };
+    if (typeof body.id !== 'number' || typeof body.slug !== 'string' || body.slug === '') {
+      return { ok: false, reason: 'rejected' };
+    }
+    return { id: String(body.id), ok: true, slug: body.slug };
+  } catch {
+    return { ok: false, reason: 'unreachable' };
+  }
 }
 
 /** What GitHub says about one installation of an App. */

@@ -2,6 +2,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearInstallationTokenCache,
+  fetchGitHubAppIdentity,
   GitHubTokenMissingError,
   PlatformCredentialHostError,
   resolveGitHubToken,
@@ -319,5 +320,66 @@ describe('the credential set carries its own host', () => {
     await expect(
       resolveGitHubToken(set, { apiUrl: 'https://ghe.corp/api/v3', installationId: '7' })
     ).resolves.toBe('tok-7');
+  });
+});
+
+describe('fetchGitHubAppIdentity', () => {
+  const answer = (status: number, body: unknown = {}) =>
+    vi.fn(
+      async (_url: string, _init?: RequestInit) => new Response(JSON.stringify(body), { status })
+    );
+  const ask = (fetchImpl: ReturnType<typeof answer>, apiUrl = 'https://api.github.com') =>
+    fetchGitHubAppIdentity({
+      apiUrl,
+      appId: '222',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      privateKey: PEM,
+    });
+
+  it('returns the id and slug GitHub reports, after asking GET /app with an App JWT', async () => {
+    const f = answer(200, { id: 222, slug: 'approver' });
+    expect(await ask(f, 'https://ghe.example.com/api/v3/')).toEqual({
+      id: '222',
+      ok: true,
+      slug: 'approver',
+    });
+    const [url, init] = f.mock.calls[0] ?? [];
+    expect(url).toBe('https://ghe.example.com/api/v3/app');
+    expect(init?.redirect).toBe('error');
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    const auth = headers.Authorization ?? '';
+    expect(auth).toMatch(/^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
+    const payload = JSON.parse(Buffer.from(auth.split('.')[1] ?? '', 'base64url').toString());
+    expect(payload.iss).toBe('222');
+  });
+
+  it.each([401, 403, 404])('is rejected on a %i', async (status) => {
+    expect(await ask(answer(status))).toEqual({ ok: false, reason: 'rejected' });
+  });
+
+  it('is rejected when the answer is not an App', async () => {
+    expect(await ask(answer(200, { login: 'someone' }))).toEqual({ ok: false, reason: 'rejected' });
+  });
+
+  it('is unreachable on a server error or a network failure, and never carries their text', async () => {
+    expect(await ask(answer(500))).toEqual({ ok: false, reason: 'unreachable' });
+    const boom = vi.fn(async () => {
+      throw new Error('ECONNRESET secret-detail');
+    });
+    const out = await ask(boom as unknown as ReturnType<typeof answer>);
+    expect(out).toEqual({ ok: false, reason: 'unreachable' });
+    expect(JSON.stringify(out)).not.toContain('secret-detail');
+  });
+
+  it('is rejected, without calling the host, for a key that cannot sign', async () => {
+    const f = answer(200, { id: 222, slug: 'approver' });
+    const out = await fetchGitHubAppIdentity({
+      apiUrl: 'https://api.github.com',
+      appId: '222',
+      fetchImpl: f as unknown as typeof fetch,
+      privateKey: 'not a key',
+    });
+    expect(out).toEqual({ ok: false, reason: 'rejected' });
+    expect(f).not.toHaveBeenCalled();
   });
 });

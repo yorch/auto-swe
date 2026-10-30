@@ -58,6 +58,29 @@ export function approvalState(
   return { approvers, required: needed, satisfied: approvers.length >= needed };
 }
 
+/**
+ * Whether some reviewer other than the author and a bot account has a standing request for
+ * changes, on any commit. Latest verdict per login, as `approvalState` takes it, except that a
+ * plain comment or a pending review is no verdict (the host keeps a request standing past one).
+ * Nobody has to be a trusted approver: an objection from anyone counts.
+ */
+export function hasHumanObjection(reviews: readonly PrReview[], prAuthor: string): boolean {
+  const author = prAuthor.toLowerCase();
+  const latest = new Map<string, string>();
+  for (const review of reviews) {
+    if (review.state === 'COMMENTED' || review.state === 'PENDING') {
+      continue;
+    }
+    latest.set(review.login.toLowerCase(), review.state);
+  }
+  for (const [login, state] of latest) {
+    if (login !== author && !login.endsWith('[bot]') && state === 'CHANGES_REQUESTED') {
+      return true;
+    }
+  }
+  return false;
+}
+
 function isExcluded(
   review: PrReview,
   login: string,
@@ -78,11 +101,16 @@ function clip(text: string): string {
   return text.length <= MAX_DESCRIPTION ? text : `${text.slice(0, MAX_DESCRIPTION - 3)}...`;
 }
 
-/** The commit status to publish, or null when the repository has evaluation off. */
+/**
+ * The commit status to publish, or null when the repository has evaluation off.
+ * `evaluatorApproved` is whether the bot approver's approval stands on this head (the caller
+ * proves it); it is only ever read for a LOW class outside `advisory`/`off`.
+ */
 export function statusFor(
   classification: Classification,
   approval: ApprovalState,
-  mode: PrEvaluationMode
+  mode: PrEvaluationMode,
+  options: { evaluatorApproved?: boolean } = {}
 ): CommitStatus | null {
   if (mode === 'off') {
     return null;
@@ -98,6 +126,14 @@ export function statusFor(
     return {
       description: clip(`${label}: evaluation failed, treated as high risk`),
       state: 'failure',
+    };
+  }
+  // The evaluator's own approval stands in for the human count on a LOW change only; it is read
+  // after the error check above and never lifts any other class.
+  if (options.evaluatorApproved === true && classification.riskClass === 'LOW') {
+    return {
+      description: clip(`${label}: approved by the evaluator, no human approval required`),
+      state: 'success',
     };
   }
   return approval.satisfied

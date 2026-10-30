@@ -27,6 +27,15 @@ vi.mock('@auto-swe/shared/config', () => ({
   }),
 }));
 
+const approver = vi.hoisted(() => ({
+  approver: { appId: '222' } as { appId: string } | null,
+  platformAppId: '111' as string | null,
+}));
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveGitHubApproverAppConfig: vi.fn(async () => approver.approver),
+  resolveGitHubConfig: vi.fn(async () => ({ appId: approver.platformAppId })),
+}));
+
 import { resetSweepDebounceForTests } from '../lib/prEvaluationSweep.js';
 import { prEvaluationRoutes } from './prEvaluation.js';
 
@@ -55,6 +64,7 @@ const DEFAULTS: Record<string, unknown> = {
   'prEvaluation.autoMinDistinctRequesters': 2,
   'prEvaluation.autoMinEvidence': 10,
   'prEvaluation.autoMinRepoEvidence': 5,
+  'prEvaluation.botApprovalAllowed': true,
   'prEvaluation.defaultMode': 'advisory',
   'prEvaluation.enabled': true,
   'prEvaluation.highApprovers': 2,
@@ -135,6 +145,8 @@ describe('pr evaluation routes', () => {
     ctx.authState.role = 'ENGINEER';
     ctx.authState.sub = 'user-1';
     settings.values = { ...DEFAULTS };
+    approver.approver = { appId: '222' };
+    approver.platformAppId = '111';
     settings.ctx.length = 0;
     for (const model of Object.values(ctx.prisma)) {
       for (const fn of Object.values(model)) {
@@ -147,8 +159,9 @@ describe('pr evaluation routes', () => {
     evidence(0, 0);
   });
 
-  const repoRow = (mode: string | null = null) => ({
+  const repoRow = (mode: string | null = null, botApproval = false) => ({
     id: REPO,
+    prEvaluationBotApproval: botApproval,
     prEvaluationMode: mode,
     team: { orgId: 'org-1' },
     teamId: TEAM,
@@ -212,6 +225,7 @@ describe('pr evaluation routes', () => {
       expect(JSON.stringify(res.json())).not.toContain('req-');
       expect(res.json().data).toEqual({
         autoMergeAllowed: true,
+        botApproval: { approverAppConfigured: true, enabled: false, globalAllowed: true },
         enabled: true,
         evidence: {
           deployment: {
@@ -243,6 +257,23 @@ describe('pr evaluation routes', () => {
         },
       });
       expect(settings.ctx).toContainEqual({ orgId: 'org-1', teamId: TEAM });
+    });
+
+    it('reports the bot approval block as booleans only, with no App identity', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow('auto', true));
+      ctx.prisma.prEvaluation.findFirst.mockResolvedValue(null);
+      settings.values['prEvaluation.botApprovalAllowed'] = false;
+      approver.approver = null;
+      const body = (await get()).json().data;
+      expect(body.botApproval).toEqual({
+        approverAppConfigured: false,
+        enabled: true,
+        globalAllowed: false,
+      });
+      approver.approver = { appId: '222' };
+      const again = await get();
+      expect(again.json().data.botApproval.approverAppConfigured).toBe(true);
+      expect(JSON.stringify(again.json())).not.toContain('222');
     });
 
     it('reports the default mode when the repository has not chosen one', async () => {
@@ -292,7 +323,7 @@ describe('pr evaluation routes', () => {
         const res = await put(mode);
         expect(res.statusCode).toBe(200);
         expect(ctx.prisma.connection.update).toHaveBeenCalledWith({
-          data: { prEvaluationMode: mode },
+          data: { prEvaluationBotApproval: false, prEvaluationMode: mode },
           select: { id: true },
           where: { id: REPO },
         });
@@ -327,7 +358,7 @@ describe('pr evaluation routes', () => {
         const res = await put('enforce');
         expect(res.statusCode).toBe(200);
         expect(ctx.prisma.connection.update).toHaveBeenCalledWith({
-          data: { prEvaluationMode: 'enforce' },
+          data: { prEvaluationBotApproval: false, prEvaluationMode: 'enforce' },
           select: { id: true },
           where: { id: REPO },
         });
@@ -691,6 +722,280 @@ describe('pr evaluation routes', () => {
         ctx.prisma.prEvaluation.findFirst.mockResolvedValue(null);
         expect((await put('advisory')).statusCode).toBe(200);
       });
+    });
+  });
+
+  describe('PUT bot approval', () => {
+    const putBody = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload,
+        url: `/api/v1/repositories/${REPO}/pr-evaluation`,
+      });
+    const reasonsOf = (res: { json: () => { error: { details: { reasons: string[] } } } }) =>
+      res.json().error.details.reasons;
+
+    function asAdmin(mode: string | null, botApproval = false) {
+      ctx.authState.role = 'ADMIN';
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(mode, botApproval));
+      ctx.prisma.prEvaluation.findFirst.mockResolvedValue({ readiness: READY });
+      evidence(50, 0);
+    }
+
+    it('needs at least one of mode and botApproval', async () => {
+      ctx.authState.role = 'ADMIN';
+      expect((await putBody({})).statusCode).toBe(400);
+      expect((await putBody({ botApproval: 'yes' })).statusCode).toBe(400);
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses turning it on to a team LEAD, naming the role rule, and writes nothing', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow('auto'));
+      leadOfTeam(true);
+      const res = await putBody({ botApproval: true });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('BOT_APPROVAL_NOT_READY');
+      expect(reasonsOf(res)).toContain('Only a platform admin may enable bot approval.');
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('answers a lost race against the database check with a 409 and a fixed message, never a 500', async () => {
+      asAdmin('auto');
+      const lost = Object.assign(
+        new Error(
+          'new row for relation "connections" violates check constraint "connections_bot_approval_requires_auto_check"'
+        ),
+        { code: 'P2004' }
+      );
+      ctx.prisma.connection.update.mockRejectedValue(lost);
+      const res = await putBody({ botApproval: true });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('PR_EVALUATION_CONFLICT');
+      expect(res.payload).not.toContain('connections_bot_approval_requires_auto_check');
+      expect(res.payload).not.toContain('relation');
+    });
+
+    it('still fails an unrelated database error', async () => {
+      asAdmin('auto');
+      ctx.prisma.connection.update.mockRejectedValue(new Error('connection reset'));
+      expect((await putBody({ botApproval: true })).statusCode).toBe(500);
+    });
+
+    it('turns it on for an admin when every precondition holds, in one update', async () => {
+      asAdmin('auto');
+      const res = await putBody({ botApproval: true });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.prisma.connection.update).toHaveBeenCalledTimes(1);
+      expect(ctx.prisma.connection.update.mock.calls[0][0].data).toEqual({
+        prEvaluationBotApproval: true,
+      });
+      expect(res.json().data).toMatchObject({ botApproval: true, mode: 'auto' });
+      expect(ctx.temporal.startPrEvaluationWorkflow).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [
+        'auto-merge is not allowed',
+        () => {
+          settings.values['prEvaluation.autoMergeAllowed'] = false;
+        },
+        'prEvaluation.autoMergeAllowed',
+      ],
+      [
+        'bot approval is not allowed',
+        () => {
+          settings.values['prEvaluation.botApprovalAllowed'] = false;
+        },
+        'prEvaluation.botApprovalAllowed',
+      ],
+      [
+        'the approver App is not configured',
+        () => {
+          approver.approver = null;
+        },
+        'approver GitHub App is not configured',
+      ],
+      [
+        'the approver App is the platform App',
+        () => {
+          approver.approver = { appId: '111' };
+        },
+        'must be a different GitHub App',
+      ],
+    ])('refuses turning it on when %s', async (_name, arrange, text) => {
+      asAdmin('auto');
+      arrange();
+      const res = await putBody({ botApproval: true });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('BOT_APPROVAL_NOT_READY');
+      expect(reasonsOf(res)).toHaveLength(1);
+      expect(reasonsOf(res)[0]).toContain(text);
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('reports every unmet precondition together, and never an App id', async () => {
+      asAdmin('advisory');
+      settings.values['prEvaluation.autoMergeAllowed'] = false;
+      settings.values['prEvaluation.botApprovalAllowed'] = false;
+      approver.approver = { appId: '111' };
+      const res = await putBody({ botApproval: true });
+      expect(reasonsOf(res)).toHaveLength(4);
+      expect(JSON.stringify(res.json())).not.toContain('111');
+    });
+
+    it('refuses it on a repository whose mode is advisory', async () => {
+      asAdmin('advisory');
+      const res = await putBody({ botApproval: true });
+      expect(res.statusCode).toBe(400);
+      expect(reasonsOf(res).join('\n')).toContain('auto mode');
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses it together with a mode other than auto', async () => {
+      asAdmin('auto');
+      const res = await putBody({ botApproval: true, mode: 'enforce' });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('BOT_APPROVAL_NOT_READY');
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('sets auto and bot approval in one update, and auto must itself be ready', async () => {
+      asAdmin('advisory');
+      const res = await putBody({ botApproval: true, mode: 'auto' });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.prisma.connection.update).toHaveBeenCalledTimes(1);
+      expect(ctx.prisma.connection.update.mock.calls[0][0].data).toEqual({
+        prEvaluationBotApproval: true,
+        prEvaluationMode: 'auto',
+      });
+
+      asAdmin('advisory');
+      ctx.prisma.connection.update.mockClear();
+      evidence(1, 0);
+      const refused = await putBody({ botApproval: true, mode: 'auto' });
+      expect(refused.statusCode).toBe(400);
+      expect(refused.json().error.code).toBe('AUTO_NOT_READY');
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('lets the owning-team LEAD turn it off with no precondition, and sweeps every open pull request', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow('auto', true));
+      leadOfTeam(true);
+      settings.values['prEvaluation.botApprovalAllowed'] = false;
+      approver.approver = null;
+      ctx.prisma.prEvaluation.findMany
+        .mockResolvedValueOnce([{ connectionId: REPO, prNumber: 5 }])
+        .mockResolvedValueOnce([
+          {
+            autoMergeEnabled: false,
+            closedAt: null,
+            connectionId: REPO,
+            mergedAt: null,
+            prNumber: 5,
+          },
+        ]);
+      const res = await putBody({ botApproval: false });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.prisma.connection.update.mock.calls[0][0].data).toEqual({
+        prEvaluationBotApproval: false,
+      });
+      // Unarmed pull requests are swept too: the approval is withdrawn, not only auto-merge.
+      expect(ctx.prisma.prEvaluation.findMany.mock.calls[0][0].where).not.toHaveProperty(
+        'autoMergeEnabled'
+      );
+      expect(ctx.temporal.startPrEvaluationWorkflow.mock.calls.map((c) => c[1])).toEqual([
+        { connectionId: REPO, prNumber: 5, trigger: 'disarm-sweep' },
+      ]);
+    });
+
+    it('does not sweep when it was already off, or when it is turned on', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow('auto', false));
+      leadOfTeam(true);
+      expect((await putBody({ botApproval: false })).statusCode).toBe(200);
+      expect(ctx.prisma.prEvaluation.findMany).not.toHaveBeenCalled();
+      asAdmin('auto');
+      expect((await putBody({ botApproval: true })).statusCode).toBe(200);
+      expect(ctx.prisma.prEvaluation.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each(['off', 'advisory', 'enforce', null] as const)(
+      'forces it off in the same update when auto becomes %s',
+      async (mode) => {
+        ctx.authState.role = 'LEAD';
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow('auto', true));
+        leadOfTeam(true);
+        const res = await putBody({ mode });
+        expect(res.statusCode).toBe(200);
+        expect(ctx.prisma.connection.update).toHaveBeenCalledTimes(1);
+        expect(ctx.prisma.connection.update.mock.calls[0][0].data).toEqual({
+          prEvaluationBotApproval: false,
+          prEvaluationMode: mode,
+        });
+        expect(res.json().data.botApproval).toBe(false);
+        expect(ctx.prisma.prEvaluation.findMany).toHaveBeenCalled();
+      }
+    );
+
+    it('never writes a state the CHECK constraint rejects', async () => {
+      // The constraint: bot approval is false, or the mode is exactly 'auto'.
+      const accepted = (
+        data: { prEvaluationBotApproval?: boolean; prEvaluationMode?: unknown },
+        before: ReturnType<typeof repoRow>
+      ) => {
+        const bot = data.prEvaluationBotApproval ?? before.prEvaluationBotApproval;
+        const mode = 'prEvaluationMode' in data ? data.prEvaluationMode : before.prEvaluationMode;
+        return bot === false || mode === 'auto';
+      };
+      const cases: Array<[string | null, boolean, Record<string, unknown>]> = [
+        ['auto', true, { mode: 'off' }],
+        ['auto', true, { mode: null }],
+        ['auto', true, { botApproval: false, mode: 'enforce' }],
+        ['auto', true, { mode: 'auto' }],
+        ['auto', true, { botApproval: false }],
+        ['advisory', false, { botApproval: true, mode: 'auto' }],
+        ['advisory', false, { mode: 'advisory' }],
+      ];
+      for (const [mode, bot, payload] of cases) {
+        ctx.prisma.connection.update.mockClear();
+        asAdmin(mode, bot);
+        const res = await putBody(payload);
+        expect(res.statusCode, JSON.stringify(payload)).toBe(200);
+        const before = repoRow(mode, bot);
+        expect(accepted(ctx.prisma.connection.update.mock.calls[0][0].data, before)).toBe(true);
+        resetSweepDebounceForTests();
+      }
+    });
+
+    it('audits the old and new value of each field', async () => {
+      asAdmin('advisory');
+      expect((await putBody({ botApproval: true, mode: 'auto' })).statusCode).toBe(200);
+      expect(ctx.prisma.configAuditLog.create.mock.calls[0][0].data).toMatchObject({
+        action: 'UPDATE',
+        actorId: 'user-1',
+        afterJson: { prEvaluationBotApproval: true, prEvaluationMode: 'auto' },
+        beforeJson: { prEvaluationBotApproval: false, prEvaluationMode: 'advisory' },
+        entityId: REPO,
+        entityType: 'Connection',
+      });
+      ctx.prisma.configAuditLog.create.mockClear();
+      asAdmin('auto', true);
+      expect((await putBody({ botApproval: false })).statusCode).toBe(200);
+      expect(ctx.prisma.configAuditLog.create.mock.calls[0][0].data).toMatchObject({
+        afterJson: { prEvaluationBotApproval: false, prEvaluationMode: 'auto' },
+        beforeJson: { prEvaluationBotApproval: true, prEvaluationMode: 'auto' },
+      });
+    });
+
+    it('answers a non-member 404, not 403 or a readiness list', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.prisma.connection.findFirst.mockResolvedValue(null);
+      const res = await putBody({ botApproval: true });
+      expect(res.statusCode).toBe(404);
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
     });
   });
 

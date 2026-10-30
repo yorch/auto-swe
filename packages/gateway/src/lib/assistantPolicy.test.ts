@@ -27,7 +27,7 @@ const ALIASES = /^\/api\/v1\/(admin|inbox)(\/|$)/;
  * never by loosening the table.
  */
 const SECRET_PATHS =
-  /(credential|secret|\/tokens?(\/|$)|access-tokens|service-principals|mcp-grants|test-decrypt|webhook\/regenerate|\/config\/(github|slack|issue-tracker|knowledge-base|figma)$)/;
+  /(credential|secret|github-approver-app|\/tokens?(\/|$)|access-tokens|service-principals|mcp-grants|test-decrypt|webhook\/regenerate|\/config\/(github|slack|issue-tracker|knowledge-base|figma)$)/;
 const IDENTITY_WRITE_PATHS =
   /^\/api\/v1\/(users|platform\/sessions|platform\/config\/grants)(\/|$)|\/members(\/|$)/;
 const HUMAN_DECISIONS =

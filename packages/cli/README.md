@@ -149,6 +149,12 @@ pr-policy mode <repoId> <off|advisory|enforce|auto|inherit>
                                      print when the status is not a required check. auto is
                                      platform-admin only and is refused with the reasons it is
                                      not ready (exit 1)
+pr-policy bot-approval <repoId> <on|off>
+                                     Let the approver App approve a repository's LOW pull
+                                     requests, so they merge with no human approval (auto mode
+                                     only). on is platform-admin only and is refused with every
+                                     unmet reason (exit 1); off needs a team lead or platform
+                                     admin and withdraws the approvals
 
 evals list                           List eval datasets (admin token)
 evals show <id>                      Print a dataset's cases
@@ -168,8 +174,8 @@ evals run <dataset-slug> --candidate=<ref> --against=<ref>
 help                                 Show usage
 ```
 
-`pr-policy init` and `pr-policy validate` are token-free and offline; `pr-policy status` and
-`pr-policy mode` call the gateway (see [`docs/pr-evaluation.md`](../../docs/pr-evaluation.md)).
+`pr-policy init` and `pr-policy validate` are token-free and offline; `pr-policy status`,
+`pr-policy mode` and `pr-policy bot-approval` call the gateway (see [`docs/pr-evaluation.md`](../../docs/pr-evaluation.md)).
 
 `bundle` (singular) is token-free local authoring over `@auto-swe/sdk`; `bundles`
 (plural) hits `/api/v1/platform/bundles` and needs an admin token. `evals` also needs an

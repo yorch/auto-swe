@@ -76,6 +76,8 @@ describe('pull request evaluation webhook handling', () => {
   let platformPr: { workflow: { temporalWorkflowId: string } } | null = null;
   let armedRow: { id: string } | null = null;
   const armedLookups: Array<Record<string, unknown>> = [];
+  let botRow: { id: string } | null = null;
+  const botLookups: Array<Record<string, unknown>> = [];
   const connectionWheres: Array<Record<string, unknown>> = [];
   const platformLookups: Array<Record<string, unknown>> = [];
 
@@ -92,10 +94,16 @@ describe('pull request evaluation webhook handling', () => {
       },
       prEvaluation: {
         findFirst: vi.fn(
-          async (args: { where: { autoMergeEnabled?: boolean; headSha: string } }) => {
+          async (args: {
+            where: { autoMergeEnabled?: boolean; botApproved?: boolean; headSha: string };
+          }) => {
             if (args.where.autoMergeEnabled) {
               armedLookups.push(args.where);
               return armedRow;
+            }
+            if (args.where.botApproved) {
+              botLookups.push(args.where);
+              return botRow;
             }
             findFirstCalls.push(args as never);
             const match = rows
@@ -147,6 +155,8 @@ describe('pull request evaluation webhook handling', () => {
     startFailure = null;
     platformPr = { workflow: { temporalWorkflowId: 'wf-1' } };
     armedRow = null;
+    botRow = null;
+    botLookups.length = 0;
     armedLookups.length = 0;
     connectionWheres.length = 0;
     platformLookups.length = 0;
@@ -316,6 +326,51 @@ describe('pull request evaluation webhook handling', () => {
       armedRow = { id: 'row-1' };
       await deliver('pull_request', { action: 'synchronize', pull_request: pr() }, 'D3adBeef-0002');
       expect(starts).toHaveLength(1);
+    });
+
+    it('still starts one when the feature is off but a bot approval of an open pull request stands', async () => {
+      settingsState.enabled = false;
+      armedRow = null;
+      botRow = { id: 'row-bot' };
+      await deliver('pull_request', { action: 'synchronize', pull_request: pr() });
+      expect(starts).toHaveLength(1);
+      expect(botLookups).toEqual([
+        {
+          botApproved: true,
+          closedAt: null,
+          connectionId: CONN.id,
+          mergedAt: null,
+          prNumber: 7,
+        },
+      ]);
+      botRow = null;
+    });
+
+    it('starts one for an off-mode or deactivated repository with a standing bot approval only', async () => {
+      armedRow = null;
+      for (const patch of [{ prEvaluationMode: 'off' }, { isActive: false }]) {
+        connections = [{ ...CONN, ...patch }];
+        botRow = null;
+        const before = starts.length;
+        await deliver('pull_request', { action: 'synchronize', pull_request: pr() });
+        expect(starts).toHaveLength(before);
+        botRow = { id: 'row-bot' };
+        await deliver(
+          'pull_request',
+          { action: 'synchronize', pull_request: pr() },
+          'D3adBeef-0003'
+        );
+        expect(starts).toHaveLength(before + 1);
+      }
+      botRow = null;
+    });
+
+    it('does not look for a bot approval when an armed row already starts the evaluation', async () => {
+      settingsState.enabled = false;
+      armedRow = { id: 'row-1' };
+      const lookups = botLookups.length;
+      await deliver('pull_request', { action: 'synchronize', pull_request: pr() });
+      expect(botLookups).toHaveLength(lookups);
     });
 
     it('starts nothing when switched off and nothing was armed', async () => {

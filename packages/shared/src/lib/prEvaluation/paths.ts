@@ -144,6 +144,24 @@ export const NON_SOURCE_GLOBS: readonly string[] = [
 export const TEST_SKIP_PATTERN =
   /\.(skip|only|todo)\b|\bx(it|test|describe)\s*\(|skipIf|skipUnless|@pytest\.mark\.(skip|xfail)|\bt\.Skip(Now)?\b|@Disabled|@Ignore|@Pending|\bpending\s*\(|skipTest|\bunittest\.skip/;
 
+/**
+ * The paths a bot approval may cover: documentation and tests. Every changed path must match one,
+ * on top of the sensitive-path rules, which still make a change HIGH before this list is asked.
+ */
+export const DEFAULT_BOT_APPROVAL_PATHS: readonly string[] = [
+  '**/*.md',
+  '**/*.mdx',
+  'docs/**',
+  '**/*.test.*',
+  '**/*.spec.*',
+  '**/__tests__/**',
+  '**/test/**',
+  '**/tests/**',
+];
+
+/** Most globs the bot approval allowlist may hold. */
+export const MAX_BOT_APPROVAL_PATHS = 50;
+
 export const MAX_GLOB_LENGTH = 200;
 export const MAX_PATH_LENGTH = 1024;
 /** Most alternatives one glob may expand to. */
