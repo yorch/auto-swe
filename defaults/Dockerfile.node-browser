@@ -1,0 +1,22 @@
+FROM node:26-bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git \
+      tar \
+      ripgrep \
+      ca-certificates \
+      ffmpeg \
+      fonts-liberation \
+      fonts-noto-color-emoji \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    NODE_PATH=/usr/local/lib/node_modules
+
+RUN npm install -g playwright@1.64.1 \
+    && npx playwright install --with-deps chromium
+
+WORKDIR /workspace/target-repo
+RUN mkdir -p /workspace && chown -R node:node /workspace
+
+USER node

@@ -21,6 +21,7 @@ const SECRET_WRAPPER =
 export interface PodRef {
   namespace: string;
   pod: string;
+  container?: string;
 }
 
 /** `kubectl exec` up to and including the `--` that precedes the command. */
@@ -31,7 +32,7 @@ export function execPrefix(ref: PodRef, interactive: boolean): string[] {
     '--namespace',
     ref.namespace,
     '--container',
-    WORKSPACE_CONTAINER,
+    ref.container ?? WORKSPACE_CONTAINER,
     ref.pod,
     '--',
   ];

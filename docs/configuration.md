@@ -476,6 +476,14 @@ boundaries are described in [run activity](./run-activity.md#container-egress-pr
 and retention use `workflow.httpCaptureEnabled`, `workflow.httpCaptureBodyMaxBytes`, and
 `workflow.httpCaptureRetentionDays` in the setting registry; HTTP pruning shares the transcript sweep.
 
+The `uiValidation` group contains ADMIN-only, GLOBAL-only settings for run evidence:
+`uiValidation.maxScreenshotBytes` (5,000,000 bytes), `uiValidation.maxVideoBytes` (50,000,000
+bytes), `uiValidation.maxEvidencePerRun` (200 items), `uiValidation.evidenceRetentionDays` (90
+days), `uiValidation.prInlineImages` (off), and `uiValidation.agentRecordVideo` (on). They are not
+run-pinned and apply through the settings cache. Public PR screenshot copies require both
+`UI_EVIDENCE_PUBLIC_BUCKET` and `UI_EVIDENCE_PUBLIC_BASE_URL` in the worker environment in addition
+to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-managed.
+
 ## Limitations
 
 - **Git identity is not pinned to a run.** The identity resolves when each workspace is created. A

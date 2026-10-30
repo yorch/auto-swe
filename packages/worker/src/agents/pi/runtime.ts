@@ -4,6 +4,7 @@ import type { AgentMessage, AgentTool } from '@mariozechner/pi-agent-core';
 import type { AssistantMessage, Message, ToolResultMessage } from '@mariozechner/pi-ai';
 import type { LanguageModel } from 'ai';
 import { resolveModel } from '../../lib/models.js';
+import { BROWSER_TOOLS, type BrowserToolset } from '../browserTools.js';
 import {
   type HarnessAdapter,
   type HarnessRuntimeOptions,
@@ -53,6 +54,7 @@ export interface PiRuntimeOptions extends Omit<HarnessRuntimeOptions<PiAccess>, 
    * Agent names). An empty list is no tools, never all of them.
    */
   tools?: readonly PiTool[];
+  browserToolset?: BrowserToolset;
   /** The bound model, in place of resolving `access` (tests). */
   languageModel?: LanguageModel;
 }
@@ -171,6 +173,7 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
   const { access, loadProjectSettings, maxTurns, workspace } = options;
   const tools = options.tools ? [...options.tools] : piToolsFor(options.toolKeys);
   const policy: PiPolicyContext = {
+    browserTools: options.browserToolset ? BROWSER_TOOLS.map((entry) => entry.name) : [],
     containerId: workspace.containerId,
     projectContextLoaded: loadProjectSettings,
     tools,
@@ -179,6 +182,7 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
   let session:
     | {
         agentTools: AgentTool[];
+        browserTools: AgentTool[];
         /** The relayed MCP tools among `agentTools`. */
         mcpTools: AgentTool[];
         messages: AgentMessage[];
@@ -202,12 +206,42 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
         : [];
       policy.mcpTools = mcpTools.map((t) => t.name);
       const own = await buildPiTools({ granted: tools, holder, maxToolOutputChars, workspace });
+      const browserTools = options.browserToolset
+        ? BROWSER_TOOLS.map((entry) => ({
+            description: entry.description,
+            async execute(_id: string, params: unknown) {
+              const result = await options.browserToolset?.call(entry.name, params);
+              return {
+                content: [
+                  { text: result?.text ?? '', type: 'text' as const },
+                  ...(result?.image
+                    ? [
+                        {
+                          data: result.image.toString('base64'),
+                          mimeType: 'image/png',
+                          type: 'image' as const,
+                        },
+                      ]
+                    : []),
+                ],
+                details: undefined,
+              };
+            },
+            label: entry.name,
+            name: entry.name,
+            parameters: entry.schema.toJSONSchema() as AgentTool['parameters'],
+          }))
+        : [];
       session = {
-        agentTools: [...own, ...mcpTools],
+        agentTools: [...own, ...mcpTools, ...browserTools],
+        browserTools,
         mcpTools,
         messages: [],
         projectContext: loadProjectSettings ? await readProjectContext(turn) : null,
       };
+    }
+    if (!session) {
+      throw new Error('Pi session failed to initialize');
     }
     return session;
   }
@@ -250,7 +284,7 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
       );
       const prompt: AgentMessage = { content: user, role: 'user', timestamp: Date.now() };
       const systemPrompt = piSystemPrompt({
-        extraTools: open.mcpTools,
+        extraTools: [...open.mcpTools, ...open.browserTools],
         projectContext: open.projectContext,
         system,
         tools,
@@ -406,6 +440,7 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
     capabilities: PI_CAPABILITIES,
     async close() {
       await relay?.close();
+      await options.browserToolset?.close();
     },
     decide: async (toolName, input) => {
       const refused = canonicalisePiArgs(toolName, input);

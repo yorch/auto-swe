@@ -43,8 +43,8 @@ const repo = {
   type: 'git_repo',
 } as unknown as RepositorySummary;
 
-function renderEdit() {
-  render(<ConnectionFormModal mode={{ kind: 'edit', repo }} onClose={() => {}} open />);
+function renderEdit(initial = repo) {
+  render(<ConnectionFormModal mode={{ kind: 'edit', repo: initial }} onClose={() => {}} open />);
 }
 
 const testsField = () => screen.getByLabelText('Tests') as HTMLInputElement;
@@ -82,6 +82,53 @@ describe('ConnectionFormModal gate commands', () => {
       runLint: 'pnpm lint',
       runTests: 'npm test',
     });
+  });
+
+  it('lets a team admin save an app preview recipe from JSON', async () => {
+    auth.teamRole = 'ADMIN';
+    renderEdit();
+    fireEvent.change(screen.getByLabelText('App preview (UI validation)'), {
+      target: { value: JSON.stringify({ readyUrl: 'http://localhost:3000', start: 'npm start' }) },
+    });
+    save();
+
+    await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
+    expect(update.mutateAsync.mock.calls[0]?.[0].previewConfig).toEqual({
+      readyUrl: 'http://localhost:3000',
+      start: 'npm start',
+    });
+  });
+
+  it('clears a saved preview recipe when its JSON field is empty', async () => {
+    auth.teamRole = 'ADMIN';
+    renderEdit({
+      ...repo,
+      previewConfig: {
+        baseUrl: 'http://localhost:3000',
+        readyTimeoutMs: 180_000,
+        readyUrl: 'http://localhost:3000',
+        start: 'npm start',
+      },
+    });
+    fireEvent.change(screen.getByLabelText('App preview (UI validation)'), {
+      target: { value: '' },
+    });
+    save();
+
+    await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
+    expect(update.mutateAsync.mock.calls[0]?.[0].previewConfig).toBeNull();
+  });
+
+  it('shows server validation errors for an invalid app preview recipe', async () => {
+    auth.teamRole = 'ADMIN';
+    update.mutateAsync.mockRejectedValueOnce(new Error('readyUrl must use localhost'));
+    renderEdit();
+    fireEvent.change(screen.getByLabelText('App preview (UI validation)'), {
+      target: { value: JSON.stringify({ readyUrl: 'https://example.com', start: 'npm start' }) },
+    });
+    save();
+
+    expect(await screen.findByText('readyUrl must use localhost')).toBeTruthy();
   });
 
   describe('onboarding', () => {

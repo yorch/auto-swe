@@ -7,6 +7,7 @@ import { isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import { credentialDestinationChanged } from '@auto-swe/shared/lib/credentialDestination';
 import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { type PermissionLookup, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
+import { type PreviewConfig, PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
 import {
   lookupRepoPermission,
   type PermissionRepo,
@@ -99,6 +100,7 @@ const CreateRepoSchema = z.object({
   language: z.string().optional(),
   name: z.string().max(200).optional(),
   organizationName: z.string().min(1).optional(),
+  previewConfig: PreviewConfigSchema.nullable().optional(),
   repoName: z.string().min(1).optional(),
   teamId: z.string().uuid(),
   // MCP servers are a tool source for agents, not a workspace target, and
@@ -159,6 +161,7 @@ const UpdateRepoSchema = z.object({
   isActive: z.boolean().optional(),
   language: z.string().nullable().optional(),
   name: z.string().max(200).nullable().optional(),
+  previewConfig: PreviewConfigSchema.nullable().optional(),
   teamId: z.string().uuid().optional(),
 });
 
@@ -238,6 +241,51 @@ async function gateCommandsProblem(
   return {
     code: 'GATE_COMMANDS_FORBIDDEN',
     message: "Changing a repository's gate commands requires team-admin role",
+    status: 403,
+  };
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalJson);
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, child]) => [key, canonicalJson(child)])
+    );
+  }
+  return value;
+}
+
+function samePreviewConfig(a: unknown, b: unknown): boolean {
+  return JSON.stringify(canonicalJson(a ?? null)) === JSON.stringify(canonicalJson(b ?? null));
+}
+
+async function previewConfigProblem(
+  fastify: FastifyInstance,
+  user: JwtPayload,
+  repo: { previewConfig: unknown; teamId: string; type: string },
+  next: PreviewConfig | null,
+  ownerTeamId: string
+): Promise<{ code: string; message: string; status: 400 | 403 } | null> {
+  if (samePreviewConfig(next, repo.previewConfig)) {
+    return null;
+  }
+  if (repo.type !== 'git_repo') {
+    return {
+      code: 'VALIDATION_ERROR',
+      message: 'Only a git repository can have an app preview recipe',
+      status: 400,
+    };
+  }
+  if (await isShellAuthor(fastify, user, ownerTeamId)) {
+    return null;
+  }
+  return {
+    code: 'PREVIEW_CONFIG_FORBIDDEN',
+    message: "Changing a repository's app preview requires team-admin role",
     status: 403,
   };
 }
@@ -703,6 +751,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         name,
         config,
         gateCommands: rawGateCommands,
+        previewConfig,
         ...rest
       } = request.body;
 
@@ -754,6 +803,16 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       );
       if (gateProblem) {
         return sendError(reply, gateProblem.status, gateProblem.code, gateProblem.message);
+      }
+      const previewProblem = await previewConfigProblem(
+        fastify,
+        user,
+        { previewConfig: null, teamId, type: type ?? 'git_repo' },
+        previewConfig ?? null,
+        teamId
+      );
+      if (previewProblem) {
+        return sendError(reply, previewProblem.status, previewProblem.code, previewProblem.message);
       }
 
       const urls = await normaliseRepositoryUrls({
@@ -830,6 +889,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             config: config != null ? (config as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
             name: name ?? null,
             organizationName: organizationName ?? null,
+            previewConfig:
+              previewConfig != null ? (previewConfig as Prisma.InputJsonValue) : Prisma.DbNull,
             repoName: repoName ?? null,
             teamId,
             type: type ?? 'git_repo',
@@ -851,6 +912,15 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           action: 'CREATE',
           actor: user,
           after: { gateCommands },
+          entityId: repo.id,
+          entityType: 'Connection',
+        });
+      }
+      if (previewConfig != null) {
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor: user,
+          after: { previewConfig },
           entityId: repo.id,
           entityType: 'Connection',
         });
@@ -905,6 +975,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           installation: { select: { host: true, installationId: true } },
           installationId: true,
           organizationName: true,
+          previewConfig: true,
           repoName: true,
           teamId: true,
           type: true,
@@ -976,6 +1047,27 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           return sendError(reply, gateProblem.status, gateProblem.code, gateProblem.message);
         }
       }
+      const nextPreviewConfig = request.body.previewConfig;
+      const previewConfigChange =
+        nextPreviewConfig !== undefined &&
+        !samePreviewConfig(nextPreviewConfig, repo.previewConfig);
+      if (nextPreviewConfig !== undefined) {
+        const previewProblem = await previewConfigProblem(
+          fastify,
+          user,
+          repo,
+          nextPreviewConfig,
+          request.body.teamId ?? repo.teamId
+        );
+        if (previewProblem) {
+          return sendError(
+            reply,
+            previewProblem.status,
+            previewProblem.code,
+            previewProblem.message
+          );
+        }
+      }
       // Moving a repository hands its gate commands to the destination team: they run in every
       // run the new owners launch. Unchanged commands were not vouched for by anyone there, so
       // the move takes the role on the destination, as a change would.
@@ -995,6 +1087,22 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           403,
           'GATE_COMMANDS_FORBIDDEN',
           'Moving a repository with gate commands requires team-admin role in the target team'
+        );
+      }
+      const keptPreviewConfig =
+        nextPreviewConfig === undefined ? repo.previewConfig : nextPreviewConfig;
+      if (
+        newTeamId &&
+        newTeamId !== repo.teamId &&
+        keptPreviewConfig != null &&
+        !previewConfigChange &&
+        !(await isShellAuthor(fastify, user, newTeamId))
+      ) {
+        return sendError(
+          reply,
+          403,
+          'PREVIEW_CONFIG_FORBIDDEN',
+          'Moving a repository with an app preview requires team-admin role in the target team'
         );
       }
 
@@ -1019,6 +1127,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         isActive,
         language,
         name,
+        previewConfig: bodyPreviewConfig,
         teamId,
       } = request.body;
       const { githubApiUrl, githubUrl } = urls;
@@ -1158,6 +1267,14 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             isActive,
             language,
             name,
+            ...(previewConfigChange
+              ? {
+                  previewConfig:
+                    bodyPreviewConfig === null
+                      ? Prisma.DbNull
+                      : (bodyPreviewConfig as Prisma.InputJsonValue),
+                }
+              : {}),
             teamId,
           },
           include: { team: { select: { id: true, name: true, slug: true } } },
@@ -1253,6 +1370,16 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           actor: user,
           after: { gateCommands: nextGateCommands },
           before: { gateCommands: normaliseGateCommands(repo.gateCommands) },
+          entityId: repo.id,
+          entityType: 'Connection',
+        });
+      }
+      if (previewConfigChange) {
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: user,
+          after: { previewConfig: nextPreviewConfig },
+          before: { previewConfig: repo.previewConfig },
           entityId: repo.id,
           entityType: 'Connection',
         });

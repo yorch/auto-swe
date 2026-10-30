@@ -79,6 +79,14 @@ vi.mock('../agents/implementer.js', () => ({
     promptSuffix: '',
     skills: [],
   })),
+  resolveImplementerConfig: vi.fn(async () => ({
+    harnessApiRetries: 0,
+    harnessContextTokens: 0,
+    maxSteps: 50,
+    maxToolOutputChars: 20_000,
+    skills: [],
+    toolKeys: null,
+  })),
 }));
 
 vi.mock('../agents/securityReviewProcessor.js', () => ({
@@ -158,7 +166,7 @@ vi.mock('./workspace.js', () => ({
   shellQuote: (s: string) => `'${s}'`,
 }));
 
-import { buildImplementerForActivity } from '../agents/implementer.js';
+import { buildImplementerForActivity, resolveImplementerConfig } from '../agents/implementer.js';
 import {
   currentAttempt,
   persistActivityTrace,
@@ -317,6 +325,38 @@ describe('executeImplementation base branch', () => {
     );
     expect(diff?.[0]).toBe("git diff origin/'release/1.4'");
     expect(result.baseBranch).toBe('release/1.4');
+  });
+
+  it('starts preview services only for an explicitly browser-granted implementer', async () => {
+    prismaMock.connection.findUniqueOrThrow.mockResolvedValueOnce({
+      defaultBranch: 'main',
+      detectedStack: null,
+      executorImage: null,
+      id: 'repo-1',
+      organizationName: 'acme',
+      previewConfig: {
+        readyUrl: 'http://localhost:3000',
+        services: [{ image: 'mirror.gcr.io/library/redis:7', name: 'redis' }],
+        start: 'npm run dev',
+      },
+      repoName: 'api',
+      teamId: 'team-1',
+    } as never);
+    vi.mocked(resolveImplementerConfig).mockResolvedValueOnce({
+      harnessApiRetries: 0,
+      harnessContextTokens: 0,
+      maxSteps: 50,
+      maxToolOutputChars: 20_000,
+      skills: [],
+      toolKeys: ['browser'],
+    });
+
+    await executeImplementation(REQUEST);
+
+    expect(vi.mocked(createWorkspace).mock.calls[0]?.[6]).toMatchObject({
+      services: [{ image: 'mirror.gcr.io/library/redis:7', name: 'redis' }],
+      teamId: 'team-1',
+    });
   });
 
   it('refuses a malformed base before any workspace exists', async () => {

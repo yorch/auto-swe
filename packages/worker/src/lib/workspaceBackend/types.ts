@@ -42,6 +42,15 @@ export interface WorkspaceContainerSpec {
    * A name may not also appear in `env`.
    */
   secretEnv?: Record<string, string>;
+  services?: WorkspaceServiceSpec[];
+}
+
+export interface WorkspaceServiceSpec {
+  name: string;
+  image: string;
+  env?: Record<string, string>;
+  port?: number;
+  readyCommand?: string;
 }
 
 /**
@@ -54,6 +63,7 @@ export interface WorkspaceContainerSpec {
 export interface WorkspaceHandle {
   readonly id: string;
   readonly keeperPid: number;
+  readonly container?: string;
 }
 
 export interface WorkspaceExecOptions {

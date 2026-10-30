@@ -12,6 +12,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const { teamFindUniqueMock } = vi.hoisted(() => ({
+  teamFindUniqueMock: vi.fn(async () => null),
+}));
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: { team: { findUnique: teamFindUniqueMock } },
+}));
+
 vi.mock('../lib/egressWiring.js', () => ({ beginWorkspaceEgress: vi.fn(async () => null) }));
 
 import { beginWorkspaceEgress } from '../lib/egressWiring.js';
@@ -1357,5 +1364,28 @@ describe('createWorkspace commit identity (execShellAsync mocked)', () => {
     vi.mocked(resolveGitIdentity).mockRejectedValue(new Error('connection reset'));
     await expect(createWorkspace(URL, 'auto/T-1', 'main')).rejects.toThrow('connection reset');
     expect(allCommands().some((c) => c.includes('docker run'))).toBe(false);
+  });
+});
+
+describe('createWorkspace service image allowlist', () => {
+  it('rejects a service image absent from the team allowlist before creating a workspace', async () => {
+    teamFindUniqueMock.mockResolvedValueOnce({ shellImageAllowlist: [] } as never);
+
+    await expect(
+      createWorkspace(
+        'https://github.com/acme/repo.git',
+        'auto/T-1',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        {
+          services: [{ image: 'mirror.gcr.io/library/postgres:18', name: 'postgres' }],
+          teamId: 'team-a',
+        }
+      )
+    ).rejects.toThrow(/not on the shell-step allowlist/i);
+
+    expect(execShellAsync).not.toHaveBeenCalled();
   });
 });

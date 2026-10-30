@@ -25,12 +25,14 @@ export const ALL_TOOL_KEYS = [
   'listDirectory',
   'bash',
   'mcp',
+  'browser',
   'searchKnowledge',
   'submitLearning',
 ] as const;
 
 const TOOL_LABELS: Record<(typeof ALL_TOOL_KEYS)[number], string> = {
   bash: 'Run workspace commands',
+  browser: 'Use the app browser for UI verification (explicit opt-in)',
   listDirectory: 'List workspace directories',
   mcp: 'Use connected MCP tools',
   readFile: 'Read workspace files',

@@ -32,7 +32,11 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
-import { parseImageProbeOutput, probeExecutorImage } from './probeExecutorImage.js';
+import {
+  IMAGE_CONTRACT_PROBE_SCRIPT,
+  parseImageProbeOutput,
+  probeExecutorImage,
+} from './probeExecutorImage.js';
 
 const ALL_OK_STDOUT = [
   'ASW|sh|ok|the probe is running under sh',
@@ -41,6 +45,7 @@ const ALL_OK_STDOUT = [
   'ASW|rg|ok|ripgrep 15.1.0',
   'ASW|exec-user|ok|node (uid 1000)',
   'ASW|workspace|ok|/workspace exists and is writable by the exec user',
+  'ASW|browser|ok|playwright 1.64.1 available',
 ].join('\n');
 
 describe('parseImageProbeOutput', () => {
@@ -54,8 +59,10 @@ describe('parseImageProbeOutput', () => {
       'rg',
       'exec-user',
       'workspace',
+      'browser',
     ]);
     expect(r.checks.find((c) => c.name === 'exec-user')?.required).toBe(false);
+    expect(r.checks.find((c) => c.name === 'browser')?.required).toBe(false);
   });
 
   it('fails when a required check reports fail', () => {
@@ -69,6 +76,29 @@ describe('parseImageProbeOutput', () => {
     expect(r.ok).toBe(true);
     const rg = r.checks.find((c) => c.name === 'rg');
     expect(rg).toMatchObject({ ok: false, required: false });
+  });
+
+  it('stays ok when the advisory browser check reports unavailable', () => {
+    const r = parseImageProbeOutput(
+      ALL_OK_STDOUT.replace(
+        'ASW|browser|ok|playwright 1.64.1 available',
+        'ASW|browser|fail|no Playwright/Chromium; browser validation unavailable'
+      )
+    );
+    expect(r.ok).toBe(true);
+    expect(r.checks.find((c) => c.name === 'browser')).toMatchObject({
+      detail: 'no Playwright/Chromium; browser validation unavailable',
+      ok: false,
+      required: false,
+    });
+  });
+
+  it('checks Playwright and Chromium through the advisory browser probe', () => {
+    expect(IMAGE_CONTRACT_PROBE_SCRIPT).toContain('require.resolve("playwright")');
+    expect(IMAGE_CONTRACT_PROBE_SCRIPT).toContain('chromium.executablePath()');
+    expect(IMAGE_CONTRACT_PROBE_SCRIPT).toContain(
+      'no Playwright/Chromium; browser validation unavailable'
+    );
   });
 
   it('synthesizes a required check the script never reported as failed', () => {

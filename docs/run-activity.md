@@ -91,13 +91,29 @@ Governed external writes emit `external_write` activity events with connection/p
 and outcome (`done`, `replayed`, `refused`, or `ambiguous`), without the write's secret payload.
 These events supplement, rather than replace, the external-write ledger and governance checks.
 
+## UI evidence
+
+Workflow activities and agents attach screenshots, browser recordings, traces and text logs to a
+run. Evidence metadata records its kind, source, caption, page URL, workflow node, attempt and
+dimensions where known; its bytes use the workflow artifact store. The Evidence panel requests
+short-lived, user-bound media links and the gateway rechecks the user's current account and run
+visibility each time a link is fetched. Only PNG/JPEG/WebP images, WebM video, ZIP archives and
+plain text are served with their respective media types; other types are downloaded as opaque
+binary data.
+
+Evidence items are limited by `uiValidation.maxScreenshotBytes`, `uiValidation.maxVideoBytes` and
+`uiValidation.maxEvidencePerRun`. Trace files can be opened with
+`npx playwright show-trace <file>`.
+
 ## Retention
 
 The daily transcript sweep (`AGENT_TRANSCRIPT_PRUNE_ENABLED`, `AGENT_TRANSCRIPT_PRUNE_CRON`,
 default `57 4 * * *`) also prunes HTTP rows whose `createdAt` exceeds
 `workflow.httpCaptureRetentionDays`, in bounded batches. Disabling that sweep stops HTTP pruning
 too. Deleting a run cascades to its HTTP rows. Transcript legal holds do not hold HTTP metadata or
-bodies; transcripts and artifacts have their own retention rules.
+bodies; transcripts and artifacts have their own retention rules. The same scheduled sweep removes
+expired UI evidence and its artifacts using `uiValidation.evidenceRetentionDays`. Evidence cleanup
+runs after transcript pruning and does not fail transcript pruning.
 
 ## API and authorization
 

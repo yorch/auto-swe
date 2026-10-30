@@ -56,7 +56,7 @@ function envEntries(spec: WorkspaceContainerSpec): EnvEntry[] {
     }
     return { name: pair.slice(0, eq), value: pair.slice(eq + 1) };
   });
-  const secretNames = secretEnvNames(spec);
+  const secretNames = workspaceSecretEnvNames(spec);
   const clash = plain.find((e) => secretNames.includes(e.name));
   if (clash) {
     throw new Error(`environment variable ${clash.name} is both plain and secret`);
@@ -71,8 +71,29 @@ function envEntries(spec: WorkspaceContainerSpec): EnvEntry[] {
   ];
 }
 
-/** The validated names of a spec's `secretEnv`, in a stable order. */
-function secretEnvNames(spec: WorkspaceContainerSpec): string[] {
+function serviceEnvSecretKey(serviceName: string, envName: string): string {
+  return `ASW_SERVICE_${serviceName.toUpperCase().replaceAll('-', '_')}_${envName}`;
+}
+
+function serviceEnvValues(spec: WorkspaceContainerSpec): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const service of spec.services ?? []) {
+    for (const [name, value] of Object.entries(service.env ?? {})) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(name)) {
+        throw new Error(`invalid service environment name: ${name}`);
+      }
+      const secretKey = serviceEnvSecretKey(service.name, name);
+      if (secretKey in values || secretKey in (spec.secretEnv ?? {})) {
+        throw new Error(`duplicate service secret key: ${secretKey}`);
+      }
+      values[secretKey] = value;
+    }
+  }
+  return values;
+}
+
+/** The validated names of a spec's workspace `secretEnv`, in a stable order. */
+function workspaceSecretEnvNames(spec: WorkspaceContainerSpec): string[] {
   const names = Object.keys(spec.secretEnv ?? {}).sort();
   for (const name of names) {
     if (!SECRET_KEY_RE.test(name)) {
@@ -80,6 +101,11 @@ function secretEnvNames(spec: WorkspaceContainerSpec): string[] {
     }
   }
   return names;
+}
+
+/** All secret keys required by workspace and service containers. */
+function secretEnvNames(spec: WorkspaceContainerSpec): string[] {
+  return [...workspaceSecretEnvNames(spec), ...Object.keys(serviceEnvValues(spec)).sort()];
 }
 
 /** Whether `spec.secretEnv` names anything, so the pod needs a Secret. Validates the names. */
@@ -107,7 +133,7 @@ export function buildWorkspaceSecret(
   if (names.length === 0) {
     return null;
   }
-  const secrets = spec.secretEnv ?? {};
+  const secrets = { ...spec.secretEnv, ...serviceEnvValues(spec) };
   return {
     apiVersion: 'v1',
     data: Object.fromEntries(
@@ -188,6 +214,46 @@ export function buildWorkspacePod(
           },
           volumeMounts: [{ mountPath: WORKSPACE_MOUNT, name: 'workspace' }],
         },
+        ...(spec.services ?? []).map((service) => {
+          if (!/^[a-z][a-z0-9-]{0,30}$/.test(service.name)) {
+            throw new Error(`invalid workspace service name: ${service.name}`);
+          }
+          return {
+            env: Object.keys(service.env ?? {})
+              .sort()
+              .map((name) => {
+                if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+                  throw new Error(`invalid service environment name: ${name}`);
+                }
+                return {
+                  name,
+                  valueFrom: {
+                    secretKeyRef: {
+                      key: serviceEnvSecretKey(service.name, name),
+                      name: workspaceSecretName(spec.name),
+                      optional: false as const,
+                    },
+                  },
+                };
+              }),
+            image: service.image,
+            name: service.name,
+            resources: {
+              limits: resources,
+              requests: resources,
+            },
+            securityContext: {
+              allowPrivilegeEscalation: false,
+              capabilities: {
+                add: ['CHOWN', 'SETUID', 'SETGID', 'FOWNER', 'DAC_OVERRIDE'],
+                drop: ['ALL'],
+              },
+              runAsGroup: 0,
+              runAsNonRoot: false,
+              runAsUser: 0,
+            },
+          };
+        }),
       ],
       enableServiceLinks: false,
       hostAliases: [

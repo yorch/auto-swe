@@ -3,6 +3,7 @@ import type { Readable, Writable } from 'node:stream';
 import type { Workspace } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import type { McpConnectionTarget } from '../../lib/config/mcpConnection.js';
+import type { BrowserToolset } from '../browserTools.js';
 import type { ContainerPlatform } from './binary.js';
 import type { ToolDecision } from './policy.js';
 import type { UsageNormaliser, UsageTotals } from './usage.js';
@@ -259,6 +260,8 @@ export interface HarnessRuntimeOptions<Access> {
    * connection's credential never enters the container. One that cannot ignores it.
    */
   mcp?: McpConnectionTarget | null;
+  /** Available only for an explicit `browser` tool grant. */
+  browserToolset?: BrowserToolset;
   tracer: AgentTracer;
   workspace: Workspace;
 }

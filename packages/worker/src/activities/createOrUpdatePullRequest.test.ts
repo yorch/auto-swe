@@ -69,6 +69,13 @@ describe('formatPRTitle / formatPRBody', () => {
     // Nothing expanded the smuggled tokens into real values.
     expect(body).not.toContain('src/JIRA-7.ts');
     expect(body.match(/All tests passing/g)).toHaveLength(1);
+    expect(body).not.toContain('### UI evidence');
+  });
+
+  it('expands uiEvidence once and uses an empty value by default', () => {
+    const evidence = '### UI evidence\n\n[View run evidence](https://example.test/runs/1#evidence)';
+    expect(formatPRBody(request, codeResult, '{{uiEvidence}}', evidence)).toBe(evidence);
+    expect(formatPRBody(request, codeResult, '{{uiEvidence}}')).toBe('');
   });
 
   it('words test results as passing, failing, or unreadable', () => {

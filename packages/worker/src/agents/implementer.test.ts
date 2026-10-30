@@ -91,6 +91,7 @@ const workspace = {
     author: { email: 'auto-swe@localhost', name: 'auto-swe' },
     committer: { email: 'auto-swe@localhost', name: 'auto-swe' },
   },
+  readFile: vi.fn(async () => Buffer.alloc(0)),
 } satisfies Workspace;
 
 async function writeTool(): Promise<WriteTool> {

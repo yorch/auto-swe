@@ -11,12 +11,18 @@ import {
 } from '@auto-swe/shared/lib/agentRun';
 import { decideAdmission } from '@auto-swe/shared/lib/agentRunAdmission';
 import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
+import { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
 import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 import type { FileChange, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
-import { grantedWorkspaceToolIds, selectAgentRunTools } from '../agents/agentRunTools.js';
+import {
+  grantedWorkspaceToolIds,
+  grantsBrowserTool,
+  selectAgentRunTools,
+} from '../agents/agentRunTools.js';
+import { BrowserToolset, createMastraBrowserTools } from '../agents/browserTools.js';
 import type { BoundHarness } from '../agents/harness/registry.js';
 import { HARNESSES } from '../agents/harnessRegistry.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
@@ -218,6 +224,16 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
   const repoRef = toRepoRef(repo);
   const scm = getScmProvider(repoRef);
   const { authedCloneUrl } = await scm.cloneCredentials(repoRef);
+  let services: ReturnType<typeof PreviewConfigSchema.parse>['services'];
+  if (grantsBrowserTool(resolved.toolKeys)) {
+    const previewRow = await prisma.connection.findUnique({
+      select: { previewConfig: true },
+      where: { id: repo.id },
+    });
+    services = previewRow?.previewConfig
+      ? PreviewConfigSchema.parse(previewRow.previewConfig).services
+      : undefined;
+  }
 
   const tracer = new AgentTracer();
   let agentWs: Workspace | undefined;
@@ -235,7 +251,7 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       executorImageFor(repo),
       undefined,
       undefined,
-      { detectedStack: repo.detectedStack, teamId: repo.teamId }
+      { detectedStack: repo.detectedStack, services, teamId: repo.teamId }
     );
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
 
@@ -250,6 +266,7 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       maxSteps: effective.maxSteps,
       maxToolOutputChars: settings['workspace.maxToolOutputChars'],
       prompt,
+      repoId: input.repo.id,
       resolved,
       settingsCtx,
       tracer,
@@ -540,6 +557,7 @@ interface AgentLoopInput {
   resolved: ResolvedAgent;
   settingsCtx: ResolveCtx;
   tracer: AgentTracer;
+  repoId: string;
   workspace: Workspace;
 }
 
@@ -562,6 +580,21 @@ async function runOnMastra(
   const { agentCtx, key, resolved, tracer } = input;
   const built = buildWorkspaceTools(input.workspace, tracer, input.maxToolOutputChars);
   const knowledgeTools = buildKnowledgeTools(tracer);
+  const closeFns: Array<() => Promise<void>> = [];
+  const browserToolset = grantsBrowserTool(resolved.toolKeys)
+    ? new BrowserToolset({
+        containerId: input.workspace.containerId,
+        repoId: input.repoId,
+        tracer,
+        workspace: input.workspace,
+      })
+    : undefined;
+  if (browserToolset) {
+    closeFns.push(browserToolset.close.bind(browserToolset));
+  }
+  onMcp(async () => {
+    await Promise.allSettled(closeFns.map((close) => close()));
+  });
   const spec = await resolveAgentSpec(
     {
       agentKey: key as ModelBackedAgentKey,
@@ -569,6 +602,7 @@ async function runOnMastra(
       // intersects offered tools with `toolKeys`, so nothing else binds them.
       availableTools: {
         ...selectAgentRunTools(built, resolved.toolKeys),
+        ...(browserToolset ? createMastraBrowserTools(browserToolset) : {}),
         ...(resolved.toolKeys?.includes('searchKnowledge')
           ? { searchKnowledge: knowledgeTools.searchKnowledge }
           : {}),
@@ -589,7 +623,7 @@ async function runOnMastra(
   let mcpTools: AgentTools | undefined;
   if (mcpTarget) {
     const loaded = await loadMcpTools(mcpTarget, tracer);
-    onMcp(loaded.close);
+    closeFns.push(loaded.close);
     mcpTools = loaded.tools as AgentTools;
     spec.tools = { ...loaded.tools, ...spec.tools } as AgentTools;
   }
@@ -635,6 +669,16 @@ async function runOnHarness(
   const systemPrompt = composeAgentPrompt(resolved);
   const runtime = harness.build({
     deadline: input.deadline,
+    ...(grantsBrowserTool(resolved.toolKeys)
+      ? {
+          browserToolset: new BrowserToolset({
+            containerId: input.workspace.containerId,
+            repoId: input.repoId,
+            tracer,
+            workspace: input.workspace,
+          }),
+        }
+      : {}),
     exactToolKeys: grantedWorkspaceToolIds(resolved.toolKeys),
     loadProjectSettings: true,
     maxTurns: input.maxSteps,

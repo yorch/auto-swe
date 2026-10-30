@@ -20,6 +20,7 @@ import {
 import { skillMenuLine, skillPromptBlock } from '../lib/config/skillPrompt.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { getModel, type LanguageModel } from '../lib/models.js';
+import { BrowserToolset, createMastraBrowserTools } from './browserTools.js';
 import { buildKnowledgeTools } from './knowledgeTools.js';
 import { createLessonTools } from './lessonTools.js';
 import { isMcpToolEnabled, loadMcpTools, type McpToolRecord } from './mcpTools.js';
@@ -74,6 +75,8 @@ export interface ImplementerAgentOptions {
   lessonRepoId?: string;
   /** Knowledge tools require explicit Agent.toolKeys grants; null never enables them. */
   knowledgeToolKeys?: string[];
+  /** Browser access is supplied only when `browser` is explicitly granted. */
+  browserToolset?: BrowserToolset;
 }
 
 export { skillMenuLine };
@@ -95,6 +98,7 @@ export async function createImplementerAgent(
    * leaking the client connection.
    */
   closeMcp?: () => Promise<void>;
+  closeBrowser?: () => Promise<void>;
 }> {
   // Resolved once, here, rather than inside a tool's `execute` — every
   // bash/readFile/listDirectory call in the session shares this value instead
@@ -107,6 +111,10 @@ export async function createImplementerAgent(
     tracer,
     maxToolOutputChars
   );
+  const browserTools =
+    tools?.includes('browser') && options?.browserToolset
+      ? createMastraBrowserTools(options.browserToolset)
+      : {};
 
   // Build a name→skill index for the load_skill tool to look up full promptText.
   const resolvedSkills = skills ?? [];
@@ -227,14 +235,22 @@ export async function createImplementerAgent(
     name: 'implementer',
     // Built-in tool keys always win over MCP tool keys on collision —
     // a remote server must not be able to shadow bash/readFile/writeFile.
-    tools: { ...mcpTools, ...resolvedActiveTools },
+    tools: { ...mcpTools, ...resolvedActiveTools, ...browserTools },
   });
 
   const mastra = new Mastra({
     agents: { implementer: implementerAgent },
   });
 
-  return { agent: mastra.getAgent('implementer'), closeMcp, mastra, promptSuffix };
+  return {
+    agent: mastra.getAgent('implementer'),
+    closeBrowser: browserTools
+      ? options?.browserToolset?.close.bind(options.browserToolset)
+      : undefined,
+    closeMcp,
+    mastra,
+    promptSuffix,
+  };
 }
 
 /**
@@ -389,6 +405,7 @@ export async function buildImplementerForActivity(
   agent: Agent;
   promptSuffix: string;
   closeMcp?: () => Promise<void>;
+  closeBrowser?: () => Promise<void>;
   maxSteps: number;
   skills: ResolvedSkill[];
   toolKeys: string[] | null;
@@ -398,24 +415,39 @@ export async function buildImplementerForActivity(
     agentKey
   );
   const mcpTarget = await resolveImplementerMcpTarget(agentKey, ctx, tracer);
-  const { agent, promptSuffix, closeMcp } = await createImplementerAgent(
-    workspace,
-    tracer,
-    toolKeys,
-    skills,
-    {
-      agentKey,
-      ...(lessonRepoId ? { lessonRepoId } : {}),
-      // The effective keys already fold a persona into the implementer's set, so the
-      // knowledge grant is read from there and never widened by a persona.
-      knowledgeToolKeys: toolKeys?.filter(
-        (key) => key === 'searchKnowledge' || key === 'submitLearning'
-      ),
-      maxToolOutputChars,
-      mcp: mcpTarget,
-      resolveCtx: ctx,
-    },
-    modelOverride
-  );
-  return { agent, closeMcp, maxSteps, promptSuffix, skills, toolKeys };
+  const browserToolset =
+    toolKeys?.includes('browser') && lessonRepoId
+      ? new BrowserToolset({
+          containerId: workspace.containerId,
+          repoId: lessonRepoId,
+          tracer,
+          workspace,
+        })
+      : undefined;
+  try {
+    const { agent, promptSuffix, closeMcp, closeBrowser } = await createImplementerAgent(
+      workspace,
+      tracer,
+      toolKeys,
+      skills,
+      {
+        agentKey,
+        ...(lessonRepoId ? { lessonRepoId } : {}),
+        // The effective keys already fold a persona into the implementer's set, so the
+        // knowledge grant is read from there and never widened by a persona.
+        knowledgeToolKeys: toolKeys?.filter(
+          (key) => key === 'searchKnowledge' || key === 'submitLearning'
+        ),
+        maxToolOutputChars,
+        mcp: mcpTarget,
+        resolveCtx: ctx,
+        ...(browserToolset ? { browserToolset } : {}),
+      },
+      modelOverride
+    );
+    return { agent, closeBrowser, closeMcp, maxSteps, promptSuffix, skills, toolKeys };
+  } catch (error) {
+    await browserToolset?.close();
+    throw error;
+  }
 }

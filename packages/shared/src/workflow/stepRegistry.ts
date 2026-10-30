@@ -52,6 +52,7 @@ export const MCP_TOOL_KEY = 'mcp' as const;
 export const AGENT_TOOL_KEYS = [
   ...IMPLEMENTER_TOOL_IDS,
   MCP_TOOL_KEY,
+  'browser',
   ...KNOWLEDGE_TOOL_IDS,
 ] as const;
 export type AgentToolKey = (typeof AGENT_TOOL_KEYS)[number];
@@ -645,6 +646,46 @@ register({
     'output.gates.<name>; output.passed is true only when every gate ran and passed.',
   label: 'Run quality gates',
   name: 'runQualityGates',
+});
+
+register({
+  category: 'gate',
+  configFields: [
+    {
+      description: 'Which configured UI checks to run. Defaults to both when e2e is configured.',
+      enumValues: ['smoke', 'e2e', 'both'],
+      key: 'mode',
+      label: 'Mode',
+      type: 'enum',
+    },
+    {
+      description: 'Record a browser video. Defaults to true.',
+      key: 'recordVideo',
+      label: 'Record video',
+      type: 'boolean',
+    },
+    {
+      description: 'Fail when the browser reports console errors. Defaults to true.',
+      key: 'failOnConsoleErrors',
+      label: 'Fail on console errors',
+      type: 'boolean',
+    },
+    {
+      description: 'Wall-clock limit for UI verification, in milliseconds. Defaults to 1200000.',
+      key: 'timeoutMs',
+      label: 'Timeout (ms)',
+      type: 'number',
+    },
+    {
+      description: 'Branch to verify. Defaults to the branch produced by implementation.',
+      key: 'branch',
+      label: 'Branch',
+      type: 'string',
+    },
+  ],
+  description: 'Run the repository app preview smoke checks and configured end-to-end tests.',
+  label: 'Verify UI',
+  name: 'uiVerify',
 });
 
 register({

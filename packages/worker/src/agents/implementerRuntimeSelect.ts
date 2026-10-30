@@ -6,6 +6,7 @@ import { type AgentRuntimeSource, resolveAgentRuntime } from '../lib/config/agen
 import { type ResolvedSkill, skillsToPromptSuffix } from '../lib/config/agentSkills.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { getBoundModel } from '../lib/models.js';
+import { BrowserToolset } from './browserTools.js';
 import { HARNESSES } from './harnessRegistry.js';
 import {
   buildImplementerForActivity,
@@ -116,7 +117,10 @@ export async function buildImplementerTurnRunner(input: {
     return runner({
       agent: bound.agent,
       boundModelSpec: bound.spec,
-      close: built.closeMcp,
+      close: async () => {
+        await built.closeBrowser?.();
+        await built.closeMcp?.();
+      },
       kind,
       kindSource,
       maxSteps: built.maxSteps,
@@ -136,6 +140,15 @@ export async function buildImplementerTurnRunner(input: {
     resolveImplementerConfig(input.ctx, agentKey),
     resolveImplementerMcpTarget(agentKey, input.ctx, input.tracer),
   ]);
+  const browserToolset =
+    config.toolKeys?.includes('browser') && input.repoId
+      ? new BrowserToolset({
+          containerId: input.workspace.containerId,
+          repoId: input.repoId,
+          tracer: input.tracer,
+          workspace: input.workspace,
+        })
+      : undefined;
   const runtime = harness.bind(agentKey, model).build({
     // The repository's own harness configuration (Claude Code's CLAUDE.md and
     // `.claude` settings) applies, so a flow ported from a developer machine
@@ -148,6 +161,7 @@ export async function buildImplementerTurnRunner(input: {
     maxTurns: config.maxSteps,
     // The same MCP connection the Mastra loop would bind, relayed from the worker.
     mcp: isMcpToolEnabled(config.toolKeys) ? mcpTarget : null,
+    ...(browserToolset ? { browserToolset } : {}),
     // The Agent row's tools bound the harness as they bound the Mastra loop.
     toolKeys: config.toolKeys,
     tracer: input.tracer,

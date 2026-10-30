@@ -3,6 +3,11 @@
 A repository is a `Connection` with `type = 'git_repo'`. This document covers what identifies one,
 which hosts its URLs may point at, and which teams may use it.
 
+Repository settings also accept an optional `previewConfig` JSON recipe for UI validation. Only
+`git_repo` connections can store one, and changing it takes the same team shell-authoring role as
+changing gate commands; see [UI validation](./ui-validation.md) for its schema and runtime behavior.
+Browser sessions use the `defaults/Dockerfile.node-browser` executor image.
+
 ---
 
 ## 1. Identity

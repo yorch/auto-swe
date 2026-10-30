@@ -42,6 +42,27 @@ describe('retention settings', () => {
   });
 });
 
+describe('UI validation settings', () => {
+  it('uses deployment-wide ADMIN defaults for evidence limits and retention', () => {
+    const values = {
+      'uiValidation.agentRecordVideo': true,
+      'uiValidation.evidenceRetentionDays': 90,
+      'uiValidation.maxEvidencePerRun': 200,
+      'uiValidation.maxScreenshotBytes': 5_000_000,
+      'uiValidation.maxVideoBytes': 50_000_000,
+      'uiValidation.prInlineImages': false,
+    } as const;
+    for (const [key, value] of Object.entries(values)) {
+      const def = SETTING_DEFINITIONS[key as keyof typeof SETTING_DEFINITIONS];
+      expect(def.defaultValue, key).toBe(value);
+      expect(def.group, key).toBe('uiValidation');
+      expect(def.requiredRole, key).toBe('ADMIN');
+      expect(def.overridableAt, key).toEqual([]);
+      expect(def.runPinned, key).toBe(false);
+    }
+  });
+});
+
 describe('git author settings', () => {
   const accepts = (key: keyof typeof SETTING_DEFINITIONS, value: unknown) =>
     SETTING_DEFINITIONS[key].schema.safeParse(value).success;
