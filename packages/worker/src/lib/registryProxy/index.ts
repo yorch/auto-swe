@@ -1666,9 +1666,7 @@ export function createRegistryProxy(options: {
         return;
       }
       const handle = basicRoute[1] === 'maven' ? handleMaven : handlePypi;
-      basicReg.run(() =>
-        handle(basicReg, req, res, basicRoute[2] ?? '', basicRoute[3] ?? '')
-      );
+      basicReg.run(() => handle(basicReg, req, res, basicRoute[2] ?? '', basicRoute[3] ?? ''));
       return;
     }
     const goRoute = /^\/go\/([^/]+)\/([^/]+)(\/.*)$/.exec(url.pathname);
