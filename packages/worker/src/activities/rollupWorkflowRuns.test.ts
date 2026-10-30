@@ -158,8 +158,8 @@ vi.mock('@auto-swe/shared/db', () => {
           mocks.events.push(`read:${day.toISOString().slice(0, 10)}`);
           return Array.from({ length: mocks.runsPerDay }, (_, index) => ({
             attributedOrgId: 'org',
+            attributedRepoId: `repo-${index}`,
             attributedTeamId: 'team',
-            connectionId: `repo-${index}`,
             costUsdAccrued: 0,
             endedAt: null,
             estimatedHumanTimeSaved: null,

@@ -37,6 +37,7 @@ export const SETTING_GROUPS = [
   'repoAccess',
   'repoDependency',
   'skills',
+  'uiValidation',
   'workflow',
   'workspace',
 ] as const;

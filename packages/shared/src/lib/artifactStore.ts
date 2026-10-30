@@ -49,9 +49,9 @@ function copyToUint8Array(buf: Buffer): Uint8Array<ArrayBuffer> {
 // and we don't want @aws-sdk/client-s3 in the dependency graph by default.
 // When ARTIFACT_S3_BUCKET is set the operator is expected to install the SDK.
 interface S3Helper {
-  putObject(key: string, body: Buffer, contentType: string): Promise<void>;
-  getObject(key: string): Promise<Buffer>;
-  deleteObject(key: string): Promise<void>;
+  putObject(key: string, body: Buffer, contentType: string, bucket: string): Promise<void>;
+  getObject(key: string, bucket: string): Promise<Buffer>;
+  deleteObject(key: string, bucket: string): Promise<void>;
 }
 let s3ClientPromise: Promise<S3Helper> | null = null;
 
@@ -82,11 +82,6 @@ async function s3Client(): Promise<S3Helper> {
     }
     const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = mod;
     const storageCfg = await resolveStorageConfig();
-    if (!storageCfg.s3Bucket) {
-      throw new Error(
-        'S3 backend is active but s3Bucket is not configured. Set it at /admin/integrations → Storage.'
-      );
-    }
     const region = storageCfg.s3Region ?? 'us-east-1';
     const endpoint = storageCfg.s3Endpoint ?? undefined;
     const forcePathStyle = storageCfg.s3ForcePathStyle;
@@ -94,12 +89,11 @@ async function s3Client(): Promise<S3Helper> {
       region,
       ...(endpoint ? { endpoint, forcePathStyle } : {}),
     });
-    const bucket = storageCfg.s3Bucket;
     return {
-      async deleteObject(key) {
+      async deleteObject(key, bucket) {
         await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
       },
-      async getObject(key) {
+      async getObject(key, bucket) {
         const resp = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
         if (!resp.Body) {
           throw new Error(`artifact body missing for s3://${bucket}/${key}`);
@@ -109,7 +103,7 @@ async function s3Client(): Promise<S3Helper> {
         // Node's evolving Buffer types (avoids the SharedArrayBuffer mismatch).
         return Buffer.from(new Uint8Array(bytes));
       },
-      async putObject(key, body, contentType) {
+      async putObject(key, body, contentType, bucket) {
         await client.send(
           new PutObjectCommand({ Body: body, Bucket: bucket, ContentType: contentType, Key: key })
         );
@@ -152,7 +146,7 @@ export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef>
         status: 'pending',
       },
     });
-    await client.putObject(key, body, contentType);
+    await client.putObject(key, body, contentType, bucket);
     await prisma.workflowArtifact.update({ data: { status: 'ready' }, where: { id: row.id } });
     return { backend: 's3', contentType, id: row.id, kind: input.kind, sizeBytes: body.byteLength };
   }
@@ -189,7 +183,7 @@ export async function getArtifact(id: string): Promise<{ ref: ArtifactRef; body:
       throw new Error(`artifact ${id} has backend=s3 but no s3Key`);
     }
     const client = await s3Client();
-    const body = await client.getObject(row.s3Key);
+    const body = await client.getObject(row.s3Key, row.s3Bucket ?? '');
     return { body, ref };
   }
   if (!row.inlineBlob) {
@@ -211,9 +205,21 @@ export async function deleteArtifact(id: string): Promise<void> {
   }
   if (row.backend === 's3' && row.s3Key) {
     const client = await s3Client();
-    await client.deleteObject(row.s3Key);
+    await client.deleteObject(row.s3Key, row.s3Bucket ?? '');
   }
   await prisma.workflowArtifact.delete({ where: { id } });
+}
+
+export async function putObjectToBucket(
+  bucket: string,
+  key: string,
+  body: Buffer,
+  contentType: string
+): Promise<void> {
+  if (!bucket.trim() || !key.trim()) {
+    throw new Error('S3 bucket and object key are required');
+  }
+  await (await s3Client()).putObject(key, body, contentType, bucket);
 }
 
 /** True for the "no such key" answers an S3-compatible store gives. */
@@ -235,7 +241,7 @@ function isMissingObject(err: unknown): boolean {
  */
 export async function deletePendingArtifact(id: string): Promise<boolean> {
   const row = await prisma.workflowArtifact.findUnique({
-    select: { backend: true, s3Key: true, status: true },
+    select: { backend: true, s3Bucket: true, s3Key: true, status: true },
     where: { id },
   });
   if (row?.status !== 'pending') {
@@ -244,7 +250,7 @@ export async function deletePendingArtifact(id: string): Promise<boolean> {
   if (row.backend === 's3' && row.s3Key) {
     const client = await s3Client();
     try {
-      await client.deleteObject(row.s3Key);
+      await client.deleteObject(row.s3Key, row.s3Bucket ?? '');
     } catch (err) {
       if (!isMissingObject(err)) {
         throw err;

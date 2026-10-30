@@ -3,7 +3,7 @@ import {
   resolveWorkspaceInfra,
   type WorkspaceInfraConfig,
 } from '@auto-swe/shared/lib/systemConfig';
-import type { WorkspaceContainerSpec } from './types.js';
+import type { WorkspaceContainerSpec, WorkspaceServiceSpec } from './types.js';
 
 /**
  * The {@link WorkspaceContainerSpec} for an agent workspace on `image`, with
@@ -16,7 +16,8 @@ import type { WorkspaceContainerSpec } from './types.js';
 export function agentWorkspaceSpec(
   name: string,
   image: string,
-  infra: WorkspaceInfraConfig = resolveWorkspaceInfra()
+  infra: WorkspaceInfraConfig = resolveWorkspaceInfra(),
+  services?: WorkspaceServiceSpec[]
 ): WorkspaceContainerSpec {
   // With the harness model proxy advertised at the Docker host alias, the alias
   // resolves to the host gateway, so a harness turn can reach the worker's
@@ -36,5 +37,6 @@ export function agentWorkspaceSpec(
     ...(infra.network ? { network: infra.network } : {}),
     pidsLimit: infra.pidsLimit,
     reachWorker: Boolean(reachWorker),
+    ...(services?.length ? { services } : {}),
   };
 }

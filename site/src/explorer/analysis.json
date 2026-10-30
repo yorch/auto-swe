@@ -12048,7 +12048,7 @@
       "title": "The legacy-cost and daily-series reads are capped and flagged"
     },
     {
-      "anchor": "const attributionScope = await resolveWorkflowRunAttributionScope(fastify.prisma, user);",
+      "anchor": "const attributionScope = await resolveWorkflowRunAttributionScope(\n      fastify.prisma,\n      user,\n      request.repoAccessGate\n    );\n    const ANALYTICS_ROW_CAP = 50_000;",
       "before": 0,
       "id": "analyticsAttributionScope",
       "lines": 1,

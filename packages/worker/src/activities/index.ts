@@ -213,6 +213,8 @@ export type { PruneAutomationDecisionsResult } from './pruneAutomationDecisions.
 export { pruneAutomationDecisions } from './pruneAutomationDecisions.js';
 export type { PruneCallbackDeliveriesResult } from './pruneCallbackDeliveries.js';
 export { pruneCallbackDeliveries } from './pruneCallbackDeliveries.js';
+export type { PruneUiEvidenceResult } from './pruneUiEvidence.js';
+export { pruneUiEvidence } from './pruneUiEvidence.js';
 export type {
   PublishOutcomeInput,
   PublishOutcomeResult,
@@ -279,6 +281,8 @@ export {
   resolveTemplateForRepo,
   retireFailedLaunch,
 } from './templates.js';
+export type { UiVerifyInput, UiVerifyResult } from './uiVerify.js';
+export { runUiVerify } from './uiVerify.js';
 export { validateContext } from './validateContext.js';
 export type { CiWaitConfig, WaitForCiByPollingInput } from './waitForCiByPolling.js';
 export { resolveCiWaitConfig, waitForCiByPolling } from './waitForCiByPolling.js';

@@ -66,6 +66,19 @@ export function harnessToolsGranting(keys: readonly string[]): HarnessTool[] {
 
 /** The in-process MCP server an Agent's MCP connection is relayed through. */
 export const MCP_RELAY_SERVER = 'connection';
+export const BROWSER_MCP_SERVER = 'browser';
+export const BROWSER_RELAYED_TOOL_NAMES = [
+  'browser_start_app',
+  'browser_navigate',
+  'browser_click',
+  'browser_fill',
+  'browser_press',
+  'browser_select',
+  'browser_wait',
+  'browser_snapshot',
+  'browser_screenshot',
+  'browser_console',
+].map((name) => `mcp__${BROWSER_MCP_SERVER}__${name}`);
 
 /** The name the harness calls a relayed MCP tool by: `mcp__<server>__<tool>`. */
 export function relayedToolName(tool: string): string {
@@ -91,6 +104,7 @@ export interface PolicyContext {
    * connection, and is audit-logged there; nothing about it runs in the container.
    */
   mcpTools?: readonly string[];
+  browserTools?: readonly string[];
 }
 
 /**
@@ -149,6 +163,9 @@ export async function decideToolCall(
   harnessCwd?: string
 ): Promise<ToolDecision> {
   if (ctx.mcpTools?.includes(toolName)) {
+    return { allow: true };
+  }
+  if (ctx.browserTools?.includes(toolName)) {
     return { allow: true };
   }
   if (!(HARNESS_TOOLS as readonly string[]).includes(toolName)) {

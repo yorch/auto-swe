@@ -3,7 +3,39 @@ import os from 'node:os';
 import path from 'node:path';
 import { DOCKER_HOST_ALIAS } from '@auto-swe/shared/lib/systemConfig';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { dockerWorkspaceBackend, ephemeralArgs } from './docker.js';
+import { buildServiceContainerArgs, dockerWorkspaceBackend, ephemeralArgs } from './docker.js';
+
+describe('buildServiceContainerArgs', () => {
+  it('hardens service sidecars in the workspace network namespace', () => {
+    const args = buildServiceContainerArgs('workspace-abc123', {
+      env: { POSTGRES_PASSWORD: 'kept-off-argv' },
+      image: 'mirror.gcr.io/library/postgres:18',
+      name: 'postgres',
+      port: 5432,
+    });
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '--name',
+        'workspace-abc123-svc-postgres',
+        '--network',
+        'container:workspace-abc123',
+        '--memory=512m',
+        '--cpus=1',
+        '--pids-limit=128',
+        '--security-opt=no-new-privileges',
+        '--cap-drop=ALL',
+        '--cap-add=CHOWN',
+        '--cap-add=SETUID',
+        '--cap-add=SETGID',
+        '--cap-add=FOWNER',
+        '--cap-add=DAC_OVERRIDE',
+        '-e',
+        'POSTGRES_PASSWORD',
+      ])
+    );
+    expect(args).not.toContain('kept-off-argv');
+  });
+});
 
 describe('ephemeralArgs', () => {
   it('runs with no network unless the spec asks for egress', () => {

@@ -33,6 +33,34 @@ describe('retention settings', () => {
   it('page-view events are off by default', () => {
     expect(SETTING_DEFINITIONS['analytics.uiEventsEnabled'].defaultValue).toBe(false);
   });
+
+  it('organization-wide reports are disabled by default and org-overridable by platform admins only', () => {
+    const setting = SETTING_DEFINITIONS['analytics.orgWideReports'];
+    expect(setting.defaultValue).toBe(false);
+    expect(setting.overridableAt).toEqual(['ORGANIZATION']);
+    expect(setting.requiredRole).toBe('ADMIN');
+  });
+});
+
+describe('UI validation settings', () => {
+  it('uses deployment-wide ADMIN defaults for evidence limits and retention', () => {
+    const values = {
+      'uiValidation.agentRecordVideo': true,
+      'uiValidation.evidenceRetentionDays': 90,
+      'uiValidation.maxEvidencePerRun': 200,
+      'uiValidation.maxScreenshotBytes': 5_000_000,
+      'uiValidation.maxVideoBytes': 50_000_000,
+      'uiValidation.prInlineImages': false,
+    } as const;
+    for (const [key, value] of Object.entries(values)) {
+      const def = SETTING_DEFINITIONS[key as keyof typeof SETTING_DEFINITIONS];
+      expect(def.defaultValue, key).toBe(value);
+      expect(def.group, key).toBe('uiValidation');
+      expect(def.requiredRole, key).toBe('ADMIN');
+      expect(def.overridableAt, key).toEqual([]);
+      expect(def.runPinned, key).toBe(false);
+    }
+  });
 });
 
 describe('git author settings', () => {

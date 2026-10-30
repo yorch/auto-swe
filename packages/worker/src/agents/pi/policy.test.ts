@@ -48,6 +48,25 @@ describe('tool grants', () => {
     expect(piToolsGranting(['listDirectory'])).toEqual(['read', 'ls', 'grep', 'find']);
   });
 
+  it('allows browser tools only from an explicit browser grant', async () => {
+    await expect(
+      decidePiToolCall('browser_navigate', { url: 'http://localhost' }, ctx)
+    ).resolves.toMatchObject({ allow: false });
+    await expect(
+      decidePiToolCall(
+        'browser_navigate',
+        { url: 'http://localhost' },
+        {
+          ...ctx,
+          browserTools: ['browser_navigate'],
+        }
+      )
+    ).resolves.toMatchObject({ allow: true });
+    await expect(
+      decidePiToolCall('browser_secret', {}, { ...ctx, browserTools: ['browser_navigate'] })
+    ).resolves.toMatchObject({ allow: false });
+  });
+
   it('refuses a tool outside the list, and one the Agent was not granted', async () => {
     for (const tool of ['web_fetch', 'task', 'mcp__search']) {
       await expect(decidePiToolCall(tool, {}, ctx)).resolves.toMatchObject({ allow: false });

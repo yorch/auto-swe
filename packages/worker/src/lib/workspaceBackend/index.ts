@@ -8,6 +8,7 @@ export type {
   WorkspaceContainerSpec,
   WorkspaceExecOptions,
   WorkspaceHandle,
+  WorkspaceServiceSpec,
   WorkspaceSpawnOptions,
 } from './types.js';
 

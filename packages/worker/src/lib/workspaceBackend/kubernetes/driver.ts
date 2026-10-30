@@ -120,6 +120,7 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
     return {
       namespace: this.config().namespace,
       pod: typeof h === 'string' ? h : h.id,
+      ...(typeof h === 'string' || !h.container ? {} : { container: h.container }),
     };
   }
 
@@ -132,7 +133,10 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
     const wantsSecret = hasWorkspaceSecret(spec);
     // A kubectl error can quote the object it refused: scrub each value and
     // its base64 form (the Secret's `data`).
-    const values = Object.values(spec.secretEnv ?? {});
+    const values = [
+      ...Object.values(spec.secretEnv ?? {}),
+      ...(spec.services ?? []).flatMap((service) => Object.values(service.env ?? {})),
+    ];
     const scrub = [...values, ...values.map((v) => Buffer.from(v, 'utf8').toString('base64'))];
     try {
       // The Pod goes first: its `secretKeyRef` entries hold the container in
@@ -156,7 +160,9 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
         }
       }
       try {
-        return await this.awaitReady(spec);
+        const handle = await this.awaitReady(spec);
+        await this.awaitServicesReady(spec, handle);
+        return handle;
       } catch (err) {
         // The pod is the caller's to remove() by `spec.name`, which also deletes the Secret.
         if (wantsSecret) {
@@ -248,6 +254,34 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
       );
     }
     return { id: spec.name, keeperPid: candidates[0] ?? 0 };
+  }
+
+  private async awaitServicesReady(
+    spec: WorkspaceContainerSpec,
+    handle: WorkspaceHandle
+  ): Promise<void> {
+    for (const service of spec.services ?? []) {
+      if (!service.readyCommand) {
+        continue;
+      }
+      const deadline = Date.now() + 120_000;
+      let ready = false;
+      while (Date.now() < deadline) {
+        const result = await this.exec(
+          { ...handle, container: service.name },
+          ['sh', '-c', service.readyCommand],
+          { heartbeatLabel: `workspace: waiting for service ${service.name}`, timeoutMs: 15_000 }
+        );
+        if (result.exitCode === 0) {
+          ready = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      if (!ready) {
+        throw new Error(`workspace service ${service.name} did not become ready within 120000ms`);
+      }
+    }
   }
 
   attach(id: string, keeperPid = 0): WorkspaceHandle {

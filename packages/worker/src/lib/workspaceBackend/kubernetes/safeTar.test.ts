@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { assertSafeArchive, UnsafeArchiveError } from './safeTar.js';
+import { assertSafeArchive, readSingleFileFromArchive, UnsafeArchiveError } from './safeTar.js';
 import { buildTar, type TarEntry } from './testTar.js';
 
 let dir: string;
@@ -143,5 +143,33 @@ describe('assertSafeArchive', () => {
 
   it('throws UnsafeArchiveError so callers can tell it from an I/O failure', async () => {
     await expect(check([{ data: 'x', name: '/abs' }])).rejects.toBeInstanceOf(UnsafeArchiveError);
+  });
+});
+
+describe('readSingleFileFromArchive', () => {
+  it('reads a bounded regular file from a safe archive', async () => {
+    const file = path.join(dir, 'single.tar');
+    await fs.writeFile(file, buildTar([{ data: 'hello', name: 'file.txt' }]));
+    await expect(readSingleFileFromArchive(file, 5)).resolves.toEqual(Buffer.from('hello'));
+    await expect(readSingleFileFromArchive(file, 4)).rejects.toThrow('exceeds the 4 byte limit');
+  });
+
+  it('refuses archives with no regular file or multiple regular files', async () => {
+    const empty = path.join(dir, 'empty.tar');
+    await fs.writeFile(empty, buildTar([{ name: 'folder/', type: '5' }]));
+    await expect(readSingleFileFromArchive(empty, 10)).rejects.toThrow(
+      'archive does not contain a single regular file'
+    );
+    const multiple = path.join(dir, 'multiple.tar');
+    await fs.writeFile(
+      multiple,
+      buildTar([
+        { data: 'first', name: 'one' },
+        { data: 'second', name: 'two' },
+      ])
+    );
+    await expect(readSingleFileFromArchive(multiple, 10)).rejects.toThrow(
+      'archive contains more than one regular file'
+    );
   });
 });

@@ -1,6 +1,9 @@
+import { randomBytes } from 'node:crypto';
+import { _resetKeyCacheForTests } from '@auto-swe/shared/lib/crypto';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { signEvidenceLink } from '../lib/evidenceDownloadLink.js';
 import { TemporalUnavailableError } from '../lib/temporalErrors.js';
 import {
   MAX_CONTEXT_ARTIFACT_BYTES,
@@ -14,6 +17,9 @@ const { recordRunFinalized, getArtifact } = vi.hoisted(() => ({
 }));
 vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({ getArtifact }));
+vi.mock('@auto-swe/shared/lib/repoAccessGate', () => ({
+  resolveRepoAccessGateOrLastKnown: vi.fn().mockResolvedValue(null),
+}));
 
 function newMockPrisma() {
   return {
@@ -27,6 +33,17 @@ function newMockPrisma() {
     },
     configAuditLog: {
       create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+    },
+    runEvidence: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    user: {
+      findUnique: vi.fn().mockResolvedValue({
+        isActive: true,
+        role: 'ENGINEER',
+        slackId: null,
+      }),
     },
     workflowArtifact: {
       findFirst: vi.fn().mockResolvedValue(null),
@@ -1183,5 +1200,106 @@ describe('workflowRunRoutes GET /:id/artifacts/:artifactId (context overflow tex
       url: `/api/v1/workflow-runs/${RUN}/artifacts/not-a-uuid`,
     });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('workflowRunRoutes UI evidence', () => {
+  const runId = '11111111-1111-4111-8111-111111111111';
+  const evidenceId = '22222222-2222-4222-8222-222222222222';
+
+  beforeEach(() => {
+    process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+    _resetKeyCacheForTests();
+  });
+
+  it('lists ready evidence only after checking run visibility', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.workflowRun.findFirst.mockResolvedValue({ id: runId });
+    prisma.runEvidence.findMany.mockResolvedValue([
+      {
+        artifact: { contentType: 'image/png', sizeBytes: 12, status: 'ready' },
+        caption: 'Landing page',
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        height: 480,
+        id: evidenceId,
+        kind: 'screenshot',
+        pageUrl: 'http://localhost:3000/',
+        source: 'uiVerify',
+        specNodeId: 'smoke',
+        stepAttempt: 1,
+        width: 640,
+      },
+      {
+        artifact: { contentType: 'image/png', sizeBytes: 10, status: 'pending' },
+        createdAt: new Date(),
+        id: '33333333-3333-4333-8333-333333333333',
+        kind: 'screenshot',
+        source: 'uiVerify',
+      },
+    ]);
+
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/evidence`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toHaveLength(1);
+    expect(res.json().data[0]).toMatchObject({
+      contentType: 'image/png',
+      id: evidenceId,
+      sizeBytes: 12,
+      specNodeId: 'smoke',
+    });
+    expect(prisma.workflowRun.findFirst.mock.calls[0][0].where).toMatchObject({ id: runId });
+  });
+
+  it('rechecks run visibility on each signed content fetch and sets safe media headers', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.workflowRun.findFirst.mockResolvedValueOnce({ id: runId }).mockResolvedValueOnce(null);
+    prisma.runEvidence.findFirst.mockResolvedValue({
+      artifact: { contentType: 'image/png', sizeBytes: 5, status: 'ready' },
+      artifactId: 'artifact-1',
+      id: evidenceId,
+      kind: 'screenshot',
+    });
+    getArtifact.mockResolvedValue({ body: Buffer.from('image') });
+    const { token } = signEvidenceLink({ eid: evidenceId, rid: runId, sub: 'u-1' });
+    const url = `/api/v1/workflow-runs/${runId}/evidence/${evidenceId}/content?token=${encodeURIComponent(token)}`;
+
+    const res = await app.inject({ method: 'GET', url });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe('image');
+    expect(res.headers['content-type']).toBe('image/png');
+    expect(res.headers['content-disposition']).toContain('inline; filename="screenshot-');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['content-security-policy']).toBe("sandbox; default-src 'none'");
+    expect(res.headers['cache-control']).toBe('private, max-age=300');
+
+    const second = await app.inject({ method: 'GET', url });
+    expect(second.statusCode).toBe(404);
+    expect(prisma.workflowRun.findFirst).toHaveBeenCalledTimes(2);
+  });
+
+  it('serves unapproved artifact types as octet-stream attachments', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.workflowRun.findFirst.mockResolvedValue({ id: runId });
+    prisma.runEvidence.findFirst.mockResolvedValue({
+      artifact: { contentType: 'text/html', sizeBytes: 5, status: 'ready' },
+      artifactId: 'artifact-1',
+      id: evidenceId,
+      kind: 'trace',
+    });
+    getArtifact.mockResolvedValue({ body: Buffer.from('<html>') });
+    const { token } = signEvidenceLink({ eid: evidenceId, rid: runId, sub: 'u-1' });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/evidence/${evidenceId}/content?token=${encodeURIComponent(token)}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('application/octet-stream');
+    expect(res.headers['content-disposition']).toContain('attachment; filename="trace-');
   });
 });

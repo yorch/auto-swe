@@ -34,6 +34,7 @@ import { SUPPORT_KB_RETRIEVAL_SKILL } from './supportKbRetrieval.js';
 import { SUPPORT_RESPONSE_TEMPLATES_SKILL } from './supportResponseTemplates.js';
 import { SUPPORT_TICKET_TONE_SKILL } from './supportTicketTone.js';
 import { TEST_FIRST_SKILL } from './testFirst.js';
+import { UI_VERIFICATION_SKILL } from './uiVerification.js';
 
 export interface BuiltinSkillDef {
   name: string;
@@ -47,6 +48,7 @@ export const BUILTIN_SKILLS: BuiltinSkillDef[] = [
   SCOPE_CONSERVATISM_SKILL,
   FOLLOW_EXISTING_PATTERNS_SKILL,
   TEST_FIRST_SKILL,
+  UI_VERIFICATION_SKILL,
   INCREMENTAL_COMMITS_SKILL,
   NO_NEW_DEPENDENCIES_SKILL,
   SHELL_COMMAND_SAFETY_SKILL,
@@ -127,4 +129,5 @@ export {
   SUPPORT_RESPONSE_TEMPLATES_SKILL,
   SUPPORT_TICKET_TONE_SKILL,
   TEST_FIRST_SKILL,
+  UI_VERIFICATION_SKILL,
 };

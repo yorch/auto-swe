@@ -103,9 +103,9 @@ export const USE_CASES = {
     source: 'packages/shared/src/workflow/templates/ticketToMerge.ts',
     summary:
       'Implements a ticket in an isolated sandbox until the tests pass, has three ' +
-      'reviewer agents inspect the change, opens a pull request, fixes CI failures from ' +
-      'the logs, and then waits for a person to merge. What it learned is stored for the ' +
-      'next run on the same repository.',
+      'reviewer agents inspect the change, verifies the configured app preview, opens a pull ' +
+      'request with run evidence, fixes CI failures from the logs, and then waits for a person to ' +
+      'merge. What it learned is stored for the next run on the same repository.',
     title: 'Ticket to reviewed pull request',
   },
   'ticket-to-merge-qodo': {

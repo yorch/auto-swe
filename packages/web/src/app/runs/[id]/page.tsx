@@ -22,6 +22,7 @@ import { Transcript } from '@/components/runs/layouts/Transcript';
 import type { RunLayoutProps } from '@/components/runs/layouts/types';
 import { RunActivity } from '@/components/runs/RunActivity';
 import { RunCallbackDeliveries } from '@/components/runs/RunCallbackDeliveries';
+import { RunEvidence } from '@/components/runs/RunEvidence';
 import { RunLessons } from '@/components/runs/RunLessons';
 import { RunReadingGuide } from '@/components/runs/RunReadingGuide';
 import { RunSummaryBand } from '@/components/runs/RunSummaryBand';
@@ -519,6 +520,7 @@ export default function RunDetailPage({ params }: PageProps) {
       <RunCallbackDeliveries runId={run.id} />
 
       <RunTranscripts runId={run.id} />
+      <RunEvidence live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
       <RunActivity
         fanOutNodeIds={fanOutNodeIds}
         linker={linker}

@@ -28,6 +28,19 @@ describe('execArgs', () => {
     expect(args).not.toContain('-i');
   });
 
+  it('can execute readiness commands in a named service container', () => {
+    const args = execArgs({ ...ref, container: 'postgres' }, ['sh', '-c', 'pg_isready'], {});
+    expect(args.slice(0, 7)).toEqual([
+      'exec',
+      '--namespace',
+      'ns',
+      '--container',
+      'postgres',
+      'workspace-1',
+      '--',
+    ]);
+  });
+
   it('changes directory through the shell wrapper, not a flag kubectl lacks', () => {
     const args = execArgs(ref, ['ls'], { workdir: '/workspace' });
     expect(args.slice(7)).toEqual(['sh', '-c', 'cd "$0" && exec "$@"', '/workspace', 'ls']);

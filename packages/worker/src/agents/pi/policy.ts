@@ -152,6 +152,7 @@ export interface PiPolicyContext {
    * connection and is audit-logged there; nothing about it runs in the container.
    */
   mcpTools?: readonly string[];
+  browserTools?: readonly string[];
 }
 
 /** The repository's own context files the run reads, at the checkout's root. */
@@ -225,6 +226,9 @@ export async function decidePiToolCall(
   ctx: PiPolicyContext
 ): Promise<ToolDecision> {
   if (ctx.mcpTools?.includes(toolName)) {
+    return { allow: true };
+  }
+  if (ctx.browserTools?.includes(toolName)) {
     return { allow: true };
   }
   if (!(PI_TOOLS as readonly string[]).includes(toolName)) {

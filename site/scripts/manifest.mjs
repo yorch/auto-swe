@@ -140,6 +140,7 @@ export const SIDEBAR = [
       'docs/qodo',
       'docs/transcripts',
       'docs/run-activity',
+      'docs/ui-validation',
     ],
   },
   {

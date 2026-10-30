@@ -141,6 +141,10 @@ The audit and activity retention sweep is environment-only too: `AUDIT_ACTIVITY_
 `audit.configLogRetentionDays` is set (ADMIN, GLOBAL only, default `0` = forever, otherwise at least 365
 days); activity events are kept for `analytics.activityRetentionDays` (ADMIN, GLOBAL only, default 90 days,
 at least 7). See [audit-log.md](./audit-log.md#4-retention) and [user-activity.md](./user-activity.md).
+Organization-wide reports and organization-scope digests are disabled by default; a platform ADMIN
+enables them for each organization with the organization override `analytics.orgWideReports`.
+Changes take up to `CONFIG_CACHE_TTL_MS` (30 seconds by default) to apply on other gateway
+replicas and the worker.
 
 This doc covers the third tier. For integration credentials see
 [model-configuration.md](./model-configuration.md) and the admin pages themselves; for the
@@ -471,6 +475,14 @@ The optional container egress proxy is configured by worker bootstrap env: `EGRE
 boundaries are described in [run activity](./run-activity.md#container-egress-proxy). HTTP capture
 and retention use `workflow.httpCaptureEnabled`, `workflow.httpCaptureBodyMaxBytes`, and
 `workflow.httpCaptureRetentionDays` in the setting registry; HTTP pruning shares the transcript sweep.
+
+The `uiValidation` group contains ADMIN-only, GLOBAL-only settings for run evidence:
+`uiValidation.maxScreenshotBytes` (5,000,000 bytes), `uiValidation.maxVideoBytes` (50,000,000
+bytes), `uiValidation.maxEvidencePerRun` (200 items), `uiValidation.evidenceRetentionDays` (90
+days), `uiValidation.prInlineImages` (off), and `uiValidation.agentRecordVideo` (on). They are not
+run-pinned and apply through the settings cache. Public PR screenshot copies require both
+`UI_EVIDENCE_PUBLIC_BUCKET` and `UI_EVIDENCE_PUBLIC_BASE_URL` in the worker environment in addition
+to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-managed.
 
 ## Limitations
 

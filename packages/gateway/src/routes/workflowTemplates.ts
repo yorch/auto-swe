@@ -644,7 +644,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       previousStart,
       start: windowStart,
     } = resolveWindow(request.query, request.query.window);
-    const attributionScope = await resolveWorkflowRunAttributionScope(fastify.prisma, user);
+    const attributionScope = await resolveWorkflowRunAttributionScope(
+      fastify.prisma,
+      user,
+      request.repoAccessGate
+    );
     const ANALYTICS_ROW_CAP = 50_000;
     const APPROVAL_STEP_ROW_CAP = 10_000;
     const GROUP_BY = [
@@ -742,6 +746,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
                 orderBy: { startedAt: 'desc' },
                 select: {
                   attributedOrgId: true,
+                  attributedRepoId: true,
                   attributedTeamId: true,
                   connectionId: true,
                   costUsdAccrued: true,
@@ -779,7 +784,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       select: {
         requestedAt: true,
         resolvedAt: true,
-        run: { select: { template: { select: { name: true } }, templateId: true } },
+        run: { select: { templateId: true } },
         status: true,
       },
       take: APPROVAL_STEP_ROW_CAP + 1,
@@ -828,6 +833,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
                       allGroups
                         .map((group) => group.templateId)
                         .filter((id): id is string => id !== null)
+                        .concat(stepRows.map((step) => step.run.templateId))
                     ),
                   ],
                 },
@@ -838,9 +844,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         })
     );
     const templateNames = new Map(templateRows.map((template) => [template.id, template.name]));
-    for (const id of new Set(
-      allGroups.map((group) => group.templateId).filter((id): id is string => id !== null)
-    )) {
+    for (const id of new Set([
+      ...allGroups.map((group) => group.templateId).filter((id): id is string => id !== null),
+      ...stepRows.map((step) => step.run.templateId),
+    ])) {
       if (!templateNames.has(id)) {
         templateNames.set(id, 'Private template');
       }
@@ -882,7 +889,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         resolvedAt: s.resolvedAt,
         status: s.status,
         templateId: s.run.templateId,
-        templateName: s.run.template.name,
+        templateName: templateNames.get(s.run.templateId) ?? 'Private template',
       })),
       stepRows.length > APPROVAL_STEP_ROW_CAP
     );
@@ -3014,7 +3021,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // Whole UTC days, as the cross-template rollup and custom ranges are.
       const { end: windowEnd, start: windowStart } = resolveWindow({}, request.query.window);
-      const scope = await resolveWorkflowRunAttributionScope(fastify.prisma, user);
+      const scope = await resolveWorkflowRunAttributionScope(
+        fastify.prisma,
+        user,
+        request.repoAccessGate
+      );
       // Hard cap on rows pulled into memory. Templates with high run volume
       // would otherwise OOM the gateway on a 90d window. At the cap the rollup
       // becomes an approximation of the most recent N runs/steps in the window.
@@ -3154,6 +3165,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
                   orderBy: { startedAt: 'desc' },
                   select: {
                     attributedOrgId: true,
+                    attributedRepoId: true,
                     attributedTeamId: true,
                     connectionId: true,
                     costUsdAccrued: true,

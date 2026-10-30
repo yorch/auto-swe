@@ -41,6 +41,8 @@ interface PodShape {
     containers: {
       command: string[];
       env: { name: string; value?: string; valueFrom?: unknown }[];
+      image: string;
+      name: string;
       resources: { limits: Record<string, string>; requests: Record<string, string> };
       securityContext: Record<string, unknown>;
       volumeMounts: { mountPath: string; name: string }[];
@@ -131,6 +133,77 @@ describe('buildWorkspacePod', () => {
     expect(s.containers[0].command).toEqual(['sleep', 'infinity']);
     expect(s.shareProcessNamespace).toBe(true);
     expect(s.restartPolicy).toBe('Never');
+  });
+
+  it('adds root-starting service sidecars without changing workspace security', () => {
+    const servicePod = buildWorkspacePod(
+      {
+        ...spec,
+        services: [
+          {
+            env: { POSTGRES_PASSWORD: 'secret' },
+            image: 'mirror.gcr.io/library/postgres:18',
+            name: 'postgres',
+            port: 5432,
+          },
+        ],
+      },
+      config
+    ) as unknown as PodShape;
+    const workspace = servicePod.spec.containers[0];
+    const service = servicePod.spec.containers[1];
+    expect(workspace?.name).toBe('workspace');
+    expect(workspace?.securityContext).toMatchObject({
+      allowPrivilegeEscalation: false,
+      capabilities: { drop: ['ALL'] },
+      runAsNonRoot: true,
+      runAsUser: 1000,
+    });
+    expect(service?.name).toBe('postgres');
+    expect(service?.image).toBe('mirror.gcr.io/library/postgres:18');
+    expect(service?.securityContext).toMatchObject({
+      allowPrivilegeEscalation: false,
+      capabilities: {
+        add: ['CHOWN', 'SETUID', 'SETGID', 'FOWNER', 'DAC_OVERRIDE'],
+        drop: ['ALL'],
+      },
+      runAsNonRoot: false,
+      runAsUser: 0,
+    });
+    expect(servicePod.spec.securityContext.runAsNonRoot).toBe(true);
+    expect(service?.env).toEqual([
+      {
+        name: 'POSTGRES_PASSWORD',
+        valueFrom: {
+          secretKeyRef: {
+            key: 'ASW_SERVICE_POSTGRES_POSTGRES_PASSWORD',
+            name: 'workspace-abc123-env',
+            optional: false,
+          },
+        },
+      },
+    ]);
+    expect(JSON.stringify(servicePod)).not.toContain('"value":"secret"');
+    expect(
+      buildWorkspaceSecret(
+        {
+          ...spec,
+          services: [
+            {
+              env: { POSTGRES_PASSWORD: 'sensitive-value' },
+              image: 'mirror.gcr.io/library/postgres:18',
+              name: 'postgres',
+            },
+          ],
+        },
+        config,
+        POD_UID
+      )
+    ).toMatchObject({
+      data: {
+        ASW_SERVICE_POSTGRES_POSTGRES_PASSWORD: Buffer.from('sensitive-value').toString('base64'),
+      },
+    });
   });
 
   it('bounds the pod’s lifetime in the kubelet, not only in the worker', () => {

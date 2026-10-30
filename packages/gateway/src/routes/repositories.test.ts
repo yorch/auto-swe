@@ -187,6 +187,12 @@ describe('repositoryRoutes', () => {
         {
           executorImageBuild: { stack: 'node', useRepoDockerfile: true },
           id: 'repo-1',
+          previewConfig: {
+            baseUrl: 'http://localhost:3000',
+            readyTimeoutMs: 180_000,
+            readyUrl: 'http://localhost:3000/health',
+            start: 'npm run dev',
+          },
           repoName: 'alpha',
           teamId: TEAM_ID,
         },
@@ -203,6 +209,10 @@ describe('repositoryRoutes', () => {
       expect(JSON.parse(res.payload).data[0].executorImageBuild).toEqual({
         stack: 'node',
         useRepoDockerfile: true,
+      });
+      expect(JSON.parse(res.payload).data[0].previewConfig).toMatchObject({
+        baseUrl: 'http://localhost:3000',
+        readyUrl: 'http://localhost:3000/health',
       });
     });
 
@@ -1154,6 +1164,182 @@ describe('repositoryRoutes', () => {
       const notGit = await patch({ gateCommands: { runTests: 'npm test' } });
       expect(notGit.statusCode).toBe(400);
       expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('app preview configuration', () => {
+    const recipe = { readyUrl: 'http://localhost:3000/health', start: 'npm run dev' };
+    const patch = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload,
+        url: `/api/v1/repositories/${REPO_ID}`,
+      });
+    const asTeamMember = (role: 'LEAD' | 'ADMIN') => {
+      ctx.authState.role = 'LEAD';
+      ctx.authState.sub = 'lead-1';
+      ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+        role,
+        team: { isActive: true },
+      });
+    };
+    const stored = (previewConfig: unknown, type = 'git_repo') =>
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        apiKeyCiphertext: null,
+        config: null,
+        executorImage: null,
+        executorImageBuild: null,
+        gateCommands: null,
+        githubApiUrl: null,
+        githubUrl: null,
+        id: REPO_ID,
+        installation: null,
+        installationId: null,
+        organizationName: 'acme',
+        previewConfig,
+        repoName: 'widgets',
+        teamId: TEAM_ID,
+        type,
+      });
+    const onboard = (previewConfig: unknown) => {
+      ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ id: TEAM_ID, isActive: true });
+      ctx.mockPrisma.connection.findFirst.mockResolvedValueOnce(null);
+      ctx.mockPrisma.connection.create.mockImplementationOnce(
+        async ({ data }: { data: Record<string, unknown> }) => ({ ...data, id: REPO_ID })
+      );
+      return ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: {
+          organizationName: 'acme',
+          previewConfig,
+          repoName: 'widgets',
+          teamId: TEAM_ID,
+        },
+        url: '/api/v1/repositories',
+      });
+    };
+
+    beforeEach(() => {
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+    });
+
+    it('requires the shell-authoring role to change a recipe', async () => {
+      asTeamMember('LEAD');
+      stored(null);
+      const res = await patch({ previewConfig: recipe });
+
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error.code).toBe('PREVIEW_CONFIG_FORBIDDEN');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('stores and audits a team admin change with schema defaults', async () => {
+      asTeamMember('ADMIN');
+      stored(null);
+      const res = await patch({ previewConfig: recipe });
+      const update = ctx.mockPrisma.connection.update.mock.calls.at(-1)?.[0] as {
+        data: Record<string, unknown>;
+      };
+
+      expect(res.statusCode, res.payload).toBe(200);
+      expect(update.data.previewConfig).toMatchObject({
+        baseUrl: 'http://localhost:3000',
+        readyTimeoutMs: 180_000,
+      });
+      expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'UPDATE',
+          afterJson: { previewConfig: expect.objectContaining({ start: recipe.start }) },
+          beforeJson: { previewConfig: null },
+          entityId: REPO_ID,
+          entityType: 'Connection',
+        }),
+      });
+    });
+
+    it('accepts a recipe while a team admin onboards a git repository', async () => {
+      asTeamMember('ADMIN');
+      const res = await onboard(recipe);
+      const created = ctx.mockPrisma.connection.create.mock.calls.at(-1)?.[0] as {
+        data: Record<string, unknown>;
+      };
+
+      expect(res.statusCode, res.payload).toBe(201);
+      expect(created.data.previewConfig).toMatchObject({
+        baseUrl: 'http://localhost:3000',
+        readyTimeoutMs: 180_000,
+        start: recipe.start,
+      });
+      expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'CREATE',
+          afterJson: { previewConfig: expect.objectContaining({ start: recipe.start }) },
+          entityId: REPO_ID,
+          entityType: 'Connection',
+        }),
+      });
+    });
+
+    it('allows an unchanged recipe to be saved without rewriting or auditing it', async () => {
+      asTeamMember('LEAD');
+      stored({
+        ...recipe,
+        baseUrl: 'http://localhost:3000',
+        readyTimeoutMs: 180_000,
+      });
+      const res = await patch({ description: 'updated', previewConfig: recipe });
+      const update = ctx.mockPrisma.connection.update.mock.calls.at(-1)?.[0] as {
+        data: Record<string, unknown>;
+      };
+
+      expect(res.statusCode, res.payload).toBe(200);
+      expect(update.data).not.toHaveProperty('previewConfig');
+      expect(ctx.mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('allows a team admin to clear a recipe and rejects recipes on other connection types', async () => {
+      asTeamMember('ADMIN');
+      stored(recipe);
+      const cleared = await patch({ previewConfig: null });
+      expect(cleared.statusCode).toBe(200);
+      const update = ctx.mockPrisma.connection.update.mock.calls.at(-1)?.[0] as
+        | { data: Record<string, unknown> }
+        | undefined;
+      expect(update?.data.previewConfig).toBe(DB_NULL);
+
+      stored(null, 'notion');
+      const notGit = await patch({ previewConfig: recipe });
+      expect(notGit.statusCode).toBe(400);
+      expect(ctx.mockPrisma.connection.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('requires the target team shell-authoring role when moving a repository with a recipe', async () => {
+      const targetTeam = '44444444-4444-4444-8444-444444444444';
+      ctx.authState.role = 'LEAD';
+      ctx.authState.sub = 'lead-1';
+      ctx.mockPrisma.teamMembership.findUnique.mockImplementation(
+        async ({ where }: { where: { userId_teamId: { teamId: string } } }) => ({
+          role: where.userId_teamId.teamId === targetTeam ? 'LEAD' : 'LEAD',
+          team: { isActive: true },
+        })
+      );
+      ctx.mockPrisma.team.findUnique.mockResolvedValue({ isActive: true, orgId: null });
+      stored(recipe);
+
+      const res = await patch({ teamId: targetTeam });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error.code).toBe('PREVIEW_CONFIG_FORBIDDEN');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('validates preview recipe fields at the repository boundary', async () => {
+      const invalid = await patch({
+        previewConfig: { ...recipe, readyUrl: 'https://example.com' },
+      });
+      expect(invalid.statusCode).toBe(400);
+      expect(ctx.mockPrisma.connection.findUnique).not.toHaveBeenCalled();
     });
   });
 

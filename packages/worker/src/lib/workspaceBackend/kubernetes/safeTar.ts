@@ -239,3 +239,45 @@ export async function assertSafeArchive(file: string): Promise<void> {
     await handle.close();
   }
 }
+
+/** Read the sole regular file in a safe tar archive without extracting it. */
+export async function readSingleFileFromArchive(file: string, maxBytes: number): Promise<Buffer> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError('maxBytes must be a non-negative safe integer');
+  }
+  await assertSafeArchive(file);
+  const archive = await fs.readFile(file);
+  let pos = 0;
+  let result: Buffer | undefined;
+
+  while (pos + BLOCK <= archive.length) {
+    const header = archive.subarray(pos, pos + BLOCK);
+    if (header.every((byte) => byte === 0)) {
+      break;
+    }
+    const size = parseSize(header);
+    const dataStart = pos + BLOCK;
+    const end = dataStart + size;
+    const type = String.fromCharCode(header[156] ?? 0);
+    if (type === 'L' || type === 'K' || type === 'x' || type === 'g') {
+      pos = dataStart + Math.ceil(size / BLOCK) * BLOCK;
+      continue;
+    }
+    if (type !== '0' && type !== '\0' && type !== '7') {
+      throw new UnsafeArchiveError('archive does not contain a single regular file');
+    }
+    if (result) {
+      throw new UnsafeArchiveError('archive contains more than one regular file');
+    }
+    if (size > maxBytes) {
+      throw new RangeError(`workspace file exceeds the ${maxBytes} byte limit`);
+    }
+    result = Buffer.from(archive.subarray(dataStart, end));
+    pos = dataStart + Math.ceil(size / BLOCK) * BLOCK;
+  }
+
+  if (!result) {
+    throw new UnsafeArchiveError('archive does not contain a regular file');
+  }
+  return result;
+}

@@ -64,7 +64,7 @@ describe('ticket-to-merge-qodo', () => {
   });
 
   it('keeps every other node of ticket-to-merge as it is', () => {
-    const base = ticketToMergeNodes('qodoReview');
+    const base = ticketToMergeNodes('qodoReview', { uiVerify: true });
     for (const [id, node] of Object.entries(TICKET_TO_MERGE_SPEC.nodes)) {
       if (id === 'checkCI') {
         continue;

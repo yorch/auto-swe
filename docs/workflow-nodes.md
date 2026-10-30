@@ -250,6 +250,15 @@ own shape; `updateDomainState` returns `{ "status": … }`, so the example's val
 **Failure.** `onFail` and `onError` as in §4. Steps that run a quality gate return
 `{ "passed": false, … }` on a failing check, which is a gate failure.
 
+**`uiVerify`.** The `uiVerify` gate step starts a repository's configured app preview and evaluates
+its smoke paths and optional E2E command. Its config accepts `mode` (`smoke`, `e2e` or `both`),
+`recordVideo` (default `true`), `failOnConsoleErrors` (default `true`), `timeoutMs` (default
+`1200000`) and `branch` (defaults to the implementation branch). When the repository has no
+`previewConfig`, it returns a successful skipped result. A configured repository uses its executor
+image; an image without Playwright/Chromium returns a failed gate result. The output includes
+`passed`, `summary`, `exitCode`, `pages`, `evidenceIds`, optional `e2e`, and the `ui.log` evidence
+identifier as `artifactId`. See [UI validation](./ui-validation.md#workflow-verification).
+
 **Built-in examples.** `ticket-to-merge`, `hotfix`, `code-and-ci`
 
 **Example.**
