@@ -44,7 +44,7 @@ resolves it from the detected stack at run time.
   (`executeImplementation.ts`, `implementerSession.ts`, `utils.ts#detectTestCommand`.)
   Fix: `gateCommands.runTests` → detected-stack suggestion → `package.json` guess; honour
   component subdirectories in a monorepo.
-- [~] M5. Dependency installs are npm-only (no PyPI / Maven / Go module proxy or credentialed path). *Plan in `docs/adr/non-npm-package-proxies.md` (Go first, then PyPI, then Maven; reuse `PackageRegistry.ecosystem`). Go built: `/go/<token>/<id>` route, go.sum allowlist, `GOPROXY` wiring, admin API and dashboard. PyPI and Maven open.*
+- [~] M5. Dependency installs are npm-only (no PyPI / Maven / Go module proxy or credentialed path). *Plan in `docs/adr/non-npm-package-proxies.md` (Go first, then PyPI, then Maven; reuse `PackageRegistry.ecosystem`). Go and PyPI built (token-in-path routes, lockfile allowlists, env wiring, admin API and dashboard). Maven open.*
 - [~] M6. Go image added in phase 2 (`defaults/Dockerfile.go`, `stack` input, gateway enum). None for
   Rust/.NET/Ruby.
 - [x] M7. Dataset cases ran on `node:24-alpine` whatever their stack. A case now names a `stack`
@@ -271,7 +271,7 @@ intended test), the data migration on rows, the composite under dash and busybox
 Maven or Gradle build (Surefire and Gradle output shapes are unit-tested), the new `docker.yml` matrix on
 GitHub Actions, and the dashboard in a browser.
 
-Still open: M5 (Go built; PyPI and Maven open), a polyglot root (a root Node project beside a Python
+Still open: M5 (Go and PyPI built; Maven open), a polyglot root (a root Node project beside a Python
 service: the service gets nothing), publishing under the repository's GHCR namespace needs a human
 decision on visibility, and `workspace.test.ts` is flaky on the authoring machine (a different subset
 fails each run).
