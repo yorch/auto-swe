@@ -1,3 +1,4 @@
+import { isUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { beforeEach, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({ find: vi.fn(), remove: vi.fn() }));
@@ -27,4 +28,17 @@ it('does not delete anything when empty', async () => {
 it('surfaces database failures to retry the sweep', async () => {
   h.find.mockRejectedValue(new Error('unavailable'));
   await expect(pruneWorkflowHttpCalls(new Date())).rejects.toThrow('unavailable');
+});
+it('exempts only HTTP rows for deployment-wide retention reads and deletes', async () => {
+  h.find.mockImplementation(async () => {
+    expect(isUnscoped('WorkflowHttpCall')).toBe(true);
+    expect(isUnscoped('AgentTrace')).toBe(false);
+    return [{ id: 'expired' }];
+  });
+  h.remove.mockImplementation(async () => {
+    expect(isUnscoped('WorkflowHttpCall')).toBe(true);
+    return { count: 1 };
+  });
+  expect(await pruneWorkflowHttpCalls(new Date())).toBe(1);
+  expect(isUnscoped('WorkflowHttpCall')).toBe(false);
 });
