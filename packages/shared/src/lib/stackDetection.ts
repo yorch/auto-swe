@@ -1,5 +1,5 @@
 import type { DetectedStack, RepoGateCommands } from '../types/api.js';
-import { packageManagerPins } from './lockfileAllowlist.js';
+import { packageManagerPins } from './packageManagerPins.js';
 
 export type Stack = 'node' | 'python' | 'jvm' | 'go';
 
@@ -456,7 +456,7 @@ export function detectedGateDefaults(detected: unknown): RepoGateCommands | null
 }
 
 /** The most components {@link uncoveredComponents} lists; past it the list is capped, not an error. */
-const MAX_UNCOVERED_COMPONENTS = 20;
+export const MAX_UNCOVERED_COMPONENTS = 20;
 
 /**
  * The components a root target's default gates do not cover: every other valid component whose

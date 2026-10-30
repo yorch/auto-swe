@@ -2,7 +2,7 @@
 
 import type { ConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
-import { uncoveredComponents } from '@auto-swe/shared/lib/stackDetection';
+import { MAX_UNCOVERED_COMPONENTS, uncoveredComponents } from '@auto-swe/shared/lib/stackDetection';
 import {
   type ExecutorImageProbeResult,
   REPO_GATE_COMMAND_KEYS,
@@ -421,8 +421,11 @@ export function ConnectionFormModal({
                       .slice(0, 5)
                       .map((c) => `${c.path} (${c.stacks.join(', ')})`)
                       .join(', ')}
-                    {uncovered.length > 5 && `, and ${uncovered.length - 5} more`}. Set gate
-                    commands that <code>cd</code> into them.
+                    {uncovered.length > 5 &&
+                      (uncovered.length >= MAX_UNCOVERED_COMPONENTS
+                        ? ', and more'
+                        : `, and ${uncovered.length - 5} more`)}
+                    . Set gate commands that <code>cd</code> into them.
                   </p>
                 )}
                 {(initial.detectedStack.componentsTruncated ||

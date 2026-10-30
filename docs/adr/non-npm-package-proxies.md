@@ -1,10 +1,10 @@
 # Package proxies beyond npm — decision log
 
-The worker's registry proxy serves npm, Go modules and PyPI ([`package-registries.md`](../package-registries.md)).
-JVM repositories install straight from the network: no private index, no credential
+The worker's registry proxy serves npm, Go modules, PyPI and Maven ([`package-registries.md`](../package-registries.md)).
+Gradle and wrapper-based builds reach their repositories directly: no private index, no credential
 that stays out of the agent's hands, no lockfile-scoped access. This records how to extend the
 proxy, in what order, and what is deliberately left out. Each decision is **Proposed** until the
-slice that carries it merges; the Go and PyPI slices are **Accepted**.
+slice that carries it merges; all three slices are **Accepted**.
 
 ## D1 — 2026-10-29 — One proxy per ecosystem, the npm proxy's model
 
@@ -25,7 +25,7 @@ fronts such a mirror, it does not replace it.
 
 ## D2 — 2026-10-29 — Go modules first, then PyPI, then Maven
 
-**Status**: Accepted for Go and PyPI; Maven Proposed
+**Status**: Accepted
 **Decision**: Build in that order, one pull request per ecosystem, each shippable alone.
 - **Go**: the `GOPROXY` protocol is four read-only paths (`/<module>/@v/list`, `.info`, `.mod`, `.zip`),
   and `go.sum` is a committed, content-hashed list of exactly the modules and versions a build may
@@ -40,7 +40,8 @@ fronts such a mirror, it does not replace it.
   registry credential goes only to file URLs under the registry's own path.
 - **Maven**: last, because Maven has **no committed lockfile**. Lockfile mode has nothing to read,
   so a Maven registry is `open` mode only until a source for the allowlist exists (Gradle's
-  dependency locking and a resolved-dependency report are candidates, neither universal).
+  dependency locking and a resolved-dependency report are candidates, neither universal). Built for `mvn`:
+  open mode only, a `settings.xml` mirror of `*`; the admin API refuses `lockfile` on a Maven row.
 **Reason**: Go and PyPI have a committed artifact that makes the proxy's strongest mode meaningful;
 Maven would ship the weaker mode first and invite the assumption that it is the strong one. Go's
 protocol is the smallest, so it proves the shared parts (registration, limits, wiring, admin) for the
@@ -53,7 +54,7 @@ registry serves; it gets the credential protection but not the lockfile scope.
 
 ## D3 — 2026-10-29 — Reuse `PackageRegistry`, keyed by its `ecosystem`
 
-**Status**: Accepted for Go and PyPI; Maven Proposed
+**Status**: Accepted
 **Decision**: The admin-managed `PackageRegistry` row already carries `ecosystem` (default `npm`). New
 ecosystems use it: `go`, `pypi`, `maven`. `npmScopes` stays npm's; routing for the others is by the
 registry that claims the repository's ecosystem, with the same default/override rules. The admin
@@ -67,7 +68,7 @@ name.
 
 ## D4 — 2026-10-29 — The workspace is wired by what the repository's stack needs
 
-**Status**: Accepted for Go and PyPI; Maven Proposed
+**Status**: Accepted
 **Decision**: `beginWorkspaceRegistries` wires an ecosystem only when the repository's detected stack
 (or component, for a layout of several) uses it, and renders that ecosystem's client configuration
 into the workspace the way it renders `.npmrc` today: the Go environment variables, `pip.conf` and

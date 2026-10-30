@@ -479,12 +479,13 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   // unreachable on this network — warn and run without it.
   let registry: WorkspaceRegistryAccess | null = null;
   if (input.network === 'egress' && workerRegistryProxy()) {
-    // As `createWorkspace` does: a detected stack narrows the proxies wired; unknown wires all.
+    // Unlike `createWorkspace`, unknown wires nothing but npm: a step's image and command are
+    // arbitrary, and GOPROXY / GOTOOLCHAIN=local / PIP_* could break installs that went direct.
     const stacks = detectedStacks(meta.detectedStack);
     const access = await beginWorkspaceRegistries(meta.teamId, volumeName, {
-      go: stacks === null || stacks.includes('go'),
-      maven: stacks === null || stacks.includes('jvm'),
-      pypi: stacks === null || stacks.includes('python'),
+      go: stacks?.includes('go') === true,
+      maven: stacks?.includes('jvm') === true,
+      pypi: stacks?.includes('python') === true,
     });
     if (access) {
       if (!backend.canReachWorkerProxy(access.baseUrl)) {

@@ -14,6 +14,8 @@ vi.mock('@auto-swe/shared/db', () => ({
     // no rows means every setting falls back to its registered default.
     configSetting: { findMany: vi.fn().mockResolvedValue([]) },
     connection: { findUniqueOrThrow: vi.fn() },
+    // Read by `detectedStackForRun`; undefined means no run row, so the live detection is used.
+    workflowRun: { findUnique: vi.fn() },
   },
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => {
@@ -836,6 +838,7 @@ describe('runShellStep — registry wiring', () => {
       findUniqueOrThrow.mockResolvedValue({
         defaultBranch: 'main',
         detectedStack,
+        id: 'conn-1',
         team: { egressAllowlist: [], id: 'team-1', shellImageAllowlist: ['alpine/git:latest'] },
       } as never);
       await runShellStep({
@@ -851,12 +854,29 @@ describe('runShellStep — registry wiring', () => {
       primary: stack,
     });
 
-    it('wires only the proxies the detected stack uses; an unknown detection wires all', async () => {
+    it('wires only the proxies the detected stack uses; an unknown detection wires none', async () => {
       expect(await run(detected('go'))).toEqual({ go: true, maven: false, pypi: false });
       expect(await run(detected('python'))).toEqual({ go: false, maven: false, pypi: true });
       expect(await run(detected('jvm'))).toEqual({ go: false, maven: true, pypi: false });
       expect(await run(detected('node'))).toEqual({ go: false, maven: false, pypi: false });
-      expect(await run(null)).toEqual({ go: true, maven: true, pypi: true });
+      expect(await run(null)).toEqual({ go: false, maven: false, pypi: false });
+    });
+
+    it('wires from the stack the run pinned, not the live connection row', async () => {
+      const workflowRunFindUnique = vi.mocked(prisma.workflowRun.findUnique);
+      workflowRunFindUnique.mockResolvedValueOnce({
+        pinnedDetections: { 'conn-1': detected('go') },
+      } as never);
+      expect(await run(detected('node'))).toEqual({ go: true, maven: false, pypi: false });
+      workflowRunFindUnique.mockResolvedValueOnce({
+        pinnedDetections: { 'conn-1': detected('node') },
+      } as never);
+      expect(await run(detected('go'))).toEqual({ go: false, maven: false, pypi: false });
+      // A pinned null is "unknown at run start": it must not fall through to the live scan.
+      workflowRunFindUnique.mockResolvedValueOnce({
+        pinnedDetections: { 'conn-1': null },
+      } as never);
+      expect(await run(detected('go'))).toEqual({ go: false, maven: false, pypi: false });
     });
 
     it('splits the env: token-bearing entries in secretEnv only, MAVEN_ARGS and the rest plain', async () => {

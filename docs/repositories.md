@@ -619,7 +619,10 @@ longer fit.
   retry of one execution keeps that execution's first. A repository first scanned after the run began has no
   recorded detection for that run. Runs that began before the pin existed, and a connection
   outside the run's authorized set, read the live value. A polyglot root (root `package.json` plus a Python
-  service) is a Node target, and the service gets nothing. A single component is chosen only when it is
+  service) is a Node target, and the service gets no default gates: making the defaults cover both would run
+  `pytest` in an image that may not have it. The repository form says so instead, listing the components
+  the root's defaults do not cover (those whose first stack differs from the root's), and a `gateCommands`
+  entry that `cd`s into them is the fix. A single component is chosen only when it is
   the only one seen, which a repository whose real build is a `Makefile` beside one lone nested `package.json`
   would satisfy wrongly; the `cd` in the recorded command is how that shows, and `gateCommands` is the
   fix. A Python `runTests` assumes `pytest` is installed by the repository's own setup.

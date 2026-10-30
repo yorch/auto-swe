@@ -199,6 +199,23 @@ describe('ConnectionFormModal detected stack coverage', () => {
     ).toBeTruthy();
   });
 
+  it('counts the rest below the cap', () => {
+    renderWithDetection([
+      'package.json',
+      ...Array.from({ length: 8 }, (_, i) => `s${i}/requirements.txt`),
+    ]);
+    expect(screen.getByText(/, and 3 more\./)).toBeTruthy();
+  });
+
+  it('says "and more", not a number, once the list is capped', () => {
+    renderWithDetection([
+      'package.json',
+      ...Array.from({ length: 25 }, (_, i) => `s${String(i).padStart(2, '0')}/requirements.txt`),
+    ]);
+    expect(screen.getByText(/, and more\./)).toBeTruthy();
+    expect(screen.queryByText(/and \d+ more/)).toBeNull();
+  });
+
   it('says nothing when the root covers every component', () => {
     renderWithDetection(['package.json', 'packages/a/package.json']);
     expect(screen.queryByText(/Not covered/)).toBeNull();
