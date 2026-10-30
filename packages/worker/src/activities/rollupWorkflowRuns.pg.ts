@@ -151,15 +151,15 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
     const [rows, humanRows, reviewRows] = await Promise.all([
       runUnscoped('read the workflow-run rollup test fixture', ['WorkflowRunDailyRollup'], () =>
         prisma.workflowRunDailyRollup.findMany({
-          where: { bucketVersion: 2, day: dayStart },
+          where: { bucketVersion: 3, day: dayStart },
         })
       ),
       runUnscoped('read the human-step rollup test fixture', ['HumanStepDailyRollup'], () =>
-        prisma.humanStepDailyRollup.findMany({ where: { bucketVersion: 2, day: dayStart } })
+        prisma.humanStepDailyRollup.findMany({ where: { bucketVersion: 3, day: dayStart } })
       ),
       runUnscoped('read the review-verdict rollup test fixture', ['ReviewVerdictDailyRollup'], () =>
         prisma.reviewVerdictDailyRollup.findMany({
-          where: { bucketVersion: 2, day: dayStart },
+          where: { bucketVersion: 3, day: dayStart },
         })
       ),
     ]);

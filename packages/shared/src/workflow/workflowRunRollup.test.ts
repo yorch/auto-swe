@@ -33,6 +33,7 @@ describe('WorkflowRun daily rollups', () => {
       estimatedHumanTimeSaved: null,
       hadHumanStep: null,
       id: 'run-1',
+      launchedById: 'launcher-1',
       outcomeDomain: null,
       outcomeType: null,
       startedAt: new Date('2026-10-01T10:00:00Z'),
@@ -54,6 +55,7 @@ describe('WorkflowRun daily rollups', () => {
     const mappedForSweep = workflowRunRollupInputFromRun(run);
     const mappedForLive = workflowRunRollupInputFromRun(run);
     expect(mappedForSweep).toMatchObject({
+      launchedById: 'launcher-1',
       legacyCostUsd: 2,
       repoId: 'repo',
     });
@@ -127,7 +129,7 @@ describe('WorkflowRun daily rollups', () => {
   });
 
   it('uses versioned sub-second and logarithmic duration buckets', () => {
-    expect(WORKFLOW_RUN_ROLLUP_BUCKET_VERSION).toBe(2);
+    expect(WORKFLOW_RUN_ROLLUP_BUCKET_VERSION).toBe(3);
     expect(DURATION_BUCKET_BOUNDS_MS.slice(0, 7)).toEqual([10, 25, 50, 100, 250, 500, 1000]);
     expect(durationBucketForMs(10)).toBe(0);
     expect(durationBucketForMs(11)).toBe(1);
@@ -162,6 +164,7 @@ describe('WorkflowRun daily rollups', () => {
           estimatedHumanTimeSaved: null,
           hadHumanStep: null,
           id: 'sub-second-run',
+          launchedById: 'launcher-1',
           outcomeDomain: null,
           outcomeType: null,
           repoId: null,
@@ -175,7 +178,7 @@ describe('WorkflowRun daily rollups', () => {
       steps: [],
       traces: [],
     })[0];
-    expect(row?.bucketVersion).toBe(2);
+    expect(row?.bucketVersion).toBe(3);
     expect(row?.durationBuckets[durationBucketForMs(250)]).toBe(1);
 
     const rounds = Array.from({ length: 21 }, () => 0);
@@ -455,6 +458,8 @@ describe('WorkflowRun daily rollups', () => {
         attributedOrgId: 'org-1',
         attributedTeamId: 'team-1',
         id: 'run-1',
+        launchedById: 'launcher-1',
+        repoId: 'repo-1',
         startedAt: requestedAt,
       },
     ];
@@ -478,7 +483,12 @@ describe('WorkflowRun daily rollups', () => {
       steps: [],
     }).review;
     const reviewerRows = buildReviewVerdictDailyRollups({ runs, traces });
-    expect(reviewerRows[0]).toMatchObject({ orgId: 'org-1', teamId: 'team-1' });
+    expect(reviewerRows[0]).toMatchObject({
+      launchedById: 'launcher-1',
+      orgId: 'org-1',
+      repoId: 'repo-1',
+      teamId: 'team-1',
+    });
     const rollupReview = qualityReviewFromRollups(reviewerRows);
     expect(rollupReview).toEqual(liveReview);
   });
@@ -488,7 +498,9 @@ describe('WorkflowRun daily rollups', () => {
     const stepRows = buildHumanStepDailyRollups([
       {
         kind: 'APPROVAL',
+        launchedById: 'launcher-1',
         orgId: null,
+        repoId: 'repo-1',
         requestedAt: requestTime,
         resolvedAt: new Date(requestTime.getTime() + 10),
         resolvedBy: 'deleted-user-id',
@@ -497,6 +509,7 @@ describe('WorkflowRun daily rollups', () => {
         teamId: null,
       },
     ]);
+    expect(stepRows[0]).toMatchObject({ launchedById: 'launcher-1', repoId: 'repo-1' });
     expect(humanStepMetricsFromRollups(stepRows).byApprover[0]?.name).toBe('Unknown approver');
 
     const runs = [

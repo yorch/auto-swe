@@ -644,7 +644,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       previousStart,
       start: windowStart,
     } = resolveWindow(request.query, request.query.window);
-    const attributionScope = await resolveWorkflowRunAttributionScope(fastify.prisma, user);
+    const attributionScope = await resolveWorkflowRunAttributionScope(
+      fastify.prisma,
+      user,
+      request.repoAccessGate
+    );
     const ANALYTICS_ROW_CAP = 50_000;
     const APPROVAL_STEP_ROW_CAP = 10_000;
     const GROUP_BY = [
@@ -3014,7 +3018,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // Whole UTC days, as the cross-template rollup and custom ranges are.
       const { end: windowEnd, start: windowStart } = resolveWindow({}, request.query.window);
-      const scope = await resolveWorkflowRunAttributionScope(fastify.prisma, user);
+      const scope = await resolveWorkflowRunAttributionScope(
+        fastify.prisma,
+        user,
+        request.repoAccessGate
+      );
       // Hard cap on rows pulled into memory. Templates with high run volume
       // would otherwise OOM the gateway on a 90d window. At the cap the rollup
       // becomes an approximation of the most recent N runs/steps in the window.

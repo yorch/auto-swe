@@ -2,7 +2,7 @@ import { parseReviewVerdict } from './reports.js';
 
 export const WORKFLOW_RUN_DAY_MS = 24 * 60 * 60 * 1000;
 export const WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS = 30;
-export const WORKFLOW_RUN_ROLLUP_BUCKET_VERSION = 2;
+export const WORKFLOW_RUN_ROLLUP_BUCKET_VERSION = 3;
 export const CI_FIX_ROUND_BUCKETS = 21;
 export const CI_FIX_ROUND_OVERFLOW = 20;
 
@@ -22,6 +22,7 @@ export interface WorkflowRunRollupRunInput {
   estimatedHumanTimeSaved: number | null;
   hadHumanStep: boolean | null;
   id: string;
+  launchedById?: string | null;
   legacyCostUsd?: number;
   outcomeDomain: string | null;
   outcomeType: string | null;
@@ -42,6 +43,7 @@ export function workflowRunRollupInputFromRun(run: {
   estimatedHumanTimeSaved: number | null;
   hadHumanStep: boolean | null;
   id: string;
+  launchedById?: string | null;
   outcomeDomain: string | null;
   outcomeType: string | null;
   startedAt: Date;
@@ -71,6 +73,7 @@ export function workflowRunRollupInputFromRun(run: {
     estimatedHumanTimeSaved: run.estimatedHumanTimeSaved,
     hadHumanStep: run.hadHumanStep,
     id: run.id,
+    launchedById: run.launchedById ?? null,
     legacyCostUsd: activeWorkflow ? toNumber(activeWorkflow.costUsdAccrued) : 0,
     outcomeDomain: run.outcomeDomain,
     outcomeType: run.outcomeType,
@@ -81,6 +84,22 @@ export function workflowRunRollupInputFromRun(run: {
     templateVersion: run.templateVersion,
     wasAutonomous: run.wasAutonomous,
   };
+}
+
+export function workflowRunRepoIdFromRun(run: {
+  connectionId?: string | null;
+  workflowId: string;
+  workRequest?: {
+    activeWorkflows: readonly { repoId: string | null; temporalWorkflowId: string }[];
+  } | null;
+}): string | null {
+  return (
+    run.workRequest?.activeWorkflows.find(
+      (workflow) => workflow.temporalWorkflowId === run.workflowId
+    )?.repoId ??
+    run.connectionId ??
+    null
+  );
 }
 
 export interface WorkflowRunRollupPullRequestInput {
@@ -114,6 +133,7 @@ export interface WorkflowRunRollupRow {
   durationCount: number;
   durationMsSum: bigint;
   hadHumanStep: boolean | null;
+  launchedById: string | null;
   mergeMsBuckets: number[];
   orgId: string | null;
   outcomeDomain: string | null;
@@ -270,6 +290,7 @@ export function buildWorkflowRunDailyRollups(
       run.outcomeType,
       run.wasAutonomous,
       run.hadHumanStep,
+      run.launchedById ?? null,
     ]);
     const key = `${dayMs}:${dimensionKey}`;
     const row = rows.get(key) ?? {
@@ -284,6 +305,7 @@ export function buildWorkflowRunDailyRollups(
       durationCount: 0,
       durationMsSum: 0n,
       hadHumanStep: run.hadHumanStep,
+      launchedById: run.launchedById ?? null,
       mergeMsBuckets: durationBuckets(),
       orgId: run.attributedOrgId,
       outcomeDomain: run.outcomeDomain,
@@ -349,8 +371,10 @@ export function buildWorkflowRunDailyRollups(
 }
 
 export interface HumanStepDailyRollupInput {
+  launchedById?: string | null;
   kind: string;
   orgId: string | null;
+  repoId?: string | null;
   requestedAt: Date;
   resolvedAt: Date | null;
   resolvedBy: string | null;
@@ -364,7 +388,9 @@ export interface HumanStepDailyRollupRow {
   day: Date;
   dimensionKey: string;
   kind: string;
+  launchedById: string | null;
   orgId: string | null;
+  repoId: string | null;
   resolvedBy: string | null;
   resolvedVia: string;
   status: string;
@@ -390,6 +416,8 @@ export function buildHumanStepDailyRollups(
     const dimensions = [
       step.orgId,
       step.teamId,
+      step.repoId ?? null,
+      step.launchedById ?? null,
       step.kind,
       step.status,
       resolvedVia,
@@ -402,7 +430,9 @@ export function buildHumanStepDailyRollups(
       day: new Date(dayMs),
       dimensionKey,
       kind: step.kind,
+      launchedById: step.launchedById ?? null,
       orgId: step.orgId,
+      repoId: step.repoId ?? null,
       resolvedBy: step.resolvedBy,
       resolvedVia,
       status: step.status,
@@ -430,6 +460,8 @@ export interface ReviewVerdictDailyRollupRunInput {
   attributedOrgId: string | null;
   attributedTeamId: string | null;
   id: string;
+  launchedById?: string | null;
+  repoId?: string | null;
   startedAt: Date;
 }
 
@@ -446,8 +478,10 @@ export interface ReviewVerdictDailyRollupRow {
   day: Date;
   dimensionKey: string;
   findings: number;
+  launchedById: string | null;
   nonVerdictRows: number;
   orgId: string | null;
+  repoId: string | null;
   reviewer: string | null;
   severity: string | null;
   teamId: string | null;
@@ -483,6 +517,8 @@ export function buildReviewVerdictDailyRollups(input: {
     const dimensionKey = JSON.stringify([
       run.attributedOrgId,
       run.attributedTeamId,
+      run.repoId ?? null,
+      run.launchedById ?? null,
       reviewer,
       severity,
       approved,
@@ -495,8 +531,10 @@ export function buildReviewVerdictDailyRollups(input: {
       day: new Date(dayMs),
       dimensionKey,
       findings: 0,
+      launchedById: run.launchedById ?? null,
       nonVerdictRows: 0,
       orgId: run.attributedOrgId,
+      repoId: run.repoId ?? null,
       reviewer,
       severity,
       teamId: run.attributedTeamId,

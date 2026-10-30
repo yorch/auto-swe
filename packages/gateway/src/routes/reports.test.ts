@@ -3,6 +3,11 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { describe, expect, it, vi } from 'vitest';
 import { reportsRoutes } from './reports.js';
 
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveSetting: vi.fn(async () => true),
+}));
+
 function mockPrisma() {
   return {
     activeWorkflow: { findMany: vi.fn().mockResolvedValue([]) },
@@ -113,9 +118,15 @@ describe('report routes', () => {
     });
     expect(delivery.statusCode, delivery.body).toBe(200);
     const deliveryRunQuery = prisma.workflowRun.findMany.mock.calls[0]?.[0];
-    expect(deliveryRunQuery?.where.AND).toContainEqual({
-      OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
-    });
+    expect(deliveryRunQuery?.where.AND).toContainEqual(
+      expect.objectContaining({
+        OR: expect.arrayContaining([
+          { attributedTeamId: { in: [] } },
+          { attributedOrgId: { in: [] } },
+          { launchedById: 'user-1' },
+        ]),
+      })
+    );
 
     const qualityStart = prisma.workflowRun.findMany.mock.calls.length;
     const quality = await app.inject({
@@ -127,12 +138,16 @@ describe('report routes', () => {
     const qualityRunQueries = prisma.workflowRun.findMany.mock.calls
       .slice(qualityStart)
       .map(([args]) => args);
-    expect(qualityRunQueries[0]?.where.AND).toContainEqual({
-      OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
-    });
-    expect(qualityRunQueries[1]?.where.AND).toContainEqual({
-      OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
-    });
+    expect(qualityRunQueries[0]?.where.AND).toContainEqual(
+      expect.objectContaining({
+        OR: expect.arrayContaining([{ launchedById: 'user-1' }]),
+      })
+    );
+    expect(qualityRunQueries[1]?.where.AND).toContainEqual(
+      expect.objectContaining({
+        OR: expect.arrayContaining([{ launchedById: 'user-1' }]),
+      })
+    );
 
     const hitl = await app.inject({
       headers: AUTH,
@@ -141,11 +156,7 @@ describe('report routes', () => {
     });
     expect(hitl.statusCode, hitl.body).toBe(200);
     for (const [args] of prisma.workflowHumanStep.findMany.mock.calls) {
-      expect(args.where.AND[1].run.AND).toContainEqual(
-        expect.objectContaining({
-          OR: expect.arrayContaining([{ workRequest: { requestedById: 'user-1' } }]),
-        })
-      );
+      expect(JSON.stringify(args.where)).toContain('"launchedById":"user-1"');
     }
   });
 
@@ -169,10 +180,8 @@ describe('report routes', () => {
     });
     expect(memberHitlResponse.statusCode).toBe(200);
     expect(
-      memberApp.prisma.workflowHumanStep.findMany.mock.calls[0]?.[0].where.AND[1].run.AND
-    ).toContainEqual({
-      attributedTeamId: teamId,
-    });
+      JSON.stringify(memberApp.prisma.workflowHumanStep.findMany.mock.calls[0]?.[0].where)
+    ).toContain(`"attributedTeamId":"${teamId}"`);
 
     const matchingOrgAdmin = await buildApp('ENGINEER');
     matchingOrgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: 'org-1' }]);
@@ -185,9 +194,7 @@ describe('report routes', () => {
     expect(authorizedResponse.statusCode).toBe(200);
     expect(
       matchingOrgAdmin.prisma.workflowRun.findMany.mock.calls[0]?.[0].where.AND
-    ).toContainEqual({
-      attributedTeamId: teamId,
-    });
+    ).toContainEqual({ attributedTeamId: teamId });
 
     const otherOrgAdmin = await buildApp('ENGINEER');
     otherOrgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: 'org-1' }]);
@@ -209,7 +216,7 @@ describe('report routes', () => {
     expect(memberForbidden.statusCode).toBe(403);
   });
 
-  it('keeps the legacy run filter on non-rollup reads when no report is admin scoped', async () => {
+  it('uses the new attribution scope for live HITL reads', async () => {
     const { app, prisma } = await buildApp('ENGINEER');
     for (const tab of ['quality', 'hitl']) {
       const response = await app.inject({
@@ -220,16 +227,8 @@ describe('report routes', () => {
       expect(response.statusCode, response.body).toBe(200);
     }
 
-    const qualityRunQuery = prisma.workflowRun.findMany.mock.calls[0]?.[0];
-    expect(qualityRunQuery?.where.AND).toContainEqual({
-      OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
-    });
     for (const [args] of prisma.workflowHumanStep.findMany.mock.calls) {
-      expect(args.where.AND[1].run.AND).toContainEqual(
-        expect.objectContaining({
-          OR: expect.arrayContaining([{ workRequest: { requestedById: 'user-1' } }]),
-        })
-      );
+      expect(JSON.stringify(args.where)).toContain('"launchedById":"user-1"');
     }
   });
 

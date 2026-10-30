@@ -11,7 +11,8 @@ template when the run started.
 Workflow runs store nullable reporting-only team and organization attribution. The team resolver
 uses the run connection, work-request connection, channel, requesting service, then template, in
 that order; the selected team's organization wins, with the work request's billing organization as
-the fallback when no team is available. This attribution does not change run visibility.
+  the fallback when no team is available. Reporting visibility combines persisted attribution
+  with organization opt-in, reachable repository, and launcher ownership.
 
 Pull requests store their template id, template version and associated run id. Writers and the
 historical backfill associate a PR only through an active workflow in the same repository.
@@ -135,18 +136,17 @@ otherwise the configured Resend transport.
 ## Limitations
 
 - CLI and MCP report commands are not available.
-- Non-ADMIN reporting visibility is based on persisted attribution: a row is included when its
-  `teamId` (`WorkflowRun.attributedTeamId`) is one of the caller's member teams, or its `orgId`
-  (`WorkflowRun.attributedOrgId`) is an organization where the caller is `ORG_ADMIN`. ADMIN sees
-  all rows, including null-attribution rows; null-attribution rows are excluded for everyone else.
-  This rule applies to attribution-scoped rollup slices, including headline metrics, group-bys,
-  selected runs, steps, and quality traces. ORG_ADMIN therefore sees every run attributed to their
-  organization even when `buildWorkflowRunVisibilityFilter` would hide it; requester-only and
-  shared-connection visibility do not apply to these rollup slices. A `teamId` filter is allowed
-  only for a caller's member team or a team in an organization they administer; otherwise the route
-  returns 403. Non-rollup reads retain the normal run-visibility filter and add the selected team
-  filter. HITL is currently a visibility exception within one response: live-window steps use
-  normal run visibility, while historical rollup rows use persisted attribution.
+- Non-ADMIN reporting visibility includes runs attributed to the caller's teams, runs attributed
+  to an organization where the caller is ORG_ADMIN and `analytics.orgWideReports` is enabled, runs
+  on repositories reachable through the caller's teams and GitHub permission gate, and runs
+  launched by the caller. The four predicates form one OR, so a run matching multiple predicates
+  contributes once. ADMIN sees all rows, including null-attribution rows. A `teamId` filter remains
+  team-only and is allowed for a member team or a team in an organization with the opt-in enabled;
+  otherwise the route returns 403. Live and rollup report slices use the same run-to-repository
+  mapping. HITL uses this same scope for live and historical rows.
+- Organization-wide digest creation, updates, test sends, and scheduled delivery require
+  `analytics.orgWideReports`; disabled subscriptions remain stored but scheduled delivery skips
+  them without creating delivery rows.
 - Template names hidden by the workflow-template visibility rule, channel names hidden by channel
   access, and repository names blocked by the repository-access gate are masked as `Private
   template`, `Private channel`, and `Inaccessible repository`; the corresponding counts remain.

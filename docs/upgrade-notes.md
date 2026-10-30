@@ -632,6 +632,14 @@ maintenance window when workflow, step, and trace writes can pause for the index
 **Actions.** No manual SQL is required. The standard migration deploy applies the indexes; the
 worker uses them to find changed source rows for frozen rollup days.
 
+### Reporting visibility rollup dimensions
+
+**Affected.** Deployments applying the report visibility rollup-dimension migration.
+
+**Actions.** Set `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to rebuild the desired history; until it is
+rebuilt, older report windows use live reads. ORG_ADMINs do not receive organization-wide reports
+or digests until the organization enables `analytics.orgWideReports`.
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

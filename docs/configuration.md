@@ -141,6 +141,8 @@ The audit and activity retention sweep is environment-only too: `AUDIT_ACTIVITY_
 `audit.configLogRetentionDays` is set (ADMIN, GLOBAL only, default `0` = forever, otherwise at least 365
 days); activity events are kept for `analytics.activityRetentionDays` (ADMIN, GLOBAL only, default 90 days,
 at least 7). See [audit-log.md](./audit-log.md#4-retention) and [user-activity.md](./user-activity.md).
+Organization-wide reports and organization-scope digests are disabled by default; an organization
+administrator can enable them with the organization override `analytics.orgWideReports`.
 
 This doc covers the third tier. For integration credentials see
 [model-configuration.md](./model-configuration.md) and the admin pages themselves; for the

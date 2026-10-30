@@ -29,7 +29,6 @@ import {
   resolveWorkflowRunAttributionScope,
   workflowRunAttributionWhere,
   workflowRunRollupAttributionWhere,
-  workflowRunWithLegacyVisibility,
 } from '../lib/workflowRunAttributionScope.js';
 import {
   coveredHumanStepRollupDays,
@@ -101,6 +100,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       const scope = await resolveWorkflowRunAttributionScope(
         fastify.prisma,
         user,
+        request.repoAccessGate,
         request.query.teamId
       );
       if (!scope.authorized) {
@@ -376,6 +376,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       const scope = await resolveWorkflowRunAttributionScope(
         fastify.prisma,
         user,
+        request.repoAccessGate,
         request.query.teamId
       );
       if (!scope.authorized) {
@@ -878,6 +879,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       const scope = await resolveWorkflowRunAttributionScope(
         fastify.prisma,
         user,
+        request.repoAccessGate,
         request.query.teamId
       );
       if (!scope.authorized) {
@@ -998,6 +1000,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       const scope = await resolveWorkflowRunAttributionScope(
         fastify.prisma,
         user,
+        request.repoAccessGate,
         request.query.teamId
       );
       if (!scope.authorized) {
@@ -1016,13 +1019,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
         covered,
         workflowRunRollupHorizonMs(nowMs)
       );
-      const visibleRun = {
-        ...workflowRunWithLegacyVisibility(
-          user,
-          visibility(user, request.repoAccessGate),
-          request.query.teamId
-        ),
-      };
+      const visibleRun = workflowRunAttributionWhere(scope);
       const [windowSteps, pendingCount, pendingOldest, decisions, hitlRollupRows] =
         await Promise.all([
           asPlatformAdmin(user, 'admin HITL report spans every tenant', ['WorkflowHumanStep'], () =>
@@ -1050,11 +1047,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             () =>
               fastify.prisma.workflowHumanStep.count({
                 where: {
-                  run: workflowRunWithLegacyVisibility(
-                    user,
-                    visibility(user, request.repoAccessGate),
-                    request.query.teamId
-                  ),
+                  run: visibleRun,
                   status: 'PENDING',
                 },
               })
@@ -1068,11 +1061,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 orderBy: { requestedAt: 'asc' },
                 select: { requestedAt: true },
                 where: {
-                  run: workflowRunWithLegacyVisibility(
-                    user,
-                    visibility(user, request.repoAccessGate),
-                    request.query.teamId
-                  ),
+                  run: visibleRun,
                   status: 'PENDING',
                 },
               })
@@ -1088,11 +1077,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 take: REPORT_ROW_CAP + 1,
                 where: {
                   createdAt: { gte: range.start, lt: range.end },
-                  run: workflowRunWithLegacyVisibility(
-                    user,
-                    visibility(user, request.repoAccessGate),
-                    request.query.teamId
-                  ),
+                  run: visibleRun,
                 },
               })
           ),

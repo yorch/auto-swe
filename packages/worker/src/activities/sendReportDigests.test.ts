@@ -22,11 +22,15 @@ const mocks = vi.hoisted(() => ({
   heartbeats: [] as string[],
   latestDeliveryPeriod: null as Date | null,
   nextDeliveryId: 0,
+  orgWideReportsEnabled: false,
   slackPosts: [] as Array<{ blocks: unknown[]; channelId: string; text: string }>,
   subscriptions: [] as Array<Record<string, unknown>>,
   updates: [] as Array<{ id: string; data: Record<string, unknown> }>,
 }));
 
+vi.mock('@auto-swe/shared/config', () => ({
+  resolveSetting: async () => mocks.orgWideReportsEnabled,
+}));
 function deliveryKey(subscriptionId: string, periodStart: Date, target: string): string {
   return `${subscriptionId}:${periodStart.toISOString().slice(0, 10)}:${target}`;
 }
@@ -179,6 +183,7 @@ vi.mock('../lib/reportDigestEmail.js', () => ({
   },
 }));
 
+import { logWarn } from '../lib/activityLog.js';
 import { sendReportDigests } from './sendReportDigests.js';
 
 const now = new Date('2026-10-20T12:00:00Z');
@@ -221,6 +226,7 @@ beforeEach(() => {
   mocks.slackPosts = [];
   mocks.emails = [];
   mocks.failedEmailRecipients = [];
+  mocks.orgWideReportsEnabled = false;
 });
 
 describe('sendReportDigests', () => {
@@ -239,6 +245,23 @@ describe('sendReportDigests', () => {
     );
   });
 
+  it('skips disabled organization digests without creating deliveries', async () => {
+    mocks.subscriptions = [
+      subscription('disabled-org', {
+        organization: { id: 'org-1' },
+        orgId: 'org-1',
+        scope: 'ORGANIZATION',
+        team: null,
+        teamId: null,
+      }),
+    ];
+    await expect(sendReportDigests({ now, periodStart })).resolves.toMatchObject({ skipped: 1 });
+    expect(mocks.deliveries.size).toBe(0);
+    expect(logWarn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ reason: 'org_wide_reports_disabled' })
+    );
+  });
   it('persists each target once and does not resend a sent target for the same period', async () => {
     mocks.subscriptions = [
       subscription('idempotent', { emailRecipients: ['digest@example.test'] }),
