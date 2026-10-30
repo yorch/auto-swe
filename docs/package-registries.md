@@ -310,7 +310,7 @@ under 90%. Cache errors fall through to the upstream.
 | Variable | Purpose |
 |---|---|
 | `REGISTRY_PROXY_PORT` | Enables the proxy; port the worker listens on. Unset = no registry wiring. |
-| `REGISTRY_PROXY_URL` | Base URL a workspace reaches the proxy at; `{hostname}` resolves per replica. Default `http://host.docker.internal:$PORT` (the host-gateway alias is then added to the container). |
+| `REGISTRY_PROXY_URL` | Base URL a workspace reaches the proxy at; `{hostname}` resolves per replica. Default `http://host.docker.internal:$PORT` (the host-gateway alias is then added to the container). On `WORKSPACE_BACKEND=kubernetes` it is required when the port is set: the worker refuses to boot when it is unset, names the Docker host alias, or contains `{hostname}`. It should be a Service name pods can resolve; the check does not prove that. |
 | `REGISTRY_PROXY_BIND` | Listen address, default `0.0.0.0`. |
 | `REGISTRY_PROXY_CACHE_DIR` | Tarball cache directory; unset disables the cache. |
 | `REGISTRY_PROXY_CACHE_MAX_BYTES` | Cache cap, default 2 GiB. |
