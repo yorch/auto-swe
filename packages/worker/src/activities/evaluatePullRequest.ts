@@ -21,6 +21,7 @@ import {
   type PlatformCredential,
   resolvePlatformCredential,
 } from '@auto-swe/shared/lib/githubHostCredential';
+import { repoHostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import {
   type ApprovalState,
@@ -32,6 +33,7 @@ import {
   type Classification,
   classify,
   type EvaluationSignals,
+  type ExcludedIdentities,
   mergePolicy,
   type PolicyFloor,
   type PrEvaluationMode,
@@ -52,6 +54,7 @@ import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 import { logWarn } from '../lib/activityLog.js';
 import { scanDiffForCodeIssuesDetailed } from '../lib/codeSecurityScanner.js';
+import { resolveLauncherSet } from '../lib/prLauncher.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import type {
   BranchRules,
@@ -96,6 +99,11 @@ export type EvaluatePullRequestDeps = {
    * credential is not an App. A requirement pinned to any other App is not ours.
    */
   expectedAppId: (repo: RepoRef) => Promise<number | null>;
+  /**
+   * The host family the repository lives on (`github.com`, `ghe.example.com`), which a linked
+   * GitHub account's id is only comparable on.
+   */
+  repoHost: (repo: RepoRef) => Promise<string>;
   scan: (diff: string) => Promise<{ findings: readonly unknown[]; incomplete: boolean }>;
   now: () => Date;
 };
@@ -319,6 +327,8 @@ export async function evaluatePullRequest(
   return evaluatePullRequestWith(input, {
     expectedAppId: (repo) => expectedAppIdFor(repo),
     now: () => new Date(),
+    repoHost: async (repo) =>
+      repoHostFamily({ apiUrl: repo.apiUrl, baseUrl: repo.baseUrl }, await resolveGitHubConfig()),
     scan: scanDiffForCodeIssuesDetailed,
     scm: getScmProvider(),
   });
@@ -553,6 +563,16 @@ export async function evaluatePullRequestWith(
     return { outcome: 'skipped', reason: 'not a pull request the platform opened' };
   }
   const temporalWorkflowId = platformPr.workflow.temporalWorkflowId;
+  // Everyone who launched a run of this work, and whoever asked for it: their own approval never
+  // counts, and unless every one of them is matched by id on this repository's host the pull
+  // request is never armed. Only a count reaches the row and the logs, never who they were.
+  const launcher = await resolveLauncherSet(prisma, {
+    repoHost: await deps.repoHost(repo),
+    repoId: connection.id,
+    runId: platformPr.runId,
+    temporalWorkflowId,
+    workRequestId: platformPr.workflow.workRequestId,
+  });
   const { scm } = deps;
 
   let pr: PullRequestDetails | null;
@@ -688,7 +708,8 @@ export async function evaluatePullRequestWith(
       reviews,
       pr.author ?? '',
       classification.requiredApprovers,
-      pr.headSha
+      pr.headSha,
+      launcher
     );
     const approval = trusted.approval;
     if (trusted.excluded > 0) {
@@ -696,6 +717,22 @@ export async function evaluatePullRequestWith(
         infoReason(
           'approvers-unverified',
           `${trusted.excluded} approving reviewer(s) were not counted: write access to the repository could not be confirmed.`
+        )
+      );
+    }
+    if (trusted.launcherExcluded > 0) {
+      classification.reasons.push(
+        infoReason(
+          'launcher-excluded',
+          `${trusted.launcherExcluded} distinct approver(s) who launched or requested this work were not counted.`
+        )
+      );
+    }
+    if (!launcher.resolved) {
+      classification.reasons.push(
+        infoReason(
+          'launcher-unresolved',
+          "Everyone who launched or requested this work could not be matched to a linked GitHub account on this repository's host, so their own approval cannot be told apart; auto-merge is never armed."
         )
       );
     }
@@ -719,6 +756,7 @@ export async function evaluatePullRequestWith(
         context,
         deps,
         draft: live.draft,
+        launcherResolved: launcher.resolved,
         minEvidence: settings['prEvaluation.autoMinEvidence'],
         readiness,
         statusPublished: statusPublished.ok,
@@ -819,7 +857,9 @@ const MAX_APPROVER_LOOKUPS = 20;
  * The approval count with only people who hold write access counted. The distinct approvers
  * (first 20 in review order) are each asked for their permission on the repository; a lookup
  * that errors, is refused or answers below `write` leaves that login out. The author is never
- * asked about (`approvalState` leaves them out first).
+ * asked about (`approvalState` leaves them out first), and neither is anyone who launched or
+ * requested the work (`excludedIdentities`), whose own approval never counts; `launcherExcluded`
+ * is how many distinct approvers were set aside for that reason, a count and never who.
  */
 async function trustedApprovers(
   scm: ScmProvider,
@@ -827,9 +867,19 @@ async function trustedApprovers(
   reviews: readonly PullRequestReviewSummary[],
   author: string,
   required: number,
-  headSha: string
-): Promise<{ approval: ApprovalState; excluded: number }> {
-  const candidates = approvalState(reviews, author, required, headSha).approvers;
+  headSha: string,
+  excludedIdentities?: ExcludedIdentities
+): Promise<{ approval: ApprovalState; excluded: number; launcherExcluded: number }> {
+  const everyone = approvalState(reviews, author, required, headSha).approvers;
+  const candidates = approvalState(
+    reviews,
+    author,
+    required,
+    headSha,
+    [],
+    undefined,
+    excludedIdentities
+  ).approvers;
   const eligible = new Set<string>();
   for (const login of candidates.slice(0, MAX_APPROVER_LOOKUPS)) {
     try {
@@ -841,8 +891,20 @@ async function trustedApprovers(
       // Fail closed: an approver whose standing cannot be read does not count.
     }
   }
-  const approval = approvalState(reviews, author, required, headSha, [], eligible);
-  return { approval, excluded: candidates.length - approval.approvers.length };
+  const approval = approvalState(
+    reviews,
+    author,
+    required,
+    headSha,
+    [],
+    eligible,
+    excludedIdentities
+  );
+  return {
+    approval,
+    excluded: candidates.length - approval.approvers.length,
+    launcherExcluded: everyone.length - candidates.length,
+  };
 }
 
 async function readRules(
@@ -875,6 +937,7 @@ async function decideAuto(args: {
   context: string;
   deps: EvaluatePullRequestDeps;
   draft: boolean;
+  launcherResolved: boolean;
   minEvidence: number;
   readiness: BranchRules | null;
   statusPublished: boolean;
@@ -892,6 +955,7 @@ async function decideAuto(args: {
       approvalSatisfied: args.approvalSatisfied,
       context: args.context,
       draft: args.draft,
+      launcherResolved: args.launcherResolved,
       readiness: args.readiness,
       statusPublished: args.statusPublished,
     })

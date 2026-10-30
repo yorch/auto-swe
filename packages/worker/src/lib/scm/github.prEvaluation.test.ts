@@ -251,6 +251,15 @@ describe('listPullRequestReviews', () => {
     ]);
   });
 
+  it('returns the reviewer numeric id as a string, and omits it when the host gave none', async () => {
+    octokit.listReviews.mockResolvedValue({
+      data: [review({ user: { id: 583231, login: 'alice' } }), review({ user: { login: 'bob' } })],
+    });
+    const listed = await provider.listPullRequestReviews(repo, 7);
+    expect(listed[0]).toMatchObject({ login: 'alice', userId: '583231' });
+    expect(listed[1]).not.toHaveProperty('userId');
+  });
+
   it('reads every page, up to the cap', async () => {
     const full = Array.from({ length: 100 }, () => review());
     octokit.listReviews

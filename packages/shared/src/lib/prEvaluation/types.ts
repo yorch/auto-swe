@@ -89,7 +89,16 @@ export type Brief = {
   markdown: string;
 };
 
-export type PrReview = { login: string; state: string; commitId: string };
+export type PrReview = {
+  login: string;
+  state: string;
+  commitId: string;
+  /** The reviewer's numeric host user id, as a string; absent or null when the host gave none. */
+  userId?: string | null;
+};
+
+/** People whose approval never counts, by the host's stable id and by (lower-cased) login. */
+export type ExcludedIdentities = { logins: ReadonlySet<string>; ids: ReadonlySet<string> };
 
 export type ApprovalState = { approvers: string[]; required: number; satisfied: boolean };
 

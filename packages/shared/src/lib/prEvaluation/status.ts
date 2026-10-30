@@ -2,6 +2,7 @@ import type {
   ApprovalState,
   Classification,
   CommitStatus,
+  ExcludedIdentities,
   PrEvaluationMode,
   PrReview,
 } from './types.js';
@@ -15,7 +16,9 @@ const MAX_DESCRIPTION = 140;
  * is stale; accounts ending in `[bot]` and any login in `ignoreLogins`
  * (lowercased) never count. When `eligibleLogins` (lowercased) is given, only a
  * login in it can count: the caller passes the logins it verified to hold write
- * access, so an approval from anyone else does not. Reviews are expected oldest first, as GitHub lists
+ * access, so an approval from anyone else does not. `excludedIdentities` names people whose
+ * approval never counts (the run's launcher): a review is theirs when its author's id is in `ids`
+ * (stable across a rename, so the primary check) or its lower-cased login is in `logins`. Reviews are expected oldest first, as GitHub lists
  * them. One human with two logins cannot be detected here. `required` is
  * floored at 1, and a blank `headSha` is never satisfied.
  */
@@ -25,7 +28,8 @@ export function approvalState(
   required: number,
   headSha: string,
   ignoreLogins: readonly string[] = [],
-  eligibleLogins?: ReadonlySet<string>
+  eligibleLogins?: ReadonlySet<string>,
+  excludedIdentities?: ExcludedIdentities
 ): ApprovalState {
   const needed = Number.isFinite(required) ? Math.max(1, Math.trunc(required)) : 1;
   if (typeof headSha !== 'string' || headSha.trim() === '') {
@@ -44,6 +48,7 @@ export function approvalState(
       !login.endsWith('[bot]') &&
       !ignored.has(login) &&
       (eligibleLogins === undefined || eligibleLogins.has(login)) &&
+      !isExcluded(review, login, excludedIdentities) &&
       review.state === 'APPROVED' &&
       review.commitId === headSha
     ) {
@@ -51,6 +56,22 @@ export function approvalState(
     }
   }
   return { approvers, required: needed, satisfied: approvers.length >= needed };
+}
+
+function isExcluded(
+  review: PrReview,
+  login: string,
+  excluded: ExcludedIdentities | undefined
+): boolean {
+  if (!excluded) {
+    return false;
+  }
+  return (
+    (typeof review.userId === 'string' &&
+      review.userId !== '' &&
+      excluded.ids.has(review.userId)) ||
+    excluded.logins.has(login)
+  );
 }
 
 function clip(text: string): string {

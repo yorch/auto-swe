@@ -1424,6 +1424,7 @@ export class GitHubScmProvider implements ScmProvider {
           login: r.user.login,
           state: r.state.toUpperCase(),
           submittedAt: r.submitted_at ?? null,
+          ...(typeof r.user.id === 'number' ? { userId: String(r.user.id) } : {}),
         });
       }
       if (data.length < 100) {

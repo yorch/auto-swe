@@ -29,6 +29,13 @@ export interface AutoArmingInput {
   /** Whether the commit status for this evaluation was accepted by the host. */
   statusPublished: boolean;
   draft: boolean;
+  /**
+   * Whether everyone who launched a run of this work, and whoever requested it, is matched to a
+   * linked GitHub account by numeric id on the repository's host, so their approval was excluded
+   * from the count. Anything other than `true` refuses: an approval that cannot be told from
+   * theirs must not stand behind an unattended merge.
+   */
+  launcherResolved: boolean;
 }
 
 /** Every reason arming is not allowed; an empty list means it is allowed. */
@@ -72,6 +79,11 @@ export function autoArmingRefusals(input: AutoArmingInput): string[] {
   }
   if (input.draft) {
     reasons.push('draft');
+  }
+  if (input.launcherResolved !== true) {
+    reasons.push(
+      "someone who launched or requested this work is not matched to a linked GitHub account on the repository's host, so their own approval cannot be told apart"
+    );
   }
   return reasons;
 }

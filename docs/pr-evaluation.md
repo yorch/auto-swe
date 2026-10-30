@@ -168,6 +168,39 @@ the **exact head commit**. A later comment or change request withdraws an approv
 an older commit is stale, the pull request's author never counts, and accounts ending in `[bot]`
 never count. One person with two logins cannot be detected.
 
+**Whoever launched or requested the work never counts.** The platform's pull requests are authored
+by its own GitHub credential, so excluding the author alone would let the person who launched the
+run, if they hold write access, approve the pull request their own run opened. `PullRequest.runId`
+cannot name that person on its own: a retry, re-run or scheduled fire that adopts the open pull
+request overwrites it with its own run. The excluded set is therefore the union of the
+`WorkflowRun.launchedById` of **every run of the same work** (the stamped run, the run of the
+opening workflow, and every run of the same work request on this repository, at most 50) and the
+work request's requester (`requestedById`, which for webhook-created work is the mapped GitHub
+sender). Each member is resolved through the user's linked GitHub account, and a review is theirs
+when **either** check matches:
+
+- the reviewer's numeric GitHub user id equals the id of the member's linked account **and that
+  account is on the repository's host** (stable across a rename, so this is the primary check), or
+- the reviewer's login equals the member's linked login, ignoring case (the fallback, and the only
+  check available for an account linked before its id was recorded or on another host).
+
+A member is **resolved** only when the match by id is available: a numeric account id recorded on
+the repository's host (a bare id is github.com's, `{host}:{id}` is that Enterprise Server's). A run
+with no launcher (a webhook automation, a schedule without an acting user), a service-principal
+requester, a user who never linked GitHub or whose login was cleared, a login linked without an
+account id, an account on another host than the repository, an empty set, and a set larger than the
+cap are all unresolved. Approvals keep counting against every member that did resolve, and by login
+for the rest, but the evaluation records `launcher-unresolved` and the pull request is never armed
+(§8). When an approval is set aside the evaluation records an info reason `launcher-excluded` with
+the number of distinct approvers set aside. Logins and ids are used only for the comparison: they
+are never stored on the evaluation, logged, or written into the brief, the comment or the status.
+
+The host consequence: on a repository that lives on one host, a person whose linked GitHub account
+is on another (a github.com account against an Enterprise Server repository, or the reverse) is
+excluded by login only. They are not matched by id, because the same number on another host is
+another person, and since they cannot be resolved the pull request is never armed. A reviewer who
+renames their account after launching work is excluded only while that launcher is matched by id.
+
 Two consequences an operator must know:
 
 - **`advisory` reports `success` whatever the class and the approval count** (an error raised while evaluating still posts `failure`, in every mode). Marking the context required in branch protection for a
@@ -289,6 +322,10 @@ refusal is named in the evaluation's `auto-merge-blocked` reason.
   approvals the class needs are already given on this head.
 - The commit status for this evaluation was accepted by GitHub.
 - The pull request is not a draft.
+- Everyone who launched a run of the work, and whoever requested it, is resolved to a linked GitHub
+  account by numeric id on the repository's host (§5), so their own approval was excluded from the
+  count. The check on choosing `auto` (§10) does not
+  ask this, because it belongs to one pull request.
 - The deployment's evidence gate is met (§9).
 
 The call carries `expectedHeadOid` and uses the **squash** merge method. If the head moves between
@@ -450,8 +487,17 @@ A repository you cannot reach answers `404`. The CLI wraps the first two (§14).
   itself show that unattended merging is safe.
 - **Deleting a repository deletes its evaluations**, and with them its merge counts and bad-merge
   marks, which lowers the evidence figure.
-- **A run's launcher can approve the pull request their run opened**, if they have write access on
-  GitHub. The count excludes only the pull request's own author.
+- **A pull request whose launchers cannot all be resolved by id is never armed, but its approvals
+  count.** That covers work any of whose runs was started by a webhook automation, a schedule
+  without an acting user, or a service principal or token, a requester who is a service principal,
+  users who never linked GitHub, whose login was cleared, who linked a login with no account id, or
+  whose linked account is on a different host than the repository, and work with more than 50 runs.
+  Its status follows the approval count as for any other, so on a repository whose branch rules
+  require the status, someone with write access who started the work through such a path can still
+  approve it.
+- **The launcher exclusion matches the one GitHub account each person linked.** A person who also
+  holds a second GitHub account can approve with it, and a run launched through a service principal
+  cannot be attributed to anyone behind it.
 - **Concurrent evaluations of one pull request are not serialised.** Each re-reads the head and the
   reviews just before publishing, which narrows the window; two evaluations that read the same head
   can still both publish.

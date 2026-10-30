@@ -34,6 +34,58 @@ describe('approvalState: eligibleLogins', () => {
   });
 });
 
+describe('approvalState: excludedIdentities', () => {
+  const withId = (login: string, userId: string | null, state = 'APPROVED'): PrReview => ({
+    commitId: HEAD,
+    login,
+    state,
+    userId,
+  });
+  const none = { ids: new Set<string>(), logins: new Set<string>() };
+
+  it('excludes a review by the launcher id, and counts a second human', () => {
+    const reviews = [withId('launcher', '42'), withId('bob', '7')];
+    const state = approvalState(reviews, 'z', 1, HEAD, [], undefined, {
+      ids: new Set(['42']),
+      logins: new Set(),
+    });
+    expect(state).toEqual({ approvers: ['bob'], required: 1, satisfied: true });
+  });
+
+  it('excludes by login, case-insensitively, when the review carries no id', () => {
+    const reviews = [review('LauNcher', 'APPROVED'), review('bob', 'APPROVED')];
+    const state = approvalState(reviews, 'z', 1, HEAD, [], undefined, {
+      ids: new Set(),
+      logins: new Set(['launcher']),
+    });
+    expect(state.approvers).toEqual(['bob']);
+  });
+
+  it('excludes by id even when the login differs after a rename', () => {
+    const reviews = [withId('renamed-launcher', '42')];
+    const state = approvalState(reviews, 'z', 1, HEAD, [], undefined, {
+      ids: new Set(['42']),
+      logins: new Set(['old-name']),
+    });
+    expect(state.approvers).toEqual([]);
+    expect(state.satisfied).toBe(false);
+  });
+
+  it('excludes nothing when both sets are empty or the option is absent', () => {
+    const reviews = [withId('a', '1'), withId('b', null)];
+    expect(approvalState(reviews, 'z', 2, HEAD, [], undefined, none).approvers).toEqual(['a', 'b']);
+    expect(approvalState(reviews, 'z', 2, HEAD).approvers).toEqual(['a', 'b']);
+  });
+
+  it('does not reduce the required count', () => {
+    const state = approvalState([withId('launcher', '42')], 'z', 2, HEAD, [], undefined, {
+      ids: new Set(['42']),
+      logins: new Set(),
+    });
+    expect(state).toEqual({ approvers: [], required: 2, satisfied: false });
+  });
+});
+
 describe('approvalState', () => {
   it('counts distinct approvers on the head commit', () => {
     const state = approvalState([review('a', 'APPROVED'), review('b', 'APPROVED')], 'z', 2, HEAD);

@@ -5,6 +5,7 @@ const OK: AutoArmingInput = {
   approvalSatisfied: false,
   context: 'auto-swe/pr-evaluation',
   draft: false,
+  launcherResolved: true,
   readiness: {
     allowsAutoMerge: true,
     requiredReviewCount: 1,
@@ -18,6 +19,25 @@ const OK: AutoArmingInput = {
 const withRules = (over: Record<string, unknown>): AutoArmingInput => ({
   ...OK,
   readiness: { ...OK.readiness, ...over },
+});
+
+describe('autoArmingRefusals: the launcher', () => {
+  it('refuses when the launcher is unresolved, naming what is unresolved', () => {
+    const reasons = autoArmingRefusals({ ...OK, launcherResolved: false });
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]).toMatch(/launched or requested/);
+  });
+
+  it('refuses when launcherResolved is missing (fail closed)', () => {
+    const { launcherResolved: _omitted, ...rest } = OK;
+    expect(autoArmingRefusals(rest as AutoArmingInput)).toHaveLength(1);
+  });
+
+  it('adds to, and does not replace, the other refusals', () => {
+    const reasons = autoArmingRefusals({ ...OK, draft: true, launcherResolved: false });
+    expect(reasons).toContain('draft');
+    expect(reasons).toHaveLength(2);
+  });
 });
 
 describe('autoArmingRefusals', () => {

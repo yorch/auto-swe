@@ -435,6 +435,9 @@ async function autoRefusals(
       approvalSatisfied: true,
       context,
       draft: false,
+      // Launcher resolution is per pull request, so this repository-level check cannot ask it;
+      // it is enforced when a pull request is armed.
+      launcherResolved: true,
       readiness,
       statusPublished,
     })) {

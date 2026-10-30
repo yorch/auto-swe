@@ -17,11 +17,16 @@ const m = vi.hoisted(() => ({
   onInvalidate: undefined as (() => void) | undefined,
   platformPr: vi.fn(),
   previous: vi.fn(),
+  repoHost: { value: 'github.com' },
+  request: vi.fn(),
   resolveSettingsCtx: [] as unknown[],
+  runs: vi.fn(),
   settings: {} as Record<string, unknown>,
   steps: vi.fn(),
   update: vi.fn(),
   updateMany: vi.fn(),
+  user: vi.fn(),
+  users: {} as Record<string, { githubLogin: string | null; githubLoginAccountId: string | null }>,
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
@@ -41,6 +46,9 @@ vi.mock('@auto-swe/shared/db', () => ({
       updateMany: m.updateMany,
     },
     pullRequest: { findFirst: m.platformPr },
+    runInput: { findUnique: m.request },
+    user: { findMany: m.user },
+    workflowRun: { findMany: m.runs },
     workflowStep: { findMany: m.steps },
   },
 }));
@@ -76,6 +84,10 @@ const OLD_HEAD = 'b'.repeat(40);
 const CONNECTION = '1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d';
 const SECRET = 'ghp_SuperSecretToken123456789';
 const PATCH_TEXT = 'const patchBodyThatMustNeverBeLogged = 1;';
+const LAUNCHER_LOGIN = 'launcher-login-xyz';
+const LAUNCHER_ID = '424242';
+const WORKFLOW_ID = 'eng-acme-widgets-JIRA-1';
+const WORK_REQUEST = 'wr-1';
 const POLICY_TEXT = 'version: 1\nsensitivePaths: ["policy-secret/**"]\n';
 
 const DEFAULT_SETTINGS: Record<string, unknown> = {
@@ -173,6 +185,7 @@ function depsWith(
   return {
     expectedAppId: async () => expectedAppId,
     now: () => new Date('2026-10-29T12:00:00Z'),
+    repoHost: async () => m.repoHost.value,
     scan: scan ?? (async () => ({ findings: [], incomplete: false })),
     scm,
   };
@@ -207,7 +220,32 @@ beforeEach(() => {
     teamId: 'team-1',
   });
   m.platformPr.mockReset();
-  m.platformPr.mockResolvedValue({ workflow: { temporalWorkflowId: 'eng-acme-widgets-JIRA-1' } });
+  m.platformPr.mockResolvedValue({
+    runId: 'run-1',
+    workflow: { temporalWorkflowId: WORKFLOW_ID, workRequestId: WORK_REQUEST },
+  });
+  m.repoHost.value = 'github.com';
+  // The launcher reads assert the ids they are asked about, and answer only for a user that
+  // exists in the table: a lookup that resolved the wrong person gets nothing back.
+  m.runs.mockReset();
+  m.runs.mockImplementation(async (args: { where: { OR: unknown[] } }) => {
+    expect(args.where.OR).toEqual([
+      { id: 'run-1' },
+      { workflowId: WORKFLOW_ID },
+      { OR: [{ connectionId: null }, { connectionId: CONNECTION }], workRequestId: WORK_REQUEST },
+    ]);
+    return [{ launchedById: 'user-1' }];
+  });
+  m.request.mockReset();
+  m.request.mockImplementation(async (args: { where: { id: string } }) => {
+    expect(args.where).toEqual({ id: WORK_REQUEST });
+    return { requestedById: 'user-1', requestedByServiceId: null };
+  });
+  m.users = { 'user-1': { githubLogin: LAUNCHER_LOGIN, githubLoginAccountId: LAUNCHER_ID } };
+  m.user.mockReset();
+  m.user.mockImplementation(async (args: { where: { id: { in: string[] } } }) =>
+    args.where.id.in.flatMap((id) => (m.users[id] ? [{ id, ...m.users[id] }] : []))
+  );
   m.previous.mockReset();
   m.previous.mockResolvedValue(null);
   m.steps.mockReset();
@@ -1382,5 +1420,248 @@ describe('isRetryableEvaluationError', () => {
     ['text', false],
   ])('%j -> %s', (err, expected) => {
     expect(isRetryableEvaluationError(err)).toBe(expected);
+  });
+});
+
+describe('evaluatePullRequest: the run launcher cannot approve their own pull request', () => {
+  const approval = (login: string, userId?: string): PullRequestReviewSummary => ({
+    commitId: HEAD,
+    login,
+    state: 'APPROVED',
+    submittedAt: null,
+    ...(userId ? { userId } : {}),
+  });
+  const autoRepo = async () => {
+    m.connection.mockResolvedValue({ ...(await m.connection()), prEvaluationMode: 'auto' });
+  };
+  const codes = () =>
+    (m.created[0]?.reasons as { code: string }[] | undefined)?.map((r) => r.code) ?? [];
+
+  it('does not count the launcher approval (by id), so the status stays pending', async () => {
+    await autoRepo();
+    const scm = fakeScm({
+      listPullRequestReviews: async () => [approval('renamed-since', LAUNCHER_ID)],
+    });
+    const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+    expect(result.statusState).toBe('pending');
+    expect(codes()).toContain('launcher-excluded');
+    // The launcher is never asked about, so no permission lookup is spent on them.
+    expect(argsOf('repoPermission')).toHaveLength(0);
+  });
+
+  it('does not count the launcher approval (by login, any case) when the review carries no id', async () => {
+    await autoRepo();
+    const scm = fakeScm({
+      listPullRequestReviews: async () => [approval(LAUNCHER_LOGIN.toUpperCase())],
+    });
+    expect((await evaluatePullRequestWith(INPUT, depsWith(scm))).statusState).toBe('pending');
+  });
+
+  it('counts another trusted human next to the launcher', async () => {
+    await autoRepo();
+    const scm = fakeScm({
+      listPullRequestReviews: async () => [
+        approval(LAUNCHER_LOGIN, LAUNCHER_ID),
+        approval('bob', '7'),
+      ],
+    });
+    const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+    expect(result.statusState).toBe('success');
+    expect(result.autoMerge).toBe('enabled');
+    expect(codes()).toContain('launcher-excluded');
+  });
+
+  it('records no launcher-excluded reason when the launcher did not approve', async () => {
+    await autoRepo();
+    await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+    expect(codes()).not.toContain('launcher-excluded');
+    expect(codes()).not.toContain('launcher-unresolved');
+  });
+
+  it.each([
+    [
+      'a run of the work has no launcher',
+      () =>
+        m.runs.mockImplementation(async () => [{ launchedById: 'user-1' }, { launchedById: null }]),
+    ],
+    [
+      'the work request has no person behind it',
+      () =>
+        m.request.mockImplementation(async () => ({
+          requestedById: null,
+          requestedByServiceId: 'svc-1',
+        })),
+    ],
+    [
+      'there is no run, workflow or work request to follow',
+      () => {
+        m.platformPr.mockResolvedValue({
+          runId: null,
+          workflow: { temporalWorkflowId: '', workRequestId: null },
+        });
+      },
+    ],
+    [
+      'the launcher never linked GitHub',
+      () => {
+        m.users = { 'user-1': { githubLogin: null, githubLoginAccountId: null } };
+      },
+    ],
+    [
+      'the launcher is linked by login only (no numeric account id)',
+      () => {
+        m.users = { 'user-1': { githubLogin: LAUNCHER_LOGIN, githubLoginAccountId: null } };
+      },
+    ],
+    [
+      'the launcher user row is gone',
+      () => {
+        m.users = {};
+      },
+    ],
+    [
+      'the launcher account is on another host than the repository',
+      () => {
+        m.repoHost.value = 'ghe.example.com';
+      },
+    ],
+  ])('keeps counting approvals but never arms when %s', async (_name, arrange) => {
+    await autoRepo();
+    arrange();
+    const scm = fakeScm();
+    const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+    expect(result.statusState).toBe('success');
+    expect(result.autoMerge).not.toBe('enabled');
+    expect(argsOf('enableAutoMerge')).toHaveLength(0);
+    expect(codes()).toContain('launcher-unresolved');
+    const reasons = (m.created[0]?.reasons ?? []) as { code: string; message: string }[];
+    const blocked = reasons.find((r) => r.code === 'auto-merge-blocked');
+    expect(blocked?.message).toMatch(/launched or requested/);
+  });
+
+  it('still excludes the members that resolved when another run has no launcher', async () => {
+    await autoRepo();
+    m.runs.mockImplementation(async () => [{ launchedById: null }, { launchedById: 'user-1' }]);
+    const scm = fakeScm({
+      listPullRequestReviews: async () => [approval('renamed-since', LAUNCHER_ID)],
+    });
+    const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+    expect(result.statusState).toBe('pending');
+    expect(codes()).toContain('launcher-excluded');
+    expect(codes()).toContain('launcher-unresolved');
+  });
+
+  it('excludes the original launcher after a re-run by someone else took the stamp over', async () => {
+    await autoRepo();
+    // The stamped run is Y's; X launched the original run of the same work; Z asked for it.
+    m.platformPr.mockResolvedValue({
+      runId: 'run-y',
+      workflow: {
+        temporalWorkflowId: 'eng-acme-widgets-JIRA-1-rerun',
+        workRequestId: WORK_REQUEST,
+      },
+    });
+    m.runs.mockImplementation(async (args: { where: { OR: unknown[] } }) => {
+      expect(args.where.OR).toEqual([
+        { id: 'run-y' },
+        { workflowId: 'eng-acme-widgets-JIRA-1-rerun' },
+        { OR: [{ connectionId: null }, { connectionId: CONNECTION }], workRequestId: WORK_REQUEST },
+      ]);
+      return [{ launchedById: 'user-y' }, { launchedById: 'user-1' }];
+    });
+    m.request.mockImplementation(async () => ({
+      requestedById: 'user-z',
+      requestedByServiceId: null,
+    }));
+    m.users = {
+      'user-1': { githubLogin: LAUNCHER_LOGIN, githubLoginAccountId: LAUNCHER_ID },
+      'user-y': { githubLogin: 'rerunner', githubLoginAccountId: '2' },
+      'user-z': { githubLogin: 'requester', githubLoginAccountId: '3' },
+    };
+    const scm = fakeScm({
+      listPullRequestReviews: async () => [
+        approval('anything', LAUNCHER_ID),
+        approval('rerunner', '2'),
+        approval('requester', '3'),
+      ],
+    });
+    const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+    expect(result.statusState).toBe('pending');
+    expect(m.created[0]?.reasons).toContainEqual(
+      expect.objectContaining({
+        code: 'launcher-excluded',
+        message: expect.stringContaining('3 distinct approver(s)'),
+      })
+    );
+    expect(codes()).not.toContain('launcher-unresolved');
+    expect(argsOf('repoPermission')).toHaveLength(0);
+  });
+
+  it('a retry by Y after X still excludes X (both runs of the same work)', async () => {
+    await autoRepo();
+    m.runs.mockImplementation(async () => [{ launchedById: 'user-y' }, { launchedById: 'user-1' }]);
+    m.users['user-y'] = { githubLogin: 'retrier', githubLoginAccountId: '2' };
+    const scm = fakeScm({
+      listPullRequestReviews: async () => [approval('x-now', LAUNCHER_ID), approval('bob', '7')],
+    });
+    const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+    expect(result.statusState).toBe('success');
+    expect(argsOf('repoPermission').map((a) => a[1])).toEqual(['bob']);
+  });
+
+  it('does not exclude a reviewer who renamed away when the launcher is linked by login only, and never arms', async () => {
+    await autoRepo();
+    m.users = { 'user-1': { githubLogin: LAUNCHER_LOGIN, githubLoginAccountId: null } };
+    const scm = fakeScm({
+      listPullRequestReviews: async () => [approval('brand-new-login', LAUNCHER_ID)],
+    });
+    const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+    // Nothing links the new login to the launcher, so the approval counts: arming is the guard.
+    expect(result.statusState).toBe('success');
+    expect(result.autoMerge).not.toBe('enabled');
+    expect(argsOf('enableAutoMerge')).toHaveLength(0);
+    expect(codes()).toContain('launcher-unresolved');
+  });
+
+  it('still excludes a login-only launcher by login', async () => {
+    await autoRepo();
+    m.users = { 'user-1': { githubLogin: LAUNCHER_LOGIN, githubLoginAccountId: null } };
+    const scm = fakeScm({ listPullRequestReviews: async () => [approval(LAUNCHER_LOGIN)] });
+    expect((await evaluatePullRequestWith(INPUT, depsWith(scm))).statusState).toBe('pending');
+  });
+
+  it('does not exclude by id on a repository host other than the account host', async () => {
+    await autoRepo();
+    m.repoHost.value = 'ghe.example.com';
+    const scm = fakeScm({
+      listPullRequestReviews: async () => [approval('someone-else', LAUNCHER_ID)],
+    });
+    const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+    // The same number on another host is another person: counted, and arming is refused.
+    expect(result.statusState).toBe('success');
+    expect(result.autoMerge).not.toBe('enabled');
+  });
+
+  it('arms when the launcher is resolved and every other condition holds', async () => {
+    await autoRepo();
+    expect((await evaluatePullRequestWith(INPUT, depsWith(fakeScm()))).autoMerge).toBe('enabled');
+  });
+
+  it('never puts the launcher login or id in a comment, status, row or log', async () => {
+    await autoRepo();
+    const scm = fakeScm({
+      listPullRequestReviews: async () => [
+        approval(LAUNCHER_LOGIN, LAUNCHER_ID),
+        approval('bob', '7'),
+      ],
+    });
+    await evaluatePullRequestWith(INPUT, depsWith(scm));
+    m.users = { 'user-1': { githubLogin: LAUNCHER_LOGIN, githubLoginAccountId: null } };
+    await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+    m.runs.mockImplementation(async () => [{ launchedById: null }, { launchedById: 'user-1' }]);
+    await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+    const everything = JSON.stringify([m.calls, m.created, m.update.mock.calls, m.logs]);
+    expect(everything).not.toContain(LAUNCHER_LOGIN);
+    expect(everything).not.toContain(LAUNCHER_ID);
   });
 });

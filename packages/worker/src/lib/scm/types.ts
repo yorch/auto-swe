@@ -201,6 +201,8 @@ export interface PullRequestReviewSummary {
   /** The commit the review was submitted against. */
   commitId: string;
   submittedAt: string | null;
+  /** The reviewer's numeric host user id as a string; absent when the host gave none. */
+  userId?: string;
 }
 
 export type CommitStatusState = 'pending' | 'success' | 'failure' | 'error';
