@@ -15,7 +15,7 @@ type NodeSDKConfig = NonNullable<ConstructorParameters<typeof NodeSDK>[0]>;
 export interface InitTelemetryOptions {
   serviceName: string;
   traceExporter?: NodeSDKConfig['traceExporter'];
-  metricReader?: NodeSDKConfig['metricReader'];
+  metricReaders?: NodeSDKConfig['metricReaders'];
   instrumentations?: NodeSDKConfig['instrumentations'];
   logRecordProcessors?: NodeSDKConfig['logRecordProcessors'];
   /**
@@ -78,7 +78,7 @@ export function initTelemetry(opts: InitTelemetryOptions): {
     autoDetectResources: false,
     instrumentations: opts.instrumentations ?? [],
     logRecordProcessors: opts.logRecordProcessors,
-    metricReader: opts.metricReader,
+    metricReaders: opts.metricReaders,
     resource,
     traceExporter: opts.traceExporter,
   });

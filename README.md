@@ -65,14 +65,14 @@ For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per
 | ------------------- | ---------------------------------------------------------- |
 | HTTP API            | Fastify 5.12 + Zod 4 validation                            |
 | Orchestration       | Temporal 1.31 (server + admin-tools + ui) + @temporalio/* SDK 1.24 |
-| Agents              | Mastra 1.73 + Vercel AI SDK 7 (default `claude-opus-5-5`)  |
+| Agents              | Mastra 1.79 + Vercel AI SDK 7 (default `claude-opus-5-5`)  |
 | Database            | PostgreSQL 18 + pgvector (Prisma 7.10)                      |
 | Embeddings          | OpenAI `text-embedding-3-large` (1536d)                    |
 | Workspace isolation | Docker-in-Docker                                           |
 | Observability       | OpenTelemetry → Grafana LGTM (`grafana/otel-lgtm:0.34.0`)  |
 | Web dashboard       | Next.js 16 + React 19 + Tailwind CSS 4 + TanStack Query 5  |
 | Language            | TypeScript 7 (strict mode, Yarn 4.18 monorepo)             |
-| Tests / Lint+Format | Vitest 4 / Biome 2.5                                       |
+| Tests / Lint+Format | Vitest 5 / Biome 2.6                                       |
 
 ## Prerequisites
 

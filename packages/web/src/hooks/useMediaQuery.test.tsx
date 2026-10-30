@@ -15,6 +15,13 @@ function Probe() {
   return <p data-testid="probe">{useIsNarrow() ? 'narrow' : 'wide'}</p>;
 }
 
+/** Re-renders itself on demand, handing the trigger to the test. */
+function Ticker({ register }: { register: (bump: () => void) => void }) {
+  const [, setTick] = useState(0);
+  register(() => setTick((n) => n + 1));
+  return <Probe />;
+}
+
 describe('matchesQuery', () => {
   it('answers with the fallback where the browser has no matchMedia', () => {
     clearViewport();
@@ -40,12 +47,7 @@ describe('useIsNarrow', () => {
   it('subscribes once, however often the component re-renders', () => {
     const viewport = mockViewport(500);
     let bump: () => void = () => {};
-    function Ticker() {
-      const [, setTick] = useState(0);
-      bump = () => setTick((n) => n + 1);
-      return <Probe />;
-    }
-    render(<Ticker />);
+    render(<Ticker register={(fn) => (bump = fn)} />);
     for (let i = 0; i < 20; i++) {
       act(() => bump());
     }

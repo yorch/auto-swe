@@ -17,6 +17,28 @@ function type(input: HTMLElement, text: string) {
   fireEvent.change(input, { target: { value: text } });
 }
 
+const MODELS = [
+  { label: 'anthropic/claude-opus-5-5', value: 'anthropic/claude-opus-5-5' },
+  { label: 'openai/gpt-5.5', value: 'openai/gpt-5.5' },
+];
+
+/** Holds the value the way a caller does — the input is controlled by it. */
+function ModelPicker({ onChange }: { onChange: (v: string) => void }) {
+  const [value, setValue] = useState('');
+  return (
+    <Combobox
+      allowsCustomValue
+      label="Model"
+      onChange={(v) => {
+        setValue(v);
+        onChange(v);
+      }}
+      options={MODELS}
+      value={value}
+    />
+  );
+}
+
 describe('Combobox', () => {
   it('is named by its label and filters options by typed text', () => {
     render(<Combobox label="User" onChange={() => {}} options={USERS} value="" />);
@@ -95,28 +117,6 @@ describe('Combobox', () => {
   });
 
   describe('allowsCustomValue', () => {
-    const MODELS = [
-      { label: 'anthropic/claude-opus-5-5', value: 'anthropic/claude-opus-5-5' },
-      { label: 'openai/gpt-5.5', value: 'openai/gpt-5.5' },
-    ];
-
-    /** Holds the value the way a caller does — the input is controlled by it. */
-    function ModelPicker({ onChange }: { onChange: (v: string) => void }) {
-      const [value, setValue] = useState('');
-      return (
-        <Combobox
-          allowsCustomValue
-          label="Model"
-          onChange={(v) => {
-            setValue(v);
-            onChange(v);
-          }}
-          options={MODELS}
-          value={value}
-        />
-      );
-    }
-
     it('reports typed text that matches no option as the value', () => {
       const onChange = vi.fn();
       render(<ModelPicker onChange={onChange} />);

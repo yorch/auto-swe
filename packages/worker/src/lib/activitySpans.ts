@@ -7,7 +7,10 @@ import { CancelledFailure, type Context } from '@temporalio/activity';
 import type { ActivityInterceptors } from '@temporalio/worker';
 import { recordActivityDuration } from './metrics.js';
 
-const tracer = trace.getTracer('auto-swe-worker');
+// Looked up per call, not at import: @opentelemetry/api 1.10 ships separate ESM and CJS
+// copies, and a tracer taken before the provider registers binds to this copy's proxy,
+// which a provider registered through the other copy never reaches (spans become no-ops).
+const getTracer = () => trace.getTracer('auto-swe-worker');
 
 function signalLinks(headers: Parameters<typeof signalLinkFromHeaders>[0]): Link[] {
   const link = signalLinkFromHeaders(headers);
@@ -49,7 +52,7 @@ export function activitySpanInterceptor(ctx: Context): ActivityInterceptors {
   return {
     inbound: {
       execute: (input, next) =>
-        tracer.startActiveSpan(
+        getTracer().startActiveSpan(
           `activity.${info.activityType}`,
           {
             attributes: {

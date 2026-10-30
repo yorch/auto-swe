@@ -59,13 +59,13 @@ describe('Sidebar structure', () => {
 });
 
 describe('Sidebar data-tour anchors', () => {
-  const useRole = (role: 'ENGINEER' | 'LEAD' | 'ADMIN') =>
+  const setRole = (role: 'ENGINEER' | 'LEAD' | 'ADMIN') =>
     useAuthStore.setState({ user: { email: 'a@x.dev', role, sub: 'u1' } } as never);
 
   it.each(['ENGINEER', 'LEAD', 'ADMIN'] as const)(
     'gives the sidebar container its anchor and every rendered %s nav link its own href',
     (role) => {
-      useRole(role);
+      setRole(role);
       resetNavigation('', '/');
       const { container } = render(<Sidebar onClose={() => undefined} open />);
       expect(container.querySelector('aside')?.getAttribute('data-tour')).toBe('sidebar');
@@ -81,7 +81,7 @@ describe('Sidebar data-tour anchors', () => {
   it.each(['ENGINEER', 'LEAD', 'ADMIN'] as const)(
     'anchors exactly the items the %s role may open, plus Start work',
     (role) => {
-      useRole(role);
+      setRole(role);
       resetNavigation('', '/');
       const { container } = render(<Sidebar onClose={() => undefined} open />);
       // The usage-scope check is mocked as platform-wide, matching useVisibleNavGroups.
@@ -122,11 +122,11 @@ describe('Sidebar data-tour anchors', () => {
   });
 
   it('has no Agents anchor for an ENGINEER, and one for an ADMIN', () => {
-    useRole('ENGINEER');
+    setRole('ENGINEER');
     resetNavigation('', '/');
     const { container } = render(<Sidebar onClose={() => undefined} open />);
     expect(container.querySelector('[data-tour="nav:/agents"]')).toBeNull();
-    useRole('ADMIN');
+    setRole('ADMIN');
     cleanup();
     const admin = render(<Sidebar onClose={() => undefined} open />);
     expect(admin.container.querySelector('[data-tour="nav:/agents"]')).not.toBeNull();

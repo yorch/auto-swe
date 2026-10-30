@@ -211,14 +211,10 @@ describe.skipIf(!enabled)('the Claude Code runtime against a real container', ()
 
     const main = api.requests.filter((r) => r.tools.includes('Bash'));
     expect(main[0]).toMatchObject({ apiKey: API_KEY, model: 'claude-sonnet-5-5' });
-    expect([...(main[0]?.tools ?? [])].sort()).toEqual([
-      'Bash',
-      'Edit',
-      'Glob',
-      'Grep',
-      'Read',
-      'Write',
-    ]);
+    // The harness also advertises `DeferredToolPlaceholder` (since SDK 0.3.309). It is not one of
+    // ours and `decideToolCall` refuses it (policy.test.ts), so it is left out of the granted set.
+    const advertised = (main[0]?.tools ?? []).filter((tool) => tool !== 'DeferredToolPlaceholder');
+    expect([...advertised].sort()).toEqual(['Bash', 'Edit', 'Glob', 'Grep', 'Read', 'Write']);
     expect(main[0]?.system).toContain('You are the implementer.');
   }, 180_000);
 

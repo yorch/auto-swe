@@ -51,20 +51,20 @@ applies to one file belongs in a skill, not in the context of every session.
 | Runtime               | Node.js                                | >=26.0.0               |
 | Package Manager       | Yarn 4 (Berry, via corepack from npm)  | 4.18.0                 |
 | Language              | TypeScript                             | 7.0.2                  |
-| HTTP Framework        | Fastify                                | 5.12.5                 |
+| HTTP Framework        | Fastify                                | 5.12.7                 |
 | Orchestration server  | Temporal (Docker images)               | temporalio/server:1.31.2 + admin-tools 1.31 + ui 2.53.3 |
 | Orchestration SDK     | @temporalio/{client,worker,workflow}   | 1.24.0                 |
-| Agent Framework       | Mastra                                 | 1.73.0                 |
+| Agent Framework       | Mastra                                 | 1.79.0                 |
 | LLM SDK               | Vercel AI SDK + provider adapters      | ai 7.x; @ai-sdk/{anthropic,openai,google,openai-compatible} |
-| ORM                   | Prisma                                 | 7.10.0                  |
+| ORM                   | Prisma                                 | 7.10.1                  |
 | Database              | PostgreSQL 18 + pgvector               | pgvector/pgvector:pg18 |
-| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.3.8 / 19.3.0 / 4.3.3 |
-| Public docs site      | Astro + Starlight                      | 7.3.5 / 0.42.5        |
-| Server State          | TanStack Query                         | 5.104.0                |
-| Client State          | Zustand                                | 5.0.15                 |
-| Validation            | Zod                                    | 4.6.5                  |
-| Testing               | Vitest                                 | 4.1.11                  |
-| Lint / Format         | Biome                                  | 2.5.15                 |
+| Web Dashboard         | Next.js + React + Tailwind CSS         | 16.4.2 / 19.3.1 / 4.3.3 |
+| Public docs site      | Astro + Starlight                      | 7.4.2 / 0.42.6        |
+| Server State          | TanStack Query                         | 5.104.5                |
+| Client State          | Zustand                                | 5.0.16                 |
+| Validation            | Zod                                    | 4.6.7                  |
+| Testing               | Vitest                                 | 5.0.5                  |
+| Lint / Format         | Biome                                  | 2.6.2                 |
 | Observability         | OpenTelemetry + Grafana LGTM (local)   | grafana/otel-lgtm:0.34.0 |
 
 ---

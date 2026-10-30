@@ -97,7 +97,7 @@ export async function deliverAuthEmail(message: AuthEmail): Promise<void> {
       // SMTP `sendMail` resolves on submission acceptance, not on delivery.
       // A non-empty rejected list with nothing accepted means the relay refused
       // the address even though the call "succeeded".
-      if (info.rejected.length > 0 && info.accepted.length === 0) {
+      if ((info.rejected ?? []).length > 0 && (info.accepted ?? []).length === 0) {
         throw new Error(`SMTP relay rejected the recipient: ${info.response}`);
       }
       return;
