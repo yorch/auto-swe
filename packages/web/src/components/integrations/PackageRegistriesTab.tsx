@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
@@ -223,6 +224,7 @@ export function PackageRegistriesTab() {
   const query = usePackageRegistries();
   const del = useDeletePackageRegistry();
   const [modal, setModal] = useState<'create' | PackageRegistryRow | null>(null);
+  const [deleting, setDeleting] = useState<PackageRegistryRow | null>(null);
 
   return (
     <div className="space-y-4">
@@ -252,11 +254,7 @@ export function PackageRegistriesTab() {
                     <button className="text-accent-400" onClick={() => setModal(r)} type="button">
                       Edit
                     </button>
-                    <button
-                      className="text-paper-400"
-                      onClick={() => void del.mutateAsync(r.id)}
-                      type="button"
-                    >
+                    <button className="text-paper-400" onClick={() => setDeleting(r)} type="button">
                       Delete
                     </button>
                   </span>
@@ -270,6 +268,21 @@ export function PackageRegistriesTab() {
           />
         )}
       </QueryBoundary>
+      {deleting && (
+        <ConfirmModal
+          confirmLabel="Delete"
+          dangerous
+          message={`The registry ${deleting.name} stops serving workspaces. Installs that go through it fail until it is added again.`}
+          onClose={() => setDeleting(null)}
+          onConfirm={async () => {
+            // Awaited so the dialog stays open and shows a failed delete.
+            await del.mutateAsync(deleting.id);
+          }}
+          open
+          pendingLabel="Deleting…"
+          title={`Delete ${deleting.name}?`}
+        />
+      )}
       {modal === 'create' && <RegistryModal initial={EMPTY} onClose={() => setModal(null)} />}
       {modal && modal !== 'create' && (
         <RegistryModal

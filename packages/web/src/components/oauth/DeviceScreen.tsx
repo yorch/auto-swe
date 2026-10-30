@@ -57,6 +57,8 @@ export function DeviceScreen({ search }: { search: string }) {
     },
   });
   const error = decide.error ?? review.error;
+  // One parse of the space-separated scope string, so every check below means the same thing.
+  const scopes = review.data?.scope.split(' ') ?? [];
   const terminal = finished ?? (review.data?.status !== 'pending' ? review.data?.status : null);
 
   return (
@@ -148,29 +150,35 @@ export function DeviceScreen({ search }: { search: string }) {
               <p>
                 Requested scopes: <code>{review.data.scope}</code>
               </p>
-              {(review.data.scope.includes('mcp:read') ||
-                review.data.scope.includes('mcp:write')) && (
+              {(scopes.includes('mcp:read') || scopes.includes('mcp:write')) && (
                 <p>Read: see repositories, runs and pending human steps.</p>
               )}
-              {review.data.scope.split(' ').includes('mcp:write') && (
+              {scopes.includes('mcp:write') && (
                 <Alert title="Write access requested" variant="warning">
                   This app can launch and cancel work as you, using your identity and credentials.
                   Templates may push branches or open pull requests.
                 </Alert>
               )}
-              {review.data.scope.split(' ').includes('offline_access') && (
+              {scopes.includes('offline_access') && (
                 <p>Stay connected for up to 14 days using rotating refresh tokens.</p>
               )}
               <p>
                 Approval grants all requested scopes. To allow read only, deny and ask your app to
                 request read-only access.
               </p>
+              {client.isLoading && <p className="text-paper-500">Loading app details…</p>}
+              {client.isError && (
+                <Alert title="App name unavailable" variant="warning">
+                  Could not look up this app's name, so the address above is all that identifies it.
+                  Check that before you approve.
+                </Alert>
+              )}
               <div className="flex gap-3">
                 <Button
-                  disabled={decide.isPending || client.isPending || client.isError}
+                  disabled={decide.isPending || client.isLoading}
                   onClick={() => decide.mutate(true)}
                 >
-                  Approve
+                  {decide.isPending ? 'Working…' : 'Approve'}
                 </Button>
                 <Button
                   disabled={decide.isPending}

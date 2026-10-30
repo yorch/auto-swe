@@ -34,7 +34,8 @@ export function ConfirmModal({
   /** When set, the confirm button stays disabled until the user types exactly this. */
   confirmText?: string;
   dangerous?: boolean;
-  error?: string;
+  /** A failure to show in the dialog; a string, or richer content such as a list of addresses. */
+  error?: ReactNode;
   message: ReactNode;
   onClose: () => void;
   onConfirm: () => void | Promise<void>;
@@ -74,7 +75,7 @@ export function ConfirmModal({
     }
   };
 
-  const shownError = error ?? asyncError;
+  const shownError: ReactNode = error ?? asyncError;
 
   return (
     <Modal dismissible={!pending} onClose={handleClose} open={open} title={title}>

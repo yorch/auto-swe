@@ -17,6 +17,7 @@ import {
   specNodeIdOfRecording,
   type TraceLinker,
 } from '@/lib/traceLinkage';
+import { formatDate } from '@/lib/utils';
 
 function HttpDetail({ runId, callId }: { runId: string; callId: string }) {
   const query = useHttpCall(runId, callId);
@@ -57,10 +58,12 @@ function ActivityRow({ item, runId }: { item: RunActivityItem; runId: string }) 
   const line = (
     <>
       <time dateTime={item.ts} title={item.ts}>
-        {new Date(item.ts).toLocaleTimeString()}
+        {formatDate(item.ts, { showSeconds: true })}
       </time>
       <Badge tone="muted">{item.kind.replaceAll('_', ' ')}</Badge>
-      <span className="text-paper-500">{item.recordingId ?? item.specNodeId ?? 'run'}</span>
+      {item.kind === 'step' && item.detail.stepName && (
+        <span className="text-paper-500">{item.detail.stepName}</span>
+      )}
       <span className="min-w-0 break-all">
         {item.kind === 'http_call'
           ? `${item.detail.method} ${item.detail.host}${item.detail.path}`
@@ -73,7 +76,7 @@ function ActivityRow({ item, runId }: { item: RunActivityItem; runId: string }) 
           >
             {item.detail.status ?? 'No status'}
           </Badge>
-          <span>{item.detail.durationMs ?? '—'} ms</span>
+          {typeof item.detail.durationMs === 'number' && <span>{item.detail.durationMs} ms</span>}
           {item.detail.blocked && <Badge tone="danger">Blocked</Badge>}
         </>
       )}
@@ -184,13 +187,18 @@ function ActivityContent({
       {query.isLoading ? (
         <p role="status">Loading activity…</p>
       ) : !data.length ? (
-        <p className="text-sm text-paper-500">No activity matches these filters.</p>
+        // A failed query is reported by the alert above, not as "no matches".
+        query.error ? null : (
+          <p className="text-sm text-paper-500">No activity matches these filters.</p>
+        )
       ) : (
-        <ol aria-label="Run activity" className="max-h-96 overflow-auto">
-          {data.map((item) => (
-            <ActivityRow item={item} key={item.id} runId={runId} />
-          ))}
-        </ol>
+        <section aria-label="Run activity" className="max-h-96 overflow-auto">
+          <ol>
+            {data.map((item) => (
+              <ActivityRow item={item} key={item.id} runId={runId} />
+            ))}
+          </ol>
+        </section>
       )}
       {query.hasNextPage && (
         <Button

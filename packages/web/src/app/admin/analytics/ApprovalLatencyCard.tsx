@@ -29,7 +29,7 @@ export function ApprovalLatencyCard({ latency }: { latency: ApprovalLatencySumma
         <div className="space-y-6">
           <div className="grid grid-cols-1 gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
             <Stat
-              hint={`Over ${latency.resolved.count} answered`}
+              hint={`Based on ${latency.resolved.count} answered ${latency.resolved.count === 1 ? 'step' : 'steps'}`}
               label="Wait, median"
               value={formatDuration(latency.resolved.p50Ms)}
             />

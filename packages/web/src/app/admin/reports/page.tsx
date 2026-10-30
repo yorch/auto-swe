@@ -1,12 +1,14 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { Suspense, useState } from 'react';
+import { Suspense } from 'react';
 import { Button } from '@/components/ui/Button';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Select } from '@/components/ui/Select';
+import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { useTeams } from '@/hooks/useTeams';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { ApiError, api } from '@/lib/api';
@@ -41,8 +43,8 @@ function ReportsWorkspace() {
   const { params, update } = useUrlFilters();
   const teamsQuery = useTeams();
   const range = parseDateRange(params);
-  const [localTab, setLocalTab] = useState<TabId>('delivery');
-  const activeTab = selectedTab(params.get('tab') ?? localTab);
+  // The URL is the only source of the active tab, so Back and Forward show the tab they name.
+  const activeTab = selectedTab(params.get('tab'));
   const activeDefinition = TABS.find((tab) => tab.id === activeTab) ?? TABS[0];
   const query = new URLSearchParams(rangeQuery(range));
   const teamId = params.get('teamId') ?? '';
@@ -99,22 +101,22 @@ function ReportsWorkspace() {
               />
             )}
             {activeTab !== 'budget' && activeTab !== 'digests' && (
-              <label className="flex items-center gap-2 text-sm text-paper-300">
-                Team
-                <select
+              <div>
+                <Select
+                  appearance="pill"
                   aria-label="Team"
-                  className="rounded-md border border-ink-600 bg-ink-900 px-3 py-2 text-paper-100"
-                  onChange={(event) => update({ teamId: event.target.value || null })}
+                  onChange={(value) => update({ teamId: value || null })}
+                  options={[
+                    { label: 'All visible teams', value: '' },
+                    ...(teamsQuery.data ?? []).map((team) => ({
+                      label: team.name,
+                      value: team.id,
+                    })),
+                  ]}
+                  prefix="Team:"
                   value={teamId}
-                >
-                  <option value="">All visible teams</option>
-                  {(teamsQuery.data ?? []).map((team) => (
-                    <option key={team.id} value={team.id}>
-                      {team.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                />
+              </div>
             )}
           </div>
         }
@@ -122,46 +124,38 @@ function ReportsWorkspace() {
         subtitle="Delivery, quality, budget, automation, approval outcomes, and weekly digests."
         title="Reports"
       />
-      <div aria-label="Report tabs" className="flex flex-wrap gap-2" role="tablist">
-        {TABS.map((tab) => (
-          <button
-            aria-selected={activeTab === tab.id}
-            className={`rounded-md px-3 py-2 text-sm ${activeTab === tab.id ? 'bg-accent-500 text-paper-50' : 'border border-ink-600 text-paper-300'}`}
-            key={tab.id}
-            onClick={() => {
-              setLocalTab(tab.id);
-              update({ tab: tab.id === 'delivery' ? null : tab.id });
-            }}
-            role="tab"
-            type="button"
+      <TabBar
+        active={activeTab}
+        ariaLabel="Report tabs"
+        idPrefix="reports"
+        onChange={(tab) => update({ tab: tab === 'delivery' ? null : tab })}
+        tabs={TABS.map(({ id, label }) => ({ id, label }))}
+      />
+      <div {...tabPanelProps('reports', activeTab)}>
+        {activeTab === 'digests' ? (
+          <DigestsTab />
+        ) : activeTab === 'budget' &&
+          reportQuery.error instanceof ApiError &&
+          reportQuery.error.status === 403 ? (
+          <EmptyState
+            hint="An organization administrator can grant access to budget forecasts."
+            title="Budget forecasts need org admin access"
+          />
+        ) : (
+          <QueryBoundary
+            error={reportQuery.error}
+            isError={reportQuery.isError}
+            isFetching={reportQuery.isFetching}
+            isLoading={reportQuery.isLoading}
+            label={`${activeDefinition.label.toLowerCase()} report`}
+            onRetry={() => void reportQuery.refetch()}
+            rows={3}
+            shape="cards"
           >
-            {tab.label}
-          </button>
-        ))}
+            {reportQuery.data && <ReportTabPanel data={reportQuery.data} tab={activeTab} />}
+          </QueryBoundary>
+        )}
       </div>
-      {activeTab === 'digests' ? (
-        <DigestsTab />
-      ) : activeTab === 'budget' &&
-        reportQuery.error instanceof ApiError &&
-        reportQuery.error.status === 403 ? (
-        <EmptyState
-          hint="An organization administrator can grant access to budget forecasts."
-          title="Budget forecasts need org admin access"
-        />
-      ) : (
-        <QueryBoundary
-          error={reportQuery.error}
-          isError={reportQuery.isError}
-          isFetching={reportQuery.isFetching}
-          isLoading={reportQuery.isLoading}
-          label={`${activeDefinition.label.toLowerCase()} report`}
-          onRetry={() => void reportQuery.refetch()}
-          rows={3}
-          shape="cards"
-        >
-          {reportQuery.data && <ReportTabPanel data={reportQuery.data} tab={activeTab} />}
-        </QueryBoundary>
-      )}
     </div>
   );
 }

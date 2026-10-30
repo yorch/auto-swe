@@ -35,9 +35,10 @@ const rows: PackageRegistryRow[] = [
 
 const createMutate = vi.fn().mockResolvedValue({});
 const updateMutate = vi.fn().mockResolvedValue({});
+const deleteMutate = vi.fn().mockResolvedValue({});
 vi.mock('@/hooks/usePackageRegistries', () => ({
   useCreatePackageRegistry: () => ({ isPending: false, mutateAsync: createMutate }),
-  useDeletePackageRegistry: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useDeletePackageRegistry: () => ({ isPending: false, mutateAsync: deleteMutate }),
   usePackageRegistries: () => ({
     data: rows,
     error: null,
@@ -156,5 +157,28 @@ describe('PackageRegistriesTab', () => {
     expect(screen.queryByLabelText('Ecosystem')).toBeNull();
     expect(screen.getByText('Ecosystem: PyPI')).toBeTruthy();
     expect(screen.queryByLabelText('npm scopes')).toBeNull();
+  });
+
+  it('deletes a registry only after it is confirmed in a dialog', async () => {
+    render(<PackageRegistriesTab />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(deleteMutate).not.toHaveBeenCalled();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => expect(deleteMutate).toHaveBeenCalledWith('row-npm'));
+  });
+
+  it('keeps the dialog open and shows the reason when a delete fails', async () => {
+    deleteMutate.mockRejectedValueOnce(new Error('Registry is still in use'));
+    render(<PackageRegistriesTab />);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0]);
+
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    expect(await within(dialog).findByRole('alert')).toBeTruthy();
+    expect(within(dialog).getByRole('alert').textContent).toContain('Registry is still in use');
   });
 });

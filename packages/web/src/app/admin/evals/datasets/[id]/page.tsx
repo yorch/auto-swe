@@ -10,6 +10,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -256,8 +257,12 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                         />
                       ),
                       header: (
-                        <span title="The toolchain image the case's golden test runs in. A case with no stack runs on Node.">
+                        <span className="inline-flex items-center gap-1">
                           Stack
+                          <HelpTip label="Stack">
+                            The toolchain image the case's golden test runs in. A case with no stack
+                            runs on Node.
+                          </HelpTip>
                         </span>
                       ),
                       id: 'stack',

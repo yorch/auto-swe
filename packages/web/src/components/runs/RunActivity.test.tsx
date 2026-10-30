@@ -36,6 +36,14 @@ async function open() {
   await screen.findByText('Export activity');
 }
 describe('RunActivity', () => {
+  it('reports a failed activity query as an error, not as an empty result', async () => {
+    h.error = new Error('activity backend unavailable');
+    render(<RunActivity {...props} />);
+    await open();
+    expect(screen.getByText('activity backend unavailable')).toBeTruthy();
+    expect(screen.queryByText('No activity matches these filters.')).toBeNull();
+  });
+
   it('starts collapsed, shows empty results, filters kinds and loads more', async () => {
     render(<RunActivity {...props} />);
     expect(h.hook).not.toHaveBeenCalled();
