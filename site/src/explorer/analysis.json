@@ -11440,12 +11440,12 @@
       "title": "Package registries are managed by platform ADMINs"
     },
     {
-      "anchor": "export const PACKAGE_REGISTRY_ECOSYSTEMS = ['npm', 'go'] as const;",
+      "anchor": "export const PACKAGE_REGISTRY_ECOSYSTEMS = ['npm', 'go', 'pypi'] as const;",
       "before": 1,
       "id": "registryEcosystems",
       "lines": 2,
       "path": "packages/shared/src/lib/packageRegistry.ts",
-      "title": "The proxy serves npm and Go modules"
+      "title": "The proxy serves npm, Go modules and PyPI"
     },
     {
       "anchor": "const effectiveImage = image ?? infra.image;",

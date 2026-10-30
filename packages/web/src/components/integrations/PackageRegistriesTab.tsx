@@ -19,6 +19,18 @@ import {
 } from '@/hooks/usePackageRegistries';
 import { errMsg } from '@/lib/errors';
 
+const ECOSYSTEM_LABEL: Record<PackageRegistryBody['ecosystem'], string> = {
+  go: 'Go',
+  npm: 'npm',
+  pypi: 'PyPI',
+};
+
+/** A Go or PyPI registry takes no scopes; each says what it serves in place of them. */
+const SCOPELESS_NOTE: Record<Exclude<PackageRegistryBody['ecosystem'], 'npm'>, string> = {
+  go: 'A Go registry has no scopes: it serves every module for its team.',
+  pypi: 'A PyPI registry has no scopes: it serves every package for its team. Its upstream URL is the simple index, e.g. https://pypi.org/simple.',
+};
+
 const EMPTY: PackageRegistryBody = {
   accessMode: 'lockfile',
   allowPrivateNetwork: false,
@@ -71,26 +83,25 @@ function RegistryModal({
       <div className="space-y-4">
         {error && <Alert variant="error">{error}</Alert>}
         {registry ? (
-          <p className="text-sm text-paper-300">
-            Ecosystem: {form.ecosystem === 'go' ? 'Go' : 'npm'}
-          </p>
+          <p className="text-sm text-paper-300">Ecosystem: {ECOSYSTEM_LABEL[form.ecosystem]}</p>
         ) : (
           <label className="block text-sm text-paper-300">
             Ecosystem{' '}
             <select
               className="rounded border border-ink-400 bg-ink-700 px-2 py-1"
               onChange={(e) => {
-                const ecosystem = e.target.value as 'npm' | 'go';
+                const ecosystem = e.target.value as PackageRegistryBody['ecosystem'];
                 setForm({
                   ...form,
                   ecosystem,
-                  npmScopes: ecosystem === 'go' ? [] : form.npmScopes,
+                  npmScopes: ecosystem === 'npm' ? form.npmScopes : [],
                 });
               }}
               value={form.ecosystem}
             >
               <option value="npm">npm</option>
               <option value="go">Go</option>
+              <option value="pypi">PyPI</option>
             </select>
           </label>
         )}
@@ -104,14 +115,11 @@ function RegistryModal({
           hint="The upstream the proxy forwards to, e.g. https://registry.npmjs.org or an internal Artifactory."
           label="Upstream URL"
           onChange={(e) => setForm({ ...form, upstreamUrl: e.target.value })}
+          placeholder={form.ecosystem === 'pypi' ? 'https://pypi.org/simple' : undefined}
           required
           value={form.upstreamUrl}
         />
-        {form.ecosystem === 'go' ? (
-          <p className="text-sm text-paper-400">
-            A Go registry has no scopes: it serves every module for its team.
-          </p>
-        ) : (
+        {form.ecosystem === 'npm' ? (
           <Input
             hint="Comma-separated, e.g. @acme,@acme-internal. Empty means the default registry for unscoped packages."
             label="npm scopes"
@@ -126,6 +134,8 @@ function RegistryModal({
             }
             value={form.npmScopes.join(',')}
           />
+        ) : (
+          <p className="text-sm text-paper-400">{SCOPELESS_NOTE[form.ecosystem]}</p>
         )}
         <Input
           hint={
@@ -218,8 +228,8 @@ export function PackageRegistriesTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-paper-400">
-          npm and Go registries workspaces install through the worker's registry proxy. The upstream
-          credential stays in the worker; a workspace holds only its own proxy token.
+          npm, Go and PyPI registries workspaces install through the worker's registry proxy. The
+          upstream credential stays in the worker; a workspace holds only its own proxy token.
         </p>
         <Button onClick={() => setModal('create')}>Add registry</Button>
       </div>

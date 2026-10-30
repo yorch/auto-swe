@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PackageRegistryRow } from '@/hooks/usePackageRegistries';
 
@@ -23,6 +23,14 @@ const base: PackageRegistryRow = {
 const rows: PackageRegistryRow[] = [
   base,
   { ...base, ecosystem: 'go', id: 'row-go', name: 'goproxy', npmScopes: [] },
+  {
+    ...base,
+    ecosystem: 'pypi',
+    id: 'row-pypi',
+    name: 'pypi-proxy',
+    npmScopes: [],
+    upstreamUrl: 'https://pypi.org/simple',
+  },
 ];
 
 const createMutate = vi.fn().mockResolvedValue({});
@@ -106,5 +114,47 @@ describe('PackageRegistriesTab', () => {
     fireEvent.click(screen.getByText('Save'));
     await waitFor(() => expect(updateMutate).toHaveBeenCalled());
     expect(updateMutate.mock.calls[0][0]).not.toHaveProperty('ecosystem');
+  });
+
+  it('lists a PyPI row by its ecosystem', () => {
+    render(<PackageRegistriesTab />);
+    expect(screen.getAllByText('pypi').length).toBeGreaterThan(0);
+  });
+
+  it('offers PyPI in the ecosystem select on create', () => {
+    render(<PackageRegistriesTab />);
+    fireEvent.click(screen.getByText('Add registry'));
+    const options = within(screen.getByLabelText('Ecosystem')).getAllByRole('option');
+    expect(options.map((o) => o.textContent)).toEqual(['npm', 'Go', 'PyPI']);
+  });
+
+  it('hides and clears scopes for PyPI, points at the simple index, and sends ecosystem pypi', async () => {
+    render(<PackageRegistriesTab />);
+    fireEvent.click(screen.getByText('Add registry'));
+    fireEvent.change(screen.getByLabelText('npm scopes'), { target: { value: '@acme' } });
+    fireEvent.change(screen.getByLabelText('Ecosystem'), { target: { value: 'pypi' } });
+    expect(screen.queryByLabelText('npm scopes')).toBeNull();
+    expect(screen.getByText(/serves every package for its team/)).toBeTruthy();
+    expect(screen.getByText(/simple index/)).toBeTruthy();
+    expect((screen.getByLabelText(/^Upstream URL/) as HTMLInputElement).placeholder).toBe(
+      'https://pypi.org/simple'
+    );
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'pypi-proxy' } });
+    fireEvent.change(screen.getByLabelText(/^Upstream URL/), {
+      target: { value: 'https://pypi.org/simple' },
+    });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(createMutate).toHaveBeenCalled());
+    expect(createMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ ecosystem: 'pypi', npmScopes: [] })
+    );
+  });
+
+  it('shows the ecosystem read-only as PyPI when editing a PyPI row', () => {
+    render(<PackageRegistriesTab />);
+    fireEvent.click(screen.getAllByText('Edit')[2]);
+    expect(screen.queryByLabelText('Ecosystem')).toBeNull();
+    expect(screen.getByText('Ecosystem: PyPI')).toBeTruthy();
+    expect(screen.queryByLabelText('npm scopes')).toBeNull();
   });
 });

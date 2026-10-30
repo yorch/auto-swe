@@ -9,7 +9,7 @@
  */
 
 /** The ecosystems the registry proxy serves. */
-export const PACKAGE_REGISTRY_ECOSYSTEMS = ['npm', 'go'] as const;
+export const PACKAGE_REGISTRY_ECOSYSTEMS = ['npm', 'go', 'pypi'] as const;
 export type PackageRegistryEcosystem = (typeof PACKAGE_REGISTRY_ECOSYSTEMS)[number];
 
 /**

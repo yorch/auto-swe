@@ -378,6 +378,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/goModuleAllowlist.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/pypiAllowlist',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/pypiAllowlist.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/guardedFetch',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/guardedFetch.ts'),
       },
