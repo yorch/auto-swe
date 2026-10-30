@@ -228,7 +228,10 @@ describe('policy hardening regressions', () => {
         path: `services/${'aaaaaaaa/'.repeat(5)}module${i}/handler${'a'.repeat(30)}.ts`,
         status: 'modified' as const,
       }));
-      const start = performance.now();
+      // CPU time of this process, not wall time: a busy machine (CI runs ~1000 test files at once,
+      // under coverage) stretches wall time by scheduling delays that have nothing to do with the
+      // work, and one stretched sample breaks a ratio.
+      const before = process.cpuUsage();
       classify(
         {
           draft: false,
@@ -239,14 +242,19 @@ describe('policy hardening regressions', () => {
         },
         effective
       );
-      return performance.now() - start;
+      const used = process.cpuUsage(before);
+      return (used.user + used.system) / 1000;
     };
+    // The best of three on each side discards the samples that a GC pause or a noisy neighbour
+    // inflated, which is what a ratio of two single samples cannot do.
+    const best = (count: number): number =>
+      Math.min(timeClassify(count), timeClassify(count), timeClassify(count));
     timeClassify(200); // warm the glob cache so the first measurement is the work, not the compile
-    const small = Math.min(timeClassify(600), timeClassify(600));
-    const large = timeClassify(2400);
-    // 4x the files: linear is ~4x, quadratic ~16x. 10x leaves room for GC and timer noise.
+    const small = best(600);
+    const large = best(2400);
+    // 4x the files: linear is ~4x, quadratic ~16x. 10x leaves room for what is left of the noise.
     expect(large / small).toBeLessThan(10);
-  }, 120_000);
+  }, 300_000);
 
   it('rejects a file whose union with the defaults is over 400 globs, and says so (finding 6)', () => {
     const many = (n: number, p: string) => Array.from({ length: n }, (_, i) => `${p}${i}/**`);

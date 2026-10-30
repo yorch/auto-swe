@@ -162,12 +162,30 @@ describe('buildBrief', () => {
     const files = Array.from({ length: 3000 }, (_, i) =>
       file(`src/${'d'.repeat(150)}/${i}.ts`, { additions: 5 })
     );
-    const result = brief(files);
+    // The cap belongs to the brief builder, so it is handed a classification in which every file
+    // is a sensitive-path hit (the worst case for the brief's size) instead of classifying 3000
+    // files against ~100 globs: that is the expensive part, and it made this test depend on
+    // machine load under CI's coverage run without adding anything to what is asserted.
+    const result = buildBrief(
+      files,
+      {
+        autoEligible: false,
+        reasons: [
+          {
+            code: 'sensitive-path',
+            message: 'every file',
+            paths: files.map((f) => f.path),
+            severity: 'exclusion',
+          },
+        ],
+        requiredApprovers: 2,
+        riskClass: 'HIGH',
+      },
+      effective
+    );
     expect(result.markdown.length).toBeLessThan(60_000);
     expect(result.focus).toHaveLength(10);
-    // A functional cap test, not a timing one: classifying 3000 files takes ~0.3 s here but over
-    // the 5 s default under CI's v8 coverage, so it gets an explicit timeout.
-  }, 60_000);
+  });
 
   it('respects ignoredFromSkim in the brief', () => {
     const policy = { ...effective, ignoredFromSkim: ['src/**'] };
