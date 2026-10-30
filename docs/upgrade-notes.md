@@ -632,7 +632,7 @@ maintenance window when workflow, step, and trace writes can pause for the index
 **Actions.** No manual SQL is required. The standard migration deploy applies the indexes; the
 worker uses them to find changed source rows for frozen rollup days.
 
-### Reporting visibility rollup dimensions (`d0b3cf004a93593f8c03378f64fb67984d553790`)
+### Reporting visibility rollup dimensions (`4d7b5af2`)
 
 **Affected.** Deployments applying the report visibility rollup-dimension migration.
 
@@ -640,9 +640,9 @@ worker uses them to find changed source rows for frozen rollup days.
 rebuilt, older report windows use live reads. ORG_ADMINs do not receive organization-wide reports
 or digests until the organization enables `analytics.orgWideReports`.
 
-### Persisted workflow-run repository attribution (`23a0cc67`)
+### Persisted workflow-run repository attribution (`fbb2266d`)
 
-**Affected.** Deployments applying commit `23a0cc67` or a descendant that have not yet applied
+**Affected.** Deployments applying commit `fbb2266d` or a descendant that have not yet applied
 `20261030170000_workflow_run_repo_attribution`.
 
 **Expected cost.** The migration backfills repository attribution by rewriting `workflow_runs` and

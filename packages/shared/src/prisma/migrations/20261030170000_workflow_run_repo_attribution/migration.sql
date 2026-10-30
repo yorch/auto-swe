@@ -31,3 +31,7 @@ WHERE target."id" = resolved."id"
 
 ALTER TABLE "workflow_runs"
   VALIDATE CONSTRAINT "workflow_runs_attributed_repo_id_fkey";
+
+DELETE FROM "workflow_run_daily_rollups" WHERE "bucket_version" < 4;
+DELETE FROM "human_step_daily_rollups" WHERE "bucket_version" < 4;
+DELETE FROM "review_verdict_daily_rollups" WHERE "bucket_version" < 4;

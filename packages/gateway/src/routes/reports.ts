@@ -293,7 +293,16 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             fastify.prisma.team.findMany({
               select: { id: true, name: true },
               where: {
-                id: { in: unique(allRows.flatMap((row) => (row.teamId ? [row.teamId] : []))) },
+                AND: [
+                  {
+                    id: { in: unique(allRows.flatMap((row) => (row.teamId ? [row.teamId] : []))) },
+                  },
+                  user.role === 'ADMIN'
+                    ? {}
+                    : {
+                        OR: [{ id: { in: scope.teamIds } }, { orgId: { in: scope.orgIds } }],
+                      },
+                ],
               },
             })
         ),
@@ -338,15 +347,34 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       for (const template of templates) {
         templateNames.set(template.id, template.name);
       }
-      const report = deliveryReportFromRollups(
-        allRows,
+      const otherTeamId = '__other_team__';
+      const visibleTeamIds = new Set(teams.map((team) => team.id));
+      const reportRows = allRows.map((row) =>
+        row.teamId && !visibleTeamIds.has(row.teamId) ? { ...row, teamId: otherTeamId } : row
+      );
+      const reportMergeDurations = exactLiveMergeDurations?.map((merge) =>
+        merge.teamId && !visibleTeamIds.has(merge.teamId)
+          ? { ...merge, teamId: otherTeamId }
+          : merge
+      );
+      const deliveryReport = deliveryReportFromRollups(
+        reportRows,
         {
           repos: repoNames,
-          teams: new Map(teams.map((team) => [team.id, team.name])),
+          teams: new Map([
+            ...teams.map((team) => [team.id, team.name] as const),
+            [otherTeamId, 'Other team'],
+          ]),
           templates: templateNames,
         },
-        exactLiveMergeDurations
+        reportMergeDurations
       );
+      const report = {
+        ...deliveryReport,
+        byTeam: deliveryReport.byTeam.map((team) =>
+          team.teamId === otherTeamId ? { ...team, teamId: null } : team
+        ),
+      };
       return {
         data: {
           ...report,
@@ -395,7 +423,6 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               id: true,
               launchedById: true,
               startedAt: true,
-              template: { select: { name: true } },
               templateId: true,
               workflowId: true,
             },
@@ -1036,7 +1063,6 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 requestedAt: true,
                 resolvedAt: true,
                 resolvedBy: true,
-                resolvedByUser: { select: { name: true } },
                 resolvedVia: true,
                 status: true,
               },
@@ -1106,38 +1132,53 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               )
             : Promise.resolve([]),
         ]);
-      const approverIds = unique(
-        hitlRollupRows.flatMap((row) => (row.resolvedBy ? [row.resolvedBy] : []))
+      const approverIds = unique([
+        ...hitlRollupRows.flatMap((row) => (row.resolvedBy ? [row.resolvedBy] : [])),
+        ...windowSteps.flatMap((step) => (step.resolvedBy ? [step.resolvedBy] : [])),
+      ]);
+      const approverNames = new Map<string, string | null>(
+        approverIds.map((id) => [id, user.role === 'ADMIN' ? 'Unknown approver' : 'Other approver'])
       );
-      const approverNames = approverIds.length
-        ? new Map(
-            (
-              await runUnscoped(
-                'HITL rollup approver labels are resolved only for scoped rows',
-                ['User'],
-                () =>
-                  fastify.prisma.user.findMany({
-                    select: { id: true, name: true },
-                    where: { id: { in: approverIds } },
-                  })
-              )
-            ).map((userRow) => [userRow.id, userRow.name])
-          )
-        : new Map<string, string>();
+      if (approverIds.length) {
+        const visibleApprovers = await runUnscoped(
+          'HITL approver labels are resolved only for caller-visible users',
+          ['User'],
+          () =>
+            fastify.prisma.user.findMany({
+              select: { id: true, name: true },
+              where: {
+                AND: [
+                  { id: { in: approverIds } },
+                  user.role === 'ADMIN'
+                    ? {}
+                    : {
+                        OR: [
+                          { id: { in: [user.sub] } },
+                          ...(scope.teamIds.length
+                            ? [{ memberships: { some: { teamId: { in: scope.teamIds } } } }]
+                            : []),
+                          ...(scope.orgIds.length
+                            ? [{ orgMemberships: { some: { orgId: { in: scope.orgIds } } } }]
+                            : []),
+                        ],
+                      },
+                ],
+              },
+            })
+        );
+        for (const approver of visibleApprovers) {
+          approverNames.set(approver.id, approver.name);
+        }
+      }
       const liveWindowSteps = windowSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
         kind: step.kind,
         requestedAt: step.requestedAt,
         resolvedAt: step.resolvedAt,
         resolvedBy: step.resolvedBy,
-        resolvedByName: step.resolvedByUser?.name ?? null,
+        resolvedByName: step.resolvedBy ? (approverNames.get(step.resolvedBy) ?? null) : null,
         resolvedVia: step.resolvedVia,
         status: step.status,
       }));
-      for (const step of liveWindowSteps) {
-        if (step.resolvedBy) {
-          approverNames.set(step.resolvedBy, step.resolvedByName);
-        }
-      }
       const report = computeHitlReport({
         autonomyDecisions: decisions.slice(0, REPORT_ROW_CAP),
         now: new Date(),

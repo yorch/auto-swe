@@ -784,7 +784,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       select: {
         requestedAt: true,
         resolvedAt: true,
-        run: { select: { template: { select: { name: true } }, templateId: true } },
+        run: { select: { templateId: true } },
         status: true,
       },
       take: APPROVAL_STEP_ROW_CAP + 1,
@@ -833,6 +833,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
                       allGroups
                         .map((group) => group.templateId)
                         .filter((id): id is string => id !== null)
+                        .concat(stepRows.map((step) => step.run.templateId))
                     ),
                   ],
                 },
@@ -843,9 +844,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         })
     );
     const templateNames = new Map(templateRows.map((template) => [template.id, template.name]));
-    for (const id of new Set(
-      allGroups.map((group) => group.templateId).filter((id): id is string => id !== null)
-    )) {
+    for (const id of new Set([
+      ...allGroups.map((group) => group.templateId).filter((id): id is string => id !== null),
+      ...stepRows.map((step) => step.run.templateId),
+    ])) {
       if (!templateNames.has(id)) {
         templateNames.set(id, 'Private template');
       }
@@ -887,7 +889,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         resolvedAt: s.resolvedAt,
         status: s.status,
         templateId: s.run.templateId,
-        templateName: s.run.template.name,
+        templateName: templateNames.get(s.run.templateId) ?? 'Private template',
       })),
       stepRows.length > APPROVAL_STEP_ROW_CAP
     );

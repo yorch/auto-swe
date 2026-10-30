@@ -2841,6 +2841,22 @@ describe('GET /workflow-templates/analytics approval latency', () => {
     run: { template: { name }, templateId },
     status,
   });
+  const template = (id: string, name: string): FakeTemplate => ({
+    activeVersion: 1,
+    createdAt: t0,
+    description: '',
+    experimentSplit: null,
+    experimentVersion: null,
+    id,
+    isDefault: false,
+    name,
+    status: 'ACTIVE',
+    team: null,
+    teamId: null,
+    updatedAt: t0,
+    versions: [],
+    workspaceProvider: null,
+  });
   const get = (app: FastifyInstance) =>
     app.inject({
       headers: { authorization: 'Bearer x' },
@@ -2859,7 +2875,7 @@ describe('GET /workflow-templates/analytics approval latency', () => {
         step('PENDING', null),
       ],
       runs: [],
-      templates: [],
+      templates: [template('tpl-a', 'A'), template('tpl-b', 'B')],
       versions: new Map(),
     };
     const app = buildApp(state);

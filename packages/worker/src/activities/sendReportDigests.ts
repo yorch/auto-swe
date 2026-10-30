@@ -22,6 +22,7 @@ type DigestErrorCode =
   | 'build_failed'
   | 'delivery_failed'
   | 'email_failed'
+  | 'org_wide_reports_disabled'
   | 'period_out_of_order'
   | 'period_too_soon'
   | 'rollup_incomplete'
@@ -149,6 +150,7 @@ export async function sendReportDigests(input: {
         orgId: subscription.orgId ?? undefined,
       }))
     ) {
+      await recordDigestError(subscription.id, 'org_wide_reports_disabled');
       logWarn(
         'report digest subscription skipped because organization-wide reporting is disabled',
         {

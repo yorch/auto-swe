@@ -390,6 +390,89 @@ describe('report routes', () => {
     expect(JSON.stringify(runWhere)).toContain(`"attributedRepoId":{"in":["${repoId}"]}`);
   });
 
+  it('masks foreign teams and approvers on repo-visible runs', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    const repoId = '00000000-0000-4000-8000-000000000001';
+    prisma.teamMembership.findMany.mockResolvedValue([{ teamId: 'own-team' }] as never);
+    prisma.connection.findMany.mockResolvedValue([
+      { id: repoId, organizationName: 'acme', repoName: 'shared-repo' },
+    ] as never);
+    prisma.team.findMany.mockResolvedValue([{ id: 'own-team', name: 'Own team' }] as never);
+    const run = {
+      attributedOrgId: null,
+      attributedRepoId: repoId,
+      attributedTeamId: 'foreign-team',
+      costUsdAccrued: 0,
+      endedAt: null,
+      estimatedHumanTimeSaved: null,
+      hadHumanStep: null,
+      hasError: false,
+      id: 'foreign-team-run',
+      launchedById: null,
+      outcomeDomain: null,
+      outcomeType: null,
+      startedAt: new Date(),
+      status: 'SUCCESS',
+      templateId: null,
+      templateVersion: null,
+      wasAutonomous: null,
+      workflowId: 'foreign-team-workflow',
+      workRequest: { activeWorkflows: [] },
+    };
+    prisma.workflowRun.findMany.mockResolvedValue([
+      run,
+      { ...run, attributedRepoId: null, attributedTeamId: 'own-team', id: 'own-team-run' },
+    ] as never);
+    prisma.workflowHumanStep.findMany.mockResolvedValueOnce([
+      {
+        kind: 'APPROVAL',
+        requestedAt: new Date(),
+        resolvedAt: new Date(),
+        resolvedBy: 'foreign-approver',
+        resolvedVia: 'web',
+        status: 'RESOLVED',
+      },
+    ] as never);
+
+    const delivery = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/reports/delivery?window=30',
+    });
+    expect(delivery.statusCode, delivery.body).toBe(200);
+    expect(delivery.json().data.byTeam).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ teamId: null, teamName: 'Other team' }),
+        expect.objectContaining({ teamId: 'own-team', teamName: 'Own team' }),
+      ])
+    );
+    expect(JSON.stringify(delivery.json().data.byTeam)).not.toContain('foreign-team');
+
+    const hitl = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/reports/hitl?window=30',
+    });
+    expect(hitl.statusCode, hitl.body).toBe(200);
+    expect(hitl.json().data.byApprover).toMatchObject([{ name: 'Other approver' }]);
+    expect(JSON.stringify(prisma.workflowHumanStep.findMany.mock.calls[0]?.[0].where)).toContain(
+      `"attributedRepoId":{"in":["${repoId}"]}`
+    );
+    expect(prisma.user.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          AND: expect.arrayContaining([
+            expect.objectContaining({
+              OR: expect.arrayContaining([
+                { memberships: { some: { teamId: { in: ['own-team'] } } } },
+              ]),
+            }),
+          ]),
+        }),
+      })
+    );
+  });
+
   it('reports each bounded quality source truncation flag', async () => {
     const { app, prisma } = await buildApp();
     prisma.workflowRun.findMany.mockResolvedValue([

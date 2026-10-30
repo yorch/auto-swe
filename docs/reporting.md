@@ -146,10 +146,15 @@ otherwise the configured Resend transport.
   mapping. HITL uses this same scope for live and historical rows.
 - Organization-wide digest creation, updates, test sends, and scheduled delivery require
   `analytics.orgWideReports`, which only a platform ADMIN can enable per organization; disabled
-  subscriptions remain stored but scheduled delivery skips them without creating delivery rows.
+  subscriptions remain stored but scheduled delivery records `org_wide_reports_disabled` and
+  skips them without creating delivery rows. Setting changes take up to `CONFIG_CACHE_TTL_MS`
+  (30 seconds by default) to apply on other gateway replicas and the worker.
 - Template names hidden by the workflow-template visibility rule, channel names hidden by channel
   access, and repository names blocked by the repository-access gate are masked as `Private
   template`, `Private channel`, and `Inaccessible repository`; the corresponding counts remain.
+  Foreign team and approver names are masked as `Other team` and `Other approver`. Non-ADMIN
+  approver names are visible only for the caller, users sharing a caller team, and users in an
+  enabled organization. ADMIN reports use `Unknown approver` when the account no longer exists.
 - Run and merge duration percentiles are approximate. Duration buckets use sub-second bounds,
   then grow logarithmically; percentile ranks are interpolated inside each bucket (linearly from
   zero in the first bucket, logarithmically thereafter). When the entire requested window is live,
@@ -170,6 +175,8 @@ otherwise the configured Resend transport.
   duration/PR statistics, delivery metrics, and the HITL and reviewer report slices use these
   hybrid readers. Set `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to populate older history; the default
   of zero leaves older history on the live path.
+- Launcher and repository rollup dimensions increase rows per day in proportion to distinct
+  launchers multiplied by distinct repositories.
 - Approval source counts use `resolvedVia`; historical rows with no source are reported as
   `unknown`.
 - HITL approval rollups use the UTC day of `requestedAt` and retain kind, status, resolution source,
@@ -177,8 +184,6 @@ otherwise the configured Resend transport.
   `WorkflowRun.startedAt` and retain reviewer, severity, approval, findings, category, and
   malformed-verdict measures. Both carry a bucket version and persisted organization/team
   attribution. Pending approvals remain an uncapped live count plus the oldest `findFirst` row.
-  If an approver account is no longer available, the report labels it `Unknown approver` rather than
-  exposing its stored user ID.
 - User records do not expose a service-principal or API-token approver flag, so approval counts
   cannot separate people from machine identities. The human-step HTTP route requires a user
   principal and does not admit service-principal tokens.

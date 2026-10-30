@@ -255,8 +255,12 @@ describe('sendReportDigests', () => {
         teamId: null,
       }),
     ];
-    await expect(sendReportDigests({ now, periodStart })).resolves.toMatchObject({ skipped: 1 });
+    await expect(sendReportDigests(baseInput)).resolves.toMatchObject({ skipped: 1 });
     expect(mocks.deliveries.size).toBe(0);
+    expect(mocks.updates).toContainEqual({
+      data: { lastError: 'org_wide_reports_disabled' },
+      id: 'disabled-org',
+    });
     expect(logWarn).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ reason: 'org_wide_reports_disabled' })
