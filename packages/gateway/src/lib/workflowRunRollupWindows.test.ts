@@ -21,12 +21,12 @@ describe('workflowRunRollupHorizonMs', () => {
     expect(workflowRunRollupHorizonMs(now)).toBe(Date.UTC(2026, 9, 10));
   });
 
-  it('treats rollup rows from other bucket versions as uncovered', async () => {
+  it('reads built-day markers for the current bucket version only', async () => {
     vi.stubEnv('WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS', '10');
     const day = new Date(Date.UTC(2026, 9, 1));
     const prisma = {
-      workflowRunDailyRollup: {
-        groupBy: async ({ where }: { where: unknown }) => {
+      rollupBuiltDay: {
+        findMany: async ({ where }: { where: unknown }) => {
           mocks.where = where;
           return [{ day }];
         },

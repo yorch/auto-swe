@@ -3,6 +3,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { orgMonthSpend } from '@auto-swe/shared/lib/billing';
 import { forecastMonthlyBudget } from '@auto-swe/shared/lib/budgetForecast';
 import { createReportDigestUnsubscribeToken } from '@auto-swe/shared/lib/reportDigestUnsubscribe';
+import { builtRollupDays } from '@auto-swe/shared/lib/rollupBuiltDays';
 import { resolvePublicUrl, resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
@@ -25,6 +26,7 @@ type DigestErrorCode =
   | 'org_wide_reports_disabled'
   | 'period_out_of_order'
   | 'period_too_soon'
+  | 'recipients_out_of_scope'
   | 'rollup_incomplete'
   | 'slack_failed';
 
@@ -188,19 +190,12 @@ export async function sendReportDigests(input: {
           continue;
         }
       }
-      const coveredDays = await runUnscoped(
-        'the report digest checks coverage for its 14 completed rollup days',
-        ['WorkflowRunDailyRollup'],
-        () =>
-          prisma.workflowRunDailyRollup.groupBy({
-            by: ['day'],
-            where: {
-              bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
-              day: { gte: previousStart, lt: currentEnd },
-            },
-          })
+      // A built day with no runs has no rollup rows, so coverage is the built-day marker.
+      const covered = await builtRollupDays(
+        prisma,
+        { gte: previousStart, lt: currentEnd },
+        WORKFLOW_RUN_ROLLUP_BUCKET_VERSION
       );
-      const covered = new Set(coveredDays.map(({ day }) => day.getTime()));
       const hasCompleteCoverage = Array.from(
         { length: 14 },
         (_, index) => previousStart.getTime() + index * DAY_MS
@@ -400,13 +395,26 @@ export async function sendReportDigests(input: {
 
       stage = 'delivery';
       const optedOut = new Set(subscription.optedOutEmails.map((email) => email.toLowerCase()));
-      const targets: DigestTarget[] = subscription.emailRecipients
-        .filter((email) => !optedOut.has(email.trim().toLowerCase()))
-        .map((email) => ({
-          email: email.trim().toLowerCase(),
-          key: `email:${email.trim().toLowerCase()}`,
-          kind: 'email',
-        }));
+      const candidateEmails = [
+        ...new Set(
+          subscription.emailRecipients
+            .map((email) => email.trim().toLowerCase())
+            .filter((email) => !optedOut.has(email))
+        ),
+      ];
+      // The subscription was validated when it was saved; people leave teams and accounts are
+      // deactivated afterwards, so each recipient is checked again at send time.
+      const memberEmails = await activeScopeMemberEmails(subscription, candidateEmails);
+      const outOfScope = candidateEmails.filter((email) => !memberEmails.has(email));
+      if (outOfScope.length > 0) {
+        logWarn('report digest skipped recipients that are no longer active members of its scope', {
+          skipped: outOfScope.length,
+          subscriptionId: subscription.id,
+        });
+      }
+      const targets: DigestTarget[] = candidateEmails
+        .filter((email) => memberEmails.has(email))
+        .map((email) => ({ email, key: `email:${email}`, kind: 'email' }));
       if (subscription.slackChannel) {
         targets.push({
           key: 'slack',
@@ -415,6 +423,13 @@ export async function sendReportDigests(input: {
         });
       }
       if (targets.length === 0) {
+        if (outOfScope.length > 0) {
+          if (input.sendTest) {
+            await recordTestDigestError(subscription.id, 'recipients_out_of_scope');
+          } else {
+            await recordDigestError(subscription.id, 'recipients_out_of_scope');
+          }
+        }
         skipped++;
         continue;
       }
@@ -594,6 +609,33 @@ export async function sendReportDigests(input: {
     }
   }
   return { failed, rollupIncomplete, sent, skipped };
+}
+
+async function activeScopeMemberEmails(
+  subscription: {
+    orgId: string | null;
+    scope: 'ORGANIZATION' | 'TEAM';
+    teamId: string | null;
+  },
+  emails: string[]
+): Promise<Set<string>> {
+  if (emails.length === 0) {
+    return new Set();
+  }
+  const membership =
+    subscription.scope === 'ORGANIZATION'
+      ? { orgMemberships: { some: { orgId: subscription.orgId as string } } }
+      : { memberships: { some: { teamId: subscription.teamId as string } } };
+  const users = await runUnscoped(
+    'the report digest re-checks that each email recipient is still an active member of its scope',
+    ['User'],
+    () =>
+      prisma.user.findMany({
+        select: { email: true },
+        where: { email: { in: emails }, isActive: true, ...membership },
+      })
+  );
+  return new Set(users.map(({ email }) => email.toLowerCase()));
 }
 
 function parseDigestPeriodStart(value: string | undefined): Date {

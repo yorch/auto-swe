@@ -524,6 +524,14 @@ jobs:
           RUN_DETECTION_PG_TEST: '1'
         run: yarn test packages/worker/src/lib/runDetection.pg.test.ts
 
+      # The daily rollup sweep: a finalized old run's day is rebuilt, the watermark
+      # persists, and a day with no runs still gets its built-day marker, which
+      # a mocked Prisma cannot show (it writes in one transaction with the rows).
+      - name: Workflow run rollup sweep (database-backed tests)
+        env:
+          ROLLUP_WORKFLOW_RUNS_PG_TEST: '1'
+        run: yarn test packages/worker/src/activities/rollupWorkflowRuns.pg.test.ts
+
       # The usage report read from the daily rollup must equal the report read from
       # the traces: the rollup sums a Float column into a Decimal one and BigInt
       # sums come back as another JavaScript type, which an in-memory stand-in

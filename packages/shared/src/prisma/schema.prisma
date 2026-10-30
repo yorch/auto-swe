@@ -2271,6 +2271,17 @@ model RollupSweepState {
   @@map("rollup_sweep_states")
 }
 
+/// One row per UTC day (and bucket version) the daily rollup sweep has built. A day with no runs
+/// writes no rollup rows, so this marker is what separates "built and empty" from "not built yet".
+model RollupBuiltDay {
+  day           DateTime @db.Date
+  bucketVersion Int      @map("bucket_version")
+  builtAt       DateTime @default(now()) @map("built_at") @db.Timestamptz
+
+  @@id([day, bucketVersion])
+  @@map("rollup_built_days")
+}
+
 model ReportDigestSubscription {
   id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   scope           ReportDigestScope

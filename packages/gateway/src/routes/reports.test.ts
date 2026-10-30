@@ -27,6 +27,7 @@ function mockPrisma() {
       findMany: vi.fn().mockResolvedValue([]),
       groupBy: vi.fn().mockResolvedValue([]),
     },
+    rollupBuiltDay: { findMany: vi.fn().mockResolvedValue([]) },
     team: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
@@ -109,7 +110,7 @@ describe('report routes', () => {
     }
   });
 
-  it('uses attribution visibility for rollups and legacy visibility for non-rollup reads', async () => {
+  it('uses attribution visibility for rollups and for the live rows beside them', async () => {
     const { app, prisma } = await buildApp('ENGINEER');
     const delivery = await app.inject({
       headers: AUTH,
@@ -282,6 +283,39 @@ describe('report routes', () => {
     });
   });
 
+  it('lets an ADMIN or an enabled-org grant filter automations by a non-member team', async () => {
+    const teamId = '00000000-0000-4000-8000-000000000001';
+    const admin = await buildApp('ADMIN');
+    admin.prisma.automation.findMany.mockResolvedValue([
+      { connectionId: null, id: 'automation-1', teamId },
+    ]);
+    const adminResponse = await admin.app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/reports/automations?teamId=${teamId}`,
+    });
+    expect(adminResponse.statusCode, adminResponse.body).toBe(200);
+    expect(admin.prisma.automation.findMany.mock.calls[0]?.[0].where.AND).toEqual([
+      {},
+      { OR: [{ teamId }, { connection: { teamId } }] },
+    ]);
+    expect(admin.prisma.automationFire.findMany.mock.calls[0]?.[0].where).toMatchObject({
+      automationId: { in: ['automation-1'] },
+    });
+
+    const orgAdmin = await buildApp('ENGINEER');
+    orgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: 'org-1' }]);
+    orgAdmin.prisma.team.findUnique.mockResolvedValue({ orgId: 'org-1' });
+    orgAdmin.prisma.automation.findMany.mockResolvedValue([]);
+    const orgResponse = await orgAdmin.app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/reports/automations?teamId=${teamId}`,
+    });
+    expect(orgResponse.statusCode, orgResponse.body).toBe(200);
+    expect(orgAdmin.prisma.automation.findMany.mock.calls[0]?.[0].where.AND[0]).toEqual({});
+  });
+
   it('uses the delivery attribution guard and one run-cost fallback across its slices', async () => {
     const { app, prisma } = await buildApp();
     const startedAt = new Date('2026-01-01T00:00:00.000Z');
@@ -303,16 +337,10 @@ describe('report routes', () => {
         templateVersion: 1,
         wasAutonomous: null,
         workflowId: 'workflow-1',
-        workRequest: {
-          activeWorkflows: [
-            {
-              costUsdAccrued: 5,
-              repoId,
-              temporalWorkflowId: 'workflow-1',
-            },
-          ],
-        },
       },
+    ]);
+    prisma.activeWorkflow.findMany.mockResolvedValue([
+      { costUsdAccrued: 5, repoId, temporalWorkflowId: 'workflow-1' },
     ]);
     prisma.pullRequest.findMany.mockResolvedValue([
       {
@@ -617,6 +645,76 @@ describe('report routes', () => {
     for (const [args] of prisma.agentTrace.findMany.mock.calls) {
       expect(args.where).toMatchObject({ nodeId: 'runReviewNetwork' });
     }
+  });
+
+  it('reads live and rollup HITL rows under the same attribution predicate', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.teamMembership.findMany.mockResolvedValue([{ teamId: 'team-1' }]);
+    prisma.rollupBuiltDay.findMany.mockResolvedValue([
+      { day: new Date('2020-01-01T00:00:00.000Z') },
+    ]);
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/reports/hitl?since=2020-01-01&until=2020-01-01',
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(prisma.humanStepDailyRollup.findMany).toHaveBeenCalled();
+    expect(prisma.humanStepDailyRollup.findMany.mock.calls[0]?.[0].where.AND[1]).toEqual({
+      OR: [
+        { teamId: { in: ['team-1'] } },
+        { orgId: { in: [] } },
+        { repoId: { in: [] } },
+        { launchedById: 'user-1' },
+      ],
+    });
+    const liveSteps = prisma.workflowHumanStep.findMany.mock.calls;
+    const pending = prisma.workflowHumanStep.count.mock.calls;
+    expect(pending[0]?.[0].where.run).toEqual({
+      OR: [
+        { attributedTeamId: { in: ['team-1'] } },
+        { attributedOrgId: { in: [] } },
+        { attributedRepoId: { in: [] } },
+        { launchedById: 'user-1' },
+      ],
+    });
+    for (const [args] of liveSteps) {
+      expect(args.where.AND[1].run).toEqual({
+        OR: [
+          { attributedTeamId: { in: ['team-1'] } },
+          { attributedOrgId: { in: [] } },
+          { attributedRepoId: { in: [] } },
+          { launchedById: 'user-1' },
+        ],
+      });
+    }
+  });
+
+  it('limits the automations report to the requested team for an ADMIN', async () => {
+    const teamId = '00000000-0000-4000-8000-000000000001';
+    const { app, prisma } = await buildApp('ADMIN');
+    prisma.automation.findMany.mockResolvedValue([
+      { connectionId: null, id: 'automation-in-team', teamId },
+    ]);
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/reports/automations?window=30&teamId=${teamId}`,
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(prisma.automationFire.findMany.mock.calls[0]?.[0].where).toMatchObject({
+      automationId: { in: ['automation-in-team'] },
+    });
+
+    const unfiltered = await buildApp('ADMIN');
+    await unfiltered.app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/reports/automations?window=30',
+    });
+    expect(unfiltered.prisma.automationFire.findMany.mock.calls[0]?.[0].where).not.toHaveProperty(
+      'automationId'
+    );
   });
 
   it('reports automation and HITL source truncation flags', async () => {

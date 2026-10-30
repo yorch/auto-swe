@@ -1,5 +1,9 @@
 import { orgMonthSpend } from '@auto-swe/shared/lib/billing';
 import { forecastMonthlyBudget } from '@auto-swe/shared/lib/budgetForecast';
+import {
+  matchingActiveWorkflows,
+  withMatchingActiveWorkflow,
+} from '@auto-swe/shared/lib/runActiveWorkflows';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   buildHumanStepDailyRollups,
@@ -21,7 +25,6 @@ import { z } from 'zod';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
-import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { teamMembershipFilter } from '../lib/templateLaunch.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { planWindow } from '../lib/usageWindows.js';
@@ -78,13 +81,6 @@ function numericCategoryCounts(value: unknown): Record<string, number> {
       typeof count === 'number' && Number.isFinite(count) ? [[category, count]] : []
     )
   );
-}
-
-function visibility(
-  user: { role: string; sub: string },
-  gate: Parameters<typeof buildWorkflowRunVisibilityFilter>[1]
-) {
-  return user.role === 'ADMIN' ? {} : buildWorkflowRunVisibilityFilter(user, gate);
 }
 
 export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
@@ -162,16 +158,6 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                   templateVersion: true,
                   wasAutonomous: true,
                   workflowId: true,
-                  workRequest: {
-                    select: {
-                      activeWorkflows: {
-                        select: {
-                          costUsdAccrued: true,
-                          temporalWorkflowId: true,
-                        },
-                      },
-                    },
-                  },
                 },
                 take: REPORT_ROW_CAP + 1,
                 where: {
@@ -183,6 +169,10 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       const runsTruncated = liveRunsResult.length > REPORT_ROW_CAP;
       const liveRuns = liveRunsResult.slice(0, REPORT_ROW_CAP);
       const runIds = liveRuns.map((run) => run.id);
+      const ledgerRows = await matchingActiveWorkflows(
+        fastify.prisma,
+        liveRuns.map((run) => run.workflowId)
+      );
       const [pullRequests, fixSteps] = await Promise.all([
         runIds.length
           ? runUnscoped(
@@ -232,7 +222,9 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       for (const step of fixSteps.slice(0, REPORT_ROW_CAP)) {
         ciRoundsByRun.set(step.runId, (ciRoundsByRun.get(step.runId) ?? 0) + 1);
       }
-      const liveRunInputs = liveRuns.map(workflowRunRollupInputFromRun);
+      const liveRunInputs = liveRuns.map((run) =>
+        workflowRunRollupInputFromRun(withMatchingActiveWorkflow(run, ledgerRows))
+      );
       const liveRollups = buildWorkflowRunDailyRollups({
         now: new Date(),
         pullRequests: liveRuns.flatMap((run) =>
@@ -836,36 +828,8 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 },
                 take: 6,
                 where: {
-                  AND: [
-                    { startedAt: { gte: monthStart, lt: monthEnd } },
-                    {
-                      OR: [
-                        { workRequest: { connection: { team: { orgId: org.id } } } },
-                        {
-                          connection: { team: { orgId: org.id } },
-                          OR: [{ workRequestId: null }, { workRequest: { connectionId: null } }],
-                        },
-                        {
-                          connectionId: null,
-                          workRequest: {
-                            activeWorkflows: {
-                              some: { repository: { team: { orgId: org.id } } },
-                            },
-                            connectionId: null,
-                          },
-                        },
-                        {
-                          connectionId: null,
-                          workRequest: {
-                            activeWorkflows: { none: { repoId: { not: null } } },
-                            billingOrgId: org.id,
-                            connectionId: null,
-                          },
-                        },
-                      ],
-                    },
-                    visibility(user, request.repoAccessGate),
-                  ],
+                  attributedOrgId: org.id,
+                  startedAt: { gte: monthStart, lt: monthEnd },
                 },
               })
           ),
@@ -918,6 +882,11 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!scope.authorized) {
         return reply.status(403).send({ error: 'Team report access is not authorized' });
       }
+      // A non-member team filter is authorized only through an org with analytics.orgWideReports
+      // enabled, so that org-wide grant (like ADMIN) sees every automation of the filtered team.
+      const teamWide =
+        user.role === 'ADMIN' ||
+        (!!request.query.teamId && !scope.teamIds.includes(request.query.teamId));
       const accessibleAutomations = await runUnscoped(
         'automation reports follow the automation list repository and team scopes',
         ['Automation'],
@@ -928,7 +897,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             take: REPORT_ROW_CAP + 1,
             where: {
               AND: [
-                user.role === 'ADMIN'
+                teamWide
                   ? {}
                   : {
                       OR: [
@@ -972,7 +941,9 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             take: REPORT_ROW_CAP + 1,
             where: {
               createdAt: { gte: range.start, lt: range.end },
-              ...(user.role === 'ADMIN' ? {} : { automationId: { in: visibleAutomationIds } }),
+              ...(user.role === 'ADMIN' && !request.query.teamId
+                ? {}
+                : { automationId: { in: visibleAutomationIds } }),
             },
           })
       );

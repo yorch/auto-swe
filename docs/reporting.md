@@ -12,7 +12,7 @@ Workflow runs store nullable reporting-only team and organization attribution. T
 uses the run connection, work-request connection, channel, requesting service, then template, in
 that order; the selected team's organization wins, with the work request's billing organization as
   the fallback when no team is available. Reporting visibility combines persisted attribution
-  with organization opt-in, reachable repository, and launcher ownership.
+with organization opt-in, reachable repository, and launcher ownership.
 
 Pull requests store their template id, template version and associated run id. Writers and the
 historical backfill associate a PR only through an active workflow in the same repository.
@@ -64,9 +64,10 @@ elapsed UTC days, month length, and projected spend. Projection uses fractional 
 projection from less than one elapsed day is still shown and marked low confidence. The status
 prioritizes actual overspend, projected overspend, an alert threshold, and then an in-budget state.
 Organizations without a cap show `no_cap`. The report lists the five highest-cost runs started in
-the current month for each organization, attributed with the same organization ownership precedence
-as month-to-date spend. Top runs are filtered by the caller's run visibility, so they may be a
-partial view of the organization's highest-cost runs.
+the current month for each organization, selected by the run's persisted organization attribution
+(`WorkflowRun.attributedOrgId`), the same field the other reports scope by; month-to-date spend
+keeps its own billing ownership precedence, so the two can differ for a run whose attribution and
+billing disagree.
 
 ## Automations
 
@@ -105,7 +106,7 @@ The weekly sweep runs Mondays at 13:00 UTC when `REPORT_DIGEST_ENABLED` is true.
 start time: the previous ISO week, Monday 00:00 through Sunday 23:59:59 UTC. Retries and schedule
 catch-up reuse that period. Digests require workflow-run rollups to be enabled;
 `REPORT_DIGEST_CRON` must run after `WORKFLOW_RUN_ROLLUP_CRON`. If any of the 14 required completed
-UTC days has no rollup rows, the workflow retries the coverage check up to six times, sleeping 15
+UTC days is not marked built, the workflow retries the coverage check up to six times, sleeping 15
 minutes between passes, and records `rollup_incomplete` if coverage remains unavailable. Each
 email address and Slack channel has its own durable delivery row for a reporting period. Failed
 targets are retried after 15 minutes, for at most three attempts; targets already sent are not sent
@@ -113,7 +114,10 @@ again. Activity-level retries are disabled so the workflow owns the retry policy
 refuses to create rows for a period less than six days after the last fully delivered period, or
 earlier than any existing delivery period.
 
-Email targets opted out on the subscription are excluded. The email includes a table-based HTML
+Email targets opted out on the subscription are excluded. At send time each remaining recipient
+is checked again: one who is no longer an active user belonging to the subscription's organization
+or team is skipped and counted in the worker log, and a subscription left with no target records
+`recipients_out_of_scope`. The email includes a table-based HTML
 report, a plain-text alternative, and `List-Unsubscribe` plus RFC 8058
 `List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers. Opening the public unsubscribe URL
 only renders a confirmation form; the form and one-click mail-client POST both opt out through
@@ -136,6 +140,10 @@ otherwise the configured Resend transport.
 ## Limitations
 
 - CLI and MCP report commands are not available.
+- A digest drops recipients at send time who are no longer active members of the subscription's
+  scope. The skip is logged with a count only, and the subscription records an error
+  (`recipients_out_of_scope`) only when no recipient remains; a partly delivered digest shows no
+  sign in the admin UI that some addresses were skipped.
 - Non-ADMIN reporting visibility includes runs attributed to the caller's teams, runs attributed
   to an organization where the caller is ORG_ADMIN and `analytics.orgWideReports` is enabled, runs
   on repositories reachable through the caller's teams and GitHub permission gate, and runs
@@ -144,6 +152,9 @@ otherwise the configured Resend transport.
   team-only and is allowed for a member team or a team in an organization with the opt-in enabled;
   otherwise the route returns 403. Live and rollup report slices use the same run-to-repository
   mapping. HITL uses this same scope for live and historical rows.
+- The automations report lists fires of automations the caller can reach (an ADMIN with a `teamId`
+  filter sees that team's automations); it reads at most 10,000 automations and flags
+  `automationsTruncated` when more exist, and fires of automations beyond that cap are omitted.
 - Organization-wide digest creation, updates, test sends, and scheduled delivery require
   `analytics.orgWideReports`, which only a platform ADMIN can enable per organization; disabled
   subscriptions remain stored but scheduled delivery records `org_wide_reports_disabled` and
@@ -168,15 +179,21 @@ otherwise the configured Resend transport.
   separately by `resolvedAt` for the approval rollup. Run deletions are not detected. Detection
   uses a fixed one-hour overlap and advances its watermark to the current sweep time only after
   that sweep's selected days rebuild successfully. At most 60 dirty days are rebuilt per sweep,
-  oldest first; the durable backlog carries remaining days to later sweeps. `rollupDays` and
-  `liveDays` show which dates came from each source; rows
-  with an obsolete duration-bucket version count as uncovered, and truncation flags apply only to
+  oldest first; the durable backlog carries remaining days to later sweeps. A day with no runs
+  writes no rollup rows, so each rebuild also writes a built-day marker (`RollupBuiltDay`) in the
+  same transaction; coverage, the digest's 14-day check and the backfill budget read that marker,
+  so quiet days count as built and use the backfill budget once. `rollupDays` and
+  `liveDays` show which dates came from each source; days marked at an obsolete bucket version
+  count as uncovered, and truncation flags apply only to
   live reads. Global analytics daily series and duration percentiles, template per-version
   duration/PR statistics, delivery metrics, and the HITL and reviewer report slices use these
   hybrid readers. Set `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to populate older history; the default
   of zero leaves older history on the live path.
 - Launcher and repository rollup dimensions increase rows per day in proportion to distinct
   launchers multiplied by distinct repositories.
+- The not-actionable re-launch guard (`409 UNCHANGED_AFTER_NOT_ACTIONABLE`) compares the newest
+  200 stopped runs of the same template version, repository and ticket inside its 24-hour window;
+  a matching stop older than the 200th is not seen and the launch proceeds.
 - Approval source counts use `resolvedVia`; historical rows with no source are reported as
   `unknown`.
 - HITL approval rollups use the UTC day of `requestedAt` and retain kind, status, resolution source,

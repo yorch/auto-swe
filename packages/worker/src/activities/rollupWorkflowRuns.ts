@@ -1,5 +1,10 @@
 import { prisma } from '@auto-swe/shared/db';
 import { DAY_MS, TX_TIMEOUT_MS } from '@auto-swe/shared/lib/agentTraceRollup';
+import { builtRollupDays, markRollupDayBuilt } from '@auto-swe/shared/lib/rollupBuiltDays';
+import {
+  matchingActiveWorkflows,
+  withMatchingActiveWorkflow,
+} from '@auto-swe/shared/lib/runActiveWorkflows';
 import {
   resolveScheduledSweeps,
   validateScheduledSweepsEnv,
@@ -223,19 +228,14 @@ export async function rollupWorkflowRuns(
       : null;
     if (oldestDay !== null) {
       const newestBackfill = newest - settings.recomputeDays * WORKFLOW_RUN_DAY_MS;
-      const present = await runUnscoped(
-        'the workflow run rollup backfill lists already-built days',
-        ['WorkflowRunDailyRollup'],
-        () =>
-          prisma.workflowRunDailyRollup.groupBy({
-            by: ['day'],
-            where: {
-              bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
-              day: { gte: new Date(oldestDay), lt: new Date(newestBackfill + WORKFLOW_RUN_DAY_MS) },
-            },
-          })
+      // A built day with no runs has no rollup rows, so coverage comes from the built-day
+      // marker. Without it every empty day would count as missing and use up the sweep's
+      // backfill budget on each pass.
+      const have = await builtRollupDays(
+        prisma,
+        { gte: new Date(oldestDay), lt: new Date(newestBackfill + WORKFLOW_RUN_DAY_MS) },
+        WORKFLOW_RUN_ROLLUP_BUCKET_VERSION
       );
-      const have = new Set(present.map((row) => row.day.getTime()));
       let count = 0;
       for (let day = newestBackfill; day >= oldestDay; day -= WORKFLOW_RUN_DAY_MS) {
         if (!have.has(day)) {
@@ -295,16 +295,13 @@ export async function rollupWorkflowRuns(
             templateVersion: true,
             wasAutonomous: true,
             workflowId: true,
-            workRequest: {
-              select: {
-                activeWorkflows: {
-                  select: { costUsdAccrued: true, temporalWorkflowId: true },
-                },
-              },
-            },
           },
           where: { startedAt: { gte: dayStart, lt: dayEnd } },
         })
+    );
+    const ledgerRows = await matchingActiveWorkflows(
+      prisma,
+      runs.map((run) => run.workflowId)
     );
     const runIds = runs.map((run) => run.id);
     const [sourceRows, selectedHumanSteps] = await Promise.all([
@@ -379,7 +376,9 @@ export async function rollupWorkflowRuns(
       pullRequests: pullRequests
         .filter((pr) => pr.runId !== null)
         .map((pr) => ({ ...pr, runId: pr.runId as string })),
-      runs: runs.map(workflowRunRollupInputFromRun),
+      runs: runs.map((run) =>
+        workflowRunRollupInputFromRun(withMatchingActiveWorkflow(run, ledgerRows))
+      ),
       steps,
       traces,
     });
@@ -410,7 +409,12 @@ export async function rollupWorkflowRuns(
     });
     await runUnscoped(
       'the workflow run rollup replaces one complete UTC day atomically',
-      ['WorkflowRunDailyRollup', 'HumanStepDailyRollup', 'ReviewVerdictDailyRollup'],
+      [
+        'WorkflowRunDailyRollup',
+        'HumanStepDailyRollup',
+        'ReviewVerdictDailyRollup',
+        'RollupBuiltDay',
+      ],
       () =>
         prisma.$transaction(
           async (tx) => {
@@ -432,6 +436,7 @@ export async function rollupWorkflowRuns(
                 data: reviewRows.slice(offset, offset + 500),
               });
             }
+            await markRollupDayBuilt(tx, dayStart, WORKFLOW_RUN_ROLLUP_BUCKET_VERSION, now);
           },
           { maxWait: 30_000, timeout: TX_TIMEOUT_MS }
         )

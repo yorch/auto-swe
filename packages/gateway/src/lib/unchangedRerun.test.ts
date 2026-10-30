@@ -112,12 +112,41 @@ describe('refuseUnchangedRerun', () => {
     expect(sent[0].error.message).not.toContain('acknowledgeUnchanged');
   });
 
+  it('keeps paging past a full page of other stops to find the matching one', async () => {
+    const other = (index: number) => ({
+      id: `other-${index}`,
+      startedAt: new Date(NOW - 1_000 - index),
+      workRequest: { description: 'something else', payload: {} },
+      workRequestId: `wr-other-${index}`,
+    });
+    const pages = [Array.from({ length: 25 }, (_, index) => other(index)), [previous], []];
+    const findMany = vi.fn(async (_query: unknown) => pages.shift() ?? []);
+    const reply = { send: vi.fn(() => reply), status: vi.fn(() => reply) };
+    const refused = await refuseUnchangedRerun(
+      {
+        gate: undefined,
+        log: { warn: vi.fn() },
+        now: () => NOW,
+        prisma: {
+          workflowRun: { findMany },
+          workflowTemplateVersion: { findFirst: async () => ({ spec: stopSpec }) },
+        } as never,
+        user,
+      },
+      identity,
+      reply as never,
+      undefined
+    );
+    expect(refused).toBe(true);
+    expect(findMany.mock.calls[1]?.[0]).toMatchObject({ cursor: { id: 'other-24' }, skip: 1 });
+  });
+
   it('asks the database for exactly the failed stops of this request, version and window', async () => {
     const { call, findMany } = harness([]);
     await call();
     expect(findMany).toHaveBeenCalledTimes(1);
     expect(findMany.mock.calls[0][0]).toEqual({
-      orderBy: { startedAt: 'desc' },
+      orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
       select: {
         id: true,
         startedAt: true,
