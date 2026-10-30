@@ -1,3 +1,4 @@
+import { WORKFLOW_RUN_ROLLUP_BUCKET_VERSION } from '@auto-swe/shared/workflow';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ where: null as unknown }));
@@ -38,6 +39,6 @@ describe('workflowRunRollupHorizonMs', () => {
       Date.UTC(2026, 9, 20)
     );
     expect(covered).toEqual(new Set([day.getTime()]));
-    expect(mocks.where).toMatchObject({ bucketVersion: 2 });
+    expect(mocks.where).toMatchObject({ bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION });
   });
 });
