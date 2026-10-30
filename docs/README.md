@@ -127,13 +127,13 @@ Writing docs? Two rules:
 
 1. **Present tense, current state.** No shipped-status, PR numbers, phase labels, or roadmap
    promises. That is what git history and the pull request are for.
-2. **`yarn docs:check` enforces both.** It derives countable facts (node types, Prisma models,
-   built-in skills, scanner patterns, seeded agents) and dependency versions from source, rejects
-   the status prose rule 1 bans, requires every capability doc to carry a `## Limitations` section,
+2. **`yarn docs:check` enforces both.** It derives dependency versions and the seeded
+   agent roster from source, rejects the status prose rule 1 bans, requires every capability doc to carry a `## Limitations` section,
    rejects a setting key no longer defined in the registry, and fails on broken relative links. It
-   runs as its own CI job with no install step. Run it after changing the schema, the node-type
-   union, the skills, the scanner patterns, the seeded agents, a setting key, or any dependency a
-   doc names by version.
+   runs as its own CI job with no install step. Run it after changing the seeded agents, a setting key,
+   or any dependency a doc names by version. Counts of what the schema, the spec, the skills or the
+   scanner patterns contain are not stated in the docs, because they drift and the source is
+   authoritative.
 
 ## history/
 

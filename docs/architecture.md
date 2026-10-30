@@ -81,7 +81,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 111 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — the Prisma models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | The consolidated `20260618000000_init` baseline (generated from `schema.prisma`) plus the hand-written `20260618000001_custom_constraints_and_indexes` beside it; new changes append their own migration once the schema is deployed |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -336,7 +336,7 @@ flowchart TD
 
 ### Node types
 
-The spec supports 15 node types.
+The spec supports the node types below.
 
 | Node type | Purpose | Key fields |
 |-----------|---------|-----------|
@@ -713,7 +713,7 @@ whose audience is the MCP resource (`{BETTER_AUTH_URL}/api/v1/mcp`), signed with
 REST API's, so a token from one is not valid on the other. A Fastify plugin in front of better-auth
 (`mcpOAuthGate.ts`) decides which provider endpoints exist, who may authorize and what a client may
 register; the operator switches are the registry settings `mcp.enabled` and `mcp.writeToolsEnabled`. The
-tables it uses are the eight `oauth*` and `jwks` models. Details, and what it does not do, are in
+tables it uses are the `oauth*` and `jwks` models. Details, and what it does not do, are in
 [oauth-setup.md](./oauth-setup.md#the-platform-as-an-oauth-server-for-mcp-clients).
 
 **Authorization** is declarative on the `requireAuth` hook. Platform roles are
@@ -742,7 +742,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 111 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative.
 
 ```mermaid
 erDiagram
@@ -808,7 +808,7 @@ erDiagram
 | Channel assistant | `SlackWorkspace`, `SlackChannel`, `SlackChannelMember`, `ChannelThreadSession`, `ChannelOpenItem` | See [channel-assistant.md](./channel-assistant.md) |
 | Evals | `EvalDataset`, `EvalCase`, `EvalRun`, `EvalRubric` | See [evals.md](./evals.md) |
 | Distribution | `InstalledBundle` | Installed bundles as a managed base layer |
-| Scanners | `ScannerPattern` | DB-backed regex patterns across six pattern types |
+| Scanners | `ScannerPattern` | DB-backed regex patterns across the scanner pattern types |
 
 **Billing idempotency.** `finalizeWorkflowRun` performs the run-denormalize update and the
 `OrgMonthlyUsage` increment-upsert in one transaction, and only the write that sets `endedAt`

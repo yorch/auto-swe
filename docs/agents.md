@@ -9,7 +9,7 @@
 Agent identity is a **free-form string** — there is no enum, the DB columns are plain `TEXT`, and
 `AnySkillRole = string`. New agents are added as data, not code.
 
-`syncBuiltins` seeds 33 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
+`syncBuiltins` seeds the built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
 are seed content for the flagship software-engineering use case, not a fixed roster. An agent a team
 adds resolves through exactly the same cascade as `implementer`, and nothing in the engine privileges
 the seeded set — `assertConfigReady` gates boot on what the deployment has *installed*, not on the
@@ -18,7 +18,7 @@ catalog (§2).
 They split by how they bind a model: an agent carries either its own `modelSpec`, or an
 `inheritsModelFrom` pointer that `resolveAgent` chases to a parent.
 
-### Model-backed agents (19)
+### Model-backed agents
 
 Each has a GLOBAL `Agent` row with its own `modelSpec`. Model, prompt, skills, and tools are edited
 — and overridden at CHANNEL / TEAM / ORGANIZATION / WORKFLOW_TEMPLATE scope — through the Agent
@@ -68,7 +68,7 @@ runs on a cheaper, different model from the agents it scores, to avoid self-pref
 > It complements the review network rather than being replaced by it: the network gives three
 > personas an opinion and routes on their verdicts, this one fails the activity outright.
 
-### Sub-role personas (14)
+### Sub-role personas
 
 No `modelSpec`; each carries `inheritsModelFrom` so it runs on its parent's model. The activity that
 runs a persona resolves its `systemPrompt`, skills, `toolKeys`, and MCP binding from the persona's
@@ -249,9 +249,9 @@ does not read it. Mastra's own default when no budget is passed is 5 steps, whic
 before the agent has read, edited, and tested anything. Like `workspace.maxToolOutputChars`, it is
 read once per agent build.
 
-### 3.1 Workspace Tools (4, configurable)
+### 3.1 Workspace Tools (configurable)
 
-These tools translate agent calls to `docker exec` commands inside the workspace container. All four are listed in `IMPLEMENTER_TOOL_IDS` and are controlled by `Agent.toolKeys`.
+These tools translate agent calls to `docker exec` commands inside the workspace container. All of them are listed in `IMPLEMENTER_TOOL_IDS` and are controlled by `Agent.toolKeys`.
 
 | Tool ID | Description | Security layer |
 |---|---|---|
@@ -264,9 +264,9 @@ These tools translate agent calls to `docker exec` commands inside the workspace
 
 Governed knowledge adds two separate tool IDs, `searchKnowledge` and `submitLearning`. They are not workspace tools and are excluded when `toolKeys` is null or legacy. Grant each explicitly on the resolved Agent to enable it. Search returns bounded, cited, trust-labeled knowledge as untrusted context; submission captures only local LEARNING items and requires persisted evidence. See [knowledge.md](./knowledge.md) for scope, lifecycle, and limitations.
 
-### 3.2 `loadSkill` Tool (5th tool, always present when skills exist)
+### 3.2 `loadSkill` Tool (always present when skills exist)
 
-When `skills` is non-empty, a fifth tool — `loadSkill` — is automatically added alongside the four workspace tools. It is **not** listed in `IMPLEMENTER_TOOL_IDS` and is **not** part of `Agent.toolKeys` (it is auto-added).
+When `skills` is non-empty, a further tool — `loadSkill` — is automatically added alongside the workspace tools. It is **not** listed in `IMPLEMENTER_TOOL_IDS` and is **not** part of `Agent.toolKeys` (it is auto-added).
 
 ```
 loadSkill({ name: string }) → { promptText: string }
@@ -683,7 +683,7 @@ Paths must be absolute because the harness resolves a relative one against its o
 directory, which a `cd` in an earlier `Bash` call moves: `cd .git` followed by a `Write` of
 `hooks/pre-push` would otherwise be checked as one file and written as another.
 
-The tools are the same capability as the four Mastra workspace tools under Claude Code's names, and
+The tools are the same capability as the Mastra workspace tools under Claude Code's names, and
 the Agent's `toolKeys` gate them the same way: `readFile` and `listDirectory` grant `Read`, `Glob`
 and `Grep`, `writeFile` grants `Write` and `Edit`, `bash` grants `Bash`, and `null`, `[]` or a list
 naming no workspace tool grants all six. A tool the keys do not grant is left out of the harness's
@@ -1267,7 +1267,7 @@ Skills are an **ADMIN-curated library**: creation (`POST /api/v1/platform/skills
 
 **Table:** `skills` in `packages/shared/src/prisma/schema.prisma`
 
-### 6.2 Built-in Skills (36 total)
+### 6.2 Built-in Skills
 
 **File:** `packages/shared/src/skills/index.ts`
 
@@ -1453,18 +1453,18 @@ The preview body is `{ host?, owner, repo, path?, ref, scriptMode?, scope?, team
 
 ## 7. Tool Access Control (`Agent.toolKeys`)
 
-`Agent.toolKeys` controls which of the four workspace tools are available to an agent role. It is a nullable Json string array on the resolved `Agent`.
+`Agent.toolKeys` controls which of the workspace tools are available to an agent role. It is a nullable Json string array on the resolved `Agent`.
 
 | Field | Purpose |
 |---|---|
 | `key` | Which agent key (e.g. `implementer`) |
 | `scope` | `GLOBAL` \| `TEAM` \| `WORKFLOW_TEMPLATE` |
-| `toolKeys` | nullable Json `string[]` of allowed tool IDs (`null` = all four enabled) |
+| `toolKeys` | nullable Json `string[]` of allowed tool IDs (`null` = all enabled) |
 | `teamId` / `workflowTemplateId` | Scope keys (partial unique index) |
 
 **Cascade:** `loadAgentToolConfig(role, ctx)` in `packages/worker/src/lib/config/agentSkills.ts` (a thin shim over `resolveAgent`) follows the same WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL order. Returns `null` when the resolved Agent has no `toolKeys`, which means all tools are enabled.
 
-**`mcp` pseudo-tool key:** in addition to the four workspace tool IDs, the worker honours an `'mcp'` entry in `toolKeys` to gate MCP tool loading (see section 3.5). It is not part of `IMPLEMENTER_TOOL_IDS` but is included in the canonical `AGENT_TOOL_KEYS` set (`packages/shared/src/workflow/stepRegistry.ts`), so the gateway tool-key validation accepts it. A non-empty `toolKeys` must explicitly list `'mcp'` to enable MCP; absence disables it, mirroring the built-in gating.
+**`mcp` pseudo-tool key:** in addition to the workspace tool IDs, the worker honours an `'mcp'` entry in `toolKeys` to gate MCP tool loading (see section 3.5). It is not part of `IMPLEMENTER_TOOL_IDS` but is included in the canonical `AGENT_TOOL_KEYS` set (`packages/shared/src/workflow/stepRegistry.ts`), so the gateway tool-key validation accepts it. A non-empty `toolKeys` must explicitly list `'mcp'` to enable MCP; absence disables it, mirroring the built-in gating.
 
 **Agent runs read `toolKeys` differently.** The implementer reads `null`, `[]` and a list with no
 workspace tool in it as every tool. An [agent run](./agent-runs.md) launches an arbitrary library agent
@@ -1736,7 +1736,7 @@ Importing skills from an external repository is a separate surface, documented w
 
 The single governed surface for per-key config. An Agent payload carries
 `modelSpec` / `inheritsModelFrom`, `reasoning`, `systemPrompt`, `credentialId`, ordered
-`skillRefs`, and `toolKeys` (`null` = all four workspace tools; values from
+`skillRefs`, and `toolKeys` (`null` = all workspace tools; values from
 `IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash']`).
 Writes cut a new immutable `version`. A create, or an edit that changes `modelSpec` or
 `inheritsModelFrom`, is refused with `400 MODEL_REQUIRED` when the version would name neither:
