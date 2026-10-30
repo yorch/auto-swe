@@ -2,15 +2,15 @@
 /**
  * Documentation drift check.
  *
- * The living docs make a handful of *countable* claims about the system ("15 node
- * types", "51 Prisma models", "28 built-in skills"). Prose has no compiler, so those
- * numbers silently rot every time the schema or the spec changes — this script is the
- * compiler. It derives each fact from source, then fails if any living doc states a
- * different number.
+ * Prose has no compiler, so the parts of the living docs that restate something the code
+ * owns rot silently. This script is the compiler for those: dependency and image versions,
+ * forbidden status prose, setting keys, repository paths, dashboard routes, relative links,
+ * the agent roster, and the `## Limitations` section every capability doc carries.
  *
- * Scope is deliberately narrow: only claims that can be derived unambiguously from a
- * single source of truth. Frozen docs under `docs/history/` are never checked — they are
- * point-in-time records and are *supposed* to state the numbers that were true then.
+ * Counts of what the schema, the spec, the skill set or the registries contain ("15 node
+ * types", "111 Prisma models") are deliberately NOT checked: the docs do not state them,
+ * because they churn on every change and carry almost no information — the source is the
+ * authority. Frozen docs under `docs/history/` are never checked.
  *
  * Run: `yarn docs:check`
  */
@@ -20,182 +20,9 @@ import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { walkMarkdown } from './walkMarkdown.mjs';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+// `DOC_DRIFT_ROOT` points the check at a fixture tree; the test suite uses it.
+const ROOT = process.env.DOC_DRIFT_ROOT ?? join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
-
-// Docs may spell small counts as words.
-const WORD_NUMBERS = {
-  eight: 8,
-  eleven: 11,
-  five: 5,
-  four: 4,
-  nine: 9,
-  seven: 7,
-  six: 6,
-  ten: 10,
-  three: 3,
-  twelve: 12,
-  two: 2,
-};
-const toNumber = (raw) => WORD_NUMBERS[raw.toLowerCase()] ?? Number(raw);
-
-/**
- * A counted quantity. The lookbehind rejects a digit that is really part of a
- * section number or a decimal — `### 6.2 Built-in Skills` must not read as "2".
- */
-const NUM = '(?<![\\w.])(\\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)';
-
-// ---------------------------------------------------------------------------
-// Facts derived from source
-// ---------------------------------------------------------------------------
-
-const specSrc = read('packages/shared/src/workflow/spec.ts');
-const schemaSrc = read('packages/shared/src/prisma/schema.prisma');
-const skillsSrc = read('packages/shared/src/skills/index.ts');
-const patternsSrc = read('packages/shared/src/scannerPatterns/index.ts');
-const agentKeysSrc = read('packages/shared/src/agentKeys.ts');
-const stepRegistrySrc = read('packages/shared/src/workflow/stepRegistry.ts');
-
-const count = (src, re) => (src.match(re) ?? []).length;
-
-/** Members of the `NodeSchema` discriminated union. */
-const nodeTypes = count(specSrc, /^\s*type: z\.literal\('[a-zA-Z]+'\),$/gm);
-
-/** `model X {` declarations in the Prisma schema. */
-const prismaModels = count(schemaSrc, /^model /gm);
-
-/** Entries of the `BUILTIN_SKILLS` array. */
-const builtinSkills = (() => {
-  const body = skillsSrc.match(/BUILTIN_SKILLS: BuiltinSkillDef\[\] = \[([\s\S]*?)^\];/m);
-  if (!body) {
-    throw new Error('could not locate BUILTIN_SKILLS array');
-  }
-  return count(body[1], /^\s*[A-Z0-9_]+_SKILL,$/gm);
-})();
-
-/**
- * Built-in scanner patterns, total and per `ScannerPatternType`.
- *
- * The trailing comma is load-bearing: `BuiltinScannerPatternDef` declares
- * `type: 'INJECTION' | 'EXFILTRATION' | …;`, and matching without it counted
- * that union as a 14th INJECTION pattern — inflating every total by one.
- * Verified against a seeded database: 58 rows, 13 INJECTION.
- */
-const patternsByType = {};
-for (const m of patternsSrc.matchAll(/type: '([A-Z_]+)',/g)) {
-  patternsByType[m[1]] = (patternsByType[m[1]] ?? 0) + 1;
-}
-const scannerPatterns = Object.values(patternsByType).reduce((a, b) => a + b, 0);
-
-/** Entries of `MODEL_BACKED_AGENT_KEYS` — the narrow convenience set, not the agent universe. */
-const modelBackedAgentKeys = (() => {
-  const body = agentKeysSrc.match(/MODEL_BACKED_AGENT_KEYS = \[([\s\S]*?)\] as const;/);
-  if (!body) {
-    throw new Error('could not locate MODEL_BACKED_AGENT_KEYS array');
-  }
-  return count(body[1], /^\s*'[a-zA-Z]+',$/gm);
-})();
-
-/**
- * Seeded built-in agents, split by how they bind a model. An agent carries either its
- * own `modelSpec` (model-backed) or an `inheritsModelFrom` pointer (sub-role persona).
- */
-const builtinAgentsSrc = read('packages/shared/src/lib/syncBuiltins.ts');
-const modelBackedAgents = count(builtinAgentsSrc, /^\s*modelSpec: '/gm);
-const subRoleAgents = count(builtinAgentsSrc, /^\s*inheritsModelFrom: '/gm);
-const builtinAgents = modelBackedAgents + subRoleAgents;
-
-/** Entries of `IMPLEMENTER_TOOL_IDS` (the configurable workspace tools). */
-const implementerTools = (() => {
-  const body = stepRegistrySrc.match(/IMPLEMENTER_TOOL_IDS = \[([^\]]*)\]/);
-  if (!body) {
-    throw new Error('could not locate IMPLEMENTER_TOOL_IDS array');
-  }
-  return count(body[1], /'[a-zA-Z]+'/g);
-})();
-
-// ---------------------------------------------------------------------------
-// Claims to verify in the living docs
-// ---------------------------------------------------------------------------
-
-const CHECKS = [
-  {
-    actual: nodeTypes,
-    label: 'workflow node types',
-    patterns: [new RegExp(`${NUM}\\s+node types`, 'gi')],
-    // The four HITL node types are a legitimate subset, not a claim about the total.
-    skipLine: /HITL|human/i,
-    source: 'packages/shared/src/workflow/spec.ts (NodeSchema union)',
-  },
-  {
-    actual: prismaModels,
-    label: 'Prisma models',
-    // A model is a table, and the deployment runbook counts them that way — the
-    // same fact stated in the other vocabulary, and it drifted precisely because
-    // only one spelling was checked.
-    patterns: [new RegExp(`${NUM}\\s+(?:Prisma\\s+)?(?:models|tables)\\b`, 'gi')],
-    source: 'packages/shared/src/prisma/schema.prisma',
-  },
-  {
-    actual: builtinSkills,
-    label: 'built-in skills',
-    patterns: [
-      // Tolerates qualifiers between the two words: "27 built-in prompt-fragment skills".
-      new RegExp(`${NUM}\\s+built-in(?:\\s+[a-z-]+){0,3}\\s+skills`, 'gi'),
-      new RegExp(`built-in skills \\(${NUM} total\\)`, 'gi'),
-    ],
-    source: 'packages/shared/src/skills/index.ts (BUILTIN_SKILLS)',
-  },
-  {
-    actual: scannerPatterns,
-    label: 'built-in scanner patterns',
-    patterns: [
-      new RegExp(`${NUM}\\s+built-in (?:scanner )?patterns`, 'gi'),
-      new RegExp(`${NUM}\\s+patterns (?:in|across)`, 'gi'),
-      new RegExp(`(?:total(?:ling)?|totals?)\\s+\\*{0,2}${NUM}\\*{0,2}`, 'gi'),
-    ],
-    source: 'packages/shared/src/scannerPatterns/index.ts',
-  },
-  {
-    actual: builtinAgents,
-    label: 'seeded built-in agents',
-    patterns: [
-      new RegExp(`${NUM}\\s+(?:seeded\\s+)?built-in agents`, 'gi'),
-      new RegExp(`${NUM}\\s+agent roles`, 'gi'),
-    ],
-    source: 'packages/shared/src/lib/syncBuiltins.ts',
-  },
-  {
-    actual: modelBackedAgents,
-    label: 'model-backed built-in agents (own modelSpec)',
-    patterns: [new RegExp(`${NUM}\\s+model-backed`, 'gi')],
-    source: 'packages/shared/src/lib/syncBuiltins.ts (entries with modelSpec)',
-  },
-  {
-    actual: subRoleAgents,
-    label: 'sub-role built-in agents (inheritsModelFrom)',
-    patterns: [new RegExp(`${NUM}\\s+sub-role`, 'gi')],
-    source: 'packages/shared/src/lib/syncBuiltins.ts (entries with inheritsModelFrom)',
-  },
-  {
-    actual: modelBackedAgentKeys,
-    label: 'MODEL_BACKED_AGENT_KEYS entries',
-    patterns: [new RegExp(`MODEL_BACKED_AGENT_KEYS[^.\\n]*?\\(${NUM}\\)`, 'g')],
-    source: 'packages/shared/src/agentKeys.ts (MODEL_BACKED_AGENT_KEYS)',
-  },
-  {
-    actual: implementerTools,
-    label: 'configurable implementer workspace tools',
-    patterns: [new RegExp(`${NUM}\\s+configurable workspace tools`, 'gi')],
-    source: 'packages/shared/src/workflow/stepRegistry.ts (IMPLEMENTER_TOOL_IDS)',
-  },
-  ...Object.entries(patternsByType).map(([type, n]) => ({
-    actual: n,
-    label: `${type} scanner patterns`,
-    patterns: [new RegExp(`${NUM}\\s+\\*{0,2}\`?${type}\`?\\*{0,2}`, 'g')],
-    source: 'packages/shared/src/scannerPatterns/index.ts',
-  })),
-];
 
 // ---------------------------------------------------------------------------
 // Dependency versions
@@ -587,8 +414,6 @@ const targets = [
     .map((f) => join('docs', f)),
 ];
 
-const failures = [];
-
 for (const file of targets) {
   const lines = read(file).split('\n');
   lines.forEach((line, i) => {
@@ -596,29 +421,6 @@ for (const file of targets) {
     checkImageVersions(relative('.', file), line, i + 1);
     checkProse(relative('.', file), line, i + 1);
     checkSettingKeys(relative('.', file), line, i + 1);
-    for (const check of CHECKS) {
-      if (check.skipLine?.test(line)) {
-        continue;
-      }
-      for (const pattern of check.patterns) {
-        pattern.lastIndex = 0;
-        for (const match of line.matchAll(pattern)) {
-          const claimed = toNumber(match[1]);
-          if (Number.isNaN(claimed) || claimed === check.actual) {
-            continue;
-          }
-          failures.push({
-            actual: check.actual,
-            claimed,
-            file: relative('.', file),
-            label: check.label,
-            line: i + 1,
-            source: check.source,
-            text: match[0].trim(),
-          });
-        }
-      }
-    }
   });
 }
 
@@ -665,11 +467,9 @@ const staleExemptions = [...GAP_EXEMPT_DOCS].filter((d) => !existsSync(join(ROOT
 // ---------------------------------------------------------------------------
 // Seeded agents named in the roster
 //
-// The counts above catch a *number* going stale. They do not catch a roster
-// that lists ten of seventeen agents and reads as though it lists them all —
-// which is what happened: the seven agents seeded for content, support and
-// product work were absent from the summary in AGENTS.md while the count
-// beside it stayed correct.
+// A roster that lists ten of seventeen agents reads as though it lists them
+// all — which is what happened: the seven agents seeded for content, support
+// and product work were absent from the summary in AGENTS.md.
 //
 // Only the two docs that claim to enumerate the roster are checked. Every other
 // doc mentions agents in passing and has no business listing all of them.
@@ -677,9 +477,18 @@ const staleExemptions = [...GAP_EXEMPT_DOCS].filter((d) => !existsSync(join(ROOT
 
 const ROSTER_DOCS = ['AGENTS.md', 'docs/agents.md'];
 
+const builtinAgentsSrc = read('packages/shared/src/lib/syncBuiltins.ts');
 const seededAgentKeys = [...builtinAgentsSrc.matchAll(/^\s+key: '([a-zA-Z]+)',$/gm)].map(
   (m) => m[1]
 );
+// A roster check over zero agents passes by checking nothing. If the shape of the `key:` lines in
+// syncBuiltins.ts changes, say so instead of going quiet.
+if (seededAgentKeys.length === 0) {
+  throw new Error(
+    'check-doc-drift: found no seeded agent keys in packages/shared/src/lib/syncBuiltins.ts; ' +
+      'the roster check would pass without checking anything. Update the key pattern.'
+  );
+}
 
 const rosterFailures = [];
 for (const doc of ROSTER_DOCS) {
@@ -904,7 +713,7 @@ for (const file of targets) {
 // ---------------------------------------------------------------------------
 // Broken relative links
 //
-// Moving a doc silently breaks every link into it. Unlike the counts above this
+// Moving a doc silently breaks every link into it. Unlike the checks above this
 // scans the whole tree, frozen docs included — a dead link is wrong everywhere.
 // ---------------------------------------------------------------------------
 
@@ -971,19 +780,7 @@ for (const file of walk('.')) {
 // Report
 // ---------------------------------------------------------------------------
 
-const facts = [
-  ['workflow node types', nodeTypes],
-  ['Prisma models', prismaModels],
-  ['built-in skills', builtinSkills],
-  ['built-in scanner patterns', scannerPatterns],
-  ['seeded built-in agents', builtinAgents],
-  ['  … model-backed', modelBackedAgents],
-  ['  … sub-role personas', subRoleAgents],
-  ['implementer workspace tools', implementerTools],
-];
-
 const clean =
-  failures.length === 0 &&
   brokenLinks.length === 0 &&
   missingGaps.length === 0 &&
   staleExemptions.length === 0 &&
@@ -996,7 +793,7 @@ const clean =
 
 if (clean) {
   console.log(
-    `Doc drift check passed — ${targets.length} living docs, ${CHECKS.length} facts, ` +
+    `Doc drift check passed — ${targets.length} living docs, ` +
       `${VERSIONED_DEPS.length} dependency versions, ${IMAGE_DEPS.length} image tags + Node, ` +
       'no broken links or anchors.'
   );
@@ -1012,21 +809,7 @@ if (clean) {
   );
   console.log('  every repository path named in prose exists.');
   console.log(`  the agent roster names all ${seededAgentKeys.length} seeded agents.`);
-  for (const [label, value] of facts) {
-    console.log(`  ${String(value).padStart(3)}  ${label}`);
-  }
   process.exit(0);
-}
-
-if (failures.length > 0) {
-  console.error(`Stale claims — ${failures.length} in the living docs.\n`);
-  for (const f of failures) {
-    console.error(`  ${f.file}:${f.line}`);
-    console.error(`    claims "${f.text}" but there are ${f.actual} ${f.label}`);
-    console.error(`    source of truth: ${f.source}\n`);
-  }
-  console.error('Update the doc, or the source, so the two agree.');
-  console.error('Frozen docs under docs/history/ are exempt from claim checks.\n');
 }
 
 if (staleExemptions.length > 0) {

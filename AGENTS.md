@@ -177,15 +177,19 @@ prose has no compiler and status prose rots silently.
 
   | Check | Source of truth |
   |---|---|
-  | Countable claims — "15 node types", "Prisma model count", "37 built-in skills" | `spec.ts`, `schema.prisma`, `skills/index.ts`, `scannerPatterns/`, `syncBuiltins.ts` |
   | Dependency versions in the tech-stack tables | every `package.json` (a truncated claim passes when it prefixes the real version) |
   | Forbidden status prose — phase labels, PR numbers, "now shipped", roadmap promises | the rules above (backticks and quotes are stripped first, so this file may quote what it bans) |
   | A capability doc with no `## Limitations` section | the gap-locality rule above |
   | A setting key named in prose that the registry does not define | `config/registry.ts` (a key carries its own group as a prefix, so regrouping a knob renames it) |
   | Broken relative `.md` links, `docs/history/` included | the filesystem |
+  | An agent roster that omits a seeded agent (`AGENTS.md`, `docs/agents.md`) | `syncBuiltins.ts` |
 
-  Run it after changing the schema, the node-type union, the built-in skills, the scanner patterns,
-  the seeded agents, or any dependency that a doc names by version.
+  Counts of what the schema, the workflow spec, the skill set or the scanner patterns contain are
+  deliberately not stated in prose, and so not checked: they churn on every change, carry almost no
+  information, and the source is authoritative.
+
+  Run it after changing the seeded agents, a setting key, or any dependency that a doc names by
+  version.
 - `docs/history/` is exempt from the check and from edits.
 
 ### Source invariants
@@ -240,7 +244,7 @@ yarn test:watch           # Vitest in watch mode
 yarn lint                 # Lint + format check (biome check)
 yarn lint:fix             # Auto-fix safe lint issues + format (biome check --write)
 yarn format               # Format only (biome format --write)
-yarn docs:check           # Fail on stale countable claims in the living docs
+yarn docs:check           # Fail on stale versions, status prose, setting keys, paths and links in the living docs
 yarn invariants:check     # Fail on source rules the types and tests cannot reach (§5)
 yarn env:setup <init|sync|check>  # Create / update / validate .env from .env.example (zero-dependency script)
 
@@ -512,14 +516,14 @@ skills via `skillRefs` and tools via `toolKeys`. `getModel` / `getModelSpec` / `
 **Agent identity is a free-form `string`** (`AnySkillRole = string`) — there is no enum. New agents
 are added as data, not code. Seeded built-ins split by how they bind a model:
 
-- **Model-backed** (own `modelSpec`), 19 of them. The engineering set is `implementer`, `reviewer`,
+- **Model-backed** (own `modelSpec`). The engineering set is `implementer`, `reviewer`,
   `planner`, `securityReview`, `validateContext`, `commitToMemory`, `channelAssistant`, `evalJudge`,
   `workflowAuthor`, `workflowExplainer`, `repoDependencyInferrer`. `appAssistant` answers in the
   dashboard's assistant panel, acting as the signed-in user, and `assistantTitler` names its
   conversations. The rest exist because the
   platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
   `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product).
-- **Sub-role personas** (`inheritsModelFrom`), 14 of them: `securityReviewer` /
+- **Sub-role personas** (`inheritsModelFrom`): `securityReviewer` /
   `domainLogicReviewer` / `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` /
   `prdDecomposer` / `ciTriager` / `ticketContextGatherer` / `prFeedbackResponder` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
   `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`).
@@ -552,12 +556,12 @@ request, platform credential only, manual redirects, fixed error strings — nev
 or a response body in a message), and nothing from a source is ever executed. See
 [`docs/agents.md` §6.6](./docs/agents.md#66-external-skill-sources).
 
-**Tool** = an executable Mastra `createTool()` function. The implementer has four configurable
+**Tool** = an executable Mastra `createTool()` function. The implementer has configurable
 workspace tools (`readFile`, `writeFile`, `listDirectory`, `bash`) listed in `IMPLEMENTER_TOOL_IDS`
-and gated by the resolved Agent's `toolKeys`; `null` means all four are enabled. A fifth tool,
+and gated by the resolved Agent's `toolKeys`; `null` means all of them are enabled. A further tool,
 `loadSkill`, is added automatically when skills are present and is **not** configurable via
 `toolKeys`; so are the read-only memory tools `searchLessons` and `explainLesson`, bound in code to
-the session's repository. A sixth `'mcp'` pseudo-key (in `AGENT_TOOL_KEYS`, not in `IMPLEMENTER_TOOL_IDS`) gates
+the session's repository. An `'mcp'` pseudo-key (in `AGENT_TOOL_KEYS`, not in `IMPLEMENTER_TOOL_IDS`) gates
 MCP tool loading: when an Agent lists `'mcp'` **and** references an active `mcp` Connection via
 `Agent.mcpConnectionId`, that server's tools bind at run time for the implementer activities and
 the generic agent node.
@@ -637,8 +641,8 @@ Seven scanners run during agent execution, each independently advisory or blocki
 | **LLM output** | Post-generate per TDD iteration | Advisory | `scanSkillContent`; wrapped in try/catch — a DB failure must never abort the activity |
 | **Memory content** | Every `memory_items` write + every recall into a prompt | **Hard-block** (refuses the write / drops the item; fails closed) | `INJECTION` patterns only, via `memoryGuard.ts` — memory is replayed into every later run that recalls it |
 
-**Built-in patterns:** 68 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION,
-11 EXFILTRATION, 18 SHELL_COMMAND, 15 CODE_SECURITY, 7 SENSITIVE_FILE, 4 PII. Synced idempotently by
+**Built-in patterns:** `packages/shared/src/scannerPatterns/index.ts`, grouped by type — INJECTION,
+EXFILTRATION, SHELL_COMMAND, CODE_SECURITY, SENSITIVE_FILE, PII. Synced idempotently by
 `syncBuiltins()` at gateway startup and admin-extensible at `/admin/scanner`.
 
 `EXFILTRATION` patterns are written for **prose** — skill text and LLM output — and several are far
