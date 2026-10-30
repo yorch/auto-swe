@@ -397,6 +397,39 @@ describe('pull request evaluation webhook handling', () => {
       await deliver('pull_request', merged());
       expect(updateCalls).toHaveLength(1);
     });
+
+    it('starts a merged recount for the pull request once the merged row is stamped', async () => {
+      rows = [{ createdAt: new Date(), headSha: 'sha-1', id: 'r1' }];
+      await deliver('pull_request', merged());
+      expect(starts).toHaveLength(1);
+      expect(starts[0]?.input).toEqual({ connectionId: CONN.id, prNumber: 7, trigger: 'merged' });
+      expect(starts[0]?.id).toBe('preval-c0ffee00-7-d3adbeef');
+    });
+
+    it('starts the recount even when the feature is off', async () => {
+      settingsState.enabled = false;
+      rows = [{ createdAt: new Date(), headSha: 'sha-1', id: 'r1' }];
+      await deliver('pull_request', merged());
+      expect(starts).toHaveLength(1);
+    });
+
+    it('starts no recount when no row matched the merged head, or the close was no merge', async () => {
+      rows = [{ createdAt: new Date(), headSha: 'sha-other', id: 'x' }];
+      await deliver('pull_request', merged());
+      rows = [{ createdAt: new Date(), headSha: 'sha-1', id: 'r1' }];
+      await deliver('pull_request', {
+        action: 'closed',
+        pull_request: pr({ closed_at: '2026-10-02T00:00:00Z', merged: false }),
+      });
+      expect(starts).toHaveLength(0);
+    });
+
+    it('still answers 200 when the recount cannot be started', async () => {
+      rows = [{ createdAt: new Date(), headSha: 'sha-1', id: 'r1' }];
+      startFailure = new Error('temporal down');
+      expect((await deliver('pull_request', merged())).statusCode).toBe(200);
+      expect(updateCalls).toHaveLength(1);
+    });
   });
 
   describe('revert detection', () => {

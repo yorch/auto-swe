@@ -45,7 +45,8 @@ import {
   truncateBrief,
 } from '@auto-swe/shared/lib/prEvaluation';
 import {
-  autoEvidenceSatisfied,
+  autoEvidenceAssessment,
+  type EvidenceThresholds,
   prEvaluationEvidence,
 } from '@auto-swe/shared/lib/prEvaluationEvidence';
 import { findPlatformPullRequest } from '@auto-swe/shared/lib/prEvaluationPlatformPr';
@@ -113,6 +114,9 @@ const SETTING_KEYS = [
   'prEvaluation.defaultMode',
   'prEvaluation.autoMergeAllowed',
   'prEvaluation.autoMinEvidence',
+  'prEvaluation.autoMinRepoEvidence',
+  'prEvaluation.autoMinDistinctRequesters',
+  'prEvaluation.autoEvidenceMinChangedLines',
   'prEvaluation.maxLowLines',
   'prEvaluation.maxLowFiles',
   'prEvaluation.maxLowDirs',
@@ -505,6 +509,85 @@ async function skipAndDisarm(
   return skipped;
 }
 
+/** Started by the merge webhook, after it stamped `mergedAt` on the row of the merged head. */
+const MERGED_TRIGGER = 'merged';
+
+/**
+ * The merge-time recount. The approval fact on an evaluation row was taken when the head was
+ * evaluated; the row is stamped merged later. A dismissed approval followed by an admin
+ * bypass-merge starts no evaluation (the pull request is merged), so the row would keep the
+ * earlier, higher count. This recounts at the merged head with the same trust filter and
+ * launcher exclusion as an evaluation and writes the result to the one stamped row.
+ *
+ * It only ever lowers or confirms: any failure writes 0. It publishes no status, posts no
+ * comment, arms and disarms nothing, never throws for a missing row, and logs no ids.
+ */
+async function recountMergedApprovals(
+  connection: { id: string },
+  input: PrEvaluationInput,
+  deps: EvaluatePullRequestDeps,
+  repo: RepoRef
+): Promise<EvaluatePullRequestResult> {
+  const skipped: EvaluatePullRequestResult = {
+    outcome: 'skipped',
+    reason: 'merged: approvals recounted',
+  };
+  const row = await prisma.prEvaluation.findFirst({
+    orderBy: { mergedAt: 'desc' },
+    select: { headSha: true, id: true },
+    where: { connectionId: connection.id, mergedAt: { not: null }, prNumber: input.prNumber },
+  });
+  if (!row) {
+    logWarn('pr evaluation: no merged evaluation row to recount', {});
+    return skipped;
+  }
+  let recounted = 0;
+  try {
+    const platformPr = await findPlatformPullRequest(prisma, connection.id, input.prNumber);
+    if (!platformPr?.workflow) {
+      throw new Error('not a pull request the platform opened');
+    }
+    const launcher = await resolveLauncherSet(prisma, {
+      repoHost: await deps.repoHost(repo),
+      repoId: connection.id,
+      runId: platformPr.runId,
+      temporalWorkflowId: platformPr.workflow.temporalWorkflowId,
+      workRequestId: platformPr.workflow.workRequestId,
+    });
+    const pr = await deps.scm.getPullRequest(repo, input.prNumber);
+    if (!pr?.merged) {
+      throw new Error('the pull request is not merged');
+    }
+    const reviews = await deps.scm.listPullRequestReviews(repo, input.prNumber);
+    const trusted = await trustedApprovers(
+      deps.scm,
+      repo,
+      reviews,
+      pr.author ?? '',
+      1,
+      row.headSha,
+      launcher
+    );
+    recounted = launcher.resolved ? trusted.approval.approvers.length : 0;
+  } catch (err) {
+    // Fail closed: nothing could be shown, so the row keeps no approval.
+    logWarn('pr evaluation: the merged approvals could not be recounted', safeErrorMeta(err));
+    recounted = 0;
+  }
+  try {
+    await prisma.prEvaluation.update({
+      data: { trustedApprovers: recounted },
+      where: { id: row.id },
+    });
+  } catch (err) {
+    if (isRetryableEvaluationError(err)) {
+      throw err;
+    }
+    logWarn('pr evaluation: the recounted approvals could not be recorded', safeErrorMeta(err));
+  }
+  return skipped;
+}
+
 /** The evaluation's status as the host accepted it: never carries the host's own text. */
 type StatusPublished = { ok: boolean; reason?: 'refused' | 'error' };
 
@@ -524,6 +607,9 @@ export async function evaluatePullRequestWith(
     return { outcome: 'skipped', reason: 'repository not found or inactive' };
   }
   const repo = toRepoRef(connection);
+  if (input.trigger === MERGED_TRIGGER) {
+    return recountMergedApprovals(connection, input, deps, repo);
+  }
   if (!connection.isActive) {
     // A deactivated repository is treated as `off`: an arming it still carries is cancelled.
     return skipAndDisarm(connection, input, deps, repo, 'repository is inactive');
@@ -753,11 +839,17 @@ export async function evaluatePullRequestWith(
       decision = await decideAuto({
         approvalSatisfied: approval.satisfied,
         classification,
+        connectionId: connection.id,
         context,
         deps,
         draft: live.draft,
+        evidenceThresholds: {
+          minDistinctRequesters: settings['prEvaluation.autoMinDistinctRequesters'],
+          minEvidence: settings['prEvaluation.autoMinEvidence'],
+          minRepoEvidence: settings['prEvaluation.autoMinRepoEvidence'],
+        },
         launcherResolved: launcher.resolved,
-        minEvidence: settings['prEvaluation.autoMinEvidence'],
+        minChangedLines: settings['prEvaluation.autoEvidenceMinChangedLines'],
         readiness,
         statusPublished: statusPublished.ok,
       });
@@ -797,16 +889,22 @@ export async function evaluatePullRequestWith(
           markdown: briefMarkdown,
           skim: brief.skim.slice(0, MAX_PERSISTED_SKIM),
         }),
+        // The facts the evidence gate counts, describing the head just evaluated.
+        changedLines: listed.files.reduce((sum, f) => sum + f.additions + f.deletions, 0),
         connectionId: connection.id,
         headSha: pr.headSha,
         mode: statusMode,
         prNumber: input.prNumber,
         readiness: asJson({ ...(readiness ?? {}), statusPublished }),
         reasons: asJson(boundReasons(classification.reasons)),
+        requesterId: launcher.requesterId,
         requiredApprovers: classification.requiredApprovers,
         riskClass: classification.riskClass,
         statusState: status.state,
         triggeredBy: input.trigger,
+        // A row whose launcher set is unresolved can never count as reviewed evidence: the
+        // requester's own approval could not be told apart, so no approval is credited.
+        trustedApprovers: launcher.resolved ? approval.approvers.length : 0,
       },
       select: { id: true },
     });
@@ -938,7 +1036,9 @@ async function decideAuto(args: {
   deps: EvaluatePullRequestDeps;
   draft: boolean;
   launcherResolved: boolean;
-  minEvidence: number;
+  connectionId: string;
+  evidenceThresholds: EvidenceThresholds;
+  minChangedLines: number;
   readiness: BranchRules | null;
   statusPublished: boolean;
 }): Promise<AutoDecision> {
@@ -962,11 +1062,15 @@ async function decideAuto(args: {
   );
   // Only worth a query when everything cheaper already holds.
   if (blockers.length === 0) {
-    const evidence = await prEvaluationEvidence(prisma, args.deps.now());
-    if (!autoEvidenceSatisfied(evidence, args.minEvidence)) {
-      blockers.push(
-        `evidence gate not met (${evidence.lowMerged}/${args.minEvidence} low-risk merges, ${evidence.badMerges} bad)`
-      );
+    const evidence = await prEvaluationEvidence(
+      prisma,
+      args.connectionId,
+      args.deps.now(),
+      args.minChangedLines
+    );
+    const assessment = autoEvidenceAssessment(evidence, args.evidenceThresholds);
+    for (const unmet of assessment.unmet) {
+      blockers.push(`evidence gate not met, ${unmet}`);
     }
   }
   return { blockers, eligible: blockers.length === 0 };

@@ -353,10 +353,18 @@ model PrEvaluation {
   closedAt          DateTime?  @map("closed_at") @db.Timestamptz
   badMerge          Boolean    @default(false) @map("bad_merge")
   badMergeReason    String?    @map("bad_merge_reason")
+  /// The platform user who requested the work, resolved when evaluated. NULL when it could not be.
+  /// With the two columns below it decides whether a merged row counts as auto-mode evidence.
+  requesterId       String?    @map("requester_id") @db.Uuid
+  /// Additions plus deletions over the files listed for the evaluation.
+  changedLines      Int?       @map("changed_lines")
+  /// Distinct trusted approvals counted at the evaluated head, after the launcher exclusion.
+  trustedApprovers  Int?       @map("trusted_approvers")
   createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([connectionId, prNumber])
   @@index([riskClass, mergedAt])
+  @@index([connectionId, riskClass, mergedAt])
   @@map("pr_evaluations")
 }
 

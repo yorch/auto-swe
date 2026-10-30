@@ -72,6 +72,7 @@ describe('resolveLauncherSet', () => {
       ids: new Set(['583231']),
       logins: new Set(['octo-cat']),
       members: 1,
+      requesterId: 'x',
       resolved: true,
     });
     expect(findUsers.mock.calls[0]?.[0].where.id.in).toEqual(['x']);
@@ -89,6 +90,7 @@ describe('resolveLauncherSet', () => {
       ids: new Set(['583231', '777', '9']),
       logins: new Set(['octo-cat', 'bee-hive', 'zed']),
       members: 3,
+      requesterId: 'z',
       resolved: true,
     });
     expect([...(findUsers.mock.calls[0]?.[0].where.id.in ?? [])].sort()).toEqual(['x', 'y', 'z']);
@@ -104,6 +106,7 @@ describe('resolveLauncherSet', () => {
       ids: new Set(['583231']),
       logins: new Set(['octo-cat']),
       members: 2,
+      requesterId: 'x',
       resolved: false,
     });
   });
@@ -124,6 +127,7 @@ describe('resolveLauncherSet', () => {
       ids: new Set(),
       logins: new Set(),
       members: 0,
+      requesterId: null,
       resolved: false,
     });
   });
@@ -156,6 +160,7 @@ describe('resolveLauncherSet', () => {
       ids: new Set(),
       logins: new Set(['old-row']),
       members: 1,
+      requesterId: 'x',
       resolved: false,
     });
   });
@@ -181,6 +186,7 @@ describe('resolveLauncherSet', () => {
       ids: new Set(),
       logins: new Set(['octo-cat']),
       members: 1,
+      requesterId: 'x',
       resolved: false,
     });
   });
@@ -207,6 +213,7 @@ describe('resolveLauncherSet', () => {
       ids: new Set(['991']),
       logins: new Set(['ghes-user']),
       members: 1,
+      requesterId: 'x',
       resolved: true,
     });
   });
@@ -259,5 +266,22 @@ describe('resolveLauncherSet', () => {
     expect(findRuns).not.toHaveBeenCalled();
     expect(findRequest).not.toHaveBeenCalled();
     expect(findUsers).not.toHaveBeenCalled();
+  });
+
+  it('exposes the work request requester, and null when the requester is not a user', async () => {
+    const human = dbWith({
+      requester: { requestedById: 'y', requestedByServiceId: null },
+      runs: [{ launchedById: 'x' }],
+      users: { x: X, y: Y },
+    });
+    expect((await resolveLauncherSet(human.db, ARGS)).requesterId).toBe('y');
+    const service = dbWith({
+      requester: { requestedById: null, requestedByServiceId: 'svc' },
+      runs: [{ launchedById: 'x' }],
+      users: { x: X },
+    });
+    expect((await resolveLauncherSet(service.db, ARGS)).requesterId).toBeNull();
+    const none = dbWith({ runs: [{ launchedById: 'x' }], users: { x: X } });
+    expect((await resolveLauncherSet(none.db, ARGS)).requesterId).toBeNull();
   });
 });

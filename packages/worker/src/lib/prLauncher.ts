@@ -14,7 +14,16 @@ export const MAX_LAUNCHER_RUNS = 50;
  * the only thing about the set that may be logged or stored. `ids` and `logins` are used for the
  * comparison alone.
  */
-export type LauncherSet = ExcludedIdentities & { members: number; resolved: boolean };
+export type LauncherSet = ExcludedIdentities & {
+  members: number;
+  /**
+   * The platform user who requested the work: one stable identity per piece of work, stored on the
+   * evaluation row so the evidence gate can count distinct requesters. Null when the work has no
+   * user requester (a service principal, or no work request). Never logged or posted.
+   */
+  requesterId: string | null;
+  resolved: boolean;
+};
 
 export type LauncherSetArgs = {
   /** The repository's host family (`github.com`, `ghe.example.com`). */
@@ -82,12 +91,14 @@ export async function resolveLauncherSet(
       unattributable += 1;
     }
   }
+  let requesterId: string | null = null;
   if (args.workRequestId) {
     const request = await db.runInput.findUnique({
       select: { requestedById: true, requestedByServiceId: true },
       where: { id: args.workRequestId },
     });
     if (request?.requestedById) {
+      requesterId = request.requestedById;
       userIds.add(request.requestedById);
     } else if (request) {
       // A service principal, or nobody: a requester who cannot be matched to a person.
@@ -125,5 +136,11 @@ export async function resolveLauncherSet(
   }
 
   const members = userIds.size + unattributable;
-  return { ids, logins, members, resolved: members > 0 && unresolved === 0 && !overCap };
+  return {
+    ids,
+    logins,
+    members,
+    requesterId,
+    resolved: members > 0 && unresolved === 0 && !overCap,
+  };
 }

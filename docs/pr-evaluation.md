@@ -326,7 +326,7 @@ refusal is named in the evaluation's `auto-merge-blocked` reason.
   account by numeric id on the repository's host (§5), so their own approval was excluded from the
   count. The check on choosing `auto` (§10) does not
   ask this, because it belongs to one pull request.
-- The deployment's evidence gate is met (§9).
+- The evidence gate is met, for the deployment and for this repository (§9).
 
 The call carries `expectedHeadOid` and uses the **squash** merge method. If the head moves between
 the evaluation and the call, GitHub refuses, so an approval of one commit can never arm the merge of
@@ -360,23 +360,60 @@ The sweeps only start re-evaluations; the worker's evaluation does the disarming
 ## 9. The evidence gate
 
 `auto` needs a track record before it can be chosen and before it arms. The gate is
-`prEvaluationEvidence` in `packages/shared/src/lib/prEvaluationEvidence.ts`:
+`prEvaluationEvidence` with `autoEvidenceAssessment` in
+`packages/shared/src/lib/prEvaluationEvidence.ts`.
 
-- count the evaluation rows with class `LOW` whose pull request merged in the last **90 days**, and
-- count those that were marked a **bad merge**;
-- the gate is met when the first is at least `prEvaluation.autoMinEvidence` (default 150) and the
-  second is **zero**.
+**What counts.** An evaluation row counts as evidence only when all of these hold:
+
+- its class is `LOW`;
+- its pull request merged in the last **90 days**;
+- it is not marked a **bad merge**;
+- it recorded a **requester**: the platform user who requested the work (`requesterId`), one
+  stable identity per piece of work, null when the work has no user requester;
+- it recorded at least `prEvaluation.autoEvidenceMinChangedLines` (default 10) **changed lines**,
+  additions plus deletions over the files listed for the evaluation;
+- it recorded at least **one trusted approval** (`trustedApprovers`): a distinct approver with write
+  access, counted at the evaluated head after the requester and everyone who launched a run of the
+  work are set aside. The set aside only works when every one of them is matched to a linked GitHub
+  account on the repository's host (§5); a row whose launcher set is **unresolved** records **0**,
+  so it never counts.
+
+The activity writes these three facts when it evaluates a head, so they describe that head. The
+merge webhook later marks the row of the head that was merged and starts a **merge-time recount**
+(trigger `merged`): the activity lists the reviews again at the merged head, applies the same
+trust filter and launcher exclusion, and rewrites `trustedApprovers` on that one row (0 when the
+launcher set is unresolved or anything fails). An approval dismissed before an admin bypass-merge
+therefore does not stay counted. The recount publishes no status or comment and never arms or
+disarms anything. Rows written before the facts existed hold NULL in them and so no longer count; a
+deployment whose repositories were already in `auto` must accumulate new evidence (see UN-9 in
+[upgrade-notes.md](./upgrade-notes.md)).
+
+**Two scopes, both must pass.** To choose `auto` for a repository (`PUT`, refused with
+`400 AUTO_NOT_READY`) and for the platform to arm one of its pull requests:
+
+1. Deployment-wide: counted `LOW` merges are at least `prEvaluation.autoMinEvidence` (default 150),
+   there are **no** bad merges, and the counted merges came from at least
+   `prEvaluation.autoMinDistinctRequesters` (default 3) different requesters.
+2. This repository: counted `LOW` merges in it are at least `prEvaluation.autoMinRepoEvidence`
+   (default 20), and it has **no** bad merge of its own.
+
+Every unmet condition is named, in the refusal, in the arming note on the evaluation, and in
+`auto-swe pr-policy status`. The figures are counts: no requester is named in an API response, a
+log line, a status or a comment. The deployment-wide history is shared by every organization and
+team on the instance (organization B's merges count toward organization A's thresholds), and the
+aggregate counts, never ids, are visible to any ENGINEER who can reach one repository
+(`GET /repositories/:id/pr-evaluation`, `evidence.deployment`).
 
 A merge is recorded on the single evaluation row of the head that was merged. A merge is marked bad
 when a later merged pull request in the same repository reverts it within **14 days** of the merge,
 recognised from GitHub's default revert text only: a body starting `Reverts owner/repo#N`, or a title
 starting `Revert` that names `(#N)`.
 
-What it counts is evaluation rows merged under `LOW`. It does **not** check who approved, whether the
-merge was by a person or by auto-merge, which repository it was in, or whether the repository was
-in `advisory`, `enforce` or `auto` mode; the count is the whole deployment's. What it shows is that the
-classifier's `LOW` was not followed by a revert recognised by that text in the weeks after. It does
-not show that unattended merging is safe; see Limitations.
+**What it shows:** reviewed, merged and unreverted small-to-medium changes, in this repository and
+across the deployment, by several people who asked for the work. **What it does not show:** that
+unattended merging is safe. It does not check how the merge happened (by a person or by
+auto-merge), which mode the repository was in, or that the approver read the change; revert
+detection is a title heuristic; and the rows of a repository are deleted with it. See Limitations.
 
 ## 10. Who may do what
 
@@ -430,7 +467,10 @@ All are ADMIN-only registry settings in the `prEvaluation` group; see
 | `prEvaluation.enabled` | off | GLOBAL only | The kill switch. Off, nothing is evaluated and nothing is posted. |
 | `prEvaluation.defaultMode` | `advisory` | team, organization | Mode of a repository that has not chosen one: `off`, `advisory` or `enforce`. |
 | `prEvaluation.autoMergeAllowed` | off | GLOBAL only | Whether any repository may arm GitHub auto-merge. Off, `auto` keeps its status rules and arms nothing. |
-| `prEvaluation.autoMinEvidence` | 150 | GLOBAL only | Low-risk merges in 90 days, with no bad merge, that `auto` needs (§9). |
+| `prEvaluation.autoMinEvidence` | 150 | GLOBAL only | Counted low-risk merges in 90 days, deployment-wide, that `auto` needs, with no bad merge (§9). |
+| `prEvaluation.autoMinRepoEvidence` | 20 | GLOBAL only | Counted low-risk merges in 90 days in the repository itself that `auto` needs, with no bad merge there (§9). |
+| `prEvaluation.autoMinDistinctRequesters` | 3 | GLOBAL only | Different requesters the deployment-wide counted merges must come from (§9). |
+| `prEvaluation.autoEvidenceMinChangedLines` | 10 | GLOBAL only | Changed lines a merged change needs to count as evidence (§9). |
 | `prEvaluation.requiredStatusContext` | `auto-swe/pr-evaluation` | GLOBAL only | The status context name. |
 | `prEvaluation.maxLowLines` | 400 | team, organization | Changed lines a `LOW` change may carry. |
 | `prEvaluation.maxLowFiles` | 15 | team, organization | Files a `LOW` change may touch. |
@@ -480,13 +520,19 @@ A repository you cannot reach answers `404`. The CLI wraps the first two (§14).
 - **The platform never submits an approving review.** It has no second App identity, so on a
   repository whose branch rules require reviews, `auto` waits for a human approval before anything
   merges. Where reviews are not required, the approvals the class needs must already be given.
-- **The evidence gate is deployment-wide and weak evidence.** It counts `LOW` evaluation rows merged
-  in 90 days, with no recorded bad merge, whoever approved and however they merged. A bad merge is
-  recognised only from GitHub's default revert text, within 14 days; a revert written in other
-  words is not seen. Anyone who can launch runs can contribute to the count. Meeting it does not by
-  itself show that unattended merging is safe.
+- **The evidence gate is narrowed, not closed, against farming.** It counts only `LOW` rows with a
+  recorded requester, at least `prEvaluation.autoEvidenceMinChangedLines` changed lines and a
+  trusted approval, requires the repository's own merges as well as the deployment's, and wants
+  several distinct requesters. Several colluding requesters, each rubber-stamped by a colleague,
+  can still produce it. A bad merge is recognised only from GitHub's default revert text, within
+  14 days; a revert written in other words is not seen. Meeting it does not by itself show that
+  unattended merging is safe. Rows evaluated before the three facts were recorded do not count.
+- **Distinct requesters are platform users, not people.** One person with several accounts counts
+  several times, and a deleted requester keeps counting, because `requester_id` has no foreign key.
+- **`changedLines` counts every listed file.** Generated files, lockfiles and whitespace-only
+  changes count toward `prEvaluation.autoEvidenceMinChangedLines`.
 - **Deleting a repository deletes its evaluations**, and with them its merge counts and bad-merge
-  marks, which lowers the evidence figure.
+  marks, which lowers the evidence figure, including the repository's own.
 - **A pull request whose launchers cannot all be resolved by id is never armed, but its approvals
   count.** That covers work any of whose runs was started by a webhook automation, a schedule
   without an acting user, or a service principal or token, a requester who is a service principal,

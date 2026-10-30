@@ -62,8 +62,10 @@ per request, so they take effect within the settings cache's ~30 s with no resta
 The `prEvaluation` group holds the risk thresholds, approver counts, sensitive-path globs and the
 auto-merge gate for the pull requests the platform opens: `prEvaluation.enabled` (default off, the
 kill switch), `prEvaluation.defaultMode`, `prEvaluation.autoMergeAllowed` (default off),
-`prEvaluation.autoMinEvidence`, `prEvaluation.requiredStatusContext`, the size thresholds and the
-approver counts. All are ADMIN-only; the switches, the evidence minimum and the context are GLOBAL
+`prEvaluation.autoMinEvidence`, `prEvaluation.autoMinRepoEvidence`,
+`prEvaluation.autoMinDistinctRequesters`, `prEvaluation.autoEvidenceMinChangedLines`,
+`prEvaluation.requiredStatusContext`, the size thresholds and the
+approver counts. All are ADMIN-only; the switches, the four evidence settings and the context are GLOBAL
 only, the rest overridable at team and organization. Turning `prEvaluation.enabled` or
 `prEvaluation.autoMergeAllowed` off also starts the disarm sweep described in
 [pr-evaluation.md](./pr-evaluation.md#8-when-auto-merge-is-armed).

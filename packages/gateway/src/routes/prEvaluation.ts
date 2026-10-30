@@ -2,7 +2,7 @@ import { type Prisma, Role } from '@auto-swe/shared';
 import { resolveSetting, resolveSettings } from '@auto-swe/shared/config';
 import { autoArmingRefusals, type BranchRulesLike } from '@auto-swe/shared/lib/prEvaluation';
 import {
-  autoEvidenceSatisfied,
+  autoEvidenceAssessment,
   prEvaluationEvidence,
 } from '@auto-swe/shared/lib/prEvaluationEvidence';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
@@ -48,6 +48,9 @@ const POLICY_KEYS = [
   'prEvaluation.defaultMode',
   'prEvaluation.autoMergeAllowed',
   'prEvaluation.autoMinEvidence',
+  'prEvaluation.autoMinRepoEvidence',
+  'prEvaluation.autoMinDistinctRequesters',
+  'prEvaluation.autoEvidenceMinChangedLines',
   'prEvaluation.requiredStatusContext',
   ...THRESHOLD_KEYS,
 ] as const;
@@ -122,8 +125,8 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
       if (!repo) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      const [settings, last, evidence] = await Promise.all([
-        settingsFor(repo, POLICY_KEYS),
+      const settings = await settingsFor(repo, POLICY_KEYS);
+      const [last, evidence] = await Promise.all([
         fastify.prisma.prEvaluation.findFirst({
           orderBy: { createdAt: 'desc' },
           select: {
@@ -140,18 +143,36 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
           },
           where: { connectionId: repo.id },
         }),
-        prEvaluationEvidence(fastify.prisma, new Date()),
+        prEvaluationEvidence(
+          fastify.prisma,
+          repo.id,
+          new Date(),
+          settings['prEvaluation.autoEvidenceMinChangedLines']
+        ),
       ]);
       const defaultMode = settings['prEvaluation.defaultMode'];
-      const minEvidence = settings['prEvaluation.autoMinEvidence'];
+      const thresholds = {
+        minDistinctRequesters: settings['prEvaluation.autoMinDistinctRequesters'],
+        minEvidence: settings['prEvaluation.autoMinEvidence'],
+        minRepoEvidence: settings['prEvaluation.autoMinRepoEvidence'],
+      };
+      const assessment = autoEvidenceAssessment(evidence, thresholds);
       return {
         data: {
           autoMergeAllowed: settings['prEvaluation.autoMergeAllowed'],
           enabled: settings['prEvaluation.enabled'],
+          // Counts and thresholds only: nothing here names a requester.
           evidence: {
-            ...evidence,
-            minEvidence,
-            satisfied: autoEvidenceSatisfied(evidence, minEvidence),
+            deployment: {
+              ...evidence.deployment,
+              minDistinctRequesters: thresholds.minDistinctRequesters,
+              minEvidence: thresholds.minEvidence,
+            },
+            minChangedLines: settings['prEvaluation.autoEvidenceMinChangedLines'],
+            repository: { ...evidence.repository, minRepoEvidence: thresholds.minRepoEvidence },
+            satisfied: assessment.satisfied,
+            unmet: assessment.unmet,
+            windowDays: evidence.windowDays,
           },
           lastEvaluation: last,
           mode: repo.prEvaluationMode ?? defaultMode,
@@ -401,12 +422,18 @@ async function autoRefusals(
     ...(repo.team?.orgId ? { orgId: repo.team.orgId } : {}),
     teamId: repo.teamId,
   };
-  const [enabled, autoMergeAllowed, minEvidence, context, evidence, last] = await Promise.all([
-    resolveSetting('prEvaluation.enabled', ctx),
-    resolveSetting('prEvaluation.autoMergeAllowed', ctx),
-    resolveSetting('prEvaluation.autoMinEvidence', ctx),
+  const [enabled, autoMergeAllowed, minEvidence, minRepoEvidence, minDistinctRequesters, minLines] =
+    await Promise.all([
+      resolveSetting('prEvaluation.enabled', ctx),
+      resolveSetting('prEvaluation.autoMergeAllowed', ctx),
+      resolveSetting('prEvaluation.autoMinEvidence', ctx),
+      resolveSetting('prEvaluation.autoMinRepoEvidence', ctx),
+      resolveSetting('prEvaluation.autoMinDistinctRequesters', ctx),
+      resolveSetting('prEvaluation.autoEvidenceMinChangedLines', ctx),
+    ]);
+  const [context, evidence, last] = await Promise.all([
     resolveSetting('prEvaluation.requiredStatusContext', ctx),
-    prEvaluationEvidence(fastify.prisma, new Date()),
+    prEvaluationEvidence(fastify.prisma, repo.id, new Date(), minLines),
     fastify.prisma.prEvaluation.findFirst({
       orderBy: { createdAt: 'desc' },
       select: { readiness: true },
@@ -419,10 +446,13 @@ async function autoRefusals(
   if (!autoMergeAllowed) {
     reasons.push('Auto-merge is not allowed on this deployment (prEvaluation.autoMergeAllowed).');
   }
-  if (!autoEvidenceSatisfied(evidence, minEvidence)) {
-    reasons.push(
-      `Not enough evidence: ${evidence.lowMerged} low-risk merges in ${evidence.windowDays} days (need ${minEvidence}), ${evidence.badMerges} marked bad (need 0).`
-    );
+  const assessment = autoEvidenceAssessment(evidence, {
+    minDistinctRequesters,
+    minEvidence,
+    minRepoEvidence,
+  });
+  for (const unmet of assessment.unmet) {
+    reasons.push(`Not enough evidence, ${unmet}.`);
   }
   if (!last) {
     reasons.push('Auto mode is not ready: no evaluation has run yet for this repository.');

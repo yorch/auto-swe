@@ -201,7 +201,23 @@ describe('pr-policy', () => {
     const STATUS = {
       autoMergeAllowed: false,
       enabled: true,
-      evidence: { badMerges: 1, lowMerged: 3, minEvidence: 5, satisfied: false, windowDays: 90 },
+      evidence: {
+        deployment: {
+          badMerges: 1,
+          distinctRequesters: 1,
+          lowMerged: 3,
+          minDistinctRequesters: 3,
+          minEvidence: 5,
+        },
+        minChangedLines: 10,
+        repository: { badMerges: 0, lowMerged: 2, minRepoEvidence: 20 },
+        satisfied: false,
+        unmet: [
+          'deployment-wide: 3 qualifying low-risk merges in 90 days (need 5)',
+          'this repository: 2 qualifying low-risk merges in 90 days (need 20)',
+        ],
+        windowDays: 90,
+      },
       lastEvaluation: {
         createdAt: '2026-10-28T10:00:00.000Z',
         prNumber: 42,
@@ -223,8 +239,27 @@ describe('pr-policy', () => {
       expect(text).toMatch(/Mode:\s+advisory \(set on this repository\)/);
       expect(text).toMatch(/PR #42 — class HIGH, 2 approver\(s\) required, status success/);
       expect(text).toMatch(
-        /3 low-risk merge\(s\) in 90 days \(minimum 5\), 1 marked bad, auto not satisfied/
+        /Evidence \(deployment\):\s+3 qualifying low-risk merge\(s\) in 90 days \(minimum 5\), 1 marked bad, 1 requester\(s\) \(minimum 3\)/
       );
+      expect(text).toMatch(
+        /Evidence \(repository\):\s+2 qualifying low-risk merge\(s\) \(minimum 20\), 0 marked bad/
+      );
+      expect(text).toMatch(/Auto evidence:\s+not satisfied/);
+      expect(text).toContain(
+        '  - deployment-wide: 3 qualifying low-risk merges in 90 days (need 5)'
+      );
+      expect(text).toContain(
+        '  - this repository: 2 qualifying low-risk merges in 90 days (need 20)'
+      );
+    });
+
+    it('prints satisfied, with no list, when nothing is unmet', async () => {
+      respond(200, {
+        data: { ...STATUS, evidence: { ...STATUS.evidence, satisfied: true, unmet: [] } },
+      });
+      expect(await runPrPolicyCommand(['status', REPO_ID], loadEnv)).toBe(0);
+      expect(out.join('')).toMatch(/Auto evidence:\s+satisfied/);
+      expect(out.join('')).not.toContain('  - ');
     });
 
     it('says none when the repository has no evaluation yet', async () => {

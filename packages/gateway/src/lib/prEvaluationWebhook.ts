@@ -98,16 +98,19 @@ function shouldStart(eventType: string, payload: Delivery): boolean {
   return payload.action !== 'edited' || payload.changes?.base !== undefined;
 }
 
-/** The pull request's merge or close, on the one evaluation row of the head that was merged. */
+/**
+ * The pull request's merge or close, on the one evaluation row of the head that was merged.
+ * Returns whether a row was stamped as merged.
+ */
 async function recordClosed(
   prisma: PrismaClient,
   connectionId: string,
   payload: Delivery
-): Promise<void> {
+): Promise<boolean> {
   const pr = payload.pull_request;
   const headSha = pr.head?.sha;
   if (!headSha) {
-    return;
+    return false;
   }
   // Exactly one row: the auto-merge evidence gate counts rows, so marking every evaluation of
   // a pull request would count one merge once per push. A head no row evaluated is not guessed.
@@ -117,7 +120,7 @@ async function recordClosed(
     where: { connectionId, headSha, prNumber: pr.number },
   });
   if (!row) {
-    return;
+    return false;
   }
   const at = (iso: string | null | undefined): Date => {
     const parsed = iso ? new Date(iso) : null;
@@ -128,6 +131,7 @@ async function recordClosed(
     data: pr.merged ? { closedAt, mergedAt: at(pr.merged_at) } : { closedAt },
     where: { id: row.id },
   });
+  return pr.merged === true;
 }
 
 async function markRevertedMerge(
@@ -216,9 +220,21 @@ export async function handlePrEvaluationDelivery(
       // One repository's failure must not stop the next.
       try {
         if (closing) {
-          await recordClosed(prisma, connection.id, payload);
+          const stamped = await recordClosed(prisma, connection.id, payload);
           if (payload.pull_request.merged) {
             await markRevertedMerge(prisma, connection, payload, new Date());
+          }
+          if (stamped) {
+            // The approval fact on the row predates the merge: have the worker recount it at
+            // the merged head (a dismissal followed by a bypass-merge starts no evaluation).
+            await fastify.temporal.startPrEvaluationWorkflow(
+              prEvaluationWorkflowId(connection.id, payload.pull_request.number, deliveryId),
+              {
+                connectionId: connection.id,
+                prNumber: payload.pull_request.number,
+                trigger: 'merged',
+              }
+            );
           }
           continue;
         }

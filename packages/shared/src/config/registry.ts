@@ -696,6 +696,19 @@ export const SETTING_DEFINITIONS = {
   // ── Pull request evaluation ────────────────────────────────────────────────
   // Risk class, approver counts and the auto-merge gate for the pull requests the
   // platform opens. Every knob is ADMIN-only: each one moves a safety floor.
+  'prEvaluation.autoEvidenceMinChangedLines': defineSetting({
+    defaultValue: 10,
+    description:
+      'The fewest changed lines (additions plus deletions) a merged low-risk pull request may have and still count as evidence for auto mode, so trivial one-line changes do not build the record.',
+    group: 'prEvaluation',
+    label: 'Minimum changed lines for evidence',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(10000),
+    unit: 'lines',
+  }),
   'prEvaluation.autoMergeAllowed': defineSetting({
     defaultValue: false,
     description:
@@ -708,12 +721,38 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
+  'prEvaluation.autoMinDistinctRequesters': defineSetting({
+    defaultValue: 3,
+    description:
+      'How many different requesters (platform user accounts) must have requested the work behind the qualifying low-risk merges counted for auto mode, so one person cannot supply the whole track record.',
+    group: 'prEvaluation',
+    label: 'Distinct requesters required for auto mode',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(1000),
+    unit: 'requesters',
+  }),
   'prEvaluation.autoMinEvidence': defineSetting({
     defaultValue: 150,
     description:
       'How many low-risk pull requests merged in the last 90 days, with none reverted or marked a bad merge, a deployment needs before any repository may use auto mode.',
     group: 'prEvaluation',
     label: 'Evidence required for auto mode',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(10000),
+    unit: 'pull requests',
+  }),
+  'prEvaluation.autoMinRepoEvidence': defineSetting({
+    defaultValue: 20,
+    description:
+      'How many qualifying low-risk pull requests merged in this repository in the last 90 days, with none marked a bad merge, a repository needs before it may use auto mode. Counted in addition to the deployment-wide minimum.',
+    group: 'prEvaluation',
+    label: 'Evidence required per repository for auto mode',
     overridableAt: [],
     requiredRole: 'ADMIN',
     restartRequired: false,

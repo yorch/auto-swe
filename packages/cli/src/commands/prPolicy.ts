@@ -100,11 +100,18 @@ interface PrEvaluationStatus {
   autoMergeAllowed: boolean;
   lastEvaluation: LastEvaluation | null;
   evidence: {
-    lowMerged: number;
-    badMerges: number;
     windowDays: number;
-    minEvidence: number;
+    minChangedLines: number;
+    deployment: {
+      lowMerged: number;
+      badMerges: number;
+      distinctRequesters: number;
+      minEvidence: number;
+      minDistinctRequesters: number;
+    };
+    repository: { lowMerged: number; badMerges: number; minRepoEvidence: number };
     satisfied: boolean;
+    unmet: string[];
   };
 }
 
@@ -307,7 +314,10 @@ async function cmdStatus(args: string[], env: CliEnv): Promise<number> {
     last
       ? `Last evaluation:  PR #${last.prNumber} — class ${last.riskClass}, ${last.requiredApprovers} approver(s) required, status ${last.statusState ?? 'none'}, evaluated ${last.createdAt}`
       : 'Last evaluation:  none',
-    `Evidence:        ${ev.lowMerged} low-risk merge(s) in ${ev.windowDays} days (minimum ${ev.minEvidence}), ${ev.badMerges} marked bad, auto ${ev.satisfied ? 'satisfied' : 'not satisfied'}`,
+    `Evidence (deployment): ${ev.deployment.lowMerged} qualifying low-risk merge(s) in ${ev.windowDays} days (minimum ${ev.deployment.minEvidence}), ${ev.deployment.badMerges} marked bad, ${ev.deployment.distinctRequesters} requester(s) (minimum ${ev.deployment.minDistinctRequesters})`,
+    `Evidence (repository):  ${ev.repository.lowMerged} qualifying low-risk merge(s) (minimum ${ev.repository.minRepoEvidence}), ${ev.repository.badMerges} marked bad`,
+    `Auto evidence:   ${ev.satisfied ? 'satisfied' : 'not satisfied'}`,
+    ...ev.unmet.map((reason) => `  - ${reason}`),
   ];
   process.stdout.write(`${lines.join('\n')}\n`);
   return 0;

@@ -301,7 +301,7 @@ describe('prEvaluation settings', () => {
   ) as (keyof typeof SETTING_DEFINITIONS)[];
 
   it('are all ADMIN-only, in the prEvaluation group, and not pinned to a run', () => {
-    expect(keys).toHaveLength(13);
+    expect(keys).toHaveLength(16);
     for (const key of keys) {
       const def = SETTING_DEFINITIONS[key];
       expect(def.group, key).toBe('prEvaluation');
@@ -350,6 +350,24 @@ describe('prEvaluation settings', () => {
       expect(accepts(key, 1), key).toBe(true);
       for (const bad of [0, -5, 2.5, 100_000_000]) {
         expect(accepts(key, bad), `${key} ${bad}`).toBe(false);
+      }
+    }
+  });
+
+  it('defines the three evidence-gate knobs, GLOBAL only and ADMIN only', () => {
+    const defaults = {
+      'prEvaluation.autoEvidenceMinChangedLines': 10,
+      'prEvaluation.autoMinDistinctRequesters': 3,
+      'prEvaluation.autoMinRepoEvidence': 20,
+    } as const;
+    for (const [key, value] of Object.entries(defaults)) {
+      const def = SETTING_DEFINITIONS[key as keyof typeof defaults];
+      expect(def.defaultValue, key).toBe(value);
+      expect(def.overridableAt, key).toEqual([]);
+      expect(def.requiredRole, key).toBe('ADMIN');
+      expect(accepts(key as keyof typeof defaults, 1), key).toBe(true);
+      for (const bad of [0, -1, 2.5, '3', 100_000_000]) {
+        expect(accepts(key as keyof typeof defaults, bad), `${key} ${String(bad)}`).toBe(false);
       }
     }
   });

@@ -10,7 +10,9 @@ const m = vi.hoisted(() => ({
   calls: [] as { name: string; args: unknown[] }[],
   connection: vi.fn(),
   created: [] as Record<string, unknown>[],
-  evidence: { bad: 0, low: 200 },
+  evidence: { deploymentBad: 0, deploymentLow: 200, repoBad: 0, repoLow: 25, requesters: 5 },
+  evidenceWheres: [] as Record<string, unknown>[],
+  groupByArgs: [] as { by: string[]; where: Record<string, unknown> }[],
   invalidated: { count: 0 },
   logs: [] as { message: string; meta: unknown }[],
   markers: vi.fn(),
@@ -33,15 +35,26 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     connection: { findFirst: m.connection },
     prEvaluation: {
-      count: vi.fn(async (args: { where: { badMerge?: boolean } }) =>
-        args.where.badMerge === true ? m.evidence.bad : m.evidence.low
-      ),
+      count: vi.fn(async (args: { where: { badMerge?: boolean; connectionId?: string } }) => {
+        m.evidenceWheres.push(args.where);
+        const bad = args.where.badMerge === true;
+        if (args.where.connectionId) {
+          return bad ? m.evidence.repoBad : m.evidence.repoLow;
+        }
+        return bad ? m.evidence.deploymentBad : m.evidence.deploymentLow;
+      }),
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
         m.created.push(args.data);
         return { id: `row-${m.created.length}` };
       }),
       findFirst: m.previous,
-      findMany: m.markers,
+      findMany: vi.fn(async (args: unknown) => m.markers(args)),
+      groupBy: vi.fn(async (args: { by: string[]; where: Record<string, unknown> }) => {
+        m.groupByArgs.push(args);
+        return Array.from({ length: m.evidence.requesters }, (_, i) => ({
+          requesterId: `req-${i}`,
+        }));
+      }),
       update: m.update,
       updateMany: m.updateMany,
     },
@@ -91,8 +104,11 @@ const WORK_REQUEST = 'wr-1';
 const POLICY_TEXT = 'version: 1\nsensitivePaths: ["policy-secret/**"]\n';
 
 const DEFAULT_SETTINGS: Record<string, unknown> = {
+  'prEvaluation.autoEvidenceMinChangedLines': 10,
   'prEvaluation.autoMergeAllowed': true,
+  'prEvaluation.autoMinDistinctRequesters': 3,
   'prEvaluation.autoMinEvidence': 150,
+  'prEvaluation.autoMinRepoEvidence': 20,
   'prEvaluation.defaultMode': 'advisory',
   'prEvaluation.enabled': true,
   'prEvaluation.highApprovers': 2,
@@ -205,7 +221,9 @@ beforeEach(() => {
   m.invalidated.count = 0;
   m.onInvalidate = undefined;
   m.settings = { ...DEFAULT_SETTINGS };
-  m.evidence = { bad: 0, low: 200 };
+  m.evidence = { deploymentBad: 0, deploymentLow: 200, repoBad: 0, repoLow: 25, requesters: 5 };
+  m.evidenceWheres.length = 0;
+  m.groupByArgs.length = 0;
   m.connection.mockReset();
   m.connection.mockResolvedValue({
     githubApiUrl: null,
@@ -612,6 +630,246 @@ describe('evaluatePullRequest: approvals and status', () => {
   });
 });
 
+describe('evaluatePullRequest: the facts the evidence gate counts', () => {
+  it('persists the requester, the changed lines and the trusted approver count', async () => {
+    await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+    // 10 + 2 + 5 + 0 changed lines over the listed files; bob's approval is the one trusted one.
+    expect(m.created[0]).toMatchObject({
+      changedLines: 17,
+      requesterId: 'user-1',
+      trustedApprovers: 1,
+    });
+  });
+
+  it('persists a null requester when the work has no user requester', async () => {
+    m.request.mockImplementation(async () => ({
+      requestedById: null,
+      requestedByServiceId: 'svc',
+    }));
+    await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+    expect(m.created[0]).toMatchObject({ requesterId: null });
+  });
+
+  it('persists zero trusted approvers when nobody trusted approved', async () => {
+    await evaluatePullRequestWith(
+      INPUT,
+      depsWith(fakeScm({ listPullRequestReviews: async () => [] }))
+    );
+    expect(m.created[0]).toMatchObject({ trustedApprovers: 0 });
+  });
+
+  describe('the approval fact leaves the launchers out only when they are all known', () => {
+    const approval = (login: string, userId?: string): PullRequestReviewSummary => ({
+      commitId: HEAD,
+      login,
+      state: 'APPROVED',
+      submittedAt: null,
+      ...(userId ? { userId } : {}),
+    });
+
+    it('stores 0 when the launcher set is unresolved, even though a trusted human approved', async () => {
+      // The requester never linked GitHub, so the launcher's own approval cannot be told apart.
+      m.users = { 'user-1': { githubLogin: null, githubLoginAccountId: null } };
+      const scm = fakeScm({
+        listPullRequestReviews: async () => [approval('bob', '7'), approval('requester-login')],
+      });
+      await evaluatePullRequestWith(INPUT, depsWith(scm));
+      expect(m.created[0]?.trustedApprovers).toBe(0);
+    });
+
+    it('stores 0 when the launcher alone approved (resolved set, set aside by id)', async () => {
+      const scm = fakeScm({
+        listPullRequestReviews: async () => [approval('renamed-since', LAUNCHER_ID)],
+      });
+      await evaluatePullRequestWith(INPUT, depsWith(scm));
+      expect(m.created[0]?.trustedApprovers).toBe(0);
+    });
+
+    it('stores 1 when a second human approves next to the launcher (resolved set)', async () => {
+      const scm = fakeScm({
+        listPullRequestReviews: async () => [
+          approval(LAUNCHER_LOGIN, LAUNCHER_ID),
+          approval('bob', '7'),
+        ],
+      });
+      await evaluatePullRequestWith(INPUT, depsWith(scm));
+      expect(m.created[0]?.trustedApprovers).toBe(1);
+    });
+  });
+
+  it('never logs, posts or publishes the requester', async () => {
+    await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+    const out = JSON.stringify([m.logs, m.calls]);
+    expect(out).not.toContain('user-1');
+  });
+
+  it('reads the evidence with the configured line minimum and this repository', async () => {
+    m.settings['prEvaluation.autoEvidenceMinChangedLines'] = 25;
+    m.connection.mockResolvedValue({ ...(await m.connection()), prEvaluationMode: 'auto' });
+    await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+    expect(m.evidenceWheres.length).toBeGreaterThan(0);
+    expect(m.evidenceWheres.some((w) => w.connectionId === CONNECTION)).toBe(true);
+    // The requester count is a database grouping over the very filter the merge counts use.
+    expect(m.groupByArgs).toHaveLength(1);
+    expect(m.groupByArgs[0]?.by).toEqual(['requesterId']);
+    expect(m.groupByArgs[0]?.where).toMatchObject({
+      badMerge: false,
+      changedLines: { gte: 25 },
+      requesterId: { not: null },
+      trustedApprovers: { gte: 1 },
+    });
+    expect(m.groupByArgs[0]?.where.connectionId).toBeUndefined();
+    expect(
+      m.evidenceWheres.every(
+        (w) => w.badMerge === true || (w.changedLines as { gte: number }).gte === 25
+      )
+    ).toBe(true);
+  });
+});
+
+describe('evaluatePullRequest: the evidence gate refuses arming with every unmet reason', () => {
+  it('names each unmet condition and nothing that identifies a person', async () => {
+    m.connection.mockResolvedValue({ ...(await m.connection()), prEvaluationMode: 'auto' });
+    m.evidence = { deploymentBad: 1, deploymentLow: 10, repoBad: 1, repoLow: 0, requesters: 1 };
+    const scm = fakeScm();
+    const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+    expect(result.autoMerge).toBe('not-eligible');
+    expect(scm.calls).not.toContain('enableAutoMerge');
+    const reasons = m.created[0]?.reasons as { code: string; message: string }[];
+    const blocked = reasons.find((r) => r.code === 'auto-merge-blocked')?.message ?? '';
+    expect(blocked).toContain('deployment-wide');
+    expect(blocked).toContain('this repository');
+    expect(blocked).toContain('distinct requester');
+    expect(blocked).not.toContain('user-1');
+    expect(blocked).not.toContain('req-');
+  });
+});
+
+describe('evaluatePullRequest: the merge-time recount', () => {
+  const MERGED = { ...OPEN_PR, merged: true, state: 'closed' as const };
+  const MERGE_INPUT = { connectionId: CONNECTION, prNumber: 7, trigger: 'merged' };
+  const approved = (login: string, userId?: string): PullRequestReviewSummary => ({
+    commitId: HEAD,
+    login,
+    state: 'APPROVED',
+    submittedAt: null,
+    ...(userId ? { userId } : {}),
+  });
+  const REVIEWS = [{ commitId: HEAD, login: 'bob', state: 'DISMISSED', submittedAt: null }];
+  const written = () =>
+    m.update.mock.calls.map((c) => c[0] as { data: Record<string, unknown>; where: unknown });
+
+  beforeEach(() => {
+    // The one row the merge webhook stamped.
+    m.previous.mockResolvedValue({ headSha: HEAD, id: 'row-merged' });
+  });
+
+  const ALLOWED_CALLS = ['getPullRequest', 'listPullRequestReviews', 'repoPermission'];
+
+  it('corrects a row whose approval was dismissed before an admin bypass-merge to 0', async () => {
+    const scm = fakeScm({
+      getPullRequest: async () => MERGED,
+      listPullRequestReviews: async () => REVIEWS,
+    });
+    const result = await evaluatePullRequestWith(MERGE_INPUT, depsWith(scm));
+    expect(result.outcome).toBe('skipped');
+    expect(written()).toEqual([{ data: { trustedApprovers: 0 }, where: { id: 'row-merged' } }]);
+    expect(m.previous.mock.calls[0]?.[0]).toMatchObject({
+      where: { connectionId: CONNECTION, mergedAt: { not: null }, prNumber: 7 },
+    });
+  });
+
+  it('writes the recounted 1 when the approval still stands', async () => {
+    const scm = fakeScm({ getPullRequest: async () => MERGED });
+    await evaluatePullRequestWith(MERGE_INPUT, depsWith(scm));
+    expect(written()).toEqual([{ data: { trustedApprovers: 1 }, where: { id: 'row-merged' } }]);
+  });
+
+  it('sets the launcher approval aside, as the evaluation does', async () => {
+    const alone = fakeScm({
+      getPullRequest: async () => MERGED,
+      listPullRequestReviews: async () => [approved(LAUNCHER_LOGIN, LAUNCHER_ID)],
+    });
+    await evaluatePullRequestWith(MERGE_INPUT, depsWith(alone));
+    expect(written().at(-1)?.data).toEqual({ trustedApprovers: 0 });
+    const withSecond = fakeScm({
+      getPullRequest: async () => MERGED,
+      listPullRequestReviews: async () => [
+        approved(LAUNCHER_LOGIN, LAUNCHER_ID),
+        approved('bob', '7'),
+      ],
+    });
+    await evaluatePullRequestWith(MERGE_INPUT, depsWith(withSecond));
+    expect(written().at(-1)?.data).toEqual({ trustedApprovers: 1 });
+  });
+
+  it('writes 0 when the launcher set is unresolved', async () => {
+    m.users = { 'user-1': { githubLogin: null, githubLoginAccountId: null } };
+    const scm = fakeScm({ getPullRequest: async () => MERGED });
+    await evaluatePullRequestWith(MERGE_INPUT, depsWith(scm));
+    expect(written()).toEqual([{ data: { trustedApprovers: 0 }, where: { id: 'row-merged' } }]);
+  });
+
+  it('returns without writing or calling the host when no row was stamped, logging no ids', async () => {
+    m.previous.mockResolvedValue(null);
+    const scm = fakeScm({ getPullRequest: async () => MERGED });
+    const result = await evaluatePullRequestWith(MERGE_INPUT, depsWith(scm));
+    expect(result.outcome).toBe('skipped');
+    expect(written()).toHaveLength(0);
+    expect(scm.calls).toEqual([]);
+    expect(JSON.stringify(m.logs)).not.toContain(CONNECTION);
+  });
+
+  it.each([
+    [
+      'the pull request cannot be read',
+      {
+        getPullRequest: async () => {
+          throw Object.assign(new Error('boom'), { status: 404 });
+        },
+      },
+    ],
+    [
+      'the host is unavailable',
+      {
+        getPullRequest: async () => {
+          throw Object.assign(new Error('boom'), { status: 503 });
+        },
+      },
+    ],
+    [
+      'the reviews cannot be listed',
+      {
+        getPullRequest: async () => MERGED,
+        listPullRequestReviews: async () => {
+          throw new Error('boom');
+        },
+      },
+    ],
+    ['the pull request is not merged after all', { getPullRequest: async () => OPEN_PR }],
+  ])('fails closed to 0 when %s, and never throws', async (_name, over) => {
+    const scm = fakeScm(over);
+    const result = await evaluatePullRequestWith(MERGE_INPUT, depsWith(scm));
+    expect(result.outcome).toBe('skipped');
+    expect(written()).toEqual([{ data: { trustedApprovers: 0 }, where: { id: 'row-merged' } }]);
+  });
+
+  it('publishes nothing, posts nothing, arms and disarms nothing, and creates no row', async () => {
+    m.connection.mockResolvedValue({ ...(await m.connection()), prEvaluationMode: 'auto' });
+    const scm = fakeScm({ getPullRequest: async () => MERGED });
+    await evaluatePullRequestWith(MERGE_INPUT, depsWith(scm));
+    expect(scm.calls.filter((c) => !ALLOWED_CALLS.includes(c))).toEqual([]);
+    expect(m.created).toHaveLength(0);
+    expect(m.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('does not touch a row for any other trigger of a merged pull request', async () => {
+    const scm = fakeScm({ getPullRequest: async () => MERGED });
+    expect((await evaluatePullRequestWith(INPUT, depsWith(scm))).outcome).toBe('skipped');
+    expect(written()).toHaveLength(0);
+  });
+});
+
 describe('evaluatePullRequest: the expected App id', () => {
   it('reads the branch rules against the platform App id the credential resolves to', async () => {
     await evaluatePullRequestWith(INPUT, depsWith(fakeScm(), undefined, 4242));
@@ -897,14 +1155,35 @@ describe('evaluatePullRequest: auto-merge', () => {
     [
       'evidence is below the minimum',
       () => {
-        m.evidence = { bad: 0, low: 149 };
+        m.evidence = { ...m.evidence, deploymentLow: 149 };
       },
       {},
     ],
     [
       'a bad merge is on record',
       () => {
-        m.evidence = { bad: 1, low: 500 };
+        m.evidence = { ...m.evidence, deploymentBad: 1, deploymentLow: 500 };
+      },
+      {},
+    ],
+    [
+      'this repository has too little evidence',
+      () => {
+        m.evidence = { ...m.evidence, repoLow: 19 };
+      },
+      {},
+    ],
+    [
+      'this repository has a bad merge',
+      () => {
+        m.evidence = { ...m.evidence, repoBad: 1 };
+      },
+      {},
+    ],
+    [
+      'too few distinct requesters',
+      () => {
+        m.evidence = { ...m.evidence, requesters: 2 };
       },
       {},
     ],

@@ -500,6 +500,41 @@ pull request the platform opened shows the status `auto-swe/pr-evaluation` on it
 
 ---
 
+### UN-9. Pull-request evaluation: earlier evidence no longer counts toward `auto`
+
+This entry is not a credential defect. It describes a tightening of the evidence gate
+([`pr-evaluation.md`](./pr-evaluation.md) §9).
+
+**Affected.** Every deployment with at least one repository in `auto` mode, or with evaluation rows
+recorded before commit `EVIDENCE_GATE_COMMIT`. A build before it counts every low-risk merge, whoever
+approved and whichever repository it was in.
+
+**What changes.** A migration adds the nullable columns `requester_id`, `changed_lines` and
+`trusted_approvers` to `pr_evaluations`. The gate counts a row only when all three are recorded
+(and the changed lines reach `prEvaluation.autoEvidenceMinChangedLines`, with at least one trusted
+approval), and it also requires the repository's own merges
+(`prEvaluation.autoMinRepoEvidence`) and several distinct requesters
+(`prEvaluation.autoMinDistinctRequesters`). Rows written before this change hold NULL and no longer
+count, so **a repository already in `auto` stops having new pull requests armed** until new evidence
+accumulates. Its mode and its status checks are unchanged; only arming stops.
+
+**Actions.**
+
+1. Apply the migration with the normal migrate step.
+2. Expect no arming on repositories in `auto` until the thresholds are met again from new merges,
+   or lower the four evidence settings at `/admin/platform-settings` if the new defaults are too
+   strict for the deployment. Lowering a threshold cannot revive old rows: they hold NULL and never
+   count, and `autoMinRepoEvidence` has a floor of 1, so at least one new qualifying merge in the
+   repository is needed. `auto-swe pr-policy status <repoId>` lists each unmet condition.
+3. A pull request the platform armed before the upgrade **stays armed** until its next evaluation
+   event, so GitHub may merge it in the meantime. To disarm them immediately, toggle
+   `prEvaluation.autoMergeAllowed` off at `/admin/platform-settings`, which runs the disarm sweep.
+
+**Verify.** `auto-swe pr-policy status <repoId>` shows the deployment and repository figures and
+every unmet condition.
+
+---
+
 ### Device authorization codes require the new migration
 
 **Affected.** A deployment that enables `mcp.deviceFlowEnabled` on a database that has not applied

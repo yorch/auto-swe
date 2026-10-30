@@ -50,8 +50,11 @@ const READY = {
 };
 
 const DEFAULTS: Record<string, unknown> = {
+  'prEvaluation.autoEvidenceMinChangedLines': 10,
   'prEvaluation.autoMergeAllowed': true,
+  'prEvaluation.autoMinDistinctRequesters': 2,
   'prEvaluation.autoMinEvidence': 10,
+  'prEvaluation.autoMinRepoEvidence': 5,
   'prEvaluation.defaultMode': 'advisory',
   'prEvaluation.enabled': true,
   'prEvaluation.highApprovers': 2,
@@ -73,7 +76,7 @@ async function buildApp() {
   const prisma = {
     configAuditLog: { create: vi.fn() },
     connection: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
-    prEvaluation: { count: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
+    prEvaluation: { count: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), groupBy: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
   };
   const temporal = { startPrEvaluationWorkflow: vi.fn() };
@@ -99,11 +102,26 @@ describe('pr evaluation routes', () => {
   });
   afterAll(() => ctx.app.close());
 
-  /** Evidence counts: first call is low merged, second is the bad merges. */
-  function evidence(lowMerged: number, badMerges: number) {
+  /**
+   * Evidence figures: the organization's qualifying and bad merges, and (by default the same) the
+   * repository's, plus how many distinct requesters the qualifying merges came from.
+   */
+  function evidence(
+    lowMerged: number,
+    badMerges: number,
+    over: { repoLow?: number; repoBad?: number; requesters?: number } = {}
+  ) {
     ctx.prisma.prEvaluation.count.mockImplementation(
-      async (args: { where: { badMerge?: boolean } }) =>
-        args.where.badMerge ? badMerges : lowMerged
+      async (args: { where: { badMerge?: boolean; connectionId?: string } }) => {
+        const bad = args.where.badMerge === true;
+        if (args.where.connectionId) {
+          return bad ? (over.repoBad ?? badMerges) : (over.repoLow ?? lowMerged);
+        }
+        return bad ? badMerges : lowMerged;
+      }
+    );
+    ctx.prisma.prEvaluation.groupBy.mockImplementation(async () =>
+      Array.from({ length: over.requesters ?? 5 }, (_v, i) => ({ requesterId: `req-${i}` }))
     );
   }
   function leadOfTeam(yes: boolean) {
@@ -161,6 +179,18 @@ describe('pr evaluation routes', () => {
       expect(ctx.prisma.connection.findFirst.mock.calls[0][0].where.AND).toBeUndefined();
     });
 
+    it('reports both evidence scopes and each unmet condition when the gate is not met', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow('advisory'));
+      ctx.prisma.prEvaluation.findFirst.mockResolvedValue(null);
+      evidence(12, 0, { repoLow: 1, requesters: 1 });
+      const body = (await get()).json().data.evidence;
+      expect(body.satisfied).toBe(false);
+      expect(body.deployment).toMatchObject({ distinctRequesters: 1, lowMerged: 12 });
+      expect(body.repository).toMatchObject({ lowMerged: 1, minRepoEvidence: 5 });
+      expect(body.unmet).toHaveLength(2);
+      expect(JSON.stringify(body)).not.toContain('req-');
+    });
+
     it('returns the effective policy, the last evaluation and the evidence', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow('auto'));
       const last = {
@@ -179,10 +209,24 @@ describe('pr evaluation routes', () => {
       evidence(12, 0);
       const res = await get();
       expect(res.statusCode).toBe(200);
+      expect(JSON.stringify(res.json())).not.toContain('req-');
       expect(res.json().data).toEqual({
         autoMergeAllowed: true,
         enabled: true,
-        evidence: { badMerges: 0, lowMerged: 12, minEvidence: 10, satisfied: true, windowDays: 90 },
+        evidence: {
+          deployment: {
+            badMerges: 0,
+            distinctRequesters: 5,
+            lowMerged: 12,
+            minDistinctRequesters: 2,
+            minEvidence: 10,
+          },
+          minChangedLines: 10,
+          repository: { badMerges: 0, lowMerged: 12, minRepoEvidence: 5 },
+          satisfied: true,
+          unmet: [],
+          windowDays: 90,
+        },
         lastEvaluation: last,
         mode: 'auto',
         modeSource: 'repository',
@@ -459,6 +503,7 @@ describe('pr evaluation routes', () => {
         ctx.prisma.prEvaluation.findFirst.mockResolvedValue({ readiness: READY });
         evidence(50, 0);
         expect((await put('auto')).statusCode).toBe(200);
+        // The evidence read is a count and a groupBy; the sweep reads rows with findMany.
         expect(ctx.prisma.prEvaluation.findMany).not.toHaveBeenCalled();
         expect(ctx.temporal.startPrEvaluationWorkflow).not.toHaveBeenCalled();
       });
@@ -488,6 +533,18 @@ describe('pr evaluation routes', () => {
         expect((await put('off')).statusCode).toBe(200);
         expect(ctx.temporal.startPrEvaluationWorkflow).toHaveBeenCalledTimes(3);
       });
+    });
+
+    it('lists every unmet evidence condition at once, and no requester id', async () => {
+      ctx.authState.role = 'ADMIN';
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow());
+      ctx.prisma.prEvaluation.findFirst.mockResolvedValue({ readiness: READY });
+      evidence(3, 1, { repoBad: 1, repoLow: 0, requesters: 1 });
+      const res = await put('auto');
+      expect(res.statusCode).toBe(400);
+      const reasons: string[] = res.json().error.details.reasons;
+      expect(reasons.filter((r) => /deployment-wide|this repository/.test(r))).toHaveLength(5);
+      expect(JSON.stringify(res.json())).not.toContain('req-');
     });
 
     it('refuses auto to a team LEAD, naming the role rule', async () => {
@@ -539,8 +596,27 @@ describe('pr evaluation routes', () => {
           },
           'Auto-merge is not allowed',
         ],
-        ['there are too few low-risk merges', () => evidence(9, 0), 'Not enough evidence'],
-        ['a merge was marked bad', () => evidence(50, 1), 'Not enough evidence'],
+        [
+          'there are too few low-risk merges',
+          () => evidence(9, 0),
+          'deployment-wide: 9 qualifying',
+        ],
+        ['a merge was marked bad', () => evidence(50, 1), 'deployment-wide: 1 low-risk merge'],
+        [
+          'this repository has too few merges',
+          () => evidence(50, 0, { repoLow: 4 }),
+          'this repository: 4 qualifying',
+        ],
+        [
+          'this repository has a bad merge',
+          () => evidence(50, 0, { repoBad: 1 }),
+          'this repository: 1 low-risk merge',
+        ],
+        [
+          'too few distinct requesters',
+          () => evidence(50, 0, { requesters: 1 }),
+          '1 distinct requester',
+        ],
         [
           'there is no evaluation yet',
           () => ctx.prisma.prEvaluation.findFirst.mockResolvedValue(null),
