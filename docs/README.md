@@ -43,6 +43,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [bundles.md](./bundles.md) | Signed, versioned distribution of reusable agents, skills, scanner patterns, and templates across deployments |
 | [qodo.md](./qodo.md) | Reading Qodo's review of a pull request through a team's read-only Qodo MCP connection — setup, output screening, the shared findings client and the `qodo.enabled` switch |
 | [transcripts.md](./transcripts.md) | Full-fidelity agent model-call capture: recording, normalized reads, integrity hashes, retention and legal holds |
+| [run-activity.md](./run-activity.md) | Unified run history — worker HTTP capture, audited container egress, execution events, activity APIs and dashboard export |
 | [repo-access-gating.md](./repo-access-gating.md) | Making repository access agree with GitHub — the permission projection, the sweep and webhook refresh, and the advisory-then-enforce rollout |
 | [repositories.md](./repositories.md) | What identifies a repository (host, owner, name), which hosts its URLs may point at, and sharing it with other teams |
 - [`package-registries.md`](./package-registries.md) — admin-managed npm registries fronted by a worker-side proxy; the upstream credential never enters the workspace.

@@ -139,6 +139,7 @@ export const SIDEBAR = [
       'docs/bundles',
       'docs/qodo',
       'docs/transcripts',
+      'docs/run-activity',
     ],
   },
   {

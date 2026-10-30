@@ -7848,7 +7848,7 @@
       "title": "A refused resolution is reported as an unreachable network, not passed through"
     },
     {
-      "anchor": "const response = await createGuardedFetch({ allowPrivate })(url, {",
+      "anchor": "const response = await capturingFetch(createGuardedFetch({ allowPrivate }), 'connector')(",
       "before": 4,
       "id": "jiraPinned",
       "lines": 8,
@@ -9936,7 +9936,7 @@
       "title": "The completion callback row is written in the transaction of the winning terminal write"
     },
     {
-      "anchor": "const guardedFetch = createGuardedFetch({",
+      "anchor": "const guardedFetch = capturingFetch(",
       "before": 4,
       "id": "callbackSend",
       "lines": 26,
@@ -10232,7 +10232,7 @@
       "title": "The worker reaches Docker through an allowlisting socket proxy"
     },
     {
-      "anchor": "const response = await createGuardedFetch({ allowPrivate })(url, {",
+      "anchor": "const response = await capturingFetch(createGuardedFetch({ allowPrivate }), 'connector')(",
       "before": 6,
       "id": "confluenceConnector",
       "lines": 45,
