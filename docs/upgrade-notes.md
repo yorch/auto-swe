@@ -506,7 +506,7 @@ This entry is not a credential defect. It describes a tightening of the evidence
 ([`pr-evaluation.md`](./pr-evaluation.md) §9).
 
 **Affected.** Every deployment with at least one repository in `auto` mode, or with evaluation rows
-recorded before commit `EVIDENCE_GATE_COMMIT`. A build before it counts every low-risk merge, whoever
+recorded before commit `a51c0b59`. A build before it counts every low-risk merge, whoever
 approved and whichever repository it was in.
 
 **What changes.** A migration adds the nullable columns `requester_id`, `changed_lines` and
@@ -542,7 +542,7 @@ earlier code, for bot approval ([`pr-evaluation.md`](./pr-evaluation.md) §16) t
 approval is **not on** after the upgrade.
 
 **Affected.** Every deployment whose gateway and worker images are built from a commit that contains
-`BOT_APPROVAL_COMMIT`. A build before it has no approver App and no bot approval.
+`a51c0b59`. A build before it has no approver App and no bot approval.
 
 **What changes.** Migrations add the singleton table
 `github_approver_app` (`github_approver_app`), the column `connections.pr_evaluation_bot_approval`
