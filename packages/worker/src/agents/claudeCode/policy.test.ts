@@ -42,7 +42,13 @@ describe('the tool allowlist', () => {
   });
 
   it('refuses a tool outside it', async () => {
-    for (const tool of ['WebFetch', 'Task', 'Skill', 'mcp__repo__delete']) {
+    for (const tool of [
+      'WebFetch',
+      'Task',
+      'Skill',
+      'mcp__repo__delete',
+      'DeferredToolPlaceholder',
+    ]) {
       const verdict = await decideToolCall(tool, {}, ctx);
       expect(verdict).toMatchObject({ allow: false });
     }
