@@ -36,6 +36,7 @@ export type AuditEntityType =
   | 'PackageRegistry'
   | 'PersonalAccessToken'
   | 'ProviderCredential'
+  | 'ReportDigestSubscription'
   | 'ScannerPattern'
   | 'ScheduledWorkRequest'
   | 'ServicePrincipal'

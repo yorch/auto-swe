@@ -2,12 +2,17 @@ import { orgMonthSpend } from '@auto-swe/shared/lib/billing';
 import { forecastMonthlyBudget } from '@auto-swe/shared/lib/budgetForecast';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
+  buildHumanStepDailyRollups,
+  buildReviewVerdictDailyRollups,
   buildWorkflowRunDailyRollups,
   computeAutomationReport,
   computeHitlReport,
   computeQualityReport,
   deliveryReportFromRollups,
+  humanStepMetricsFromRollups,
   qualityMetricsFromRollups,
+  qualityReviewFromRollups,
+  WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
   workflowRunRollupInputFromRun,
 } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
@@ -27,7 +32,10 @@ import {
   workflowRunWithLegacyVisibility,
 } from '../lib/workflowRunAttributionScope.js';
 import {
+  coveredHumanStepRollupDays,
+  coveredReviewVerdictRollupDays,
   coveredWorkflowRunRollupDays,
+  requestedAtWhere,
   startedAtWhere,
   workflowRunRollupHorizonMs,
 } from '../lib/workflowRunRollupWindows.js';
@@ -56,6 +64,21 @@ function reportWindow(query: z.infer<typeof ReportQuery>) {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function inRanges(date: Date, ranges: readonly { gte: Date; lt: Date }[]): boolean {
+  return ranges.some((range) => date >= range.gte && date < range.lt);
+}
+
+function numericCategoryCounts(value: unknown): Record<string, number> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([category, count]) =>
+      typeof count === 'number' && Number.isFinite(count) ? [[category, count]] : []
+    )
+  );
 }
 
 function visibility(
@@ -103,7 +126,13 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             () =>
               fastify.prisma.workflowRunDailyRollup.findMany({
                 where: {
-                  AND: [{ day: { in: plan.rollupDays } }, workflowRunRollupAttributionWhere(scope)],
+                  AND: [
+                    {
+                      bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+                      day: { in: plan.rollupDays },
+                    },
+                    workflowRunRollupAttributionWhere(scope),
+                  ],
                 },
               })
           )
@@ -204,6 +233,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       for (const step of fixSteps.slice(0, REPORT_ROW_CAP)) {
         ciRoundsByRun.set(step.runId, (ciRoundsByRun.get(step.runId) ?? 0) + 1);
       }
+      const liveRunInputs = liveRuns.map(workflowRunRollupInputFromRun);
       const liveRollups = buildWorkflowRunDailyRollups({
         now: new Date(),
         pullRequests: liveRuns.flatMap((run) =>
@@ -214,7 +244,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             status: pr.status,
           }))
         ),
-        runs: liveRuns.map(workflowRunRollupInputFromRun),
+        runs: liveRunInputs,
         steps: fixSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
           runId: step.runId,
           status: step.status,
@@ -223,6 +253,23 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
         traces: [],
       });
       const allRows = [...rollupRows, ...liveRollups];
+      const exactLiveMergeDurations =
+        rollupRows.length === 0
+          ? liveRunInputs.flatMap((run) =>
+              (prsByRun.get(run.id) ?? []).flatMap((pr) =>
+                pr.status === 'MERGED' && pr.mergedAt
+                  ? [
+                      {
+                        durationMs: Math.max(0, pr.mergedAt.getTime() - run.startedAt.getTime()),
+                        repoId: run.repoId,
+                        teamId: run.attributedTeamId,
+                        templateId: run.templateId,
+                      },
+                    ]
+                  : []
+              )
+            )
+          : undefined;
       const [repos, teams, templates] = await Promise.all([
         runUnscoped(
           'delivery labels are resolved only for IDs present in caller-scoped rollups',
@@ -292,11 +339,15 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       for (const template of templates) {
         templateNames.set(template.id, template.name);
       }
-      const report = deliveryReportFromRollups(allRows, {
-        repos: repoNames,
-        teams: new Map(teams.map((team) => [team.id, team.name])),
-        templates: templateNames,
-      });
+      const report = deliveryReportFromRollups(
+        allRows,
+        {
+          repos: repoNames,
+          teams: new Map(teams.map((team) => [team.id, team.name])),
+          templates: templateNames,
+        },
+        exactLiveMergeDurations
+      );
       return {
         data: {
           ...report,
@@ -338,6 +389,8 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
           fastify.prisma.workflowRun.findMany({
             orderBy: { startedAt: 'desc' },
             select: {
+              attributedOrgId: true,
+              attributedTeamId: true,
               id: true,
               startedAt: true,
               template: { select: { name: true } },
@@ -356,6 +409,22 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       const runsTruncated = runRows.length > REPORT_ROW_CAP;
       const runs = runRows.slice(0, REPORT_ROW_CAP);
       const runIds = runs.map((run) => run.id);
+      const nowMs = Date.now();
+      const reviewCovered = await coveredReviewVerdictRollupDays(
+        fastify.prisma,
+        range.start.getTime(),
+        range.end.getTime(),
+        nowMs
+      );
+      const reviewPlan = planWindow(
+        range.start.getTime(),
+        range.end.getTime(),
+        reviewCovered,
+        workflowRunRollupHorizonMs(nowMs)
+      );
+      const liveReviewRunIds = runs
+        .filter((run) => inRanges(run.startedAt, reviewPlan.live))
+        .map((run) => run.id);
       const [steps, pullRequests, traces] = await Promise.all([
         runIds.length
           ? runUnscoped(
@@ -402,7 +471,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 })
             )
           : [],
-        runIds.length
+        liveReviewRunIds.length
           ? runUnscoped(
               'quality report reads review traces only for visible cohort runs',
               ['AgentTrace'],
@@ -414,14 +483,14 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                   where: {
                     agentKey: 'reviewer',
                     error: null,
-                    runId: { in: runIds },
+                    nodeId: 'runReviewNetwork',
+                    runId: { in: liveReviewRunIds },
                     type: 'llm_response',
                   },
                 })
             )
           : [],
       ]);
-      const nowMs = Date.now();
       const covered = await coveredWorkflowRunRollupDays(
         fastify.prisma,
         range.start.getTime(),
@@ -443,7 +512,10 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 fastify.prisma.workflowRunDailyRollup.findMany({
                   where: {
                     AND: [
-                      { day: { in: plan.rollupDays } },
+                      {
+                        bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+                        day: { in: plan.rollupDays },
+                      },
                       workflowRunRollupAttributionWhere(scope),
                     ],
                   },
@@ -481,6 +553,24 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             )
           : Promise.resolve([]),
       ]);
+      const reviewRollupRows = reviewPlan.rollupDays.length
+        ? await runUnscoped(
+            'quality reviewer rollups use the persisted attribution scope',
+            ['ReviewVerdictDailyRollup'],
+            () =>
+              fastify.prisma.reviewVerdictDailyRollup.findMany({
+                where: {
+                  AND: [
+                    {
+                      bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+                      day: { in: reviewPlan.rollupDays },
+                    },
+                    workflowRunRollupAttributionWhere(scope),
+                  ],
+                },
+              })
+          )
+        : [];
       const metricRunsTruncated = metricRunRows.length > REPORT_ROW_CAP;
       const metricRuns = metricRunRows.slice(0, REPORT_ROW_CAP);
       const metricRunIds = metricRuns.map((run) => run.id);
@@ -526,6 +616,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                   take: REPORT_ROW_CAP + 1,
                   where: {
                     agentKey: 'reviewer',
+                    nodeId: 'runReviewNetwork',
                     runId: { in: metricRunIds },
                     type: 'llm_response',
                   },
@@ -575,7 +666,9 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const metricRollups = [...rollupRows, ...metricRunsRollup];
       const prsTruncated = pullRequests.length > REPORT_ROW_CAP;
-      const tracesTruncated = traces.length > REPORT_ROW_CAP;
+      const liveReviewRuns = runs.filter((run) => inRanges(run.startedAt, reviewPlan.live));
+      const liveReviewTraces = traces;
+      const tracesTruncated = liveReviewTraces.length > REPORT_ROW_CAP;
       const reportPrs = pullRequests.slice(0, REPORT_ROW_CAP).flatMap((pr) => {
         if (!pr.runId) {
           return [];
@@ -584,7 +677,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const report = computeQualityReport({
         pullRequests: reportPrs,
-        reviewTraces: traces.slice(0, REPORT_ROW_CAP).map((trace) => ({
+        reviewTraces: liveReviewTraces.slice(0, REPORT_ROW_CAP).map((trace) => ({
           error: trace.error,
           outputJson: trace.outputJson,
           runId: trace.runId,
@@ -597,6 +690,26 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
           stepName: step.stepName,
         })),
       });
+      const reviewerRollups = [
+        ...reviewRollupRows.map((row) => ({
+          ...row,
+          categoryCounts: numericCategoryCounts(row.categoryCounts),
+        })),
+        ...buildReviewVerdictDailyRollups({
+          runs: liveReviewRuns.map((run) => ({
+            attributedOrgId: run.attributedOrgId,
+            attributedTeamId: run.attributedTeamId,
+            id: run.id,
+            startedAt: run.startedAt,
+          })),
+          traces: liveReviewTraces.slice(0, REPORT_ROW_CAP).map((trace) => ({
+            error: trace.error,
+            outputJson: trace.outputJson,
+            runId: trace.runId,
+          })),
+        }),
+      ];
+      report.review = qualityReviewFromRollups(reviewerRollups);
       Object.assign(report, qualityMetricsFromRollups(metricRollups));
       return {
         data: {
@@ -890,37 +1003,31 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       if (!scope.authorized) {
         return reply.status(403).send({ error: 'Team report access is not authorized' });
       }
-      const [windowSteps, pendingSteps, decisions] = await Promise.all([
-        asPlatformAdmin(user, 'admin HITL report spans every tenant', ['WorkflowHumanStep'], () =>
-          fastify.prisma.workflowHumanStep.findMany({
-            orderBy: { requestedAt: 'desc' },
-            select: {
-              kind: true,
-              requestedAt: true,
-              resolvedAt: true,
-              resolvedBy: true,
-              resolvedByUser: { select: { name: true } },
-              resolvedVia: true,
-              status: true,
-            },
-            take: REPORT_ROW_CAP + 1,
-            where: {
-              requestedAt: { gte: range.start, lt: range.end },
-              run: workflowRunWithLegacyVisibility(
-                user,
-                visibility(user, request.repoAccessGate),
-                request.query.teamId
-              ),
-            },
-          })
-        ),
-        asPlatformAdmin(
+      const nowMs = Date.now();
+      const covered = await coveredHumanStepRollupDays(
+        fastify.prisma,
+        range.start.getTime(),
+        range.end.getTime(),
+        nowMs
+      );
+      const hitlPlan = planWindow(
+        range.start.getTime(),
+        range.end.getTime(),
+        covered,
+        workflowRunRollupHorizonMs(nowMs)
+      );
+      const visibleRun = {
+        ...workflowRunWithLegacyVisibility(
           user,
-          'admin pending approval report spans every tenant',
-          ['WorkflowHumanStep'],
-          () =>
+          visibility(user, request.repoAccessGate),
+          request.query.teamId
+        ),
+      };
+      const [windowSteps, pendingCount, pendingOldest, decisions, hitlRollupRows] =
+        await Promise.all([
+          asPlatformAdmin(user, 'admin HITL report spans every tenant', ['WorkflowHumanStep'], () =>
             fastify.prisma.workflowHumanStep.findMany({
-              orderBy: { requestedAt: 'asc' },
+              orderBy: { requestedAt: 'desc' },
               select: {
                 kind: true,
                 requestedAt: true,
@@ -932,66 +1039,155 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               },
               take: REPORT_ROW_CAP + 1,
               where: {
-                run: workflowRunWithLegacyVisibility(
-                  user,
-                  visibility(user, request.repoAccessGate),
-                  request.query.teamId
-                ),
-                status: 'PENDING',
+                AND: [requestedAtWhere(hitlPlan.live), { run: visibleRun }],
               },
             })
-        ),
-        asPlatformAdmin(
-          user,
-          'admin autonomy report spans every tenant',
-          ['AutonomyDecision'],
-          () =>
-            fastify.prisma.autonomyDecision.findMany({
-              orderBy: { createdAt: 'desc' },
-              select: { event: true, riskClass: true },
-              take: REPORT_ROW_CAP + 1,
-              where: {
-                createdAt: { gte: range.start, lt: range.end },
-                run: workflowRunWithLegacyVisibility(
-                  user,
-                  visibility(user, request.repoAccessGate),
-                  request.query.teamId
-                ),
-              },
-            })
-        ),
-      ]);
+          ),
+          asPlatformAdmin(
+            user,
+            'admin pending approval report spans every tenant',
+            ['WorkflowHumanStep'],
+            () =>
+              fastify.prisma.workflowHumanStep.count({
+                where: {
+                  run: workflowRunWithLegacyVisibility(
+                    user,
+                    visibility(user, request.repoAccessGate),
+                    request.query.teamId
+                  ),
+                  status: 'PENDING',
+                },
+              })
+          ),
+          asPlatformAdmin(
+            user,
+            'admin pending approval age spans every tenant',
+            ['WorkflowHumanStep'],
+            () =>
+              fastify.prisma.workflowHumanStep.findFirst({
+                orderBy: { requestedAt: 'asc' },
+                select: { requestedAt: true },
+                where: {
+                  run: workflowRunWithLegacyVisibility(
+                    user,
+                    visibility(user, request.repoAccessGate),
+                    request.query.teamId
+                  ),
+                  status: 'PENDING',
+                },
+              })
+          ),
+          asPlatformAdmin(
+            user,
+            'admin autonomy report spans every tenant',
+            ['AutonomyDecision'],
+            () =>
+              fastify.prisma.autonomyDecision.findMany({
+                orderBy: { createdAt: 'desc' },
+                select: { event: true, riskClass: true },
+                take: REPORT_ROW_CAP + 1,
+                where: {
+                  createdAt: { gte: range.start, lt: range.end },
+                  run: workflowRunWithLegacyVisibility(
+                    user,
+                    visibility(user, request.repoAccessGate),
+                    request.query.teamId
+                  ),
+                },
+              })
+          ),
+          hitlPlan.rollupDays.length
+            ? runUnscoped(
+                'HITL rollups use the same persisted attribution scope as live steps',
+                ['HumanStepDailyRollup'],
+                () =>
+                  fastify.prisma.humanStepDailyRollup.findMany({
+                    where: {
+                      AND: [
+                        {
+                          bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+                          day: { in: hitlPlan.rollupDays },
+                        },
+                        workflowRunRollupAttributionWhere(scope),
+                      ],
+                    },
+                  })
+              )
+            : Promise.resolve([]),
+        ]);
+      const approverIds = unique(
+        hitlRollupRows.flatMap((row) => (row.resolvedBy ? [row.resolvedBy] : []))
+      );
+      const approverNames = approverIds.length
+        ? new Map(
+            (
+              await runUnscoped(
+                'HITL rollup approver labels are resolved only for scoped rows',
+                ['User'],
+                () =>
+                  fastify.prisma.user.findMany({
+                    select: { id: true, name: true },
+                    where: { id: { in: approverIds } },
+                  })
+              )
+            ).map((userRow) => [userRow.id, userRow.name])
+          )
+        : new Map<string, string>();
+      const liveWindowSteps = windowSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
+        kind: step.kind,
+        requestedAt: step.requestedAt,
+        resolvedAt: step.resolvedAt,
+        resolvedBy: step.resolvedBy,
+        resolvedByName: step.resolvedByUser?.name ?? null,
+        resolvedVia: step.resolvedVia,
+        status: step.status,
+      }));
+      for (const step of liveWindowSteps) {
+        if (step.resolvedBy) {
+          approverNames.set(step.resolvedBy, step.resolvedByName);
+        }
+      }
       const report = computeHitlReport({
         autonomyDecisions: decisions.slice(0, REPORT_ROW_CAP),
         now: new Date(),
-        pendingSteps: pendingSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
+        pendingSteps: [],
+        windowSteps: liveWindowSteps,
+      });
+      const liveHumanRows = buildHumanStepDailyRollups(
+        liveWindowSteps.map((step) => ({
           kind: step.kind,
+          orgId: null,
           requestedAt: step.requestedAt,
           resolvedAt: step.resolvedAt,
           resolvedBy: step.resolvedBy,
-          resolvedByName: step.resolvedByUser?.name ?? null,
           resolvedVia: step.resolvedVia,
           status: step.status,
-        })),
-        windowSteps: windowSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
-          kind: step.kind,
-          requestedAt: step.requestedAt,
-          resolvedAt: step.resolvedAt,
-          resolvedBy: step.resolvedBy,
-          resolvedByName: step.resolvedByUser?.name ?? null,
-          resolvedVia: step.resolvedVia,
-          status: step.status,
-        })),
+          teamId: null,
+        }))
+      );
+      if (hitlPlan.rollupDays.length) {
+        Object.assign(
+          report,
+          humanStepMetricsFromRollups([...hitlRollupRows, ...liveHumanRows], approverNames)
+        );
+      }
+      Object.assign(report, {
+        oldestPendingAgeMs: pendingOldest ? Date.now() - pendingOldest.requestedAt.getTime() : null,
+        pendingNow: pendingCount,
       });
       const windowStepsTruncated = windowSteps.length > REPORT_ROW_CAP;
-      const pendingStepsTruncated = pendingSteps.length > REPORT_ROW_CAP;
       const decisionsTruncated = decisions.length > REPORT_ROW_CAP;
       return {
         data: {
           ...report,
           decisionsTruncated,
-          pendingStepsTruncated,
-          truncated: windowStepsTruncated || pendingStepsTruncated || decisionsTruncated,
+          liveDays: hitlPlan.live.reduce(
+            (sum, live) => sum + (live.lt.getTime() - live.gte.getTime()) / 86_400_000,
+            0
+          ),
+          pendingStepsTruncated: false,
+          rollupDays: hitlPlan.rollupDays.length,
+          truncated: windowStepsTruncated || decisionsTruncated,
           windowEnd: range.windowEnd,
           windowStart: range.windowStart,
           windowStepsTruncated,

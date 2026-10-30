@@ -100,14 +100,37 @@ data; team subscriptions do not. Send-test delivers immediately without changing
 last-sent timestamp.
 
 The weekly sweep runs Mondays at 13:00 UTC when `REPORT_DIGEST_ENABLED` is true. Configure
-`REPORT_DIGEST_CRON` to change the schedule. Digests require workflow-run rollups to be enabled;
-`REPORT_DIGEST_CRON` must run after `WORKFLOW_RUN_ROLLUP_CRON`. The sweep skips delivery and
-retries on its next run when any of the 14 required completed UTC days has no rollup rows. A
-subscription is claimed once per reporting period before delivery, so a failed email or Slack
-channel is recorded but is not retried in the same period. Send-test bypasses the weekly claim and
-does not change the scheduled last-sent timestamp; its one-minute limit is stored in Postgres.
-Email uses the platform SMTP configuration when available, otherwise the configured Resend
-transport.
+`REPORT_DIGEST_CRON` to change the schedule. Each workflow anchors one reporting period to its
+start time: the previous ISO week, Monday 00:00 through Sunday 23:59:59 UTC. Retries and schedule
+catch-up reuse that period. Digests require workflow-run rollups to be enabled;
+`REPORT_DIGEST_CRON` must run after `WORKFLOW_RUN_ROLLUP_CRON`. If any of the 14 required completed
+UTC days has no rollup rows, the workflow retries the coverage check up to six times, sleeping 15
+minutes between passes, and records `rollup_incomplete` if coverage remains unavailable. Each
+email address and Slack channel has its own durable delivery row for a reporting period. Failed
+targets are retried after 15 minutes, for at most three attempts; targets already sent are not sent
+again. Activity-level retries are disabled so the workflow owns the retry policy. The activity
+refuses to create rows for a period less than six days after the last fully delivered period, or
+earlier than any existing delivery period.
+
+Email targets opted out on the subscription are excluded. The email includes a table-based HTML
+report, a plain-text alternative, and `List-Unsubscribe` plus RFC 8058
+`List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers. Opening the public unsubscribe URL
+only renders a confirmation form; the form and one-click mail-client POST both opt out through
+POST to that URL. Both methods are rate limited. The recipient-bound link uses a purpose-specific
+HMAC key derived from the existing `CONFIG_ENCRYPTION_KEY`; no separate unsubscribe secret is
+configured. Keep the previous encryption key in `CONFIG_ENCRYPTION_KEY_PREVIOUS` while links
+signed by it need to remain valid. Removing that old key invalidates its outstanding unsubscribe
+links. Plus-address variants (for example, `reports+weekly@example.test`) are separate recipient
+targets and must be managed as distinct addresses.
+
+Managers can see opted-out addresses in the Digests tab. Re-adding one requires confirmation and
+records the manager in the audit log. `lastPeriodStart` is retained as the last fully delivered
+period for display and as a guard against near-duplicate periods; the migration clears legacy
+claim-era values so the displayed date has consistent meaning. Only a period whose active targets
+all succeed is recorded. Send-test bypasses delivery-row persistence, records failures separately
+from scheduled delivery status, and does not change the scheduled last-sent timestamp; its
+one-minute limit is stored in Postgres. Email uses the platform SMTP configuration when available,
+otherwise the configured Resend transport.
 
 ## Limitations
 
@@ -116,31 +139,46 @@ transport.
   `teamId` (`WorkflowRun.attributedTeamId`) is one of the caller's member teams, or its `orgId`
   (`WorkflowRun.attributedOrgId`) is an organization where the caller is `ORG_ADMIN`. ADMIN sees
   all rows, including null-attribution rows; null-attribution rows are excluded for everyone else.
-  This rule is applied to every slice in a rollup-backed response, including headline metrics,
-  group-bys, selected runs, steps, and quality traces. ORG_ADMIN therefore sees every run
-  attributed to their organization even when `buildWorkflowRunVisibilityFilter` would hide it;
-  requester-only and shared-connection visibility do not apply to these reports. A `teamId` filter
-  is allowed only for a caller's member team or a team in an organization they administer;
-  otherwise the route returns 403. Non-rollup reads retain the normal run-visibility filter and
-  add the selected team filter.
+  This rule applies to attribution-scoped rollup slices, including headline metrics, group-bys,
+  selected runs, steps, and quality traces. ORG_ADMIN therefore sees every run attributed to their
+  organization even when `buildWorkflowRunVisibilityFilter` would hide it; requester-only and
+  shared-connection visibility do not apply to these rollup slices. A `teamId` filter is allowed
+  only for a caller's member team or a team in an organization they administer; otherwise the route
+  returns 403. Non-rollup reads retain the normal run-visibility filter and add the selected team
+  filter. HITL is currently a visibility exception within one response: live-window steps use
+  normal run visibility, while historical rollup rows use persisted attribution.
 - Template names hidden by the workflow-template visibility rule, channel names hidden by channel
   access, and repository names blocked by the repository-access gate are masked as `Private
   template`, `Private channel`, and `Inaccessible repository`; the corresponding counts remain.
-- Run and merge duration percentiles are approximate: values fall into logarithmically spaced
-  buckets and the reader returns the bucket's geometric midpoint. CI-fix p95 and average use an
-  exact attempt-count histogram for 0–19; its 20+ overflow bucket is represented as 20.
-- Rollups are rebuilt daily and recomputed over the configured
-  `WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS` horizon to include late outcomes. Once a day is older than
-  that horizon it is frozen; later merges and run finalizations are not reflected in that day.
-  `rollupDays` and `liveDays` show which dates came from each source; truncation flags apply only
-  to live reads. Global analytics daily series and duration percentiles, template per-version
-  duration/PR statistics, and delivery metrics use this hybrid reader. Duration and merge
-  percentiles use logarithmically spaced buckets and return a bucket midpoint; the CI-fix histogram
-  is exact for 0–19 attempts and represents 20 or more as 20. Freshness is bounded by the daily
-  schedule and the recompute window. Set `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to populate older
-  history; the default of zero leaves history outside the recompute horizon on the live path.
+- Run and merge duration percentiles are approximate. Duration buckets use sub-second bounds,
+  then grow logarithmically; percentile ranks are interpolated inside each bucket (linearly from
+  zero in the first bucket, logarithmically thereafter). When the entire requested window is live,
+  run and HITL wait percentiles use the exact values already read for the response; mixed and
+  rollup-backed windows use bucket interpolation. CI-fix p95 and average use an exact attempt-count
+  histogram for 0–19; its 20+ overflow bucket is represented as 20.
+- Rollups are rebuilt daily and recomputed over the shared
+  `WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS` horizon to include recent outcomes. Older run days are
+  dirtied by `WorkflowRun.updatedAt`, `PullRequest.updatedAt`, completion of a CI-fix
+  `WorkflowStep`, or creation of a reviewer `AgentTrace`; human-step requested days are dirtied
+  separately by `resolvedAt` for the approval rollup. Run deletions are not detected. Detection
+  uses a fixed one-hour overlap and advances its watermark to the current sweep time only after
+  that sweep's selected days rebuild successfully. At most 60 dirty days are rebuilt per sweep,
+  oldest first; the durable backlog carries remaining days to later sweeps. `rollupDays` and
+  `liveDays` show which dates came from each source; rows
+  with an obsolete duration-bucket version count as uncovered, and truncation flags apply only to
+  live reads. Global analytics daily series and duration percentiles, template per-version
+  duration/PR statistics, delivery metrics, and the HITL and reviewer report slices use these
+  hybrid readers. Set `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to populate older history; the default
+  of zero leaves older history on the live path.
 - Approval source counts use `resolvedVia`; historical rows with no source are reported as
   `unknown`.
+- HITL approval rollups use the UTC day of `requestedAt` and retain kind, status, resolution source,
+  approver, timeout, and resolved-wait histogram measures. Reviewer rollups use the UTC day of
+  `WorkflowRun.startedAt` and retain reviewer, severity, approval, findings, category, and
+  malformed-verdict measures. Both carry a bucket version and persisted organization/team
+  attribution. Pending approvals remain an uncapped live count plus the oldest `findFirst` row.
+  If an approver account is no longer available, the report labels it `Unknown approver` rather than
+  exposing its stored user ID.
 - User records do not expose a service-principal or API-token approver flag, so approval counts
   cannot separate people from machine identities. The human-step HTTP route requires a user
   principal and does not admit service-principal tokens.

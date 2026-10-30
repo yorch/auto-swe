@@ -1,13 +1,20 @@
+import {
+  reportDigestUnsubscribeSubscriptionId,
+  verifyReportDigestUnsubscribeToken,
+} from '@auto-swe/shared/lib/reportDigestUnsubscribe';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { writeAuditLog } from '../lib/auditLog.js';
+import { registerFormBodyParser } from '../lib/formBody.js';
 import { claimReportDigestTestSend } from '../lib/reportDigestRateLimit.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const paramsSchema = z.object({ id: z.string().uuid() });
 const bodySchema = z
   .object({
+    confirmOptedOutReadd: z.array(z.string().email()).max(20).optional(),
     emailRecipients: z.array(z.string().email()).max(20).optional(),
     enabled: z.boolean().optional(),
     orgId: z.string().uuid().nullable().optional(),
@@ -16,11 +23,120 @@ const bodySchema = z
     teamId: z.string().uuid().nullable().optional(),
   })
   .strict();
+const createBodySchema = bodySchema.omit({ confirmOptedOutReadd: true });
 const MAX_SUBSCRIPTIONS_PER_SCOPE = 5;
+const unsubscribeQuerySchema = z.object({ token: z.string().min(1).max(256) });
+const unsubscribeBodySchema = z.object({ 'List-Unsubscribe': z.literal('One-Click') }).strict();
+
+function setUnsubscribeResponseHeaders(reply: FastifyReply): void {
+  reply
+    .header(
+      'Content-Security-Policy',
+      "default-src 'none'; form-action 'self'; frame-ancestors 'none'"
+    )
+    .header('X-Frame-Options', 'DENY')
+    .header('Referrer-Policy', 'no-referrer')
+    .header('Cache-Control', 'no-store')
+    .header('X-Content-Type-Options', 'nosniff');
+}
 
 export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = requireAuth({ requiredRole: 'ENGINEER' });
+
+  try {
+    registerFormBodyParser(fastify);
+  } catch {
+    // The gateway may already have installed the shared form parser.
+  }
+
+  const verifiedUnsubscribeRecipient = async (token: string) => {
+    const subscriptionId = reportDigestUnsubscribeSubscriptionId(token);
+    if (!subscriptionId) {
+      return null;
+    }
+    const subscription = await runUnscoped(
+      'the public digest unsubscribe validates only its signed subscription',
+      ['ReportDigestSubscription'],
+      () =>
+        fastify.prisma.reportDigestSubscription.findUnique({
+          select: { emailRecipients: true, id: true, optedOutEmails: true },
+          where: { id: subscriptionId },
+        })
+    );
+    if (!subscription) {
+      return null;
+    }
+    let matchedEmail: string | null = null;
+    for (const email of new Set([
+      ...subscription.emailRecipients,
+      ...subscription.optedOutEmails,
+    ])) {
+      if (verifyReportDigestUnsubscribeToken(token, subscription.id, email)) {
+        matchedEmail = email.trim().toLowerCase();
+      }
+    }
+    return matchedEmail ? { email: matchedEmail, subscription } : null;
+  };
+
+  app.get(
+    '/unsubscribe',
+    {
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+      schema: { querystring: unsubscribeQuerySchema },
+    },
+    async (request, reply) => {
+      setUnsubscribeResponseHeaders(reply);
+      const { token } = request.query;
+      if (!(await verifiedUnsubscribeRecipient(token))) {
+        return reply.status(400).type('text/plain').send('Invalid unsubscribe link.');
+      }
+      const action = `/api/v1/report-digests/unsubscribe?token=${encodeURIComponent(token)}`;
+      return reply
+        .type('text/html; charset=utf-8')
+        .send(
+          `<!doctype html><html><body><p>Confirm you want to unsubscribe from this report digest.</p><form method="post" action="${action}"><button name="List-Unsubscribe" value="One-Click" type="submit">Unsubscribe</button></form></body></html>`
+        );
+    }
+  );
+
+  app.post(
+    '/unsubscribe',
+    {
+      config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+      schema: { body: unsubscribeBodySchema, querystring: unsubscribeQuerySchema },
+    },
+    async (request, reply) => {
+      setUnsubscribeResponseHeaders(reply);
+      const recipient = await verifiedUnsubscribeRecipient(request.query.token);
+      if (!recipient) {
+        return reply.status(400).type('text/plain').send('Invalid unsubscribe link.');
+      }
+      if (
+        !recipient.subscription.optedOutEmails.some(
+          (email) => email.trim().toLowerCase() === recipient.email
+        )
+      ) {
+        await runUnscoped(
+          'the public digest unsubscribe records only its verified recipient',
+          ['ReportDigestSubscription'],
+          () =>
+            fastify.prisma.reportDigestSubscription.updateMany({
+              data: { optedOutEmails: { push: recipient.email } },
+              where: {
+                id: recipient.subscription.id,
+                NOT: { optedOutEmails: { has: recipient.email } },
+              },
+            })
+        );
+      }
+      return reply
+        .type('text/html; charset=utf-8')
+        .send(
+          '<!doctype html><html><body><p>You have been unsubscribed from this report digest.</p></body></html>'
+        );
+    }
+  );
 
   const membershipScopes = async (userId: string) => {
     const [orgs, teams] = await runUnscoped(
@@ -216,7 +332,7 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
     };
   });
 
-  app.post('/', { onRequest: auth, schema: { body: bodySchema } }, async (request, reply) => {
+  app.post('/', { onRequest: auth, schema: { body: createBodySchema } }, async (request, reply) => {
     const user = requireUser(request);
     const body = request.body;
     if (!body.scope) {
@@ -311,18 +427,70 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       ) {
         return reply.status(409).send({ error: 'A scope can have at most 5 digest subscriptions' });
       }
-      return {
-        data: await fastify.prisma.reportDigestSubscription.update({
+      const optedOut = new Set(existing.optedOutEmails.map((email) => email.trim().toLowerCase()));
+      const existingRecipients = new Set(
+        existing.emailRecipients.map((email) => email.trim().toLowerCase())
+      );
+      const requestedRecipients = new Set(
+        checked.emailRecipients.map((email) => email.trim().toLowerCase())
+      );
+      const { confirmOptedOutReadd, ...patchBody } = request.body;
+      const confirmations = new Set(
+        (confirmOptedOutReadd ?? []).map((email) => email.trim().toLowerCase())
+      );
+      const readdedRecipients = [...confirmations].filter(
+        (email) => optedOut.has(email) && requestedRecipients.has(email)
+      );
+      const readded = new Set(readdedRecipients);
+      const newlyAddedOptedOutRecipients = checked.emailRecipients
+        .map((email) => email.trim().toLowerCase())
+        .filter((email) => optedOut.has(email) && !existingRecipients.has(email));
+      const invalidConfirmations = [...confirmations].filter(
+        (email) => !optedOut.has(email) || !requestedRecipients.has(email)
+      );
+      const unconfirmedRecipients = newlyAddedOptedOutRecipients.filter(
+        (email) => !confirmations.has(email)
+      );
+      if (unconfirmedRecipients.length > 0 || invalidConfirmations.length > 0) {
+        return reply.status(400).send({
+          error: 'Confirm each opted-out address before re-adding it',
+          optedOutAddresses: [...unconfirmedRecipients, ...invalidConfirmations],
+        });
+      }
+      const updated = await fastify.prisma.$transaction(async (tx) => {
+        const result = await tx.reportDigestSubscription.update({
           data: {
-            ...request.body,
+            ...patchBody,
+            ...(request.body.emailRecipients !== undefined || readdedRecipients.length > 0
+              ? {
+                  optedOutEmails: {
+                    set: existing.optedOutEmails.filter(
+                      (email) => !readded.has(email.trim().toLowerCase())
+                    ),
+                  },
+                }
+              : {}),
             emailRecipients: checked.emailRecipients,
             orgId: value.orgId,
             scope: value.scope,
             teamId: value.teamId,
           },
           where: { id: existing.id },
-        }),
-      };
+        });
+        if (readdedRecipients.length > 0) {
+          await writeAuditLog(fastify, {
+            action: 'UPDATE',
+            actor: user,
+            after: { readdedRecipients },
+            before: { optedOutRecipients: readdedRecipients },
+            client: tx,
+            entityId: existing.id,
+            entityType: 'ReportDigestSubscription',
+          });
+        }
+        return result;
+      });
+      return { data: updated };
     }
   );
 

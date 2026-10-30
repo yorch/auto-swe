@@ -159,3 +159,13 @@ describe('transcript download-link token (dl query parameter)', () => {
     expect(all).not.toContain(DL);
   });
 });
+
+describe('digest unsubscribe token query parameter', () => {
+  it('redacts the token from URLs and log messages', () => {
+    const token = 'signed-unsubscribe-token';
+    const url = `/api/v1/report-digests/unsubscribe?token=${token}`;
+
+    expect(redactRequestUrl(url)).toBe('/api/v1/report-digests/unsubscribe?token=[redacted]');
+    expect(redactLogText(url)).toBe('/api/v1/report-digests/unsubscribe?token=[redacted]');
+  });
+});

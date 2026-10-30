@@ -1,7 +1,17 @@
+import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { describe, expect, it, vi } from 'vitest';
 import { reportDigestRoutes } from './reportDigests.js';
+
+vi.mock('@auto-swe/shared/lib/reportDigestUnsubscribe', () => ({
+  reportDigestUnsubscribeSubscriptionId: (token: string) =>
+    token === 'valid-token' ? '66666666-6666-4666-8666-666666666666' : null,
+  verifyReportDigestUnsubscribeToken: (token: string, id: string, email: string) =>
+    token === 'valid-token' &&
+    id === '66666666-6666-4666-8666-666666666666' &&
+    email.toLowerCase() === 'digest@example.test',
+}));
 
 const ORG_A = '11111111-1111-4111-8111-111111111111';
 const ORG_B = '22222222-2222-4222-8222-222222222222';
@@ -14,6 +24,7 @@ const AUTH = { authorization: 'Bearer fake' };
 async function buildApp(role: string, membership: { orgIds?: string[]; teamIds?: string[] } = {}) {
   const temporal = { triggerReportDigestTest: vi.fn().mockResolvedValue(undefined) };
   const prisma = {
+    configAuditLog: { create: vi.fn().mockResolvedValue(undefined) },
     organization: { findMany: vi.fn().mockResolvedValue([]) },
     organizationMembership: {
       findMany: vi.fn().mockResolvedValue((membership.orgIds ?? []).map((orgId) => ({ orgId }))),
@@ -48,20 +59,195 @@ async function buildApp(role: string, membership: { orgIds?: string[]; teamIds?:
       ),
     },
   };
+  const database = Object.assign(prisma, {
+    $transaction: (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+  });
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
-  app.decorate('prisma', prisma as unknown as never);
+  app.decorate('prisma', database as unknown as never);
   app.decorate('temporal', temporal as unknown as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'user-1' }),
   } as unknown as never);
+  await app.register(rateLimit, { global: false, max: 1000, timeWindow: '1 minute' });
   await app.register(reportDigestRoutes, { prefix: '/api/v1/report-digests' });
   await app.ready();
   return { app, prisma, temporal };
 }
 
 describe('report digest routes', () => {
+  it('renders a non-mutating confirmation on GET and opts out through the RFC 8058 POST', async () => {
+    const { app, prisma } = await buildApp('VIEWER');
+    prisma.reportDigestSubscription.findUnique.mockResolvedValue({
+      emailRecipients: ['digest@example.test'],
+      id: SUBSCRIPTION,
+      optedOutEmails: [],
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/report-digests/unsubscribe?token=valid-token',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers).toMatchObject({
+      'cache-control': 'no-store',
+      'content-security-policy': "default-src 'none'; form-action 'self'; frame-ancestors 'none'",
+      'referrer-policy': 'no-referrer',
+      'x-content-type-options': 'nosniff',
+      'x-frame-options': 'DENY',
+    });
+    expect(response.body).toContain('method="post"');
+    expect(response.body).toContain('List-Unsubscribe');
+    expect(response.body).toContain(
+      'action="/api/v1/report-digests/unsubscribe?token=valid-token"'
+    );
+    expect(prisma.reportDigestSubscription.updateMany).not.toHaveBeenCalled();
+
+    const post = await app.inject({
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      method: 'POST',
+      payload: 'List-Unsubscribe=One-Click',
+      url: '/api/v1/report-digests/unsubscribe?token=valid-token',
+    });
+
+    expect(post.statusCode).toBe(200);
+    expect(post.body).toContain('You have been unsubscribed');
+    expect(prisma.reportDigestSubscription.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { optedOutEmails: { push: 'digest@example.test' } },
+        where: expect.objectContaining({ id: SUBSCRIPTION }),
+      })
+    );
+    await app.close();
+  });
+
+  it('rate limits the public unsubscribe confirmation route', async () => {
+    const { app } = await buildApp('VIEWER');
+    const responses = await Promise.all(
+      Array.from({ length: 31 }, () =>
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/report-digests/unsubscribe?token=invalid-token',
+        })
+      )
+    );
+
+    expect(responses.at(-1)?.statusCode).toBe(429);
+    await app.close();
+
+    const postApp = await buildApp('VIEWER');
+    const postResponses = await Promise.all(
+      Array.from({ length: 31 }, () =>
+        postApp.app.inject({
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          method: 'POST',
+          payload: 'List-Unsubscribe=One-Click',
+          url: '/api/v1/report-digests/unsubscribe?token=invalid-token',
+        })
+      )
+    );
+
+    expect(postResponses.at(-1)?.statusCode).toBe(429);
+    await postApp.app.close();
+  });
+
+  it('requires confirmation and audits a manager re-adding an opted-out recipient', async () => {
+    const { app, prisma } = await buildApp('ADMIN');
+    prisma.reportDigestSubscription.findUnique.mockResolvedValue({
+      emailRecipients: [],
+      id: SUBSCRIPTION,
+      optedOutEmails: ['digest@example.test'],
+      orgId: ORG_A,
+      scope: 'ORGANIZATION',
+      slackChannelId: null,
+      teamId: null,
+    });
+
+    const unconfirmed = await app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { emailRecipients: ['digest@example.test'] },
+      url: `/api/v1/report-digests/${SUBSCRIPTION}`,
+    });
+    expect(unconfirmed.statusCode).toBe(400);
+    expect(prisma.reportDigestSubscription.update).not.toHaveBeenCalled();
+
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: {
+        confirmOptedOutReadd: ['digest@example.test'],
+        emailRecipients: ['digest@example.test'],
+      },
+      url: `/api/v1/report-digests/${SUBSCRIPTION}`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(prisma.reportDigestSubscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          emailRecipients: ['digest@example.test'],
+          optedOutEmails: { set: [] },
+        }),
+      })
+    );
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'UPDATE',
+          actorId: 'user-1',
+          entityId: SUBSCRIPTION,
+          entityType: 'ReportDigestSubscription',
+        }),
+      })
+    );
+    await app.close();
+  });
+
+  it('re-adds one recipient while preserving other opted-out recipients', async () => {
+    const { app, prisma } = await buildApp('ADMIN');
+    prisma.reportDigestSubscription.findUnique.mockResolvedValue({
+      emailRecipients: ['digest@example.test', 'other@example.test'],
+      id: SUBSCRIPTION,
+      optedOutEmails: ['digest@example.test', 'other@example.test'],
+      orgId: ORG_A,
+      scope: 'ORGANIZATION',
+      slackChannelId: null,
+      teamId: null,
+    });
+
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: {
+        confirmOptedOutReadd: ['digest@example.test'],
+        emailRecipients: ['digest@example.test', 'other@example.test'],
+      },
+      url: `/api/v1/report-digests/${SUBSCRIPTION}`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(prisma.reportDigestSubscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          emailRecipients: ['digest@example.test', 'other@example.test'],
+          optedOutEmails: { set: ['other@example.test'] },
+        }),
+      })
+    );
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          afterJson: { readdedRecipients: ['digest@example.test'] },
+          beforeJson: { optedOutRecipients: ['digest@example.test'] },
+        }),
+      })
+    );
+    await app.close();
+  });
+
   it('allows an org admin to create an org digest only for their own organization', async () => {
     const { app, prisma } = await buildApp('ENGINEER', { orgIds: [ORG_A] });
     const own = await app.inject({

@@ -15,6 +15,7 @@
     "./lib/telemetry": "./dist/lib/telemetry.js",
     "./lib/temporalTracing": "./dist/lib/temporalTracing.js",
     "./lib/crypto": "./dist/lib/crypto.js",
+    "./lib/reportDigestUnsubscribe": "./dist/lib/reportDigestUnsubscribe.js",
     "./lib/securityTraceTags": "./dist/lib/securityTraceTags.js",
     "./lib/credentialScope": "./dist/lib/credentialScope.js",
     "./lib/agentPrompts": "./dist/lib/agentPrompts.js",

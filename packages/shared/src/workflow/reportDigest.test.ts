@@ -18,6 +18,7 @@ function rows(input: {
   merged: boolean;
   startedAt: Date;
   status: string;
+  templateId?: string;
 }) {
   return buildWorkflowRunDailyRollups({
     now,
@@ -45,7 +46,7 @@ function rows(input: {
         repoId: null,
         startedAt: input.startedAt,
         status: input.status,
-        templateId: 'hostile-template',
+        templateId: input.templateId ?? 'hostile-template',
         templateVersion: 1,
         wasAutonomous: true,
       },
@@ -98,6 +99,17 @@ describe('buildReportDigest', () => {
     expect(digest.text).toContain('Month-to-date spend: $20.00');
     expect(digest.text).toContain('Projected monthly spend: $40.00');
     expect(digest.html).toContain('https://example.test/admin/reports');
+    const htmlTags = [...digest.html.matchAll(/<\/?([a-z][a-z0-9]*)\b/gi)].map((match) =>
+      (match[1] ?? '').toLowerCase()
+    );
+    expect(htmlTags.every((tag) => ['a', 'table', 'th', 'tr', 'td'].includes(tag))).toBe(true);
+    expect(digest.html).toContain('style="');
+    expect(digest.html).not.toMatch(/<style\b|class=/i);
+    expect(digest.html).toContain('color:#18794e');
+    expect(digest.html).toContain('color:#b42318');
+    const blockTypes = digest.slackBlocks.map((block) => (block as { type: string }).type);
+    expect(blockTypes).toEqual(['header', 'section', 'section', 'section', 'context', 'actions']);
+    expect(digest.slackMrkdwn).toContain('Open reports: https://example.test/admin/reports');
   });
 
   it('handles an empty week without inventing rates or deltas', () => {
@@ -141,6 +153,57 @@ describe('buildReportDigest', () => {
     expect(digest.html).toContain('&lt;img');
     expect(digest.slackMrkdwn).toContain('&lt;img');
     expect(digest.slackMrkdwn).toContain('\\*alert\\*');
+    const templateBlock = digest.slackBlocks.find(
+      (block) =>
+        (block as { text?: { text?: string } }).text?.text?.startsWith('*Top templates*') ?? false
+    ) as { text: { text: string } };
+    expect(templateBlock.text.text).toContain('&lt;img');
+    expect(templateBlock.text.text).toContain('\\*alert\\*');
+  });
+
+  it('renders bounded top templates in Slack using masked names', () => {
+    const currentRows = [
+      ...rows({
+        cost: 1,
+        id: 'visible-template-run',
+        merged: false,
+        startedAt: new Date('2026-10-15T12:00:00Z'),
+        status: 'SUCCESS',
+        templateId: 'visible-template',
+      }),
+      ...rows({
+        cost: 1,
+        id: 'private-template-run',
+        merged: false,
+        startedAt: new Date('2026-10-16T12:00:00Z'),
+        status: 'SUCCESS',
+        templateId: 'private-template-id',
+      }),
+    ];
+    const digest = buildReportDigest({
+      currentPeriod,
+      currentRows,
+      now,
+      oldestPendingApprovalRequestedAt: null,
+      pendingApprovalCount: 0,
+      previousPeriod,
+      previousRows: [],
+      scope: { name: 'Team', type: 'TEAM' },
+      templateNames: new Map([
+        ['private-template-id', 'Private template'],
+        ['visible-template', `<Billing> *${'x'.repeat(5000)}*`],
+      ]),
+    });
+    const templateBlock = digest.slackBlocks.find(
+      (block) =>
+        (block as { text?: { text?: string } }).text?.text?.startsWith('*Top templates*') ?? false
+    ) as { text: { text: string } };
+
+    expect(templateBlock.text.text).toContain('*Private template*');
+    expect(templateBlock.text.text).toContain('&lt;Billing&gt;');
+    expect(templateBlock.text.text).toContain('\\*');
+    expect(templateBlock.text.text).not.toContain('private-template-id');
+    expect(templateBlock.text.text.length).toBeLessThanOrEqual(3000);
   });
 
   it('strips line breaks from scope headings and escapes them in every format', () => {
@@ -174,5 +237,26 @@ describe('buildReportDigest', () => {
       worstGateNotComputed: true,
     });
     expect(digest.text).toContain('Worst gate: not computed');
+  });
+
+  it('keeps plain-text Slack headers at 150 characters and omits relative action URLs', () => {
+    const digest = buildReportDigest({
+      currentPeriod,
+      currentRows: [],
+      now,
+      oldestPendingApprovalRequestedAt: null,
+      pendingApprovalCount: 0,
+      previousPeriod,
+      previousRows: [],
+      reportsUrl: '/admin/reports',
+      scope: { name: '*'.repeat(200), type: 'ORGANIZATION' },
+    });
+    const header = digest.slackBlocks[0] as { text: { text: string; type: string } };
+
+    expect(header.text.type).toBe('plain_text');
+    expect(header.text.text).toBe('*'.repeat(150));
+    expect(header.text.text.length).toBeLessThanOrEqual(150);
+    expect(digest.slackBlocks).not.toContainEqual(expect.objectContaining({ type: 'actions' }));
+    expect(digest.slackMrkdwn).not.toContain('Open reports: /admin/reports');
   });
 });

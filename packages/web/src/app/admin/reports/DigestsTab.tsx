@@ -9,8 +9,11 @@ type Digest = {
   emailRecipients: string[];
   enabled: boolean;
   id: string;
+  lastPeriodStart: string | null;
+  lastTestError: string | null;
   organization: Scope | null;
   orgId: string | null;
+  optedOutEmails: string[];
   scope: 'ORGANIZATION' | 'TEAM';
   slackChannel: { id: string; name: string } | null;
   slackChannelId: string | null;
@@ -57,11 +60,27 @@ export function DigestsTab() {
     onSuccess: refresh,
   });
   const update = useMutation({
-    mutationFn: (input: { id: string; enabled?: boolean }) =>
+    mutationFn: (input: {
+      confirmOptedOutReadd?: string[];
+      emailRecipients?: string[];
+      id: string;
+      enabled?: boolean;
+      slackChannelId?: string | null;
+    }) =>
       api.patch(`/api/v1/report-digests/${input.id}`, {
-        ...(input.enabled === undefined
-          ? { emailRecipients: recipients(editEmail), slackChannelId: editChannel || null }
-          : { enabled: input.enabled }),
+        ...(input.enabled !== undefined
+          ? { enabled: input.enabled }
+          : {
+              ...(input.confirmOptedOutReadd
+                ? { confirmOptedOutReadd: input.confirmOptedOutReadd }
+                : {}),
+              emailRecipients: input.emailRecipients ?? recipients(editEmail),
+              ...(input.slackChannelId !== undefined
+                ? { slackChannelId: input.slackChannelId }
+                : input.emailRecipients === undefined
+                  ? { slackChannelId: editChannel || null }
+                  : {}),
+            }),
       }),
     onSuccess: refresh,
   });
@@ -193,6 +212,52 @@ export function DigestsTab() {
                   {digest.emailRecipients.join(', ') || 'No email recipients'} ·{' '}
                   {digest.slackChannel?.name ?? 'No Slack channel'}
                 </p>
+                <p className="mt-1 text-xs text-paper-400">
+                  Last completed period:{' '}
+                  {digest.lastPeriodStart
+                    ? new Date(digest.lastPeriodStart).toLocaleDateString()
+                    : 'None'}
+                </p>
+                {digest.lastTestError && (
+                  <p className="mt-1 text-xs text-danger-400" role="status">
+                    Last test delivery failed: {digest.lastTestError}
+                  </p>
+                )}
+                {digest.optedOutEmails.length > 0 && (
+                  <div className="mt-3 rounded border border-ink-700 p-3">
+                    <h3 className="text-sm font-medium">Opted-out email addresses</h3>
+                    <ul className="mt-2 space-y-2">
+                      {digest.optedOutEmails.map((email) => (
+                        <li className="flex items-center justify-between gap-3" key={email}>
+                          <span className="text-sm text-paper-300">{email}</span>
+                          <button
+                            className="rounded border border-ink-600 px-3 py-1 text-sm"
+                            onClick={() => {
+                              if (!window.confirm(`Re-add ${email} to this digest?`)) {
+                                return;
+                              }
+                              update.mutate({
+                                confirmOptedOutReadd: [email],
+                                emailRecipients: [
+                                  ...digest.emailRecipients,
+                                  ...(!digest.emailRecipients.some(
+                                    (recipient) => recipient.toLowerCase() === email.toLowerCase()
+                                  )
+                                    ? [email]
+                                    : []),
+                                ],
+                                id: digest.id,
+                              });
+                            }}
+                            type="button"
+                          >
+                            Re-add
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {editing === digest.id && (
                   <div className="mt-3 flex flex-wrap gap-3">
                     <input

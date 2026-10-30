@@ -38,8 +38,8 @@ export function initTelemetry(serviceName: string): { shutdown: () => Promise<vo
     instrumentations: [
       new HttpInstrumentation({
         // `url.query` is redacted by the instrumentation itself: its default list (pre-signed
-        // URL signatures), plus each credential parameter the gateway accepts — a transcript
-        // download link's `dl` token.
+        // URL signatures), plus each credential parameter the gateway accepts — transcript
+        // download (`dl`) and report-digest unsubscribe (`token`) links.
         redactedQueryParamsServer: [...DEFAULT_REDACTED_QUERY_PARAMS, ...SECRET_QUERY_PARAMS],
         // The server span's `url.path` would otherwise carry a template webhook's token, which
         // is that webhook's credential. Hook attributes override the instrumentation's own.

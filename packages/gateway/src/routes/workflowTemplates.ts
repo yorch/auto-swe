@@ -31,6 +31,7 @@ import {
   migrateSpec,
   parseWorkflowSpec,
   SPEC_SCHEMA_VERSION,
+  WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
   type WorkflowSpec,
   workflowRunDurationStatsFromRollups,
   workflowRunRollupInputFromRun,
@@ -720,7 +721,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             () =>
               fastify.prisma.workflowRunDailyRollup.findMany({
                 where: {
-                  AND: [{ day: { in: days } }, workflowRunRollupAttributionWhere(attributionScope)],
+                  AND: [
+                    {
+                      bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+                      day: { in: days },
+                    },
+                    workflowRunRollupAttributionWhere(attributionScope),
+                  ],
                 },
               })
           )
@@ -890,20 +897,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       steps: [],
       traces: [],
     });
-    const previousLiveRollups = buildWorkflowRunDailyRollups({
-      pullRequests: [],
-      runs: previousSeriesKept.map(workflowRunRollupInputFromRun),
-      steps: [],
-      traces: [],
-    });
-    const currentDuration = workflowRunDurationStatsFromRollups([
-      ...currentRollupRows,
-      ...currentLiveRollups,
-    ]);
-    const previousDuration = workflowRunDurationStatsFromRollups([
-      ...previousRollupRows,
-      ...previousLiveRollups,
-    ]);
+    const currentDuration = workflowRunDurationStatsFromRollups(
+      currentRollupRows,
+      currentSeriesKept
+    );
+    const previousDuration = workflowRunDurationStatsFromRollups(
+      previousRollupRows,
+      previousSeriesKept
+    );
     const liveDays = (ranges: typeof currentPlan.live) =>
       ranges.reduce(
         (sum, range) => sum + (range.lt.getTime() - range.gte.getTime()) / 86_400_000,
@@ -3133,7 +3134,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
                 fastify.prisma.workflowRunDailyRollup.findMany({
                   where: {
                     AND: [
-                      { day: { in: plan.rollupDays }, templateId: tpl.id },
+                      {
+                        bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+                        day: { in: plan.rollupDays },
+                        templateId: tpl.id,
+                      },
                       workflowRunRollupAttributionWhere(scope),
                     ],
                   },
@@ -3221,10 +3226,22 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         steps: [],
         traces: [],
       });
-      const versionMetrics = workflowTemplatePerVersionFromRollups([
-        ...versionRollups,
-        ...liveVersionRollups,
-      ]);
+      const versionsWithRollups = new Set(
+        versionRollups.flatMap((row) => (row.templateVersion === null ? [] : [row.templateVersion]))
+      );
+      const exactLiveDurationsByVersion = new Map<number, number[]>();
+      for (const run of versionLiveRuns) {
+        if (versionsWithRollups.has(run.templateVersion) || !run.endedAt) {
+          continue;
+        }
+        const durations = exactLiveDurationsByVersion.get(run.templateVersion) ?? [];
+        durations.push(Math.max(0, run.endedAt.getTime() - run.startedAt.getTime()));
+        exactLiveDurationsByVersion.set(run.templateVersion, durations);
+      }
+      const versionMetrics = workflowTemplatePerVersionFromRollups(
+        [...versionRollups, ...liveVersionRollups],
+        exactLiveDurationsByVersion
+      );
       const analytics = computeAnalytics(
         selectedRuns,
         steps.slice(0, ANALYTICS_ROW_CAP),

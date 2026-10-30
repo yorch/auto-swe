@@ -9,6 +9,12 @@ export interface WorkflowRunAttributionScope {
   teamIds: string[];
 }
 
+export interface RollupAttributionWhere {
+  orgId?: { in: string[] } | undefined;
+  teamId?: string | { in: string[] } | undefined;
+  OR?: RollupAttributionWhere[] | undefined;
+}
+
 export async function resolveWorkflowRunAttributionScope(
   prisma: Pick<PrismaClient, 'organizationMembership' | 'team' | 'teamMembership'>,
   user: { role: string; sub: string },
@@ -75,7 +81,7 @@ export function workflowRunAttributionWhere(
 
 export function workflowRunRollupAttributionWhere(
   scope: WorkflowRunAttributionScope
-): Prisma.WorkflowRunDailyRollupWhereInput {
+): RollupAttributionWhere {
   if (scope.teamId) {
     return { teamId: scope.teamId };
   }
