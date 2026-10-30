@@ -279,13 +279,14 @@ export async function rollupWorkflowRuns(
           orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
           select: {
             attributedOrgId: true,
+            attributedRepoId: true,
             attributedTeamId: true,
-            connectionId: true,
             costUsdAccrued: true,
             endedAt: true,
             estimatedHumanTimeSaved: true,
             hadHumanStep: true,
             id: true,
+            launchedById: true,
             outcomeDomain: true,
             outcomeType: true,
             startedAt: true,
@@ -297,7 +298,7 @@ export async function rollupWorkflowRuns(
             workRequest: {
               select: {
                 activeWorkflows: {
-                  select: { costUsdAccrued: true, repoId: true, temporalWorkflowId: true },
+                  select: { costUsdAccrued: true, temporalWorkflowId: true },
                 },
               },
             },
@@ -358,7 +359,14 @@ export async function rollupWorkflowRuns(
               resolvedAt: true,
               resolvedBy: true,
               resolvedVia: true,
-              run: { select: { attributedOrgId: true, attributedTeamId: true } },
+              run: {
+                select: {
+                  attributedOrgId: true,
+                  attributedRepoId: true,
+                  attributedTeamId: true,
+                  launchedById: true,
+                },
+              },
               status: true,
             },
             where: { requestedAt: { gte: dayStart, lt: dayEnd } },
@@ -378,7 +386,9 @@ export async function rollupWorkflowRuns(
     const humanRows = buildHumanStepDailyRollups(
       selectedHumanSteps.map((step) => ({
         kind: step.kind,
+        launchedById: step.run.launchedById,
         orgId: step.run.attributedOrgId,
+        repoId: step.run.attributedRepoId,
         requestedAt: step.requestedAt,
         resolvedAt: step.resolvedAt,
         resolvedBy: step.resolvedBy,
@@ -392,6 +402,8 @@ export async function rollupWorkflowRuns(
         attributedOrgId: run.attributedOrgId,
         attributedTeamId: run.attributedTeamId,
         id: run.id,
+        launchedById: run.launchedById,
+        repoId: run.attributedRepoId,
         startedAt: run.startedAt,
       })),
       traces,

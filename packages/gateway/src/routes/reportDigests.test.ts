@@ -4,6 +4,10 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { describe, expect, it, vi } from 'vitest';
 import { reportDigestRoutes } from './reportDigests.js';
 
+const configMocks = vi.hoisted(() => ({ orgWideReportsEnabled: true }));
+vi.mock('@auto-swe/shared/config', () => ({
+  resolveSetting: async () => configMocks.orgWideReportsEnabled,
+}));
 vi.mock('@auto-swe/shared/lib/reportDigestUnsubscribe', () => ({
   reportDigestUnsubscribeSubscriptionId: (token: string) =>
     token === 'valid-token' ? '66666666-6666-4666-8666-666666666666' : null,
@@ -21,7 +25,12 @@ const CHANNEL_B = '55555555-5555-4555-8555-555555555555';
 const SUBSCRIPTION = '66666666-6666-4666-8666-666666666666';
 const AUTH = { authorization: 'Bearer fake' };
 
-async function buildApp(role: string, membership: { orgIds?: string[]; teamIds?: string[] } = {}) {
+async function buildApp(
+  role: string,
+  membership: { orgIds?: string[]; teamIds?: string[] } = {},
+  orgWideReportsEnabled = true
+) {
+  configMocks.orgWideReportsEnabled = orgWideReportsEnabled;
   const temporal = { triggerReportDigestTest: vi.fn().mockResolvedValue(undefined) };
   const prisma = {
     configAuditLog: { create: vi.fn().mockResolvedValue(undefined) },
@@ -77,6 +86,40 @@ async function buildApp(role: string, membership: { orgIds?: string[]; teamIds?:
 }
 
 describe('report digest routes', () => {
+  it('forbids creating, updating and test-sending organization digests while disabled', async () => {
+    const { app, prisma } = await buildApp('ENGINEER', { orgIds: [ORG_A] }, false);
+    const create = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { emailRecipients: ['reports@example.test'], orgId: ORG_A, scope: 'ORGANIZATION' },
+      url: '/api/v1/report-digests',
+    });
+    expect(create.statusCode).toBe(403);
+    expect(create.json().error).toContain('Organization-wide reports are disabled');
+
+    prisma.reportDigestSubscription.findUnique.mockResolvedValue({
+      emailRecipients: ['reports@example.test'],
+      id: SUBSCRIPTION,
+      orgId: ORG_A,
+      scope: 'ORGANIZATION',
+      teamId: null,
+    });
+    const update = await app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { enabled: false },
+      url: `/api/v1/report-digests/${SUBSCRIPTION}`,
+    });
+    const testSend = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/report-digests/${SUBSCRIPTION}/send-test`,
+    });
+    expect(update.statusCode).toBe(403);
+    expect(testSend.statusCode).toBe(403);
+    expect(prisma.reportDigestSubscription.update).not.toHaveBeenCalled();
+    await app.close();
+  });
   it('renders a non-mutating confirmation on GET and opts out through the RFC 8058 POST', async () => {
     const { app, prisma } = await buildApp('VIEWER');
     prisma.reportDigestSubscription.findUnique.mockResolvedValue({

@@ -202,7 +202,12 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
     },
     where: { id: input.channelId },
   });
+  const activeWorkflow = await prisma.activeWorkflow.findUnique({
+    select: { repoId: true },
+    where: { temporalWorkflowId: input.workflowId },
+  });
   const attribution = resolveWorkflowRunAttribution({
+    activeWorkflowRepoId: activeWorkflow?.repoId,
     channel: channel?.team ? { team: channel.team } : null,
     template: { team: templateTeam },
   });
@@ -260,6 +265,7 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
         agentRuntimes: agentRuntimes as Prisma.InputJsonObject,
         agentVersions,
         attributedOrgId: attribution.attributedOrgId,
+        attributedRepoId: attribution.attributedRepoId,
         attributedTeamId: attribution.attributedTeamId,
         channelId: channel?.id ?? null,
         // Channel launches have no durable actor-bound source snapshot; fail closed.

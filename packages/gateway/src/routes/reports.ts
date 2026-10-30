@@ -29,7 +29,6 @@ import {
   resolveWorkflowRunAttributionScope,
   workflowRunAttributionWhere,
   workflowRunRollupAttributionWhere,
-  workflowRunWithLegacyVisibility,
 } from '../lib/workflowRunAttributionScope.js';
 import {
   coveredHumanStepRollupDays,
@@ -101,6 +100,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       const scope = await resolveWorkflowRunAttributionScope(
         fastify.prisma,
         user,
+        request.repoAccessGate,
         request.query.teamId
       );
       if (!scope.authorized) {
@@ -146,8 +146,8 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 orderBy: { startedAt: 'desc' },
                 select: {
                   attributedOrgId: true,
+                  attributedRepoId: true,
                   attributedTeamId: true,
-                  connectionId: true,
                   costUsdAccrued: true,
                   endedAt: true,
                   estimatedHumanTimeSaved: true,
@@ -167,7 +167,6 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                       activeWorkflows: {
                         select: {
                           costUsdAccrued: true,
-                          repoId: true,
                           temporalWorkflowId: true,
                         },
                       },
@@ -294,7 +293,16 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             fastify.prisma.team.findMany({
               select: { id: true, name: true },
               where: {
-                id: { in: unique(allRows.flatMap((row) => (row.teamId ? [row.teamId] : []))) },
+                AND: [
+                  {
+                    id: { in: unique(allRows.flatMap((row) => (row.teamId ? [row.teamId] : []))) },
+                  },
+                  user.role === 'ADMIN'
+                    ? {}
+                    : {
+                        OR: [{ id: { in: scope.teamIds } }, { orgId: { in: scope.orgIds } }],
+                      },
+                ],
               },
             })
         ),
@@ -339,15 +347,34 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       for (const template of templates) {
         templateNames.set(template.id, template.name);
       }
-      const report = deliveryReportFromRollups(
-        allRows,
+      const otherTeamId = '__other_team__';
+      const visibleTeamIds = new Set(teams.map((team) => team.id));
+      const reportRows = allRows.map((row) =>
+        row.teamId && !visibleTeamIds.has(row.teamId) ? { ...row, teamId: otherTeamId } : row
+      );
+      const reportMergeDurations = exactLiveMergeDurations?.map((merge) =>
+        merge.teamId && !visibleTeamIds.has(merge.teamId)
+          ? { ...merge, teamId: otherTeamId }
+          : merge
+      );
+      const deliveryReport = deliveryReportFromRollups(
+        reportRows,
         {
           repos: repoNames,
-          teams: new Map(teams.map((team) => [team.id, team.name])),
+          teams: new Map([
+            ...teams.map((team) => [team.id, team.name] as const),
+            [otherTeamId, 'Other team'],
+          ]),
           templates: templateNames,
         },
-        exactLiveMergeDurations
+        reportMergeDurations
       );
+      const report = {
+        ...deliveryReport,
+        byTeam: deliveryReport.byTeam.map((team) =>
+          team.teamId === otherTeamId ? { ...team, teamId: null } : team
+        ),
+      };
       return {
         data: {
           ...report,
@@ -376,6 +403,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       const scope = await resolveWorkflowRunAttributionScope(
         fastify.prisma,
         user,
+        request.repoAccessGate,
         request.query.teamId
       );
       if (!scope.authorized) {
@@ -390,10 +418,11 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             orderBy: { startedAt: 'desc' },
             select: {
               attributedOrgId: true,
+              attributedRepoId: true,
               attributedTeamId: true,
               id: true,
+              launchedById: true,
               startedAt: true,
-              template: { select: { name: true } },
               templateId: true,
               workflowId: true,
             },
@@ -531,12 +560,14 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                   orderBy: { startedAt: 'desc' },
                   select: {
                     attributedOrgId: true,
+                    attributedRepoId: true,
                     attributedTeamId: true,
                     costUsdAccrued: true,
                     endedAt: true,
                     estimatedHumanTimeSaved: true,
                     hadHumanStep: true,
                     id: true,
+                    launchedById: true,
                     outcomeDomain: true,
                     outcomeType: true,
                     startedAt: true,
@@ -644,9 +675,10 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
           estimatedHumanTimeSaved: run.estimatedHumanTimeSaved,
           hadHumanStep: run.hadHumanStep,
           id: run.id,
+          launchedById: run.launchedById,
           outcomeDomain: run.outcomeDomain,
           outcomeType: run.outcomeType,
-          repoId: null,
+          repoId: run.attributedRepoId,
           startedAt: run.startedAt,
           status: run.status,
           templateId: run.templateId,
@@ -700,6 +732,8 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             attributedOrgId: run.attributedOrgId,
             attributedTeamId: run.attributedTeamId,
             id: run.id,
+            launchedById: run.launchedById,
+            repoId: run.attributedRepoId,
             startedAt: run.startedAt,
           })),
           traces: liveReviewTraces.slice(0, REPORT_ROW_CAP).map((trace) => ({
@@ -878,6 +912,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       const scope = await resolveWorkflowRunAttributionScope(
         fastify.prisma,
         user,
+        request.repoAccessGate,
         request.query.teamId
       );
       if (!scope.authorized) {
@@ -998,6 +1033,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       const scope = await resolveWorkflowRunAttributionScope(
         fastify.prisma,
         user,
+        request.repoAccessGate,
         request.query.teamId
       );
       if (!scope.authorized) {
@@ -1016,13 +1052,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
         covered,
         workflowRunRollupHorizonMs(nowMs)
       );
-      const visibleRun = {
-        ...workflowRunWithLegacyVisibility(
-          user,
-          visibility(user, request.repoAccessGate),
-          request.query.teamId
-        ),
-      };
+      const visibleRun = workflowRunAttributionWhere(scope);
       const [windowSteps, pendingCount, pendingOldest, decisions, hitlRollupRows] =
         await Promise.all([
           asPlatformAdmin(user, 'admin HITL report spans every tenant', ['WorkflowHumanStep'], () =>
@@ -1033,7 +1063,6 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 requestedAt: true,
                 resolvedAt: true,
                 resolvedBy: true,
-                resolvedByUser: { select: { name: true } },
                 resolvedVia: true,
                 status: true,
               },
@@ -1050,11 +1079,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             () =>
               fastify.prisma.workflowHumanStep.count({
                 where: {
-                  run: workflowRunWithLegacyVisibility(
-                    user,
-                    visibility(user, request.repoAccessGate),
-                    request.query.teamId
-                  ),
+                  run: visibleRun,
                   status: 'PENDING',
                 },
               })
@@ -1068,11 +1093,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 orderBy: { requestedAt: 'asc' },
                 select: { requestedAt: true },
                 where: {
-                  run: workflowRunWithLegacyVisibility(
-                    user,
-                    visibility(user, request.repoAccessGate),
-                    request.query.teamId
-                  ),
+                  run: visibleRun,
                   status: 'PENDING',
                 },
               })
@@ -1088,11 +1109,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 take: REPORT_ROW_CAP + 1,
                 where: {
                   createdAt: { gte: range.start, lt: range.end },
-                  run: workflowRunWithLegacyVisibility(
-                    user,
-                    visibility(user, request.repoAccessGate),
-                    request.query.teamId
-                  ),
+                  run: visibleRun,
                 },
               })
           ),
@@ -1115,38 +1132,68 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               )
             : Promise.resolve([]),
         ]);
-      const approverIds = unique(
-        hitlRollupRows.flatMap((row) => (row.resolvedBy ? [row.resolvedBy] : []))
+      const approverIds = unique([
+        ...hitlRollupRows.flatMap((row) => (row.resolvedBy ? [row.resolvedBy] : [])),
+        ...windowSteps.flatMap((step) => (step.resolvedBy ? [step.resolvedBy] : [])),
+      ]);
+      const approverNames = new Map<string, string | null>(
+        approverIds.map((id) => [id, user.role === 'ADMIN' ? 'Unknown approver' : 'Other approver'])
       );
-      const approverNames = approverIds.length
-        ? new Map(
-            (
-              await runUnscoped(
-                'HITL rollup approver labels are resolved only for scoped rows',
-                ['User'],
-                () =>
-                  fastify.prisma.user.findMany({
-                    select: { id: true, name: true },
-                    where: { id: { in: approverIds } },
-                  })
-              )
-            ).map((userRow) => [userRow.id, userRow.name])
-          )
-        : new Map<string, string>();
+      const visibleApproverIds = new Set<string>();
+      if (approverIds.length) {
+        const visibleApprovers = await runUnscoped(
+          'HITL approver labels are resolved only for caller-visible users',
+          ['User'],
+          () =>
+            fastify.prisma.user.findMany({
+              select: { id: true, name: true },
+              where: {
+                AND: [
+                  { id: { in: approverIds } },
+                  user.role === 'ADMIN'
+                    ? {}
+                    : {
+                        OR: [
+                          { id: { in: [user.sub] } },
+                          ...(scope.teamIds.length
+                            ? [{ memberships: { some: { teamId: { in: scope.teamIds } } } }]
+                            : []),
+                          ...(scope.orgIds.length
+                            ? [{ orgMemberships: { some: { orgId: { in: scope.orgIds } } } }]
+                            : []),
+                        ],
+                      },
+                ],
+              },
+            })
+        );
+        for (const approver of visibleApprovers) {
+          visibleApproverIds.add(approver.id);
+          approverNames.set(approver.id, approver.name);
+        }
+      }
+      const otherApproverId = '__other_approver__';
+      if (user.role !== 'ADMIN') {
+        approverNames.set(otherApproverId, 'Other approver');
+      }
+      const reportApproverId = (id: string | null) =>
+        user.role !== 'ADMIN' && id && !visibleApproverIds.has(id) ? otherApproverId : id;
       const liveWindowSteps = windowSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
         kind: step.kind,
         requestedAt: step.requestedAt,
         resolvedAt: step.resolvedAt,
-        resolvedBy: step.resolvedBy,
-        resolvedByName: step.resolvedByUser?.name ?? null,
+        resolvedBy: reportApproverId(step.resolvedBy),
+        resolvedByName: step.resolvedBy ? (approverNames.get(step.resolvedBy) ?? null) : null,
         resolvedVia: step.resolvedVia,
         status: step.status,
       }));
-      for (const step of liveWindowSteps) {
-        if (step.resolvedBy) {
-          approverNames.set(step.resolvedBy, step.resolvedByName);
-        }
-      }
+      const reportHitlRollupRows =
+        user.role === 'ADMIN'
+          ? hitlRollupRows
+          : hitlRollupRows.map((row) => ({
+              ...row,
+              resolvedBy: reportApproverId(row.resolvedBy),
+            }));
       const report = computeHitlReport({
         autonomyDecisions: decisions.slice(0, REPORT_ROW_CAP),
         now: new Date(),
@@ -1168,7 +1215,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       if (hitlPlan.rollupDays.length) {
         Object.assign(
           report,
-          humanStepMetricsFromRollups([...hitlRollupRows, ...liveHumanRows], approverNames)
+          humanStepMetricsFromRollups([...reportHitlRollupRows, ...liveHumanRows], approverNames)
         );
       }
       Object.assign(report, {

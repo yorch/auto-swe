@@ -1,3 +1,4 @@
+import { resolveSetting } from '@auto-swe/shared/config';
 import {
   reportDigestUnsubscribeSubscriptionId,
   verifyReportDigestUnsubscribeToken,
@@ -261,6 +262,9 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
     return { emailRecipients, orgId };
   };
 
+  const orgWideReportsEnabled = (orgId: string | null) =>
+    orgId ? resolveSetting('analytics.orgWideReports', { orgId }) : Promise.resolve(false);
+
   const countScopeSubscriptions = (
     value: { orgId: string | null; scope: 'ORGANIZATION' | 'TEAM'; teamId: string | null },
     excludingId?: string
@@ -361,6 +365,11 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
     if (!(await canManage(user, candidate))) {
       return reply.status(403).send({ error: 'Digest scope access is not authorized' });
     }
+    if (body.scope === 'ORGANIZATION' && !(await orgWideReportsEnabled(orgId))) {
+      return reply
+        .status(403)
+        .send({ error: 'Organization-wide reports are disabled for this organization' });
+    }
     if ((await countScopeSubscriptions(candidate)) >= MAX_SUBSCRIPTIONS_PER_SCOPE) {
       return reply.status(409).send({ error: 'A scope can have at most 5 digest subscriptions' });
     }
@@ -414,6 +423,11 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (!(await canManage(user, value))) {
         return reply.status(403).send({ error: 'Digest scope access is not authorized' });
+      }
+      if (value.scope === 'ORGANIZATION' && !(await orgWideReportsEnabled(value.orgId))) {
+        return reply
+          .status(403)
+          .send({ error: 'Organization-wide reports are disabled for this organization' });
       }
       if (
         (await countScopeSubscriptions(
@@ -526,6 +540,11 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (!(await canManage(user, existing))) {
         return reply.status(403).send({ error: 'Digest scope access is not authorized' });
+      }
+      if (existing.scope === 'ORGANIZATION' && !(await orgWideReportsEnabled(existing.orgId))) {
+        return reply
+          .status(403)
+          .send({ error: 'Organization-wide reports are disabled for this organization' });
       }
       const now = new Date();
       if (!(await claimReportDigestTestSend(fastify.prisma, existing.id, now))) {

@@ -315,6 +315,9 @@ describe('createWorkflowRun', () => {
     vi.mocked(prisma.connection.findUnique).mockResolvedValue({
       team: { id: 'run-team', orgId: 'run-org' },
     } as never);
+    vi.mocked(prisma.activeWorkflow.findUnique).mockResolvedValueOnce({
+      repoId: 'run-repo',
+    } as never);
 
     await createWorkflowRun({
       runConnectionId: 'run-connection',
@@ -325,6 +328,7 @@ describe('createWorkflowRun', () => {
 
     expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({
       attributedOrgId: 'run-org',
+      attributedRepoId: 'run-repo',
       attributedTeamId: 'run-team',
     });
   });
@@ -1241,7 +1245,12 @@ describe('createWorkflowRun', () => {
           })
         );
         expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({
+          attributedRepoId: 'repo-sched',
           connectionId: 'repo-sched',
+        });
+        expect(prisma.workflowRun.updateMany).toHaveBeenCalledWith({
+          data: { attributedRepoId: 'repo-sched' },
+          where: { workflowId: fire.workflowId },
         });
       });
 

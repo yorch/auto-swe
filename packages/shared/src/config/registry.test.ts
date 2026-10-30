@@ -33,6 +33,13 @@ describe('retention settings', () => {
   it('page-view events are off by default', () => {
     expect(SETTING_DEFINITIONS['analytics.uiEventsEnabled'].defaultValue).toBe(false);
   });
+
+  it('organization-wide reports are disabled by default and org-overridable by platform admins only', () => {
+    const setting = SETTING_DEFINITIONS['analytics.orgWideReports'];
+    expect(setting.defaultValue).toBe(false);
+    expect(setting.overridableAt).toEqual(['ORGANIZATION']);
+    expect(setting.requiredRole).toBe('ADMIN');
+  });
 });
 
 describe('UI validation settings', () => {

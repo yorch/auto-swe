@@ -543,6 +543,7 @@ model Connection {
   runInputs             RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
   workflowRuns          WorkflowRun[]
+  attributedRepoRuns    WorkflowRun[]         @relation("WorkflowRunAttributedRepo")
   mcpAgents             Agent[]                @relation("AgentMcpConnection")
   /// Repo dependency graph edges (repo-dependency-graph feature). `dependenciesFrom`
   /// are edges where this repo is the dependent; `dependenciesTo` where it is depended upon.
@@ -2040,6 +2041,8 @@ model WorkflowRun {
   /// Reporting-only attribution; these fields do not affect run visibility.
   attributedTeamId  String?           @map("attributed_team_id") @db.Uuid
   attributedTeam    Team?             @relation("WorkflowRunAttributedTeam", fields: [attributedTeamId], references: [id], onDelete: SetNull)
+  attributedRepoId  String?           @map("attributed_repo_id") @db.Uuid
+  attributedRepo    Connection?       @relation("WorkflowRunAttributedRepo", fields: [attributedRepoId], references: [id], onDelete: SetNull)
   attributedOrgId   String?           @map("attributed_org_id") @db.Uuid
   attributedOrganization Organization? @relation("WorkflowRunAttributedOrganization", fields: [attributedOrgId], references: [id], onDelete: SetNull)
   /// True when this run was routed to the canary arm (evals P2 canary).
@@ -2119,6 +2122,7 @@ model WorkflowRun {
   @@index([templateId])
   @@index([workRequestId])
   @@index([attributedTeamId, startedAt])
+  @@index([attributedRepoId, startedAt])
   @@index([attributedOrgId, startedAt])
   @@index([launchedById])
   @@index([channelId])
@@ -2157,13 +2161,14 @@ model RunEvidence {
 model WorkflowRunDailyRollup {
   id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   day                      DateTime @db.Date
-  bucketVersion            Int      @default(1) @map("bucket_version")
+  bucketVersion            Int      @default(4) @map("bucket_version")
   dimensionKey             String   @map("dimension_key")
   orgId                    String?  @map("org_id") @db.Uuid
   teamId                   String?  @map("team_id") @db.Uuid
   templateId               String?  @map("template_id") @db.Uuid
   templateVersion          Int?     @map("template_version")
   repoId                   String?  @map("repo_id") @db.Uuid
+  launchedById             String?  @map("launched_by_id") @db.Uuid
   status                   String
   outcomeDomain            String?  @map("outcome_domain")
   outcomeType              String?  @map("outcome_type")
@@ -2196,16 +2201,20 @@ model WorkflowRunDailyRollup {
   @@index([orgId, day])
   @@index([teamId, day])
   @@index([templateId, day])
+  @@index([repoId, day])
+  @@index([launchedById, day])
   @@map("workflow_run_daily_rollups")
 }
 
 model HumanStepDailyRollup {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   day            DateTime @db.Date
-  bucketVersion  Int      @default(2) @map("bucket_version")
+  bucketVersion  Int      @default(4) @map("bucket_version")
   dimensionKey   String   @map("dimension_key")
   orgId          String?  @map("org_id") @db.Uuid
   teamId         String?  @map("team_id") @db.Uuid
+  repoId         String?  @map("repo_id") @db.Uuid
+  launchedById   String?  @map("launched_by_id") @db.Uuid
   kind           String
   status         String
   resolvedVia    String   @map("resolved_via")
@@ -2220,16 +2229,20 @@ model HumanStepDailyRollup {
   @@index([day])
   @@index([orgId, day])
   @@index([teamId, day])
+  @@index([repoId, day])
+  @@index([launchedById, day])
   @@map("human_step_daily_rollups")
 }
 
 model ReviewVerdictDailyRollup {
   id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   day             DateTime @db.Date
-  bucketVersion   Int      @default(2) @map("bucket_version")
+  bucketVersion   Int      @default(4) @map("bucket_version")
   dimensionKey    String   @map("dimension_key")
   orgId           String?  @map("org_id") @db.Uuid
   teamId          String?  @map("team_id") @db.Uuid
+  repoId          String?  @map("repo_id") @db.Uuid
+  launchedById    String?  @map("launched_by_id") @db.Uuid
   reviewer        String?
   severity        String?
   approved        Boolean?
@@ -2243,6 +2256,8 @@ model ReviewVerdictDailyRollup {
   @@index([day])
   @@index([orgId, day])
   @@index([teamId, day])
+  @@index([repoId, day])
+  @@index([launchedById, day])
   @@map("review_verdict_daily_rollups")
 }
 

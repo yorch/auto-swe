@@ -186,7 +186,7 @@ describe.skipIf(!enabled)('workflow run attribution backfill against Postgres', 
       },
       {
         channelId: null,
-        connectionId: null,
+        connectionId: connectionIds[4],
         repoId: null,
         templateId: requiredAt(templateIds, 4),
         workRequestId: null,
@@ -240,6 +240,7 @@ describe.skipIf(!enabled)('workflow run attribution backfill against Postgres', 
   it('matches resolver precedence, billing-org fallback, and null attribution', async () => {
     const expected = [
       resolveWorkflowRunAttribution({
+        activeWorkflowRepoId: requiredAt(connectionIds, 0),
         connection: { team: { id: requiredAt(teamIds, 0), orgId } },
       }),
       resolveWorkflowRunAttribution({
@@ -249,7 +250,11 @@ describe.skipIf(!enabled)('workflow run attribution backfill against Postgres', 
       resolveWorkflowRunAttribution({
         workRequest: { requestedByService: { team: { id: requiredAt(teamIds, 3), orgId } } },
       }),
-      resolveWorkflowRunAttribution({ template: { team: { id: requiredAt(teamIds, 4), orgId } } }),
+      resolveWorkflowRunAttribution({
+        connection: { team: { id: requiredAt(teamIds, 4), orgId } },
+        connectionId: requiredAt(connectionIds, 4),
+        template: { team: { id: requiredAt(teamIds, 4), orgId } },
+      }),
       resolveWorkflowRunAttribution({ workRequest: { billingOrgId: orgId } }),
       resolveWorkflowRunAttribution({}),
     ];
@@ -257,7 +262,8 @@ describe.skipIf(!enabled)('workflow run attribution backfill against Postgres', 
       UPDATE "workflow_runs" AS target
       SET
         "attributed_team_id" = selected_team."id",
-        "attributed_org_id" = COALESCE(selected_team."org_id", work_request."billing_org_id")
+        "attributed_org_id" = COALESCE(selected_team."org_id", work_request."billing_org_id"),
+        "attributed_repo_id" = COALESCE(aw."repo_id", source."connection_id")
       FROM "workflow_runs" AS source
       LEFT JOIN "run_inputs" AS work_request ON work_request."id" = source."work_request_id"
       LEFT JOIN "active_workflows" AS aw ON aw."temporal_workflow_id" = source."workflow_id"
@@ -282,7 +288,12 @@ describe.skipIf(!enabled)('workflow run attribution backfill against Postgres', 
         AND COALESCE(selected_team."id", work_request."billing_org_id") IS NOT NULL
     `;
     const actual = await prisma.workflowRun.findMany({
-      select: { attributedOrgId: true, attributedTeamId: true, workflowId: true },
+      select: {
+        attributedOrgId: true,
+        attributedRepoId: true,
+        attributedTeamId: true,
+        workflowId: true,
+      },
       where: { id: { in: runIds } },
     });
     expect(
@@ -290,6 +301,7 @@ describe.skipIf(!enabled)('workflow run attribution backfill against Postgres', 
         .sort((a, b) => a.workflowId.localeCompare(b.workflowId))
         .map((row) => ({
           attributedOrgId: row.attributedOrgId,
+          attributedRepoId: row.attributedRepoId,
           attributedTeamId: row.attributedTeamId,
         }))
     ).toEqual(expected);
