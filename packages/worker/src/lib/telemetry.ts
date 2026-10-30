@@ -44,12 +44,14 @@ export function initTelemetry(serviceName: string): {
     logRecordProcessors: endpoint
       ? [new BatchLogRecordProcessor({ exporter: new OTLPLogExporter({ url: endpoint }) })]
       : undefined,
-    metricReader: endpoint
-      ? new PeriodicExportingMetricReader({
-          exporter: new OTLPMetricExporter({ url: endpoint }),
-          // Standard OTel env-var convention; defaults to 30s when unset/invalid.
-          exportIntervalMillis: resolveOtelMetricExportInterval(),
-        })
+    metricReaders: endpoint
+      ? [
+          new PeriodicExportingMetricReader({
+            exporter: new OTLPMetricExporter({ url: endpoint }),
+            // Standard OTel env-var convention; defaults to 30s when unset/invalid.
+            exportIntervalMillis: resolveOtelMetricExportInterval(),
+          }),
+        ]
       : undefined,
     serviceName,
     traceExporter,

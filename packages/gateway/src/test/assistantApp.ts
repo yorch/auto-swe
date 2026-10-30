@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { vi } from 'vitest';
+import { type Mock, vi } from 'vitest';
 import authPlugin from '../plugins/auth.js';
 
 /**
@@ -14,7 +14,14 @@ export const OTHER_USER_ID = '00000000-0000-4000-8000-0000000000bb';
 export const CONVERSATION_ID = '00000000-0000-4000-8000-0000000000c1';
 export const ACTION_ID = '00000000-0000-4000-8000-0000000000d1';
 
-export function makeAssistantPrisma() {
+// Spelled out because the inferred `vi.fn()` type names a vitest-internal type TypeScript cannot
+// reference from a declaration (TS2883).
+export function makeAssistantPrisma(): {
+  assistantAction: Record<'create' | 'findFirst' | 'findUnique' | 'updateMany', Mock>;
+  assistantConversation: { findFirst: Mock };
+  configAuditLog: { create: Mock };
+  user: { findUnique: Mock };
+} {
   return {
     assistantAction: {
       create: vi.fn(),

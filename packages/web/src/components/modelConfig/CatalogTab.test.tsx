@@ -8,7 +8,7 @@ import type { ModelCatalogEntry } from '@/lib/modelCatalog';
 const {
   batchAsync,
   createAsync,
-  DEFAULT_DATA,
+  defaultData,
   ENTRIES,
   discoverMutate,
   dismissMutate,
@@ -89,7 +89,7 @@ const {
     };
   }
 
-  function DEFAULT_DATA(): Record<string, unknown> {
+  function defaultData(): Record<string, unknown> {
     return {
       hiddenDismissed: { NEW: 0, RETIREMENT_CANDIDATE: 0 },
       providers: [
@@ -127,7 +127,7 @@ const {
   }
 
   const suggestionState: { data: Record<string, unknown> } = { data: {} };
-  suggestionState.data = DEFAULT_DATA();
+  suggestionState.data = defaultData();
   // One object per answer: the form tells a new answer from a re-render by identity.
   const hintState: {
     data: Record<string, unknown> | undefined;
@@ -141,7 +141,7 @@ const {
   return {
     batchAsync: vi.fn(async (_entries: unknown) => ({})),
     createAsync: vi.fn(async (_body: unknown) => ({})),
-    DEFAULT_DATA,
+    defaultData,
     discoverMutate: vi.fn(),
     dismissMutate: vi.fn(),
     ENTRIES,
@@ -347,9 +347,9 @@ describe('CatalogTab price hints', () => {
 
   it("shows each discovered model's suggested price, and says when none is published", () => {
     suggestionState.data = {
-      ...DEFAULT_DATA(),
+      ...defaultData(),
       suggestions: [
-        ...(DEFAULT_DATA().suggestions as unknown[]),
+        ...(defaultData().suggestions as unknown[]),
         {
           dismissedAt: null,
           displayName: null,
@@ -373,7 +373,7 @@ describe('CatalogTab price hints', () => {
     expect(within(priced).getByText('$3 / $15')).toBeTruthy();
     expect(within(priced).getByText(/listing/)).toBeTruthy();
     expect(within(rowFor('ollama/qwen-9')).getByText('No published price')).toBeTruthy();
-    suggestionState.data = DEFAULT_DATA();
+    suggestionState.data = defaultData();
   });
 
   const openAdd = () => {
@@ -513,7 +513,7 @@ describe('CatalogTab empty discovery states', () => {
   }
 
   afterEach(() => {
-    suggestionState.data = DEFAULT_DATA();
+    suggestionState.data = defaultData();
   });
 
   it('says no provider has been checked when there are no statuses', () => {

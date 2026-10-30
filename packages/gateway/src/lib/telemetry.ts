@@ -61,11 +61,13 @@ export function initTelemetry(serviceName: string): { shutdown: () => Promise<vo
       ? [new BatchLogRecordProcessor({ exporter: new OTLPLogExporter({ url: endpoint }) })]
       : undefined,
     // Same reader as the worker's; the gateway's metrics are in lib/metrics.ts.
-    metricReader: endpoint
-      ? new PeriodicExportingMetricReader({
-          exporter: new OTLPMetricExporter({ url: endpoint }),
-          exportIntervalMillis: resolveOtelMetricExportInterval(),
-        })
+    metricReaders: endpoint
+      ? [
+          new PeriodicExportingMetricReader({
+            exporter: new OTLPMetricExporter({ url: endpoint }),
+            exportIntervalMillis: resolveOtelMetricExportInterval(),
+          }),
+        ]
       : undefined,
     serviceName,
     traceExporter: endpoint ? new OTLPTraceExporter({ url: endpoint }) : undefined,
