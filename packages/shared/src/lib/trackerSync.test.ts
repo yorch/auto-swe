@@ -216,7 +216,7 @@ describe('repoTrackerScope', () => {
     });
   });
 
-  it("resolves the list at the first repository's team and organization", async () => {
+  it("resolves the list at the repository's team and organization", async () => {
     mocks.resolveSetting.mockResolvedValue(['acme/issues']);
     const repos = [repo({ team: { orgId: 'org-1' }, teamId: 'team-1' })];
     expect((await repoTrackerScope(repos)).extraRepos).toEqual(['acme/issues']);
@@ -224,6 +224,17 @@ describe('repoTrackerScope', () => {
       orgId: 'org-1',
       teamId: 'team-1',
     });
+  });
+
+  it("lists the union of every repository's own scope", async () => {
+    mocks.resolveSetting.mockImplementation(async (_key: string, ctx: { teamId?: string }) =>
+      ctx.teamId === 'team-2' ? ['acme/b', 'acme/shared'] : ['acme/a', 'acme/shared']
+    );
+    const repos = [
+      repo({ teamId: 'team-1' }),
+      repo({ repoName: 'Api', team: { orgId: 'org-2' }, teamId: 'team-2' }),
+    ];
+    expect((await repoTrackerScope(repos)).extraRepos).toEqual(['acme/a', 'acme/shared', 'acme/b']);
   });
 
   it('does not throw, and lists nothing, when the setting cannot be read', async () => {

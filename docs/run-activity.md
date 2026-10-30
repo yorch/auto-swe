@@ -63,7 +63,7 @@ Each container registration gets a random Basic-auth proxy token. The worker ret
 and binds the registration to the registering activity's context and egress allowlist snapshot.
 The container receives uppercase/lowercase `HTTP_PROXY` and `HTTPS_PROXY` variables containing
 the credentials. `NO_PROXY` / `no_proxy` exclude localhost, loopback, and configured registry/model
-proxy hosts. Teardown releases the registration, closes remaining exchanges, and waits with a
+proxy hosts and the repository's own git host (clone, fetch and push go direct). A `NO_PROXY` entry also covers subdomains of that host, so `github.com` covers `api.github.com`. Only a plain hostname or IP literal is written there. Teardown releases the registration, closes remaining exchanges, and waits with a
 five-second bound. Registrations allow 32 concurrent exchanges and use a 60-second idle timeout.
 
 - Absolute-form plain HTTP is forwarded with method, sanitized path, status, duration and bytes.
@@ -153,6 +153,10 @@ hints reduce rendering work; the section does not use a dedicated virtualization
 
 ## Limitations
 
+- The repository's git host is excluded from the workspace proxy (`NO_PROXY`, which also matches
+  its subdomains), so git traffic to it, including a GitHub Enterprise host on a private address, is neither subject to the team
+  allowlist nor recorded as proxy rows. Other hosts a run clones from (dependency repositories on
+  a different host) go through the proxy and need an allowlist entry.
 - The proxy is cooperative, not transparent interception. Direct sockets and clients that ignore
   proxy environment variables bypass its enforcement and logging. The DNS filter remains; its
   hostname restriction alone does not prevent literal-IP connections.

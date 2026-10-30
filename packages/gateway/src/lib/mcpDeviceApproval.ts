@@ -31,6 +31,7 @@ export async function approveMcpDevice(request: FastifyRequest, reply: FastifyRe
     return refuse(401, 'unauthorized', 'Sign in to approve this request');
   }
   const result = await prisma.$transaction(async (tx) => {
+    // CLAUDE.md §7 exception: row lock serialising approvals per user; Prisma cannot express FOR UPDATE.
     const users = await tx.$queryRaw<
       Array<{ is_active: boolean }>
     >`SELECT is_active FROM users WHERE id = ${session.user.id}::uuid FOR UPDATE`;

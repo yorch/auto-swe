@@ -14,7 +14,7 @@ import {
 } from './activityContext.js';
 import { logWarn } from './activityLog.js';
 import { currentNodeTag, nodeTagColumns } from './activityNodeTag.js';
-import { redactJsonValues } from './agentTracer.js';
+import { redactJsonValues, redactString } from './agentTracer.js';
 import { maskCredentialShapes } from './redactToken.js';
 import { currentSpendOwner } from './spendOwner.js';
 import { currentTranscriptRecorder, sanitizedPath } from './transcriptRecorder.js';
@@ -98,7 +98,7 @@ async function bodyCapture(
       if (json) {
         return { bytes, truncated: true };
       }
-      body = maskCredentialShapes(body);
+      body = maskCredentialShapes(redactString(body));
     }
     const redacted = Buffer.from(body);
     return {

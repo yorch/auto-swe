@@ -19,7 +19,10 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: { team: { findUnique: teamFindUniqueMock } },
 }));
 
-vi.mock('../lib/egressWiring.js', () => ({ beginWorkspaceEgress: vi.fn(async () => null) }));
+vi.mock('../lib/egressWiring.js', () => ({
+  beginWorkspaceEgress: vi.fn(async () => null),
+  gitHostOf: (url: string) => new URL(url).hostname,
+}));
 
 import { beginWorkspaceEgress } from '../lib/egressWiring.js';
 
@@ -330,6 +333,20 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     expect(start).not.toContain('proxy-secret');
     await ws.destroy();
     expect(release).toHaveBeenCalledOnce();
+  });
+
+  it('passes the repository git host so it bypasses the egress proxy', async () => {
+    const ws = await createWorkspace(
+      'https://ghe.corp.internal/acme/repo.git',
+      'auto/TICKET-1',
+      'main',
+      undefined,
+      undefined,
+      undefined,
+      { teamId: 'team-1' }
+    );
+    expect(beginWorkspaceEgress).toHaveBeenCalledWith('team-1', ['ghe.corp.internal']);
+    await ws.destroy();
   });
 
   it('is best-effort: a failed metadata-block sidecar does not fail workspace creation', async () => {

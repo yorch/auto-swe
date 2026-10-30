@@ -153,14 +153,18 @@ export function isGitHubTicketInScope(
 }
 
 /**
- * {@link TrackerRepoScope} for repositories already in hand (the one a request targets). The
- * operator's extra repositories resolve at the first repository's team and organization.
+ * {@link TrackerRepoScope} for repositories already in hand (the ones a request targets). The
+ * operator's extra repositories are the union of each repository's own scope (its team and
+ * organization): the request targets every one of them, so none outranks another and the result
+ * does not depend on their order.
  */
 export async function repoTrackerScope(
   repos: ReadonlyArray<TrackerScopeRepo>
 ): Promise<TrackerRepoScope> {
   return {
-    extraRepos: await resolveRepoIssueRepos(repos[0]),
+    extraRepos: [
+      ...new Set((await Promise.all(repos.map((repo) => resolveRepoIssueRepos(repo)))).flat()),
+    ],
     instanceBaseUrl: await resolveGitHubBaseUrl(),
     repos,
   };

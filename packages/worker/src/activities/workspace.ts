@@ -6,7 +6,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { assertShellImageAllowed, DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
-import { beginWorkspaceEgress } from '../lib/egressWiring.js';
+import { beginWorkspaceEgress, gitHostOf } from '../lib/egressWiring.js';
 import type { CapturedResult, OnTimeout } from '../lib/execUtils.js';
 import {
   type GitIdentity,
@@ -727,7 +727,8 @@ export async function createWorkspace(
   let handle: WorkspaceHandle = backend.attach(containerName);
   try {
     const spec = agentWorkspaceSpec(containerName, effectiveImage, infra, options?.services);
-    egress = await beginWorkspaceEgress(options?.teamId ?? null);
+    const gitHost = gitHostOf(cleanUrl);
+    egress = await beginWorkspaceEgress(options?.teamId ?? null, gitHost ? [gitHost] : []);
     if (egress) {
       spec.reachWorker = true;
       spec.env = [...(spec.env ?? []), ...egress.env];

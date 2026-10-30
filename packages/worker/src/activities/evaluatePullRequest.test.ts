@@ -2452,6 +2452,108 @@ describe('evaluatePullRequest: bot approval', () => {
     expect(rowCodes()).toContain('bot-approval-refused:not-confirmed');
   });
 
+  it('withdraws the approval it just made when the review list cannot be read after the submit', async () => {
+    let afterSubmit = 0;
+    const scm = scmWith({
+      listPullRequestReviews: async () => {
+        if (submit.mock.calls.length > 0 && afterSubmit++ === 0) {
+          throw new Error('list failed');
+        }
+        return [...world.reviews];
+      },
+    });
+    const out = await evaluatePullRequestWith(INPUT, botDeps(scm));
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(out.statusState).not.toBe('success');
+    expect(statuses().every((st) => stateOf(st) !== 'success')).toBe(true);
+    expect(argsOf('enableAutoMerge')).toHaveLength(0);
+    expect(dismissed()).toEqual([NEW_REVIEW_ID]);
+    expect(lastRow().botApproved).toBe(false);
+  });
+
+  it('retracts an unrecorded approval and its status when a retryable error follows the publish', async () => {
+    const { prisma } = await import('@auto-swe/shared/db');
+    vi.mocked(prisma.prEvaluation.create).mockRejectedValueOnce(
+      Object.assign(new Error('unavailable'), { status: 503 })
+    );
+    await expect(evaluatePullRequestWith(INPUT, botDeps(scmWith()))).rejects.toMatchObject({
+      status: 503,
+    });
+    expect(stateOf(statuses().at(-1) as never)).toBe('pending');
+    expect(dismissed()).toEqual([NEW_REVIEW_ID]);
+    // A marker row says the platform made the dismissal, so the retry does not read it as a person's.
+    expect(m.created).toHaveLength(1);
+    expect(m.created[0]).toMatchObject({ headSha: HEAD, statusState: 'pending' });
+    expect(rowCodes()).toEqual(['bot-approval-withdrawn']);
+  });
+
+  it('approves again on the retry after a retraction, instead of reading it as a person dismissal', async () => {
+    const { prisma } = await import('@auto-swe/shared/db');
+    vi.mocked(prisma.prEvaluation.create).mockRejectedValueOnce(
+      Object.assign(new Error('unavailable'), { status: 503 })
+    );
+    await expect(evaluatePullRequestWith(INPUT, botDeps(scmWith()))).rejects.toMatchObject({
+      status: 503,
+    });
+    const rows = m.created.map((r) => ({ headSha: r.headSha, reasons: r.reasons }));
+    m.markers.mockResolvedValue(rows);
+    world.reviews = [dismissedOwn(HEAD, NEW_REVIEW_ID)];
+    submit.mockClear();
+    await evaluatePullRequestWith(INPUT, botDeps(scmWith()));
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(rowCodes()).not.toContain('bot-approval-suppressed');
+  });
+
+  it('still dismisses the approval when the status behind it cannot be reset', async () => {
+    const { prisma } = await import('@auto-swe/shared/db');
+    let failing = false;
+    vi.mocked(prisma.prEvaluation.create).mockImplementationOnce((() => {
+      failing = true;
+      return Promise.reject(Object.assign(new Error('unavailable'), { status: 503 }));
+    }) as never);
+    const base = scmWith();
+    const scm = {
+      ...base,
+      setCommitStatus: async (...a: Parameters<typeof base.setCommitStatus>) => {
+        if (failing) {
+          throw Object.assign(new Error('rate limited'), { status: 429 });
+        }
+        return base.setCommitStatus(...a);
+      },
+    } as typeof base;
+    await expect(evaluatePullRequestWith(INPUT, botDeps(scm))).rejects.toMatchObject({
+      status: 503,
+    });
+    expect(dismissed()).toEqual([NEW_REVIEW_ID]);
+  });
+
+  it('retracts a standing approval no row records when a later attempt fails', async () => {
+    const { prisma } = await import('@auto-swe/shared/db');
+    vi.mocked(prisma.prEvaluation.create).mockRejectedValueOnce(
+      Object.assign(new Error('unavailable'), { status: 503 })
+    );
+    world.reviews = [botApproval(BOT_REVIEW_ID)];
+    await expect(evaluatePullRequestWith(INPUT, botDeps(scmWith()))).rejects.toMatchObject({
+      status: 503,
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(dismissed()).toEqual([BOT_REVIEW_ID]);
+  });
+
+  it('retries the activity when the approval it made can be neither listed nor withdrawn', async () => {
+    const scm = scmWith({
+      listPullRequestReviews: async () => {
+        if (submit.mock.calls.length > 0) {
+          throw new Error('list failed');
+        }
+        return [...world.reviews];
+      },
+    });
+    await expect(evaluatePullRequestWith(INPUT, botDeps(scm))).rejects.toMatchObject({
+      type: 'BOT_APPROVAL_NOT_WITHDRAWN',
+    });
+  });
+
   it.each([
     'not-configured',
     'host-not-allowed',
