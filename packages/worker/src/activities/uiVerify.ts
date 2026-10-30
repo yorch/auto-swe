@@ -1,3 +1,4 @@
+import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import { type PreviewConfigInput, PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
@@ -5,7 +6,7 @@ import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
-import { BrowserSession } from '../browser/session.js';
+import { BrowserSession, type DriverResult } from '../browser/session.js';
 import { PreviewNotReadyError, startAppPreview } from '../lib/appPreview.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
@@ -45,11 +46,22 @@ export interface UiVerifyResult {
   pages?: UiVerifyPage[];
   e2e?: { exitCode: number; passed: boolean };
   evidenceIds?: string[];
+  /** Evidence the run could not keep (over a configured cap, or unreadable). */
+  notes?: string[];
   skipped?: boolean;
 }
 
 const DEFAULT_TIMEOUT_MS = 1_200_000;
 const LOG_TAIL_BYTES = 4000;
+const EVIDENCE_READ_BYTES = 100 * 1024 * 1024;
+
+/** A driver command that reports `ok: false` is a failure, not an empty result. */
+function requireDriver(result: DriverResult, what: string): DriverResult {
+  if (result.ok !== true) {
+    throw new Error(`${what} failed: ${result.error ?? 'the browser driver reported a failure'}`);
+  }
+  return result;
+}
 
 async function checkoutWorkspace(
   request: RepoWorkRequest,
@@ -109,6 +121,7 @@ export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult>
   const { workspace } = await checkoutWorkspace(input.request, input.branch, config.services);
   const evidenceIds: string[] = [];
   const pages: UiVerifyPage[] = [];
+  const notes: string[] = [];
   let artifactId: string | undefined;
   let preview: Awaited<ReturnType<typeof startAppPreview>> | undefined;
   let session: BrowserSession | undefined;
@@ -141,6 +154,9 @@ export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult>
       ...details,
     });
     if (!result.ok) {
+      notes.push(
+        `${kind} evidence was not saved: ${result.reason === 'too_large' ? 'over the configured size limit' : 'the run is at its evidence-count limit'}`
+      );
       return undefined;
     }
     evidenceIds.push(result.evidenceId);
@@ -165,6 +181,7 @@ export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult>
       try {
         session = await BrowserSession.start(workspace, {
           allowedHosts: config.allowedHosts ?? [],
+          maxVideoBytes: await resolveSetting('uiValidation.maxVideoBytes'),
           recordVideo: input.recordVideo ?? true,
           trace: true,
         });
@@ -178,36 +195,50 @@ export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult>
             errors: [],
             name: smoke.name,
             path: smoke.path,
+            status: null,
           };
           try {
-            const response = await session.call({
-              cmd: 'goto',
-              url: `${preview.baseUrl}${smoke.path}`,
-            });
+            // Any driver command can report `ok: false` (a navigation timeout, a
+            // selector that never appears). Treating that as an empty result
+            // would let a broken page pass the gate, so each one is required.
+            const response = requireDriver(
+              await session.call({
+                cmd: 'goto',
+                url: `${preview.baseUrl}${smoke.path}`,
+              }),
+              'navigation'
+            );
             page.status = typeof response?.status === 'number' ? response.status : null;
             if (typeof page.status === 'number' && page.status >= 500) {
               page.errors.push(`HTTP ${page.status}`);
             }
             if (smoke.waitFor) {
-              await session.call({ cmd: 'wait', selector: smoke.waitFor });
-            }
-            const screenshot = await session.call({
-              cmd: 'screenshot',
-              path: `smoke-${pages.length}.png`,
-            });
-            if (typeof screenshot?.file === 'string') {
-              page.evidenceId = await saveEvidence(
-                'screenshot',
-                await session.readOutFile(screenshot.file, 100_000_000),
-                {
-                  caption: smoke.name ?? smoke.path,
-                  ...(typeof screenshot.height === 'number' ? { height: screenshot.height } : {}),
-                  ...(typeof screenshot.url === 'string' ? { pageUrl: screenshot.url } : {}),
-                  ...(typeof screenshot.width === 'number' ? { width: screenshot.width } : {}),
-                }
+              requireDriver(
+                await session.call({ cmd: 'wait', selector: smoke.waitFor }),
+                `wait for ${smoke.waitFor}`
               );
             }
-            const events = await session.call({ cmd: 'events' });
+            const screenshot = requireDriver(
+              await session.call({
+                cmd: 'screenshot',
+                path: `smoke-${pages.length}.png`,
+              }),
+              'screenshot'
+            );
+            if (typeof screenshot.file !== 'string') {
+              throw new Error('screenshot failed: the browser driver returned no file');
+            }
+            page.evidenceId = await saveEvidence(
+              'screenshot',
+              await session.readOutFile(screenshot.file, EVIDENCE_READ_BYTES),
+              {
+                caption: smoke.name ?? smoke.path,
+                ...(typeof screenshot.height === 'number' ? { height: screenshot.height } : {}),
+                ...(typeof screenshot.url === 'string' ? { pageUrl: screenshot.url } : {}),
+                ...(typeof screenshot.width === 'number' ? { width: screenshot.width } : {}),
+              }
+            );
+            const events = requireDriver(await session.call({ cmd: 'events' }), 'page diagnostics');
             if (Array.isArray(events?.pageErrors)) {
               page.errors.push(...events.pageErrors.map(String));
             }
@@ -236,30 +267,53 @@ export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult>
         failure ??= 'E2E mode requested but no e2e command is configured';
       } else {
         heartbeat('uiVerify: running e2e');
-        const result = await workspace.execCapture(`CI=1 sh -c ${shellQuote(config.e2e.command)}`, {
-          timeoutMs,
-        });
-        e2e = { exitCode: result.exitCode, passed: result.exitCode === 0 && !result.signal };
-        if (!e2e.passed) {
-          failure ??= `E2E command failed with exit code ${result.exitCode}`;
+        try {
+          const result = await workspace.execCapture(
+            `CI=1 sh -c ${shellQuote(config.e2e.command)}`,
+            { timeoutMs }
+          );
+          e2e = { exitCode: result.exitCode, passed: result.exitCode === 0 && !result.signal };
+          if (!e2e.passed) {
+            failure ??= `E2E command failed with exit code ${result.exitCode}`;
+          }
+        } catch (error) {
+          failure ??= `E2E command could not run: ${error instanceof Error ? error.message : String(error)}`;
+          e2e = { exitCode: 1, passed: false };
         }
-        const root = await workspace.exec('pwd');
+        let root = '';
+        try {
+          root = (await workspace.exec('pwd')).trim();
+        } catch (error) {
+          failure ??= `Could not locate the e2e results directory: ${error instanceof Error ? error.message : String(error)}`;
+        }
         const collect = async (
           glob: string,
           kind: 'screenshot' | 'video' | 'trace',
           limit: number
         ) => {
-          const files = await workspace.exec(
-            `find ${shellQuote(config.e2e?.resultsDir ?? 'test-results')} -maxdepth 6 -type f -iname ${shellQuote(glob)} -print 2>/dev/null | head -n ${limit}`
-          );
-          for (const file of files.split('\n').filter(Boolean)) {
-            await saveEvidence(
-              kind,
-              await workspace.readFile(`${root.trim()}/${file}`, 100_000_000),
-              {
-                caption: file,
-              }
+          if (!root) {
+            return;
+          }
+          let files: string[] = [];
+          try {
+            const listing = await workspace.exec(
+              `find ${shellQuote(config.e2e?.resultsDir ?? 'test-results')} -maxdepth 6 -type f -iname ${shellQuote(glob)} -print 2>/dev/null | head -n ${limit}`
             );
+            files = listing.split('\n').filter(Boolean);
+          } catch (error) {
+            failure ??= `Could not list ${kind} evidence: ${error instanceof Error ? error.message : String(error)}`;
+            return;
+          }
+          for (const file of files) {
+            // One unreadable or over-limit file must not cost the rest: a throw
+            // here would escape the activity and re-run the whole preview.
+            try {
+              await saveEvidence(kind, await workspace.readFile(`${root}/${file}`, 100_000_000), {
+                caption: file,
+              });
+            } catch (error) {
+              failure ??= `Could not save ${kind} evidence from ${file}: ${error instanceof Error ? error.message : String(error)}`;
+            }
           }
         };
         await collect('*.png', 'screenshot', 30);
@@ -269,16 +323,30 @@ export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult>
     }
   } finally {
     if (session) {
+      let output: Awaited<ReturnType<BrowserSession['close']>> | undefined;
       try {
-        const output = await session.close();
-        if (output.video) {
-          await saveEvidence('video', output.video, { caption: 'UI verification recording' });
-        }
-        if (output.trace) {
-          await saveEvidence('trace', output.trace, { caption: 'UI verification trace' });
-        }
+        output = await session.close();
       } catch (error) {
-        failure ??= `Could not save browser evidence: ${error instanceof Error ? error.message : String(error)}`;
+        failure ??= `Could not read browser evidence: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      if (output) {
+        notes.push(...output.errors.map((message) => `browser evidence was not read: ${message}`));
+        // Each artifact is persisted on its own: a storage failure on the
+        // recording must not cost the trace that was finalized beside it.
+        const artifacts = [
+          ['video', output.video, 'UI verification recording'],
+          ['trace', output.trace, 'UI verification trace'],
+        ] as const;
+        for (const [kind, body, caption] of artifacts) {
+          if (!body) {
+            continue;
+          }
+          try {
+            await saveEvidence(kind, body, { caption });
+          } catch (error) {
+            failure ??= `Could not save ${kind} evidence: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        }
       }
     }
     if (preview) {
@@ -305,6 +373,7 @@ export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult>
     ...(e2e ? { e2e } : {}),
     evidenceIds,
     exitCode: passed ? 0 : 1,
+    ...(notes.length > 0 ? { notes } : {}),
     pages,
     passed,
     summary: truncate(

@@ -501,6 +501,24 @@ describe('tool grants and agent scope', () => {
     });
   });
 
+  it('grants the browser tools when the Agent names the browser key', async () => {
+    m.toolKeys = ['browser', 'readFile'];
+
+    await runAgentTask({ request: request() });
+
+    expect(granted()).toEqual(
+      expect.arrayContaining(['browser_navigate', 'browser_screenshot', 'readFile'])
+    );
+    const opts = m.runAgent.mock.calls[0]?.[2] as { selfRecordingTools: Set<string> };
+    expect(opts.selfRecordingTools.has('browser_screenshot')).toBe(true);
+  });
+
+  it('granting mcp alone does not grant the browser tools', async () => {
+    m.toolKeys = ['mcp'];
+    await runAgentTask({ request: request() });
+    expect(granted().some((name) => name.startsWith('browser_'))).toBe(false);
+  });
+
   it('toolKeys [] grants no tools at all', async () => {
     m.toolKeys = [];
     await runAgentTask({ request: request() });

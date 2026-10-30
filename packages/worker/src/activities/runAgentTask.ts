@@ -592,6 +592,7 @@ async function runOnMastra(
   if (browserToolset) {
     closeFns.push(browserToolset.close.bind(browserToolset));
   }
+  const browserTools = browserToolset ? createMastraBrowserTools(browserToolset) : undefined;
   onMcp(async () => {
     await Promise.allSettled(closeFns.map((close) => close()));
   });
@@ -602,7 +603,7 @@ async function runOnMastra(
       // intersects offered tools with `toolKeys`, so nothing else binds them.
       availableTools: {
         ...selectAgentRunTools(built, resolved.toolKeys),
-        ...(browserToolset ? createMastraBrowserTools(browserToolset) : {}),
+        ...(browserTools ?? {}),
         ...(resolved.toolKeys?.includes('searchKnowledge')
           ? { searchKnowledge: knowledgeTools.searchKnowledge }
           : {}),
@@ -614,6 +615,12 @@ async function runOnMastra(
     },
     agentCtx
   );
+  // `toolKeys` names the grant (`browser`), not the concrete tool ids, so the
+  // intersection above would drop every browser tool. The grant is explicit and
+  // already checked by `grantsBrowserTool`, so bind them here.
+  if (browserTools) {
+    spec.tools = { ...browserTools, ...spec.tools } as AgentTools;
+  }
   spec.systemPrompt = `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}`.trim();
 
   // MCP per the agent's own configuration (a known exfiltration channel next
@@ -636,7 +643,7 @@ async function runOnMastra(
     perStepAccounting: true,
     // The workspace and MCP tools record their own calls on this tracer; any
     // other tool's calls are recorded from the loop's steps.
-    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools),
+    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools, browserTools),
     spanName: 'llm.agent_run',
     tracer,
   });

@@ -6,12 +6,24 @@ import { BROWSER_DRIVER_SOURCE } from './driverSource.js';
 
 const BROWSER_ROOT = '/tmp/.asw/browser';
 const DRIVER_PATH = `${BROWSER_ROOT}/driver.mjs`;
+const DEFAULT_MAX_OUTPUT_BYTES = 100 * 1024 * 1024;
 
 export interface BrowserSessionOptions {
   allowedHosts: string[];
   recordVideo: boolean;
   trace: boolean;
   viewport?: { width: number; height: number };
+  /** Bytes the worker will read back for a recording. Defaults to 100 MiB. */
+  maxVideoBytes?: number;
+  /** Bytes the worker will read back for a trace archive. Defaults to 100 MiB. */
+  maxTraceBytes?: number;
+}
+
+export interface BrowserSessionOutputs {
+  video?: Buffer;
+  trace?: Buffer;
+  /** Artifacts the driver finalized but the worker could not read back. */
+  errors: string[];
 }
 
 export interface DriverCommand {
@@ -35,7 +47,8 @@ export class BrowserSession {
 
   private constructor(
     private readonly workspace: Workspace,
-    sessionId: string
+    sessionId: string,
+    private readonly options: BrowserSessionOptions
   ) {
     this.sessionRoot = `${BROWSER_ROOT}/${sessionId}`;
     this.socketPath = `${this.sessionRoot}/driver.sock`;
@@ -53,7 +66,7 @@ export class BrowserSession {
       );
     }
 
-    const session = new BrowserSession(workspace, crypto.randomBytes(8).toString('hex'));
+    const session = new BrowserSession(workspace, crypto.randomBytes(8).toString('hex'), opts);
     await workspace.execStdin(
       `mkdir -p ${shellQuote(BROWSER_ROOT)} && cat > ${shellQuote(DRIVER_PATH)}`,
       BROWSER_DRIVER_SOURCE
@@ -127,21 +140,46 @@ export class BrowserSession {
     return this.workspace.readFile(resolved, maxBytes);
   }
 
-  async close(): Promise<{ video?: Buffer; trace?: Buffer }> {
+  async close(): Promise<BrowserSessionOutputs> {
     this.closing = true;
     this.closeResponse ??= this.enqueue({ cmd: 'close' });
     const result = await this.closeResponse;
     if (!result.ok) {
       throw new Error(result.error ?? 'browser session failed to close');
     }
-    const outputs: { video?: Buffer; trace?: Buffer } = {};
-    if (typeof result.video === 'string') {
-      outputs.video = await this.readOutFile(result.video, 100 * 1024 * 1024);
-    }
-    if (typeof result.trace === 'string') {
-      outputs.trace = await this.readOutFile(result.trace, 100 * 1024 * 1024);
-    }
-    return outputs;
+    const errors: string[] = [];
+    const read = async (
+      file: unknown,
+      maxBytes: number,
+      label: string
+    ): Promise<Buffer | undefined> => {
+      if (typeof file !== 'string') {
+        return undefined;
+      }
+      try {
+        return await this.readOutFile(file, maxBytes);
+      } catch (error) {
+        // One unreadable artifact must not cost the other: the video is finalized
+        // before the trace is read, and both are gone once the workspace dies.
+        errors.push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+        return undefined;
+      }
+    };
+    const video = await read(
+      result.video,
+      this.options.maxVideoBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+      'recording'
+    );
+    const trace = await read(
+      result.trace,
+      this.options.maxTraceBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
+      'trace'
+    );
+    return {
+      ...(video ? { video } : {}),
+      ...(trace ? { trace } : {}),
+      errors,
+    };
   }
 
   private async send(command: DriverCommand): Promise<DriverResult> {

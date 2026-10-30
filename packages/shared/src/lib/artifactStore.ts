@@ -222,6 +222,24 @@ export async function putObjectToBucket(
   await (await s3Client()).putObject(key, body, contentType, bucket);
 }
 
+/**
+ * Delete one object written by {@link putObjectToBucket}. A key that is already
+ * gone counts as deleted, so a retention sweep can call this without tracking
+ * every successful write.
+ */
+export async function deleteObjectFromBucket(bucket: string, key: string): Promise<void> {
+  if (!bucket.trim() || !key.trim()) {
+    throw new Error('S3 bucket and object key are required');
+  }
+  try {
+    await (await s3Client()).deleteObject(key, bucket);
+  } catch (error) {
+    if (!isMissingObject(error)) {
+      throw error;
+    }
+  }
+}
+
 /** True for the "no such key" answers an S3-compatible store gives. */
 function isMissingObject(err: unknown): boolean {
   const e = err as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } };
