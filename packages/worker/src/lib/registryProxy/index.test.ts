@@ -5,6 +5,9 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { gzipSync } from 'node:zlib';
 import { buildGoAllowlist, parseGoSum } from '@auto-swe/shared/lib/goModuleAllowlist';
+import type * as GuardedDispatcher from '@auto-swe/shared/lib/guardedDispatcher';
+import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
+import { buildPypiAllowlist } from '@auto-swe/shared/lib/pypiAllowlist';
 import { describe, expect, it, vi } from 'vitest';
 import {
   checkAuditBody,
@@ -13,6 +16,7 @@ import {
   TarballCache,
   tarballVersion,
 } from './index.js';
+import { fileIdFor } from './pypiProxy.js';
 import {
   registryWorkspaceEnv,
   renderNpmrc,
@@ -21,6 +25,14 @@ import {
 } from './render.js';
 
 vi.mock('../activityLog.js', () => ({ logWarn: vi.fn() }));
+
+// Passes through to the real guarded fetch; the PyPI file tests replace it to see which private-
+// network setting each fetch was built with. Every other test injects `upstreamFetch` and never
+// reaches it.
+vi.mock('@auto-swe/shared/lib/guardedDispatcher', async (importOriginal) => {
+  const actual = await importOriginal<typeof GuardedDispatcher>();
+  return { ...actual, createGuardedFetch: vi.fn(actual.createGuardedFetch) };
+});
 
 const REG = {
   allowPrivateNetwork: false,
@@ -1785,6 +1797,866 @@ describe('go module proxy: the real tarball cache', () => {
     const reg = await proxy.register({ onDenied: () => {}, registries: [GO] });
     reg.setAllowlist(new Map([[GO.id, new Map([['a/b', new Set(['v9.9.9'])]])]]));
     expect((await rawGet(base, `/go/${reg.token}/go-1/a/b/@v/v1.0.0.zip`)).status).toBe(403);
+    await proxy.close();
+  });
+});
+
+// ---- PyPI proxy (`/pypi/<token>/<registryId>/…`) ----
+
+const PY = {
+  ...REG,
+  ecosystem: 'pypi' as const,
+  id: 'py-1',
+  isDefault: false,
+  name: 'pypi',
+  token: 'py-up-token',
+  upstreamUrl: 'http://pyup.test/simple',
+};
+const SHA = 'a'.repeat(64);
+const WHL = 'flask-3.0.0-py3-none-any.whl';
+const SDIST = 'flask-2.0.0.tar.gz';
+const WHL_URL = `https://files.test/packages/${WHL}`;
+const SDIST_URL = `https://files.test/packages/${SDIST}`;
+const htmlIndex = (anchors: string[]) =>
+  `<!DOCTYPE html><html><body>${anchors.join('\n')}</body></html>`;
+const FLASK_HTML = htmlIndex([
+  `<a href="${WHL_URL}#sha256=${SHA}" data-requires-python="&gt;=3.8" data-core-metadata="sha256=${SHA}">${WHL}</a>`,
+  `<a href="${SDIST_URL}#sha256=${SHA}" data-yanked="oops &amp; bad">${SDIST}</a>`,
+]);
+const FLASK_JSON = JSON.stringify({
+  files: [
+    {
+      'core-metadata': { sha256: SHA },
+      filename: WHL,
+      hashes: { sha256: SHA },
+      'requires-python': '>=3.8',
+      url: WHL_URL,
+    },
+    { filename: SDIST, hashes: { sha256: SHA }, url: SDIST_URL, yanked: 'oops & bad' },
+  ],
+  meta: { 'api-version': '1.1' },
+  name: 'flask',
+});
+const html = (body: string) => new Response(body, { headers: { 'content-type': 'text/html' } });
+const pyLockfile = (...pins: Array<[string, string]>) =>
+  buildPypiAllowlist(pins.map(([name, version]) => ({ name, version })));
+
+/** The `<a>` links of a rendered index: href without its fragment, the fragment, the text. */
+const linksOf = (body: string) =>
+  [...body.matchAll(/<a href="([^"#]*)(?:#([^"]*))?"[^>]*>([^<]*)<\/a>/g)].map((m) => ({
+    hash: m[2],
+    href: m[1] as string,
+    text: m[3] as string,
+  }));
+
+async function startPyProxy(
+  upstream: (url: string, init?: RequestInit) => Promise<Response>,
+  opts: {
+    allowlist?: Map<string, Set<string>> | null;
+    cache?: TarballCache;
+    inject?: boolean;
+    limits?: { maxBufferedFetches?: number; maxQueuedFetches?: number };
+    maxPypiFileBytes?: number;
+    registry?: typeof PY;
+  } = {}
+) {
+  const denials: unknown[] = [];
+  const proxy = createRegistryProxy({
+    ...opts.limits,
+    advertisedUrl: (p) => `http://127.0.0.1:${p}`,
+    cache: opts.cache,
+    listenHost: '127.0.0.1',
+    listenPort: 0,
+    maxPypiFileBytes: opts.maxPypiFileBytes,
+    upstreamFetch: opts.inject === false ? undefined : (upstream as never),
+  });
+  const base = `http://127.0.0.1:${await proxy.listen()}`;
+  const reg = await proxy.register({
+    onDenied: (d) => denials.push(d),
+    registries: [opts.registry ?? PY],
+  });
+  reg.setAllowlist(new Map([[PY.id, opts.allowlist === undefined ? null : opts.allowlist]]));
+  const at = (rest: string, method = 'GET', authorization?: string) =>
+    rawGet(base, `/pypi/${reg.token}/${PY.id}${rest}`, authorization, method);
+  /** The served index of `flask`, and a request for the rewritten link to `filename`. */
+  const file = async (filename: string, method = 'GET') => {
+    const index = await at('/simple/flask/');
+    const link = linksOf(index.body).find((l) => l.text === filename);
+    expect(link, `${filename} is listed`).toBeDefined();
+    return { index, response: await rawGet(base, link?.href as string, undefined, method) };
+  };
+  return { at, base, denials, file, proxy, reg };
+}
+
+describe('pypi proxy: access', () => {
+  it('answers 401, 404, 405, 503 and 404 in the Go route’s order', async () => {
+    const { base, proxy } = await startProxy(async () => html(FLASK_HTML));
+    const reg = await proxy.register({ onDenied: () => {}, registries: [PY, REG, GO] });
+    const idx = (id: string, method = 'GET') =>
+      rawGet(base, `/pypi/${reg.token}/${id}/simple/flask/`, undefined, method);
+    expect((await rawGet(base, '/pypi/wrong/py-1/simple/flask/')).status).toBe(401);
+    expect((await idx('nope')).status).toBe(404);
+    // Neither an npm nor a Go registry id is a PyPI registry.
+    expect((await idx(REG.id)).status).toBe(404);
+    expect((await idx(GO.id)).status).toBe(404);
+    expect((await idx('py-1', 'POST')).status).toBe(405);
+    expect((await idx('py-1', 'DELETE')).status).toBe(405);
+    expect((await idx('py-1')).status).toBe(503);
+    reg.setAllowlist(
+      new Map([
+        [PY.id, null],
+        [REG.id, null],
+        [GO.id, null],
+      ])
+    );
+    for (const rest of [
+      '/simple/',
+      '/simple',
+      '/',
+      '/simple/flask/x',
+      '/files/x/y',
+      '/other/flask/',
+    ]) {
+      const res = await rawGet(base, `/pypi/${reg.token}/py-1${rest}`);
+      expect(res.status, rest).toBe(404);
+      expect(res.body, rest).toContain('unrecognized PyPI path');
+    }
+    expect((await idx('py-1')).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('authenticates by its path token alone, never by a header', async () => {
+    const { at, base, proxy, reg } = await startPyProxy(async () => html(FLASK_HTML));
+    const index = '/simple/flask/';
+    expect((await rawGet(base, `/pypi/wrong/py-1${index}`, bearer(reg.token))).status).toBe(401);
+    expect((await rawGet(base, `/pypi${index}`, bearer(reg.token))).status).toBe(401);
+    expect((await rawGet(base, `/pypi/wrong/py-1${index}`, basic('x', reg.token))).status).toBe(
+      401
+    );
+    expect((await rawGet(base, `/pypi/wrong/py-1${index}`, basic(reg.token, 'x'))).status).toBe(
+      401
+    );
+    expect((await at(index, 'GET', bearer('bogus'))).status).toBe(200);
+    expect((await at(index, 'GET', 'Basic !!!')).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('judges the route by the normalised path: /pypi/.. reaches neither npm nor Go', async () => {
+    const { base, proxy } = await startProxy(async () => new Response('{}'));
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG, GO, PY] });
+    reg.setAllowlist(
+      new Map([
+        [PY.id, null],
+        [REG.id, null],
+        [GO.id, null],
+      ])
+    );
+    // A request target sent exactly as written, so `..` is not resolved on the client.
+    const target = (path: string, authorization?: string) =>
+      new Promise<number>((resolve, reject) => {
+        const u = new URL(base);
+        const req = http.request(
+          {
+            headers: authorization ? { authorization } : {},
+            host: u.hostname,
+            method: 'GET',
+            path,
+            port: u.port,
+          },
+          (res) => {
+            res.resume();
+            res.on('end', () => resolve(res.statusCode ?? 0));
+          }
+        );
+        req.on('error', reject);
+        req.end();
+      });
+    for (const path of [
+      `/pypi/../npm/${REG.id}/pkg`,
+      `/pypi/%2e%2e/npm/${REG.id}/pkg`,
+      `/pypi/x/../../npm/${REG.id}/pkg`,
+    ]) {
+      // Judged as the npm path it normalises to: Basic is refused, Bearer is an ordinary request.
+      expect(await target(path, basic('u', reg.token)), path).toBe(401);
+      expect(await target(path, bearer(reg.token)), path).toBe(200);
+    }
+    // With the path token alone nothing on npm or Go is reachable.
+    for (const path of [
+      `/pypi/${reg.token}/../npm/${REG.id}/pkg`,
+      `/pypi/${reg.token}/%2e%2e/npm/${REG.id}/pkg`,
+      `/pypi/${reg.token}/../go/${reg.token}/${GO.id}/a/b/@latest`,
+    ]) {
+      expect(await target(path), path).toBe(401);
+    }
+    await proxy.close();
+  });
+
+  it('keeps a PyPI registry out of the npm and Go routes, and out of npm resolution', async () => {
+    const urls: string[] = [];
+    const { base, proxy } = await startProxy(async (url) => {
+      urls.push(url);
+      return new Response('{}');
+    });
+    // The only default-flagged registry is the PyPI one, and it claims a scope.
+    const pyDefault = { ...PY, isDefault: true, scopes: ['@acme'] };
+    const npmPlain = { ...REG, isDefault: false, scopes: ['@other'] };
+    const reg = await proxy.register({ onDenied: () => {}, registries: [pyDefault, npmPlain] });
+    reg.setAllowlist(
+      new Map([
+        [PY.id, null],
+        [REG.id, null],
+      ])
+    );
+    const npm = (path: string) => rawGet(base, `/npm/${REG.id}${path}`, bearer(reg.token));
+    expect((await rawGet(base, `/npm/${PY.id}/pkg`, bearer(reg.token))).status).toBe(404);
+    expect((await rawGet(base, `/go/${reg.token}/${PY.id}/a/b/@latest`)).status).toBe(404);
+    // Not the default, and its scope is not offered.
+    const noDefault = await npm('/left-pad');
+    expect(noDefault.status).toBe(404);
+    expect(noDefault.body).toContain('no registry serves left-pad');
+    expect((await npm('/@acme%2fx')).status).toBe(404);
+    expect((await npm('/@other%2fx')).status).toBe(200);
+    // And an audit has no default registry to go to.
+    const audit = await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, '{"left-pad":["1.0.0"]}');
+    expect(audit.status).toBe(404);
+    expect(audit.body).toContain('no default registry answers audits');
+    expect(urls).toEqual(['http://upstream.test/@other%2fx']);
+    await proxy.close();
+  });
+
+  it('never puts the path token in a response, header or denial report except inside the index links', async () => {
+    const denials: unknown[] = [];
+    const { base, proxy } = await startProxy(async (url) =>
+      url.endsWith('/flask/') ? html(FLASK_HTML) : new Response('SECRET', { status: 500 })
+    );
+    const reg = await proxy.register({ onDenied: (d) => denials.push(d), registries: [PY] });
+    reg.setAllowlist(new Map([[PY.id, pyLockfile(['flask', '3.0.0'])]]));
+    const at = (rest: string, method = 'GET') =>
+      rawGet(base, `/pypi/${reg.token}/${PY.id}${rest}`, undefined, method);
+    const index = await at('/simple/flask/');
+    const id = fileIdFor(PY.id, WHL_URL);
+    const responses = [
+      await at('/simple/django/'),
+      await at('/simple/'),
+      await at('/simple/flask/', 'POST'),
+      await at(`/files/${id}/${WHL}`),
+      await at(`/files/${id}/other.whl`),
+      await at(`/files/${'0'.repeat(32)}/${WHL}`),
+      await rawGet(base, `/pypi/${reg.token}/nope/simple/flask/`),
+    ];
+    expect(index.status).toBe(200);
+    expect(responses.map((r) => r.status)).toEqual([403, 404, 405, 502, 404, 404, 404]);
+    // In the index the token appears once per link, and only as the prefix of that link's path.
+    const links = linksOf(index.body);
+    expect(links).toHaveLength(1);
+    expect(index.body.split(reg.token)).toHaveLength(links.length + 1);
+    expect(index.body.replaceAll(`/pypi/${reg.token}/`, '')).not.toContain(reg.token);
+    expect(JSON.stringify(index.headers)).not.toContain(reg.token);
+    for (const r of responses) {
+      expect(r.body).not.toContain(reg.token);
+      expect(JSON.stringify(r.headers)).not.toContain(reg.token);
+    }
+    expect(denials.length).toBeGreaterThan(0);
+    expect(JSON.stringify(denials)).not.toContain(reg.token);
+    await proxy.close();
+  });
+});
+
+describe('pypi proxy: the project index', () => {
+  it('rewrites an HTML index and a JSON index to the same HTML', async () => {
+    const seen: Array<{ url: string; init?: RequestInit }> = [];
+    const fromHtml = await startPyProxy(async (url, init) => {
+      seen.push({ init, url });
+      return html(FLASK_HTML);
+    });
+    const a = await fromHtml.at('/simple/flask/');
+    await fromHtml.proxy.close();
+    const fromJson = await startPyProxy(
+      async () =>
+        new Response(FLASK_JSON, {
+          headers: { 'content-type': 'application/vnd.pypi.simple.v1+json' },
+        })
+    );
+    const b = await fromJson.at('/simple/flask/');
+    await fromJson.proxy.close();
+    expect(a.status).toBe(200);
+    // Two registrations, two tokens: the links differ in nothing else.
+    expect(b.body.replaceAll(fromJson.reg.token, 'T')).toBe(
+      a.body.replaceAll(fromHtml.reg.token, 'T')
+    );
+    expect(a.headers['content-type']).toBe('text/html; charset=utf-8');
+    expect(a.headers['cache-control']).toBe('no-store');
+    expect(seen[0]?.url).toBe('http://pyup.test/simple/flask/');
+    const { token } = fromHtml.reg;
+    const links = linksOf(a.body);
+    expect(links).toEqual([
+      {
+        hash: `sha256=${SHA}`,
+        href: `/pypi/${token}/py-1/files/${fileIdFor(PY.id, WHL_URL)}/${WHL}`,
+        text: WHL,
+      },
+      {
+        hash: `sha256=${SHA}`,
+        href: `/pypi/${token}/py-1/files/${fileIdFor(PY.id, SDIST_URL)}/${SDIST}`,
+        text: SDIST,
+      },
+    ]);
+    expect(a.body).toContain('data-requires-python="&gt;=3.8"');
+    expect(a.body).toContain('data-yanked="oops &amp; bad"');
+    expect(a.body).toContain('<meta name="pypi:repository-version" content="1.0">');
+    // PEP 658 metadata files are not proxied, so the attribute that announces them is dropped.
+    expect(a.body).not.toContain('data-core-metadata');
+    expect(a.body).not.toContain('data-dist-info-metadata');
+    // The upstream's own file URLs are not handed out.
+    expect(a.body).not.toContain('files.test');
+  });
+
+  it('sends the registry credential, a fixed accept and no redirect-following; never the proxy token', async () => {
+    const seen: Array<{ url: string; init?: RequestInit }> = [];
+    const bearerRun = await startPyProxy(async (url, init) => {
+      seen.push({ init, url });
+      return html(FLASK_HTML);
+    });
+    await bearerRun.at('/simple/flask/');
+    const headers = seen[0]?.init?.headers as Record<string, string>;
+    expect(headers.authorization).toBe('Bearer py-up-token');
+    expect(headers.accept).toBe('application/vnd.pypi.simple.v1+json, text/html;q=0.1');
+    expect(headers['accept-encoding']).toBe('identity');
+    expect(seen[0]?.init?.redirect).toBe('error');
+    expect(seen[0]?.init?.method).toBe('GET');
+    expect(JSON.stringify(seen)).not.toContain(bearerRun.reg.token);
+    await bearerRun.proxy.close();
+    const basicRun = await startPyProxy(
+      async (url, init) => {
+        seen.push({ init, url });
+        return html(FLASK_HTML);
+      },
+      { registry: { ...PY, authKind: 'basic' as never, token: 'svc:secret' } }
+    );
+    await basicRun.at('/simple/flask/');
+    const basicHeaders = seen[1]?.init?.headers as Record<string, string>;
+    expect(basicHeaders.authorization).toBe(
+      `Basic ${Buffer.from('svc:secret').toString('base64')}`
+    );
+    await basicRun.proxy.close();
+  });
+
+  it('normalises the project spelling for the upstream request', async () => {
+    const urls: string[] = [];
+    const { at, proxy } = await startPyProxy(async (url) => {
+      urls.push(url);
+      return html(FLASK_HTML);
+    });
+    expect((await at('/simple/Flask/')).status).toBe(200);
+    expect((await at('/simple/zope.interface/')).status).toBe(200);
+    expect((await at('/simple/Zope__Interface')).status).toBe(200);
+    expect(urls).toEqual([
+      'http://pyup.test/simple/flask/',
+      'http://pyup.test/simple/zope-interface/',
+      'http://pyup.test/simple/zope-interface/',
+    ]);
+    await proxy.close();
+  });
+
+  it('answers HEAD with the headers of the index and no body', async () => {
+    const { at, proxy } = await startPyProxy(async () => html(FLASK_HTML));
+    const get = await at('/simple/flask/');
+    const head = await at('/simple/flask/', 'HEAD');
+    expect(head.status).toBe(200);
+    expect(head.body).toBe('');
+    expect(head.headers['content-type']).toBe('text/html; charset=utf-8');
+    expect(head.headers['content-length']).toBe(String(Buffer.byteLength(get.body)));
+    await proxy.close();
+  });
+
+  it('in lockfile mode keeps the pinned versions and drops the rest', async () => {
+    const { at, denials, proxy } = await startPyProxy(async () => html(FLASK_HTML), {
+      allowlist: pyLockfile(['flask', '3.0.0']),
+    });
+    const res = await at('/simple/flask/');
+    expect(res.status).toBe(200);
+    expect(linksOf(res.body).map((l) => l.text)).toEqual([WHL]);
+    expect(res.body).not.toContain(SDIST);
+    expect(denials).toEqual([]);
+    await proxy.close();
+  });
+
+  it('in lockfile mode answers 403 when no version is pinned, and when the project is absent', async () => {
+    const upstream = vi.fn(async () => html(FLASK_HTML));
+    const { at, denials, proxy } = await startPyProxy(upstream, {
+      allowlist: pyLockfile(['flask', '9.9.9'], ['requests', '2.0.0']),
+    });
+    const none = await at('/simple/flask/');
+    expect(none.status).toBe(403);
+    expect(none.body).toContain('flask is not in the repository');
+    expect(upstream).toHaveBeenCalledTimes(1);
+    const absent = await at('/simple/Django/');
+    expect(absent.status).toBe(403);
+    expect(absent.body).toContain('django is not in the repository');
+    // The project the lockfile does not name is refused before the upstream is asked.
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(denials).toEqual([
+      { name: 'flask', reason: 'no-versions', registryId: 'py-1' },
+      { name: 'django', reason: 'not-in-lockfile', registryId: 'py-1' },
+    ]);
+    await proxy.close();
+  });
+
+  it('treats a registry the allowlist map omits as an empty lockfile', async () => {
+    const upstream = vi.fn(async () => html(FLASK_HTML));
+    const { base, proxy } = await startProxy(upstream);
+    const reg = await proxy.register({ onDenied: () => {}, registries: [PY] });
+    reg.setAllowlist(new Map());
+    expect((await rawGet(base, `/pypi/${reg.token}/py-1/simple/flask/`)).status).toBe(403);
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+
+  it('in open mode lists every file, including other projects’ and unpinned versions', async () => {
+    const { at, proxy } = await startPyProxy(async () =>
+      html(
+        htmlIndex([
+          `<a href="${WHL_URL}">${WHL}</a>`,
+          '<a href="https://f.test/w-1.0.tar.gz">w-1.0.tar.gz</a>',
+        ])
+      )
+    );
+    expect(linksOf((await at('/simple/flask/')).body).map((l) => l.text)).toEqual([
+      WHL,
+      'w-1.0.tar.gz',
+    ]);
+    await proxy.close();
+  });
+
+  it('relays an upstream 404 and 410 as 404, and anything else as a fixed 502', async () => {
+    let mode: 'redirect' | '404' | '410' | '500' | 'throw' | 'garbage' | 'binary' = '404';
+    const { at, proxy } = await startPyProxy(async () => {
+      switch (mode) {
+        case 'throw':
+          throw new Error('SECRET connect ECONNREFUSED 10.0.0.1');
+        case 'redirect':
+          throw new TypeError('fetch failed', { cause: new Error('SECRET unexpected redirect') });
+        case 'garbage':
+          return html('SECRET not an index at all <');
+        case 'binary':
+          return new Response('SECRET', { headers: { 'content-type': 'image/png' } });
+        default:
+          return new Response('SECRET upstream body', { status: Number(mode) });
+      }
+    });
+    const expected = {
+      '404': [404, /does not have this project/],
+      '410': [404, /does not have this project/],
+      '500': [502, /answered with an error/],
+      binary: [502, /not a simple index/],
+      garbage: [502, /not a simple index/],
+      redirect: [502, /could not be reached/],
+      throw: [502, /could not be reached/],
+    } as const;
+    for (const m of Object.keys(expected) as Array<keyof typeof expected>) {
+      mode = m;
+      const res = await at('/simple/flask/');
+      expect(res.status, m).toBe(expected[m][0]);
+      expect(res.body, m).not.toContain('SECRET');
+      expect(JSON.parse(res.body).error, m).toMatch(expected[m][1]);
+    }
+    await proxy.close();
+  });
+
+  it('survives a hostile index: bad entries are dropped, the good one is served', async () => {
+    const hostile = htmlIndex([
+      `<a href="javascript:alert(1)">flask-1.0.0.tar.gz</a>`,
+      `<a href="https://user:pw@evil.test/flask-1.0.1.tar.gz">flask-1.0.1.tar.gz</a>`,
+      `<a href="https://f.test/x">flask-1.0.2&#47;..&#47;x.tar.gz</a>`,
+      `<a href="https://f.test/y">a/b-1.0.tar.gz</a>`,
+      `<a href="https://f.test/z">flask-1.0.3&amp;lt;script&amp;gt;.tar.gz</a>`,
+      `<a ${'x="y" '.repeat(50_000)}>flask-1.0.4.tar.gz</a>`,
+      `<a href="${'h'.repeat(5000)}">flask-1.0.5.tar.gz</a>`,
+      `<a href="https://f.test/${WHL}" data-requires-python="&lt;script&gt;alert(1)&lt;/script&gt;">${WHL}</a>`,
+      `<a href="https://f.test/unclosed-1.0.tar.gz">flask-9.0.0.tar.gz`,
+      '<a href="https://f.test/tail',
+    ]);
+    const { at, proxy } = await startPyProxy(async () => html(hostile));
+    const res = await at('/simple/flask/');
+    expect(res.status).toBe(200);
+    expect(linksOf(res.body).map((l) => l.text)).toEqual([WHL, 'flask-9.0.0.tar.gz']);
+    expect(res.body).not.toContain('javascript:');
+    expect(res.body).not.toContain('evil.test');
+    // The decoded attribute is escaped again on the way out.
+    expect(res.body).toContain('data-requires-python="&lt;script&gt;alert(1)&lt;/script&gt;"');
+    expect(res.body).not.toContain('<script>');
+    await proxy.close();
+  });
+
+  it('takes one of the registration’s buffered-fetch slots, 503s when none is free, and gives it back', async () => {
+    let started = 0;
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const { at, proxy } = await startPyProxy(
+      async () => {
+        started++;
+        await gate;
+        return html(FLASK_HTML);
+      },
+      { limits: { maxBufferedFetches: 1, maxQueuedFetches: 0 } }
+    );
+    const first = at('/simple/flask/');
+    for (let i = 0; i < 1000 && started === 0; i++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    }
+    expect(started).toBe(1);
+    const refused = await at('/simple/requests/');
+    expect(refused.status).toBe(503);
+    expect(refused.headers['retry-after']).toBe('5');
+    expect(started).toBe(1);
+    open();
+    expect((await first).status).toBe(200);
+    expect((await at('/simple/flask/')).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('stops the upstream when the client hangs up', async () => {
+    const aborted = vi.fn();
+    const { base, proxy, reg } = await startPyProxy(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          // What a real fetch does when its signal fires.
+          init?.signal?.addEventListener('abort', () => {
+            aborted();
+            reject(new Error('aborted'));
+          });
+        })
+    );
+    await new Promise<void>((resolve) => {
+      const req = http.request(`${base}/pypi/${reg.token}/py-1/simple/flask/`);
+      req.on('error', () => {});
+      req.end();
+      setTimeout(() => {
+        req.destroy();
+        resolve();
+      }, 50);
+    });
+    await vi.waitFor(() => expect(aborted).toHaveBeenCalled());
+    await reg.release();
+    await proxy.close();
+  });
+});
+
+describe('pypi proxy: files', () => {
+  /** An upstream serving the flask index, and `bytes` for any file URL. */
+  const flaskUpstream =
+    (
+      onFile: (url: string, init?: RequestInit) => Response | Promise<Response> = () =>
+        new Response('WHEELBYTES')
+    ) =>
+    async (url: string, init?: RequestInit) =>
+      url.endsWith('/simple/flask/') ? html(FLASK_HTML) : onFile(url, init);
+
+  it('relays a listed file through its rewritten link, with a fixed content type', async () => {
+    const { file, proxy } = await startPyProxy(
+      flaskUpstream(() => new Response('WHEELBYTES', { headers: { 'content-type': 'text/html' } }))
+    );
+    const { response } = await file(WHL);
+    expect(response.status).toBe(200);
+    expect(response.body).toBe('WHEELBYTES');
+    expect(response.headers['content-type']).toBe('application/octet-stream');
+    await proxy.close();
+  });
+
+  it('relays HEAD without a body and passes a content-length through', async () => {
+    const { file, proxy } = await startPyProxy(
+      flaskUpstream((_url, init) =>
+        init?.method === 'HEAD'
+          ? new Response(null, { headers: { 'content-length': '10' }, status: 200 })
+          : new Response('WHEELBYTES', { headers: { 'content-length': '10' } })
+      )
+    );
+    const get = (await file(WHL)).response;
+    expect(get.headers['content-length']).toBe('10');
+    const head = (await file(WHL, 'HEAD')).response;
+    expect(head.status).toBe(200);
+    expect(head.body).toBe('');
+    await proxy.close();
+  });
+
+  it('refuses an id the index never listed, a wrong filename, and any file before an index', async () => {
+    const upstream = vi.fn(flaskUpstream());
+    const { at, proxy } = await startPyProxy(upstream);
+    const id = fileIdFor(PY.id, WHL_URL);
+    expect((await at(`/files/${id}/${WHL}`)).status).toBe(404);
+    expect((await at('/simple/flask/')).status).toBe(200);
+    expect((await at(`/files/${'0'.repeat(32)}/${WHL}`)).status).toBe(404);
+    expect((await at(`/files/${id}/${SDIST}`)).status).toBe(404);
+    expect((await at(`/files/${id}/${WHL}x`)).status).toBe(404);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect((await at(`/files/${id}/${WHL}`)).status).toBe(200);
+    expect((await at(`/files/${id}/${WHL}`, 'POST')).status).toBe(405);
+    await proxy.close();
+  });
+
+  it('does not offer a file a lockfile-mode index filtered out', async () => {
+    const upstream = vi.fn(flaskUpstream());
+    const { at, proxy } = await startPyProxy(upstream, {
+      allowlist: pyLockfile(['flask', '3.0.0']),
+    });
+    await at('/simple/flask/');
+    expect((await at(`/files/${fileIdFor(PY.id, SDIST_URL)}/${SDIST}`)).status).toBe(404);
+    expect((await at(`/files/${fileIdFor(PY.id, WHL_URL)}/${WHL}`)).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('checks the pin again on a file, and reports the denial without the token', async () => {
+    const upstream = vi.fn(flaskUpstream());
+    const { at, denials, file, proxy, reg } = await startPyProxy(upstream);
+    const { response } = await file(WHL);
+    expect(response.status).toBe(200);
+    // The lockfile changes after the index was served: the listed file is no longer pinned.
+    reg.setAllowlist(new Map([[PY.id, pyLockfile(['flask', '2.0.0'])]]));
+    const denied = await at(`/files/${fileIdFor(PY.id, WHL_URL)}/${WHL}`);
+    expect(denied.status).toBe(403);
+    // The version is the canonical form the allowlist compares (`3.0.0` is `3`).
+    expect(denied.body).toContain('flask@3 is not in the repository');
+    expect(denials).toEqual([
+      { name: 'flask', reason: 'not-in-lockfile', registryId: 'py-1', version: '3' },
+    ]);
+    expect(JSON.stringify(denials)).not.toContain(reg.token);
+    await proxy.close();
+  });
+
+  it('sends the registry credential only to a file on the registry’s own origin', async () => {
+    const sameOriginUrl = 'http://pyup.test/packages/flask-1.0.0.tar.gz';
+    const index = htmlIndex([
+      `<a href="${WHL_URL}">${WHL}</a>`,
+      `<a href="${sameOriginUrl}">flask-1.0.0.tar.gz</a>`,
+      '<a href="/elsewhere/flask-1.1.0.tar.gz">flask-1.1.0.tar.gz</a>',
+    ]);
+    const seen = new Map<string, Record<string, string>>();
+    const { file, proxy } = await startPyProxy(async (url, init) => {
+      if (url.endsWith('/simple/flask/')) {
+        return html(index);
+      }
+      seen.set(url, init?.headers as Record<string, string>);
+      expect(init?.redirect).toBe('error');
+      return new Response('BYTES');
+    });
+    expect((await file(WHL)).response.status).toBe(200);
+    expect((await file('flask-1.0.0.tar.gz')).response.status).toBe(200);
+    expect((await file('flask-1.1.0.tar.gz')).response.status).toBe(200);
+    // Other host: nothing. Same origin, by an absolute URL and a relative one: the credential.
+    expect(seen.get(WHL_URL)?.authorization).toBeUndefined();
+    expect(seen.get(sameOriginUrl)?.authorization).toBe('Bearer py-up-token');
+    expect(seen.get('http://pyup.test/elsewhere/flask-1.1.0.tar.gz')?.authorization).toBe(
+      'Bearer py-up-token'
+    );
+    expect(JSON.stringify([...seen])).not.toContain('Basic');
+    await proxy.close();
+  });
+
+  it('uses a guard without the private-network opt-in for another origin, and the registry’s own for the same origin', async () => {
+    const calls: Array<{ allowPrivate: boolean | undefined; url: string }> = [];
+    vi.mocked(createGuardedFetch).mockImplementation(
+      (opts) =>
+        (async (url: string) => {
+          calls.push({ allowPrivate: opts?.allowPrivate, url: String(url) });
+          return String(url).endsWith('/simple/flask/')
+            ? html(
+                htmlIndex([
+                  `<a href="${WHL_URL}">${WHL}</a>`,
+                  '<a href="/packages/flask-1.0.0.tar.gz">flask-1.0.0.tar.gz</a>',
+                ])
+              )
+            : new Response('BYTES');
+        }) as never
+    );
+    try {
+      const { file, proxy } = await startPyProxy(async () => new Response('unused'), {
+        inject: false,
+        registry: { ...PY, allowPrivateNetwork: true },
+      });
+      expect((await file(WHL)).response.status).toBe(200);
+      expect((await file('flask-1.0.0.tar.gz')).response.status).toBe(200);
+      expect(calls.filter((c) => c.url === WHL_URL).map((c) => c.allowPrivate)).toEqual([false]);
+      expect(calls.filter((c) => c.url === 'http://pyup.test/packages/flask-1.0.0.tar.gz')).toEqual(
+        [{ allowPrivate: true, url: 'http://pyup.test/packages/flask-1.0.0.tar.gz' }]
+      );
+      // The index itself is the registry's: its opt-in applies.
+      expect(calls.find((c) => c.url.endsWith('/simple/flask/'))?.allowPrivate).toBe(true);
+      await proxy.close();
+    } finally {
+      vi.mocked(createGuardedFetch).mockReset();
+    }
+  });
+
+  it('refuses a cross-origin http file, without fetching it', async () => {
+    const urls: string[] = [];
+    const index = htmlIndex([
+      `<a href="http://files.test/packages/${WHL}">${WHL}</a>`,
+      `<a href="http://pyup.test/packages/${SDIST}">${SDIST}</a>`,
+    ]);
+    const { file, proxy } = await startPyProxy(async (url) => {
+      urls.push(url);
+      return url.endsWith('/simple/flask/') ? html(index) : new Response('BYTES');
+    });
+    const blocked = await file(WHL);
+    expect(blocked.response.status).toBe(502);
+    expect(JSON.parse(blocked.response.body).error).toMatch(/not on a permitted address/);
+    // Plain http is fine on the registry's own origin.
+    expect((await file(SDIST)).response.status).toBe(200);
+    expect(urls.filter((u) => u.startsWith('http://files.test'))).toEqual([]);
+    await proxy.close();
+  });
+
+  it('does not follow a redirect, and turns every other outcome into a fixed message', async () => {
+    let mode: 'redirect' | '404' | '410' | '500' | 'throw' = '404';
+    const { file, proxy } = await startPyProxy(
+      flaskUpstream((_url, init) => {
+        expect(init?.redirect).toBe('error');
+        if (mode === 'throw') {
+          throw new Error('SECRET connect ECONNREFUSED 10.0.0.1');
+        }
+        if (mode === 'redirect') {
+          throw new TypeError('fetch failed', { cause: new Error('SECRET unexpected redirect') });
+        }
+        return new Response('SECRET upstream body', { status: Number(mode) });
+      })
+    );
+    const expected = { '404': 404, '410': 404, '500': 502, redirect: 502, throw: 502 } as const;
+    for (const m of Object.keys(expected) as Array<keyof typeof expected>) {
+      mode = m;
+      const { response } = await file(WHL);
+      expect(response.status, m).toBe(expected[m]);
+      expect(response.body, m).not.toContain('SECRET');
+    }
+    await proxy.close();
+  });
+
+  it('refuses a file whose content-length is over the cap, before streaming', async () => {
+    const { file, proxy } = await startPyProxy(
+      flaskUpstream(() => new Response('x'.repeat(100), { headers: { 'content-length': '100' } })),
+      { maxPypiFileBytes: 50 }
+    );
+    const { response } = await file(WHL);
+    expect(response.status).toBe(502);
+    expect(response.cutOff).toBe(false);
+    await proxy.close();
+  });
+
+  it('cuts a file off once it passes the cap without a content-length', async () => {
+    const aborted = vi.fn();
+    const { file, proxy } = await startPyProxy(
+      flaskUpstream((_url, init) => {
+        init?.signal?.addEventListener('abort', aborted);
+        const chunk = new Uint8Array(40).fill(65);
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.enqueue(chunk);
+              // Like a network body, each chunk arrives in a later turn of the event loop.
+              return new Promise((r) => setTimeout(r, 1));
+            },
+          })
+        );
+      }),
+      { maxPypiFileBytes: 100 }
+    );
+    const { response } = await file(WHL);
+    expect(response.cutOff).toBe(true);
+    expect(response.bytes).toBeLessThanOrEqual(100);
+    await vi.waitFor(() => expect(aborted).toHaveBeenCalled());
+    await proxy.close();
+  });
+
+  it('stops the upstream when the client hangs up, and release() waits for the request', async () => {
+    let cancelled = false;
+    const { at, base, proxy, reg } = await startPyProxy(
+      flaskUpstream(
+        () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              cancel() {
+                cancelled = true;
+              },
+              pull(controller) {
+                controller.enqueue(new Uint8Array(1024));
+                return new Promise((r) => setTimeout(r, 5));
+              },
+            })
+          )
+      )
+    );
+    const link = linksOf((await at('/simple/flask/')).body)[0]?.href as string;
+    await new Promise<void>((resolve) => {
+      const req = http.request(`${base}${link}`, (res) => {
+        res.once('data', () => {
+          req.destroy();
+          resolve();
+        });
+      });
+      req.on('error', () => {});
+      req.end();
+    });
+    await reg.release();
+    expect(cancelled).toBe(true);
+    await proxy.close();
+  });
+
+  it('serves a cached file without an upstream call, keyed by registry and file URL, and caches only GETs', async () => {
+    const store = new Map<string, Buffer>();
+    const cache = {
+      get: async (id: string, key: string) => {
+        const hit = store.get(`${id} ${key}`);
+        return hit ? { createStream: () => Readable.from([hit]) } : null;
+      },
+      startWrite: async (id: string, key: string) => {
+        const parts: Buffer[] = [];
+        return {
+          abort: async () => {},
+          commit: async () => {
+            store.set(`${id} ${key}`, Buffer.concat(parts));
+          },
+          write: async (c: Uint8Array) => {
+            parts.push(Buffer.from(c));
+          },
+        };
+      },
+    } as unknown as TarballCache;
+    const fileFetch = vi.fn(() => new Response('WHEELBYTES'));
+    const { at, file, proxy, reg } = await startPyProxy(flaskUpstream(fileFetch), { cache });
+    expect((await file(WHL)).response.body).toBe('WHEELBYTES');
+    await vi.waitFor(() => expect(store.has(`py-1 ${WHL_URL}`)).toBe(true));
+    expect((await file(WHL)).response.body).toBe('WHEELBYTES');
+    expect(fileFetch).toHaveBeenCalledTimes(1);
+    // The key holds the file URL, never the path token.
+    expect([...store.keys()].join('\n')).not.toContain(reg.token);
+    expect((await at(`/files/${fileIdFor(PY.id, WHL_URL)}/${WHL}`, 'HEAD')).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('never serves a cached file the allowlist would deny', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pypi-cache-'));
+    const cache = new TarballCache(dir, 10 * 1024 * 1024);
+    const upstream = vi.fn(flaskUpstream());
+    const { at, file, proxy, reg } = await startPyProxy(upstream, { cache });
+    expect((await file(WHL)).response.body).toBe('WHEELBYTES');
+    // The entry is committed (renamed into place as `<sha>.tgz`) after the response ends.
+    const committed = () =>
+      existsSync(join(dir, PY.id)) && readdirSync(join(dir, PY.id)).some((f) => f.endsWith('.tgz'));
+    for (let i = 0; i < 200 && !committed(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(committed()).toBe(true);
+    const link = `/files/${fileIdFor(PY.id, WHL_URL)}/${WHL}`;
+    // Served from disk while it is allowed…
+    const calls = upstream.mock.calls.length;
+    expect((await at(link)).body).toBe('WHEELBYTES');
+    expect(upstream.mock.calls.length).toBe(calls);
+    // …and refused, not served from disk, once it is not.
+    reg.setAllowlist(new Map([[PY.id, pyLockfile(['flask', '2.0.0'])]]));
+    expect((await at(link)).status).toBe(403);
+    // A cross-origin plain-http entry cannot be reached through the cache either: it never got in.
+    expect(readdirSync(join(dir, PY.id))).toHaveLength(1);
     await proxy.close();
   });
 });

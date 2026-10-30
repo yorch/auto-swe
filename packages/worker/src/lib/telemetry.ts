@@ -30,11 +30,15 @@ export function initTelemetry(serviceName: string): {
     // Undici is global `fetch`, which the AI SDK providers and Octokit call
     // through; `http` never sees it. It hooks diagnostics channels, so it needs
     // no module patching.
-    // The registry proxy's Go route carries its workspace token as a path segment (`/go/<token>/…`),
-    // and an inbound-request span records the path, so those requests are not traced at all.
+    // The registry proxy's Go and PyPI routes carry their workspace token as a path segment
+    // (`/go/<token>/…`, `/pypi/<token>/…`), and an inbound-request span records the path, so those
+    // requests are not traced at all.
     instrumentations: [
       new HttpInstrumentation({
-        ignoreIncomingRequestHook: (req) => (req.url ?? '').startsWith('/go/'),
+        ignoreIncomingRequestHook: (req) => {
+          const url = req.url ?? '';
+          return url.startsWith('/go/') || url.startsWith('/pypi/');
+        },
       }),
       new UndiciInstrumentation(),
     ],
