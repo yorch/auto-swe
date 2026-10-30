@@ -170,4 +170,43 @@ describe('DigestsTab', () => {
     );
     await waitFor(() => expect(deletes()).toHaveLength(1));
   });
+
+  it('explains a known scheduled and test error in words', async () => {
+    setupFetchMock({
+      '/api/v1/report-digests': () => ({
+        data: {
+          ...DATA,
+          subscriptions: [
+            {
+              ...SUBSCRIPTION,
+              lastError: 'recipients_out_of_scope',
+              lastTestError: 'rollup_incomplete',
+            },
+          ],
+        },
+      }),
+    });
+    render(withQuery(<DigestsTab />));
+
+    const alerts = (await screen.findAllByRole('alert')).map((alert) => alert.textContent);
+    expect(alerts).toContain(
+      'No recipient is still an active member of the digest scope, so nothing was sent.'
+    );
+    expect(alerts).toContain(
+      'Last test delivery failed. The workflow-run rollups for this period are incomplete, so it was not built.'
+    );
+    expect(screen.queryByText('recipients_out_of_scope')).toBeNull();
+    expect(screen.queryByText('rollup_incomplete')).toBeNull();
+  });
+
+  it('shows an error code it does not know as it is', async () => {
+    setupFetchMock({
+      '/api/v1/report-digests': () => ({
+        data: { ...DATA, subscriptions: [{ ...SUBSCRIPTION, lastError: 'SOMETHING_NEW' }] },
+      }),
+    });
+    render(withQuery(<DigestsTab />));
+
+    expect((await screen.findByRole('alert')).textContent).toBe('SOMETHING_NEW');
+  });
 });

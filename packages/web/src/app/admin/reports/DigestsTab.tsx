@@ -13,6 +13,7 @@ type Digest = {
   emailRecipients: string[];
   enabled: boolean;
   id: string;
+  lastError: string | null;
   lastPeriodStart: string | null;
   lastTestError: string | null;
   organization: Scope | null;
@@ -37,6 +38,30 @@ type UpdateInput = {
   enabled?: boolean;
   slackChannelId?: string | null;
 };
+
+/**
+ * Readable text for each status code the digest sweep records in `lastError` (scheduled
+ * runs) and `lastTestError` (send-test). A code not listed here is shown as it is.
+ */
+const DIGEST_ERRORS: Record<string, string> = {
+  build_failed: 'The digest could not be built from the workflow-run rollups.',
+  delivery_failed: 'The digest was built but could not be delivered.',
+  email_failed: 'The test email could not be sent to at least one recipient.',
+  org_wide_reports_disabled:
+    'Organization-wide reports are turned off, so this digest was skipped.',
+  period_out_of_order: 'An earlier digest covers a later period, so this digest was skipped.',
+  period_too_soon:
+    'The last digest was sent for a period too close to this one, so it was skipped.',
+  recipients_out_of_scope:
+    'No recipient is still an active member of the digest scope, so nothing was sent.',
+  rollup_incomplete:
+    'The workflow-run rollups for this period are incomplete, so it was not built.',
+  slack_failed: 'The test message could not be posted to the Slack channel.',
+};
+
+function digestErrorText(code: string): string {
+  return Object.hasOwn(DIGEST_ERRORS, code) ? DIGEST_ERRORS[code] : code;
+}
 
 function recipients(value: string) {
   return value
@@ -293,8 +318,13 @@ export function DigestsTab() {
                     Test digest queued for delivery.
                   </Alert>
                 )}
+                {digest.lastError && (
+                  <Alert className="mt-2">{digestErrorText(digest.lastError)}</Alert>
+                )}
                 {digest.lastTestError && (
-                  <Alert className="mt-2">Last test delivery failed: {digest.lastTestError}</Alert>
+                  <Alert className="mt-2">
+                    Last test delivery failed. {digestErrorText(digest.lastTestError)}
+                  </Alert>
                 )}
                 {update.isError && update.variables?.id === digest.id && readdTarget === null && (
                   <Alert className="mt-2">

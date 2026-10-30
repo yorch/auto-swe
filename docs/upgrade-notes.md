@@ -707,16 +707,19 @@ non-git hosts your workspaces need; no migration is involved.
   days per sweep, oldest first, so a long history takes several sweeps and adds read load on
   `workflow_runs`, `pull_requests`, `workflow_steps` and `agent_traces` while it drains. Rollup
   results stay correct throughout; no action clears the backlog sooner.
-- The same migration and `20261029195849_rollup_duration_buckets_and_dirty_days` build plain
-  (not concurrent) indexes, including `agent_traces(created_at, run_id)` and
-  `workflow_steps(ended_at, run_id)`. PostgreSQL blocks writes to each table while its index is
-  built, and `agent_traces` is usually the largest. A migration that has to run in a
-  transaction cannot build them concurrently, so the supported route is a maintenance window
-  with the gateway and worker stopped, or a raised `statement_timeout` on the migration session.
-  Do not create the indexes by hand beforehand: the migration then fails on the existing name.
+- `20261029195849_rollup_duration_buckets_and_dirty_days` builds plain (not concurrent) indexes on
+  `workflow_runs(ended_at, started_at)`, `pull_requests(merged_at, run_id)`,
+  `pull_requests(closed_at, run_id)` and `workflow_human_steps(resolved_at, run_id)`. PostgreSQL
+  blocks writes to each table while its index is built. The indexes that
+  `20261029201256_rollup_dirty_source_timestamps` builds, including the ones on `agent_traces` and
+  `workflow_steps`, are described in the entry "Workflow-run dirty-day source indexes" above. A
+  migration that has to run in a transaction cannot build any of these concurrently, so the
+  supported route is a maintenance window with the gateway and worker stopped, or a raised
+  `statement_timeout` on the migration session. Do not create these indexes by hand beforehand: the
+  migration then fails on the existing name.
 
-**Actions.** Apply the migrations with the normal migrate step, in a window sized for the index
-builds on your largest tables.
+**Actions.** Apply the migrations with the normal migrate step, in a window sized for all of the
+index builds above.
 
 ---
 
