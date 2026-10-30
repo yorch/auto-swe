@@ -1,4 +1,4 @@
-FROM node:26-bookworm-slim
+FROM node:26-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git \
@@ -15,6 +15,17 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
 
 RUN npm install -g playwright@1.64.1 \
     && npx playwright install --with-deps chromium
+
+# The image is an executor image, so the repository's own gates run in it. node:26
+# ships no `yarn`, `pnpm` or `corepack`, and a target repo would hit
+# `yarn: not found` on its first install. Mirrors defaults/Dockerfile.node.
+RUN npm install -g corepack && corepack enable
+ENV COREPACK_HOME=/usr/local/share/corepack
+RUN mkdir -p "$COREPACK_HOME" && \
+    corepack prepare yarn@1.22.22 --activate && \
+    corepack prepare pnpm@10.34.7 --activate && \
+    corepack prepare yarn@4.18.1 && \
+    chown -R node:node "$COREPACK_HOME"
 
 WORKDIR /workspace/target-repo
 RUN mkdir -p /workspace && chown -R node:node /workspace
