@@ -59,6 +59,7 @@ import {
   parseGoProxyPath,
 } from './goProxy.js';
 import {
+  fileCredentialPolicy,
   fileIdFor,
   filterAllowedFiles,
   parsePypiPath,
@@ -1389,10 +1390,11 @@ export function createRegistryProxy(options: {
    * must be the one stored with it; in lockfile mode the pin is checked again here from the stored
    * filename (the index filter is not the only gate), before the cache is read.
    *
-   * The registry credential is sent only when the file is on the registry's own origin. A file
-   * elsewhere (PyPI serves files from another host) gets no credential, must be https, and is
-   * fetched through a guard with the private-network opt-in OFF: an index merely names that host,
-   * and the operator vouched for the registry's origin, not for it.
+   * The registry credential is sent only when the file is on the registry's own origin and under
+   * its path prefix (`fileCredentialPolicy`). A file elsewhere (PyPI serves files from another
+   * host), or on the same host outside that prefix, gets no credential and is fetched through a
+   * guard with the private-network opt-in OFF: an index merely names that URL, and the operator
+   * vouched for the registry's path, not for it. Another origin must also be https.
    */
   async function servePypiFile(
     reg: Registration,
@@ -1426,16 +1428,14 @@ export function createRegistryProxy(options: {
         return;
       }
     }
-    let sameOrigin: boolean;
     let secure: boolean;
     try {
-      const target = new URL(entry.url);
-      sameOrigin = target.origin === new URL(registry.upstreamUrl).origin;
-      secure = target.protocol === 'https:';
+      secure = new URL(entry.url).protocol === 'https:';
     } catch {
       sendJson(res, 502, 'the upstream file could not be reached');
       return;
     }
+    const { credential, sameOrigin } = fileCredentialPolicy(registry.upstreamUrl, entry.url);
     if (!sameOrigin && !secure) {
       sendJson(res, 502, 'the upstream file is not on a permitted address');
       return;
@@ -1454,11 +1454,11 @@ export function createRegistryProxy(options: {
     }
 
     const headers: Record<string, string> = { accept: '*/*', 'accept-encoding': 'identity' };
-    const authorization = sameOrigin ? registryAuthorization(registry) : undefined;
+    const authorization = credential ? registryAuthorization(registry) : undefined;
     if (authorization) {
       headers.authorization = authorization;
     }
-    const fetchFile = sameOrigin
+    const fetchFile = credential
       ? upstreamFetchFor(registry)
       : (options.upstreamFetch ?? createGuardedFetch({ allowPrivate: false }));
     const maxBytes = options.maxPypiFileBytes ?? MAX_PYPI_FILE_BYTES;

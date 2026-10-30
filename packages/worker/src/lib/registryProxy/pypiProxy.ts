@@ -26,7 +26,7 @@ export type PypiPath =
 
 export interface PypiIndexFile {
   filename: string;
-  /** Absolute http(s) URL, no userinfo, no fragment. */
+  /** Absolute http(s) URL, no userinfo, query or fragment; its last path segment is `filename`. */
   url: string;
   /** `algo=hex`, sha256 preferred. */
   hash?: string;
@@ -45,6 +45,8 @@ export interface PypiRenderedFile {
 
 const MAX_INDEX_FILES = 100_000;
 const MAX_ATTR_CHARS = 4_000;
+/** A stored file URL is kept in memory for the life of the registration: bound it. */
+const MAX_FILE_URL_CHARS = 2_000;
 /** A text node longer than this cannot be a distribution filename. */
 const MAX_ANCHOR_TEXT_CHARS = 2_000;
 
@@ -82,6 +84,34 @@ export function parsePypiPath(rest: string): PypiPath | null {
     return { fileId: first, filename: second, kind: 'file' };
   }
   return null;
+}
+
+/**
+ * Whether the registry credential may go to `fileUrl`, a URL an index named. The credential is
+ * sent only when the file is on the registry's own origin AND under the registry's path prefix
+ * (the `upstreamUrl` path without a trailing `/simple`), compared on the parsed pathname with a
+ * segment boundary, so `..` segments are already resolved and `/repo-evil/` is not `/repo/`.
+ * `sameOrigin` is the origin test alone: it relaxes the https-only rule for a file URL, not the
+ * credential. Anything unparseable gets neither.
+ */
+export function fileCredentialPolicy(
+  upstreamUrl: string,
+  fileUrl: string
+): { credential: boolean; sameOrigin: boolean } {
+  try {
+    const upstream = new URL(upstreamUrl);
+    const file = new URL(fileUrl);
+    if (file.origin !== upstream.origin || file.origin === 'null') {
+      return { credential: false, sameOrigin: false };
+    }
+    let path = upstream.pathname.replace(/\/+$/, '');
+    if (path.endsWith('/simple')) {
+      path = path.slice(0, -'/simple'.length);
+    }
+    return { credential: file.pathname.startsWith(`${path}/`), sameOrigin: true };
+  } catch {
+    return { credential: false, sameOrigin: false };
+  }
 }
 
 /** The opaque id a file is served under: stable for a registry and URL, unguessable without both. */
@@ -180,6 +210,23 @@ function toIndexFile(raw: RawEntry, baseUrl: string): PypiIndexFile | null {
     return null;
   }
   resolved.hash = '';
+  // Every real index (pypi.org, Nexus, Artifactory, GitLab) ends a file URL in its filename. An
+  // entry that does not could name any other path on the registry's host, and that path would be
+  // fetched with the registry credential.
+  if (resolved.search !== '' || resolved.href.length > MAX_FILE_URL_CHARS) {
+    return null;
+  }
+  let lastSegment: string;
+  try {
+    lastSegment = decodeURIComponent(
+      resolved.pathname.slice(resolved.pathname.lastIndexOf('/') + 1)
+    );
+  } catch {
+    return null;
+  }
+  if (lastSegment !== raw.filename || lastSegment.includes('/') || lastSegment.includes('\\')) {
+    return null;
+  }
   return {
     filename: raw.filename,
     url: resolved.href,

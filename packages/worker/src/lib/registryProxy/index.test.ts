@@ -2273,7 +2273,7 @@ describe('pypi proxy: the project index', () => {
       `<a ${'x="y" '.repeat(50_000)}>flask-1.0.4.tar.gz</a>`,
       `<a href="${'h'.repeat(5000)}">flask-1.0.5.tar.gz</a>`,
       `<a href="https://f.test/${WHL}" data-requires-python="&lt;script&gt;alert(1)&lt;/script&gt;">${WHL}</a>`,
-      `<a href="https://f.test/unclosed-1.0.tar.gz">flask-9.0.0.tar.gz`,
+      `<a href="https://f.test/flask-9.0.0.tar.gz">flask-9.0.0.tar.gz`,
       '<a href="https://f.test/tail',
     ]);
     const { at, proxy } = await startPyProxy(async () => html(hostile));
@@ -2483,6 +2483,100 @@ describe('pypi proxy: files', () => {
       );
       // The index itself is the registry's: its opt-in applies.
       expect(calls.find((c) => c.url.endsWith('/simple/flask/'))?.allowPrivate).toBe(true);
+      await proxy.close();
+    } finally {
+      vi.mocked(createGuardedFetch).mockReset();
+    }
+  });
+
+  it('does not list an index entry whose URL does not end in its filename', async () => {
+    const index = htmlIndex([
+      `<a href="http://pyup.test/api/v1/admin/secrets">flask-1.0.0.tar.gz</a>`,
+      `<a href="http://pyup.test/packages/flask-1.0.1.tar.gz?token=x">flask-1.0.1.tar.gz</a>`,
+      `<a href="http://pyup.test/packages/flask-1.0.2.tar.gz/..">flask-1.0.2.tar.gz</a>`,
+      `<a href="http://pyup.test/packages/flask-1.0.3.tar.gz%2Fx">flask-1.0.3.tar.gz</a>`,
+      `<a href="http://pyup.test/packages/flask-1.0.4.tar.gz">flask-1.0.4.tar.gz</a>`,
+      `<a href="http://pyup.test/packages/${'p'.repeat(2000)}/flask-1.0.5.tar.gz">flask-1.0.5.tar.gz</a>`,
+    ]);
+    const { at, proxy } = await startPyProxy(async () => html(index));
+    expect(linksOf((await at('/simple/flask/')).body).map((l) => l.text)).toEqual([
+      'flask-1.0.4.tar.gz',
+    ]);
+    await proxy.close();
+  });
+
+  it('sends the credential only under the registry’s path prefix, not to a same-origin sibling path', async () => {
+    const registry = { ...PY, upstreamUrl: 'http://pyup.test/artifactory/api/pypi/repo/simple' };
+    const under = 'http://pyup.test/artifactory/api/pypi/repo/packages/flask-1.0.0.tar.gz';
+    const sibling = 'http://pyup.test/artifactory/api/pypi/repo-evil/packages/flask-1.1.0.tar.gz';
+    const outside = 'http://pyup.test/api/v1/flask-1.2.0.tar.gz';
+    const escaped = 'http://pyup.test/artifactory/api/pypi/repo/../../x/flask-1.3.0.tar.gz';
+    const index = htmlIndex(
+      [under, sibling, outside, escaped].map((u) => {
+        const name = u.slice(u.lastIndexOf('/') + 1);
+        return `<a href="${u}">${name}</a>`;
+      })
+    );
+    const seen = new Map<string, Record<string, string>>();
+    const { file, proxy } = await startPyProxy(
+      async (url, init) => {
+        if (url.endsWith('/simple/flask/')) {
+          return html(index);
+        }
+        seen.set(url, init?.headers as Record<string, string>);
+        return new Response('BYTES');
+      },
+      { registry }
+    );
+    for (const name of [
+      'flask-1.0.0.tar.gz',
+      'flask-1.1.0.tar.gz',
+      'flask-1.2.0.tar.gz',
+      'flask-1.3.0.tar.gz',
+    ]) {
+      expect((await file(name)).response.status, name).toBe(200);
+    }
+    expect(seen.get(under)?.authorization).toBe('Bearer py-up-token');
+    expect(seen.get(sibling)?.authorization).toBeUndefined();
+    expect(seen.get(outside)?.authorization).toBeUndefined();
+    // The parser resolved `..`, so the request goes to the resolved path, outside the prefix.
+    expect(
+      seen.get('http://pyup.test/artifactory/api/x/flask-1.3.0.tar.gz')?.authorization
+    ).toBeUndefined();
+    await proxy.close();
+  });
+
+  it('fetches a same-origin file outside the prefix through a guard without the private opt-in', async () => {
+    const calls: Array<{ allowPrivate: boolean | undefined; url: string }> = [];
+    vi.mocked(createGuardedFetch).mockImplementation(
+      (opts) =>
+        (async (url: string) => {
+          calls.push({ allowPrivate: opts?.allowPrivate, url: String(url) });
+          return String(url).endsWith('/simple/flask/')
+            ? html(
+                htmlIndex([
+                  '<a href="/packages/flask-1.0.0.tar.gz">flask-1.0.0.tar.gz</a>',
+                  '<a href="/elsewhere/flask-1.1.0.tar.gz">flask-1.1.0.tar.gz</a>',
+                ])
+              )
+            : new Response('BYTES');
+        }) as never
+    );
+    try {
+      const { file, proxy } = await startPyProxy(async () => new Response('unused'), {
+        inject: false,
+        registry: {
+          ...PY,
+          allowPrivateNetwork: true,
+          upstreamUrl: 'http://pyup.test/repo/simple',
+        },
+      });
+      // Relative URLs resolve against the index URL `/repo/simple/flask/`.
+      expect((await file('flask-1.0.0.tar.gz')).response.status).toBe(200);
+      expect((await file('flask-1.1.0.tar.gz')).response.status).toBe(200);
+      const byUrl = (u: string) => calls.filter((c) => c.url === u).map((c) => c.allowPrivate);
+      expect(byUrl('http://pyup.test/packages/flask-1.0.0.tar.gz')).toEqual([false]);
+      expect(byUrl('http://pyup.test/elsewhere/flask-1.1.0.tar.gz')).toEqual([false]);
       await proxy.close();
     } finally {
       vi.mocked(createGuardedFetch).mockReset();

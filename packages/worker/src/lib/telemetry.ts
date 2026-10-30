@@ -11,6 +11,7 @@ import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
 import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { isProxyTokenPath } from './registryProxy/tracePolicy.js';
 import type { WorkflowSpanTarget } from './workflowSpanSink.js';
 
 export function initTelemetry(serviceName: string): {
@@ -35,10 +36,7 @@ export function initTelemetry(serviceName: string): {
     // requests are not traced at all.
     instrumentations: [
       new HttpInstrumentation({
-        ignoreIncomingRequestHook: (req) => {
-          const url = req.url ?? '';
-          return url.startsWith('/go/') || url.startsWith('/pypi/');
-        },
+        ignoreIncomingRequestHook: (req) => isProxyTokenPath(req.url),
       }),
       new UndiciInstrumentation(),
     ],

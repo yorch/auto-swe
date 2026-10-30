@@ -490,6 +490,15 @@ export function parsePipfileLock(text: string): PypiRequirement[] {
 const REQUIREMENTS_NAME_RE = /^requirements[-_.A-Za-z0-9]*\.txt$/;
 const PYLOCK_NAME_RE = /^pylock\.[-_.A-Za-z0-9]+\.toml$/;
 
+/** Whether a basename is one `parsePypiLockfile` reads. */
+export function isPypiLockfileName(base: string): boolean {
+  return (
+    (PYPI_LOCKFILE_NAMES as readonly string[]).includes(base) ||
+    PYLOCK_NAME_RE.test(base) ||
+    REQUIREMENTS_NAME_RE.test(base)
+  );
+}
+
 /** The pins of a lockfile, chosen by its basename; an unrecognised name yields nothing. */
 export function parsePypiLockfile(fileName: string, text: string): PypiRequirement[] {
   const base = fileName.slice(Math.max(fileName.lastIndexOf('/'), fileName.lastIndexOf('\\')) + 1);

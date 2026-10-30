@@ -408,7 +408,14 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
         await wiredWith({ components: [{ path: '', stacks: ['go'] }], primary: 'go' })
       ).toEqual({
         go: true,
+        pypi: false,
       });
+    });
+
+    it('wires PyPI for a detected Python repository and nothing else', async () => {
+      expect(
+        await wiredWith({ components: [{ path: '', stacks: ['python'] }], primary: 'python' })
+      ).toEqual({ go: false, pypi: true });
     });
 
     it('wires Go for a polyglot repository that has a Go component', async () => {
@@ -419,21 +426,127 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
             { path: 'svc', stacks: ['go'] },
           ],
         })
-      ).toEqual({ go: true });
+      ).toEqual({ go: true, pypi: false });
     });
 
-    it('does not wire Go for a detected Node repository', async () => {
+    it('does not wire Go or PyPI for a detected Node repository', async () => {
       expect(
         await wiredWith({ components: [{ path: '', stacks: ['node'] }], primary: 'node' })
       ).toEqual({
         go: false,
+        pypi: false,
       });
     });
 
-    it('wires Go when the detection is unknown', async () => {
-      expect(await wiredWith(undefined)).toEqual({ go: true });
-      expect(await wiredWith(null)).toEqual({ go: true });
-      expect(await wiredWith({ components: [] })).toEqual({ go: true });
+    it('wires Go and PyPI when the detection is unknown', async () => {
+      const both = { go: true, pypi: true };
+      expect(await wiredWith(undefined)).toEqual(both);
+      expect(await wiredWith(null)).toEqual(both);
+      expect(await wiredWith({ components: [] })).toEqual(both);
+    });
+
+    it('keeps the PyPI token in secretEnv, off argv, and scrubs it from a failing exec', async () => {
+      const TOKEN = 'cafe0123deadbeef';
+      const index = `http://proxy.internal:9999/pypi/${TOKEN}/pypi-1/simple/`;
+      const setAllowlist = vi.fn();
+      vi.mocked(beginWorkspaceRegistries).mockResolvedValueOnce({
+        baseUrl: 'http://proxy.internal:9999',
+        env: [
+          `PIP_INDEX_URL=${index}`,
+          `UV_DEFAULT_INDEX=${index}`,
+          `UV_INDEX_URL=${index}`,
+          'PIP_TRUSTED_HOST=proxy.internal:9999',
+        ],
+        registration: {
+          baseUrl: 'http://proxy.internal:9999',
+          release: async () => {},
+          setAllowlist,
+          token: TOKEN,
+        },
+        registries: [
+          {
+            accessMode: 'lockfile',
+            ecosystem: 'pypi',
+            id: 'pypi-1',
+            isDefault: true,
+            name: 'pypi',
+            scopes: [],
+          },
+        ],
+        token: TOKEN,
+      });
+      const ws = await createWorkspace(
+        AUTHED,
+        'auto/T-1',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        { detectedStack: { primary: 'python' }, teamId: 'team-a' }
+      );
+      await ws.destroy();
+      const commands = vi.mocked(execShellAsync).mock.calls.map((c) => c[0] as string);
+      const startCmd = commands.find((c) => c.includes('docker run -d --name')) ?? '';
+      expect(startCmd).toContain('-e PIP_INDEX_URL');
+      expect(startCmd).toContain('-e UV_DEFAULT_INDEX');
+      expect(startCmd).toContain('-e UV_INDEX_URL');
+      expect(startCmd).toContain('PIP_TRUSTED_HOST=proxy.internal:9999');
+      expect(startCmd).not.toContain(TOKEN);
+      expect(
+        vi
+          .mocked(execShellAsync)
+          .mock.calls.some((c) =>
+            (c[1] as { env?: Record<string, string> })?.env?.PIP_INDEX_URL?.includes(TOKEN)
+          )
+      ).toBe(true);
+      // No npm client files for a pypi-only workspace.
+      expect(commands.some((c) => c.includes('.auto-swe'))).toBe(false);
+      expect(vi.mocked(spawnWithStdinAsync).mock.calls.map((c) => String(c[0]))).not.toEqual(
+        expect.arrayContaining([expect.stringContaining('npmrc')])
+      );
+      const allowlist = setAllowlist.mock.calls[0]?.[0] as Map<string, unknown>;
+      expect(allowlist.get('pypi-1')).toEqual(new Map());
+
+      // A failure whose error text carries the token has it scrubbed.
+      vi.mocked(beginWorkspaceRegistries).mockResolvedValueOnce({
+        baseUrl: 'http://proxy.internal:9999',
+        env: [`PIP_INDEX_URL=${index}`],
+        registration: {
+          baseUrl: 'http://proxy.internal:9999',
+          release: async () => {},
+          setAllowlist: () => {},
+          token: TOKEN,
+        },
+        registries: [
+          {
+            accessMode: 'lockfile',
+            ecosystem: 'pypi',
+            id: 'pypi-1',
+            isDefault: true,
+            name: 'pypi',
+            scopes: [],
+          },
+        ],
+        token: TOKEN,
+      });
+      vi.mocked(execShellAsync).mockImplementation(async (cmd: string) => {
+        if (cmd.includes('clone')) {
+          throw new Error(`pip said no: ${index}`);
+        }
+        return okExec(cmd);
+      });
+      const err = await createWorkspace(
+        AUTHED,
+        'auto/T-1',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        { detectedStack: { primary: 'python' }, teamId: 'team-a' }
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).not.toContain(TOKEN);
+      expect((err as Error).message).toContain('***');
     });
 
     it('writes no npm client files for a Go-only workspace and keeps the token off argv', async () => {

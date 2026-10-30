@@ -31,6 +31,7 @@ const row = (over: Record<string, unknown>) => ({
 
 const NPM_ROW = row({ id: 'npm-1' });
 const GO_ROW = row({ ecosystem: 'go', id: 'go-1', upstreamUrl: 'https://goproxy.test' });
+const PYPI_ROW = row({ ecosystem: 'pypi', id: 'pypi-1', upstreamUrl: 'https://pypi.test' });
 
 let registered: { registries: ResolvedRegistry[] } | undefined;
 
@@ -108,6 +109,55 @@ describe('beginWorkspaceRegistries', () => {
     expect(await beginWorkspaceRegistries(null, 'workspace-x', { go: true })).toBeNull();
     findMany.mockResolvedValue([]);
     expect(await beginWorkspaceRegistries('team-a', 'workspace-x', { go: true })).toBeNull();
+  });
+
+  it('wires pypi only when asked, and never takes a pypi row for npm or go', async () => {
+    findMany.mockResolvedValue([PYPI_ROW]);
+    expect(await beginWorkspaceRegistries('team-a', 'workspace-x')).toBeNull();
+    expect(await beginWorkspaceRegistries('team-a', 'workspace-x', { go: true })).toBeNull();
+    expect(register).not.toHaveBeenCalled();
+
+    const access = await beginWorkspaceRegistries('team-a', 'workspace-x', { pypi: true });
+    expect(access?.registries).toEqual([
+      {
+        accessMode: 'lockfile',
+        ecosystem: 'pypi',
+        id: 'pypi-1',
+        isDefault: true,
+        name: 'registry',
+        scopes: [],
+      },
+    ]);
+    expect(registered?.registries.map((r) => [r.id, r.ecosystem, r.isDefault, r.scopes])).toEqual([
+      ['pypi-1', 'pypi', true, []],
+    ]);
+    expect(access?.env.some((p) => p.startsWith('NPM_CONFIG_'))).toBe(false);
+    expect(access?.env.some((p) => p.startsWith('PIP_INDEX_URL='))).toBe(true);
+  });
+
+  it('resolves npm, go and pypi separately, none shadowing another', async () => {
+    findMany.mockResolvedValue([PYPI_ROW, GO_ROW, NPM_ROW]);
+    const access = await beginWorkspaceRegistries('team-a', 'workspace-x', {
+      go: true,
+      pypi: true,
+    });
+    expect(access?.registries.map((r) => [r.id, r.ecosystem, r.isDefault])).toEqual([
+      ['npm-1', 'npm', true],
+      ['go-1', 'go', true],
+      ['pypi-1', 'pypi', true],
+    ]);
+    expect(access?.env).toContain('NPM_CONFIG_REGISTRY=http://proxy.internal:9999/npm/npm-1');
+    expect(access?.env.some((p) => p.startsWith('GOPROXY='))).toBe(true);
+    expect(access?.env.some((p) => p.startsWith('PIP_INDEX_URL='))).toBe(true);
+  });
+
+  it('keeps one pypi default, a team row beating a global one', async () => {
+    findMany.mockResolvedValue([
+      row({ ecosystem: 'pypi', id: 'pypi-global' }),
+      row({ ecosystem: 'pypi', id: 'pypi-team', teamId: 'team-a' }),
+    ]);
+    const access = await beginWorkspaceRegistries('team-a', 'workspace-x', { pypi: true });
+    expect(access?.registries.map((r) => r.id)).toEqual(['pypi-team']);
   });
 });
 
@@ -243,5 +293,100 @@ describe('buildRegistryAllowlist', () => {
       fakeExec(files)
     );
     expect(map.get('go-1')?.size).toBe(50);
+  });
+
+  describe('a pypi registry', () => {
+    const REQ_A = 'requests==2.31.0\nflask==3.0.0\n';
+    const REQ_B = 'Flask==3.0.1\nnumpy==1.26.4\n';
+    const pypi = (over: Partial<WorkspaceRegistryAccess['registries'][number]> = {}) =>
+      access([{ ecosystem: 'pypi', id: 'pypi-1', ...over }]);
+
+    it('merges every lockfile at any depth, by union', async () => {
+      const exec = fakeExec({ 'requirements.txt': REQ_A, 'svc/api/requirements-dev.txt': REQ_B });
+      const map = await buildRegistryAllowlist(pypi(), 'HEAD', exec);
+      const list = map.get('pypi-1');
+      // Versions are stored canonical: trailing `.0` segments are dropped.
+      expect(list?.get('requests')).toEqual(new Set(['2.31']));
+      expect(list?.get('flask')).toEqual(new Set(['3', '3.0.1']));
+      expect(list?.get('numpy')).toEqual(new Set(['1.26.4']));
+    });
+
+    it('skips vendored and virtualenv trees', async () => {
+      const exec = fakeExec({
+        '.venv/requirements.txt': 'evil==1.0\n',
+        'a/node_modules/x/requirements.txt': 'evil==2.0\n',
+        'a/site-packages/requirements.txt': 'evil==3.0\n',
+        'requirements.txt': REQ_A,
+        'third_party/requirements.txt': 'evil==4.0\n',
+        'vendor/requirements.txt': 'evil==5.0\n',
+        'venv/requirements.txt': 'evil==6.0\n',
+      });
+      const map = await buildRegistryAllowlist(pypi(), 'HEAD', exec);
+      expect([...(map.get('pypi-1')?.keys() ?? [])].sort()).toEqual(['flask', 'requests']);
+    });
+
+    it('gives an empty, not absent, allowlist when there is no lockfile', async () => {
+      const map = await buildRegistryAllowlist(pypi(), 'HEAD', fakeExec({ 'README.md': '' }));
+      expect(map.has('pypi-1')).toBe(true);
+      expect(map.get('pypi-1')).toEqual(new Map());
+    });
+
+    it('leaves an open-mode registry unchecked and makes no git read for it', async () => {
+      const exec = fakeExec({ 'requirements.txt': REQ_A });
+      const map = await buildRegistryAllowlist(pypi({ accessMode: 'open' }), 'HEAD', exec);
+      expect(map.get('pypi-1')).toBeNull();
+      expect(exec.mock.calls.some(([c]) => c.includes('cat-file') || c.includes('git show'))).toBe(
+        false
+      );
+    });
+
+    it('skips an oversized or truncated file', async () => {
+      const big = vi.fn(async (command: string) =>
+        command.includes('git ls-tree')
+          ? { stdout: 'requirements.txt\0' }
+          : { stdout: command.includes('cat-file -s') ? String(60 * 1024 * 1024) : REQ_A }
+      );
+      expect((await buildRegistryAllowlist(pypi(), 'HEAD', big)).get('pypi-1')).toEqual(new Map());
+      expect(big.mock.calls.some(([c]) => c.includes('git show'))).toBe(false);
+
+      const truncated = vi.fn(async (command: string) =>
+        command.includes('git ls-tree')
+          ? { stdout: 'requirements.txt\0' }
+          : {
+              stdout: command.includes('cat-file -s') ? '10' : 'x'.repeat(50 * 1024 * 1024 + 2),
+            }
+      );
+      expect((await buildRegistryAllowlist(pypi(), 'HEAD', truncated)).get('pypi-1')).toEqual(
+        new Map()
+      );
+    });
+
+    it('caps the lockfiles read at 50', async () => {
+      const files = Object.fromEntries(
+        Array.from({ length: 55 }, (_, i) => [`m${i}/requirements.txt`, `pkg${i}==1.0.0\n`])
+      );
+      const map = await buildRegistryAllowlist(pypi(), 'HEAD', fakeExec(files));
+      expect(map.get('pypi-1')?.size).toBe(50);
+    });
+
+    it('leaves the npm and go allowlists unaffected', async () => {
+      const exec = fakeExec({
+        'go.sum': GO_SUM_B,
+        'package-lock.json': PACKAGE_LOCK,
+        'requirements.txt': REQ_A,
+      });
+      const map = await buildRegistryAllowlist(
+        access([
+          { ecosystem: 'npm', id: 'npm-1' },
+          { ecosystem: 'go', id: 'go-1' },
+          { ecosystem: 'pypi', id: 'pypi-1' },
+        ]),
+        'HEAD',
+        exec
+      );
+      expect([...(map.get('npm-1')?.keys() ?? [])]).toEqual(['left-pad']);
+      expect([...(map.get('go-1')?.keys() ?? [])]).toEqual(['example.com/c']);
+      expect([...(map.get('pypi-1')?.keys() ?? [])].sort()).toEqual(['flask', 'requests']);
+    });
   });
 });

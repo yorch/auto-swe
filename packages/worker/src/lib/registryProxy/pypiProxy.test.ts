@@ -1,6 +1,7 @@
 import { buildPypiAllowlist } from '@auto-swe/shared/lib/pypiAllowlist';
 import { describe, expect, it } from 'vitest';
 import {
+  fileCredentialPolicy,
   fileIdFor,
   filterAllowedFiles,
   parsePypiPath,
@@ -69,6 +70,109 @@ describe('parsePypiPath', () => {
     parsePypiPath(`/simple/${'-'.repeat(2_000_000)}/`);
     parsePypiPath(`/files/${'a'.repeat(32)}/${'.'.repeat(2_000_000)}`);
     expect(performance.now() - start).toBeLessThan(1000);
+  });
+});
+
+describe('fileCredentialPolicy', () => {
+  const UP = 'https://h.test/artifactory/api/pypi/repo/simple';
+  const policy = (up: string, file: string) => fileCredentialPolicy(up, file);
+
+  it('grants the credential under the prefix with `/simple` removed', () => {
+    expect(policy(UP, 'https://h.test/artifactory/api/pypi/repo/packages/a-1.tar.gz')).toEqual({
+      credential: true,
+      sameOrigin: true,
+    });
+    expect(policy('https://h.test/simple', 'https://h.test/packages/a-1.tar.gz')).toEqual({
+      credential: true,
+      sameOrigin: true,
+    });
+    expect(policy('https://h.test/simple/', 'https://h.test/x/a-1.tar.gz').credential).toBe(true);
+    expect(policy('https://h.test', 'https://h.test/x/a-1.tar.gz').credential).toBe(true);
+  });
+
+  it('refuses a same-origin path outside the prefix, and a sibling sharing its text', () => {
+    expect(policy(UP, 'https://h.test/api/v1/a-1.tar.gz')).toEqual({
+      credential: false,
+      sameOrigin: true,
+    });
+    expect(policy(UP, 'https://h.test/artifactory/api/pypi/repo-evil/a-1.tar.gz').credential).toBe(
+      false
+    );
+    expect(policy(UP, 'https://h.test/artifactory/api/pypi/repo').credential).toBe(false);
+  });
+
+  it('judges the parsed path: `..` and `%2e%2e` cannot climb out of the prefix', () => {
+    expect(policy(UP, 'https://h.test/artifactory/api/pypi/repo/../../x/a-1.tar.gz')).toEqual({
+      credential: false,
+      sameOrigin: true,
+    });
+    expect(
+      policy(UP, 'https://h.test/artifactory/api/pypi/repo/%2e%2e/x/a-1.tar.gz').credential
+    ).toBe(false);
+    expect(policy(UP, 'https://h.test/artifactory/api/pypi/repo/%2E%2E/%2e%2e/a').credential).toBe(
+      false
+    );
+    expect(
+      policy(UP, 'https://h.test/other/../artifactory/api/pypi/repo/a-1.tar.gz').credential
+    ).toBe(true);
+  });
+
+  it('compares origins as the URL parser does', () => {
+    // Default port and case do not matter; userinfo is not part of the origin.
+    expect(policy(UP, 'https://H.TEST:443/artifactory/api/pypi/repo/a-1.tar.gz').credential).toBe(
+      true
+    );
+    expect(policy(UP, 'https://u:p@h.test/artifactory/api/pypi/repo/a-1.tar.gz').credential).toBe(
+      true
+    );
+    // Another port, scheme, host, or a trailing dot is another origin.
+    for (const other of [
+      'https://h.test:8443/artifactory/api/pypi/repo/a',
+      'http://h.test/artifactory/api/pypi/repo/a',
+      'https://h2.test/artifactory/api/pypi/repo/a',
+      'https://h.test./artifactory/api/pypi/repo/a',
+    ]) {
+      expect(policy(UP, other), other).toEqual({ credential: false, sameOrigin: false });
+    }
+    expect(policy('http://h.test:8080/simple', 'http://h.test:8080/a').credential).toBe(true);
+    expect(policy('http://h.test:8080/simple', 'http://h.test/a').sameOrigin).toBe(false);
+  });
+
+  it('grants nothing for a URL that does not parse', () => {
+    expect(policy(UP, 'not a url')).toEqual({ credential: false, sameOrigin: false });
+    expect(policy('nope', 'https://h.test/a')).toEqual({ credential: false, sameOrigin: false });
+  });
+});
+
+describe('parseSimpleIndex: file URL binding', () => {
+  const json = (files: Array<{ filename: string; url: string }>) =>
+    parseSimpleIndex(JSON.stringify({ files }), 'application/json', BASE)?.map((f) => f.filename);
+
+  it('keeps only entries whose last path segment, decoded once, is the filename', () => {
+    const fn = 'flask-1.0.0.tar.gz';
+    expect(
+      json([
+        { filename: fn, url: `https://f.test/a/${fn}` },
+        { filename: fn, url: `https://f.test/a/flask-1.0.0.tar.g%7a` },
+        { filename: fn, url: 'https://f.test/api/admin' },
+        { filename: fn, url: `https://f.test/a/${fn}?x=1` },
+        { filename: fn, url: `https://f.test/a/${fn}/` },
+        { filename: fn, url: `https://f.test/a/${fn}%2F..` },
+        { filename: fn, url: `https://f.test/a/${fn}%5c` },
+        { filename: fn, url: 'https://f.test/a/flask-1.0.0.tar.gz%' },
+        { filename: fn, url: `https://f.test/${'p'.repeat(2000)}/${fn}` },
+      ])
+    ).toEqual([fn, fn]);
+  });
+
+  it('strips the fragment from the stored URL', () => {
+    const fn = 'flask-1.0.0.tar.gz';
+    const out = parseSimpleIndex(
+      JSON.stringify({ files: [{ filename: fn, url: `https://f.test/${fn}#sha256=${SHA}` }] }),
+      'application/json',
+      BASE
+    );
+    expect(out?.[0]?.url).toBe(`https://f.test/${fn}`);
   });
 });
 
@@ -217,7 +321,7 @@ describe('parseSimpleIndex: PEP 503 HTML', () => {
        <a href="https://f.test/d" data-requires-python="${'x'.repeat(4001)}">flask-1.0.6.tar.gz</a>
        <abbr href="https://f.test/e">flask-1.0.7.tar.gz</abbr>
        <!-- <a href="https://f.test/f">flask-1.0.8.tar.gz</a> -->
-       <a href="https://f.test/ok">flask-9.9.9.tar.gz</a>`
+       <a href="https://f.test/flask-9.9.9.tar.gz">flask-9.9.9.tar.gz</a>`
     );
     expect(parseSimpleIndex(body, 'text/html', BASE)?.map((f) => f.filename)).toEqual([
       'flask-9.9.9.tar.gz',

@@ -19,6 +19,11 @@ import {
   parseLockfile,
 } from '@auto-swe/shared/lib/lockfileAllowlist';
 import { registriesFor, resolvePackageRegistries } from '@auto-swe/shared/lib/packageRegistry';
+import {
+  buildPypiAllowlist,
+  isPypiLockfileName,
+  parsePypiLockfile,
+} from '@auto-swe/shared/lib/pypiAllowlist';
 import { logWarn } from '../activityLog.js';
 import { shellQuote } from '../shellQuote.js';
 
@@ -45,7 +50,7 @@ export interface WorkspaceRegistryAccess {
   token: string;
   registries: {
     accessMode: string;
-    ecosystem: 'npm' | 'go';
+    ecosystem: 'npm' | 'go' | 'pypi';
     id: string;
     isDefault: boolean;
     name: string;
@@ -58,7 +63,7 @@ type RegistryRow = Awaited<ReturnType<typeof prisma.packageRegistry.findMany>>[n
 
 function toResolvedRegistry(
   registry: RegistryRow,
-  ecosystem: 'npm' | 'go',
+  ecosystem: 'npm' | 'go' | 'pypi',
   isDefault: boolean,
   scopes: string[]
 ): ResolvedRegistry {
@@ -90,12 +95,12 @@ function toResolvedRegistry(
  *
  * npm is always resolved. Go is resolved only when `wanted.go` is set — the
  * caller's say-so that the repository's stack uses it, so a Node repository
- * never receives a Go proxy it has no use for.
+ * never receives a Go proxy it has no use for. PyPI is the same, behind `wanted.pypi`.
  */
 export async function beginWorkspaceRegistries(
   teamId: string | null,
   containerName: string,
-  wanted: { go?: boolean } = {}
+  wanted: { go?: boolean; pypi?: boolean } = {}
 ): Promise<WorkspaceRegistryAccess | null> {
   const proxy = workerRegistryProxy();
   if (!proxy || !teamId) {
@@ -111,7 +116,10 @@ export async function beginWorkspaceRegistries(
   const resolvedGo = wanted.go
     ? resolvePackageRegistries(registriesFor(rows, 'go'), teamId).filter((r) => r.isDefault)
     : [];
-  if (resolved.length === 0 && resolvedGo.length === 0) {
+  const resolvedPypi = wanted.pypi
+    ? resolvePackageRegistries(registriesFor(rows, 'pypi'), teamId).filter((r) => r.isDefault)
+    : [];
+  if (resolved.length === 0 && resolvedGo.length === 0 && resolvedPypi.length === 0) {
     return null;
   }
   const registries: ResolvedRegistry[] = [
@@ -119,6 +127,7 @@ export async function beginWorkspaceRegistries(
       toResolvedRegistry(registry, 'npm', isDefault, scopes)
     ),
     ...resolvedGo.map(({ registry }) => toResolvedRegistry(registry, 'go', true, [])),
+    ...resolvedPypi.map(({ registry }) => toResolvedRegistry(registry, 'pypi', true, [])),
   ];
   const registration = await proxy.register({
     onDenied(d) {
@@ -146,6 +155,14 @@ export async function beginWorkspaceRegistries(
     ...resolvedGo.map(({ registry }) => ({
       accessMode: registry.accessMode,
       ecosystem: 'go' as const,
+      id: registry.id,
+      isDefault: true,
+      name: registry.name,
+      scopes: [],
+    })),
+    ...resolvedPypi.map(({ registry }) => ({
+      accessMode: registry.accessMode,
+      ecosystem: 'pypi' as const,
       id: registry.id,
       isDefault: true,
       name: registry.name,
@@ -241,12 +258,78 @@ async function buildGoSumAllowlist(
   return combined;
 }
 
+/** Trees whose `requirements.txt` files belong to a dependency, not to the repository. */
+const PYPI_SKIP_SEGMENTS = new Set([
+  '.git',
+  '.venv',
+  'node_modules',
+  'site-packages',
+  'third_party',
+  'vendor',
+  'venv',
+]);
+
+/**
+ * The allowlist derived from every PyPI lockfile committed at `ref`, at any depth outside
+ * vendored and virtualenv trees. Always a map — empty when there is none, so a lockfile-mode
+ * PyPI registry then denies everything. A file that is oversized, truncated or unparsable
+ * contributes nothing (fails closed).
+ */
+async function buildPypiLockAllowlist(
+  exec: Exec,
+  repoDir: string,
+  ref: string,
+  allPaths: string[]
+): Promise<Map<string, Set<string>>> {
+  const combined = new Map<string, Set<string>>();
+  const all = allPaths.filter((p) => {
+    const segments = p.split('/');
+    return (
+      isPypiLockfileName(segments[segments.length - 1] ?? '') &&
+      !segments.slice(0, -1).some((s) => PYPI_SKIP_SEGMENTS.has(s))
+    );
+  });
+  if (all.length > LOCKFILE_MAX_FILES) {
+    logWarn('registry allowlist: more PyPI lockfiles than the cap, keeping the first', {
+      count: all.length,
+      ref,
+    });
+  }
+  for (const path of all.slice(0, LOCKFILE_MAX_FILES)) {
+    const read = await readCommittedFile(exec, repoDir, ref, path);
+    if ('skipped' in read) {
+      logWarn(`registry allowlist: ${read.skipped} PyPI lockfile, skipping`, {
+        path,
+        ref,
+        ...(read.size !== undefined ? { size: read.size } : {}),
+      });
+      continue;
+    }
+    try {
+      for (const [name, versions] of buildPypiAllowlist(parsePypiLockfile(path, read.text))) {
+        const set = combined.get(name) ?? new Set<string>();
+        for (const v of versions) {
+          set.add(v);
+        }
+        combined.set(name, set);
+      }
+    } catch (err) {
+      logWarn('registry allowlist: unparsable PyPI lockfile, ignoring', {
+        error: err instanceof Error ? err.message : String(err),
+        path,
+        ref,
+      });
+    }
+  }
+  return combined;
+}
+
 /**
  * The lockfile-derived allowlist, keyed by registry id. An `open`-mode
  * registry maps to `null` (no check); a lockfile-mode one maps to the union
  * of every parsed lockfile — including an empty set when the repo has none.
- * npm registries are fed by npm lockfiles only and Go registries by `go.sum`
- * only. `exec` runs `sh -c` in the workspace and returns stdout.
+ * npm registries are fed by npm lockfiles only, Go registries by `go.sum`
+ * only and PyPI registries by PyPI lockfiles only. `exec` runs `sh -c` in the workspace and returns stdout.
  */
 export async function buildRegistryAllowlist(
   access: WorkspaceRegistryAccess,
@@ -325,8 +408,15 @@ export async function buildRegistryAllowlist(
   const goCombined = goRegistries.some((r) => r.accessMode !== 'open')
     ? await buildGoSumAllowlist(exec, repoDir, ref, allPaths)
     : null;
+  const pypiCombined = access.registries.some(
+    (r) => r.ecosystem === 'pypi' && r.accessMode !== 'open'
+  )
+    ? await buildPypiLockAllowlist(exec, repoDir, ref, allPaths)
+    : null;
   for (const r of access.registries) {
-    if (r.ecosystem === 'go') {
+    if (r.ecosystem === 'pypi') {
+      map.set(r.id, r.accessMode === 'open' ? null : (pypiCombined ?? new Map()));
+    } else if (r.ecosystem === 'go') {
       map.set(r.id, r.accessMode === 'open' ? null : (goCombined ?? new Map()));
     } else {
       map.set(r.id, r.accessMode === 'open' ? null : combined);
