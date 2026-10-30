@@ -51,6 +51,7 @@ function tailScript(maxBytes: number): string {
 
 function stopScript(): string {
   return [
+    '(async () => {',
     'const fs = require("node:fs");',
     `const path = ${JSON.stringify(PREVIEW_PGID)};`,
     'try {',
@@ -62,6 +63,7 @@ function stopScript(): string {
     '  }',
     '  fs.unlinkSync(path);',
     '} catch {}',
+    '})().catch(() => {});',
   ].join('\n');
 }
 

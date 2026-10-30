@@ -26,6 +26,7 @@ const m = vi.hoisted(() => ({
   modelSpec: 'anthropic/x',
   persist: vi.fn(async (_tracer: unknown, _key: string) => {}),
   prCreate: vi.fn(async (_args: unknown) => ({})),
+  previewConfig: null as unknown,
   prUpdate: vi.fn(async (_args: unknown) => ({})),
   push: vi.fn(),
   recordUsage: vi.fn(),
@@ -59,6 +60,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     activeWorkflow: { findFirst: vi.fn(async () => m.ledger), updateMany: m.closeRows },
     connection: {
+      findUnique: vi.fn(async () => ({ previewConfig: m.previewConfig })),
       findUniqueOrThrow: vi.fn(async () => ({
         defaultBranch: 'main',
         executorImage: null,
@@ -183,6 +185,7 @@ vi.mock('./agentRunFinalize.js', () => ({
   pushGatedCommit: m.push,
 }));
 
+import { prisma } from '@auto-swe/shared/db';
 import { __resetReconcileCacheForTests } from '@auto-swe/shared/lib/agentRunAdmission';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { AgentTracer } from '../lib/agentTracer.js';
@@ -242,6 +245,7 @@ beforeEach(() => {
   m.slots = [{ launchedAt: new Date(1), teamId: 'team-1', workflowId: 'wf-1' }];
   m.temporal = {};
   m.toolKeys = null;
+  m.previewConfig = null;
   // A test may replace the implementation; clearAllMocks does not restore it.
   vi.mocked(resolveAgent).mockImplementation(defaultResolveAgent as never);
   m.runtime = null;
@@ -465,6 +469,36 @@ describe('tool grants and agent scope', () => {
     m.toolKeys = null;
     await runAgentTask({ request: request() });
     expect(granted()).toEqual(['listDirectory', 'readFile']);
+  });
+
+  it('passes preview services only with an explicit browser grant', async () => {
+    m.toolKeys = ['browser'];
+    m.previewConfig = {
+      readyUrl: 'http://localhost:3000',
+      services: [{ image: 'mirror.gcr.io/library/redis:7', name: 'redis' }],
+      start: 'npm run dev',
+    };
+
+    await runAgentTask({ request: request() });
+
+    expect(vi.mocked(prisma.connection.findUnique)).toHaveBeenCalledWith({
+      select: { previewConfig: true },
+      where: { id: 'repo-1' },
+    });
+    expect(vi.mocked(createWorkspace).mock.calls[0]?.[6]).toMatchObject({
+      services: [{ image: 'mirror.gcr.io/library/redis:7', name: 'redis' }],
+    });
+  });
+
+  it('does not load preview services when toolKeys is null', async () => {
+    m.toolKeys = null;
+
+    await runAgentTask({ request: request() });
+
+    expect(vi.mocked(prisma.connection.findUnique)).not.toHaveBeenCalled();
+    expect(vi.mocked(createWorkspace).mock.calls[0]?.[6]).toMatchObject({
+      services: undefined,
+    });
   });
 
   it('toolKeys [] grants no tools at all', async () => {

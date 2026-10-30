@@ -19,6 +19,7 @@ import type {
   WorkspaceContainerSpec,
   WorkspaceExecOptions,
   WorkspaceHandle,
+  WorkspaceServiceSpec,
   WorkspaceSpawnOptions,
 } from './types.js';
 
@@ -66,6 +67,36 @@ export function buildMetadataBlockArgs(containerName: string, image: string): st
 
 /** The `--add-host` entry that makes the Docker host alias resolve to the host gateway. */
 const workerHostEntry = () => `--add-host=${DOCKER_HOST_ALIAS}:host-gateway`;
+
+export function buildServiceContainerArgs(
+  workspaceName: string,
+  service: WorkspaceServiceSpec
+): string[] {
+  const envNames = Object.keys(service.env ?? {}).sort();
+  return [
+    'run',
+    '-d',
+    '--name',
+    `${workspaceName}-svc-${service.name}`,
+    '--label',
+    `asw.workspace=${workspaceName}`,
+    '--network',
+    `container:${workspaceName}`,
+    '--memory=512m',
+    '--cpus=1',
+    '--pids-limit=128',
+    '--security-opt=no-new-privileges',
+    '--cap-drop=ALL',
+    '--cap-add=CHOWN',
+    '--cap-add=SETUID',
+    '--cap-add=SETGID',
+    '--cap-add=FOWNER',
+    '--cap-add=DAC_OVERRIDE',
+    ...envNames.flatMap((name) => ['-e', name]),
+    '--',
+    service.image,
+  ];
+}
 
 /**
  * `sh` script that prints the PID of every direct child of PID 1, one per
@@ -255,6 +286,48 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       }
     }
 
+    for (const service of spec.services ?? []) {
+      if (!/^[a-z][a-z0-9-]{0,30}$/.test(service.name)) {
+        throw new Error(`invalid workspace service name: ${service.name}`);
+      }
+      const serviceName = `${spec.name}-svc-${service.name}`;
+      const env = service.env ?? {};
+      for (const name of Object.keys(env)) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+          throw new Error(`invalid service environment name: ${name}`);
+        }
+      }
+      await execShellAsync(
+        ['docker', ...buildServiceContainerArgs(spec.name, service)].map(shellQuote).join(' '),
+        {
+          heartbeatLabel: `workspace: starting service ${service.name}`,
+          ...(Object.keys(env).length > 0 ? { env } : {}),
+        }
+      );
+      if (service.readyCommand) {
+        const deadline = Date.now() + 120_000;
+        let ready = false;
+        while (Date.now() < deadline) {
+          try {
+            await execShellAsync(
+              `docker exec ${shellQuote(serviceName)} sh -c ${shellQuote(service.readyCommand)}`,
+              {
+                heartbeatLabel: `workspace: waiting for service ${service.name}`,
+                timeoutMs: 15_000,
+              }
+            );
+            ready = true;
+            break;
+          } catch {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+          }
+        }
+        if (!ready) {
+          throw new Error(`workspace service ${service.name} did not become ready within 120000ms`);
+        }
+      }
+    }
+
     return handle;
   }
 
@@ -353,6 +426,22 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
 
   async remove(idOrHandle: string | WorkspaceHandle): Promise<void> {
     const id = typeof idOrHandle === 'string' ? idOrHandle : idOrHandle.id;
+    try {
+      const sidecars = await spawnCaptureAsync(
+        'docker',
+        ['ps', '-aq', '--filter', `label=asw.workspace=${id}`],
+        { heartbeatLabel: 'workspace: finding service containers', timeoutMs: 30_000 }
+      );
+      const ids = sidecars.stdout.split(/\s+/).filter((value) => /^[a-f0-9]+$/i.test(value));
+      if (ids.length > 0) {
+        await spawnCaptureAsync('docker', ['rm', '-f', ...ids], {
+          heartbeatLabel: 'workspace: removing service containers',
+          timeoutMs: 60_000,
+        });
+      }
+    } catch {
+      /* already gone */
+    }
     try {
       await execShellAsync(`docker rm -f ${id}`);
     } catch {

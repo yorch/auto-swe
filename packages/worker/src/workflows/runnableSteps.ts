@@ -49,6 +49,7 @@ import {
   qodoReviewActivities,
   stateActivities,
   trackerCommentActivities,
+  uiVerifyActivities,
 } from './runnableActivities.js';
 
 interface StepExecutorArgs {
@@ -837,6 +838,27 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         ...(isolation === 'shared' || isolation === 'per-gate' ? { isolation } : {}),
         request,
         ...(typeof stopOnFailure === 'boolean' ? { stopOnFailure } : {}),
+      });
+    },
+  ],
+  [
+    'uiVerify',
+    ({ config, ctx, inputs, request }) => {
+      const branch =
+        (inputs.branch as string | undefined) ??
+        (config.branch as string | undefined) ??
+        (lookupPath(ctx, 'context.currentCodeResult.branch') as string | undefined);
+      const mode = inputs.mode ?? config.mode;
+      const recordVideo = inputs.recordVideo ?? config.recordVideo;
+      const failOnConsoleErrors = inputs.failOnConsoleErrors ?? config.failOnConsoleErrors;
+      const timeoutMs = inputs.timeoutMs ?? config.timeoutMs;
+      return uiVerifyActivities.runUiVerify({
+        ...(typeof branch === 'string' && branch ? { branch } : {}),
+        ...(mode === 'smoke' || mode === 'e2e' || mode === 'both' ? { mode } : {}),
+        ...(typeof recordVideo === 'boolean' ? { recordVideo } : {}),
+        ...(typeof failOnConsoleErrors === 'boolean' ? { failOnConsoleErrors } : {}),
+        ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
+        request,
       });
     },
   ],

@@ -94,7 +94,7 @@
           "from": "context.ticket"
         }
       },
-      "next": "initCounters",
+      "next": "uiVerify",
       "step": "executeImplementation",
       "type": "step"
     },
@@ -430,6 +430,12 @@
     "terminateReviewFailed": {
       "status": "FAILED",
       "type": "terminate"
+    },
+    "uiVerify": {
+      "next": "initCounters",
+      "onFail": "warn",
+      "step": "uiVerify",
+      "type": "step"
     },
     "updateCodeAfterCIFix": {
       "next": "clearCiResult",

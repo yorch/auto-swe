@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import type { FigmaDesignSummary } from '@auto-swe/shared/lib/integrations/figmaDesign';
+import { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
 import {
   resolveIssueTrackerConfig,
   resolveWorkflowDefaults,
@@ -14,6 +15,7 @@ import type {
   TestRunResult,
 } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
+import { resolveImplementerConfig } from '../agents/implementer.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import {
   buildImplementerTurnRunner,
@@ -172,6 +174,14 @@ export async function executeImplementation(
   // The branch the change is cut from and diffed against: the launch's base, else the
   // repository's default. Clone, path guard and diff must all use the same one.
   const baseBranch = await resolveRequestBaseBranch(request, repo);
+  const activityCtx = await currentRequestContext();
+  let services: ReturnType<typeof PreviewConfigSchema.parse>['services'];
+  if (repo.previewConfig) {
+    const implementerConfig = await resolveImplementerConfig(activityCtx, 'implementer');
+    if (implementerConfig.toolKeys?.includes('browser')) {
+      services = PreviewConfigSchema.parse(repo.previewConfig).services;
+    }
+  }
 
   const workspace = await createWorkspace(
     authedCloneUrl,
@@ -180,7 +190,7 @@ export async function executeImplementation(
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, teamId: repo.teamId }
+    { detectedStack: repo.detectedStack, services, teamId: repo.teamId }
   );
 
   const tracer = new AgentTracer();
@@ -235,7 +245,6 @@ export async function executeImplementation(
     // TEAM → GLOBAL cascade), and under Mastra the agent and any MCP server, bound
     // to the workspace so the tracer captures every call. The runtime decides how
     // skills reach the prompt, so the suffix comes back from it.
-    const activityCtx = await currentRequestContext();
     turns = await buildImplementerTurnRunner({
       ctx: activityCtx,
       repoId: requireRepoId(request, 'executeImplementation'),

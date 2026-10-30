@@ -27,7 +27,7 @@ export const TICKET_TO_MERGE_QODO_SPEC: WorkflowSpec = {
   entry: 'setValidating',
   name: 'ticket-to-merge-qodo',
   nodes: mergeNodes(
-    ticketToMergeNodes('qodoReview'),
+    ticketToMergeNodes('qodoReview', { uiVerify: true }),
     qodoReview({ next: 'setAwaitingHumanMerge', onBlocked: 'qodoDecision' }),
     {
       qodoDecision: {

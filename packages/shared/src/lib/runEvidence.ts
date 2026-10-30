@@ -60,7 +60,7 @@ export async function recordRunEvidence(
   });
   try {
     const evidence = await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${input.runId}, 0))`;
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${input.runId}, 0))`;
       if ((await tx.runEvidence.count({ where: { runId: input.runId } })) >= maxEvidencePerRun) {
         return null;
       }

@@ -281,6 +281,8 @@ export {
   resolveTemplateForRepo,
   retireFailedLaunch,
 } from './templates.js';
+export type { UiVerifyInput, UiVerifyResult } from './uiVerify.js';
+export { runUiVerify } from './uiVerify.js';
 export { validateContext } from './validateContext.js';
 export type { CiWaitConfig, WaitForCiByPollingInput } from './waitForCiByPolling.js';
 export { resolveCiWaitConfig, waitForCiByPolling } from './waitForCiByPolling.js';

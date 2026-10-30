@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   grantedWorkspaceToolIds,
+  grantsBrowserTool,
   grantsWriteTools,
   READ_TOOL_IDS,
   selectAgentRunTools,
@@ -10,6 +11,7 @@ describe('agent run tool grants', () => {
   it('null (an agent with no opinion about tools) grants the read tools only', () => {
     expect(grantedWorkspaceToolIds(null)).toEqual([...READ_TOOL_IDS]);
     expect(grantsWriteTools(null)).toBe(false);
+    expect(grantsBrowserTool(null)).toBe(false);
   });
 
   it.each([
@@ -19,6 +21,12 @@ describe('agent run tool grants', () => {
   ])('%s grants no workspace tool at all', (_label, keys) => {
     expect(grantedWorkspaceToolIds(keys)).toEqual([]);
     expect(grantsWriteTools(keys)).toBe(false);
+    expect(grantsBrowserTool(keys)).toBe(false);
+  });
+
+  it('grants the browser only when its key is explicitly named', () => {
+    expect(grantsBrowserTool(['browser'])).toBe(true);
+    expect(grantsBrowserTool(['readFile', 'browser'])).toBe(true);
   });
 
   it('grants a write tool only when it is named', () => {

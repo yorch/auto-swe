@@ -10,6 +10,7 @@ vi.mock('../../lib/sensitiveFileScanner.js', () => ({ checkSensitiveFilePath }))
 vi.mock('../../lib/shellCommandScanner.js', () => ({ scanShellCommand }));
 
 import {
+  BROWSER_RELAYED_TOOL_NAMES,
   decideToolCall,
   HARNESS_TOOLS,
   harnessToolsFor,
@@ -63,6 +64,21 @@ describe('relayed MCP tools', () => {
     });
     // Without a relay, no MCP tool is allowed.
     await expect(decideToolCall('mcp__connection__search', {}, ctx)).resolves.toMatchObject({
+      allow: false,
+    });
+  });
+});
+
+describe('explicit browser tools', () => {
+  it('allows exactly the in-process browser server tool names', async () => {
+    const withBrowser = { ...ctx, browserTools: BROWSER_RELAYED_TOOL_NAMES };
+    await expect(
+      decideToolCall('mcp__browser__browser_navigate', { url: 'http://localhost' }, withBrowser)
+    ).resolves.toMatchObject({ allow: true });
+    await expect(
+      decideToolCall('mcp__browser__browser_secret', {}, withBrowser)
+    ).resolves.toMatchObject({ allow: false });
+    await expect(decideToolCall('mcp__browser__browser_navigate', {}, ctx)).resolves.toMatchObject({
       allow: false,
     });
   });

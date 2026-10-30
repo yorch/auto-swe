@@ -53,3 +53,7 @@ export function grantsWriteTools(toolKeys: readonly string[] | null): boolean {
     (WRITE_TOOL_IDS as readonly string[]).includes(id)
   );
 }
+
+export function grantsBrowserTool(toolKeys: readonly string[] | null): boolean {
+  return toolKeys?.includes('browser') === true;
+}

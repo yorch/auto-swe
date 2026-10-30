@@ -476,8 +476,9 @@ The `uiValidation` group contains ADMIN-only, GLOBAL-only settings for run evide
 `uiValidation.maxScreenshotBytes` (5,000,000 bytes), `uiValidation.maxVideoBytes` (50,000,000
 bytes), `uiValidation.maxEvidencePerRun` (200 items), `uiValidation.evidenceRetentionDays` (90
 days), `uiValidation.prInlineImages` (off), and `uiValidation.agentRecordVideo` (on). They are not
-run-pinned and apply through the settings cache. The inline-image switch is reserved for a future
-public pull-request image flow; no public copy is made by this evidence pipeline.
+run-pinned and apply through the settings cache. Public PR screenshot copies require both
+`UI_EVIDENCE_PUBLIC_BUCKET` and `UI_EVIDENCE_PUBLIC_BASE_URL` in the worker environment in addition
+to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-managed.
 
 ## Limitations
 

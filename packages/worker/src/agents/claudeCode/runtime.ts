@@ -7,6 +7,7 @@ import type {
   PreToolUseHookInput,
   SDKResultMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { getSettingDefinition } from '@auto-swe/shared/config';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ApplicationFailure } from '@temporalio/activity';
@@ -17,6 +18,7 @@ import {
   type TranscriptRecorder,
 } from '../../lib/transcriptRecorder.js';
 import { isCredentialEnvName } from '../../lib/workspaceBackend/credentialEnv.js';
+import { BROWSER_TOOLS, type BrowserToolset } from '../browserTools.js';
 import {
   HARNESS_DIR,
   HARNESS_HOME,
@@ -35,6 +37,8 @@ import type { McpTracer } from '../mcpTools.js';
 import { binarySha256, resolveClaudeBinary } from './binary.js';
 import { type ModelProxy, workerModelProxy } from './modelProxy.js';
 import {
+  BROWSER_MCP_SERVER,
+  BROWSER_RELAYED_TOOL_NAMES,
   CLAUDE_CODE_CAPABILITIES,
   decideToolCall,
   type HarnessTool,
@@ -224,6 +228,7 @@ export interface ClaudeCodeRuntimeOptions
    * what the Agent names, and an empty list here is no tools, never all of them.
    */
   tools?: readonly HarnessTool[];
+  browserToolset?: BrowserToolset;
   /**
    * The model proxy the turns go through: omitted, the worker's own (when the
    * deployment runs one); `null`, none — the harness holds the credential.
@@ -404,6 +409,7 @@ export function claudeCodeAdapter(
   const baseUrl = normalizeAnthropicBaseUrl(access.apiBase);
   const tools = options.tools ? [...options.tools] : harnessToolsFor(options.toolKeys);
   const policy: PolicyContext = {
+    browserTools: options.browserToolset ? BROWSER_RELAYED_TOOL_NAMES : [],
     containerId: workspace.containerId,
     cwd: WORKSPACE_DIR,
     home: HARNESS_HOME,
@@ -457,7 +463,8 @@ export function claudeCodeAdapter(
     turn: HarnessTurn,
     { system, user }: { system: string; user: string },
     endpoint: { baseUrl: string; apiKey: string; proxied: boolean },
-    mcpServer: { instance: McpServer; timeout: number } | undefined
+    mcpServer: { instance: McpServer; timeout: number } | undefined,
+    browserServer: ReturnType<typeof createSdkMcpServer> | undefined
   ): Promise<HarnessTurnResult<ClaudeUsageReport>> {
     let result: SDKResultMessage | undefined;
     let toolCalls = 0;
@@ -554,7 +561,10 @@ export function claudeCodeAdapter(
         ...(access.effort ? { effort: access.effort } : {}),
         loadProjectSettings,
         maxTurns,
-        mcpServers: mcpServer ? [MCP_RELAY_SERVER] : [],
+        mcpServers: [
+          ...(mcpServer ? [MCP_RELAY_SERVER] : []),
+          ...(browserServer ? [BROWSER_MCP_SERVER] : []),
+        ],
         model: access.modelId,
         proxied: endpoint.proxied,
         runtime: 'claude-code',
@@ -605,15 +615,20 @@ export function claudeCodeAdapter(
         // fallback reaches `canUseTool` above, which refuses.
         // The Agent's own MCP connection, relayed from the worker, and no other:
         // a repository's `.mcp.json` or the harness's settings add no server.
-        ...(mcpServer
+        ...(mcpServer || browserServer
           ? {
               mcpServers: {
-                [MCP_RELAY_SERVER]: {
-                  instance: mcpServer.instance,
-                  name: MCP_RELAY_SERVER,
-                  timeout: mcpServer.timeout,
-                  type: 'sdk' as const,
-                },
+                ...(mcpServer
+                  ? {
+                      [MCP_RELAY_SERVER]: {
+                        instance: mcpServer.instance,
+                        name: MCP_RELAY_SERVER,
+                        timeout: mcpServer.timeout,
+                        type: 'sdk' as const,
+                      },
+                    }
+                  : {}),
+                ...(browserServer ? { [BROWSER_MCP_SERVER]: browserServer } : {}),
               },
             }
           : {}),
@@ -750,6 +765,7 @@ export function claudeCodeAdapter(
     capabilities: CLAUDE_CODE_CAPABILITIES,
     async close() {
       await (await relay)?.close();
+      await options.browserToolset?.close();
     },
     decide: (toolName, input, harnessCwd) => decideToolCall(toolName, input, policy, harnessCwd),
     kind: 'claude-code',
@@ -765,6 +781,18 @@ export function claudeCodeAdapter(
       policy.mcpTools = mcpRelay?.tools.map((tool) => relayedToolName(tool.name)) ?? [];
       const mcpServer = mcpRelay
         ? { instance: mcpRelay.createServer(), timeout: mcpRelay.callTimeoutMs }
+        : undefined;
+      const browserServer = options.browserToolset
+        ? createSdkMcpServer({
+            name: BROWSER_MCP_SERVER,
+            timeout: 1_200_000,
+            tools: BROWSER_TOOLS.map((entry) =>
+              tool(entry.name, entry.description, entry.schema.shape, async (args) => {
+                const result = await options.browserToolset?.call(entry.name, args);
+                return { content: [{ text: result?.text ?? '', type: 'text' }] };
+              })
+            ),
+          })
         : undefined;
       // Through the worker's model proxy when the deployment runs one: the
       // container gets a token good only for this turn's model calls, never the
@@ -811,12 +839,14 @@ export function claudeCodeAdapter(
           registration
             ? { apiKey: registration.token, baseUrl: registration.baseUrl, proxied: true }
             : { apiKey: access.apiKey, baseUrl, proxied: false },
-          mcpServer
+          mcpServer,
+          browserServer
         );
       } finally {
         // Every call the turn made is reported before the turn's usage is settled.
         await registration?.release();
         await mcpServer?.instance.close().catch(() => undefined);
+        await browserServer?.instance.close().catch(() => undefined);
         // Without the proxy no exchange was recorded; the session file the
         // harness wrote holds the conversation as it saw it.
         // The read runs in the background — the recorder's close drains it —

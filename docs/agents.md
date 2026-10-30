@@ -1267,7 +1267,7 @@ Skills are an **ADMIN-curated library**: creation (`POST /api/v1/platform/skills
 
 **Table:** `skills` in `packages/shared/src/prisma/schema.prisma`
 
-### 6.2 Built-in Skills (36 total)
+### 6.2 Built-in Skills (37 total)
 
 **File:** `packages/shared/src/skills/index.ts`
 

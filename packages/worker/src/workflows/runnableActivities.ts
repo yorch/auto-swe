@@ -137,6 +137,12 @@ export const gateBatchActivities = proxyActivities<Pick<typeof activitiesType, '
   startToCloseTimeout: T_60M,
 });
 
+export const uiVerifyActivities = proxyActivities<Pick<typeof activitiesType, 'runUiVerify'>>({
+  heartbeatTimeout: T_5M,
+  retry: RETRY_SANDBOX,
+  startToCloseTimeout: T_60M,
+});
+
 export const githubActivities = proxyActivities<
   Pick<typeof activitiesType, 'createOrUpdatePullRequest' | 'fetchCILogs'>
 >({

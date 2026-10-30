@@ -2,9 +2,10 @@ import crypto from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { prisma } from '@auto-swe/shared/db';
 import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
-import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
+import { assertShellImageAllowed, DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import { beginWorkspaceEgress } from '../lib/egressWiring.js';
 import type { CapturedResult, OnTimeout } from '../lib/execUtils.js';
 import {
@@ -25,7 +26,7 @@ import { shellQuote } from '../lib/shellQuote.js';
 import { workspaceBackend } from '../lib/workspaceBackend/index.js';
 import { readSingleFileFromArchive } from '../lib/workspaceBackend/kubernetes/safeTar.js';
 import { agentWorkspaceSpec } from '../lib/workspaceBackend/spec.js';
-import type { WorkspaceHandle } from '../lib/workspaceBackend/types.js';
+import type { WorkspaceHandle, WorkspaceServiceSpec } from '../lib/workspaceBackend/types.js';
 
 export type CapturedExec = CapturedResult;
 
@@ -612,6 +613,7 @@ export async function createWorkspace(
   existingBranch?: boolean,
   options?: {
     teamId?: string | null;
+    services?: WorkspaceServiceSpec[];
     /**
      * The repository's stored stack detection (`repo.detectedStack`). It decides which
      * non-npm registries are wired; absent or unusable means "unknown".
@@ -627,6 +629,26 @@ export async function createWorkspace(
 
   if (!DOCKER_IMAGE_REF_RE.test(effectiveImage)) {
     throw new Error(`Invalid Docker image name: ${effectiveImage}`);
+  }
+
+  if (options?.services?.length) {
+    const names = new Set<string>();
+    for (const service of options.services) {
+      if (names.has(service.name)) {
+        throw new Error(`duplicate workspace service name: ${service.name}`);
+      }
+      names.add(service.name);
+    }
+    const team = options.teamId
+      ? await prisma.team.findUnique({
+          select: { shellImageAllowlist: true },
+          where: { id: options.teamId },
+        })
+      : null;
+    const teamAllowlist = (team?.shellImageAllowlist as string[] | null) ?? [];
+    for (const service of options.services) {
+      assertShellImageAllowed(service.image, teamAllowlist);
+    }
   }
 
   // Extract the embedded credential from the authed clone URL (if any) so it
@@ -704,7 +726,7 @@ export async function createWorkspace(
   }
   let handle: WorkspaceHandle = backend.attach(containerName);
   try {
-    const spec = agentWorkspaceSpec(containerName, effectiveImage, infra);
+    const spec = agentWorkspaceSpec(containerName, effectiveImage, infra, options?.services);
     egress = await beginWorkspaceEgress(options?.teamId ?? null);
     if (egress) {
       spec.reachWorker = true;
@@ -872,7 +894,12 @@ export async function createWorkspace(
     // A failed git command rejects with the full command line in
     // `error.message` (and stdout/stderr/cmd) — scrub the credential before
     // it reaches Temporal history or a log line.
-    redactExecError(err, [...cloneSecrets, registry?.token, egress?.registration.token]);
+    redactExecError(err, [
+      ...cloneSecrets,
+      ...(options?.services ?? []).flatMap((service) => Object.values(service.env ?? {})),
+      registry?.token,
+      egress?.registration.token,
+    ]);
     throw err;
   }
 

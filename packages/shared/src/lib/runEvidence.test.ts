@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
-  $queryRaw: vi.fn(),
+  $executeRaw: vi.fn(),
   $transaction: vi.fn(),
   count: vi.fn(),
   create: vi.fn(),
@@ -33,11 +33,11 @@ describe('recordRunEvidence', () => {
     artifacts.deleteArtifact.mockResolvedValue(undefined);
     db.$transaction.mockImplementation((fn) =>
       fn({
-        $queryRaw: db.$queryRaw,
+        $executeRaw: db.$executeRaw,
         runEvidence: { count: db.count, create: db.create },
       })
     );
-    db.$queryRaw.mockResolvedValue([]);
+    db.$executeRaw.mockResolvedValue(1);
     db.count.mockResolvedValue(0);
     db.create.mockResolvedValue({ id: 'evidence-1' });
   });

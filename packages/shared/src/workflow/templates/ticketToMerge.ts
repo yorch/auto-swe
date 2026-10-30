@@ -47,7 +47,7 @@ export const TICKET_TO_MERGE_SPEC: WorkflowSpec = {
     'the logs, then wait for a person to merge. The lesson is stored for the next run.',
   entry: 'setValidating',
   name: 'ticket-to-merge',
-  nodes: ticketToMergeNodes('setAwaitingHumanMerge'),
+  nodes: ticketToMergeNodes('setAwaitingHumanMerge', { uiVerify: true }),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };
 
@@ -56,7 +56,7 @@ export const TICKET_TO_MERGE_SPEC: WorkflowSpec = {
  * `ticket-to-merge` hands off to the merge wait; a template that checks something between green CI
  * and the merge wait passes its own first node and adds the nodes it needs beside the result.
  */
-export function ticketToMergeNodes(passed: string): NodeMap {
+export function ticketToMergeNodes(passed: string, options: { uiVerify?: boolean } = {}): NodeMap {
   return mergeNodes(
     validatePhase({ next: 'setImplementing', stopIfNotActionable: true, ticketContext: true }),
     {
@@ -69,11 +69,23 @@ export function ticketToMergeNodes(passed: string): NodeMap {
           successCriteria: { default: [], from: 'context.successCriteria' },
           ticket: { from: 'context.ticket' },
         },
-        next: 'initCounters',
+        next: options.uiVerify ? 'uiVerify' : 'initCounters',
         step: 'executeImplementation',
         title: 'Implement the ticket',
         type: 'step',
       },
+      ...(options.uiVerify
+        ? {
+            uiVerify: {
+              group: 'implement',
+              next: 'initCounters',
+              onFail: 'warn' as const,
+              step: 'uiVerify',
+              title: 'Verify the app preview',
+              type: 'step' as const,
+            },
+          }
+        : {}),
       initCounters: initCounters('clearCiResult', { group: 'implement' }),
       setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
     },
