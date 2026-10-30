@@ -393,3 +393,82 @@ describe('buildRegistryAllowlist', () => {
     });
   });
 });
+
+describe('a maven registry', () => {
+  const MAVEN_ROW = row({ ecosystem: 'maven', id: 'mvn-1', upstreamUrl: 'https://repo.test' });
+
+  it('is wired only when asked, and never taken for npm, go or pypi', async () => {
+    findMany.mockResolvedValue([MAVEN_ROW]);
+    expect(await beginWorkspaceRegistries('team-a', 'workspace-x')).toBeNull();
+    expect(
+      await beginWorkspaceRegistries('team-a', 'workspace-x', { go: true, pypi: true })
+    ).toBeNull();
+    expect(register).not.toHaveBeenCalled();
+
+    const access = await beginWorkspaceRegistries('team-a', 'workspace-x', { maven: true });
+    expect(access?.registries).toEqual([
+      {
+        accessMode: 'lockfile',
+        ecosystem: 'maven',
+        id: 'mvn-1',
+        isDefault: true,
+        name: 'registry',
+        scopes: [],
+      },
+    ]);
+    expect(registered?.registries.map((r) => [r.id, r.ecosystem, r.isDefault, r.scopes])).toEqual([
+      ['mvn-1', 'maven', true, []],
+    ]);
+    expect(access?.env.some((p) => p.startsWith('NPM_CONFIG_'))).toBe(false);
+    expect(access?.env).toContain('MAVEN_ARGS=-s /workspace/.auto-swe/maven-settings.xml');
+  });
+
+  it('keeps one default, a team row beating a global one, and leaves the others unaffected', async () => {
+    findMany.mockResolvedValue([
+      row({ ecosystem: 'maven', id: 'mvn-global' }),
+      row({ ecosystem: 'maven', id: 'mvn-team', teamId: 'team-a' }),
+      NPM_ROW,
+      GO_ROW,
+      PYPI_ROW,
+    ]);
+    const access = await beginWorkspaceRegistries('team-a', 'workspace-x', {
+      go: true,
+      maven: true,
+      pypi: true,
+    });
+    expect(access?.registries.map((r) => [r.ecosystem, r.id])).toEqual([
+      ['npm', 'npm-1'],
+      ['go', 'go-1'],
+      ['pypi', 'pypi-1'],
+      ['maven', 'mvn-team'],
+    ]);
+    // Without Maven wanted the npm, go and pypi result is what it was.
+    const without = await beginWorkspaceRegistries('team-a', 'workspace-x', {
+      go: true,
+      pypi: true,
+    });
+    expect(without?.registries.map((r) => r.ecosystem)).toEqual(['npm', 'go', 'pypi']);
+  });
+
+  it('always has a null allowlist, whatever its stored mode says', async () => {
+    const exec = vi.fn(async (command: string) => ({
+      stdout: command.includes('git ls-tree') ? 'pom.xml\0package-lock.json\0go.sum\0' : '',
+    }));
+    const access = {
+      registries: ['lockfile', 'open', 'something-stale'].map((accessMode, i) => ({
+        accessMode,
+        ecosystem: 'maven',
+        id: `mvn-${i}`,
+        isDefault: true,
+        name: 'n',
+        scopes: [],
+      })),
+    } as unknown as WorkspaceRegistryAccess;
+    const map = await buildRegistryAllowlist(access, 'HEAD', exec);
+    expect([...map.entries()]).toEqual([
+      ['mvn-0', null],
+      ['mvn-1', null],
+      ['mvn-2', null],
+    ]);
+  });
+});

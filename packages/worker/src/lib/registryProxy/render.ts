@@ -6,15 +6,63 @@
 
 /** A registry as the renderers see it; an absent `ecosystem` is npm. */
 interface RenderedRegistry {
-  ecosystem?: 'npm' | 'go' | 'pypi';
+  ecosystem?: 'npm' | 'go' | 'pypi' | 'maven';
   id: string;
   isDefault?: boolean;
   scopes: string[];
 }
 
-/** The npm entries of a mixed list: a go or pypi registry's id must never appear as an npm registry. */
+/** The npm entries of a mixed list: a go, pypi or maven registry's id must never appear as an npm registry. */
 const npmOnly = (registries: RenderedRegistry[]): RenderedRegistry[] =>
-  registries.filter((r) => r.ecosystem !== 'go' && r.ecosystem !== 'pypi');
+  registries.filter((r) => r.ecosystem === undefined || r.ecosystem === 'npm');
+
+/** Where the workspace and the shell step keep the Maven `settings.xml`; `MAVEN_ARGS` names it. */
+export const MAVEN_SETTINGS_PATH = '/workspace/.auto-swe/maven-settings.xml';
+
+const xmlEscape = (value: string): string =>
+  value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
+/**
+ * Maven `settings.xml` for the first maven registry, or null when there is none. One mirror of
+ * everything (`mirrorOf *`), so every repository a POM or plugin names is fetched through the
+ * proxy, and one server entry carrying the proxy token as the Basic password. The file is the
+ * secret: the token is in no URL.
+ */
+export function renderMavenSettings(
+  registries: RenderedRegistry[],
+  baseUrl: string,
+  token: string
+): string | null {
+  const maven = registries.find((r) => r.ecosystem === 'maven');
+  if (!maven) {
+    return null;
+  }
+  const root = baseUrl.replace(/\/+$/, '');
+  return `${[
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<settings>',
+    '  <mirrors>',
+    '    <mirror>',
+    '      <id>auto-swe-proxy</id>',
+    '      <mirrorOf>*</mirrorOf>',
+    `      <url>${xmlEscape(`${root}/maven/${maven.id}/`)}</url>`,
+    '    </mirror>',
+    '  </mirrors>',
+    '  <servers>',
+    '    <server>',
+    '      <id>auto-swe-proxy</id>',
+    '      <username>token</username>',
+    `      <password>${xmlEscape(token)}</password>`,
+    '    </server>',
+    '  </servers>',
+    '</settings>',
+  ].join('\n')}\n`;
+}
 
 /** npmrc lines for every registry + scope, written to `NPM_CONFIG_USERCONFIG`. */
 export function renderNpmrc(
@@ -75,9 +123,10 @@ export function registryWorkspaceEnv(
   const npm = npmOnly(registries);
   const goRegistry = registries.find((r) => r.ecosystem === 'go');
   const pypiRegistry = registries.find((r) => r.ecosystem === 'pypi');
+  const mavenRegistry = registries.find((r) => r.ecosystem === 'maven');
   const env: string[] = [];
-  // A workspace wired only to go and/or pypi gets no npm, Corepack or Yarn env at all. An empty
-  // list is not that: it keeps the npm block, as it always has.
+  // A workspace wired only to go, pypi and/or maven gets no npm, Corepack or Yarn env at all. An
+  // empty list is not that: it keeps the npm block, as it always has.
   if (npm.length > 0 || registries.length === 0) {
     env.push(
       'NPM_CONFIG_USERCONFIG=/workspace/.auto-swe/npmrc',
@@ -135,6 +184,10 @@ export function registryWorkspaceEnv(
       'PIP_EXTRA_INDEX_URL=',
       'UV_EXTRA_INDEX_URL='
     );
+  }
+  if (mavenRegistry) {
+    // Maven 3.9+ reads `MAVEN_ARGS`. The path holds no secret: the token is in the settings file.
+    env.push(`MAVEN_ARGS=-s ${MAVEN_SETTINGS_PATH}`);
   }
   return env;
 }

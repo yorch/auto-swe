@@ -30,6 +30,7 @@ import crypto from 'node:crypto';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
+import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/shared/workflow';
@@ -54,6 +55,7 @@ import {
 } from '../lib/redactToken.js';
 import { workerRegistryProxy } from '../lib/registryProxy/index.js';
 import {
+  renderMavenSettings,
   renderNpmrc,
   renderYarnrc,
   splitRegistryWorkspaceEnv,
@@ -65,6 +67,7 @@ import {
 } from '../lib/registryProxy/workspaceWiring.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
+import { detectedStackForRun } from '../lib/runDetection.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { workspaceBackend } from '../lib/workspaceBackend/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
@@ -197,6 +200,8 @@ interface RepoMeta {
    */
   gitAuthHeader?: string;
   defaultBranch: string;
+  /** The repository's stack detection (the run's pinned one when it has one); null when unknown. */
+  detectedStack: unknown;
   teamId: string;
   teamAllowlist: string[];
   teamEgressAllowlist: string[];
@@ -223,6 +228,7 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
     cleanUrl,
     // The run's base: what a step that runs before the first push falls back to cloning.
     defaultBranch: await resolveRequestBaseBranch(request, repo),
+    detectedStack: await detectedStackForRun(repo),
     ...(gitAuthHeader ? { gitAuthHeader } : {}),
     teamAllowlist: (repo.team?.shellImageAllowlist as string[] | null) ?? [],
     teamEgressAllowlist: (repo.team?.egressAllowlist as string[] | null) ?? [],
@@ -473,7 +479,13 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   // unreachable on this network — warn and run without it.
   let registry: WorkspaceRegistryAccess | null = null;
   if (input.network === 'egress' && workerRegistryProxy()) {
-    const access = await beginWorkspaceRegistries(meta.teamId, volumeName);
+    // As `createWorkspace` does: a detected stack narrows the proxies wired; unknown wires all.
+    const stacks = detectedStacks(meta.detectedStack);
+    const access = await beginWorkspaceRegistries(meta.teamId, volumeName, {
+      go: stacks === null || stacks.includes('go'),
+      maven: stacks === null || stacks.includes('jvm'),
+      pypi: stacks === null || stacks.includes('python'),
+    });
     if (access) {
       if (!backend.canReachWorkerProxy(access.baseUrl)) {
         logWarn('registry proxy is not reachable from the sandbox; skipping registry wiring', {
@@ -505,6 +517,11 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
         registry.registration.setAllowlist(allowlist);
         const npmrc = renderNpmrc(registry.registries, registry.baseUrl, registry.token);
         const yarnrc = renderYarnrc(registry.registries, registry.baseUrl);
+        const mavenSettings = renderMavenSettings(
+          registry.registries,
+          registry.baseUrl,
+          registry.token
+        );
         // The content reaches the files through env, never through the
         // container's command line, so the author command cannot read it from
         // /proc. `secretEnv` keeps this write off the docker client's arguments
@@ -520,13 +537,21 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
                 'chmod 644 /workspace/.auto-swe/home/.npmrc && ' +
                 'if [ -n "$AUTO_SWE_YARNRC" ]; then ' +
                 'printf \'%s\' "$AUTO_SWE_YARNRC" > /workspace/.auto-swe/home/.yarnrc.yml && ' +
-                'chmod 644 /workspace/.auto-swe/home/.yarnrc.yml; fi',
+                'chmod 644 /workspace/.auto-swe/home/.yarnrc.yml; fi && ' +
+                // Readable like the npmrc above: the step may run as another user than this helper.
+                'if [ -n "$AUTO_SWE_MAVEN_SETTINGS" ]; then ' +
+                'printf \'%s\' "$AUTO_SWE_MAVEN_SETTINGS" > /workspace/.auto-swe/maven-settings.xml && ' +
+                'chmod 644 /workspace/.auto-swe/maven-settings.xml; fi',
             ],
             entrypoint: 'sh',
             image: helperImage,
             // Multi-line values: fine for Docker's client environment; a Kubernetes helper
             // (not implemented) would need another channel, as the stdin preamble is line-based.
-            secretEnv: { AUTO_SWE_NPMRC: npmrc, ...(yarnrc ? { AUTO_SWE_YARNRC: yarnrc } : {}) },
+            secretEnv: {
+              AUTO_SWE_NPMRC: npmrc,
+              ...(yarnrc ? { AUTO_SWE_YARNRC: yarnrc } : {}),
+              ...(mavenSettings ? { AUTO_SWE_MAVEN_SETTINGS: mavenSettings } : {}),
+            },
             volumes: [{ source: volumeName, target: '/workspace' }],
           },
           { heartbeatLabel: 'shell-step: registry config' }
