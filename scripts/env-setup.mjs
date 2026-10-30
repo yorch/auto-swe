@@ -43,7 +43,6 @@ export const PUBLIC_URL_KEYS = [
   'CORS_ORIGIN',
   'NEXT_PUBLIC_API_URL',
   'PUBLIC_URL',
-  'UI_EVIDENCE_PUBLIC_BASE_URL',
   'WEB_URL',
 ];
 

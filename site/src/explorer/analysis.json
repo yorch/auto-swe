@@ -11376,7 +11376,7 @@
       "title": "Validate prologue with the optional not-actionable stop"
     },
     {
-      "anchor": "export function ticketToMergeNodes(passed: string): NodeMap {",
+      "anchor": "export function ticketToMergeNodes(passed: string, options",
       "before": 5,
       "id": "actionableDefault",
       "lines": 8,

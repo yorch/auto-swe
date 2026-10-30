@@ -184,6 +184,16 @@ jobs:
           docker build -f defaults/Dockerfile.python -t asw-executor-python:ci defaults
           yarn test packages/worker/src/lib/registryProxy/pypiClient.docker.test.ts packages/worker/src/lib/registryProxy/pypiLock.docker.test.ts
 
+      # Headless Chromium in the hardened workspace container: the driver daemon, screenshots,
+      # video, traces and the localhost-only network policy against the real browser image.
+      - name: Browser executor image (Docker-backed)
+        env:
+          BROWSER_DOCKER_TEST: '1'
+          ASW_BROWSER_IMAGE: asw-executor-node-browser:ci
+        run: |
+          docker build -f defaults/Dockerfile.node-browser -t asw-executor-node-browser:ci defaults
+          yarn test packages/worker/src/browser/session.docker.test.ts
+
       # Builds each curated defaults/Dockerfile.<stack> and checks it against the executor
       # image contract and its own toolchain, as the user the executor runs as.
       - name: Curated executor images (Docker-backed)

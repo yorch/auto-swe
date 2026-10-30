@@ -5,7 +5,7 @@ steps the step registry holds, and which built-in templates use each. It lists w
 [workflow-nodes.md](./workflow-nodes.md) explains how to use it. This page is generated from
 the code by `yarn docs:inventory`, and a test fails when it no longer matches.
 
-There are 15 node types, 56 registered steps (1 of them internal) and 30 built-in templates.
+There are 15 node types, 57 registered steps (1 of them internal) and 30 built-in templates.
 
 ## Node types
 
@@ -22,7 +22,7 @@ node dispatches through — the same step a `step` node may name directly.
 | [`agent`](./workflow-nodes.md#agent) | Execution | `next?` | `runAgentNode` | 8 nodes in 6 templates: `create-issue-from-brief`, `issue-to-confluence-page`, `notion-content-brand-review`, `notion-content-draft`, `product-prd-draft`, `zendesk-ticket-reply` |
 | [`eval`](./workflow-nodes.md#eval) | Execution | `next?` | `runEvalNode` | — |
 | [`mcp`](./workflow-nodes.md#mcp) | Execution | `next?` | `mcpCallTool` | — |
-| [`step`](./workflow-nodes.md#step) | Execution | `next?` | — | 291 nodes in all 30 templates |
+| [`step`](./workflow-nodes.md#step) | Execution | `next?` | — | 293 nodes in all 30 templates |
 | [`cond`](./workflow-nodes.md#cond) | Control flow | `onFalse`, `onTrue` | — | 100 nodes in 24 templates: `address-pr-feedback`, `agent-reviewed-pr`, `approve-before-pr`, `ci-triage-and-fix`, `code-and-ci`, `consensus-review`, `create-issue`, `create-issue-from-brief`, `dependency-update`, `external-approval-gate`, `four-eyes`, `fully-supervised`, `issue-to-confluence-page`, `model-catalog-refresh`, `notion-content-brand-review`, `notion-content-draft`, `parallel-fan-out`, `product-prd-draft`, `scope-clarification`, `send-slack-update`, `staged-deploy-signals`, `ticket-to-merge`, `ticket-to-merge-qodo`, `zendesk-ticket-reply` |
 | [`fanOut`](./workflow-nodes.md#fanout) | Control flow | `join`, `subgraph` | — | 2 nodes in 2 templates: `consensus-review`, `parallel-fan-out` |
 | [`set`](./workflow-nodes.md#set) | Control flow | `next?` | — | 160 nodes in 22 templates: `address-pr-feedback`, `agent-reviewed-pr`, `approve-before-pr`, `ci-triage-and-fix`, `code-and-ci`, `consensus-review`, `db-migration-dry-run`, `dependency-update`, `external-approval-gate`, `four-eyes`, `fully-supervised`, `hotfix`, `human-code-review`, `model-catalog-refresh`, `parallel-fan-out`, `prd-decomposition`, `scope-clarification`, `security-triage`, `staged-deploy-signals`, `ticket-to-merge`, `ticket-to-merge-qodo`, `tiered-escalation` |
@@ -81,6 +81,7 @@ owns it, and is left out of the editor’s palette. A step’s built-in template
 | `runTests` | Run tests | Run the full test suite as a hard gate (separate from implementer TDD). | `command`, `timeoutMs` | — | 6 nodes in 6 templates: `address-pr-feedback`, `approve-before-pr`, `ci-triage-and-fix`, `code-and-ci`, `dependency-update`, `model-catalog-refresh` |
 | `runTypecheck` | Run typecheck | Run the repo typecheck command in the workspace. | `command`, `timeoutMs` | — | 5 nodes in 5 templates: `address-pr-feedback`, `ci-triage-and-fix`, `code-and-ci`, `hotfix`, `human-code-review` |
 | `runVulnScan` | Run vuln scan | Run a vulnerability scan against the workspace dependencies. | `command`, `timeoutMs` | — | 1 node in 1 template: `security-triage` |
+| `uiVerify` | Verify UI | Run the repository app preview smoke checks and configured end-to-end tests. | `branch`, `failOnConsoleErrors`, `mode`, `recordVideo`, `timeoutMs` | — | 2 nodes in 2 templates: `ticket-to-merge`, `ticket-to-merge-qodo` |
 | `verifyCiFix` | Verify a CI fix | Run the command the CI triager says reproduces the failure on the failing branch, then on the fix, in a fresh workspace. Only the whole run: of a step the host reports as failed, read from the workflow file, and that the shell scanner clears is run. output.verification.status is verified, not_reproduced, still_failing or unverified; output.codeResult carries it in its notes for the pull request. Never fails the run. | — | — | 1 node in 1 template: `ci-triage-and-fix` |
 | `waitForCiByPolling` | Wait for CI (polling) | Poll GitHub for the CI result of a ref instead of waiting for a webhook signal. Returns the same { passed, ... } payload the ciPipelineSignal carries. | `deadlineSec`, `graceSec`, `intervalSec`, `ref` | — | 6 nodes in 4 templates: `address-pr-feedback`, `ci-triage-and-fix`, `ticket-to-merge`, `ticket-to-merge-qodo` |
 
@@ -158,8 +159,8 @@ it is made of, with how many nodes of each.
 | `security-triage` | Implement, run a vulnerability scan, then ask a person how to proceed. | 13 | `humanDecision` ×1, `set` ×3, `step` ×7, `terminate` ×2 |
 | `send-slack-update` | Send a Slack message to a channel. | 7 | `cond` ×1, `humanApproval` ×1, `step` ×3, `terminate` ×2 |
 | `staged-deploy-signals` | Implement, have the review agents check it (up to 3 attempts), open a pull request and wait for CI. | 38 | `cond` ×6, `set` ×9, `signal` ×3, `step` ×12, `terminate` ×8 |
-| `ticket-to-merge` (default) | Implement a ticket in an isolated sandbox until the tests pass, run the security, domain-logic, and performance reviewers, open a pull request, fix CI failures… | 45 | `cond` ×6, `set` ×12, `signal` ×2, `step` ×19, `terminate` ×6 |
-| `ticket-to-merge-qodo` | ticket-to-merge, with a Qodo review of the final commit once CI is green: a review with an open action_required finding asks a person to continue or stop, and… | 50 | `cond` ×7, `humanDecision` ×1, `set` ×12, `signal` ×2, `step` ×20, `terminate` ×8 |
+| `ticket-to-merge` (default) | Implement a ticket in an isolated sandbox until the tests pass, run the security, domain-logic, and performance reviewers, open a pull request, fix CI failures… | 46 | `cond` ×6, `set` ×12, `signal` ×2, `step` ×20, `terminate` ×6 |
+| `ticket-to-merge-qodo` | ticket-to-merge, with a Qodo review of the final commit once CI is green: a review with an open action_required finding asks a person to continue or stop, and… | 51 | `cond` ×7, `humanDecision` ×1, `set` ×12, `signal` ×2, `step` ×21, `terminate` ×8 |
 | `tiered-escalation` | After implementation, a person rates the change's risk (low, medium or high). | 13 | `humanApproval` ×2, `humanDecision` ×1, `set` ×2, `step` ×5, `terminate` ×3 |
 | `zendesk-ticket-reply` | Fetch a Zendesk ticket, draft a response with the support responder, and post it back. | 10 | `agent` ×1, `cond` ×1, `humanApproval` ×1, `step` ×5, `terminate` ×2 |
 

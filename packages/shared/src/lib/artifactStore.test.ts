@@ -197,6 +197,7 @@ describe('deleteArtifact', () => {
     findUniqueMock.mockResolvedValue({
       backend: 's3',
       id: 'art-s3',
+      s3Bucket: 'bucket-1',
       s3Key: 'workflow-artifacts/global/x/y',
     } as never);
     // The object goes first: by the time the row delete runs, the S3 delete

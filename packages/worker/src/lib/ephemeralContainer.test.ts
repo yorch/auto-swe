@@ -475,7 +475,9 @@ describe('secretEnv', () => {
     await expect(
       runEphemeralContainer({ ...BASE, secretEnv: { 'bad-name': SECRET } })
     ).rejects.toThrow(/environment variable name/);
-    expect(vi.mocked(spawnCaptureAsync)).not.toHaveBeenCalled();
+    // Cleanup still runs and lists service containers with `docker ps`; no container starts.
+    const calls = vi.mocked(spawnCaptureAsync).mock.calls as unknown as SpawnCall[];
+    expect(calls.filter(([, args]) => args[0] === 'run')).toEqual([]);
   });
 });
 

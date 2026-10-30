@@ -648,6 +648,8 @@ const REVIEWED_COLLISIONS: Readonly<Record<string, string>> = {
     'GHES and GHE both name GitHub Enterprise Server in the docs (GHE 14 times, GHES once, in pr-feedback.md); the rule does not flag it, and the stemmer merges it',
   'jwt/jwts':
     'JWTs: the plural of the acronym JWT (JSON Web Token), as in "sends session-bridge JWTs"',
+  'png/pngs':
+    'PNGs: the plural of the acronym PNG (Portable Network Graphics), as in "screenshots are PNGs"',
   'prd/prds':
     'PRDs: the plural of the abbreviation PRD (product requirements document), as in "PRD runs"',
   'sync/syncs':

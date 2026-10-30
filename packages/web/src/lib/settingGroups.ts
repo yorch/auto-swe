@@ -15,6 +15,7 @@ export const GROUP_TITLES: Record<string, string> = {
   repoAccess: 'Repository access',
   repoDependency: 'Repo dependency graph',
   skills: 'Skill imports',
+  uiValidation: 'UI validation',
   workflow: 'Workflow interpreter',
   workspace: 'Agent workspace',
 };
@@ -42,6 +43,8 @@ export const GROUP_BLURBS: Record<string, string> = {
   repoDependency:
     'How confidently an LLM-inferred repo-to-repo dependency edge must be evidenced before it is promoted straight to active instead of waiting for a human confirm.',
   skills: 'How skills imported from external repositories are screened and fetched.',
+  uiValidation:
+    'How much browser evidence a run may keep (screenshots, video, traces), for how long, and whether screenshots are copied into pull request bodies.',
   workflow:
     'Bounds on how far one run may expand. Frozen when a run starts, so changing them affects new runs only.',
   workspace:

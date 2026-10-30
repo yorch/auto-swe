@@ -9,6 +9,7 @@ const m = vi.hoisted(() => ({
     activeWorkflow: { findFirst: vi.fn() },
     connection: { findUniqueOrThrow: vi.fn() },
     pullRequest: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+    runEvidence: { findMany: vi.fn() },
     runInput: { findUnique: vi.fn() },
     workflowRun: { findUnique: vi.fn() },
   },
@@ -72,6 +73,7 @@ beforeEach(() => {
   m.prisma.pullRequest.findFirst.mockResolvedValue(null);
   m.prisma.activeWorkflow.findFirst.mockResolvedValue({ id: 'w1' });
   m.prisma.workflowRun.findUnique.mockResolvedValue(null);
+  m.prisma.runEvidence.findMany.mockResolvedValue([]);
   m.createPr.mockResolvedValue({ prNumber: 7, prUrl: 'https://example.test/pull/7' });
 });
 

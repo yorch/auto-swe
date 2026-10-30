@@ -7,17 +7,8 @@ import type { Workspace } from '../activities/workspace.js';
 import { readSingleFileFromArchive } from '../lib/workspaceBackend/kubernetes/safeTar.js';
 import { BrowserSession } from './session.js';
 
-const enabled = (() => {
-  if (!process.env.ASW_BROWSER_IMAGE) {
-    return false;
-  }
-  try {
-    execFileSync('docker', ['info'], { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-})();
+const enabled = process.env.BROWSER_DOCKER_TEST === '1';
+const IMAGE = process.env.ASW_BROWSER_IMAGE ?? 'asw-executor-node-browser:ci';
 let containerName: string | undefined;
 
 function runInContainer(args: string[], input?: string | Buffer): Promise<string> {
@@ -71,7 +62,7 @@ describe.skipIf(!enabled)('browser executor Docker smoke', () => {
         '--pids-limit=512',
         '--memory=4g',
         '--cpus=2',
-        process.env.ASW_BROWSER_IMAGE ?? '',
+        IMAGE,
         'sleep',
         'infinity',
       ],
