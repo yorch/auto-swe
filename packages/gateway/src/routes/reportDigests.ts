@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { registerFormBodyParser } from '../lib/formBody.js';
 import { claimReportDigestTestSend } from '../lib/reportDigestRateLimit.js';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { getErrorName, requireAuth, requireUser } from '../plugins/auth.js';
 
 const paramsSchema = z.object({ id: z.string().uuid() });
 const bodySchema = z
@@ -531,7 +531,16 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       if (!(await claimReportDigestTestSend(fastify.prisma, existing.id, now))) {
         return reply.status(429).send({ error: 'Send-test is limited to once per minute' });
       }
-      await fastify.temporal.triggerReportDigestTest(existing.id);
+      try {
+        await fastify.temporal.triggerReportDigestTest(existing.id);
+      } catch (err) {
+        if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
+          return reply
+            .status(409)
+            .send({ error: 'A test digest is already running for this subscription' });
+        }
+        throw err;
+      }
       return reply.status(202).send({ data: { accepted: true } });
     }
   );

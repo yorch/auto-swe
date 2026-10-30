@@ -1529,7 +1529,7 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         taskQueue: 'engineering-workflow',
         workflowId: `report-digest-test-${subscriptionId}`,
         workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
-        workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE,
+        workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE,
       });
     },
 
