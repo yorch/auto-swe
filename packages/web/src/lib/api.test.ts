@@ -43,6 +43,23 @@ describe('ApiClient request shaping', () => {
     const client = new ApiClient();
     await expect(client.delete('/api/v1/skills/abc')).resolves.toBeUndefined();
   });
+
+  it('uses a string gateway error as the API error message', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Send-test is limited to once per minute' }), {
+        headers: { 'content-type': 'application/json' },
+        status: 429,
+      })
+    );
+    const client = new ApiClient();
+
+    await expect(client.get('/api/v1/report-digests/test')).rejects.toMatchObject({
+      code: null,
+      details: undefined,
+      message: 'Send-test is limited to once per minute',
+      status: 429,
+    });
+  });
 });
 
 describe('ApiClient 401 handling', () => {

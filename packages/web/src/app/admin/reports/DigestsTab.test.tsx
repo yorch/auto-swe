@@ -60,7 +60,7 @@ describe('DigestsTab', () => {
       const response =
         method === 'POST' && url.includes('/send-test')
           ? {
-              body: { error: { message: 'Please wait before sending another test.' } },
+              body: { error: 'Send-test is limited to once per minute' },
               status: 429,
             }
           : { body: { data }, status: 200 };
@@ -74,7 +74,7 @@ describe('DigestsTab', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Send test' }));
 
     expect((await screen.findByRole('alert')).textContent).toBe(
-      'Please wait before sending another test.'
+      'Send-test is limited to once per minute'
     );
   });
 });

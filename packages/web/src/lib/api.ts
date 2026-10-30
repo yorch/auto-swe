@@ -205,7 +205,15 @@ export class ApiClient {
 
   private async toApiError(res: Response): Promise<ApiError> {
     const body: unknown = await res.json().catch(() => ({}));
-    const err = isRecord(body) && isRecord(body.error) ? body.error : null;
+    const bodyError = isRecord(body) ? body.error : null;
+    if (typeof bodyError === 'string') {
+      return new ApiError(
+        bodyError.length > 0 ? bodyError : `HTTP ${res.status}`,
+        res.status,
+        null
+      );
+    }
+    const err = isRecord(bodyError) ? bodyError : null;
     const message =
       err && typeof err.message === 'string' && err.message.length > 0
         ? err.message
