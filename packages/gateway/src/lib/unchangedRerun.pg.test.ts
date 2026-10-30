@@ -314,16 +314,21 @@ describe.skipIf(!enabled)('unchanged-request guard against Postgres', () => {
 
   it('launches when a later run of the same request exists, whatever its outcome', async () => {
     const ticketId = freshTicket();
-    await runOf({ ticketId });
-    await runOf({ context: { error: 'failed at CI' }, ticketId });
+    await runOf({ startedAt: new Date(Date.now() - 120_000), ticketId });
+    await runOf({
+      context: { error: 'failed at CI' },
+      startedAt: new Date(Date.now() - 60_000),
+      ticketId,
+    });
     expect((await check({ ticketId })).refused).toBe(false);
   });
 
   it('launches when a later run belongs to the same work request', async () => {
     const ticketId = freshTicket();
-    const stop = await runOf({ ticketId });
+    const stop = await runOf({ startedAt: new Date(Date.now() - 120_000), ticketId });
     await runOf({
       context: { error: 'failed at CI' },
+      startedAt: new Date(Date.now() - 60_000),
       ticketId,
       workRequestId: stop.workRequestId as string,
     });
