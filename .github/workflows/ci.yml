@@ -194,6 +194,14 @@ jobs:
           docker build -f defaults/Dockerfile.node-browser -t asw-executor-node-browser:ci defaults
           yarn test packages/worker/src/browser/session.docker.test.ts
 
+      # One filesystem-artifact-store volume across two containers: the worker writes as uid 1000,
+      # the gateway's read-only mount reads the same store, and a read-only mount cannot create a
+      # second store identity.
+      - name: Filesystem artifact store (Docker-backed)
+        env:
+          ARTIFACT_FS_DOCKER_TEST: '1'
+        run: yarn test packages/shared/src/lib/artifactFsStore.docker.test.ts
+
       # A real Maven against the registry proxy through the JVM executor image — build-extension
       # resolution through the settings mirror, the release cache and the 404 mapping, end to end.
       - name: Maven proxy client tests (Docker-backed)
