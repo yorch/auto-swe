@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import { hostname } from 'node:os';
+import path from 'node:path';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { decryptSecret } from './crypto.js';
 import { hostFamily } from './githubHostScope.js';
@@ -348,8 +349,13 @@ export async function resolveSlackBotTokenForWorkspace(
 
 // ─── Storage ──────────────────────────────────────────────────────────────────
 
+export type ArtifactStoreBackend = 's3' | 'fs' | 'pg';
+
 export interface ResolvedStorageConfig {
-  backend: 'inline' | 's3';
+  /** Where new artifacts are written. */
+  writeBackend: ArtifactStoreBackend;
+  /** Mounted directory that holds (and reads) filesystem artifacts, if any. */
+  fsDir: string | null;
   s3Bucket: string | null;
   s3Region: string | null;
   s3Endpoint: string | null;
@@ -359,18 +365,58 @@ export interface ResolvedStorageConfig {
   awsSecretAccessKey: string | null;
 }
 
-/// Environment-only: storage is infrastructure, picked at deploy time. With no
-/// bucket configured the backend is `inline` (Postgres).
+/**
+ * Environment-only: storage is infrastructure, picked at deploy time.
+ *
+ * `ARTIFACT_FS_DIR` is read configuration as well as a write target — it is what
+ * makes filesystem rows written earlier readable after a deployment switches its
+ * writes elsewhere. `ARTIFACT_WRITE_BACKEND` chooses where **new** artifacts go:
+ * with it unset, a directory means `fs`, a bucket means `s3`, neither means
+ * Postgres; both set is refused rather than silently preferred.
+ */
 export function resolveStorageConfig(_opts?: ResolveOpts): ResolvedStorageConfig {
+  const s3Bucket = process.env.ARTIFACT_S3_BUCKET ?? null;
+  const fsDir = process.env.ARTIFACT_FS_DIR?.trim() ? process.env.ARTIFACT_FS_DIR.trim() : null;
+  const explicit = process.env.ARTIFACT_WRITE_BACKEND?.trim() || null;
+
+  if (fsDir && !path.isAbsolute(fsDir)) {
+    throw new Error(`ARTIFACT_FS_DIR must be an absolute path (found "${fsDir}")`);
+  }
+
+  let writeBackend: ArtifactStoreBackend;
+  if (explicit) {
+    if (explicit !== 's3' && explicit !== 'fs' && explicit !== 'pg') {
+      throw new Error(`ARTIFACT_WRITE_BACKEND must be one of s3, fs, pg (found "${explicit}")`);
+    }
+    if (explicit === 'fs' && !fsDir) {
+      throw new Error('ARTIFACT_WRITE_BACKEND=fs requires ARTIFACT_FS_DIR');
+    }
+    if (explicit === 's3' && !s3Bucket) {
+      throw new Error('ARTIFACT_WRITE_BACKEND=s3 requires ARTIFACT_S3_BUCKET');
+    }
+    writeBackend = explicit;
+  } else if (fsDir && s3Bucket) {
+    throw new Error(
+      'ARTIFACT_FS_DIR and ARTIFACT_S3_BUCKET are both set; set ARTIFACT_WRITE_BACKEND to say which one new artifacts go to'
+    );
+  } else if (fsDir) {
+    writeBackend = 'fs';
+  } else if (s3Bucket) {
+    writeBackend = 's3';
+  } else {
+    writeBackend = 'pg';
+  }
+
   return {
     awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID ?? null,
     awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? null,
-    backend: process.env.ARTIFACT_S3_BUCKET ? 's3' : 'inline',
-    s3Bucket: process.env.ARTIFACT_S3_BUCKET ?? null,
+    fsDir,
+    s3Bucket,
     s3Endpoint: process.env.ARTIFACT_S3_ENDPOINT ?? null,
     s3ForcePathStyle: process.env.ARTIFACT_S3_FORCE_PATH_STYLE === 'true',
     s3Prefix: process.env.ARTIFACT_S3_PREFIX ?? null,
     s3Region: process.env.ARTIFACT_S3_REGION ?? null,
+    writeBackend,
   };
 }
 

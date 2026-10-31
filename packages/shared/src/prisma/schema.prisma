@@ -1896,9 +1896,15 @@ model WorkflowArtifact {
   kind        String
   contentType String       @default("application/octet-stream") @map("content_type")
   sizeBytes   Int          @map("size_bytes")
+  /// 's3' | 'pg' | 'fs' — reads dispatch on this, not on the current config.
   backend     String
   s3Bucket    String?      @map("s3_bucket")
   s3Key       String?      @map("s3_key")
+  /// Store-relative path of an 'fs' artifact: `<run_id|global>/<kind>/<id>`.
+  fsPath      String?      @map("fs_path")
+  /// Identity of the filesystem store the row was written to; a read or delete
+  /// against a directory carrying another (or no) marker fails closed.
+  fsStoreId   String?      @map("fs_store_id")
   inlineBlob  Bytes?       @map("inline_blob")
   /// "ready" once the payload is stored. An S3 artifact's row is written
   /// "pending" before its PutObject so an object whose upload outlived its

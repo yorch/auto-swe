@@ -164,6 +164,13 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
 # included — a second time; it cost 608MB in this image. The WORKDIR itself
 # is still created by root, so chown that one directory (single inode).
 RUN chown node:node /app
+
+# The filesystem artifact store's mount point. Docker seeds an empty named
+# volume from this path, ownership included, so the worker can write artifacts
+# without a chown on the host. A bind-mounted directory must be chowned to this
+# image's uid (1000) by the operator instead.
+RUN mkdir -p /var/lib/auto-swe/artifacts \
+    && chown node:node /var/lib/auto-swe /var/lib/auto-swe/artifacts
 USER node
 # The OpenTelemetry preload must load before the app's imports; see src/instrument.ts.
 CMD ["node", "--disable-warning=DEP0205", "--import", "./packages/worker/dist/instrument.js", "packages/worker/dist/index.js"]

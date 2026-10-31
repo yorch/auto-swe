@@ -419,10 +419,17 @@ describe('systemConfig resolvers', () => {
   });
 
   describe('resolveStorageConfig', () => {
-    it('is inline with nothing configured', () => {
+    beforeEach(() => {
+      delete process.env.ARTIFACT_FS_DIR;
+      delete process.env.ARTIFACT_WRITE_BACKEND;
+      delete process.env.ARTIFACT_S3_BUCKET;
+    });
+
+    it('writes to Postgres with nothing configured', () => {
       const config = resolveStorageConfig();
 
-      expect(config.backend).toBe('inline');
+      expect(config.writeBackend).toBe('pg');
+      expect(config.fsDir).toBeNull();
       expect(config.s3Bucket).toBeNull();
       expect(config.awsSecretAccessKey).toBeNull();
       expect(config.s3ForcePathStyle).toBe(false);
@@ -440,11 +447,61 @@ describe('systemConfig resolvers', () => {
       expect(config).toMatchObject({
         awsAccessKeyId: 'env-access-key',
         awsSecretAccessKey: 'env-secret-key',
-        backend: 's3',
         s3Bucket: 'env-bucket',
         s3ForcePathStyle: true,
         s3Region: 'eu-west-1',
+        writeBackend: 's3',
       });
+    });
+
+    it('is fs once a directory is set, and keeps reading it after writes move on', () => {
+      vi.stubEnv('ARTIFACT_FS_DIR', '/var/lib/auto-swe/artifacts');
+      vi.stubEnv('ARTIFACT_S3_BUCKET', 'old-bucket');
+      vi.stubEnv('ARTIFACT_WRITE_BACKEND', 's3');
+
+      const config = resolveStorageConfig();
+
+      expect(config.writeBackend).toBe('s3');
+      expect(config.fsDir).toBe('/var/lib/auto-swe/artifacts');
+      expect(config.s3Bucket).toBe('old-bucket');
+    });
+
+    it('derives fs from the directory alone', () => {
+      vi.stubEnv('ARTIFACT_FS_DIR', '/srv/artifacts');
+
+      expect(resolveStorageConfig().writeBackend).toBe('fs');
+    });
+
+    it('refuses a directory and a bucket together without an explicit choice', () => {
+      vi.stubEnv('ARTIFACT_FS_DIR', '/srv/artifacts');
+      vi.stubEnv('ARTIFACT_S3_BUCKET', 'bucket-1');
+
+      expect(() => resolveStorageConfig()).toThrow(/ARTIFACT_WRITE_BACKEND/);
+    });
+
+    it('honours an explicit selector over the derived one', () => {
+      vi.stubEnv('ARTIFACT_FS_DIR', '/srv/artifacts');
+      vi.stubEnv('ARTIFACT_S3_BUCKET', 'bucket-1');
+      vi.stubEnv('ARTIFACT_WRITE_BACKEND', 'pg');
+
+      expect(resolveStorageConfig().writeBackend).toBe('pg');
+    });
+
+    it('refuses a selector whose store is not configured', () => {
+      vi.stubEnv('ARTIFACT_WRITE_BACKEND', 'fs');
+      expect(() => resolveStorageConfig()).toThrow(/requires ARTIFACT_FS_DIR/);
+
+      vi.stubEnv('ARTIFACT_WRITE_BACKEND', 's3');
+      expect(() => resolveStorageConfig()).toThrow(/requires ARTIFACT_S3_BUCKET/);
+
+      vi.stubEnv('ARTIFACT_WRITE_BACKEND', 'disk');
+      expect(() => resolveStorageConfig()).toThrow(/must be one of/);
+    });
+
+    it('refuses a relative filesystem directory', () => {
+      vi.stubEnv('ARTIFACT_FS_DIR', 'data/artifacts');
+
+      expect(() => resolveStorageConfig()).toThrow(/absolute path/);
     });
   });
 

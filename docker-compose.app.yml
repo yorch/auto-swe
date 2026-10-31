@@ -61,6 +61,14 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4317
       - PORT=8080
       - HOSTNAME=0.0.0.0
+      # A filesystem artifact store is read by the gateway when it serves
+      # evidence and transcripts. The same mount must be visible here and in the
+      # worker; leave the variable empty to keep artifacts in Postgres/S3.
+      - ARTIFACT_FS_DIR=${ARTIFACT_FS_DIR:-}
+    volumes:
+      # Read-only: the gateway never writes an artifact. Docker seeds an empty
+      # named volume from the image's directory, ownership included.
+      - artifacts:/var/lib/auto-swe/artifacts:ro
 
   worker:
     build:
@@ -109,6 +117,11 @@ services:
       - ARTIFACT_S3_ENDPOINT=${ARTIFACT_S3_ENDPOINT:-http://garage:3900}
       - ARTIFACT_S3_FORCE_PATH_STYLE=${ARTIFACT_S3_FORCE_PATH_STYLE:-true}
       - ARTIFACT_S3_PREFIX=${ARTIFACT_S3_PREFIX:-workflow-artifacts}
+      # Filesystem store: set ARTIFACT_FS_DIR (and optionally
+      # ARTIFACT_WRITE_BACKEND=fs) to keep artifacts on the mounted volume
+      # instead. The directory must be the same store the gateway reads.
+      - ARTIFACT_FS_DIR=${ARTIFACT_FS_DIR:-}
+      - ARTIFACT_WRITE_BACKEND=${ARTIFACT_WRITE_BACKEND:-}
       # Named ARTIFACT_S3_* on the outside so an ambient AWS_ACCESS_KEY_ID in
       # the developer's shell cannot silently take precedence over `.env`.
       - AWS_ACCESS_KEY_ID=${ARTIFACT_S3_ACCESS_KEY:-autoswelocal}
@@ -131,6 +144,8 @@ services:
       - WORKSPACE_NETWORK=${WORKSPACE_NETWORK:-auto-swe-workspaces}
       # The Docker CLI the worker shells out to talks to the socket proxy, not a socket.
       - DOCKER_HOST=tcp://docker-socket-proxy:2375
+    volumes:
+      - artifacts:/var/lib/auto-swe/artifacts
     networks:
       - default
       - workspaces
@@ -205,6 +220,13 @@ services:
       - API_INTERNAL_URL=${API_INTERNAL_URL:-http://gateway:8080}
       - PORT=3000
       - HOSTNAME=0.0.0.0
+
+volumes:
+  # The filesystem artifact store, when ARTIFACT_FS_DIR is configured. A named
+  # volume (rather than a host path) so a fresh install needs no chown; point
+  # ARTIFACT_FS_DIR at a bind mount instead if the files must be visible on the
+  # host (see docs/deployment.md §5c).
+  artifacts:
 
 networks:
   # Agent workspaces and the worker, and nothing else: a workspace reaches the

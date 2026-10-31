@@ -69,7 +69,8 @@ copies are created only when that setting is enabled and both optional environme
 screenshots to `ui-evidence/<runId>/<evidenceId>.png` without setting an ACL. Configure the public
 bucket's read policy deliberately; the dashboard evidence remains access-controlled. The retention
 sweep deletes those copies with their evidence, and only while `UI_EVIDENCE_PUBLIC_BUCKET` still
-names the bucket they were written to.
+names the bucket they were written to. The public bucket is S3-compatible even when artifacts live
+in the filesystem store: inline PR images are the one feature that always needs an object store.
 
 ## Repository preview recipes
 
