@@ -1,0 +1,98 @@
+# Reference manifest for the filesystem artifact store on Kubernetes
+# (ARTIFACT_FS_DIR). Only needed when artifacts are kept on a mounted directory
+# instead of S3 or Postgres; see docs/deployment.md §5c.
+#
+# Apply after changing the marked values. The same claim is mounted by the
+# gateway (read-only: it serves evidence and transcripts) and by every worker
+# replica (read-write: it writes artifacts). The store carries a marker file that
+# records its identity, and both processes refuse to start against a different
+# or empty volume while rows reference it, so a wrong mount fails the pod instead
+# of losing evidence. (With no rows yet, the worker creates the store on its
+# first write.)
+#
+# The code's durability (rename + directory fsync) is verified on a local
+# filesystem. A shared volume across hosts must provide POSIX rename/fsync and
+# stable directory lookups, and S3 is the supported multi-node store; see §5c.
+#
+# Do NOT mount this claim into workspace pods: it holds evidence, transcripts and
+# step outputs from every run and tenant, and an agent could read or delete them.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: auto-swe-artifacts
+  namespace: auto-swe # CHANGE: the namespace your gateway and worker run in
+spec:
+  # ReadWriteMany is required when the gateway and workers can be scheduled on
+  # different nodes. ReadWriteOnce only works while every pod that mounts it is
+  # on one node; two pods on different nodes would see different stores.
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi # CHANGE: size it for recordings, transcripts and diffs
+  # CHANGE: a class that supports ReadWriteMany. Behind NFS, mount it with
+  # `lookupcache=positive` (or `none`) so a file the worker just renamed into
+  # place is visible to the gateway; S3 remains the supported multi-node store.
+  # storageClassName: <your-rwx-class>
+---
+# Merge the following into the existing worker and gateway workloads (the
+# repository ships no Helm chart).
+#
+# Ownership: unlike Docker, Kubernetes does not seed a claim from the image's
+# mount point. On a block/file volume the kubelet applies fsGroup on mount; on
+# NFS fsGroup is not applied, so the export must already be writable by uid/gid
+# 1000 (the images' `node` user). `fsGroupChangePolicy: OnRootMismatch` keeps a
+# pod restart from recursively chowning the whole store while workers write to
+# it. New files are created 0600 by the store itself; fsGroup only relaxes what
+# the kubelet rewrites at mount time.
+#
+# worker — read-write, it writes artifacts:
+#
+#   spec:
+#     template:
+#       spec:
+#         securityContext:
+#           runAsNonRoot: true
+#           runAsUser: 1000
+#           runAsGroup: 1000
+#           fsGroup: 1000
+#           fsGroupChangePolicy: OnRootMismatch
+#         containers:
+#           - name: worker
+#             env:
+#               - name: ARTIFACT_FS_DIR
+#                 value: /var/lib/auto-swe/artifacts
+#               - name: ARTIFACT_WRITE_BACKEND
+#                 value: fs
+#             volumeMounts:
+#               - name: artifacts
+#                 mountPath: /var/lib/auto-swe/artifacts
+#         volumes:
+#           - name: artifacts
+#             persistentVolumeClaim:
+#               claimName: auto-swe-artifacts
+#
+# gateway — read-only, it serves evidence and transcripts from the same store:
+#
+#   spec:
+#     template:
+#       spec:
+#         securityContext:
+#           runAsNonRoot: true
+#           runAsUser: 1000
+#           runAsGroup: 1000
+#           fsGroup: 1000
+#           fsGroupChangePolicy: OnRootMismatch
+#         containers:
+#           - name: gateway
+#             env:
+#               - name: ARTIFACT_FS_DIR
+#                 value: /var/lib/auto-swe/artifacts
+#             volumeMounts:
+#               - name: artifacts
+#                 mountPath: /var/lib/auto-swe/artifacts
+#                 readOnly: true
+#         volumes:
+#           - name: artifacts
+#             persistentVolumeClaim:
+#               claimName: auto-swe-artifacts
