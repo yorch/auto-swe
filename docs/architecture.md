@@ -1242,7 +1242,8 @@ killed or crashes first would leave its container or pod behind. The
 `auto-swe-workspace-reaper` Temporal Schedule (`WORKSPACE_REAPER_ENABLED`, default `true`;
 `WORKSPACE_REAPER_CRON`, default every 15 minutes) starts `ScheduledWorkspaceReaperWorkflow`, whose
 one activity (`reapOrphanedWorkspaces`) calls `reapOrphans` on the worker's backend, removing at
-most 25 workspaces per sweep (the rest wait for the next one). It judges from the
+most 25 containers per sweep on Docker or 25 pods on Kubernetes (the rest wait for the next one). On
+Docker a workspace and each of its sidecar and service containers count separately. It judges from the
 workspace itself, never from the worker's memory, so a workspace belonging to another worker on the
 same Docker host or namespace is safe while it is within its lifetime:
 - Docker: every workspace container, ephemeral step container, detached sidecar and repo-preview
@@ -1250,12 +1251,14 @@ same Docker host or namespace is safe while it is within its lifetime:
   and `auto-swe.created-at=<epoch seconds>`. The metadata-block sidecar is the exception: it carries
   no labels, and it runs `--rm` and exits once it has installed its routes. The sweep lists
   (`docker ps --all`) only containers with the marker label and `docker rm -f`s those older than
-  seven hours. That bound is the longest activity that holds a workspace, the agent run step
-  (`T_AGENT_RUN_ACTIVITY`, six hours: the four-hour wall-clock ceiling plus two hours of headroom),
-  plus an hour for clock skew between workers. The other workspace-holding activities are shorter:
-  the eval (four hours), the batch quality-gate run, `runUiVerify`, `verifyCiFix`, shell and
-  container steps (60 minutes each), and the single quality gates (15 minutes). A container with no
-  readable creation label is kept.
+  seven hours. That bound is the longest activity that holds a workspace, plus an hour for clock
+  skew between workers. The six-hour activities (`T_AGENT_RUN_ACTIVITY`, the four-hour wall-clock
+  ceiling plus two hours of headroom) are the agent run step (`runAgentTask`) and the PR-feedback
+  agent task (`runAgentPrFeedbackTask`). Shorter activities also hold a workspace, for example the
+  eval harness (four hours), the 30-minute agent activities (`executeImplementation`,
+  `runReviewNetwork`, `resolveMergeConflict`), and the 60-minute shell, container, UI-verify
+  (`runUiVerify`) and CI-verify (`verifyCiFix`) steps. A container with no readable creation label
+  is kept.
 - Kubernetes: the sweep lists pods carrying both `app.kubernetes.io/managed-by=auto-swe` and
   `asw/role=workspace` in the workspace namespace and deletes those that are `Succeeded` or `Failed`
   (a deadline kill is `Failed`), or are still not terminal ten minutes past their own
@@ -1434,7 +1437,7 @@ Current constraints of the system as built. Deliberate product boundaries are in
   orphaned while still running is deleted only once it is terminal or ten minutes past its
   `activeDeadlineSeconds`, which defaults to 86,400 s, so it can hold its share of the namespace
   quota for up to that maximum lifetime; `K8S_WORKSPACE_MAX_LIFETIME_SEC` is the lever. A sweep
-  removes at most 25 workspaces and leaves the rest for the next one. The sweep runs wherever the
+  removes at most 25 pods and leaves the rest for the next one. The sweep runs wherever the
   scheduled activity lands, so on a deployment with workers on separate Docker hosts only the host
   of the worker that picks it up is swept in a given tick.
 - **The Docker sweep trusts its marker label.** Any container on the same daemon carrying

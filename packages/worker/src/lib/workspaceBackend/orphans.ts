@@ -10,9 +10,11 @@ import { MANAGED_BY_LABEL, WORKSPACE_ROLE_LABEL } from './kubernetes/podSpec.js'
  */
 
 /**
- * The most workspaces one sweep removes. Each removal is bounded at 60 s by its
- * driver, so 25 keeps the worst case (about 26 minutes) inside the sweep's
- * 30-minute activity timeout; a larger backlog is picked up by the next sweep.
+ * The most objects one sweep removes: containers on Docker, pods on Kubernetes.
+ * On Docker a workspace and each of its sidecar or service containers count
+ * separately. Each removal is bounded at 60 s by its driver, so 25 keeps the
+ * worst case (about 26 minutes) inside the sweep's 30-minute activity timeout;
+ * a larger backlog is picked up by the next sweep.
  */
 export const MAX_REAPED_PER_SWEEP = 25;
 
@@ -50,11 +52,13 @@ const DOCKER_MAX_AGE_SLACK_SEC = 3600;
  * The oldest a Docker workspace container can legitimately be. A workspace
  * exists inside one activity (`createWorkspace` ... `destroy` in a `finally`),
  * so it can live no longer than that activity's `startToCloseTimeout`. The
- * longest activity that holds one is the agent run step
- * (`T_AGENT_RUN_ACTIVITY`, 6 h: the 4 h wall-clock ceiling plus 2 h of headroom);
- * the others (eval 4 h, shell and container steps 60 m) are shorter, and the
- * 6 h CI poll holds no workspace. An hour of slack covers clock skew between
- * workers. A container older than this belongs to no live activity, whichever
+ * longest activities that hold one are the agent run step (`runAgentTask`) and
+ * the PR-feedback agent task (`runAgentPrFeedbackTask`), both on
+ * `T_AGENT_RUN_ACTIVITY` (6 h: the 4 h wall-clock ceiling plus 2 h of headroom).
+ * Shorter ones also hold a workspace, for example the eval harness (4 h), the
+ * 30 m agent activities, and the 60 m shell, container, UI-verify and CI-verify
+ * steps. The 6 h CI poll holds no workspace. An hour of slack covers clock skew
+ * between workers. A container older than this belongs to no live activity, whichever
  * worker started it.
  */
 export const DOCKER_WORKSPACE_MAX_AGE_MS =
