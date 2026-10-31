@@ -151,6 +151,13 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 # (metadata on a single inode — it does not copy the contents up into a new
 # layer the way the recursive form did).
 RUN chown node:node /app
+
+# The filesystem artifact store's mount point. Docker seeds an empty named
+# volume from this path, ownership included, so the gateway can read artifacts
+# without a chown on the host. A bind-mounted directory must be chowned to this
+# image's uid (1000) by the operator instead.
+RUN mkdir -p /var/lib/auto-swe/artifacts \
+    && chown node:node /var/lib/auto-swe /var/lib/auto-swe/artifacts
 USER node
 
 # Runs `prisma migrate deploy` (idempotent), then the command below.

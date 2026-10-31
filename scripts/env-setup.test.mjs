@@ -362,6 +362,38 @@ describe('check', () => {
     expect(errorsWith({ ARTIFACT_S3_SECRET_KEY: 'short' })).toMatch(/ARTIFACT_S3_SECRET_KEY/);
   });
 
+  it('accepts a filesystem store instead of S3', () => {
+    expect(errorsWith({ ARTIFACT_FS_DIR: '/srv/artifacts' })).toBe('');
+    expect(errorsWith({ ARTIFACT_FS_DIR: '/srv/artifacts', ARTIFACT_WRITE_BACKEND: 'fs' })).toBe(
+      ''
+    );
+  });
+
+  it('refuses an ambiguous or incomplete store selection', () => {
+    expect(
+      errorsWith({ ARTIFACT_FS_DIR: '/srv/artifacts', ARTIFACT_S3_BUCKET: 'bucket-1' })
+    ).toMatch(/ARTIFACT_WRITE_BACKEND/);
+    expect(errorsWith({ ARTIFACT_WRITE_BACKEND: 'fs' })).toMatch(/ARTIFACT_FS_DIR/);
+    expect(errorsWith({ ARTIFACT_WRITE_BACKEND: 's3' })).toMatch(/ARTIFACT_S3_BUCKET/);
+    expect(errorsWith({ ARTIFACT_WRITE_BACKEND: 'disk' })).toMatch(/must be s3, fs or pg/);
+    expect(errorsWith({ ARTIFACT_FS_DIR: 'data/artifacts' })).toMatch(/absolute path/);
+  });
+
+  it('does not inject an S3 bucket when a filesystem store is chosen', () => {
+    const base = new Map([
+      ['COMPOSE_PROFILES', 'objectstore'],
+      ['ARTIFACT_FS_DIR', '/srv/artifacts'],
+    ]);
+    const { overrides } = planValues(base, {
+      mode: 'init',
+      profile: 'prod',
+      rand: (n) => randomBytes(n),
+      sets: [],
+    });
+    expect(overrides.has('ARTIFACT_S3_BUCKET')).toBe(false);
+    expect(overrides.has('ARTIFACT_S3_ACCESS_KEY')).toBe(true);
+  });
+
   describe('prod', () => {
     const prodOk = {
       ARTIFACT_S3_ACCESS_KEY: 'GK0123456789abcdef',
@@ -396,6 +428,21 @@ describe('check', () => {
         )
       ).toMatch(/POSTGRES_PASSWORD is still the dev default/);
     });
+    it('does not require S3 credentials for a filesystem store', () => {
+      expect(
+        errorsWith(
+          {
+            ...prodOk,
+            ARTIFACT_FS_DIR: '/srv/artifacts',
+            ARTIFACT_S3_ACCESS_KEY: null,
+            ARTIFACT_S3_SECRET_KEY: null,
+            ARTIFACT_WRITE_BACKEND: 'fs',
+          },
+          prod
+        )
+      ).toBe('');
+    });
+
     it('is not applied to the local profile', () => {
       expect(errorsWith({})).toBe('');
     });

@@ -297,7 +297,13 @@ export function planValues(base, { mode, profile, rand, sets }) {
           generated.push(k);
         }
       }
-      if (!overrides.has('ARTIFACT_S3_BUCKET')) {
+      // A deployment that has already chosen the filesystem store must not get
+      // a bucket injected beside it: both set with no ARTIFACT_WRITE_BACKEND is
+      // an ambiguous configuration the app refuses to start on.
+      const fsChosen =
+        (env().get('ARTIFACT_FS_DIR') ?? '') !== '' ||
+        (env().get('ARTIFACT_WRITE_BACKEND') ?? '') === 'fs';
+      if (!overrides.has('ARTIFACT_S3_BUCKET') && !fsChosen) {
         overrides.set('ARTIFACT_S3_BUCKET', 'auto-swe-artifacts');
       }
     }
@@ -483,6 +489,28 @@ export function checkEnv(values, { profile = 'local', templateKeys = [] } = {}) 
     }
   }
 
+  const fsDir = get('ARTIFACT_FS_DIR').trim();
+  const s3Bucket = get('ARTIFACT_S3_BUCKET').trim();
+  const writeBackend = get('ARTIFACT_WRITE_BACKEND').trim();
+  if (writeBackend && !['s3', 'fs', 'pg'].includes(writeBackend)) {
+    errors.push(`ARTIFACT_WRITE_BACKEND must be s3, fs or pg (found "${writeBackend}")`);
+  }
+  if (writeBackend === 'fs' && !fsDir) {
+    errors.push('ARTIFACT_WRITE_BACKEND=fs requires ARTIFACT_FS_DIR');
+  }
+  if (writeBackend === 's3' && !s3Bucket) {
+    errors.push('ARTIFACT_WRITE_BACKEND=s3 requires ARTIFACT_S3_BUCKET');
+  }
+  if (!writeBackend && fsDir && s3Bucket) {
+    errors.push(
+      'ARTIFACT_FS_DIR and ARTIFACT_S3_BUCKET are both set; set ARTIFACT_WRITE_BACKEND (fs, s3 or pg) to say where new artifacts go'
+    );
+  }
+  if (fsDir && !fsDir.startsWith('/')) {
+    errors.push('ARTIFACT_FS_DIR must be an absolute path');
+  }
+  const effectiveStore = writeBackend || (fsDir ? 'fs' : s3Bucket ? 's3' : 'pg');
+
   if (profile === 'prod') {
     for (const key of PUBLIC_URL_KEYS) {
       const v = get(key);
@@ -502,10 +530,21 @@ export function checkEnv(values, { profile = 'local', templateKeys = [] } = {}) 
         errors.push(`${key} is still the dev default`);
       }
     }
-    for (const key of ['ARTIFACT_S3_ACCESS_KEY', 'ARTIFACT_S3_SECRET_KEY']) {
-      if (!get(key)) {
-        errors.push(`${key} is required by docker-compose.prod.yml`);
+    if (effectiveStore === 's3') {
+      for (const key of ['ARTIFACT_S3_ACCESS_KEY', 'ARTIFACT_S3_SECRET_KEY']) {
+        if (!get(key)) {
+          errors.push(`${key} is required when artifacts go to S3 in production`);
+        }
       }
+    } else if (effectiveStore === 'pg') {
+      warnings.push(
+        'artifacts will be stored inline in Postgres; set ARTIFACT_S3_BUCKET or ARTIFACT_FS_DIR for a production deployment'
+      );
+    }
+    if (objectstoreActive(values) && effectiveStore !== 's3') {
+      warnings.push(
+        'COMPOSE_PROFILES includes objectstore but artifacts do not go to S3; clear it or set ARTIFACT_WRITE_BACKEND=s3'
+      );
     }
   }
 
