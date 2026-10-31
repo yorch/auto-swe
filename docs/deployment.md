@@ -20,7 +20,7 @@ Six long-running processes plus one Docker daemon, and two more that are optiona
 | `docker-socket-proxy`      | `haproxy:3.4-alpine` (`DOCKER_SOCKET_PROXY_IMAGE`) with `infra/docker-socket-proxy/haproxy.cfg` | Filters the Docker API for the worker; the only app container that mounts the host socket. Its idle timeouts (65 min) outlast the longest container step. |
 | `web`                      | built from `packages/web/Dockerfile`               | Next.js dashboard on `:3000`. Stateless, scale horizontally.           |
 | `otel-lgtm` (optional)     | `grafana/otel-lgtm:0.34.0`                         | Grafana + Loki + Tempo + Mimir bundle for traces, logs, metrics.       |
-| object store (optional)    | `dxflrs/garage` (bundled) / AWS S3 / Cloudflare R2 / Backblaze B2 | S3-compatible artifact store for large step outputs (diffs, logs, scan reports). Without it the worker falls back to Postgres-inline storage which inflates the app DB. |
+| artifact store (one of)    | `dxflrs/garage` (bundled) / AWS S3 / Cloudflare R2 / Backblaze B2 / a mounted directory / Postgres | Where large step outputs, transcripts and run evidence live. S3-compatible stores and a filesystem directory keep them out of the app DB; with neither, they are stored inline in Postgres. See §5c. |
 
 The worker reaches the Docker daemon through `docker-socket-proxy` (`DOCKER_HOST=tcp://docker-socket-proxy:2375`, on an `internal` network only the two share) and spawns ephemeral `node:24-alpine`-style containers per work request. The base image comes from the connection's `executorImage`, falling back to the `WORKSPACE_IMAGE` environment variable (default `node:24-alpine`); an explicit `image` on a node still wins. Leave a connection's executor image **blank** to inherit that default — the column has no database default, so blank means "inherit" rather than a pinned value, and a connection that names an image keeps it. Clearing the field in the connection's settings is how you opt one back in (see [`architecture.md` §8](./architecture.md#8-observability--cost) for the container's hardening posture). The proxy is haproxy with a path allowlist in `infra/docker-socket-proxy/haproxy.cfg`: it passes only the API groups the worker uses (`_ping`, `version`, `containers` — which covers `docker cp` and `pause` —, `exec`, `images`, `volumes`) and answers everything else with a 403 (build, networks, swarm, services, secrets, plugins, system, info, events). The file names what each allowed path is for; a new Docker operation in the worker needs its path there. **It limits the API surface, not container options:** the worker may still create a container with `--privileged` or a host bind mount, so anyone with code execution inside the worker container can still reach root on its host. Keep the worker host isolated.
 
@@ -81,7 +81,7 @@ Before touching infrastructure, gather these:
 - **Email transport** — pick one of SMTP (`SMTP_HOST/PORT/USER/PASS` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Required for magic-link sign-in and password reset outside development — without one those requests fail, and the gateway logs an error that never contains the link. Only with `NODE_ENV=development` or `test` does it print the link to stdout instead.
 - **OAuth credentials** (optional but recommended) — register a GitHub OAuth app, a Google OAuth client, and/or an Okta OIDC app, callback `{BETTER_AUTH_URL}/api/auth/callback/{github,google,okta}`. Credentials are environment variables (`GITHUB_CLIENT_ID/SECRET`, `GOOGLE_CLIENT_ID/SECRET`, `OKTA_ISSUER` + `OKTA_CLIENT_ID/SECRET`). See [`oauth-setup.md`](./oauth-setup.md).
 - **Slack credentials** (optional) — configured via `/admin/integrations` (Slack tab) after first boot.
-- **S3-compatible artifact store** (optional but recommended in prod) — configured with the `ARTIFACT_S3_*` environment variables. Without a bucket, large step outputs are stored inline in Postgres.
+- **Artifact store** (one of, recommended in prod) — S3-compatible (`ARTIFACT_S3_*`), a mounted directory (`ARTIFACT_FS_DIR`), or Postgres inline as the fallback. `ARTIFACT_WRITE_BACKEND` picks which one receives new artifacts when more than one is configured. See §5c.
 
 Generate strong secrets:
 
@@ -204,7 +204,9 @@ AUTH_FROM_EMAIL=auth@example.com
 # SLACK_SIGNING_SECRET=...
 # SLACK_BOT_TOKEN=xoxb-...
 #
-# Artifact store
+# Artifact store — pick one (§5c)
+# ARTIFACT_WRITE_BACKEND=fs          # fs | s3 | pg; derived when unset
+# ARTIFACT_FS_DIR=/var/lib/auto-swe/artifacts   # mounted into gateway and worker
 # ARTIFACT_S3_ACCESS_KEY=...        # compose maps this to AWS_ACCESS_KEY_ID
 # ARTIFACT_S3_SECRET_KEY=...        # compose maps this to AWS_SECRET_ACCESS_KEY
 # ARTIFACT_S3_BUCKET=auto-swe-artifacts
@@ -473,7 +475,15 @@ Things to know:
 
 ## 5c. Choosing an object store
 
-The artifact store is S3-compatible, and the worker only ever issues `PutObject` and `GetObject` against it. Anything speaking those two verbs works — the choice is operational, not one of compatibility.
+The artifact store holds what would otherwise bloat the workflow context or the app database: diffs, gates' logs, transcript parts and run evidence (screenshots, recordings). Three options, one active writer at a time:
+
+| Store | Selected by | Notes |
+|---|---|---|
+| **S3-compatible** | `ARTIFACT_S3_BUCKET` | The bundled Garage or any S3/R2/B2 endpoint. Objects are written, read and deleted (`PutObject`, `GetObject`, `DeleteObject`); the choice of provider is operational, not one of compatibility. |
+| **Filesystem** | `ARTIFACT_FS_DIR` | A directory mounted into the worker (writes) **and** the gateway (reads). Single host; §5c below. |
+| **Postgres inline** | neither | `workflow_artifacts.inline_blob`. Fine for small installs and local dev; recordings and screenshots inflate the app DB and its backups. |
+
+`ARTIFACT_WRITE_BACKEND` (`fs`, `s3`, `pg`) overrides the derived choice when more than one store is configured. Old rows keep working after a switch because reads dispatch on the row's recorded backend: keep `ARTIFACT_FS_DIR` set to read filesystem artifacts, and the S3 bucket/credentials reachable to read S3 ones. Setting a directory and a bucket together without `ARTIFACT_WRITE_BACKEND` is refused at boot rather than guessed.
 
 **Bundled Garage (default).** A single-node [Garage](https://garagehq.deuxfleurs.fr/) container, configured by `infra/garage/garage.toml` and started with `--single-node --default-bucket`. It provisions the cluster layout, the access key and the bucket on first boot from `ARTIFACT_S3_ACCESS_KEY` / `ARTIFACT_S3_SECRET_KEY` / `ARTIFACT_S3_BUCKET`, and re-running is a no-op, so there is nothing to bootstrap separately. It idles around 5 MB of RAM. Its state is `./data/garage`, which needs backing up alongside the two Postgres volumes (§9).
 
@@ -490,7 +500,53 @@ Two constraints worth knowing before you set credentials:
 | Cloudflare R2 | `https://<account-id>.r2.cloudflarestorage.com` | `auto` | `false` |
 | Backblaze B2 | `https://s3.<region>.backblazeb2.com` | your region | `true` |
 
-`ARTIFACT_S3_ACCESS_KEY` / `ARTIFACT_S3_SECRET_KEY` become the provider's credentials — compose passes them into the container as the standard `AWS_*` names the SDK reads, but keeps them under a distinct name outside so an ambient `AWS_ACCESS_KEY_ID` in the deploying shell cannot silently win over `.env`. **The bucket must already exist** — only the bundled store self-provisions one. These same settings can be managed at `/admin/integrations → Storage` instead, which takes precedence over the environment.
+`ARTIFACT_S3_ACCESS_KEY` / `ARTIFACT_S3_SECRET_KEY` become the provider's credentials — compose passes them into the container as the standard `AWS_*` names the SDK reads, but keeps them under a distinct name outside so an ambient `AWS_ACCESS_KEY_ID` in the deploying shell cannot silently win over `.env`. **The bucket must already exist** — only the bundled store self-provisions one. Storage is environment-only: there is no admin page that overrides it, because the directory or bucket has to be mounted/authorized before either process starts.
+
+### Filesystem store instead of S3
+
+A deployment with no object store can keep artifacts on a directory instead of inflating Postgres.
+Set `ARTIFACT_FS_DIR` (and `ARTIFACT_WRITE_BACKEND=fs` if a bucket is also configured) and mount the
+**same** directory into both processes: the worker writes, and the gateway serves evidence and
+transcripts from it. A gateway that cannot see the store returns errors on every evidence request, so
+both mounts are required.
+
+The compose files mount a named volume, `artifacts`, at `/var/lib/auto-swe/artifacts` in both
+services. A named volume is the default because Docker seeds it from the image's directory, ownership
+included, so a fresh install needs no `chown`. To keep the files at a visible host path instead, swap
+it for a bind mount and give it to the image's user first — Docker creates a missing bind-mount source
+as `root`, and the services run as `node` (uid 1000):
+
+```bash
+mkdir -p ./data/artifacts
+sudo chown 1000:1000 ./data/artifacts
+# docker-compose override: ./data/artifacts:/var/lib/auto-swe/artifacts
+```
+
+What the store guarantees, and what it does not:
+
+- **One store, one identity.** The first write creates `.auto-swe-artifacts.json` in the directory;
+  every row records that id. If the directory is missing, empty, or a different store, **both
+  processes refuse to start** rather than serving errors and letting a retention sweep delete rows
+  whose files sit on the real volume. Do not delete or copy that file between directories.
+- **Durable publication.** Each artifact is written to `.tmp/`, fsynced, renamed into place, and the
+  directory fsynced before its row is marked ready. An interrupted write leaves at most a temporary
+  file, which the daily transcript sweep removes after a day.
+- **Single host.** A local directory is not shared between hosts. On Kubernetes every gateway and
+  worker pod needs a `ReadWriteMany` volume; `ReadWriteOnce` only works while the pods are on one
+  node, and two replicas on different nodes silently see different stores (the store identity check
+  turns that into a failed boot rather than missing evidence). Multiple workers on one host are fine.
+- **Disk is your capacity limit.** `ENOSPC` fails the artifact write (a run step fails) rather than
+  corrupting anything; monitor the volume. No compression, deduplication or replication beyond the
+  filesystem's own.
+- **Backups.** Back up the directory with the database (§9). A restore of one without the other leaves
+  either rows with no files (reads fail) or files with no rows (swept only if a row names them; the
+  rest is manual cleanup).
+- **Changing the directory** means moving the files: rows store a store-relative path and the base
+  comes from `ARTIFACT_FS_DIR`.
+- **Nothing is encrypted at rest by the application.** The files are plain artifacts on the volume,
+  exactly like the S3 objects and the Postgres blobs; protect the disk the way you protect the
+  database (filesystem encryption, access control on the host). Files are mode `0600` and directories
+  `0700`, so another local user cannot read them.
 
 **Migrating an existing MinIO deployment.** Garage's on-disk format is unrelated to MinIO's, so pointing it at `./data/minio` will not work and existing objects will not appear. `ArtifactRef` rows in the app DB hold keys, not blobs, so any object left behind becomes a broken artifact link rather than a visible failure. Copy the objects across before cutting over, with both stores running:
 
@@ -591,10 +647,11 @@ open https://app.example.com
 
 ## 9. Backup + DR
 
-Two stateful datastores; both need backups:
+Two stateful datastores, plus the artifact store when it is not Postgres:
 
 1. **`postgres` (app DB)** — `pg_dump`. Recovery is straightforward. Restoring loses no functionality; the worker just resumes whatever Temporal still has in flight.
 2. **`postgres-temporal` (workflow history)** — `pg_dump`. Loss of this DB means in-flight workflows are gone forever (signals, history, timers). For long-running humanMergeSignal waits (up to 7 days), this is real data loss. Treat this DB at least as carefully as the app DB.
+3. **Artifacts** — the filesystem store's directory (`./data/artifacts`, or the `artifacts` volume) or the S3 bucket. Back it up with the app DB: a database restored against an older directory leaves rows whose files are gone, and a directory restored against an older database leaves files nothing references. Filesystem artifacts are mode `0600`/`0700` and are not readable by other uids; preserve ownership when restoring.
 
 Container workspaces are ephemeral — never back them up. The Docker daemon on the worker host can be restored from scratch.
 
@@ -615,7 +672,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] Reverse proxy enforces HTTPS and forwards `X-Forwarded-For` / `X-Forwarded-Proto`, and `TRUST_PROXY` names that proxy's IPs or CIDRs. The gateway rate-limits a verified user by user id and everything else by client IP; without `TRUST_PROXY` every anonymous request behind the proxy shares the proxy's IP and one limit. Do not set it when clients can reach the gateway directly — they could then choose their own IP.
 - [ ] With the bundled object store (`COMPOSE_PROFILES=objectstore`), `GARAGE_RPC_SECRET` is set in `.env`. Compose does not enforce it in production (§5c); left unset, Garage runs on the infra file's public placeholder.
 - [ ] Postgres connection uses TLS (`?sslmode=require`).
-- [ ] S3 artifact store has lifecycle policy for old workflow artifacts (the DB stores references; the worker never deletes the objects itself).
+- [ ] The artifact store has a retention/lifecycle policy you control: the daily transcript sweep deletes expired artifacts through the application, but it does not expire objects an interrupted write or a deleted run left behind. On S3, add a bucket lifecycle rule; on the filesystem store, monitor the directory (`workflow-artifacts` keys and `.tmp/` are the two places to watch).
 - [ ] Temporal namespace retention is set deliberately (default in self-hosted = 30d; tune for your humanMergeSignal wait).
 - [ ] `OTEL_EXPORTER_OTLP_ENDPOINT` is set and the collector is reachable — otherwise traces, metrics and logs silently drop.
 - [ ] GitHub PAT and webhook secret are set via `/admin/integrations` (or env var fallback). Secrets are random per-environment.

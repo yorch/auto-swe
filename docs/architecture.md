@@ -898,10 +898,13 @@ flowchart LR
 ```
 
 `docker-compose.app.yml` is an overlay — it references infra services and is not runnable
-standalone. The worker creates workspaces through `docker-socket-proxy`, which alone mounts `/var/run/docker.sock`. The object store
-is optional: without an S3 config, artifacts fall back to Postgres inline blobs. Garage sits behind
-the `objectstore` compose profile, so a deployment using a hosted S3 provider omits it entirely and
-points `ARTIFACT_S3_ENDPOINT` at the provider instead.
+standalone. The worker creates workspaces through `docker-socket-proxy`, which alone mounts `/var/run/docker.sock`. The artifact
+store is one of three: an S3-compatible bucket (the bundled Garage, behind the `objectstore` compose
+profile, or any hosted provider via `ARTIFACT_S3_ENDPOINT`), a mounted directory (`ARTIFACT_FS_DIR`,
+single host, read by the gateway and written by the worker), or Postgres inline blobs as the fallback
+when neither is configured. `ARTIFACT_WRITE_BACKEND` picks the writer when more than one is set up;
+reads dispatch on the row's recorded backend, so a switch does not orphan old artifacts. See
+[deployment.md §5c](./deployment.md).
 
 ---
 
@@ -1833,6 +1836,15 @@ Current constraints of the system as built. Deliberate product boundaries are in
   bundle-installed ones are not in it, so "which templates use this step" counts built-in templates
   only; the assistant reads a team's templates through `callApi`. A `searchDocs` section is
   capped, so a long table answered from the docs shows only some of its rows.
+- **The filesystem artifact store is single-host.** Its rows record the store's identity and the API
+  refuses to start against a different (or empty) mount, so a wrong volume is a failed boot rather
+  than missing evidence — but it cannot span hosts. Kubernetes needs a `ReadWriteMany` volume for
+  every gateway and worker replica; a local directory also sets the deployment's capacity: a full
+  disk fails the artifact write, and nothing replicates or deduplicates the files.
+- **Deleting a run does not delete its artifacts.** `WorkflowArtifact.run` cascades, so removing a
+  run drops the rows without calling `deleteArtifact`; the stored payload (S3 object or file) stays.
+  The transcript sweep's pending pass only removes writes that never completed. This predates the
+  filesystem store and applies to all three backends.
 - **UI evidence is stored, then linked.** A recording, trace or screenshot is written to the artifact
   store as a ready artifact before its `RunEvidence` row is created. A worker that dies between the
   two writes leaves a ready `ui.*` artifact no evidence row points at; the retention sweep reads
