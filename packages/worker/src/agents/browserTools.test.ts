@@ -132,6 +132,7 @@ describe('BrowserToolset', () => {
 
   it('saves session video and trace evidence during close', async () => {
     session.close.mockResolvedValue({
+      errors: [],
       trace: Buffer.from('trace'),
       video: Buffer.from('video'),
     });
@@ -149,5 +150,46 @@ describe('BrowserToolset', () => {
       expect.objectContaining({ body: Buffer.from('trace'), kind: 'trace', source: 'agent' }),
       tracer
     );
+  });
+
+  it('starts one browser for concurrent first calls, so cleanup can reach it', async () => {
+    const toolset = createToolset();
+    await Promise.all([toolset.call('browser_snapshot', {}), toolset.call('browser_snapshot', {})]);
+
+    expect(startBrowser).toHaveBeenCalledTimes(1);
+    await toolset.close();
+    expect(session.close).toHaveBeenCalledOnce();
+  });
+
+  it('traces an artifact the worker could not read back at close', async () => {
+    session.close.mockResolvedValue({
+      errors: ['recording: file exceeds the read limit'],
+    });
+    const toolset = createToolset();
+    await toolset.call('browser_snapshot', {});
+
+    await toolset.close();
+
+    expect(tracer.addActivityEvent).toHaveBeenCalledWith({
+      name: 'ui.evidence_unavailable',
+      outputJson: { error: 'recording: file exceeds the read limit' },
+    });
+  });
+
+  it('closes a session that started after cleanup began', async () => {
+    let resolveStart: (value: typeof session) => void = () => undefined;
+    startBrowser.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveStart = resolve;
+      })
+    );
+    const toolset = createToolset();
+    const pending = toolset.call('browser_snapshot', {});
+    const closing = toolset.close();
+    resolveStart(session);
+    await pending;
+    await closing;
+
+    expect(session.close).toHaveBeenCalledOnce();
   });
 });

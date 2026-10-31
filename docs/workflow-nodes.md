@@ -257,7 +257,8 @@ its smoke paths and optional E2E command. Its config accepts `mode` (`smoke`, `e
 `previewConfig`, it returns a successful skipped result. A configured repository uses its executor
 image; an image without Playwright/Chromium returns a failed gate result. The output includes
 `passed`, `summary`, `exitCode`, `pages`, `evidenceIds`, optional `e2e`, and the `ui.log` evidence
-identifier as `artifactId`. See [UI validation](./ui-validation.md#workflow-verification).
+identifier as `artifactId`. When a configured cap drops an item instead of saving it, `notes` says
+which. See [UI validation](./ui-validation.md#workflow-verification).
 
 **Built-in examples.** `ticket-to-merge`, `hotfix`, `code-and-ci`
 

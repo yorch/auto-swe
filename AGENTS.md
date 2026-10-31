@@ -564,7 +564,9 @@ and gated by the resolved Agent's `toolKeys`; `null` means all of them are enabl
 the session's repository. An `'mcp'` pseudo-key (in `AGENT_TOOL_KEYS`, not in `IMPLEMENTER_TOOL_IDS`) gates
 MCP tool loading: when an Agent lists `'mcp'` **and** references an active `mcp` Connection via
 `Agent.mcpConnectionId`, that server's tools bind at run time for the implementer activities and
-the generic agent node.
+the generic agent node. A `'browser'` key is the one grant `null` never implies: naming it binds the
+browser toolset (screenshots become run evidence) for the implementer path on every runtime and for
+agent runs — see [`docs/ui-validation.md`](./docs/ui-validation.md).
 
 > **Gotcha:** `packages/worker` declares `@modelcontextprotocol/sdk` directly even though it only
 > ever imports `@mastra/mcp`. `@mastra/mcp` moved to the MCP SDK 2.x packages but still depends on

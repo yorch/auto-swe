@@ -6,7 +6,8 @@ which hosts its URLs may point at, and which teams may use it.
 Repository settings also accept an optional `previewConfig` JSON recipe for UI validation. Only
 `git_repo` connections can store one, and changing it takes the same team shell-authoring role as
 changing gate commands; see [UI validation](./ui-validation.md) for its schema and runtime behavior.
-Browser sessions use the `defaults/Dockerfile.node-browser` executor image.
+Preview sessions need a browser in the repository's executor image: `defaults/Dockerfile.node-browser`
+is that image, and a repository without one fails the `uiVerify` step rather than passing it.
 
 ---
 
@@ -308,6 +309,12 @@ container, and returns each check with `required`/`ok`/`detail`.
 Maven, daemons off). `build-executor.yml` builds one of them per run: the
 `stack` input (`node`|`python`|`jvm`|`go`, default `node`) selects it, unless
 `use_repo_dockerfile` builds the repository's own Dockerfile instead.
+
+`defaults/Dockerfile.node-browser` is a fifth base — Debian with Playwright's Chromium and the same
+Node toolchain — for a repository whose run should verify its app preview. `docker.yml` does not
+publish it and `build-executor.yml` does not build it, so a deployer builds it and sets it as the
+connection's executor image ([deployment.md](./deployment.md) and
+[ui-validation.md](./ui-validation.md)).
 
 **Recording the build.** A build writes the image back to the connection together with
 `executorImageBuild` (`{ stack, useRepoDockerfile }`), the settings it was built with. Like the

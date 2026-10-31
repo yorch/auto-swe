@@ -103,6 +103,50 @@ describe('BrowserSession', () => {
 
     expect(files.video?.toString()).toMatch(/recording\.webm$/);
     expect(files.trace?.toString()).toMatch(/trace\.zip$/);
+    expect(files.errors).toEqual([]);
+  });
+
+  it('keeps the trace when the recording cannot be read back', async () => {
+    const { readFile, workspace } = makeWorkspace((outputDir) =>
+      JSON.stringify({
+        ok: true,
+        trace: `${outputDir}/trace.zip`,
+        video: `${outputDir}/recording.webm`,
+      })
+    );
+    readFile.mockImplementation(async (filePath: string) => {
+      if (filePath.endsWith('recording.webm')) {
+        throw new Error('file exceeds the read limit');
+      }
+      return Buffer.from(filePath);
+    });
+    const session = await BrowserSession.start(workspace, {
+      allowedHosts: [],
+      recordVideo: true,
+      trace: true,
+    });
+    const files = await session.close();
+
+    expect(files.video).toBeUndefined();
+    expect(files.trace?.toString()).toMatch(/trace\.zip$/);
+    expect(files.errors).toEqual([
+      expect.stringContaining('recording: file exceeds the read limit'),
+    ]);
+  });
+
+  it('reads the recording up to the configured limit', async () => {
+    const { readFile, workspace } = makeWorkspace((outputDir) =>
+      JSON.stringify({ ok: true, video: `${outputDir}/recording.webm` })
+    );
+    const session = await BrowserSession.start(workspace, {
+      allowedHosts: [],
+      maxVideoBytes: 2_000_000,
+      recordVideo: true,
+      trace: false,
+    });
+    await session.close();
+
+    expect(readFile).toHaveBeenCalledWith(expect.stringMatching(/recording\.webm$/), 2_000_000);
   });
 
   it('reports a clear error when the workspace has no browser', async () => {

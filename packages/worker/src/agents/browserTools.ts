@@ -1,6 +1,6 @@
 import { resolveSetting } from '@auto-swe/shared/config/resolveSetting';
 import { prisma } from '@auto-swe/shared/db';
-import { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
+import { type PreviewConfig, PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
@@ -186,8 +186,12 @@ export interface BrowserToolsetOptions {
 export class BrowserToolset implements BrowserToolContext {
   private closed = false;
   private browser?: BrowserSession;
+  private sessionPromise?: Promise<BrowserSession>;
   private previewConfig?: z.infer<typeof PreviewConfigSchema> | null;
   private preview?: Awaited<ReturnType<typeof import('../lib/appPreview.js')['startAppPreview']>>;
+  private previewPromise?: Promise<
+    Awaited<ReturnType<typeof import('../lib/appPreview.js')['startAppPreview']>>
+  >;
   private closing = false;
   private readonly evidenceIds: string[] = [];
 
@@ -197,25 +201,51 @@ export class BrowserToolset implements BrowserToolContext {
     if (this.closing) {
       throw new Error('Browser toolset is closing');
     }
-    await this.loadPreviewConfig();
-    this.browser ??= await BrowserSession.start(this.options.workspace, {
-      allowedHosts: this.previewConfig?.allowedHosts ?? [],
-      recordVideo: await resolveSetting('uiValidation.agentRecordVideo'),
-      trace: true,
-    });
-    return this.browser;
+    // Memoize the in-flight start: an agent may issue several tool calls in one
+    // step, and two concurrent starts would leave one session unreachable from
+    // `close()`, losing its recording and trace.
+    if (!this.sessionPromise) {
+      const starting = (async () => {
+        await this.loadPreviewConfig();
+        return BrowserSession.start(this.options.workspace, {
+          allowedHosts: this.previewConfig?.allowedHosts ?? [],
+          maxVideoBytes: await resolveSetting('uiValidation.maxVideoBytes'),
+          recordVideo: await resolveSetting('uiValidation.agentRecordVideo'),
+          trace: true,
+        });
+      })();
+      this.sessionPromise = starting;
+      starting.catch(() => {
+        if (this.sessionPromise === starting) {
+          this.sessionPromise = undefined;
+        }
+      });
+    }
+    return this.sessionPromise;
   }
 
   async startApp(): Promise<string> {
+    if (this.closing) {
+      throw new Error('Browser toolset is closing');
+    }
     await this.loadPreviewConfig();
     if (!this.previewConfig) {
       await this.ensureSession();
       return 'No app preview is configured. Start the server with bash, then pass its URL to browser_navigate.';
     }
-    this.preview ??= await (await import('../lib/appPreview.js')).startAppPreview(
-      this.options.workspace,
-      this.previewConfig
-    );
+    if (!this.previewPromise) {
+      const starting = (async () => {
+        const { startAppPreview } = await import('../lib/appPreview.js');
+        return startAppPreview(this.options.workspace, this.previewConfig as PreviewConfig);
+      })();
+      this.previewPromise = starting;
+      starting.catch(() => {
+        if (this.previewPromise === starting) {
+          this.previewPromise = undefined;
+        }
+      });
+    }
+    this.preview = await this.previewPromise;
     await this.ensureSession();
     return `App preview ready at ${this.preview.baseUrl}`;
   }
@@ -306,7 +336,17 @@ export class BrowserToolset implements BrowserToolContext {
     }
     this.closing = true;
     try {
+      // A start that is still in flight when the session ends would otherwise
+      // outlive cleanup: wait for it so its recording and trace are persisted.
+      this.browser ??= await this.sessionPromise?.catch(() => undefined);
+      this.preview ??= await this.previewPromise?.catch(() => undefined);
       const outputs = await this.browser?.close();
+      for (const message of outputs?.errors ?? []) {
+        this.options.tracer.addActivityEvent({
+          name: 'ui.evidence_unavailable',
+          outputJson: { error: message },
+        });
+      }
       if (outputs?.video) {
         const saved = await recordActivityEvidence(
           {

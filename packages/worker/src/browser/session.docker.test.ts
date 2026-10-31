@@ -46,8 +46,8 @@ describe.skipIf(!enabled)('browser executor Docker smoke', () => {
     }
   });
 
-  it('drives Chromium with workspace hardening and collects browser artifacts', async () => {
-    containerName = `asw-browser-test-${process.pid}`;
+  function startContainer(): void {
+    containerName = `asw-browser-test-${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
     execFileSync(
       'docker',
       [
@@ -68,6 +68,35 @@ describe.skipIf(!enabled)('browser executor Docker smoke', () => {
       ],
       { stdio: 'ignore' }
     );
+  }
+
+  it('meets the executor image contract and carries the browser toolchain', async () => {
+    startContainer();
+    const contract = [
+      'git --version',
+      'tar --version',
+      'rg --version',
+      'sha256sum /dev/null',
+      'test "$(id -u)" = 1000',
+      'touch /workspace/target-repo/.probe',
+      'node -e \'const p=require("playwright");require("node:fs").accessSync(p.chromium.executablePath())\'',
+    ];
+    for (const command of contract) {
+      await expect(runInContainer(['sh', '-c', command])).resolves.toBeDefined();
+    }
+    // The image is an executor image: a Yarn or pnpm target repo runs its own
+    // gates here, so the package managers the Node image provides must exist.
+    const toolchain = await runInContainer([
+      'sh',
+      '-c',
+      'node --version && npm --version && yarn --version && pnpm --version',
+    ]);
+    expect(toolchain).toMatch(/^v\d+/);
+    expect(toolchain.match(/\d+\.\d+\.\d+/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+  }, 120_000);
+
+  it('drives Chromium with workspace hardening and collects browser artifacts', async () => {
+    startContainer();
     const workspace = {
       exec: async (command: string) => runInContainer(['sh', '-c', command]),
       execStdin: async (command: string, stdin: string | Buffer) =>
@@ -119,6 +148,7 @@ describe.skipIf(!enabled)('browser executor Docker smoke', () => {
       ])
     );
     const files = await session.close();
+    expect(files.errors).toEqual([]);
     expect(files.video?.subarray(0, 4)).toEqual(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
     expect(files.trace?.subarray(0, 2).toString()).toBe('PK');
     const evidenceDir = process.env.ASW_BROWSER_EVIDENCE_DIR;

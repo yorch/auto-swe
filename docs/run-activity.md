@@ -99,7 +99,8 @@ dimensions where known; its bytes use the workflow artifact store. The Evidence 
 short-lived, user-bound media links and the gateway rechecks the user's current account and run
 visibility each time a link is fetched. Only PNG/JPEG/WebP images, WebM video, ZIP archives and
 plain text are served with their respective media types; other types are downloaded as opaque
-binary data.
+binary data. How the `uiVerify` step and the agent browser tool produce this evidence, and the
+per-repository preview recipe behind it, are in [ui-validation.md](./ui-validation.md).
 
 Evidence items are limited by `uiValidation.maxScreenshotBytes`, `uiValidation.maxVideoBytes` and
 `uiValidation.maxEvidencePerRun`. Trace files can be opened with

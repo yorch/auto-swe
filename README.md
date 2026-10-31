@@ -14,10 +14,16 @@ Teams drive all of it from the **Slack channel teammate**: a channel-resident as
 
 1. **Submit a work request** — POST a ticket ID (Jira, Linear, GitHub Issues, etc.) and description to the API
 2. **Agent implements** — An LLM agent clones the target repo into an ephemeral Docker sandbox, writes code and tests, and iterates until tests go green (TDD loop, max 5 iterations)
-3. **Review network runs** — Three parallel review agents (Security Auditor, Domain Logic, Performance) inspect the diff and can request fixes
-4. **PR opens** — A pull request is created on GitHub with the implementation
-5. **CI self-heals** — If pipeline checks fail, the agent wakes up, reads the logs, and pushes a fix
-6. **Human merges** — The workflow waits (up to 7 days) for a human to merge the PR, then commits learnings to semantic memory (pgvector) for future runs. A repository can opt into native auto-merge for low-risk changes, and, with a second GitHub App and its own switch, into having the lowest-risk changes approved with no human ([`docs/pr-evaluation.md`](./docs/pr-evaluation.md)); it is off by default
+3. **App preview verified** — A headless browser runs next to the app inside the same sandbox, visits each configured page, and stores screenshots, a video recording, a Playwright trace and the app log as run evidence. Console errors and 5xx responses fail the check
+4. **Review network runs** — Three parallel review agents (Security Auditor, Domain Logic, Performance) inspect the diff and can request fixes
+5. **PR opens** — A pull request is created on GitHub with the implementation and a link to the run's evidence
+6. **CI self-heals** — If pipeline checks fail, the agent wakes up, reads the logs, and pushes a fix
+7. **Human merges** — The workflow waits (up to 7 days) for a human to merge the PR, then commits learnings to semantic memory (pgvector) for future runs. A repository can opt into native auto-merge for low-risk changes, and, with a second GitHub App and its own switch, into having the lowest-risk changes approved with no human ([`docs/pr-evaluation.md`](./docs/pr-evaluation.md)); it is off by default
+
+App preview validation is opt-in per repository: a `previewConfig` recipe says how to start the app
+and which pages to visit, and a repository without one skips the step. Recorded evidence is
+access-controlled per user and shown on the run page; agents can also drive the same browser through
+an explicitly granted `browser` tool. See [`docs/ui-validation.md`](./docs/ui-validation.md).
 
 All execution is durable via Temporal.io — workflows survive crashes, restarts, and API rate limits.
 
@@ -44,6 +50,8 @@ Fastify Gateway ──────────────────▶ Tempor
    │                                 ├── executeImplementation        (Implementer agent + DinD TDD loop;
    │                                 │                                 takes optional Subtask for per-branch fan-out)
    │                                 ├── runLint / Typecheck / Tests / Build / VulnScan / PerfBench  (quality gates)
+   │                                 ├── uiVerify                    (headless browser: preview smoke paths + e2e;
+   │                                 │                                 screenshots, video, trace, log as evidence)
    │                                 ├── executeGateFixImplementation (fix-loop for failed gates)
    │                                 ├── runReviewNetwork             (Security / Domain / Performance agents)
    │                                 ├── executeReviewFixImplementation
