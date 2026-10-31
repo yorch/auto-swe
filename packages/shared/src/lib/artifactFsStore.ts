@@ -24,6 +24,7 @@ import crypto from 'node:crypto';
 import type { FileHandle } from 'node:fs/promises';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { Readable } from 'node:stream';
 
 export const FS_STORE_MARKER = '.auto-swe-artifacts.json';
 export const FS_TEMP_DIR = '.tmp';
@@ -279,18 +280,24 @@ export async function writeFsArtifact(input: {
   await syncDirectory(tempDir);
 }
 
-/** Read one artifact, refusing a symlink at the final component. */
-export async function readFsArtifact(input: {
+/**
+ * Open one artifact for streaming. The file handle is opened without following a
+ * symlink and its actual size is returned so a response can set an accurate
+ * Content-Length; the stream closes the handle when it ends or is destroyed.
+ */
+export async function openFsArtifactStream(input: {
   root: string;
   relativePath: string;
-}): Promise<Buffer> {
+}): Promise<{ sizeBytes: number; stream: Readable }> {
   await assertRealParents(input.root, input.relativePath);
   const target = resolveInsideStore(input.root, input.relativePath);
   const handle = await fs.open(target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
   try {
-    return await handle.readFile();
-  } finally {
-    await handle.close();
+    const stat = await handle.stat();
+    return { sizeBytes: stat.size, stream: handle.createReadStream() };
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    throw error;
   }
 }
 

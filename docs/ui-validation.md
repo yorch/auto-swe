@@ -110,9 +110,10 @@ recipe's base URL, or the readiness URL's origin when none is supplied.
 - A worker that dies between writing an artifact and creating its `RunEvidence` row leaves a ready
   `ui.*` artifact that no evidence row points at. The daily transcript sweep deletes those, and a
   pending write, after a day; until then the object is stored but unreachable from any run.
-- Evidence bytes move through the worker: the recording is read out of the container and written to
-  the artifact store in memory, so the `uiValidation.maxVideoBytes` cap bounds a single worker's
-  memory use, and the step's wall-clock budget has to cover the transfer as well as the recording.
+- Evidence bytes move through the worker on the way in: the recording is read out of the container
+  and written to the artifact store in memory, so the `uiValidation.maxVideoBytes` cap bounds a
+  single worker's memory use, and the step's wall-clock budget has to cover the transfer as well as
+  the recording. Serving is streamed from the store, not buffered.
 - The `browser` tool is bound to the implementer path and to agent runs, not to a generic `agent`
   node in a checkout. A node that needs to look at a page must be an implementer-family step or an
   agent run whose Agent grants `browser`.

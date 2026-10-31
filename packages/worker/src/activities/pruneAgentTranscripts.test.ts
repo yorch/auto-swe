@@ -122,7 +122,7 @@ vi.mock('@auto-swe/shared/db', () => ({
             runEvidence?: unknown;
           };
         }) =>
-          where.status === 'pending'
+          where.status === 'pending' || (typeof where.status === 'object' && 'in' in where.status)
             ? h.pendingArtifacts
                 .filter((a) => a.createdAt < where.createdAt.lt)
                 .filter((a) => !where.id || a.id > where.id.gt)
@@ -379,7 +379,12 @@ describe('pruneAgentTranscripts', () => {
     const pendingQuery = vi
       .mocked(prisma.workflowArtifact.findMany)
       .mock.calls.map((c) => c[0] as { where: Record<string, unknown> })
-      .find((a) => a.where.status === 'pending');
+      .find(
+        (a) =>
+          a.where.status === 'pending' ||
+          (typeof a.where.status === 'object' &&
+            (a.where.status as { in?: string[] }).in?.includes('pending') === true)
+      );
     expect(pendingQuery?.where.createdAt).toEqual({ lt: ago(1) });
   });
 

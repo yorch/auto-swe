@@ -24,6 +24,7 @@
  * getArtifact(id) to materialize the payload on demand.
  */
 
+import { Readable } from 'node:stream';
 import { prisma } from '../db.js';
 import {
   artifactRelativePath,
@@ -31,8 +32,8 @@ import {
   deleteFsArtifact,
   ensureFsStore,
   FS_STORE_MARKER,
+  openFsArtifactStream,
   probeFsStore,
-  readFsArtifact,
   readFsStoreMarker,
   sweepArtifactTempFiles as sweepStoreTempFiles,
   writeFsArtifact,
@@ -68,7 +69,8 @@ function copyToUint8Array(buf: Buffer): Uint8Array<ArrayBuffer> {
 // When ARTIFACT_S3_BUCKET is set the operator is expected to install the SDK.
 interface S3Helper {
   putObject(key: string, body: Buffer, contentType: string, bucket: string): Promise<void>;
-  getObject(key: string, bucket: string): Promise<Buffer>;
+  /** The SDK's response body, streamed; the caller owns it. */
+  getObjectStream(key: string, bucket: string): Promise<{ sizeBytes?: number; stream: Readable }>;
   deleteObject(key: string, bucket: string): Promise<void>;
 }
 let s3ClientPromise: Promise<S3Helper> | null = null;
@@ -84,9 +86,7 @@ async function s3Client(): Promise<S3Helper> {
       S3Client: new (
         cfg: Record<string, unknown>
       ) => {
-        send: (cmd: unknown) => Promise<{
-          Body?: { transformToByteArray(): Promise<Uint8Array> };
-        }>;
+        send: (cmd: unknown) => Promise<{ Body?: unknown; ContentLength?: number }>;
       };
       PutObjectCommand: new (input: Record<string, unknown>) => unknown;
       GetObjectCommand: new (input: Record<string, unknown>) => unknown;
@@ -111,15 +111,16 @@ async function s3Client(): Promise<S3Helper> {
       async deleteObject(key, bucket) {
         await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
       },
-      async getObject(key, bucket) {
+      async getObjectStream(key, bucket) {
         const resp = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
         if (!resp.Body) {
           throw new Error(`artifact body missing for s3://${bucket}/${key}`);
         }
-        const bytes = await resp.Body.transformToByteArray();
-        // Copy into a fresh Buffer/ArrayBuffer to satisfy strict typing on
-        // Node's evolving Buffer types (avoids the SharedArrayBuffer mismatch).
-        return Buffer.from(new Uint8Array(bytes));
+        // In Node the SDK's Body is a Readable.
+        return {
+          ...(typeof resp.ContentLength === 'number' ? { sizeBytes: resp.ContentLength } : {}),
+          stream: resp.Body as unknown as Readable,
+        };
       },
       async putObject(key, body, contentType, bucket) {
         await client.send(
@@ -176,9 +177,18 @@ async function putFsArtifact(
       .catch(() => undefined);
     throw error;
   }
-  // If this fails the file is already in place and the row stays pending: the
-  // sweep deletes both after a day rather than leaving an untracked object.
-  await prisma.workflowArtifact.update({ data: { status: 'ready' }, where: { id: row.id } });
+  // Marking ready is conditional on the row still being `pending`: retention
+  // claims a day-old row (status `pruning`) before it touches the payload, and a
+  // writer that lost that claim must not publish a row whose bytes are being
+  // deleted. The payload this writer just wrote is removed again, best effort.
+  const marked = await prisma.workflowArtifact.updateMany({
+    data: { status: 'ready' },
+    where: { id: row.id, status: 'pending' },
+  });
+  if (marked.count === 0) {
+    await deleteFsArtifact({ relativePath, root }).catch(() => undefined);
+    throw new Error(`artifact ${row.id} was claimed by retention before it was published`);
+  }
   return {
     backend: 'fs',
     contentType,
@@ -225,7 +235,16 @@ export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef>
       },
     });
     await client.putObject(key, body, contentType, bucket);
-    await prisma.workflowArtifact.update({ data: { status: 'ready' }, where: { id: row.id } });
+    // Same claim rule as the filesystem store: a row retention has claimed can
+    // no longer be published.
+    const marked = await prisma.workflowArtifact.updateMany({
+      data: { status: 'ready' },
+      where: { id: row.id, status: 'pending' },
+    });
+    if (marked.count === 0) {
+      await client.deleteObject(key, bucket).catch(() => undefined);
+      throw new Error(`artifact ${row.id} was claimed by retention before it was published`);
+    }
     return { backend: 's3', contentType, id: row.id, kind: input.kind, sizeBytes: body.byteLength };
   }
 
@@ -244,7 +263,14 @@ export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef>
   return { backend: 'pg', contentType, id: row.id, kind: input.kind, sizeBytes: body.byteLength };
 }
 
-export async function getArtifact(id: string): Promise<{ ref: ArtifactRef; body: Buffer }> {
+/**
+ * Open an artifact for streaming, with the size the response should advertise.
+ * The row is checked exactly as for a buffered read; a missing or non-ready
+ * artifact throws before a response is committed.
+ */
+export async function getArtifactStream(
+  id: string
+): Promise<{ ref: ArtifactRef; sizeBytes: number; stream: Readable }> {
   const row = await prisma.workflowArtifact.findUniqueOrThrow({ where: { id } });
   if (row.status !== 'ready') {
     throw new Error(`artifact ${id} is not ready (status=${row.status})`);
@@ -261,16 +287,17 @@ export async function getArtifact(id: string): Promise<{ ref: ArtifactRef; body:
       throw new Error(`artifact ${id} has backend=s3 but no s3Key`);
     }
     const client = await s3Client();
-    const body = await client.getObject(row.s3Key, row.s3Bucket ?? '');
-    return { body, ref };
+    const opened = await client.getObjectStream(row.s3Key, row.s3Bucket ?? '');
+    return { ref, sizeBytes: opened.sizeBytes ?? row.sizeBytes, stream: opened.stream };
   }
   if (row.backend === 'fs') {
     if (!row.fsPath) {
       throw new Error(`artifact ${id} has backend=fs but no fsPath`);
     }
-    const root = await fsStoreRoot('getArtifact');
+    const root = await fsStoreRoot('getArtifactStream');
     await assertFsStore(root, row.fsStoreId);
-    return { body: await readFsArtifact({ relativePath: row.fsPath, root }), ref };
+    const opened = await openFsArtifactStream({ relativePath: row.fsPath, root });
+    return { ref, sizeBytes: opened.sizeBytes, stream: opened.stream };
   }
   if (row.backend !== 'pg') {
     throw new Error(`artifact ${id} has unknown backend "${row.backend}"`);
@@ -278,7 +305,21 @@ export async function getArtifact(id: string): Promise<{ ref: ArtifactRef; body:
   if (!row.inlineBlob) {
     throw new Error(`artifact ${id} has backend=pg but no inlineBlob`);
   }
-  return { body: Buffer.from(row.inlineBlob), ref };
+  return {
+    ref,
+    sizeBytes: row.inlineBlob.byteLength,
+    stream: Readable.from([Buffer.from(row.inlineBlob)]),
+  };
+}
+
+/** Buffer an artifact the caller needs whole (transcript parts, text views). */
+export async function getArtifact(id: string): Promise<{ ref: ArtifactRef; body: Buffer }> {
+  const { ref, stream } = await getArtifactStream(id);
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+  }
+  return { body: Buffer.concat(chunks), ref };
 }
 
 /**
@@ -349,10 +390,11 @@ function isMissingObject(err: unknown): boolean {
 }
 
 /**
- * Delete a `pending` artifact: a write that never completed. The payload goes
- * first and a missing one counts as deleted (the write may never have landed);
- * then the row, only while it is still pending. Returns whether a row was
- * removed.
+ * Delete a `pending` artifact: a write that never completed. The row is claimed
+ * (`pruning`) first, so a writer resuming late cannot mark it ready while its
+ * payload is being deleted; then the payload goes (a missing one counts as
+ * deleted), then the row. A row whose payload delete fails stays claimed and the
+ * next sweep retries it. Returns whether a row was removed.
  */
 export async function deletePendingArtifact(id: string): Promise<boolean> {
   const row = await prisma.workflowArtifact.findUnique({
@@ -366,9 +408,28 @@ export async function deletePendingArtifact(id: string): Promise<boolean> {
     },
     where: { id },
   });
-  if (row?.status !== 'pending') {
+  if (!row) {
     return false;
   }
+  // A row that is already `ready` belongs to a writer that won; `pruning` is a
+  // claim a previous sweep left behind (it crashed, or its delete failed).
+  if (row.status !== 'pending' && row.status !== 'pruning') {
+    return false;
+  }
+
+  // Claim before touching the payload. A writer's ready transition requires
+  // `pending`, so once this succeeds the row can no longer be published while
+  // its bytes are being deleted. If the payload delete then fails, the row
+  // stays `pruning` and the next sweep retries it; the writer still cannot
+  // revive it.
+  const claim = await prisma.workflowArtifact.updateMany({
+    data: { status: 'pruning' },
+    where: { id, status: row.status },
+  });
+  if (claim.count === 0) {
+    return false;
+  }
+
   if (row.backend === 's3' && row.s3Key) {
     const client = await s3Client();
     try {
@@ -386,7 +447,7 @@ export async function deletePendingArtifact(id: string): Promise<boolean> {
     throw new Error(`artifact ${id} has unknown backend "${row.backend}"`);
   }
   const { count } = await prisma.workflowArtifact.deleteMany({
-    where: { id, status: 'pending' },
+    where: { id, status: 'pruning' },
   });
   return count > 0;
 }

@@ -1839,8 +1839,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **The filesystem artifact store is single-host.** Its rows record the store's identity and the API
   refuses to start against a different (or empty) mount, so a wrong volume is a failed boot rather
   than missing evidence — but it cannot span hosts. Kubernetes needs a `ReadWriteMany` volume for
-  every gateway and worker replica; a local directory also sets the deployment's capacity: a full
-  disk fails the artifact write, and nothing replicates or deduplicates the files.
+  every gateway and worker replica (`infra/kubernetes/artifact-store.yaml` is the reference claim),
+  and a shared filesystem has to provide the POSIX rename/fsync and lookup semantics the writer
+  relies on — S3 is the supported multi-node store ([deployment.md §5c](./deployment.md)). A local
+  directory also sets the deployment's capacity: a full disk fails the artifact write, and nothing
+  replicates or deduplicates the files.
 - **Deleting a run does not delete its artifacts.** `WorkflowArtifact.run` cascades, so removing a
   run drops the rows without calling `deleteArtifact`; the stored payload (S3 object or file) stays.
   The transcript sweep's pending pass only removes writes that never completed. This predates the
@@ -1849,8 +1852,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   store as a ready artifact before its `RunEvidence` row is created, so a worker killed between the
   two writes leaves an object nothing points at until the daily transcript sweep removes it (it reaps
   ready `ui.*` artifacts older than a day with no evidence row, alongside the transcript-part and
-  pending passes). The payload also transfers through the worker, not a streaming upload: a 50 MB
-  recording is held in worker memory while it is read out of the container and written to the store.
+  pending passes). The write path is not streaming: a 50 MB recording is held in worker memory while
+  it is read out of the container and written to the store. Reads are streamed (`getArtifactStream`)
+  where the response is the raw payload — run evidence — and still buffered for the transcript and
+  text views that transform the bytes.
 - **The browser image is not published with the executor images, and it is not the default image.**
   `docker.yml` builds and publishes `executor-node`, `executor-python`, `executor-jvm` and
   `executor-go`; `defaults/Dockerfile.node-browser` is built only by the CI browser job. A

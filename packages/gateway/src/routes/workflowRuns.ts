@@ -1,7 +1,6 @@
-import { Readable } from 'node:stream';
 import type { Prisma } from '@auto-swe/shared';
 import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
-import { getArtifact } from '@auto-swe/shared/lib/artifactStore';
+import { getArtifact, getArtifactStream } from '@auto-swe/shared/lib/artifactStore';
 import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
   CHANNEL_TASK_TEMPLATE_NAME,
@@ -527,7 +526,10 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       if (evidence?.artifact.status !== 'ready') {
         return sendError(reply, 404, 'EVIDENCE_NOT_FOUND', 'Run evidence not found');
       }
-      const { body } = await getArtifact(evidence.artifactId);
+      // Streamed, not buffered: a recording can be tens of megabytes, and the
+      // file or object is already stored — there is no reason to hold it in the
+      // gateway's memory before sending it.
+      const { sizeBytes, stream } = await getArtifactStream(evidence.artifactId);
       const contentType = ALLOWED_EVIDENCE_CONTENT_TYPES.has(evidence.artifact.contentType)
         ? evidence.artifact.contentType
         : 'application/octet-stream';
@@ -539,11 +541,11 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           'Content-Disposition',
           `${inline ? 'inline' : 'attachment'}; filename="${filename}"`
         )
-        .header('Content-Length', String(body.byteLength))
+        .header('Content-Length', String(sizeBytes))
         .header('X-Content-Type-Options', 'nosniff')
         .header('Content-Security-Policy', "sandbox; default-src 'none'")
         .header('Cache-Control', 'private, max-age=300')
-        .send(Readable.from([body]));
+        .send(stream);
     }
   );
 
