@@ -30,8 +30,10 @@ const h = vi.hoisted(() => ({
   deletedArtifacts: [] as string[],
   deletedPending: [] as string[],
   deletedTranscripts: [] as string[],
+  failingArtifacts: new Set<string>(),
   failingPending: new Set<string>(),
   orphanArtifacts: [] as { id: string }[],
+  orphanEvidence: [] as { id: string }[],
   pendingArtifacts: [] as { createdAt: Date; id: string }[],
   transcripts: [] as {
     createdAt: Date;
@@ -113,7 +115,12 @@ vi.mock('@auto-swe/shared/db', () => ({
           where,
         }: {
           take: number;
-          where: { status?: string; createdAt: { lt: Date }; id?: { gt: string } };
+          where: {
+            status?: string;
+            createdAt: { lt: Date };
+            id?: { gt: string };
+            runEvidence?: unknown;
+          };
         }) =>
           where.status === 'pending'
             ? h.pendingArtifacts
@@ -122,7 +129,9 @@ vi.mock('@auto-swe/shared/db', () => ({
                 .sort((a, b) => a.id.localeCompare(b.id))
                 .slice(0, take)
                 .map((a) => ({ id: a.id }))
-            : h.orphanArtifacts
+            : where.runEvidence
+              ? h.orphanEvidence
+              : h.orphanArtifacts
       ),
     },
     workflowHttpCall: {
@@ -134,6 +143,9 @@ vi.mock('@auto-swe/shared/db', () => ({
 
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
   deleteArtifact: vi.fn(async (id: string) => {
+    if (h.failingArtifacts.has(id)) {
+      throw new Error('object store unavailable');
+    }
     h.deletedArtifacts.push(id);
   }),
   deletePendingArtifact: vi.fn(async (id: string) => {
@@ -173,10 +185,12 @@ beforeEach(() => {
   h.accessLog = [];
   h.failingPending.clear();
   h.deletedArtifacts.length = 0;
+  h.failingArtifacts.clear();
   h.deletedPending.length = 0;
   h.pendingArtifacts.length = 0;
   h.deletedTranscripts.length = 0;
   h.orphanArtifacts.length = 0;
+  h.orphanEvidence.length = 0;
   h.transcripts.length = 0;
   h.unscopedCalls.length = 0;
   h.updates.length = 0;
@@ -315,6 +329,40 @@ describe('pruneAgentTranscripts', () => {
 
     expect(h.deletedArtifacts.sort()).toEqual(['orphan-1', 'orphan-2']);
     expect(result.orphanArtifacts).toBe(2);
+  });
+
+  it('deletes UI evidence artifacts whose evidence row was never written', async () => {
+    h.orphanEvidence.push({ id: 'ui-orphan-1' }, { id: 'ui-orphan-2' });
+
+    const result = await pruneAgentTranscripts(NOW);
+
+    expect(h.deletedArtifacts.sort()).toEqual(['ui-orphan-1', 'ui-orphan-2']);
+    expect(result.orphanUiArtifacts).toBe(2);
+    const query = vi
+      .mocked(prisma.workflowArtifact.findMany)
+      .mock.calls.map((c) => c[0] as { where: Record<string, unknown> })
+      .find((a) => a.where.runEvidence);
+    expect(query?.where).toMatchObject({
+      kind: { in: ['ui.log', 'ui.screenshot', 'ui.trace', 'ui.video'] },
+      runEvidence: { is: null },
+      status: 'ready',
+    });
+  });
+
+  it('keeps sweeping when an orphan artifact cannot be deleted', async () => {
+    h.orphanArtifacts.push({ id: 'orphan-1' });
+    h.orphanEvidence.push({ id: 'ui-a' }, { id: 'ui-b' });
+    h.failingArtifacts.add('ui-a');
+
+    const result = await pruneAgentTranscripts(NOW);
+
+    // The transcript orphan and the second evidence orphan still go; the failed
+    // one is counted and retried next sweep instead of failing the activity.
+    expect(h.deletedArtifacts.sort()).toEqual(['orphan-1', 'ui-b']);
+    expect(result.orphanArtifacts).toBe(1);
+    expect(result.orphanArtifactFailures).toBe(0);
+    expect(result.orphanUiArtifacts).toBe(1);
+    expect(result.orphanUiFailures).toBe(1);
   });
 
   it('deletes day-old pending artifacts through the write-ahead cleanup and reports the count', async () => {

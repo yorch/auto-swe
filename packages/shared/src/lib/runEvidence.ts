@@ -23,6 +23,18 @@ export type RecordRunEvidenceResult =
   | { ok: true; evidenceId: string; artifactId: string }
   | { ok: false; reason: 'too_large' | 'run_cap' };
 
+/** The artifact kinds UI evidence writes. The daily sweep reaps ones no row links. */
+export const UI_EVIDENCE_ARTIFACT_KINDS = [
+  'ui.log',
+  'ui.screenshot',
+  'ui.trace',
+  'ui.video',
+] as const;
+
+export function uiEvidenceArtifactKind(kind: RunEvidenceKind): string {
+  return `ui.${kind}`;
+}
+
 const CONTENT_TYPES: Record<RunEvidenceKind, string> = {
   log: 'text/plain; charset=utf-8',
   screenshot: 'image/png',
@@ -55,7 +67,7 @@ export async function recordRunEvidence(
   const artifact = await putArtifact({
     body,
     contentType: input.contentType,
-    kind: `ui.${input.kind}`,
+    kind: uiEvidenceArtifactKind(input.kind),
     runId: input.runId,
   });
   try {

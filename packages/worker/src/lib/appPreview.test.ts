@@ -1,6 +1,15 @@
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Workspace } from '../activities/workspace.js';
-import { PreviewNotReadyError, startAppPreview } from './appPreview.js';
+import {
+  APP_PREVIEW_LAUNCHER,
+  PreviewNotReadyError,
+  previewStopScript,
+  startAppPreview,
+} from './appPreview.js';
 
 const config = {
   env: { GREETING: "hello ' preview" },
@@ -38,7 +47,10 @@ describe('startAppPreview', () => {
       secretEnv: config.env,
       timeoutMs: 1_080_000,
     });
-    expect(exec.mock.calls[1]?.[0]).toContain('nohup sh -c');
+    expect(exec.mock.calls[1]?.[0]).toContain('detached: true');
+    // `--` keeps a start command that begins with a dash out of Node's own flag
+    // parsing.
+    expect(exec.mock.calls[1]?.[0]).toContain(' -- ');
     expect(exec.mock.calls[1]?.[0]).toContain('/tmp/.asw/preview.log');
     expect(exec.mock.calls[1]?.[0]).not.toContain(config.env.GREETING);
     expect(exec.mock.calls[1]?.[1]).toEqual({ secretEnv: config.env, timeoutMs: 10_000 });
@@ -66,6 +78,34 @@ describe('startAppPreview', () => {
     expect(exec.mock.calls.at(-1)?.[0]).toContain('process.kill(-pgid');
   });
 
+  it('runs the app in its own process group, so stop() kills the whole tree', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'asw-preview-'));
+    const pgidFile = path.join(dir, 'preview.pgid');
+    const logFile = path.join(dir, 'preview.log');
+    let group = 0;
+    try {
+      execFileSync(process.execPath, ['-e', APP_PREVIEW_LAUNCHER, 'sleep 30', pgidFile, logFile]);
+      group = Number(await fs.readFile(pgidFile, 'utf8'));
+
+      expect(Number.isInteger(group) && group > 1).toBe(true);
+      expect(groupAlive(group)).toBe(true);
+      // The whole tree: `sh -c` and the command it started share the group.
+      execFileSync(process.execPath, ['-e', previewStopScript(pgidFile)]);
+
+      expect(await waitForGone(group)).toBe(true);
+      await expect(fs.access(pgidFile)).rejects.toThrow();
+    } finally {
+      if (group > 1 && groupAlive(group)) {
+        try {
+          process.kill(-group, 'SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+      await fs.rm(dir, { force: true, recursive: true });
+    }
+  });
+
   it('exposes the typed readiness error', () => {
     expect(new PreviewNotReadyError('not ready', 'log')).toMatchObject({
       logTail: 'log',
@@ -73,3 +113,23 @@ describe('startAppPreview', () => {
     });
   });
 });
+
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForGone(pgid: number): Promise<boolean> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    if (!groupAlive(pgid)) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return !groupAlive(pgid);
+}

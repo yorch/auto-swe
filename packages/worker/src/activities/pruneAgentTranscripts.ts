@@ -22,6 +22,7 @@ import {
   deletePendingArtifact,
   sweepArtifactTempFiles,
 } from '@auto-swe/shared/lib/artifactStore';
+import { UI_EVIDENCE_ARTIFACT_KINDS } from '@auto-swe/shared/lib/runEvidence';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { logWarn } from '../lib/activityLog.js';
 import { PRUNE_BATCH, PRUNE_MAX_BATCHES } from './pruneAutomationDecisions.js';
@@ -38,6 +39,12 @@ export interface PruneAgentTranscriptsResult {
   abandoned: number;
   /** Transcript-part artifacts with no part row left, deleted. */
   orphanArtifacts: number;
+  /** Orphan transcript-part artifacts whose deletion failed this sweep. */
+  orphanArtifactFailures: number;
+  /** UI evidence artifacts whose `RunEvidence` row was never written, deleted. */
+  orphanUiArtifacts: number;
+  /** Orphan UI evidence artifacts whose deletion failed this sweep. */
+  orphanUiFailures: number;
   /** Artifacts left `pending` by an upload that never completed, deleted with their objects. */
   pendingArtifacts: number;
   /** Pending artifacts whose deletion failed this sweep (logged; retried next sweep). */
@@ -233,22 +240,81 @@ export async function pruneAgentTranscripts(
     });
   }
 
+  // A delete that fails (an object-store error, a store that is not mounted)
+  // must not stop the sweep: the row is retried next time, and every later pass
+  // — including the UI retention that would otherwise never run — still runs.
+  const reapArtifacts = async (
+    fetchBatch: (cursor: string | undefined) => Promise<{ id: string }[]>,
+    label: string
+  ): Promise<{ deleted: number; failures: number }> => {
+    let deleted = 0;
+    let failures = 0;
+    let cursor: string | undefined;
+    for (let batch = 0; batch < PRUNE_MAX_BATCHES; batch++) {
+      const rows = await fetchBatch(cursor);
+      for (const row of rows) {
+        try {
+          await deleteArtifact(row.id);
+          deleted += 1;
+        } catch (error) {
+          failures += 1;
+          logWarn(`${label} could not be deleted; the next sweep retries it`, {
+            artifactId: row.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      cursor = rows.at(-1)?.id;
+      if (rows.length < PRUNE_BATCH) {
+        break;
+      }
+      if (batch === PRUNE_MAX_BATCHES - 1) {
+        more = true;
+      }
+    }
+    return { deleted, failures };
+  };
+
   // A part row insert can fail after its artifact was written; the artifact is
   // then kind 'agent-transcript-part' with no part row — an orphan nobody reads.
-  const orphans = await prisma.workflowArtifact.findMany({
-    select: { id: true },
-    take: PRUNE_BATCH,
-    where: {
-      createdAt: { lt: staleCutoff },
-      kind: 'agent-transcript-part',
-      // A pending part is the pass above's.
-      status: 'ready',
-      transcriptParts: { none: {} },
-    },
-  });
-  for (const orphan of orphans) {
-    await deleteArtifact(orphan.id);
-  }
+  const transcriptOrphans = await reapArtifacts(
+    (cursor) =>
+      prisma.workflowArtifact.findMany({
+        orderBy: { id: 'asc' },
+        select: { id: true },
+        take: PRUNE_BATCH,
+        where: {
+          createdAt: { lt: staleCutoff },
+          kind: 'agent-transcript-part',
+          // A pending part is the pass above's.
+          status: 'ready',
+          transcriptParts: { none: {} },
+          ...(cursor ? { id: { gt: cursor } } : {}),
+        },
+      }),
+    'orphan transcript-part artifact'
+  );
+
+  // Evidence is stored before its `RunEvidence` row is inserted, so a worker
+  // that dies in between leaves a ready `ui.*` artifact nothing points at. The
+  // UI retention sweep reads evidence rows, so it would never reach it; this
+  // pass does, once the write is a day old.
+  const uiOrphans = await reapArtifacts(
+    (cursor) =>
+      prisma.workflowArtifact.findMany({
+        orderBy: { id: 'asc' },
+        select: { id: true },
+        take: PRUNE_BATCH,
+        where: {
+          createdAt: { lt: staleCutoff },
+          kind: { in: [...UI_EVIDENCE_ARTIFACT_KINDS] },
+          runEvidence: { is: null },
+          status: 'ready',
+          ...(cursor ? { id: { gt: cursor } } : {}),
+        },
+      }),
+    'orphan UI evidence artifact'
+  );
 
   if (more) {
     logWarn('agent transcript sweep stopped at its batch limit; the next sweep continues', {
@@ -264,7 +330,10 @@ export async function pruneAgentTranscripts(
     accessLogRetentionDays,
     deleted,
     more,
-    orphanArtifacts: orphans.length,
+    orphanArtifactFailures: transcriptOrphans.failures,
+    orphanArtifacts: transcriptOrphans.deleted,
+    orphanUiArtifacts: uiOrphans.deleted,
+    orphanUiFailures: uiOrphans.failures,
     pendingArtifactFailures,
     pendingArtifacts,
     retentionDays,
