@@ -32,6 +32,7 @@ const h = vi.hoisted(() => ({
   deletedTranscripts: [] as string[],
   failingPending: new Set<string>(),
   orphanArtifacts: [] as { id: string }[],
+  orphanEvidence: [] as { id: string }[],
   pendingArtifacts: [] as { createdAt: Date; id: string }[],
   transcripts: [] as {
     createdAt: Date;
@@ -113,7 +114,12 @@ vi.mock('@auto-swe/shared/db', () => ({
           where,
         }: {
           take: number;
-          where: { status?: string; createdAt: { lt: Date }; id?: { gt: string } };
+          where: {
+            status?: string;
+            createdAt: { lt: Date };
+            id?: { gt: string };
+            runEvidence?: unknown;
+          };
         }) =>
           where.status === 'pending'
             ? h.pendingArtifacts
@@ -122,7 +128,9 @@ vi.mock('@auto-swe/shared/db', () => ({
                 .sort((a, b) => a.id.localeCompare(b.id))
                 .slice(0, take)
                 .map((a) => ({ id: a.id }))
-            : h.orphanArtifacts
+            : where.runEvidence
+              ? h.orphanEvidence
+              : h.orphanArtifacts
       ),
     },
     workflowHttpCall: {
@@ -177,6 +185,7 @@ beforeEach(() => {
   h.pendingArtifacts.length = 0;
   h.deletedTranscripts.length = 0;
   h.orphanArtifacts.length = 0;
+  h.orphanEvidence.length = 0;
   h.transcripts.length = 0;
   h.unscopedCalls.length = 0;
   h.updates.length = 0;
@@ -315,6 +324,24 @@ describe('pruneAgentTranscripts', () => {
 
     expect(h.deletedArtifacts.sort()).toEqual(['orphan-1', 'orphan-2']);
     expect(result.orphanArtifacts).toBe(2);
+  });
+
+  it('deletes UI evidence artifacts whose evidence row was never written', async () => {
+    h.orphanEvidence.push({ id: 'ui-orphan-1' }, { id: 'ui-orphan-2' });
+
+    const result = await pruneAgentTranscripts(NOW);
+
+    expect(h.deletedArtifacts.sort()).toEqual(['ui-orphan-1', 'ui-orphan-2']);
+    expect(result.orphanUiArtifacts).toBe(2);
+    const query = vi
+      .mocked(prisma.workflowArtifact.findMany)
+      .mock.calls.map((c) => c[0] as { where: Record<string, unknown> })
+      .find((a) => a.where.runEvidence);
+    expect(query?.where).toMatchObject({
+      kind: { in: ['ui.log', 'ui.screenshot', 'ui.trace', 'ui.video'] },
+      runEvidence: { is: null },
+      status: 'ready',
+    });
   });
 
   it('deletes day-old pending artifacts through the write-ahead cleanup and reports the count', async () => {

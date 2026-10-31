@@ -1846,13 +1846,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   The transcript sweep's pending pass only removes writes that never completed. This predates the
   filesystem store and applies to all three backends.
 - **UI evidence is stored, then linked.** A recording, trace or screenshot is written to the artifact
-  store as a ready artifact before its `RunEvidence` row is created. A worker that dies between the
-  two writes leaves a ready `ui.*` artifact no evidence row points at; the retention sweep reads
-  `RunEvidence`, so that object outlives the configured retention. The compensating delete covers a
-  failed insert but not a killed process, and the existing ready-artifact orphan sweep handles
-  transcript parts only. The payload also transfers through the worker, not a streaming upload: a
-  50 MB recording is held in worker memory while it is read out of the container and written to the
-  store.
+  store as a ready artifact before its `RunEvidence` row is created, so a worker killed between the
+  two writes leaves an object nothing points at until the daily transcript sweep removes it (it reaps
+  ready `ui.*` artifacts older than a day with no evidence row, alongside the transcript-part and
+  pending passes). The payload also transfers through the worker, not a streaming upload: a 50 MB
+  recording is held in worker memory while it is read out of the container and written to the store.
 - **The browser image is not published with the executor images, and it is not the default image.**
   `docker.yml` builds and publishes `executor-node`, `executor-python`, `executor-jvm` and
   `executor-go`; `defaults/Dockerfile.node-browser` is built only by the CI browser job. A

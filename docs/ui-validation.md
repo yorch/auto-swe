@@ -89,10 +89,10 @@ before the app preview starts. Kubernetes keeps service environment values in th
 per-pod Secret rather than the Pod manifest. Agent workspaces receive the recipe's services only
 when the agent has an explicit `browser` grant.
 
-The worker's `startAppPreview` helper runs optional setup, starts the app with configured
-environment values, polls the readiness URL from inside the workspace and returns a stop function
-and bounded, redacted log tail. It uses the recipe's base URL, or the readiness URL's origin when
-none is supplied.
+The worker's `startAppPreview` helper runs optional setup, starts the app in its own session (so
+its pid is its process-group id and `stop()` can kill the whole tree), polls the readiness URL from
+inside the workspace and returns a stop function and bounded, redacted log tail. It uses the
+recipe's base URL, or the readiness URL's origin when none is supplied.
 
 ## Limitations
 
@@ -103,14 +103,13 @@ none is supplied.
   admin setting are enabled. The public bucket's access policy is operator-managed. Renaming the
   bucket after copies exist leaves the old copies behind: retention can only delete from the bucket
   the environment currently names.
-- The preview process is stopped on a best-effort basis. `startAppPreview` records the child's pid
-  and signals it as a process group; the container's `sh` has no job control without a TTY, so the
-  child is usually not its own group leader and the group signal finds nothing. The preview then
-  dies with the workspace rather than at `stop()`, which leaves it running for the rest of a session
-  that reuses the container (the agent toolset) and loses the log tail after the stop attempt.
+- `stop()` signals the preview's process group, which `startAppPreview` creates with a detached
+  Node launcher (`spawn(..., { detached: true })` calls `setsid`). A process that double-forks and
+  leaves the session — a daemonized child of the app — is not in that group and still outlives
+  `stop()` until the workspace is destroyed.
 - A worker that dies between writing an artifact and creating its `RunEvidence` row leaves a ready
-  `ui.*` artifact that no evidence row, and therefore no retention sweep, points at. The
-  compensating delete covers a failed insert, not a killed process.
+  `ui.*` artifact that no evidence row points at. The daily transcript sweep deletes those, and a
+  pending write, after a day; until then the object is stored but unreachable from any run.
 - Evidence bytes move through the worker: the recording is read out of the container and written to
   the artifact store in memory, so the `uiValidation.maxVideoBytes` cap bounds a single worker's
   memory use, and the step's wall-clock budget has to cover the transfer as well as the recording.

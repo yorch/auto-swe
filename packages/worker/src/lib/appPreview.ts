@@ -49,11 +49,35 @@ function tailScript(maxBytes: number): string {
   ].join('\n');
 }
 
-function stopScript(): string {
+/**
+ * Launch the preview in its own session, so its pid is also its process-group
+ * id. A shell cannot do this portably: `set -m` needs a TTY (dash prints "job
+ * control turned off" and the child keeps the shell's group), so `stop()` used
+ * to signal a group that did not exist and the app outlived it until the
+ * container was destroyed. `spawn(..., { detached: true })` calls setsid(2).
+ */
+export const APP_PREVIEW_LAUNCHER = [
+  'const { spawn } = require("node:child_process");',
+  'const fs = require("node:fs");',
+  'const [command, pgidFile, logFile] = process.argv.slice(1);',
+  'const out = fs.openSync(logFile, "a");',
+  'const child = spawn("sh", ["-c", command], { detached: true, stdio: ["ignore", out, out] });',
+  'child.on("error", (error) => {',
+  '  fs.appendFileSync(logFile, "preview failed to start: " + error.message + "\\n");',
+  '  process.exitCode = 1;',
+  '});',
+  'child.on("spawn", () => {',
+  '  fs.writeFileSync(pgidFile, String(child.pid));',
+  '  child.unref();',
+  '});',
+].join('\n');
+
+/** The stop side of {@link APP_PREVIEW_LAUNCHER}; exported for its contract test. */
+export function previewStopScript(pgidPath: string = PREVIEW_PGID): string {
   return [
     '(async () => {',
     'const fs = require("node:fs");',
-    `const path = ${JSON.stringify(PREVIEW_PGID)};`,
+    `const path = ${JSON.stringify(pgidPath)};`,
     'try {',
     '  const pgid = Number(fs.readFileSync(path, "utf8").trim());',
     '  if (Number.isSafeInteger(pgid) && pgid > 1) {',
@@ -91,13 +115,10 @@ export async function startAppPreview(
     }
   }
 
-  const startScript =
-    'set -m; sh -c "$1" & preview_pid=$!; printf "%s\\n" "$preview_pid" > "$2"; wait "$preview_pid"';
   const startCommand =
-    `mkdir -p /tmp/.asw && rm -f ${shellQuote(PREVIEW_PGID)} && ` +
-    `(nohup sh -c ${shellQuote(startScript)} app-preview ` +
-    `${shellQuote(config.start)} ${shellQuote(PREVIEW_PGID)} ` +
-    `>${shellQuote(PREVIEW_LOG)} 2>&1 </dev/null & echo $!)`;
+    `mkdir -p /tmp/.asw && rm -f ${shellQuote(PREVIEW_PGID)} ${shellQuote(PREVIEW_LOG)} && ` +
+    `node -e ${shellQuote(APP_PREVIEW_LAUNCHER)} ${shellQuote(config.start)} ` +
+    `${shellQuote(PREVIEW_PGID)} ${shellQuote(PREVIEW_LOG)}`;
   await workspace.exec(startCommand, execOptions(10_000));
 
   const logTail = async (maxBytes: number): Promise<string> => {
@@ -123,7 +144,7 @@ export async function startAppPreview(
       return;
     }
     stopped = true;
-    await workspace.exec(`node -e ${shellQuote(stopScript())}`, { timeoutMs: 5000 });
+    await workspace.exec(`node -e ${shellQuote(previewStopScript())}`, { timeoutMs: 5000 });
   };
 
   try {

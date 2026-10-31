@@ -22,6 +22,7 @@ import {
   deletePendingArtifact,
   sweepArtifactTempFiles,
 } from '@auto-swe/shared/lib/artifactStore';
+import { UI_EVIDENCE_ARTIFACT_KINDS } from '@auto-swe/shared/lib/runEvidence';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { logWarn } from '../lib/activityLog.js';
 import { PRUNE_BATCH, PRUNE_MAX_BATCHES } from './pruneAutomationDecisions.js';
@@ -38,6 +39,8 @@ export interface PruneAgentTranscriptsResult {
   abandoned: number;
   /** Transcript-part artifacts with no part row left, deleted. */
   orphanArtifacts: number;
+  /** UI evidence artifacts whose `RunEvidence` row was never written, deleted. */
+  orphanUiArtifacts: number;
   /** Artifacts left `pending` by an upload that never completed, deleted with their objects. */
   pendingArtifacts: number;
   /** Pending artifacts whose deletion failed this sweep (logged; retried next sweep). */
@@ -250,6 +253,24 @@ export async function pruneAgentTranscripts(
     await deleteArtifact(orphan.id);
   }
 
+  // Evidence is stored before its `RunEvidence` row is inserted, so a worker
+  // that dies in between leaves a ready `ui.*` artifact nothing points at. The
+  // UI retention sweep reads evidence rows, so it would never reach it; this
+  // pass does, once the write is a day old.
+  const orphanEvidence = await prisma.workflowArtifact.findMany({
+    select: { id: true },
+    take: PRUNE_BATCH,
+    where: {
+      createdAt: { lt: staleCutoff },
+      kind: { in: [...UI_EVIDENCE_ARTIFACT_KINDS] },
+      runEvidence: { is: null },
+      status: 'ready',
+    },
+  });
+  for (const orphan of orphanEvidence) {
+    await deleteArtifact(orphan.id);
+  }
+
   if (more) {
     logWarn('agent transcript sweep stopped at its batch limit; the next sweep continues', {
       accessLogDeleted,
@@ -265,6 +286,7 @@ export async function pruneAgentTranscripts(
     deleted,
     more,
     orphanArtifacts: orphans.length,
+    orphanUiArtifacts: orphanEvidence.length,
     pendingArtifactFailures,
     pendingArtifacts,
     retentionDays,
