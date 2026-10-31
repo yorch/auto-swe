@@ -1,5 +1,5 @@
 /**
- * Admin CRUD for `PackageRegistry` — the npm, Go and PyPI upstreams the worker's
+ * Admin CRUD for `PackageRegistry` — the npm, Go, PyPI and Maven upstreams the worker's
  * registry proxy fronts. Tokens are write-only: sealed on the way in, and the API
  * only ever reports `hasToken`. Platform ADMIN only.
  */
@@ -37,7 +37,8 @@ const Fields = z.object({
 });
 
 const CreateSchema = z.object({
-  accessMode: Fields.shape.accessMode.default('lockfile'),
+  // Defaulted in the handler: a Maven registry's default is `open`, every other ecosystem's `lockfile`.
+  accessMode: Fields.shape.accessMode.optional(),
   allowPrivateNetwork: Fields.shape.allowPrivateNetwork.default(false),
   authKind: Fields.shape.authKind.default('bearer'),
   ecosystem: Fields.shape.ecosystem.default('npm'),
@@ -107,7 +108,7 @@ function tokenColumns(token: string) {
   };
 }
 
-/** Every ecosystem but npm: a Go or PyPI registry serves its whole team and takes no scopes. */
+/** Every ecosystem but npm: a Go, PyPI or Maven registry serves its whole team and takes no scopes. */
 type ScopelessEcosystem = Exclude<PackageRegistryEcosystem, 'npm'>;
 
 /** A stored row's ecosystem is a plain string, so this narrows it once for every rule below. */
@@ -117,20 +118,25 @@ function isScopeless(ecosystem: string): ecosystem is ScopelessEcosystem {
 
 const SCOPELESS_NOUN: Record<ScopelessEcosystem, string> = {
   go: 'Go registry',
+  maven: 'Maven registry',
   pypi: 'PyPI registry',
 };
 
 const NO_SCOPES: Record<ScopelessEcosystem, string> = {
   go: 'A Go registry has no scopes: it serves every module for its team',
+  maven: 'A Maven registry has no scopes: it serves every artifact for its team',
   pypi: 'A PyPI registry has no scopes: it serves every package for its team',
 };
+
+/** Maven has no committed lockfile to scope a registry by, so `lockfile` mode has nothing to read. */
+const MAVEN_OPEN_ONLY = 'a Maven registry serves open mode only';
 
 /** npm keeps the unqualified noun its messages have always used. */
 function registryNoun(ecosystem: string): string {
   return isScopeless(ecosystem) ? SCOPELESS_NOUN[ecosystem] : 'registry';
 }
 
-/** The Go and PyPI proxies append paths to the upstream, so it must be a bare base URL. */
+/** The Go, PyPI and Maven proxies append paths to the upstream, so it must be a bare base URL. */
 function bareUrlProblem(ecosystem: ScopelessEcosystem, url: string): string | null {
   const parsed = new URL(url);
   const noun = SCOPELESS_NOUN[ecosystem];
@@ -216,6 +222,10 @@ export const packageRegistryRoutes: FastifyPluginAsync = async (fastify) => {
       if (!safety.ok) {
         return sendError(reply, 400, 'BASE_URL_REFUSED', safety.reason);
       }
+      const accessMode = body.accessMode ?? (body.ecosystem === 'maven' ? 'open' : 'lockfile');
+      if (body.ecosystem === 'maven' && accessMode !== 'open') {
+        return sendError(reply, 400, 'VALIDATION_ERROR', MAVEN_OPEN_ONLY);
+      }
       if (isScopeless(body.ecosystem)) {
         if (body.npmScopes.length) {
           return sendError(reply, 400, 'VALIDATION_ERROR', NO_SCOPES[body.ecosystem]);
@@ -237,7 +247,7 @@ export const packageRegistryRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const created = await fastify.prisma.packageRegistry.create({
           data: {
-            accessMode: body.accessMode,
+            accessMode,
             allowPrivateNetwork: body.allowPrivateNetwork,
             authKind: body.authKind,
             ecosystem: body.ecosystem,
@@ -288,6 +298,9 @@ export const packageRegistryRoutes: FastifyPluginAsync = async (fastify) => {
       const safety = checkProbeUrl(nextUrl, { allowPrivate: nextPrivate });
       if (!safety.ok) {
         return sendError(reply, 400, 'BASE_URL_REFUSED', safety.reason);
+      }
+      if (existing.ecosystem === 'maven' && body.accessMode === 'lockfile') {
+        return sendError(reply, 400, 'VALIDATION_ERROR', MAVEN_OPEN_ONLY);
       }
       if (isScopeless(existing.ecosystem)) {
         if (body.npmScopes?.length) {

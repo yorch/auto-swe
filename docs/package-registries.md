@@ -1,6 +1,6 @@
 # Package registries
 
-> Admin-managed npm, Go-module and PyPI registries that agent workspaces install through a worker-side
+> Admin-managed npm, Go-module, PyPI and Maven registries that agent workspaces install through a worker-side
 > proxy. The upstream credential never enters the container; the workspace holds only a
 > per-workspace proxy token.
 
@@ -31,7 +31,8 @@ to a Go registry only when its repository's stored stack detection
 detected as Node-only never receives a `GOPROXY` it has no use for.
 
 A PyPI registry is served on a third route (`/pypi/…`, §4 and §5), wired only into a workspace whose
-repository's detection lists Python, or is unknown.
+repository's detection lists Python, or is unknown. A Maven registry is served on a fourth (`/maven/…`)
+in open mode only, wired the same way for a repository whose detection lists a JVM stack.
 
 ## 2. Registries
 
@@ -44,17 +45,19 @@ upstreams — Artifactory is usually internal), an optional `teamId` (null = eve
 encrypted token (`hasToken`/`tokenLastFour` is all the API reports). Every change writes a config
 audit-log entry.
 
-A row's `ecosystem` is `npm` (the default), `go` or `pypi`, and is fixed when the row is created. A `go` or
-`pypi` row has no scopes — it is the team's single registry of its ecosystem — and its `upstreamUrl` may carry
+A row's `ecosystem` is `npm` (the default), `go`, `pypi` or `maven`, and is fixed when the row is created. A `go`,
+`pypi` or `maven` row has no scopes — it is the team's single registry of its ecosystem — and its `upstreamUrl` may carry
 no userinfo, query string or fragment, because the proxy appends paths to it. A PyPI row's `upstreamUrl` is its
-**simple index** (`https://pypi.org/simple`, or `https://host/artifactory/api/pypi/<repo>/simple`). Resolution for the two
-ecosystems never mixes: an npm default, a Go registry and a PyPI registry coexist for one team, and a `go` or `pypi` row can
+**simple index** (`https://pypi.org/simple`, or `https://host/artifactory/api/pypi/<repo>/simple`); a Maven row's
+is the repository base (`https://repo.maven.apache.org/maven2`). A Maven row's `accessMode` is `open`: Maven has no
+committed lockfile to scope it by, and the API refuses `lockfile` on one. Resolution for the two
+ecosystems never mixes: an npm default and a registry of each other ecosystem coexist for one team, and a non-npm row can
 never be taken for npm's default or claim an npm scope.
 
 Write-time uniqueness: among active rows of one ecosystem of one team group (null is its own group), at most one
 default registry and each scope at most once — clashes are refused with `409`. Resolution for a
 workspace of team T takes active rows where `teamId IN (T, null)`; per key (the default key and
-each scope; a Go or PyPI registry has only the default) a team row beats a global one.
+each scope; a non-npm registry has only the default) a team row beats a global one.
 
 ## 3. Access modes
 
@@ -171,10 +174,25 @@ The suite is `registryProxy/pypiClient.docker.test.ts`, run in CI against the cu
 runs real `pip` and `uv` installs through the proxy in both modes, and shows a version, a project and a
 cross-origin file outside what the lockfile allows being refused.
 
-**Shell steps.** A `network: 'egress'` shell step gets the same wiring, with these differences:
+**Maven.** A workspace wired to a Maven registry carries the plain env entry
+`MAVEN_ARGS=-s /workspace/.auto-swe/maven-settings.xml` (Maven 3.9 and later read it) and that file, `chmod 600`,
+written like the npmrc: one `<mirror>` with `<mirrorOf>*</mirrorOf>` pointing at `<proxy URL>/maven/<registryId>/`, so
+every repository a POM or plugin names goes through the proxy (and Maven's http blocker does not apply to a mirror
+defined in settings), and one `<server>` whose password is the token. Maven sends it after the proxy's 401
+challenge. A Maven-only workspace gets none of the npm, Yarn or Corepack variables.
+
+The suite is `registryProxy/mavenClient.docker.test.ts`, run in CI against the curated JVM image. It resolves
+build extensions through the proxy with a real `mvn`, shows the release cache serving a second resolution, and
+that a missing artifact is a 404.
+
+**Shell steps.** A `network: 'egress'` shell step gets the same wiring for every ecosystem its repository's stored
+detection lists, and npm's alone when it has none, with these differences:
 - Its container's root filesystem is read-only, so its `HOME` is `/workspace/.auto-swe/home` in
   the step volume, outside the checkout the finalize commits.
-- The npmrc and Berry rc are written there by a helper container before the command runs.
+- The npmrc and Berry rc are written there by a helper container before the command runs, and so is the Maven
+  settings file (`/workspace/.auto-swe/maven-settings.xml`, mode `644` there, as the npmrc is, because the step
+  runs as the image's own user; the step's environment holds the same token). `GOPROXY` and the pip and uv
+  variables are environment only.
 - The command container gets the host-gateway alias in its `--add-host` entries, beside any
   egress-allowlist entries.
 - The allowlist is built from `origin/<defaultBranch>`, which the clone helper fetches before it
@@ -182,6 +200,16 @@ cross-origin file outside what the lockfile allows being refused.
 - The token is revoked as soon as the command exits.
 
 ## 5. The proxy
+
+**Maven route.** `<baseUrl>/maven/<registryId>/<repository path>`, authenticated like the PyPI route (an HTTP
+Basic password equal to the token, honoured only on this route's normalised path; 401 with a challenge
+otherwise). The path is validated segment by segment (no traversal, encodings, empty segments or directory
+listings) and the upstream URL is built from those segments alone. The route is **open mode only**: a
+registration whose Maven registry carries any allowlist answers 503 rather than serve from it. A release file
+(`<group…>/<artifact>/<version>/<file>`) is cached; `maven-metadata*`, any SNAPSHOT spelling and any file outside
+a version directory are never cached. Small text files run under the upstream deadline; archives stream up to
+512 MiB. Redirects are refused, the credential goes only to the registry's upstream, and a 404 or 410 is
+answered 404.
 
 **PyPI route.** `<baseUrl>/pypi/<registryId>/simple/<project>/` serves a project index and
 `…/files/<fileId>/<filename>` a file, as `/pypi/<registryId>/…`; the credential is an HTTP Basic
@@ -317,14 +345,14 @@ under 90%. Cache errors fall through to the upstream.
 
 ## Limitations
 
-- **npm, Go modules and PyPI only, and read-only.** Maven is not served, and neither is
-  publishing. PyPI has no audit relay (`pip-audit` reaches its own database directly or not at all).
+- **npm, Go modules, PyPI and Maven only, and read-only.** Publishing is not served. PyPI has no audit relay (`pip-audit` reaches its own database directly or not at all).
   A Go registry has no audit endpoint, so `govulncheck` and similar reach their own
   database directly or not at all.
-- **Open mode needs egress to the checksum database for new Go modules.** The proxy does not
-  serve `/sumdb/…`, so a module whose hash is not yet in `go.sum` is verified by Go reaching
-  `sum.golang.org` directly (unless the repository sets `GOFLAGS`/`GONOSUMDB`/`GOSUMDB`). In
-  lockfile mode every hash is already committed and the checksum database is not consulted.
+- **The Go checksum database is relayed only if the upstream serves it.** The Go route forwards
+  `/sumdb/sum.golang.org/…` (signed hashes, in lockfile and open mode) to the registry's upstream. A
+  module proxy that does not answer it gives a 404, and Go then reaches `sum.golang.org` directly, which
+  needs egress; with `GOFLAGS`/`GONOSUMDB`/`GOSUMDB` the repository can choose otherwise. The relay is
+  unit-tested against a stubbed upstream, not against Go, because the database's responses are signed.
 - **Go's token is visible to the agent.** Go prints the request URL in its errors
   (`reading http://…/go/<token>/…: 403 Forbidden`), and `env` shows `GOPROXY`. The token is good
   only at this proxy, for this workspace, and in lockfile mode only for `go.sum`'s modules — the
@@ -335,7 +363,6 @@ under 90%. Cache errors fall through to the upstream.
   component is wired, including a Go module beside a Node root. A repository with no usable
   detection, or a truncated one, is wired too, because "unknown" is not "uses no Go"; a detection
   that names only other stacks gets no Go proxy.
-- **Shell steps get no Go wiring.** They are wired for npm only.
 - **Upstream redirects are refused** (`redirect: 'error'`). An Artifactory that redirects
   downloads to object storage does not work.
 - **Yarn classic must have a default-host lockfile.** Yarn classic rewrites only
@@ -374,7 +401,6 @@ under 90%. Cache errors fall through to the upstream.
 - **No PEP 658 metadata.** Resolvers download whole wheels to read their metadata; large resolves are
   slower than against a mirror.
 - **PyPI wiring follows the stored detection**, as Go's does; a Node-only detection gets no index.
-- **Shell steps get no PyPI wiring.**
 - **uv project mode writes the proxy's address into the repository.** `uv add`, `uv lock` and `uv sync`
   record the index they resolved from — `http://<proxy host>/pypi/<registryId>/simple/` — in `uv.lock`
   and, for `uv add`, in `pyproject.toml`'s `[[tool.uv.index]]`. The token is not written (it is
@@ -391,3 +417,17 @@ under 90%. Cache errors fall through to the upstream.
 - **The PyPI route needs the proxy at the root of its host.** File links in the rewritten index are
   root-absolute paths (`/pypi/<registryId>/files/…`), so a `REGISTRY_PROXY_URL` with a path prefix
   works for npm and Go but not for PyPI.
+- **Maven is open mode only, and only `mvn` is wired.** There is no lockfile to scope it by, so a Maven
+  registry gives the credential protection and nothing else. Gradle (its wrapper downloads its own
+  distribution and the build scripts declare their repositories) reaches its repositories directly, and so
+  does the distribution `mvnw` downloads (a Maven 3.9 or later that it fetches still honours `MAVEN_ARGS`).
+  `MAVEN_ARGS` puts the platform's `-s` first, and Maven takes the first `-s`, so it beats `mvn -s …` and a
+  project `.mvn/maven.config`: a repository that needs its own settings file (private-repository
+  credentials, say) has it ignored in a workspace and resolves against the one configured upstream.
+- **A shell step is wired for another ecosystem only on a positive detection.** A step whose repository has
+  no stored detection gets the npm wiring alone, as an arbitrary image and command may not expect
+  `GOTOOLCHAIN=local`, the `PIP_*` variables or `MAVEN_ARGS`. Where the detection lists Go, Python or a JVM
+  stack, those variables are present, and a step that installs outside the lockfile is denied as a workspace
+  would be.
+- **Audit relays exist for npm only.** `pip-audit`, `govulncheck` and Maven's dependency-check read
+  vulnerability data from hosts that are not package registries, so there is nothing for the proxy to relay.

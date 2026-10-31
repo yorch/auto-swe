@@ -34,6 +34,13 @@ const SCOPELESS = [
     noun: 'PyPI',
     upstreamUrl: 'https://pypi.org/simple',
   },
+  {
+    ecosystem: 'maven',
+    name: 'maven-proxy',
+    noScopes: 'A Maven registry has no scopes: it serves every artifact for its team',
+    noun: 'Maven',
+    upstreamUrl: 'https://repo.maven.apache.org/maven2',
+  },
 ];
 
 function row(over: Record<string, unknown> = {}) {
@@ -164,7 +171,7 @@ describe('packageRegistryRoutes', () => {
     ).toMatchObject({ ecosystem: 'npm' });
   });
 
-  it('lets one team hold an npm, a go and a pypi default at once', async () => {
+  it('lets one team hold an npm, a go, a pypi and a maven default at once', async () => {
     const teamId = '22222222-2222-4222-8222-222222222222';
     // A stored default answers only the clash query of its own ecosystem and team.
     const stored: ReturnType<typeof row>[] = [];
@@ -195,13 +202,29 @@ describe('packageRegistryRoutes', () => {
         name: 'team-pypi',
         upstreamUrl: 'https://pypi.org/simple',
       });
-      expect([npm.statusCode, go.statusCode, pypi.statusCode]).toEqual([201, 201, 201]);
+      const maven = await post({
+        ecosystem: 'maven',
+        name: 'team-maven',
+        upstreamUrl: 'https://repo.maven.apache.org/maven2',
+      });
+      expect([npm.statusCode, go.statusCode, pypi.statusCode, maven.statusCode]).toEqual([
+        201, 201, 201, 201,
+      ]);
       const again = await post({
         ecosystem: 'pypi',
         name: 'second-pypi',
         upstreamUrl: 'https://pypi.org/simple',
       });
       expect(again.statusCode).toBe(409);
+      const secondMaven = await post({
+        ecosystem: 'maven',
+        name: 'second-maven',
+        upstreamUrl: 'https://repo.maven.apache.org/maven2',
+      });
+      expect(secondMaven.statusCode).toBe(409);
+      expect(JSON.parse(secondMaven.payload).error.message).toContain(
+        'an active default Maven registry already exists for this team'
+      );
     } finally {
       prisma.packageRegistry.findMany.mockImplementation((async () => []) as never);
       prisma.packageRegistry.create.mockImplementation((async (a: {
@@ -366,6 +389,99 @@ describe('packageRegistryRoutes', () => {
       )[0][0].data;
       expect(data).not.toHaveProperty('ecosystem');
       expect(lastWhere()).toMatchObject({ ecosystem: 'npm' });
+    });
+  });
+
+  describe('Maven registries serve open mode only', () => {
+    const post = (payload: Record<string, unknown>) =>
+      app.inject({
+        headers: AUTH,
+        method: 'POST',
+        payload: {
+          ecosystem: 'maven',
+          name: 'maven-proxy',
+          upstreamUrl: 'https://repo.maven.apache.org/maven2',
+          ...payload,
+        },
+        url: BASE,
+      });
+
+    it('defaults an omitted accessMode to open', async () => {
+      prisma.packageRegistry.create.mockClear();
+      const res = await post({});
+      expect(res.statusCode).toBe(201);
+      expect(JSON.parse(res.payload).data.accessMode).toBe('open');
+      const audit = (prisma.configAuditLog.create.mock.calls.at(-1) as unknown as [unknown])[0] as {
+        data: { afterJson: { accessMode: string } };
+      };
+      expect(audit.data.afterJson.accessMode).toBe('open');
+    });
+
+    it('accepts an explicit open', async () => {
+      expect((await post({ accessMode: 'open' })).statusCode).toBe(201);
+    });
+
+    it('refuses lockfile on create', async () => {
+      prisma.packageRegistry.create.mockClear();
+      const res = await post({ accessMode: 'lockfile' });
+      expect(res.statusCode).toBe(400);
+      const err = JSON.parse(res.payload).error;
+      expect(err.code).toBe('VALIDATION_ERROR');
+      expect(err.message).toBe('a Maven registry serves open mode only');
+      expect(prisma.packageRegistry.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses lockfile on PATCH, by the stored ecosystem', async () => {
+      prisma.packageRegistry.update.mockClear();
+      prisma.packageRegistry.findUnique.mockResolvedValueOnce(
+        row({ accessMode: 'open', ecosystem: 'maven' }) as never
+      );
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'PATCH',
+        payload: { accessMode: 'lockfile' },
+        url: `${BASE}/${ID}`,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe('VALIDATION_ERROR');
+      expect(prisma.packageRegistry.update).not.toHaveBeenCalled();
+    });
+
+    it('still lets a PATCH send open', async () => {
+      prisma.packageRegistry.findUnique.mockResolvedValueOnce(
+        row({ accessMode: 'open', ecosystem: 'maven' }) as never
+      );
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'PATCH',
+        payload: { accessMode: 'open' },
+        url: `${BASE}/${ID}`,
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('leaves the lockfile default and lockfile PATCH alone for the other ecosystems', async () => {
+      for (const [ecosystem, upstreamUrl] of [
+        ['npm', 'https://registry.npmjs.org'],
+        ['go', 'https://proxy.golang.org'],
+        ['pypi', 'https://pypi.org/simple'],
+      ]) {
+        const created = await app.inject({
+          headers: AUTH,
+          method: 'POST',
+          payload: { ecosystem, name: `${ecosystem}-default`, upstreamUrl },
+          url: BASE,
+        });
+        expect(JSON.parse(created.payload).data.accessMode).toBe('lockfile');
+        prisma.packageRegistry.findUnique.mockResolvedValueOnce(row({ ecosystem }) as never);
+        const patched = await app.inject({
+          headers: AUTH,
+          method: 'PATCH',
+          payload: { accessMode: 'lockfile' },
+          url: `${BASE}/${ID}`,
+        });
+        expect(patched.statusCode).toBe(200);
+      }
     });
   });
 

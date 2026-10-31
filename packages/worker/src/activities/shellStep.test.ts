@@ -14,6 +14,8 @@ vi.mock('@auto-swe/shared/db', () => ({
     // no rows means every setting falls back to its registered default.
     configSetting: { findMany: vi.fn().mockResolvedValue([]) },
     connection: { findUniqueOrThrow: vi.fn() },
+    // Read by `detectedStackForRun`; undefined means no run row, so the live detection is used.
+    workflowRun: { findUnique: vi.fn() },
   },
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => {
@@ -107,6 +109,8 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 
 import { type GitIdentity, resolveGitIdentity } from '../lib/gitIdentity.js';
+import { registryWorkspaceEnv } from '../lib/registryProxy/render.js';
+import type { WorkspaceRegistryAccess } from '../lib/registryProxy/workspaceWiring.js';
 import { getScmProvider } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { finalizeScript, runShellStep } from './shellStep.js';
@@ -791,6 +795,144 @@ describe('runShellStep — registry wiring', () => {
       env?: Record<string, string>;
     };
     expect(input.env?.HOME).toBeUndefined();
+  });
+
+  describe('Go, PyPI and Maven', () => {
+    const PROXY_TOKEN = 'proxy-tok-9';
+    const BASE = 'http://host.docker.internal:8791';
+    const MAVEN_SETTINGS_FILE = '/workspace/.auto-swe/maven-settings.xml';
+    const polyglotRegistries: WorkspaceRegistryAccess['registries'] = [
+      {
+        accessMode: 'lockfile',
+        ecosystem: 'go',
+        id: 'go-1',
+        isDefault: true,
+        name: 'g',
+        scopes: [],
+      },
+      {
+        accessMode: 'lockfile',
+        ecosystem: 'pypi',
+        id: 'py-1',
+        isDefault: true,
+        name: 'p',
+        scopes: [],
+      },
+      {
+        accessMode: 'open',
+        ecosystem: 'maven',
+        id: 'mvn-1',
+        isDefault: true,
+        name: 'm',
+        scopes: [],
+      },
+    ];
+    const polyglotAccess = {
+      baseUrl: BASE,
+      env: registryWorkspaceEnv([...polyglotRegistries], BASE, PROXY_TOKEN),
+      registration: { release: released, setAllowlist },
+      registries: [...polyglotRegistries],
+      token: PROXY_TOKEN,
+    };
+    const run = async (detectedStack: unknown) => {
+      findUniqueOrThrow.mockResolvedValue({
+        defaultBranch: 'main',
+        detectedStack,
+        id: 'conn-1',
+        team: { egressAllowlist: [], id: 'team-1', shellImageAllowlist: ['alpine/git:latest'] },
+      } as never);
+      await runShellStep({
+        command: 'mvn -q verify',
+        image: 'alpine/git:latest',
+        network: 'egress',
+        request: REQUEST,
+      });
+      return beginRegistries.mock.calls.at(-1)?.[2];
+    };
+    const detected = (stack: string) => ({
+      components: [{ path: '', stacks: [stack] }],
+      primary: stack,
+    });
+
+    it('wires only the proxies the detected stack uses; an unknown detection wires none', async () => {
+      expect(await run(detected('go'))).toEqual({ go: true, maven: false, pypi: false });
+      expect(await run(detected('python'))).toEqual({ go: false, maven: false, pypi: true });
+      expect(await run(detected('jvm'))).toEqual({ go: false, maven: true, pypi: false });
+      expect(await run(detected('node'))).toEqual({ go: false, maven: false, pypi: false });
+      expect(await run(null)).toEqual({ go: false, maven: false, pypi: false });
+    });
+
+    it('wires from the stack the run pinned, not the live connection row', async () => {
+      const workflowRunFindUnique = vi.mocked(prisma.workflowRun.findUnique);
+      workflowRunFindUnique.mockResolvedValueOnce({
+        pinnedDetections: { 'conn-1': detected('go') },
+      } as never);
+      expect(await run(detected('node'))).toEqual({ go: true, maven: false, pypi: false });
+      workflowRunFindUnique.mockResolvedValueOnce({
+        pinnedDetections: { 'conn-1': detected('node') },
+      } as never);
+      expect(await run(detected('go'))).toEqual({ go: false, maven: false, pypi: false });
+      // A pinned null is "unknown at run start": it must not fall through to the live scan.
+      workflowRunFindUnique.mockResolvedValueOnce({
+        pinnedDetections: { 'conn-1': null },
+      } as never);
+      expect(await run(detected('go'))).toEqual({ go: false, maven: false, pypi: false });
+    });
+
+    it('splits the env: token-bearing entries in secretEnv only, MAVEN_ARGS and the rest plain', async () => {
+      beginRegistries.mockResolvedValue(polyglotAccess);
+      await run(null);
+      const input = vi.mocked(runEphemeralContainer).mock.calls.at(-1)?.[0] as {
+        env: Record<string, string>;
+        secretEnv: Record<string, string>;
+      };
+      expect(Object.keys(input.secretEnv).sort()).toEqual([
+        'GOPROXY',
+        'PIP_INDEX_URL',
+        'UV_DEFAULT_INDEX',
+        'UV_INDEX_URL',
+      ]);
+      expect(input.env.MAVEN_ARGS).toBe(`-s ${MAVEN_SETTINGS_FILE}`);
+      expect(input.env.GOTOOLCHAIN).toBe('local');
+      expect(input.env.PIP_TRUSTED_HOST).toBe('host.docker.internal:8791');
+      // No token in any plain value; a maven-only wiring has no npm block either.
+      expect(Object.values(input.env).join('\n')).not.toContain(PROXY_TOKEN);
+      expect(Object.keys(input.env).some((k) => /^(COREPACK_|YARN_)/.test(k))).toBe(false);
+    });
+
+    it('writes the Maven settings through the helper env, never argv', async () => {
+      beginRegistries.mockResolvedValue(polyglotAccess);
+      await run(null);
+      const configSpec = backendRunHelper.mock.calls
+        .map(
+          ([spec]) =>
+            spec as { argv?: string[]; env?: string[]; secretEnv?: Record<string, string> }
+        )
+        .find((spec) => spec.secretEnv?.AUTO_SWE_MAVEN_SETTINGS !== undefined);
+      expect(configSpec).toBeDefined();
+      const settings = configSpec?.secretEnv?.AUTO_SWE_MAVEN_SETTINGS ?? '';
+      expect(settings).toContain(`<password>${PROXY_TOKEN}</password>`);
+      expect(settings).toContain(`<url>${BASE}/maven/mvn-1/</url>`);
+      expect(configSpec?.argv?.join(' ')).toContain(MAVEN_SETTINGS_FILE);
+      expect(configSpec?.argv?.join(' ')).not.toContain(PROXY_TOKEN);
+      expect(configSpec?.env).toBeUndefined();
+    });
+
+    it('writes no Maven settings when no maven registry is wired', async () => {
+      beginRegistries.mockResolvedValue(access);
+      await run(detected('node'));
+      const written = backendRunHelper.mock.calls.some(
+        ([spec]) =>
+          (spec as { secretEnv?: Record<string, string> }).secretEnv?.AUTO_SWE_MAVEN_SETTINGS !==
+          undefined
+      );
+      expect(written).toBe(false);
+      const input = vi.mocked(runEphemeralContainer).mock.calls.at(-1)?.[0] as {
+        env: Record<string, string>;
+      };
+      expect(input.env.MAVEN_ARGS).toBeUndefined();
+      expect(input.env.GOTOOLCHAIN).toBeUndefined();
+    });
   });
 
   it('does nothing when no registries resolve', async () => {

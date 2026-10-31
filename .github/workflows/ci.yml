@@ -194,6 +194,16 @@ jobs:
           docker build -f defaults/Dockerfile.node-browser -t asw-executor-node-browser:ci defaults
           yarn test packages/worker/src/browser/session.docker.test.ts
 
+      # A real Maven against the registry proxy through the JVM executor image — build-extension
+      # resolution through the settings mirror, the release cache and the 404 mapping, end to end.
+      - name: Maven proxy client tests (Docker-backed)
+        env:
+          MAVEN_PROXY_DOCKER_TEST: '1'
+          MAVEN_PROXY_TEST_IMAGE: asw-executor-jvm:ci
+        run: |
+          docker build -f defaults/Dockerfile.jvm -t asw-executor-jvm:ci defaults
+          yarn test packages/worker/src/lib/registryProxy/mavenClient.docker.test.ts
+
       # Builds each curated defaults/Dockerfile.<stack> and checks it against the executor
       # image contract and its own toolchain, as the user the executor runs as.
       - name: Curated executor images (Docker-backed)

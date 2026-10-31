@@ -6,6 +6,7 @@ import {
   goListBody,
   goUpstreamPath,
   parseGoProxyPath,
+  parseGoSumdbPath,
   unescapeGoPath,
 } from './goProxy.js';
 
@@ -182,5 +183,69 @@ describe('goUpstreamPath', () => {
     expect(parsed).not.toBeNull();
     // `+` is the one non-path character a valid version may carry.
     expect(goUpstreamPath(parsed as never)).toMatch(/^\/[A-Za-z0-9._~!+/@-]+$/);
+  });
+});
+
+describe('parseGoSumdbPath', () => {
+  const P = '/sumdb/sum.golang.org';
+
+  it('accepts the four request shapes', () => {
+    expect(parseGoSumdbPath(`${P}/supported`)).toEqual({ path: `${P}/supported`, tile: false });
+    expect(parseGoSumdbPath(`${P}/latest`)).toEqual({ path: `${P}/latest`, tile: false });
+    expect(parseGoSumdbPath(`${P}/lookup/golang.org/x/text@v0.14.0`)).toEqual({
+      path: `${P}/lookup/golang.org/x/text@v0.14.0`,
+      tile: false,
+    });
+    expect(
+      parseGoSumdbPath(`${P}/lookup/github.com/!azure/go-autorest@v14.2.0+incompatible`)
+    ).toEqual({
+      path: `${P}/lookup/github.com/!azure/go-autorest@v14.2.0+incompatible`,
+      tile: false,
+    });
+    for (const tile of [
+      'tile/8/0/000',
+      'tile/8/1/x001/234',
+      'tile/8/0/x001/x234/567.p/128',
+      'tile/8/data/012',
+      'tile/8/0/001.p/1',
+    ]) {
+      expect(parseGoSumdbPath(`${P}/${tile}`), tile).toEqual({ path: `${P}/${tile}`, tile: true });
+    }
+  });
+
+  it('refuses another database, traversal, escapes and malformed shapes', () => {
+    for (const p of [
+      '/sumdb/sum.example.org/supported',
+      '/sumdb/sum.golang.org.evil/supported',
+      '/sumdb/sum.golang.org',
+      '/sumdb/sum.golang.org/',
+      '/sumdb/sum.golang.org/other',
+      '/sumdb/sum.golang.org/supported/x',
+      '/sumdb/sum.golang.org/../supported',
+      '/sumdb/sum.golang.org/lookup/../x@v1.0.0',
+      '/sumdb/sum.golang.org/lookup/a%2fb@v1.0.0',
+      '/sumdb/sum.golang.org/lookup/a/b',
+      '/sumdb/sum.golang.org/lookup/@v1.0.0',
+      '/sumdb/sum.golang.org/lookup/a/b@',
+      '/sumdb/sum.golang.org/lookup/a/b@v1.0.0@v1.0.0',
+      '/sumdb/sum.golang.org/lookup/a/b@latest',
+      '/sumdb/sum.golang.org/lookup/A/b@v1.0.0',
+      '/sumdb/sum.golang.org/lookup/a/b@v1.0.0?x=1',
+      '/sumdb/sum.golang.org/tile/8/0',
+      '/sumdb/sum.golang.org/tile/8/0/1',
+      '/sumdb/sum.golang.org/tile/8/0/0001',
+      '/sumdb/sum.golang.org/tile/8/0/x01/234',
+      '/sumdb/sum.golang.org/tile/8/0/234/x001',
+      '/sumdb/sum.golang.org/tile/x/0/234',
+      '/sumdb/sum.golang.org/tile/8/0/234.p',
+      '/sumdb/sum.golang.org/tile/8/0/234.p/x',
+      '/sumdb/sum.golang.org/tile/8/0/234.q/1',
+      '/sumdb/sum.golang.org/tile/8/0/234/',
+      '/sumdb/sum.golang.org/tile/8/0/%30%30%30',
+      '//sumdb/sum.golang.org/supported',
+      '/x/sumdb/sum.golang.org/supported',
+    ]) {
+      expect(parseGoSumdbPath(p), p).toBeNull();
+    }
   });
 });

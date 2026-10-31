@@ -29,6 +29,7 @@ import { shellQuote } from '../shellQuote.js';
 
 export {
   registryWorkspaceEnv,
+  renderMavenSettings,
   renderNpmrc,
   renderYarnrc,
   splitRegistryWorkspaceEnv,
@@ -50,7 +51,7 @@ export interface WorkspaceRegistryAccess {
   token: string;
   registries: {
     accessMode: string;
-    ecosystem: 'npm' | 'go' | 'pypi';
+    ecosystem: 'npm' | 'go' | 'pypi' | 'maven';
     id: string;
     isDefault: boolean;
     name: string;
@@ -63,7 +64,7 @@ type RegistryRow = Awaited<ReturnType<typeof prisma.packageRegistry.findMany>>[n
 
 function toResolvedRegistry(
   registry: RegistryRow,
-  ecosystem: 'npm' | 'go' | 'pypi',
+  ecosystem: 'npm' | 'go' | 'pypi' | 'maven',
   isDefault: boolean,
   scopes: string[]
 ): ResolvedRegistry {
@@ -95,12 +96,13 @@ function toResolvedRegistry(
  *
  * npm is always resolved. Go is resolved only when `wanted.go` is set — the
  * caller's say-so that the repository's stack uses it, so a Node repository
- * never receives a Go proxy it has no use for. PyPI is the same, behind `wanted.pypi`.
+ * never receives a Go proxy it has no use for. PyPI and Maven are the same, behind
+ * `wanted.pypi` and `wanted.maven`.
  */
 export async function beginWorkspaceRegistries(
   teamId: string | null,
   containerName: string,
-  wanted: { go?: boolean; pypi?: boolean } = {}
+  wanted: { go?: boolean; maven?: boolean; pypi?: boolean } = {}
 ): Promise<WorkspaceRegistryAccess | null> {
   const proxy = workerRegistryProxy();
   if (!proxy || !teamId) {
@@ -119,7 +121,15 @@ export async function beginWorkspaceRegistries(
   const resolvedPypi = wanted.pypi
     ? resolvePackageRegistries(registriesFor(rows, 'pypi'), teamId).filter((r) => r.isDefault)
     : [];
-  if (resolved.length === 0 && resolvedGo.length === 0 && resolvedPypi.length === 0) {
+  const resolvedMaven = wanted.maven
+    ? resolvePackageRegistries(registriesFor(rows, 'maven'), teamId).filter((r) => r.isDefault)
+    : [];
+  if (
+    resolved.length === 0 &&
+    resolvedGo.length === 0 &&
+    resolvedPypi.length === 0 &&
+    resolvedMaven.length === 0
+  ) {
     return null;
   }
   const registries: ResolvedRegistry[] = [
@@ -128,6 +138,7 @@ export async function beginWorkspaceRegistries(
     ),
     ...resolvedGo.map(({ registry }) => toResolvedRegistry(registry, 'go', true, [])),
     ...resolvedPypi.map(({ registry }) => toResolvedRegistry(registry, 'pypi', true, [])),
+    ...resolvedMaven.map(({ registry }) => toResolvedRegistry(registry, 'maven', true, [])),
   ];
   const registration = await proxy.register({
     onDenied(d) {
@@ -163,6 +174,14 @@ export async function beginWorkspaceRegistries(
     ...resolvedPypi.map(({ registry }) => ({
       accessMode: registry.accessMode,
       ecosystem: 'pypi' as const,
+      id: registry.id,
+      isDefault: true,
+      name: registry.name,
+      scopes: [],
+    })),
+    ...resolvedMaven.map(({ registry }) => ({
+      accessMode: registry.accessMode,
+      ecosystem: 'maven' as const,
       id: registry.id,
       isDefault: true,
       name: registry.name,
@@ -329,7 +348,8 @@ async function buildPypiLockAllowlist(
  * registry maps to `null` (no check); a lockfile-mode one maps to the union
  * of every parsed lockfile — including an empty set when the repo has none.
  * npm registries are fed by npm lockfiles only, Go registries by `go.sum`
- * only and PyPI registries by PyPI lockfiles only. `exec` runs `sh -c` in the workspace and returns stdout.
+ * only and PyPI registries by PyPI lockfiles only. A Maven registry always maps to `null`
+ * whatever its stored mode says. `exec` runs `sh -c` in the workspace and returns stdout.
  */
 export async function buildRegistryAllowlist(
   access: WorkspaceRegistryAccess,
@@ -414,7 +434,11 @@ export async function buildRegistryAllowlist(
     ? await buildPypiLockAllowlist(exec, repoDir, ref, allPaths)
     : null;
   for (const r of access.registries) {
-    if (r.ecosystem === 'pypi') {
+    if (r.ecosystem === 'maven') {
+      // Open is the only mode the Maven route serves: a stale lockfile-mode row must not become
+      // an empty allowlist that denies everything.
+      map.set(r.id, null);
+    } else if (r.ecosystem === 'pypi') {
       map.set(r.id, r.accessMode === 'open' ? null : (pypiCombined ?? new Map()));
     } else if (r.ecosystem === 'go') {
       map.set(r.id, r.accessMode === 'open' ? null : (goCombined ?? new Map()));

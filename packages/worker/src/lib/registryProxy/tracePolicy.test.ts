@@ -7,6 +7,8 @@ describe('isProxyTokenPath', () => {
   it.each([
     '/go/tok/go-1/a/@v/list',
     '/pypi/py-1/simple/flask/',
+    '/maven/mv-1/a/b/1.0/b-1.0.jar',
+    '/x/%2e%2e/maven/mv-1/a/b/1.0/b-1.0.jar',
     '/./pypi/py-1/simple/flask/',
     '/%2e/pypi/py-1/simple/flask/',
     '/%2E/go/tok/go-1/a/@latest',

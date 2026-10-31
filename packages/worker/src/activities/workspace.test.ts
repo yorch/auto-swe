@@ -458,6 +458,7 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
         await wiredWith({ components: [{ path: '', stacks: ['go'] }], primary: 'go' })
       ).toEqual({
         go: true,
+        maven: false,
         pypi: false,
       });
     });
@@ -465,7 +466,13 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
     it('wires PyPI for a detected Python repository and nothing else', async () => {
       expect(
         await wiredWith({ components: [{ path: '', stacks: ['python'] }], primary: 'python' })
-      ).toEqual({ go: false, pypi: true });
+      ).toEqual({ go: false, maven: false, pypi: true });
+    });
+
+    it('wires Maven for a detected JVM repository and nothing else', async () => {
+      expect(
+        await wiredWith({ components: [{ path: '', stacks: ['jvm'] }], primary: 'jvm' })
+      ).toEqual({ go: false, maven: true, pypi: false });
     });
 
     it('wires Go for a polyglot repository that has a Go component', async () => {
@@ -476,20 +483,21 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
             { path: 'svc', stacks: ['go'] },
           ],
         })
-      ).toEqual({ go: true, pypi: false });
+      ).toEqual({ go: true, maven: false, pypi: false });
     });
 
-    it('does not wire Go or PyPI for a detected Node repository', async () => {
+    it('does not wire Go, PyPI or Maven for a detected Node repository', async () => {
       expect(
         await wiredWith({ components: [{ path: '', stacks: ['node'] }], primary: 'node' })
       ).toEqual({
         go: false,
+        maven: false,
         pypi: false,
       });
     });
 
-    it('wires Go and PyPI when the detection is unknown', async () => {
-      const both = { go: true, pypi: true };
+    it('wires Go, PyPI and Maven when the detection is unknown', async () => {
+      const both = { go: true, maven: true, pypi: true };
       expect(await wiredWith(undefined)).toEqual(both);
       expect(await wiredWith(null)).toEqual(both);
       expect(await wiredWith({ components: [] })).toEqual(both);
@@ -658,6 +666,79 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
       expect(setAllowlist).toHaveBeenCalledTimes(1);
       const allowlist = setAllowlist.mock.calls[0]?.[0] as Map<string, unknown>;
       expect(allowlist.get('go-1')).toEqual(new Map());
+    });
+
+    it('writes the Maven settings for a JVM workspace, with MAVEN_ARGS in plain env and the token off argv', async () => {
+      const TOKEN = 'cafe0123deadbeef';
+      const setAllowlist = vi.fn();
+      vi.mocked(spawnWithStdinAsync).mockClear();
+      vi.mocked(beginWorkspaceRegistries).mockResolvedValueOnce({
+        baseUrl: 'http://proxy.internal:9999',
+        env: ['MAVEN_ARGS=-s /workspace/.auto-swe/maven-settings.xml'],
+        registration: {
+          baseUrl: 'http://proxy.internal:9999',
+          release: async () => {},
+          setAllowlist,
+          token: TOKEN,
+        },
+        registries: [
+          {
+            accessMode: 'open',
+            ecosystem: 'maven',
+            id: 'mvn-1',
+            isDefault: true,
+            name: 'central',
+            scopes: [],
+          },
+        ],
+        token: TOKEN,
+      });
+      const ws = await createWorkspace(
+        AUTHED,
+        'auto/T-1',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        {
+          detectedStack: { components: [{ path: '', stacks: ['jvm'] }], primary: 'jvm' },
+          teamId: 'team-a',
+        }
+      );
+      await ws.destroy();
+      const commands = vi.mocked(execShellAsync).mock.calls.map((c) => c[0] as string);
+      const startCmd = commands.find((c) => c.includes('docker run -d --name')) ?? '';
+      // The path is no secret, so it is a plain `-e NAME=value` pair.
+      expect(startCmd).toContain('MAVEN_ARGS=-s /workspace/.auto-swe/maven-settings.xml');
+      expect(startCmd).not.toContain(TOKEN);
+      // The settings reach the file over stdin, never on a command line.
+      const writes = vi
+        .mocked(spawnWithStdinAsync)
+        .mock.calls.filter((c) => String(c[0]) === 'docker' && c[2] !== undefined);
+      const settingsWrites = writes.filter((c) => (c[1] as string[]).join(' ').includes('maven'));
+      expect(settingsWrites).toHaveLength(1);
+      const [, argv, stdin] = settingsWrites[0] ?? [];
+      expect((argv as string[]).join(' ')).toContain(
+        'chmod 600 /workspace/.auto-swe/maven-settings.xml'
+      );
+      expect(stdin).toContain('<mirrorOf>*</mirrorOf>');
+      expect(stdin).toContain('<url>http://proxy.internal:9999/maven/mvn-1/</url>');
+      expect(stdin).toContain(`<password>${TOKEN}</password>`);
+      for (const c of commands) {
+        expect(c).not.toContain(TOKEN);
+      }
+      for (const [, args] of vi.mocked(spawnWithStdinAsync).mock.calls) {
+        expect((args as string[]).join(' ')).not.toContain(TOKEN);
+      }
+      // No npm client files for a Maven-only workspace; the registry is open: no allowlist check.
+      expect(commands.some((c) => c.includes('npmrc'))).toBe(false);
+      expect(
+        vi
+          .mocked(spawnWithStdinAsync)
+          .mock.calls.some((c) => (c[1] as string[]).join(' ').includes('npmrc'))
+      ).toBe(false);
+      const allowlist = setAllowlist.mock.calls[0]?.[0] as Map<string, unknown>;
+      expect(allowlist.get('mvn-1')).toBeNull();
     });
   });
 

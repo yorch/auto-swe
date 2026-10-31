@@ -148,3 +148,62 @@ export function goUpstreamPath(p: GoProxyPath): string {
       return `${base}/@v/${escapeGoPath(p.version ?? '')}.${p.kind}`;
   }
 }
+
+/** The one checksum database the relay serves: Go's default `GOSUMDB`. */
+export const GO_SUMDB_NAME = 'sum.golang.org';
+const SUMDB_PREFIX = `/sumdb/${GO_SUMDB_NAME}/`;
+/** `tile/<height>/<level>/<index>[.p/<width>]`; an index is 3-digit groups, all but the last `x`-prefixed. */
+const SUMDB_TILE_RE = /^tile\/\d{1,2}\/(?:\d{1,2}|data)\/(?:x\d{3}\/)*\d{3}(?:\.p\/\d{1,3})?$/;
+
+export interface GoSumdbPath {
+  /** The upstream path below the registry URL, rebuilt from validated parts. */
+  path: string;
+  /** Whether the answer is a binary tile rather than text. */
+  tile: boolean;
+}
+
+/**
+ * A checksum-database request the Go tool sends to `$GOPROXY/sumdb/<name>/…`, or null. `rest` is
+ * the path after `/go/<token>/<registryId>`. Only the default database is relayed, and only the
+ * four shapes a client asks for: `supported`, `latest`, `lookup/<module>@<version>` and a tile.
+ * A lookup's module and version are held to the same shapes `go.sum` entries are and re-escaped,
+ * so nothing the caller wrote reaches the upstream.
+ */
+export function parseGoSumdbPath(rest: string): GoSumdbPath | null {
+  if (!rest.startsWith(SUMDB_PREFIX) || FORBIDDEN_RE.test(rest)) {
+    return null;
+  }
+  const tail = rest.slice(SUMDB_PREFIX.length);
+  if (tail.split('/').some((s) => s === '' || s === '.' || s === '..')) {
+    return null;
+  }
+  const path = `${SUMDB_PREFIX}${tail}`;
+  if (tail === 'supported' || tail === 'latest') {
+    return { path, tile: false };
+  }
+  if (SUMDB_TILE_RE.test(tail)) {
+    return { path, tile: true };
+  }
+  if (!tail.startsWith('lookup/')) {
+    return null;
+  }
+  const target = tail.slice('lookup/'.length);
+  const at = target.indexOf('@');
+  if (at < 1 || at !== target.lastIndexOf('@')) {
+    return null;
+  }
+  const module = unescapeGoPath(target.slice(0, at));
+  const version = unescapeGoPath(target.slice(at + 1));
+  if (
+    module === null ||
+    version === null ||
+    !isValidGoModulePath(module) ||
+    !isValidGoVersion(version)
+  ) {
+    return null;
+  }
+  return {
+    path: `${SUMDB_PREFIX}lookup/${escapeGoPath(module)}@${escapeGoPath(version)}`,
+    tile: false,
+  };
+}

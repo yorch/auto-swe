@@ -2836,3 +2836,805 @@ describe('pypi proxy: files', () => {
     await proxy.close();
   });
 });
+
+// ---- Maven proxy (`/maven/<registryId>/…`, the token as the Basic password) ----
+
+const MV = {
+  ...REG,
+  ecosystem: 'maven' as const,
+  id: 'mv-1',
+  isDefault: false,
+  name: 'central',
+  token: 'mv-up-token',
+  upstreamUrl: 'http://mvup.test/maven2',
+};
+const JAR = 'org/acme/lib/1.0/lib-1.0.jar';
+const POM = 'org/acme/lib/1.0/lib-1.0.pom';
+
+/** A request target sent exactly as written, so `..` and escapes are not resolved on the client. */
+const rawTarget = (base: string, path: string, authorization?: string, method = 'GET') =>
+  new Promise<{ body: string; status: number }>((resolve, reject) => {
+    const u = new URL(base);
+    const req = http.request(
+      {
+        headers: authorization ? { authorization } : {},
+        host: u.hostname,
+        method,
+        path,
+        port: u.port,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () =>
+          resolve({ body: Buffer.concat(chunks).toString(), status: res.statusCode ?? 0 })
+        );
+      }
+    );
+    req.on('error', reject);
+    req.end();
+  });
+
+/** An in-memory stand-in for the tarball cache, keyed like the real one. */
+function memoryCache() {
+  const store = new Map<string, Buffer>();
+  const cache = {
+    get: async (id: string, key: string) => {
+      const hit = store.get(`${id} ${key}`);
+      return hit ? { createStream: () => Readable.from([hit]) } : null;
+    },
+    startWrite: async (id: string, key: string) => {
+      const parts: Buffer[] = [];
+      return {
+        abort: async () => {},
+        commit: async () => {
+          store.set(`${id} ${key}`, Buffer.concat(parts));
+        },
+        write: async (c: Uint8Array) => {
+          parts.push(Buffer.from(c));
+        },
+      };
+    },
+  } as unknown as TarballCache;
+  return { cache, store };
+}
+
+async function startMavenProxy(
+  upstream: (url: string, init?: RequestInit) => Promise<Response>,
+  opts: {
+    allowlist?: Map<string, Set<string>> | null;
+    cache?: TarballCache;
+    maxMavenFileBytes?: number;
+    registry?: typeof MV;
+    upstreamDeadlineMs?: number;
+  } = {}
+) {
+  const denials: unknown[] = [];
+  const proxy = createRegistryProxy({
+    advertisedUrl: (p) => `http://127.0.0.1:${p}`,
+    cache: opts.cache,
+    listenHost: '127.0.0.1',
+    listenPort: 0,
+    maxMavenFileBytes: opts.maxMavenFileBytes,
+    upstreamDeadlineMs: opts.upstreamDeadlineMs,
+    upstreamFetch: upstream as never,
+  });
+  const base = `http://127.0.0.1:${await proxy.listen()}`;
+  const reg = await proxy.register({
+    onDenied: (d) => denials.push(d),
+    registries: [opts.registry ?? MV],
+  });
+  reg.setAllowlist(new Map([[MV.id, opts.allowlist === undefined ? null : opts.allowlist]]));
+  const at = (path: string, method = 'GET', authorization = basic('token', reg.token)) =>
+    rawGet(base, `/maven/${MV.id}/${path}`, authorization, method);
+  return { at, base, denials, proxy, reg };
+}
+
+describe('maven proxy: access', () => {
+  it('answers 401, 404, 405, 503 and 404 in the PyPI route’s order', async () => {
+    const { base, proxy } = await startProxy(async () => new Response('x'));
+    const reg = await proxy.register({ onDenied: () => {}, registries: [MV, REG, GO, PY] });
+    const at = (id: string, method = 'GET') =>
+      rawGet(base, `/maven/${id}/${JAR}`, basic('token', reg.token), method);
+    expect((await rawGet(base, `/maven/mv-1/${JAR}`, basic('token', 'wrong'))).status).toBe(401);
+    expect((await at('nope')).status).toBe(404);
+    // Neither an npm, a Go nor a PyPI registry id is a Maven registry.
+    for (const id of [REG.id, GO.id, PY.id]) {
+      expect((await at(id)).status, id).toBe(404);
+    }
+    expect((await at('mv-1', 'POST')).status).toBe(405);
+    expect((await at('mv-1', 'DELETE')).status).toBe(405);
+    expect((await at('mv-1')).status).toBe(503);
+    reg.setAllowlist(
+      new Map([
+        [MV.id, null],
+        [REG.id, null],
+        [GO.id, null],
+        [PY.id, null],
+      ])
+    );
+    const bad = await rawGet(base, `/maven/mv-1/org/acme`, basic('token', reg.token));
+    expect(bad.status).toBe(404);
+    expect(bad.body).toContain('unrecognized Maven path');
+    expect((await at('mv-1')).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('authenticates by the Basic password alone, whatever the user name', async () => {
+    const { at, base, proxy, reg } = await startMavenProxy(async () => new Response('JAR'));
+    expect((await at(JAR, 'GET', basic('token', reg.token))).status).toBe(200);
+    expect((await at(JAR, 'GET', basic('', reg.token))).status).toBe(200);
+    expect((await at(JAR, 'GET', basic('anything', reg.token))).status).toBe(200);
+    expect((await at(JAR, 'GET', basic(reg.token, 'x'))).status).toBe(401);
+    expect((await at(JAR, 'GET', basic(reg.token, ''))).status).toBe(401);
+    expect(
+      (await at(JAR, 'GET', `Basic ${Buffer.from(reg.token).toString('base64')}`)).status
+    ).toBe(401);
+    expect((await at(JAR, 'GET', 'Basic !!!')).status).toBe(401);
+    expect((await at(JAR, 'GET', basic('token', 'wrong'))).status).toBe(401);
+    // A token in the path is no credential.
+    expect((await rawGet(base, `/maven/${reg.token}/${MV.id}/${JAR}`)).status).toBe(401);
+    expect(
+      (await rawGet(base, `/maven/${reg.token}/${MV.id}/${JAR}`, basic('token', reg.token))).status
+    ).toBe(404);
+    await proxy.close();
+  });
+
+  it('refuses a Bearer header, or none, with a Basic challenge before anything else', async () => {
+    const { base, proxy, reg } = await startMavenProxy(async () => new Response('JAR'));
+    for (const authorization of [bearer(reg.token), undefined]) {
+      const res = await rawGet(base, `/maven/${MV.id}/${JAR}`, authorization);
+      expect(res.status).toBe(401);
+      expect(res.headers['www-authenticate']).toBe('Basic realm="registry"');
+    }
+    for (const path of ['/maven/nope/x.jar', '/maven/mv-1/other', '/maven/']) {
+      const res = await rawGet(base, path, bearer(reg.token));
+      expect(res.status, path).toBe(401);
+      expect(res.headers['www-authenticate'], path).toBe('Basic realm="registry"');
+    }
+    await proxy.close();
+  });
+
+  it('judges the route by the normalised path: /maven/.. reaches neither npm nor Go', async () => {
+    const { base, proxy } = await startProxy(async () => new Response('{}'));
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG, GO, MV] });
+    reg.setAllowlist(
+      new Map([
+        [MV.id, null],
+        [REG.id, null],
+        [GO.id, null],
+      ])
+    );
+    const creds = basic('u', reg.token);
+    // Basic is read on no route but PyPI and Maven.
+    expect((await rawGet(base, `/npm/${REG.id}/pkg`, creds)).status).toBe(401);
+    expect((await rawGet(base, `/go/wrong/${GO.id}/a/b/@latest`, creds)).status).toBe(401);
+    for (const path of [
+      `/maven/../npm/${REG.id}/pkg`,
+      `/maven/%2e%2e/npm/${REG.id}/pkg`,
+      `/maven/x/../../npm/${REG.id}/pkg`,
+    ]) {
+      // Judged as the npm path it normalises to: Basic is refused, Bearer is an ordinary request.
+      expect((await rawTarget(base, path, creds)).status, path).toBe(401);
+      expect((await rawTarget(base, path, bearer(reg.token))).status, path).toBe(200);
+      expect((await rawTarget(base, path)).status, path).toBe(401);
+    }
+    // `/maven/<id>/../npm/…` is the Maven route with the registry id `npm`: with no credential
+    // it is a challenge, with one an unknown registry — never npm.
+    const sibling = `/maven/${MV.id}/../npm/${REG.id}/pkg`;
+    expect((await rawTarget(base, sibling)).status).toBe(401);
+    expect((await rawTarget(base, sibling, creds)).status).toBe(404);
+    expect((await rawTarget(base, `/maven/../go/wrong/${GO.id}/a/b/@latest`, creds)).status).toBe(
+      401
+    );
+    await proxy.close();
+  });
+
+  it('puts the proxy token in no response, header or denial report', async () => {
+    const seenByUpstream: string[] = [];
+    const { at, base, denials, proxy, reg } = await startMavenProxy(async (url, init) => {
+      seenByUpstream.push(url, JSON.stringify(init?.headers));
+      return url.endsWith('.pom')
+        ? new Response('SECRET-UPSTREAM', { status: 500 })
+        : new Response('JAR');
+    });
+    const responses = [
+      await at(JAR),
+      await at(POM),
+      await at('org/acme'),
+      await at(JAR, 'POST'),
+      await at(JAR, 'GET', basic('token', 'wrong')),
+      await rawGet(base, `/maven/nope/${JAR}`, basic('token', reg.token)),
+      await rawGet(base, `/maven/${reg.token}/${MV.id}/${JAR}`, basic('token', reg.token)),
+    ];
+    expect(responses.map((r) => r.status)).toEqual([200, 502, 404, 405, 401, 404, 404]);
+    expect(JSON.stringify(responses.map((r) => [r.body, r.headers]))).not.toContain(reg.token);
+    expect(JSON.stringify(seenByUpstream)).not.toContain(reg.token);
+    expect(denials).toEqual([]);
+    await proxy.close();
+  });
+});
+
+describe('maven proxy: isolation from the other ecosystems', () => {
+  it('keeps a Maven registry out of the npm, Go and PyPI routes', async () => {
+    const urls: string[] = [];
+    const { base, proxy } = await startProxy(async (url) => {
+      urls.push(url);
+      return new Response('{}');
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [MV, REG] });
+    reg.setAllowlist(
+      new Map([
+        [MV.id, null],
+        [REG.id, null],
+      ])
+    );
+    expect((await rawGet(base, `/npm/${MV.id}/pkg`, bearer(reg.token))).status).toBe(404);
+    expect((await rawGet(base, `/go/${reg.token}/${MV.id}/a/b/@latest`)).status).toBe(404);
+    expect((await rawGet(base, `/pypi/${MV.id}/simple/flask/`, basic('t', reg.token))).status).toBe(
+      404
+    );
+    expect(urls).toEqual([]);
+    await proxy.close();
+  });
+
+  it('ignores a Maven row in npm default resolution, scopes and the audit relay', async () => {
+    const urls: string[] = [];
+    const { base, proxy } = await startProxy(async (url) => {
+      urls.push(url);
+      return new Response('{}');
+    });
+    // The only default-flagged registry is the Maven one, and it claims a scope.
+    const mvDefault = { ...MV, isDefault: true, scopes: ['@acme'] };
+    const npmPlain = { ...REG, isDefault: false, scopes: ['@other'] };
+    const reg = await proxy.register({ onDenied: () => {}, registries: [mvDefault, npmPlain] });
+    reg.setAllowlist(
+      new Map([
+        [MV.id, null],
+        [REG.id, null],
+      ])
+    );
+    const npm = (path: string, method = 'GET') =>
+      rawGet(base, `/npm/${REG.id}${path}`, bearer(reg.token), method);
+    const noDefault = await npm('/left-pad');
+    expect(noDefault.status).toBe(404);
+    expect(noDefault.body).toContain('no registry serves left-pad');
+    expect((await npm('/@acme%2fx')).status).toBe(404);
+    expect((await npm('/@other%2fx')).status).toBe(200);
+    const audit = await npm('/-/npm/v1/security/advisories/bulk', 'POST');
+    expect(audit.status).toBe(404);
+    expect(audit.body).toContain('no default registry answers audits');
+    expect(urls).toEqual(['http://upstream.test/@other%2fx']);
+    await proxy.close();
+  });
+});
+
+describe('maven proxy: paths and kinds', () => {
+  it('never reaches the upstream for a path that is not a plain file path', async () => {
+    const upstream = vi.fn(async () => new Response('x'));
+    const { base, proxy, reg } = await startMavenProxy(upstream);
+    const creds = basic('t', reg.token);
+    const longSegment = 'a'.repeat(201);
+    const deep = Array.from({ length: 25 }, () => 'a').join('/');
+    for (const rest of [
+      '',
+      '/',
+      '/org/acme/',
+      '/org/acme',
+      '/org//acme/x.jar',
+      '/org/.hidden/x.jar',
+      '/org/acme/x%2ejar',
+      '/org/ac%2fme/x.jar',
+      '/org/acme/x%00.jar',
+      '/org/acme/x%20y.jar',
+      '/org/acme/x%5c..%5cy.jar',
+      '/org/acme/%C3%A9.jar',
+      `/${longSegment}/x.jar`,
+      `/${deep}/x.jar`,
+    ]) {
+      const res = await rawTarget(base, `/maven/${MV.id}${rest}`, creds);
+      expect(res.status, rest).toBe(404);
+      expect(res.body, rest).toContain('unrecognized Maven path');
+    }
+    // `..` is resolved before routing: it can climb out of the route, never into the upstream.
+    const out = await rawTarget(base, `/maven/${MV.id}/../../etc/x.jar`, creds);
+    expect(out.status).toBe(401);
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+
+  it('builds the upstream URL from the validated path alone, with no query', async () => {
+    const urls: string[] = [];
+    const { at, proxy } = await startMavenProxy(async (url) => {
+      urls.push(url);
+      return new Response('x');
+    });
+    await at(JAR);
+    await at(`${POM}?x=1#frag`);
+    await at('org/acme/lib/1.0/lib-1.0+b_1~2.jar');
+    expect(urls).toEqual([
+      `http://mvup.test/maven2/${JAR}`,
+      `http://mvup.test/maven2/${POM}`,
+      'http://mvup.test/maven2/org/acme/lib/1.0/lib-1.0+b_1~2.jar',
+    ]);
+    await proxy.close();
+  });
+
+  it('answers a fixed content type per file, never the upstream’s own', async () => {
+    const { at, proxy } = await startMavenProxy(
+      async () => new Response('x', { headers: { 'content-type': 'text/html' } })
+    );
+    expect((await at(POM)).headers['content-type']).toBe('application/xml');
+    expect((await at(`${JAR}.sha1`)).headers['content-type']).toBe('text/plain; charset=utf-8');
+    expect((await at(JAR)).headers['content-type']).toBe('application/octet-stream');
+    await proxy.close();
+  });
+});
+
+describe('maven proxy: relay', () => {
+  it('sends the registry credential to its own origin with redirects refused', async () => {
+    const seen: Array<{ headers: Record<string, string>; redirect?: string; url: string }> = [];
+    const { at, proxy, reg } = await startMavenProxy(async (url, init) => {
+      seen.push({
+        headers: init?.headers as Record<string, string>,
+        redirect: init?.redirect,
+        url,
+      });
+      return new Response('x');
+    });
+    await at(JAR);
+    expect(seen[0]?.headers.authorization).toBe('Bearer mv-up-token');
+    expect(seen[0]?.redirect).toBe('error');
+    expect(new URL(seen[0]?.url ?? '').origin).toBe(new URL(MV.upstreamUrl).origin);
+    expect(JSON.stringify(seen)).not.toContain(reg.token);
+    await proxy.close();
+  });
+
+  it('sends a basic credential as Basic', async () => {
+    const seen: Array<Record<string, string>> = [];
+    const { at, proxy } = await startMavenProxy(
+      async (_url, init) => {
+        seen.push(init?.headers as Record<string, string>);
+        return new Response('x');
+      },
+      { registry: { ...MV, authKind: 'basic' as never, token: 'svc:secret' } }
+    );
+    await at(JAR);
+    expect(seen[0]?.authorization).toBe(`Basic ${Buffer.from('svc:secret').toString('base64')}`);
+    await proxy.close();
+  });
+
+  it('answers a 404 and a 410 as 404, with a fixed body', async () => {
+    const { at, proxy } = await startMavenProxy(async (url) =>
+      url.endsWith('.pom')
+        ? new Response('SECRET-UPSTREAM-404', { status: 404 })
+        : new Response('SECRET-UPSTREAM-410', { status: 410 })
+    );
+    for (const path of [POM, JAR]) {
+      const res = await at(path);
+      expect(res.status, path).toBe(404);
+      expect(res.body, path).not.toContain('SECRET');
+      expect(JSON.parse(res.body).error).toMatch(/^the upstream Maven repository/);
+    }
+    await proxy.close();
+  });
+
+  it('turns any other upstream status, a redirect and a fetch failure into a fixed 502', async () => {
+    let mode: 'redirect' | 'error' | 'throw' = 'error';
+    const { at, proxy } = await startMavenProxy(async (_url, init) => {
+      expect(init?.redirect).toBe('error');
+      if (mode === 'throw') {
+        throw new Error('SECRET connect ECONNREFUSED 10.0.0.1');
+      }
+      if (mode === 'redirect') {
+        throw new TypeError('fetch failed', { cause: new Error('SECRET unexpected redirect') });
+      }
+      return new Response('SECRET upstream 500 body', { status: 500 });
+    });
+    for (const m of ['error', 'redirect', 'throw'] as const) {
+      mode = m;
+      for (const path of [POM, JAR]) {
+        const res = await at(path);
+        expect(res.status, `${m} ${path}`).toBe(502);
+        expect(res.body, `${m} ${path}`).not.toContain('SECRET');
+        expect(JSON.parse(res.body).error).toMatch(/^the upstream Maven repository/);
+      }
+    }
+    await proxy.close();
+  });
+
+  it('relays HEAD without a body', async () => {
+    const methods: Array<string | undefined> = [];
+    const { at, proxy } = await startMavenProxy(async (_url, init) => {
+      methods.push(init?.method);
+      return init?.method === 'HEAD'
+        ? new Response(null, { headers: { 'content-length': '3' }, status: 200 })
+        : new Response('JAR');
+    });
+    const head = await at(JAR, 'HEAD');
+    expect(head.status).toBe(200);
+    expect(head.body).toBe('');
+    expect(methods).toEqual(['HEAD']);
+    await proxy.close();
+  });
+
+  it('refuses a file whose content-length is over the cap, before streaming', async () => {
+    const { at, proxy } = await startMavenProxy(
+      async () => new Response('x'.repeat(100), { headers: { 'content-length': '100' } }),
+      { maxMavenFileBytes: 50 }
+    );
+    const res = await at(JAR);
+    expect(res.status).toBe(502);
+    expect(res.cutOff).toBe(false);
+    await proxy.close();
+  });
+
+  it('cuts a file off once it passes the cap without a content-length', async () => {
+    const aborted = vi.fn();
+    const { at, proxy } = await startMavenProxy(
+      async (_url, init) => {
+        init?.signal?.addEventListener('abort', aborted);
+        const chunk = new Uint8Array(40).fill(65);
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.enqueue(chunk);
+              return new Promise((r) => setTimeout(r, 1));
+            },
+          })
+        );
+      },
+      { maxMavenFileBytes: 100 }
+    );
+    const res = await at(JAR);
+    expect(res.cutOff).toBe(true);
+    expect(res.bytes).toBeLessThanOrEqual(100);
+    await vi.waitFor(() => expect(aborted).toHaveBeenCalled());
+    await proxy.close();
+  });
+
+  it('holds a small file to the upstream deadline and lets an archive stream past it', async () => {
+    const slow = async (url: string, init?: RequestInit) => {
+      if (url.endsWith('.pom')) {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        });
+      }
+      await new Promise((r) => setTimeout(r, 120));
+      return new Response('JARBYTES');
+    };
+    const { at, proxy } = await startMavenProxy(slow, { upstreamDeadlineMs: 40 });
+    const pom = await at(POM);
+    expect(pom.status).toBe(502);
+    expect(JSON.parse(pom.body).error).toMatch(/^the upstream Maven repository/);
+    const jar = await at(JAR);
+    expect(jar.status).toBe(200);
+    expect(jar.body).toBe('JARBYTES');
+    await proxy.close();
+  });
+});
+
+describe('maven proxy: open mode only', () => {
+  it('serves nothing from a registry whose allowlist is not open', async () => {
+    const upstream = vi.fn(async () => new Response('JAR'));
+    const lockfile = await startMavenProxy(upstream, {
+      allowlist: new Map([['org.acme:lib', new Set(['1.0'])]]),
+    });
+    const res = await lockfile.at(JAR);
+    expect(res.status).toBe(503);
+    expect(JSON.parse(res.body).error).toBe('a Maven registry serves open mode only');
+    expect((await lockfile.at(JAR, 'HEAD')).status).toBe(503);
+    expect(lockfile.denials).toEqual([]);
+    await lockfile.proxy.close();
+    // A registry the allowlist map does not name at all is not open either.
+    const proxy = createRegistryProxy({
+      advertisedUrl: (p) => `http://127.0.0.1:${p}`,
+      listenHost: '127.0.0.1',
+      listenPort: 0,
+      upstreamFetch: upstream as never,
+    });
+    const base = `http://127.0.0.1:${await proxy.listen()}`;
+    const reg = await proxy.register({ onDenied: () => {}, registries: [MV] });
+    reg.setAllowlist(new Map());
+    const unnamed = await rawGet(base, `/maven/${MV.id}/${JAR}`, basic('t', reg.token));
+    expect(unnamed.status).toBe(503);
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+});
+
+describe('maven proxy: cache', () => {
+  it('caches a release file and answers the second request from it', async () => {
+    const { cache, store } = memoryCache();
+    const upstream = vi.fn(async () => new Response('JARDATA'));
+    const { at, proxy } = await startMavenProxy(upstream, { cache });
+    expect((await at(JAR)).body).toBe('JARDATA');
+    expect((await at(JAR)).body).toBe('JARDATA');
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(store.has(`mv-1 http://mvup.test/maven2/${JAR}`)).toBe(true);
+    // HEAD always asks the upstream.
+    await at(JAR, 'HEAD');
+    expect(upstream).toHaveBeenCalledTimes(2);
+    await proxy.close();
+  });
+
+  it('never caches nor serves from the cache metadata and snapshot files', async () => {
+    const { cache, store } = memoryCache();
+    const stale = [
+      'org/acme/lib/maven-metadata.xml',
+      'org/acme/lib/maven-metadata.xml.sha1',
+      'org/acme/lib/1.0-SNAPSHOT/maven-metadata.xml',
+      'org/acme/lib/1.0-SNAPSHOT/lib-1.0-SNAPSHOT.jar',
+      'org/acme/lib/1.0-SNAPSHOT/lib-1.0-20240101.123456-3.jar',
+      'org/acme/lib/1.0-SNAPSHOT/lib-1.0-20240101.123456-3.pom',
+    ];
+    for (const p of stale) {
+      store.set(`mv-1 http://mvup.test/maven2/${p}`, Buffer.from('STALE'));
+    }
+    const seeded = store.size;
+    const upstream = vi.fn(async () => new Response('FRESH'));
+    const { at, proxy } = await startMavenProxy(upstream, { cache });
+    for (const p of stale) {
+      expect((await at(p)).body, p).toBe('FRESH');
+      expect((await at(p)).body, p).toBe('FRESH');
+    }
+    expect(upstream).toHaveBeenCalledTimes(stale.length * 2);
+    expect(store.size).toBe(seeded);
+    await proxy.close();
+  });
+
+  // The real cache is the one place a Maven file, a Go zip and an npm tarball share storage, so its
+  // key layout (a directory per registry id) is exercised here and not only through a fake.
+  it('stores a release on disk under its registry id and serves the second request from it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'maven-cache-'));
+    const cache = new TarballCache(dir, 10 * 1024 * 1024);
+    const upstream = vi.fn(async () => new Response('JARDATA'));
+    const { at, proxy } = await startMavenProxy(upstream, { cache });
+    expect((await at(JAR)).body).toBe('JARDATA');
+    // The entry is committed (renamed into place as `<sha>.tgz`) after the response ends.
+    const committed = () =>
+      existsSync(join(dir, MV.id)) && readdirSync(join(dir, MV.id)).some((f) => f.endsWith('.tgz'));
+    for (let i = 0; i < 200 && !committed(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(committed()).toBe(true);
+    expect((await at(JAR)).body).toBe('JARDATA');
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(readdirSync(join(dir, MV.id))).toHaveLength(1);
+    // Metadata and a snapshot add nothing to the directory.
+    await at('org/acme/lib/maven-metadata.xml');
+    await at('org/acme/lib/1.0-SNAPSHOT/lib-1.0-SNAPSHOT.jar');
+    expect(readdirSync(join(dir, MV.id))).toHaveLength(1);
+    await proxy.close();
+  });
+});
+
+// ---- Go checksum-database relay (`/go/<token>/<registryId>/sumdb/sum.golang.org/…`) ----
+
+const SUMDB = '/sumdb/sum.golang.org';
+
+async function startSumdbProxy(
+  upstream: (url: string, init?: RequestInit) => Promise<Response>,
+  opts: {
+    allowlist?: Map<string, Set<string>> | null;
+    cache?: TarballCache;
+    limits?: {
+      maxBufferedFetches?: number;
+      maxQueuedFetches?: number;
+      upstreamDeadlineMs?: number;
+    };
+  } = {}
+) {
+  const denials: unknown[] = [];
+  const proxy = createRegistryProxy({
+    ...opts.limits,
+    advertisedUrl: (p) => `http://127.0.0.1:${p}`,
+    cache: opts.cache,
+    listenHost: '127.0.0.1',
+    listenPort: 0,
+    upstreamFetch: upstream as never,
+  });
+  const base = `http://127.0.0.1:${await proxy.listen()}`;
+  const reg = await proxy.register({ onDenied: (d) => denials.push(d), registries: [GO] });
+  reg.setAllowlist(new Map([[GO.id, opts.allowlist === undefined ? null : opts.allowlist]]));
+  const call = (rest: string, method = 'GET') =>
+    rawGet(base, `/go/${reg.token}/${GO.id}${rest}`, undefined, method);
+  return { base, call, denials, proxy, reg };
+}
+
+describe('go checksum database relay', () => {
+  it('relays the four request shapes to the same path upstream, with a fixed content type', async () => {
+    const urls: string[] = [];
+    const { call, proxy } = await startSumdbProxy(async (url) => {
+      urls.push(url);
+      return new Response('answer', { headers: { 'content-type': 'text/html' } });
+    });
+    const text = [
+      'supported',
+      'latest',
+      'lookup/golang.org/x/text@v0.14.0',
+      'lookup/github.com/!azure/go-autorest@v14.2.0+incompatible',
+    ];
+    const tiles = ['tile/8/0/000', 'tile/8/1/x001/234', 'tile/8/0/x001/x234/567.p/128'];
+    for (const rest of text) {
+      const res = await call(`${SUMDB}/${rest}`);
+      expect(res.status, rest).toBe(200);
+      expect(res.body).toBe('answer');
+      expect(res.headers['content-type'], rest).toBe('text/plain; charset=utf-8');
+    }
+    for (const rest of tiles) {
+      const res = await call(`${SUMDB}/${rest}`);
+      expect(res.status, rest).toBe(200);
+      expect(res.headers['content-type'], rest).toBe('application/octet-stream');
+    }
+    expect(urls).toEqual([...text, ...tiles].map((r) => `http://goup.test${SUMDB}/${r}`));
+    await proxy.close();
+  });
+
+  it('refuses another database, traversal and malformed shapes before any upstream call', async () => {
+    const upstream = vi.fn(async () => new Response('x'));
+    const { call, proxy } = await startSumdbProxy(upstream);
+    for (const rest of [
+      '/sumdb/sum.example.org/supported',
+      '/sumdb/sum.golang.org.evil/supported',
+      '/sumdb/',
+      '/sumdb/sum.golang.org',
+      `${SUMDB}/`,
+      `${SUMDB}/other`,
+      `${SUMDB}/supported/x`,
+      `${SUMDB}/lookup/golang.org/x/text`,
+      `${SUMDB}/lookup/golang.org/x/text@latest`,
+      `${SUMDB}/lookup/a%2fb@v1.0.0`,
+      `${SUMDB}/lookup/Golang.org/x/text@v0.14.0`,
+      `${SUMDB}/tile/8/0/1`,
+      `${SUMDB}/tile/8/0/x01/234`,
+      `${SUMDB}/tile/8/0/234.p`,
+      `${SUMDB}/tile/8/0/234.p/x`,
+      `${SUMDB}//supported`,
+      `${SUMDB}/a%2fb/supported`,
+    ]) {
+      const res = await call(rest);
+      expect(res.status, rest).toBe(404);
+      expect(res.body, rest).toContain('unrecognized Go checksum database path');
+    }
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+
+  it('judges a traversal by the normalised path', async () => {
+    const urls: string[] = [];
+    const { base, proxy, reg } = await startSumdbProxy(async (url) => {
+      urls.push(url);
+      return new Response('x');
+    });
+    // `..` is resolved before routing, so this is `/sumdb/latest`, which is not the database.
+    const res = await rawTarget(base, `/go/${reg.token}/${GO.id}${SUMDB}/../latest`);
+    expect(res.status).toBe(404);
+    expect(urls).toEqual([]);
+    await proxy.close();
+  });
+
+  it('sends the registry credential with redirects refused, and never the proxy token', async () => {
+    const seen: Array<{ headers: Record<string, string>; redirect?: string }> = [];
+    const { call, proxy, reg } = await startSumdbProxy(async (_url, init) => {
+      seen.push({ headers: init?.headers as Record<string, string>, redirect: init?.redirect });
+      return new Response('x');
+    });
+    await call(`${SUMDB}/supported`);
+    expect(seen[0]?.headers.authorization).toBe('Bearer go-up-token');
+    expect(seen[0]?.headers['accept-encoding']).toBe('identity');
+    expect(seen[0]?.redirect).toBe('error');
+    expect(JSON.stringify(seen)).not.toContain(reg.token);
+    await proxy.close();
+  });
+
+  it('is GET and HEAD only, and caches nothing', async () => {
+    const { cache, store } = memoryCache();
+    const upstream = vi.fn(async () => new Response('answer'));
+    const { call, proxy } = await startSumdbProxy(upstream, { cache });
+    expect((await call(`${SUMDB}/latest`, 'POST')).status).toBe(405);
+    expect((await call(`${SUMDB}/latest`)).body).toBe('answer');
+    expect((await call(`${SUMDB}/latest`)).body).toBe('answer');
+    expect((await call(`${SUMDB}/tile/8/0/000`)).body).toBe('answer');
+    expect((await call(`${SUMDB}/latest`, 'HEAD')).status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(4);
+    expect(store.size).toBe(0);
+    await proxy.close();
+  });
+
+  it('answers a 404 and a 410 as 404, and never relays an upstream body on an error', async () => {
+    let status = 404;
+    const { call, proxy } = await startSumdbProxy(async () => {
+      if (status === 0) {
+        throw new Error('SECRET connect ECONNREFUSED 10.0.0.1');
+      }
+      return new Response(`SECRET-UPSTREAM-${status}`, { status });
+    });
+    for (const s of [404, 410]) {
+      status = s;
+      const res = await call(`${SUMDB}/lookup/a/b@v1.0.0`);
+      expect(res.status, String(s)).toBe(404);
+      expect(res.body).not.toContain('SECRET');
+    }
+    for (const s of [500, 302, 0]) {
+      status = s;
+      const res = await call(`${SUMDB}/supported`);
+      expect(res.status, String(s)).toBe(502);
+      expect(res.body).not.toContain('SECRET');
+      expect(JSON.parse(res.body).error).toMatch(/^the upstream Go checksum database/);
+    }
+    await proxy.close();
+  });
+
+  it('refuses an answer over 8 MiB', async () => {
+    const { call, proxy } = await startSumdbProxy(
+      async () => new Response('x', { headers: { 'content-length': String(9 * 1024 * 1024) } })
+    );
+    const res = await call(`${SUMDB}/tile/8/0/000`);
+    expect(res.status).toBe(502);
+    expect(res.cutOff).toBe(false);
+    await proxy.close();
+  });
+
+  it('is served in lockfile mode too, without touching the module allowlist', async () => {
+    const urls: string[] = [];
+    const { call, denials, proxy } = await startSumdbProxy(
+      async (url) => {
+        urls.push(url);
+        return new Response('answer');
+      },
+      { allowlist: goLockfile() }
+    );
+    expect((await call(`${SUMDB}/supported`)).status).toBe(200);
+    expect((await call(`${SUMDB}/lookup/example.com/other@v1.0.0`)).status).toBe(200);
+    expect((await call(`${SUMDB}/tile/8/0/000`)).status).toBe(200);
+    expect(denials).toEqual([]);
+    // The module routes still enforce the lockfile.
+    expect((await call('/example.com/other/@v/v1.0.0.zip')).status).toBe(403);
+    expect(urls).toHaveLength(3);
+    await proxy.close();
+  });
+
+  it('takes a buffered-fetch slot for the whole relay: a taken slot is a 503', async () => {
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    let started = 0;
+    const { call, proxy } = await startSumdbProxy(
+      async () => {
+        started++;
+        await gate;
+        return new Response('answer');
+      },
+      { limits: { maxBufferedFetches: 1, maxQueuedFetches: 0 } }
+    );
+    const first = call(`${SUMDB}/latest`);
+    for (let i = 0; i < 1000 && started === 0; i++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    }
+    expect(started).toBe(1);
+    const busy = await call(`${SUMDB}/supported`);
+    expect(busy.status).toBe(503);
+    expect(busy.headers['retry-after']).toBe('5');
+    open();
+    expect((await first).status).toBe(200);
+    // The slot is given back.
+    expect((await call(`${SUMDB}/supported`)).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('answers a fixed 502 when the upstream does not answer within the deadline', async () => {
+    const { call, proxy } = await startSumdbProxy(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+      { limits: { upstreamDeadlineMs: 40 } }
+    );
+    const res = await call(`${SUMDB}/supported`);
+    expect(res.status).toBe(502);
+    expect(JSON.parse(res.body).error).toMatch(/^the upstream Go checksum database/);
+    await proxy.close();
+  });
+});

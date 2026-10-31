@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   registryWorkspaceEnv,
+  renderMavenSettings,
   renderNpmrc,
   renderYarnrc,
   splitRegistryWorkspaceEnv,
@@ -201,5 +202,85 @@ describe('npm renderers skip pypi registries', () => {
   it('renderYarnrc never names a pypi registry id and is null without npm', () => {
     expect(renderYarnrc([PYPI, SCOPED], BASE)).not.toContain('pypi-1');
     expect(renderYarnrc([PYPI, GO], BASE)).toBeNull();
+  });
+});
+
+const MAVEN = { ecosystem: 'maven' as const, id: 'mvn-1', isDefault: true, scopes: [] };
+const MAVEN_ARGS = 'MAVEN_ARGS=-s /workspace/.auto-swe/maven-settings.xml';
+
+describe('renderMavenSettings', () => {
+  it('is null without a maven registry', () => {
+    expect(renderMavenSettings([NPM, GO], BASE, TOKEN)).toBeNull();
+    expect(renderMavenSettings([], BASE, TOKEN)).toBeNull();
+  });
+
+  it('mirrors everything to the proxy route, with the token as the server password only', () => {
+    const xml = renderMavenSettings([NPM, MAVEN], BASE, TOKEN) ?? '';
+    expect(xml).toContain('<mirrorOf>*</mirrorOf>');
+    expect(xml).toContain('<id>auto-swe-proxy</id>');
+    expect(xml).toContain(`<url>${BASE}/maven/mvn-1/</url>`);
+    expect(xml).toContain('<username>token</username>');
+    expect(xml).toContain(`<password>${TOKEN}</password>`);
+    expect(xml.match(/<mirror>/g)).toHaveLength(1);
+    expect(xml.match(/<server>/g)).toHaveLength(1);
+    // No credentials in the URL, and the token appears once.
+    expect(xml).not.toMatch(/https?:\/\/[^<\s/]*@/);
+    expect(xml.split(TOKEN)).toHaveLength(2);
+  });
+
+  it('escapes every interpolated value and tolerates a trailing slash on the base URL', () => {
+    const xml =
+      renderMavenSettings(
+        [{ ...MAVEN, id: 'a<b>&"c' }],
+        'http://proxy.internal:9999/',
+        `p&ss<w>"o'rd`
+      ) ?? '';
+    expect(xml).toContain('<url>http://proxy.internal:9999/maven/a&lt;b&gt;&amp;&quot;c/</url>');
+    expect(xml).toContain('<password>p&amp;ss&lt;w&gt;&quot;o&apos;rd</password>');
+  });
+});
+
+describe('registryWorkspaceEnv with a maven registry', () => {
+  it('sets MAVEN_ARGS to the settings file path, which holds no secret', () => {
+    const env = registryWorkspaceEnv([MAVEN], BASE, TOKEN);
+    expect(env).toContain(MAVEN_ARGS);
+    expect(env.join('\n')).not.toContain(TOKEN);
+  });
+
+  it('gives a maven-only workspace, alone or with go and pypi, no npm, Corepack or Yarn env', () => {
+    for (const list of [[MAVEN], [MAVEN, GO], [MAVEN, GO, PYPI]]) {
+      const env = registryWorkspaceEnv(list, BASE, TOKEN);
+      expect(env.some((p) => /^(NPM_CONFIG_|YARN_|COREPACK_)/.test(p))).toBe(false);
+    }
+  });
+
+  it('still emits the npm block beside maven, and nothing maven-specific without it', () => {
+    const env = registryWorkspaceEnv([NPM, MAVEN], BASE, TOKEN);
+    expect(env).toContain(`NPM_CONFIG_REGISTRY=${BASE}/npm/npm-1`);
+    expect(env).toContain(MAVEN_ARGS);
+    expect(registryWorkspaceEnv([NPM], BASE, TOKEN).some((p) => p.startsWith('MAVEN_'))).toBe(
+      false
+    );
+  });
+
+  it('keeps MAVEN_ARGS in plain env and every token variable in secretEnv', () => {
+    const { env, secretEnv } = splitRegistryWorkspaceEnv(
+      registryWorkspaceEnv([MAVEN, GO, PYPI], BASE, TOKEN)
+    );
+    expect(env).toContain(MAVEN_ARGS);
+    expect(env.join('\n')).not.toContain(TOKEN);
+    expect(Object.keys(secretEnv)).toContain('GOPROXY');
+    expect(Object.keys(secretEnv)).not.toContain('MAVEN_ARGS');
+  });
+});
+
+describe('npm renderers skip maven registries', () => {
+  it('renderNpmrc never names a maven registry id', () => {
+    expect(renderNpmrc([NPM, MAVEN], BASE, TOKEN)).not.toContain('mvn-1');
+  });
+
+  it('renderYarnrc never names a maven registry id and is null without npm', () => {
+    expect(renderYarnrc([MAVEN, SCOPED], BASE)).not.toContain('mvn-1');
+    expect(renderYarnrc([MAVEN, GO], BASE)).toBeNull();
   });
 });

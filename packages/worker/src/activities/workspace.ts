@@ -17,6 +17,7 @@ import { redactExecError } from '../lib/redactToken.js';
 import {
   beginWorkspaceRegistries,
   buildRegistryAllowlist,
+  renderMavenSettings,
   renderNpmrc,
   renderYarnrc,
   splitRegistryWorkspaceEnv,
@@ -711,8 +712,10 @@ export async function createWorkspace(
     const stacks = detectedStacks(options?.detectedStack);
     const wantGo = stacks === null || stacks.includes('go');
     const wantPypi = stacks === null || stacks.includes('python');
+    const wantMaven = stacks === null || stacks.includes('jvm');
     registry = await beginWorkspaceRegistries(options?.teamId ?? null, containerName, {
       go: wantGo,
+      maven: wantMaven,
       pypi: wantPypi,
     });
   } catch (err) {
@@ -822,7 +825,28 @@ export async function createWorkspace(
     );
 
     if (registry) {
-      // A workspace with no npm registry (go and/or pypi only) gets none of the npm client files.
+      const mavenSettings = renderMavenSettings(
+        registry.registries,
+        registry.baseUrl,
+        registry.token
+      );
+      if (mavenSettings) {
+        // Via stdin, like the npmrc: the token lands in a file, never on a command line.
+        await rootExec('mkdir -p /workspace/.auto-swe');
+        await backend.exec(
+          handle,
+          [
+            'sh',
+            '-c',
+            'cat > /workspace/.auto-swe/maven-settings.xml && chmod 600 /workspace/.auto-swe/maven-settings.xml',
+          ],
+          {
+            heartbeatLabel: 'workspace: writing registry config',
+            stdin: mavenSettings,
+          }
+        );
+      }
+      // A workspace with no npm registry (go, pypi and/or maven only) gets none of the npm client files.
       if (registry.registries.some((r) => r.ecosystem === 'npm')) {
         // npmrc via stdin: the token lands in a file, never on a command line.
         const npmrc = renderNpmrc(registry.registries, registry.baseUrl, registry.token);

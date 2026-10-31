@@ -31,6 +31,15 @@ const rows: PackageRegistryRow[] = [
     npmScopes: [],
     upstreamUrl: 'https://pypi.org/simple',
   },
+  {
+    ...base,
+    accessMode: 'open',
+    ecosystem: 'maven',
+    id: 'row-maven',
+    name: 'maven-proxy',
+    npmScopes: [],
+    upstreamUrl: 'https://repo.maven.apache.org/maven2',
+  },
 ];
 
 const createMutate = vi.fn().mockResolvedValue({});
@@ -126,7 +135,7 @@ describe('PackageRegistriesTab', () => {
     render(<PackageRegistriesTab />);
     fireEvent.click(screen.getByText('Add registry'));
     const options = within(screen.getByLabelText('Ecosystem')).getAllByRole('option');
-    expect(options.map((o) => o.textContent)).toEqual(['npm', 'Go', 'PyPI']);
+    expect(options.map((o) => o.textContent)).toEqual(['npm', 'Go', 'PyPI', 'Maven']);
   });
 
   it('hides and clears scopes for PyPI, points at the simple index, and sends ecosystem pypi', async () => {
@@ -180,5 +189,58 @@ describe('PackageRegistriesTab', () => {
 
     expect(await within(dialog).findByRole('alert')).toBeTruthy();
     expect(within(dialog).getByRole('alert').textContent).toContain('Registry is still in use');
+  });
+
+  it('lists a Maven row by its ecosystem and its open mode', () => {
+    render(<PackageRegistriesTab />);
+    expect(screen.getAllByText('maven').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('open').length).toBeGreaterThan(0);
+  });
+
+  it('hides scopes for Maven, forces open, disables lockfile, and sends ecosystem maven', async () => {
+    render(<PackageRegistriesTab />);
+    fireEvent.click(screen.getByText('Add registry'));
+    fireEvent.change(screen.getByLabelText('npm scopes'), { target: { value: '@acme' } });
+    fireEvent.change(screen.getByLabelText('Ecosystem'), { target: { value: 'maven' } });
+    expect(screen.queryByLabelText('npm scopes')).toBeNull();
+    expect(screen.getByText(/serves every artifact for its team/)).toBeTruthy();
+    expect(screen.getByText(/Open mode only: Maven has no lockfile/)).toBeTruthy();
+    expect((screen.getByLabelText(/^Upstream URL/) as HTMLInputElement).placeholder).toBe(
+      'https://repo.maven.apache.org/maven2'
+    );
+    const mode = screen.getByLabelText(/^Access mode/) as HTMLSelectElement;
+    expect(mode.value).toBe('open');
+    expect((within(mode).getByText('lockfile') as HTMLOptionElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'maven-proxy' } });
+    fireEvent.change(screen.getByLabelText(/^Upstream URL/), {
+      target: { value: 'https://repo.maven.apache.org/maven2' },
+    });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(createMutate).toHaveBeenCalled());
+    expect(createMutate).toHaveBeenCalledWith(
+      expect.objectContaining({ accessMode: 'open', ecosystem: 'maven', npmScopes: [] })
+    );
+  });
+
+  it('puts lockfile back when the ecosystem moves off Maven', () => {
+    render(<PackageRegistriesTab />);
+    fireEvent.click(screen.getByText('Add registry'));
+    fireEvent.change(screen.getByLabelText('Ecosystem'), { target: { value: 'maven' } });
+    fireEvent.change(screen.getByLabelText('Ecosystem'), { target: { value: 'go' } });
+    const mode = screen.getByLabelText(/^Access mode/) as HTMLSelectElement;
+    expect(mode.value).toBe('lockfile');
+    expect((within(mode).getByText('lockfile') as HTMLOptionElement).disabled).toBe(false);
+    expect(screen.queryByText(/Open mode only/)).toBeNull();
+  });
+
+  it('shows the ecosystem read-only as Maven when editing a Maven row, open only', () => {
+    render(<PackageRegistriesTab />);
+    fireEvent.click(screen.getAllByText('Edit')[3]);
+    expect(screen.queryByLabelText('Ecosystem')).toBeNull();
+    expect(screen.getByText('Ecosystem: Maven')).toBeTruthy();
+    expect(screen.queryByLabelText('npm scopes')).toBeNull();
+    const mode = screen.getByLabelText(/^Access mode/) as HTMLSelectElement;
+    expect(mode.value).toBe('open');
+    expect((within(mode).getByText('lockfile') as HTMLOptionElement).disabled).toBe(true);
   });
 });
