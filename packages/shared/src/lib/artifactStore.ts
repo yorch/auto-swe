@@ -1,22 +1,45 @@
 /**
- * Artifact store — keeps large step outputs (diffs, logs, scan reports) out of
- * the workflow context object so we stay under Temporal's 50MB history cap.
+ * Artifact store — keeps large step outputs (diffs, logs, scan reports, run
+ * evidence, transcripts) out of the workflow context object so we stay under
+ * Temporal's 50MB history cap.
  *
- * Two backends:
+ * Three backends:
  *   - "s3" : any S3-compatible object store — the bundled Garage container,
- *            AWS S3, R2, B2. Active when ARTIFACT_S3_BUCKET is set. Loads
- *            @aws-sdk/client-s3 lazily. Only PutObject and GetObject are used.
+ *            AWS S3, R2, B2. Loads @aws-sdk/client-s3 lazily. Only PutObject,
+ *            GetObject and DeleteObject are used.
+ *   - "fs" : a directory the operator mounts into every process that reads
+ *            artifacts — the worker writes, the gateway serves evidence and
+ *            transcripts from it. ENOSPC and a wrong mount are the failure
+ *            modes; `artifactFsStore.ts` owns the layout and the store identity.
  *   - "pg" : Postgres BYTEA column on workflow_artifacts. Default for local dev
  *            so contributors need no object store running at all.
+ *
+ * New artifacts go to `ARTIFACT_WRITE_BACKEND` (derived from `ARTIFACT_FS_DIR` /
+ * `ARTIFACT_S3_BUCKET` when unset). Reads dispatch on the row's own backend, so a
+ * deployment that switches its writes still serves what it wrote before — and a
+ * backend whose configuration has gone away fails loudly rather than silently
+ * deleting rows.
  *
  * The interpreter passes artifact IDs through the run context. Activities call
  * getArtifact(id) to materialize the payload on demand.
  */
 
 import { prisma } from '../db.js';
+import {
+  artifactRelativePath,
+  assertFsStore,
+  deleteFsArtifact,
+  ensureFsStore,
+  FS_STORE_MARKER,
+  probeFsStore,
+  readFsArtifact,
+  readFsStoreMarker,
+  sweepArtifactTempFiles as sweepStoreTempFiles,
+  writeFsArtifact,
+} from './artifactFsStore.js';
 import { resolveStorageConfig } from './systemConfig.js';
 
-export type ArtifactBackend = 's3' | 'pg';
+export type ArtifactBackend = 's3' | 'pg' | 'fs';
 
 export interface ArtifactRef {
   id: string;
@@ -31,11 +54,6 @@ export interface PutArtifactInput {
   kind: string;
   contentType?: string;
   body: Buffer | string;
-}
-
-async function activeBackend(): Promise<ArtifactBackend> {
-  const cfg = await resolveStorageConfig();
-  return cfg.backend === 's3' ? 's3' : 'pg';
 }
 
 function copyToUint8Array(buf: Buffer): Uint8Array<ArrayBuffer> {
@@ -113,20 +131,80 @@ async function s3Client(): Promise<S3Helper> {
   return s3ClientPromise;
 }
 
+/** The configured filesystem store, or a clear error naming the missing setting. */
+async function fsStoreRoot(operation: string): Promise<string> {
+  const cfg = await resolveStorageConfig();
+  if (!cfg.fsDir) {
+    throw new Error(
+      `this artifact lives in the filesystem store, but ARTIFACT_FS_DIR is not set (${operation})`
+    );
+  }
+  return cfg.fsDir;
+}
+
+async function putFsArtifact(
+  input: PutArtifactInput,
+  body: Buffer,
+  contentType: string
+): Promise<ArtifactRef> {
+  const root = await fsStoreRoot('putArtifact');
+  const id = crypto.randomUUID();
+  const relativePath = artifactRelativePath({ id, kind: input.kind, runId: input.runId });
+  const marker = await ensureFsStore(root);
+
+  // Write-ahead like S3: the pending row exists before the payload, so a
+  // process killed mid-write leaves a row the daily sweep can find.
+  const row = await prisma.workflowArtifact.create({
+    data: {
+      backend: 'fs',
+      contentType,
+      fsPath: relativePath,
+      fsStoreId: marker.storeId,
+      id,
+      kind: input.kind,
+      runId: input.runId,
+      sizeBytes: body.byteLength,
+      status: 'pending',
+    },
+  });
+  try {
+    await writeFsArtifact({ body, relativePath, root });
+  } catch (error) {
+    // Nothing was published: drop the row so the sweep has no phantom to retry.
+    await prisma.workflowArtifact
+      .deleteMany({ where: { id: row.id, status: 'pending' } })
+      .catch(() => undefined);
+    throw error;
+  }
+  // If this fails the file is already in place and the row stays pending: the
+  // sweep deletes both after a day rather than leaving an untracked object.
+  await prisma.workflowArtifact.update({ data: { status: 'ready' }, where: { id: row.id } });
+  return {
+    backend: 'fs',
+    contentType,
+    id: row.id,
+    kind: input.kind,
+    sizeBytes: body.byteLength,
+  };
+}
+
 export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef> {
-  const backend = await activeBackend();
+  const cfg = await resolveStorageConfig();
   const contentType = input.contentType ?? 'application/octet-stream';
   const body = typeof input.body === 'string' ? Buffer.from(input.body, 'utf8') : input.body;
 
-  if (backend === 's3') {
-    const storageCfg = await resolveStorageConfig();
-    if (!storageCfg.s3Bucket) {
+  if (cfg.writeBackend === 'fs') {
+    return putFsArtifact(input, body, contentType);
+  }
+
+  if (cfg.writeBackend === 's3') {
+    if (!cfg.s3Bucket) {
       throw new Error(
         'S3 backend is active but s3Bucket is not configured. Set it at /admin/integrations → Storage.'
       );
     }
-    const bucket = storageCfg.s3Bucket;
-    const prefix = storageCfg.s3Prefix ?? 'workflow-artifacts';
+    const bucket = cfg.s3Bucket;
+    const prefix = cfg.s3Prefix ?? 'workflow-artifacts';
     const key = `${prefix}/${input.runId ?? 'global'}/${input.kind}/${crypto.randomUUID()}`;
     const client = await s3Client();
     // Write-ahead: the row (with its key) exists before the object does, so an
@@ -186,6 +264,17 @@ export async function getArtifact(id: string): Promise<{ ref: ArtifactRef; body:
     const body = await client.getObject(row.s3Key, row.s3Bucket ?? '');
     return { body, ref };
   }
+  if (row.backend === 'fs') {
+    if (!row.fsPath) {
+      throw new Error(`artifact ${id} has backend=fs but no fsPath`);
+    }
+    const root = await fsStoreRoot('getArtifact');
+    await assertFsStore(root, row.fsStoreId);
+    return { body: await readFsArtifact({ relativePath: row.fsPath, root }), ref };
+  }
+  if (row.backend !== 'pg') {
+    throw new Error(`artifact ${id} has unknown backend "${row.backend}"`);
+  }
   if (!row.inlineBlob) {
     throw new Error(`artifact ${id} has backend=pg but no inlineBlob`);
   }
@@ -193,10 +282,9 @@ export async function getArtifact(id: string): Promise<{ ref: ArtifactRef; body:
 }
 
 /**
- * Delete an artifact: its object first (S3 backend), then the row. The object
- * goes first so a row-removal failure leaves a re-tryable orphan the
- * transcript sweep's orphan pass can find, rather than a row pointing at
- * nothing.
+ * Delete an artifact: its payload first, then the row. The payload goes first so
+ * a row-removal failure leaves a re-tryable orphan the transcript sweep's
+ * pending pass can find, rather than a row pointing at nothing.
  */
 export async function deleteArtifact(id: string): Promise<void> {
   const row = await prisma.workflowArtifact.findUnique({ where: { id } });
@@ -206,6 +294,15 @@ export async function deleteArtifact(id: string): Promise<void> {
   if (row.backend === 's3' && row.s3Key) {
     const client = await s3Client();
     await client.deleteObject(row.s3Key, row.s3Bucket ?? '');
+  } else if (row.backend === 'fs') {
+    if (row.fsPath) {
+      const root = await fsStoreRoot('deleteArtifact');
+      // Fail closed on a wrong mount before ENOENT can pass for "already gone".
+      await assertFsStore(root, row.fsStoreId);
+      await deleteFsArtifact({ relativePath: row.fsPath, root });
+    }
+  } else if (row.backend !== 'pg') {
+    throw new Error(`artifact ${id} has unknown backend "${row.backend}"`);
   }
   await prisma.workflowArtifact.delete({ where: { id } });
 }
@@ -252,14 +349,21 @@ function isMissingObject(err: unknown): boolean {
 }
 
 /**
- * Delete a `pending` artifact: an S3 upload that never completed. The object
- * goes first and a missing one counts as deleted (the upload may never have
- * landed); then the row, only while it is still pending. Returns whether a row
- * was removed.
+ * Delete a `pending` artifact: a write that never completed. The payload goes
+ * first and a missing one counts as deleted (the write may never have landed);
+ * then the row, only while it is still pending. Returns whether a row was
+ * removed.
  */
 export async function deletePendingArtifact(id: string): Promise<boolean> {
   const row = await prisma.workflowArtifact.findUnique({
-    select: { backend: true, s3Bucket: true, s3Key: true, status: true },
+    select: {
+      backend: true,
+      fsPath: true,
+      fsStoreId: true,
+      s3Bucket: true,
+      s3Key: true,
+      status: true,
+    },
     where: { id },
   });
   if (row?.status !== 'pending') {
@@ -274,11 +378,76 @@ export async function deletePendingArtifact(id: string): Promise<boolean> {
         throw err;
       }
     }
+  } else if (row.backend === 'fs' && row.fsPath) {
+    const root = await fsStoreRoot('deletePendingArtifact');
+    await assertFsStore(root, row.fsStoreId);
+    await deleteFsArtifact({ relativePath: row.fsPath, root });
+  } else if (row.backend !== 'pg') {
+    throw new Error(`artifact ${id} has unknown backend "${row.backend}"`);
   }
   const { count } = await prisma.workflowArtifact.deleteMany({
     where: { id, status: 'pending' },
   });
   return count > 0;
+}
+
+/**
+ * Delete abandoned in-flight temporary files. A writer killed between creating
+ * its temporary and renaming it leaves one, and no row names it; the daily
+ * transcript sweep calls this. A no-op without a filesystem store.
+ */
+export async function sweepArtifactTempFiles(olderThanMs: number, now?: number): Promise<number> {
+  const cfg = await resolveStorageConfig();
+  if (!cfg.fsDir) {
+    return 0;
+  }
+  return sweepStoreTempFiles(cfg.fsDir, olderThanMs, now);
+}
+
+/**
+ * Fail a process's boot when its filesystem store is not the one the database
+ * expects. Called by the gateway (read side) and the worker (read/write side).
+ *
+ * - A fresh store with no rows may be created by the worker and is fine for the
+ *   gateway to start against.
+ * - A store whose marker is missing, or whose id differs from rows the database
+ *   holds, is a wrong mount: starting would serve errors and — worse — let a
+ *   retention sweep delete rows whose files sit on the real volume.
+ */
+export async function assertArtifactStorageReady(role: 'gateway' | 'worker'): Promise<void> {
+  const cfg = await resolveStorageConfig();
+  if (!cfg.fsDir) {
+    return;
+  }
+  const root = cfg.fsDir;
+  const marker = await readFsStoreMarker(root);
+  const stored = await prisma.workflowArtifact.count({ where: { backend: 'fs' } });
+  if (!marker) {
+    if (stored > 0) {
+      throw new Error(
+        `${stored} artifact(s) are stored in the filesystem store, but ${root} has no ${FS_STORE_MARKER}. ARTIFACT_FS_DIR must point at the directory those artifacts are in.`
+      );
+    }
+    if (role === 'gateway') {
+      return;
+    }
+    await ensureFsStore(root);
+  } else if (stored > 0) {
+    const foreign = await prisma.workflowArtifact.count({
+      where: {
+        backend: 'fs',
+        OR: [{ fsStoreId: null }, { fsStoreId: { not: marker.storeId } }],
+      },
+    });
+    if (foreign > 0) {
+      throw new Error(
+        `${foreign} artifact(s) belong to a different filesystem store than the one mounted at ${root} (${marker.storeId}). Refusing to start: this mount is not the store the database expects.`
+      );
+    }
+  }
+  if (role === 'worker') {
+    await probeFsStore(root);
+  }
 }
 
 /** Convenience: fetch artifact body as a UTF-8 string. */
