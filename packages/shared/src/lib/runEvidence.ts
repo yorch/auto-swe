@@ -67,7 +67,7 @@ export async function recordRunEvidence(
   const artifact = await putArtifact({
     body,
     contentType: input.contentType,
-    kind: `ui.${input.kind}`,
+    kind: uiEvidenceArtifactKind(input.kind),
     runId: input.runId,
   });
   try {

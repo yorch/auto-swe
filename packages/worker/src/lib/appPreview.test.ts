@@ -48,6 +48,9 @@ describe('startAppPreview', () => {
       timeoutMs: 1_080_000,
     });
     expect(exec.mock.calls[1]?.[0]).toContain('detached: true');
+    // `--` keeps a start command that begins with a dash out of Node's own flag
+    // parsing.
+    expect(exec.mock.calls[1]?.[0]).toContain(' -- ');
     expect(exec.mock.calls[1]?.[0]).toContain('/tmp/.asw/preview.log');
     expect(exec.mock.calls[1]?.[0]).not.toContain(config.env.GREETING);
     expect(exec.mock.calls[1]?.[1]).toEqual({ secretEnv: config.env, timeoutMs: 10_000 });

@@ -30,6 +30,7 @@ const h = vi.hoisted(() => ({
   deletedArtifacts: [] as string[],
   deletedPending: [] as string[],
   deletedTranscripts: [] as string[],
+  failingArtifacts: new Set<string>(),
   failingPending: new Set<string>(),
   orphanArtifacts: [] as { id: string }[],
   orphanEvidence: [] as { id: string }[],
@@ -142,6 +143,9 @@ vi.mock('@auto-swe/shared/db', () => ({
 
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
   deleteArtifact: vi.fn(async (id: string) => {
+    if (h.failingArtifacts.has(id)) {
+      throw new Error('object store unavailable');
+    }
     h.deletedArtifacts.push(id);
   }),
   deletePendingArtifact: vi.fn(async (id: string) => {
@@ -181,6 +185,7 @@ beforeEach(() => {
   h.accessLog = [];
   h.failingPending.clear();
   h.deletedArtifacts.length = 0;
+  h.failingArtifacts.clear();
   h.deletedPending.length = 0;
   h.pendingArtifacts.length = 0;
   h.deletedTranscripts.length = 0;
@@ -342,6 +347,22 @@ describe('pruneAgentTranscripts', () => {
       runEvidence: { is: null },
       status: 'ready',
     });
+  });
+
+  it('keeps sweeping when an orphan artifact cannot be deleted', async () => {
+    h.orphanArtifacts.push({ id: 'orphan-1' });
+    h.orphanEvidence.push({ id: 'ui-a' }, { id: 'ui-b' });
+    h.failingArtifacts.add('ui-a');
+
+    const result = await pruneAgentTranscripts(NOW);
+
+    // The transcript orphan and the second evidence orphan still go; the failed
+    // one is counted and retried next sweep instead of failing the activity.
+    expect(h.deletedArtifacts.sort()).toEqual(['orphan-1', 'ui-b']);
+    expect(result.orphanArtifacts).toBe(1);
+    expect(result.orphanArtifactFailures).toBe(0);
+    expect(result.orphanUiArtifacts).toBe(1);
+    expect(result.orphanUiFailures).toBe(1);
   });
 
   it('deletes day-old pending artifacts through the write-ahead cleanup and reports the count', async () => {

@@ -117,9 +117,14 @@ export async function startAppPreview(
 
   const startCommand =
     `mkdir -p /tmp/.asw && rm -f ${shellQuote(PREVIEW_PGID)} ${shellQuote(PREVIEW_LOG)} && ` +
-    `node -e ${shellQuote(APP_PREVIEW_LAUNCHER)} ${shellQuote(config.start)} ` +
+    `node -e ${shellQuote(APP_PREVIEW_LAUNCHER)} -- ${shellQuote(config.start)} ` +
     `${shellQuote(PREVIEW_PGID)} ${shellQuote(PREVIEW_LOG)}`;
-  await workspace.exec(startCommand, execOptions(10_000));
+  try {
+    await workspace.exec(startCommand, execOptions(10_000));
+  } catch (error) {
+    const detail = redactString(error instanceof Error ? error.message : String(error));
+    throw new PreviewNotReadyError(`App preview failed to start: ${detail}`, detail);
+  }
 
   const logTail = async (maxBytes: number): Promise<string> => {
     const boundedBytes = Number.isFinite(maxBytes)
