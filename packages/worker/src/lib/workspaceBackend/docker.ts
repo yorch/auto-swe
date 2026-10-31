@@ -88,6 +88,7 @@ export function buildServiceContainerArgs(
     `${workspaceName}-svc-${service.name}`,
     '--label',
     `asw.workspace=${workspaceName}`,
+    ...workspaceLabelArgs(),
     '--network',
     `container:${workspaceName}`,
     '--memory=512m',

@@ -1245,13 +1245,17 @@ one activity (`reapOrphanedWorkspaces`) calls `reapOrphans` on the worker's back
 most 25 workspaces per sweep (the rest wait for the next one). It judges from the
 workspace itself, never from the worker's memory, so a workspace belonging to another worker on the
 same Docker host or namespace is safe while it is within its lifetime:
-- Docker: every workspace container, ephemeral step container and sidecar is created with the labels
-  `auto-swe.workspace=true` and `auto-swe.created-at=<epoch seconds>`. The sweep lists
+- Docker: every workspace container, ephemeral step container, detached sidecar and repo-preview
+  service container (`<workspace>-svc-<name>`) is created with the labels `auto-swe.workspace=true`
+  and `auto-swe.created-at=<epoch seconds>`. The metadata-block sidecar is the exception: it carries
+  no labels, and it runs `--rm` and exits once it has installed its routes. The sweep lists
   (`docker ps --all`) only containers with the marker label and `docker rm -f`s those older than
   seven hours. That bound is the longest activity that holds a workspace, the agent run step
   (`T_AGENT_RUN_ACTIVITY`, six hours: the four-hour wall-clock ceiling plus two hours of headroom),
-  plus an hour for clock skew between workers; the other workspace-holding activities (evals, shell
-  and container steps) are shorter. A container with no readable creation label is kept.
+  plus an hour for clock skew between workers. The other workspace-holding activities are shorter:
+  the eval (four hours), the batch quality-gate run, `runUiVerify`, `verifyCiFix`, shell and
+  container steps (60 minutes each), and the single quality gates (15 minutes). A container with no
+  readable creation label is kept.
 - Kubernetes: the sweep lists pods carrying both `app.kubernetes.io/managed-by=auto-swe` and
   `asw/role=workspace` in the workspace namespace and deletes those that are `Succeeded` or `Failed`
   (a deadline kill is `Failed`), or are still not terminal ten minutes past their own

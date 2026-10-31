@@ -35,6 +35,20 @@ describe('buildServiceContainerArgs', () => {
     );
     expect(args).not.toContain('kept-off-argv');
   });
+
+  it('carries the orphan-sweep labels so a leaked service container is reaped', () => {
+    const args = buildServiceContainerArgs('workspace-abc123', {
+      image: 'mirror.gcr.io/library/postgres:18',
+      name: 'postgres',
+      port: 5432,
+    });
+    expect(args).toContain('auto-swe.workspace=true');
+    const createdAt = args.find((a) => a.startsWith('auto-swe.created-at='));
+    expect(createdAt).toMatch(/^auto-swe\.created-at=\d+$/);
+    expect(args.indexOf('auto-swe.workspace=true')).toBeGreaterThan(0);
+    expect(args[args.indexOf('auto-swe.workspace=true') - 1]).toBe('--label');
+    expect(args[args.indexOf(createdAt ?? '') - 1]).toBe('--label');
+  });
 });
 
 describe('ephemeralArgs', () => {
