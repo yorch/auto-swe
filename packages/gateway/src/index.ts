@@ -1,3 +1,4 @@
+import { assertArtifactStorageReady } from '@auto-swe/shared/lib/artifactStore';
 import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
 import { syncBuiltins } from '@auto-swe/shared/lib/syncBuiltins';
 import { assertScheduledSweepsEnv } from '@auto-swe/shared/lib/systemConfig';
@@ -50,6 +51,11 @@ async function start() {
   // a gateway that starts without it serves 500s on exactly the admin pages
   // needed to bootstrap a deployment.
   assertEncryptionKeyConfigured();
+  // A filesystem artifact store is read by this process directly, so prove the
+  // mounted directory is the one the database's rows were written to before the
+  // first evidence request can 500 — and before a sweep could delete a row whose
+  // file sits on a volume this deployment cannot see.
+  await assertArtifactStorageReady('gateway');
   // The sweep schedules below are environment-only and applied once, here. A
   // value the resolver would silently replace with a default is a failed boot.
   assertScheduledSweepsEnv();

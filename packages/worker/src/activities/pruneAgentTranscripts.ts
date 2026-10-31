@@ -17,7 +17,11 @@
 
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import { deleteArtifact, deletePendingArtifact } from '@auto-swe/shared/lib/artifactStore';
+import {
+  deleteArtifact,
+  deletePendingArtifact,
+  sweepArtifactTempFiles,
+} from '@auto-swe/shared/lib/artifactStore';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { logWarn } from '../lib/activityLog.js';
 import { PRUNE_BATCH, PRUNE_MAX_BATCHES } from './pruneAutomationDecisions.js';
@@ -38,6 +42,8 @@ export interface PruneAgentTranscriptsResult {
   pendingArtifacts: number;
   /** Pending artifacts whose deletion failed this sweep (logged; retried next sweep). */
   pendingArtifactFailures: number;
+  /** Abandoned in-flight temporary files removed from a filesystem store. */
+  tempFilesSwept: number;
   /** Transcript access-log rows deleted past their retention. */
   accessLogDeleted: number;
   /** Access-log rows still `started` an hour on, marked `aborted`. */
@@ -214,6 +220,19 @@ export async function pruneAgentTranscripts(
     }
   }
 
+  // A filesystem store's writer can die between creating its temporary file and
+  // renaming it; no row names that file, so the pending pass above cannot see
+  // it. Best-effort: a failure is logged and the next sweep retries, exactly
+  // like a pending artifact that could not be deleted.
+  let tempFilesSwept = 0;
+  try {
+    tempFilesSwept = await sweepArtifactTempFiles(DAY_MS, now.getTime());
+  } catch (error) {
+    logWarn('abandoned artifact temporary files could not be swept; the next sweep retries them', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
   // A part row insert can fail after its artifact was written; the artifact is
   // then kind 'agent-transcript-part' with no part row — an orphan nobody reads.
   const orphans = await prisma.workflowArtifact.findMany({
@@ -249,5 +268,6 @@ export async function pruneAgentTranscripts(
     pendingArtifactFailures,
     pendingArtifacts,
     retentionDays,
+    tempFilesSwept,
   };
 }

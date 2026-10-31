@@ -143,6 +143,7 @@ vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
     h.deletedPending.push(id);
     return true;
   }),
+  sweepArtifactTempFiles: vi.fn(async () => 3),
 }));
 
 // The real runUnscoped, wrapped so the test can see the sweep asking for the
@@ -332,6 +333,12 @@ describe('pruneAgentTranscripts', () => {
       .mock.calls.map((c) => c[0] as { where: Record<string, unknown> })
       .find((a) => a.where.status === 'pending');
     expect(pendingQuery?.where.createdAt).toEqual({ lt: ago(1) });
+  });
+
+  it('sweeps abandoned filesystem temporaries and reports the count', async () => {
+    const result = await pruneAgentTranscripts(NOW);
+
+    expect(result.tempFilesSwept).toBe(3);
   });
 
   it('keeps sweeping after one pending artifact fails, and counts the failure', async () => {

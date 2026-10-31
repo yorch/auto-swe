@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertArtifactStorageReady } from '@auto-swe/shared/lib/artifactStore';
 import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
 import { assertWorkspaceInfraEnv, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { assertBuiltinStepsRegistered } from '@auto-swe/shared/workflow';
@@ -51,6 +52,13 @@ async function run() {
   // (Docker Compose restart policy, K8s, etc.) keeps the worker out of the
   // rotation until config is complete.
   await assertConfigReady();
+
+  // The worker writes artifacts and the database's rows name the store they were
+  // written to. Refuse to boot against a mounted directory that is not that store
+  // (a wrong bind mount, or a volume that failed to attach) — reading would fail
+  // on every request, and the retention sweep would delete rows whose files are on
+  // the real volume.
+  await assertArtifactStorageReady('worker');
 
   // The resolvers fall back to defaults on a bad value (they run on paths that
   // must not throw), so a typo in the deploy environment would otherwise run
