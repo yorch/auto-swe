@@ -1906,12 +1906,12 @@ model WorkflowArtifact {
   /// against a directory carrying another (or no) marker fails closed.
   fsStoreId   String?      @map("fs_store_id")
   inlineBlob  Bytes?       @map("inline_blob")
-  /// "ready" once the payload is stored. An S3 artifact's row is written
-  /// "pending" before its PutObject so an object whose upload outlived its
-  /// writer is still findable; the transcript sweep deletes a day-old pending
-  /// row and its object (a failed upload leaves its row pending too).
-/// `getArtifact` refuses a row that is not ready; readers that treat a row as
-/// an available artifact filter on `status: 'ready'`.
+  /// "ready" once the payload is stored. A row is written "pending" before its
+  /// payload so an upload whose writer died is still findable. The daily sweep
+  /// claims a day-old pending row as "pruning" before deleting its payload, so a
+  /// writer resuming late cannot publish it mid-delete; a claimed row whose
+  /// delete failed is retried by the next sweep. `getArtifact` refuses any row
+  /// that is not ready; readers filter on `status: 'ready'`.
   status      String       @default("ready")
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
 

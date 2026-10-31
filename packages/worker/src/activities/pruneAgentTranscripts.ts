@@ -185,12 +185,13 @@ export async function pruneAgentTranscripts(
     },
   });
 
-  // An S3 artifact's row is written `pending` before its upload and marked
-  // ready after; one still pending a day later belongs to a writer that died
-  // or whose upload failed (the store may have kept the object anyway). Its
-  // object goes, then the row. One that fails is logged and counted, and the
-  // walk moves on by id, so a store error neither stops the passes below nor
-  // makes this one revisit the same rows.
+  // An artifact's row is written `pending` before its payload and marked ready
+  // after; one still pending a day later belongs to a writer that died or whose
+  // upload failed (the store may have kept the object anyway). `deletePendingArtifact`
+  // claims it (`pruning`) before deleting, so a writer resuming late cannot
+  // publish it mid-delete. One that fails is logged and counted, and the walk
+  // moves on by id, so a store error neither stops the passes below nor makes
+  // this one revisit the same rows.
   let pendingArtifacts = 0;
   let pendingArtifactFailures = 0;
   let pendingCursor: string | undefined;
@@ -201,7 +202,9 @@ export async function pruneAgentTranscripts(
       take: PRUNE_BATCH,
       where: {
         createdAt: { lt: staleCutoff },
-        status: 'pending',
+        // `pruning` is a claim a previous sweep left behind when it crashed or
+        // its payload delete failed; retry it, so a claim cannot strand a row.
+        status: { in: ['pending', 'pruning'] },
         ...(pendingCursor ? { id: { gt: pendingCursor } } : {}),
       },
     });

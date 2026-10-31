@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
@@ -28,12 +29,14 @@ vi.mock('@auto-swe/shared/db', () => ({
       findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   },
 }));
 
 const s3 = vi.hoisted(() => ({
   fail: null as null | { command: string; error: unknown },
+  payload: Buffer.alloc(0),
   sent: [] as { input: Record<string, unknown>; name: string }[],
 }));
 vi.mock('@aws-sdk/client-s3', () => ({
@@ -52,7 +55,8 @@ vi.mock('@aws-sdk/client-s3', () => ({
       if (s3.fail && s3.fail.command === cmd.constructor.name) {
         return Promise.reject(s3.fail.error);
       }
-      return Promise.resolve({ Body: { transformToByteArray: async () => new Uint8Array() } });
+      const payload = s3.payload;
+      return Promise.resolve({ Body: Readable.from([payload]), ContentLength: payload.byteLength });
     }
   },
 }));
@@ -67,6 +71,7 @@ import {
   deleteArtifact,
   deletePendingArtifact,
   getArtifact,
+  getArtifactStream,
   getArtifactText,
   putArtifact,
   sweepArtifactTempFiles,
@@ -77,6 +82,7 @@ const countMock = vi.mocked(prisma.workflowArtifact.count);
 const deleteMock = vi.mocked(prisma.workflowArtifact.delete);
 const deleteManyMock = vi.mocked(prisma.workflowArtifact.deleteMany);
 const updateMock = vi.mocked(prisma.workflowArtifact.update);
+const updateManyMock = vi.mocked(prisma.workflowArtifact.updateMany);
 const findUniqueMock = vi.mocked(prisma.workflowArtifact.findUnique);
 const findMock = vi.mocked(prisma.workflowArtifact.findUniqueOrThrow);
 
@@ -95,10 +101,13 @@ afterEach(() => {
   deleteMock.mockReset();
   deleteManyMock.mockReset();
   updateMock.mockReset();
+  updateManyMock.mockReset();
+  updateManyMock.mockResolvedValue({ count: 1 } as never);
   findUniqueMock.mockReset();
   findMock.mockReset();
   s3.sent.length = 0;
   s3.fail = null;
+  s3.payload = Buffer.alloc(0);
 });
 
 describe('putArtifact (postgres backend)', () => {
@@ -194,6 +203,66 @@ describe('getArtifact / getArtifactText (postgres backend)', () => {
   });
 });
 
+describe('getArtifactStream (S3 and Postgres)', () => {
+  it('returns the S3 body stream and its length', async () => {
+    process.env.ARTIFACT_S3_BUCKET = 'bucket-1';
+    s3.payload = Buffer.from('aws-bytes');
+    findMock.mockResolvedValue({
+      backend: 's3',
+      contentType: 'text/plain',
+      id: 'art-s3',
+      kind: 'logs',
+      s3Bucket: 'bucket-1',
+      s3Key: 'workflow-artifacts/global/logs/x',
+      sizeBytes: 9,
+      status: 'ready',
+    } as never);
+
+    const { sizeBytes, stream } = await getArtifactStream('art-s3');
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.from(chunk as Uint8Array));
+    }
+
+    expect(sizeBytes).toBe(9);
+    expect(Buffer.concat(chunks).toString('utf8')).toBe('aws-bytes');
+  });
+
+  it('streams a Postgres blob', async () => {
+    findMock.mockResolvedValue({
+      backend: 'pg',
+      contentType: 'text/plain',
+      id: 'art-pg',
+      inlineBlob: Buffer.from('pg-bytes'),
+      kind: 'logs',
+      sizeBytes: 8,
+      status: 'ready',
+    } as never);
+
+    const { sizeBytes, stream } = await getArtifactStream('art-pg');
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.from(chunk as Uint8Array));
+    }
+
+    expect(sizeBytes).toBe(8);
+    expect(Buffer.concat(chunks).toString('utf8')).toBe('pg-bytes');
+  });
+
+  it('refuses a row that is not ready before opening a stream', async () => {
+    findMock.mockResolvedValue({
+      backend: 'pg',
+      id: 'art-pending',
+      inlineBlob: Buffer.from('x'),
+      kind: 'logs',
+      sizeBytes: 1,
+      status: 'pending',
+    } as never);
+
+    await expect(getArtifactStream('art-pending')).rejects.toThrow(/not ready/);
+  });
+});
+
 describe('deleteArtifact', () => {
   it('deletes a pg-backed artifact by deleting only its row', async () => {
     findUniqueMock.mockResolvedValue({
@@ -250,10 +319,10 @@ describe('putArtifact (S3 backend, write-ahead)', () => {
       expect(s3.sent).toEqual([]);
       return { ...data, id: 'art-s3' };
     }) as never);
-    updateMock.mockImplementation((async ({ data }: { data: Record<string, unknown> }) => {
+    updateManyMock.mockImplementation((async ({ data }: { data: Record<string, unknown> }) => {
       order.push(`update:${data.status}`);
       expect(s3.sent.map((c) => c.name)).toEqual(['PutObjectCommand']);
-      return {};
+      return { count: 1 };
     }) as never);
 
     const ref = await putArtifact({ body: 'payload', kind: 'logs' });
@@ -262,7 +331,10 @@ describe('putArtifact (S3 backend, write-ahead)', () => {
     const data = createMock.mock.calls[0]?.[0]?.data as Record<string, unknown>;
     // The row carries the key the object is written under.
     expect(data.s3Key).toBe(s3.sent[0]?.input.Key);
-    expect(updateMock).toHaveBeenCalledWith({ data: { status: 'ready' }, where: { id: 'art-s3' } });
+    expect(updateManyMock).toHaveBeenCalledWith({
+      data: { status: 'ready' },
+      where: { id: 'art-s3', status: 'pending' },
+    });
     expect(ref).toMatchObject({ backend: 's3', id: 'art-s3' });
   });
 
@@ -280,7 +352,21 @@ describe('putArtifact (S3 backend, write-ahead)', () => {
     // lets the sweep find and delete it, so it must survive the failure.
     expect(deleteMock).not.toHaveBeenCalled();
     expect(deleteManyMock).not.toHaveBeenCalled();
-    expect(updateMock).not.toHaveBeenCalled();
+    expect(updateManyMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses to publish a row retention claimed, and removes the object', async () => {
+    process.env.ARTIFACT_S3_BUCKET = 'bucket-1';
+    createMock.mockImplementation((async ({ data }: { data: Record<string, unknown> }) => ({
+      ...data,
+      id: 'art-claimed',
+    })) as never);
+    updateManyMock.mockResolvedValue({ count: 0 } as never);
+
+    await expect(putArtifact({ body: 'payload', kind: 'logs' })).rejects.toThrow(
+      /claimed by retention/
+    );
+    expect(s3.sent.map((c) => c.name)).toEqual(['PutObjectCommand', 'DeleteObjectCommand']);
   });
 });
 
@@ -313,12 +399,18 @@ describe('deletePendingArtifact', () => {
       status: 'pending',
     } as never);
     deleteManyMock.mockImplementation((async () => {
+      // The row is claimed before the payload is touched, so a writer resuming
+      // late cannot publish it mid-delete.
+      expect(updateManyMock).toHaveBeenCalledWith({
+        data: { status: 'pruning' },
+        where: { id: 'art-p', status: 'pending' },
+      });
       expect(s3.sent.map((c) => c.name)).toEqual(['DeleteObjectCommand']);
       return { count: 1 };
     }) as never);
 
     expect(await deletePendingArtifact('art-p')).toBe(true);
-    expect(deleteManyMock).toHaveBeenCalledWith({ where: { id: 'art-p', status: 'pending' } });
+    expect(deleteManyMock).toHaveBeenCalledWith({ where: { id: 'art-p', status: 'pruning' } });
   });
 
   it('treats a missing object as deleted', async () => {
@@ -347,6 +439,41 @@ describe('deletePendingArtifact', () => {
     s3.fail = { command: 'DeleteObjectCommand', error: new Error('store down') };
 
     await expect(deletePendingArtifact('art-p')).rejects.toThrow('store down');
+    // The claim stays, so the next sweep retries and the writer cannot publish.
+    expect(updateManyMock).toHaveBeenCalledWith({
+      data: { status: 'pruning' },
+      where: { id: 'art-p', status: 'pending' },
+    });
+    expect(deleteManyMock).not.toHaveBeenCalled();
+  });
+
+  it('retries a claim a previous sweep left behind', async () => {
+    process.env.ARTIFACT_S3_BUCKET = 'bucket-1';
+    findUniqueMock.mockResolvedValue({
+      backend: 's3',
+      s3Key: 'workflow-artifacts/global/x/y',
+      status: 'pruning',
+    } as never);
+    deleteManyMock.mockResolvedValue({ count: 1 } as never);
+
+    expect(await deletePendingArtifact('art-p')).toBe(true);
+    expect(updateManyMock).toHaveBeenCalledWith({
+      data: { status: 'pruning' },
+      where: { id: 'art-p', status: 'pruning' },
+    });
+  });
+
+  it('does nothing when another sweep already claimed the row', async () => {
+    process.env.ARTIFACT_S3_BUCKET = 'bucket-1';
+    findUniqueMock.mockResolvedValue({
+      backend: 's3',
+      s3Key: 'workflow-artifacts/global/x/y',
+      status: 'pending',
+    } as never);
+    updateManyMock.mockResolvedValue({ count: 0 } as never);
+
+    expect(await deletePendingArtifact('art-p')).toBe(false);
+    expect(s3.sent).toEqual([]);
     expect(deleteManyMock).not.toHaveBeenCalled();
   });
 
@@ -354,6 +481,7 @@ describe('deletePendingArtifact', () => {
     findUniqueMock.mockResolvedValue({ backend: 's3', s3Key: 'k', status: 'ready' } as never);
     expect(await deletePendingArtifact('art-r')).toBe(false);
     expect(s3.sent).toEqual([]);
+    expect(updateManyMock).not.toHaveBeenCalled();
     expect(deleteManyMock).not.toHaveBeenCalled();
   });
 });
@@ -375,7 +503,7 @@ describe('filesystem backend', () => {
     createMock.mockImplementation((async ({ data }: { data: Record<string, unknown> }) => ({
       ...data,
     })) as never);
-    updateMock.mockResolvedValue({} as never);
+    updateManyMock.mockResolvedValue({ count: 1 } as never);
     deleteMock.mockResolvedValue({} as never);
     deleteManyMock.mockResolvedValue({ count: 1 } as never);
   });
@@ -402,9 +530,9 @@ describe('filesystem backend', () => {
     expect(marker?.storeId).toBe(data.fsStoreId);
     expect(await fs.readFile(path.join(root, data.fsPath), 'utf8')).toBe('hello');
     expect((await fs.stat(path.join(root, data.fsPath))).mode & 0o777).toBe(0o600);
-    expect(updateMock).toHaveBeenCalledWith({
+    expect(updateManyMock).toHaveBeenCalledWith({
       data: { status: 'ready' },
-      where: { id: data.id },
+      where: { id: data.id, status: 'pending' },
     });
   });
 
@@ -416,6 +544,20 @@ describe('filesystem backend', () => {
 
     expect(ref.backend).toBe('fs');
     expect(body.toString('utf8')).toBe('png-bytes');
+  });
+
+  it('streams a filesystem artifact without buffering it first', async () => {
+    const { data } = await putOne('ui.video', 'video-bytes');
+    findMock.mockResolvedValue({ ...data, status: 'ready' } as never);
+
+    const { sizeBytes, stream } = await getArtifactStream(String(data.id));
+    const chunks: Buffer[] = [];
+    for await (const chunk of stream) {
+      chunks.push(Buffer.from(chunk as Uint8Array));
+    }
+
+    expect(sizeBytes).toBe(11);
+    expect(Buffer.concat(chunks).toString('utf8')).toBe('video-bytes');
   });
 
   it('deletes the file, then the row', async () => {
@@ -443,6 +585,16 @@ describe('filesystem backend', () => {
     expect(deleteMock).not.toHaveBeenCalled();
   });
 
+  it('removes the file it just wrote when retention claimed the row first', async () => {
+    updateManyMock.mockResolvedValue({ count: 0 } as never);
+
+    await expect(putArtifact({ body: 'x', kind: 'ui.log', runId })).rejects.toThrow(
+      /claimed by retention/
+    );
+    const data = createMock.mock.calls.at(-1)?.[0]?.data as Record<string, string>;
+    await expect(fs.access(path.join(root, data.fsPath))).rejects.toThrow();
+  });
+
   it('removes the final file and an in-flight temporary when reaping a pending row', async () => {
     const { data } = await putOne();
     const temp = path.join(root, '.tmp', `${data.id}.part`);
@@ -454,7 +606,7 @@ describe('filesystem backend', () => {
     await expect(fs.access(path.join(root, data.fsPath))).rejects.toThrow();
     await expect(fs.access(temp)).rejects.toThrow();
     expect(deleteManyMock).toHaveBeenCalledWith({
-      where: { id: data.id, status: 'pending' },
+      where: { id: data.id, status: 'pruning' },
     });
   });
 

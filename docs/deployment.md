@@ -525,16 +525,25 @@ sudo chown 1000:1000 ./data/artifacts
 What the store guarantees, and what it does not:
 
 - **One store, one identity.** The first write creates `.auto-swe-artifacts.json` in the directory;
-  every row records that id. If the directory is missing, empty, or a different store, **both
-  processes refuse to start** rather than serving errors and letting a retention sweep delete rows
-  whose files sit on the real volume. Do not delete or copy that file between directories.
+  every row records that id. Once rows reference the store, a directory that is missing, empty or a
+  different store makes **both processes refuse to start**, rather than serving errors and letting a
+  retention sweep delete rows whose files sit on the real volume. With no rows yet the worker
+  creates the store on its first write, and the gateway starts without one. Do not delete or copy
+  that file between directories.
 - **Durable publication.** Each artifact is written to `.tmp/`, fsynced, renamed into place, and the
   directory fsynced before its row is marked ready. An interrupted write leaves at most a temporary
   file, which the daily transcript sweep removes after a day.
-- **Single host.** A local directory is not shared between hosts. On Kubernetes every gateway and
-  worker pod needs a `ReadWriteMany` volume; `ReadWriteOnce` only works while the pods are on one
-  node, and two replicas on different nodes silently see different stores (the store identity check
-  turns that into a failed boot rather than missing evidence). Multiple workers on one host are fine.
+- **One host, unless the shared filesystem is trustworthy.** The store's writer relies on a POSIX
+  rename and directory fsync it performs locally; nothing verifies those semantics on a network
+  filesystem. Across hosts, the volume must be a POSIX shared filesystem with stable directory
+  lookups — on NFS a freshly renamed file can be invisible to the gateway for a moment (cached
+  lookups), so new evidence may briefly fail to load — and every gateway and worker pod needs
+  `ReadWriteMany`. `ReadWriteOnce` only works while the pods are on one node, and two replicas on
+  different nodes would see different stores; the store identity check turns that into a failed boot
+  rather than missing evidence. **S3 is the supported multi-node store**; the filesystem store is for
+  a single host, or a shared filesystem you have verified (`lookupcache=positive`, stable rename and
+  fsync). `infra/kubernetes/artifact-store.yaml` is a reference claim and the mounts for both
+  workloads.
 - **Disk is your capacity limit.** `ENOSPC` fails the artifact write (a run step fails) rather than
   corrupting anything; monitor the volume. No compression, deduplication or replication beyond the
   filesystem's own.
@@ -545,8 +554,10 @@ What the store guarantees, and what it does not:
   comes from `ARTIFACT_FS_DIR`.
 - **Nothing is encrypted at rest by the application.** The files are plain artifacts on the volume,
   exactly like the S3 objects and the Postgres blobs; protect the disk the way you protect the
-  database (filesystem encryption, access control on the host). Files are mode `0600` and directories
-  `0700`, so another local user cannot read them.
+  database (filesystem encryption, access control on the host). Artifact files are created mode
+  `0600` and the run/kind directories `0700`, so another local user cannot read the payloads; the
+  mount point itself is `0755` from the image, so run ids are listable. A Kubernetes `fsGroup` mount
+  may grant the group read/write on entries the kubelet rewrites.
 
 **Migrating an existing MinIO deployment.** Garage's on-disk format is unrelated to MinIO's, so pointing it at `./data/minio` will not work and existing objects will not appear. `ArtifactRef` rows in the app DB hold keys, not blobs, so any object left behind becomes a broken artifact link rather than a visible failure. Copy the objects across before cutting over, with both stores running:
 
@@ -651,7 +662,7 @@ Two stateful datastores, plus the artifact store when it is not Postgres:
 
 1. **`postgres` (app DB)** — `pg_dump`. Recovery is straightforward. Restoring loses no functionality; the worker just resumes whatever Temporal still has in flight.
 2. **`postgres-temporal` (workflow history)** — `pg_dump`. Loss of this DB means in-flight workflows are gone forever (signals, history, timers). For long-running humanMergeSignal waits (up to 7 days), this is real data loss. Treat this DB at least as carefully as the app DB.
-3. **Artifacts** — the filesystem store's directory (`./data/artifacts`, or the `artifacts` volume) or the S3 bucket. Back it up with the app DB: a database restored against an older directory leaves rows whose files are gone, and a directory restored against an older database leaves files nothing references. Filesystem artifacts are mode `0600`/`0700` and are not readable by other uids; preserve ownership when restoring.
+3. **Artifacts** — the filesystem store's directory (`./data/artifacts`, or the `artifacts` volume) or the S3 bucket. Back it up with the app DB: a database restored against an older directory leaves rows whose files are gone, and a directory restored against an older database leaves files nothing references. Artifact files are created `0600` (the store's own directories `0700`; the mount point itself is `0755`), and are not readable by other uids; preserve ownership when restoring.
 
 Container workspaces are ephemeral — never back them up. The Docker daemon on the worker host can be restored from scratch.
 

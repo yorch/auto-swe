@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { _resetKeyCacheForTests } from '@auto-swe/shared/lib/crypto';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
@@ -11,12 +12,13 @@ import {
   workflowRunRoutes,
 } from './workflowRuns.js';
 
-const { recordRunFinalized, getArtifact } = vi.hoisted(() => ({
+const { recordRunFinalized, getArtifact, getArtifactStream } = vi.hoisted(() => ({
   getArtifact: vi.fn(),
+  getArtifactStream: vi.fn(),
   recordRunFinalized: vi.fn(),
 }));
 vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
-vi.mock('@auto-swe/shared/lib/artifactStore', () => ({ getArtifact }));
+vi.mock('@auto-swe/shared/lib/artifactStore', () => ({ getArtifact, getArtifactStream }));
 vi.mock('@auto-swe/shared/lib/repoAccessGate', () => ({
   resolveRepoAccessGateOrLastKnown: vi.fn().mockResolvedValue(null),
 }));
@@ -1264,7 +1266,17 @@ describe('workflowRunRoutes UI evidence', () => {
       id: evidenceId,
       kind: 'screenshot',
     });
-    getArtifact.mockResolvedValue({ body: Buffer.from('image') });
+    getArtifactStream.mockResolvedValue({
+      ref: {
+        backend: 'fs',
+        contentType: 'image/png',
+        id: 'artifact-1',
+        kind: 'ui.screenshot',
+        sizeBytes: 5,
+      },
+      sizeBytes: 5,
+      stream: Readable.from([Buffer.from('image')]),
+    });
     const { token } = signEvidenceLink({ eid: evidenceId, rid: runId, sub: 'u-1' });
     const url = `/api/v1/workflow-runs/${runId}/evidence/${evidenceId}/content?token=${encodeURIComponent(token)}`;
 
@@ -1291,7 +1303,17 @@ describe('workflowRunRoutes UI evidence', () => {
       id: evidenceId,
       kind: 'trace',
     });
-    getArtifact.mockResolvedValue({ body: Buffer.from('<html>') });
+    getArtifactStream.mockResolvedValue({
+      ref: {
+        backend: 'fs',
+        contentType: 'text/html',
+        id: 'artifact-1',
+        kind: 'ui.trace',
+        sizeBytes: 6,
+      },
+      sizeBytes: 6,
+      stream: Readable.from([Buffer.from('<html>')]),
+    });
     const { token } = signEvidenceLink({ eid: evidenceId, rid: runId, sub: 'u-1' });
 
     const res = await app.inject({
