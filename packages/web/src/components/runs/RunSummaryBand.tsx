@@ -1,5 +1,6 @@
 'use client';
 
+import { readTrackerWriteback } from '@auto-swe/shared/lib/integrations/ticketFailure';
 import { hasRunResult, RunSummary, type RunSummaryProps } from './RunSummary';
 
 type RunSummaryBandProps = Omit<RunSummaryProps, 'variant'>;
@@ -15,7 +16,8 @@ export function RunSummaryBand(props: RunSummaryBandProps) {
     pendingSteps.length === 0 &&
     answeredSteps.length === 0 &&
     !hasRunResult(run.result) &&
-    !failedStep
+    !failedStep &&
+    readTrackerWriteback(run.contextSnapshot) === null
   ) {
     return null;
   }

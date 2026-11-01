@@ -38,6 +38,51 @@ function order(texts: string[]): number[] {
 }
 
 describe('RunSummary', () => {
+  describe('the tracker write-back note', () => {
+    const writeback = { trackerWriteback: { failure: 'forbidden' } };
+
+    it.each(['compact', 'full'] as const)(
+      'shows on a run with no result or failure to show (%s)',
+      (variant) => {
+        render(
+          <RunSummary
+            failedStep={null}
+            pendingSteps={[]}
+            run={mkRun({ contextSnapshot: writeback, status: 'SUCCESS' })}
+            variant={variant}
+          />
+        );
+        expect(screen.getByText(/ticket was not updated/i)).toBeTruthy();
+      }
+    );
+
+    it('shows above the result', () => {
+      render(
+        <RunSummary
+          failedStep={null}
+          pendingSteps={[]}
+          run={mkRun({ contextSnapshot: writeback, result: { pr: 1 }, status: 'FAILED' })}
+          variant="full"
+        />
+      );
+      const [note, outcome] = order(['ticket was not updated', 'outcome card']);
+      expect(note).toBeGreaterThanOrEqual(0);
+      expect(note).toBeLessThan(outcome);
+    });
+
+    it('is absent when the run recorded none', () => {
+      render(
+        <RunSummary
+          failedStep={null}
+          pendingSteps={[]}
+          run={mkRun({ result: { pr: 1 }, status: 'FAILED' })}
+          variant="full"
+        />
+      );
+      expect(screen.queryByText(/ticket was not updated/i)).toBeNull();
+    });
+  });
+
   it.each(['compact', 'full'] as const)(
     'orders approvals, result, then failure (%s)',
     (variant) => {
