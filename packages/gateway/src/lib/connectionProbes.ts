@@ -484,6 +484,8 @@ async function platformChecks(
     baseUrl: repo.githubUrl,
     installationHost: repo.installation?.host ?? null,
     installationId: repo.installation?.installationId ?? null,
+    organizationName: target.organizationName,
+    repoName: target.repoName,
   };
   let credential: Awaited<ReturnType<typeof resolvePlatformCredential>>;
   try {

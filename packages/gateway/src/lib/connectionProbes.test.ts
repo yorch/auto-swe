@@ -332,6 +332,17 @@ describe('probeRepositoryAccess', () => {
     expect((fetchMock.mock.calls[1] as [string])[0]).toBe(`${API}/repos/acme/api/branches/main`);
   });
 
+  it("asks for a token scoped to the repository, as a run's would be", async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(200, { permissions: { push: true } }))
+      .mockResolvedValueOnce(json(200, {}));
+    await probeRepositoryAccess(prisma, repo, 'user-1');
+    expect(resolvePlatformCredential).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationName: 'acme', repoName: 'api' }),
+      expect.anything()
+    );
+  });
+
   it('fails a credential that can read but not push, since runs open pull requests', async () => {
     fetchMock
       .mockResolvedValueOnce(json(200, { permissions: { pull: true, push: false } }))
