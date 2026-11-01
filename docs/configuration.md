@@ -345,6 +345,28 @@ guard the connector applies at run time: GitHub needs a public address, and the 
 knowledge base honour the `allowPrivateNetwork` value on the form. Failures report fixed wording
 per status class and never echo the remote response body.
 
+The same holds for the other tests: `POST /api/v1/platform/github-host-credentials/:id/test`,
+`POST /api/v1/integrations/github-approver-app/test` and
+`POST /api/v1/admin/package-registries/:id/test` (all ADMIN) answer `200` with
+`{ ok, detail, checks[], durationMs }`, and a missing row is the only `404`. They read nothing
+from the request: the stored secrets are decrypted for the call and never returned. None is
+available to the in-app assistant.
+
+**Testing every connection at once.** `POST /api/v1/platform/connections/test` (ADMIN) runs the
+check each connection's own "Test connection" button runs and answers with one entry per
+connection: `ok`, `failed`, or `skipped` when it is not configured. It covers the five
+integrations, the approver App, each per-host GitHub credential, each active package registry and
+each model-provider key. The issue tracker is fetched only when the body carries a real
+`trackerTicketId`; without one it is `skipped`. A check that throws is a `failed` entry with fixed
+wording, never a failed request, so one broken connection does not hide the rest. The dashboard
+shows the answer on **Admin → Integrations → Connection health**, and the CLI as
+`auto-swe connections test`, which exits 1 when any connection fails.
+
+A GitHub App configuration is tested end to end: the App's id and private key must belong
+together, GitHub must issue an installation token for the configured installation, and that token
+must list repositories. A GitHub App test with an unsaved API URL is refused ("Save the API URL
+before testing the GitHub App"), because minting the token sends the App's JWT to that URL.
+
 **Outbound URL guard.** Every request to an operator-supplied URL (connector base URLs, MCP
 servers, bundle URLs, provider `apiBase` probes, skill sources, CI log links) is checked twice. The
 text check (`shared/lib/ssrfGuard.ts`) refuses a bad scheme and a host written as a loopback,
