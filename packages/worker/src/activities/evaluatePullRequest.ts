@@ -89,6 +89,7 @@ export const PR_POLICY_PATH = '.auto-swe/pr-policy.yml';
 const MAX_SCAN_CHARS = 2 * 1024 * 1024;
 const MAX_PERSISTED_REASONS = 100;
 const MAX_PERSISTED_PATHS = 100;
+const MAX_PERSISTED_PATH = 50;
 const MAX_PERSISTED_SKIM = 200;
 const MAX_PERSISTED_CLAIMS = 50;
 const MAX_TEXT = 500;
@@ -343,7 +344,7 @@ function infoReason(code: string, message: string): Reason {
   return { code, message, severity: 'info' };
 }
 
-const EMPTY_BRIEF = { claimsToVerify: [], focus: [], markdown: '', skim: [] };
+const EMPTY_BRIEF = { claimsToVerify: [], markdown: '', path: [], skim: [] };
 
 function asJson(value: unknown): Prisma.InputJsonValue {
   return value as Prisma.InputJsonValue;
@@ -1519,8 +1520,8 @@ export async function evaluatePullRequestWith(
         botApproved,
         brief: asJson({
           claimsToVerify: brief.claimsToVerify.slice(0, MAX_PERSISTED_CLAIMS),
-          focus: brief.focus.slice(0, 20),
           markdown: briefMarkdown,
+          path: brief.path.slice(0, MAX_PERSISTED_PATH),
           skim: brief.skim.slice(0, MAX_PERSISTED_SKIM),
         }),
         // The facts the evidence gate counts, describing the head just evaluated.

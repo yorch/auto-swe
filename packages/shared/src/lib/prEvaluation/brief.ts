@@ -1,4 +1,4 @@
-import { matchesAny } from './paths.js';
+import { CONTRACT_GLOBS, isTestFile, matchesAny, NON_SOURCE_GLOBS } from './paths.js';
 import type {
   Brief,
   ChangedFile,
@@ -19,7 +19,12 @@ export const BOT_APPROVED_BRIEF_SENTENCE =
 
 /** First line of the comment, so the writer can find and update its own comment. */
 export const BRIEF_MARKER = '<!-- auto-swe:pr-evaluation -->';
-export const MAX_FOCUS = 10;
+/** Files of the reading path always listed; the rest of an unflagged tail is collapsed. */
+export const MAX_READ_VISIBLE = 10;
+/** Flagged files listed beyond the first ones, so a risky file is never hidden in the collapse. */
+const MAX_READ_FLAGGED = 30;
+/** Entries inside the collapsed block; keeps the block closing inside `MAX_BRIEF_CHARS`. */
+const MAX_READ_COLLAPSED = 100;
 export const MAX_BRIEF_CHARS = 60_000;
 const MAX_SKIM_SHOWN = 50;
 const MAX_REASON_PATHS_SHOWN = 5;
@@ -242,6 +247,99 @@ function whyAndVerify(file: ChangedFile, hits: Reason[]): { why: string; verify:
   };
 }
 
+const TEST_STEM_SUFFIX = /(?:\.test|\.spec|_test|_spec|Tests?)$/;
+const TEST_STEM_PREFIX = /^test_/;
+const TEST_DIRS = new Set(['test', 'tests', '__tests__', 'spec', 'e2e']);
+
+function baseName(path: string): string {
+  return path.split('/').pop() ?? path;
+}
+
+/** A file's name without its extension and, for a test, without the marker that says it is one. */
+function stemOf(path: string, test: boolean): string {
+  const name = baseName(path);
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  if (!test) {
+    return stem.toLowerCase();
+  }
+  const bare = stem.replace(TEST_STEM_SUFFIX, '').replace(TEST_STEM_PREFIX, '');
+  return (bare === '' ? stem : bare).toLowerCase();
+}
+
+/** The directories a test may sit in for the source it covers: its own, and a test directory's parent. */
+function sourceDirsFor(testPath: string): string[] {
+  const dir = dirname(testPath);
+  return TEST_DIRS.has(baseName(dir).toLowerCase()) ? [dir, dirname(dir)] : [dir];
+}
+
+const byPath = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+const churn = (file: ChangedFile): number => file.additions + file.deletions;
+
+/**
+ * The order to read the files in: what the rest depends on first (manifests, schema, contracts),
+ * then source grouped by directory with each test straight after the source it covers, then tests
+ * with no source in the change, then documentation and other files. A pure function of the paths
+ * and line counts, so the same change always reads in the same order. Risk does not move a file:
+ * the caller marks it.
+ */
+export function readingOrder(files: readonly ChangedFile[]): ChangedFile[] {
+  const contracts: ChangedFile[] = [];
+  const sources: ChangedFile[] = [];
+  const tests: ChangedFile[] = [];
+  const other: ChangedFile[] = [];
+  for (const file of files) {
+    if (isTestFile(file.path)) {
+      tests.push(file);
+    } else if (matchesAny(file.path, CONTRACT_GLOBS)) {
+      contracts.push(file);
+    } else if (matchesAny(file.path, NON_SOURCE_GLOBS)) {
+      other.push(file);
+    } else {
+      sources.push(file);
+    }
+  }
+
+  const sourceByKey = new Map<string, ChangedFile>();
+  for (const file of [...sources].sort((a, b) => byPath(a.path, b.path))) {
+    const key = `${dirname(file.path)}\0${stemOf(file.path, false)}`;
+    if (!sourceByKey.has(key)) {
+      sourceByKey.set(key, file);
+    }
+  }
+  const testsOf = new Map<ChangedFile, ChangedFile[]>();
+  const unpaired: ChangedFile[] = [];
+  for (const test of [...tests].sort((a, b) => byPath(a.path, b.path))) {
+    const stem = stemOf(test.path, true);
+    const owner = sourceDirsFor(test.path)
+      .map((dir) => sourceByKey.get(`${dir}\0${stem}`))
+      .find((source) => source !== undefined);
+    if (owner) {
+      testsOf.set(owner, [...(testsOf.get(owner) ?? []), test]);
+    } else {
+      unpaired.push(test);
+    }
+  }
+
+  const dirs = new Map<string, ChangedFile[]>();
+  for (const file of sources) {
+    dirs.set(dirname(file.path), [...(dirs.get(dirname(file.path)) ?? []), file]);
+  }
+  const dirChurn = (group: ChangedFile[]): number => group.reduce((sum, f) => sum + churn(f), 0);
+  const orderedDirs = [...dirs.entries()].sort(
+    ([dirA, a], [dirB, b]) => dirChurn(b) - dirChurn(a) || byPath(dirA, dirB)
+  );
+
+  const ordered: ChangedFile[] = [...contracts.sort((a, b) => byPath(a.path, b.path))];
+  for (const [, group] of orderedDirs) {
+    for (const source of group.sort((a, b) => churn(b) - churn(a) || byPath(a.path, b.path))) {
+      ordered.push(source, ...(testsOf.get(source) ?? []));
+    }
+  }
+  ordered.push(...unpaired, ...other.sort((a, b) => byPath(a.path, b.path)));
+  return ordered;
+}
+
 export function buildBrief(
   files: ChangedFile[],
   classification: Classification,
@@ -268,18 +366,8 @@ export function buildBrief(
     }
   }
 
-  const ranked = [...rest].sort((a, b) => {
-    const hitDelta = Number(hitsByPath.has(b.path)) - Number(hitsByPath.has(a.path));
-    if (hitDelta !== 0) {
-      return hitDelta;
-    }
-    const churnDelta = b.additions + b.deletions - (a.additions + a.deletions);
-    if (churnDelta !== 0) {
-      return churnDelta;
-    }
-    return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
-  });
-  const focus = ranked.slice(0, MAX_FOCUS).map((file) => ({
+  const path = readingOrder(rest).map((file) => ({
+    flagged: hitsByPath.has(file.path),
     path: file.path,
     ...whyAndVerify(file, hitsByPath.get(file.path) ?? []),
   }));
@@ -288,20 +376,36 @@ export function buildBrief(
     .filter((reason) => reason.severity !== 'info' && (reason.paths?.length ?? 0) === 0)
     .map((reason) => reason.message);
 
-  const markdown = renderMarkdown(
-    classification,
-    focus,
-    ranked.length - focus.length,
-    skim,
-    claimsToVerify
-  );
-  return { claimsToVerify, focus, markdown, skim };
+  const markdown = renderMarkdown(classification, path, skim, claimsToVerify);
+  return { claimsToVerify, markdown, path, skim };
+}
+
+type PathEntry = Brief['path'][number];
+
+/**
+ * The first `MAX_READ_VISIBLE` entries, plus every flagged one after them (up to
+ * `MAX_READ_FLAGGED`), in reading order. A risky file past the tenth is never folded away.
+ */
+function splitVisible(path: PathEntry[]): {
+  visible: { entry: PathEntry; position: number }[];
+  collapsed: PathEntry[];
+} {
+  const visible: { entry: PathEntry; position: number }[] = [];
+  const collapsed: PathEntry[] = [];
+  let flaggedLate = 0;
+  path.forEach((entry, i) => {
+    if (i < MAX_READ_VISIBLE || (entry.flagged && flaggedLate++ < MAX_READ_FLAGGED)) {
+      visible.push({ entry, position: i + 1 });
+    } else {
+      collapsed.push(entry);
+    }
+  });
+  return { collapsed, visible };
 }
 
 function renderMarkdown(
   classification: Classification,
-  focus: Brief['focus'],
-  moreFocus: number,
+  path: PathEntry[],
   skim: Brief['skim'],
   claims: string[]
 ): string {
@@ -327,15 +431,30 @@ function renderMarkdown(
     }
     lines.push('');
   }
-  if (focus.length > 0) {
-    lines.push('**Focus your review here**', '');
-    focus.forEach((item, i) => {
+  if (path.length > 0) {
+    const { visible, collapsed } = splitVisible(path);
+    lines.push('**Read in this order**', '');
+    // Bullets with the position written out: a numbered list would renumber a flagged file that
+    // sits past the tenth (its neighbours are folded away) as if it were the eleventh.
+    for (const { entry, position } of visible) {
+      const check = entry.flagged ? ` **Check:** ${escapeText(entry.verify)}` : '';
+      lines.push(`- **${position}.** ${codeSpan(entry.path)} - ${escapeText(entry.why)}.${check}`);
+    }
+    if (collapsed.length > 0) {
+      const shown = collapsed.slice(0, MAX_READ_COLLAPSED);
       lines.push(
-        `${i + 1}. ${codeSpan(item.path)} - ${escapeText(item.why)}. ${escapeText(item.verify)}`
+        '',
+        '<details>',
+        `<summary>${collapsed.length} more file${collapsed.length === 1 ? '' : 's'}, still in reading order</summary>`,
+        ''
       );
-    });
-    if (moreFocus > 0) {
-      lines.push(`- +${moreFocus} more file${moreFocus === 1 ? '' : 's'} not listed`);
+      for (const item of shown) {
+        lines.push(`- ${codeSpan(item.path)}`);
+      }
+      if (collapsed.length > shown.length) {
+        lines.push(`- +${collapsed.length - shown.length} more`);
+      }
+      lines.push('', '</details>');
     }
     lines.push('');
   }

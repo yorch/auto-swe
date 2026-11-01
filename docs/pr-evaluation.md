@@ -129,12 +129,34 @@ The brief is a single comment, updated in place on every evaluation. Its first l
 marker `<!-- auto-swe:pr-evaluation -->`. It carries:
 
 - **Why this class**: each reason with up to five of its paths.
-- **Focus your review here**: at most ten files, the ones named by a reason first, then by churn,
-  each with why it is listed and what to verify.
+- **Read in this order**: every file that is not provably skimmable, in the order to read it (below).
+  A file a reason names carries a **Check** note saying what to verify; the order does not depend on
+  risk.
 - **Verify**: the claims that name no path (a reviewer finding, a failed scan, an invalid policy file).
 - **Safe to skim**: files with a deterministic proof, at most 50 shown.
 
-The brief is also stored on the evaluation row and returned by the routes in §13.
+The brief is also stored on the evaluation row and returned by the routes in §13. The row keeps the
+first 50 entries of the reading path.
+
+### The reading path
+
+GitHub's Files tab lists files alphabetically, which splits a change from its tests and shows a
+reader the use of something before its definition. The brief gives an order instead, a pure function
+of the paths and line counts (`readingOrder` in `packages/shared/src/lib/prEvaluation/brief.ts`), so
+the same change always reads the same way:
+
+1. **Contracts and structure first**: manifests and lockfiles, schema and migrations, API contracts
+   (`CONTRACT_GLOBS` in `paths.ts`), by path.
+2. **Source, one directory at a time**, the directory with the most changed lines first and the
+   busiest file first inside it. A test follows the source file it covers: the same name once the
+   test marker is dropped (`foo.test.ts`, `foo.spec.ts`, `foo_test.go`, `test_foo.py`, `FooTest.java`),
+   in the same directory or, for a test inside a `test`, `tests`, `__tests__`, `spec` or `e2e`
+   directory, in its parent.
+3. **Tests with no source in the change**, then documentation and other files, by path.
+
+The first ten files are listed in full, with their position. A flagged file past the tenth (up to 30
+of them) is listed too, at its real position, so a risky file is never folded away. Everything else
+is folded into a `<details>` block of at most 100 names, still in reading order.
 
 A file is listed as safe to skim only when one of two proofs holds, and nothing else qualifies:
 
@@ -809,6 +831,11 @@ documentation change as a platform pull request and read the evaluation's reason
 
 ## Limitations
 
+- **The reading path orders by name and directory, not by what imports what.** It sees paths and
+  patches, never file contents, so a file that depends on another in a different directory can come
+  first. A test is paired with its source only in the same directory or the parent of a test
+  directory; a mirrored layout (`test/foo/bar.test.ts` for `src/foo/bar.ts`) reads as a loose test.
+  The brief cannot reorder GitHub's Files tab, which stays alphabetical.
 - **With bot approval, a `LOW` change merges with no human, on a deterministic judgement.** A change
   within the caps and the path allowlist is approved and merged by GitHub with nobody reading it.
   The classifier works from signals, not from understanding the change, so a semantic mistake
