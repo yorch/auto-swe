@@ -107,6 +107,19 @@ repos gate-commands <org/name> [--lint=CMD] [--typecheck=CMD] [--tests=CMD] [--b
                                      Setting needs a platform admin or the team's admin
                                      (see docs/repositories.md)
 
+repos test-access <org/name> [--json]
+                                     Check what a run on the repository could do with its
+                                     credentials: token, repository, push, default branch. Exits
+                                     1 on a failing step. Needs a platform admin or a lead of the
+                                     team (see docs/repositories.md)
+
+connections test [--ticket=<id>] [--json]
+                                     Check every configured connection (GitHub, Slack, issue
+                                     tracker, knowledge base, Figma, per-host credentials,
+                                     package registries, model keys). Exits 1 when any fails.
+                                     The tracker is checked only with --ticket. Needs a platform
+                                     admin (see docs/configuration.md)
+
 runs list [--status=S] [--template-id=ID] [--work-request-id=ID] [--limit=N]
                                      List recent workflow runs
 runs show <runId>                    Print one run (with steps) as JSON
@@ -187,7 +200,7 @@ admin token; `evals run` is the regression gate a nightly CI job polls to comple
 | Code | Meaning                                   |
 | ---- | ----------------------------------------- |
 | `0`  | Success                                   |
-| `1`  | User error (missing arg, no token, etc.); `evals run` also exits 1 on a regression |
+| `1`  | User error (missing arg, no token, etc.); `evals run` also exits 1 on a regression, and `connections test` and `repos test-access` when a connection or step fails |
 | `2`  | Remote error (HTTP non-2xx from gateway); `runs tail` and `agent run --wait` also exit 2 when the run ends in a non-success status, and `evals run` when the eval run fails without reaching a verdict, ends `INCONCLUSIVE` (no case had passed its flake screen, so none was scored), or passes over only the cases its budget reached (`summary.partial`; a partial run that regressed exits 1) |
 
 ## Examples
