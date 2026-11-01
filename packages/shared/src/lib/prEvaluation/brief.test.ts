@@ -11,6 +11,7 @@ import { classify } from './classify.js';
 import { DEFAULT_THRESHOLDS, mergePolicy } from './policy.js';
 import type {
   BriefEvidence,
+  BriefFinding,
   BriefIntent,
   ChangedFile,
   EffectivePolicy,
@@ -369,6 +370,75 @@ describe('the run evidence in the brief', () => {
   it('keeps a hostile count a plain number', () => {
     const md = render(evidence({ tests: { failing: -3, passing: 2.9, total: 5 } }));
     expect(md).toContain('- Tests: 2 passing, 0 failing at this head.');
+  });
+});
+
+describe('the review findings in the brief', () => {
+  const finding = (over: Partial<BriefFinding> = {}): BriefFinding => ({
+    category: 'logic',
+    description: 'the guard is inverted',
+    file: 'src/a.ts',
+    line: 12,
+    reviewer: 'DOMAIN_LOGIC',
+    severity: 'CRITICAL',
+    suggestedFix: 'flip the condition',
+    ...over,
+  });
+  const render = (findings: BriefFinding[] | undefined) => {
+    const files = [file('src/a.ts')];
+    const signals: EvaluationSignals = {
+      draft: false,
+      files,
+      maxReviewSeverity: 'PASS',
+      policyFileChanged: false,
+      scannerFindingCount: 0,
+    };
+    return buildBrief(
+      files,
+      classify(signals, effective),
+      effective,
+      undefined,
+      undefined,
+      findings
+    ).markdown;
+  };
+
+  it('adds nothing without findings', () => {
+    expect(render(undefined)).not.toContain('Review findings');
+    expect(render([])).not.toContain('Review findings');
+  });
+
+  it('lists each finding on one line with its place, ahead of the reading path', () => {
+    const md = render([finding(), finding({ line: null, severity: 'WARNING', suggestedFix: '' })]);
+    expect(md).toContain(
+      '- **CRITICAL** logic in ` src/a.ts:12 ` - the guard is inverted Suggested: flip the condition'
+    );
+    expect(md).toContain('- **WARNING** logic in ` src/a.ts ` - the guard is inverted\n');
+    expect(md).toContain('not verified');
+    expect(md.indexOf('**Review findings**')).toBeLessThan(md.indexOf('**Read in this order**'));
+  });
+
+  it('shows ten and counts the rest', () => {
+    const md = render(Array.from({ length: 13 }, (_, i) => finding({ category: `cat${i}` })));
+    expect(md).toContain('cat9');
+    expect(md).not.toContain('cat10');
+    expect(md).toContain('- +3 more not shown');
+  });
+
+  it('neutralises model text and keeps each finding on one line', () => {
+    const md = render([
+      finding({
+        category: '<b>x</b>',
+        description: 'ping @everyone see #123\n# Injected heading <script>alert(1)</script>',
+        suggestedFix: '```suggestion\nrm -rf /\n```',
+      }),
+    ]);
+    expect(md).not.toContain('<script>');
+    expect(md).not.toContain('<b>');
+    expect(md).not.toContain('@everyone');
+    expect(md).not.toContain('\n# Injected heading');
+    expect(md).not.toContain('\n```suggestion');
+    expect(md).not.toContain('see #123');
   });
 });
 

@@ -3,6 +3,7 @@ export * from './botApproval.js';
 export * from './brief.js';
 export * from './classify.js';
 export * from './engagement.js';
+export * from './findings.js';
 export * from './paths.js';
 export * from './policy.js';
 export * from './status.js';

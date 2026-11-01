@@ -2,6 +2,7 @@ import { CONTRACT_GLOBS, isTestFile, matchesAny, NON_SOURCE_GLOBS } from './path
 import type {
   Brief,
   BriefEvidence,
+  BriefFinding,
   BriefIntent,
   ChangedFile,
   Classification,
@@ -31,6 +32,7 @@ export const MAX_BRIEF_CHARS = 60_000;
 const MAX_SKIM_SHOWN = 50;
 const MAX_CRITERIA_SHOWN = 20;
 const MAX_QUESTIONS_SHOWN = 10;
+const MAX_FINDINGS_SHOWN = 10;
 const MAX_REASON_PATHS_SHOWN = 5;
 const MAX_DISPLAY_PATH = 200;
 
@@ -378,7 +380,8 @@ export function buildBrief(
   classification: Classification,
   effective: EffectivePolicy,
   intent?: BriefIntent,
-  evidence?: BriefEvidence
+  evidence?: BriefEvidence,
+  findings?: BriefFinding[]
 ): Brief {
   const hitsByPath = new Map<string, Reason[]>();
   for (const reason of classification.reasons) {
@@ -411,7 +414,15 @@ export function buildBrief(
     .filter((reason) => reason.severity !== 'info' && (reason.paths?.length ?? 0) === 0)
     .map((reason) => reason.message);
 
-  const markdown = renderMarkdown(classification, path, skim, claimsToVerify, intent, evidence);
+  const markdown = renderMarkdown(
+    classification,
+    path,
+    skim,
+    claimsToVerify,
+    intent,
+    evidence,
+    findings
+  );
   return { claimsToVerify, markdown, path, skim };
 }
 
@@ -521,13 +532,40 @@ function pushEvidence(lines: string[], evidence: BriefEvidence | undefined): voi
   lines.push('');
 }
 
+/**
+ * What the review network still raised on this head, worst first. Every field is model output, so
+ * each goes through `escapeText` (one line, bounded, no markup or mentions) and the fix is prose,
+ * never a suggestion block a reviewer could apply with one click.
+ */
+function pushFindings(lines: string[], findings: BriefFinding[] | undefined): void {
+  if (!findings || findings.length === 0) {
+    return;
+  }
+  lines.push('**Review findings** (raised by the review network on this head; not verified)', '');
+  for (const finding of findings.slice(0, MAX_FINDINGS_SHOWN)) {
+    const where = codeSpan(
+      finding.line === null ? finding.file : `${finding.file}:${finding.line}`
+    );
+    const fix =
+      finding.suggestedFix === '' ? '' : ` Suggested: ${escapeText(finding.suggestedFix)}`;
+    lines.push(
+      `- **${finding.severity}** ${escapeText(finding.category)} in ${where} - ${escapeText(finding.description)}${fix}`
+    );
+  }
+  if (findings.length > MAX_FINDINGS_SHOWN) {
+    lines.push(`- +${findings.length - MAX_FINDINGS_SHOWN} more not shown`);
+  }
+  lines.push('');
+}
+
 function renderMarkdown(
   classification: Classification,
   path: PathEntry[],
   skim: Brief['skim'],
   claims: string[],
   intent?: BriefIntent,
-  evidence?: BriefEvidence
+  evidence?: BriefEvidence,
+  findings?: BriefFinding[]
 ): string {
   const lines: string[] = [
     BRIEF_MARKER,
@@ -553,6 +591,7 @@ function renderMarkdown(
   }
   pushIntent(lines, intent);
   pushEvidence(lines, evidence);
+  pushFindings(lines, findings);
   if (path.length > 0) {
     const { visible, collapsed } = splitVisible(path);
     lines.push('**Read in this order**', '');

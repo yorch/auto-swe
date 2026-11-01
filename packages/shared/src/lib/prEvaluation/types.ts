@@ -103,6 +103,21 @@ export type BriefEvidence = {
   runUrl: string | null;
 };
 
+/**
+ * One finding of the review network's pass over exactly this head, after selection. Every string
+ * is model output: the brief and any comment built from it escape it. `line` is set only when it
+ * falls inside the file's patch, so a comment can be anchored to it.
+ */
+export type BriefFinding = {
+  category: string;
+  description: string;
+  file: string;
+  line: number | null;
+  reviewer: string;
+  severity: 'WARNING' | 'CRITICAL';
+  suggestedFix: string;
+};
+
 export type Brief = {
   /** Every file that is not provably skimmable, in the order to read it. */
   path: { path: string; why: string; verify: string; flagged: boolean }[];

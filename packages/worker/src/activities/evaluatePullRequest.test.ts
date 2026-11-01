@@ -662,6 +662,49 @@ describe('evaluatePullRequest: approvals and status', () => {
       expect(md).not.toContain('SECRET OUTPUT');
     });
 
+    describe('the review findings', () => {
+      const withFindings = (headSha: string) => [
+        {
+          outputs: {
+            codeResult: { headSha },
+            verdicts: [
+              {
+                findings: [
+                  {
+                    category: 'secrets',
+                    description: 'a token is written to the log',
+                    file: 'src/util.ts',
+                    line: 1,
+                    suggestedFix: 'drop the log line',
+                  },
+                  { category: 'logic', description: 'not in this change', file: 'src/gone.ts' },
+                ],
+                reviewer: 'SECURITY',
+                severity: 'WARNING',
+              },
+            ],
+          },
+        },
+      ];
+
+      it('lists the findings of the review of this head that fall in the change', async () => {
+        m.steps.mockResolvedValue(withFindings(HEAD));
+        await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+        const md = briefMarkdown();
+        expect(md).toContain('**Review findings**');
+        expect(md).toContain(
+          '- **WARNING** secrets in ` src/util.ts:1 ` - a token is written to the log Suggested: drop the log line'
+        );
+        expect(md).not.toContain('src/gone.ts');
+      });
+
+      it('lists nothing when the review was of another commit', async () => {
+        m.steps.mockResolvedValue(withFindings(OLD_HEAD));
+        await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+        expect(briefMarkdown()).not.toContain('Review findings');
+      });
+    });
+
     it('says no result was recorded when the run reviewed another commit', async () => {
       m.steps.mockResolvedValue([reviewedStep(OLD_HEAD, { failing: 0, passing: 3, total: 3 })]);
       await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));

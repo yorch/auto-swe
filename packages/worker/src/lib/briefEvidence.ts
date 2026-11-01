@@ -11,7 +11,7 @@ import type { RepoRef, ScmProvider } from './scm/types.js';
  * the run's notes, a command's output or an evidence caption, all of which are untrusted text.
  */
 
-type ReviewedOutputs = {
+export type ReviewedOutputs = {
   codeResult?: { headSha?: unknown; testResults?: unknown };
   verdicts?: unknown;
 };
@@ -89,20 +89,34 @@ async function readOrNull<T>(
   }
 }
 
+/**
+ * The review step's outputs for exactly this head, for everything the brief takes from it, or null
+ * when there are none or they cannot be read. Read once: the evidence and the findings share it.
+ */
+export function loadReviewedOutputsSafe(input: {
+  connectionId: string;
+  headSha: string;
+  prNumber: number;
+  temporalWorkflowId: string;
+}): Promise<ReviewedOutputs | null> {
+  return readOrNull(
+    'the run result',
+    { connectionId: input.connectionId, prNumber: input.prNumber },
+    () => loadReviewedOutputs(input.temporalWorkflowId, input.headSha)
+  );
+}
+
 export async function loadBriefEvidence(input: {
   connectionId: string;
   headSha: string;
   prNumber: number;
   repo: RepoRef;
+  reviewed: ReviewedOutputs | null;
   runId: string | null;
   scm: Pick<ScmProvider, 'fetchCiStatus'>;
-  temporalWorkflowId: string;
 }): Promise<BriefEvidence> {
   const meta = { connectionId: input.connectionId, prNumber: input.prNumber };
-  const [reviewed, ui, ci] = await Promise.all([
-    readOrNull('the run result', meta, () =>
-      loadReviewedOutputs(input.temporalWorkflowId, input.headSha)
-    ),
+  const [ui, ci] = await Promise.all([
     input.runId === null
       ? Promise.resolve(null)
       : readOrNull('the run evidence', meta, () => uiOf(input.runId as string)),
@@ -117,7 +131,7 @@ export async function loadBriefEvidence(input: {
       input.runId === null
         ? null
         : `${resolveWebUrl().replace(/\/$/, '')}/runs/${encodeURIComponent(input.runId)}`,
-    tests: testsOf(reviewed),
+    tests: testsOf(input.reviewed),
     ui,
   };
 }

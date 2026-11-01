@@ -133,6 +133,7 @@ marker `<!-- auto-swe:pr-evaluation -->`. It carries:
   ticket when it validated the request, and the ones it marked ambiguous (below).
 - **Evidence**: what the run that opened the pull request recorded: its test result at this head,
   the browser checks it captured, the head's CI verdict and a link to the run's page (below).
+- **Review findings**: what the review network raised on this head, worst first, at most ten (below).
 - **Read in this order**: every file that is not provably skimmable, in the order to read it (below).
   A file a reason names carries a **Check** note saying what to verify; the order does not depend on
   risk.
@@ -176,6 +177,27 @@ reaches it:
 It ends with what it does not check, that the tests cover what was asked. Each source is read on its
 own: one that cannot be read shows as unknown, and none of them can change the class, the status or
 the arming.
+
+### Review findings
+
+The three reviewers of the review network ([agents.md](./agents.md)) return findings with a file and
+often a line. The brief lists the ones worth a person's time, chosen by `selectReviewFindings`
+(`packages/shared/src/lib/prEvaluation/findings.ts`) from the verdicts of the review of exactly this
+head (the same step and rule as the evidence's test counts):
+
+- only findings of a `WARNING` or `CRITICAL` verdict; a reviewer that crashed leaves a synthetic
+  `REVIEWER_CRASH` entry, which is dropped;
+- only files that are in the change;
+- when CI failed on this head, a finding whose category names lint, style, formatting or a type
+  error is dropped, because the failing check already says it (a rule on the category's words, not on
+  the description);
+- a line number is kept only when it falls inside the file's patch, since a reviewer's line is a
+  guess; otherwise the finding is shown against the file alone.
+
+They are ranked critical first, then by reading position, then by line, and shown with their
+category, place, description and suggested fix, each escaped like all model text and on one line.
+A suggested fix is prose and never a suggestion block. The section is advisory: a finding is never
+verified here and decides neither the class nor the status.
 
 ### Whether reviewers act on the brief
 
@@ -884,6 +906,12 @@ documentation change as a platform pull request and read the evaluation's reason
 
 ## Limitations
 
+- **Review findings are the network's opinion, and which were fixed is not tracked.** The brief shows
+  what the last review of this head raised, so a head pushed after that review shows none, and the
+  fix loop keeps no record of which finding it addressed. Findings carry no identifier, so the same
+  concern worded differently by two reviewers appears twice. The lint and style filter reads the
+  category only, and no structured lint result is read, so a finding CI already reported under another
+  category stays.
 - **The evidence is the run's own account, at one moment.** The test counts come from the run's
   last review of the head and say nothing about test quality or coverage; a head pushed afterwards
   (a CI fix, a feedback round, a person) shows no result. CI is the verdict when the evaluation ran,
