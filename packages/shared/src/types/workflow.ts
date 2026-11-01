@@ -142,6 +142,11 @@ export interface CodeResult {
   filesChanged: FileChange[];
   headSha: string;
   implementationNotes: string;
+  /**
+   * How the implementer said it handled each open question of the ticket, from the closing lines
+   * of its last message. Its own account, not checked; absent when it gave none or none matched.
+   */
+  openQuestionNotes?: OpenQuestionNote[];
   testResults: TestRunResult;
 }
 
@@ -151,6 +156,15 @@ export interface FileChange {
   language: string;
   linesAdded: number;
   linesRemoved: number;
+}
+
+/** One open question of the ticket and what the implementer said it did about it. */
+export interface OpenQuestionNote {
+  /** What the implementer said, one line; empty when it said only the resolution. */
+  note: string;
+  /** The open question as validation extracted it, matched by its position in the prompt. */
+  question: string;
+  resolution: 'implemented' | 'left-unchanged';
 }
 
 export interface TestRunResult {

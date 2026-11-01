@@ -85,6 +85,11 @@ export type SkimProof = 'exact-rename' | 'whitespace-only';
 /** What the ticket asked for, as the run extracted it. Untrusted text: the brief escapes it. */
 export type BriefIntent = {
   criteria: string[];
+  /**
+   * What the run said it did about an open question, matched to `openQuestions` by the question's
+   * exact text. Its own account, never checked.
+   */
+  handled?: { note: string; question: string; resolution: 'implemented' | 'left-unchanged' }[];
   openQuestions: string[];
 };
 

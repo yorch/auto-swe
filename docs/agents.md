@@ -1192,8 +1192,15 @@ from `context.successCriteria`). `executeImplementation` appends an
 ticket digest and before the cross-repo block. It lists the concrete criteria as what done means
 and the ambiguity entries as open questions. For the open questions it asks the implementer not to
 guess how one is resolved: to implement only what the criteria and the description explicitly
-require, and to leave unchanged anything an open question blocks. When no concrete criterion exists
-it asks for the minimum the description plainly asks. The list is model output derived from ticket
+require, and to leave unchanged anything an open question blocks. The open questions are numbered
+(`Q1`, `Q2`, …) and the implementer is asked to end its final message with one line per question,
+`Q1: left unchanged` or `Q1: implemented - one sentence`. `executeImplementation` reads those lines
+from the last turn that gave any (`parseOpenQuestionNotes`, a strict parser: only a line of exactly
+that shape counts, a number the prompt did not list is ignored, a note is one line cut to 300
+characters) and records them as `CodeResult.openQuestionNotes`, each with the question it answers.
+It is the implementer's own account and nothing checks it; the pull-request brief shows it beside
+the question ([pr-evaluation.md](./pr-evaluation.md#what-was-asked)). When no concrete criterion
+exists it asks for the minimum the description plainly asks. The list is model output derived from ticket
 text, so it is bounded (20 criteria and 10 open questions, each cut to 500 characters and one line,
 within 6,000 characters in all, of which the open questions may always use 2,000; entries past the
 budget are replaced by an `(N more omitted)` line), and it sits inside a `<criteria>` delimiter.

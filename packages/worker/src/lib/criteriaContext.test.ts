@@ -21,12 +21,36 @@ describe('formatCriteriaContext', () => {
     expect(text).toContain('Acceptance criteria');
     expect(text).toContain('- GET /health returns 200');
     expect(text).toContain('Open questions');
-    expect(text).toContain('- does it need auth?');
-    expect(text).toContain('- which table?');
+    expect(text).toContain('- Q1: does it need auth?');
+    expect(text).toContain('- Q2: which table?');
     expect(text).not.toContain('AMBIGUOUS');
     expect(text).toMatch(/do not guess/i);
     expect(text).not.toContain('implementationNotes');
     expect(text).toMatch(/leave anything an open question blocks unchanged/);
+  });
+
+  it('asks, only when there are open questions, for one closing line per numbered question', () => {
+    const asked = formatCriteriaContext([
+      'GET /health returns 200',
+      'AMBIGUOUS: does it need auth?',
+    ]);
+    expect(asked).toContain('end your final message with one line per open question');
+    expect(asked).toContain('"Q1: left unchanged"');
+    expect(asked).toContain('"Q1: implemented - one sentence');
+    const none = formatCriteriaContext(['GET /health returns 200']);
+    expect(none).not.toContain('final message');
+    expect(none).not.toContain('Q1');
+  });
+
+  it('numbers the questions that fit from one, in the order listed', () => {
+    const text = formatCriteriaContext([
+      'AMBIGUOUS: first question',
+      'Clarify: second question?',
+      'AMBIGUOUS: third question',
+    ]);
+    expect(text).toContain('- Q1: first question');
+    expect(text).toContain('- Q2: second question?');
+    expect(text).toContain('- Q3: third question');
   });
 
   it('tells the implementer to do the minimum when no concrete criterion exists', () => {

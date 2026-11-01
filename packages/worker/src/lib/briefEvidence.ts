@@ -12,7 +12,7 @@ import type { RepoRef, ScmProvider } from './scm/types.js';
  */
 
 export type ReviewedOutputs = {
-  codeResult?: { headSha?: unknown; testResults?: unknown };
+  codeResult?: { headSha?: unknown; openQuestionNotes?: unknown; testResults?: unknown };
   verdicts?: unknown;
 };
 

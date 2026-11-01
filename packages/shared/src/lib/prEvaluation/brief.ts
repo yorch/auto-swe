@@ -455,19 +455,31 @@ function splitVisible(path: PathEntry[]): {
  * criteria were never checked against the diff, and the heading says so.
  */
 function pushIntent(lines: string[], intent: BriefIntent | undefined): void {
-  const sections: [string, string[], number][] = [
+  // What the run said it did about a question, only when it said it about this exact question.
+  const accountOf = (question: string): string => {
+    const handled = intent?.handled?.find((h) => h.question === question);
+    if (!handled) {
+      return '';
+    }
+    return handled.resolution === 'left-unchanged'
+      ? ' - the run says it **left this unchanged**'
+      : ` - the run says it **implemented** this${handled.note === '' ? '' : `: ${escapeText(handled.note)}`}`;
+  };
+  const sections: [string, string[], number, (entry: string) => string][] = [
     [
       '**What was asked** (extracted from the ticket; not checked against the diff)',
       intent?.criteria ?? [],
       MAX_CRITERIA_SHOWN,
+      () => '',
     ],
     [
-      '**Open questions in the ticket** (unresolved when the run validated it; check how the change handles each)',
+      '**Open questions in the ticket** (unresolved when the run validated it; check how the change handles each; what the run says about one is its own account, not checked)',
       intent?.openQuestions ?? [],
       MAX_QUESTIONS_SHOWN,
+      accountOf,
     ],
   ];
-  for (const [heading, all, max] of sections) {
+  for (const [heading, all, max, suffix] of sections) {
     const entries = all.filter((entry) => entry.trim() !== '');
     const shown = entries.slice(0, max);
     if (shown.length === 0) {
@@ -475,7 +487,7 @@ function pushIntent(lines: string[], intent: BriefIntent | undefined): void {
     }
     lines.push(heading, '');
     for (const entry of shown) {
-      lines.push(`- ${escapeText(entry)}`);
+      lines.push(`- ${escapeText(entry)}${suffix(entry)}`);
     }
     if (entries.length > shown.length) {
       lines.push(`- +${entries.length - shown.length} more`);

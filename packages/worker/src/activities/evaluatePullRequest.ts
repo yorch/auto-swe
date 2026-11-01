@@ -70,6 +70,7 @@ import { loadBriefEvidence, loadReviewedOutputsSafe } from '../lib/briefEvidence
 import { postFindingComments } from '../lib/briefFindings.js';
 import { scanDiffForCodeIssuesDetailed } from '../lib/codeSecurityScanner.js';
 import { splitSuccessCriteria } from '../lib/contextAmbiguity.js';
+import { validOpenQuestionNotes } from '../lib/openQuestionNotes.js';
 import { resolveLauncherSet } from '../lib/prLauncher.js';
 import {
   type ApproverClientResult,
@@ -1513,13 +1514,18 @@ export async function evaluatePullRequestWith(
     }
 
     // ── The brief, then the row, then the arming.
-    const intent = await loadBriefIntent(platformPr.workflow.workRequestId, connection.id, input);
     const reviewed = await loadReviewedOutputsSafe({
       connectionId: connection.id,
       headSha: pr.headSha,
       prNumber: input.prNumber,
       temporalWorkflowId,
     });
+    const intent = await loadBriefIntent(
+      platformPr.workflow.workRequestId,
+      connection.id,
+      input,
+      reviewed?.codeResult?.openQuestionNotes
+    );
     const evidence = await loadBriefEvidence({
       connectionId: connection.id,
       headSha: pr.headSha,
@@ -2211,7 +2217,8 @@ async function publishStatus(
 async function loadBriefIntent(
   workRequestId: string | null,
   connectionId: string,
-  input: { prNumber: number }
+  input: { prNumber: number },
+  handledByRun?: unknown
 ): Promise<BriefIntent | undefined> {
   if (workRequestId === null) {
     return undefined;
@@ -2225,7 +2232,12 @@ async function loadBriefIntent(
       return undefined;
     }
     const { concrete, ambiguities } = splitSuccessCriteria(snapshot.successCriteria);
-    return { criteria: concrete, openQuestions: ambiguities };
+    const handled = validOpenQuestionNotes(handledByRun);
+    return {
+      criteria: concrete,
+      ...(handled.length > 0 ? { handled } : {}),
+      openQuestions: ambiguities,
+    };
   } catch (err) {
     logWarn('pr evaluation: the ticket criteria could not be read for the brief', {
       connectionId,

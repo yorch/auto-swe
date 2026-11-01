@@ -797,6 +797,40 @@ describe('evaluatePullRequest: approvals and status', () => {
       expect(md).toContain('- which auth scheme applies?');
     });
 
+    it('adds the run’s own account of an open question when the review of this head carries it', async () => {
+      m.snapshot.mockResolvedValue({
+        successCriteria: ['GET /health returns 200', 'AMBIGUOUS: which auth scheme applies?'],
+      });
+      const notes = [
+        {
+          note: 'used a bearer token',
+          question: 'which auth scheme applies?',
+          resolution: 'implemented',
+        },
+      ];
+      const stepOf = (headSha: string) => [
+        {
+          outputs: {
+            codeResult: { headSha, openQuestionNotes: notes },
+            verdicts: [{ severity: 'PASS' }],
+          },
+        },
+      ];
+      m.steps.mockResolvedValue(stepOf(HEAD));
+      await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+      expect(briefMarkdown()).toContain(
+        '- which auth scheme applies? - the run says it **implemented** this: used a bearer token'
+      );
+
+      // A head the run did not review carries no account of it.
+      m.steps.mockResolvedValue(stepOf(OLD_HEAD));
+      m.created.length = 0;
+      await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+      const [, , , md] = argsOf('upsertMarkedComment').at(-1) as unknown[];
+      expect(md as string).toContain('- which auth scheme applies?');
+      expect(md as string).not.toContain('the run says it');
+    });
+
     it('leaves the sections out when the run recorded no criteria', async () => {
       await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
       expect(briefMarkdown()).not.toContain('What was asked');

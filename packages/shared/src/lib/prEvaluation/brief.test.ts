@@ -258,6 +258,46 @@ describe('the ticket intent in the brief', () => {
     expect(md).toContain('not checked against the diff');
   });
 
+  it("shows the run's own account next to the question it was about, and only that one", () => {
+    const md = withIntent({
+      criteria: [],
+      handled: [
+        { note: '', question: 'does it need auth?', resolution: 'left-unchanged' },
+        { note: 'used the orders table', question: 'which table?', resolution: 'implemented' },
+        {
+          note: 'for no question here',
+          question: 'a question nobody listed',
+          resolution: 'implemented',
+        },
+      ],
+      openQuestions: ['does it need auth?', 'which table?', 'what is the limit?'],
+    });
+    expect(md).toContain('- does it need auth? - the run says it **left this unchanged**');
+    expect(md).toContain(
+      '- which table? - the run says it **implemented** this: used the orders table'
+    );
+    expect(md).toContain('- what is the limit?\n');
+    expect(md).not.toContain('for no question here');
+    expect(md).toContain('its own account, not checked');
+  });
+
+  it('neutralises the run’s note like any model text', () => {
+    const md = withIntent({
+      criteria: [],
+      handled: [
+        {
+          note: 'ping @everyone <script>alert(1)</script>\n# Heading',
+          question: 'q?',
+          resolution: 'implemented',
+        },
+      ],
+      openQuestions: ['q?'],
+    });
+    expect(md).not.toContain('<script>');
+    expect(md).not.toContain('@everyone');
+    expect(md).not.toContain('\n# Heading');
+  });
+
   it('adds nothing when there is no intent, or only empty entries', () => {
     const plain = withIntent(undefined);
     expect(withIntent({ criteria: [], openQuestions: [] })).toBe(plain);

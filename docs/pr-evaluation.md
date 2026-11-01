@@ -154,6 +154,13 @@ line and cut to 500 characters, with a `+N more` line for the rest. Both lists d
 text, so they go through the same escaping as every other prose in the brief: no markup, mentions or
 autolinks.
 
+Beside an open question the brief adds what the run says it did about it ("left this unchanged" or
+"implemented this", with the implementer's one-line note), from the `openQuestionNotes` of the
+`CodeResult` the review of this exact head covered (the same step and rule as the evidence). It is
+matched to the question by its exact text, so a ticket whose criteria were extracted again since the
+run shows no account; it is the implementer's own words, escaped like all model text, and it is
+labelled as unchecked.
+
 They are advisory and decide nothing: neither the class, the status nor the arming reads them. The
 criteria are model output and were never checked against the diff, which the heading says. A section
 is left out when the run recorded nothing, and so is the whole of it when the read fails, with a
@@ -924,6 +931,11 @@ documentation change as a platform pull request and read the evaluation's reason
 
 ## Limitations
 
+- **What the run says about an open question is a request the model may not honour, and is not
+  checked.** The implementer is asked for closing lines but may omit them, answer a question it did
+  not understand, or say it left something unchanged that it changed; nothing compares the claim
+  with the diff. A runtime that returns no final text records none, and only the last turn that
+  gave any lines counts, so an account from before a later change can stand.
 - **Inline finding comments are untested against a live host, and a thread they open is outside the
   feedback loop.** The review path is exercised against fakes only. The PR-feedback automation
   never reads a comment that carries the finding marker, and because it keeps a thread only when

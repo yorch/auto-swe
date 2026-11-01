@@ -10,6 +10,7 @@ import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 import type {
   CodeResult,
+  OpenQuestionNote,
   RepoWorkRequest,
   Subtask,
   TestRunResult,
@@ -34,11 +35,13 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { splitSuccessCriteria } from '../lib/contextAmbiguity.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { formatCriteriaContext } from '../lib/criteriaContext.js';
 import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
+import { parseOpenQuestionNotes } from '../lib/openQuestionNotes.js';
 import {
   type CrossRepoStepOptions,
   checkoutUpstreamRepos,
@@ -382,6 +385,9 @@ export async function executeImplementation(
         },
       });
     };
+    // The open questions the prompt listed, in the order it numbered them.
+    const openQuestions = splitSuccessCriteria(successCriteria ?? []).ambiguities;
+    let openQuestionNotes: OpenQuestionNote[] = [];
     for (let iteration = 0; iteration < maxTddIterations; iteration++) {
       heartbeat(`TDD iteration ${iteration + 1}/${maxTddIterations}`);
       // A cancelled run stops here rather than spending another iteration.
@@ -401,7 +407,7 @@ export async function executeImplementation(
           : {}),
       });
       await assertBudgetAvailable(`implementer.iteration_${iteration}`);
-      await runImplementerTurn({
+      const turn = await runImplementerTurn({
         agent: turnAgent,
         boundModelSpec,
         context: { iteration },
@@ -412,6 +418,11 @@ export async function executeImplementation(
         usageEvent: `llm.implementer.iteration_${iteration}`,
         user: llmUserMessage,
       });
+      // What it said about each open question; a later turn that says nothing leaves this standing.
+      const noted = parseOpenQuestionNotes(turn.text, openQuestions);
+      if (noted.length > 0) {
+        openQuestionNotes = noted;
+      }
 
       // Run tests
       const testStart = Date.now();
@@ -531,6 +542,7 @@ export async function executeImplementation(
         : unrunnable
           ? `The test command \`${unrunnable.command}\` could not run in the workspace (${unrunnable.cause}), so the TDD loop stopped after the first test run.`
           : `Completed in ${testResult.passed ? `≤${maxTddIterations}` : `${maxTddIterations} (max)`} TDD iterations. Tests ${testStatusWord(testResult)}.`,
+      ...(openQuestionNotes.length > 0 ? { openQuestionNotes } : {}),
       repoId: requireRepoId(request, 'executeImplementation'),
       testResults: testResult,
     };
