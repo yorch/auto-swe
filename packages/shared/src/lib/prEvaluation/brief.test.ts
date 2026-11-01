@@ -9,7 +9,13 @@ import {
 } from './brief.js';
 import { classify } from './classify.js';
 import { DEFAULT_THRESHOLDS, mergePolicy } from './policy.js';
-import type { BriefIntent, ChangedFile, EffectivePolicy, EvaluationSignals } from './types.js';
+import type {
+  BriefEvidence,
+  BriefIntent,
+  ChangedFile,
+  EffectivePolicy,
+  EvaluationSignals,
+} from './types.js';
 
 const { effective } = mergePolicy({ ...DEFAULT_THRESHOLDS, sensitivePaths: [] });
 const file = (path: string, over: Partial<ChangedFile> = {}): ChangedFile => ({
@@ -293,6 +299,76 @@ describe('the ticket intent in the brief', () => {
     expect(md).not.toContain('see #123');
     expect(md).not.toContain('GH-9');
     expect(md).toContain('` https://evil.example/x `');
+  });
+});
+
+describe('the run evidence in the brief', () => {
+  const evidence = (over: Partial<BriefEvidence> = {}): BriefEvidence => ({
+    ci: 'passed',
+    runUrl: 'https://app.example.com/runs/abc',
+    tests: { failing: 0, passing: 4, total: 4 },
+    ui: null,
+    ...over,
+  });
+  const render = (e: BriefEvidence | undefined) => {
+    const files = [file('db/migrations/1.sql')];
+    const signals: EvaluationSignals = {
+      draft: false,
+      files,
+      maxReviewSeverity: 'PASS',
+      policyFileChanged: false,
+      scannerFindingCount: 0,
+    };
+    return buildBrief(files, classify(signals, effective), effective, undefined, e).markdown;
+  };
+
+  it('adds nothing without evidence', () => {
+    expect(render(undefined)).not.toContain('**Evidence**');
+  });
+
+  it('writes fixed sentences between the intent and the reading path', () => {
+    const md = render(evidence({ ui: { screenshots: 1, traces: 2, videos: 0 } }));
+    expect(md).toContain('- Tests: 4 passing, 0 failing at this head.');
+    expect(md).toContain('- Browser checks the run captured: 1 screenshot, 2 traces.');
+    expect(md).toContain('- CI on this head: passed.');
+    expect(md).toContain(
+      "- [The run's page](https://app.example.com/runs/abc) has its full trace."
+    );
+    expect(md).toContain('- Not checked here: whether the tests cover what was asked.');
+    expect(md.indexOf('**Evidence**')).toBeLessThan(md.indexOf('**Read in this order**'));
+  });
+
+  it('says what it does not know', () => {
+    const md = render(evidence({ ci: null, runUrl: null, tests: null }));
+    expect(md).toContain('- Tests: no result recorded for this head.');
+    expect(md).toContain('- CI on this head: could not be read.');
+    expect(md).not.toContain("The run's page");
+    expect(render(evidence({ tests: { failing: 0, passing: 0, total: 0 } }))).toContain(
+      '- Tests: none ran at this head.'
+    );
+  });
+
+  it.each([
+    ['pending', 'still running'],
+    ['none', 'no checks reported'],
+    ['failed', 'failed'],
+  ] as const)('words a %s CI verdict as "%s"', (ci, text) => {
+    expect(render(evidence({ ci }))).toContain(`- CI on this head: ${text}.`);
+  });
+
+  it('never writes a run address that could break out of a link', () => {
+    for (const runUrl of [
+      'https://x.example/a b',
+      'https://x.example/a)(b',
+      'javascript:alert(1)',
+    ]) {
+      expect(render(evidence({ runUrl }))).not.toContain("The run's page");
+    }
+  });
+
+  it('keeps a hostile count a plain number', () => {
+    const md = render(evidence({ tests: { failing: -3, passing: 2.9, total: 5 } }));
+    expect(md).toContain('- Tests: 2 passing, 0 failing at this head.');
   });
 });
 

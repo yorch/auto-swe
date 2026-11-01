@@ -131,6 +131,8 @@ marker `<!-- auto-swe:pr-evaluation -->`. It carries:
 - **Why this class**: each reason with up to five of its paths.
 - **What was asked** and **Open questions in the ticket**: the criteria the run extracted from the
   ticket when it validated the request, and the ones it marked ambiguous (below).
+- **Evidence**: what the run that opened the pull request recorded: its test result at this head,
+  the browser checks it captured, the head's CI verdict and a link to the run's page (below).
 - **Read in this order**: every file that is not provably skimmable, in the order to read it (below).
   A file a reason names carries a **Check** note saying what to verify; the order does not depend on
   risk.
@@ -155,6 +157,25 @@ They are advisory and decide nothing: neither the class, the status nor the armi
 criteria are model output and were never checked against the diff, which the heading says. A section
 is left out when the run recorded nothing, and so is the whole of it when the read fails, with a
 warning logged: the evaluation never fails, and never turns `HIGH`, because they could not be read.
+
+### Evidence
+
+The **Evidence** section repeats what the run already recorded and runs nothing itself. Its lines
+are fixed sentences filled with numbers and verdicts, so nothing a model, a command or a page wrote
+reaches it:
+
+- **Tests**: the counts in the test result of the run's `runReviewNetwork` step, taken only when
+  that step reviewed exactly this head (the same rule as the review severity in §2). "None ran" and
+  "no result recorded for this head" are told apart from a failing count.
+- **Browser checks**: how many screenshots, videos and traces the run stored.
+- **CI**: the host's verdict on this head at the moment of the evaluation (`passed`, `failed`,
+  `still running`, `no checks reported`).
+- **Run page**: a link to `/runs/<id>` on the dashboard's address (`WEB_URL`), written only when the
+  address contains nothing that could break out of a link.
+
+It ends with what it does not check, that the tests cover what was asked. Each source is read on its
+own: one that cannot be read shows as unknown, and none of them can change the class, the status or
+the arming.
 
 ### Whether reviewers act on the brief
 
@@ -863,6 +884,12 @@ documentation change as a platform pull request and read the evaluation's reason
 
 ## Limitations
 
+- **The evidence is the run's own account, at one moment.** The test counts come from the run's
+  last review of the head and say nothing about test quality or coverage; a head pushed afterwards
+  (a CI fix, a feedback round, a person) shows no result. CI is the verdict when the evaluation ran,
+  so `still running` is not a pass. Browser checks are counted per run, not per head, and the
+  evidence behind them can be deleted by retention while the link remains. Gate and eval results are
+  not recorded against a pull request, so they are not shown.
 - **The engagement counts are approximate and say nothing about reading.** A delivery GitHub sends
   twice counts twice, a review that arrives before its head's evaluation row exists is not counted,
   and one person's several logins count as several. Rows written before the counts existed read as

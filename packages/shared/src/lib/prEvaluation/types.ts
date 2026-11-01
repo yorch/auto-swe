@@ -88,6 +88,21 @@ export type BriefIntent = {
   openQuestions: string[];
 };
 
+/**
+ * What the run that opened the pull request recorded, as numbers and verdicts: never a model's
+ * words, a command's output or a page's text. A null says it could not be read or was not recorded.
+ */
+export type BriefEvidence = {
+  /** The run's own test result at this head; null when no review of this exact head was found. */
+  tests: { failing: number; passing: number; total: number } | null;
+  /** Browser checks the run captured, by kind; null when it captured none. */
+  ui: { screenshots: number; traces: number; videos: number } | null;
+  /** The host's verdict on this head's checks right now; null when it could not be read. */
+  ci: 'passed' | 'failed' | 'pending' | 'none' | null;
+  /** The run's page in the dashboard; null when no run or no web address is known. */
+  runUrl: string | null;
+};
+
 export type Brief = {
   /** Every file that is not provably skimmable, in the order to read it. */
   path: { path: string; why: string; verify: string; flagged: boolean }[];

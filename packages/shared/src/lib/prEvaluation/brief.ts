@@ -1,6 +1,7 @@
 import { CONTRACT_GLOBS, isTestFile, matchesAny, NON_SOURCE_GLOBS } from './paths.js';
 import type {
   Brief,
+  BriefEvidence,
   BriefIntent,
   ChangedFile,
   Classification,
@@ -376,7 +377,8 @@ export function buildBrief(
   files: ChangedFile[],
   classification: Classification,
   effective: EffectivePolicy,
-  intent?: BriefIntent
+  intent?: BriefIntent,
+  evidence?: BriefEvidence
 ): Brief {
   const hitsByPath = new Map<string, Reason[]>();
   for (const reason of classification.reasons) {
@@ -409,7 +411,7 @@ export function buildBrief(
     .filter((reason) => reason.severity !== 'info' && (reason.paths?.length ?? 0) === 0)
     .map((reason) => reason.message);
 
-  const markdown = renderMarkdown(classification, path, skim, claimsToVerify, intent);
+  const markdown = renderMarkdown(classification, path, skim, claimsToVerify, intent, evidence);
   return { claimsToVerify, markdown, path, skim };
 }
 
@@ -471,12 +473,61 @@ function pushIntent(lines: string[], intent: BriefIntent | undefined): void {
   }
 }
 
+const CI_TEXT: Record<NonNullable<BriefEvidence['ci']>, string> = {
+  failed: 'failed',
+  none: 'no checks reported',
+  passed: 'passed',
+  pending: 'still running',
+};
+/** A dashboard address safe to write as a link: no whitespace, brackets or parentheses. */
+const SAFE_LINK = /^https?:\/\/[^\s()<>[\]]+$/;
+
+const count = (n: number): string => String(Math.max(0, Math.trunc(Number(n) || 0)));
+const plural = (n: number, word: string): string => `${count(n)} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * What the run recorded about itself, in fixed sentences built from numbers and verdicts: nothing
+ * a model or a page wrote reaches this section. It says plainly what it does not check.
+ */
+function pushEvidence(lines: string[], evidence: BriefEvidence | undefined): void {
+  if (!evidence) {
+    return;
+  }
+  const { tests, ui, ci, runUrl } = evidence;
+  const items: string[] = [
+    tests === null
+      ? 'Tests: no result recorded for this head.'
+      : tests.total === 0
+        ? 'Tests: none ran at this head.'
+        : `Tests: ${count(tests.passing)} passing, ${count(tests.failing)} failing at this head.`,
+  ];
+  if (ui) {
+    const kinds = [
+      ui.screenshots > 0 ? plural(ui.screenshots, 'screenshot') : '',
+      ui.videos > 0 ? plural(ui.videos, 'video') : '',
+      ui.traces > 0 ? plural(ui.traces, 'trace') : '',
+    ].filter(Boolean);
+    items.push(`Browser checks the run captured: ${kinds.join(', ')}.`);
+  }
+  items.push(`CI on this head: ${ci === null ? 'could not be read' : CI_TEXT[ci]}.`);
+  if (runUrl !== null && SAFE_LINK.test(runUrl)) {
+    items.push(`[The run's page](${runUrl}) has its full trace.`);
+  }
+  items.push('Not checked here: whether the tests cover what was asked.');
+  lines.push('**Evidence** (what the run recorded; nothing is re-run here)', '');
+  for (const item of items) {
+    lines.push(`- ${item}`);
+  }
+  lines.push('');
+}
+
 function renderMarkdown(
   classification: Classification,
   path: PathEntry[],
   skim: Brief['skim'],
   claims: string[],
-  intent?: BriefIntent
+  intent?: BriefIntent,
+  evidence?: BriefEvidence
 ): string {
   const lines: string[] = [
     BRIEF_MARKER,
@@ -501,6 +552,7 @@ function renderMarkdown(
     lines.push('');
   }
   pushIntent(lines, intent);
+  pushEvidence(lines, evidence);
   if (path.length > 0) {
     const { visible, collapsed } = splitVisible(path);
     lines.push('**Read in this order**', '');

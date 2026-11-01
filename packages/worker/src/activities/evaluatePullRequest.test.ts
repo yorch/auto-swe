@@ -27,6 +27,7 @@ const m = vi.hoisted(() => ({
   settings: {} as Record<string, unknown>,
   snapshot: vi.fn(),
   steps: vi.fn(),
+  uiEvidence: vi.fn(),
   update: vi.fn(),
   updateMany: vi.fn(),
   user: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock('@auto-swe/shared/db', () => ({
       updateMany: m.updateMany,
     },
     pullRequest: { findFirst: m.platformPr },
+    runEvidence: { groupBy: m.uiEvidence },
     runInput: { findUnique: m.request },
     user: { findMany: m.user },
     workflowRun: { findMany: m.runs },
@@ -187,6 +189,7 @@ function fakeScm(over: Partial<Record<keyof ScmProvider, unknown>> = {}): Fake {
     disableAutoMerge: track('disableAutoMerge', { ok: true }),
     dismissReview: track('dismissReview', { ok: true }),
     enableAutoMerge: track('enableAutoMerge', { ok: true }),
+    fetchCiStatus: track('fetchCiStatus', { verdict: 'passed' }),
     fetchFileContent: track('fetchFileContent', null),
     getPullRequest: track('getPullRequest', OPEN_PR),
     listPullRequestFiles: track('listPullRequestFiles', {
@@ -282,6 +285,8 @@ beforeEach(() => {
   m.previous.mockResolvedValue(null);
   m.snapshot.mockReset();
   m.snapshot.mockResolvedValue(null);
+  m.uiEvidence.mockReset();
+  m.uiEvidence.mockResolvedValue([]);
   m.steps.mockReset();
   m.steps.mockResolvedValue([
     { outputs: { codeResult: { headSha: HEAD }, verdicts: [{ severity: 'PASS' }] } },
@@ -628,6 +633,64 @@ describe('evaluatePullRequest: approvals and status', () => {
     const [, number, marker] = argsOf('upsertMarkedComment')[0] as [unknown, number, string];
     expect(number).toBe(7);
     expect(marker).toBe('<!-- auto-swe:pr-evaluation -->');
+  });
+
+  describe('the run evidence in the brief', () => {
+    const briefMarkdown = () => (argsOf('upsertMarkedComment')[0] as unknown[])[3] as string;
+    const reviewedStep = (headSha: string, testResults: unknown) => ({
+      outputs: { codeResult: { headSha, testResults }, verdicts: [{ severity: 'PASS' }] },
+    });
+
+    it('reports the run tests for this head, the browser checks, CI and the run page', async () => {
+      m.steps.mockResolvedValue([
+        reviewedStep(HEAD, { failing: 1, passing: 11, stdout: 'SECRET OUTPUT', total: 12 }),
+      ]);
+      m.uiEvidence.mockResolvedValue([
+        { _count: { _all: 2 }, kind: 'screenshot' },
+        { _count: { _all: 1 }, kind: 'video' },
+        { _count: { _all: 4 }, kind: 'log' },
+      ]);
+      const scm = fakeScm({ fetchCiStatus: async () => ({ verdict: 'pending' }) });
+      await evaluatePullRequestWith(INPUT, depsWith(scm));
+      const md = briefMarkdown();
+      expect(md).toContain('**Evidence**');
+      expect(md).toContain('- Tests: 11 passing, 1 failing at this head.');
+      expect(md).toContain('- Browser checks the run captured: 2 screenshots, 1 video.');
+      expect(md).toContain('- CI on this head: still running.');
+      expect(md).toContain('/runs/run-1) has its full trace.');
+      expect(md).toContain('Not checked here: whether the tests cover what was asked.');
+      expect(md).not.toContain('SECRET OUTPUT');
+    });
+
+    it('says no result was recorded when the run reviewed another commit', async () => {
+      m.steps.mockResolvedValue([reviewedStep(OLD_HEAD, { failing: 0, passing: 3, total: 3 })]);
+      await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+      expect(briefMarkdown()).toContain('- Tests: no result recorded for this head.');
+    });
+
+    it('tells "none ran" from a failure', async () => {
+      m.steps.mockResolvedValue([reviewedStep(HEAD, { failing: 0, passing: 0, total: 0 })]);
+      await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+      expect(briefMarkdown()).toContain('- Tests: none ran at this head.');
+    });
+
+    it('keeps the brief, class and status when every source fails', async () => {
+      // The first read is the evaluation's own review severity, which must keep working; every
+      // read after it is the brief's.
+      m.steps.mockResolvedValueOnce([reviewedStep(HEAD, null)]);
+      m.steps.mockRejectedValue(new Error('database unreachable'));
+      m.uiEvidence.mockRejectedValue(new Error('database unreachable'));
+      const scm = fakeScm({
+        fetchCiStatus: async () => {
+          throw new Error('host unreachable');
+        },
+      });
+      const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+      expect(briefMarkdown()).toContain('- CI on this head: could not be read.');
+      expect(briefMarkdown()).toContain('- Tests: no result recorded for this head.');
+      expect(JSON.stringify(m.logs)).not.toContain('unreachable');
+      expect(result).toMatchObject({ outcome: 'evaluated' });
+    });
   });
 
   describe('the ticket intent in the brief', () => {

@@ -65,6 +65,7 @@ import {
 } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 import { logWarn } from '../lib/activityLog.js';
+import { loadBriefEvidence } from '../lib/briefEvidence.js';
 import { scanDiffForCodeIssuesDetailed } from '../lib/codeSecurityScanner.js';
 import { splitSuccessCriteria } from '../lib/contextAmbiguity.js';
 import { resolveLauncherSet } from '../lib/prLauncher.js';
@@ -1510,7 +1511,16 @@ export async function evaluatePullRequestWith(
 
     // ── The brief, then the row, then the arming.
     const intent = await loadBriefIntent(platformPr.workflow.workRequestId, connection.id, input);
-    const brief = buildBrief(listed.files, classification, effective, intent);
+    const evidence = await loadBriefEvidence({
+      connectionId: connection.id,
+      headSha: pr.headSha,
+      prNumber: input.prNumber,
+      repo,
+      runId: platformPr.runId,
+      scm,
+      temporalWorkflowId,
+    });
+    const brief = buildBrief(listed.files, classification, effective, intent, evidence);
     const briefMarkdown = truncateBrief(brief.markdown);
     await postBrief(scm, repo, input.prNumber, briefMarkdown, connection.id);
 
