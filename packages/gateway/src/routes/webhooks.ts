@@ -54,6 +54,7 @@ import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/id
 import { applyInstallationEvent, INSTALLATION_EVENT_TYPES } from '../lib/installationWebhook.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
+import { handleBriefEngagementDelivery } from '../lib/prBriefEngagement.js';
 import { handlePrEvaluationDelivery } from '../lib/prEvaluationWebhook.js';
 import { parseRateLimitConfig } from '../lib/rateLimitConfig.js';
 import {
@@ -633,6 +634,15 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         await handlePrEvaluationDelivery(fastify, {
           body: request.body,
           deliveryId: typeof delivery === 'string' ? delivery : '',
+          eventType,
+          log: request.log,
+          verifiedHost: verified.host,
+        });
+      }
+      // And the counts of how people meet the brief: a review, or an inline comment on a file.
+      if (eventType === 'pull_request_review' || eventType === 'pull_request_review_comment') {
+        await handleBriefEngagementDelivery(fastify, {
+          body: request.body,
           eventType,
           log: request.log,
           verifiedHost: verified.host,

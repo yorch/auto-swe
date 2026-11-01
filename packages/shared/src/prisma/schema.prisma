@@ -364,6 +364,15 @@ model PrEvaluation {
   /// webhook and the sweep, so a switched-off or deactivated repository still gets its bot approval
   /// withdrawn; never counted as evidence (`trustedApprovers` is human-only).
   botApproved       Boolean    @default(false) @map("bot_approved")
+  /// When a person first reviewed the pull request at this head; NULL until one did. Counts only
+  /// below: the brief's own evidence of whether it is read, never who reviewed or what they said.
+  firstHumanReviewAt    DateTime? @map("first_human_review_at") @db.Timestamptz
+  changesRequestedCount Int       @default(0) @map("changes_requested_count")
+  /// Inline comments by people at this head, by where they landed: on a file the brief flagged, on
+  /// one it said was safe to skim, anywhere else.
+  commentsOnFlagged     Int       @default(0) @map("comments_on_flagged")
+  commentsOnSkimmed     Int       @default(0) @map("comments_on_skimmed")
+  commentsElsewhere     Int       @default(0) @map("comments_elsewhere")
   createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([connectionId, prNumber])

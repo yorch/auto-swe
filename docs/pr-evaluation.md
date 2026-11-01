@@ -156,6 +156,17 @@ criteria are model output and were never checked against the diff, which the hea
 is left out when the run recorded nothing, and so is the whole of it when the read fails, with a
 warning logged: the evaluation never fails, and never turns `HIGH`, because they could not be read.
 
+### Whether reviewers act on the brief
+
+Each evaluation row counts how people met the brief at its head: when a person first reviewed it,
+how many reviews asked for changes, and where their inline comments landed (on a file the brief
+flagged, on one it listed as safe to skim, anywhere else). The gateway adds them from the review and
+review-comment deliveries it already receives, with no extra subscription, and never starts an
+evaluation for them. A review or comment by a bot, by the pull request's author, or carrying a
+platform marker (`<!-- auto-swe:`) is not counted, and a dismissed review or an edited comment is
+not a new one. The row keeps numbers only: never a login, a path or text.
+`GET /api/v1/pr-evaluations/engagement` (§13) summarises them.
+
 ### The reading path
 
 GitHub's Files tab lists files alphabetically, which splits a change from its tests and shows a
@@ -557,6 +568,7 @@ All are ADMIN-only registry settings in the `prEvaluation` group; see
 | `GET /api/v1/repositories/:id/pr-evaluation` | ENGINEER | Enabled flag, mode and where it came from, whether auto-merge is allowed, the status context, the thresholds in force, the evidence figures, whether bot approval is on, allowed by the deployment and has an approver App to use (booleans only), and the repository's last evaluation |
 | `PUT /api/v1/repositories/:id/pr-evaluation` | LEAD of the owning team, or ADMIN | Body `{ "mode"?: "off" \| "advisory" \| "enforce" \| "auto" \| null, "botApproval"?: boolean }`, at least one; `null` inherits. `auto` is ADMIN-only and may answer `400 AUTO_NOT_READY`. `botApproval: true` is ADMIN-only, needs the resulting mode to be `auto`, and may answer `400 BOT_APPROVAL_NOT_READY` with every unmet reason (§16.1); any mode other than `auto` sets it false in the same update. Two writes that race on the same repository can answer `409 PR_EVALUATION_CONFLICT`: reload and retry. The response carries the resulting `mode`, `modeSource`, `botApproval` and `warnings` under `data` (`warnings` is non-empty for `enforce` when the status context is not shown to be a required check) |
 | `GET /api/v1/pr-evaluations` | ENGINEER | Evaluations, newest first, for repositories you can reach. Filters `repoId`, `riskClass`, `merged`; `limit` (default 50, at most 100) and `offset`. Each row reports whether a brief exists and its length, not the brief |
+| `GET /api/v1/pr-evaluations/engagement` | ENGINEER | Whether reviewers act on the brief, for repositories you can reach: `days` (default 30, 1 to 365) and `repoId`. Evaluations, how many a person reviewed, the median minutes to the first review, the share of reviewed ones with a request for changes, and where inline comments landed (on a flagged file, on a file the brief said to skim, elsewhere). Reads at most 5000 evaluations and says `capped` when the window held more |
 | `GET /api/v1/pr-evaluations/:id` | ENGINEER | One evaluation in full: reasons, the brief, and the branch rules it read |
 | `GET /api/v1/integrations/github-approver-app` | ADMIN | Whether the approver App is configured, its App id and slug, the last four characters of its private key, and when it changed. The key is never returned |
 | `PUT /api/v1/integrations/github-approver-app` | ADMIN | Body `{ "appId"?, "appSlug"?, "privateKey"? }`. Checked against GitHub before anything is stored (§16.2). A blank `privateKey` keeps the stored one |
@@ -851,6 +863,11 @@ documentation change as a platform pull request and read the evaluation's reason
 
 ## Limitations
 
+- **The engagement counts are approximate and say nothing about reading.** A delivery GitHub sends
+  twice counts twice, a review that arrives before its head's evaluation row exists is not counted,
+  and one person's several logins count as several. Rows written before the counts existed read as
+  no engagement, and a brief stored before the reading path existed places every comment under
+  "elsewhere". Whether a reviewer read the brief at all is not observable.
 - **The ticket criteria are not checked against the change.** **What was asked** repeats what
   validation extracted, so it can be wrong, stale after the ticket was edited, or empty: a template
   with no validation step records no criteria, and its brief has neither section. The brief does not

@@ -171,6 +171,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/platform/usage/scopes': 'read',
   'GET /api/v1/pr-evaluations': 'read',
   'GET /api/v1/pr-evaluations/:id': 'read',
+  'GET /api/v1/pr-evaluations/engagement': 'read',
   'GET /api/v1/pull-requests': 'read',
   'GET /api/v1/pull-requests/outcomes': 'read',
   'GET /api/v1/pull-requests/outcomes/export': { never: 'bulkExport' },
