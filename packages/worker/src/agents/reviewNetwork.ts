@@ -12,7 +12,9 @@ import type { AgentTracer } from '../lib/agentTracer.js';
 import { currentActivityId } from '../lib/attemptTrace.js';
 import { formatCodeSecurityFindings } from '../lib/codeSecurityScanner.js';
 import { ConfigMissingError } from '../lib/config/resolver.js';
+import { splitSuccessCriteria } from '../lib/contextAmbiguity.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
+import { line as criterionLine } from '../lib/criteriaContext.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getBoundModel } from '../lib/models.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -225,7 +227,18 @@ export async function runReviewNetwork(
   let domainLogicPrompt =
     systemPromptOverride || options.domainLogicPrompt || DOMAIN_LOGIC_REVIEWER_PROMPT;
   if (successCriteria && successCriteria.length > 0) {
-    domainLogicPrompt += `\n\nSUCCESS CRITERIA FROM ORIGINAL REQUEST:\nThe implementation must satisfy these criteria extracted from the work request:\n${successCriteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}\n\nFor each criterion, verify whether the diff satisfies it. Report unmet criteria as findings with category "UNMET_SUCCESS_CRITERION".`;
+    // An `AMBIGUOUS:` entry is an open question, not a requirement: no diff can satisfy it, so
+    // only the concrete criteria are numbered as ones the code must meet. The entries are model
+    // output derived from ticket text, so each is one bounded line without an angle bracket.
+    const { ambiguities, concrete } = splitSuccessCriteria(successCriteria);
+    const criteria = concrete.map(criterionLine).filter(Boolean);
+    const questions = ambiguities.map(criterionLine).filter(Boolean);
+    if (criteria.length > 0) {
+      domainLogicPrompt += `\n\nSUCCESS CRITERIA FROM ORIGINAL REQUEST:\nThe implementation must satisfy these criteria extracted from the work request:\n${criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}\n\nFor each criterion, verify whether the diff satisfies it. Report unmet criteria as findings with category "UNMET_SUCCESS_CRITERION".`;
+    }
+    if (questions.length > 0) {
+      domainLogicPrompt += `\n\nOPEN QUESTIONS FROM ORIGINAL REQUEST:\nThe request left these points unresolved. They are open questions, not requirements: do not reject the change, and do not set approved to false, because the code does not resolve them. Where the implementation visibly assumed an answer, you may mention that assumption in a non-blocking note.\n${questions.map((q) => `- ${q}`).join('\n')}`;
+    }
   }
 
   // Append per-reviewer skill fragments to each reviewer's prompt.
@@ -340,10 +353,12 @@ export async function runReviewNetwork(
   const approved = verdicts.every((v) => v.approved);
 
   const rejectionSummary = approved ? undefined : summarizeRejections(verdicts);
+  const rejectionFingerprint = approved ? undefined : fingerprintRejections(verdicts);
 
   return {
     approved,
     codeResult,
+    rejectionFingerprint,
     rejectionSummary,
     verdicts,
   };
@@ -359,6 +374,35 @@ function isUnrecoverableReviewerFailure(err: unknown): boolean {
     return true;
   }
   return err instanceof ApplicationFailure && err.nonRetryable === true;
+}
+
+/**
+ * A coarse identity for a rejection, so two consecutive rounds can be compared: every finding of a
+ * rejecting verdict counted under its `reviewer|category|file`, written `key×count`, sorted and
+ * joined with `;`. The count is part of the identity, so a fixer that clears one of two findings
+ * under the same key is a different rejection. It names where the reviewers object, not the finding
+ * text, which a fixer's rewording would change. A `REVIEWER_CRASH` is left out: a transient crash
+ * is not a repeated finding. `undefined` when nothing is left to compare.
+ */
+export function fingerprintRejections(verdicts: ReviewVerdict[]): string | undefined {
+  const counts = new Map<string, number>();
+  for (const v of verdicts) {
+    if (v.approved) {
+      continue;
+    }
+    for (const f of v.findings) {
+      if (f.category !== 'REVIEWER_CRASH') {
+        const key = `${v.reviewer}|${f.category}|${f.file}`;
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      }
+    }
+  }
+  return counts.size === 0
+    ? undefined
+    : [...counts]
+        .map(([key, count]) => `${key}×${count}`)
+        .sort()
+        .join(';');
 }
 
 /**

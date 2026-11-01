@@ -1224,8 +1224,10 @@ Runs three Mastra `Agent` instances in parallel via `Promise.allSettled`. Each r
 | Reviewer | Agent row | Built-in prompt (when the row has none) |
 |---|---|---|
 | `SECURITY` | `securityReviewer` | `SECURITY_AUDITOR_PROMPT` |
-| `DOMAIN_LOGIC` | `domainLogicReviewer` | `DOMAIN_LOGIC_REVIEWER_PROMPT` (+ success criteria) |
+| `DOMAIN_LOGIC` | `domainLogicReviewer` | `DOMAIN_LOGIC_REVIEWER_PROMPT` (+ success criteria and open questions) |
 | `PERFORMANCE` | `performanceReviewer` | `PERFORMANCE_REVIEWER_PROMPT` |
+
+The domain-logic reviewer receives the success criteria the validate step extracted, split with the same `splitSuccessCriteria` the implementer's section uses. Only the concrete criteria are numbered as ones the diff must satisfy, and an unmet one is reported as `UNMET_SUCCESS_CRITERION`. An `AMBIGUOUS:` entry (marker removed) goes in a separate `OPEN QUESTIONS` block that tells the reviewer it is not a requirement: it must not reject the change, or set `approved` to false, because the code does not resolve it, and may note an assumption the implementation visibly made. A list with no concrete criterion yields the open-questions block alone. Each entry is bounded to one line with angle brackets neutralised, as in the implementer's section.
 
 Each verdict's structured output is validated against the verdict schema; an object that fails it counts as a reviewer failure. A failure is handled by kind:
 
@@ -1234,6 +1236,8 @@ Each verdict's structured output is validated against the verdict schema; an obj
 - **Some, not all, reviewers failed**: each missing verdict becomes a synthetic `REVIEWER_CRASH` finding at `CRITICAL` severity, and the review stands on the others.
 
 The overall `approved` flag requires all three verdicts to be approved. A verdict at `CRITICAL` severity is a rejection even when the model set `approved: true`. On rejection, `rejectionSummary` — the review-fix session's input — carries one line per finding of every rejecting reviewer, with the reviewer, severity, category, location, the problem (`description`) and the suggested fix; a reviewer that rejected without findings gets a `rejected without findings: <reviewer>` line.
+
+**Stall detection.** A rejected result also carries `rejectionFingerprint`: every finding of a rejecting verdict counted under its `reviewer|category|file`, written `key×count`, sorted and joined with `;` (the count is part of the identity, so clearing one of two findings under the same key is a different rejection), with `REVIEWER_CRASH` findings left out because a transient crash is not a repeated finding. The `runReviewNetwork` step takes the previous round's fingerprint as the optional input `previousFingerprint`; when a rejection's fingerprint is non-empty and equal to it, the result is `stalled: true` and the activity records a `review.stalled` event carrying the fingerprint. The shared review loop (`reviewLoop()` in the workflow templates) keeps the fingerprint in `context.lastReviewFingerprint` and, right after recording a rejection, checks `stalled` ahead of the attempt limit: a stalled loop ends where running out of attempts ends, without a fix session or another review, so a template that stores a lesson on that edge (`ticket-to-merge`, `agent-reviewed-pr`, `four-eyes`) still stores it. An approval never stalls and clears the remembered fingerprint (the `forgetRejection` node), so a template that re-enters the review after an approval (a CI fix, a price-note check) starts the comparison afresh; `context.reviewRetries` counts rounds as before.
 
 Each reviewer produces a structured `ReviewVerdict`:
 ```typescript
@@ -1808,6 +1812,15 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
 
 ## 11. Limitations
 
+- **Stall detection is coarse and covers the shared review loop only.** The fingerprint is
+  (reviewer, category, file) with a count, not the finding text, so a fixer that makes real but
+  partial progress against a same-category finding in the same file, leaving the count unchanged,
+  is stopped one round early. A template that
+  hand-rolls its review (`consensus-review`, `fully-supervised`, `human-code-review`,
+  `approve-before-pr`) is not covered, nor is a rejection whose only findings are reviewer crashes.
+- **The reviewer notes an ambiguity; it never resolves one.** An open question reaches the
+  domain-logic reviewer as context only. Nothing in the review loop answers it, so an assumption the
+  implementation made stays unconfirmed until a human reads the pull request.
 - **The MCP tool allowlist is by exact name.** A tool a server adds later, or renames, does not bind
   until the list names it, and a tool a server reclassifies from read to write stays bound if its
   name is listed: `QODO_READ_TOOLS` is audited against the Qodo catalog by hand. The allowlist and

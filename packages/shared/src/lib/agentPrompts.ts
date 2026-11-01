@@ -370,8 +370,8 @@ INSTRUCTIONS:
 1. Read the CI failure logs carefully. Identify the root cause.
 2. Explore the affected files using readFile to understand context.
 3. Apply targeted fixes — do NOT rewrite working code.
-4. Run the test suite locally to verify your fix before committing.
-5. Commit and push the fix.
+4. Run the test suite locally to verify your fix before you finish.
+5. Leave the fix in the working tree and do not run git commit or git push: the platform commits and pushes your changes when you finish, and no git credentials are available in the workspace, so a push would fail.
 
 CONSTRAINTS:
 - Only modify files within /workspace/target-repo
@@ -387,8 +387,8 @@ INSTRUCTIONS:
 1. Read the gate name, command, and output carefully. Identify the root cause of the failure.
 2. Explore the affected files using readFile to understand context.
 3. Apply targeted fixes — do NOT rewrite working code or refactor unrelated areas.
-4. Re-run the affected gate locally (or its closest local equivalent) to verify the fix before committing.
-5. Commit and push the fix on the same branch.
+4. Re-run the affected gate locally (or its closest local equivalent) to verify the fix before you finish.
+5. Leave the fix in the working tree and do not run git commit or git push: the platform commits and pushes your changes to the same branch when you finish, and no git credentials are available in the workspace, so a push would fail.
 
 CONSTRAINTS:
 - Only modify files within /workspace/target-repo
@@ -405,7 +405,7 @@ INSTRUCTIONS:
 2. Explore the affected files using readFile to understand context.
 3. Apply targeted fixes addressing each finding — do NOT rewrite working code.
 4. Run the test suite locally to verify your fixes don't break anything.
-5. Commit and push the fix.
+5. Leave the fix in the working tree and do not run git commit or git push: the platform commits and pushes your changes when you finish, and no git credentials are available in the workspace, so a push would fail.
 
 CONSTRAINTS:
 - Only modify files within /workspace/target-repo
@@ -426,7 +426,7 @@ INSTRUCTIONS:
 3. Explore the affected files using readFile to understand context.
 4. Apply targeted fixes — do NOT rewrite working code or refactor unrelated areas.
 5. Run the test suite locally to verify your fixes don't break anything.
-6. Commit and push the fix.
+6. Leave the fix in the working tree and do not run git commit or git push: the platform commits and pushes your changes when you finish, and no git credentials are available in the workspace, so a push would fail.
 
 CONSTRAINTS:
 - Only modify files within /workspace/target-repo

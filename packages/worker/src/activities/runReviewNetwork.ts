@@ -73,6 +73,21 @@ export function reviewerPersonaPrompt(
 }
 
 /**
+ * A rejection that carries the same findings (by reviewer, category and file) as the previous
+ * round's is not converging, so the loop stops instead of paying for another fix and review.
+ */
+export function isStalled(
+  result: Pick<AggregatedReviewResult, 'approved' | 'rejectionFingerprint'>,
+  previousFingerprint: string | undefined
+): boolean {
+  return (
+    !result.approved &&
+    !!result.rejectionFingerprint &&
+    result.rejectionFingerprint === previousFingerprint
+  );
+}
+
+/**
  * Runs the review network (Security Auditor, Domain Logic, Performance Reviewer)
  * in parallel and aggregates their verdicts.
  */
@@ -80,13 +95,20 @@ export async function runReviewNetwork(
   codeResult: CodeResult,
   successCriteria?: string[],
   systemPromptOverride?: string,
-  options?: CrossRepoStepOptions
+  options?: CrossRepoStepOptions,
+  previousFingerprint?: string
 ): Promise<AggregatedReviewResult> {
   // Heartbeats while the whole activity runs: its LLM call can outlast the
   // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
   return withHeartbeat(
     'runReviewNetwork',
-    runReviewNetworkImpl(codeResult, successCriteria, systemPromptOverride, options)
+    runReviewNetworkImpl(
+      codeResult,
+      successCriteria,
+      systemPromptOverride,
+      options,
+      previousFingerprint
+    )
   );
 }
 
@@ -94,7 +116,8 @@ async function runReviewNetworkImpl(
   codeResult: CodeResult,
   successCriteria?: string[],
   systemPromptOverride?: string,
-  options?: CrossRepoStepOptions
+  options?: CrossRepoStepOptions,
+  previousFingerprint?: string
 ): Promise<AggregatedReviewResult> {
   heartbeat('starting review network');
   const tracer = new AgentTracer();
@@ -177,6 +200,14 @@ async function runReviewNetworkImpl(
 
     // P0 evals: capture each reviewer verdict as a normalized signal (best-effort).
     await recordReviewEval(result.verdicts, await currentWorkflowRunId());
+
+    if (isStalled(result, previousFingerprint)) {
+      tracer.addActivityEvent({
+        name: 'review.stalled',
+        outputJson: { fingerprint: result.rejectionFingerprint },
+      });
+      return { ...result, stalled: true };
+    }
 
     return result;
   } finally {

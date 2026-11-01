@@ -1,4 +1,4 @@
-import type { CodeResult } from '@auto-swe/shared/types/workflow';
+import type { CodeResult, ReviewVerdict } from '@auto-swe/shared/types/workflow';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
@@ -51,7 +51,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { ConfigMissingError } from '../lib/config/resolver.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getBoundModel } from '../lib/models.js';
-import { runReviewNetwork } from './reviewNetwork.js';
+import { fingerprintRejections, runReviewNetwork } from './reviewNetwork.js';
 
 const MockedAgent = vi.mocked(Agent);
 
@@ -215,6 +215,39 @@ describe('runReviewNetwork cross-repo context', () => {
     expect(prompts['performance-reviewer'].indexOf('PERF_SKILL')).toBeLessThan(
       prompts['performance-reviewer'].indexOf('Cross-Repo')
     );
+  });
+
+  it('numbers only the concrete criteria and lists ambiguities as open questions', async () => {
+    await runReviewNetwork(CODE_RESULT, {
+      successCriteria: ['first criterion', 'AMBIGUOUS: the exact allowed hostnames', 'second one'],
+    });
+    const domain = instructionsById()['domain_logic-reviewer'];
+    expect(domain).toContain('1. first criterion\n2. second one');
+    expect(domain).not.toContain('3. second one');
+    expect(domain).not.toContain('2. AMBIGUOUS');
+    expect(domain).not.toContain('AMBIGUOUS');
+    expect(domain).toContain('OPEN QUESTIONS FROM ORIGINAL REQUEST');
+    expect(domain).toContain('open questions, not requirements');
+    expect(domain).toContain('- the exact allowed hostnames');
+    expect(domain.indexOf('For each criterion')).toBeLessThan(domain.indexOf('OPEN QUESTIONS'));
+  });
+
+  it('emits no must-satisfy list when every entry is an ambiguity', async () => {
+    await runReviewNetwork(CODE_RESULT, { successCriteria: ['AMBIGUOUS: which hosts?'] });
+    const domain = instructionsById()['domain_logic-reviewer'];
+    expect(domain).not.toContain('must satisfy');
+    expect(domain).not.toContain('SUCCESS CRITERIA FROM ORIGINAL REQUEST');
+    expect(domain).toContain('- which hosts?');
+  });
+
+  it('adds no criteria or question block for an empty or missing list', async () => {
+    await runReviewNetwork(CODE_RESULT, { successCriteria: [] });
+    await runReviewNetwork(CODE_RESULT);
+    for (const call of MockedAgent.mock.calls) {
+      const { instructions } = call[0] as unknown as { instructions: string };
+      expect(instructions).not.toContain('SUCCESS CRITERIA');
+      expect(instructions).not.toContain('OPEN QUESTIONS');
+    }
   });
 
   it('separates a block that carries no leading blank line', async () => {
@@ -389,5 +422,75 @@ describe('runReviewNetwork verdict consistency and summary', () => {
     const result = await runReviewNetwork(CODE_RESULT);
     expect(result.approved).toBe(false);
     expect(result.rejectionSummary).toContain('rejected without findings: SECURITY');
+  });
+});
+
+describe('rejection fingerprint', () => {
+  const finding = (category: string, file: string) => ({
+    category,
+    description: 'd',
+    file,
+    suggestedFix: 'f',
+  });
+
+  it('is sorted and counted, and names only rejecting verdicts', () => {
+    expect(
+      fingerprintRejections([
+        {
+          approved: false,
+          findings: [finding('B', 'z.ts'), finding('A', 'a.ts'), finding('A', 'a.ts')],
+          reviewer: 'DOMAIN_LOGIC',
+          severity: 'WARNING',
+        },
+        {
+          approved: true,
+          findings: [finding('NIT', 'n.ts')],
+          reviewer: 'SECURITY',
+          severity: 'PASS',
+        },
+      ])
+    ).toBe('DOMAIN_LOGIC|A|a.ts×2;DOMAIN_LOGIC|B|z.ts×1');
+  });
+
+  it('differs when a count falls, though the keys are the same', () => {
+    const rejection = (n: number): ReviewVerdict[] => [
+      {
+        approved: false,
+        findings: Array.from({ length: n }, () => finding('A', 'a.ts')),
+        reviewer: 'DOMAIN_LOGIC',
+        severity: 'WARNING',
+      },
+    ];
+    expect(fingerprintRejections(rejection(2))).not.toBe(fingerprintRejections(rejection(1)));
+    expect(fingerprintRejections(rejection(2))).toBe(fingerprintRejections(rejection(2)));
+  });
+
+  it('leaves out a reviewer crash, and is undefined when nothing else is left', () => {
+    expect(
+      fingerprintRejections([
+        {
+          approved: false,
+          findings: [finding('REVIEWER_CRASH', '')],
+          reviewer: 'SECURITY',
+          severity: 'CRITICAL',
+        },
+      ])
+    ).toBeUndefined();
+  });
+
+  it('is on a rejected result and absent from an approval', async () => {
+    generateMock.mockImplementationOnce(async () => ({
+      object: {
+        approved: false,
+        findings: [finding('UNMET_SUCCESS_CRITERION', 'a.ts')],
+        reviewer: 'DOMAIN_LOGIC',
+        severity: 'WARNING',
+      },
+      usage: undefined,
+    }));
+    const rejected = await runReviewNetwork(CODE_RESULT);
+    expect(rejected.rejectionFingerprint).toBeDefined();
+    const approved = await runReviewNetwork(CODE_RESULT);
+    expect(approved.rejectionFingerprint).toBeUndefined();
   });
 });

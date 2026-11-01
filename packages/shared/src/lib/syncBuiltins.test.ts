@@ -408,7 +408,7 @@ describe('syncBuiltins — rolling the helper-built templates out', () => {
     const [f1, f2] = versionsOf(tables, template(tables, 'four-eyes').id) as [Row, Row];
     // four-eyes: v1 signs off then opens the PR; v2 opens the PR, runs CI, then signs off.
     expect(nodesOf(f1).checkApproval?.onTrue).toBe('firstSignoff');
-    expect(nodesOf(f2).checkApproval?.onTrue).toBe('setAwaitingCi');
+    expect(nodesOf(f2).forgetRejection?.next).toBe('setAwaitingCi');
     expect(nodesOf(f2).checkCI?.onTrue).toBe('setAwaitingSignoff');
     expect(nodesOf(f2).secondSignoff?.onApprove).toBe('done');
     expect(nodesOf(f2).firstSignoff?.onReject).toBe('terminateRejected');
@@ -720,6 +720,68 @@ describe('syncBuiltins — seeded prompt migration', () => {
       expect(PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES[key]).not.toContain(sha(current));
     }
     expect(agent.systemPrompt).toBeTruthy();
+  });
+
+  it('tells the fixers to leave committing and pushing to the platform, and migrates the old text', async () => {
+    // The texts the fixers shipped with before they were told not to commit, frozen verbatim.
+    const ORIGINAL: Record<string, string> = {
+      ciFixer: `You are a highly constrained CI Fix Engineer operating within an isolated repository environment.
+
+Your previous code passed local tests but failed the CI/CD pipeline. You must analyze the CI logs and fix the failures.
+
+INSTRUCTIONS:
+1. Read the CI failure logs carefully. Identify the root cause.
+2. Explore the affected files using readFile to understand context.
+3. Apply targeted fixes — do NOT rewrite working code.
+4. Run the test suite locally to verify your fix before committing.
+5. Commit and push the fix.
+
+CONSTRAINTS:
+- Only modify files within /workspace/target-repo
+- Focus on the specific CI failure — do not refactor unrelated code
+- Preserve all existing tests that were passing
+- If the CI failure is an environment issue (e.g., missing dep, wrong Node version), fix the configuration`,
+      gateFixer: `You are a highly constrained Quality-Gate Fix Engineer operating within an isolated repository environment.
+
+A quality gate (lint, typecheck, test, build, vuln scan, perf bench) failed against your previous code. You must analyze the gate output and fix the failures.
+
+INSTRUCTIONS:
+1. Read the gate name, command, and output carefully. Identify the root cause of the failure.
+2. Explore the affected files using readFile to understand context.
+3. Apply targeted fixes — do NOT rewrite working code or refactor unrelated areas.
+4. Re-run the affected gate locally (or its closest local equivalent) to verify the fix before committing.
+5. Commit and push the fix on the same branch.
+
+CONSTRAINTS:
+- Only modify files within /workspace/target-repo
+- Address only the failing gate's findings — do not bundle unrelated changes
+- Preserve all tests that were already passing
+- If the gate output is ambiguous, prefer minimal, surgical changes over broad rewrites`,
+      reviewFixer: `You are a highly constrained Review Fix Engineer operating within an isolated repository environment.
+
+Your previous code was rejected by automated code reviewers. You must analyze the review findings and fix the issues.
+
+INSTRUCTIONS:
+1. Read the review findings carefully. Each finding includes a file, category, description, and suggested fix.
+2. Explore the affected files using readFile to understand context.
+3. Apply targeted fixes addressing each finding — do NOT rewrite working code.
+4. Run the test suite locally to verify your fixes don't break anything.
+5. Commit and push the fix.
+
+CONSTRAINTS:
+- Only modify files within /workspace/target-repo
+- Focus on the specific review findings — do not refactor unrelated code
+- Preserve all existing tests that were passing
+- Address security findings with highest priority, then correctness, then performance`,
+    };
+    for (const [key, original] of Object.entries(ORIGINAL)) {
+      const current = (await seeded(key)).agent.systemPrompt as string;
+      expect(current).not.toMatch(/commit and push/i);
+      expect(current).not.toMatch(/before committing/i);
+      expect(current).toContain('do not run git commit or git push');
+      expect(PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES[key]).toEqual([sha(original)]);
+      expect(sha(current)).not.toBe(sha(original));
+    }
   });
 
   it('cuts a new version with the current prompt for an untouched old seed, keeping the old row', async () => {

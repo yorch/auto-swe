@@ -82,6 +82,11 @@ const calls: {
   writeOutcome: [],
 };
 
+/** The arguments each `runReviewNetwork` call received, in order. */
+const reviewNetworkArgs: unknown[][] = [];
+/** Makes the next `runReviewNetwork` call reject; every other call approves. */
+let rejectNextReview = false;
+
 /** The evidence each `commitToMemory` call received (its fourth argument). */
 const lessonEvidence: unknown[] = [];
 /** Spec served by the fake createWorkflowRun; set per test before starting. */
@@ -226,7 +231,14 @@ const fakeActivities = {
     );
   },
   runLint: async () => ({ passed: false, summary: 'lint broke' }),
-  runReviewNetwork: async () => ({ approved: true, rejectionSummary: '', verdicts: [] }),
+  runReviewNetwork: async (...args: unknown[]) => {
+    reviewNetworkArgs.push(args);
+    if (rejectNextReview) {
+      rejectNextReview = false;
+      return { approved: false, rejectionFingerprint: 'DOMAIN_LOGIC|X|a.ts×1', verdicts: [] };
+    }
+    return { approved: true, rejectionSummary: '', verdicts: [] };
+  },
   runTests: async () => ({ exitCode: 0, passed: true, summary: 'ok' }),
   runTool: async (input: unknown) => {
     calls.runTool.push(input);
@@ -780,6 +792,42 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
       ['fix it', { branch: 'auto/T-1' }, 'sp', paths],
       ['fix it', { branch: 'auto/T-1' }, undefined],
     ]);
+  }, 120_000);
+
+  it('hands the review step the previous round’s fingerprint as the fifth activity argument', async () => {
+    const review = (next: string) => ({
+      inputs: {
+        codeResult: { literal: { branch: 'auto/T-1' } },
+        previousFingerprint: { default: '', from: 'context.lastReviewFingerprint' },
+      },
+      next,
+      step: 'runReviewNetwork',
+      type: 'step',
+    });
+    currentSpec = makeSpec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        first: review('remember'),
+        remember: {
+          next: 'second',
+          type: 'set',
+          values: {
+            'context.lastReviewFingerprint': {
+              default: '',
+              from: 'nodes.first.output.rejectionFingerprint',
+            },
+          },
+        },
+        second: review('done'),
+      },
+      'first'
+    );
+    reviewNetworkArgs.length = 0;
+    rejectNextReview = true;
+    await env.client.workflow.execute('RunnableWorkflow', startArgs('wf-review-fingerprint'));
+    expect(reviewNetworkArgs).toHaveLength(2);
+    expect(reviewNetworkArgs[0][4]).toBeUndefined();
+    expect(reviewNetworkArgs[1][4]).toBe('DOMAIN_LOGIC|X|a.ts×1');
   }, 120_000);
 
   it('forwards the CI template guard options, the run base and a fenced diagnosis', async () => {

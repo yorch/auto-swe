@@ -10,7 +10,7 @@ export const MAX_PROMPT_SECTION_CHARS = 6_000;
 const QUESTIONS_RESERVED_CHARS = 2_000;
 
 /** One line, bounded, and unable to carry an angle bracket (so it cannot close the fence). */
-function line(entry: string): string {
+export function line(entry: string): string {
   const flat = neutraliseFenceText(entry).replace(/\s+/g, ' ').trim();
   return flat.length > MAX_PROMPT_CRITERION_CHARS
     ? `${flat.slice(0, MAX_PROMPT_CRITERION_CHARS - 1).trimEnd()}…`
