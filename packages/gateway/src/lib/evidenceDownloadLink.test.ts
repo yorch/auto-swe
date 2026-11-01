@@ -38,7 +38,12 @@ describe('evidence download links', () => {
 
   it('rejects modified tokens and malformed payloads', () => {
     const { token } = signEvidenceLink(INPUT);
-    expect(verifyEvidenceLink(`${token.slice(0, -1)}x`).ok).toBe(false);
+    // Change the signature's first character: every one of its bits is significant. The last
+    // character of a 43-character base64url HMAC carries two padding bits the decoder ignores,
+    // so changing it can leave the decoded signature (and the token's validity) unchanged.
+    const dot = token.lastIndexOf('.');
+    const tampered = `${token.slice(0, dot + 1)}${token[dot + 1] === 'A' ? 'B' : 'A'}${token.slice(dot + 2)}`;
+    expect(verifyEvidenceLink(tampered)).toEqual({ ok: false, reason: 'bad_signature' });
     expect(verifyEvidenceLink('not-a-token')).toEqual({ ok: false, reason: 'malformed' });
   });
 });
