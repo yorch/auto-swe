@@ -10,6 +10,7 @@ import {
 import { billedOrgId, currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { CHANNEL_TASK_WORKFLOW_PREFIX } from '@auto-swe/shared/lib/channelTask';
 import { isInputSchema, runAuthorizedConnectionIds } from '@auto-swe/shared/lib/inputSchema';
+import type { TrackerWriteback } from '@auto-swe/shared/lib/integrations/ticketFailure';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { isTrackerTicket, syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
@@ -1295,7 +1296,7 @@ export async function finalizeRun(
   ) {
     try {
       const trackerConfig = await resolveIssueTrackerConfig();
-      await syncTrackerOnEvent(
+      const failure = await syncTrackerOnEvent(
         finalStatus === 'SUCCESS'
           ? { issueId: externalTicketId, type: 'workflow_completed' }
           : {
@@ -1306,6 +1307,11 @@ export async function finalizeRun(
         trackerConfig,
         { runInputId: run?.workRequestId, warn: logWarn }
       );
+      // Only the failed event posts a comment: a finished run only moves the ticket's status,
+      // which the providers do not report.
+      if (failure && finalStatus !== 'SUCCESS') {
+        await recordTrackerWriteback(runId, { failure });
+      }
     } catch (err) {
       logError(`[finalizeRun] tracker sync failed for run ${runId}:`, {
         err: err instanceof Error ? err.message : err,
@@ -1314,6 +1320,39 @@ export async function finalizeRun(
     }
   }
   return true;
+}
+
+/**
+ * Stamp the comment the tracker refused onto the run's snapshot, so the run page can say the
+ * ticket was not updated. Merges into the snapshot the run was ended with, read back from the
+ * row (the terminal write skips the column when the run ended with none). Never throws: the run
+ * is already finalized.
+ */
+async function recordTrackerWriteback(
+  runId: string,
+  trackerWriteback: TrackerWriteback
+): Promise<void> {
+  try {
+    const row = await prisma.workflowRun.findUnique({
+      select: { contextSnapshot: true },
+      where: { id: runId },
+    });
+    const held = row?.contextSnapshot;
+    await prisma.workflowRun.update({
+      data: {
+        contextSnapshot: {
+          ...(typeof held === 'object' && held !== null && !Array.isArray(held) ? held : {}),
+          trackerWriteback,
+        },
+      },
+      where: { id: runId },
+    });
+  } catch (err) {
+    logError(`[finalizeRun] could not record the tracker write-back failure for run ${runId}:`, {
+      err: err instanceof Error ? err.message : err,
+      runId,
+    });
+  }
 }
 
 /** Shape of the `payload` we stamp onto a channel-task RunInput. */
