@@ -1,8 +1,8 @@
 import { type StdioOptions, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import {
-  DOCKER_HOST_ALIAS,
   type KubernetesWorkspaceConfig,
+  podResolvableHost,
   resolveWorkspaceInfra,
 } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
@@ -556,12 +556,14 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
   }
 
   /**
-   * Whether a pod can resolve the proxy's host: anything but the Docker host
-   * alias, which exists only on a Docker host. Reachability proper is the
-   * NetworkPolicy's and the Service's business.
+   * Whether a pod can resolve the proxy's host: the boot check's host rule
+   * (`podResolvableHost`), so not the Docker host alias and not a loopback or
+   * unspecified address. The URL is already substituted by now, so there is no
+   * `{hostname}` to look for. Reachability proper is the NetworkPolicy's and
+   * the Service's business.
    */
   canReachWorkerProxy(url: string): boolean {
-    return new URL(url).hostname !== DOCKER_HOST_ALIAS;
+    return podResolvableHost(new URL(url).hostname);
   }
 }
 

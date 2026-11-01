@@ -986,18 +986,6 @@ export interface RegistryProxyConfig {
   cacheMaxBytes: number;
 }
 
-export interface RegistryProxyConfig {
-  /// Where the worker listens.
-  bindHost: string;
-  port: number;
-  /// The base URL a workspace container reaches the proxy at.
-  url: string;
-  /// Tarball cache directory (`REGISTRY_PROXY_CACHE_DIR`); null disables it.
-  cacheDir: string | null;
-  /// Cache size cap in bytes (`REGISTRY_PROXY_CACHE_MAX_BYTES`, default 2 GiB).
-  cacheMaxBytes: number;
-}
-
 /// The host a workspace container reaches its Docker host at, through the
 /// `host-gateway` alias `createWorkspace` adds when the proxy is advertised there.
 export const DOCKER_HOST_ALIAS = 'host.docker.internal';
@@ -1026,20 +1014,42 @@ const isHttpUrl = (raw: string) => {
   }
 };
 
-/// Whether a pod can resolve the URL's host: not the Docker host alias, and not
-/// the worker's own hostname, which only the worker pod knows.
-function podResolvableUrl(raw: string): boolean {
-  return (
-    !raw.includes(HOSTNAME_PLACEHOLDER) && new URL(raw).hostname.toLowerCase() !== DOCKER_HOST_ALIAS
+/// Whether a pod can resolve a proxy's host (a `URL.hostname`): not the Docker
+/// host alias, and not a loopback or unspecified address, which from a pod points
+/// at the pod itself. `URL` normalises shorthand, decimal, octal, hex and mapped
+/// forms (`127.1`, `2130706433`, `0177.0.0.1`, `[::ffff:127.0.0.1]`) before this runs.
+export function podResolvableHost(rawHost: string): boolean {
+  const host = rawHost.toLowerCase().replace(/\.$/, '');
+  return !(
+    host === DOCKER_HOST_ALIAS ||
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    /^(127|0)\.\d+\.\d+\.\d+$/.test(host) ||
+    host === '[::]' ||
+    host === '[::1]' ||
+    /^\[::ffff:(7f[0-9a-f]{2}|0):[0-9a-f]{1,4}\]$/.test(host)
   );
 }
 
-/// Lenient, like the rest of this section: an unusable value turns the proxy
-/// off rather than throwing; `assertWorkspaceInfraEnv()` fails the boot on it.
-/// Lenient, like `resolveHarnessModelProxy`: an unusable value turns the
-/// proxy off rather than throwing; `assertWorkspaceInfraEnv()` is the strict
-/// counterpart and runs at worker boot, so a bad value is a failed deploy
-/// rather than a silently different one.
+/// Boot-time form of the same rule. The raw string is also checked for the
+/// `{hostname}` placeholder, which only the worker pod can resolve.
+function podResolvableUrl(raw: string): boolean {
+  return !raw.includes(HOSTNAME_PLACEHOLDER) && podResolvableHost(new URL(raw).hostname);
+}
+
+function podUnresolvableProblem(key: string): string {
+  return (
+    `WORKSPACE_BACKEND=kubernetes requires ${key} to be a Service name ` +
+    `workspace pods can resolve; unset, ${DOCKER_HOST_ALIAS}, ${HOSTNAME_PLACEHOLDER}, ` +
+    'localhost and other loopback or unspecified addresses do not'
+  );
+}
+
+/// Lenient, like `resolveHarnessModelProxy`: an unusable port turns the proxy
+/// off, and an unusable URL falls back to `http://host.docker.internal:$PORT`,
+/// rather than throwing; `assertWorkspaceInfraEnv()` is the strict counterpart
+/// and runs at worker boot, so a bad value is a failed deploy rather than a
+/// silently different one.
 function resolveRegistryProxy(): RegistryProxyConfig | null {
   const port = process.env.REGISTRY_PROXY_PORT;
   if (!port || !isPort(port)) {
@@ -1367,9 +1377,11 @@ export function validateWorkspaceInfraEnv(): string[] {
   // the defaults are not: the Docker host alias does not exist in a cluster, and
   // `{hostname}` is the worker pod's own name. The model proxy is required,
   // because without it the provider key is handed to the workspace pod itself.
-  // The registry proxy is optional: unset, no registry wiring happens at all.
-  // Outside Kubernetes both are optional. A port or URL that is set but unusable
-  // is already reported above, so only an absent or unresolvable one is added here.
+  // The registry and egress proxies are optional: unset, no wiring happens at
+  // all; set, an unresolvable URL would point every install or outbound HTTP(S)
+  // call at a dead host. Outside Kubernetes all three are optional. A port or URL
+  // that is set but unusable is already reported above, so only an absent or
+  // unresolvable one is added here.
   if (process.env.WORKSPACE_BACKEND === 'kubernetes') {
     const port = process.env.HARNESS_MODEL_PROXY_PORT;
     const url = process.env.HARNESS_MODEL_PROXY_URL;
@@ -1380,22 +1392,18 @@ export function validateWorkspaceInfraEnv(): string[] {
           'would be placed inside the workspace pod'
       );
     } else if (isPort(port) && (!url || (isHttpUrl(url) && !podResolvableUrl(url)))) {
-      problems.push(
-        'WORKSPACE_BACKEND=kubernetes requires HARNESS_MODEL_PROXY_URL to be a Service name ' +
-          `workspace pods can resolve; unset, ${DOCKER_HOST_ALIAS} and ${HOSTNAME_PLACEHOLDER} do not`
-      );
+      problems.push(podUnresolvableProblem('HARNESS_MODEL_PROXY_URL'));
     }
-    const registryPort = process.env.REGISTRY_PROXY_PORT;
-    const registryUrl = process.env.REGISTRY_PROXY_URL;
-    if (
-      registryPort &&
-      isPort(registryPort) &&
-      (!registryUrl || (isHttpUrl(registryUrl) && !podResolvableUrl(registryUrl)))
-    ) {
-      problems.push(
-        'WORKSPACE_BACKEND=kubernetes requires REGISTRY_PROXY_URL to be a Service name ' +
-          `workspace pods can resolve; unset, ${DOCKER_HOST_ALIAS} and ${HOSTNAME_PLACEHOLDER} do not`
-      );
+    for (const prefix of ['REGISTRY_PROXY', 'EGRESS_PROXY']) {
+      const optionalPort = process.env[`${prefix}_PORT`];
+      const optionalUrl = process.env[`${prefix}_URL`];
+      if (
+        optionalPort &&
+        isPort(optionalPort) &&
+        (!optionalUrl || (isHttpUrl(optionalUrl) && !podResolvableUrl(optionalUrl)))
+      ) {
+        problems.push(podUnresolvableProblem(`${prefix}_URL`));
+      }
     }
   }
   if (process.env.WORKSPACE_BLOCK_METADATA !== 'false') {

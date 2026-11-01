@@ -91,6 +91,9 @@ const AMBIENT_ENV_KEYS = [
   'KB_API_TOKEN',
   'REGISTRY_PROXY_PORT',
   'REGISTRY_PROXY_URL',
+  'EGRESS_PROXY_PORT',
+  'EGRESS_PROXY_URL',
+  'EGRESS_PROXY_BIND',
 ];
 
 describe('systemConfig resolvers', () => {
@@ -985,6 +988,103 @@ describe('systemConfig resolvers', () => {
           expect(validateWorkspaceInfraEnv()).toEqual([
             'REGISTRY_PROXY_URL="not a url" is not an http(s) URL with no credentials',
           ]);
+        });
+      });
+
+      describe('the egress proxy on the kubernetes backend', () => {
+        beforeEach(() => {
+          vi.stubEnv('WORKSPACE_BACKEND', 'kubernetes');
+          vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+          vi.stubEnv('HARNESS_MODEL_PROXY_URL', 'http://auto-swe-worker.auto-swe.svc:8790');
+        });
+
+        it('stays optional: no egress problem when its port is unset', () => {
+          expect(validateWorkspaceInfraEnv()).toEqual([]);
+        });
+
+        it('refuses an egress proxy URL pods cannot resolve, or one left unset', () => {
+          vi.stubEnv('EGRESS_PROXY_PORT', '8792');
+          for (const url of [
+            undefined,
+            '',
+            'http://host.docker.internal:8792',
+            'http://{hostname}:8792',
+          ]) {
+            vi.stubEnv('EGRESS_PROXY_URL', url);
+            const problems = validateWorkspaceInfraEnv();
+            expect(problems, String(url)).toHaveLength(1);
+            expect(problems[0]).toContain('EGRESS_PROXY_URL');
+            expect(problems[0]).toContain('Service name');
+          }
+        });
+
+        it('accepts an egress proxy URL with a Service name', () => {
+          vi.stubEnv('EGRESS_PROXY_PORT', '8792');
+          vi.stubEnv('EGRESS_PROXY_URL', 'http://auto-swe-worker.auto-swe.svc:8792');
+          expect(validateWorkspaceInfraEnv()).toEqual([]);
+        });
+
+        it('reports a malformed egress proxy URL once, by the existing check', () => {
+          vi.stubEnv('EGRESS_PROXY_PORT', '8792');
+          vi.stubEnv('EGRESS_PROXY_URL', 'not a url');
+          expect(validateWorkspaceInfraEnv()).toEqual([
+            'EGRESS_PROXY_URL="not a url" is not an http(s) URL with no credentials',
+          ]);
+        });
+      });
+
+      describe('loopback and unspecified proxy hosts on the kubernetes backend', () => {
+        const SELF_HOSTS = [
+          'localhost',
+          'LOCALHOST',
+          'localhost.',
+          'proxy.localhost',
+          'proxy.localhost.',
+          '127.0.0.1',
+          '127.1.2.3',
+          '[::1]',
+          '0.0.0.0',
+          '[::]',
+          '[::ffff:127.0.0.1]',
+          '[::ffff:0.0.0.0]',
+          '0.0.0.1',
+          '0.255.255.255',
+          '2130706433',
+          '0177.0.0.1',
+          '0x7f.1',
+          '127.1',
+        ];
+
+        it.each([
+          ['HARNESS_MODEL_PROXY', '8790'],
+          ['REGISTRY_PROXY', '8791'],
+          ['EGRESS_PROXY', '8792'],
+        ])('refuses a %s_URL that points at the pod itself', (prefix, port) => {
+          vi.stubEnv('WORKSPACE_BACKEND', 'kubernetes');
+          vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+          vi.stubEnv('HARNESS_MODEL_PROXY_URL', 'http://auto-swe-worker.auto-swe.svc:8790');
+          vi.stubEnv(`${prefix}_PORT`, port);
+          for (const host of SELF_HOSTS) {
+            vi.stubEnv(`${prefix}_URL`, `http://${host}:${port}`);
+            const problems = validateWorkspaceInfraEnv();
+            expect(problems, host).toHaveLength(1);
+            expect(problems[0]).toContain(`${prefix}_URL`);
+            expect(problems[0]).toContain('Service name');
+          }
+        });
+
+        it('does not mistake a Service name that merely contains localhost', () => {
+          vi.stubEnv('WORKSPACE_BACKEND', 'kubernetes');
+          vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+          vi.stubEnv('HARNESS_MODEL_PROXY_URL', 'http://localhost-proxy.auto-swe.svc:8790');
+          expect(validateWorkspaceInfraEnv()).toEqual([]);
+        });
+
+        it('leaves the Docker backend free to use a loopback proxy URL', () => {
+          vi.stubEnv('WORKSPACE_BACKEND', 'docker');
+          vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+          vi.stubEnv('HARNESS_MODEL_PROXY_URL', 'http://localhost:8790');
+          expect(validateWorkspaceInfraEnv()).toEqual([]);
         });
       });
 
