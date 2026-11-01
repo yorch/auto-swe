@@ -305,6 +305,7 @@ describe('POST /api/v1/work-requests', () => {
       syncSlackChannelSyncSchedule: async () => {},
       syncWorkflowRunRollupSchedule: async () => {},
       syncWorkRequestSchedule: async () => {},
+      syncWorkspaceReaperSchedule: async () => {},
       triggerConsolidationNow: async () => {},
       triggerEvalNow: async () => {},
       triggerRepoDependencyScanNow: async () => {},

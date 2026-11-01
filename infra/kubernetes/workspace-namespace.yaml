@@ -68,7 +68,7 @@ spec:
               - fc00::/7
               - fe80::/10
 ---
-# ADJUST: caps what a janitor failure or a burst of runs can hold.
+# ADJUST: caps what pods awaiting the orphan sweep or a burst of runs can hold.
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -86,6 +86,7 @@ spec:
 # the token is not in the Pod object or its audit-log entries). The worker creates each Secret
 # already owned by its pod (so it is garbage-collected with the pod) and deletes it; it never
 # reads one, and no verb here gets, lists or patches them. No cluster-wide verbs.
+# `list` and `delete` on pods are also what the orphan sweep (ScheduledWorkspaceReaperWorkflow) uses.
 # `pods/exec` is a shell in every workspace, so keep anything else out of this namespace
 # and never put another Secret here: anyone with `get secrets` can read the token.
 apiVersion: rbac.authorization.k8s.io/v1
