@@ -22,6 +22,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import { linkedGithubAccountIds } from '@auto-swe/shared/lib/githubAccountId';
 import { permissionMeets } from '@auto-swe/shared/lib/githubPermission';
+import { isFindingComment } from '@auto-swe/shared/lib/prEvaluation';
 import {
   PR_FEEDBACK_QODO_TRIGGER,
   PR_FEEDBACK_TEMPLATE_NAME,
@@ -602,6 +603,10 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
         continue;
       }
       for (const c of thread.comments.slice(0, MAX_THREAD_COMMENTS)) {
+        // The platform's own finding comments are not a person's feedback, whoever posted them.
+        if (isFindingComment(c.body)) {
+          continue;
+        }
         const trusted = (await trustedUserId(c.authorId, c.authorLogin)) !== null;
         candidates.push({ comment: c, text: commentText(c.body), thread, trusted });
       }

@@ -67,6 +67,7 @@ import {
 import { ApplicationFailure } from '@temporalio/activity';
 import { logWarn } from '../lib/activityLog.js';
 import { loadBriefEvidence, loadReviewedOutputsSafe } from '../lib/briefEvidence.js';
+import { postFindingComments } from '../lib/briefFindings.js';
 import { scanDiffForCodeIssuesDetailed } from '../lib/codeSecurityScanner.js';
 import { splitSuccessCriteria } from '../lib/contextAmbiguity.js';
 import { resolveLauncherSet } from '../lib/prLauncher.js';
@@ -199,6 +200,7 @@ const SETTING_KEYS = [
   'prEvaluation.highApprovers',
   'prEvaluation.sensitivePaths',
   'prEvaluation.requiredStatusContext',
+  'prEvaluation.postReviewFindings',
 ] as const;
 
 const SEVERITY_ORDER: Record<ReviewSeverity, number> = {
@@ -1531,6 +1533,16 @@ export async function evaluatePullRequestWith(
     const brief = buildBrief(listed.files, classification, effective, intent, evidence, findings);
     const briefMarkdown = truncateBrief(brief.markdown);
     await postBrief(scm, repo, input.prNumber, briefMarkdown, connection.id);
+    if (settings['prEvaluation.postReviewFindings']) {
+      await postFindingComments({
+        connectionId: connection.id,
+        findings,
+        headSha: pr.headSha,
+        prNumber: input.prNumber,
+        repo,
+        scm,
+      });
+    }
 
     const row = await prisma.prEvaluation.create({
       data: {

@@ -199,6 +199,23 @@ category, place, description and suggested fix, each escaped like all model text
 A suggested fix is prose and never a suggestion block. The section is advisory: a finding is never
 verified here and decides neither the class nor the status.
 
+**Inline comments (off by default).** With `prEvaluation.postReviewFindings` on, the findings that
+have a line inside the diff (at most ten) are also posted as inline comments, in one review on the
+evaluated head:
+
+- The review is created through `ScmProvider.createReview`, whose event is fixed to `COMMENT`: there
+  is no path through it to approve a pull request or to request changes, so it can neither merge nor
+  block one, and a `COMMENTED` review withdraws no approval.
+- Each comment ends with `<!-- auto-swe:finding <key> -->`, a key made from the reviewer, file, line
+  and category. The review threads are read first and a finding already carrying its key is not
+  posted again, so a retry or a re-evaluation of the same head adds nothing.
+- The head is read again just before posting; a head that moved posts nothing, and a host that
+  refuses the review (a line no longer in the diff) is logged and leaves the brief to carry the
+  findings. A failure here never fails the evaluation.
+- The text is escaped like the brief's, and `/auto-swe` is broken in it so a comment can never read
+  as the feedback command. The PR-feedback automation skips comments that carry the finding marker
+  ([pr-feedback.md](./pr-feedback.md)), and the engagement counts skip them too.
+
 ### Whether reviewers act on the brief
 
 Each evaluation row counts how people met the brief at its head: when a person first reviewed it,
@@ -586,6 +603,7 @@ All are ADMIN-only registry settings in the `prEvaluation` group; see
 | `prEvaluation.enabled` | off | GLOBAL only | The kill switch. Off, nothing is evaluated and nothing is posted. |
 | `prEvaluation.defaultMode` | `advisory` | team, organization | Mode of a repository that has not chosen one: `off`, `advisory` or `enforce`. |
 | `prEvaluation.autoMergeAllowed` | off | GLOBAL only | Whether any repository may arm GitHub auto-merge. Off, `auto` keeps its status rules and arms nothing. |
+| `prEvaluation.postReviewFindings` | off | team, organization | Whether the review network's findings that fall inside the diff are also posted as inline comments, in one review that never approves or requests changes (§4). Off, they appear in the brief only. |
 | `prEvaluation.botApprovalAllowed` | off | GLOBAL only | The second key for per-repository bot approval (§16): the approver App approves LOW pull requests of a repository that has it on. Needs `prEvaluation.autoMergeAllowed` and a configured approver App. Turning it off (or clearing it) starts the sweep that withdraws approvals. |
 | `prEvaluation.botApprovalMaxLines` | 50 | GLOBAL only | Most changed lines (added plus deleted, over every listed file) a change may carry and still be approved by the approver App; at most 400. Any change to it, or clearing it, starts the sweep that withdraws approvals. |
 | `prEvaluation.botApprovalMaxFiles` | 3 | GLOBAL only | Most files a change may touch and still be approved by the approver App; at most 15. Any change to it, or clearing it, starts the sweep that withdraws approvals. |
@@ -906,6 +924,12 @@ documentation change as a platform pull request and read the evaluation's reason
 
 ## Limitations
 
+- **Inline finding comments are untested against a live host, and a thread they open is outside the
+  feedback loop.** The review path is exercised against fakes only. The PR-feedback automation
+  never reads a comment that carries the finding marker, and because it keeps a thread only when
+  the comment that opened it is usable, a person's reply inside a finding's thread is not read
+  either; they start a new thread or command to ask for a fix. One review holds at most ten
+  comments, and the host's refusal of a stale line drops all of them for that evaluation.
 - **Review findings are the network's opinion, and which were fixed is not tracked.** The brief shows
   what the last review of this head raised, so a head pushed after that review shows none, and the
   fix loop keeps no record of which finding it addressed. Findings carry no identifier, so the same

@@ -65,7 +65,7 @@ kill switch), `prEvaluation.defaultMode`, `prEvaluation.autoMergeAllowed` (defau
 `prEvaluation.botApprovalMaxLines`, `prEvaluation.botApprovalMaxFiles`,
 `prEvaluation.autoMinEvidence`, `prEvaluation.autoMinRepoEvidence`,
 `prEvaluation.autoMinDistinctRequesters`, `prEvaluation.autoEvidenceMinChangedLines`,
-`prEvaluation.requiredStatusContext`, the size thresholds and the
+`prEvaluation.postReviewFindings` (default off), `prEvaluation.requiredStatusContext`, the size thresholds and the
 approver counts. All are ADMIN-only; the switches, the bot approval paths and caps, the four evidence
 settings and the context are GLOBAL only, the rest overridable at team and organization. Turning
 `prEvaluation.enabled`, `prEvaluation.autoMergeAllowed` or `prEvaluation.botApprovalAllowed` off also

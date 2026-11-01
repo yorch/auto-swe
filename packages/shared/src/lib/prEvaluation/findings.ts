@@ -7,6 +7,18 @@ import type { BriefEvidence, BriefFinding, ChangedFile } from './types.js';
  * the head's CI verdict; the brief and the inline comments both read its answer, so they agree.
  */
 
+/**
+ * What every inline finding comment carries, so the platform's own comments can be recognised: the
+ * feedback automation must not read them as a person's feedback, and the engagement counts must not
+ * count them as a reviewer's.
+ */
+export const FINDING_MARKER_PREFIX = '<!-- auto-swe:finding ';
+export const FINDING_REVIEW_MARKER = '<!-- auto-swe:review-findings -->';
+
+export function isFindingComment(body: string | null | undefined): boolean {
+  return typeof body === 'string' && body.includes(FINDING_MARKER_PREFIX);
+}
+
 /** A finding with no usable file, or one the network invented for a reviewer that crashed. */
 const CRASH_CATEGORY = 'REVIEWER_CRASH';
 

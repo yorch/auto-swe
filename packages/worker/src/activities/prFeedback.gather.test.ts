@@ -433,6 +433,32 @@ describe('gatherPrFeedback — threads and the brief', () => {
     expect(r.threads).toHaveLength(0);
     expect(r.dropped.untrusted).toBeGreaterThan(0);
   });
+  it('does not read the platform’s own finding comments as feedback, even from a trusted account', async () => {
+    base();
+    m.listReviewThreads.mockResolvedValue([
+      thread('t1', {
+        body: 'WARNING logic\n\nflip it\n\n<!-- auto-swe:finding 0123456789abcdef -->',
+      }),
+      thread('t2', {}),
+    ]);
+    const r = await gatherPrFeedback({ request: request() });
+    expect(r.threads.map((t) => t.label)).toEqual(['T1']);
+    expect(r.brief).not.toContain('flip it');
+    expect(r.dropped.untrusted).toBe(0);
+  });
+  it('leaves a thread a finding comment opened out of the round, replies included', async () => {
+    base();
+    m.listReviewThreads.mockResolvedValue([
+      thread('t1', { body: 'WARNING logic\n\n<!-- auto-swe:finding 0123456789abcdef -->' }, [
+        { body: 'please fix the guard' },
+      ]),
+    ]);
+    const r = await gatherPrFeedback({ request: request() });
+    // The thread's opener is model text from the review of a diff, so nothing in the thread
+    // reaches the fixer; only the trigger itself does.
+    expect(r.threads).toEqual([]);
+    expect(r.brief).not.toContain('please fix the guard');
+  });
   it('fences the brief as review feedback', async () => {
     base();
     m.listReviewThreads.mockResolvedValue([thread('t1', {})]);

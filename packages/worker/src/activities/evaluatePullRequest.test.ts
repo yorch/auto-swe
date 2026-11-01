@@ -186,6 +186,7 @@ function fakeScm(over: Partial<Record<keyof ScmProvider, unknown>> = {}): Fake {
       return value;
     };
   const base: Record<string, unknown> = {
+    createReview: track('createReview', { htmlUrl: 'u', ok: true }),
     disableAutoMerge: track('disableAutoMerge', { ok: true }),
     dismissReview: track('dismissReview', { ok: true }),
     enableAutoMerge: track('enableAutoMerge', { ok: true }),
@@ -199,6 +200,7 @@ function fakeScm(over: Partial<Record<keyof ScmProvider, unknown>> = {}): Fake {
     listPullRequestReviews: track('listPullRequestReviews', [
       { commitId: HEAD, login: 'bob', state: 'APPROVED', submittedAt: null },
     ] satisfies PullRequestReviewSummary[]),
+    listReviewThreads: track('listReviewThreads', []),
     readBranchRules: track('readBranchRules', ALLOWS),
     repoPermission: track('repoPermission', { ok: true, permission: 'write' }),
     setCommitStatus: track('setCommitStatus', { ok: true }),
@@ -696,6 +698,46 @@ describe('evaluatePullRequest: approvals and status', () => {
           '- **WARNING** secrets in ` src/util.ts:1 ` - a token is written to the log Suggested: drop the log line'
         );
         expect(md).not.toContain('src/gone.ts');
+      });
+
+      it('posts the anchored ones as one review only when the setting is on', async () => {
+        m.steps.mockResolvedValue(withFindings(HEAD));
+        const off = fakeScm();
+        await evaluatePullRequestWith(INPUT, depsWith(off));
+        expect(off.calls).not.toContain('createReview');
+
+        m.settings['prEvaluation.postReviewFindings'] = true;
+        m.created.length = 0;
+        const on = fakeScm();
+        await evaluatePullRequestWith(INPUT, depsWith(on));
+        expect(on.calls.filter((c) => c === 'createReview')).toHaveLength(1);
+        const [, , review] = argsOf('createReview')[0] as [
+          unknown,
+          number,
+          { comments: { line: number; path: string }[]; commitId: string },
+        ];
+        expect(review.commitId).toBe(HEAD);
+        expect(review.comments).toEqual([
+          {
+            body: expect.stringContaining('a token is written to the log'),
+            line: 1,
+            path: 'src/util.ts',
+          },
+        ]);
+      });
+
+      it('still evaluates and posts the brief when the review cannot be posted', async () => {
+        m.steps.mockResolvedValue(withFindings(HEAD));
+        m.settings['prEvaluation.postReviewFindings'] = true;
+        const scm = fakeScm({
+          createReview: async () => {
+            throw new Error('host unreachable');
+          },
+        });
+        const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+        expect(result).toMatchObject({ outcome: 'evaluated' });
+        expect(briefMarkdown()).toContain('**Review findings**');
+        expect(JSON.stringify(m.logs)).not.toContain('unreachable');
       });
 
       it('lists nothing when the review was of another commit', async () => {

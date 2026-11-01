@@ -302,6 +302,15 @@ export interface ReviewThreadComment extends FeedbackAuthor {
   reviewDatabaseId: number | null;
 }
 
+/** One inline comment of a review the platform posts: on `line` of the file's new side. */
+export interface ReviewCommentInput {
+  body: string;
+  line: number;
+  path: string;
+}
+
+export type CreateReviewResult = { ok: true; htmlUrl: string } | { ok: false; reason: 'rejected' };
+
 /** A pull-request review thread (an inline comment chain on a file). */
 export interface ReviewThread {
   /** The thread's GraphQL node id (what replies and the responder cite). */
@@ -480,6 +489,18 @@ export interface ScmProvider {
     commentId: number,
     body: string
   ): Promise<{ htmlUrl: string }>;
+  /**
+   * Post one review on `commitId` made of inline comments, each on `line` of its file's new side.
+   * The event is always `COMMENT`: there is no way through this method to approve a pull request or
+   * to request changes, so it can neither merge one nor block one. The host refuses the whole review
+   * (422) when a comment's line is not in the diff or `commitId` is no longer the head; that
+   * resolves `{ ok: false, reason: 'rejected' }` and posts nothing.
+   */
+  createReview(
+    repo: RepoRef,
+    prNumber: number,
+    input: { body: string; comments: ReviewCommentInput[]; commitId: string }
+  ): Promise<CreateReviewResult>;
   /**
    * Create `branch` at `sha`, never forcing: `exists_same` when it already points there (a
    * retry), `exists_other` when it exists elsewhere — which callers refuse non-retryably,

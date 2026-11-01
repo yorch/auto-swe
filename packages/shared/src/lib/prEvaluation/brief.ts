@@ -212,7 +212,7 @@ function escapeProse(raw: string): string {
  * markup, no mentions, no autolinks. Bare URLs are shown as code, `#123`
  * references are backslash-escaped so they do not link to an issue.
  */
-function escapeText(raw: string): string {
+export function escapeText(raw: string): string {
   const text = clipCodePoints(replaceUnsafe(raw, ' '), MAX_PROSE_CHARS);
   let out = '';
   let last = 0;
