@@ -387,6 +387,8 @@ type FeedbackConnection = {
   githubUrl: string | null;
   id: string;
   installation: { host: string; installationId: string } | null;
+  organizationName: string | null;
+  repoName: string | null;
 };
 
 /**
@@ -412,6 +414,8 @@ async function feedbackReadTarget(
     baseUrl: repo.githubUrl,
     installationHost: repo.installation?.host ?? null,
     installationId: repo.installation?.installationId ?? null,
+    organizationName: repo.organizationName,
+    repoName: repo.repoName,
   };
   try {
     const credential = await resolvePlatformCredential(scoped, ghConfig);
@@ -528,6 +532,8 @@ export async function enrichPrFeedbackFacts(
         githubUrl: true,
         id: true,
         installation: { select: { host: true, installationId: true } },
+        organizationName: true,
+        repoName: true,
         team: { select: { orgId: true } },
         teamId: true,
       },

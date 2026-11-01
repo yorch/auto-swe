@@ -30,6 +30,7 @@ import {
   type BotApprovalCondition,
   type BotApprovalInput,
   BRIEF_MARKER,
+  type BriefIntent,
   botApprovalRefusalConditions,
   buildBrief,
   type ChangedFile,
@@ -65,6 +66,7 @@ import {
 import { ApplicationFailure } from '@temporalio/activity';
 import { logWarn } from '../lib/activityLog.js';
 import { scanDiffForCodeIssuesDetailed } from '../lib/codeSecurityScanner.js';
+import { splitSuccessCriteria } from '../lib/contextAmbiguity.js';
 import { resolveLauncherSet } from '../lib/prLauncher.js';
 import {
   type ApproverClientResult,
@@ -89,6 +91,7 @@ export const PR_POLICY_PATH = '.auto-swe/pr-policy.yml';
 const MAX_SCAN_CHARS = 2 * 1024 * 1024;
 const MAX_PERSISTED_REASONS = 100;
 const MAX_PERSISTED_PATHS = 100;
+const MAX_PERSISTED_PATH = 50;
 const MAX_PERSISTED_SKIM = 200;
 const MAX_PERSISTED_CLAIMS = 50;
 const MAX_TEXT = 500;
@@ -343,7 +346,7 @@ function infoReason(code: string, message: string): Reason {
   return { code, message, severity: 'info' };
 }
 
-const EMPTY_BRIEF = { claimsToVerify: [], focus: [], markdown: '', skim: [] };
+const EMPTY_BRIEF = { claimsToVerify: [], markdown: '', path: [], skim: [] };
 
 function asJson(value: unknown): Prisma.InputJsonValue {
   return value as Prisma.InputJsonValue;
@@ -1506,7 +1509,8 @@ export async function evaluatePullRequestWith(
     }
 
     // ── The brief, then the row, then the arming.
-    const brief = buildBrief(listed.files, classification, effective);
+    const intent = await loadBriefIntent(platformPr.workflow.workRequestId, connection.id, input);
+    const brief = buildBrief(listed.files, classification, effective, intent);
     const briefMarkdown = truncateBrief(brief.markdown);
     await postBrief(scm, repo, input.prNumber, briefMarkdown, connection.id);
 
@@ -1519,8 +1523,8 @@ export async function evaluatePullRequestWith(
         botApproved,
         brief: asJson({
           claimsToVerify: brief.claimsToVerify.slice(0, MAX_PERSISTED_CLAIMS),
-          focus: brief.focus.slice(0, 20),
           markdown: briefMarkdown,
+          path: brief.path.slice(0, MAX_PERSISTED_PATH),
           skim: brief.skim.slice(0, MAX_PERSISTED_SKIM),
         }),
         // The facts the evidence gate counts, describing the head just evaluated.
@@ -2165,6 +2169,40 @@ async function publishStatus(
       ...safeErrorMeta(err),
     });
     return { ok: false, reason: 'error' };
+  }
+}
+
+/**
+ * What the ticket asked for and left open, from the criteria the run extracted when it validated
+ * the request. Advisory text for the reviewer: a read that fails leaves the sections out. It must
+ * not throw, because an error here would reach `failClosed` and publish `HIGH` over a feature that
+ * decides nothing.
+ */
+async function loadBriefIntent(
+  workRequestId: string | null,
+  connectionId: string,
+  input: { prNumber: number }
+): Promise<BriefIntent | undefined> {
+  if (workRequestId === null) {
+    return undefined;
+  }
+  try {
+    const snapshot = await prisma.contextSnapshot.findUnique({
+      select: { successCriteria: true },
+      where: { workRequestId },
+    });
+    if (!snapshot) {
+      return undefined;
+    }
+    const { concrete, ambiguities } = splitSuccessCriteria(snapshot.successCriteria);
+    return { criteria: concrete, openQuestions: ambiguities };
+  } catch (err) {
+    logWarn('pr evaluation: the ticket criteria could not be read for the brief', {
+      connectionId,
+      prNumber: input.prNumber,
+      ...safeErrorMeta(err),
+    });
+    return undefined;
   }
 }
 

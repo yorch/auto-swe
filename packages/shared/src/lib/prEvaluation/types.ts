@@ -82,8 +82,15 @@ export type Classification = {
 
 export type SkimProof = 'exact-rename' | 'whitespace-only';
 
+/** What the ticket asked for, as the run extracted it. Untrusted text: the brief escapes it. */
+export type BriefIntent = {
+  criteria: string[];
+  openQuestions: string[];
+};
+
 export type Brief = {
-  focus: { path: string; why: string; verify: string }[];
+  /** Every file that is not provably skimmable, in the order to read it. */
+  path: { path: string; why: string; verify: string; flagged: boolean }[];
   skim: { path: string; proof: SkimProof }[];
   claimsToVerify: string[];
   markdown: string;

@@ -25,6 +25,7 @@ const m = vi.hoisted(() => ({
   resolveSettingsCtx: [] as unknown[],
   runs: vi.fn(),
   settings: {} as Record<string, unknown>,
+  snapshot: vi.fn(),
   steps: vi.fn(),
   update: vi.fn(),
   updateMany: vi.fn(),
@@ -35,6 +36,7 @@ const m = vi.hoisted(() => ({
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     connection: { findFirst: m.connection },
+    contextSnapshot: { findUnique: m.snapshot },
     prEvaluation: {
       count: vi.fn(async (args: { where: { badMerge?: boolean; connectionId?: string } }) => {
         m.evidenceWheres.push(args.where);
@@ -278,6 +280,8 @@ beforeEach(() => {
   );
   m.previous.mockReset();
   m.previous.mockResolvedValue(null);
+  m.snapshot.mockReset();
+  m.snapshot.mockResolvedValue(null);
   m.steps.mockReset();
   m.steps.mockResolvedValue([
     { outputs: { codeResult: { headSha: HEAD }, verdicts: [{ severity: 'PASS' }] } },
@@ -624,6 +628,60 @@ describe('evaluatePullRequest: approvals and status', () => {
     const [, number, marker] = argsOf('upsertMarkedComment')[0] as [unknown, number, string];
     expect(number).toBe(7);
     expect(marker).toBe('<!-- auto-swe:pr-evaluation -->');
+  });
+
+  describe('the ticket intent in the brief', () => {
+    const briefMarkdown = () => (argsOf('upsertMarkedComment')[0] as unknown[])[3] as string;
+
+    it('puts the extracted criteria and open questions in the brief', async () => {
+      m.snapshot.mockResolvedValue({
+        successCriteria: ['GET /health returns 200', 'AMBIGUOUS: which auth scheme applies?'],
+      });
+      await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+      expect(m.snapshot).toHaveBeenCalledWith({
+        select: { successCriteria: true },
+        where: { workRequestId: WORK_REQUEST },
+      });
+      const md = briefMarkdown();
+      expect(md).toContain('**What was asked**');
+      expect(md).toContain('- GET /health returns 200');
+      expect(md).toContain('**Open questions in the ticket**');
+      expect(md).toContain('- which auth scheme applies?');
+    });
+
+    it('leaves the sections out when the run recorded no criteria', async () => {
+      await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+      expect(briefMarkdown()).not.toContain('What was asked');
+      expect(briefMarkdown()).not.toContain('Open questions');
+    });
+
+    it('neutralises markup and mentions in ticket text', async () => {
+      m.snapshot.mockResolvedValue({
+        successCriteria: ['ping @everyone <script>alert(1)</script> see #123'],
+      });
+      await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+      const md = briefMarkdown();
+      expect(md).toContain('What was asked');
+      expect(md).not.toContain('<script>');
+      expect(md).not.toContain('@everyone');
+      expect(md).not.toContain('see #123');
+    });
+
+    it('still posts the brief, with the same class and status, when the read fails', async () => {
+      m.snapshot.mockRejectedValue(new Error('database unreachable'));
+      const result = await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+      expect(result).toMatchObject({
+        outcome: 'evaluated',
+        riskClass: 'LOW',
+        statusState: 'success',
+      });
+      expect(briefMarkdown()).toContain('### PR evaluation: LOW risk');
+      expect(briefMarkdown()).not.toContain('What was asked');
+      expect(m.logs.map((l) => l.message)).toContain(
+        'pr evaluation: the ticket criteria could not be read for the brief'
+      );
+      expect(JSON.stringify(m.logs)).not.toContain('database unreachable');
+    });
   });
 
   it('persists one row per evaluation with the readiness it read', async () => {

@@ -3,12 +3,13 @@ import {
   BOT_APPROVED_BRIEF_SENTENCE,
   BRIEF_MARKER,
   buildBrief,
+  readingOrder,
   skimProof,
   truncateBrief,
 } from './brief.js';
 import { classify } from './classify.js';
 import { DEFAULT_THRESHOLDS, mergePolicy } from './policy.js';
-import type { ChangedFile, EffectivePolicy, EvaluationSignals } from './types.js';
+import type { BriefIntent, ChangedFile, EffectivePolicy, EvaluationSignals } from './types.js';
 
 const { effective } = mergePolicy({ ...DEFAULT_THRESHOLDS, sensitivePaths: [] });
 const file = (path: string, over: Partial<ChangedFile> = {}): ChangedFile => ({
@@ -102,7 +103,7 @@ describe('buildBrief', () => {
   it('puts only proven files in skim and does not focus on them', () => {
     const result = brief([exactRename(), file('src/b.ts', { additions: 3 })]);
     expect(result.skim).toEqual([{ path: 'src/new.ts', proof: 'exact-rename' }]);
-    expect(result.focus.map((f) => f.path)).toEqual(['src/b.ts']);
+    expect(result.path.map((f) => f.path)).toEqual(['src/b.ts']);
   });
 
   it('never skims a sensitive rename', () => {
@@ -110,10 +111,11 @@ describe('buildBrief', () => {
       exactRename({ path: 'db/migrations/2.sql', previousPath: 'db/migrations/1.sql' }),
     ]);
     expect(result.skim).toEqual([]);
-    expect(result.focus[0]?.path).toBe('db/migrations/2.sql');
+    expect(result.path[0]?.path).toBe('db/migrations/2.sql');
+    expect(result.path[0]?.flagged).toBe(true);
   });
 
-  it('ranks exclusion hits first, then churn, capped at 10 with a +N note', () => {
+  it('lists the first ten files, flags risk without moving the file, and folds the rest', () => {
     const files = [
       ...Array.from({ length: 14 }, (_, i) =>
         file(`src/f${String(i).padStart(2, '0')}.ts`, { additions: i + 1, deletions: 0 })
@@ -121,11 +123,31 @@ describe('buildBrief', () => {
       file('db/migrations/1.sql', { additions: 1, deletions: 0 }),
     ];
     const result = brief(files);
-    expect(result.focus).toHaveLength(10);
-    expect(result.focus[0]?.path).toBe('db/migrations/1.sql');
-    expect(result.focus[1]?.path).toBe('src/f13.ts');
-    expect(result.focus[9]?.path).toBe('src/f05.ts');
-    expect(result.markdown).toContain('+5 more files not listed');
+    expect(result.path).toHaveLength(15);
+    // the migration is a contract, so it is read first; risk is a marker, not a sort key
+    expect(result.path[0]).toMatchObject({ flagged: true, path: 'db/migrations/1.sql' });
+    expect(result.path[1]).toMatchObject({ flagged: false, path: 'src/f13.ts' });
+    expect(result.path[9]?.path).toBe('src/f05.ts');
+    expect(result.markdown).toContain('**Read in this order**');
+    expect(result.markdown).toContain('- **1.** ` db/migrations/1.sql `');
+    expect(result.markdown).toContain('<summary>5 more files, still in reading order</summary>');
+    expect(result.markdown).toContain('- ` src/f00.ts `');
+    expect(result.markdown.endsWith('</details>')).toBe(true);
+  });
+
+  it('keeps a flagged file visible at its real position when it is past the tenth', () => {
+    const files = [
+      ...Array.from({ length: 14 }, (_, i) =>
+        file(`src/f${String(i).padStart(2, '0')}.ts`, { additions: 20, deletions: 0 })
+      ),
+      file('auth/login.ts', { additions: 1, deletions: 0 }),
+    ];
+    const result = brief(files);
+    expect(result.path[14]).toMatchObject({ flagged: true, path: 'auth/login.ts' });
+    expect(result.markdown).toContain('- **15.** ` auth/login.ts `');
+    expect(result.markdown).toContain('**Check:** Read the change itself');
+    expect(result.markdown).toContain('<summary>4 more files, still in reading order</summary>');
+    expect(result.markdown).not.toContain('- ` auth/login.ts `');
   });
 
   it('starts the markdown with the marker and is deterministic', () => {
@@ -138,12 +160,12 @@ describe('buildBrief', () => {
   it('neutralises hostile file names', () => {
     const hostile = 'x`; </details><img src=x onerror=1> @octocat | a\n# H1 ``` .ts';
     const result = brief([file(hostile)]);
-    const line = result.markdown.split('\n').find((l) => l.startsWith('1.')) as string;
+    const line = result.markdown.split('\n').find((l) => l.startsWith('- **1.**')) as string;
     expect(line).toBeDefined();
     // newline in the name is replaced, so the list item stays on one line
     expect(result.markdown).not.toContain('\n# H1');
     // the name sits in a code span whose fence is longer than any backtick run inside it
-    expect(line).toMatch(/^1\. ````+ x/);
+    expect(line).toMatch(/^- \*\*1\.\*\* ````+ x/);
     // the mention sits between the opening and closing fence
     expect(line.indexOf('@octocat')).toBeGreaterThan(line.indexOf('x`;'));
     expect(line.indexOf('@octocat')).toBeLessThan(line.lastIndexOf('````'));
@@ -190,13 +212,162 @@ describe('buildBrief', () => {
       effective
     );
     expect(result.markdown.length).toBeLessThan(60_000);
-    expect(result.focus).toHaveLength(10);
+    expect(result.path).toHaveLength(3000);
+    // the folded block is capped and still closes inside the limit
+    expect(result.markdown).toContain('</details>');
+    expect(result.markdown).not.toContain('(truncated)');
   });
 
   it('respects ignoredFromSkim in the brief', () => {
     const policy = { ...effective, ignoredFromSkim: ['src/**'] };
     const result = brief([exactRename()], policy);
     expect(result.skim).toEqual([]);
+  });
+});
+
+describe('the ticket intent in the brief', () => {
+  const withIntent = (intent: BriefIntent | undefined, files = [file('db/migrations/1.sql')]) => {
+    const signals: EvaluationSignals = {
+      draft: false,
+      files,
+      maxReviewSeverity: 'PASS',
+      policyFileChanged: false,
+      scannerFindingCount: 0,
+    };
+    return buildBrief(files, classify(signals, effective), effective, intent).markdown;
+  };
+
+  it('puts what was asked and the open questions between the class and the reading path', () => {
+    const md = withIntent({
+      criteria: ['GET /health returns 200'],
+      openQuestions: ['which auth scheme applies?'],
+    });
+    const at = (text: string) => md.indexOf(text);
+    expect(md).toContain('- GET /health returns 200');
+    expect(md).toContain('- which auth scheme applies?');
+    expect(at('**Why this class**')).toBeLessThan(at('**What was asked**'));
+    expect(at('**What was asked**')).toBeLessThan(at('**Open questions in the ticket**'));
+    expect(at('**Open questions in the ticket**')).toBeLessThan(at('**Read in this order**'));
+    expect(md).toContain('not checked against the diff');
+  });
+
+  it('adds nothing when there is no intent, or only empty entries', () => {
+    const plain = withIntent(undefined);
+    expect(withIntent({ criteria: [], openQuestions: [] })).toBe(plain);
+    expect(withIntent({ criteria: ['  ', ''], openQuestions: ['\n'] })).toBe(plain);
+    expect(plain).not.toContain('What was asked');
+    expect(plain).not.toContain('Open questions');
+  });
+
+  it('shows at most 20 criteria and 10 questions and says how many were left out', () => {
+    const md = withIntent({
+      criteria: Array.from({ length: 25 }, (_, i) => `criterion ${i}`),
+      openQuestions: Array.from({ length: 12 }, (_, i) => `question ${i}`),
+    });
+    expect(md).toContain('- criterion 19');
+    expect(md).not.toContain('- criterion 20');
+    expect(md).toContain('- question 9');
+    expect(md).not.toContain('- question 10');
+    expect(md.match(/- \+5 more/g)).toHaveLength(1);
+    expect(md.match(/- \+2 more/g)).toHaveLength(1);
+  });
+
+  it('keeps an entry on one line and bounded', () => {
+    const md = withIntent({
+      criteria: [`first\n# Injected heading\n${'x'.repeat(5000)}`],
+      openQuestions: [],
+    });
+    expect(md).not.toContain('\n# Injected heading');
+    expect(md.length).toBeLessThan(5000);
+  });
+
+  it('neutralises markup, mentions, links and issue references in ticket text', () => {
+    const md = withIntent({
+      criteria: ['ping @everyone <img src=x onerror=1> `code` see #123 and https://evil.example/x'],
+      openQuestions: ['is <script>alert(1)</script> ok? cc @octocat GH-9'],
+    });
+    expect(md).not.toContain('<img');
+    expect(md).not.toContain('<script>');
+    expect(md).not.toContain('@everyone');
+    expect(md).not.toContain('@octocat');
+    expect(md).not.toContain('see #123');
+    expect(md).not.toContain('GH-9');
+    expect(md).toContain('` https://evil.example/x `');
+  });
+});
+
+describe('readingOrder', () => {
+  const order = (files: ChangedFile[]) => readingOrder(files).map((f) => f.path);
+
+  it('reads contracts, then source with its tests, then loose tests, then the rest', () => {
+    const files = [
+      file('docs/guide.md'),
+      file('test/zzz.test.ts'),
+      file('src/app/b.test.ts'),
+      file('src/app/b.ts', { additions: 2, deletions: 0 }),
+      file('src/app/a.ts', { additions: 9, deletions: 1 }),
+      file('package.json'),
+      file('db/migrations/1.sql'),
+    ];
+    expect(order(files)).toEqual([
+      'db/migrations/1.sql',
+      'package.json',
+      'src/app/a.ts',
+      'src/app/b.ts',
+      'src/app/b.test.ts',
+      'test/zzz.test.ts',
+      'docs/guide.md',
+    ]);
+  });
+
+  it('puts a test straight after the source it covers, in the same or the parent directory', () => {
+    const files = [
+      file('src/foo.spec.ts'),
+      file('src/__tests__/foo.test.ts'),
+      file('src/foo.ts', { additions: 5, deletions: 0 }),
+      file('src/bar.ts', { additions: 1, deletions: 0 }),
+      file('src/test_baz.py'),
+      file('src/baz.py', { additions: 3, deletions: 0 }),
+      file('src/QuxTest.java'),
+      file('src/Qux.java', { additions: 2, deletions: 0 }),
+    ];
+    expect(order(files)).toEqual([
+      'src/foo.ts',
+      'src/__tests__/foo.test.ts',
+      'src/foo.spec.ts',
+      'src/baz.py',
+      'src/test_baz.py',
+      'src/Qux.java',
+      'src/QuxTest.java',
+      'src/bar.ts',
+    ]);
+  });
+
+  it('keeps a directory together, busiest directory first', () => {
+    const files = [
+      file('a/one.ts', { additions: 1, deletions: 0 }),
+      file('b/one.ts', { additions: 8, deletions: 0 }),
+      file('a/two.ts', { additions: 1, deletions: 0 }),
+      file('b/two.ts', { additions: 8, deletions: 0 }),
+    ];
+    expect(order(files)).toEqual(['b/one.ts', 'b/two.ts', 'a/one.ts', 'a/two.ts']);
+  });
+
+  it('does not pair a test with a source of another name or directory', () => {
+    const files = [file('src/foo.ts'), file('src/other/foo.test.ts'), file('src/bar.test.ts')];
+    expect(order(files)).toEqual(['src/foo.ts', 'src/bar.test.ts', 'src/other/foo.test.ts']);
+  });
+
+  it('gives the same order whatever order the host listed the files in', () => {
+    const files = [
+      file('src/a/x.ts', { additions: 3, deletions: 0 }),
+      file('src/a/x.test.ts'),
+      file('src/b/y.ts', { additions: 3, deletions: 0 }),
+      file('yarn.lock'),
+      file('README.md'),
+      file('tests/loose.test.ts'),
+    ];
+    expect(order([...files].reverse())).toEqual(order(files));
   });
 });
 

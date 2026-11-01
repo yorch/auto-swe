@@ -108,6 +108,40 @@ describe('LinearProvider.syncOnEvent', () => {
   });
 });
 
+describe('LinearProvider.syncOnEvent comment failures', () => {
+  const failed = { issueId: 'iss-1', type: 'workflow_failed' } as const;
+
+  it('reports no failure when Linear takes the comment', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        json: async () => ({ data: { commentCreate: { success: true } } }),
+        ok: true,
+      }))
+    );
+    await expect(provider().syncOnEvent(failed)).resolves.toBeNull();
+  });
+
+  it('reports a refused mutation as rejected', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        json: async () => ({ data: { commentCreate: { success: false } } }),
+        ok: true,
+      }))
+    );
+    await expect(provider().syncOnEvent(failed)).resolves.toBe('rejected');
+  });
+
+  it('reports an HTTP failure by its class', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ json: async () => ({}), ok: false, status: 403 }))
+    );
+    await expect(provider().syncOnEvent(failed)).resolves.toBe('forbidden');
+  });
+});
+
 describe('LinearProvider.addComment', () => {
   it('reports a comment Linear accepted as posted', async () => {
     vi.stubGlobal(

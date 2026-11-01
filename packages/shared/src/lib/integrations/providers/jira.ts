@@ -355,14 +355,19 @@ export class JiraProvider implements IssueTrackerProvider {
   }
 
   async addComment(issueId: string, bodyText: string): Promise<boolean> {
+    return (await this.postComment(issueId, bodyText)) === null;
+  }
+
+  /** Posts a comment; resolves why the tracker refused it, or null when it took it. */
+  private async postComment(issueId: string, bodyText: string): Promise<TicketFailureClass | null> {
     try {
       await this.client.post(`/rest/api/3/issue/${encodeURIComponent(issueId)}/comment`, {
         body: adfFromText(bodyText),
       });
-      return true;
+      return null;
     } catch (err) {
       this.log?.warn({ err, issueId }, 'Jira addComment failed');
-      return false;
+      return jiraFailure(err);
     }
   }
 
@@ -376,7 +381,8 @@ export class JiraProvider implements IssueTrackerProvider {
     }
   }
 
-  async syncOnEvent(event: TrackerSyncEvent): Promise<void> {
+  async syncOnEvent(event: TrackerSyncEvent): Promise<TicketFailureClass | null> {
+    let failure: TicketFailureClass | null = null;
     try {
       switch (event.type) {
         case 'workflow_started':
@@ -389,10 +395,10 @@ export class JiraProvider implements IssueTrackerProvider {
           await this.transitionIssue(event.issueId, JIRA_SYNC_STATUSES.prOpened);
           break;
         case 'ci_passed':
-          await this.addComment(event.issueId, '✅ CI passed');
+          failure = await this.postComment(event.issueId, '✅ CI passed');
           break;
         case 'ci_failed':
-          await this.addComment(
+          failure = await this.postComment(
             event.issueId,
             `❌ CI failed${event.summary ? `: ${event.summary}` : ''}`
           );
@@ -404,7 +410,7 @@ export class JiraProvider implements IssueTrackerProvider {
           await this.transitionIssue(event.issueId, JIRA_SYNC_STATUSES.completed);
           break;
         case 'workflow_failed':
-          await this.addComment(
+          failure = await this.postComment(
             event.issueId,
             `⚠️ Workflow failed${event.summary ? `: ${event.summary}` : ''}`
           );
@@ -413,5 +419,6 @@ export class JiraProvider implements IssueTrackerProvider {
     } catch (err) {
       this.log?.warn({ err, event }, 'Jira syncOnEvent failed');
     }
+    return failure;
   }
 }

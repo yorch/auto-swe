@@ -42,6 +42,17 @@ describe('RunSummaryBand', () => {
     expect(screen.getByText('Dana: Wrong table')).toBeTruthy();
   });
 
+  it('shows the tracker write-back note on a run with no result, failed step or approval', () => {
+    // A reaped run: no result and no failed step row, only the failure recorded on its snapshot.
+    const reaped = {
+      ...run,
+      contextSnapshot: { trackerWriteback: { failure: 'forbidden' } },
+      status: 'TIMED_OUT',
+    } as unknown as WorkflowRunDetail;
+    render(<RunSummaryBand failedStep={null} pendingSteps={[]} run={reaped} />);
+    expect(screen.getByText(/ticket was not updated/i)).toBeTruthy();
+  });
+
   it('renders nothing when there is nothing to show', () => {
     const { container } = render(<RunSummaryBand failedStep={null} pendingSteps={[]} run={run} />);
     expect(container.firstChild).toBeNull();
