@@ -140,6 +140,24 @@ export const NON_SOURCE_GLOBS: readonly string[] = [
   '**/LICENSE*',
 ];
 
+/**
+ * What other files depend on: manifests and lockfiles, schema and migrations, API contracts. The
+ * brief's reading path puts these first, so a reviewer meets the shape of a change before its use.
+ */
+export const CONTRACT_GLOBS: readonly string[] = [
+  '**/package.json',
+  '**/{yarn.lock,package-lock.json,pnpm-lock.yaml}',
+  '**/{Cargo.toml,Cargo.lock,go.mod,go.sum,pyproject.toml,poetry.lock}',
+  '**/requirements*.txt',
+  '**/{Gemfile,Gemfile.lock,pom.xml}',
+  '**/build.gradle*',
+  '**/migrations/**',
+  '**/*.sql',
+  '**/schema.prisma',
+  '**/*.{proto,graphql,gql}',
+  '**/{openapi,swagger}*.{yml,yaml,json}',
+];
+
 /** Added lines in a test file that switch tests off. Linear: one pass, no nested quantifiers. */
 export const TEST_SKIP_PATTERN =
   /\.(skip|only|todo)\b|\bx(it|test|describe)\s*\(|skipIf|skipUnless|@pytest\.mark\.(skip|xfail)|\bt\.Skip(Now)?\b|@Disabled|@Ignore|@Pending|\bpending\s*\(|skipTest|\bunittest\.skip/;
