@@ -20,6 +20,7 @@ import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { probeApproverApp } from '../lib/connectionProbes.js';
 import { sendError } from '../lib/httpErrors.js';
 import { GLOBAL_SWEEP_CAP, sweepArmedPullRequests } from '../lib/prEvaluationSweep.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -147,6 +148,13 @@ export const githubApproverAppRoutes: FastifyPluginAsync = async (fastify) => {
   app.get('/github-approver-app', { onRequest: adminOnly }, async () =>
     present(await fastify.prisma.gitHubApproverApp.findUnique({ where: { id: 'default' } }))
   );
+
+  // POST /github-approver-app/test — ask GitHub who the stored key's App is, and confirm it is the
+  // App id and slug on file. A wrong slug leaves every approval unrecognisable, and the save-time
+  // check cannot see a key that was revoked since. Always 200 with `ok`.
+  app.post('/github-approver-app/test', { onRequest: adminOnly }, async () => ({
+    data: await probeApproverApp(),
+  }));
 
   app.put(
     '/github-approver-app',

@@ -16,6 +16,7 @@ import {
 import { WebClient } from '@slack/web-api';
 import type { FastifyBaseLogger } from 'fastify';
 import { auditContextData } from './auditContext.js';
+import { probeAppInstallation } from './connectionProbes.js';
 
 /**
  * Service for the singleton system-config tables (GitHub, Slack,
@@ -390,10 +391,19 @@ export async function testGitHubConnection(
   const useApp = mode === 'app' || (mode === 'auto' && appConfigured);
 
   if (useApp) {
-    return {
-      detail: `GitHub App configured (id: ${config.appId}, installation: ${config.appInstallationId}). Start the worker to validate token generation.`,
-      ok: true,
-    };
+    if (!(config.appId && config.appPrivateKey && config.appInstallationId)) {
+      return {
+        detail: 'The GitHub App needs an id, a private key and an installation id.',
+        ok: false,
+      };
+    }
+    // Minting the installation token sends the App's JWT to the API URL, so a URL that was typed
+    // but not saved is not tested: it has had only the text check above, not the connection-time one.
+    if (config.apiUrl !== stored.apiUrl) {
+      return { detail: 'Save the API URL before testing the GitHub App.', ok: false };
+    }
+    const result = await probeAppInstallation(config, config.appInstallationId, config.apiUrl);
+    return { detail: result.detail, ok: result.ok };
   }
 
   if (!config.token) {

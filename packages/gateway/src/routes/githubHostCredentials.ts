@@ -22,6 +22,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { failed, probeHostCredential } from '../lib/connectionProbes.js';
 import {
   GitHubAppIdSchema,
   GitHubAppPrivateKeySchema,
@@ -273,6 +274,28 @@ export const githubHostCredentialRoutes: FastifyPluginAsync = async (fastify) =>
         }
         throw err;
       }
+    }
+  );
+
+  // POST /github-host-credentials/:id/test — ask the host whether its stored PAT authenticates and
+  // its App is real and installed. Always 200 with `ok` so the page can show the reason; 404 only
+  // for no row. Nothing is read from the request: the stored secrets are decrypted here, used for
+  // the check and never returned.
+  app.post(
+    '/github-host-credentials/:id/test',
+    { onRequest: adminOnly, schema: { params: IdParams } },
+    async (request, reply) => {
+      const row = await fastify.prisma.gitHubHostCredential.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!row) {
+        return notFound(reply);
+      }
+      const problem = await hostProblem(row.host);
+      if (problem) {
+        return { data: failed('Host', problem.message) };
+      }
+      return { data: await probeHostCredential(row.host) };
     }
   );
 

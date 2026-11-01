@@ -5,13 +5,23 @@ import type { FastifyBaseLogger } from 'fastify';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ─── Hoisted mock fns referenced inside the vi.mock factories below ───────────
-const { mockAtlassianGet, mockCreateKnowledgeBaseProvider, mockFetchTicket, mockSlackAuthTest } =
-  vi.hoisted(() => ({
-    mockAtlassianGet: vi.fn(),
-    mockCreateKnowledgeBaseProvider: vi.fn(),
-    mockFetchTicket: vi.fn(),
-    mockSlackAuthTest: vi.fn(),
-  }));
+const {
+  mockAtlassianGet,
+  mockCreateKnowledgeBaseProvider,
+  mockFetchTicket,
+  mockProbeAppInstallation,
+  mockSlackAuthTest,
+} = vi.hoisted(() => ({
+  mockAtlassianGet: vi.fn(),
+  mockCreateKnowledgeBaseProvider: vi.fn(),
+  mockFetchTicket: vi.fn(),
+  mockProbeAppInstallation: vi.fn(),
+  mockSlackAuthTest: vi.fn(),
+}));
+
+// The App path of testGitHubConnection() asks GitHub for an installation token; its own tests
+// live in connectionProbes.test.ts.
+vi.mock('./connectionProbes.js', () => ({ probeAppInstallation: mockProbeAppInstallation }));
 
 // testIssueTrackerConnection() lazily `import()`s this relative module — mock
 // it so the connection test doesn't reach real provider network code.
@@ -976,7 +986,32 @@ describe('systemConfigService', () => {
   // ─── Live connection tests ──────────────────────────────────────────────
 
   describe('testGitHubConnection', () => {
-    it('reports App configured when authMode=auto and App fields are fully present', async () => {
+    it('checks the installation token when authMode=auto and App fields are fully present', async () => {
+      const config = {
+        apiUrl: 'https://api.github.com',
+        appId: '12345',
+        appInstallationId: '999',
+        appPrivateKey: '-----BEGIN KEY-----',
+        authMode: null,
+        token: null,
+      };
+      resolveGitHubConfigMock.mockResolvedValueOnce(config as never);
+      mockProbeAppInstallation.mockResolvedValueOnce({
+        checks: [],
+        detail: 'Installation 999 can reach 3 repositories.',
+        durationMs: 5,
+        ok: true,
+      });
+      const result = await testGitHubConnection();
+      expect(mockProbeAppInstallation).toHaveBeenCalledWith(
+        expect.objectContaining({ appId: '12345' }),
+        '999',
+        'https://api.github.com'
+      );
+      expect(result).toEqual({ detail: 'Installation 999 can reach 3 repositories.', ok: true });
+    });
+
+    it('fails when the installation token cannot be issued', async () => {
       resolveGitHubConfigMock.mockResolvedValueOnce({
         apiUrl: 'https://api.github.com',
         appId: '12345',
@@ -985,9 +1020,50 @@ describe('systemConfigService', () => {
         authMode: null,
         token: null,
       } as never);
+      mockProbeAppInstallation.mockResolvedValueOnce({
+        checks: [],
+        detail: 'GitHub would not issue a token for installation 999.',
+        durationMs: 5,
+        ok: false,
+      });
       const result = await testGitHubConnection();
-      expect(result.ok).toBe(true);
-      expect(result.detail).toContain('GitHub App configured');
+      expect(result.ok).toBe(false);
+      expect(result.detail).toContain('would not issue a token');
+    });
+
+    it('does not probe an App that lacks an installation id', async () => {
+      resolveGitHubConfigMock.mockResolvedValueOnce({
+        apiUrl: 'https://api.github.com',
+        appId: '12345',
+        appInstallationId: null,
+        appPrivateKey: '-----BEGIN KEY-----',
+        authMode: 'app',
+        token: null,
+      } as never);
+      const result = await testGitHubConnection();
+      expect(mockProbeAppInstallation).not.toHaveBeenCalled();
+      expect(result.ok).toBe(false);
+      expect(result.detail).toContain('installation id');
+    });
+
+    it('does not send the App JWT to an API URL that was typed but not saved', async () => {
+      resolveGitHubConfigMock.mockResolvedValueOnce({
+        apiUrl: 'https://api.github.com',
+        appId: '12345',
+        appInstallationId: '999',
+        appPrivateKey: '-----BEGIN KEY-----',
+        authMode: 'app',
+        token: null,
+      } as never);
+      const result = await testGitHubConnection({
+        apiUrl: 'https://ghe.example.com/api/v3',
+        token: 'typed-token',
+      });
+      expect(mockProbeAppInstallation).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        detail: 'Save the API URL before testing the GitHub App.',
+        ok: false,
+      });
     });
 
     it('reports no-token when neither PAT nor App is configured', async () => {

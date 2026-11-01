@@ -17,6 +17,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { probeRegistryRow } from '../lib/connectionProbes.js';
 import { sendError } from '../lib/httpErrors.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -349,6 +350,23 @@ export const packageRegistryRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'PackageRegistry',
       });
       return { data: present(updated) };
+    }
+  );
+
+  // POST /package-registries/:id/test — ask the upstream whether it answers and accepts the stored
+  // token. Always 200 with `ok` so the page can show the reason; 404 only for no row. The token is
+  // decrypted here, sent to the registry's own URL and never returned.
+  app.post(
+    '/package-registries/:id/test',
+    { onRequest: adminOnly, schema: { params: IdParams } },
+    async (request, reply) => {
+      const row = await fastify.prisma.packageRegistry.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!row) {
+        return notFound(reply);
+      }
+      return { data: await probeRegistryRow(row) };
     }
   );
 
