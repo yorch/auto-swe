@@ -1,5 +1,6 @@
 'use client';
 
+import { readTrackerWriteback } from '@auto-swe/shared/lib/integrations/ticketFailure';
 import type { WorkflowRunDetail, WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import { type ReactNode, useState } from 'react';
 import { HumanStepCard } from '@/components/approvals/HumanStepCard';
@@ -16,6 +17,7 @@ import { AgentRunFailureNote } from './AgentRunOutcomeCard';
 import { ArtifactAwareText } from './ArtifactAwareText';
 import { FailureCard } from './FailureCard';
 import { RunOutcomeCard } from './RunOutcomeCard';
+import { TrackerWritebackNote } from './TrackerWritebackNote';
 
 type ApprovalSteps = NonNullable<ReturnType<typeof useApprovals>['data']>;
 
@@ -82,7 +84,10 @@ export function RunSummary({
   const ended = run.status === 'FAILED' || run.status === 'TIMED_OUT';
   const hasFailure = failedStep != null || (!full && ended);
 
+  const hasWriteback = readTrackerWriteback(run.contextSnapshot) !== null;
+
   const hasContent =
+    hasWriteback ||
     pendingSteps.length > 0 ||
     answeredSteps.length > 0 ||
     hasResult ||
@@ -117,6 +122,7 @@ export function RunSummary({
           ))}
         </section>
       )}
+      <TrackerWritebackNote contextSnapshot={run.contextSnapshot} />
       {full && (hasResult || failedStep) && (
         <Button
           aria-expanded={!folded}

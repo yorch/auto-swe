@@ -302,6 +302,11 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
   }
 
   async addComment(issueId: string, bodyText: string): Promise<boolean> {
+    return (await this.postComment(issueId, bodyText)) === null;
+  }
+
+  /** Posts a comment; resolves why the tracker refused it, or null when it took it. */
+  private async postComment(issueId: string, bodyText: string): Promise<TicketFailureClass | null> {
     try {
       const parsed = parseGitHubTicketId(issueId, this.defaultRepo);
       if (!parsed) {
@@ -309,7 +314,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
           { issueId },
           'GitHub addComment: ticket ID must be owner/repo#123 or a bare issue number'
         );
-        return false;
+        return 'rejected';
       }
       const url = `${this.baseUrl}/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}/comments`;
       const res = await this.request(
@@ -322,13 +327,18 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         },
         parsed
       );
-      if (!res.ok) {
-        this.log?.warn({ issueId, status: res.status }, 'GitHub addComment failed');
+      if (res.ok) {
+        return null;
       }
-      return res.ok;
+      this.log?.warn({ issueId, status: res.status }, 'GitHub addComment failed');
+      // An exhausted primary rate limit is a 403 that says so in a header.
+      const limited =
+        res.status === 403 &&
+        (res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after'));
+      return limited ? 'rate_limited' : ticketFailureFromStatus(res.status);
     } catch (err) {
       this.log?.warn({ err, issueId }, 'GitHub addComment failed');
-      return false;
+      return githubFailure(err);
     }
   }
 
@@ -337,7 +347,8 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     await this.addComment(issueId, `🔗 [${title}](${url})`);
   }
 
-  async syncOnEvent(event: TrackerSyncEvent): Promise<void> {
+  async syncOnEvent(event: TrackerSyncEvent): Promise<TicketFailureClass | null> {
+    let failure: TicketFailureClass | null = null;
     try {
       switch (event.type) {
         case 'workflow_started':
@@ -349,10 +360,10 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
           }
           break;
         case 'ci_passed':
-          await this.addComment(event.issueId, '✅ CI passed');
+          failure = await this.postComment(event.issueId, '✅ CI passed');
           break;
         case 'ci_failed':
-          await this.addComment(
+          failure = await this.postComment(
             event.issueId,
             `❌ CI failed${event.summary ? `: ${event.summary}` : ''}`
           );
@@ -364,7 +375,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
           await this.transitionIssue(event.issueId, 'done');
           break;
         case 'workflow_failed':
-          await this.addComment(
+          failure = await this.postComment(
             event.issueId,
             `⚠️ Workflow failed${event.summary ? `: ${event.summary}` : ''}`
           );
@@ -373,5 +384,6 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     } catch (err) {
       this.log?.warn({ err, event }, 'GitHub syncOnEvent failed');
     }
+    return failure;
   }
 }

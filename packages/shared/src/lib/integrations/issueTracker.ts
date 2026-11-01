@@ -1,3 +1,4 @@
+import type { TicketFailureClass } from './ticketFailure.js';
 import type {
   CreatedIssue,
   FetchedIssue,
@@ -27,5 +28,11 @@ export interface IssueTrackerProvider {
   /** True when the tracker accepted the comment. A failure is logged and reported, never thrown. */
   addComment(issueId: string, bodyText: string): Promise<boolean>;
   addRemoteLink(issueId: string, url: string, title: string): Promise<void>;
-  syncOnEvent(event: TrackerSyncEvent): Promise<void>;
+  /**
+   * Mirrors a run event onto the ticket. Resolves the class of a comment the tracker refused
+   * (never its text), or null when it took every comment or the event posts none. Transitions
+   * are best-effort and are not reported; on GitHub and Linear a link is itself a comment, and is
+   * not reported either.
+   */
+  syncOnEvent(event: TrackerSyncEvent): Promise<TicketFailureClass | null>;
 }

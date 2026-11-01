@@ -1882,6 +1882,93 @@ describe('finalizeWorkflowRun', () => {
     findRun.mockReset();
   });
 
+  describe('when the tracker refuses the terminal comment', () => {
+    const runRow = {
+      endedAt: null,
+      workflowId: 'eng-x',
+      workRequest: {
+        activeWorkflows: [],
+        connection: { team: { orgId: 'org-1' } },
+        externalTicketId: 'T-1',
+        payload: null,
+      },
+    } as never;
+    const stored = { context: { ticket: '' }, result: { message: 'not actionable' } };
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const tracker = vi.mocked(syncTrackerOnEvent);
+    const patchRun = vi.mocked(prisma.workflowRun.update);
+
+    /** The row the run was ended with: the finalize read, then the snapshot read-back. */
+    const storedSnapshot = (contextSnapshot: unknown) =>
+      findRun.mockImplementation((async (args: { select?: { contextSnapshot?: boolean } }) =>
+        args.select?.contextSnapshot ? { contextSnapshot } : runRow) as never);
+
+    beforeEach(() => {
+      tracker.mockReset();
+      patchRun.mockReset();
+      updateManyRuns.mockReset();
+      updateManyRuns.mockResolvedValue({ count: 1 } as never);
+      storedSnapshot(stored);
+    });
+    afterEach(() => {
+      findRun.mockReset();
+    });
+
+    it('records the failure on the run snapshot, keeping what the snapshot held', async () => {
+      tracker.mockResolvedValue('forbidden' as never);
+      await expect(finalizeRun('run-wb', 'FAILED', stored, 'worker')).resolves.toBe(true);
+      expect(patchRun).toHaveBeenCalledTimes(1);
+      expect(patchRun).toHaveBeenCalledWith({
+        data: { contextSnapshot: { ...stored, trackerWriteback: { failure: 'forbidden' } } },
+        where: { id: 'run-wb' },
+      });
+    });
+
+    it('merges into the stored snapshot, not the one in hand, when the run ended with none', async () => {
+      tracker.mockResolvedValue('timeout' as never);
+      await finalizeRun('run-wb', 'TIMED_OUT', undefined, 'worker');
+      expect(patchRun).toHaveBeenCalledWith({
+        data: { contextSnapshot: { ...stored, trackerWriteback: { failure: 'timeout' } } },
+        where: { id: 'run-wb' },
+      });
+    });
+
+    it.each([
+      ['null', null],
+      ['an array', ['x']],
+    ])('starts a snapshot when the stored one is %s', async (_label, held) => {
+      storedSnapshot(held);
+      tracker.mockResolvedValue('forbidden' as never);
+      await finalizeRun('run-wb', 'FAILED', undefined, 'worker');
+      expect(patchRun).toHaveBeenCalledWith({
+        data: { contextSnapshot: { trackerWriteback: { failure: 'forbidden' } } },
+        where: { id: 'run-wb' },
+      });
+    });
+
+    it('writes nothing when the tracker took the comment', async () => {
+      tracker.mockResolvedValue(null as never);
+      await finalizeRun('run-wb', 'FAILED', stored, 'worker');
+      expect(patchRun).not.toHaveBeenCalled();
+    });
+
+    it('writes nothing for a run that succeeded: it posts no comment to refuse', async () => {
+      tracker.mockResolvedValue('forbidden' as never);
+      await finalizeRun('run-wb', 'SUCCESS', stored, 'worker');
+      expect(patchRun).not.toHaveBeenCalled();
+    });
+
+    it('still reports the run finalized when recording the failure fails', async () => {
+      tracker.mockResolvedValue('forbidden' as never);
+      patchRun.mockRejectedValue(new Error('db down'));
+      await expect(finalizeRun('run-wb', 'FAILED', stored, 'worker')).resolves.toBe(true);
+      expect(vi.mocked(logError)).toHaveBeenCalledWith(
+        '[finalizeRun] could not record the tracker write-back failure for run run-wb:',
+        { err: 'db down', runId: 'run-wb' }
+      );
+    });
+  });
+
   it('does not sync the tracker for a ticket id the platform generated', async () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     const tracker = vi.mocked(syncTrackerOnEvent);
