@@ -54,6 +54,14 @@ committed lockfile to scope it by, and the API refuses `lockfile` on one. Resolu
 ecosystems never mixes: an npm default and a registry of each other ecosystem coexist for one team, and a non-npm row can
 never be taken for npm's default or claim an npm scope.
 
+**Testing a registry.** A row's **Test** action (`POST /api/v1/admin/package-registries/:id/test`,
+ADMIN) sends the stored token to the row's own upstream and reports whether it answers. npm is
+asked at `/-/ping` and every other ecosystem at the upstream's root, with the same `Authorization`
+header the proxy sends. A `401` or `403` fails the check; a `404` or a redirect on that path means
+the registry was reached but has no cheap endpoint to prove the credential against, and the answer
+says so instead of claiming the token was verified. A private upstream is reachable only with the
+row's `allowPrivateNetwork`, as for the proxy itself; redirects are never followed.
+
 Write-time uniqueness: among active rows of one ecosystem of one team group (null is its own group), at most one
 default registry and each scope at most once — clashes are refused with `409`. Resolution for a
 workspace of team T takes active rows where `teamId IN (T, null)`; per key (the default key and
@@ -345,6 +353,9 @@ under 90%. Cache errors fall through to the upstream.
 
 ## Limitations
 
+- **The registry test is a reachability and credential check, not an install check.** It does not
+  resolve a package, so a registry that answers its root but rejects a particular package, scope or
+  version is not found by it.
 - **npm, Go modules, PyPI and Maven only, and read-only.** Publishing is not served. PyPI has no audit relay (`pip-audit` reaches its own database directly or not at all).
   A Go registry has no audit endpoint, so `govulncheck` and similar reach their own
   database directly or not at all.

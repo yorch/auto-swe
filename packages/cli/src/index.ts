@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { runAgentCommand } from './commands/agent.js';
 import { runBundleCommand } from './commands/bundle.js';
 import { runBundlesCommand } from './commands/bundles.js';
+import { runConnectionsCommand } from './commands/connections.js';
 import { runEvalsCommand } from './commands/evals.js';
 import { runMcpCommand } from './commands/mcp.js';
 import { runPrPolicyCommand } from './commands/prPolicy.js';
@@ -53,6 +54,13 @@ COMMANDS
         [--vuln-scan=CMD] [--perf-bench=CMD] [--clear]
                                        Print a repository's gate commands, or set them (an empty
                                        value removes one); setting needs team admin
+  repos test-access <org/name> [--json]
+                                       Check what a run on the repository could do with its
+                                       credentials (exit 1 on a failing step); needs team lead
+
+  connections test [--ticket=<id>] [--json]
+                                       Check every configured connection (GitHub, Slack, tracker,
+                                       registries, model keys, …); exit 1 if any fails; needs admin
 
   runs list [--status=S] [--template-id=ID] [--work-request-id=ID] [--limit=N]
                                        List recent workflow runs
@@ -171,6 +179,9 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'repos') {
     return await runReposCommand(rest, env);
+  }
+  if (cmd === 'connections') {
+    return await runConnectionsCommand(rest, env);
   }
   process.stderr.write(`Unknown command: ${cmd}\n${HELP}`);
   return 1;

@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from 'react';
 import { ConfigAuditLogTab } from '@/components/audit/ConfigAuditLogTab';
+import { ConnectionHealthPanel } from '@/components/integrations/ConnectionHealthPanel';
 import { FigmaTab } from '@/components/integrations/FigmaTab';
 import { GitHubTab } from '@/components/integrations/GitHubTab';
 import { IssueTrackerTab } from '@/components/integrations/IssueTrackerTab';
@@ -15,7 +16,15 @@ import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { HELP_LINKS } from '@/lib/helpLinks';
 
-type Tab = 'github' | 'slack' | 'tracker' | 'knowledge-base' | 'figma' | 'registries' | 'audit-log';
+type Tab =
+  | 'github'
+  | 'slack'
+  | 'tracker'
+  | 'knowledge-base'
+  | 'figma'
+  | 'registries'
+  | 'health'
+  | 'audit-log';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'github', label: 'GitHub' },
@@ -24,6 +33,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'knowledge-base', label: 'Knowledge base' },
   { id: 'figma', label: 'Figma' },
   { id: 'registries', label: 'Package registries' },
+  { id: 'health', label: 'Connection health' },
   { id: 'audit-log', label: 'Audit log' },
 ];
 
@@ -102,6 +112,11 @@ function StudioIntegrationsPageInner() {
       {panel('knowledge-base', <KnowledgeBaseTab />)}
       {panel('figma', <FigmaTab />)}
       {panel('registries', <PackageRegistriesTab />)}
+      {active === 'health' && (
+        <div {...tabPanelProps('integrations', 'health')}>
+          <ConnectionHealthPanel />
+        </div>
+      )}
       {active === 'audit-log' && (
         <div {...tabPanelProps('integrations', 'audit-log')}>
           <ConfigAuditLogTab initialGroup="integrations" />

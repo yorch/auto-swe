@@ -22,6 +22,7 @@ import {
 } from '@/hooks/useGithubHostCredentials';
 import { errMsg } from '@/lib/errors';
 import { IntegrationCard } from './IntegrationCard';
+import { ProbeModal } from './ProbeModal';
 
 /**
  * Adds a host's credentials, or — given `edit` — changes the ones it has. When
@@ -193,6 +194,7 @@ export function GitHubHostCredentialsCard() {
   // `false` is closed, `null` is the add form, a row is the edit form.
   const [modal, setModal] = useState<GithubHostCredentialRow | null | false>(false);
   const [deleteTarget, setDeleteTarget] = useState<GithubHostCredentialRow | null>(null);
+  const [testTarget, setTestTarget] = useState<GithubHostCredentialRow | null>(null);
 
   const addButton = (
     <Button onClick={() => setModal(null)} size="sm" type="button">
@@ -230,6 +232,14 @@ export function GitHubHostCredentialsCard() {
           <DataTable
             actions={(c) => (
               <>
+                <Button
+                  aria-label={`Test the credentials for ${c.host}`}
+                  onClick={() => setTestTarget(c)}
+                  size="sm"
+                  variant="secondary"
+                >
+                  Test
+                </Button>
                 <Button onClick={() => setModal(c)} size="sm" variant="secondary">
                   Edit
                 </Button>
@@ -264,6 +274,14 @@ export function GitHubHostCredentialsCard() {
         )}
       </QueryBoundary>
 
+      {testTarget && (
+        <ProbeModal
+          onClose={() => setTestTarget(null)}
+          path={`/api/v1/platform/github-host-credentials/${testTarget.id}/test`}
+          subtitle={testTarget.host}
+          title="Test host credentials"
+        />
+      )}
       {modal !== false && (
         <CredentialModal edit={modal} key={modal?.id ?? 'new'} onClose={() => setModal(false)} />
       )}

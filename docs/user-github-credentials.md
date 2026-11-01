@@ -215,6 +215,12 @@ launched.
 | On another host with none, or whose approval has lapsed | None: runs fail with `REPO_CREDENTIAL_HOST_MISMATCH`; only a user's saved token reaches it |
 | Web and API overrides on different hosts | None, not even a user's token: `REPO_HOST_MISCONFIGURED` |
 
+Each row has a **Test** action (`POST /github-host-credentials/:id/test`, ADMIN) that asks the host
+whether the PAT authenticates and whether the App's id and key belong together and are installed on
+at least one account. An App installed nowhere is reported as failing, since it could reach no
+repository. To check a repository as a whole, see
+[repositories.md](./repositories.md#testing-a-repositorys-access).
+
 A host's credential set contains nothing of the instance's: a host with only an App does not borrow
 the instance's PAT, and the instance's singleton installation id is never used there. The App
 installation a repository uses on a host is an installation recorded for that host (see

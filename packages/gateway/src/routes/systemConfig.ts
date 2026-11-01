@@ -8,6 +8,7 @@ import {
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { checkAllConnections } from '../lib/connectionHealth.js';
 import {
   GitHubAppIdSchema,
   GitHubAppPrivateKeySchema,
@@ -246,6 +247,8 @@ const IssueTrackerPutBody = z.object({
 
 /// Unsaved tracker form values. A blank or omitted token means "use the stored one", which the
 /// service refuses to send to a different provider or base URL than the one it was saved for.
+const ConnectionsTestBody = z.object({ trackerTicketId: z.string().min(1).max(200).optional() });
+
 const IssueTrackerTestBody = z.object({
   allowPrivateNetwork: z.boolean().optional(),
   apiToken: z.string().min(1).max(500).optional(),
@@ -339,6 +342,17 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
       }
       return reply.send(await getIntegrationConfig(fastify.prisma, integration));
     }
+  );
+
+  // ── Every connection at once ────────────────────────────────────────────────
+
+  // Runs each stored connection's own check. 200 whatever the outcome, with one entry per
+  // connection: a failing one is an entry, not an error.
+  f.post(
+    '/connections/test',
+    { schema: { body: ConnectionsTestBody.nullish(), response: { 200: z.any() } } },
+    async (req, reply) =>
+      reply.send({ data: await checkAllConnections(fastify.prisma, req.body ?? {}) })
   );
 
   // ── GitHub ──────────────────────────────────────────────────────────────────

@@ -215,6 +215,23 @@ under the same host rules as every other lookup. The refusals:
 The access check runs before the duplicate check, so a refused caller does not learn whether the
 repository is already onboarded.
 
+### Testing a repository's access
+
+`POST /repositories/:id/test-access` (the **Test access** action on a connection's row, or
+`auto-swe repos test-access <org/name>`) answers what a run on the repository could do, in order:
+the repository's URLs are on an approved host; the platform credential for its host exists and
+GitHub issues a token for it; that credential can see the repository and, where the credential
+reports a permission level, can push (a read-only credential cannot open the pull request a run
+ends with); and the default branch exists. When the caller saved their own token for the
+repository ([`user-github-credentials.md`](./user-github-credentials.md)), the same checks run with
+it, because that token is the identity their runs act as. The answer is always `200` with
+`{ ok, detail, checks[], durationMs }`; a failing step is a check, not an error, and the wording is
+fixed per status class.
+
+Only a platform ADMIN or a lead of the owning team may ask, the rule that governs editing the
+repository. The check is about a repository that is already connected, so it cannot be used to
+find which private repositories the platform credential can see.
+
 ### Gate commands
 
 A repository can give each gate step its own command (`Connection.gateCommands`): `runLint`,
@@ -549,6 +566,10 @@ longer fit.
 
 ## Limitations
 
+- **The access test does not look at webhooks.** Listing a repository's hooks needs an
+  administrative permission the platform's credential does not otherwise hold, so a missing or
+  mis-signed webhook is not found by it. An installation token reports no permission level for a
+  repository, so for an App the push check says it cannot judge rather than passing or failing.
 - **Onboarding asks about the caller's linked login, not a saved token.** A per-repository token
   (see [`user-github-credentials.md`](./user-github-credentials.md)) belongs to a connection that
   does not exist yet, so it cannot stand in; a lead whose only GitHub identity is such a token asks a

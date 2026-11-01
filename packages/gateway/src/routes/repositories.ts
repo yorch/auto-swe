@@ -10,6 +10,7 @@ import { type PermissionLookup, permissionMeets } from '@auto-swe/shared/lib/git
 import { type PreviewConfig, PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
 import {
   lookupRepoPermission,
+  PERMISSION_REPO_SELECT,
   type PermissionRepo,
   verifiedGithubLoginFor,
 } from '@auto-swe/shared/lib/repoPermission';
@@ -22,6 +23,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendConflict } from '../lib/conflict.js';
+import { probeRepositoryAccess } from '../lib/connectionProbes.js';
 import { redactConnection } from '../lib/connectionRedaction.js';
 import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
 import { sendError } from '../lib/httpErrors.js';
@@ -1513,6 +1515,40 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: repo.id },
       });
       return { data: shares?.shares ?? [] };
+    }
+  );
+
+  // POST /api/v1/repositories/:id/test-access — what a run on this repository could do: the
+  // platform credential for its host mints a token, sees the repository, may push, and the
+  // default branch exists; and the same for the caller's own saved token, when they have one.
+  // Only someone who may manage the repository: it is an existing connection, so this answers
+  // "does it work", never "which private repositories can the platform credential see". Always 200
+  // with `ok` so the page can show the reason.
+  app.post(
+    '/:id/test-access',
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: { params: RepoParamsSchema },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const repo = await fastify.prisma.connection.findUnique({
+        select: {
+          ...PERMISSION_REPO_SELECT,
+          defaultBranch: true,
+          id: true,
+          teamId: true,
+          type: true,
+        },
+        where: { id: request.params.id },
+      });
+      if (repo?.type !== 'git_repo') {
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+        return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
+      }
+      return { data: await probeRepositoryAccess(fastify.prisma, repo, user.sub) };
     }
   );
 
