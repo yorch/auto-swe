@@ -493,9 +493,11 @@ describe('what the Kubernetes backend does not do yet', () => {
     await expect(backend.removeVolume('v')).resolves.toBeUndefined();
   });
 
-  it('judges a proxy URL reachable unless it uses the Docker host alias', () => {
+  it('judges a proxy URL reachable unless it names the Docker host alias or the pod itself', () => {
     expect(backend.canReachWorkerProxy('http://worker-proxy.auto-swe.svc:9000')).toBe(true);
-    expect(backend.canReachWorkerProxy('http://host.docker.internal:9000')).toBe(false);
+    for (const host of ['host.docker.internal', 'localhost', '127.0.0.1', '[::1]', '0.0.0.0']) {
+      expect(backend.canReachWorkerProxy(`http://${host}:9000`), host).toBe(false);
+    }
   });
 });
 

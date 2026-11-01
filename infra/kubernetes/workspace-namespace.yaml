@@ -42,7 +42,7 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
-    # ADJUST: the worker pods that serve the model and registry proxies.
+    # ADJUST: the worker pods that serve the model, registry and egress proxies.
     - to:
         - namespaceSelector:
             matchLabels:
@@ -53,6 +53,7 @@ spec:
       ports:
         - { protocol: TCP, port: 8790 } # HARNESS_MODEL_PROXY_PORT
         - { protocol: TCP, port: 8791 } # REGISTRY_PROXY_PORT
+        - { protocol: TCP, port: 8792 } # EGRESS_PROXY_PORT
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

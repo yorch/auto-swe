@@ -55,9 +55,11 @@ EGRESS_PROXY_BIND=0.0.0.0
 `EGRESS_PROXY_URL` advertises the listener to containers (its default uses
 `DOCKER_HOST_ALIAS`, or `host.docker.internal`, and the configured port). With a worker in Docker,
 publish/reach the configured port on the host or advertise a directly reachable worker address.
-Compose advertises the worker hostname on the shared workspace network. Kubernetes workspace pods
-need an advertised URL reachable from their network. Do not expose the listener to untrusted networks
-unnecessarily.
+Compose advertises the worker hostname on the shared workspace network. On the Kubernetes backend
+the default does not exist in a cluster, so with `EGRESS_PROXY_PORT` set the worker refuses to start
+unless `EGRESS_PROXY_URL` is a Service name pods can resolve (not the Docker host alias, a loopback
+or unspecified host, or `{hostname}`); the namespace NetworkPolicy must allow the port. Do not
+expose the listener to untrusted networks unnecessarily.
 
 Each container registration gets a random Basic-auth proxy token. The worker retains its digest
 and binds the registration to the registering activity's context and egress allowlist snapshot.
@@ -167,7 +169,8 @@ hints reduce rendering work; the section does not use a dedicated virtualization
 - CONNECT exposes a destination and aggregate tunnel bytes, not individual HTTPS requests,
   paths, status codes or bodies. No container traffic body is captured, including plain HTTP.
 - Kubernetes agent workspaces receive proxy env, but the backend does not support ephemeral
-  shell execution or detached sidecars. Proxy reachability from pods is an operator concern.
+  shell execution or detached sidecars. The boot check validates the advertised URL's host, not
+  that the Service exists or that the NetworkPolicy admits the port.
 - Worker capture wraps fetch and the shared guarded-fetch path, not arbitrary `node:http` or
   `node:https` clients, subprocess traffic, or third-party clients with an independent transport.
 - Body reads stop after two seconds; binary/unknown content types have no body. Incomplete or

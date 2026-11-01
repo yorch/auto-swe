@@ -723,6 +723,28 @@ index builds above.
 
 ---
 
+### UN-11. Kubernetes worker refuses to start on an unreachable proxy URL
+
+**Affected.** `WORKSPACE_BACKEND=kubernetes`, with a worker built from a commit that contains this
+check, and any of these: `REGISTRY_PROXY_PORT` set with no `REGISTRY_PROXY_URL`;
+`EGRESS_PROXY_PORT` set with no `EGRESS_PROXY_URL`; or a model, registry or egress proxy URL that
+names the Docker host alias, contains `{hostname}`, or names a loopback or unspecified host
+(`localhost`, `127.0.0.0/8`, `[::1]`, `0.0.0.0`).
+
+**What changes.** The worker exits at boot, naming each variable. These setups were already
+broken at run time: an unset URL defaults to the Docker host alias, which does not exist in a
+cluster, and from a workspace pod a loopback host is the pod itself, so package installs through
+the registry proxy and outbound HTTP(S) through the egress proxy failed. Nothing was exposed.
+
+**Actions.** Set each URL to a Service name workspace pods resolve, and allow the proxy ports in
+the workspace namespace's NetworkPolicy (`infra/kubernetes/workspace-namespace.yaml` allows 8790,
+8791 and 8792). To run without the registry or egress proxy, unset its port. See
+[`deployment.md`](./deployment.md).
+
+**Verify.** The worker boots. The check validates the URL's host, not that the Service exists.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,
