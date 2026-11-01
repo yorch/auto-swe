@@ -129,6 +129,8 @@ The brief is a single comment, updated in place on every evaluation. Its first l
 marker `<!-- auto-swe:pr-evaluation -->`. It carries:
 
 - **Why this class**: each reason with up to five of its paths.
+- **What was asked** and **Open questions in the ticket**: the criteria the run extracted from the
+  ticket when it validated the request, and the ones it marked ambiguous (below).
 - **Read in this order**: every file that is not provably skimmable, in the order to read it (below).
   A file a reason names carries a **Check** note saying what to verify; the order does not depend on
   risk.
@@ -137,6 +139,22 @@ marker `<!-- auto-swe:pr-evaluation -->`. It carries:
 
 The brief is also stored on the evaluation row and returned by the routes in §13. The row keeps the
 first 50 entries of the reading path.
+
+### What was asked
+
+The first two sections ahead of the reading path say what the change was meant to do. They read the
+`successCriteria` the run's validation step stored for the pull request's work request
+(`ContextSnapshot`) and split it with the same function the implementer's prompt uses
+(`splitSuccessCriteria`): concrete criteria go under **What was asked**, entries marked `AMBIGUOUS:`
+under **Open questions in the ticket**. At most 20 criteria and 10 questions are shown, each on one
+line and cut to 500 characters, with a `+N more` line for the rest. Both lists derive from ticket
+text, so they go through the same escaping as every other prose in the brief: no markup, mentions or
+autolinks.
+
+They are advisory and decide nothing: neither the class, the status nor the arming reads them. The
+criteria are model output and were never checked against the diff, which the heading says. A section
+is left out when the run recorded nothing, and so is the whole of it when the read fails, with a
+warning logged: the evaluation never fails, and never turns `HIGH`, because they could not be read.
 
 ### The reading path
 
@@ -831,6 +849,10 @@ documentation change as a platform pull request and read the evaluation's reason
 
 ## Limitations
 
+- **The ticket criteria are not checked against the change.** **What was asked** repeats what
+  validation extracted, so it can be wrong, stale after the ticket was edited, or empty: a template
+  with no validation step records no criteria, and its brief has neither section. The brief does not
+  say whether a criterion is met.
 - **The reading path orders by name and directory, not by what imports what.** It sees paths and
   patches, never file contents, so a file that depends on another in a different directory can come
   first. A test is paired with its source only in the same directory or the parent of a test

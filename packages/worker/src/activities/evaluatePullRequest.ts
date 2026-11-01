@@ -30,6 +30,7 @@ import {
   type BotApprovalCondition,
   type BotApprovalInput,
   BRIEF_MARKER,
+  type BriefIntent,
   botApprovalRefusalConditions,
   buildBrief,
   type ChangedFile,
@@ -65,6 +66,7 @@ import {
 import { ApplicationFailure } from '@temporalio/activity';
 import { logWarn } from '../lib/activityLog.js';
 import { scanDiffForCodeIssuesDetailed } from '../lib/codeSecurityScanner.js';
+import { splitSuccessCriteria } from '../lib/contextAmbiguity.js';
 import { resolveLauncherSet } from '../lib/prLauncher.js';
 import {
   type ApproverClientResult,
@@ -1507,7 +1509,8 @@ export async function evaluatePullRequestWith(
     }
 
     // ── The brief, then the row, then the arming.
-    const brief = buildBrief(listed.files, classification, effective);
+    const intent = await loadBriefIntent(platformPr.workflow.workRequestId, connection.id, input);
+    const brief = buildBrief(listed.files, classification, effective, intent);
     const briefMarkdown = truncateBrief(brief.markdown);
     await postBrief(scm, repo, input.prNumber, briefMarkdown, connection.id);
 
@@ -2166,6 +2169,40 @@ async function publishStatus(
       ...safeErrorMeta(err),
     });
     return { ok: false, reason: 'error' };
+  }
+}
+
+/**
+ * What the ticket asked for and left open, from the criteria the run extracted when it validated
+ * the request. Advisory text for the reviewer: a read that fails leaves the sections out. It must
+ * not throw, because an error here would reach `failClosed` and publish `HIGH` over a feature that
+ * decides nothing.
+ */
+async function loadBriefIntent(
+  workRequestId: string | null,
+  connectionId: string,
+  input: { prNumber: number }
+): Promise<BriefIntent | undefined> {
+  if (workRequestId === null) {
+    return undefined;
+  }
+  try {
+    const snapshot = await prisma.contextSnapshot.findUnique({
+      select: { successCriteria: true },
+      where: { workRequestId },
+    });
+    if (!snapshot) {
+      return undefined;
+    }
+    const { concrete, ambiguities } = splitSuccessCriteria(snapshot.successCriteria);
+    return { criteria: concrete, openQuestions: ambiguities };
+  } catch (err) {
+    logWarn('pr evaluation: the ticket criteria could not be read for the brief', {
+      connectionId,
+      prNumber: input.prNumber,
+      ...safeErrorMeta(err),
+    });
+    return undefined;
   }
 }
 

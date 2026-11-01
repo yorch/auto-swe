@@ -1,6 +1,7 @@
 import { CONTRACT_GLOBS, isTestFile, matchesAny, NON_SOURCE_GLOBS } from './paths.js';
 import type {
   Brief,
+  BriefIntent,
   ChangedFile,
   Classification,
   EffectivePolicy,
@@ -27,6 +28,8 @@ const MAX_READ_FLAGGED = 30;
 const MAX_READ_COLLAPSED = 100;
 export const MAX_BRIEF_CHARS = 60_000;
 const MAX_SKIM_SHOWN = 50;
+const MAX_CRITERIA_SHOWN = 20;
+const MAX_QUESTIONS_SHOWN = 10;
 const MAX_REASON_PATHS_SHOWN = 5;
 const MAX_DISPLAY_PATH = 200;
 
@@ -343,7 +346,8 @@ export function readingOrder(files: readonly ChangedFile[]): ChangedFile[] {
 export function buildBrief(
   files: ChangedFile[],
   classification: Classification,
-  effective: EffectivePolicy
+  effective: EffectivePolicy,
+  intent?: BriefIntent
 ): Brief {
   const hitsByPath = new Map<string, Reason[]>();
   for (const reason of classification.reasons) {
@@ -376,7 +380,7 @@ export function buildBrief(
     .filter((reason) => reason.severity !== 'info' && (reason.paths?.length ?? 0) === 0)
     .map((reason) => reason.message);
 
-  const markdown = renderMarkdown(classification, path, skim, claimsToVerify);
+  const markdown = renderMarkdown(classification, path, skim, claimsToVerify, intent);
   return { claimsToVerify, markdown, path, skim };
 }
 
@@ -403,11 +407,47 @@ function splitVisible(path: PathEntry[]): {
   return { collapsed, visible };
 }
 
+/**
+ * What the ticket asked for, ahead of the code. Both lists are model output derived from ticket
+ * text, so every entry goes through `escapeText` (one line, bounded, no markup or mentions). The
+ * criteria were never checked against the diff, and the heading says so.
+ */
+function pushIntent(lines: string[], intent: BriefIntent | undefined): void {
+  const sections: [string, string[], number][] = [
+    [
+      '**What was asked** (extracted from the ticket; not checked against the diff)',
+      intent?.criteria ?? [],
+      MAX_CRITERIA_SHOWN,
+    ],
+    [
+      '**Open questions in the ticket** (unresolved when the run validated it; check how the change handles each)',
+      intent?.openQuestions ?? [],
+      MAX_QUESTIONS_SHOWN,
+    ],
+  ];
+  for (const [heading, all, max] of sections) {
+    const entries = all.filter((entry) => entry.trim() !== '');
+    const shown = entries.slice(0, max);
+    if (shown.length === 0) {
+      continue;
+    }
+    lines.push(heading, '');
+    for (const entry of shown) {
+      lines.push(`- ${escapeText(entry)}`);
+    }
+    if (entries.length > shown.length) {
+      lines.push(`- +${entries.length - shown.length} more`);
+    }
+    lines.push('');
+  }
+}
+
 function renderMarkdown(
   classification: Classification,
   path: PathEntry[],
   skim: Brief['skim'],
-  claims: string[]
+  claims: string[],
+  intent?: BriefIntent
 ): string {
   const lines: string[] = [
     BRIEF_MARKER,
@@ -431,6 +471,7 @@ function renderMarkdown(
     }
     lines.push('');
   }
+  pushIntent(lines, intent);
   if (path.length > 0) {
     const { visible, collapsed } = splitVisible(path);
     lines.push('**Read in this order**', '');

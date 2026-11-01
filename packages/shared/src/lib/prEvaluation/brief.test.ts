@@ -9,7 +9,7 @@ import {
 } from './brief.js';
 import { classify } from './classify.js';
 import { DEFAULT_THRESHOLDS, mergePolicy } from './policy.js';
-import type { ChangedFile, EffectivePolicy, EvaluationSignals } from './types.js';
+import type { BriefIntent, ChangedFile, EffectivePolicy, EvaluationSignals } from './types.js';
 
 const { effective } = mergePolicy({ ...DEFAULT_THRESHOLDS, sensitivePaths: [] });
 const file = (path: string, over: Partial<ChangedFile> = {}): ChangedFile => ({
@@ -222,6 +222,77 @@ describe('buildBrief', () => {
     const policy = { ...effective, ignoredFromSkim: ['src/**'] };
     const result = brief([exactRename()], policy);
     expect(result.skim).toEqual([]);
+  });
+});
+
+describe('the ticket intent in the brief', () => {
+  const withIntent = (intent: BriefIntent | undefined, files = [file('db/migrations/1.sql')]) => {
+    const signals: EvaluationSignals = {
+      draft: false,
+      files,
+      maxReviewSeverity: 'PASS',
+      policyFileChanged: false,
+      scannerFindingCount: 0,
+    };
+    return buildBrief(files, classify(signals, effective), effective, intent).markdown;
+  };
+
+  it('puts what was asked and the open questions between the class and the reading path', () => {
+    const md = withIntent({
+      criteria: ['GET /health returns 200'],
+      openQuestions: ['which auth scheme applies?'],
+    });
+    const at = (text: string) => md.indexOf(text);
+    expect(md).toContain('- GET /health returns 200');
+    expect(md).toContain('- which auth scheme applies?');
+    expect(at('**Why this class**')).toBeLessThan(at('**What was asked**'));
+    expect(at('**What was asked**')).toBeLessThan(at('**Open questions in the ticket**'));
+    expect(at('**Open questions in the ticket**')).toBeLessThan(at('**Read in this order**'));
+    expect(md).toContain('not checked against the diff');
+  });
+
+  it('adds nothing when there is no intent, or only empty entries', () => {
+    const plain = withIntent(undefined);
+    expect(withIntent({ criteria: [], openQuestions: [] })).toBe(plain);
+    expect(withIntent({ criteria: ['  ', ''], openQuestions: ['\n'] })).toBe(plain);
+    expect(plain).not.toContain('What was asked');
+    expect(plain).not.toContain('Open questions');
+  });
+
+  it('shows at most 20 criteria and 10 questions and says how many were left out', () => {
+    const md = withIntent({
+      criteria: Array.from({ length: 25 }, (_, i) => `criterion ${i}`),
+      openQuestions: Array.from({ length: 12 }, (_, i) => `question ${i}`),
+    });
+    expect(md).toContain('- criterion 19');
+    expect(md).not.toContain('- criterion 20');
+    expect(md).toContain('- question 9');
+    expect(md).not.toContain('- question 10');
+    expect(md.match(/- \+5 more/g)).toHaveLength(1);
+    expect(md.match(/- \+2 more/g)).toHaveLength(1);
+  });
+
+  it('keeps an entry on one line and bounded', () => {
+    const md = withIntent({
+      criteria: [`first\n# Injected heading\n${'x'.repeat(5000)}`],
+      openQuestions: [],
+    });
+    expect(md).not.toContain('\n# Injected heading');
+    expect(md.length).toBeLessThan(5000);
+  });
+
+  it('neutralises markup, mentions, links and issue references in ticket text', () => {
+    const md = withIntent({
+      criteria: ['ping @everyone <img src=x onerror=1> `code` see #123 and https://evil.example/x'],
+      openQuestions: ['is <script>alert(1)</script> ok? cc @octocat GH-9'],
+    });
+    expect(md).not.toContain('<img');
+    expect(md).not.toContain('<script>');
+    expect(md).not.toContain('@everyone');
+    expect(md).not.toContain('@octocat');
+    expect(md).not.toContain('see #123');
+    expect(md).not.toContain('GH-9');
+    expect(md).toContain('` https://evil.example/x `');
   });
 });
 
