@@ -176,18 +176,37 @@ describe('repoHostFamily and installationHostFor', () => {
 
 describe('installationTargetFor', () => {
   it('takes the singleton installation, at the instance API, when the repository has none', () => {
-    expect(installationTargetFor({ apiUrl: 'https://x/api' }, DOTCOM)).toEqual({
+    expect(installationTargetFor({ apiUrl: 'https://x/api', repoName: null }, DOTCOM)).toEqual({
       apiUrl: DOTCOM.apiUrl,
       installationId: null,
     });
   });
 
+  it('names the repository when the caller knows it, and only then', () => {
+    expect(
+      installationTargetFor({ installationId: '7', repoName: 'payments-api' }, DOTCOM)
+    ).toEqual({ apiUrl: DOTCOM.apiUrl, installationId: '7', repositories: ['payments-api'] });
+    expect(
+      installationTargetFor(
+        { installationId: '7', organizationName: 'acme', repoName: 'payments-api' },
+        DOTCOM
+      )
+    ).toMatchObject({ owner: 'acme', repositories: ['payments-api'] });
+    expect(installationTargetFor({ installationId: '7', repoName: '' }, DOTCOM)).not.toHaveProperty(
+      'repositories'
+    );
+  });
+
   it('asks only the API of the credential set it is given, even for a repository on another host', () => {
-    expect(installationTargetFor({ apiUrl: GHE.apiUrl, installationId: '7' }, DOTCOM)).toEqual({
+    expect(
+      installationTargetFor({ apiUrl: GHE.apiUrl, installationId: '7', repoName: null }, DOTCOM)
+    ).toEqual({
       apiUrl: DOTCOM.apiUrl,
       installationId: '7',
     });
-    expect(installationTargetFor({ apiUrl: GHE.apiUrl, installationId: '7' }, GHE)).toEqual({
+    expect(
+      installationTargetFor({ apiUrl: GHE.apiUrl, installationId: '7', repoName: null }, GHE)
+    ).toEqual({
       apiUrl: GHE.apiUrl,
       installationId: '7',
     });
