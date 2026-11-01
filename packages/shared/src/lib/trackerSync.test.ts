@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   findConnections: vi.fn(async (..._args: unknown[]) => [] as unknown[]),
   findRunInput: vi.fn(),
   resolveSetting: vi.fn(),
-  syncOnEvent: vi.fn(async (..._args: unknown[]) => {}),
+  syncOnEvent: vi.fn(async (..._args: unknown[]): Promise<string | null> => null),
 }));
 
 vi.mock('../db.js', () => ({
@@ -448,5 +448,39 @@ describe('syncTrackerOnEvent', () => {
     expect(mocks.findRunInput).not.toHaveBeenCalled();
     expect(mocks.syncOnEvent).toHaveBeenCalledTimes(1);
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  describe('the comment failure it reports', () => {
+    const JIRA = { ...GITHUB, provider: 'jira' } as ResolvedIssueTrackerConfig;
+
+    it('is null when the provider reports no failure', async () => {
+      mocks.syncOnEvent.mockResolvedValueOnce(null);
+      await expect(syncTrackerOnEvent(EVENT, JIRA, { runInputId: null })).resolves.toBeNull();
+    });
+
+    it("is the provider's failure class", async () => {
+      mocks.syncOnEvent.mockResolvedValueOnce('forbidden');
+      await expect(syncTrackerOnEvent(EVENT, JIRA, { runInputId: null })).resolves.toBe(
+        'forbidden'
+      );
+    });
+
+    it('is unknown when the sync itself throws, and still warns with the fixed line', async () => {
+      mocks.syncOnEvent.mockRejectedValueOnce(new Error('db down'));
+      const warn = vi.fn();
+      await expect(syncTrackerOnEvent(EVENT, JIRA, { runInputId: null, warn })).resolves.toBe(
+        'unknown'
+      );
+      expect(warn).toHaveBeenCalledWith(TRACKER_SYNC_FAILED, expect.anything());
+    });
+
+    it('is null for a write the repository check refused, which is policy and not a failure', async () => {
+      await expect(
+        syncTrackerOnEvent({ ...EVENT, issueId: 'attacker/public#1' }, GITHUB, {
+          runInputId: 'wr-1',
+          warn: vi.fn(),
+        })
+      ).resolves.toBeNull();
+    });
   });
 });

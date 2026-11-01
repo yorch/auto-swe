@@ -222,6 +222,49 @@ describe('JiraProvider.addComment', () => {
   });
 });
 
+describe('JiraProvider.syncOnEvent', () => {
+  const failed = { issueId: 'AIDEVEX-8', summary: 'stopped', type: 'workflow_failed' } as const;
+
+  it('reports no failure when the tracker accepts the comment', async () => {
+    const post = vi.fn(async (..._args: unknown[]) => ({ id: '10001' }));
+    const client = { post } as unknown as AtlassianClient;
+    await expect(provider(client).syncOnEvent(failed)).resolves.toBeNull();
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [401, 'auth', 'unauthorized'],
+    [403, 'auth', 'forbidden'],
+    [404, 'not_found', 'not_found'],
+    [429, 'rate_limited', 'rate_limited'],
+    [500, 'server', 'server_error'],
+  ] as const)('reports the class of a refused comment (%s)', async (status, code, failure) => {
+    const post = vi.fn(async () => {
+      throw new AtlassianError(status, code, 'refused');
+    });
+    const client = { post } as unknown as AtlassianClient;
+    await expect(provider(client).syncOnEvent(failed)).resolves.toBe(failure);
+  });
+
+  it('classifies a failure that is not an Atlassian error as unknown', async () => {
+    const post = vi.fn(async () => {
+      throw new Error('boom');
+    });
+    const client = { post } as unknown as AtlassianClient;
+    await expect(provider(client).syncOnEvent(failed)).resolves.toBe('unknown');
+  });
+
+  it('reports no failure for an event that posts no comment', async () => {
+    const get = vi.fn(async () => {
+      throw new AtlassianError(403, 'auth', 'forbidden');
+    });
+    const client = { get, post: vi.fn() } as unknown as AtlassianClient;
+    await expect(
+      provider(client).syncOnEvent({ issueId: 'AIDEVEX-8', type: 'workflow_started' })
+    ).resolves.toBeNull();
+  });
+});
+
 describe('JiraProvider.searchIssues', () => {
   const hit = (key: string, project = 'AIDEVEX') => ({
     fields: { project: { key: project }, summary: `Summary of ${key}` },

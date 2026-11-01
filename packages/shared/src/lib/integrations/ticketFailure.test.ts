@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isTimeoutError,
+  readTrackerWriteback,
   TICKET_FAILURE_CLASSES,
   ticketFailureFromStatus,
 } from './ticketFailure.js';
@@ -44,5 +45,25 @@ describe('isTimeoutError', () => {
     expect(isTimeoutError(new TypeError('fetch failed'))).toBe(false);
     expect(isTimeoutError('TimeoutError')).toBe(false);
     expect(isTimeoutError(null)).toBe(false);
+  });
+});
+
+describe('readTrackerWriteback', () => {
+  it('reads the failure a run recorded on its snapshot', () => {
+    expect(
+      readTrackerWriteback({ result: {}, trackerWriteback: { failure: 'forbidden' } })
+    ).toEqual({ failure: 'forbidden' });
+  });
+
+  it.each([
+    ['no snapshot', null],
+    ['a snapshot that is not an object', 'text'],
+    ['a snapshot with no record', { result: {} }],
+    ['a record that is not an object', { trackerWriteback: 'forbidden' }],
+    ['a record with no failure', { trackerWriteback: {} }],
+    ['a failure outside the closed set', { trackerWriteback: { failure: 'boom: 403 <html>' } }],
+    ['a failure that is a prototype key', { trackerWriteback: { failure: 'constructor' } }],
+  ])('answers null for %s', (_label, snapshot) => {
+    expect(readTrackerWriteback(snapshot)).toBeNull();
   });
 });

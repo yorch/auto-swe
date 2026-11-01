@@ -56,6 +56,41 @@ describe('GitHubIssuesProvider.addComment', () => {
     await expect(make(403).provider.addComment('acme/api#7', 'hi')).resolves.toBe(false);
   });
 
+  describe('syncOnEvent', () => {
+    const failed = { issueId: 'acme/api#7', type: 'workflow_failed' } as const;
+
+    it('reports no failure when GitHub takes the comment', async () => {
+      await expect(make(201).provider.syncOnEvent(failed)).resolves.toBeNull();
+    });
+
+    it.each([
+      [401, 'unauthorized'],
+      [403, 'forbidden'],
+      [404, 'not_found'],
+      [500, 'server_error'],
+    ])('reports the class of a refused comment (%s)', async (status, failure) => {
+      await expect(make(status).provider.syncOnEvent(failed)).resolves.toBe(failure);
+    });
+
+    it('reports a rate-limited 403 as rate limited', async () => {
+      const fetchImpl = vi.fn(
+        async (..._args: unknown[]) =>
+          new Response('{}', { headers: { 'x-ratelimit-remaining': '0' }, status: 403 })
+      );
+      const provider = new GitHubIssuesProvider({
+        apiToken: 't',
+        fetchImpl: fetchImpl as typeof fetch,
+      });
+      await expect(provider.syncOnEvent(failed)).resolves.toBe('rate_limited');
+    });
+
+    it('reports a comment on an id it cannot place as rejected', async () => {
+      await expect(
+        make(201).provider.syncOnEvent({ issueId: '7', type: 'workflow_failed' })
+      ).resolves.toBe('rejected');
+    });
+  });
+
   it('reports an id it cannot place as not posted, without a request', async () => {
     const { fetchImpl, provider } = make(201);
     await expect(provider.addComment('7', 'hi')).resolves.toBe(false);

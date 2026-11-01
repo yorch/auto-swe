@@ -298,6 +298,11 @@ export class LinearProvider implements IssueTrackerProvider {
   }
 
   async addComment(issueId: string, bodyText: string): Promise<boolean> {
+    return (await this.postComment(issueId, bodyText)) === null;
+  }
+
+  /** Posts a comment; resolves why the tracker refused it, or null when it took it. */
+  private async postComment(issueId: string, bodyText: string): Promise<TicketFailureClass | null> {
     try {
       // GraphQL reports a refused mutation in a 200 body, so `success` is what says it landed.
       const result = await linearGraphql<{ data?: { commentCreate?: { success?: boolean } } }>(
@@ -306,13 +311,13 @@ export class LinearProvider implements IssueTrackerProvider {
         { body: bodyText, issueId }
       );
       if (result.data?.commentCreate?.success === true) {
-        return true;
+        return null;
       }
       this.log?.warn({ issueId }, 'Linear addComment was not accepted');
-      return false;
+      return 'rejected';
     } catch (err) {
       this.log?.warn({ err, issueId }, 'Linear addComment failed');
-      return false;
+      return linearFailure(err);
     }
   }
 
@@ -321,7 +326,8 @@ export class LinearProvider implements IssueTrackerProvider {
     await this.addComment(issueId, `🔗 ${url}`);
   }
 
-  async syncOnEvent(event: TrackerSyncEvent): Promise<void> {
+  async syncOnEvent(event: TrackerSyncEvent): Promise<TicketFailureClass | null> {
+    let failure: TicketFailureClass | null = null;
     try {
       switch (event.type) {
         case 'workflow_started':
@@ -334,10 +340,10 @@ export class LinearProvider implements IssueTrackerProvider {
           await this.transitionIssue(event.issueId, 'In Review');
           break;
         case 'ci_passed':
-          await this.addComment(event.issueId, '✅ CI passed');
+          failure = await this.postComment(event.issueId, '✅ CI passed');
           break;
         case 'ci_failed':
-          await this.addComment(
+          failure = await this.postComment(
             event.issueId,
             `❌ CI failed${event.summary ? `: ${event.summary}` : ''}`
           );
@@ -349,7 +355,7 @@ export class LinearProvider implements IssueTrackerProvider {
           await this.transitionIssue(event.issueId, 'Done');
           break;
         case 'workflow_failed':
-          await this.addComment(
+          failure = await this.postComment(
             event.issueId,
             `⚠️ Workflow failed${event.summary ? `: ${event.summary}` : ''}`
           );
@@ -358,5 +364,6 @@ export class LinearProvider implements IssueTrackerProvider {
     } catch (err) {
       this.log?.warn({ err, event }, 'Linear syncOnEvent failed');
     }
+    return failure;
   }
 }
