@@ -44,6 +44,9 @@ export async function syncSchedulesOnceConnected(
   // The run reaper finalizes (and bills) runs whose workflow ended without
   // finalizing them. It only reads Temporal, so it is on by default.
   app.temporal.syncRunReaperSchedule(sweeps.runReaper).catch(warn('run reaper'));
+  // The workspace reaper removes only auto-swe-labelled containers and pods older than any
+  // activity can run, so it is on by default.
+  app.temporal.syncWorkspaceReaperSchedule(sweeps.workspaceReaper).catch(warn('workspace reaper'));
   // Deletes automation decisions that started no run, past their retention. On by default.
   app.temporal
     .syncAutomationDecisionPruneSchedule(sweeps.automationDecisionPrune)

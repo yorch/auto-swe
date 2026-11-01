@@ -89,6 +89,8 @@ const AMBIENT_ENV_KEYS = [
   'KB_BASE_URL',
   'KB_EMAIL',
   'KB_API_TOKEN',
+  'REGISTRY_PROXY_PORT',
+  'REGISTRY_PROXY_URL',
 ];
 
 describe('systemConfig resolvers', () => {
@@ -943,6 +945,55 @@ describe('systemConfig resolvers', () => {
         ]);
       });
 
+      describe('the registry proxy on the kubernetes backend', () => {
+        beforeEach(() => {
+          // The model proxy is valid here, so only the registry rule is exercised.
+          vi.stubEnv('WORKSPACE_BACKEND', 'kubernetes');
+          vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+          vi.stubEnv('HARNESS_MODEL_PROXY_URL', 'http://auto-swe-worker.auto-swe.svc:8790');
+        });
+
+        it('stays optional: no registry problem when its port is unset', () => {
+          expect(validateWorkspaceInfraEnv()).toEqual([]);
+        });
+
+        it('refuses a registry proxy URL pods cannot resolve, or one left unset', () => {
+          vi.stubEnv('REGISTRY_PROXY_PORT', '8791');
+          for (const url of [
+            undefined,
+            '',
+            'http://host.docker.internal:8791',
+            'http://{hostname}:8791',
+          ]) {
+            vi.stubEnv('REGISTRY_PROXY_URL', url);
+            const problems = validateWorkspaceInfraEnv();
+            expect(problems, String(url)).toHaveLength(1);
+            expect(problems[0]).toContain('REGISTRY_PROXY_URL');
+            expect(problems[0]).toContain('Service name');
+          }
+        });
+
+        it('accepts a registry proxy URL with a Service name', () => {
+          vi.stubEnv('REGISTRY_PROXY_PORT', '8791');
+          vi.stubEnv('REGISTRY_PROXY_URL', 'http://auto-swe-worker.auto-swe.svc:8791');
+          expect(validateWorkspaceInfraEnv()).toEqual([]);
+        });
+
+        it('reports a malformed registry proxy URL once, by the existing check', () => {
+          vi.stubEnv('REGISTRY_PROXY_PORT', '8791');
+          vi.stubEnv('REGISTRY_PROXY_URL', 'not a url');
+          expect(validateWorkspaceInfraEnv()).toEqual([
+            'REGISTRY_PROXY_URL="not a url" is not an http(s) URL with no credentials',
+          ]);
+        });
+      });
+
+      it('leaves the Docker backend free to run with a registry proxy and no URL', () => {
+        vi.stubEnv('WORKSPACE_BACKEND', 'docker');
+        vi.stubEnv('REGISTRY_PROXY_PORT', '8791');
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
+      });
+
       it('leaves the Docker backend free to run without the model proxy', () => {
         vi.stubEnv('WORKSPACE_BACKEND', 'docker');
         expect(validateWorkspaceInfraEnv()).toEqual([]);
@@ -976,6 +1027,8 @@ describe('systemConfig resolvers', () => {
       'MODEL_DISCOVERY_CRON',
       'RUN_REAPER_ENABLED',
       'RUN_REAPER_CRON',
+      'WORKSPACE_REAPER_ENABLED',
+      'WORKSPACE_REAPER_CRON',
       'SKILL_SOURCE_SYNC_ENABLED',
       'SKILL_SOURCE_SYNC_CRON',
       'AUTOMATION_DECISION_PRUNE_ENABLED',
@@ -1024,6 +1077,7 @@ describe('systemConfig resolvers', () => {
           enabled: true,
           recomputeDays: 30,
         },
+        workspaceReaper: { cronExpression: '*/15 * * * *', enabled: true },
       });
     });
 
@@ -1036,6 +1090,8 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('MODEL_DISCOVERY_CRON', '0 5 * * 1');
       vi.stubEnv('RUN_REAPER_ENABLED', 'false');
       vi.stubEnv('RUN_REAPER_CRON', '*/5 * * * *');
+      vi.stubEnv('WORKSPACE_REAPER_ENABLED', 'false');
+      vi.stubEnv('WORKSPACE_REAPER_CRON', '*/10 * * * *');
       vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'false');
       vi.stubEnv('SKILL_SOURCE_SYNC_CRON', '7 6 * * 2');
       vi.stubEnv('AUTOMATION_DECISION_PRUNE_ENABLED', 'false');
@@ -1080,6 +1136,7 @@ describe('systemConfig resolvers', () => {
           enabled: false,
           recomputeDays: 45,
         },
+        workspaceReaper: { cronExpression: '*/10 * * * *', enabled: false },
       });
     });
 
@@ -1088,6 +1145,7 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('REPO_DEPENDENCY_SCAN_CRON', 'daily');
       vi.stubEnv('MODEL_DISCOVERY_ENABLED', 'off');
       vi.stubEnv('RUN_REAPER_CRON', 'often');
+      vi.stubEnv('WORKSPACE_REAPER_ENABLED', 'maybe');
       vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'off');
       vi.stubEnv('SLACK_CHANNEL_SYNC_STALE_HOURS', '0');
       const sweeps = resolveScheduledSweeps();
@@ -1095,6 +1153,7 @@ describe('systemConfig resolvers', () => {
       expect(sweeps.repoDependency.cronExpression).toBe('0 4 * * *');
       expect(sweeps.modelDiscovery.enabled).toBe(true);
       expect(sweeps.runReaper.cronExpression).toBe('*/15 * * * *');
+      expect(sweeps.workspaceReaper.enabled).toBe(true);
       expect(sweeps.skillSourceSync.enabled).toBe(true);
       expect(sweeps.slackChannelSync.staleAfterHours).toBe(6);
     });
@@ -1110,6 +1169,8 @@ describe('systemConfig resolvers', () => {
         vi.stubEnv('MODEL_DISCOVERY_CRON', '17 3 * * *');
         vi.stubEnv('RUN_REAPER_ENABLED', 'true');
         vi.stubEnv('RUN_REAPER_CRON', '*/15 * * * *');
+        vi.stubEnv('WORKSPACE_REAPER_ENABLED', 'true');
+        vi.stubEnv('WORKSPACE_REAPER_CRON', '*/15 * * * *');
         vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'true');
         vi.stubEnv('SKILL_SOURCE_SYNC_CRON', '41 5 * * *');
         expect(validateScheduledSweepsEnv()).toEqual([]);

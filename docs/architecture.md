@@ -1237,6 +1237,38 @@ sit on this seam, and so does the ephemeral shell/container-step sandbox:
   the lockdown from an author command.
 - `createVolume` and `removeVolume` manage the step volumes.
 
+**Orphaned workspaces.** A workspace is removed in its activity's `finally`, so a worker that is
+killed or crashes first would leave its container or pod behind. The
+`auto-swe-workspace-reaper` Temporal Schedule (`WORKSPACE_REAPER_ENABLED`, default `true`;
+`WORKSPACE_REAPER_CRON`, default every 15 minutes) starts `ScheduledWorkspaceReaperWorkflow`, whose
+one activity (`reapOrphanedWorkspaces`) calls `reapOrphans` on the worker's backend, removing at
+most 25 containers per sweep on Docker or 25 pods on Kubernetes (the rest wait for the next one). On
+Docker a workspace and each of its sidecar and service containers count separately. It judges from the
+workspace itself, never from the worker's memory, so a workspace belonging to another worker on the
+same Docker host or namespace is safe while it is within its lifetime:
+- Docker: every workspace container, ephemeral step container, detached sidecar and repo-preview
+  service container (`<workspace>-svc-<name>`) is created with the labels `auto-swe.workspace=true`
+  and `auto-swe.created-at=<epoch seconds>`. The metadata-block sidecar is the exception: it carries
+  no labels, and it runs `--rm` and exits once it has installed its routes. The sweep lists
+  (`docker ps --all`) only containers with the marker label and `docker rm -f`s those older than
+  seven hours. That bound is the longest activity that holds a workspace, plus an hour for clock
+  skew between workers. The six-hour activities (`T_AGENT_RUN_ACTIVITY`, the four-hour wall-clock
+  ceiling plus two hours of headroom) are the agent run step (`runAgentTask`) and the PR-feedback
+  agent task (`runAgentPrFeedbackTask`). Shorter activities also hold a workspace, for example the
+  eval harness (four hours), the 30-minute agent activities (`executeImplementation`,
+  `runReviewNetwork`, `resolveMergeConflict`), and the 60-minute shell, container, UI-verify
+  (`runUiVerify`) and CI-verify (`verifyCiFix`) steps. A container with no readable creation label
+  is kept.
+- Kubernetes: the sweep lists pods carrying both `app.kubernetes.io/managed-by=auto-swe` and
+  `asw/role=workspace` in the workspace namespace and deletes those that are `Succeeded` or `Failed`
+  (a deadline kill is `Failed`), or are still not terminal ten minutes past their own
+  `activeDeadlineSeconds`, which means the kubelet did not enforce it. The worker's Role already
+  grants `list` and `delete` on pods.
+
+Each removal and each failure is logged at warn level, and the activity never throws: a sweep that
+cannot list or remove tries again on the next tick. The Docker sweep lists through the socket proxy's
+existing `containers` path.
+
 The dev smoke script `agents/pi/smoke.ts` is the only Docker caller outside the seam.
 
 #### Kubernetes backend
@@ -1260,7 +1292,7 @@ runbook.
 | Pause | `kill -STOP -1` in the pod: SIGSTOP cannot be caught, and the tree is quiescent for the copy |
 | Cloud metadata and egress | The namespace's NetworkPolicy, not a sidecar (`NET_ADMIN` is forbidden under `restricted`). The GCP metadata hostnames also resolve to `0.0.0.0` through `hostAliases` |
 | Start-up check | A worker refuses to start unless it holds the RBAC it needs and a probe pod cannot reach the metadata endpoint or the cluster API address, which proves the CNI enforces the policy. `K8S_REQUIRE_NETWORK_POLICY=false` skips only the second check, for a local cluster |
-| Proxies | Workspaces reach the worker's model and registry proxies at the URLs the deployment advertises (`HARNESS_MODEL_PROXY_URL`, `REGISTRY_PROXY_URL`): a Service name, not the Docker host alias. The model proxy is required: `assertWorkspaceInfraEnv()` fails the boot unless `HARNESS_MODEL_PROXY_PORT` is set and `HARNESS_MODEL_PROXY_URL` is set to something other than the Docker host alias or the `{hostname}` placeholder, so the provider key never enters a workspace pod. It does not check that the Service exists or is reachable, and it does not check `REGISTRY_PROXY_URL` |
+| Proxies | Workspaces reach the worker's model and registry proxies at the URLs the deployment advertises (`HARNESS_MODEL_PROXY_URL`, `REGISTRY_PROXY_URL`): a Service name, not the Docker host alias. The model proxy is required: `assertWorkspaceInfraEnv()` fails the boot unless `HARNESS_MODEL_PROXY_PORT` is set and `HARNESS_MODEL_PROXY_URL` is set to something other than the Docker host alias or the `{hostname}` placeholder, so the provider key never enters a workspace pod. The registry proxy is optional: when `REGISTRY_PROXY_PORT` is set, the boot likewise fails unless `REGISTRY_PROXY_URL` is set to something other than the Docker host alias or the `{hostname}` placeholder. It does not check that the Service exists or is reachable |
 
 Package installs go through a second seam: when `REGISTRY_PROXY_PORT` is set the worker runs a
 read-only npm registry proxy ([package-registries.md](./package-registries.md)) — the workspace
@@ -1399,9 +1431,21 @@ Current constraints of the system as built. Deliberate product boundaries are in
   pool; `WORKSPACE_PIDS_LIMIT` is not applied. The `NET_ADMIN` metadata sidecar: PodSecurity
   `restricted` forbids it, so the NetworkPolicy does that job, and `WORKSPACE_DNS` is not applied
   either (workspaces use cluster DNS so a Service name resolves).
-- **Kubernetes workspace pods are not reaped by the worker.** `activeDeadlineSeconds` makes the
-  kubelet terminate a pod that outlives its limit, but the terminated pod object stays until
-  something deletes it, and a worker that dies mid-run does not delete its workspaces.
+- **The orphaned-workspace sweep is periodic, bounded by age, and runs on one worker.** A Docker
+  container that leaks is removed once it is seven hours old, not when its worker dies. A Kubernetes
+  pod that has failed or been deadline-killed is deleted at the next 15-minute sweep, but a pod
+  orphaned while still running is deleted only once it is terminal or ten minutes past its
+  `activeDeadlineSeconds`, which defaults to 86,400 s, so it can hold its share of the namespace
+  quota for up to that maximum lifetime; `K8S_WORKSPACE_MAX_LIFETIME_SEC` is the lever. A sweep
+  removes at most 25 pods and leaves the rest for the next one. The sweep runs wherever the
+  scheduled activity lands, so on a deployment with workers on separate Docker hosts only the host
+  of the worker that picks it up is swept in a given tick.
+- **The Docker sweep trusts its marker label.** Any container on the same daemon carrying
+  `auto-swe.workspace=true` and an old `auto-swe.created-at` (an image `LABEL` run by something other
+  than the worker, say) is treated as a workspace and removed; the worker's own `--label` flags
+  override an image's labels. Containers created before the labels existed carry no marker and are
+  never touched, and neither are the `runHelper` git containers, the short-lived metadata-block
+  container, or the step volumes (`createVolume`). The sweep is off with `WORKSPACE_REAPER_ENABLED=false`.
 - **The registry-proxy token is still readable inside a Kubernetes workspace and to a namespace
   reader of Secrets.** It is in the process environment of the workspace container by design
   (Corepack and Yarn Berry read it from there), and anyone with `get secrets` in the workspace
@@ -1409,7 +1453,8 @@ Current constraints of the system as built. Deliberate product boundaries are in
   are base64 in etcd unless the cluster encrypts them at rest). The token is only valid for that
   run's registry proxy and its allowlist, and dies with the worker's in-memory registration. A
   worker that dies between creating the Pod and the Secret leaves no Secret at all: the pod sits
-  in `CreateContainerConfigError` until its `activeDeadlineSeconds`. Every Secret that does exist
+  in `CreateContainerConfigError` until its `activeDeadlineSeconds`, and the orphaned-workspace
+  sweep deletes it ten minutes later. Every Secret that does exist
   is owned by its pod from creation, so no Secret can be orphaned.
 - **Kubernetes `copyOut` runs the agent's `tar`.** The archive is validated before it is
   extracted anywhere, but the export itself is produced by a binary in the agent-controlled

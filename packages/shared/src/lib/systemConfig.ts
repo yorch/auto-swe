@@ -1363,13 +1363,13 @@ export function validateWorkspaceInfraEnv(): string[] {
     (raw) => raw.split(',').every((name) => K8S_NAME_RE.test(name.trim())),
     'a comma-separated list of Secret names'
   );
-  // Without the proxy the provider key is handed to the workspace pod itself.
-  // Outside Kubernetes the proxy is optional, and only the shipped compose files
-  // turn it on. On Kubernetes it is required, and so is a URL pods can resolve:
-  // the default is the Docker host alias, and `{hostname}` is the worker pod's
-  // own name, which other pods cannot resolve. A port or URL that is set but
-  // unusable is already reported above, so only an absent or unresolvable one
-  // is added here.
+  // On Kubernetes the worker's proxies must be reachable from workspace pods, and
+  // the defaults are not: the Docker host alias does not exist in a cluster, and
+  // `{hostname}` is the worker pod's own name. The model proxy is required,
+  // because without it the provider key is handed to the workspace pod itself.
+  // The registry proxy is optional: unset, no registry wiring happens at all.
+  // Outside Kubernetes both are optional. A port or URL that is set but unusable
+  // is already reported above, so only an absent or unresolvable one is added here.
   if (process.env.WORKSPACE_BACKEND === 'kubernetes') {
     const port = process.env.HARNESS_MODEL_PROXY_PORT;
     const url = process.env.HARNESS_MODEL_PROXY_URL;
@@ -1382,6 +1382,18 @@ export function validateWorkspaceInfraEnv(): string[] {
     } else if (isPort(port) && (!url || (isHttpUrl(url) && !podResolvableUrl(url)))) {
       problems.push(
         'WORKSPACE_BACKEND=kubernetes requires HARNESS_MODEL_PROXY_URL to be a Service name ' +
+          `workspace pods can resolve; unset, ${DOCKER_HOST_ALIAS} and ${HOSTNAME_PLACEHOLDER} do not`
+      );
+    }
+    const registryPort = process.env.REGISTRY_PROXY_PORT;
+    const registryUrl = process.env.REGISTRY_PROXY_URL;
+    if (
+      registryPort &&
+      isPort(registryPort) &&
+      (!registryUrl || (isHttpUrl(registryUrl) && !podResolvableUrl(registryUrl)))
+    ) {
+      problems.push(
+        'WORKSPACE_BACKEND=kubernetes requires REGISTRY_PROXY_URL to be a Service name ' +
           `workspace pods can resolve; unset, ${DOCKER_HOST_ALIAS} and ${HOSTNAME_PLACEHOLDER} do not`
       );
     }
@@ -1424,6 +1436,8 @@ export interface ScheduledSweepsConfig {
   repoAccess: SweepSchedule;
   /// Finalizes runs whose workflow ended in Temporal without finalizing them.
   runReaper: SweepSchedule;
+  /// Removes workspace containers and pods that outlived the activity that created them.
+  workspaceReaper: SweepSchedule;
   automationDecisionPrune: SweepSchedule;
   /// Deletes agent transcripts past their retention (never those under legal hold).
   agentTranscriptPrune: SweepSchedule;
@@ -1500,6 +1514,10 @@ function envCron(name: string, fallback: string): string {
 ///   RUN_REAPER_ENABLED            default true — it only reads Temporal and
 ///                                 closes runs that are already over
 ///   RUN_REAPER_CRON               default `*/15 * * * *`
+///   WORKSPACE_REAPER_ENABLED      default true — it removes only containers and pods that
+///                                 carry the auto-swe marker and are older than any
+///                                 activity can run
+///   WORKSPACE_REAPER_CRON         default `*/15 * * * *`
 ///   SKILL_SOURCE_SYNC_ENABLED     default true — one cheap request per source, and
 ///                                 it only flags: it never changes a skill
 ///   SKILL_SOURCE_SYNC_CRON        default `41 5 * * *`
@@ -1587,6 +1605,10 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
       enabled: envFlag('WORKFLOW_RUN_ROLLUP_ENABLED', true),
       recomputeDays: envDays('WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS', 30),
     },
+    workspaceReaper: {
+      cronExpression: envCron('WORKSPACE_REAPER_CRON', '*/15 * * * *'),
+      enabled: envFlag('WORKSPACE_REAPER_ENABLED', true),
+    },
   };
 }
 
@@ -1612,6 +1634,8 @@ export function validateScheduledSweepsEnv(): string[] {
   check('MODEL_DISCOVERY_CRON', cron, 'a five-field cron expression such as "17 3 * * *"');
   check('RUN_REAPER_ENABLED', flag, "'true' or 'false'");
   check('RUN_REAPER_CRON', cron, 'a five-field cron expression such as "*/15 * * * *"');
+  check('WORKSPACE_REAPER_ENABLED', flag, "'true' or 'false'");
+  check('WORKSPACE_REAPER_CRON', cron, 'a five-field cron expression such as "*/15 * * * *"');
   check('AUTOMATION_DECISION_PRUNE_ENABLED', flag, "'true' or 'false'");
   check(
     'AUTOMATION_DECISION_PRUNE_CRON',
