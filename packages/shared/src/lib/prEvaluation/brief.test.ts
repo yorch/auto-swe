@@ -353,6 +353,40 @@ describe('readingOrder', () => {
     expect(order(files)).toEqual(['b/one.ts', 'b/two.ts', 'a/one.ts', 'a/two.ts']);
   });
 
+  it('pairs a test in a mirrored test tree with the one source it can cover', () => {
+    const files = [
+      file('test/foo/bar.test.ts'),
+      file('src/foo/bar.ts', { additions: 5, deletions: 0 }),
+      file('src/foo/baz.ts', { additions: 2, deletions: 0 }),
+      file('tests/solo.test.ts'),
+      file('lib/solo.ts', { additions: 1, deletions: 0 }),
+    ];
+    expect(order(files)).toEqual([
+      'src/foo/bar.ts',
+      'test/foo/bar.test.ts',
+      'src/foo/baz.ts',
+      'lib/solo.ts',
+      'tests/solo.test.ts',
+    ]);
+  });
+
+  it('leaves a mirrored test loose when two sources could be its own', () => {
+    const files = [
+      file('test/x.test.ts'),
+      file('a/x.ts', { additions: 2, deletions: 0 }),
+      file('b/x.ts', { additions: 1, deletions: 0 }),
+      file('test/foo/y.test.ts'),
+      file('src/bar/y.ts', { additions: 1, deletions: 0 }),
+    ];
+    expect(order(files)).toEqual([
+      'a/x.ts',
+      'b/x.ts',
+      'src/bar/y.ts',
+      'test/foo/y.test.ts',
+      'test/x.test.ts',
+    ]);
+  });
+
   it('does not pair a test with a source of another name or directory', () => {
     const files = [file('src/foo.ts'), file('src/other/foo.test.ts'), file('src/bar.test.ts')];
     expect(order(files)).toEqual(['src/foo.ts', 'src/bar.test.ts', 'src/other/foo.test.ts']);

@@ -276,6 +276,31 @@ function sourceDirsFor(testPath: string): string[] {
   return TEST_DIRS.has(baseName(dir).toLowerCase()) ? [dir, dirname(dir)] : [dir];
 }
 
+/**
+ * The source a test covers when the tests live in a tree of their own (`test/foo/bar.test.ts` for
+ * `src/foo/bar.ts`): the one changed source of that name whose directory ends with the test's path
+ * below its test directory. With nothing below the test directory the name alone must be unique.
+ * Two candidates mean no pairing: a wrong pairing is worse than a loose test.
+ */
+function mirroredOwner(
+  test: ChangedFile,
+  candidates: readonly ChangedFile[] | undefined
+): ChangedFile | undefined {
+  const parts = dirname(test.path).split('/');
+  const at = parts.findIndex((part) => TEST_DIRS.has(part.toLowerCase()));
+  if (at === -1 || !candidates) {
+    return undefined;
+  }
+  const below = parts.slice(at + 1).join('/');
+  const matches =
+    below === ''
+      ? candidates
+      : candidates.filter(
+          (c) => dirname(c.path) === below || dirname(c.path).endsWith(`/${below}`)
+        );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 const byPath = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const churn = (file: ChangedFile): number => file.additions + file.deletions;
 
@@ -304,19 +329,23 @@ export function readingOrder(files: readonly ChangedFile[]): ChangedFile[] {
   }
 
   const sourceByKey = new Map<string, ChangedFile>();
+  const sourcesByStem = new Map<string, ChangedFile[]>();
   for (const file of [...sources].sort((a, b) => byPath(a.path, b.path))) {
-    const key = `${dirname(file.path)}\0${stemOf(file.path, false)}`;
+    const stem = stemOf(file.path, false);
+    const key = `${dirname(file.path)}\0${stem}`;
     if (!sourceByKey.has(key)) {
       sourceByKey.set(key, file);
     }
+    sourcesByStem.set(stem, [...(sourcesByStem.get(stem) ?? []), file]);
   }
   const testsOf = new Map<ChangedFile, ChangedFile[]>();
   const unpaired: ChangedFile[] = [];
   for (const test of [...tests].sort((a, b) => byPath(a.path, b.path))) {
     const stem = stemOf(test.path, true);
-    const owner = sourceDirsFor(test.path)
-      .map((dir) => sourceByKey.get(`${dir}\0${stem}`))
-      .find((source) => source !== undefined);
+    const owner =
+      sourceDirsFor(test.path)
+        .map((dir) => sourceByKey.get(`${dir}\0${stem}`))
+        .find((source) => source !== undefined) ?? mirroredOwner(test, sourcesByStem.get(stem));
     if (owner) {
       testsOf.set(owner, [...(testsOf.get(owner) ?? []), test]);
     } else {

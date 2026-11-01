@@ -169,7 +169,9 @@ the same change always reads the same way:
    busiest file first inside it. A test follows the source file it covers: the same name once the
    test marker is dropped (`foo.test.ts`, `foo.spec.ts`, `foo_test.go`, `test_foo.py`, `FooTest.java`),
    in the same directory or, for a test inside a `test`, `tests`, `__tests__`, `spec` or `e2e`
-   directory, in its parent.
+   directory, in its parent. A test in a tree of its own (`test/foo/bar.test.ts` for
+   `src/foo/bar.ts`) pairs with the one changed source of that name whose directory ends with the
+   path below the test directory; two candidates mean no pairing.
 3. **Tests with no source in the change**, then documentation and other files, by path.
 
 The first ten files are listed in full, with their position. A flagged file past the tenth (up to 30
@@ -855,8 +857,8 @@ documentation change as a platform pull request and read the evaluation's reason
   say whether a criterion is met.
 - **The reading path orders by name and directory, not by what imports what.** It sees paths and
   patches, never file contents, so a file that depends on another in a different directory can come
-  first. A test is paired with its source only in the same directory or the parent of a test
-  directory; a mirrored layout (`test/foo/bar.test.ts` for `src/foo/bar.ts`) reads as a loose test.
+  first. A test is paired with its source by name and place, never by what it imports: a test whose
+  name differs from its source's, or that could belong to two changed sources, reads as a loose test.
   The brief cannot reorder GitHub's Files tab, which stays alphabetical.
 - **With bot approval, a `LOW` change merges with no human, on a deterministic judgement.** A change
   within the caps and the path allowlist is approved and merged by GitHub with nobody reading it.
