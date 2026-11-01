@@ -19,6 +19,7 @@ import {
   useUpdatePackageRegistry,
 } from '@/hooks/usePackageRegistries';
 import { errMsg } from '@/lib/errors';
+import { ProbeModal } from './ProbeModal';
 
 const ECOSYSTEM_LABEL: Record<PackageRegistryBody['ecosystem'], string> = {
   go: 'Go',
@@ -250,6 +251,7 @@ export function PackageRegistriesTab() {
   const del = useDeletePackageRegistry();
   const [modal, setModal] = useState<'create' | PackageRegistryRow | null>(null);
   const [deleting, setDeleting] = useState<PackageRegistryRow | null>(null);
+  const [testing, setTesting] = useState<PackageRegistryRow | null>(null);
 
   return (
     <div className="space-y-4">
@@ -276,6 +278,9 @@ export function PackageRegistriesTab() {
               {
                 cell: (r) => (
                   <span className="flex gap-2">
+                    <button className="text-accent-400" onClick={() => setTesting(r)} type="button">
+                      Test
+                    </button>
                     <button className="text-accent-400" onClick={() => setModal(r)} type="button">
                       Edit
                     </button>
@@ -293,6 +298,14 @@ export function PackageRegistriesTab() {
           />
         )}
       </QueryBoundary>
+      {testing && (
+        <ProbeModal
+          onClose={() => setTesting(null)}
+          path={`/api/v1/admin/package-registries/${testing.id}/test`}
+          subtitle={testing.name}
+          title="Test package registry"
+        />
+      )}
       {deleting && (
         <ConfirmModal
           confirmLabel="Delete"

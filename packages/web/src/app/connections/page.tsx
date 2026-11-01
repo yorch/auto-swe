@@ -3,6 +3,7 @@
 import { getConnectionTypeMetadata, isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useCallback, useEffect, useState } from 'react';
+import { ProbeModal } from '@/components/integrations/ProbeModal';
 import type { ConnectionPrefill } from '@/components/repositories/ConnectionFormModal';
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
@@ -49,6 +50,7 @@ type ModalMode =
   | { kind: 'automations'; repo: RepositorySummary }
   | { kind: 'credential'; repo: RepositorySummary }
   | { kind: 'share'; repo: RepositorySummary }
+  | { kind: 'test'; repo: RepositorySummary }
   | { kind: 'import' }
   | null;
 
@@ -284,6 +286,19 @@ export default function ConnectionsPage() {
                           },
                         ]
                       : []),
+                    // The server decides, as it does for sharing: only the owning team's
+                    // leads (and platform admins) may check what the platform's
+                    // credential can do with the repository.
+                    ...(canManageTeam(r.team?.id) && isGitRepo
+                      ? [
+                          {
+                            icon: 'checkCircle' as const,
+                            id: 'test-access',
+                            label: 'Test access',
+                            onAction: () => setMode({ kind: 'test', repo: r }),
+                          },
+                        ]
+                      : []),
                     // The server decides: only the owning team's leads (and
                     // platform admins) may change sharing.
                     ...(canManageTeam(r.team?.id) && isGitRepo
@@ -471,6 +486,15 @@ export default function ConnectionsPage() {
       {formMode && <ConnectionFormModal mode={formMode} onClose={() => setMode(null)} open />}
 
       {mode?.kind === 'share' && <ShareRepoModal onClose={() => setMode(null)} repo={mode.repo} />}
+
+      {mode?.kind === 'test' && (
+        <ProbeModal
+          onClose={() => setMode(null)}
+          path={`/api/v1/repositories/${mode.repo.id}/test-access`}
+          subtitle={connectionLabel(mode.repo)}
+          title="Test repository access"
+        />
+      )}
 
       {mode?.kind === 'credential' && (
         <MyCredentialModal
