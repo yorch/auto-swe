@@ -1069,6 +1069,71 @@ const INTENDED_CHANGES: Record<
   },
 };
 
+/**
+ * Every template built on `reviewLoop` stops when two consecutive rejected reviews carry the same
+ * findings, routing to wherever running out of attempts goes (read off `checkReviewLimit`, so a
+ * template whose exhausted route another change moved keeps both together).
+ */
+const REVIEW_STALL_TEMPLATES = [
+  'agent-reviewed-pr',
+  'external-approval-gate',
+  'four-eyes',
+  'model-catalog-refresh',
+  'scope-clarification',
+  'staged-deploy-signals',
+  'ticket-to-merge',
+  'ticket-to-merge-qodo',
+];
+
+const REVIEW_STALL_REASON =
+  'the review loop stops when two consecutive rejected reviews carry the same findings ' +
+  '(reviewer, category, file, count), going where running out of attempts goes; an approval ' +
+  'clears the remembered findings first';
+
+function withReviewStallStop(g: WorkflowSpec): WorkflowSpec {
+  const nodes = structuredClone(g.nodes) as unknown as Record<string, Record<string, unknown>>;
+  const exhausted = (nodes.checkReviewLimit as { onTrue: string }).onTrue;
+  nodes.review.inputs = {
+    ...(nodes.review.inputs as object),
+    previousFingerprint: { default: '', from: 'context.lastReviewFingerprint' },
+  };
+  nodes.storeRejection.next = 'checkStalled';
+  nodes.storeRejection.values = {
+    ...(nodes.storeRejection.values as object),
+    'context.lastReviewFingerprint': {
+      default: '',
+      from: 'nodes.review.output.rejectionFingerprint',
+    },
+  };
+  nodes.forgetRejection = {
+    next: (nodes.checkApproval as { onTrue: string }).onTrue,
+    type: 'set',
+    values: { 'context.lastReviewFingerprint': { literal: '' } },
+  };
+  (nodes.checkApproval as { onTrue: string }).onTrue = 'forgetRejection';
+  nodes.checkStalled = {
+    expr: 'nodes.review.output.stalled == true',
+    onFalse: 'checkReviewLimit',
+    onTrue: exhausted,
+    type: 'cond',
+  };
+  return { ...g, nodes: nodes as unknown as WorkflowSpec['nodes'] };
+}
+
+/** The template's intended change: its own entry, then the stall stop where it applies. */
+function intendedChange(
+  name: string
+): { reason: string; apply: (g: WorkflowSpec) => WorkflowSpec } | undefined {
+  const own = INTENDED_CHANGES[name];
+  if (!REVIEW_STALL_TEMPLATES.includes(name)) {
+    return own;
+  }
+  return {
+    apply: (g) => withReviewStallStop(own ? own.apply(g) : g),
+    reason: own ? `${own.reason}; ${REVIEW_STALL_REASON}` : REVIEW_STALL_REASON,
+  };
+}
+
 /** Point `done`'s issueUrl at the split write nodes instead of the absent `writeOutcome`. */
 function issueUrlFromSplitWrites(spec: WorkflowSpec): WorkflowSpec {
   const done = structuredClone(spec.nodes.done) as Node & { result: Record<string, unknown> };
@@ -1090,7 +1155,7 @@ describe('built-in templates match their pre-helper golden specs', () => {
   it.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const))(
     '%s expands to its golden flat spec',
     (name, spec) => {
-      const change = INTENDED_CHANGES[name];
+      const change = intendedChange(name);
       const expected = change ? change.apply(golden(name)) : golden(name);
       // Strict: a key left as `undefined` would pass toEqual but is not the golden's bytes.
       expect(stripPresentation(spec)).toStrictEqual(expected);

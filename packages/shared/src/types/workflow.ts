@@ -184,6 +184,13 @@ export interface AggregatedReviewResult {
   verdicts: ReviewVerdict[];
   codeResult: CodeResult;
   rejectionSummary?: string;
+  /**
+   * Which findings rejected the change, as `reviewer|category|file` entries sorted and joined with
+   * `;` (a reviewer crash excluded). Two consecutive rounds with the same one are not converging.
+   */
+  rejectionFingerprint?: string;
+  /** True when this round rejected with the same fingerprint as the previous one. */
+  stalled?: boolean;
 }
 
 // ── Semantic Memory Types (Phase 2) ──

@@ -465,7 +465,8 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         codeResult,
         successCriteria,
         config.systemPrompt as string | undefined,
-        crossRepoOptions(config)
+        crossRepoOptions(config),
+        (inputs.previousFingerprint as string | undefined) || undefined
       );
     },
   ],

@@ -58,7 +58,7 @@ vi.mock('../lib/repoDependencyContext.js', async (importOriginal) => {
 });
 
 import { persistActivityTrace } from '../lib/activityContext.js';
-import { runReviewNetwork } from './runReviewNetwork.js';
+import { isStalled, runReviewNetwork } from './runReviewNetwork.js';
 
 const CODE_RESULT: CodeResult = {
   branch: 'auto/JIRA-1',
@@ -89,6 +89,44 @@ beforeEach(() => {
   }));
   loadMock.mockResolvedValue('');
   runReviewMock.mockResolvedValue({ approved: true, codeResult: CODE_RESULT, verdicts: [] });
+});
+
+describe('runReviewNetwork activity stall detection', () => {
+  const rejected = {
+    approved: false,
+    codeResult: CODE_RESULT,
+    rejectionFingerprint: 'DOMAIN_LOGIC|UNMET_SUCCESS_CRITERION|a.ts',
+    verdicts: [],
+  };
+
+  it('marks a rejection that repeats the previous fingerprint as stalled and records why', async () => {
+    runReviewMock.mockResolvedValue(rejected);
+    const result = await runReviewNetwork(
+      CODE_RESULT,
+      undefined,
+      undefined,
+      undefined,
+      rejected.rejectionFingerprint
+    );
+    expect(result.stalled).toBe(true);
+    expect(persistedEventNames()).toContain('review.stalled');
+  });
+
+  it('does not stall on a different fingerprint, or on the first round', async () => {
+    runReviewMock.mockResolvedValue(rejected);
+    expect(
+      (await runReviewNetwork(CODE_RESULT, undefined, undefined, undefined, 'other')).stalled
+    ).toBeUndefined();
+    expect((await runReviewNetwork(CODE_RESULT)).stalled).toBeUndefined();
+    expect(persistedEventNames()).not.toContain('review.stalled');
+  });
+
+  it('never stalls an approval, nor an empty fingerprint', () => {
+    expect(isStalled({ approved: true, rejectionFingerprint: 'x' }, 'x')).toBe(false);
+    expect(isStalled({ approved: false, rejectionFingerprint: '' }, '')).toBe(false);
+    expect(isStalled({ approved: false }, undefined)).toBe(false);
+    expect(isStalled({ approved: false, rejectionFingerprint: 'x' }, 'x')).toBe(true);
+  });
 });
 
 describe('runReviewNetwork activity', () => {

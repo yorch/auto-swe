@@ -28,18 +28,26 @@ export interface ReviewLoopOptions {
 }
 
 /**
- * The agent review loop, as nine plain nodes:
+ * The agent review loop, as eleven plain nodes:
  *
- *   setReviewing -> review -> checkApproval --approved--> `approved`
+ *   setReviewing -> review -> checkApproval --approved--> forgetRejection -> `approved`
  *                                   |
  *                              (rejected)
  *                                   v
- *   incReviewRetries -> storeRejection -> checkReviewLimit --over limit--> terminateReviewFailed
+ *   incReviewRetries -> storeRejection -> checkStalled --same findings as last round--> `exhausted`
  *                                                |
+ *                                           (new findings)
+ *                                                v
+ *                                         checkReviewLimit --over limit--> `exhausted`
+ *                                                |                  (default terminateReviewFailed)
  *                                            (under)
  *                                                v
  *                         reviewFix -> updateCodeAfterReviewFix -> `afterFix` (setReviewing)
  *
+ * `review` is handed the previous round's findings fingerprint
+ * (`context.lastReviewFingerprint`) and reports `stalled` when a rejection repeats it.
+ * An approval clears the fingerprint (`forgetRejection`), so a template that re-enters the review
+ * afterwards (a CI fix, a price-note check) does not compare a later rejection with an earlier one.
  * The counter lives at `context.reviewRetries` and must be initialised to 0
  * before the loop is entered (see `initCounters`). Entry node: `setReviewing`.
  */
@@ -51,7 +59,7 @@ export function reviewLoop(opts: ReviewLoopOptions): NodeMap {
       expr: 'nodes.review.output.approved == true',
       group,
       onFalse: 'incReviewRetries',
-      onTrue: opts.approved,
+      onTrue: 'forgetRejection',
       title: 'Approved?',
       type: 'cond',
     },
@@ -62,6 +70,21 @@ export function reviewLoop(opts: ReviewLoopOptions): NodeMap {
       onTrue: opts.exhausted ?? 'terminateReviewFailed',
       title: 'Out of attempts?',
       type: 'cond',
+    },
+    checkStalled: {
+      expr: 'nodes.review.output.stalled == true',
+      group,
+      onFalse: 'checkReviewLimit',
+      onTrue: opts.exhausted ?? 'terminateReviewFailed',
+      title: 'Same findings as last round?',
+      type: 'cond',
+    },
+    forgetRejection: {
+      group,
+      next: opts.approved,
+      title: 'Forget the last rejection',
+      type: 'set',
+      values: { 'context.lastReviewFingerprint': { literal: '' } },
     },
     incReviewRetries: {
       group,
@@ -74,6 +97,7 @@ export function reviewLoop(opts: ReviewLoopOptions): NodeMap {
       group,
       inputs: {
         codeResult: { from: 'context.currentCodeResult' },
+        previousFingerprint: { default: '', from: 'context.lastReviewFingerprint' },
         successCriteria: { from: 'context.successCriteria' },
       },
       next: 'checkApproval',
@@ -96,13 +120,17 @@ export function reviewLoop(opts: ReviewLoopOptions): NodeMap {
     setReviewing: statusStamp('IN_REVIEW', 'review', { group }),
     storeRejection: {
       group,
-      next: 'checkReviewLimit',
+      next: 'checkStalled',
       title: 'Record why it was rejected',
       type: 'set',
       values: {
         'context.lastRejectionSummary': {
           default: '',
           from: 'nodes.review.output.rejectionSummary',
+        },
+        'context.lastReviewFingerprint': {
+          default: '',
+          from: 'nodes.review.output.rejectionFingerprint',
         },
       },
     },

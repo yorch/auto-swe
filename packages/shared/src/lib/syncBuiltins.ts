@@ -808,6 +808,9 @@ export const PREVIOUS_DEFAULT_MODEL_SPECS: Readonly<Record<string, string>> = {
 export const PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES: Readonly<Record<string, readonly string[]>> = {
   appAssistant: ['d5a52c2596f39753b18d3bd46d4ba06da99208eb846d7b6bb76cf71111ddef29'],
   assistantTitler: ['067c7e378495f75ae9741d60fb480e61fcefb2f2c188f1bce4a58fd2135dc91d'],
+  ciFixer: ['a1de7455bfcb61856f077fee7fe27ffbc674150a70b7a6544413d8cad89b8445'],
+  gateFixer: ['21e99af8ceb834b11ff55af708f21a545c32a33ea12b83e9c8176f8770d296cb'],
+  reviewFixer: ['30479b30fb05ea6073bf0de6fc19c411d543cb75886ace24d31eb6db05ab0ef3'],
   validateContext: ['952cb18ee5c2f12a216ec4b15490f492dd17a11814af8e28987d7863c0b8bc50'],
   workflowAuthor: ['c3c88e3157e74a9ffc9be506d7317b6ed68a3cf9c61b2c6bf5c29f7e1a94c16a'],
   workflowExplainer: ['4ca25fbd0ca975380190be914a35bf813dedf4238418a4c39d0239e7fe156065'],

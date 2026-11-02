@@ -3,11 +3,13 @@ import { reviewLoop } from './reviewLoop.js';
 import { expectWellFormed } from './testUtil.js';
 
 describe('reviewLoop', () => {
-  it('expands to nine plain nodes under the ids the templates have always used', () => {
+  it('expands to eleven plain nodes under the ids the templates have always used', () => {
     const nodes = reviewLoop({ approved: 'next' });
     expect(Object.keys(nodes).sort()).toEqual([
       'checkApproval',
       'checkReviewLimit',
+      'checkStalled',
+      'forgetRejection',
       'incReviewRetries',
       'review',
       'reviewFix',
@@ -19,6 +21,37 @@ describe('reviewLoop', () => {
     expectWellFormed(nodes, 'setReviewing', ['next']);
   });
 
+  it('stops on a repeated rejection before the limit, to the same place as running out', () => {
+    const nodes = reviewLoop({ approved: 'n' });
+    expect(nodes.review).toMatchObject({
+      inputs: { previousFingerprint: { default: '', from: 'context.lastReviewFingerprint' } },
+    });
+    expect(nodes.storeRejection).toMatchObject({
+      next: 'checkStalled',
+      values: {
+        'context.lastReviewFingerprint': {
+          default: '',
+          from: 'nodes.review.output.rejectionFingerprint',
+        },
+      },
+    });
+    expect(nodes.checkStalled).toMatchObject({
+      expr: 'nodes.review.output.stalled == true',
+      onFalse: 'checkReviewLimit',
+      onTrue: 'terminateReviewFailed',
+      type: 'cond',
+    });
+    expect(nodes.incReviewRetries).toMatchObject({
+      values: { 'context.reviewRetries': { expr: 'context.reviewRetries + 1' } },
+    });
+  });
+
+  it('sends a stall to `exhausted` when given one, as it does the limit', () => {
+    const nodes = reviewLoop({ approved: 'n', exhausted: 'lessonReviewFailed' });
+    expect(nodes.checkStalled).toMatchObject({ onTrue: 'lessonReviewFailed' });
+    expect(nodes.checkReviewLimit).toMatchObject({ onTrue: 'lessonReviewFailed' });
+  });
+
   it('is one group', () => {
     const groups = new Set(Object.values(reviewLoop({ approved: 'n' })).map((n) => n.group));
     expect([...groups]).toEqual(['review loop']);
@@ -26,7 +59,14 @@ describe('reviewLoop', () => {
 
   it('routes an approval to `approved` and a fix back into the review by default', () => {
     const nodes = reviewLoop({ approved: 'openPR' });
-    expect(nodes.checkApproval).toMatchObject({ onFalse: 'incReviewRetries', onTrue: 'openPR' });
+    expect(nodes.checkApproval).toMatchObject({
+      onFalse: 'incReviewRetries',
+      onTrue: 'forgetRejection',
+    });
+    expect(nodes.forgetRejection).toMatchObject({
+      next: 'openPR',
+      values: { 'context.lastReviewFingerprint': { literal: '' } },
+    });
     expect(nodes.updateCodeAfterReviewFix).toMatchObject({ next: 'setReviewing' });
     expect(nodes.setReviewing).toMatchObject({ config: { status: 'IN_REVIEW' }, next: 'review' });
   });
