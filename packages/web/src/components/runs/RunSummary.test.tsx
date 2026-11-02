@@ -56,6 +56,27 @@ describe('RunSummary', () => {
       }
     );
 
+    it.each(['compact', 'full'] as const)(
+      'says a run that succeeded was not moved on in the ticket (%s)',
+      (variant) => {
+        render(
+          <RunSummary
+            failedStep={null}
+            pendingSteps={[]}
+            run={mkRun({
+              contextSnapshot: {
+                trackerWriteback: { event: 'workflow_completed', failure: 'out_of_scope' },
+              },
+              status: 'SUCCESS',
+            })}
+            variant={variant}
+          />
+        );
+        expect(screen.getByText(/ticket was not updated/i)).toBeTruthy();
+        expect(screen.getByText(/run finished, but the ticket could not be updated/i)).toBeTruthy();
+      }
+    );
+
     it('shows above the result', () => {
       render(
         <RunSummary

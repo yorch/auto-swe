@@ -55,6 +55,9 @@ export const TICKET_UNAVAILABLE_LINES = new Map<string, string>([
   ['timeout', `${UNREAD} (the tracker did not answer in time).`],
   ['network', `${UNREAD} (the tracker could not be reached).`],
   ['redirect', `${UNREAD} (the tracker address redirects, which is not followed).`],
+  // Write-only: a refused read is reported as `not_found`, so a read must never produce this.
+  // Kept so the table stays aligned with the class set.
+  ['out_of_scope', `${UNREAD} (it is in a repository this run does not target).`],
   ['rejected', `${UNREAD} (it rejected the request).`],
   ['refused', `${UNREAD} (it was blocked by the platform's network policy).`],
   ['unconfigured', `${UNREAD} (no ticket tracker is configured).`],

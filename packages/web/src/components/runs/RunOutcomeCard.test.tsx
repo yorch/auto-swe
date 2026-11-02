@@ -176,6 +176,8 @@ describe('a spilled result text', () => {
       network: 'The ticket could not be read from the tracker (the tracker could not be reached).',
       not_found:
         'The ticket could not be read from the tracker (access was refused, or it does not exist).',
+      out_of_scope:
+        'The ticket could not be read from the tracker (it is in a repository this run does not target).',
       rate_limited:
         'The ticket could not be read from the tracker (the tracker is limiting requests).',
       redirect:
