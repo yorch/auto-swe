@@ -3,7 +3,12 @@
 import { TICKET_FAILURE_CLASSES } from '@auto-swe/shared/lib/integrations/ticketFailure';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import { RunOutcomeCard, TICKET_UNAVAILABLE_LINES } from './RunOutcomeCard';
+import {
+  RunOutcomeCard,
+  TICKET_UNAVAILABLE_HINTS,
+  TICKET_UNAVAILABLE_LINES,
+  TICKET_UNAVAILABLE_WORKAROUND,
+} from './RunOutcomeCard';
 
 describe('RunOutcomeCard', () => {
   it('renders nothing for an unknown template', () => {
@@ -176,9 +181,8 @@ describe('a spilled result text', () => {
       redirect:
         'The ticket could not be read from the tracker (the tracker address redirects, which is not followed).',
       refused:
-        "The ticket could not be read from the tracker (it was blocked by the platform's network policy; ask an administrator to check the tracker's allowed addresses).",
-      rejected:
-        'The ticket could not be read from the tracker (it rejected the request — check the tracker credentials and ticket id).',
+        "The ticket could not be read from the tracker (it was blocked by the platform's network policy).",
+      rejected: 'The ticket could not be read from the tracker (it rejected the request).',
       server_error:
         'The ticket could not be read from the tracker (the tracker returned an error).',
       timeout:
@@ -195,6 +199,163 @@ describe('a spilled result text', () => {
         [...TICKET_FAILURE_CLASSES].sort()
       );
       expect(Object.keys(LINES).sort()).toEqual([...TICKET_FAILURE_CLASSES].sort());
+    });
+
+    // Classes that are not read failures: 'empty' means the ticket was read but had no text. A new
+    // failure class must be consciously placed: either it gets a hint (unreadable) or it is added here.
+    const NOT_READ_FAILURES = ['empty'];
+    const UNREADABLE = [...TICKET_FAILURE_CLASSES].filter((c) => !NOT_READ_FAILURES.includes(c));
+
+    // The literal the validate phase stores (packages/shared/.../authoring/validatePhase.ts).
+    const REAL_MESSAGE =
+      'The request is not actionable: validation found nothing it could verify, only the ambiguities listed here. Paste the ticket text or add acceptance criteria to the request, then re-run.';
+
+    it('has a next-step hint for every unreadable class, and none for anything else', () => {
+      expect([...TICKET_UNAVAILABLE_HINTS.keys()].sort()).toEqual([...UNREADABLE].sort());
+    });
+
+    it('uses distinct hint wording where the advice differs', () => {
+      // 12 hints, 11 distinct: unauthorized and forbidden intentionally share their advice.
+      expect(new Set(TICKET_UNAVAILABLE_HINTS.values()).size).toBe(
+        TICKET_UNAVAILABLE_HINTS.size - 1
+      );
+      expect(TICKET_UNAVAILABLE_HINTS.get('unauthorized')).toBe(
+        TICKET_UNAVAILABLE_HINTS.get('forbidden')
+      );
+    });
+
+    it.each(UNREADABLE)(
+      'leads with the failure for %s, then the hint, then the workaround',
+      (reason) => {
+        const { container } = render(
+          <RunOutcomeCard
+            result={{
+              ambiguities: ['The ticket only states Vuln UIP-1.'],
+              message: REAL_MESSAGE,
+              ticketUnavailableReason: reason,
+            }}
+            runId="run-1"
+            templateName="ticket-to-merge"
+          />
+        );
+        const text = container.textContent ?? '';
+        const line = TICKET_UNAVAILABLE_LINES.get(reason) ?? '';
+        const hint = TICKET_UNAVAILABLE_HINTS.get(reason) ?? '';
+        expect(line).not.toBe('');
+        expect(hint).not.toBe('');
+        expect(text.indexOf(line)).toBeGreaterThanOrEqual(0);
+        expect(text.indexOf(hint)).toBeGreaterThan(text.indexOf(line));
+        expect(text.indexOf(TICKET_UNAVAILABLE_WORKAROUND)).toBeGreaterThan(text.indexOf(hint));
+        expect(text).not.toContain('Vuln UIP-1');
+        expect(container.querySelector('li')).toBeNull();
+        // F1: the stored message is not rendered on this path, and nothing dangles.
+        expect(text).not.toContain(REAL_MESSAGE);
+        expect(text).not.toContain('not actionable');
+        expect(text).not.toContain('listed here');
+        // F6: the lead is bright and medium weight, and differs from the hint.
+        const leadClass = screen.getByText(line).className;
+        const hintClass = screen.getByText(hint).className;
+        expect(leadClass).toMatch(/\bfont-medium\b/);
+        expect(leadClass).toMatch(/\btext-paper-100\b/);
+        expect(leadClass).not.toBe(hintClass);
+        expect(hintClass).not.toMatch(/font-medium|text-paper-100/);
+        expect(hint).not.toMatch(/\byou\b|\byour\b/i);
+      }
+    );
+
+    it('offers the workaround as plain own-copy text without blaming the requester', () => {
+      expect(TICKET_UNAVAILABLE_WORKAROUND).toMatch(/paste the ticket text/i);
+      expect(TICKET_UNAVAILABLE_WORKAROUND).toMatch(/acceptance criteria/);
+      // It must not point at a list the unreadable path hides.
+      expect(TICKET_UNAVAILABLE_WORKAROUND).not.toContain('listed here');
+    });
+
+    it.each(['', 'empty', undefined])(
+      'still renders the real message (and ambiguities) when the reason is %j',
+      (ticketUnavailableReason) => {
+        const { container } = render(
+          <RunOutcomeCard
+            result={{
+              ambiguities: ['Which component?'],
+              message: REAL_MESSAGE,
+              ticketUnavailableReason,
+            }}
+            runId="run-1"
+            templateName="ticket-to-merge"
+          />
+        );
+        const text = container.textContent ?? '';
+        expect(text).toContain(REAL_MESSAGE);
+        expect(text).toContain('Which component?');
+        expect(text).not.toContain(TICKET_UNAVAILABLE_WORKAROUND);
+      }
+    );
+
+    it('keeps the old order for the empty class', () => {
+      const { container } = render(
+        <RunOutcomeCard
+          result={{
+            message: REAL_MESSAGE,
+            ticketUnavailableReason: 'empty',
+          }}
+          runId="run-1"
+          templateName="ticket-to-merge"
+        />
+      );
+      const text = container.textContent ?? '';
+      expect(text).toContain(REAL_MESSAGE);
+      expect(text).toContain(LINES.empty);
+      expect(text.indexOf(REAL_MESSAGE)).toBeLessThan(text.indexOf(LINES.empty));
+    });
+
+    describe('hint wording', () => {
+      const hint = (reason: string) => TICKET_UNAVAILABLE_HINTS.get(reason) ?? '';
+      const TRANSIENT = ['rate_limited', 'server_error', 'timeout', 'network'];
+      const ADMIN_CHECK = ['redirect', 'unconfigured', 'unauthorized', 'forbidden', 'refused'];
+
+      it.each(TRANSIENT)('%s says to try again and does not blame credentials', (reason) => {
+        expect(hint(reason)).toMatch(/try again in a few minutes/);
+        expect(hint(reason)).toMatch(/administrator/);
+        expect(hint(reason)).toMatch(/keeps happening/);
+        expect(hint(reason)).not.toMatch(/credentials/);
+        expect(hint(reason)).toMatch(/not the requester/);
+      });
+
+      it.each(ADMIN_CHECK)('%s asks an administrator and is not the requester', (reason) => {
+        expect(hint(reason)).toMatch(/administrator/);
+        expect(hint(reason)).toMatch(/not the requester/);
+      });
+
+      it('rejected points at the platform tracker settings, not the ticket id', () => {
+        expect(hint('rejected')).toMatch(/not the requester/);
+        expect(hint('rejected')).toMatch(/administrator.*tracker settings/);
+        expect(hint('rejected')).not.toMatch(/ticket id|credentials/);
+        expect(LINES.rejected).not.toMatch(/check/);
+        expect(LINES.refused).not.toMatch(/administrator|check/);
+      });
+
+      it('not_found keeps the not-the-requester framing without leading on the id', () => {
+        expect(hint('not_found')).toMatch(/token/);
+        expect(hint('not_found')).toMatch(/ticket id/);
+        expect(hint('not_found')).toMatch(/administrator/);
+        expect(hint('not_found')).not.toMatch(/^Check the ticket id/);
+        // The token and the platform come before the id, and it is not the requester's fault.
+        expect(hint('not_found').search(/token/)).toBeLessThan(
+          hint('not_found').search(/ticket id/)
+        );
+        expect(hint('not_found')).not.toMatch(/looks wrong|you |your /i);
+      });
+
+      it('unknown does not blame the tracker or its credentials', () => {
+        expect(hint('unknown')).toMatch(/platform/);
+        expect(hint('unknown')).toMatch(/administrator/);
+        expect(hint('unknown')).not.toMatch(/tracker|credentials/);
+      });
+
+      it('has a rule for every unreadable class', () => {
+        const covered = [...TRANSIENT, ...ADMIN_CHECK, 'rejected', 'not_found', 'unknown'];
+        expect([...covered].sort()).toEqual([...UNREADABLE].sort());
+      });
     });
 
     it.each(Object.entries(LINES))('adds one neutral line for the class %s', (reason, line) => {

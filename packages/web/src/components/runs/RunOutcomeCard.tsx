@@ -55,19 +55,56 @@ export const TICKET_UNAVAILABLE_LINES = new Map<string, string>([
   ['timeout', `${UNREAD} (the tracker did not answer in time).`],
   ['network', `${UNREAD} (the tracker could not be reached).`],
   ['redirect', `${UNREAD} (the tracker address redirects, which is not followed).`],
-  [
-    'rejected',
-    `${UNREAD} (it rejected the request — check the tracker credentials and ticket id).`,
-  ],
-  [
-    'refused',
-    `${UNREAD} (it was blocked by the platform's network policy; ask an administrator to check the tracker's allowed addresses).`,
-  ],
+  ['rejected', `${UNREAD} (it rejected the request).`],
+  ['refused', `${UNREAD} (it was blocked by the platform's network policy).`],
   ['unconfigured', `${UNREAD} (no ticket tracker is configured).`],
   ['empty', 'The ticket was read from the tracker but has no text.'],
   // Also the catch-all for a failure inside the platform (a database error, say): not the tracker.
   ['unknown', 'The ticket could not be read (the reason is not known).'],
 ]);
+
+/**
+ * What to do about each unreadable-ticket class: the single carrier of the next step (the lines
+ * only say what happened). Same rule as the lines: a closed lookup, plain text. Its keys are the
+ * failure classes that are read failures, i.e. all but 'empty' (a test fails when they drift apart).
+ */
+const PLATFORM =
+  "This is a problem with the platform's tracker connection, not the requester's ticket";
+const RETRY = 'try again in a few minutes, and if it keeps happening ask an administrator to';
+export const TICKET_UNAVAILABLE_HINTS = new Map<string, string>([
+  [
+    'unauthorized',
+    `${PLATFORM}: ask an administrator to check the tracker credentials and settings.`,
+  ],
+  ['forbidden', `${PLATFORM}: ask an administrator to check the tracker credentials and settings.`],
+  [
+    'not_found',
+    "The tracker token may not be able to see this ticket, or the ticket id may be wrong: ask an administrator to check the token's access, and check the id.",
+  ],
+  ['rate_limited', `${PLATFORM}: ${RETRY} check the tracker's request limits.`],
+  ['server_error', `${PLATFORM}: ${RETRY} check the tracker's status and settings.`],
+  ['timeout', `${PLATFORM}: ${RETRY} check the tracker's responsiveness and settings.`],
+  ['network', `${PLATFORM}: ${RETRY} check the tracker address and network access.`],
+  ['redirect', `${PLATFORM}: ask an administrator to check the tracker address in its settings.`],
+  ['rejected', `${PLATFORM}: ask an administrator to check the tracker settings.`],
+  [
+    'refused',
+    `${PLATFORM}: ask an administrator to check the tracker's allowed addresses and network policy.`,
+  ],
+  ['unconfigured', `${PLATFORM}: ask an administrator to configure the ticket tracker.`],
+  [
+    'unknown',
+    "This may be a problem on the platform's side, not the requester's ticket: try again, and if it keeps happening ask an administrator to check the platform logs.",
+  ],
+]);
+
+/** Shown instead of the stored message when the ticket could not be read (own copy, no stored text). */
+export const TICKET_UNAVAILABLE_WORKAROUND =
+  'In the meantime you can paste the ticket text into the request, or add acceptance criteria, and run it again.';
+
+function ticketUnavailableHint(reason: unknown): string | null {
+  return typeof reason === 'string' ? (TICKET_UNAVAILABLE_HINTS.get(reason) ?? null) : null;
+}
 
 function ticketUnavailableLine(reason: unknown): string | null {
   return typeof reason === 'string' ? (TICKET_UNAVAILABLE_LINES.get(reason) ?? null) : null;
@@ -222,11 +259,27 @@ export function RunOutcomeCard({ result, runId, templateName, isAgentRun }: RunO
       ? [...new Set(result.ambiguities.filter((item): item is string => typeof item === 'string'))]
       : [];
     const ticketLine = ticketUnavailableLine(result.ticketUnavailableReason);
+    // An integration failure (the ticket could not be read) leads the card and replaces the model's
+    // ambiguities and the stored message, which describe a ticket the platform never saw.
+    const ticketHint = ticketUnavailableHint(result.ticketUnavailableReason);
+    const unreadable = ticketHint !== null;
     return (
       <OutcomeShell icon="warning" title="Stopped" tone="warning">
-        <OutcomeText runId={runId} value={result.message} />
-        {ticketLine ? <p className="text-sm leading-relaxed text-paper-300">{ticketLine}</p> : null}
-        {ambiguities.length > 0 ? (
+        {unreadable ? (
+          <>
+            <p className="text-sm font-medium leading-relaxed text-paper-100">{ticketLine}</p>
+            <p className="text-sm leading-relaxed text-paper-300">{ticketHint}</p>
+            <p className="text-sm leading-relaxed text-paper-300">
+              {TICKET_UNAVAILABLE_WORKAROUND}
+            </p>
+          </>
+        ) : (
+          <OutcomeText runId={runId} value={result.message} />
+        )}
+        {ticketLine && !unreadable ? (
+          <p className="text-sm leading-relaxed text-paper-300">{ticketLine}</p>
+        ) : null}
+        {!unreadable && ambiguities.length > 0 ? (
           <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-paper-300">
             {ambiguities.map((item) => (
               <li className="break-words" key={item}>
