@@ -9,6 +9,10 @@
  *   yarn workspace @auto-swe/worker exec tsx --env-file=../../.env \
  *     scripts/toolTokenReport.ts --days 7 --limit 50
  *
+ * `--cache-read-rate <x>` prices cached input at x times the plain input price for a
+ * model the price table has no cache rate for (it then reports no discount, so cost
+ * equals tokens). The rate used and where it came from are printed per model.
+ *
  * Read-only, and prints aggregates only — no transcript text. It reads the
  * database and artifact store directly, so it is for an operator with that
  * access; it does not write the transcript access log the gateway's reads do.
@@ -16,9 +20,8 @@
  * which are the largest prompts, and would bias the shares.
  *
  * Limits: the chars-to-tokens split is proportional, so a share is an estimate
- * of the real total, not a tokenizer count. A provider whose recorded usage has
- * no cache figures (the OpenAI chat path) shows cost equal to tokens. A harness
- * session-file record is not attributable and is counted as unmeasurable.
+ * of the real total, not a tokenizer count. A harness session-file record is not
+ * attributable and is counted as unmeasurable.
  * The attribution is in `src/lib/toolTokenAttribution.ts`.
  */
 import { createHash } from 'node:crypto';
@@ -27,7 +30,10 @@ import { gunzip } from 'node:zlib';
 import { prisma } from '@auto-swe/shared/db';
 import { getArtifact } from '@auto-swe/shared/lib/artifactStore';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { normalizeTranscriptRecord } from '@auto-swe/shared/lib/transcripts/normalize';
+import {
+  type NormalizedCall,
+  normalizeTranscriptRecord,
+} from '@auto-swe/shared/lib/transcripts/normalize';
 import { getCacheMultipliers } from '../src/lib/costTracking.js';
 import { IMPLEMENTER_ACTIVITY_TYPES } from '../src/lib/lessonTranscriptEvidence.js';
 import {
@@ -38,21 +44,33 @@ import {
 
 const gunzipAsync = promisify(gunzip);
 
-function parseArgs(argv: string[]): { runId?: string; days: number; limit: number } {
+function parseArgs(argv: string[]): {
+  runId?: string;
+  days: number;
+  limit: number;
+  cacheReadRate?: number;
+} {
   let runId: string | undefined;
   let days = 7;
   let limit = 50;
+  let cacheReadRate: number | undefined;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i] as string;
-    if (arg === '--days' || arg === '--limit') {
+    if (arg === '--days' || arg === '--limit' || arg === '--cache-read-rate') {
       const value = Number(argv[++i]);
-      if (!Number.isFinite(value) || value <= 0) {
-        throw new Error(`${arg} takes a positive number`);
+      if (!Number.isFinite(value) || value <= 0 || (arg === '--cache-read-rate' && value > 1)) {
+        throw new Error(
+          arg === '--cache-read-rate'
+            ? '--cache-read-rate takes a number above 0 and at most 1'
+            : `${arg} takes a positive number`
+        );
       }
       if (arg === '--days') {
         days = value;
-      } else {
+      } else if (arg === '--limit') {
         limit = value;
+      } else {
+        cacheReadRate = value;
       }
     } else if (arg.startsWith('--') || runId !== undefined) {
       throw new Error(`unexpected argument: ${arg}`);
@@ -60,30 +78,48 @@ function parseArgs(argv: string[]): { runId?: string; days: number; limit: numbe
       runId = arg;
     }
   }
-  return { days, limit, runId };
+  return { cacheReadRate, days, limit, runId };
 }
 
-const { runId, days, limit } = parseArgs(process.argv.slice(2));
+const { runId, days, limit, cacheReadRate } = parseArgs(process.argv.slice(2));
 
-const rateCache = new Map<string, CacheRates>();
-async function ratesFor(model: string | undefined): Promise<CacheRates> {
-  const key = model ?? '';
+// The price table keys on `<provider>/<model>`; a transcript records the provider's own name for the model.
+const SPEC_PROVIDER: Partial<Record<NormalizedCall['provider'], string>> = {
+  anthropic: 'anthropic',
+  google: 'google',
+  'openai-chat': 'openai',
+  'openai-responses': 'openai',
+};
+
+interface RateChoice {
+  rates: CacheRates;
+  source: string;
+}
+const rateCache = new Map<string, RateChoice>();
+async function ratesFor(call: NormalizedCall): Promise<RateChoice> {
+  const provider = SPEC_PROVIDER[call.provider];
+  const key = `${provider ?? call.provider}/${call.model ?? ''}`;
   const seen = rateCache.get(key);
   if (seen) {
     return seen;
   }
-  // An unknown model is costed as if nothing were cached: its cost share equals its token share.
-  let rates: CacheRates = { read: 1, write: 1 };
-  if (model) {
+  // No known discount: cached input is costed as plain input, so cost share equals token share.
+  let choice: RateChoice = { rates: { read: 1, write: 1 }, source: 'none known' };
+  if (provider && call.model) {
     try {
-      const m = await getCacheMultipliers(model);
-      rates = { read: m.read, write: m.write };
+      const m = await getCacheMultipliers(key);
+      if (m.read !== 1 || m.write !== 1) {
+        choice = { rates: { read: m.read, write: m.write }, source: 'price table' };
+      }
     } catch {
       // keep the neutral rates
     }
   }
-  rateCache.set(key, rates);
-  return rates;
+  if (choice.source === 'none known' && cacheReadRate !== undefined) {
+    choice = { rates: { read: cacheReadRate, write: 1 }, source: '--cache-read-rate' };
+  }
+  rateCache.set(key, choice);
+  return choice;
 }
 
 const rows = await runUnscoped(
@@ -106,6 +142,7 @@ const rows = await runUnscoped(
 
 // One report per runtime and model: a report's cost column is in units of one model's input price.
 const reports = new Map<string, SpendReport>();
+const rateNotes = new Map<string, string>();
 let read = 0;
 let unreadable = 0;
 
@@ -137,10 +174,10 @@ for (const row of rows) {
       const call =
         record && typeof record === 'object' ? normalizeTranscriptRecord(record as never) : null;
       if (call) {
-        staged.push({
-          attribution: attributeCallContext(call, await ratesFor(call.model)),
-          key: `${row.runtime} / ${call.model ?? 'unknown model'}`,
-        });
+        const { rates, source } = await ratesFor(call);
+        const key = `${row.runtime} / ${call.model ?? 'unknown model'}`;
+        rateNotes.set(key, `cache read x${rates.read} (${source})`);
+        staged.push({ attribution: attributeCallContext(call, rates), key });
       }
     }
   }
@@ -166,7 +203,7 @@ if (rows.length === limit) {
 for (const [key, report] of reports) {
   console.log(
     `\n${key}  model calls=${report.calls}  unmeasurable=${report.skipped}` +
-      `  input tokens=${Math.round(report.inputTokens)}`
+      `  input tokens=${Math.round(report.inputTokens)}  ${rateNotes.get(key) ?? ''}`
   );
   console.log('segment'.padEnd(34), 'tokens'.padStart(7), ' cost');
   for (const r of report.rows().slice(0, 15)) {
