@@ -49,10 +49,27 @@ describe('isTimeoutError', () => {
 });
 
 describe('readTrackerWriteback', () => {
-  it('reads the failure a run recorded on its snapshot', () => {
+  it.each(['workflow_completed', 'workflow_failed'] as const)(
+    'reads the %s failure a run recorded on its snapshot',
+    (event) => {
+      expect(
+        readTrackerWriteback({ result: {}, trackerWriteback: { event, failure: 'forbidden' } })
+      ).toEqual({ event, failure: 'forbidden' });
+    }
+  );
+
+  it('reads a record stored before the event was kept as a workflow_failed one', () => {
     expect(
       readTrackerWriteback({ result: {}, trackerWriteback: { failure: 'forbidden' } })
-    ).toEqual({ failure: 'forbidden' });
+    ).toEqual({ event: 'workflow_failed', failure: 'forbidden' });
+  });
+
+  it('accepts the out_of_scope class', () => {
+    expect(
+      readTrackerWriteback({
+        trackerWriteback: { event: 'workflow_completed', failure: 'out_of_scope' },
+      })
+    ).toEqual({ event: 'workflow_completed', failure: 'out_of_scope' });
   });
 
   it.each([
@@ -63,6 +80,16 @@ describe('readTrackerWriteback', () => {
     ['a record with no failure', { trackerWriteback: {} }],
     ['a failure outside the closed set', { trackerWriteback: { failure: 'boom: 403 <html>' } }],
     ['a failure that is a prototype key', { trackerWriteback: { failure: 'constructor' } }],
+    [
+      'an event outside the closed set',
+      { trackerWriteback: { event: 'ci_failed', failure: 'forbidden' } },
+    ],
+    [
+      'an event that is a prototype key',
+      { trackerWriteback: { event: 'constructor', failure: 'forbidden' } },
+    ],
+    ['an event that is not a string', { trackerWriteback: { event: 1, failure: 'forbidden' } }],
+    ['an event that is null', { trackerWriteback: { event: null, failure: 'forbidden' } }],
   ])('answers null for %s', (_label, snapshot) => {
     expect(readTrackerWriteback(snapshot)).toBeNull();
   });

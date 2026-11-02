@@ -84,6 +84,81 @@ describe('GitHubIssuesProvider.addComment', () => {
       await expect(provider.syncOnEvent(failed)).resolves.toBe('rate_limited');
     });
 
+    describe('workflow_completed (closes the issue, may post a PR link comment)', () => {
+      const completed = { issueId: 'acme/api#7', type: 'workflow_completed' } as const;
+      const withPr = { ...completed, prTitle: 'Fix', prUrl: 'https://gh/pr/1' } as const;
+
+      it('reports no failure when the issue is closed', async () => {
+        const { fetchImpl, provider } = make(200);
+        await expect(provider.syncOnEvent(completed)).resolves.toBeNull();
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        expect(fetchImpl.mock.calls[0]?.[1]).toMatchObject({ method: 'PATCH' });
+      });
+
+      it.each([
+        [401, 'unauthorized'],
+        [403, 'forbidden'],
+        [404, 'not_found'],
+        [500, 'server_error'],
+      ])('reports a refused close (%s)', async (status, failure) => {
+        await expect(make(status).provider.syncOnEvent(completed)).resolves.toBe(failure);
+      });
+
+      it('reports a rate-limited close as rate limited', async () => {
+        const fetchImpl = vi.fn(
+          async (..._args: unknown[]) =>
+            new Response('{}', { headers: { 'retry-after': '30' }, status: 403 })
+        );
+        const provider = new GitHubIssuesProvider({
+          apiToken: 't',
+          fetchImpl: fetchImpl as typeof fetch,
+        });
+        await expect(provider.syncOnEvent(completed)).resolves.toBe('rate_limited');
+      });
+
+      it('reports a network failure on the close', async () => {
+        const fetchImpl = vi.fn(async (..._args: unknown[]) => {
+          throw new TypeError('fetch failed');
+        });
+        const provider = new GitHubIssuesProvider({
+          apiToken: 't',
+          fetchImpl: fetchImpl as typeof fetch,
+        });
+        await expect(provider.syncOnEvent(completed)).resolves.toBe('network');
+      });
+
+      it('reports a refused PR link comment, and still closes the issue', async () => {
+        const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) =>
+          init?.method === 'POST' ? new Response('{}', { status: 403 }) : new Response('{}')
+        );
+        const provider = new GitHubIssuesProvider({
+          apiToken: 't',
+          fetchImpl: fetchImpl as typeof fetch,
+        });
+        await expect(provider.syncOnEvent(withPr)).resolves.toBe('forbidden');
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+      });
+
+      it('keeps the public transitionIssue and addRemoteLink void and silent', async () => {
+        const { provider } = make(403);
+        await expect(provider.transitionIssue('acme/api#7', 'done')).resolves.toBeUndefined();
+        await expect(
+          provider.addRemoteLink('acme/api#7', 'https://x', 't')
+        ).resolves.toBeUndefined();
+      });
+    });
+
+    it('reports a refused pr_opened link', async () => {
+      await expect(
+        make(403).provider.syncOnEvent({
+          issueId: 'acme/api#7',
+          prTitle: 'Fix',
+          prUrl: 'https://gh/pr/1',
+          type: 'pr_opened',
+        })
+      ).resolves.toBe('forbidden');
+    });
+
     it('reports a comment on an id it cannot place as rejected', async () => {
       await expect(
         make(201).provider.syncOnEvent({ issueId: '7', type: 'workflow_failed' })

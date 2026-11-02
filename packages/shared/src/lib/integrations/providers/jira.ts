@@ -332,6 +332,17 @@ export class JiraProvider implements IssueTrackerProvider {
   }
 
   async transitionIssue(issueId: string, targetStatusName: string): Promise<void> {
+    await this.moveIssue(issueId, targetStatusName);
+  }
+
+  /**
+   * Moves the issue to a status; resolves why the tracker refused (the read of its transitions or
+   * the move), or null when it moved or when the issue has no such transition.
+   */
+  private async moveIssue(
+    issueId: string,
+    targetStatusName: string
+  ): Promise<TicketFailureClass | null> {
     try {
       const result = await this.client.get<JiraTransitionResponse>(
         `/rest/api/3/issue/${encodeURIComponent(issueId)}/transitions`
@@ -343,14 +354,17 @@ export class JiraProvider implements IssueTrackerProvider {
           t.to?.name?.toLowerCase() === targetStatusName.toLowerCase()
       );
       if (!transition) {
-        // No matching transition — silently no-op
-        return;
+        // No matching transition: a silent no-op, not a failure. The workflow may simply not
+        // have that status, and nothing was refused.
+        return null;
       }
       await this.client.post(`/rest/api/3/issue/${encodeURIComponent(issueId)}/transitions`, {
         transition: { id: transition.id },
       });
+      return null;
     } catch (err) {
       this.log?.warn({ err, issueId, targetStatusName }, 'Jira transitionIssue failed');
+      return jiraFailure(err);
     }
   }
 
@@ -372,47 +386,69 @@ export class JiraProvider implements IssueTrackerProvider {
   }
 
   async addRemoteLink(issueId: string, url: string, title: string): Promise<void> {
+    await this.postRemoteLink(issueId, url, title);
+  }
+
+  /** Links a URL to the issue; resolves why the tracker refused it, or null when it took it. */
+  private async postRemoteLink(
+    issueId: string,
+    url: string,
+    title: string
+  ): Promise<TicketFailureClass | null> {
     try {
       await this.client.post(`/rest/api/3/issue/${encodeURIComponent(issueId)}/remotelink`, {
         object: { title, url },
       });
+      return null;
     } catch (err) {
       this.log?.warn({ err, issueId, title, url }, 'Jira addRemoteLink failed');
+      return jiraFailure(err);
     }
   }
 
+  /**
+   * Mirrors a run event onto the issue. Every write of the event is attempted; resolves the class
+   * of the first one the tracker refused (comment, status move or link), or null.
+   */
   async syncOnEvent(event: TrackerSyncEvent): Promise<TicketFailureClass | null> {
     let failure: TicketFailureClass | null = null;
+    const note = (refused: TicketFailureClass | null) => {
+      failure ??= refused;
+    };
     try {
       switch (event.type) {
         case 'workflow_started':
-          await this.transitionIssue(event.issueId, JIRA_SYNC_STATUSES.started);
+          note(await this.moveIssue(event.issueId, JIRA_SYNC_STATUSES.started));
           break;
         case 'pr_opened':
           if (event.prUrl && event.prTitle) {
-            await this.addRemoteLink(event.issueId, event.prUrl, event.prTitle);
+            note(await this.postRemoteLink(event.issueId, event.prUrl, event.prTitle));
           }
-          await this.transitionIssue(event.issueId, JIRA_SYNC_STATUSES.prOpened);
+          note(await this.moveIssue(event.issueId, JIRA_SYNC_STATUSES.prOpened));
           break;
         case 'ci_passed':
-          failure = await this.postComment(event.issueId, '✅ CI passed');
+          note(await this.postComment(event.issueId, '✅ CI passed'));
           break;
         case 'ci_failed':
-          failure = await this.postComment(
-            event.issueId,
-            `❌ CI failed${event.summary ? `: ${event.summary}` : ''}`
+          note(
+            await this.postComment(
+              event.issueId,
+              `❌ CI failed${event.summary ? `: ${event.summary}` : ''}`
+            )
           );
           break;
         case 'workflow_completed':
           if (event.prUrl && event.prTitle) {
-            await this.addRemoteLink(event.issueId, event.prUrl, event.prTitle);
+            note(await this.postRemoteLink(event.issueId, event.prUrl, event.prTitle));
           }
-          await this.transitionIssue(event.issueId, JIRA_SYNC_STATUSES.completed);
+          note(await this.moveIssue(event.issueId, JIRA_SYNC_STATUSES.completed));
           break;
         case 'workflow_failed':
-          failure = await this.postComment(
-            event.issueId,
-            `⚠️ Workflow failed${event.summary ? `: ${event.summary}` : ''}`
+          note(
+            await this.postComment(
+              event.issueId,
+              `⚠️ Workflow failed${event.summary ? `: ${event.summary}` : ''}`
+            )
           );
           break;
       }
