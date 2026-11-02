@@ -9,7 +9,14 @@ import {
 } from './brief.js';
 import { classify } from './classify.js';
 import { DEFAULT_THRESHOLDS, mergePolicy } from './policy.js';
-import type { BriefIntent, ChangedFile, EffectivePolicy, EvaluationSignals } from './types.js';
+import type {
+  BriefEvidence,
+  BriefFinding,
+  BriefIntent,
+  ChangedFile,
+  EffectivePolicy,
+  EvaluationSignals,
+} from './types.js';
 
 const { effective } = mergePolicy({ ...DEFAULT_THRESHOLDS, sensitivePaths: [] });
 const file = (path: string, over: Partial<ChangedFile> = {}): ChangedFile => ({
@@ -251,6 +258,46 @@ describe('the ticket intent in the brief', () => {
     expect(md).toContain('not checked against the diff');
   });
 
+  it("shows the run's own account next to the question it was about, and only that one", () => {
+    const md = withIntent({
+      criteria: [],
+      handled: [
+        { note: '', question: 'does it need auth?', resolution: 'left-unchanged' },
+        { note: 'used the orders table', question: 'which table?', resolution: 'implemented' },
+        {
+          note: 'for no question here',
+          question: 'a question nobody listed',
+          resolution: 'implemented',
+        },
+      ],
+      openQuestions: ['does it need auth?', 'which table?', 'what is the limit?'],
+    });
+    expect(md).toContain('- does it need auth? - the run says it **left this unchanged**');
+    expect(md).toContain(
+      '- which table? - the run says it **implemented** this: used the orders table'
+    );
+    expect(md).toContain('- what is the limit?\n');
+    expect(md).not.toContain('for no question here');
+    expect(md).toContain('its own account, not checked');
+  });
+
+  it('neutralises the run’s note like any model text', () => {
+    const md = withIntent({
+      criteria: [],
+      handled: [
+        {
+          note: 'ping @everyone <script>alert(1)</script>\n# Heading',
+          question: 'q?',
+          resolution: 'implemented',
+        },
+      ],
+      openQuestions: ['q?'],
+    });
+    expect(md).not.toContain('<script>');
+    expect(md).not.toContain('@everyone');
+    expect(md).not.toContain('\n# Heading');
+  });
+
   it('adds nothing when there is no intent, or only empty entries', () => {
     const plain = withIntent(undefined);
     expect(withIntent({ criteria: [], openQuestions: [] })).toBe(plain);
@@ -293,6 +340,145 @@ describe('the ticket intent in the brief', () => {
     expect(md).not.toContain('see #123');
     expect(md).not.toContain('GH-9');
     expect(md).toContain('` https://evil.example/x `');
+  });
+});
+
+describe('the run evidence in the brief', () => {
+  const evidence = (over: Partial<BriefEvidence> = {}): BriefEvidence => ({
+    ci: 'passed',
+    runUrl: 'https://app.example.com/runs/abc',
+    tests: { failing: 0, passing: 4, total: 4 },
+    ui: null,
+    ...over,
+  });
+  const render = (e: BriefEvidence | undefined) => {
+    const files = [file('db/migrations/1.sql')];
+    const signals: EvaluationSignals = {
+      draft: false,
+      files,
+      maxReviewSeverity: 'PASS',
+      policyFileChanged: false,
+      scannerFindingCount: 0,
+    };
+    return buildBrief(files, classify(signals, effective), effective, undefined, e).markdown;
+  };
+
+  it('adds nothing without evidence', () => {
+    expect(render(undefined)).not.toContain('**Evidence**');
+  });
+
+  it('writes fixed sentences between the intent and the reading path', () => {
+    const md = render(evidence({ ui: { screenshots: 1, traces: 2, videos: 0 } }));
+    expect(md).toContain('- Tests: 4 passing, 0 failing at this head.');
+    expect(md).toContain('- Browser checks the run captured: 1 screenshot, 2 traces.');
+    expect(md).toContain('- CI on this head: passed.');
+    expect(md).toContain(
+      "- [The run's page](https://app.example.com/runs/abc) has its full trace."
+    );
+    expect(md).toContain('- Not checked here: whether the tests cover what was asked.');
+    expect(md.indexOf('**Evidence**')).toBeLessThan(md.indexOf('**Read in this order**'));
+  });
+
+  it('says what it does not know', () => {
+    const md = render(evidence({ ci: null, runUrl: null, tests: null }));
+    expect(md).toContain('- Tests: no result recorded for this head.');
+    expect(md).toContain('- CI on this head: could not be read.');
+    expect(md).not.toContain("The run's page");
+    expect(render(evidence({ tests: { failing: 0, passing: 0, total: 0 } }))).toContain(
+      '- Tests: none ran at this head.'
+    );
+  });
+
+  it.each([
+    ['pending', 'still running'],
+    ['none', 'no checks reported'],
+    ['failed', 'failed'],
+  ] as const)('words a %s CI verdict as "%s"', (ci, text) => {
+    expect(render(evidence({ ci }))).toContain(`- CI on this head: ${text}.`);
+  });
+
+  it('never writes a run address that could break out of a link', () => {
+    for (const runUrl of [
+      'https://x.example/a b',
+      'https://x.example/a)(b',
+      'javascript:alert(1)',
+    ]) {
+      expect(render(evidence({ runUrl }))).not.toContain("The run's page");
+    }
+  });
+
+  it('keeps a hostile count a plain number', () => {
+    const md = render(evidence({ tests: { failing: -3, passing: 2.9, total: 5 } }));
+    expect(md).toContain('- Tests: 2 passing, 0 failing at this head.');
+  });
+});
+
+describe('the review findings in the brief', () => {
+  const finding = (over: Partial<BriefFinding> = {}): BriefFinding => ({
+    category: 'logic',
+    description: 'the guard is inverted',
+    file: 'src/a.ts',
+    line: 12,
+    reviewer: 'DOMAIN_LOGIC',
+    severity: 'CRITICAL',
+    suggestedFix: 'flip the condition',
+    ...over,
+  });
+  const render = (findings: BriefFinding[] | undefined) => {
+    const files = [file('src/a.ts')];
+    const signals: EvaluationSignals = {
+      draft: false,
+      files,
+      maxReviewSeverity: 'PASS',
+      policyFileChanged: false,
+      scannerFindingCount: 0,
+    };
+    return buildBrief(
+      files,
+      classify(signals, effective),
+      effective,
+      undefined,
+      undefined,
+      findings
+    ).markdown;
+  };
+
+  it('adds nothing without findings', () => {
+    expect(render(undefined)).not.toContain('Review findings');
+    expect(render([])).not.toContain('Review findings');
+  });
+
+  it('lists each finding on one line with its place, ahead of the reading path', () => {
+    const md = render([finding(), finding({ line: null, severity: 'WARNING', suggestedFix: '' })]);
+    expect(md).toContain(
+      '- **CRITICAL** logic in ` src/a.ts:12 ` - the guard is inverted Suggested: flip the condition'
+    );
+    expect(md).toContain('- **WARNING** logic in ` src/a.ts ` - the guard is inverted\n');
+    expect(md).toContain('not verified');
+    expect(md.indexOf('**Review findings**')).toBeLessThan(md.indexOf('**Read in this order**'));
+  });
+
+  it('shows ten and counts the rest', () => {
+    const md = render(Array.from({ length: 13 }, (_, i) => finding({ category: `cat${i}` })));
+    expect(md).toContain('cat9');
+    expect(md).not.toContain('cat10');
+    expect(md).toContain('- +3 more not shown');
+  });
+
+  it('neutralises model text and keeps each finding on one line', () => {
+    const md = render([
+      finding({
+        category: '<b>x</b>',
+        description: 'ping @everyone see #123\n# Injected heading <script>alert(1)</script>',
+        suggestedFix: '```suggestion\nrm -rf /\n```',
+      }),
+    ]);
+    expect(md).not.toContain('<script>');
+    expect(md).not.toContain('<b>');
+    expect(md).not.toContain('@everyone');
+    expect(md).not.toContain('\n# Injected heading');
+    expect(md).not.toContain('\n```suggestion');
+    expect(md).not.toContain('see #123');
   });
 });
 
@@ -351,6 +537,40 @@ describe('readingOrder', () => {
       file('b/two.ts', { additions: 8, deletions: 0 }),
     ];
     expect(order(files)).toEqual(['b/one.ts', 'b/two.ts', 'a/one.ts', 'a/two.ts']);
+  });
+
+  it('pairs a test in a mirrored test tree with the one source it can cover', () => {
+    const files = [
+      file('test/foo/bar.test.ts'),
+      file('src/foo/bar.ts', { additions: 5, deletions: 0 }),
+      file('src/foo/baz.ts', { additions: 2, deletions: 0 }),
+      file('tests/solo.test.ts'),
+      file('lib/solo.ts', { additions: 1, deletions: 0 }),
+    ];
+    expect(order(files)).toEqual([
+      'src/foo/bar.ts',
+      'test/foo/bar.test.ts',
+      'src/foo/baz.ts',
+      'lib/solo.ts',
+      'tests/solo.test.ts',
+    ]);
+  });
+
+  it('leaves a mirrored test loose when two sources could be its own', () => {
+    const files = [
+      file('test/x.test.ts'),
+      file('a/x.ts', { additions: 2, deletions: 0 }),
+      file('b/x.ts', { additions: 1, deletions: 0 }),
+      file('test/foo/y.test.ts'),
+      file('src/bar/y.ts', { additions: 1, deletions: 0 }),
+    ];
+    expect(order(files)).toEqual([
+      'a/x.ts',
+      'b/x.ts',
+      'src/bar/y.ts',
+      'test/foo/y.test.ts',
+      'test/x.test.ts',
+    ]);
   });
 
   it('does not pair a test with a source of another name or directory', () => {

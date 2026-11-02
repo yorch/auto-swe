@@ -85,7 +85,42 @@ export type SkimProof = 'exact-rename' | 'whitespace-only';
 /** What the ticket asked for, as the run extracted it. Untrusted text: the brief escapes it. */
 export type BriefIntent = {
   criteria: string[];
+  /**
+   * What the run said it did about an open question, matched to `openQuestions` by the question's
+   * exact text. Its own account, never checked.
+   */
+  handled?: { note: string; question: string; resolution: 'implemented' | 'left-unchanged' }[];
   openQuestions: string[];
+};
+
+/**
+ * What the run that opened the pull request recorded, as numbers and verdicts: never a model's
+ * words, a command's output or a page's text. A null says it could not be read or was not recorded.
+ */
+export type BriefEvidence = {
+  /** The run's own test result at this head; null when no review of this exact head was found. */
+  tests: { failing: number; passing: number; total: number } | null;
+  /** Browser checks the run captured, by kind; null when it captured none. */
+  ui: { screenshots: number; traces: number; videos: number } | null;
+  /** The host's verdict on this head's checks right now; null when it could not be read. */
+  ci: 'passed' | 'failed' | 'pending' | 'none' | null;
+  /** The run's page in the dashboard; null when no run or no web address is known. */
+  runUrl: string | null;
+};
+
+/**
+ * One finding of the review network's pass over exactly this head, after selection. Every string
+ * is model output: the brief and any comment built from it escape it. `line` is set only when it
+ * falls inside the file's patch, so a comment can be anchored to it.
+ */
+export type BriefFinding = {
+  category: string;
+  description: string;
+  file: string;
+  line: number | null;
+  reviewer: string;
+  severity: 'WARNING' | 'CRITICAL';
+  suggestedFix: string;
 };
 
 export type Brief = {

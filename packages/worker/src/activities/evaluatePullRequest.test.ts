@@ -27,6 +27,7 @@ const m = vi.hoisted(() => ({
   settings: {} as Record<string, unknown>,
   snapshot: vi.fn(),
   steps: vi.fn(),
+  uiEvidence: vi.fn(),
   update: vi.fn(),
   updateMany: vi.fn(),
   user: vi.fn(),
@@ -62,6 +63,7 @@ vi.mock('@auto-swe/shared/db', () => ({
       updateMany: m.updateMany,
     },
     pullRequest: { findFirst: m.platformPr },
+    runEvidence: { groupBy: m.uiEvidence },
     runInput: { findUnique: m.request },
     user: { findMany: m.user },
     workflowRun: { findMany: m.runs },
@@ -184,9 +186,11 @@ function fakeScm(over: Partial<Record<keyof ScmProvider, unknown>> = {}): Fake {
       return value;
     };
   const base: Record<string, unknown> = {
+    createReview: track('createReview', { htmlUrl: 'u', ok: true }),
     disableAutoMerge: track('disableAutoMerge', { ok: true }),
     dismissReview: track('dismissReview', { ok: true }),
     enableAutoMerge: track('enableAutoMerge', { ok: true }),
+    fetchCiStatus: track('fetchCiStatus', { verdict: 'passed' }),
     fetchFileContent: track('fetchFileContent', null),
     getPullRequest: track('getPullRequest', OPEN_PR),
     listPullRequestFiles: track('listPullRequestFiles', {
@@ -196,6 +200,7 @@ function fakeScm(over: Partial<Record<keyof ScmProvider, unknown>> = {}): Fake {
     listPullRequestReviews: track('listPullRequestReviews', [
       { commitId: HEAD, login: 'bob', state: 'APPROVED', submittedAt: null },
     ] satisfies PullRequestReviewSummary[]),
+    listReviewThreads: track('listReviewThreads', []),
     readBranchRules: track('readBranchRules', ALLOWS),
     repoPermission: track('repoPermission', { ok: true, permission: 'write' }),
     setCommitStatus: track('setCommitStatus', { ok: true }),
@@ -282,6 +287,8 @@ beforeEach(() => {
   m.previous.mockResolvedValue(null);
   m.snapshot.mockReset();
   m.snapshot.mockResolvedValue(null);
+  m.uiEvidence.mockReset();
+  m.uiEvidence.mockResolvedValue([]);
   m.steps.mockReset();
   m.steps.mockResolvedValue([
     { outputs: { codeResult: { headSha: HEAD }, verdicts: [{ severity: 'PASS' }] } },
@@ -630,6 +637,147 @@ describe('evaluatePullRequest: approvals and status', () => {
     expect(marker).toBe('<!-- auto-swe:pr-evaluation -->');
   });
 
+  describe('the run evidence in the brief', () => {
+    const briefMarkdown = () => (argsOf('upsertMarkedComment')[0] as unknown[])[3] as string;
+    const reviewedStep = (headSha: string, testResults: unknown) => ({
+      outputs: { codeResult: { headSha, testResults }, verdicts: [{ severity: 'PASS' }] },
+    });
+
+    it('reports the run tests for this head, the browser checks, CI and the run page', async () => {
+      m.steps.mockResolvedValue([
+        reviewedStep(HEAD, { failing: 1, passing: 11, stdout: 'SECRET OUTPUT', total: 12 }),
+      ]);
+      m.uiEvidence.mockResolvedValue([
+        { _count: { _all: 2 }, kind: 'screenshot' },
+        { _count: { _all: 1 }, kind: 'video' },
+        { _count: { _all: 4 }, kind: 'log' },
+      ]);
+      const scm = fakeScm({ fetchCiStatus: async () => ({ verdict: 'pending' }) });
+      await evaluatePullRequestWith(INPUT, depsWith(scm));
+      const md = briefMarkdown();
+      expect(md).toContain('**Evidence**');
+      expect(md).toContain('- Tests: 11 passing, 1 failing at this head.');
+      expect(md).toContain('- Browser checks the run captured: 2 screenshots, 1 video.');
+      expect(md).toContain('- CI on this head: still running.');
+      expect(md).toContain('/runs/run-1) has its full trace.');
+      expect(md).toContain('Not checked here: whether the tests cover what was asked.');
+      expect(md).not.toContain('SECRET OUTPUT');
+    });
+
+    describe('the review findings', () => {
+      const withFindings = (headSha: string) => [
+        {
+          outputs: {
+            codeResult: { headSha },
+            verdicts: [
+              {
+                findings: [
+                  {
+                    category: 'secrets',
+                    description: 'a token is written to the log',
+                    file: 'src/util.ts',
+                    line: 1,
+                    suggestedFix: 'drop the log line',
+                  },
+                  { category: 'logic', description: 'not in this change', file: 'src/gone.ts' },
+                ],
+                reviewer: 'SECURITY',
+                severity: 'WARNING',
+              },
+            ],
+          },
+        },
+      ];
+
+      it('lists the findings of the review of this head that fall in the change', async () => {
+        m.steps.mockResolvedValue(withFindings(HEAD));
+        await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+        const md = briefMarkdown();
+        expect(md).toContain('**Review findings**');
+        expect(md).toContain(
+          '- **WARNING** secrets in ` src/util.ts:1 ` - a token is written to the log Suggested: drop the log line'
+        );
+        expect(md).not.toContain('src/gone.ts');
+      });
+
+      it('posts the anchored ones as one review only when the setting is on', async () => {
+        m.steps.mockResolvedValue(withFindings(HEAD));
+        const off = fakeScm();
+        await evaluatePullRequestWith(INPUT, depsWith(off));
+        expect(off.calls).not.toContain('createReview');
+
+        m.settings['prEvaluation.postReviewFindings'] = true;
+        m.created.length = 0;
+        const on = fakeScm();
+        await evaluatePullRequestWith(INPUT, depsWith(on));
+        expect(on.calls.filter((c) => c === 'createReview')).toHaveLength(1);
+        const [, , review] = argsOf('createReview')[0] as [
+          unknown,
+          number,
+          { comments: { line: number; path: string }[]; commitId: string },
+        ];
+        expect(review.commitId).toBe(HEAD);
+        expect(review.comments).toEqual([
+          {
+            body: expect.stringContaining('a token is written to the log'),
+            line: 1,
+            path: 'src/util.ts',
+          },
+        ]);
+      });
+
+      it('still evaluates and posts the brief when the review cannot be posted', async () => {
+        m.steps.mockResolvedValue(withFindings(HEAD));
+        m.settings['prEvaluation.postReviewFindings'] = true;
+        const scm = fakeScm({
+          createReview: async () => {
+            throw new Error('host unreachable');
+          },
+        });
+        const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+        expect(result).toMatchObject({ outcome: 'evaluated' });
+        expect(briefMarkdown()).toContain('**Review findings**');
+        expect(JSON.stringify(m.logs)).not.toContain('unreachable');
+      });
+
+      it('lists nothing when the review was of another commit', async () => {
+        m.steps.mockResolvedValue(withFindings(OLD_HEAD));
+        await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+        expect(briefMarkdown()).not.toContain('Review findings');
+      });
+    });
+
+    it('says no result was recorded when the run reviewed another commit', async () => {
+      m.steps.mockResolvedValue([reviewedStep(OLD_HEAD, { failing: 0, passing: 3, total: 3 })]);
+      await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+      expect(briefMarkdown()).toContain('- Tests: no result recorded for this head.');
+    });
+
+    it('tells "none ran" from a failure', async () => {
+      m.steps.mockResolvedValue([reviewedStep(HEAD, { failing: 0, passing: 0, total: 0 })]);
+      await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+      expect(briefMarkdown()).toContain('- Tests: none ran at this head.');
+    });
+
+    it('keeps the brief, class and status when every source fails', async () => {
+      // The first read is the evaluation's own review severity, which must keep working; every
+      // read after it is the brief's.
+      m.steps.mockResolvedValueOnce([reviewedStep(HEAD, null)]);
+      m.steps.mockRejectedValue(new Error('database unreachable'));
+      m.uiEvidence.mockRejectedValue(new Error('database unreachable'));
+      const scm = fakeScm({
+        fetchCiStatus: async () => {
+          throw new Error('host unreachable');
+        },
+      });
+      const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+      expect(briefMarkdown()).toContain('- CI on this head: could not be read.');
+      expect(briefMarkdown()).toContain('- Tests: no result recorded for this head.');
+      expect(JSON.stringify(m.logs)).not.toContain('unreachable');
+      expect(result).toMatchObject({ outcome: 'evaluated' });
+    });
+  });
+
   describe('the ticket intent in the brief', () => {
     const briefMarkdown = () => (argsOf('upsertMarkedComment')[0] as unknown[])[3] as string;
 
@@ -647,6 +795,40 @@ describe('evaluatePullRequest: approvals and status', () => {
       expect(md).toContain('- GET /health returns 200');
       expect(md).toContain('**Open questions in the ticket**');
       expect(md).toContain('- which auth scheme applies?');
+    });
+
+    it('adds the run’s own account of an open question when the review of this head carries it', async () => {
+      m.snapshot.mockResolvedValue({
+        successCriteria: ['GET /health returns 200', 'AMBIGUOUS: which auth scheme applies?'],
+      });
+      const notes = [
+        {
+          note: 'used a bearer token',
+          question: 'which auth scheme applies?',
+          resolution: 'implemented',
+        },
+      ];
+      const stepOf = (headSha: string) => [
+        {
+          outputs: {
+            codeResult: { headSha, openQuestionNotes: notes },
+            verdicts: [{ severity: 'PASS' }],
+          },
+        },
+      ];
+      m.steps.mockResolvedValue(stepOf(HEAD));
+      await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+      expect(briefMarkdown()).toContain(
+        '- which auth scheme applies? - the run says it **implemented** this: used a bearer token'
+      );
+
+      // A head the run did not review carries no account of it.
+      m.steps.mockResolvedValue(stepOf(OLD_HEAD));
+      m.created.length = 0;
+      await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+      const [, , , md] = argsOf('upsertMarkedComment').at(-1) as unknown[];
+      expect(md as string).toContain('- which auth scheme applies?');
+      expect(md as string).not.toContain('the run says it');
     });
 
     it('leaves the sections out when the run recorded no criteria', async () => {

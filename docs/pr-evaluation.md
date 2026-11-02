@@ -131,6 +131,9 @@ marker `<!-- auto-swe:pr-evaluation -->`. It carries:
 - **Why this class**: each reason with up to five of its paths.
 - **What was asked** and **Open questions in the ticket**: the criteria the run extracted from the
   ticket when it validated the request, and the ones it marked ambiguous (below).
+- **Evidence**: what the run that opened the pull request recorded: its test result at this head,
+  the browser checks it captured, the head's CI verdict and a link to the run's page (below).
+- **Review findings**: what the review network raised on this head, worst first, at most ten (below).
 - **Read in this order**: every file that is not provably skimmable, in the order to read it (below).
   A file a reason names carries a **Check** note saying what to verify; the order does not depend on
   risk.
@@ -151,10 +154,85 @@ line and cut to 500 characters, with a `+N more` line for the rest. Both lists d
 text, so they go through the same escaping as every other prose in the brief: no markup, mentions or
 autolinks.
 
+Beside an open question the brief adds what the run says it did about it ("left this unchanged" or
+"implemented this", with the implementer's one-line note), from the `openQuestionNotes` of the
+`CodeResult` the review of this exact head covered (the same step and rule as the evidence). It is
+matched to the question by its exact text, so a ticket whose criteria were extracted again since the
+run shows no account; it is the implementer's own words, escaped like all model text, and it is
+labelled as unchecked.
+
 They are advisory and decide nothing: neither the class, the status nor the arming reads them. The
 criteria are model output and were never checked against the diff, which the heading says. A section
 is left out when the run recorded nothing, and so is the whole of it when the read fails, with a
 warning logged: the evaluation never fails, and never turns `HIGH`, because they could not be read.
+
+### Evidence
+
+The **Evidence** section repeats what the run already recorded and runs nothing itself. Its lines
+are fixed sentences filled with numbers and verdicts, so nothing a model, a command or a page wrote
+reaches it:
+
+- **Tests**: the counts in the test result of the run's `runReviewNetwork` step, taken only when
+  that step reviewed exactly this head (the same rule as the review severity in §2). "None ran" and
+  "no result recorded for this head" are told apart from a failing count.
+- **Browser checks**: how many screenshots, videos and traces the run stored.
+- **CI**: the host's verdict on this head at the moment of the evaluation (`passed`, `failed`,
+  `still running`, `no checks reported`).
+- **Run page**: a link to `/runs/<id>` on the dashboard's address (`WEB_URL`), written only when the
+  address contains nothing that could break out of a link.
+
+It ends with what it does not check, that the tests cover what was asked. Each source is read on its
+own: one that cannot be read shows as unknown, and none of them can change the class, the status or
+the arming.
+
+### Review findings
+
+The three reviewers of the review network ([agents.md](./agents.md)) return findings with a file and
+often a line. The brief lists the ones worth a person's time, chosen by `selectReviewFindings`
+(`packages/shared/src/lib/prEvaluation/findings.ts`) from the verdicts of the review of exactly this
+head (the same step and rule as the evidence's test counts):
+
+- only findings of a `WARNING` or `CRITICAL` verdict; a reviewer that crashed leaves a synthetic
+  `REVIEWER_CRASH` entry, which is dropped;
+- only files that are in the change;
+- when CI failed on this head, a finding whose category names lint, style, formatting or a type
+  error is dropped, because the failing check already says it (a rule on the category's words, not on
+  the description);
+- a line number is kept only when it falls inside the file's patch, since a reviewer's line is a
+  guess; otherwise the finding is shown against the file alone.
+
+They are ranked critical first, then by reading position, then by line, and shown with their
+category, place, description and suggested fix, each escaped like all model text and on one line.
+A suggested fix is prose and never a suggestion block. The section is advisory: a finding is never
+verified here and decides neither the class nor the status.
+
+**Inline comments (off by default).** With `prEvaluation.postReviewFindings` on, the findings that
+have a line inside the diff (at most ten) are also posted as inline comments, in one review on the
+evaluated head:
+
+- The review is created through `ScmProvider.createReview`, whose event is fixed to `COMMENT`: there
+  is no path through it to approve a pull request or to request changes, so it can neither merge nor
+  block one, and a `COMMENTED` review withdraws no approval.
+- Each comment ends with `<!-- auto-swe:finding <key> -->`, a key made from the reviewer, file, line
+  and category. The review threads are read first and a finding already carrying its key is not
+  posted again, so a retry or a re-evaluation of the same head adds nothing.
+- The head is read again just before posting; a head that moved posts nothing, and a host that
+  refuses the review (a line no longer in the diff) is logged and leaves the brief to carry the
+  findings. A failure here never fails the evaluation.
+- The text is escaped like the brief's, and `/auto-swe` is broken in it so a comment can never read
+  as the feedback command. The PR-feedback automation skips comments that carry the finding marker
+  ([pr-feedback.md](./pr-feedback.md)), and the engagement counts skip them too.
+
+### Whether reviewers act on the brief
+
+Each evaluation row counts how people met the brief at its head: when a person first reviewed it,
+how many reviews asked for changes, and where their inline comments landed (on a file the brief
+flagged, on one it listed as safe to skim, anywhere else). The gateway adds them from the review and
+review-comment deliveries it already receives, with no extra subscription, and never starts an
+evaluation for them. A review or comment by a bot, by the pull request's author, or carrying a
+platform marker (`<!-- auto-swe:`) is not counted, and a dismissed review or an edited comment is
+not a new one. The row keeps numbers only: never a login, a path or text.
+`GET /api/v1/pr-evaluations/engagement` (§13) summarises them.
 
 ### The reading path
 
@@ -169,7 +247,9 @@ the same change always reads the same way:
    busiest file first inside it. A test follows the source file it covers: the same name once the
    test marker is dropped (`foo.test.ts`, `foo.spec.ts`, `foo_test.go`, `test_foo.py`, `FooTest.java`),
    in the same directory or, for a test inside a `test`, `tests`, `__tests__`, `spec` or `e2e`
-   directory, in its parent.
+   directory, in its parent. A test in a tree of its own (`test/foo/bar.test.ts` for
+   `src/foo/bar.ts`) pairs with the one changed source of that name whose directory ends with the
+   path below the test directory; two candidates mean no pairing.
 3. **Tests with no source in the change**, then documentation and other files, by path.
 
 The first ten files are listed in full, with their position. A flagged file past the tenth (up to 30
@@ -530,6 +610,7 @@ All are ADMIN-only registry settings in the `prEvaluation` group; see
 | `prEvaluation.enabled` | off | GLOBAL only | The kill switch. Off, nothing is evaluated and nothing is posted. |
 | `prEvaluation.defaultMode` | `advisory` | team, organization | Mode of a repository that has not chosen one: `off`, `advisory` or `enforce`. |
 | `prEvaluation.autoMergeAllowed` | off | GLOBAL only | Whether any repository may arm GitHub auto-merge. Off, `auto` keeps its status rules and arms nothing. |
+| `prEvaluation.postReviewFindings` | off | team, organization | Whether the review network's findings that fall inside the diff are also posted as inline comments, in one review that never approves or requests changes (§4). Off, they appear in the brief only. |
 | `prEvaluation.botApprovalAllowed` | off | GLOBAL only | The second key for per-repository bot approval (§16): the approver App approves LOW pull requests of a repository that has it on. Needs `prEvaluation.autoMergeAllowed` and a configured approver App. Turning it off (or clearing it) starts the sweep that withdraws approvals. |
 | `prEvaluation.botApprovalMaxLines` | 50 | GLOBAL only | Most changed lines (added plus deleted, over every listed file) a change may carry and still be approved by the approver App; at most 400. Any change to it, or clearing it, starts the sweep that withdraws approvals. |
 | `prEvaluation.botApprovalMaxFiles` | 3 | GLOBAL only | Most files a change may touch and still be approved by the approver App; at most 15. Any change to it, or clearing it, starts the sweep that withdraws approvals. |
@@ -555,6 +636,7 @@ All are ADMIN-only registry settings in the `prEvaluation` group; see
 | `GET /api/v1/repositories/:id/pr-evaluation` | ENGINEER | Enabled flag, mode and where it came from, whether auto-merge is allowed, the status context, the thresholds in force, the evidence figures, whether bot approval is on, allowed by the deployment and has an approver App to use (booleans only), and the repository's last evaluation |
 | `PUT /api/v1/repositories/:id/pr-evaluation` | LEAD of the owning team, or ADMIN | Body `{ "mode"?: "off" \| "advisory" \| "enforce" \| "auto" \| null, "botApproval"?: boolean }`, at least one; `null` inherits. `auto` is ADMIN-only and may answer `400 AUTO_NOT_READY`. `botApproval: true` is ADMIN-only, needs the resulting mode to be `auto`, and may answer `400 BOT_APPROVAL_NOT_READY` with every unmet reason (§16.1); any mode other than `auto` sets it false in the same update. Two writes that race on the same repository can answer `409 PR_EVALUATION_CONFLICT`: reload and retry. The response carries the resulting `mode`, `modeSource`, `botApproval` and `warnings` under `data` (`warnings` is non-empty for `enforce` when the status context is not shown to be a required check) |
 | `GET /api/v1/pr-evaluations` | ENGINEER | Evaluations, newest first, for repositories you can reach. Filters `repoId`, `riskClass`, `merged`; `limit` (default 50, at most 100) and `offset`. Each row reports whether a brief exists and its length, not the brief |
+| `GET /api/v1/pr-evaluations/engagement` | ENGINEER | Whether reviewers act on the brief, for repositories you can reach: `days` (default 30, 1 to 365) and `repoId`. Evaluations, how many a person reviewed, the median minutes to the first review, the share of reviewed ones with a request for changes, and where inline comments landed (on a flagged file, on a file the brief said to skim, elsewhere). Reads at most 5000 evaluations and says `capped` when the window held more |
 | `GET /api/v1/pr-evaluations/:id` | ENGINEER | One evaluation in full: reasons, the brief, and the branch rules it read |
 | `GET /api/v1/integrations/github-approver-app` | ADMIN | Whether the approver App is configured, its App id and slug, the last four characters of its private key, and when it changed. The key is never returned |
 | `PUT /api/v1/integrations/github-approver-app` | ADMIN | Body `{ "appId"?, "appSlug"?, "privateKey"? }`. Checked against GitHub before anything is stored (§16.2). A blank `privateKey` keeps the stored one |
@@ -849,14 +931,42 @@ documentation change as a platform pull request and read the evaluation's reason
 
 ## Limitations
 
+- **What the run says about an open question is a request the model may not honour, and is not
+  checked.** The implementer is asked for closing lines but may omit them, answer a question it did
+  not understand, or say it left something unchanged that it changed; nothing compares the claim
+  with the diff. A runtime that returns no final text records none, and only the last turn that
+  gave any lines counts, so an account from before a later change can stand.
+- **Inline finding comments are untested against a live host, and a thread they open is outside the
+  feedback loop.** The review path is exercised against fakes only. The PR-feedback automation
+  never reads a comment that carries the finding marker, and because it keeps a thread only when
+  the comment that opened it is usable, a person's reply inside a finding's thread is not read
+  either; they start a new thread or command to ask for a fix. One review holds at most ten
+  comments, and the host's refusal of a stale line drops all of them for that evaluation.
+- **Review findings are the network's opinion, and which were fixed is not tracked.** The brief shows
+  what the last review of this head raised, so a head pushed after that review shows none, and the
+  fix loop keeps no record of which finding it addressed. Findings carry no identifier, so the same
+  concern worded differently by two reviewers appears twice. The lint and style filter reads the
+  category only, and no structured lint result is read, so a finding CI already reported under another
+  category stays.
+- **The evidence is the run's own account, at one moment.** The test counts come from the run's
+  last review of the head and say nothing about test quality or coverage; a head pushed afterwards
+  (a CI fix, a feedback round, a person) shows no result. CI is the verdict when the evaluation ran,
+  so `still running` is not a pass. Browser checks are counted per run, not per head, and the
+  evidence behind them can be deleted by retention while the link remains. Gate and eval results are
+  not recorded against a pull request, so they are not shown.
+- **The engagement counts are approximate and say nothing about reading.** A delivery GitHub sends
+  twice counts twice, a review that arrives before its head's evaluation row exists is not counted,
+  and one person's several logins count as several. Rows written before the counts existed read as
+  no engagement, and a brief stored before the reading path existed places every comment under
+  "elsewhere". Whether a reviewer read the brief at all is not observable.
 - **The ticket criteria are not checked against the change.** **What was asked** repeats what
   validation extracted, so it can be wrong, stale after the ticket was edited, or empty: a template
   with no validation step records no criteria, and its brief has neither section. The brief does not
   say whether a criterion is met.
 - **The reading path orders by name and directory, not by what imports what.** It sees paths and
   patches, never file contents, so a file that depends on another in a different directory can come
-  first. A test is paired with its source only in the same directory or the parent of a test
-  directory; a mirrored layout (`test/foo/bar.test.ts` for `src/foo/bar.ts`) reads as a loose test.
+  first. A test is paired with its source by name and place, never by what it imports: a test whose
+  name differs from its source's, or that could belong to two changed sources, reads as a loose test.
   The brief cannot reorder GitHub's Files tab, which stays alphabetical.
 - **With bot approval, a `LOW` change merges with no human, on a deterministic judgement.** A change
   within the caps and the path allowlist is approved and merged by GitHub with nobody reading it.

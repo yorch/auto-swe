@@ -444,8 +444,39 @@ describe('executeImplementation success criteria', () => {
     expect(prompt.startsWith('BASE_PROMPT')).toBe(true);
     expect(prompt).toContain('<criteria>');
     expect(prompt).toContain('- GET /health returns 200');
-    expect(prompt).toContain('- does it need auth?');
+    expect(prompt).toContain('- Q1: does it need auth?');
     expect(prompt).toMatch(/do not guess/i);
+  });
+
+  describe('what the implementer says about the open questions', () => {
+    const ask = [
+      'GET /health returns 200',
+      'AMBIGUOUS: does it need auth?',
+      'AMBIGUOUS: which table?',
+    ];
+
+    it('records the closing lines of its last message on the code result', async () => {
+      generateMock.mockResolvedValue({
+        text: 'Done.\nQ1: left unchanged\nQ2: implemented - used orders',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      });
+      const result = await run(ask);
+      expect(result.openQuestionNotes).toEqual([
+        { note: '', question: 'does it need auth?', resolution: 'left-unchanged' },
+        { note: 'used orders', question: 'which table?', resolution: 'implemented' },
+      ]);
+    });
+
+    it('records nothing when it says nothing, or when there were no open questions', async () => {
+      generateMock.mockResolvedValue({ text: 'done', usage: { inputTokens: 1, outputTokens: 1 } });
+      expect((await run(ask)).openQuestionNotes).toBeUndefined();
+      generateMock.mockResolvedValue({
+        text: 'Q1: left unchanged',
+        usage: { inputTokens: 1, outputTokens: 1 },
+      });
+      expect((await run(['GET /health returns 200'])).openQuestionNotes).toBeUndefined();
+      expect((await run()).openQuestionNotes).toBeUndefined();
+    });
   });
 
   it('places them after the ticket and before the cross-repo block', async () => {

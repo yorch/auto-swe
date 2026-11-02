@@ -48,6 +48,7 @@ import {
   type Reason,
   type RepoPolicyFile,
   type ReviewSeverity,
+  selectReviewFindings,
   statusFor,
   truncateBrief,
 } from '@auto-swe/shared/lib/prEvaluation';
@@ -65,8 +66,11 @@ import {
 } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 import { logWarn } from '../lib/activityLog.js';
+import { loadBriefEvidence, loadReviewedOutputsSafe } from '../lib/briefEvidence.js';
+import { postFindingComments } from '../lib/briefFindings.js';
 import { scanDiffForCodeIssuesDetailed } from '../lib/codeSecurityScanner.js';
 import { splitSuccessCriteria } from '../lib/contextAmbiguity.js';
+import { validOpenQuestionNotes } from '../lib/openQuestionNotes.js';
 import { resolveLauncherSet } from '../lib/prLauncher.js';
 import {
   type ApproverClientResult,
@@ -197,6 +201,7 @@ const SETTING_KEYS = [
   'prEvaluation.highApprovers',
   'prEvaluation.sensitivePaths',
   'prEvaluation.requiredStatusContext',
+  'prEvaluation.postReviewFindings',
 ] as const;
 
 const SEVERITY_ORDER: Record<ReviewSeverity, number> = {
@@ -1509,10 +1514,41 @@ export async function evaluatePullRequestWith(
     }
 
     // ── The brief, then the row, then the arming.
-    const intent = await loadBriefIntent(platformPr.workflow.workRequestId, connection.id, input);
-    const brief = buildBrief(listed.files, classification, effective, intent);
+    const reviewed = await loadReviewedOutputsSafe({
+      connectionId: connection.id,
+      headSha: pr.headSha,
+      prNumber: input.prNumber,
+      temporalWorkflowId,
+    });
+    const intent = await loadBriefIntent(
+      platformPr.workflow.workRequestId,
+      connection.id,
+      input,
+      reviewed?.codeResult?.openQuestionNotes
+    );
+    const evidence = await loadBriefEvidence({
+      connectionId: connection.id,
+      headSha: pr.headSha,
+      prNumber: input.prNumber,
+      repo,
+      reviewed,
+      runId: platformPr.runId,
+      scm,
+    });
+    const findings = selectReviewFindings(reviewed?.verdicts, listed.files, evidence.ci);
+    const brief = buildBrief(listed.files, classification, effective, intent, evidence, findings);
     const briefMarkdown = truncateBrief(brief.markdown);
     await postBrief(scm, repo, input.prNumber, briefMarkdown, connection.id);
+    if (settings['prEvaluation.postReviewFindings']) {
+      await postFindingComments({
+        connectionId: connection.id,
+        findings,
+        headSha: pr.headSha,
+        prNumber: input.prNumber,
+        repo,
+        scm,
+      });
+    }
 
     const row = await prisma.prEvaluation.create({
       data: {
@@ -2181,7 +2217,8 @@ async function publishStatus(
 async function loadBriefIntent(
   workRequestId: string | null,
   connectionId: string,
-  input: { prNumber: number }
+  input: { prNumber: number },
+  handledByRun?: unknown
 ): Promise<BriefIntent | undefined> {
   if (workRequestId === null) {
     return undefined;
@@ -2195,7 +2232,12 @@ async function loadBriefIntent(
       return undefined;
     }
     const { concrete, ambiguities } = splitSuccessCriteria(snapshot.successCriteria);
-    return { criteria: concrete, openQuestions: ambiguities };
+    const handled = validOpenQuestionNotes(handledByRun);
+    return {
+      criteria: concrete,
+      ...(handled.length > 0 ? { handled } : {}),
+      openQuestions: ambiguities,
+    };
   } catch (err) {
     logWarn('pr evaluation: the ticket criteria could not be read for the brief', {
       connectionId,

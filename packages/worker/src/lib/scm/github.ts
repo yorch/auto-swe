@@ -51,6 +51,7 @@ import {
   type CommitStatusInput,
   type CreateBranchResult,
   type CreatePullRequestInput,
+  type CreateReviewResult,
   DraftPullRequestUnsupportedError,
   ExistingPullRequestNotDraftError,
   type IssueCommentInfo,
@@ -63,6 +64,7 @@ import {
   type PullRequestReviewSummary,
   type RepoRef,
   type ReviewCommentInfo,
+  type ReviewCommentInput,
   type ReviewThread,
   type ScmActionResult,
   type ScmProvider,
@@ -1323,6 +1325,37 @@ export class GitHubScmProvider implements ScmProvider {
       repo: repo.repoName,
     });
     return { htmlUrl: data.html_url };
+  }
+
+  async createReview(
+    repo: RepoRef,
+    prNumber: number,
+    input: { body: string; comments: ReviewCommentInput[]; commitId: string }
+  ): Promise<CreateReviewResult> {
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.pulls.createReview({
+        body: input.body,
+        comments: input.comments.map((c) => ({
+          body: c.body,
+          line: c.line,
+          path: c.path,
+          side: 'RIGHT' as const,
+        })),
+        commit_id: input.commitId,
+        // Fixed: a review this platform posts never approves and never requests changes.
+        event: 'COMMENT',
+        owner: repo.organizationName,
+        pull_number: prNumber,
+        repo: repo.repoName,
+      });
+      return { htmlUrl: data.html_url, ok: true };
+    } catch (err) {
+      if ((err as { status?: number }).status === 422) {
+        return { ok: false, reason: 'rejected' };
+      }
+      throw err;
+    }
   }
 
   async createBranch(repo: RepoRef, branch: string, sha: string): Promise<CreateBranchResult> {

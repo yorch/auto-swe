@@ -1,6 +1,10 @@
 import { type Prisma, Role } from '@auto-swe/shared';
 import { resolveSetting, resolveSettings } from '@auto-swe/shared/config';
-import { autoArmingRefusals, type BranchRulesLike } from '@auto-swe/shared/lib/prEvaluation';
+import {
+  autoArmingRefusals,
+  type BranchRulesLike,
+  summarizeBriefEngagement,
+} from '@auto-swe/shared/lib/prEvaluation';
 import {
   autoEvidenceAssessment,
   prEvaluationEvidence,
@@ -41,6 +45,13 @@ const ListQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
   repoId: z.string().uuid().optional(),
   riskClass: z.enum(RISK_CLASSES).optional(),
 });
+
+const EngagementQuery = z.object({
+  days: z.coerce.number().int().min(1).max(365).default(30),
+  repoId: z.string().uuid().optional(),
+});
+/** Evaluations read for one engagement summary; a window with more says so in `capped`. */
+const ENGAGEMENT_ROW_CAP = 5000;
 
 const THRESHOLD_KEYS = [
   'prEvaluation.maxLowLines',
@@ -374,6 +385,46 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
           return { ...row, briefAvailable: length > 0, briefMarkdownLength: length };
         }),
         meta: { limit, offset, total },
+      };
+    }
+  );
+
+  // GET /api/v1/pr-evaluations/engagement — whether reviewers act on the brief, repositories the
+  // caller can reach only. Registered before `/:id`, which would otherwise read it as an id.
+  app.get(
+    '/pr-evaluations/engagement',
+    {
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      schema: { querystring: EngagementQuery },
+    },
+    async (request) => {
+      const user = requireUser(request);
+      const { days, repoId } = request.query;
+      const rows = await fastify.prisma.prEvaluation.findMany({
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        select: {
+          changesRequestedCount: true,
+          commentsElsewhere: true,
+          commentsOnFlagged: true,
+          commentsOnSkimmed: true,
+          createdAt: true,
+          firstHumanReviewAt: true,
+        },
+        take: ENGAGEMENT_ROW_CAP + 1,
+        where: {
+          createdAt: { gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) },
+          ...(user.role === Role.ADMIN
+            ? {}
+            : { connection: reachableConnections(user, request.repoAccessGate) }),
+          ...(repoId ? { connectionId: repoId } : {}),
+        },
+      });
+      return {
+        data: {
+          capped: rows.length > ENGAGEMENT_ROW_CAP,
+          windowDays: days,
+          ...summarizeBriefEngagement(rows.slice(0, ENGAGEMENT_ROW_CAP)),
+        },
       };
     }
   );

@@ -1,6 +1,8 @@
 import { CONTRACT_GLOBS, isTestFile, matchesAny, NON_SOURCE_GLOBS } from './paths.js';
 import type {
   Brief,
+  BriefEvidence,
+  BriefFinding,
   BriefIntent,
   ChangedFile,
   Classification,
@@ -30,6 +32,7 @@ export const MAX_BRIEF_CHARS = 60_000;
 const MAX_SKIM_SHOWN = 50;
 const MAX_CRITERIA_SHOWN = 20;
 const MAX_QUESTIONS_SHOWN = 10;
+const MAX_FINDINGS_SHOWN = 10;
 const MAX_REASON_PATHS_SHOWN = 5;
 const MAX_DISPLAY_PATH = 200;
 
@@ -209,7 +212,7 @@ function escapeProse(raw: string): string {
  * markup, no mentions, no autolinks. Bare URLs are shown as code, `#123`
  * references are backslash-escaped so they do not link to an issue.
  */
-function escapeText(raw: string): string {
+export function escapeText(raw: string): string {
   const text = clipCodePoints(replaceUnsafe(raw, ' '), MAX_PROSE_CHARS);
   let out = '';
   let last = 0;
@@ -276,6 +279,31 @@ function sourceDirsFor(testPath: string): string[] {
   return TEST_DIRS.has(baseName(dir).toLowerCase()) ? [dir, dirname(dir)] : [dir];
 }
 
+/**
+ * The source a test covers when the tests live in a tree of their own (`test/foo/bar.test.ts` for
+ * `src/foo/bar.ts`): the one changed source of that name whose directory ends with the test's path
+ * below its test directory. With nothing below the test directory the name alone must be unique.
+ * Two candidates mean no pairing: a wrong pairing is worse than a loose test.
+ */
+function mirroredOwner(
+  test: ChangedFile,
+  candidates: readonly ChangedFile[] | undefined
+): ChangedFile | undefined {
+  const parts = dirname(test.path).split('/');
+  const at = parts.findIndex((part) => TEST_DIRS.has(part.toLowerCase()));
+  if (at === -1 || !candidates) {
+    return undefined;
+  }
+  const below = parts.slice(at + 1).join('/');
+  const matches =
+    below === ''
+      ? candidates
+      : candidates.filter(
+          (c) => dirname(c.path) === below || dirname(c.path).endsWith(`/${below}`)
+        );
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 const byPath = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const churn = (file: ChangedFile): number => file.additions + file.deletions;
 
@@ -304,19 +332,23 @@ export function readingOrder(files: readonly ChangedFile[]): ChangedFile[] {
   }
 
   const sourceByKey = new Map<string, ChangedFile>();
+  const sourcesByStem = new Map<string, ChangedFile[]>();
   for (const file of [...sources].sort((a, b) => byPath(a.path, b.path))) {
-    const key = `${dirname(file.path)}\0${stemOf(file.path, false)}`;
+    const stem = stemOf(file.path, false);
+    const key = `${dirname(file.path)}\0${stem}`;
     if (!sourceByKey.has(key)) {
       sourceByKey.set(key, file);
     }
+    sourcesByStem.set(stem, [...(sourcesByStem.get(stem) ?? []), file]);
   }
   const testsOf = new Map<ChangedFile, ChangedFile[]>();
   const unpaired: ChangedFile[] = [];
   for (const test of [...tests].sort((a, b) => byPath(a.path, b.path))) {
     const stem = stemOf(test.path, true);
-    const owner = sourceDirsFor(test.path)
-      .map((dir) => sourceByKey.get(`${dir}\0${stem}`))
-      .find((source) => source !== undefined);
+    const owner =
+      sourceDirsFor(test.path)
+        .map((dir) => sourceByKey.get(`${dir}\0${stem}`))
+        .find((source) => source !== undefined) ?? mirroredOwner(test, sourcesByStem.get(stem));
     if (owner) {
       testsOf.set(owner, [...(testsOf.get(owner) ?? []), test]);
     } else {
@@ -347,7 +379,9 @@ export function buildBrief(
   files: ChangedFile[],
   classification: Classification,
   effective: EffectivePolicy,
-  intent?: BriefIntent
+  intent?: BriefIntent,
+  evidence?: BriefEvidence,
+  findings?: BriefFinding[]
 ): Brief {
   const hitsByPath = new Map<string, Reason[]>();
   for (const reason of classification.reasons) {
@@ -380,7 +414,15 @@ export function buildBrief(
     .filter((reason) => reason.severity !== 'info' && (reason.paths?.length ?? 0) === 0)
     .map((reason) => reason.message);
 
-  const markdown = renderMarkdown(classification, path, skim, claimsToVerify, intent);
+  const markdown = renderMarkdown(
+    classification,
+    path,
+    skim,
+    claimsToVerify,
+    intent,
+    evidence,
+    findings
+  );
   return { claimsToVerify, markdown, path, skim };
 }
 
@@ -413,19 +455,31 @@ function splitVisible(path: PathEntry[]): {
  * criteria were never checked against the diff, and the heading says so.
  */
 function pushIntent(lines: string[], intent: BriefIntent | undefined): void {
-  const sections: [string, string[], number][] = [
+  // What the run said it did about a question, only when it said it about this exact question.
+  const accountOf = (question: string): string => {
+    const handled = intent?.handled?.find((h) => h.question === question);
+    if (!handled) {
+      return '';
+    }
+    return handled.resolution === 'left-unchanged'
+      ? ' - the run says it **left this unchanged**'
+      : ` - the run says it **implemented** this${handled.note === '' ? '' : `: ${escapeText(handled.note)}`}`;
+  };
+  const sections: [string, string[], number, (entry: string) => string][] = [
     [
       '**What was asked** (extracted from the ticket; not checked against the diff)',
       intent?.criteria ?? [],
       MAX_CRITERIA_SHOWN,
+      () => '',
     ],
     [
-      '**Open questions in the ticket** (unresolved when the run validated it; check how the change handles each)',
+      '**Open questions in the ticket** (unresolved when the run validated it; check how the change handles each; what the run says about one is its own account, not checked)',
       intent?.openQuestions ?? [],
       MAX_QUESTIONS_SHOWN,
+      accountOf,
     ],
   ];
-  for (const [heading, all, max] of sections) {
+  for (const [heading, all, max, suffix] of sections) {
     const entries = all.filter((entry) => entry.trim() !== '');
     const shown = entries.slice(0, max);
     if (shown.length === 0) {
@@ -433,7 +487,7 @@ function pushIntent(lines: string[], intent: BriefIntent | undefined): void {
     }
     lines.push(heading, '');
     for (const entry of shown) {
-      lines.push(`- ${escapeText(entry)}`);
+      lines.push(`- ${escapeText(entry)}${suffix(entry)}`);
     }
     if (entries.length > shown.length) {
       lines.push(`- +${entries.length - shown.length} more`);
@@ -442,12 +496,88 @@ function pushIntent(lines: string[], intent: BriefIntent | undefined): void {
   }
 }
 
+const CI_TEXT: Record<NonNullable<BriefEvidence['ci']>, string> = {
+  failed: 'failed',
+  none: 'no checks reported',
+  passed: 'passed',
+  pending: 'still running',
+};
+/** A dashboard address safe to write as a link: no whitespace, brackets or parentheses. */
+const SAFE_LINK = /^https?:\/\/[^\s()<>[\]]+$/;
+
+const count = (n: number): string => String(Math.max(0, Math.trunc(Number(n) || 0)));
+const plural = (n: number, word: string): string => `${count(n)} ${word}${n === 1 ? '' : 's'}`;
+
+/**
+ * What the run recorded about itself, in fixed sentences built from numbers and verdicts: nothing
+ * a model or a page wrote reaches this section. It says plainly what it does not check.
+ */
+function pushEvidence(lines: string[], evidence: BriefEvidence | undefined): void {
+  if (!evidence) {
+    return;
+  }
+  const { tests, ui, ci, runUrl } = evidence;
+  const items: string[] = [
+    tests === null
+      ? 'Tests: no result recorded for this head.'
+      : tests.total === 0
+        ? 'Tests: none ran at this head.'
+        : `Tests: ${count(tests.passing)} passing, ${count(tests.failing)} failing at this head.`,
+  ];
+  if (ui) {
+    const kinds = [
+      ui.screenshots > 0 ? plural(ui.screenshots, 'screenshot') : '',
+      ui.videos > 0 ? plural(ui.videos, 'video') : '',
+      ui.traces > 0 ? plural(ui.traces, 'trace') : '',
+    ].filter(Boolean);
+    items.push(`Browser checks the run captured: ${kinds.join(', ')}.`);
+  }
+  items.push(`CI on this head: ${ci === null ? 'could not be read' : CI_TEXT[ci]}.`);
+  if (runUrl !== null && SAFE_LINK.test(runUrl)) {
+    items.push(`[The run's page](${runUrl}) has its full trace.`);
+  }
+  items.push('Not checked here: whether the tests cover what was asked.');
+  lines.push('**Evidence** (what the run recorded; nothing is re-run here)', '');
+  for (const item of items) {
+    lines.push(`- ${item}`);
+  }
+  lines.push('');
+}
+
+/**
+ * What the review network still raised on this head, worst first. Every field is model output, so
+ * each goes through `escapeText` (one line, bounded, no markup or mentions) and the fix is prose,
+ * never a suggestion block a reviewer could apply with one click.
+ */
+function pushFindings(lines: string[], findings: BriefFinding[] | undefined): void {
+  if (!findings || findings.length === 0) {
+    return;
+  }
+  lines.push('**Review findings** (raised by the review network on this head; not verified)', '');
+  for (const finding of findings.slice(0, MAX_FINDINGS_SHOWN)) {
+    const where = codeSpan(
+      finding.line === null ? finding.file : `${finding.file}:${finding.line}`
+    );
+    const fix =
+      finding.suggestedFix === '' ? '' : ` Suggested: ${escapeText(finding.suggestedFix)}`;
+    lines.push(
+      `- **${finding.severity}** ${escapeText(finding.category)} in ${where} - ${escapeText(finding.description)}${fix}`
+    );
+  }
+  if (findings.length > MAX_FINDINGS_SHOWN) {
+    lines.push(`- +${findings.length - MAX_FINDINGS_SHOWN} more not shown`);
+  }
+  lines.push('');
+}
+
 function renderMarkdown(
   classification: Classification,
   path: PathEntry[],
   skim: Brief['skim'],
   claims: string[],
-  intent?: BriefIntent
+  intent?: BriefIntent,
+  evidence?: BriefEvidence,
+  findings?: BriefFinding[]
 ): string {
   const lines: string[] = [
     BRIEF_MARKER,
@@ -472,6 +602,8 @@ function renderMarkdown(
     lines.push('');
   }
   pushIntent(lines, intent);
+  pushEvidence(lines, evidence);
+  pushFindings(lines, findings);
   if (path.length > 0) {
     const { visible, collapsed } = splitVisible(path);
     lines.push('**Read in this order**', '');

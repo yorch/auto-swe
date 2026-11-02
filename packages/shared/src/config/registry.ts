@@ -947,6 +947,18 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.max(1000000),
     unit: 'lines',
   }),
+  'prEvaluation.postReviewFindings': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether the evaluation also posts the review network's findings that fall inside the diff as inline comments, in one review that never approves or requests changes. Off, the findings appear in the brief only.",
+    group: 'prEvaluation',
+    label: 'Post review findings inline',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'prEvaluation.requiredStatusContext': defineSetting({
     defaultValue: 'auto-swe/pr-evaluation',
     description:

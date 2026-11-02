@@ -329,7 +329,7 @@ describe('prEvaluation settings', () => {
   ) as (keyof typeof SETTING_DEFINITIONS)[];
 
   it('are all ADMIN-only, in the prEvaluation group, and not pinned to a run', () => {
-    expect(keys).toHaveLength(20);
+    expect(keys).toHaveLength(21);
     for (const key of keys) {
       const def = SETTING_DEFINITIONS[key];
       expect(def.group, key).toBe('prEvaluation');
@@ -348,6 +348,14 @@ describe('prEvaluation settings', () => {
       expect(SETTING_DEFINITIONS[key].defaultValue, key).toBe(false);
       expect(SETTING_DEFINITIONS[key].overridableAt, key).toEqual([]);
     }
+  });
+
+  it('keeps inline finding comments off by default, a boolean a team may turn on', () => {
+    const def = SETTING_DEFINITIONS['prEvaluation.postReviewFindings'];
+    expect(def.defaultValue).toBe(false);
+    expect(def.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
+    expect(accepts('prEvaluation.postReviewFindings', true)).toBe(true);
+    expect(accepts('prEvaluation.postReviewFindings', 'yes')).toBe(false);
   });
 
   it('refuses a default mode of auto', () => {

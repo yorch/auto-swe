@@ -1080,6 +1080,76 @@ describe('pr evaluation routes', () => {
     });
   });
 
+  describe('GET /pr-evaluations/engagement', () => {
+    const at = (minutes: number) => new Date(Date.UTC(2026, 10, 1, 12, minutes));
+    const engagementRow = (over: Record<string, unknown> = {}) => ({
+      changesRequestedCount: 0,
+      commentsElsewhere: 0,
+      commentsOnFlagged: 0,
+      commentsOnSkimmed: 0,
+      createdAt: at(0),
+      firstHumanReviewAt: null,
+      ...over,
+    });
+    const get = (query = '') =>
+      ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `/api/v1/pr-evaluations/engagement${query}`,
+      });
+
+    it('summarises the window, scoped to repositories the caller can reach', async () => {
+      ctx.prisma.prEvaluation.findMany.mockResolvedValue([
+        engagementRow({ commentsOnFlagged: 2, firstHumanReviewAt: at(10) }),
+        engagementRow({
+          changesRequestedCount: 1,
+          commentsOnSkimmed: 2,
+          firstHumanReviewAt: at(30),
+        }),
+        engagementRow(),
+      ]);
+      const res = await get('?days=7');
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toEqual({
+        capped: false,
+        changeRequestRate: 0.5,
+        comments: { elsewhere: 0, flagged: 2, flaggedShare: 0.5, skimmed: 2, skimmedShare: 0.5 },
+        evaluations: 3,
+        medianMinutesToFirstReview: 20,
+        reviewed: 2,
+        windowDays: 7,
+      });
+      const args = ctx.prisma.prEvaluation.findMany.mock.calls[0][0];
+      expect(args.where.connection).toBeDefined();
+      expect(args.where.createdAt.gte).toBeInstanceOf(Date);
+      expect(args.take).toBe(5001);
+    });
+
+    it('adds no reach predicate for an admin and honours the repository filter', async () => {
+      ctx.authState.role = 'ADMIN';
+      await get(`?repoId=${REPO}`);
+      const { where } = ctx.prisma.prEvaluation.findMany.mock.calls[0][0];
+      expect(where.connection).toBeUndefined();
+      expect(where.connectionId).toBe(REPO);
+    });
+
+    it('says when the window held more evaluations than it read', async () => {
+      ctx.prisma.prEvaluation.findMany.mockResolvedValue(
+        Array.from({ length: 5001 }, () => engagementRow())
+      );
+      const body = (await get()).json().data;
+      expect(body.capped).toBe(true);
+      expect(body.evaluations).toBe(5000);
+      expect(body.windowDays).toBe(30);
+    });
+
+    it('rejects a window outside 1 to 365 days and a malformed repository id', async () => {
+      for (const query of ['?days=0', '?days=366', '?days=abc', '?repoId=nope']) {
+        expect((await get(query)).statusCode).toBe(400);
+      }
+    });
+  });
+
   describe('GET /pr-evaluations/:id', () => {
     it('returns the full row, brief included', async () => {
       ctx.prisma.prEvaluation.findFirst.mockResolvedValue({ brief: { markdown: 'x' }, id: EVAL });

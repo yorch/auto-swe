@@ -21,16 +21,18 @@ export function line(entry: string): string {
 function fit(
   entries: string[],
   budget: number,
-  maxCount: number
+  maxCount: number,
+  label: (index: number) => string = () => ''
 ): { lines: string[]; used: number } {
   const kept: string[] = [];
   let used = 0;
   for (const entry of entries.slice(0, maxCount)) {
-    if (used + entry.length + 3 > budget) {
+    const prefix = label(kept.length);
+    if (used + prefix.length + entry.length + 3 > budget) {
       break;
     }
-    kept.push(`- ${entry}`);
-    used += entry.length + 3;
+    kept.push(`- ${prefix}${entry}`);
+    used += prefix.length + entry.length + 3;
   }
   const omitted = entries.length - kept.length;
   return { lines: omitted > 0 ? [...kept, `(${omitted} more omitted)`] : kept, used };
@@ -59,7 +61,13 @@ export function formatCriteriaContext(successCriteria: readonly string[] | undef
     MAX_PROMPT_SECTION_CHARS - Math.min(askedChars, QUESTIONS_RESERVED_CHARS),
     MAX_PROMPT_CRITERIA
   );
-  const questions = fit(asked, MAX_PROMPT_SECTION_CHARS - criteria.used, asked.length);
+  // Numbered, so the implementer can say what it did about each one and the answer can be matched.
+  const questions = fit(
+    asked,
+    MAX_PROMPT_SECTION_CHARS - criteria.used,
+    asked.length,
+    (i) => `Q${i + 1}: `
+  );
   const body = [
     ...(criteria.lines.length > 0
       ? ['Acceptance criteria:', ...criteria.lines]
@@ -73,6 +81,7 @@ export function formatCriteriaContext(successCriteria: readonly string[] | undef
     ...(asked.length > 0
       ? [
           'Do not guess how an open question is resolved: implement only what the acceptance criteria and the description explicitly require, and leave anything an open question blocks unchanged.',
+          'When you finish, end your final message with one line per open question, using its number: "Q1: left unchanged", or "Q1: implemented - one sentence on what you did and why".',
         ]
       : []),
   ].join(' ');

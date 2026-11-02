@@ -82,7 +82,11 @@ The fixer sees: the fenced brief (trigger notes plus each open trusted thread, l
 `T2`, …, per-comment bounded, HTML comments stripped, injection-screened, ~40k characters
 total) — and, on the CI follow-up, the redacted, screened, fenced CI logs (a log the screen
 refuses ends the round rather than reaching the model). It never sees the webhook payload or
-the run's request description.
+the run's request description. A comment carrying the platform's finding marker
+(`<!-- auto-swe:finding`) is the pull-request evaluation's own inline finding, written by a model
+from the diff, and is never gathered as feedback, whoever posted it; a thread such a comment
+opened is left out of the round with its replies
+([pr-evaluation.md](./pr-evaluation.md#review-findings)).
 
 The pull request sees: the summary comment (rendered from the responder's fields only, with
 mentions, autolinks, HTML and markdown neutralised — the same sanitiser the CI-triage comment
