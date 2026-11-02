@@ -254,14 +254,104 @@ describe('JiraProvider.syncOnEvent', () => {
     await expect(provider(client).syncOnEvent(failed)).resolves.toBe('unknown');
   });
 
-  it('reports no failure for an event that posts no comment', async () => {
+  describe('workflow_completed (a status transition, no comment)', () => {
+    const completed = { issueId: 'AIDEVEX-8', type: 'workflow_completed' } as const;
+    const withPr = { ...completed, prTitle: 'Fix it', prUrl: 'https://gh/pr/1' } as const;
+    const transitions = { transitions: [{ id: '31', name: 'Done', to: { name: 'Done' } }] };
+
+    it('reports no failure when the transition lands', async () => {
+      const get = vi.fn(async () => transitions);
+      const post = vi.fn(async (..._args: unknown[]) => ({}));
+      const client = { get, post } as unknown as AtlassianClient;
+      await expect(provider(client).syncOnEvent(completed)).resolves.toBeNull();
+      expect(post).toHaveBeenCalledTimes(1);
+      expect(String(post.mock.calls[0]?.[0])).toContain('/transitions');
+    });
+
+    it.each([
+      [401, 'auth', 'unauthorized'],
+      [403, 'auth', 'forbidden'],
+      [429, 'rate_limited', 'rate_limited'],
+      [500, 'server', 'server_error'],
+    ] as const)('reports a refused transition POST (%s)', async (status, code, failure) => {
+      const get = vi.fn(async () => transitions);
+      const post = vi.fn(async () => {
+        throw new AtlassianError(status, code, 'refused');
+      });
+      const client = { get, post } as unknown as AtlassianClient;
+      await expect(provider(client).syncOnEvent(completed)).resolves.toBe(failure);
+    });
+
+    it('reports a refused read of the transitions', async () => {
+      const get = vi.fn(async () => {
+        throw new AtlassianError(403, 'auth', 'forbidden');
+      });
+      const client = { get, post: vi.fn() } as unknown as AtlassianClient;
+      await expect(provider(client).syncOnEvent(completed)).resolves.toBe('forbidden');
+    });
+
+    it('treats a ticket with no matching transition as a silent no-op, not a failure', async () => {
+      const get = vi.fn(async () => ({ transitions: [{ id: '1', name: 'Start' }] }));
+      const post = vi.fn();
+      const client = { get, post } as unknown as AtlassianClient;
+      await expect(provider(client).syncOnEvent(completed)).resolves.toBeNull();
+      expect(post).not.toHaveBeenCalled();
+    });
+
+    it('reports a refused remote link, and still tries the transition', async () => {
+      const get = vi.fn(async () => transitions);
+      const post = vi.fn(async (path: string) => {
+        if (path.includes('/remotelink')) {
+          throw new AtlassianError(403, 'auth', 'refused');
+        }
+        return {};
+      });
+      const client = { get, post } as unknown as AtlassianClient;
+      await expect(provider(client).syncOnEvent(withPr)).resolves.toBe('forbidden');
+      expect(post).toHaveBeenCalledTimes(2);
+    });
+
+    it('reports the first refused write when both are refused', async () => {
+      const get = vi.fn(async () => transitions);
+      const post = vi.fn(async (path: string) => {
+        throw path.includes('/remotelink')
+          ? new AtlassianError(401, 'auth', 'refused')
+          : new AtlassianError(403, 'auth', 'refused');
+      });
+      const client = { get, post } as unknown as AtlassianClient;
+      await expect(provider(client).syncOnEvent(withPr)).resolves.toBe('unauthorized');
+    });
+
+    it('keeps the public transitionIssue and addRemoteLink void and silent', async () => {
+      const get = vi.fn(async () => transitions);
+      const post = vi.fn(async () => {
+        throw new AtlassianError(403, 'auth', 'refused');
+      });
+      const p = provider({ get, post } as unknown as AtlassianClient);
+      await expect(p.transitionIssue('AIDEVEX-8', 'Done')).resolves.toBeUndefined();
+      await expect(p.addRemoteLink('AIDEVEX-8', 'https://x', 't')).resolves.toBeUndefined();
+    });
+  });
+
+  it('reports a refused pr_opened transition', async () => {
+    const get = vi.fn(async () => ({ transitions: [{ id: '2', name: 'In Review' }] }));
+    const post = vi.fn(async () => {
+      throw new AtlassianError(403, 'auth', 'refused');
+    });
+    const client = { get, post } as unknown as AtlassianClient;
+    await expect(
+      provider(client).syncOnEvent({ issueId: 'AIDEVEX-8', type: 'pr_opened' })
+    ).resolves.toBe('forbidden');
+  });
+
+  it('reports a refused workflow_started transition', async () => {
     const get = vi.fn(async () => {
       throw new AtlassianError(403, 'auth', 'forbidden');
     });
     const client = { get, post: vi.fn() } as unknown as AtlassianClient;
     await expect(
       provider(client).syncOnEvent({ issueId: 'AIDEVEX-8', type: 'workflow_started' })
-    ).resolves.toBeNull();
+    ).resolves.toBe('forbidden');
   });
 });
 

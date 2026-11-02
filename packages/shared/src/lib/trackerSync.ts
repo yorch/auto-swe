@@ -290,9 +290,10 @@ export interface SyncTrackerOptions {
 }
 
 /**
- * Mirrors a run event onto its ticket. Resolves the class of the comment the tracker refused
- * (never its text), `'unknown'` when the sync itself failed, and null otherwise, including when
- * the write was not attempted: a repository check that refused it is policy, not a failure.
+ * Mirrors a run event onto its ticket. Resolves the class of the first write the tracker refused
+ * (a comment, a status transition or a link; never its text), `'out_of_scope'` when the
+ * repository check declined a GitHub write, `'unknown'` when the sync itself failed, and null
+ * otherwise (including events that write nothing, and a ticket with no matching status).
  */
 export async function syncTrackerOnEvent(
   event: TrackerSyncEvent,
@@ -313,7 +314,10 @@ export async function syncTrackerOnEvent(
           event: event.type,
           runInputId: opts.runInputId ?? null,
         });
-        return null;
+        // Reported only when the id names a repository, so "a repository this run does not
+        // target" is true. A bare id (`123`, `#123`) names none: a write cannot resolve it
+        // against a default repository, so it stays unwritten and silent, as it always was.
+        return parseGitHubTicketId(event.issueId) ? 'out_of_scope' : null;
       }
     }
     const provider = createIssueTrackerProvider(config, { log: opts.log });

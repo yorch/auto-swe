@@ -93,6 +93,15 @@ function githubFailure(err: unknown): TicketFailureClass {
   return err instanceof SyntaxError ? 'unknown' : 'network';
 }
 
+/** The failure class of a refused write: its status, or `rate_limited` for a limit's 403. */
+function githubStatusFailure(res: Response): TicketFailureClass {
+  // An exhausted primary rate limit is a 403 that says so in a header.
+  const limited =
+    res.status === 403 &&
+    (res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after'));
+  return limited ? 'rate_limited' : ticketFailureFromStatus(res.status);
+}
+
 export class GitHubIssuesProvider implements IssueTrackerProvider {
   private readonly apiToken: string | null;
   private readonly baseUrl: string;
@@ -279,14 +288,25 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
   }
 
   async transitionIssue(issueId: string, targetStatusName: string): Promise<void> {
+    await this.moveIssue(issueId, targetStatusName);
+  }
+
+  /**
+   * Opens or closes the issue; resolves why the tracker refused it, or null when it took it (or
+   * the id names no issue, which is a silent no-op).
+   */
+  private async moveIssue(
+    issueId: string,
+    targetStatusName: string
+  ): Promise<TicketFailureClass | null> {
     try {
       const parsed = parseGitHubTicketId(issueId, this.defaultRepo);
       if (!parsed) {
-        return;
+        return null;
       }
       const state = targetStatusName.toLowerCase() === 'done' ? 'closed' : 'open';
       const url = `${this.baseUrl}/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}`;
-      await this.request(
+      const res = await this.request(
         url,
         {
           body: JSON.stringify({ state }),
@@ -296,8 +316,14 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         },
         parsed
       );
+      if (res.ok) {
+        return null;
+      }
+      this.log?.warn({ issueId, status: res.status }, 'GitHub transitionIssue failed');
+      return githubStatusFailure(res);
     } catch (err) {
       this.log?.warn({ err, issueId, targetStatusName }, 'GitHub transitionIssue failed');
+      return githubFailure(err);
     }
   }
 
@@ -331,11 +357,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         return null;
       }
       this.log?.warn({ issueId, status: res.status }, 'GitHub addComment failed');
-      // An exhausted primary rate limit is a 403 that says so in a header.
-      const limited =
-        res.status === 403 &&
-        (res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after'));
-      return limited ? 'rate_limited' : ticketFailureFromStatus(res.status);
+      return githubStatusFailure(res);
     } catch (err) {
       this.log?.warn({ err, issueId }, 'GitHub addComment failed');
       return githubFailure(err);
@@ -343,12 +365,27 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
   }
 
   async addRemoteLink(issueId: string, url: string, title: string): Promise<void> {
-    // GitHub has no remote link concept — add as comment
-    await this.addComment(issueId, `🔗 [${title}](${url})`);
+    await this.postRemoteLink(issueId, url, title);
   }
 
+  /** GitHub has no remote link concept: the link is a comment, and fails as one. */
+  private postRemoteLink(
+    issueId: string,
+    url: string,
+    title: string
+  ): Promise<TicketFailureClass | null> {
+    return this.postComment(issueId, `🔗 [${title}](${url})`);
+  }
+
+  /**
+   * Mirrors a run event onto the issue. Every write of the event is attempted; resolves the class
+   * of the first one the tracker refused (comment, status move or link), or null.
+   */
   async syncOnEvent(event: TrackerSyncEvent): Promise<TicketFailureClass | null> {
     let failure: TicketFailureClass | null = null;
+    const note = (refused: TicketFailureClass | null) => {
+      failure ??= refused;
+    };
     try {
       switch (event.type) {
         case 'workflow_started':
@@ -356,28 +393,32 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
           break;
         case 'pr_opened':
           if (event.prUrl && event.prTitle) {
-            await this.addRemoteLink(event.issueId, event.prUrl, event.prTitle);
+            note(await this.postRemoteLink(event.issueId, event.prUrl, event.prTitle));
           }
           break;
         case 'ci_passed':
-          failure = await this.postComment(event.issueId, '✅ CI passed');
+          note(await this.postComment(event.issueId, '✅ CI passed'));
           break;
         case 'ci_failed':
-          failure = await this.postComment(
-            event.issueId,
-            `❌ CI failed${event.summary ? `: ${event.summary}` : ''}`
+          note(
+            await this.postComment(
+              event.issueId,
+              `❌ CI failed${event.summary ? `: ${event.summary}` : ''}`
+            )
           );
           break;
         case 'workflow_completed':
           if (event.prUrl && event.prTitle) {
-            await this.addRemoteLink(event.issueId, event.prUrl, event.prTitle);
+            note(await this.postRemoteLink(event.issueId, event.prUrl, event.prTitle));
           }
-          await this.transitionIssue(event.issueId, 'done');
+          note(await this.moveIssue(event.issueId, 'done'));
           break;
         case 'workflow_failed':
-          failure = await this.postComment(
-            event.issueId,
-            `⚠️ Workflow failed${event.summary ? `: ${event.summary}` : ''}`
+          note(
+            await this.postComment(
+              event.issueId,
+              `⚠️ Workflow failed${event.summary ? `: ${event.summary}` : ''}`
+            )
           );
           break;
       }

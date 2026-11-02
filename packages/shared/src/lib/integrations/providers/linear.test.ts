@@ -142,6 +142,102 @@ describe('LinearProvider.syncOnEvent comment failures', () => {
   });
 });
 
+describe('LinearProvider.syncOnEvent transition and link failures', () => {
+  const completed = { issueId: 'iss-1', type: 'workflow_completed' } as const;
+  const withPr = { ...completed, prTitle: 'Fix', prUrl: 'https://gh/pr/1' } as const;
+
+  it('reports no failure when the transition lands', async () => {
+    mockLinear();
+    await expect(provider().syncOnEvent(completed)).resolves.toBeNull();
+  });
+
+  it('reports no failure when the issue is already in the target state', async () => {
+    mockLinear('st-shipped');
+    await expect(provider().syncOnEvent(completed)).resolves.toBeNull();
+  });
+
+  it('reports an HTTP refusal of the state lookup by its class', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ json: async () => ({}), ok: false, status: 403 }))
+    );
+    await expect(provider().syncOnEvent(completed)).resolves.toBe('forbidden');
+  });
+
+  it('reports an HTTP refusal of the state update by its class', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: { body: string }) => {
+        const { query } = JSON.parse(init.body) as { query: string };
+        return query.includes('IssueStates')
+          ? {
+              json: async () => ({
+                data: { issue: { state: { id: 'st-todo' }, team: { states: { nodes: STATES } } } },
+              }),
+              ok: true,
+            }
+          : { json: async () => ({}), ok: false, status: 401 };
+      })
+    );
+    await expect(provider().syncOnEvent(completed)).resolves.toBe('unauthorized');
+  });
+
+  it('reports a state update Linear answers with success false as rejected', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: { body: string }) => {
+        const { query } = JSON.parse(init.body) as { query: string };
+        return {
+          json: async () =>
+            query.includes('IssueStates')
+              ? {
+                  data: {
+                    issue: { state: { id: 'st-todo' }, team: { states: { nodes: STATES } } },
+                  },
+                }
+              : { data: { issueUpdate: { success: false } } },
+          ok: true,
+        };
+      })
+    );
+    await expect(provider().syncOnEvent(completed)).resolves.toBe('rejected');
+  });
+
+  it('reports a refused PR link comment, and still attempts the transition', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: { body: string }) => {
+        const { query } = JSON.parse(init.body) as { query: string };
+        calls.push(query);
+        if (query.includes('IssueStates')) {
+          return {
+            json: async () => ({
+              data: { issue: { state: { id: 'st-todo' }, team: { states: { nodes: STATES } } } },
+            }),
+            ok: true,
+          };
+        }
+        return query.includes('commentCreate')
+          ? { json: async () => ({}), ok: false, status: 403 }
+          : { json: async () => ({ data: {} }), ok: true };
+      })
+    );
+    await expect(provider().syncOnEvent(withPr)).resolves.toBe('forbidden');
+    expect(calls.some((q) => q.includes('IssueStates'))).toBe(true);
+    expect(calls.some((q) => q.includes('commentCreate'))).toBe(true);
+  });
+
+  it('keeps the public transitionIssue and addRemoteLink void and silent', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ json: async () => ({}), ok: false, status: 403 }))
+    );
+    await expect(provider().transitionIssue('iss-1', 'Done')).resolves.toBeUndefined();
+    await expect(provider().addRemoteLink('iss-1', 'https://x', 't')).resolves.toBeUndefined();
+  });
+});
+
 describe('LinearProvider.addComment', () => {
   it('reports a comment Linear accepted as posted', async () => {
     vi.stubGlobal(

@@ -53,6 +53,17 @@ describe('RunSummaryBand', () => {
     expect(screen.getByText(/ticket was not updated/i)).toBeTruthy();
   });
 
+  it('says a run that succeeded was not moved on in the ticket', () => {
+    const finished = {
+      ...run,
+      contextSnapshot: { trackerWriteback: { event: 'workflow_completed', failure: 'forbidden' } },
+      status: 'SUCCESS',
+    } as unknown as WorkflowRunDetail;
+    render(<RunSummaryBand failedStep={null} pendingSteps={[]} run={finished} />);
+    expect(screen.getByText(/ticket was not updated/i)).toBeTruthy();
+    expect(screen.getByText(/run finished, but the ticket could not be updated/i)).toBeTruthy();
+  });
+
   it('renders nothing when there is nothing to show', () => {
     const { container } = render(<RunSummaryBand failedStep={null} pendingSteps={[]} run={run} />);
     expect(container.firstChild).toBeNull();

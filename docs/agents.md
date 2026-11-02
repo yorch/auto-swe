@@ -1094,6 +1094,8 @@ example a Linear API key it answers with 400), `timeout`, `network`, `redirect` 
 connector does not follow), `refused` (the platform's network policy blocked the address; GitHub
 Issues and Linear report it, Jira reports a blocked address as `network`),
 `unconfigured` (no tracker, or none that can be built), `empty` (read, but with nothing to render)
+`out_of_scope` (write-only: the platform declined a GitHub write to a repository the run does not
+target; a read never produces it, a refused read is `not_found`)
 and `unknown` (an answer that could not be parsed, or a failure inside the platform; GitHub Issues
 and Linear report it, Jira reports an invalid response body as `network`). A class carries no provider text, response body, URL, token
 or header. `not_found` is ambiguous on purpose: Jira and GitHub answer 404 both for a ticket that
@@ -1107,13 +1109,24 @@ trace the same event. A GitHub ticket outside the run's repositories is refused 
 and reads as `not_found`: the tracker is not asked, and nothing it would return is recorded or shown.
 The id the requester submitted stays in the event, as for any other miss.
 
+**When a run could not update its ticket.** The same class set describes the writes a finished run
+makes. `syncOnEvent` resolves the class of the first write the tracker refused: the comment of a
+run that did not finish, or the status move of one that did (a link is written only when a PR url
+is supplied, which `finalizeRun` does not do). A Jira ticket with no
+transition of the wanted name is a silent no-op, not a failure. A GitHub ticket outside the run's
+repositories is not written to and resolves `out_of_scope`; a bare GitHub id (`123`, `#123`)
+names no repository, so it is not written either but is not reported. `finalizeRun` stores the class on the
+run's `contextSnapshot` as `trackerWriteback: { event, failure }` (`event` is `workflow_completed`
+or `workflow_failed`; a record stored without one reads as `workflow_failed`), and the run page
+shows "The ticket was not updated" with the reason.
+
 The Jira poller of an automation reads through `fetchIssueOutcome`, which classifies nothing itself:
 it maps the same class to what a poll decides. `not_found` is `refused`, the tracker's final word
 about that issue (no access to it, or gone), so the poll marks it seen. Every other class is
 `unavailable`, which a later poll may change: `unauthorized` and `forbidden` (a credential or a
 network rule an operator fixes, not a verdict on the issue), `rejected`, `rate_limited`,
-`server_error`, `timeout`, `network`, `redirect`, `refused`, `unconfigured`, `empty` and `unknown`.
-The poll leaves such an issue unseen.
+`server_error`, `timeout`, `network`, `redirect`, `refused`, `unconfigured`, `empty`,
+`out_of_scope` and `unknown`. The poll leaves such an issue unseen.
 
 Another template opts in by adding the same pieces: the `gatherTicketContext` step, a `set` node
 that keeps `nodes.<id>.output.text` in `context.ticket`, and `ticket: context.ticket` as an input on

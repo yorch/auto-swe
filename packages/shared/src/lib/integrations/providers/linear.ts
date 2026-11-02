@@ -260,6 +260,17 @@ export class LinearProvider implements IssueTrackerProvider {
   }
 
   async transitionIssue(issueId: string, targetStatusName: string): Promise<void> {
+    await this.moveIssue(issueId, targetStatusName);
+  }
+
+  /**
+   * Moves the issue to a workflow state; resolves why Linear refused (the lookup or the update),
+   * or null when it moved or there is no state to move it to (a silent no-op).
+   */
+  private async moveIssue(
+    issueId: string,
+    targetStatusName: string
+  ): Promise<TicketFailureClass | null> {
     try {
       type StatesResponse = {
         data?: {
@@ -274,7 +285,7 @@ export class LinearProvider implements IssueTrackerProvider {
       });
       const states = result.data?.issue?.team?.states?.nodes ?? [];
       if (states.length === 0) {
-        return;
+        return null;
       }
 
       const wanted = targetStatusName.trim().toLowerCase();
@@ -285,15 +296,23 @@ export class LinearProvider implements IssueTrackerProvider {
       // No sensible mapping, or the issue is already there — nothing to do.
       // Silently no-op like the Jira provider rather than failing the run.
       if (!target || target.id === result.data?.issue?.state?.id) {
-        return;
+        return null;
       }
 
-      await linearGraphql(this.apiToken, LINEAR_ISSUE_UPDATE_STATE_MUTATION, {
-        id: issueId,
-        stateId: target.id,
-      });
+      const update = await linearGraphql<{ data?: { issueUpdate?: { success?: boolean } } }>(
+        this.apiToken,
+        LINEAR_ISSUE_UPDATE_STATE_MUTATION,
+        { id: issueId, stateId: target.id }
+      );
+      // GraphQL reports a refused mutation in a 200 body; only an explicit `false` is one.
+      if (update.data?.issueUpdate?.success === false) {
+        this.log?.warn({ issueId, targetStatusName }, 'Linear transitionIssue was not accepted');
+        return 'rejected';
+      }
+      return null;
     } catch (err) {
       this.log?.warn({ err, issueId, targetStatusName }, 'Linear transitionIssue failed');
+      return linearFailure(err);
     }
   }
 
@@ -322,42 +341,57 @@ export class LinearProvider implements IssueTrackerProvider {
   }
 
   async addRemoteLink(issueId: string, url: string, _title: string): Promise<void> {
-    // Linear has no remote link concept — add as comment
-    await this.addComment(issueId, `🔗 ${url}`);
+    await this.postRemoteLink(issueId, url);
   }
 
+  /** Linear has no remote link concept: the link is a comment, and fails as one. */
+  private postRemoteLink(issueId: string, url: string): Promise<TicketFailureClass | null> {
+    return this.postComment(issueId, `🔗 ${url}`);
+  }
+
+  /**
+   * Mirrors a run event onto the issue. Every write of the event is attempted; resolves the class
+   * of the first one the tracker refused (comment, status move or link), or null.
+   */
   async syncOnEvent(event: TrackerSyncEvent): Promise<TicketFailureClass | null> {
     let failure: TicketFailureClass | null = null;
+    const note = (refused: TicketFailureClass | null) => {
+      failure ??= refused;
+    };
     try {
       switch (event.type) {
         case 'workflow_started':
-          await this.transitionIssue(event.issueId, 'In Progress');
+          note(await this.moveIssue(event.issueId, 'In Progress'));
           break;
         case 'pr_opened':
           if (event.prUrl) {
-            await this.addRemoteLink(event.issueId, event.prUrl, event.prTitle ?? 'PR');
+            note(await this.postRemoteLink(event.issueId, event.prUrl));
           }
-          await this.transitionIssue(event.issueId, 'In Review');
+          note(await this.moveIssue(event.issueId, 'In Review'));
           break;
         case 'ci_passed':
-          failure = await this.postComment(event.issueId, '✅ CI passed');
+          note(await this.postComment(event.issueId, '✅ CI passed'));
           break;
         case 'ci_failed':
-          failure = await this.postComment(
-            event.issueId,
-            `❌ CI failed${event.summary ? `: ${event.summary}` : ''}`
+          note(
+            await this.postComment(
+              event.issueId,
+              `❌ CI failed${event.summary ? `: ${event.summary}` : ''}`
+            )
           );
           break;
         case 'workflow_completed':
           if (event.prUrl) {
-            await this.addRemoteLink(event.issueId, event.prUrl, event.prTitle ?? 'PR');
+            note(await this.postRemoteLink(event.issueId, event.prUrl));
           }
-          await this.transitionIssue(event.issueId, 'Done');
+          note(await this.moveIssue(event.issueId, 'Done'));
           break;
         case 'workflow_failed':
-          failure = await this.postComment(
-            event.issueId,
-            `⚠️ Workflow failed${event.summary ? `: ${event.summary}` : ''}`
+          note(
+            await this.postComment(
+              event.issueId,
+              `⚠️ Workflow failed${event.summary ? `: ${event.summary}` : ''}`
+            )
           );
           break;
       }

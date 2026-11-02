@@ -1296,21 +1296,23 @@ export async function finalizeRun(
   ) {
     try {
       const trackerConfig = await resolveIssueTrackerConfig();
+      const event: TrackerWriteback['event'] =
+        finalStatus === 'SUCCESS' ? 'workflow_completed' : 'workflow_failed';
       const failure = await syncTrackerOnEvent(
-        finalStatus === 'SUCCESS'
-          ? { issueId: externalTicketId, type: 'workflow_completed' }
+        event === 'workflow_completed'
+          ? { issueId: externalTicketId, type: event }
           : {
               issueId: externalTicketId,
               summary: `Workflow ended with status: ${finalStatus}`,
-              type: 'workflow_failed',
+              type: event,
             },
         trackerConfig,
         { runInputId: run?.workRequestId, warn: logWarn }
       );
-      // Only the failed event posts a comment: a finished run only moves the ticket's status,
-      // which the providers do not report.
-      if (failure && finalStatus !== 'SUCCESS') {
-        await recordTrackerWriteback(runId, { failure });
+      // Either event writes to the ticket (a failed run comments, a finished one moves its status
+      // and links its PR), and the sync resolves the first write the tracker refused: say so.
+      if (failure) {
+        await recordTrackerWriteback(runId, { event, failure });
       }
     } catch (err) {
       logError(`[finalizeRun] tracker sync failed for run ${runId}:`, {
@@ -1323,7 +1325,7 @@ export async function finalizeRun(
 }
 
 /**
- * Stamp the comment the tracker refused onto the run's snapshot, so the run page can say the
+ * Stamp the write the tracker refused onto the run's snapshot, so the run page can say the
  * ticket was not updated. Merges into the snapshot the run was ended with, read back from the
  * row (the terminal write skips the column when the run ended with none). Never throws: the run
  * is already finalized.

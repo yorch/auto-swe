@@ -474,9 +474,66 @@ describe('syncTrackerOnEvent', () => {
       expect(warn).toHaveBeenCalledWith(TRACKER_SYNC_FAILED, expect.anything());
     });
 
-    it('is null for a write the repository check refused, which is policy and not a failure', async () => {
+    it('is out_of_scope for a write the repository check refused: the ticket was not updated', async () => {
+      const warn = vi.fn();
       await expect(
         syncTrackerOnEvent({ ...EVENT, issueId: 'attacker/public#1' }, GITHUB, {
+          runInputId: 'wr-1',
+          warn,
+        })
+      ).resolves.toBe('out_of_scope');
+      expect(warn).toHaveBeenCalledWith(TRACKER_SYNC_OUT_OF_SCOPE, {
+        event: 'workflow_completed',
+        runInputId: 'wr-1',
+      });
+      expect(mocks.syncOnEvent).not.toHaveBeenCalled();
+    });
+
+    it('is out_of_scope for a failed event refused for want of a run, too', async () => {
+      await expect(
+        syncTrackerOnEvent({ ...EVENT, type: 'workflow_failed' }, GITHUB, {
+          runInputId: null,
+          warn: vi.fn(),
+        })
+      ).resolves.toBe('out_of_scope');
+    });
+
+    it.each(['123', '#123'])(
+      'is null, not out_of_scope, for the bare GitHub id %s: still unwritten, but it names no repository',
+      async (issueId) => {
+        const warn = vi.fn();
+        await expect(
+          syncTrackerOnEvent({ ...EVENT, issueId }, GITHUB, { runInputId: 'wr-1', warn })
+        ).resolves.toBeNull();
+        expect(mocks.syncOnEvent).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(TRACKER_SYNC_OUT_OF_SCOPE, {
+          event: 'workflow_completed',
+          runInputId: 'wr-1',
+        });
+      }
+    );
+
+    it('is null for a bare GitHub id when the caller names no run', async () => {
+      await expect(
+        syncTrackerOnEvent({ ...EVENT, issueId: '123' }, GITHUB, {
+          runInputId: null,
+          warn: vi.fn(),
+        })
+      ).resolves.toBeNull();
+      expect(mocks.syncOnEvent).not.toHaveBeenCalled();
+    });
+
+    it('calls the provider for an explicit in-scope repository', async () => {
+      mocks.syncOnEvent.mockResolvedValue(null);
+      await expect(
+        syncTrackerOnEvent(EVENT, GITHUB, { runInputId: 'wr-1', warn: vi.fn() })
+      ).resolves.toBeNull();
+      expect(mocks.syncOnEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it('is null for workflow_started on GitHub, which writes nothing', async () => {
+      await expect(
+        syncTrackerOnEvent({ ...EVENT, type: 'workflow_started' }, GITHUB, {
           runInputId: 'wr-1',
           warn: vi.fn(),
         })

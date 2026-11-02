@@ -1882,7 +1882,7 @@ describe('finalizeWorkflowRun', () => {
     findRun.mockReset();
   });
 
-  describe('when the tracker refuses the terminal comment', () => {
+  describe('when the tracker refuses the terminal write', () => {
     const runRow = {
       endedAt: null,
       workflowId: 'eng-x',
@@ -1919,7 +1919,12 @@ describe('finalizeWorkflowRun', () => {
       await expect(finalizeRun('run-wb', 'FAILED', stored, 'worker')).resolves.toBe(true);
       expect(patchRun).toHaveBeenCalledTimes(1);
       expect(patchRun).toHaveBeenCalledWith({
-        data: { contextSnapshot: { ...stored, trackerWriteback: { failure: 'forbidden' } } },
+        data: {
+          contextSnapshot: {
+            ...stored,
+            trackerWriteback: { event: 'workflow_failed', failure: 'forbidden' },
+          },
+        },
         where: { id: 'run-wb' },
       });
     });
@@ -1928,7 +1933,12 @@ describe('finalizeWorkflowRun', () => {
       tracker.mockResolvedValue('timeout' as never);
       await finalizeRun('run-wb', 'TIMED_OUT', undefined, 'worker');
       expect(patchRun).toHaveBeenCalledWith({
-        data: { contextSnapshot: { ...stored, trackerWriteback: { failure: 'timeout' } } },
+        data: {
+          contextSnapshot: {
+            ...stored,
+            trackerWriteback: { event: 'workflow_failed', failure: 'timeout' },
+          },
+        },
         where: { id: 'run-wb' },
       });
     });
@@ -1941,7 +1951,9 @@ describe('finalizeWorkflowRun', () => {
       tracker.mockResolvedValue('forbidden' as never);
       await finalizeRun('run-wb', 'FAILED', undefined, 'worker');
       expect(patchRun).toHaveBeenCalledWith({
-        data: { contextSnapshot: { trackerWriteback: { failure: 'forbidden' } } },
+        data: {
+          contextSnapshot: { trackerWriteback: { event: 'workflow_failed', failure: 'forbidden' } },
+        },
         where: { id: 'run-wb' },
       });
     });
@@ -1952,8 +1964,38 @@ describe('finalizeWorkflowRun', () => {
       expect(patchRun).not.toHaveBeenCalled();
     });
 
-    it('writes nothing for a run that succeeded: it posts no comment to refuse', async () => {
+    it('records a refused write of a run that succeeded, as a workflow_completed one', async () => {
       tracker.mockResolvedValue('forbidden' as never);
+      await expect(finalizeRun('run-wb', 'SUCCESS', stored, 'worker')).resolves.toBe(true);
+      expect(tracker.mock.calls[0]?.[0]).toEqual({ issueId: 'T-1', type: 'workflow_completed' });
+      expect(patchRun).toHaveBeenCalledTimes(1);
+      expect(patchRun).toHaveBeenCalledWith({
+        data: {
+          contextSnapshot: {
+            ...stored,
+            trackerWriteback: { event: 'workflow_completed', failure: 'forbidden' },
+          },
+        },
+        where: { id: 'run-wb' },
+      });
+    });
+
+    it('records a ticket the repository check declined, as out_of_scope', async () => {
+      tracker.mockResolvedValue('out_of_scope' as never);
+      await finalizeRun('run-wb', 'SUCCESS', stored, 'worker');
+      expect(patchRun).toHaveBeenCalledWith({
+        data: {
+          contextSnapshot: {
+            ...stored,
+            trackerWriteback: { event: 'workflow_completed', failure: 'out_of_scope' },
+          },
+        },
+        where: { id: 'run-wb' },
+      });
+    });
+
+    it('writes nothing for a run that succeeded when the tracker took every write', async () => {
+      tracker.mockResolvedValue(null as never);
       await finalizeRun('run-wb', 'SUCCESS', stored, 'worker');
       expect(patchRun).not.toHaveBeenCalled();
     });
