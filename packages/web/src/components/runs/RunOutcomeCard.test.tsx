@@ -205,7 +205,10 @@ describe('a spilled result text', () => {
 
     // Classes that are not read failures: 'empty' means the ticket was read but had no text. A new
     // failure class must be consciously placed: either it gets a hint (unreadable) or it is added here.
-    const NOT_READ_FAILURES = ['empty'];
+    // Classes that are not a failure to read the ticket: 'empty' means it was read, and
+    // 'out_of_scope' is write-only (a refused read is reported as 'not_found'), so neither leads
+    // the card or has a hint. A new class must be placed here or given a hint.
+    const NOT_READ_FAILURES = ['empty', 'out_of_scope'];
     const UNREADABLE = [...TICKET_FAILURE_CLASSES].filter((c) => !NOT_READ_FAILURES.includes(c));
 
     // The literal the validate phase stores (packages/shared/.../authoring/validatePhase.ts).
