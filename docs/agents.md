@@ -48,6 +48,7 @@ library at `/agents`.
 | `ticketPlanner` | Document review pack — proposes an epic, tickets and sub-tasks as JSON for a person to approve (`confluence-review-to-tickets`) | `anthropic/claude-sonnet-5-5` |
 | `appAssistant` | The dashboard's in-app assistant panel (`runAssistantTurn`), acting as the signed-in user; its read-only tools (`searchDocs`, `workflowInventory`, `getPageContext`, `describeApi`, `callApi`) are bound in code — see [architecture.md §5](./architecture.md#5-authentication) | `anthropic/claude-sonnet-5-5` |
 | `assistantTitler` | `nameAssistantConversation` — names an in-app assistant conversation from the user's first messages, alongside its turn; no tools | `anthropic/claude-haiku-4-5-20251001` |
+| `prTitler` | `resolvePrTitle` — picks the Conventional Commits type and a summary for a pull request title, from the request and the changed file paths, when a repository's format is `conventional` and no type is fixed; no tools; best-effort, so a failure falls back to `chore` rather than failing the run | `anthropic/claude-haiku-4-5-20251001` |
 
 `assertConfigReady()` gates worker boot on the agents the **installed templates** can reach:
 `requiredAgentKeysForDeployment()` walks the active (and experiment) version of every `ACTIVE`

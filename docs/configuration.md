@@ -500,6 +500,52 @@ applies to reads and writes is in [`work-views.md`](./work-views.md).
 
 ---
 
+## 10. Pull request titles
+
+The title of a pull request the platform opens comes from one of two formats.
+
+| Format | Title |
+|---|---|
+| `template` | The title template, expanded with `{{ticketId}}` and `{{description}}`. The default is `[auto-swe] {{ticketId}}`. |
+| `conventional` | A [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) title, `type: summary`, at most 72 characters. |
+
+Three registry settings choose the behaviour, each overridable per workflow template, team and
+organization: `workflow.prTitleFormat`, `workflow.prTitleTemplate` and `workflow.prTitleType`. A
+repository can set its own format and template as well, in the repository edit form (see
+[pull request titles](./repositories.md#pull-request-titles)); those two columns win over every
+registry scope. The resolution order for the format and the template is
+
+1. the repository's own value,
+2. the registry cascade: workflow template, team, organization, global,
+3. for the template only, the template set at `/admin/workflow-defaults` (or `PR_TITLE_TEMPLATE`),
+   which is what a deployment that sets none of the above keeps using.
+
+`workflow.prTitleTemplate` is empty by default, which means "use the Workflow defaults template".
+
+**Choosing the type.** In `conventional` format the type is the registry's `workflow.prTitleType`
+when it names one of `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `build`, `ci`, `chore`,
+`revert` or `style`. The summary is then the first line of the request. With the type on `auto`
+(the default) the `prTitler` agent chooses both the type and a summary from the request text and the
+list of changed files; see [`agents.md`](./agents.md). A fixed type skips that model call, which
+suits a workflow template that always does one kind of work.
+
+The title is built by fixed code, never taken verbatim from a model: an unknown type becomes
+`chore`, the summary is reduced to one lower-case line, cut at a word boundary to fit the cap, and
+an empty one falls back to the request's first line, then to the ticket id. A run is never failed
+over its title. The `prTitler` call is best-effort: a missing credential, a refusal or a malformed
+answer produces `chore: <first line of the request>`.
+
+**Agent runs.** A draft pull request opened by an agent run uses the same resolution, with one
+difference: while no template is set for the repository or in the registry, it keeps its own title,
+`[auto-swe] agent run: <the first 80 characters of the prompt>`, instead of the global defaults
+template. The `prTitler` agent is resolved for an agent run at global and organization scope only,
+like the run's own agent, never at the owning team's.
+
+Titles of pull requests that already exist are not rewritten, and a feedback or CI-fix push does not
+touch them.
+
+---
+
 ## Run activity and container egress
 
 The optional container egress proxy is configured by worker bootstrap env: `EGRESS_PROXY_PORT`,
@@ -518,6 +564,17 @@ to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-
 
 ## Limitations
 
+- **Conventional titles carry no scope and no breaking-change marker.** The title is `type: summary`.
+  A scope such as `fix(gateway):` or a `!` would come from model or ticket text and change what
+  downstream release tooling reads, so neither is produced; a repository that needs them sets its own
+  template.
+- **The type is the model's judgement.** With `workflow.prTitleType` on `auto`, the `prTitler` agent
+  sees the request text and the changed file paths, not the diff, so it can call a fix a feature. A
+  fixed type, or a repository that pins its own template, removes the guess.
+- **`workflow.prTitleTemplate` and the Workflow defaults template are two places for one value.** An
+  empty registry value defers to the defaults template, and a non-empty one at any scope wins over
+  it, so the template an admin sees at `/admin/workflow-defaults` is not always the one in effect.
+  The effective-config view shows which registry scope supplied the value.
 - **Git identity is not pinned to a run.** The identity resolves when each workspace is created. A
   setting edited during a long run can give one pull request commits from two identities.
 - **There is no per-agent git identity.** Agents never run `git commit`; platform code does, so the
