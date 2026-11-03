@@ -140,6 +140,10 @@ scope, embedded by the same model, at or above `memory.supersedeThreshold` simil
 1 turns it off) is marked superseded by the new one. A lesson written from fresher evidence about
 the same thing therefore replaces the old one in recall instead of sitting beside it; the old row
 stays, with `supersededById` naming its replacement.
+Supersession only ever replaces older rows (ordered by creation time, then id), so two similar
+lessons written at the same moment never retire each other: the later one stays active. If the
+earlier write commits after the later one has already run its replacement, both stay active until
+the next similar write.
 
 Every write goes through `insertMemoryItem` (`packages/worker/src/lib/memoryStore.ts`), which
 applies the memory gate (§5) before it embeds anything.

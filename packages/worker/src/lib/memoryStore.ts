@@ -331,6 +331,15 @@ export async function insertMemoryItem(input: {
  * the same thing replaces the old one rather than sitting beside it in recall.
  * The older row is kept, with `superseded_by_id` naming its replacement.
  *
+ * Supersession is strictly one-directional: only rows older than the new item,
+ * ordered by `(created_at, id)`, are marked. Two similar lessons written
+ * concurrently both insert before either UPDATE runs, so neither is yet
+ * superseded when the other's UPDATE executes; without the ordering each would
+ * retire the other and recall would find neither. With it, only the later of the
+ * two supersedes the earlier, so at least one always stays active. If the earlier
+ * writer commits after the later one has already run its UPDATE, both stay active
+ * until the next similar write; that costs a duplicate in recall, never an empty one.
+ *
  * Best-effort: the new item is already stored, and failing to retire an old
  * one leaves recall as it was before, so a failure is logged, not thrown.
  * Returns how many items were superseded.
@@ -363,7 +372,8 @@ async function supersedeOlderMemory(input: {
           AND superseded_at IS NULL
           AND embedding IS NOT NULL
           AND embedding_model = $4
-          AND 1 - (embedding <=> $5::vector) >= $6`,
+          AND 1 - (embedding <=> $5::vector) >= $6
+          AND (created_at, id) < (SELECT created_at, id FROM memory_items WHERE id = $1::uuid)`,
       input.id,
       input.scopeId,
       input.scope,
