@@ -31,6 +31,7 @@ const m = vi.hoisted(() => ({
   push: vi.fn(),
   recordUsage: vi.fn(),
   resolveAgentSpec: vi.fn(),
+  resolvePrTitle: vi.fn(async (input: { legacyTitle?: string }) => input.legacyTitle ?? ''),
   run: {
     template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
     templateId: 'tpl-1',
@@ -98,6 +99,10 @@ vi.mock('../lib/temporalClient.js', () => ({
   }),
 }));
 vi.mock('@auto-swe/shared/config', () => ({ resolveSettings: vi.fn(async () => m.settings) }));
+// The title policy is covered by prTitle.test.ts; here the resolver keeps the agent run's own title.
+vi.mock('./prTitle.js', () => ({
+  resolvePrTitle: m.resolvePrTitle,
+}));
 vi.mock('@auto-swe/shared/lib/agentRunAdmission', async (orig) => ({
   ...(await orig<typeof import('@auto-swe/shared/lib/agentRunAdmission')>()),
   loadAgentRunSlots: vi.fn(async () => m.slots),
@@ -687,6 +692,18 @@ describe('delivery: trust boundary and gate-before-push', () => {
         workflowId: 'ledger-1',
       },
     });
+  });
+
+  it("resolves the PR title at the repository's scope but the titler at global and organization", async () => {
+    await runAgentTask({ request: deliver('draft_pr') });
+    expect(m.resolvePrTitle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentCtx: { orgId: 'org-1' },
+        ctx: { orgId: 'org-1', teamId: 'team-1' },
+        legacyTitle: '[auto-swe] agent run: fix the typo',
+        ticketId: expect.any(String),
+      })
+    );
   });
 
   it('never updates a row that already holds the same repository and number', async () => {

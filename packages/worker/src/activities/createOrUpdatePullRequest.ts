@@ -22,6 +22,7 @@ import {
 } from '../lib/scm/types.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
 import { requestTicketIsSynthetic } from '../lib/trackerTicket.js';
+import { resolvePrTitle } from './prTitle.js';
 import { testStatusWord } from './utils.js';
 
 const EMPTY_PR_ATTRIBUTION = { runId: null, templateId: null, templateVersion: null } as const;
@@ -70,7 +71,10 @@ async function doCreateOrUpdatePullRequest(
   options: CreatePullRequestOptions
 ): Promise<{ prNumber: number; prUrl: string }> {
   const repo = await prisma.connection.findUniqueOrThrow({
-    include: { installation: { select: { host: true, installationId: true } } },
+    include: {
+      installation: { select: { host: true, installationId: true } },
+      team: { select: { orgId: true } },
+    },
     where: { id: requireRepoId(request, 'createOrUpdatePullRequest') },
   });
 
@@ -169,7 +173,20 @@ async function doCreateOrUpdatePullRequest(
     return { prNumber: existingPR.prNumber, prUrl };
   }
 
-  const title = formatPRTitle(request, workflowDefaults.prTitleTemplate);
+  const title = await resolvePrTitle({
+    ctx: {
+      orgId: repo.team?.orgId ?? undefined,
+      teamId: repo.teamId,
+      workflowTemplateId: ownAttribution.templateId ?? undefined,
+    },
+    defaultsTemplate: workflowDefaults.prTitleTemplate,
+    description: request.description,
+    files: codeResult.filesChanged,
+    renderTemplate: (template) => formatPRTitle(request, template),
+    repo,
+    ticketId: request.externalTicketId,
+    tracer,
+  });
 
   // Create the PR (or, on Temporal retries, reuse one a prior attempt created
   // on the host but crashed before persisting the DB row — the tracking row is

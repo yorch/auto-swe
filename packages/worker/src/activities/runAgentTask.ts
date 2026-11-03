@@ -55,6 +55,8 @@ import {
   importAgentTree,
   pushGatedCommit,
 } from './agentRunFinalize.js';
+import { renderTemplate } from './createOrUpdatePullRequest.js';
+import { resolvePrTitle } from './prTitle.js';
 import { runAgent } from './runAgent.js';
 import { parseDiffToFileChanges } from './utils.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
@@ -493,7 +495,24 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
       ? {}
       : {
           afterPush: async (pushed) => {
-            const title = prTitle(request.description);
+            const title = await resolvePrTitle({
+              agentCtx: { orgId: baseCtx.orgId },
+              ctx: { orgId: baseCtx.orgId, teamId: baseCtx.teamId },
+              defaultsTemplate: workflowDefaults.prTitleTemplate,
+              description: request.description,
+              files: pushed.filesChanged,
+              // An agent run keeps its own descriptive title until a template is set for the
+              // repository or the registry; the global defaults template is the workflow path's.
+              legacyTitle: prTitle(request.description),
+              renderTemplate: (template) =>
+                renderTemplate(template, {
+                  description: request.description,
+                  ticketId: request.externalTicketId,
+                }),
+              repo,
+              ticketId: request.externalTicketId,
+              tracer: pushed.tracer,
+            });
             try {
               pr = await scm.createOrUpdatePullRequest({
                 baseBranch,
