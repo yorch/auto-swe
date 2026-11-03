@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PullFilesResult, ReviewFile } from './githubPullFiles.js';
-import { assembleCockpit, type EvaluationRow } from './pullRequestCockpit.js';
+import { assembleCockpit, type EvaluationRow, viewedPaths } from './pullRequestCockpit.js';
 
 const HEAD = 'abc123';
 const PATCH = ['@@ -1,2 +1,3 @@', ' keep', '+added', ' tail'].join('\n');
@@ -286,5 +286,49 @@ describe('assembleCockpit', () => {
     expect(files).toEqual({ reason: 'host-not-approved', type: 'unavailable' });
     expect(ev?.id).toBe('eval-1');
     expect(ev?.createdAt).toBe('2026-11-03T10:00:00.000Z');
+  });
+});
+
+describe('viewedPaths', () => {
+  const files = (...items: { path: string; digest: string | null }[]) =>
+    run(
+      null,
+      ok(
+        items.map((i) =>
+          i.digest === null
+            ? file({ patch: undefined, patchDigest: undefined, path: i.path })
+            : file({ patchDigest: i.digest, path: i.path })
+        )
+      )
+    ).files;
+
+  it('counts a mark only while the patch is the one that was viewed', () => {
+    const shown = files({ digest: 'new', path: 'src/a.ts' }, { digest: 'same', path: 'src/b.ts' });
+    expect(
+      viewedPaths(shown, [
+        { patchDigest: 'old', path: 'src/a.ts' },
+        { patchDigest: 'same', path: 'src/b.ts' },
+      ])
+    ).toEqual(['src/b.ts']);
+  });
+
+  it('ignores a mark for a file the page does not show', () => {
+    expect(
+      viewedPaths(files({ digest: 'd', path: 'src/a.ts' }), [{ patchDigest: 'd', path: 'gone.ts' }])
+    ).toEqual([]);
+  });
+
+  it('never counts a file that has no patch to match', () => {
+    expect(
+      viewedPaths(files({ digest: null, path: 'logo.png' }), [
+        { patchDigest: '', path: 'logo.png' },
+      ])
+    ).toEqual([]);
+  });
+
+  it('counts nothing while the files could not be read', () => {
+    expect(
+      viewedPaths({ reason: 'failed', type: 'unavailable' }, [{ patchDigest: 'd', path: 'a' }])
+    ).toEqual([]);
   });
 });

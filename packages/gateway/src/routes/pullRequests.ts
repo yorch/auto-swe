@@ -22,7 +22,7 @@ import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/date
 import { readPullFiles } from '../lib/githubPullFiles.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
-import { assembleCockpit } from '../lib/pullRequestCockpit.js';
+import { assembleCockpit, viewedPaths } from '../lib/pullRequestCockpit.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { teamMembershipFilter } from '../lib/templateLaunch.js';
 import { reachableConnections } from '../lib/tenantScope.js';
@@ -48,6 +48,26 @@ const OutcomesQuery = refineCustomRange(
     window: z.coerce.number().int().min(1).max(365).default(30),
   })
 );
+
+/** The host lists at most 3000 files of a pull request, so a person has at most that many marks. */
+const MAX_VIEWED_PER_PULL_REQUEST = 3000;
+/** Marks one request may set or clear. */
+const MAX_VIEWED_PER_REQUEST = 200;
+
+const ViewedBody = z.object({
+  files: z
+    .array(
+      z.object({
+        /** The digest the page received with the file; a mark counts only while it still matches. */
+        patchDigest: z.string().regex(/^[0-9a-f]{64}$/),
+        // Short enough for a btree key (the unique index holds the path).
+        path: z.string().min(1).max(500),
+      })
+    )
+    .min(1)
+    .max(MAX_VIEWED_PER_REQUEST),
+  viewed: z.boolean(),
+});
 
 /** Most rows one outcomes read takes; one more is fetched to detect a cut. */
 const OUTCOMES_ROW_CAP = 10_000;
@@ -584,7 +604,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'PULL_REQUEST_NOT_FOUND', 'Pull request not found');
       }
       const ledger = row.workflow && row.workflow.repoId === row.repoId ? row.workflow : null;
-      const [instanceBaseUrl, run, evaluation, files] = await Promise.all([
+      const [instanceBaseUrl, run, evaluation, files, viewedRows] = await Promise.all([
         resolveGitHubBaseUrl(),
         ledger
           ? fastify.prisma.workflowRun.findFirst({
@@ -617,6 +637,12 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         row.repository && row.prNumber !== null
           ? readPullFiles(row.repository, row.prNumber)
           : ({ reason: 'not-found', type: 'unavailable' } as const),
+        // The caller's own marks only; the route has already decided they may see this pull request.
+        fastify.prisma.prFileView.findMany({
+          select: { patchDigest: true, path: true },
+          take: MAX_VIEWED_PER_PULL_REQUEST,
+          where: { pullRequestId: row.id, userId: user.sub },
+        }),
       ]);
       const parts = assembleCockpit({ evaluation, files, storedHeadSha: row.headSha });
       const data: PullRequestCockpit = {
@@ -647,8 +673,69 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
             : null,
           workRequestId: ledger?.workRequest?.id ?? null,
         },
+        viewed: viewedPaths(parts.files, viewedRows),
       };
       return { data };
+    }
+  );
+  // PUT /api/v1/pull-requests/:id/viewed — mark files viewed, or clear the marks, for the caller
+  // alone. The caller must be able to reach the pull request's repository; a mark names no host
+  // data, so nothing is read from the host here.
+  app.put(
+    '/:id/viewed',
+    {
+      onRequest: engineerOnly,
+      schema: { body: ViewedBody, params: z.object({ id: z.string().uuid() }) },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const pull = await fastify.prisma.pullRequest.findFirst({
+        select: { id: true },
+        where: {
+          id: request.params.id,
+          ...(user.role === 'ADMIN'
+            ? {}
+            : { repository: reachableConnections(user, request.repoAccessGate) }),
+        },
+      });
+      if (!pull) {
+        return sendError(reply, 404, 'PULL_REQUEST_NOT_FOUND', 'Pull request not found');
+      }
+      // One mark per path in a request, the last one given.
+      const byPath = new Map(request.body.files.map((f) => [f.path, f.patchDigest]));
+      const paths = [...byPath.keys()];
+      const mine = { pullRequestId: pull.id, userId: user.sub };
+      if (!request.body.viewed) {
+        const cleared = await fastify.prisma.prFileView.deleteMany({
+          where: { ...mine, path: { in: paths } },
+        });
+        return { data: { updated: cleared.count } };
+      }
+      const [already, total] = await Promise.all([
+        fastify.prisma.prFileView.findMany({
+          select: { path: true },
+          where: { ...mine, path: { in: paths } },
+        }),
+        fastify.prisma.prFileView.count({ where: mine }),
+      ]);
+      if (total + (paths.length - already.length) > MAX_VIEWED_PER_PULL_REQUEST) {
+        return sendError(
+          reply,
+          400,
+          'TOO_MANY_VIEWED_FILES',
+          `At most ${MAX_VIEWED_PER_PULL_REQUEST} files can be marked viewed on one pull request`
+        );
+      }
+      await fastify.prisma.$transaction(
+        [...byPath].map(([path, patchDigest]) =>
+          fastify.prisma.prFileView.upsert({
+            create: { ...mine, patchDigest, path },
+            update: { patchDigest, viewedAt: new Date() },
+            where: { userId_pullRequestId_path: { ...mine, path } },
+          })
+        )
+      );
+      return { data: { updated: paths.length } };
     }
   );
 };
