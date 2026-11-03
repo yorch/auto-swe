@@ -101,6 +101,7 @@ describe('POST /api/v1/work-requests', () => {
   let notActionableStops: unknown[] = [];
   let stopLookups = 0;
   const createdRunInputs: Record<string, unknown>[] = [];
+  let priorRunInput: Record<string, unknown> | null = null;
   const stoppedRequest = {
     id: 'run-stopped',
     startedAt: new Date(),
@@ -190,6 +191,7 @@ describe('POST /api/v1/work-requests', () => {
           return { id: 'wr-1', ...args.data };
         },
         delete: async () => ({}),
+        findUnique: async () => priorRunInput,
       },
       // The first lookup is the stops; the second, the runs after one.
       workflowRun: {
@@ -342,6 +344,51 @@ describe('POST /api/v1/work-requests', () => {
       url: '/api/v1/work-requests',
     });
     expect(res.statusCode).toBe(400);
+  });
+
+  describe('Idempotency-Key replay and egressPolicy', () => {
+    const body = {
+      description: 'Add health endpoint',
+      externalTicketId: 'JIRA-1',
+      repoIds: ['00000000-0000-4000-8000-000000000001'],
+    };
+    const send = (extra: Record<string, unknown>) =>
+      app.inject({
+        headers: { authorization: 'Bearer test-token', 'idempotency-key': 'key-1' },
+        method: 'POST',
+        payload: { ...body, ...extra },
+        url: '/api/v1/work-requests',
+      });
+    const prior = (requestPayload: Record<string, unknown>) => ({
+      connectionId: body.repoIds[0],
+      description: body.description,
+      externalTicketId: body.externalTicketId,
+      id: 'wr-prior',
+      payload: { budget: 'STANDARD' },
+      requestPayload: JSON.stringify(requestPayload),
+      startedActiveWorkflowId: 'aw-1',
+    });
+
+    afterEach(() => {
+      priorRunInput = null;
+    });
+
+    it.each([
+      ['a new policy on a key first used without one', {}, { egressPolicy: 'blocked' }],
+      ['a different policy', { egressPolicy: 'restricted' }, { egressPolicy: 'blocked' }],
+      ['no policy on a key first used with one', { egressPolicy: 'blocked' }, {}],
+    ])('refuses the key for %s', async (_label, stored, requested) => {
+      priorRunInput = prior({ ...body, ...stored });
+      const res = await send(requested);
+      expect(res.statusCode).toBe(422);
+      expect(res.json().error.code).toBe('IDEMPOTENCY_KEY_MISMATCH');
+    });
+
+    it('does not call it a mismatch when the policy is the same', async () => {
+      priorRunInput = prior({ ...body, egressPolicy: 'blocked' });
+      const res = await send({ egressPolicy: 'blocked' });
+      expect(res.statusCode).not.toBe(422);
+    });
   });
 
   it('creates a work request', async () => {

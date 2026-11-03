@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
 import { shouldRouteToCanary } from '@auto-swe/shared/lib/canary';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
+import { egressPolicySchema } from '@auto-swe/shared/lib/egressPolicy';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { extractFigmaRefs } from '@auto-swe/shared/lib/integrations/figmaDesign';
 import {
@@ -31,6 +32,11 @@ import { BUDGET_TIERS, type RepoWorkRequest } from '@auto-swe/shared/types/workf
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import {
+  egressPolicyForRerun,
+  refuseWideningEgressPolicy,
+  storedEgressPolicy,
+} from '../lib/egressPolicyLaunch.js';
 import { experimentBucket } from '../lib/experimentBucket.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema } from '../lib/idempotency.js';
@@ -345,6 +351,8 @@ const CreateWorkRequestSchema = z.object({
     .string()
     .min(1, 'description is required — tell the agent what to implement')
     .max(MAX_DESCRIPTION_LENGTH),
+  /** Network egress for this run's containers; can only be stricter than the configured policy. */
+  egressPolicy: egressPolicySchema.optional(),
   externalTicketId: ExternalTicketIdSchema,
   repoIds: z.array(z.string().uuid()).min(1).max(1), // MVP: single repo only
 });
@@ -426,8 +434,14 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const { acknowledgeUnchanged, externalTicketId, description, repoIds, budgetTier } =
-        request.body;
+      const {
+        acknowledgeUnchanged,
+        externalTicketId,
+        description,
+        egressPolicy,
+        repoIds,
+        budgetTier,
+      } = request.body;
       const user = requireUser(request);
       const idempotencyKey = request.headers['idempotency-key'];
 
@@ -492,6 +506,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             externalTicketId: true,
             id: true,
             payload: true,
+            requestPayload: true,
             startedActiveWorkflowId: true,
           },
           where: { requestedById_idempotencyKey: { idempotencyKey, requestedById: user.sub } },
@@ -504,14 +519,15 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           prior.externalTicketId !== externalTicketId ||
           prior.description !== description ||
           prior.connectionId !== repoIds[0] ||
-          priorBudget !== budgetTier
+          priorBudget !== budgetTier ||
+          storedEgressPolicy(prior.requestPayload) !== egressPolicy
         ) {
           return sent(
             sendError(
               reply,
               422,
               'IDEMPOTENCY_KEY_MISMATCH',
-              'This Idempotency-Key was already used for a different request. Use a new key for a different ticket, repository, description or budget tier.'
+              'This Idempotency-Key was already used for a different request. Use a new key for a different ticket, repository, description, budget tier or egress policy.'
             )
           );
         }
@@ -689,6 +705,16 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
+      // A launch may narrow the network egress policy for its run, never widen it.
+      const wideningEgress = await refuseWideningEgressPolicy(reply, egressPolicy, {
+        orgId: repo.team.orgId,
+        teamId: repo.teamId,
+        workflowTemplateId: resolvedTemplate.templateId,
+      });
+      if (wideningEgress) {
+        return reply;
+      }
+
       // P3: build the generic run-input payload and validate it against the
       // template's declared inputSchema (if any). SWE maps its request fields
       // onto the seeded `{ ticketId, connectionId, description, budget }`
@@ -742,6 +768,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const repoWorkRequest: RepoWorkRequest = {
         budgetTier,
         description,
+        ...(egressPolicy ? { egressPolicy } : {}),
         externalTicketId,
         launchedById: user.sub,
         repoId: repo.id,
@@ -785,7 +812,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             templateVersion: resolvedTemplate.version,
           }),
         {
-          audit: { actor: user, source: 'work-request' },
+          audit: { actor: user, ...(egressPolicy ? { egressPolicy } : {}), source: 'work-request' },
           guard: mcpWrite.launchGuard,
           log: fastify.log,
           sourceAuthorization: { actor: user },
@@ -1148,6 +1175,15 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // → same canary arm.
       const canaryPin = await resolveCanaryPin(workRequest.id);
 
+      // The launcher's stored egress choice, held at least as strict as the cascade today.
+      const retryEgressPolicy = await egressPolicyForRerun(
+        storedEgressPolicy(workRequest.requestPayload),
+        {
+          orgId: repo.team.orgId,
+          teamId: repo.teamId,
+          workflowTemplateId: retryTemplateId ?? undefined,
+        }
+      );
       const repoWorkRequest: RepoWorkRequest = {
         // The branch the request was launched with, when it has one of its own: a re-run keeps it.
         ...(workRequest.workBranch ? { branchName: workRequest.workBranch } : {}),
@@ -1156,6 +1192,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         description: request.body?.instructions
           ? `${workRequest.description}\n\nAdditional instructions for this attempt:\n${request.body.instructions}`
           : workRequest.description,
+        ...(retryEgressPolicy ? { egressPolicy: retryEgressPolicy } : {}),
         externalTicketId: workRequest.externalTicketId,
         // Whoever re-runs it, not whoever first asked: the re-run acts as the
         // caller, including with their own saved GitHub token, never as the

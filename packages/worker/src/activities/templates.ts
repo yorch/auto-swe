@@ -9,6 +9,11 @@ import {
 } from '@auto-swe/shared/lib/automationLedger';
 import { billedOrgId, currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { CHANNEL_TASK_WORKFLOW_PREFIX } from '@auto-swe/shared/lib/channelTask';
+import {
+  type EgressPolicy,
+  egressPolicySchema,
+  narrowEgressPolicy,
+} from '@auto-swe/shared/lib/egressPolicy';
 import { isInputSchema, runAuthorizedConnectionIds } from '@auto-swe/shared/lib/inputSchema';
 import type { TrackerWriteback } from '@auto-swe/shared/lib/integrations/ticketFailure';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -296,6 +301,9 @@ export interface CreateWorkflowRunInput {
   /// for the life of the run, and the run is tagged isCanary=true.
   canaryAgentKey?: string;
   canaryVersion?: number;
+  /// The launcher's requested `workspace.egressPolicy` (see `RunRequest.egressPolicy`). Narrows
+  /// the pinned value; a request looser than the cascade is ignored.
+  egressPolicy?: EgressPolicy;
   /**
    * Set when this run is a child of an epic orchestrator. The gateway writes
    * the ledger row for the epic, not for its children, so the child's row is
@@ -568,7 +576,11 @@ export async function createWorkflowRun(
   // ceiling must finish under the same one or its replay history stops matching
   // its code — so these are resolved once, here, and carried forward.
   const settingsCtx = await runSettingsContext(input, scheduledRepoId);
-  const pinnedSettings = await snapshotPinnedSettings(settingsCtx);
+  const pinnedSettings = narrowPinnedEgressPolicy(
+    await snapshotPinnedSettings(settingsCtx),
+    input.egressPolicy,
+    input.workflowId
+  );
 
   // Skill text is a second input to every agent: freeze the revision of every
   // skill visible to this run so a mid-run edit cannot reach a retry or a replay.
@@ -831,6 +843,34 @@ async function skillTenantContext(
   return channel
     ? { ...settingsCtx, orgId: channel.orgId ?? undefined, teamId: channel.teamId ?? undefined }
     : settingsCtx;
+}
+
+/// A launcher's requested egress policy narrows the cascade value that was just snapshotted, and
+/// the narrowed value is what gets pinned, so a retry or replay reads the same one. The gateway
+/// refuses a looser request at launch; this is the re-check for launch paths that skip it, and it
+/// falls back to the cascade value rather than failing the run.
+export function narrowPinnedEgressPolicy(
+  pins: Record<string, unknown>,
+  requested: EgressPolicy | undefined,
+  workflowId: string
+): Record<string, unknown> {
+  if (requested === undefined) {
+    return pins;
+  }
+  const ceiling = egressPolicySchema.safeParse(pins['workspace.egressPolicy']);
+  if (!ceiling.success) {
+    return pins;
+  }
+  const narrowed = narrowEgressPolicy(ceiling.data, requested);
+  if (!narrowed.ok) {
+    logWarn('requested egress policy is looser than the configured one; using the configured one', {
+      ceiling: narrowed.ceiling,
+      requested,
+      workflowId,
+    });
+    return pins;
+  }
+  return { ...pins, 'workspace.egressPolicy': narrowed.policy };
 }
 
 /// Scope context for the run's pinned-settings snapshot. The template comes from

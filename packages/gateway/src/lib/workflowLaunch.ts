@@ -384,7 +384,12 @@ export async function launchTrackedWorkflow(
      * Who launched the run and through which door (`work-request`, `webhook`, ...), for the
      * audit row written once the workflow has started. Omit `actor` for a system launch.
      */
-    audit?: { actor?: { sub: string } | null; source: string; templateId?: string };
+    audit?: {
+      actor?: { sub: string } | null;
+      egressPolicy?: string;
+      source: string;
+      templateId?: string;
+    };
   }
 ): Promise<LaunchWorkflowResult> {
   const { runInput } = rows;
@@ -548,7 +553,12 @@ async function recordLaunchAudit(
   activeWorkflowId: string | null,
   opts?: {
     log?: { error: (obj: unknown, msg?: string) => void };
-    audit?: { actor?: { sub: string } | null; source: string; templateId?: string };
+    audit?: {
+      actor?: { sub: string } | null;
+      egressPolicy?: string;
+      source: string;
+      templateId?: string;
+    };
   }
 ): Promise<void> {
   const workRequestId = (rows.runInput?.id ?? rows.activeWorkflow?.workRequestId) as
@@ -566,6 +576,7 @@ async function recordLaunchAudit(
         action: 'CREATE',
         actorId: opts?.audit?.actor?.sub ?? null,
         afterJson: {
+          ...(opts?.audit?.egressPolicy ? { egressPolicy: opts.audit.egressPolicy } : {}),
           source: opts?.audit?.source ?? 'unspecified',
           templateId:
             (rows.runInput?.templateId as string | undefined) ?? opts?.audit?.templateId ?? null,

@@ -9,6 +9,7 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
 }));
 
 const cfg = vi.hoisted(() => ({
+  egressCeiling: 'open' as 'open' | 'restricted' | 'blocked',
   hostsOk: true,
   settings: {
     'mcp.agentRunAllowedDeliverModes': ['none', 'draft_pr'],
@@ -24,7 +25,10 @@ const cfg = vi.hoisted(() => ({
     'workspace.agentRunMaxWallClockSeconds': 1800,
   } as Record<string, number | string | boolean | string[]>,
 }));
-vi.mock('@auto-swe/shared/config', () => ({ resolveSettings: vi.fn(async () => cfg.settings) }));
+vi.mock('@auto-swe/shared/config', () => ({
+  resolveSetting: vi.fn(async () => cfg.egressCeiling),
+  resolveSettings: vi.fn(async () => cfg.settings),
+}));
 vi.mock('@auto-swe/shared/lib/connectionCredential', async (orig) => ({
   ...(await orig<typeof import('@auto-swe/shared/lib/connectionCredential')>()),
   repositoryHostsAllowed: vi.fn(async () =>
@@ -78,6 +82,7 @@ describe('POST /api/v1/agent-runs', () => {
   beforeEach(async () => {
     __resetReconcileCacheForTests();
     cfg.hostsOk = true;
+    cfg.egressCeiling = 'open';
     resetMcpWriteRateLimit();
     cfg.settings['workspace.agentRunMaxConcurrentGlobal'] = 4;
     cfg.settings['workspace.agentRunMaxConcurrentPerTeam'] = 2;
@@ -371,6 +376,39 @@ describe('POST /api/v1/agent-runs', () => {
       const res = await post({ baseBranch: 'auto/JIRA-1' });
       expect(res.statusCode).toBe(400);
       expect(res.json().error.code).toBe('INVALID_BASE_BRANCH');
+      expect(started).toHaveLength(0);
+    });
+  });
+
+  describe('egressPolicy', () => {
+    it('carries a narrowing request to the workflow input and the stored request', async () => {
+      cfg.egressCeiling = 'restricted';
+      const res = await post({ egressPolicy: 'blocked' });
+      expect(res.statusCode).toBe(201);
+      expect(started[0]?.input.request).toMatchObject({ egressPolicy: 'blocked' });
+      expect(JSON.parse(String(runInputs[0]?.requestPayload))).toMatchObject({
+        egressPolicy: 'blocked',
+      });
+      expect(res.json().data.effective.egressPolicy).toBe('blocked');
+    });
+
+    it('leaves the field off the workflow input when none is requested', async () => {
+      const res = await post({});
+      expect(res.statusCode).toBe(201);
+      expect(started[0]?.input.request).not.toHaveProperty('egressPolicy');
+    });
+
+    it('refuses a request looser than the configured policy', async () => {
+      cfg.egressCeiling = 'restricted';
+      const res = await post({ egressPolicy: 'open' });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('EGRESS_POLICY_WIDENS');
+      expect(started).toHaveLength(0);
+    });
+
+    it('rejects an unknown level', async () => {
+      const res = await post({ egressPolicy: 'closed' });
+      expect(res.statusCode).toBe(400);
       expect(started).toHaveLength(0);
     });
   });
@@ -694,6 +732,40 @@ describe('POST /api/v1/agent-runs/:id/rerun', () => {
     expect(first.description).toContain('Use the older dependency');
     expect(prevRun.description).toBe('original prompt');
     await app.close();
+  });
+
+  describe('egressPolicy', () => {
+    const rerun = (app: Awaited<ReturnType<typeof build>>['app']) =>
+      app.inject({
+        headers: { authorization: 'Bearer t' },
+        method: 'POST',
+        url: `/api/v1/agent-runs/${PREV_RUN}/rerun`,
+      });
+
+    it('keeps the stored policy when it is at least as strict as the cascade now', async () => {
+      cfg.egressCeiling = 'restricted';
+      const { app, started } = await build({
+        ...prevRun,
+        payload: { ...prevRun.payload, egressPolicy: 'blocked' },
+      });
+      const res = await rerun(app);
+      expect(res.statusCode).toBe(201);
+      expect(started[0]?.input.request).toMatchObject({ egressPolicy: 'blocked' });
+      expect(res.json().data.effective.egressPolicy).toBe('blocked');
+      await app.close();
+    });
+
+    it('runs at the tightened cascade value instead of refusing when the cascade tightened since', async () => {
+      cfg.egressCeiling = 'blocked';
+      const { app, started } = await build({
+        ...prevRun,
+        payload: { ...prevRun.payload, egressPolicy: 'open' },
+      });
+      const res = await rerun(app);
+      expect(res.statusCode).toBe(201);
+      expect(started[0]?.input.request).toMatchObject({ egressPolicy: 'blocked' });
+      await app.close();
+    });
   });
 
   it('404s a work request that is not an agent run, or has no usable payload', async () => {

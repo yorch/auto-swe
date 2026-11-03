@@ -22,6 +22,7 @@ import {
 } from '@auto-swe/shared/lib/agentRunAdmission';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
+import { type EgressPolicy, egressPolicySchema } from '@auto-swe/shared/lib/egressPolicy';
 import { BaseBranchSchema, isPlatformWorkBranch } from '@auto-swe/shared/lib/gitRef';
 import { type CallbackRequest, CallbackRequestSchema } from '@auto-swe/shared/lib/runCallbacks';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
@@ -35,6 +36,7 @@ import {
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { egressPolicyForRerun, refuseWideningEgressPolicy } from '../lib/egressPolicyLaunch.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import {
@@ -80,6 +82,8 @@ const CreateAgentRunBody = z.object({
   callback: CallbackRequestSchema.optional(),
   /** `none` shows the diff, `branch` pushes a branch, `draft_pr` also opens a DRAFT pull request. */
   deliver: z.enum(AGENT_RUN_DELIVERIES).default('none'),
+  /** Network egress for this run's containers; can only be stricter than the configured policy. */
+  egressPolicy: egressPolicySchema.optional(),
   /** Can only lower the platform ceiling. */
   maxSteps: z.number().int().min(1).max(500).optional(),
   maxWallClockSeconds: z.number().int().min(60).max(14_400).optional(),
@@ -119,6 +123,9 @@ interface LaunchInput {
   /** A fresh launch only; a re-run reuses its request and reports nowhere. */
   callback?: CallbackRequest;
   deliver: AgentRunPayload['deliver'];
+  egressPolicy?: EgressPolicy;
+  /** A re-run: the stored `egressPolicy` is held to today's cascade value instead of refused. */
+  egressPolicyIsRerun?: boolean;
   idempotencyKey: string | undefined;
   maxSteps?: number;
   maxWallClockSeconds?: number;
@@ -374,6 +381,18 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       return previous.reply;
     }
 
+    // A launch may narrow the network egress policy for its run, never widen it. The worker pins
+    // the narrowed value; this is the early, readable refusal.
+    const egressScope = { orgId, teamId: repo.teamId, workflowTemplateId: template.id };
+    let egressPolicy = input.egressPolicy;
+    if (input.egressPolicyIsRerun) {
+      // A re-run keeps the original's choice but never loosens a cascade tightened since: the
+      // stricter of the two runs, rather than a refusal the launcher cannot act on.
+      egressPolicy = await egressPolicyForRerun(input.egressPolicy, egressScope);
+    } else if (await refuseWideningEgressPolicy(reply, input.egressPolicy, egressScope)) {
+      return reply;
+    }
+
     // Concurrency. Friendly early refusal; the worker admits by rank and is the authority.
     // A ledger row only holds a slot while its workflow is still running in
     // Temporal; one whose workflow is gone is closed here (bounded, and kept
@@ -417,6 +436,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       agentRef: input.agent,
       ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
       deliver: input.deliver,
+      ...(egressPolicy ? { egressPolicy } : {}),
       maxSteps: input.maxSteps,
       maxWallClockSeconds: input.maxWallClockSeconds,
     });
@@ -448,6 +468,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       budgetTier: input.budgetTier,
       connectionId: repo.id,
       description: input.prompt,
+      ...(egressPolicy ? { egressPolicy } : {}),
       externalTicketId,
       // A person's run acts as, and uses the saved GitHub credential of, its
       // launcher. A service principal's uses the platform credential.
@@ -513,7 +534,11 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
               }),
             }
           : { guard: mcpWrite.launchGuard }),
-        audit: { actor: user ?? null, source: service ? 'service-token' : 'agent-run' },
+        audit: {
+          actor: user ?? null,
+          ...(egressPolicy ? { egressPolicy } : {}),
+          source: service ? 'service-token' : 'agent-run',
+        },
         log: fastify.log,
         sourceAuthorization: user ? { actor: user } : {},
       }
@@ -537,6 +562,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         ...(callback.target ? { callback: { target: callback.target } } : {}),
         effective: {
           deliver: payload.deliver,
+          ...(egressPolicy ? { egressPolicy } : {}),
           maxSteps: Math.min(payload.maxSteps ?? ceilings.maxSteps, ceilings.maxSteps),
           maxWallClockSeconds: Math.min(
             payload.maxWallClockSeconds ?? ceilings.maxWallClockSeconds,
@@ -717,6 +743,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         ...(b.callback ? { callback: b.callback } : {}),
         caller,
         deliver: b.deliver,
+        ...(b.egressPolicy ? { egressPolicy: b.egressPolicy } : {}),
         idempotencyKey: request.headers['idempotency-key'],
         maxSteps: b.maxSteps,
         maxWallClockSeconds: b.maxWallClockSeconds,
@@ -781,6 +808,8 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         budgetTier: 'STANDARD',
         caller: { kind: 'user', user },
         deliver: p.deliver,
+        // The stricter of the original's and the policy configured now (see `egressPolicyIsRerun`).
+        ...(p.egressPolicy ? { egressPolicy: p.egressPolicy, egressPolicyIsRerun: true } : {}),
         idempotencyKey: request.headers['idempotency-key'],
         maxSteps: p.maxSteps,
         maxWallClockSeconds: p.maxWallClockSeconds,

@@ -200,6 +200,15 @@ export function pinnedImplementerRuntime(pinned: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
+/** The egress policy a run pinned at start (`workspace.egressPolicy`); null when none was pinned. */
+export function pinnedEgressPolicy(pinned: unknown): string | null {
+  if (!pinned || typeof pinned !== 'object' || Array.isArray(pinned)) {
+    return null;
+  }
+  const value = (pinned as Record<string, unknown>)['workspace.egressPolicy'];
+  return typeof value === 'string' ? value : null;
+}
+
 /**
  * The runtime the run pinned for each agent with one of its own
  * (`WorkflowRun.agentRuntimes`), keeping only well-formed entries. A `null` pin —
@@ -995,6 +1004,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           agentRuntimes: pinnedAgentRuntimes(run.agentRuntimes),
           contextSnapshot: run.contextSnapshot,
           costUsdAccrued: run.costUsdAccrued,
+          egressPolicy: pinnedEgressPolicy(run.pinnedSettings),
           endedAt: run.endedAt,
           id: run.id,
           implementerRuntime: pinnedImplementerRuntime(run.pinnedSettings),
