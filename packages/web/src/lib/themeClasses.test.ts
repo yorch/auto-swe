@@ -38,7 +38,8 @@ describe('theme colour classes', () => {
     expect(knowledgePage).not.toMatch(/\bborder-paper-800\b/);
   });
 
-  it('uses only shades the theme declares', () => {
+  // Synchronously scans every source file (~2.8s alone), so the 5s default is too close under load.
+  it('uses only shades the theme declares', { timeout: 60_000 }, () => {
     const offenders: string[] = [];
     const files = globSync('{app,components,hooks,lib,stores}/**/*.{ts,tsx}', { cwd: SRC });
     for (const file of files) {

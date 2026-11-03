@@ -146,7 +146,10 @@ describe('aiSdkStreamFn', () => {
     outputTokens: { reasoning: 40, text: 10, total: 50 },
   };
 
-  it('sends the first call’s signed reasoning back on the call after its tool call, with the Agent’s level', async () => {
+  // ~0.9s alone (first-use model/middleware load); it took 6.3s once under load.
+  it('sends the first call’s signed reasoning back on the call after its tool call, with the Agent’s level', {
+    timeout: 30_000,
+  }, async () => {
     const calls: { prompt: unknown; reasoning: unknown }[] = [];
     let n = 0;
     const mock = new MockLanguageModelV4({

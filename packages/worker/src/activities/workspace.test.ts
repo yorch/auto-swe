@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { teamFindUniqueMock } = vi.hoisted(() => ({
   teamFindUniqueMock: vi.fn(async () => null),
@@ -1080,7 +1080,20 @@ describe('cloneDependencyRepos', () => {
   });
 });
 
-describe('authedGitScript against a real git repository', () => {
+describe('authedGitScript against a real git repository', { timeout: 60_000 }, () => {
+  // The setup git commands in these tests inherit process.env, and the host's global
+  // core.hooksPath (a lefthook shim) made each commit take ~6s under load vs ~0.3s without
+  // it, so the setup is isolated from the host git config for speed and hermeticity. (The
+  // script under test already ignores host config via HARDENED_GIT_ENV.)
+  beforeAll(() => {
+    vi.stubEnv('GIT_CONFIG_GLOBAL', '/dev/null');
+    vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1');
+  });
+  // The later gitIdentityConfigScript it.each block writes with `git config --global` and relies on
+  // this block's env being restored first (declaration order).
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
   const git = (cwd: string, ...args: string[]) =>
     execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const HEADER = 'AUTHORIZATION: basic c2VjcmV0';

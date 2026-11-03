@@ -1,8 +1,15 @@
 /**
  * Why a tracker ticket could not be read. A closed set on purpose: the class is stored on traces
  * and step outputs and shown to people, so it never carries provider error text, a response
- * body, a URL, a token or a header. `out_of_scope` is only ever a write: the platform declined to
- * touch a GitHub ticket in a repository the run does not target, so no tracker was asked.
+ * body, a URL, a token or a header. `out_of_scope`, `no_repository` and `no_transition` are only
+ * ever writes, and the platform knows nothing was written (for `no_transition` only because
+ * `finalizeRun`, the sole recorder, sends no `prUrl`; a Jira remote link could otherwise succeed
+ * first): `out_of_scope` declined a GitHub ticket
+ * in a repository the run does not target, `no_repository` a GitHub ticket id the platform could
+ * not resolve a repository from (a bare `123`, an issue URL, `owner/repo`, or another tracker's
+ * key), and `no_transition` is a Jira ticket on which no transition to a status
+ * named like the target was found (the platform looks for a fixed name, and the project may name
+ * its done status differently, so this is not a claim about the workflow). A read never produces them.
  * `not_found` is deliberately ambiguous: trackers answer 404
  * both for an issue that does not exist and for one the token may not see.
  */
@@ -20,6 +27,8 @@ export const TICKET_FAILURE_CLASSES = [
   'unconfigured',
   'empty',
   'out_of_scope',
+  'no_repository',
+  'no_transition',
   'unknown',
 ] as const;
 
@@ -71,8 +80,9 @@ export type TrackerWritebackEvent = (typeof TRACKER_WRITEBACK_EVENTS)[number];
  * (`workflow_completed`; a link is written only when a PR url is supplied, which `finalizeRun`
  * does not do). Stored on the run's `contextSnapshot` as `trackerWriteback`, so
  * a run that could not report back to its ticket says so. The failure is from the closed set
- * {@link TicketFailureClass}: never provider text. A transition for which the ticket has no
- * matching status is a no-op and is not recorded.
+ * {@link TicketFailureClass}: never provider text. A ticket already in the target status
+ * has no transition to it and is not recorded; one with no transition to a status named
+ * like it is `no_transition`.
  */
 // A type alias, not an interface: only an alias is assignable to Prisma's JSON input type.
 export type TrackerWriteback = { event: TrackerWritebackEvent; failure: TicketFailureClass };

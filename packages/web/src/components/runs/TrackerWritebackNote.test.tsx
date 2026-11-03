@@ -69,6 +69,40 @@ describe('TrackerWritebackNote', () => {
     expect(screen.queryByText(/may not have been moved/i)).toBeNull();
   });
 
+  describe.each(['no_repository', 'no_transition'])('the write-only class %s', (failure) => {
+    it.each(['workflow_completed', 'workflow_failed'])(
+      'states plainly that nothing was written, with no hedge or claim of refusal (%s)',
+      (event) => {
+        render(<TrackerWritebackNote contextSnapshot={snapshot(failure, event)} />);
+        const text = screen.getByRole('note').textContent ?? '';
+        expect(text).toMatch(/did not write to it|named like the one the platform looks for/i);
+        expect(text).not.toMatch(/refused|may not/i);
+      }
+    );
+  });
+
+  it('words the no_repository note for a finished run and a failed one', () => {
+    const { rerender } = render(
+      <TrackerWritebackNote contextSnapshot={snapshot('no_repository', 'workflow_completed')} />
+    );
+    expect(screen.getByText(/could not resolve a repository from the ticket id/i)).toBeTruthy();
+    expect(screen.getByText(/run finished, but the ticket could not be updated/i)).toBeTruthy();
+    rerender(
+      <TrackerWritebackNote contextSnapshot={snapshot('no_repository', 'workflow_failed')} />
+    );
+    expect(screen.getByText(/saying the run did not finish could not be posted/i)).toBeTruthy();
+  });
+
+  it('words the no_transition note for a finished run', () => {
+    render(
+      <TrackerWritebackNote contextSnapshot={snapshot('no_transition', 'workflow_completed')} />
+    );
+    const text = screen.getByRole('note').textContent ?? '';
+    expect(text).toMatch(/no transition to a status named like the one the platform looks for/i);
+    expect(text).toMatch(/project may name its statuses differently/i);
+    expect(text).not.toMatch(/workflow has no move/i);
+  });
+
   it('keeps the status hedge for other classes on a finished run', () => {
     render(<TrackerWritebackNote contextSnapshot={snapshot('forbidden', 'workflow_completed')} />);
     expect(screen.getByText(/may not have been moved/i)).toBeTruthy();

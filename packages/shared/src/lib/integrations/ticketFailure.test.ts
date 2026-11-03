@@ -64,6 +64,12 @@ describe('readTrackerWriteback', () => {
     ).toEqual({ event: 'workflow_failed', failure: 'forbidden' });
   });
 
+  it.each(['no_repository', 'no_transition'])('accepts the %s class', (failure) => {
+    expect(
+      readTrackerWriteback({ trackerWriteback: { event: 'workflow_completed', failure } })
+    ).toEqual({ event: 'workflow_completed', failure });
+  });
+
   it('accepts the out_of_scope class', () => {
     expect(
       readTrackerWriteback({

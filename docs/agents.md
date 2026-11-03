@@ -1095,7 +1095,10 @@ connector does not follow), `refused` (the platform's network policy blocked the
 Issues and Linear report it, Jira reports a blocked address as `network`),
 `unconfigured` (no tracker, or none that can be built), `empty` (read, but with nothing to render)
 `out_of_scope` (write-only: the platform declined a GitHub write to a repository the run does not
-target; a read never produces it, a refused read is `not_found`)
+target; a read never produces it, a refused read is `not_found`),
+`no_repository` (write-only: the platform could not resolve a repository from the GitHub ticket id (a bare `123` or `#123`,
+an issue URL, `owner/repo`, or another tracker's key), so it did not write to it) and `no_transition` (write-only: a Jira ticket's workflow has no
+move to the target status)
 and `unknown` (an answer that could not be parsed, or a failure inside the platform; GitHub Issues
 and Linear report it, Jira reports an invalid response body as `network`). A class carries no provider text, response body, URL, token
 or header. `not_found` is ambiguous on purpose: Jira and GitHub answer 404 both for a ticket that
@@ -1113,9 +1116,14 @@ The id the requester submitted stays in the event, as for any other miss.
 makes. `syncOnEvent` resolves the class of the first write the tracker refused: the comment of a
 run that did not finish, or the status move of one that did (a link is written only when a PR url
 is supplied, which `finalizeRun` does not do). A Jira ticket with no
-transition of the wanted name is a silent no-op, not a failure. A GitHub ticket outside the run's
-repositories is not written to and resolves `out_of_scope`; a bare GitHub id (`123`, `#123`)
-names no repository, so it is not written either but is not reported. `finalizeRun` stores the class on the
+transition to a status named like the wanted one resolves `no_transition` (the platform looks for a fixed name, so a project that names its done status differently, such as Closed or Resolved, also lands here; it says nothing about the workflow itself and nothing was written), unless it is already in that status
+(Jira omits the self-transition; the status is read, and the ticket counts as already there when
+its name equals the target, case-insensitively, or its status category matches the target's
+(`done` for Done, `indeterminate` for In Progress and In Review); a read that fails or names none
+reports nothing). A GitHub ticket outside the run's
+repositories is not written to and resolves `out_of_scope`; a GitHub id from which no repository can be resolved (`123`, `#123`, an
+issue URL, `owner/repo`, a Jira-style key) is not written either and resolves `no_repository`
+(`workflow_started` writes nothing on GitHub and reports nothing). `finalizeRun` stores the class on the
 run's `contextSnapshot` as `trackerWriteback: { event, failure }` (`event` is `workflow_completed`
 or `workflow_failed`; a record stored without one reads as `workflow_failed`), and the run page
 shows "The ticket was not updated" with the reason.
@@ -1126,7 +1134,7 @@ about that issue (no access to it, or gone), so the poll marks it seen. Every ot
 `unavailable`, which a later poll may change: `unauthorized` and `forbidden` (a credential or a
 network rule an operator fixes, not a verdict on the issue), `rejected`, `rate_limited`,
 `server_error`, `timeout`, `network`, `redirect`, `refused`, `unconfigured`, `empty`,
-`out_of_scope` and `unknown`. The poll leaves such an issue unseen.
+`out_of_scope`, `no_repository`, `no_transition` and `unknown`. The poll leaves such an issue unseen.
 
 Another template opts in by adding the same pieces: the `gatherTicketContext` step, a `set` node
 that keeps `nodes.<id>.output.text` in `context.ticket`, and `ticket: context.ticket` as an input on

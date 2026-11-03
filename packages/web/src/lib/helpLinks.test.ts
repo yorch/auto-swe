@@ -11,7 +11,9 @@ const SRC_DIR = path.resolve(HERE, '..');
 
 const ENTRIES = Object.entries(HELP_LINKS) as [string, { slug: string; anchor?: string }][];
 
-describe('HELP_LINKS', () => {
+// Each case reads and tokenises a whole doc (1-1.7s alone; 4x+ that on a loaded machine), so it
+// gets a budget well above the 5s default instead of sitting near it.
+describe('HELP_LINKS', { timeout: 30_000 }, () => {
   it.each(ENTRIES)('%s points at a doc and heading that exist', (_key, link) => {
     const file = path.join(DOCS_DIR, `${link.slug}.md`);
     expect(existsSync(file), `${link.slug}.md`).toBe(true);

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { NO_CRITERIA_REASON } from '@auto-swe/shared/lib/agentPrompts';
 import { TICKET_FAILURE_CLASSES } from '@auto-swe/shared/lib/integrations/ticketFailure';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
@@ -174,10 +175,13 @@ describe('a spilled result text', () => {
       empty: 'The ticket was read from the tracker but has no text.',
       forbidden: 'The ticket could not be read from the tracker (access was refused).',
       network: 'The ticket could not be read from the tracker (the tracker could not be reached).',
+      no_repository:
+        'The platform could not resolve a repository from the ticket id, so it did not write to it.',
+      no_transition:
+        'No transition to a status named like the one the platform looks for was found on the ticket (the project may name its statuses differently), so nothing was written.',
       not_found:
         'The ticket could not be read from the tracker (access was refused, or it does not exist).',
-      out_of_scope:
-        'The ticket could not be read from the tracker (it is in a repository this run does not target).',
+      out_of_scope: 'The ticket is in a repository this run does not target.',
       rate_limited:
         'The ticket could not be read from the tracker (the tracker is limiting requests).',
       redirect:
@@ -208,7 +212,7 @@ describe('a spilled result text', () => {
     // Classes that are not a failure to read the ticket: 'empty' means it was read, and
     // 'out_of_scope' is write-only (a refused read is reported as 'not_found'), so neither leads
     // the card or has a hint. A new class must be placed here or given a hint.
-    const NOT_READ_FAILURES = ['empty', 'out_of_scope'];
+    const NOT_READ_FAILURES = ['empty', 'out_of_scope', 'no_repository', 'no_transition'];
     const UNREADABLE = [...TICKET_FAILURE_CLASSES].filter((c) => !NOT_READ_FAILURES.includes(c));
 
     // The literal the validate phase stores (packages/shared/.../authoring/validatePhase.ts).
@@ -251,8 +255,9 @@ describe('a spilled result text', () => {
         expect(text.indexOf(line)).toBeGreaterThanOrEqual(0);
         expect(text.indexOf(hint)).toBeGreaterThan(text.indexOf(line));
         expect(text.indexOf(TICKET_UNAVAILABLE_WORKAROUND)).toBeGreaterThan(text.indexOf(hint));
-        expect(text).not.toContain('Vuln UIP-1');
-        expect(container.querySelector('li')).toBeNull();
+        // The ambiguities are only reachable inside a closed <details> (see the describe below).
+        expect(container.querySelector('details[open]')).toBeNull();
+        expect(container.querySelectorAll('details > ul > li')).toHaveLength(1);
         // F1: the stored message is not rendered on this path, and nothing dangles.
         expect(text).not.toContain(REAL_MESSAGE);
         expect(text).not.toContain('not actionable');
@@ -311,6 +316,98 @@ describe('a spilled result text', () => {
       expect(text).toContain(REAL_MESSAGE);
       expect(text).toContain(LINES.empty);
       expect(text.indexOf(REAL_MESSAGE)).toBeLessThan(text.indexOf(LINES.empty));
+    });
+
+    describe('ambiguities on the unreadable path', () => {
+      const REAL_AMBIGUITY =
+        "The ticket only states 'Vuln UIP-15211' and gives no description, so the intended change cannot be determined.";
+      const renderUnreadable = (ambiguities: unknown) =>
+        render(
+          <RunOutcomeCard
+            result={{
+              ambiguities,
+              message: REAL_MESSAGE,
+              ticketUnavailableReason: 'not_found',
+            }}
+            runId="run-1"
+            templateName="ticket-to-merge"
+          />
+        ).container;
+
+      it('puts them in a closed details after the workaround, as plain list items', () => {
+        const container = renderUnreadable([REAL_AMBIGUITY]);
+        const details = container.querySelectorAll('details');
+        expect(details).toHaveLength(1);
+        const el = details[0] as HTMLDetailsElement;
+        expect(el.open).toBe(false);
+        expect(el.hasAttribute('open')).toBe(false);
+        expect(el.textContent).toContain(REAL_AMBIGUITY);
+        expect(el.querySelector('summary')?.textContent ?? '').not.toMatch(/\byou\b|\byour\b/i);
+        expect(el.querySelectorAll('ul > li')).toHaveLength(1);
+        // Every list item of the card is inside the details: none is rendered outside it too.
+        expect(container.querySelectorAll('li')).toHaveLength(1);
+        expect(el.querySelector('li')?.children).toHaveLength(0);
+        // The lead, hint and workaround keep their order and the details comes after all of them.
+        const text = container.textContent ?? '';
+        expect(text.indexOf(REAL_AMBIGUITY)).toBeGreaterThan(
+          text.indexOf(TICKET_UNAVAILABLE_WORKAROUND)
+        );
+        const workaround = screen.getByText(TICKET_UNAVAILABLE_WORKAROUND);
+        expect(
+          workaround.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING
+        ).toBeTruthy();
+        // The stored message still does not render.
+        expect(text).not.toContain('listed here');
+      });
+
+      it.each([
+        ['empty', []],
+        ['missing', undefined],
+        ['non-array', 'text'],
+        ['non-string items', [1, null, { a: 1 }]],
+      ])('renders no details when the ambiguities are %s', (_label, ambiguities) => {
+        expect(renderUnreadable(ambiguities).querySelector('details')).toBeNull();
+      });
+
+      it('renders no details when the only entry is the no-criteria reason, even repeated', () => {
+        expect(renderUnreadable([NO_CRITERIA_REASON]).querySelector('details')).toBeNull();
+        expect(
+          renderUnreadable([NO_CRITERIA_REASON, NO_CRITERIA_REASON]).querySelector('details')
+        ).toBeNull();
+      });
+
+      it('keeps the details, with both entries, when the reason comes with a real ambiguity', () => {
+        const container = renderUnreadable([NO_CRITERIA_REASON, REAL_AMBIGUITY]);
+        expect(container.querySelectorAll('details')).toHaveLength(1);
+        expect(container.querySelectorAll('details li')).toHaveLength(2);
+      });
+
+      it('keeps the details for real ambiguities only', () => {
+        const container = renderUnreadable([REAL_AMBIGUITY]);
+        expect(container.querySelectorAll('details li')).toHaveLength(1);
+      });
+
+      it('de-duplicates and truncates the items, ignoring non-strings', () => {
+        const long = 'x'.repeat(900);
+        const container = renderUnreadable(['A one', 'A one', 7, long]);
+        const items = [...container.querySelectorAll('details li')].map((li) => li.textContent);
+        expect(items).toHaveLength(2);
+        expect(items[0]).toBe('A one');
+        expect((items[1] ?? '').length).toBeLessThan(long.length);
+        expect(items[1]).toMatch(/^x+/);
+      });
+
+      it('does not add a details to the non-unreadable path, which keeps its visible list', () => {
+        const { container } = render(
+          <RunOutcomeCard
+            result={{ ambiguities: ['Which component?'], message: REAL_MESSAGE }}
+            runId="run-1"
+            templateName="ticket-to-merge"
+          />
+        );
+        expect(container.querySelector('details')).toBeNull();
+        expect(container.querySelectorAll('ul > li')).toHaveLength(1);
+      });
     });
 
     describe('hint wording', () => {

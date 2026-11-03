@@ -21,7 +21,13 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import proto from '@temporalio/proto';
-import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
+import {
+  bundleWorkflowCode,
+  DefaultLogger,
+  Runtime,
+  Worker,
+  type WorkflowBundleWithSourceMap,
+} from '@temporalio/worker';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -65,9 +71,16 @@ const patchesOf = (name: string) =>
 const count = (name: string, type: proto.temporal.api.enums.v1.EventType) =>
   typesOf(name).filter((t) => t === type).length;
 
-beforeAll(() => {
-  Runtime.install({ logger: new DefaultLogger('WARN') });
-});
+// Every replay used to run its own webpack bundle of the workflows (~1.2s each alone, 30+ fixtures,
+// and webpack is CPU-bound, so minutes to ~800s on a loaded machine). Bundle once; the bundle is
+// the same code `workflowsPath` would have compiled, so the replay still runs the real workflows.
+let workflowBundle: WorkflowBundleWithSourceMap;
+
+beforeAll(async () => {
+  const logger = new DefaultLogger('WARN');
+  Runtime.install({ logger });
+  workflowBundle = await bundleWorkflowCode({ logger, workflowsPath: WORKFLOWS_PATH });
+}, 600_000);
 
 describe('Epic and channel workflows — history replay', () => {
   it('has a fixture for every control-flow shape worth guarding', () => {
@@ -97,7 +110,7 @@ describe('Epic and channel workflows — history replay', () => {
       // child's id from its own (the deferred-task wrapper's `<id>-run`) would
       // otherwise diverge on the id alone.
       await expect(
-        Worker.runReplayHistory({ workflowsPath: WORKFLOWS_PATH }, history, replayWorkflowId(name))
+        Worker.runReplayHistory({ workflowBundle }, history, replayWorkflowId(name))
       ).resolves.toBeUndefined();
     },
     120_000

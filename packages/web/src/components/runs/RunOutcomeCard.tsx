@@ -1,5 +1,6 @@
 'use client';
 
+import { NO_CRITERIA_REASON } from '@auto-swe/shared/lib/agentPrompts';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/Badge';
@@ -55,9 +56,18 @@ export const TICKET_UNAVAILABLE_LINES = new Map<string, string>([
   ['timeout', `${UNREAD} (the tracker did not answer in time).`],
   ['network', `${UNREAD} (the tracker could not be reached).`],
   ['redirect', `${UNREAD} (the tracker address redirects, which is not followed).`],
-  // Write-only: a refused read is reported as `not_found`, so a read must never produce this.
-  // Kept so the table stays aligned with the class set.
-  ['out_of_scope', `${UNREAD} (it is in a repository this run does not target).`],
+  // Write-only, so unreachable here (the card only renders these for a read failure): a refused
+  // read is reported as `not_found`, and a read never produces the next three. Kept so the table
+  // stays aligned with the class set, with standalone text that does not claim a failed read.
+  ['out_of_scope', 'The ticket is in a repository this run does not target.'],
+  [
+    'no_repository',
+    'The platform could not resolve a repository from the ticket id, so it did not write to it.',
+  ],
+  [
+    'no_transition',
+    'No transition to a status named like the one the platform looks for was found on the ticket (the project may name its statuses differently), so nothing was written.',
+  ],
   ['rejected', `${UNREAD} (it rejected the request).`],
   ['refused', `${UNREAD} (it was blocked by the platform's network policy).`],
   ['unconfigured', `${UNREAD} (no ticket tracker is configured).`],
@@ -69,7 +79,8 @@ export const TICKET_UNAVAILABLE_LINES = new Map<string, string>([
 /**
  * What to do about each unreadable-ticket class: the single carrier of the next step (the lines
  * only say what happened). Same rule as the lines: a closed lookup, plain text. Its keys are the
- * failure classes that are read failures, i.e. all but 'empty' (a test fails when they drift apart).
+ * failure classes that are read failures, i.e. all but the NOT_READ classes: `empty`, `out_of_scope`,
+ * `no_repository` and `no_transition` (a test fails when they drift apart).
  */
 const PLATFORM =
   "This is a problem with the platform's tracker connection, not the requester's ticket";
@@ -262,8 +273,9 @@ export function RunOutcomeCard({ result, runId, templateName, isAgentRun }: RunO
       ? [...new Set(result.ambiguities.filter((item): item is string => typeof item === 'string'))]
       : [];
     const ticketLine = ticketUnavailableLine(result.ticketUnavailableReason);
-    // An integration failure (the ticket could not be read) leads the card and replaces the model's
-    // ambiguities and the stored message, which describe a ticket the platform never saw.
+    // An integration failure (the ticket could not be read) leads the card; the stored message, which
+    // describes a ticket the platform never saw, is not shown, and the model's ambiguities move
+    // into a collapsed details.
     const ticketHint = ticketUnavailableHint(result.ticketUnavailableReason);
     const unreadable = ticketHint !== null;
     return (
@@ -275,6 +287,31 @@ export function RunOutcomeCard({ result, runId, templateName, isAgentRun }: RunO
             <p className="text-sm leading-relaxed text-paper-300">
               {TICKET_UNAVAILABLE_WORKAROUND}
             </p>
+            {/* Only the no-criteria reason restates the heading: nothing was noted, so no disclosure. */}
+            {ambiguities.some((item) => item !== NO_CRITERIA_REASON) ? (
+              <details className="group rounded-lg border border-ink-400/60 bg-ink-900/40 px-4 py-3">
+                <summary
+                  className={cn(
+                    'flex cursor-pointer list-none items-center gap-1.5 rounded-sm text-sm font-medium text-paper-200 [&::-webkit-details-marker]:hidden',
+                    FOCUS_RING
+                  )}
+                >
+                  <Icon
+                    className="text-paper-500 transition-transform group-open:rotate-90"
+                    name="chevronRight"
+                    size={14}
+                  />
+                  What validation noted about the request text on its own
+                </summary>
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-relaxed text-paper-300">
+                  {ambiguities.map((item) => (
+                    <li className="break-words" key={item}>
+                      {truncate(item, 500)}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
           </>
         ) : (
           <OutcomeText runId={runId} value={result.message} />

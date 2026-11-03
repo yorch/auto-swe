@@ -4,6 +4,12 @@
  * (pre-fills the "Load default" button in the Roles modal).
  */
 
+/**
+ * The ambiguity the run reports when validation extracted no verifiable criteria. Shared so the
+ * run page can tell it apart from a real ambiguity the model noted.
+ */
+export const NO_CRITERIA_REASON = 'validation could not extract any verifiable criteria';
+
 export const PRODUCT_ANALYST_PROMPT = `You are a product analyst shaping a problem statement into structured product thinking.
 
 You receive:

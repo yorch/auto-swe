@@ -31,7 +31,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SIGNAL_REWAIT_PATCH } from '@auto-swe/shared/workflow/signalSlots';
 import proto from '@temporalio/proto';
-import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
+import {
+  bundleWorkflowCode,
+  DefaultLogger,
+  Runtime,
+  Worker,
+  type WorkflowBundleWithSourceMap,
+} from '@temporalio/worker';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -65,9 +71,16 @@ const fixtures = readdirSync(FIXTURE_DIR)
 
 const eventsOf = (name: string) => fixtures.find((f) => f.name === name)?.history.events ?? [];
 
-beforeAll(() => {
-  Runtime.install({ logger: new DefaultLogger('WARN') });
-});
+// Every replay used to run its own webpack bundle of the workflows (~1.2s each alone, 20+ fixtures,
+// and webpack is CPU-bound, so ~800s and failures on a loaded machine). Bundle once; the bundle is
+// the same code `workflowsPath` would have compiled, so the replay still runs the real workflows.
+let workflowBundle: WorkflowBundleWithSourceMap;
+
+beforeAll(async () => {
+  const logger = new DefaultLogger('WARN');
+  Runtime.install({ logger });
+  workflowBundle = await bundleWorkflowCode({ logger, workflowsPath: WORKFLOWS_PATH });
+}, 600_000);
 
 describe('RunnableWorkflow — history replay', () => {
   it('has a fixture for every control-flow shape worth guarding', () => {
@@ -107,11 +120,7 @@ describe('RunnableWorkflow — history replay', () => {
       // Under the id the recorder started the run with, not the replayer's
       // default, so nothing that reads its own workflow id can diverge on it.
       await expect(
-        Worker.runReplayHistory(
-          { workflowsPath: WORKFLOWS_PATH },
-          history,
-          `replay-fixture-${name}`
-        )
+        Worker.runReplayHistory({ workflowBundle }, history, `replay-fixture-${name}`)
       ).resolves.toBeUndefined();
     },
     120_000

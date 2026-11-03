@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { type AtlassianClient, AtlassianError } from '../atlassianClient.js';
 import { TICKET_FAILURE_CLASSES } from '../ticketFailure.js';
+import type { TrackerSyncEvent } from '../types.js';
 import { JiraProvider, jiraOutcomeKind } from './jira.js';
 
 const adf = (text: string) => ({
@@ -290,12 +291,119 @@ describe('JiraProvider.syncOnEvent', () => {
       await expect(provider(client).syncOnEvent(completed)).resolves.toBe('forbidden');
     });
 
-    it('treats a ticket with no matching transition as a silent no-op, not a failure', async () => {
-      const get = vi.fn(async () => ({ transitions: [{ id: '1', name: 'Start' }] }));
-      const post = vi.fn();
+    describe('with no transition to the target status', () => {
+      const noMatch = { transitions: [{ id: '1', name: 'Start' }] };
+      const answering = (status: unknown) =>
+        vi.fn(async (path: string) =>
+          path.includes('/transitions') ? noMatch : { fields: { status } }
+        );
+
+      it('reports no_transition when the ticket is in another status', async () => {
+        const get = answering({ name: 'In Progress' });
+        const post = vi.fn();
+        const client = { get, post } as unknown as AtlassianClient;
+        await expect(provider(client).syncOnEvent(completed)).resolves.toBe('no_transition');
+        expect(post).not.toHaveBeenCalled();
+        expect(get).toHaveBeenCalledWith('/rest/api/3/issue/AIDEVEX-8?fields=status');
+      });
+
+      it('stays null when the ticket is already in the target status (case-insensitive)', async () => {
+        const get = answering({ name: 'DONE' });
+        const post = vi.fn();
+        const client = { get, post } as unknown as AtlassianClient;
+        await expect(provider(client).syncOnEvent(completed)).resolves.toBeNull();
+        expect(post).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['Closed', 'done', 'Done'],
+        ['Fertig', 'done', 'Done'],
+        ['In Review', 'indeterminate', 'In Review'],
+        ['Code Review', 'indeterminate', 'In Review'],
+        ['In Progress', 'indeterminate', 'In Progress'],
+        ['Doing', 'indeterminate', 'In Progress'],
+      ])(
+        'stays null for status %s (category %s) when the target is %s',
+        async (name, key, target) => {
+          const get = answering({ name, statusCategory: { key } });
+          const client = { get, post: vi.fn() } as unknown as AtlassianClient;
+          await expect(
+            provider(client).transitionIssue('AIDEVEX-8', target)
+          ).resolves.toBeUndefined();
+          const events: Record<string, TrackerSyncEvent> = {
+            Done: completed,
+            'In Progress': { issueId: 'AIDEVEX-8', type: 'workflow_started' },
+            'In Review': { issueId: 'AIDEVEX-8', type: 'pr_opened' },
+          };
+          await expect(provider(client).syncOnEvent(events[target])).resolves.toBeNull();
+        }
+      );
+
+      it('reports no_transition for a new-category ticket when the target is Done', async () => {
+        const get = answering({ name: 'To Do', statusCategory: { key: 'new' } });
+        const client = { get, post: vi.fn() } as unknown as AtlassianClient;
+        await expect(provider(client).syncOnEvent(completed)).resolves.toBe('no_transition');
+      });
+
+      it('reports no_transition for workflow_started and pr_opened when the ticket is in another category', async () => {
+        const todo = answering({ name: 'To Do', statusCategory: { key: 'new' } });
+        const started = { issueId: 'AIDEVEX-8', type: 'workflow_started' } as const;
+        await expect(
+          provider({ get: todo, post: vi.fn() } as unknown as AtlassianClient).syncOnEvent(started)
+        ).resolves.toBe('no_transition');
+        const opened = { issueId: 'AIDEVEX-8', type: 'pr_opened' } as const;
+        await expect(
+          provider({ get: todo, post: vi.fn() } as unknown as AtlassianClient).syncOnEvent(opened)
+        ).resolves.toBe('no_transition');
+      });
+
+      it('reports no_transition when a done ticket is asked to move to In Progress', async () => {
+        const get = answering({ name: 'Done', statusCategory: { key: 'done' } });
+        const client = { get, post: vi.fn() } as unknown as AtlassianClient;
+        await expect(
+          provider(client).syncOnEvent({ issueId: 'AIDEVEX-8', type: 'workflow_started' })
+        ).resolves.toBe('no_transition');
+      });
+
+      it('compares the name only when the status has no category', async () => {
+        const get = answering({ name: 'Closed' });
+        const client = { get, post: vi.fn() } as unknown as AtlassianClient;
+        await expect(provider(client).syncOnEvent(completed)).resolves.toBe('no_transition');
+      });
+
+      it('stays null when the status read fails', async () => {
+        const get = vi.fn(async (path: string) => {
+          if (path.includes('/transitions')) {
+            return noMatch;
+          }
+          throw new AtlassianError(403, 'auth', 'forbidden');
+        });
+        const client = { get, post: vi.fn() } as unknown as AtlassianClient;
+        await expect(provider(client).syncOnEvent(completed)).resolves.toBeNull();
+      });
+
+      it('stays null when the status read returns no status', async () => {
+        const client = { get: answering(undefined), post: vi.fn() } as unknown as AtlassianClient;
+        await expect(provider(client).syncOnEvent(completed)).resolves.toBeNull();
+      });
+
+      it('keeps the public transitionIssue void', async () => {
+        const client = {
+          get: answering({ name: 'To Do' }),
+          post: vi.fn(),
+        } as unknown as AtlassianClient;
+        await expect(
+          provider(client).transitionIssue('AIDEVEX-8', 'Done')
+        ).resolves.toBeUndefined();
+      });
+    });
+
+    it('does not read the status when a transition matches', async () => {
+      const get = vi.fn(async () => transitions);
+      const post = vi.fn(async () => ({}));
       const client = { get, post } as unknown as AtlassianClient;
       await expect(provider(client).syncOnEvent(completed)).resolves.toBeNull();
-      expect(post).not.toHaveBeenCalled();
+      expect(get).toHaveBeenCalledTimes(1);
     });
 
     it('reports a refused remote link, and still tries the transition', async () => {
