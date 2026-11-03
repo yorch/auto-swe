@@ -13,6 +13,10 @@ const m = vi.hoisted(() => ({
     runInput: { findUnique: vi.fn() },
     workflowRun: { findUnique: vi.fn() },
   },
+  resolvePrTitle: vi.fn(
+    async (input: { defaultsTemplate?: string; renderTemplate: (t?: string) => string }) =>
+      input.renderTemplate(input.defaultsTemplate)
+  ),
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: m.prisma }));
@@ -45,6 +49,8 @@ vi.mock('../lib/scm/index.js', () => ({
   toRepoRef: () => ({ organizationName: 'acme', repoName: 'api' }),
 }));
 vi.mock('../lib/slackNotify.js', () => ({ notifySlackPrReady: vi.fn() }));
+// The title policy is covered by prTitle.test.ts; here the resolver renders the template it is given.
+vi.mock('./prTitle.js', () => ({ resolvePrTitle: m.resolvePrTitle }));
 
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import {
@@ -98,6 +104,44 @@ describe('createOrUpdatePullRequest draft option', () => {
       title: '[auto-swe] T-1',
     });
     expect(m.prisma.pullRequest.create.mock.calls[1]?.[0].data).toMatchObject({ isDraft: false });
+  });
+
+  it("resolves the title at the repository's team, organization and the run's template", async () => {
+    m.prisma.connection.findUniqueOrThrow.mockResolvedValue({
+      defaultBranch: 'main',
+      id: 'repo-1',
+      prTitleFormat: 'conventional',
+      prTitleTemplate: null,
+      team: { orgId: 'org-1' },
+      teamId: 'team-1',
+    });
+    m.prisma.activeWorkflow.findFirst.mockResolvedValue({
+      id: 'w1',
+      repoId: 'repo-1',
+      temporalWorkflowId: 'wf-own',
+    });
+    m.prisma.workflowRun.findUnique.mockResolvedValue({
+      id: 'run-1',
+      templateId: 'tpl-1',
+      templateVersion: 3,
+    });
+    m.resolvePrTitle.mockResolvedValueOnce('feat: add a thing');
+    await createOrUpdatePullRequest(request, {
+      ...codeResult,
+      filesChanged: [{ operation: 'CREATE', path: 'a.ts' }],
+    } as unknown as CodeResult);
+    expect(m.resolvePrTitle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ctx: { orgId: 'org-1', teamId: 'team-1', workflowTemplateId: 'tpl-1' },
+        description: 'd',
+        files: [{ operation: 'CREATE', path: 'a.ts' }],
+        repo: expect.objectContaining({ prTitleFormat: 'conventional' }),
+        ticketId: 'T-1',
+      })
+    );
+    expect(m.createPr).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'feat: add a thing' })
+    );
   });
 
   it('fails non-retryably when the repository cannot hold drafts, and opens nothing else', async () => {

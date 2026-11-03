@@ -520,7 +520,7 @@ are added as data, not code. Seeded built-ins split by how they bind a model:
   `planner`, `securityReview`, `validateContext`, `commitToMemory`, `channelAssistant`, `evalJudge`,
   `workflowAuthor`, `workflowExplainer`, `repoDependencyInferrer`. `appAssistant` answers in the
   dashboard's assistant panel, acting as the signed-in user, and `assistantTitler` names its
-  conversations. The rest exist because the
+  conversations. `prTitler` picks the type and summary of a Conventional Commits pull request title. The rest exist because the
   platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
   `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product),
   `docsMaintainer`, `docReviewer`, `ticketPlanner` (documentation and document review).
@@ -769,7 +769,7 @@ Seeded model defaults (applied to the GLOBAL Agents by `syncBuiltins`):
 | ----- | ------- |
 | `implementer`, `reviewer`, `commitToMemory`, `channelAssistant`, `workflowAuthor` | `anthropic/claude-opus-5-5` |
 | `planner`, `securityReview`, `validateContext`, `workflowExplainer` | `anthropic/claude-sonnet-5-5` |
-| `evalJudge`, `assistantTitler` | `anthropic/claude-haiku-4-5-20251001` |
+| `evalJudge`, `assistantTitler`, `prTitler` | `anthropic/claude-haiku-4-5-20251001` |
 | (embedding) | `openai/text-embedding-3-large` |
 
 When a default changes, `syncAgents` moves a GLOBAL built-in Agent forward **only** if its latest

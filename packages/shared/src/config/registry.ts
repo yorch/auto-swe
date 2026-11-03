@@ -12,6 +12,7 @@ import {
   MAX_GLOB_STARS,
 } from '../lib/prEvaluation/paths.js';
 import { MAX_FILE_GLOB_COST } from '../lib/prEvaluation/policy.js';
+import { CONVENTIONAL_COMMIT_TYPES, PR_TITLE_FORMATS } from '../lib/prTitle.js';
 import { IMPLEMENTER_RUNTIMES } from '../types/api.js';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { MAX_FANOUT_CONCURRENCY } from '../workflow/spec.js';
@@ -1423,6 +1424,42 @@ export const SETTING_DEFINITIONS = {
     runPinned: true,
     schema: positiveInt.max(100_000),
     unit: 'transitions',
+  }),
+  'workflow.prTitleFormat': defineSetting({
+    defaultValue: 'template',
+    description:
+      "How the title of a pull request the platform opens is written. 'template' renders the PR title template; 'conventional' writes a Conventional Commits title (`type: summary`, at most 72 characters), the type taken from 'PR title type' or, when that is auto, chosen by the prTitler agent from the request and the files changed. A repository's own setting wins over this one.",
+    group: 'workflow',
+    label: 'PR title format',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.enum(PR_TITLE_FORMATS),
+  }),
+  'workflow.prTitleTemplate': defineSetting({
+    defaultValue: '',
+    description:
+      "The title template for 'template' format, with {{ticketId}} and {{description}} placeholders. Empty means the template set at Workflow defaults. A repository's own template wins over this one. Agent runs use a template only when this or the repository sets one.",
+    group: 'workflow',
+    label: 'PR title template',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.string().trim().max(300),
+  }),
+  'workflow.prTitleType': defineSetting({
+    defaultValue: 'auto',
+    description:
+      "The Conventional Commits type every pull request title carries in 'conventional' format. Auto lets the prTitler agent choose per pull request; a fixed type skips that model call, which suits a template that always does one kind of work (a docs refresh is always docs).",
+    group: 'workflow',
+    label: 'PR title type',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.enum(['auto', ...CONVENTIONAL_COMMIT_TYPES]),
   }),
 
   // ── Runless workflows ──────────────────────────────────────────────────────

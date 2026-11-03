@@ -8,6 +8,7 @@ import { credentialDestinationChanged } from '@auto-swe/shared/lib/credentialDes
 import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { type PermissionLookup, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import { type PreviewConfig, PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
+import { PR_TITLE_FORMATS } from '@auto-swe/shared/lib/prTitle';
 import {
   lookupRepoPermission,
   PERMISSION_REPO_SELECT,
@@ -164,6 +165,16 @@ const UpdateRepoSchema = z.object({
   language: z.string().nullable().optional(),
   name: z.string().max(200).nullable().optional(),
   previewConfig: PreviewConfigSchema.nullable().optional(),
+  /** The repository's own PR title format; null inherits `workflow.prTitleFormat`. */
+  prTitleFormat: z.enum(PR_TITLE_FORMATS).nullable().optional(),
+  /** The repository's own PR title template; blank or null inherits. */
+  prTitleTemplate: z
+    .string()
+    .trim()
+    .max(300)
+    .transform((v) => v || null)
+    .nullable()
+    .optional(),
   teamId: z.string().uuid().optional(),
 });
 
@@ -1130,6 +1141,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         language,
         name,
         previewConfig: bodyPreviewConfig,
+        prTitleFormat,
+        prTitleTemplate,
         teamId,
       } = request.body;
       const { githubApiUrl, githubUrl } = urls;
@@ -1277,6 +1290,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
                       : (bodyPreviewConfig as Prisma.InputJsonValue),
                 }
               : {}),
+            prTitleFormat,
+            prTitleTemplate,
             teamId,
           },
           include: { team: { select: { id: true, name: true, slug: true } } },

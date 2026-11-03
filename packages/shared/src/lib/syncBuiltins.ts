@@ -28,6 +28,7 @@ import {
   PERFORMANCE_REVIEWER_PROMPT,
   PLANNER_AGENT_PROMPT,
   PR_FEEDBACK_RESPONDER_PROMPT,
+  PR_TITLER_PROMPT,
   PRD_ANALYST_PROMPT,
   PRD_DECOMPOSER_PROMPT,
   PRD_WRITER_PROMPT,
@@ -804,6 +805,19 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     key: 'prFeedbackResponder',
     name: 'PR Feedback Responder',
     systemPrompt: PR_FEEDBACK_RESPONDER_PROMPT,
+  },
+  // ── Pull-request titles ────────────────────────────────────────────────────
+  {
+    // Picks the Conventional Commits type and summary of a pull request title when a repository's
+    // format is `conventional` and no type is fixed (`resolvePrTitle`). A few words of output, so
+    // the cheap model; resolved on demand and best-effort, so not in MODEL_BACKED_AGENT_KEYS: a
+    // missing credential costs a title's type (it falls back to `chore`), never a run.
+    description:
+      'Classifies a change and summarises it for a Conventional Commits PR title. No tools.',
+    key: 'prTitler',
+    modelSpec: 'anthropic/claude-haiku-4-5-20251001',
+    name: 'PR Titler',
+    systemPrompt: PR_TITLER_PROMPT,
   },
 ];
 

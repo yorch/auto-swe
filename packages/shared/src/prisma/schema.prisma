@@ -498,6 +498,14 @@ model Connection {
   /// "inherit `prEvaluation.defaultMode`", and it must stay NULL-able with NO column
   /// default: a default writes a literal into every row and shadows the registry value.
   prEvaluationMode     String?             @map("pr_evaluation_mode")
+  /// Per-repository PR title format: 'template' | 'conventional'. NULL means "inherit
+  /// `workflow.prTitleFormat`", and it must stay NULL-able with NO column default: a default
+  /// writes a literal into every row and shadows the registry value. The CHECK
+  /// `connections_pr_title_format_check` (hand-written migration DDL) names the formats.
+  prTitleFormat        String?             @map("pr_title_format")
+  /// Per-repository PR title template, used by the 'template' format. NULL means "inherit
+  /// `workflow.prTitleTemplate`, then the Workflow defaults template".
+  prTitleTemplate      String?             @map("pr_title_template")
   /// Whether the approver App may approve this repository's LOW pull requests, so they can merge
   /// with no human approval. A separate, deliberate switch from `auto`: the CHECK
   /// `connections_bot_approval_requires_auto_check` (hand-written migration DDL) keeps it false

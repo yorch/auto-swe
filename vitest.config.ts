@@ -76,6 +76,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/transcripts/$1.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/prTitle',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/prTitle.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/pullRequestOutcomes',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/pullRequestOutcomes.ts'),
       },

@@ -65,6 +65,7 @@ export const NON_LAUNCHABLE_AGENT_KEYS: ReadonlySet<string> = new Set([
   'assistantTitler',
   'ciTriager',
   'prFeedbackResponder',
+  'prTitler',
 ]);
 
 export function isLaunchableAgentKey(key: string): boolean {

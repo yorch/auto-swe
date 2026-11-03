@@ -475,6 +475,15 @@ The repository edit form shows the detection as a suggestion: the detected stack
 the suggested `defaults/Dockerfile.<stack>` for `build-executor.yml`, and a **Use suggested gate
 commands** button that fills the gate fields without saving them.
 
+### Pull request titles
+
+A repository can choose how the pull requests opened for it are titled (`Connection.prTitleFormat`
+and `Connection.prTitleTemplate`). Both are edited in the connection form, under **PR title format**
+and **PR title template**, by the same people who can edit the rest of the repository. Left on
+**Inherit** (stored as `NULL`), the repository follows the registry cascade; a value set here wins
+over every scope in it. The formats, the placeholders and how a Conventional Commits title is built
+are in [`configuration.md` §10](./configuration.md#10-pull-request-titles).
+
 ---
 
 ## 3. Sharing with other teams

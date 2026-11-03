@@ -163,6 +163,47 @@ describe('ConnectionFormModal gate commands', () => {
   });
 });
 
+describe('ConnectionFormModal PR title', () => {
+  beforeAll(() => stubDialogPrototype());
+  beforeEach(() => {
+    update.mutateAsync.mockReset().mockResolvedValue({});
+    auth.role = 'LEAD';
+    auth.teamRole = 'LEAD';
+  });
+
+  const templateField = () => screen.getByLabelText('PR title template') as HTMLInputElement;
+
+  it('inherits by default, sending null for both', async () => {
+    renderEdit();
+    expect(templateField().value).toBe('');
+    save();
+    await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
+    expect(update.mutateAsync.mock.calls[0]?.[0]).toMatchObject({
+      prTitleFormat: null,
+      prTitleTemplate: null,
+    });
+  });
+
+  it('sends a trimmed template the person typed', async () => {
+    renderEdit({ ...repo, prTitleFormat: 'template' });
+    fireEvent.change(templateField(), { target: { value: '  [x] {{ticketId}} ' } });
+    save();
+    await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
+    expect(update.mutateAsync.mock.calls[0]?.[0]).toMatchObject({
+      prTitleFormat: 'template',
+      prTitleTemplate: '[x] {{ticketId}}',
+    });
+  });
+
+  it('disables the template for a conventional repository and keeps the format', async () => {
+    renderEdit({ ...repo, prTitleFormat: 'conventional' });
+    expect(templateField().disabled).toBe(true);
+    save();
+    await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
+    expect(update.mutateAsync.mock.calls[0]?.[0].prTitleFormat).toBe('conventional');
+  });
+});
+
 describe('ConnectionFormModal detected stack coverage', () => {
   beforeAll(() => stubDialogPrototype());
   beforeEach(() => {

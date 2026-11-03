@@ -2,6 +2,7 @@
 
 import type { ConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
+import { isPrTitleFormat } from '@auto-swe/shared/lib/prTitle';
 import { MAX_UNCOVERED_COMPONENTS, uncoveredComponents } from '@auto-swe/shared/lib/stackDetection';
 import {
   type ExecutorImageProbeResult,
@@ -53,6 +54,15 @@ type Mode =
 
 const CONNECTION_TYPE_OPTIONS = selectableConnectionTypes();
 
+/** `inherit` stores null: the repository follows the team, organization and global setting. */
+type PrTitleFormChoice = 'inherit' | 'template' | 'conventional';
+
+const PR_TITLE_FORMAT_OPTIONS: Array<{ label: string; value: PrTitleFormChoice }> = [
+  { label: 'Inherit from team, organization or global', value: 'inherit' },
+  { label: 'Template', value: 'template' },
+  { label: 'Conventional Commits', value: 'conventional' },
+];
+
 export function ConnectionFormModal({
   open,
   onClose,
@@ -98,6 +108,10 @@ export function ConnectionFormModal({
     initial?.previewConfig != null ? JSON.stringify(initial.previewConfig, null, 2) : ''
   );
   const [language, setLanguage] = useState(initial?.language ?? prefill?.language ?? '');
+  const [prTitleFormat, setPrTitleFormat] = useState<PrTitleFormChoice>(
+    initial?.prTitleFormat ?? 'inherit'
+  );
+  const [prTitleTemplate, setPrTitleTemplate] = useState(initial?.prTitleTemplate ?? '');
 
   // non-git fields (name + type-specific config)
   const [name, setName] = useState(initial?.name ?? '');
@@ -132,6 +146,8 @@ export function ConnectionFormModal({
       initial?.previewConfig != null ? JSON.stringify(initial.previewConfig, null, 2) : ''
     );
     setLanguage(initial?.language ?? prefill?.language ?? '');
+    setPrTitleFormat(initial?.prTitleFormat ?? 'inherit');
+    setPrTitleTemplate(initial?.prTitleTemplate ?? '');
     setName(initial?.name ?? '');
     setConfigJson(initial?.config != null ? JSON.stringify(initial.config, null, 2) : '');
     setDescription(initial?.description ?? prefill?.description ?? '');
@@ -221,6 +237,8 @@ export function ConnectionFormModal({
             ...(parsedPreviewConfig !== undefined ? { previewConfig: parsedPreviewConfig } : {}),
             isActive,
             language: language.trim() || null,
+            prTitleFormat: prTitleFormat === 'inherit' ? null : prTitleFormat,
+            prTitleTemplate: prTitleTemplate.trim() || null,
             teamId,
           });
         } else {
@@ -382,6 +400,31 @@ export function ConnectionFormModal({
                 value={language}
               />
             </div>
+            {isEdit && (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Select
+                  hint="How the pull requests opened for this repository are titled. Conventional Commits writes `type: summary`."
+                  id="pr-title-format"
+                  label="PR title format"
+                  onChange={(v) => {
+                    if (v === 'inherit' || isPrTitleFormat(v)) {
+                      setPrTitleFormat(v);
+                    }
+                  }}
+                  options={PR_TITLE_FORMAT_OPTIONS}
+                  value={prTitleFormat}
+                />
+                <Input
+                  disabled={prTitleFormat === 'conventional'}
+                  hint="Placeholders: {{ticketId}}, {{description}}. Blank inherits."
+                  id="pr-title-template"
+                  label="PR title template"
+                  onChange={(e) => setPrTitleTemplate(e.target.value)}
+                  placeholder="[auto-swe] {{ticketId}}"
+                  value={prTitleTemplate}
+                />
+              </div>
+            )}
             {probe && (
               <Alert variant={probe.ok ? 'info' : 'warning'}>
                 <p className="font-medium">
