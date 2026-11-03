@@ -745,7 +745,7 @@ the workspace namespace's NetworkPolicy (`infra/kubernetes/workspace-namespace.y
 
 ---
 
-### UN-12. Kubernetes workspace namespace: re-apply the manifest for egress policies `blocked` and `restricted` (`<fixing commit SHA>`)
+### UN-12. Kubernetes workspace namespace: re-apply the manifest for egress policies `blocked` and `restricted` (`7fd21a8b`)
 
 **Affected.** `WORKSPACE_BACKEND=kubernetes` deployments that applied
 `infra/kubernetes/workspace-namespace.yaml` before this commit and run agents or workflows under
