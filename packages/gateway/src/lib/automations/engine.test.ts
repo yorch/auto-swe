@@ -21,6 +21,7 @@ import {
   PR_FEEDBACK,
   PrFeedbackFactsSchema,
   prFeedbackSource,
+  pushSource,
   WORKFLOW_RUN_FAILED,
   type WorkflowRunFailedFacts,
   workflowRunFailedSource,
@@ -916,6 +917,36 @@ describe('owners that are not a repository', () => {
     await expect(run()).resolves.toBeNull();
     h.fires.push(produced(OWNER));
     await expect(run()).resolves.toMatchObject({ outcome: 'SUPPRESSED_OWN_OUTPUT' });
+  });
+
+  it('never acts on a push of a commit a feedback or CI-fix run pushed', async () => {
+    const h = harness();
+    const sha = 'c'.repeat(40);
+    const scope = {
+      automation: { cooldownMinutes: 0, id: 'a', maxRunsPerDay: 10 },
+      ownerKey: 'github.com/acme/api',
+    };
+    const facts = pushSource.tester.facts({ branch: 'feature/x' });
+    const keys = pushSource.keys({ ...facts, after: sha });
+    const run = () =>
+      decideUnderLock(h.db as never, scope, pushSource, keys, new Date(), async () => true);
+    await expect(run()).resolves.toBeNull();
+    for (const source of [PR_FEEDBACK, WORKFLOW_RUN_FAILED]) {
+      h.fires.length = 0;
+      h.fires.push({
+        automationId: 'x',
+        createdAt: new Date(),
+        dedupeKey: `d-${source}`,
+        id: `fire-${source}`,
+        outcome: 'STARTED',
+        ownerKey: 'github.com/acme/api',
+        producedKey: sha,
+        scopeKey: 'pr-9',
+        source,
+        subjectKey: 'pr-9@x',
+      });
+      await expect(run()).resolves.toMatchObject({ outcome: 'SUPPRESSED_OWN_OUTPUT' });
+    }
   });
 
   it('derives a host for a person’s account only from a repository key', async () => {

@@ -17,6 +17,8 @@ import {
   jiraFilterStatusChangedSource,
 } from './sources/jiraFilter.js';
 import { PR_FEEDBACK, prFeedbackSource } from './sources/prFeedback.js';
+import { PR_LABELED, prLabeledSource } from './sources/prLabeled.js';
+import { GITHUB_PUSH, pushSource } from './sources/push.js';
 import { WORKFLOW_RUN_FAILED, workflowRunFailedSource } from './sources/workflowRunFailed.js';
 import type { EventSource } from './types.js';
 
@@ -28,6 +30,8 @@ export * from './sources/inboundEvent.js';
 export * from './sources/issueLabeled.js';
 export * from './sources/jiraFilter.js';
 export * from './sources/prFeedback.js';
+export * from './sources/prLabeled.js';
+export * from './sources/push.js';
 export * from './sources/workflowRunFailed.js';
 export * from './types.js';
 
@@ -36,6 +40,8 @@ export const EVENT_SOURCES = {
   [WORKFLOW_RUN_FAILED]: workflowRunFailedSource,
   [ISSUE_LABELED]: issueLabeledSource,
   [PR_FEEDBACK]: prFeedbackSource,
+  [PR_LABELED]: prLabeledSource,
+  [GITHUB_PUSH]: pushSource,
   [INBOUND_EVENT]: inboundEventSource,
   [JIRA_FILTER_NEW_ISSUE]: jiraFilterNewIssueSource,
   [JIRA_FILTER_STATUS_CHANGED]: jiraFilterStatusChangedSource,

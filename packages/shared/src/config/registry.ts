@@ -482,6 +482,30 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
+  'github.prLabelAutomationsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether a repository's pull-request label automations may start runs. Off by default: a label added to a pull request starts a template on the pull request's title and body, which whoever opened it wrote, so an admin turns this on deliberately. Even when on, a labelling starts a run only when the person who added the label is an active platform user with a linked GitHub account and a member of the repository, and never for a pull request from a fork. Turning it off does not stop runs already started.",
+    group: 'github',
+    label: 'Pull-request label automations enabled',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'github.pushAutomationsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether a repository's push automations may start runs. Off by default: a push starts a template on a commit message and changed files that someone else wrote (after a squash merge the message is the pull request's own text, whose author may be outside the repository), so an admin turns this on deliberately. Even when on, a push starts a run only on a branch the automation names, never on a branch under the platform's current work-branch prefix (a branch made under an earlier prefix is not covered), and only when the pusher is an active platform user with a linked GitHub account and a member of the repository. A commit that a CI-fix or pull-request-feedback run pushed to a person's own pull-request branch is not under that prefix; it is recognised only as the platform's own output and not acted on again. Turning it off does not stop runs already started.",
+    group: 'github',
+    label: 'Push automations enabled',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'github.repositoryHosts': defineSetting({
     defaultValue: [],
     description:
