@@ -5,7 +5,19 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: { connection: { findUnique: vi.fn() } },
 }));
 vi.mock('@auto-swe/shared/workflow', () => ({ assertShellImageAllowed: vi.fn() }));
-vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
+vi.mock('@temporalio/activity', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@temporalio/activity')>()),
+  heartbeat: vi.fn(),
+}));
+const proxy = vi.hoisted(() => ({ configured: true }));
+vi.mock('../lib/egressProxy.js', () => ({
+  workerEgressProxy: () => (proxy.configured ? {} : null),
+}));
+const policy = vi.hoisted(() => ({ value: 'open' as 'open' | 'restricted' | 'blocked' }));
+vi.mock('../lib/egressWiring.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/egressWiring.js')>()),
+  resolveRunEgressPolicy: vi.fn(async () => policy.value),
+}));
 vi.mock('../lib/ephemeralContainer.js', () => ({
   runEphemeralContainer: vi.fn(),
   runSidecarContainer: vi.fn(),
@@ -31,6 +43,8 @@ const base = { image: 'node:24-alpine', request: REQUEST };
 
 beforeEach(() => {
   vi.clearAllMocks();
+  policy.value = 'open';
+  proxy.configured = true;
   findUnique.mockResolvedValue({
     team: { egressAllowlist: [], shellImageAllowlist: ['node:24-alpine'] },
   } as never);
@@ -186,5 +200,72 @@ describe('runContainerStep', () => {
         /requires a sidecar config/
       );
     });
+  });
+});
+
+describe('egress policy', () => {
+  beforeEach(() => {
+    mockedRun.mockResolvedValue({ exitCode: 0, stderr: '', stdout: 'null' } as never);
+  });
+  const withAllowlist = (egressAllowlist: string[]) =>
+    findUnique.mockResolvedValue({
+      team: { egressAllowlist, id: 't1', shellImageAllowlist: ['node:24-alpine'] },
+    } as never);
+
+  it("'blocked' forces network none and says so in the audit", async () => {
+    policy.value = 'blocked';
+    withAllowlist(['a.com']);
+    await runContainerStep({ ...base, network: 'egress' });
+    expect(mockedRun).toHaveBeenCalledWith(expect.objectContaining({ network: 'none' }));
+    expect(vi.mocked(executionAudit)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        network: expect.stringContaining('capped by egress policy blocked'),
+      })
+    );
+  });
+  it("'restricted' with an empty allowlist forces none; with one it is unchanged", async () => {
+    policy.value = 'restricted';
+    withAllowlist([]);
+    await runContainerStep({ ...base, network: 'egress' });
+    expect(mockedRun).toHaveBeenLastCalledWith(expect.objectContaining({ network: 'none' }));
+    withAllowlist(['a.com']);
+    await runContainerStep({ ...base, network: 'egress' });
+    expect(mockedRun).toHaveBeenLastCalledWith(expect.objectContaining({ network: 'egress' }));
+    expect(vi.mocked(executionAudit)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ network: 'egress (proxy-enforced only; not network-locked)' })
+    );
+  });
+  it('refuses a sidecar when the policy forbids egress', async () => {
+    policy.value = 'blocked';
+    withAllowlist([]);
+    await expect(
+      runContainerStep({ ...base, sidecar: { port: 80 }, transport: 'sidecar' })
+    ).rejects.toMatchObject({
+      message: expect.stringMatching(/sidecar/),
+      nonRetryable: true,
+      type: 'EGRESS_POLICY_UNENFORCEABLE',
+    });
+    expect(mockedSidecar).not.toHaveBeenCalled();
+    expect(vi.mocked(executionAudit)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.stringMatching(/sidecar/),
+        name: 'container',
+        network: 'none',
+      })
+    );
+  });
+  it('refuses a restricted egress step when the egress proxy is not configured', async () => {
+    policy.value = 'restricted';
+    withAllowlist(['a.com']);
+    proxy.configured = false;
+    await expect(runContainerStep({ ...base, network: 'egress' })).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'EGRESS_POLICY_UNENFORCEABLE',
+    });
+    await expect(
+      runContainerStep({ ...base, sidecar: { port: 80 }, transport: 'sidecar' })
+    ).rejects.toMatchObject({ nonRetryable: true });
+    expect(mockedRun).not.toHaveBeenCalled();
+    expect(mockedSidecar).not.toHaveBeenCalled();
   });
 });

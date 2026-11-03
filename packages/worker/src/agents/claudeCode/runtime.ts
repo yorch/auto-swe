@@ -273,8 +273,14 @@ async function prepareContainer(workspace: Workspace): Promise<void> {
     { timeoutMs: 120_000 }
   );
   if (bash.exitCode !== 0) {
+    // The workspace's network was locked before this ran (`createWorkspace`), so `apk add` cannot
+    // reach a package mirror under these policies: the image itself must carry bash.
+    const locked =
+      workspace.egressPolicy === 'blocked' || workspace.egressPolicy === 'restricted'
+        ? ` Egress policy '${workspace.egressPolicy}' locks the workspace's network before bash could be installed from a package mirror: install bash in the image.`
+        : '';
     throw ApplicationFailure.nonRetryable(
-      'The workspace image has no bash and it could not be installed (it needs to run as root with network access on Alpine). Claude Code needs bash for its shell tool; use an executor image that includes it.',
+      `The workspace image has no bash and it could not be installed (it needs to run as root with network access on Alpine). Claude Code needs bash for its shell tool; use an executor image that includes it.${locked}`,
       'HARNESS_NO_SHELL'
     );
   }

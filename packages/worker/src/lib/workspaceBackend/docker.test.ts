@@ -2,8 +2,16 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DOCKER_HOST_ALIAS } from '@auto-swe/shared/lib/systemConfig';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildServiceContainerArgs, dockerWorkspaceBackend, ephemeralArgs } from './docker.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  assertEgressLocked,
+  buildEgressHelperCommand,
+  buildEgressLockScript,
+  buildServiceContainerArgs,
+  dockerWorkspaceBackend,
+  ephemeralArgs,
+  resolveEgressTargets,
+} from './docker.js';
 
 describe('buildServiceContainerArgs', () => {
   it('hardens service sidecars in the workspace network namespace', () => {
@@ -366,5 +374,158 @@ if (args[0] === 'exec') process.stdout.write('42\\n');
     expect(run?.args).toEqual(expect.arrayContaining(['-e', 'YARN_NPM_AUTH_TOKEN', 'PLAIN=1']));
     expect(JSON.stringify(calls.map((c) => c.args))).not.toContain(TOKEN);
     expect(run?.token).toBe(TOKEN);
+  });
+});
+
+describe('egress lock', () => {
+  const rules = [{ ip: '203.0.113.7', port: 443 }, { ip: '198.51.100.9' }, { ip: '2001:db8::1' }];
+
+  it('builds a default-deny script: resolver refused before lo, no OUTPUT conntrack, DROP last', () => {
+    const script = buildEgressLockScript(rules);
+    expect(script).toContain("allow_ip '203.0.113.7' '443'");
+    expect(script).toContain("allow_ip '198.51.100.9' ''");
+    expect(script).toContain("allow_ip '2001:db8::1' ''");
+    const lo = script.indexOf('iptables -A OUTPUT -o lo -j ACCEPT');
+    expect(lo).toBeGreaterThan(-1);
+    for (const rule of [
+      'iptables -A OUTPUT -d 127.0.0.11 -p tcp -j REJECT',
+      'iptables -A OUTPUT -d 127.0.0.11 -p udp -j REJECT',
+      'iptables -A OUTPUT -m conntrack --ctorigdst 127.0.0.11 -j REJECT',
+    ]) {
+      expect(script.indexOf(rule)).toBeGreaterThan(-1);
+      expect(script.indexOf(rule)).toBeLessThan(lo);
+    }
+    // OUTPUT accepts no conntrack state; INPUT accepts loopback and replies only.
+    expect(script).not.toMatch(/-A OUTPUT[^\n]*ESTABLISHED/);
+    expect(script).toContain('iptables -A INPUT -i lo -j ACCEPT');
+    expect(script).toContain(
+      'iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT'
+    );
+    expect(script).toContain('iptables -P OUTPUT DROP');
+    expect(script).toContain('iptables -P INPUT DROP');
+    expect(script).toContain('ip6tables -P OUTPUT DROP');
+    expect(script).toContain('ip6tables -P INPUT DROP');
+    expect(script).toContain('conntrack -F');
+    // No DNS is opened, no name resolution happens in the helper, and the policy comes last.
+    expect(script).not.toMatch(/dport 53|--dport "53"/);
+    expect(script).not.toContain('getent');
+    expect(script).not.toContain('allow_host');
+    expect(script.lastIndexOf('allow_ip ')).toBeLessThan(script.indexOf('iptables -P OUTPUT DROP'));
+  });
+
+  it('skips v6 entries without aborting when ip6tables is unusable and IPv6 is disabled', () => {
+    const script = buildEgressLockScript(rules);
+    expect(script).toContain('skipping $1 (IPv6 disabled)');
+    expect(script).toContain('ip6tables unusable and IPv6 enabled" >&2; exit 1');
+  });
+
+  it('refuses a rule that is not a plain, allowed IP address or a 1-65535 port', () => {
+    for (const ip of [
+      'example.com',
+      'a;rm -rf /',
+      '',
+      '127.0.0.1',
+      '169.254.169.254',
+      '::1',
+      '0.0.0.0',
+    ]) {
+      expect(() => buildEgressLockScript([{ ip }])).toThrow(/not an IP|refused/);
+    }
+    for (const port of [0, 65536, -1, 1.5, Number.NaN]) {
+      expect(() => buildEgressLockScript([{ ip: '203.0.113.7', port }])).toThrow(/invalid port/);
+    }
+  });
+
+  it('refuses hosts and ports that are not plain hostnames, IP literals or 1-65535', async () => {
+    const resolve = async () => ['203.0.113.7'];
+    for (const host of ['a;rm -rf /', 'a b', '$(id)', '', '-x.com', 'a..b', "x'y", 'a/b']) {
+      await expect(resolveEgressTargets([{ host }], resolve)).rejects.toThrow(/invalid host/);
+    }
+    for (const port of [0, 65536, -1, 1.5, Number.NaN]) {
+      await expect(resolveEgressTargets([{ host: 'example.com', port }], resolve)).rejects.toThrow(
+        /invalid port/
+      );
+    }
+  });
+
+  it('resolves each name once, pins it once, and honours a trusted alias without a line', async () => {
+    const resolve = vi.fn(async () => ['203.0.113.7', '2001:db8::1']);
+    const out = await resolveEgressTargets(
+      [
+        { host: 'git.example.com', port: 443 },
+        { host: 'Git.Example.com', port: 22 },
+        { host: 'host.docker.internal' },
+        { host: '198.51.100.9', port: 22 },
+      ],
+      resolve,
+      new Map([['host.docker.internal', ['172.17.0.1']]])
+    );
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve).toHaveBeenCalledWith('git.example.com');
+    expect(out.rules).toEqual([
+      { ip: '203.0.113.7', port: 443 },
+      { ip: '2001:db8::1', port: 443 },
+      { ip: '203.0.113.7', port: 22 },
+      { ip: '2001:db8::1', port: 22 },
+      { ip: '172.17.0.1' },
+      { ip: '198.51.100.9', port: 22 },
+    ]);
+    expect(out.hosts).toEqual([
+      ['203.0.113.7', 'git.example.com'],
+      ['2001:db8::1', 'git.example.com'],
+    ]);
+  });
+
+  it('refuses forbidden answers, forbidden literals and names with no address', async () => {
+    await expect(
+      resolveEgressTargets([{ host: 'evil.example.com' }], async () => ['169.254.169.254'])
+    ).rejects.toThrow(/refused address/);
+    await expect(
+      resolveEgressTargets([{ host: 'evil.example.com' }], async () => ['203.0.113.7', '127.0.0.1'])
+    ).rejects.toThrow(/refused address/);
+    await expect(resolveEgressTargets([{ host: '127.0.0.1' }], async () => [])).rejects.toThrow(
+      /refused address/
+    );
+    await expect(
+      resolveEgressTargets([{ host: 'nx.example.com' }], async () => [])
+    ).rejects.toThrow(/no address/);
+  });
+});
+
+describe('egress script and helper', () => {
+  it('runs the helper in the workspace namespace with NET_ADMIN and a quoted script', () => {
+    const cmd = buildEgressHelperCommand('workspace-ab12', 'alpine:3.20', "echo 'x'");
+    expect(cmd).toContain('--network container:workspace-ab12');
+    expect(cmd).toContain('--cap-add=NET_ADMIN');
+    expect(cmd).toContain('auto-swe.workspace=true');
+    expect(() => buildEgressHelperCommand('bad name;x', 'alpine:3.20', 'true')).toThrow(
+      /invalid workspace name/
+    );
+  });
+
+  it('accepts only a read-back that shows DROP on INPUT and OUTPUT, and IPv6 DROP or disabled', () => {
+    const v4 = 'v4:\n-P OUTPUT DROP\n-A OUTPUT -o lo -j ACCEPT\n-P INPUT DROP\n';
+    const drop = `${v4}v6:\n-P OUTPUT DROP\n-P INPUT DROP\nv6disabled=0\n`;
+    expect(() => assertEgressLocked(drop)).not.toThrow();
+    expect(() => assertEgressLocked(`${v4}v6:\nv6-unavailable\nv6disabled=1\n`)).not.toThrow();
+    expect(() =>
+      assertEgressLocked(
+        'v4:\n-P OUTPUT ACCEPT\n-P INPUT DROP\nv6:\n-P OUTPUT DROP\n-P INPUT DROP\n'
+      )
+    ).toThrow(/IPv4 OUTPUT/);
+    expect(() =>
+      assertEgressLocked(
+        'v4:\n-P OUTPUT DROP\n-P INPUT ACCEPT\nv6:\n-P OUTPUT DROP\n-P INPUT DROP\n'
+      )
+    ).toThrow(/IPv4 INPUT/);
+    expect(() => assertEgressLocked('v4:\n-P OUTPUT DROP\nv6:\n-P OUTPUT DROP\n')).toThrow(/INPUT/);
+    expect(() =>
+      assertEgressLocked(`${v4}v6:\n-P OUTPUT DROP\n-P INPUT ACCEPT\nv6disabled=0\n`)
+    ).toThrow(/IPv6/);
+    expect(() =>
+      assertEgressLocked(`${v4}v6:\n-P OUTPUT ACCEPT\n-P INPUT DROP\nv6disabled=0\n`)
+    ).toThrow(/IPv6/);
+    expect(() => assertEgressLocked(`${v4}v6:\nv6-unavailable\nv6disabled=0\n`)).toThrow(/IPv6/);
+    expect(() => assertEgressLocked('')).toThrow();
   });
 });

@@ -34,11 +34,23 @@ vi.mock('@auto-swe/shared/workflow', async () => {
     assertShellImageAllowed: vi.fn(),
   };
 });
-vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
+vi.mock('@temporalio/activity', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@temporalio/activity')>()),
+  heartbeat: vi.fn(),
+}));
+const proxy = vi.hoisted(() => ({ configured: true }));
+vi.mock('../lib/egressProxy.js', () => ({
+  workerEgressProxy: () => (proxy.configured ? {} : null),
+}));
 // Resolving `workspace.gitHelperImage` scopes the read to the calling run, which
 // otherwise reaches Temporal's activity context and the database.
 vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn().mockResolvedValue({}),
+}));
+const egressPolicy = vi.hoisted(() => ({ value: 'open' as 'open' | 'restricted' | 'blocked' }));
+vi.mock('../lib/egressWiring.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/egressWiring.js')>()),
+  resolveRunEgressPolicy: vi.fn(async () => egressPolicy.value),
 }));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn().mockReturnValue('wf-1'),
@@ -60,6 +72,7 @@ vi.mock('../lib/workspaceBackend/index.js', () => ({
   workspaceBackend: () => ({
     canReachWorkerProxy: (url: string) => new URL(url).hostname === 'host.docker.internal',
     createVolume: backendCreateVolume,
+    lockEgress: vi.fn(),
     removeVolume: backendRemoveVolume,
     runEphemeral: backendRunEphemeral,
     runHelper: backendRunHelper,
@@ -150,6 +163,8 @@ const REQUEST = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  egressPolicy.value = 'open';
+  proxy.configured = true;
   vi.mocked(resolveGitIdentity).mockResolvedValue(RESOLVED_IDENTITY);
   findUniqueOrThrow.mockResolvedValue({
     defaultBranch: 'main',
@@ -775,6 +790,77 @@ describe('runShellStep — registry wiring', () => {
       })
     ).rejects.toThrow('boom');
     expect(released).toHaveBeenCalled();
+  });
+
+  it.each([
+    ['blocked', ['a.com']],
+    ['restricted', []],
+  ] as const)(
+    'caps an egress step to none under policy %s (allowlist %j) and wires no registry',
+    async (policy, allowlist) => {
+      egressPolicy.value = policy;
+      findUniqueOrThrow.mockResolvedValue({
+        defaultBranch: 'main',
+        team: {
+          egressAllowlist: [...allowlist],
+          id: 'team-1',
+          shellImageAllowlist: ['alpine/git:latest'],
+        },
+      } as never);
+      await runShellStep({
+        command: 'x',
+        image: 'alpine/git:latest',
+        network: 'egress',
+        request: REQUEST,
+      });
+      expect(beginRegistries).not.toHaveBeenCalled();
+      expect(vi.mocked(runEphemeralContainer).mock.calls.at(-1)?.[0]).toMatchObject({
+        network: 'none',
+      });
+    }
+  );
+
+  it('leaves an egress step alone under restricted with an allowlist', async () => {
+    egressPolicy.value = 'restricted';
+    findUniqueOrThrow.mockResolvedValue({
+      defaultBranch: 'main',
+      team: {
+        egressAllowlist: ['a.com'],
+        id: 'team-1',
+        shellImageAllowlist: ['alpine/git:latest'],
+      },
+    } as never);
+    await runShellStep({
+      command: 'x',
+      image: 'alpine/git:latest',
+      network: 'egress',
+      request: REQUEST,
+    });
+    expect(vi.mocked(runEphemeralContainer).mock.calls.at(-1)?.[0]).toMatchObject({
+      network: 'egress',
+    });
+  });
+
+  it('refuses, non-retryably, a restricted egress step when the egress proxy is not configured', async () => {
+    egressPolicy.value = 'restricted';
+    proxy.configured = false;
+    findUniqueOrThrow.mockResolvedValue({
+      defaultBranch: 'main',
+      team: {
+        egressAllowlist: ['a.com'],
+        id: 'team-1',
+        shellImageAllowlist: ['alpine/git:latest'],
+      },
+    } as never);
+    await expect(
+      runShellStep({
+        command: 'x',
+        image: 'alpine/git:latest',
+        network: 'egress',
+        request: REQUEST,
+      })
+    ).rejects.toMatchObject({ nonRetryable: true, type: 'EGRESS_POLICY_UNENFORCEABLE' });
+    expect(runEphemeralContainer).not.toHaveBeenCalled();
   });
 
   it('does not wire a network:none step', async () => {

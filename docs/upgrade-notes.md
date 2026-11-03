@@ -745,6 +745,42 @@ the workspace namespace's NetworkPolicy (`infra/kubernetes/workspace-namespace.y
 
 ---
 
+### UN-12. Kubernetes workspace namespace: re-apply the manifest for egress policies `blocked` and `restricted` (`<fixing commit SHA>`)
+
+**Affected.** `WORKSPACE_BACKEND=kubernetes` deployments that applied
+`infra/kubernetes/workspace-namespace.yaml` before this commit and run agents or workflows under
+egress policy `blocked` or `restricted`. On the Docker backend only the helper-image note below
+and the rollout order below apply.
+
+**What changes.** The manifest gains two NetworkPolicies, `workspace-egress-blocked` (DNS and the
+worker's model and registry proxy ports) and `workspace-egress-restricted` (the same plus the
+egress forwarding proxy port, admitted by selecting the worker pods), an
+`asw/egress NotIn [blocked, restricted]` selector on `workspace-egress`, and `patch` on pods and
+`create` on networkpolicies in the worker's Role. A workspace the worker locks is labelled
+`asw/egress=blocked` or `asw/egress=restricted`, which moves it from the broad policy to the
+matching narrow one, and the worker adds a policy of its own for the addresses the allowed hosts resolve to. Both
+`blocked` and `restricted` agent runs lock their workspace at the network layer, so both need
+the new manifest and RBAC. Without the new manifest the label changes nothing: the lock check from
+inside the pod still reaches the internet, and the run fails closed. Only runs with policy `open`
+are unaffected.
+
+On the Docker backend the lock runs `iptables` and `ip6tables` in a helper container
+(`WORKSPACE_METADATA_BLOCK_IMAGE`, default `alpine:3.20`) and installs both with `apk` when the
+helper image lacks either. The install path is apk-only: a non-Alpine helper image, or an offline
+deployment whose helper cannot reach a package mirror, needs an image that already has both:
+set `WORKSPACE_METADATA_BLOCK_IMAGE` to one.
+
+**Actions.** Re-apply the manifest (keeping your adjusted worker namespace, labels and proxy ports
+in all three policies), then confirm a locked run starts. On every backend, roll the workers out
+before the gateway: an older worker neither pins `workspace.egressPolicy` nor reads the
+`egressPolicy` launch field, so a `blocked` or `restricted` run starts with its network open.
+
+**Verify.** `kubectl -n auto-swe-workspaces get networkpolicy workspace-egress-blocked workspace-egress-restricted`,
+and `kubectl auth can-i patch pods` and `kubectl auth can-i create networkpolicies` as the worker's
+ServiceAccount answer `yes`.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

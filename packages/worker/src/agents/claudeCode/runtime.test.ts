@@ -258,6 +258,26 @@ describe('preparing the container', () => {
     });
   });
 
+  it.each(['blocked', 'restricted'] as const)(
+    'names the %s egress policy and the fix when bash cannot be installed',
+    async (egressPolicy) => {
+      const { runtime, workspace } = setup();
+      Object.assign(workspace, { egressPolicy });
+      workspace.execCapture.mockImplementation(async (command: string) =>
+        command.startsWith('uname')
+          ? { exitCode: 0, stderr: '', stdout: 'x86_64\n' }
+          : { exitCode: 1, stderr: '', stdout: '' }
+      );
+      await expect(runtime.runTurn({ system: 'S', user: 'U' })).rejects.toMatchObject({
+        message: expect.stringContaining(`'${egressPolicy}'`),
+        type: 'HARNESS_NO_SHELL',
+      });
+      await expect(runtime.runTurn({ system: 'S', user: 'U' })).rejects.toMatchObject({
+        message: expect.stringContaining('install bash in the image'),
+      });
+    }
+  );
+
   it('reports a failed binary copy', async () => {
     const { runtime } = setup();
     h.spawnCaptureAsync.mockResolvedValue({ exitCode: 1, stderr: 'no space left', stdout: '' });

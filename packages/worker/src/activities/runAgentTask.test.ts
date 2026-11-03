@@ -110,6 +110,11 @@ vi.mock('@auto-swe/shared/lib/agentRunAdmission', async (orig) => ({
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(async () => ({ branchPrefix: 'auto' })),
 }));
+const egressPolicy = vi.hoisted(() => ({ value: 'open' as 'open' | 'restricted' | 'blocked' }));
+vi.mock('../lib/egressWiring.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/egressWiring.js')>()),
+  resolveRunEgressPolicy: vi.fn(async () => egressPolicy.value),
+}));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn(() => 'wf-1'),
   persistActivityTrace: m.persist,
@@ -241,6 +246,7 @@ async function failureOf(p: Promise<unknown>): Promise<ApplicationFailure> {
 beforeEach(() => {
   __resetReconcileCacheForTests();
   vi.clearAllMocks();
+  egressPolicy.value = 'open';
   m.run = {
     template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
     templateId: 'tpl-1',
@@ -603,6 +609,21 @@ describe('deliver none', () => {
 describe('delivery: trust boundary and gate-before-push', () => {
   const deliver = (d: 'branch' | 'draft_pr') =>
     request({ payload: { agentRef: 'contentWriter', deliver: d } });
+
+  it.each([
+    ['open', 'open', 'open'],
+    ['restricted', 'restricted', 'blocked'],
+    ['blocked', 'blocked', 'blocked'],
+  ] as const)(
+    'under egress policy %s the agent container gets %s and the trusted one %s (git host only)',
+    async (policy, agentPolicy, trustedPolicy) => {
+      egressPolicy.value = policy;
+      await runAgentTask({ request: deliver('branch') });
+      const calls = vi.mocked(createWorkspace).mock.calls;
+      expect(calls[0]?.[6]).toMatchObject({ egressPolicy: agentPolicy });
+      expect(calls[1]?.[6]).toMatchObject({ egressPolicy: trustedPolicy });
+    }
+  );
 
   it('judges and pushes from a FRESH container pinned to the base SHA, never the agent container', async () => {
     const r = await runAgentTask({ request: deliver('branch') });

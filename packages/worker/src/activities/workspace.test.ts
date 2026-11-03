@@ -19,12 +19,23 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: { team: { findUnique: teamFindUniqueMock } },
 }));
 
+import { ApplicationFailure } from '@temporalio/activity';
+
+const policy = vi.hoisted(() => ({ value: 'open' as 'open' | 'restricted' | 'blocked' }));
 vi.mock('../lib/egressWiring.js', () => ({
   beginWorkspaceEgress: vi.fn(async () => null),
+  blockedEgressAllow: vi.fn(() => [{ host: 'github.com', port: 443 }]),
+  egressPolicyFailure: (message: string) =>
+    ApplicationFailure.nonRetryable(message, 'EGRESS_POLICY_UNENFORCEABLE'),
   gitHostOf: (url: string) => new URL(url).hostname,
+  resolveRunEgressPolicy: vi.fn(async () => policy.value),
 }));
 
-import { beginWorkspaceEgress } from '../lib/egressWiring.js';
+import { beginWorkspaceEgress, blockedEgressAllow } from '../lib/egressWiring.js';
+
+afterEach(() => {
+  policy.value = 'open';
+});
 
 vi.mock('../lib/execUtils.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/execUtils.js')>();
@@ -80,6 +91,7 @@ import {
   resolveGitIdentity,
 } from '../lib/gitIdentity.js';
 import { beginWorkspaceRegistries } from '../lib/registryProxy/workspaceWiring.js';
+import { dockerWorkspaceBackend } from '../lib/workspaceBackend/docker.js';
 import {
   authedGitScript,
   buildMetadataBlockArgs,
@@ -345,8 +357,146 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
       undefined,
       { teamId: 'team-1' }
     );
-    expect(beginWorkspaceEgress).toHaveBeenCalledWith('team-1', ['ghe.corp.internal']);
+    expect(beginWorkspaceEgress).toHaveBeenCalledWith('team-1', ['ghe.corp.internal'], 'open');
     await ws.destroy();
+  });
+
+  describe('egress policy', () => {
+    const backend = dockerWorkspaceBackend();
+    beforeEach(() => {
+      policy.value = 'open';
+      vi.mocked(execShellAsync).mockReset();
+      vi.mocked(execShellAsync).mockImplementation(okExec);
+    });
+
+    it('takes the run policy and passes it to the proxy wiring', async () => {
+      policy.value = 'restricted';
+      const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+      const ws = await createWorkspace(
+        'https://github.com/acme/repo.git',
+        'b',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        {
+          teamId: 'team-1',
+        }
+      );
+      expect(beginWorkspaceEgress).toHaveBeenLastCalledWith('team-1', ['github.com'], 'restricted');
+      lock.mockRestore();
+      await ws.destroy();
+    });
+
+    it('an explicit option overrides the run policy', async () => {
+      policy.value = 'blocked';
+      const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+      const ws = await createWorkspace(
+        'https://github.com/acme/repo.git',
+        'b',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        {
+          egressPolicy: 'open',
+        }
+      );
+      expect(lock).not.toHaveBeenCalled();
+      lock.mockRestore();
+      await ws.destroy();
+    });
+
+    it('locks a blocked workspace after the clone and before returning it', async () => {
+      policy.value = 'blocked';
+      const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+      const ws = await createWorkspace('https://github.com/acme/repo.git', 'b', 'main');
+      expect(blockedEgressAllow).toHaveBeenCalledWith(
+        'github.com',
+        expect.objectContaining({
+          cleanUrl: 'https://github.com/acme/repo.git',
+        })
+      );
+      expect(lock).toHaveBeenCalledOnce();
+      expect(lock.mock.calls[0]?.[1]).toEqual([{ host: 'github.com', port: 443 }]);
+      expect(lock.mock.calls[0]?.[2]).toEqual({ mode: 'blocked' });
+      const commands = vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+      expect(commands.some((c) => c.includes('clone'))).toBe(true);
+      lock.mockRestore();
+      await ws.destroy();
+    });
+
+    it('fails closed: a lock failure removes the workspace and throws a non-retryable failure', async () => {
+      policy.value = 'blocked';
+      const lock = vi.spyOn(backend, 'lockEgress').mockRejectedValue(new Error('lock failed'));
+      const failure = await createWorkspace('https://github.com/acme/repo.git', 'b', 'main').catch(
+        (err: unknown) => err
+      );
+      expect(failure).toBeInstanceOf(ApplicationFailure);
+      expect(failure).toMatchObject({
+        message: expect.stringContaining('lock failed'),
+        nonRetryable: true,
+        type: 'EGRESS_POLICY_UNENFORCEABLE',
+      });
+      const commands = vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+      expect(commands.some((c) => c.includes('docker rm'))).toBe(true);
+      lock.mockRestore();
+    });
+
+    it('does not lock an open workspace', async () => {
+      const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+      policy.value = 'open';
+      await (await createWorkspace('https://github.com/acme/repo.git', 'b', 'main')).destroy();
+      expect(lock).not.toHaveBeenCalled();
+      lock.mockRestore();
+    });
+
+    it('locks a restricted workspace to the egress proxy as well, so it cannot be bypassed', async () => {
+      policy.value = 'restricted';
+      const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+      vi.mocked(beginWorkspaceEgress).mockResolvedValueOnce({
+        env: [],
+        registration: {
+          release: vi.fn(async () => {}),
+          token: 't',
+          url: 'http://egress.internal:8792',
+        },
+        secretEnv: { HTTP_PROXY: 'p', HTTPS_PROXY: 'p', http_proxy: 'p', https_proxy: 'p' },
+      });
+      const ws = await createWorkspace('https://github.com/acme/repo.git', 'b', 'main');
+      expect(blockedEgressAllow).toHaveBeenLastCalledWith(
+        'github.com',
+        expect.objectContaining({ egressProxyUrl: 'http://egress.internal:8792' })
+      );
+      expect(lock).toHaveBeenCalledOnce();
+      expect(ws.egressPolicy).toBe('restricted');
+      lock.mockRestore();
+      await ws.destroy();
+    });
+
+    it('locks a restricted workspace with no team allowlist exactly as blocked (no proxy)', async () => {
+      policy.value = 'restricted';
+      const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+      const ws = await createWorkspace('https://github.com/acme/repo.git', 'b', 'main');
+      expect(blockedEgressAllow).toHaveBeenLastCalledWith(
+        'github.com',
+        expect.not.objectContaining({ egressProxyUrl: expect.anything() })
+      );
+      expect(lock).toHaveBeenCalledOnce();
+      lock.mockRestore();
+      await ws.destroy();
+    });
+
+    it('a restricted lock failure also removes the workspace', async () => {
+      policy.value = 'restricted';
+      const lock = vi.spyOn(backend, 'lockEgress').mockRejectedValue(new Error('no netpol'));
+      await expect(
+        createWorkspace('https://github.com/acme/repo.git', 'b', 'main')
+      ).rejects.toMatchObject({ nonRetryable: true });
+      const commands = vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+      expect(commands.some((c) => c.includes('docker rm'))).toBe(true);
+      lock.mockRestore();
+    });
   });
 
   it('is best-effort: a failed metadata-block sidecar does not fail workspace creation', async () => {
@@ -1012,6 +1162,23 @@ describe('cloneDependencyRepos', () => {
     expect(scrubCmd).toContain(shellQuote('https://github.com/acme/api.git'));
     expect(scrubCmd).not.toContain('ghp_secret');
   });
+
+  it.each(['blocked', 'restricted'] as const)(
+    'warns, naming the policy, when a checkout fails in a %s workspace',
+    async (egressPolicy) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      exec.mockRejectedValueOnce(new Error('could not resolve host'));
+      const cloned = await cloneDependencyRepos({ egressPolicy, exec }, [
+        { authedCloneUrl: 'https://other.example/a.git', name: 'a' },
+      ]);
+      expect(cloned).toEqual([]);
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('network-locked workspace'),
+        expect.objectContaining({ egressPolicy })
+      );
+      warn.mockRestore();
+    }
+  );
 
   it('omits the branch flag when no branch is given', async () => {
     await cloneDependencyRepos(ws, [{ authedCloneUrl: 'https://h/a.git', name: 'a' }]);

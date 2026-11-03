@@ -42,6 +42,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
+import { resolveRunEgressPolicy } from '../lib/egressWiring.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
@@ -237,6 +238,12 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       : undefined;
   }
 
+  // The run's pinned egress policy. The agent's container takes it as is. The trusted delivery
+  // container runs no agent code (git commit, scan, push) and needs only the repository's git
+  // host, so under any restricting policy it is locked to exactly that — `blocked` — rather than
+  // inheriting the agent's proxy wiring; under `open` it is unchanged.
+  const egressPolicy = await resolveRunEgressPolicy(repo.teamId);
+
   const tracer = new AgentTracer();
   let agentWs: Workspace | undefined;
   let trusted: Workspace | undefined;
@@ -253,7 +260,7 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       executorImageFor(repo),
       undefined,
       undefined,
-      { detectedStack: repo.detectedStack, services, teamId: repo.teamId }
+      { detectedStack: repo.detectedStack, egressPolicy, services, teamId: repo.teamId }
     );
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
 
@@ -318,7 +325,11 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       executorImageFor(repo),
       baseSha,
       undefined,
-      { detectedStack: repo.detectedStack, teamId: repo.teamId }
+      {
+        detectedStack: repo.detectedStack,
+        egressPolicy: egressPolicy === 'open' ? 'open' : 'blocked',
+        teamId: repo.teamId,
+      }
     );
     await importAgentTree(agentWs, trusted);
     const committed = await commitTrustedTree(trusted, baseSha, commitMessage);

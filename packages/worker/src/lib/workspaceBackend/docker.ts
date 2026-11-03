@@ -1,4 +1,7 @@
 import { spawn } from 'node:child_process';
+import dns from 'node:dns/promises';
+import { isIP } from 'node:net';
+import os from 'node:os';
 import { DOCKER_HOST_ALIAS, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import {
   type CappedFileResult,
@@ -10,6 +13,7 @@ import {
 } from '../execUtils.js';
 import { shellQuote } from '../shellQuote.js';
 import { assertNoCredentialEnvPairs } from './credentialEnv.js';
+import { isForbiddenAllowAddress, type ResolvedAllow } from './kubernetes/egressLock.js';
 import {
   dockerListArgs,
   MAX_REAPED_PER_SWEEP,
@@ -20,9 +24,11 @@ import {
 } from './orphans.js';
 import { assertSecretEnvName, secretEnvFlags } from './secretEnvName.js';
 import type {
+  EgressAllowEntry,
   EphemeralContainerSpec,
   EphemeralRunOptions,
   HelperContainerSpec,
+  LockEgressOptions,
   WorkspaceBackend,
   WorkspaceContainerSpec,
   WorkspaceExecOptions,
@@ -71,6 +77,337 @@ export function buildMetadataBlockArgs(containerName: string, image: string): st
       '{ echo "metadata block: no blackhole route installed (ip may lack blackhole support)" >&2; exit 1; }',
   ].join('; ');
   return `docker run --rm --network container:${containerName} --cap-add=NET_ADMIN -- ${shellQuote(image)} sh -c ${shellQuote(routeCmd)}`;
+}
+
+const WORKSPACE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const HOSTNAME_RE =
+  /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+
+/** Shell prelude: make sure `iptables`/`ip6tables` exist, installing them only if absent. */
+const IPTABLES_PRELUDE = [
+  'set -eu',
+  'if ! command -v iptables >/dev/null 2>&1 || ! command -v ip6tables >/dev/null 2>&1; then',
+  '  apk add --no-cache iptables ip6tables >/dev/null || { echo "egress lock: helper image has no iptables" >&2; exit 1; }',
+  'fi',
+];
+
+/**
+ * Validate one allow entry before it reaches any command. Returns the host (an IP literal or a
+ * DNS name) and the port, or throws. Entries are untrusted: a host may only be an IP literal or a
+ * plain hostname, a port only an integer in 1..65535.
+ */
+function checkEgressEntry(entry: EgressAllowEntry): { host: string; port?: number; ip: boolean } {
+  const host = entry.host;
+  if (typeof host !== 'string') {
+    throw new Error('egress allow entry: host must be a string');
+  }
+  const ip = isIP(host) !== 0;
+  if (!ip && !HOSTNAME_RE.test(host)) {
+    throw new Error(`egress allow entry: invalid host ${JSON.stringify(host)}`);
+  }
+  if (entry.port !== undefined) {
+    if (!Number.isInteger(entry.port) || entry.port < 1 || entry.port > 65535) {
+      throw new Error(`egress allow entry: invalid port ${String(entry.port)} for ${host}`);
+    }
+  }
+  return { host, ip, ...(entry.port !== undefined ? { port: entry.port } : {}) };
+}
+
+/** Prints the INPUT and OUTPUT chains of both families, for {@link assertEgressLocked}. */
+const EGRESS_REPORT = [
+  'echo "v4:"; iptables -S OUTPUT; iptables -S INPUT',
+  'echo "v6:"; { ip6tables -S OUTPUT && ip6tables -S INPUT; } 2>/dev/null || echo "v6-unavailable"',
+  'echo "v6disabled=$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo 0)"',
+];
+
+/** Docker's embedded resolver, reached over loopback on a user-defined network. */
+const EMBEDDED_RESOLVER = '127.0.0.11';
+
+/** An address the lock may name in a rule: an IP literal that is not on the forbidden list. */
+function checkRuleAddress(rule: ResolvedAllow): void {
+  if (isIP(rule.ip) === 0) {
+    throw new Error(`egress allow entry: ${JSON.stringify(rule.ip)} is not an IP address`);
+  }
+  if (isForbiddenAllowAddress(rule.ip)) {
+    throw new Error(`egress allow entry: ${rule.ip} is a refused address`);
+  }
+  if (
+    rule.port !== undefined &&
+    (!Number.isInteger(rule.port) || rule.port < 1 || rule.port > 65535)
+  ) {
+    throw new Error(`egress allow entry: invalid port ${String(rule.port)} for ${rule.ip}`);
+  }
+}
+
+/**
+ * `sh` script that installs default-deny egress in the shared network namespace. It receives IP
+ * literals only: names are resolved on the worker ({@link resolveEgressTargets}) and pinned in the
+ * workspace's `/etc/hosts`, so neither the helper nor the workspace needs DNS and none is opened.
+ *
+ * Rules, in order: the embedded resolver (`127.0.0.11`, matched by its original destination too,
+ * because Docker DNATs it to a local port before the filter table sees it) is refused BEFORE the
+ * loopback accept, so it cannot be used as a DNS tunnel; loopback is accepted; one ACCEPT per
+ * allowed address; the `DROP` policies come last. INPUT accepts only loopback and
+ * `ESTABLISHED,RELATED` (replies to the workspace's own flows); OUTPUT accepts no conntrack state,
+ * so a connection initiated from outside, or one that predates the lock, cannot be used as a relay.
+ * Conntrack is flushed best-effort afterwards (the flush only; no rule is ever best-effort). IPv6
+ * gets the same treatment; a namespace where `ip6tables` is unusable is accepted only when IPv6
+ * is disabled there, in which case v6 allow entries are skipped (unreachable by design).
+ *
+ * Pure: returns the script text, so it is testable without a daemon.
+ */
+export function buildEgressLockScript(allow: ResolvedAllow[]): string {
+  allow.forEach(checkRuleAddress);
+  const lines = [
+    ...IPTABLES_PRELUDE,
+    // allow_ip IP PORT: one ACCEPT rule in the right address family.
+    'allow_ip() {',
+    '  case "$1" in',
+    '    *:*)',
+    '      [ "$v6" = 1 ] || { echo "egress lock: skipping $1 (IPv6 disabled)" >&2; return 0; }',
+    '      t=ip6tables ;;',
+    '    *) t=iptables ;;',
+    '  esac',
+    '  if [ -n "$2" ]; then "$t" -A OUTPUT -d "$1" -p tcp --dport "$2" -j ACCEPT;',
+    '  else "$t" -A OUTPUT -d "$1" -j ACCEPT; fi',
+    '}',
+    'v6=1',
+    'if ! ip6tables -F OUTPUT 2>/dev/null || ! ip6tables -F INPUT 2>/dev/null; then',
+    '  v6=0',
+    '  [ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo 0)" = 1 ] || ' +
+      '{ echo "egress lock: ip6tables unusable and IPv6 enabled" >&2; exit 1; }',
+    'fi',
+    'iptables -F OUTPUT',
+    'iptables -F INPUT',
+    // The embedded resolver is refused before loopback is accepted.
+    `iptables -A OUTPUT -d ${EMBEDDED_RESOLVER} -p tcp -j REJECT`,
+    `iptables -A OUTPUT -d ${EMBEDDED_RESOLVER} -p udp -j REJECT`,
+    `iptables -A OUTPUT -m conntrack --ctorigdst ${EMBEDDED_RESOLVER} -j REJECT`,
+    'iptables -A OUTPUT -o lo -j ACCEPT',
+    'iptables -A INPUT -i lo -j ACCEPT',
+    'iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT',
+    'if [ "$v6" = 1 ]; then',
+    '  ip6tables -A OUTPUT -o lo -j ACCEPT',
+    '  ip6tables -A INPUT -i lo -j ACCEPT',
+    '  ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT',
+    'fi',
+    ...allow.map((e) => `allow_ip ${shellQuote(e.ip)} ${shellQuote(String(e.port ?? ''))}`),
+    'iptables -P OUTPUT DROP',
+    'iptables -P INPUT DROP',
+    '[ "$v6" = 0 ] || { ip6tables -P OUTPUT DROP; ip6tables -P INPUT DROP; }',
+    // Forget pre-lock connections so none of them counts as ESTABLISHED. The flush alone is
+    // best-effort: the tool is absent from most images, and every rule above is already in force.
+    'if command -v conntrack >/dev/null 2>&1; then conntrack -F >/dev/null 2>&1 || true; fi',
+    // Read the policies back from the kernel in the same run: once the lock is in, the helper
+    // can no longer fetch iptables, so a second verification container could not start.
+    ...EGRESS_REPORT,
+  ];
+  return lines.join('\n');
+}
+
+/** What {@link resolveEgressTargets} hands the lock: the rules, and the names to pin. */
+export interface EgressTargets {
+  rules: ResolvedAllow[];
+  /** `[ip, hostname]` pairs to append to the workspace's `/etc/hosts`. */
+  hosts: Array<[string, string]>;
+}
+
+/** Parse `/etc/hosts` text into name -> addresses. */
+function parseHostsFile(text: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  for (const raw of text.split('\n')) {
+    const [ip, ...names] = raw.replace(/#.*/, '').trim().split(/\s+/);
+    if (!ip || isIP(ip) === 0) {
+      continue;
+    }
+    for (const name of names) {
+      const key = name.toLowerCase();
+      out.set(key, [...(out.get(key) ?? []), ip]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Turn allow entries into IP-only rules. `resolve` answers a name the way the WORKSPACE would see
+ * it (see {@link resolveInWorkspace}); it is asked once per name, so two ports for one name get
+ * the same answer, and the rules and the `/etc/hosts` lines come from that one set. `trusted` holds
+ * the names the worker itself pinned with `--add-host` (the worker alias) and their addresses: they
+ * are honoured as given and need no new line. Every address, resolved or literal, must clear
+ * {@link isForbiddenAllowAddress}, and a name with no address is refused: the workspace is given
+ * no DNS to fall back on.
+ */
+export async function resolveEgressTargets(
+  allow: EgressAllowEntry[],
+  resolve: (host: string) => Promise<string[]>,
+  trusted: Map<string, string[]> = new Map()
+): Promise<EgressTargets> {
+  const rules: ResolvedAllow[] = [];
+  const hosts: Array<[string, string]> = [];
+  const answers = new Map<string, string[]>();
+  for (const entry of allow) {
+    const { host, port, ip } = checkEgressEntry(entry);
+    const portPart = port === undefined ? {} : { port };
+    if (ip) {
+      rules.push({ ip: host, ...portPart });
+      continue;
+    }
+    const key = host.toLowerCase();
+    let addresses = answers.get(key);
+    if (!addresses) {
+      const pinned = trusted.get(key);
+      const found = [...new Set(pinned ?? (await resolve(host)))];
+      if (found.length === 0) {
+        throw new Error(`egress allow entry ${host} resolved to no address`);
+      }
+      for (const address of found) {
+        if (isForbiddenAllowAddress(address)) {
+          throw new Error(`egress allow entry ${host} resolves to a refused address (${address})`);
+        }
+        if (!pinned) {
+          hosts.push([address, host]);
+        }
+      }
+      answers.set(key, found);
+      addresses = found;
+    }
+    for (const address of addresses) {
+      rules.push({ ip: address, ...portPart });
+    }
+  }
+  rules.forEach(checkRuleAddress);
+  return { hosts, rules };
+}
+
+/** `::ffff:1.2.3.4` (what glibc's `getent hosts` prints for an IPv4 answer) back to `1.2.3.4`. */
+function unmapV4(address: string): string {
+  const m = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(address);
+  return m?.[1] && isIP(m[1]) === 4 ? m[1] : address;
+}
+
+/** Addresses from `getent` output: the first column of each line, valid and de-duplicated. */
+function parseGetent(stdout: string): string[] {
+  const out = new Set<string>();
+  for (const line of stdout.split('\n')) {
+    const first = line.trim().split(/\s+/)[0];
+    if (first && isIP(first) !== 0) {
+      out.add(unmapV4(first));
+    }
+  }
+  return [...out];
+}
+
+/** The worker's own hostname, short and fully qualified: a name the worker answers for itself. */
+function isWorkerOwnName(host: string): boolean {
+  const own = os.hostname().toLowerCase();
+  const name = host.toLowerCase();
+  return name === own || name === own.split('.')[0];
+}
+
+/**
+ * Resolve one non-literal name the way the workspace will: with a root `docker exec` of
+ * `getent ahosts <name>` (falling back to `getent hosts` where the libc has no `ahosts`) inside the
+ * workspace, BEFORE the lock, so the answer comes from the workspace's own network and embedded DNS,
+ * not the worker's. The name has already passed the strict hostname regex and travels as one argv
+ * element; no shell sees it. Two refusals:
+ *  - a name the workspace's `/etc/hosts` already maps (other than the trusted alias) is refused:
+ *    a service container started before the lock shares that file, and `getent` reads it before
+ *    DNS, so the answer could be a planted one;
+ *  - `getent` itself missing from the image falls back to the worker-side lookup, EXCEPT for the
+ *    worker's own hostname, which is exactly the name the worker and the workspace resolve
+ *    differently (several networks vs one). A name `getent` says does not exist is final.
+ * Returns the addresses; the caller refuses an empty answer.
+ */
+export async function resolveInWorkspace(
+  containerId: string,
+  host: string,
+  mapped: Map<string, string[]>,
+  lookup: (host: string) => Promise<string[]> = async (name) =>
+    (await dns.lookup(name, { all: true })).map((a) => a.address)
+): Promise<string[]> {
+  if (mapped.has(host.toLowerCase())) {
+    throw new Error(
+      `egress allow entry ${host}: the workspace /etc/hosts already maps this name; refusing it`
+    );
+  }
+  let missing = false;
+  for (const db of ['ahosts', 'hosts']) {
+    const r = await spawnCaptureAsync(
+      'docker',
+      ['exec', '-u', 'root', containerId, 'getent', db, host],
+      { heartbeatLabel: `workspace: resolving ${host}`, timeoutMs: 30_000 }
+    );
+    if (r.exitCode === 0) {
+      const found = parseGetent(r.stdout);
+      if (found.length > 0) {
+        return found;
+      }
+      continue;
+    }
+    // 126/127 or the runtime's own message: no `getent`. 2: the name does not exist. Anything
+    // else (an `ahosts` the libc does not know exits 1 with usage text) tries the next database.
+    if (
+      r.exitCode === 126 ||
+      r.exitCode === 127 ||
+      /executable file not found|not found/i.test(r.stderr)
+    ) {
+      missing = true;
+      break;
+    }
+    if (r.exitCode === 2 && db === 'hosts') {
+      return [];
+    }
+  }
+  if (!missing) {
+    return [];
+  }
+  if (isWorkerOwnName(host)) {
+    throw new Error(
+      `egress allow entry ${host} is the worker's own name and the workspace image has no getent to resolve it from inside the workspace`
+    );
+  }
+  // Documented fallback: no getent in the workspace, so the worker's answer is the only one there is.
+  return lookup(host);
+}
+
+/**
+ * Check the lock script's read-back output: the v4 INPUT and OUTPUT policies must be DROP, and so
+ * must the v6 ones unless IPv6 is unavailable AND disabled in the namespace.
+ */
+export function assertEgressLocked(output: string): void {
+  const v4 = /v4:\n([\s\S]*?)(?:v6:|$)/.exec(output)?.[1] ?? '';
+  if (!/^-P OUTPUT DROP$/m.test(v4)) {
+    throw new Error('egress lock: IPv4 OUTPUT policy is not DROP');
+  }
+  if (!/^-P INPUT DROP$/m.test(v4)) {
+    throw new Error('egress lock: IPv4 INPUT policy is not DROP');
+  }
+  const v6 = /v6:\n([\s\S]*?)(?:v6disabled=|$)/.exec(output)?.[1] ?? '';
+  const v6Locked = /^-P OUTPUT DROP$/m.test(v6) && /^-P INPUT DROP$/m.test(v6);
+  const v6Off = /v6-unavailable/.test(v6) && /v6disabled=1/.test(output);
+  if (!v6Locked && !v6Off) {
+    throw new Error('egress lock: IPv6 INPUT/OUTPUT policy is not DROP');
+  }
+}
+
+/**
+ * The throwaway helper that runs `script` in the workspace's network namespace. Same shape as the
+ * metadata sidecar: a separate container joins the namespace with `NET_ADMIN`, so the workspace
+ * never holds it. The image is `metadataBlockImage` (`WORKSPACE_METADATA_BLOCK_IMAGE`, default
+ * `alpine:3.20`): the one deployer-configured image that already runs with `NET_ADMIN`, and not
+ * the executor image, which an admin can set per repository. Alpine has no iptables baked in, so
+ * the script runs `apk add` when it is missing; that happens before the lock, over the workspace's
+ * own network. Offline deployments point the variable at an image with iptables installed.
+ */
+export function buildEgressHelperCommand(
+  containerName: string,
+  image: string,
+  script: string
+): string {
+  if (!WORKSPACE_NAME_RE.test(containerName)) {
+    throw new Error(`egress lock: invalid workspace name ${JSON.stringify(containerName)}`);
+  }
+  return `docker run --rm ${workspaceLabelArgs().join(' ')} --network container:${containerName} --cap-add=NET_ADMIN --security-opt=no-new-privileges -- ${shellQuote(image)} sh -c ${shellQuote(script)}`;
 }
 
 /** The `--add-host` entry that makes the Docker host alias resolve to the host gateway. */
@@ -566,6 +903,71 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
 
   canReachWorkerProxy(url: string): boolean {
     return new URL(url).hostname === DOCKER_HOST_ALIAS;
+  }
+
+  async lockEgress(
+    handle: WorkspaceHandle,
+    allow: EgressAllowEntry[],
+    _opts?: LockEgressOptions
+  ): Promise<void> {
+    // Fail closed: every error below propagates and the caller destroys the workspace. The lock
+    // is the same for both modes, so `_opts` is not read.
+    const image = resolveWorkspaceInfra().metadataBlockImage;
+    // /etc/hosts belongs to the workspace container, not to its network namespace, so the helper
+    // cannot write it. Names are resolved from inside the workspace and pinned by a root
+    // `docker exec` into it, BEFORE the lock, while nothing is blocked yet.
+    const current = await spawnCaptureAsync('docker', ['exec', handle.id, 'cat', '/etc/hosts'], {
+      heartbeatLabel: 'workspace: reading hosts',
+      timeoutMs: 30_000,
+    });
+    if (current.exitCode !== 0) {
+      throw new Error('egress lock: cannot read the workspace /etc/hosts');
+    }
+    const mapped = parseHostsFile(current.stdout);
+    // The file is trusted for ONE name: the worker alias, and only when the container spec says the
+    // worker added it (`--add-host` is recorded in HostConfig.ExtraHosts). Docker writes it at
+    // creation, so its FIRST line is the worker's; a later line for the same name is not.
+    const trusted = new Map<string, string[]>();
+    const inspected = await spawnCaptureAsync(
+      'docker',
+      ['inspect', '--format', '{{json .HostConfig.ExtraHosts}}', handle.id],
+      { heartbeatLabel: 'workspace: reading extra hosts', timeoutMs: 30_000 }
+    );
+    if (inspected.exitCode !== 0) {
+      throw new Error('egress lock: cannot inspect the workspace extra hosts');
+    }
+    const alias = DOCKER_HOST_ALIAS.toLowerCase();
+    const addedByWorker = (JSON.parse(inspected.stdout.trim() || 'null') as string[] | null)?.some(
+      (h) => h.toLowerCase() === `${alias}:host-gateway`
+    );
+    const aliasAddress = mapped.get(alias)?.[0];
+    if (addedByWorker && aliasAddress) {
+      trusted.set(alias, [aliasAddress]);
+      mapped.delete(alias);
+    }
+    const { rules, hosts } = await resolveEgressTargets(
+      allow,
+      (host) => resolveInWorkspace(handle.id, host, mapped),
+      trusted
+    );
+    const script = buildEgressLockScript(rules);
+    if (hosts.length > 0) {
+      const lines = hosts.map(([ip, name]) => `${ip}\t${name}\n`).join('');
+      const written = await spawnWithStdinAsync(
+        'docker',
+        ['exec', '-i', '-u', 'root', handle.id, 'sh', '-c', 'cat >> /etc/hosts'],
+        lines,
+        { heartbeatLabel: 'workspace: pinning egress hosts', timeoutMs: 30_000 }
+      );
+      if (written.exitCode !== 0) {
+        throw new Error('egress lock: cannot write the workspace /etc/hosts');
+      }
+    }
+    const report = await execShellAsync(buildEgressHelperCommand(handle.id, image, script), {
+      heartbeatLabel: 'workspace: locking egress',
+    });
+    // The script read the policies back from the kernel; refuse anything but DROP.
+    assertEgressLocked(report);
   }
 
   async sidecarBaseUrl(name: string, containerPort: number): Promise<string> {

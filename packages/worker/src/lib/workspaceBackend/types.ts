@@ -219,6 +219,34 @@ export interface WorkspaceBackend {
    * it is false.
    */
   canReachWorkerProxy(url: string): boolean;
+  /**
+   * Cuts a running workspace off from the network (egress policy `blocked`): from here on it
+   * reaches only `allow`. Called after provisioning (clone, registry wiring) and before any agent
+   * code runs. It MUST fail closed — it throws when the restriction is not in place, and the caller
+   * destroys the workspace — unlike the best-effort metadata blackhole. Enforcement is the
+   * network's, not a cooperative client's: default-deny rules in the container's namespace on
+   * Docker, a NetworkPolicy selecting the pod on Kubernetes.
+   */
+  lockEgress(
+    handle: WorkspaceHandle,
+    allow: EgressAllowEntry[],
+    opts?: LockEgressOptions
+  ): Promise<void>;
+}
+
+/**
+ * `mode` is the egress policy the lock enforces (default `blocked`). A `restricted` workspace also
+ * reaches the worker's egress proxy, which a backend whose network policy distinguishes the two
+ * (Kubernetes) must admit by selector, not by address; Docker needs no distinction.
+ */
+export interface LockEgressOptions {
+  mode?: 'blocked' | 'restricted';
+}
+
+/** A destination a locked-down workspace may still reach. A missing `port` means any port. */
+export interface EgressAllowEntry {
+  host: string;
+  port?: number;
 }
 
 /** A volume mount on an ephemeral container (`-v source:target[:ro]`). */

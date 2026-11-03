@@ -3,6 +3,12 @@ import { prisma } from '@auto-swe/shared/db';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
+import {
+  assertStepEgressEnforceable,
+  capStepNetwork,
+  egressPolicyFailure,
+  resolveRunEgressPolicy,
+} from '../lib/egressWiring.js';
 import { runEphemeralContainer, runSidecarContainer } from '../lib/ephemeralContainer.js';
 import { executionAudit } from '../lib/executionAudit.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
@@ -69,7 +75,7 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
   // the team, whose allowlists apply, from the run's Connection, so a run with
   // no connection fails here rather than falling back to the built-in defaults.
   const conn = await prisma.connection.findUnique({
-    include: { team: { select: { egressAllowlist: true, shellImageAllowlist: true } } },
+    include: { team: { select: { egressAllowlist: true, id: true, shellImageAllowlist: true } } },
     where: {
       id: requireRepoId(
         input.request,
@@ -83,9 +89,41 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
   // Throws ShellImageNotAllowedError if the image isn't on the effective allowlist.
   assertShellImageAllowed(input.image, imageAllowlist);
 
+  // The run's egress policy caps the node's `network` (see `capStepNetwork`).
+  const egressPolicy = await resolveRunEgressPolicy(conn?.team?.id ?? null);
+  const cap = capStepNetwork(egressPolicy, egressAllowlist, input.network);
+  const stepNetwork = cap.network;
+  const auditNetwork = cap.capped
+    ? `none (capped by egress policy ${egressPolicy})`
+    : egressPolicy === 'restricted' && stepNetwork === 'egress'
+      ? 'egress (proxy-enforced only; not network-locked)'
+      : stepNetwork;
+
   if (transport === 'sidecar') {
+    if (capStepNetwork(egressPolicy, egressAllowlist, 'egress').capped) {
+      // A sidecar needs a published port, which needs bridge networking: it cannot be
+      // confined to no network, so a policy that forbids egress refuses it.
+      const refusal = egressPolicyFailure(
+        `containerStep transport 'sidecar' needs network access, which egress policy '${egressPolicy}' does not allow here`
+      );
+      await executionAudit({
+        command: input.command,
+        durationMs: 0,
+        egressAllowlist,
+        error: refusal.message,
+        image: input.image,
+        name: 'container',
+        network: auditNetwork,
+        stderr: '',
+        stdout: '',
+      });
+      throw refusal;
+    }
+    assertStepEgressEnforceable(egressPolicy, 'egress');
     return runSidecarTransport(input, egressAllowlist);
   }
+
+  assertStepEgressEnforceable(egressPolicy, stepNetwork);
 
   // NDJSON: collect each parsed line-event as it streams in and heartbeat so a
   // long-running, chatty step keeps its activity alive on output (not just the
@@ -124,7 +162,7 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
       egressAllowlist,
       image: input.image,
       memory: input.memory,
-      network: input.network ?? 'none',
+      network: stepNetwork,
       ...(onStdoutLine ? { onStdoutLine } : {}),
       secretEnv: { CONTAINER_STEP_INPUT: JSON.stringify(input.inputs ?? {}) },
       timeoutMs: input.timeoutMs,
@@ -139,7 +177,7 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
         exitCode: out?.exitCode,
         image: input.image,
         name: 'container',
-        network: input.network ?? 'none',
+        network: auditNetwork,
         stderr: out?.stderr ?? '',
         stdout: out?.stdout ?? '',
       });
@@ -152,7 +190,7 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
       exitCode: res.exitCode,
       image: input.image,
       name: 'container',
-      network: input.network ?? 'none',
+      network: auditNetwork,
       stderr: res.stderr,
       stdout: res.stdout,
     });

@@ -25,15 +25,18 @@ import {
   type WorkspaceReapResult,
 } from '../orphans.js';
 import type {
+  EgressAllowEntry,
   EphemeralContainerSpec,
   EphemeralRunOptions,
   HelperContainerSpec,
+  LockEgressOptions,
   WorkspaceBackend,
   WorkspaceContainerSpec,
   WorkspaceExecOptions,
   WorkspaceHandle,
   WorkspaceSpawnOptions,
 } from '../types.js';
+import { type EgressLockDeps, lockPodEgress } from './egressLock.js';
 import {
   createFromStdinArgs,
   createPodArgs,
@@ -124,7 +127,14 @@ async function captured(
 export class KubernetesWorkspaceBackend implements WorkspaceBackend {
   readonly kind = 'kubernetes' as const;
 
-  constructor(private readonly config: () => KubernetesWorkspaceConfig) {}
+  constructor(
+    private readonly config: () => KubernetesWorkspaceConfig,
+    /** Test seams for the egress lock: DNS, the sleep between verification probes. */
+    private readonly lockOptions: Pick<
+      EgressLockDeps,
+      'lookup' | 'pollIntervalMs' | 'sleep' | 'verifyAttempts'
+    > = {}
+  ) {}
 
   private ref(h: WorkspaceHandle | string): PodRef {
     return {
@@ -292,6 +302,46 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
         throw new Error(`workspace service ${service.name} did not become ready within 120000ms`);
       }
     }
+  }
+
+  /**
+   * Egress policy `blocked` (default) or `restricted`: labels the pod so the namespace's broad
+   * `workspace-egress` policy stops selecting it and `workspace-egress-blocked` (DNS and the
+   * worker's model and registry proxies) or, for `restricted`, `workspace-egress-restricted` (the
+   * same plus the egress forwarding proxy, admitted by selector) does, adds a
+   * per-pod policy for the resolved `allow` addresses, then proves from inside the pod that a
+   * public address is unreachable. Throws unless it is — the caller removes the workspace.
+   */
+  async lockEgress(
+    h: WorkspaceHandle,
+    allow: EgressAllowEntry[],
+    opts?: LockEgressOptions
+  ): Promise<void> {
+    const namespace = this.config().namespace;
+    await lockPodEgress(
+      h.id,
+      allow,
+      {
+        ...this.lockOptions,
+        kubectl: (args, stdin) =>
+          stdin === undefined
+            ? spawnCaptureAsync(this.kubectl, args, {
+                heartbeatLabel: 'workspace: locking egress',
+                timeoutMs: 60_000,
+              })
+            : spawnWithStdinAsync(this.kubectl, args, stdin, {
+                heartbeatLabel: 'workspace: locking egress',
+                timeoutMs: 60_000,
+              }),
+        namespace,
+        probe: (script) =>
+          this.exec(h, ['sh', '-c', script], {
+            heartbeatLabel: 'workspace: verifying egress lock',
+            timeoutMs: 30_000,
+          }),
+      },
+      opts?.mode ?? 'blocked'
+    );
   }
 
   attach(id: string, keeperPid = 0): WorkspaceHandle {
