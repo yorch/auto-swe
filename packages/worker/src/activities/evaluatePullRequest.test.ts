@@ -664,6 +664,20 @@ describe('evaluatePullRequest: approvals and status', () => {
       expect(md).not.toContain('SECRET OUTPUT');
     });
 
+    it('stores the evidence as numbers and verdicts beside the comment text, never the run output', async () => {
+      m.steps.mockResolvedValue([
+        reviewedStep(HEAD, { failing: 1, passing: 11, stdout: 'SECRET OUTPUT', total: 12 }),
+      ]);
+      const scm = fakeScm({ fetchCiStatus: async () => ({ verdict: 'passed' }) });
+      await evaluatePullRequestWith(INPUT, depsWith(scm));
+      const stored = m.created[0]?.brief as { evidence?: unknown; markdown?: string };
+      expect(stored.evidence).toMatchObject({
+        ci: 'passed',
+        tests: { failing: 1, passing: 11, total: 12 },
+      });
+      expect(JSON.stringify(m.created[0]?.brief)).not.toContain('SECRET OUTPUT');
+    });
+
     describe('the review findings', () => {
       const withFindings = (headSha: string) => [
         {
