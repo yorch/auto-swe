@@ -336,6 +336,10 @@ export interface RepositorySummary {
   gateCommands?: RepoGateCommands | null;
   /** Validated per-repository application preview recipe. */
   previewConfig?: PreviewConfig | null;
+  /** The repository's own PR title format; null inherits the registry's. */
+  prTitleFormat?: 'template' | 'conventional' | null;
+  /** The repository's own PR title template; null inherits. */
+  prTitleTemplate?: string | null;
   /** Stack detected from root manifests by the dependency scan; null until one ran. */
   detectedStack?: DetectedStack | null;
   language: string | null;

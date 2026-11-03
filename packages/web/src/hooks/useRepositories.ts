@@ -55,6 +55,8 @@ export interface UpdateRepoBody {
   /** Replaces the stored set; leave out to keep it. Changing it needs team ADMIN. */
   gateCommands?: RepoGateCommands | null;
   previewConfig?: PreviewConfig | null;
+  prTitleFormat?: 'template' | 'conventional' | null;
+  prTitleTemplate?: string | null;
   isActive?: boolean;
   language?: string | null;
   teamId?: string;

@@ -1464,6 +1464,61 @@ describe('repositoryRoutes', () => {
       expect(ctx.mockPrisma.connection.update).toHaveBeenCalled();
     });
 
+    describe('PR title format', () => {
+      const patchTitle = async (payload: Record<string, unknown>) => {
+        ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce({
+          id: REPO_ID,
+          teamId: TEAM_ID,
+          type: 'git_repo',
+        });
+        ctx.mockPrisma.connection.update.mockResolvedValueOnce({ id: REPO_ID, teamId: TEAM_ID });
+        return ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload,
+          url: `/api/v1/repositories/${REPO_ID}`,
+        });
+      };
+      const written = (): { prTitleFormat?: unknown; prTitleTemplate?: unknown } =>
+        ctx.mockPrisma.connection.update.mock.calls.at(-1)?.[0].data;
+
+      it('stores a format and a trimmed template', async () => {
+        const res = await patchTitle({
+          prTitleFormat: 'conventional',
+          prTitleTemplate: '  [x] {{ticketId}}  ',
+        });
+        expect(res.statusCode, res.payload).toBe(200);
+        expect(written()).toMatchObject({
+          prTitleFormat: 'conventional',
+          prTitleTemplate: '[x] {{ticketId}}',
+        });
+      });
+
+      it('clears both with null, and a blank template clears it too', async () => {
+        await patchTitle({ prTitleFormat: null, prTitleTemplate: null });
+        expect(written()).toMatchObject({ prTitleFormat: null, prTitleTemplate: null });
+        await patchTitle({ prTitleTemplate: '   ' });
+        expect(written().prTitleTemplate).toBeNull();
+      });
+
+      it('leaves both alone when the body does not mention them', async () => {
+        await patchTitle({ description: 'x' });
+        expect(written().prTitleFormat).toBeUndefined();
+        expect(written().prTitleTemplate).toBeUndefined();
+      });
+
+      it('refuses a format it does not know', async () => {
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'PATCH',
+          payload: { prTitleFormat: 'freeform' },
+          url: `/api/v1/repositories/${REPO_ID}`,
+        });
+        expect(res.statusCode).toBe(400);
+        expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+      });
+    });
+
     it('rejects reassignment when governed knowledge exists on the locked repository', async () => {
       ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce({
         apiKeyAuthTag: null,
