@@ -49,7 +49,8 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
      carries the narrower **Issues: Read** until an admin re-accepts the wider permission
    - Metadata: **Read** (mandatory)
 5. Set **Subscribe to events**:
-   - Pull request
+   - Pull request — also the labelled deliveries that
+     [pull-request label automations](./automations.md#33-pull-request-labels) read
    - Check run
    - Workflow run — only needed for [CI-failure triggers](./ci-failure-triggers.md) (event
      [automations](./automations.md) of failed runs); a delivery for a
@@ -59,6 +60,8 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
    - Pull request review, Pull request review comment and Issue comment — only needed for
      [pull-request feedback](./pr-feedback.md); a delivery on a repository with no matching
      automation is acknowledged and ignored
+   - Push — only needed for [push automations](./automations.md#34-pushes); a push to a
+     repository with no matching automation is acknowledged and ignored
 
    GitHub delivers the App's `installation` events (`deleted`, `suspend`, `unsuspend`) to the webhook
    URL by default; they cannot be subscribed to or unsubscribed from. auto-swe treats a delivery only

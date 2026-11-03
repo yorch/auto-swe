@@ -5,6 +5,8 @@ import {
   issueLabeledSource,
   type PrFeedbackFacts,
   prFeedbackSource,
+  prLabeledSource,
+  pushSource,
   workflowRunFailedSource,
 } from '@auto-swe/shared/automation';
 import {
@@ -41,6 +43,8 @@ import {
 } from '../lib/automations/engine.js';
 import { normalizeIssueLabeledEvent } from '../lib/automations/issueLabeled.js';
 import { enrichPrFeedbackFacts, normalizePrFeedbackEvent } from '../lib/automations/prFeedback.js';
+import { normalizePrLabeledEvent } from '../lib/automations/prLabeled.js';
+import { normalizePushEvent } from '../lib/automations/push.js';
 import { normalizeWorkflowRunEvent } from '../lib/automations/workflowRunFailed.js';
 import {
   GITHUB_MAX_PAGES,
@@ -672,6 +676,62 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
               verified.host,
               request.log
             )
+        );
+      }
+      // A label added to a pull request, for pull-request label automations. Every other
+      // `pull_request` action falls through to the lifecycle handler below, which ignores
+      // `labeled` itself, so only this action changes route.
+      if (
+        eventType === 'pull_request' &&
+        typeof request.body === 'object' &&
+        request.body !== null &&
+        (request.body as { action?: unknown }).action === 'labeled'
+      ) {
+        return handleSourceDelivery(
+          fastify,
+          prLabeledSource,
+          normalizePrLabeledEvent(request.body),
+          reply,
+          verified.host
+        );
+      }
+      // Commits pushed to a branch, for push automations. No other handler reads `push`. Every
+      // push to every repository arrives here, so one with no push automation is answered
+      // after a single lookup, before the engine resolves settings and loads the repository.
+      // Whether the source is switched on stays the engine's to decide.
+      if (eventType === 'push') {
+        return handleSourceDelivery(
+          fastify,
+          pushSource,
+          normalizePushEvent(request.body),
+          reply,
+          verified.host,
+          async (event) => {
+            const where = await webhookRepositoryWhere(
+              fastify.prisma,
+              event.org,
+              event.repoName,
+              event.repoHtmlUrl,
+              verified.host
+            );
+            const watched = await runUnscoped(
+              'a webhook names a host repository, not a team',
+              ['Connection'],
+              () =>
+                fastify.prisma.connection.findFirst({
+                  select: { id: true },
+                  where: {
+                    ...where,
+                    automations: { some: { source: pushSource.key } },
+                    isActive: true,
+                    type: 'git_repo',
+                  },
+                })
+            );
+            return watched
+              ? { facts: event.facts, type: 'ok' }
+              : { reason: 'no push automation on this repository', type: 'ignored' };
+          }
         );
       }
       // And issues, for issue-label automations.

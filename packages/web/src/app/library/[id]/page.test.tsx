@@ -90,6 +90,7 @@ vi.mock('@/components/workflow/templateNav', () => ({
   TemplateNotFound: () => null,
   TemplateSubNav: () => null,
 }));
+vi.mock('./_components/TriggersCard', () => ({ TriggersCard: () => null }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 
 import { useAuthStore } from '@/stores/authStore';

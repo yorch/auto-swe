@@ -767,7 +767,7 @@ describe('webhook routes', () => {
       });
 
       it('ignores the other actions', async () => {
-        for (const action of ['opened', 'synchronize', 'labeled', 'assigned']) {
+        for (const action of ['opened', 'synchronize', 'assigned']) {
           const res = await pr(action);
           expect(JSON.parse(res.payload).data).toEqual({ ignored: true });
         }
@@ -1062,6 +1062,114 @@ describe('webhook routes', () => {
     it('acknowledges a label added by a bot without acting on it', async () => {
       const bot = labelled.replace('"type":"User"', '"type":"Bot"');
       const res = await inject('/api/v1/webhooks/git', bot, sign(bot), ISSUES);
+      expect(res.json().data).toMatchObject({ ignored: true });
+      expect(handleOccurrence).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pull request labelled deliveries', () => {
+    const REPO = { full_name: 'acme/payments-api' };
+    const labelled = JSON.stringify({
+      action: 'labeled',
+      label: { name: 'auto-swe' },
+      pull_request: {
+        base: { ref: 'main', repo: REPO },
+        body: 'It should return 200.',
+        head: { ref: 'feature/health', repo: REPO, sha: 'abc1234' },
+        html_url: 'https://github.com/acme/payments-api/pull/9',
+        merged: false,
+        number: 9,
+        state: 'open',
+        title: 'Add a health check',
+        updated_at: '2026-10-01T00:00:00Z',
+      },
+      repository: REPO,
+      sender: { id: 42, login: 'octocat', type: 'User' },
+    });
+    const PULL_REQUEST = { 'x-github-event': 'pull_request' };
+
+    beforeEach(() => {
+      vi.mocked(handleOccurrence).mockClear();
+    });
+
+    it('hands a signed labelling to the pull-request label automations', async () => {
+      const res = await inject('/api/v1/webhooks/git', labelled, sign(labelled), PULL_REQUEST);
+      expect(res.statusCode).toBe(200);
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[1]).toMatchObject({
+        key: 'github.pull_request.labeled',
+      });
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[2]).toMatchObject({
+        facts: { label: 'auto-swe', prNumber: 9, senderId: '42' },
+      });
+    });
+
+    it('acknowledges a labelling on a fork pull request without acting on it', async () => {
+      const fork = labelled.replace(
+        '"head":{"ref":"feature/health","repo":{"full_name":"acme/payments-api"}',
+        '"head":{"ref":"feature/health","repo":{"full_name":"mallory/payments-api"}'
+      );
+      expect(fork).not.toBe(labelled);
+      const res = await inject('/api/v1/webhooks/git', fork, sign(fork), PULL_REQUEST);
+      expect(res.json().data).toMatchObject({ ignored: true });
+      expect(handleOccurrence).not.toHaveBeenCalled();
+    });
+
+    it('still sends every other pull_request action to the lifecycle handler', async () => {
+      trackedPr = { id: 'pr-row-1' };
+      const closed = labelled.replace('"action":"labeled"', '"action":"closed"');
+      const res = await inject('/api/v1/webhooks/git', closed, sign(closed), PULL_REQUEST);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toEqual({ updated: true });
+      expect(handleOccurrence).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('push deliveries', () => {
+    const REPO = { full_name: 'acme/payments-api' };
+    const pushed = JSON.stringify({
+      after: 'b'.repeat(40),
+      before: 'a'.repeat(40),
+      commits: [{ added: [], modified: ['src/a.ts'], removed: [] }],
+      compare: 'https://github.com/acme/payments-api/compare/aaa...bbb',
+      head_commit: { message: 'Fix the thing' },
+      ref: 'refs/heads/main',
+      repository: REPO,
+      sender: { id: 42, login: 'octocat', type: 'User' },
+    });
+    const PUSH = { 'x-github-event': 'push' };
+
+    beforeEach(() => {
+      vi.mocked(handleOccurrence).mockClear();
+      jiraPrismaState.activeRepo = { id: 'conn-1' };
+    });
+
+    afterEach(() => {
+      jiraPrismaState.activeRepo = null;
+    });
+
+    it('acknowledges a push to a repository with no push automation, before the engine', async () => {
+      jiraPrismaState.activeRepo = null;
+      const res = await inject('/api/v1/webhooks/git', pushed, sign(pushed), PUSH);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toMatchObject({ ignored: true });
+      expect(handleOccurrence).not.toHaveBeenCalled();
+      expect(vi.mocked(prisma.connection.findFirst).mock.calls.at(-1)?.[0]).toMatchObject({
+        where: { automations: { some: { source: 'github.push' } } },
+      });
+    });
+
+    it('hands a signed push to the push automations', async () => {
+      const res = await inject('/api/v1/webhooks/git', pushed, sign(pushed), PUSH);
+      expect(res.statusCode).toBe(200);
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[1]).toMatchObject({ key: 'github.push' });
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[2]).toMatchObject({
+        facts: { branch: 'main', senderId: '42' },
+      });
+    });
+
+    it('acknowledges a tag push without acting on it', async () => {
+      const tag = pushed.replace('refs/heads/main', 'refs/tags/v1');
+      const res = await inject('/api/v1/webhooks/git', tag, sign(tag), PUSH);
       expect(res.json().data).toMatchObject({ ignored: true });
       expect(handleOccurrence).not.toHaveBeenCalled();
     });

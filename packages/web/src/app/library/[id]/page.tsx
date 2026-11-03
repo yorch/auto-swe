@@ -27,6 +27,7 @@ import { LaunchInputsCard } from './_components/LaunchInputsCard';
 import { LintErrorsAlert } from './_components/LintErrorsAlert';
 import { ObservedCard } from './_components/ObservedCard';
 import { TemplateHeader } from './_components/TemplateHeader';
+import { TriggersCard } from './_components/TriggersCard';
 import { useWorkflowDetailState } from './_components/useWorkflowDetailState';
 import { VersionsCard } from './_components/VersionsCard';
 import { WebhookCard } from './_components/WebhookCard';
@@ -354,6 +355,17 @@ export default function TemplateDetailPage({ params }: PageProps) {
                 versions={template.versions}
               />
             )}
+
+            {/* What starts this template */}
+            <TriggersCard
+              template={{
+                id: template.id,
+                name: template.name,
+                status: template.status,
+                team: template.team,
+              }}
+              webhookConfigured={template.webhookConfigured}
+            />
 
             {/* Webhook trigger */}
             <WebhookCard canManage={canManage} template={template} />
