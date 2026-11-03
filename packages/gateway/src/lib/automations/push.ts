@@ -97,7 +97,8 @@ export function normalizePushEvent(body: unknown): PushEvent {
       commitCount: Math.min(commits.length, GITHUB_PUSH_COMMIT_LIMIT),
       compareUrl: (compare ?? '').slice(0, 500),
       files: list.slice(0, MAX_PUSH_FILES),
-      // GitHub sends at most 20 commits, so a push of that size may hold more than it lists.
+      // The list is what the platform kept: at most MAX_PUSH_FILES files, from the at most 2048
+      // commits GitHub documents per payload, so a push of that size may hold more than it lists.
       filesTruncated: list.length > MAX_PUSH_FILES || commits.length >= GITHUB_PUSH_COMMIT_LIMIT,
       // Hidden HTML comments (a squash-merged pull request body's) are dropped before the cut.
       message: visibleIssueText(head?.message ?? '').slice(0, MAX_PUSH_MESSAGE_CHARS),

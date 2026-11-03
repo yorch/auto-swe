@@ -835,9 +835,17 @@ recorded as `FAILED_TO_START` with its code.
   matches the subject across the source's whole ledger, are not affected.
 - **The push prefix guard follows the current prefix only.** A branch under a prefix the operator
   has since changed is not guarded, so a push to it can start a push automation.
-- **A push with `paths` set and 20 or more commits matches only on a listed file.** GitHub sends at
-  most 20 commits, so the file list may be incomplete. A push none of whose listed files match is
-  refused with that reason, because the matching file may be one GitHub left out.
+- **A push's `paths` match is made only against the files the platform kept.** The list can be
+  incomplete in two ways. The platform keeps at most 300 distinct changed files, and GitHub
+  documents at most 2048 commits per push payload, with nothing documented about what it sends
+  above that or whether the per-commit file lists are ever cut. When the list may be incomplete (a
+  push of 2048 or more commits, or more than 300 changed files), a push none of whose kept files
+  match is refused with a 'too large' reason, because the matching file may be one that was left
+  out. Otherwise it is refused with the plain 'no changed file matches' reason.
+- **A push delivery larger than the gateway's request body limit starts nothing.** The push
+  webhook route sets no limit of its own, so Fastify's default of 1 MiB applies. A delivery over it
+  is refused with 413 before its signature is verified, and a push of well under 2048 commits can
+  exceed it.
 - **A push-created run is based on the repository's default branch,** not the pushed branch.
 - **A platform push to a person's pull-request branch is guarded only by own-output recognition.**
   A CI-fix or pull-request-feedback run pushes to a branch that is not under the prefix. The only
