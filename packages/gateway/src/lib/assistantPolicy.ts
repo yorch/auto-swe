@@ -453,6 +453,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PUT /api/v1/platform/model-catalog/:id': 'confirm',
   'PUT /api/v1/platform/scanner-patterns/:id': 'confirm',
   'PUT /api/v1/platform/skills/:id': 'confirm',
+  'PUT /api/v1/pull-requests/:id/viewed': 'confirm',
   'PUT /api/v1/repositories/:id/credential': { never: 'secret' },
   'PUT /api/v1/repositories/:id/pr-evaluation': { never: 'humanDecision' },
   'PUT /api/v1/repositories/:id/setup/eval-datasets/:datasetId': 'confirm',

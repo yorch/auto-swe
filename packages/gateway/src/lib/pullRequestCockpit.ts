@@ -185,3 +185,21 @@ export function assembleCockpit(input: {
   };
   return { evaluation, files };
 }
+
+/** What a stored mark needs to be checked against the file it was made on. */
+export type ViewedRow = { patchDigest: string; path: string };
+
+/**
+ * The paths a person has viewed: a mark counts only while the file's patch is the one that was
+ * viewed, so a push that changes a file puts it back among the unread. A file with no patch has no
+ * digest to match and is never viewed.
+ */
+export function viewedPaths(files: PullRequestCockpitFiles, rows: readonly ViewedRow[]): string[] {
+  if (files.type !== 'ok') {
+    return [];
+  }
+  const digestOf = new Map(rows.map((row) => [row.path, row.patchDigest]));
+  return files.items
+    .filter((item) => item.patchDigest !== null && digestOf.get(item.path) === item.patchDigest)
+    .map((item) => item.path);
+}

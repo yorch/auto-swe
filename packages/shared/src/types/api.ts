@@ -1637,6 +1637,8 @@ export interface PullRequestCockpit {
   /** The latest evaluation of this pull request; null when none exists. */
   evaluation: PullRequestCockpitEvaluation | null;
   files: PullRequestCockpitFiles;
+  /** Paths of the files the caller marked viewed and whose patch has not changed since. */
+  viewed: string[];
 }
 
 /** Outcome figures for a cohort of pull requests opened in one window. */
