@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const TOKEN = 'ghs_supersecrettoken1234567890';
 const CLONE_URL = `https://x-access-token:${TOKEN}@github.com/acme/widgets.git`;
@@ -580,7 +580,18 @@ describe('runShellStep — clone credential is never persisted in the workspace 
   });
 });
 
-describe('finalizeScript against a real git repository', () => {
+describe('finalizeScript against a real git repository', { timeout: 60_000 }, () => {
+  // The setup git commands in these tests inherit process.env, and the host's global
+  // core.hooksPath (a lefthook shim) made each commit take ~6s under load vs ~0.3s without
+  // it, so the setup is isolated from the host git config for speed and hermeticity. (The
+  // script under test already ignores host config via HARDENED_GIT_ENV.)
+  beforeAll(() => {
+    vi.stubEnv('GIT_CONFIG_GLOBAL', '/dev/null');
+    vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1');
+  });
+  afterAll(() => {
+    vi.unstubAllEnvs();
+  });
   const git = (cwd: string, ...args: string[]) =>
     execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 

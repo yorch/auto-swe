@@ -118,7 +118,9 @@ async function fill(prompt = 'fix the typo') {
   fireEvent.change(screen.getByLabelText(/prompt/i), { target: { value: prompt } });
 }
 
-describe('AgentRunForm', () => {
+// jsdom render plus several waitFor polls per case (slowest measured ~4s). The describe timeout raises
+// the jsdom default of 20s to 30s for headroom under load.
+describe('AgentRunForm', { timeout: 30_000 }, () => {
   it('offers git repositories only, and shows the platform ceilings once a repository is chosen', async () => {
     stubGateway();
     render(withQuery(<AgentRunForm />));

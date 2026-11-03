@@ -190,6 +190,9 @@ const fakeActivities = {
   startChannelRun: async (args: StartRunCall) => {
     calls.startRuns.push(args);
   },
+  // The workflow calls this after every delivered turn. Unregistered, each test paid a ~6s
+  // NotFoundError retry (15 tests: ~100s alone), which is what made this file time out under load.
+  touchChannelThreadSession: async () => {},
   updateChannelReply: async (args: UpdateCall) => {
     calls.updates.push(args);
   },

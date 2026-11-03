@@ -58,7 +58,9 @@ function labelled(type: string, label: string): string {
   return end < 0 ? rest : rest.slice(0, end);
 }
 
-describe('NODE_HELP', () => {
+// Each docs-link case tokenises the node reference (0.1-1s alone); give the block headroom for a
+// loaded machine rather than the 5s default.
+describe('NODE_HELP', { timeout: 30_000 }, () => {
   it('has an entry for every node type in the spec, and no others', () => {
     // The spec's own discriminated union is the source of truth for the list of types.
     const specTypes = NodeSchema.options.map((o) => o.shape.type.value).sort();
