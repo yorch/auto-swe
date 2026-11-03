@@ -22,7 +22,15 @@ function prLabel(pr: PullRequestListItem): string {
 
 const COLUMNS: DataTableColumn<PullRequestListItem>[] = [
   {
-    cell: (pr) => pr.title ?? 'Untitled pull request',
+    // A row with no repository or number has nothing to review here, so it stays plain text.
+    cell: (pr) =>
+      pr.repository && pr.prNumber !== null ? (
+        <Link className={LINK} href={`/pull-requests/${pr.id}`}>
+          {pr.title ?? 'Untitled pull request'}
+        </Link>
+      ) : (
+        (pr.title ?? 'Untitled pull request')
+      ),
     header: 'Pull request',
     id: 'pull-request',
     primary: true,
@@ -104,7 +112,8 @@ const COLUMNS: DataTableColumn<PullRequestListItem>[] = [
 
 /**
  * Title and ticket are host and tracker text: rendered as plain text, never as markup. The
- * title is not a link: the pull request lives on its host, so the host link sits under it.
+ * title opens the review page; the pull request itself lives on its host, so the host link sits
+ * under it.
  */
 export function PullRequestTable({ pullRequests }: { pullRequests: PullRequestListItem[] }) {
   return (
