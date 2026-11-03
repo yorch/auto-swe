@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AGENT_RUN_MAX_WALL_CLOCK_SECONDS } from '../lib/agentRun.js';
 import { GlobListSchema } from '../lib/ciTrigger.js';
+import { type EgressPolicy, egressPolicySchema } from '../lib/egressPolicy.js';
 import { hasGitNameCharacter } from '../lib/gitIdentityName.js';
 import {
   countGlobStars,
@@ -1662,6 +1663,22 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: positiveInt.min(60).max(AGENT_RUN_MAX_WALL_CLOCK_SECONDS),
     unit: 'seconds',
+  }),
+
+  // Pinned: a run's containers must not change network posture mid-run, and a retry or replay
+  // must take the same path. A launcher may narrow it for one run (never widen); see
+  // `narrowEgressPolicy`.
+  'workspace.egressPolicy': defineSetting({
+    defaultValue: 'open' as EgressPolicy,
+    description:
+      "How much outbound network access a run's containers get. `open` applies the team egress allowlist when one exists and permits any public host otherwise. `restricted` makes the team allowlist mandatory, so an empty allowlist leaves only what `blocked` allows. `blocked` leaves only the platform's own proxies and the repository's git host reachable. A run's launcher may choose a stricter level for that run but never a looser one. `restricted` is enforced by the egress proxy and by a network-level lock of the workspace to the proxies and the git host. `blocked` leaves only the model and registry proxies and the git host reachable. On Kubernetes, DNS to the cluster DNS service stays reachable, which is a low-bandwidth channel. The policy governs the workspace's own traffic only: MCP and worker-side connectors originate from the worker and are not affected.",
+    group: 'workspace',
+    label: 'Run egress policy',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: true,
+    schema: egressPolicySchema,
   }),
 
   // ── Shell-step helper image ────────────────────────────────────────────────

@@ -96,6 +96,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/guardedDispatcher.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/egressPolicy',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/egressPolicy.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/crypto',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/crypto.ts'),
       },

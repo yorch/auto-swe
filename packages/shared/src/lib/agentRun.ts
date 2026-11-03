@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { egressPolicySchema } from './egressPolicy.js';
 import { BaseBranchSchema } from './gitRef.js';
 
 /**
@@ -87,6 +88,8 @@ export const AgentRunPayloadSchema = z.object({
   /** The branch the checkout is cut from and a draft PR targets. Unset: the default branch. */
   baseBranch: BaseBranchSchema.optional(),
   deliver: z.enum(AGENT_RUN_DELIVERIES).default('none'),
+  /** Requested network egress policy; kept here so a re-run asks for the same one. */
+  egressPolicy: egressPolicySchema.optional(),
   /** Per-launch caps. Can only lower the platform ceilings. */
   maxSteps: z.number().int().min(1).max(500).optional(),
   maxWallClockSeconds: z.number().int().min(60).max(14_400).optional(),
