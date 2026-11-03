@@ -43,6 +43,9 @@ library at `/agents`.
 | `productAnalyst` | Product pack — problem analysis | `anthropic/claude-sonnet-5-5` |
 | `prdWriter` | Product pack — PRD drafting | `anthropic/claude-sonnet-5-5` |
 | `issueDrafter` | Product pack — drafts issue descriptions from a brief | `anthropic/claude-sonnet-5-5` |
+| `docsMaintainer` | Documentation pack — keeps a repository's markdown true to its code; the prompt of the `docs-refresh` template, and the agent for `auto-swe agent run … --deliver draft_pr` | `anthropic/claude-sonnet-5-5` |
+| `docReviewer` | Document review pack — reviews a page against criteria and returns a verdict and located findings as JSON (`confluence-review-to-tickets`) | `anthropic/claude-sonnet-5-5` |
+| `ticketPlanner` | Document review pack — proposes an epic, tickets and sub-tasks as JSON for a person to approve (`confluence-review-to-tickets`) | `anthropic/claude-sonnet-5-5` |
 | `appAssistant` | The dashboard's in-app assistant panel (`runAssistantTurn`), acting as the signed-in user; its read-only tools (`searchDocs`, `workflowInventory`, `getPageContext`, `describeApi`, `callApi`) are bound in code — see [architecture.md §5](./architecture.md#5-authentication) | `anthropic/claude-sonnet-5-5` |
 | `assistantTitler` | `nameAssistantConversation` — names an in-app assistant conversation from the user's first messages, alongside its turn; no tools | `anthropic/claude-haiku-4-5-20251001` |
 
@@ -1350,6 +1353,9 @@ Skills are an **ADMIN-curated library**: creation (`POST /api/v1/platform/skills
 || Product | `prd-readiness` | `productAnalyst` |
 || | `product-acceptance-criteria` | `productAnalyst`, `prdWriter` |
 || | `story-decomposition` | `prdWriter` |
+|| Documentation and review | `documentation-accuracy` | `docsMaintainer` |
+|| | `document-review-rubric` | `docReviewer` |
+|| | `ticket-hierarchy-planning` | `ticketPlanner` |
 || Integrations | `qodo-context` | none (attached by an admin) |
 
 ### 6.3 Skill Assignment & Scope Cascade

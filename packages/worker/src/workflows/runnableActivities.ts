@@ -47,7 +47,12 @@ export const stateActivities = proxyActivities<
 export const genericActivities = proxyActivities<
   Pick<
     typeof activitiesType,
-    'resolveWorkspace' | 'readSource' | 'writeOutcome' | 'publishOutcome' | 'runTool'
+    | 'resolveWorkspace'
+    | 'readSource'
+    | 'writeOutcome'
+    | 'publishOutcome'
+    | 'runTool'
+    | 'parseAgentOutput'
   >
 >({
   retry: RETRY_STANDARD,

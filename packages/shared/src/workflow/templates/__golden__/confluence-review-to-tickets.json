@@ -1,0 +1,413 @@
+{
+  "description": "Review a Confluence page against your criteria and leave the findings on it as comments. When the page is ready, propose an epic with tickets and sub-tasks, let a person review or send back the structure, and create the tickets in Jira after policy and approval gating. A page that is not ready stops after the comments: fix it and run it again.",
+  "entry": "resolveWorkspace",
+  "name": "confluence-review-to-tickets",
+  "nodes": {
+    "approveStructure": {
+      "contextFrom": "nodes.parsePlan.output.markdown",
+      "description": "This is the proposed epic, tickets and sub-tasks for the Confluence page. Approve to create them in the tracker, request changes (with a note) to have the planner try again (up to 3 times), or reject to stop without creating anything.",
+      "onApprove": "setTicketPayload",
+      "onReject": "doneRejected",
+      "onRequestChanges": "noteStructureChanges",
+      "onTimeout": "doneTimedOut",
+      "timeout": "72h",
+      "title": "Review the proposed ticket structure",
+      "type": "humanApproval"
+    },
+    "checkPlan": {
+      "expr": "nodes.parsePlan.output.valid == true",
+      "onFalse": "doneBadPlan",
+      "onTrue": "approveStructure",
+      "type": "cond"
+    },
+    "checkReady": {
+      "expr": "nodes.parseReview.output.ready == true",
+      "onFalse": "doneNotReady",
+      "onTrue": "initPlan",
+      "type": "cond"
+    },
+    "checkReview": {
+      "expr": "nodes.parseReview.output.valid == true",
+      "onFalse": "doneBadReview",
+      "onTrue": "setCommentPayload",
+      "type": "cond"
+    },
+    "checkRevisions": {
+      "expr": "context.planRevisions > 3",
+      "onFalse": "planTickets",
+      "onTrue": "doneRevisionsExhausted",
+      "type": "cond"
+    },
+    "commentsAutoWrite": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.connectionId"
+        },
+        "data": {
+          "from": "context.commentPayload"
+        }
+      },
+      "next": "checkReady",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "commentsCheckAuto": {
+      "expr": "nodes.commentsPublishOutcome.output.decision == 'require_approval'",
+      "onFalse": "commentsAutoWrite",
+      "onTrue": "commentsHumanApproval",
+      "type": "cond"
+    },
+    "commentsDoneRejected": {
+      "result": {
+        "approved": {
+          "literal": false
+        },
+        "pageId": {
+          "from": "request.payload.pageId"
+        },
+        "ready": {
+          "from": "nodes.parseReview.output.ready"
+        },
+        "written": {
+          "literal": false
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "commentsHumanApproval": {
+      "approverCount": {
+        "from": "nodes.commentsPublishOutcome.output.approverCount"
+      },
+      "contextFrom": "nodes.parseReview.output.markdown",
+      "description": "The review is ready to be left on the Confluence page as comments. Approve to post them, reject to discard them.",
+      "onApprove": "commentsManualWrite",
+      "onReject": "commentsDoneRejected",
+      "onTimeout": "commentsDoneRejected",
+      "timeout": "24h",
+      "title": "Approve review comments on the page",
+      "type": "humanApproval"
+    },
+    "commentsManualWrite": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.connectionId"
+        },
+        "data": {
+          "from": "context.commentPayload"
+        }
+      },
+      "next": "checkReady",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "commentsPublishOutcome": {
+      "config": {
+        "action": "external_write"
+      },
+      "inputs": {
+        "description": {
+          "from": "request.payload.pageId"
+        }
+      },
+      "next": "commentsCheckAuto",
+      "step": "publishOutcome",
+      "type": "step"
+    },
+    "done": {
+      "result": {
+        "created": {
+          "literal": true
+        },
+        "epicUrl": {
+          "expr": "nodes.ticketsAutoWrite.output.reference ?? nodes.ticketsManualWrite.output.reference"
+        },
+        "pageId": {
+          "from": "request.payload.pageId"
+        },
+        "ready": {
+          "literal": true
+        },
+        "ticketUrls": {
+          "expr": "nodes.ticketsAutoWrite.output.references ?? nodes.ticketsManualWrite.output.references"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "doneBadPlan": {
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "doneBadReview": {
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "doneNotReady": {
+      "result": {
+        "findings": {
+          "from": "nodes.parseReview.output.findingCount"
+        },
+        "pageId": {
+          "from": "request.payload.pageId"
+        },
+        "ready": {
+          "literal": false
+        },
+        "summary": {
+          "from": "nodes.parseReview.output.summary"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "doneRejected": {
+      "result": {
+        "created": {
+          "literal": false
+        },
+        "pageId": {
+          "from": "request.payload.pageId"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "doneRevisionsExhausted": {
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "doneTimedOut": {
+      "status": "TIMED_OUT",
+      "type": "terminate"
+    },
+    "initPlan": {
+      "next": "planTickets",
+      "type": "set",
+      "values": {
+        "context.planFeedback": {
+          "literal": ""
+        },
+        "context.planRevisions": {
+          "literal": 0
+        }
+      }
+    },
+    "noteStructureChanges": {
+      "next": "checkRevisions",
+      "type": "set",
+      "values": {
+        "context.planFeedback": {
+          "from": "nodes.approveStructure.output.comment"
+        },
+        "context.planRevisions": {
+          "expr": "context.planRevisions + 1"
+        }
+      }
+    },
+    "parsePlan": {
+      "config": {
+        "kind": "ticketPlan"
+      },
+      "inputs": {
+        "text": {
+          "from": "nodes.planTickets.output.text"
+        }
+      },
+      "next": "checkPlan",
+      "step": "parseAgentOutput",
+      "type": "step"
+    },
+    "parseReview": {
+      "config": {
+        "kind": "docReview"
+      },
+      "inputs": {
+        "text": {
+          "from": "nodes.reviewDocument.output.text"
+        }
+      },
+      "next": "checkReview",
+      "step": "parseAgentOutput",
+      "type": "step"
+    },
+    "planTickets": {
+      "agentRef": "ticketPlanner",
+      "inputs": {
+        "context": {
+          "default": "",
+          "from": "request.payload.instructions"
+        },
+        "document": {
+          "from": "nodes.readSource.output.data"
+        },
+        "review": {
+          "from": "nodes.parseReview.output.markdown"
+        },
+        "reviewerNote": {
+          "from": "context.planFeedback"
+        }
+      },
+      "next": "parsePlan",
+      "spanName": "llm.ticket_plan",
+      "type": "agent"
+    },
+    "readSource": {
+      "config": {},
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.connectionId"
+        },
+        "pageId": {
+          "from": "request.payload.pageId"
+        }
+      },
+      "next": "reviewDocument",
+      "step": "readSource",
+      "type": "step"
+    },
+    "resolveWorkspace": {
+      "config": {
+        "workspaceProvider": "document"
+      },
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.connectionId"
+        }
+      },
+      "next": "readSource",
+      "step": "resolveWorkspace",
+      "type": "step"
+    },
+    "reviewDocument": {
+      "agentRef": "docReviewer",
+      "inputs": {
+        "context": {
+          "default": "",
+          "from": "request.payload.instructions"
+        },
+        "criteria": {
+          "default": "",
+          "from": "request.payload.criteria"
+        },
+        "document": {
+          "from": "nodes.readSource.output.data"
+        }
+      },
+      "next": "parseReview",
+      "spanName": "llm.document_review",
+      "type": "agent"
+    },
+    "setCommentPayload": {
+      "next": "commentsPublishOutcome",
+      "type": "set",
+      "values": {
+        "context.commentPayload.comments": {
+          "from": "nodes.parseReview.output.comments"
+        },
+        "context.commentPayload.pageId": {
+          "from": "request.payload.pageId"
+        }
+      }
+    },
+    "setTicketPayload": {
+      "next": "ticketsPublishOutcome",
+      "type": "set",
+      "values": {
+        "context.ticketPayload.epicIssueType": {
+          "default": "",
+          "from": "request.payload.epicIssueType"
+        },
+        "context.ticketPayload.plan": {
+          "from": "nodes.parsePlan.output.plan"
+        },
+        "context.ticketPayload.projectKey": {
+          "default": "",
+          "from": "request.payload.projectKey"
+        },
+        "context.ticketPayload.storyIssueType": {
+          "default": "",
+          "from": "request.payload.storyIssueType"
+        },
+        "context.ticketPayload.subtaskIssueType": {
+          "default": "",
+          "from": "request.payload.subtaskIssueType"
+        }
+      }
+    },
+    "ticketsAutoWrite": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.trackerConnectionId"
+        },
+        "data": {
+          "from": "context.ticketPayload"
+        }
+      },
+      "next": "done",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "ticketsCheckAuto": {
+      "expr": "nodes.ticketsPublishOutcome.output.decision == 'require_approval'",
+      "onFalse": "ticketsAutoWrite",
+      "onTrue": "ticketsHumanApproval",
+      "type": "cond"
+    },
+    "ticketsDoneRejected": {
+      "result": {
+        "approved": {
+          "literal": false
+        },
+        "created": {
+          "literal": false
+        },
+        "pageId": {
+          "from": "request.payload.pageId"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "ticketsHumanApproval": {
+      "approverCount": {
+        "from": "nodes.ticketsPublishOutcome.output.approverCount"
+      },
+      "contextFrom": "nodes.parsePlan.output.markdown",
+      "description": "The approved ticket structure is ready to be created in the tracker. Approve to create it, reject to discard it.",
+      "onApprove": "ticketsManualWrite",
+      "onReject": "ticketsDoneRejected",
+      "onTimeout": "ticketsDoneRejected",
+      "timeout": "24h",
+      "title": "Approve ticket creation",
+      "type": "humanApproval"
+    },
+    "ticketsManualWrite": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.trackerConnectionId"
+        },
+        "data": {
+          "from": "context.ticketPayload"
+        }
+      },
+      "next": "done",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "ticketsPublishOutcome": {
+      "config": {
+        "action": "external_write"
+      },
+      "inputs": {
+        "description": {
+          "from": "request.payload.pageId"
+        }
+      },
+      "next": "ticketsCheckAuto",
+      "step": "publishOutcome",
+      "type": "step"
+    }
+  },
+  "schemaVersion": 1
+}

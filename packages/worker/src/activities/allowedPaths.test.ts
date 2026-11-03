@@ -13,6 +13,7 @@ import {
   assertCommittedTreeWithinAllowedPaths,
   commitStaged,
   diffForResult,
+  pathAllowed,
   pushRefspec,
   startPathGuard,
 } from './allowedPaths.js';
@@ -457,5 +458,44 @@ describe('the workflow-change refusal (refuseWorkflowChanges)', () => {
     await expect(runRefusing(() => write('other.ts', 'x\n'), ['catalog.ts'])).rejects.toMatchObject(
       { type: 'DIFF_OUTSIDE_ALLOWED_PATHS' }
     );
+  });
+});
+
+describe('which paths an entry covers', () => {
+  it('matches an exact file, a directory by its trailing slash, and an extension by its suffix form', () => {
+    expect(pathAllowed(['catalog.ts'], 'catalog.ts')).toBe(true);
+    expect(pathAllowed(['catalog.ts'], 'src/catalog.ts')).toBe(false);
+    expect(pathAllowed(['docs/'], 'docs/a/b.md')).toBe(true);
+    expect(pathAllowed(['docs/'], 'docs.md')).toBe(false);
+    expect(pathAllowed(['docs/'], 'src/docs/a.md')).toBe(false);
+    expect(pathAllowed(['**/*.md'], 'README.md')).toBe(true);
+    expect(pathAllowed(['**/*.md'], 'a/b/c.md')).toBe(true);
+    expect(pathAllowed(['**/*.md'], 'a/b/c.mdx')).toBe(false);
+    expect(pathAllowed(['**/*.md'], 'a/md')).toBe(false);
+  });
+
+  it('treats any other wildcard as a literal, so a mistyped pattern narrows the guard', () => {
+    expect(pathAllowed(['docs/*'], 'docs/a.md')).toBe(false);
+    expect(pathAllowed(['docs/**/'], 'docs/a/b.md')).toBe(false);
+    expect(pathAllowed(['*.md'], 'README.md')).toBe(false);
+    expect(pathAllowed(['/'], 'a.md')).toBe(false);
+    expect(pathAllowed([], 'a.md')).toBe(false);
+  });
+
+  it('refuses a source file next to markdown when the guard allows documentation only', async () => {
+    const guard = await startPathGuard(workspace, 'main', ['**/*.md', 'docs/']);
+    write('README.md', 'x\n');
+    write('docs/guide/a.txt', 'x\n');
+    write('src/app.ts', 'x\n');
+    sh('git add -A');
+    await expect(commitStaged(workspace, 'auto: docs', guard)).rejects.toThrow(/src\/app\.ts/);
+  });
+
+  it('lets a documentation-only change through', async () => {
+    const guard = await startPathGuard(workspace, 'main', ['**/*.md', 'docs/']);
+    write('README.md', 'x\n');
+    write('docs/guide/a.txt', 'x\n');
+    sh('git add -A');
+    expect(await commitStaged(workspace, 'auto: docs', guard)).toBeDefined();
   });
 });

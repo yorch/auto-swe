@@ -167,6 +167,12 @@ export { listProviderModels } from './listProviderModels.js';
 export type { McpCallToolInput, McpCallToolResult } from './mcpCallTool.js';
 // P2/WS4 — declarative mcp node (single MCP tool call)
 export { mcpCallTool } from './mcpCallTool.js';
+export type {
+  ParseAgentOutputInput,
+  ParseAgentOutputKind,
+  ParseAgentOutputResult,
+} from './parseAgentOutput.js';
+export { parseAgentOutput } from './parseAgentOutput.js';
 // Channel assistant — passive memory ingestion (silent fact extraction)
 export type {
   PassiveIngestChannelMemoryInput,
