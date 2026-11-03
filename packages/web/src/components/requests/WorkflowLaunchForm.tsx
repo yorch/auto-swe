@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
+import { Select } from '@/components/ui/Select';
 import {
   buildInitialPayload,
   ConnectionPicker,
@@ -24,7 +25,14 @@ import {
 } from '@/components/workflow/schemaForm';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useRunTemplate } from '@/hooks/useTemplates';
-import { describeLaunchError } from '@/lib/agentRun';
+import {
+  describeLaunchError,
+  egressPolicyFor,
+  NETWORK_ACCESS_HINT,
+  NETWORK_ACCESS_OPTIONS,
+  type NetworkAccess,
+  parseNetworkAccess,
+} from '@/lib/agentRun';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { pickSampleField, WORKFLOW_SAMPLE } from '@/lib/sampleTasks';
@@ -55,6 +63,7 @@ export function WorkflowLaunchForm({
     schema ? buildInitialPayload(schema) : {}
   );
   const [label, setLabel] = useState('');
+  const [networkAccess, setNetworkAccess] = useState<NetworkAccess>('team');
   const [review, setReview] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const lock = useRef(false);
@@ -99,6 +108,7 @@ export function WorkflowLaunchForm({
       const result = await launch.mutateAsync({
         label: label.trim(),
         payload,
+        ...egressPolicyFor(networkAccess),
         ...(acknowledgeUnchanged ? { acknowledgeUnchanged } : {}),
       });
       onLaunched(result.workRequestId);
@@ -152,6 +162,11 @@ export function WorkflowLaunchForm({
                 multiline: true,
                 value: displayValue(key, value),
               })),
+              {
+                label: 'Network access',
+                value: NETWORK_ACCESS_OPTIONS.find((option) => option.value === networkAccess)
+                  ?.label,
+              },
             ]}
           />
           {(template.experimentSplit ?? 0) > 0 && (
@@ -226,6 +241,13 @@ export function WorkflowLaunchForm({
               value={typeof payload.connectionId === 'string' ? payload.connectionId : ''}
             />
           )}
+          <Select
+            hint={NETWORK_ACCESS_HINT}
+            label="Network access"
+            onChange={(v) => setNetworkAccess(parseNetworkAccess(v))}
+            options={NETWORK_ACCESS_OPTIONS}
+            value={networkAccess}
+          />
           <div className="flex justify-end border-t border-ink-600 pt-4">
             <Button onClick={reviewInputs} variant="primary">
               Review workflow

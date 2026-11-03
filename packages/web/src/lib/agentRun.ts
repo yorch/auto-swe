@@ -1,4 +1,5 @@
 import { AGENT_RUN_MAX_PROMPT_CHARS, type AgentRunDelivery } from '@auto-swe/shared/lib/agentRun';
+import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import type { AgentRunLimits } from '@auto-swe/shared/types/api';
 import { ApiError } from '@/lib/api';
 import { randomId } from '@/lib/randomId';
@@ -26,6 +27,30 @@ export const DELIVER_OPTIONS: { value: AgentRunDeliver; label: string; descripti
   },
 ];
 
+/**
+ * The network choice a launcher makes. `team` sends nothing, so the team's policy applies;
+ * `open` is not offered because a launch can only narrow that policy.
+ */
+export type NetworkAccess = 'team' | Exclude<EgressPolicy, 'open'>;
+
+export const NETWORK_ACCESS_OPTIONS: { value: NetworkAccess; label: string }[] = [
+  { label: 'Use team default', value: 'team' },
+  { label: 'Restricted', value: 'restricted' },
+  { label: 'Blocked', value: 'blocked' },
+];
+
+export const NETWORK_ACCESS_HINT =
+  "Can only be stricter than your team's policy. Blocked leaves only the model and package proxies and the repository's git host reachable.";
+
+export function parseNetworkAccess(raw: string): NetworkAccess {
+  return NETWORK_ACCESS_OPTIONS.find((o) => o.value === raw)?.value ?? 'team';
+}
+
+/** The `egressPolicy` field of a launch body; absent for "Use team default". */
+export function egressPolicyFor(choice: NetworkAccess): { egressPolicy?: EgressPolicy } {
+  return choice === 'team' ? {} : { egressPolicy: choice };
+}
+
 /** `<key>` floats to the latest version; `<key>@<version>` pins the GLOBAL version. */
 export function buildAgentRef(key: string, pinnedVersion: number | null): string {
   return pinnedVersion === null ? key : `${key}@${pinnedVersion}`;
@@ -41,6 +66,8 @@ export interface AgentRunFormValues {
   /** Raw text of the optional caps; blank means "use the platform ceiling". */
   maxSteps: string;
   maxWallClockSeconds: string;
+  /** Optional; absent reads as "Use team default". */
+  networkAccess?: NetworkAccess;
 }
 
 export type AgentRunFormErrors = Partial<
@@ -133,6 +160,7 @@ export function buildLaunchBody(v: AgentRunFormValues) {
     maxWallClockSeconds: parseCap(v.maxWallClockSeconds),
     prompt: v.prompt,
     repoId: v.repoId,
+    ...egressPolicyFor(v.networkAccess ?? 'team'),
   };
 }
 
@@ -243,6 +271,13 @@ export function describeLaunchError(err: unknown): LaunchErrorView {
         title: 'This request stopped before and has not changed',
       };
     }
+    case 'EGRESS_POLICY_WIDENS':
+      return {
+        hint: 'Choose Use team default, or a stricter option.',
+        message,
+        retryable: false,
+        title: 'Network access is looser than the team policy',
+      };
     case 'REPO_HOST_NOT_ALLOWED':
       return { message, retryable: false, title: 'Repository host not approved' };
     case 'NOT_A_GIT_REPO':

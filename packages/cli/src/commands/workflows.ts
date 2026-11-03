@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import { EGRESS_POLICIES } from '@auto-swe/shared/lib/egressPolicy';
 import type {
   WorkflowTemplateDetail,
   WorkflowTemplateSummary,
@@ -23,6 +24,7 @@ const SUB_HELP = `auto-swe workflows — manage workflow templates
   workflows import <path> [--name=NAME] [--team=<slug>]
                                          Create a template (or add a new version if the name already exists)
   workflows run <name> --payload=<json> [--label=<text>] [--acknowledge-unchanged]
+                                         [--egress-policy=open|restricted|blocked]
                                          Start a run with a generic JSON payload
   workflows generate "<description>" [--name=NAME] [--team=<slug>]
                                          Generate a DRAFT template from a plain-language description (AI)
@@ -348,8 +350,18 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
   const name = positional[0];
   if (!name) {
     process.stderr.write(
-      'Usage: workflows run <name> --payload=<json> [--label=<text>] [--team=<slug>|--global] [--acknowledge-unchanged]\n'
+      'Usage: workflows run <name> --payload=<json> [--label=<text>] [--team=<slug>|--global] [--acknowledge-unchanged] [--egress-policy=<policy>]\n'
     );
+    return 1;
+  }
+  const bare = missingValue(flags, 'egress-policy');
+  if (bare) {
+    process.stderr.write(`--${bare} requires a value\n`);
+    return 1;
+  }
+  const egressPolicy = flags['egress-policy'];
+  if (egressPolicy !== undefined && !EGRESS_POLICIES.some((p) => p === egressPolicy)) {
+    process.stderr.write(`--egress-policy must be one of: ${EGRESS_POLICIES.join(', ')}\n`);
     return 1;
   }
   const scope = parseScope(flags);
@@ -375,11 +387,19 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     }
   }
 
-  const body: { acknowledgeUnchanged?: true; label?: string; payload: Record<string, unknown> } = {
+  const body: {
+    acknowledgeUnchanged?: true;
+    egressPolicy?: string;
+    label?: string;
+    payload: Record<string, unknown>;
+  } = {
     payload,
   };
   if (flags.label && flags.label !== 'true') {
     body.label = flags.label;
+  }
+  if (egressPolicy !== undefined) {
+    body.egressPolicy = egressPolicy;
   }
   if (flags['acknowledge-unchanged']) {
     body.acknowledgeUnchanged = true;

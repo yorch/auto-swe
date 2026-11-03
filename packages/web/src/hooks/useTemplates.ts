@@ -1,5 +1,6 @@
 'use client';
 
+import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
 import type {
   GlobalAnalyticsResponse,
@@ -341,6 +342,7 @@ export function useRunTemplate(templateId: string) {
   return useMutation({
     mutationFn: (body: {
       acknowledgeUnchanged?: true;
+      egressPolicy?: EgressPolicy;
       payload?: Record<string, unknown>;
       label?: string;
     }) => {

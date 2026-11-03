@@ -97,6 +97,21 @@ describe('workflow launch', () => {
   });
 });
 
+describe('workflow launch network access', () => {
+  it('sends the chosen network access, and nothing when the team default stands', async () => {
+    const bodies = gateway();
+    render(withQuery(<WorkflowLaunchForm onLaunched={vi.fn()} template={template} />));
+    fireEvent.change(screen.getByLabelText(/Task name/), { target: { value: 'Summarize' } });
+    fireEvent.change(screen.getByLabelText(/Description/), { target: { value: 'Notes' } });
+    fireEvent.click(screen.getByRole('button', { name: /network access/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Restricted' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Launch workflow' }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({ egressPolicy: 'restricted' });
+  });
+});
+
 describe('workflow launch after a not-actionable stop', () => {
   it('explains the refusal and launches only after Run anyway, with the flag', async () => {
     const bodies: unknown[] = [];

@@ -376,6 +376,46 @@ describe('runWorkflowsCommand run', () => {
     globalThis.fetch = originalFetch;
   });
 
+  it('sends --egress-policy in the body only when given, and rejects other values', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = vi.fn(async (url: string, init: RequestInit) => {
+      if (url === 'http://gw/api/v1/workflow-templates') {
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              data: [{ activeVersion: 1, id: 'tpl-9', name: 'My Flow', status: 'ACTIVE' }],
+            }),
+        } as unknown as Response;
+      }
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return {
+        ok: true,
+        status: 201,
+        text: async () =>
+          JSON.stringify({
+            data: { temporalWorkflowId: 'twf-1', workflowId: 'wf-1', workRequestId: 'wr-1' },
+          }),
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    expect(
+      await runWorkflowsCommand(['run', 'My Flow', '--payload={}', '--egress-policy=blocked'], ENV)
+    ).toBe(0);
+    expect(bodies[0]).toMatchObject({ egressPolicy: 'blocked' });
+    expect(await runWorkflowsCommand(['run', 'My Flow', '--payload={}'], ENV)).toBe(0);
+    expect(bodies[1]).not.toHaveProperty('egressPolicy');
+
+    expect(
+      await runWorkflowsCommand(['run', 'My Flow', '--payload={}', '--egress-policy=wide'], ENV)
+    ).toBe(1);
+    expect(stderrWrites.join('')).toContain(
+      '--egress-policy must be one of: open, restricted, blocked'
+    );
+    expect(bodies).toHaveLength(2);
+  });
+
   it('requires a template name', async () => {
     globalThis.fetch = vi.fn(async () => {
       throw new Error('fetch should not be called without a template name');

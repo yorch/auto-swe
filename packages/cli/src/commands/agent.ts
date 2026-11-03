@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { AGENT_RUN_DELIVERIES } from '@auto-swe/shared/lib/agentRun';
+import { EGRESS_POLICIES } from '@auto-swe/shared/lib/egressPolicy';
 import {
   isTerminalWorkflowRunStatus,
   type WorkflowRunDetail,
@@ -17,7 +18,8 @@ const SUB_HELP = `auto-swe agent — run a library agent on a repository
 
   agent run <key[@version]> "<prompt>" --repo=<org/name>|--repo-id=<uuid>
             [--deliver=none|branch|draft_pr] [--base=<branch>] [--max-steps=N]
-            [--timeout=SECONDS] [--budget=STANDARD|LARGE|EPIC] [--idempotency-key=KEY] [--wait]
+            [--timeout=SECONDS] [--budget=STANDARD|LARGE|EPIC] [--egress-policy=open|restricted|blocked]
+            [--idempotency-key=KEY] [--wait]
   agent rerun <workRequestId> [--idempotency-key=KEY] [--wait]
 
   The agent works in a throwaway checkout of the repository. By default nothing leaves
@@ -33,7 +35,9 @@ const SUB_HELP = `auto-swe agent — run a library agent on a repository
                            (default: the repository's default branch)
     --max-steps=N          Cap model steps (can only lower the platform ceiling)
     --timeout=SECONDS      Cap wall-clock time (can only lower the platform ceiling)
-    --wait                 Poll until the run finishes; exit 2 if it did not succeed
+    --egress-policy=P      Network egress for the run: open, restricted or blocked
+                           (omit it for the platform default)
+    --wait                Poll until the run finishes; exit 2 if it did not succeed
     --idempotency-key=K    Make a retried launch return a conflict instead of a second run
 `;
 
@@ -164,6 +168,7 @@ async function cmdRun(rawArgs: string[], env: CliEnv): Promise<number> {
     'max-steps',
     'timeout',
     'budget',
+    'egress-policy',
     'idempotency-key',
     'prompt'
   );
@@ -192,6 +197,11 @@ async function cmdRun(rawArgs: string[], env: CliEnv): Promise<number> {
     process.stderr.write(`--budget must be one of: ${BUDGETS.join(', ')}\n`);
     return 1;
   }
+  const egressPolicy = flags['egress-policy'];
+  if (egressPolicy !== undefined && !EGRESS_POLICIES.some((p) => p === egressPolicy)) {
+    process.stderr.write(`--egress-policy must be one of: ${EGRESS_POLICIES.join(', ')}\n`);
+    return 1;
+  }
   const maxSteps = parsePositiveInt(flags['max-steps'], 0);
   if (maxSteps === 'invalid') {
     process.stderr.write('--max-steps must be a positive integer\n');
@@ -218,6 +228,7 @@ async function cmdRun(rawArgs: string[], env: CliEnv): Promise<number> {
       ...(flags.base ? { baseBranch: flags.base } : {}),
       budgetTier: budget,
       deliver,
+      ...(egressPolicy !== undefined ? { egressPolicy } : {}),
       ...(maxSteps > 0 ? { maxSteps } : {}),
       ...(timeout > 0 ? { maxWallClockSeconds: timeout } : {}),
       prompt,

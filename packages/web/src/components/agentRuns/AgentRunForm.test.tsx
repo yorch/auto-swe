@@ -159,6 +159,17 @@ describe('AgentRunForm', { timeout: 30_000 }, () => {
     expect(launches[0]?.headers['Idempotency-Key']).toMatch(/^[0-9a-f-]{36}$/);
   });
 
+  it('sends a stricter network access only when one is chosen', async () => {
+    const { launches } = stubGateway();
+    render(withQuery(<AgentRunForm />));
+    await fill();
+    fireEvent.click(screen.getByRole('button', { name: /network access/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Blocked' }));
+    fireEvent.click(screen.getByRole('button', { name: /run agent/i }));
+    expect(await screen.findByText(/Agent run started/)).toBeTruthy();
+    expect(launches[0]?.body.egressPolicy).toBe('blocked');
+  });
+
   it('renders the 429 concurrency error clearly and reuses the key on an identical retry', async () => {
     const reject = () =>
       new Response(
