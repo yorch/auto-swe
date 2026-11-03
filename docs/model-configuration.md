@@ -337,7 +337,9 @@ The run, in order:
    needs root in the container, the limit the workspace hardening already documents. A `checkScope`
    condition before the pull request asserts the same thing about the cumulative change, and a miss
    fails the run. `allowedPaths` is an optional config field on both steps; unset, nothing changes
-   and the original commands run.
+   and the original commands run. An entry is a file, by its path from the repository root, a directory by a trailing slash
+   (`docs/`), or an extension (`**/*.md`); any other wildcard matches only itself, so a mistyped entry
+   narrows the guard instead of widening it.
 6. **Check and open.** If the diff is empty the run ends `SUCCESS` with no pull request. Otherwise
    the `runTests` gate runs `builtinModels.test.ts`, the review network judges the change against the
    success criterion *every changed price cites an official URL; no invented figures*, the review

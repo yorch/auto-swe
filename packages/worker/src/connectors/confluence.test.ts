@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createConfluencePage, readConfluencePage, updateConfluencePage } from './confluence.js';
+import {
+  createConfluenceFooterComment,
+  createConfluenceInlineComment,
+  createConfluencePage,
+  readConfluencePage,
+  updateConfluencePage,
+} from './confluence.js';
 
 const adminKb = { allowPrivateNetwork: false, baseUrl: null as string | null };
 
@@ -585,5 +591,87 @@ describe('confluence connector', () => {
         '1'
       )
     ).rejects.toThrow(/SSRF guard/);
+  });
+});
+
+describe('confluence comments', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    adminKb.allowPrivateNetwork = false;
+    adminKb.baseUrl = null;
+  });
+
+  it('posts a footer comment as escaped storage paragraphs on the v2 endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: 'c1' }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      createConfluenceFooterComment(connection, {
+        bodyText: 'Fix <b>this</b>\nand that',
+        pageId: '9',
+      })
+    ).resolves.toEqual({ id: 'c1' });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://x.atlassian.net/wiki/api/v2/footer-comments');
+    expect(init.method).toBe('POST');
+    expect(init.redirect).toBe('error');
+    expect(JSON.parse(init.body as string)).toEqual({
+      body: {
+        representation: 'storage',
+        value: '<p>Fix &lt;b&gt;this&lt;/b&gt;</p><p>and that</p>',
+      },
+      pageId: '9',
+    });
+  });
+
+  it('anchors an inline comment with the selection, how often it appears, and which one', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: 'c2' }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await createConfluenceInlineComment(connection, {
+      bodyText: 'Vague',
+      matchCount: 3,
+      matchIndex: 0,
+      pageId: '9',
+      textSelection: 'The API is fast',
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://x.atlassian.net/wiki/api/v2/inline-comments');
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      inlineCommentProperties: {
+        textSelection: 'The API is fast',
+        textSelectionMatchCount: 3,
+        textSelectionMatchIndex: 0,
+      },
+      pageId: '9',
+    });
+  });
+
+  it('refuses a response with no comment id, so a write is never reported as done by mistake', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonResponse({})) as unknown as typeof fetch;
+    await expect(
+      createConfluenceFooterComment(connection, { bodyText: 'x', pageId: '9' })
+    ).rejects.toThrow(/no id/);
+  });
+
+  it('separates a refused anchor (permanent) from an outage (transient)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonResponse({}, 400)) as unknown as typeof fetch;
+    const refused = await createConfluenceInlineComment(connection, {
+      bodyText: 'x',
+      matchCount: 1,
+      matchIndex: 0,
+      pageId: '9',
+      textSelection: 'nowhere',
+    }).catch((e: { nonRetryable?: boolean }) => e);
+    expect(refused).toMatchObject({ nonRetryable: true });
+
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonResponse({}, 503)) as unknown as typeof fetch;
+    const outage = await createConfluenceFooterComment(connection, {
+      bodyText: 'x',
+      pageId: '9',
+    }).catch((e: { nonRetryable?: boolean }) => e);
+    expect(outage).toMatchObject({ nonRetryable: false });
   });
 });

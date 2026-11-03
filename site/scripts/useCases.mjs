@@ -140,6 +140,29 @@ export const USE_CASES = {
       'to three times.',
     title: 'Dependency update',
   },
+  'docs-refresh': {
+    group: 'engineering',
+    maturity: 'composed',
+    source: 'packages/shared/src/workflow/templates/docsRefresh.ts',
+    summary:
+      'Keeps a repository’s markdown documentation true to its code, or writes it when there ' +
+      'is none. An agent reads the docs, checks each claim against the source, and opens a ' +
+      'draft pull request; only markdown can change, and a run with nothing to fix opens ' +
+      'nothing. Put it on a repository schedule so the docs are rechecked every week.',
+    title: 'Documentation refresh',
+  },
+  'vulnerability-remediation': {
+    group: 'engineering',
+    maturity: 'composed',
+    source: 'packages/shared/src/workflow/templates/vulnerabilityRemediation.ts',
+    summary:
+      'Patches a reported vulnerability. The request carries the advisory — from a ticket, a ' +
+      'Jira filter, or an event posted to a team endpoint — and an agent makes the smallest ' +
+      'dependency change that removes it. The run scans, runs the full tests, opens a draft ' +
+      'pull request and repairs CI failures; a repository the advisory does not affect gets ' +
+      'no pull request. The vulnerability scan covers Node repositories only.',
+    title: 'Vulnerability remediation',
+  },
   'model-catalog-refresh': {
     group: 'engineering',
     maturity: 'composed',
@@ -383,6 +406,18 @@ export const USE_CASES = {
       'under the default autonomy policy.',
     title: 'Post a Slack update',
   },
+  'confluence-review-to-tickets': {
+    group: 'content',
+    maturity: 'seeded',
+    source: 'packages/shared/src/workflow/templates/confluenceReviewToTickets.ts',
+    summary:
+      'Reviews a Confluence page against your criteria and leaves the findings on it as ' +
+      'comments. When the page is ready, it proposes an epic with tickets and sub-tasks, lets ' +
+      'a person approve the structure or send it back with a note, and creates the tickets in ' +
+      'Jira once the autonomy policy allows the write. A page that is not ready stops after ' +
+      'the comments; run it again once the author has fixed it.',
+    title: 'Confluence review to Jira tickets',
+  },
   'issue-to-confluence-page': {
     group: 'content',
     maturity: 'seeded',
@@ -405,15 +440,6 @@ export const USE_CASES = {
  * that too. An idea that becomes a built-in template moves to `USE_CASES`.
  */
 export const WORKFLOW_IDEAS = [
-  {
-    builtFrom:
-      'A scheduled work request on the repository, running `code-and-ci` with a custom ' +
-      'skill on the implementer that says what drift to look for.',
-    summary:
-      'Once a week, compare the docs against the code they describe, and open a pull request ' +
-      'fixing what no longer matches.',
-    title: 'Docs that drift from the code',
-  },
   {
     builtFrom:
       'The template webhook, fired by CI on a release tag; an `mcp` node calling a GitHub MCP ' +

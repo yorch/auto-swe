@@ -14,6 +14,10 @@ export interface IssueTrackerConnectionLike {
 
 export interface CreateIssueInput {
   description?: string;
+  /** Jira: the issue type's name (default `Task`). Linear has no issue types and ignores it. */
+  issueType?: string;
+  /** The parent issue, as `IssueResult.identifier` (Jira) or `IssueResult.id` (Linear). */
+  parentId?: string;
   projectKey?: string;
   title: string;
 }
@@ -175,8 +179,10 @@ export async function createLinearIssue(
     );
   }
   const query = `
-    mutation CreateIssue($title: String!, $description: String, $teamId: String!) {
-      issueCreate(input: { title: $title, description: $description, teamId: $teamId }) {
+    mutation CreateIssue($title: String!, $description: String, $teamId: String!, $parentId: String) {
+      issueCreate(
+        input: { title: $title, description: $description, teamId: $teamId, parentId: $parentId }
+      ) {
         success
         issue {
           id
@@ -193,6 +199,7 @@ export async function createLinearIssue(
     query,
     {
       description: input.description ?? null,
+      parentId: input.parentId ?? null,
       teamId,
       title: input.title,
     }
@@ -216,7 +223,8 @@ export async function createJiraIssue(
   const payload = {
     fields: {
       description: jiraAdfDescription(input.description),
-      issuetype: { name: 'Task' },
+      issuetype: { name: input.issueType ?? 'Task' },
+      ...(input.parentId ? { parent: { key: input.parentId } } : {}),
       project: { key: projectKey },
       summary: input.title,
     },

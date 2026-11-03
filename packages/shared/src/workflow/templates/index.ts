@@ -7,11 +7,13 @@ import { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
 import { APPROVE_BEFORE_PR_SPEC } from './approveBeforePr.js';
 import { CI_TRIAGE_AND_FIX_SPEC, CI_TRIAGE_INPUT_SCHEMA } from './ciTriageAndFix.js';
 import { CODE_AND_CI_SPEC } from './codeAndCi.js';
+import { CONFLUENCE_REVIEW_TO_TICKETS_SPEC } from './confluenceReviewToTickets.js';
 import { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
 import { CREATE_ISSUE_SPEC } from './createIssue.js';
 import { CREATE_ISSUE_FROM_BRIEF_SPEC } from './createIssueFromBrief.js';
 import { DB_MIGRATION_DRY_RUN_SPEC } from './dbMigrationDryRun.js';
 import { DEPENDENCY_UPDATE_SPEC } from './dependencyUpdate.js';
+import { DOCS_REFRESH_SPEC } from './docsRefresh.js';
 import { EXTERNAL_APPROVAL_GATE_SPEC } from './externalApprovalGate.js';
 import { FOUR_EYES_SPEC } from './fourEyes.js';
 import { FULLY_SUPERVISED_SPEC } from './fullySupervised.js';
@@ -31,6 +33,7 @@ import { STAGED_DEPLOY_SIGNALS_SPEC } from './stagedDeploySignals.js';
 import { TICKET_TO_MERGE_SPEC } from './ticketToMerge.js';
 import { TICKET_TO_MERGE_QODO_SPEC } from './ticketToMergeQodo.js';
 import { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
+import { VULNERABILITY_REMEDIATION_SPEC } from './vulnerabilityRemediation.js';
 import { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';
 
 export interface BuiltinTemplate {
@@ -88,6 +91,18 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     description: DEPENDENCY_UPDATE_SPEC.description,
     name: DEPENDENCY_UPDATE_SPEC.name,
     spec: DEPENDENCY_UPDATE_SPEC,
+  },
+  {
+    // Fired by a repository schedule or by hand; a run with nothing to change opens no PR.
+    description: DOCS_REFRESH_SPEC.description,
+    name: DOCS_REFRESH_SPEC.name,
+    spec: DOCS_REFRESH_SPEC,
+  },
+  {
+    // The request carries the advisory: a ticket, a Jira filter match, or an inbound event.
+    description: VULNERABILITY_REMEDIATION_SPEC.description,
+    name: VULNERABILITY_REMEDIATION_SPEC.name,
+    spec: VULNERABILITY_REMEDIATION_SPEC,
   },
   {
     description: MODEL_CATALOG_REFRESH_SPEC.description,
@@ -332,6 +347,31 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     workspaceProvider: 'issue_tracker',
   },
 
+  // ── Document review (Confluence page -> comments -> Jira tickets) ──────────
+  {
+    description: CONFLUENCE_REVIEW_TO_TICKETS_SPEC.description,
+    inputSchema: {
+      properties: {
+        connectionId: { connectionType: 'confluence', type: 'connection' },
+        // What the page is reviewed against; the reviewer falls back to a general rubric.
+        criteria: { type: 'string' },
+        // Jira issue type names, for a project that does not call them Epic, Story and Sub-task.
+        epicIssueType: { type: 'string' },
+        instructions: { type: 'string' },
+        pageId: { type: 'string' },
+        projectKey: { type: 'string' },
+        storyIssueType: { type: 'string' },
+        subtaskIssueType: { type: 'string' },
+        trackerConnectionId: { connectionType: 'issue_tracker', type: 'connection' },
+      },
+      required: ['connectionId', 'pageId', 'trackerConnectionId'],
+      type: 'object',
+    },
+    name: CONFLUENCE_REVIEW_TO_TICKETS_SPEC.name,
+    spec: CONFLUENCE_REVIEW_TO_TICKETS_SPEC,
+    workspaceProvider: 'document',
+  },
+
   // ── PRD workflow ─────────────────────────────────────────────────────────
   {
     description: PRD_DECOMPOSITION_SPEC.description,
@@ -354,11 +394,13 @@ export { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
 export { APPROVE_BEFORE_PR_SPEC } from './approveBeforePr.js';
 export { CI_TRIAGE_AND_FIX_SPEC, CI_TRIAGE_INPUT_SCHEMA } from './ciTriageAndFix.js';
 export { CODE_AND_CI_SPEC } from './codeAndCi.js';
+export { CONFLUENCE_REVIEW_TO_TICKETS_SPEC } from './confluenceReviewToTickets.js';
 export { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
 export { CREATE_ISSUE_SPEC } from './createIssue.js';
 export { CREATE_ISSUE_FROM_BRIEF_SPEC } from './createIssueFromBrief.js';
 export { DB_MIGRATION_DRY_RUN_SPEC } from './dbMigrationDryRun.js';
 export { DEPENDENCY_UPDATE_SPEC } from './dependencyUpdate.js';
+export { DOCS_REFRESH_SPEC } from './docsRefresh.js';
 export { EXTERNAL_APPROVAL_GATE_SPEC } from './externalApprovalGate.js';
 export { FOUR_EYES_SPEC } from './fourEyes.js';
 export { FULLY_SUPERVISED_SPEC } from './fullySupervised.js';
@@ -379,4 +421,5 @@ export { STAGED_DEPLOY_SIGNALS_SPEC } from './stagedDeploySignals.js';
 export { TICKET_TO_MERGE_SPEC } from './ticketToMerge.js';
 export { TICKET_TO_MERGE_QODO_SPEC } from './ticketToMergeQodo.js';
 export { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
+export { VULNERABILITY_REMEDIATION_SPEC } from './vulnerabilityRemediation.js';
 export { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';

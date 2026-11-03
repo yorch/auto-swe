@@ -485,3 +485,66 @@ export async function updateConfluencePage(
     version: updated.version?.number ?? version + 1,
   };
 }
+
+/**
+ * Add a page-level (footer) comment. v2 throughout, like the page paths. The text is escaped and
+ * stored as paragraphs, so nothing a model wrote can add markup to the page.
+ */
+export async function createConfluenceFooterComment(
+  connection: ConfluenceConnectionLike,
+  input: { bodyText: string; pageId: string }
+): Promise<{ id: string }> {
+  const created = await confluenceFetch<{ id?: string }>(
+    connection,
+    '/wiki/api/v2/footer-comments',
+    {
+      body: JSON.stringify({
+        body: { representation: 'storage', value: storageFromText(input.bodyText) },
+        pageId: input.pageId,
+      }),
+      method: 'POST',
+    }
+  );
+  if (typeof created.id !== 'string' || created.id === '') {
+    throw ApplicationFailure.nonRetryable('Confluence returned no id for the comment');
+  }
+  return { id: created.id };
+}
+
+/**
+ * Add a comment anchored to a passage of the page. `textSelection` is the passage as it appears
+ * in the page text, `matchCount` how many times it appears there and `matchIndex` which of them
+ * the comment belongs to (zero-based). Confluence refuses a passage it cannot find, so a caller
+ * that wants the comment either way falls back to a footer comment.
+ */
+export async function createConfluenceInlineComment(
+  connection: ConfluenceConnectionLike,
+  input: {
+    bodyText: string;
+    matchCount: number;
+    matchIndex: number;
+    pageId: string;
+    textSelection: string;
+  }
+): Promise<{ id: string }> {
+  const created = await confluenceFetch<{ id?: string }>(
+    connection,
+    '/wiki/api/v2/inline-comments',
+    {
+      body: JSON.stringify({
+        body: { representation: 'storage', value: storageFromText(input.bodyText) },
+        inlineCommentProperties: {
+          textSelection: input.textSelection,
+          textSelectionMatchCount: input.matchCount,
+          textSelectionMatchIndex: input.matchIndex,
+        },
+        pageId: input.pageId,
+      }),
+      method: 'POST',
+    }
+  );
+  if (typeof created.id !== 'string' || created.id === '') {
+    throw ApplicationFailure.nonRetryable('Confluence returned no id for the comment');
+  }
+  return { id: created.id };
+}

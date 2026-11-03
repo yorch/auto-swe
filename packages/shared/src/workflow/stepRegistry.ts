@@ -81,7 +81,7 @@ const CROSS_REPO_CHECKOUT_FIELD = {
 
 const ALLOWED_PATHS_FIELD = {
   description:
-    'JSON array of repo-relative file paths this step may change, for example ["docs/a.md"]. A change that touches any other file fails the step before it is committed or pushed. Leave empty for no restriction.',
+    'JSON array of what this step may change: a repo-relative file ("docs/a.md"), a directory by a trailing slash ("docs/"), or an extension ("**/*.md"). A change that touches any other file fails the step before it is committed or pushed. Leave empty for no restriction.',
   key: 'allowedPaths',
   label: 'Allowed paths',
   type: 'json' as const,
@@ -1003,6 +1003,29 @@ register({
     'starting a RunnableWorkflow per story. Returns { workRequestIds }.',
   label: 'Submit PRD work requests',
   name: 'submitPrdWorkRequests',
+});
+
+register({
+  category: 'control',
+  configFields: [
+    {
+      description:
+        'What the agent returned: a review from the document reviewer (`docReview`) or a ticket plan from the ticket planner (`ticketPlan`).',
+      enumValues: ['docReview', 'ticketPlan'],
+      key: 'kind',
+      label: 'Kind',
+      required: true,
+      type: 'enum',
+    },
+  ],
+  description:
+    "Check a document-review agent's JSON reply against its shape and render it for a person to read. " +
+    "Reads `inputs.text` (the agent node's `output.text`). Output: `valid` (false with a fixed `error` " +
+    'when the reply is not the expected JSON, which the template routes to a person), `markdown`, and by kind: ' +
+    '`ready`, `summary`, `findingCount`, `blockingCount`, `comments` for a review (a review that lists a ' +
+    'blocker or a major finding is never ready), or `plan`, `ticketCount`, `subtaskCount` for a plan. Never fails the run.',
+  label: 'Check agent output',
+  name: 'parseAgentOutput',
 });
 
 /** Get metadata for a step name. Throws on unknown step. */
