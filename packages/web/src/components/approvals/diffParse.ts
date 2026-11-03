@@ -120,3 +120,16 @@ export function parseUnifiedDiff(content: string): ParsedDiffFile[] {
   }
   return files.filter((f) => f.lines.length > 0);
 }
+
+/**
+ * The lines of one file's patch as the host gives it: hunks only, with no file header. Every line
+ * the parser produced is kept, so a patch that confuses it still shows all of its text.
+ */
+export function parseFilePatch(patch: string): Pick<ParsedDiffFile, 'added' | 'lines' | 'removed'> {
+  const files = parseUnifiedDiff(patch);
+  return {
+    added: files.reduce((n, f) => n + f.added, 0),
+    lines: files.flatMap((f) => f.lines),
+    removed: files.reduce((n, f) => n + f.removed, 0),
+  };
+}
