@@ -9,6 +9,7 @@ import { summarizePullRequestOutcomes } from '@auto-swe/shared/lib/pullRequestOu
 import { resolveGitHubBaseUrl } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type {
+  PullRequestCockpit,
   PullRequestListItem,
   PullRequestOutcomesResponse,
   WorkflowRunStatus,
@@ -18,8 +19,10 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { csvRow } from '../lib/csv.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
+import { readPullFiles } from '../lib/githubPullFiles.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { assembleCockpit } from '../lib/pullRequestCockpit.js';
 import { repositoryTeamScope, runMetricsTeamScope } from '../lib/runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { assertTeamParam } from '../lib/teamParam.js';
@@ -545,6 +548,120 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         .header('X-Export-Row-Limit', String(OUTCOMES_EXPORT_MAX_ROWS))
         .header('X-Export-Truncated', String(matching > OUTCOMES_EXPORT_MAX_ROWS))
         .send(Readable.from(lines()));
+    }
+  );
+  // GET /api/v1/pull-requests/:id/cockpit — what the review page shows: the latest stored
+  // evaluation and the changed files read live from the host. A repository the caller cannot reach
+  // is a 404, and the host is not asked until that has been decided.
+  app.get(
+    '/:id/cockpit',
+    {
+      onRequest: engineerOnly,
+      schema: { params: z.object({ id: z.string().uuid() }) },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const reach =
+        user.role === 'ADMIN'
+          ? {}
+          : { connection: reachableConnections(user, request.repoAccessGate) };
+      const row = await fastify.prisma.pullRequest.findFirst({
+        include: {
+          repository: {
+            select: {
+              githubApiUrl: true,
+              githubUrl: true,
+              id: true,
+              installation: { select: { host: true, installationId: true } },
+              organizationName: true,
+              repoName: true,
+            },
+          },
+          workflow: {
+            select: {
+              costUsdAccrued: true,
+              repoId: true,
+              temporalWorkflowId: true,
+              workRequest: { select: { externalTicketId: true, id: true } },
+            },
+          },
+        },
+        where: {
+          id: request.params.id,
+          ...(user.role === 'ADMIN'
+            ? {}
+            : { repository: reachableConnections(user, request.repoAccessGate) }),
+        },
+      });
+      if (!row) {
+        return sendError(reply, 404, 'PULL_REQUEST_NOT_FOUND', 'Pull request not found');
+      }
+      const ledger = row.workflow && row.workflow.repoId === row.repoId ? row.workflow : null;
+      const [instanceBaseUrl, run, evaluation, files] = await Promise.all([
+        resolveGitHubBaseUrl(),
+        ledger
+          ? fastify.prisma.workflowRun.findFirst({
+              select: { id: true, status: true },
+              where: {
+                AND: [
+                  buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+                  { workflowId: ledger.temporalWorkflowId },
+                ],
+              },
+            })
+          : null,
+        row.repoId !== null && row.prNumber !== null
+          ? fastify.prisma.prEvaluation.findFirst({
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              select: {
+                brief: true,
+                createdAt: true,
+                headSha: true,
+                id: true,
+                mode: true,
+                reasons: true,
+                requiredApprovers: true,
+                riskClass: true,
+                statusState: true,
+              },
+              where: { connectionId: row.repoId, prNumber: row.prNumber, ...reach },
+            })
+          : null,
+        row.repository && row.prNumber !== null
+          ? readPullFiles(row.repository, row.prNumber)
+          : ({ reason: 'not-found', type: 'unavailable' } as const),
+      ]);
+      const parts = assembleCockpit({ evaluation, files, storedHeadSha: row.headSha });
+      const data: PullRequestCockpit = {
+        ...parts,
+        pull: {
+          ciStatus: row.ciStatus,
+          closedAt: row.closedAt?.toISOString() ?? null,
+          costUsd: ledger?.costUsdAccrued ?? null,
+          headSha: row.headSha,
+          id: row.id,
+          isDraft: row.isDraft,
+          latestRun: run ? { id: run.id, status: run.status as WorkflowRunStatus } : null,
+          mergedAt: row.mergedAt?.toISOString() ?? null,
+          openedAt: row.openedAt.toISOString(),
+          prNumber: row.prNumber,
+          repository: row.repository
+            ? {
+                id: row.repository.id,
+                name: row.repository.repoName ?? '',
+                org: row.repository.organizationName ?? '',
+              }
+            : null,
+          status: row.status as PullRequestState,
+          ticketId: ledger?.workRequest?.externalTicketId ?? null,
+          title: row.title,
+          url: row.repository
+            ? pullRequestUrl(row.repository, row.prNumber, instanceBaseUrl)
+            : null,
+          workRequestId: ledger?.workRequest?.id ?? null,
+        },
+      };
+      return { data };
     }
   );
 };
