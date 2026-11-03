@@ -9,11 +9,13 @@
  * question past the stop as if it were a concrete criterion.
  */
 
+import { NO_CRITERIA_REASON } from '@auto-swe/shared/lib/agentPrompts';
+
 /** At most this many ambiguities, each at most this many characters, reach the run result. */
 export const MAX_AMBIGUITIES = 10;
 export const MAX_AMBIGUITY_CHARS = 500;
 export const NO_REASON_GIVEN = 'no reason given';
-export const NO_CRITERIA_REASON = 'validation could not extract any verifiable criteria';
+export { NO_CRITERIA_REASON };
 
 /**
  * The marker at the start of an entry, after the decoration a model puts round it: backticks,
