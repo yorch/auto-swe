@@ -82,6 +82,74 @@ five-second bound. Registrations allow 32 concurrent exchanges and use a 60-seco
 All proxy rows have `source: egress_proxy`, `purpose: egress`, and no bodies. Socket errors do not
 crash the worker; persistence failures log and increment `egress_proxy.persist_failures`.
 
+### Run egress policy
+
+The `workspace.egressPolicy` setting (ADMIN-only, run-pinned, overridable per workflow template,
+team and organization; default `open`) decides how much outbound access a run's containers get.
+A launch may choose a stricter level for one run, never a looser one (see
+[Launch-time narrowing](#launch-time-narrowing)).
+
+| Level | Agent workspace | `shell` / `containerStep` with `network: "egress"` |
+|---|---|---|
+| `open` | Unfiltered; with the worker's egress proxy configured, `HTTP_PROXY` holds cooperating clients to the team allowlist. | The team allowlist via the DNS filter (and the egress proxy when configured); an empty allowlist permits any host. |
+| `restricted` | The team allowlist is mandatory: an empty list leaves only what `blocked` allows, and a non-empty allowlist with no egress proxy configured refuses the workspace with `EGRESS_POLICY_UNENFORCEABLE`. Enforced by the egress proxy plus a network lock that confines the workspace to the model proxy, the registry proxy when wired, the repository's git host and, for a non-empty allowlist, the egress proxy. A raw socket or `--noproxy` reaches nothing else. | An empty allowlist forces `network` to `none`. With an allowlist the step is held to it by the egress proxy and the DNS filter only; it is not network-locked. The step is refused when the worker's egress proxy is not configured. |
+| `blocked` | Only the model proxy, the registry proxy when wired, and the repository's git host (plus cluster DNS on Kubernetes). There is no forwarding proxy. | `network` is forced to `none`. |
+
+A capped step records `none (capped by egress policy <level>)` as its network in its execution
+event. A `containerStep` sidecar needs network access, so it is refused where the policy forbids
+it. When a lock cannot be established or proved, the workspace is destroyed and the activity fails
+with a non-retryable `EGRESS_POLICY_UNENFORCEABLE`.
+
+The lock is applied after provisioning (clone and registry wiring) and before any agent code runs.
+It covers the agent workspace only:
+
+- **Docker.** A short-lived helper container with `NET_ADMIN` shares the workspace's network
+  namespace and installs default-deny rules. The names to allow are resolved first and pinned in
+  the workspace's hosts file, and the embedded DNS resolver is blocked. The helper image
+  (`WORKSPACE_METADATA_BLOCK_IMAGE`, default `alpine:3.20`) needs both `iptables` and `ip6tables`,
+  or `apk` plus network access to install them; the install path is apk-only, so a non-Alpine
+  helper image must already carry both. The lock reads the policies back from the kernel and
+  fails closed on anything but a drop. A Docker workspace's attached services share its network
+  namespace, so they are locked with it and a service that needs outbound access fails.
+- **Kubernetes.** The pod is labelled `asw/egress=blocked` or `asw/egress=restricted`, which moves
+  it onto the matching narrow NetworkPolicy (`workspace-egress-blocked` /
+  `workspace-egress-restricted`), and the worker adds a per-pod policy of `/32` and `/128`
+  addresses for the allowed hosts. The
+  worker proves the lock with a connection probe before and after the label. The namespace manifest
+  must be re-applied and the worker's Role extended; see
+  [deployment](./deployment.md#kubernetes).
+
+Consequences for what runs afterwards:
+
+- The trusted delivery workspace of an agent run is created `blocked` whenever the run's policy is
+  not `open`: it only imports the agent's tree, commits and publishes.
+- Dependency repository checkouts run after the lock. Under `blocked`, and under `restricted` with
+  an empty allowlist, one on a host other than the repository's git host fails and is skipped with
+  a warning; Git LFS and submodules on other hosts fail the same way. Under `restricted` with an
+  allowlist they succeed only over HTTPS to an allowlisted host through the egress proxy (the
+  workspace carries `HTTPS_PROXY`; only the repository git host is in `NO_PROXY`).
+- The Claude Code harness cannot install `bash` from a package mirror once the network is locked,
+  so the executor image must already contain it; under `restricted` with the mirror allowlisted,
+  `apk add bash` goes through the egress proxy and succeeds.
+
+Allowed and blocked connections appear as `egress_proxy` HTTP activity rows (`blocked` and
+`blockReason` set for a denial), as described above. Connections dropped by the network lock are
+not recorded; only traffic sent through the egress proxy produces rows. Traffic the worker itself originates (model,
+SCM, connectors, MCP) is not governed by the policy.
+
+#### Launch-time narrowing
+
+`POST /api/v1/agent-runs`, `POST /api/v1/work-requests` and
+`POST /api/v1/workflow-templates/:id/runs` accept an optional `egressPolicy`. A value looser than
+the one configured for the run is refused with `400 EGRESS_POLICY_WIDENS`. The CLI exposes it as
+`--egress-policy` on `agent run`, `run` and `workflows run`, and the launch forms have a "Network
+access" select. A retry or re-run keeps the stricter of the stored and the currently configured
+value, and an idempotency-key replay of a work request, or an MCP replay, refuses a different
+value (a REST agent-run or template launch reusing a key is deduplicated by workflow id with no
+comparison). A requested level is echoed in the agent-run response's `effective` block and the
+launch audit entry; the pinned level of every run is `egressPolicy` on
+`GET /api/v1/workflow-runs/:id`.
+
 ## Execution and governed-write events
 
 Shell and container-step execution writes `shell.exec` and `container.exec` activity events with
@@ -156,6 +224,23 @@ hints reduce rendering work; the section does not use a dedicated virtualization
 
 ## Limitations
 
+- The policy governs agent-controlled containers only. Worker-originated traffic (model calls, SCM,
+  connectors, MCP) is not affected.
+- Under `restricted` with an allowlist, `shell` and `containerStep` steps are enforced by the
+  egress proxy and the DNS filter, not by a network lock, so a client that ignores proxy variables
+  can still reach a literal IP address.
+- Under `blocked`, and `restricted` with an empty allowlist, steps run with no network and no
+  registry proxy, so a step that needs package installs fails.
+- On Kubernetes, DNS to the cluster DNS service stays reachable under both locking levels. It is a
+  low-bandwidth exfiltration channel; closing it needs a DNS policy outside the platform manifest.
+  The lock also requires a CNI that enforces NetworkPolicy.
+- Allowed names are resolved once, when the lock is applied. A host whose addresses rotate (a CDN)
+  can become unreachable for later git operations, which then fail closed.
+- Dependency repositories, Git LFS and submodules on a host other than the repository's own git
+  host fail after the lock under `blocked` and under `restricted` with an empty allowlist; with an
+  allowlist they succeed only over HTTPS to an allowlisted host through the egress proxy.
+- A Docker workspace's attached services share its network namespace, so they are locked with it
+  and a service that needs outbound access fails.
 - The repository's git host is excluded from the workspace proxy (`NO_PROXY`, which also matches
   its subdomains), so git traffic to it, including a GitHub Enterprise host on a private address, is neither subject to the team
   allowlist nor recorded as proxy rows. Other hosts a run clones from (dependency repositories on
