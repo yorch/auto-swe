@@ -46,6 +46,87 @@ describe('createIssue', () => {
     );
   });
 
+  it('creates a Jira issue of the named type under a parent', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({ id: '10002', key: 'PROJ-43', self: 'https://x.atlassian.net/x' }),
+      ok: true,
+    });
+    globalThis.fetch = fetchMock;
+
+    await createIssue(
+      {
+        apiToken: 'tok',
+        config: {
+          baseUrl: 'https://x.atlassian.net',
+          defaultProjectKey: 'PROJ',
+          email: 'a@b.com',
+          provider: 'jira',
+        },
+      },
+      { description: 'd', issueType: 'Sub-task', parentId: 'PROJ-42', title: 'Do a part' }
+    );
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.fields).toMatchObject({
+      issuetype: { name: 'Sub-task' },
+      parent: { key: 'PROJ-42' },
+      project: { key: 'PROJ' },
+      summary: 'Do a part',
+    });
+  });
+
+  it('keeps creating a plain Task with no parent when neither is asked for', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({ id: '1', key: 'PROJ-1', self: 'https://x.atlassian.net/x' }),
+      ok: true,
+    });
+    globalThis.fetch = fetchMock;
+
+    await createIssue(
+      {
+        apiToken: 'tok',
+        config: {
+          baseUrl: 'https://x.atlassian.net',
+          defaultProjectKey: 'PROJ',
+          email: 'a@b.com',
+          provider: 'jira',
+        },
+      },
+      { title: 'Plain' }
+    );
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.fields.issuetype).toEqual({ name: 'Task' });
+    expect(body.fields).not.toHaveProperty('parent');
+  });
+
+  it('passes a Linear parent as the issue it nests under', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({
+        data: {
+          issueCreate: {
+            issue: { id: 'i2', identifier: 'T-2', title: 'x', url: 'https://linear.app/T-2' },
+            success: true,
+          },
+        },
+      }),
+      ok: true,
+    });
+    globalThis.fetch = fetchMock;
+
+    await createIssue(
+      { apiToken: 'lin', config: { defaultProjectKey: 'team', provider: 'linear' } },
+      { parentId: 'parent-uuid', title: 'Child' }
+    );
+
+    const body = JSON.parse((fetchMock.mock.calls[0] as [string, RequestInit])[1].body as string);
+    expect(body.variables).toMatchObject({
+      parentId: 'parent-uuid',
+      teamId: 'team',
+      title: 'Child',
+    });
+  });
+
   it('creates a Jira issue', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       json: async () => ({

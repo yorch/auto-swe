@@ -522,7 +522,8 @@ are added as data, not code. Seeded built-ins split by how they bind a model:
   dashboard's assistant panel, acting as the signed-in user, and `assistantTitler` names its
   conversations. The rest exist because the
   platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
-  `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product).
+  `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product),
+  `docsMaintainer`, `docReviewer`, `ticketPlanner` (documentation and document review).
 - **Sub-role personas** (`inheritsModelFrom`): `securityReviewer` /
   `domainLogicReviewer` / `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` /
   `prdDecomposer` / `ciTriager` / `ticketContextGatherer` / `prFeedbackResponder` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /

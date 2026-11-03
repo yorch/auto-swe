@@ -16,6 +16,8 @@ import {
   CONTENT_WRITER_PROMPT,
   CONTEXT_VALIDATOR_PROMPT,
   DECOMPOSER_AGENT_PROMPT,
+  DOC_REVIEWER_PROMPT,
+  DOCS_MAINTAINER_PROMPT,
   DOMAIN_LOGIC_REVIEWER_PROMPT,
   GATE_FIX_SYSTEM_PROMPT,
   IMPLEMENTER_SYSTEM_PROMPT,
@@ -35,6 +37,7 @@ import {
   SECURITY_REVIEW_PROMPT,
   SUPPORT_RESPONDER_PROMPT,
   TICKET_CONTEXT_GATHERER_PROMPT,
+  TICKET_PLANNER_PROMPT,
   WORKFLOW_AUTHOR_PROMPT,
   WORKFLOW_EXPLAINER_PROMPT,
 } from './agentPrompts.js';
@@ -631,6 +634,39 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-sonnet-5-5',
     name: 'PRD Writer',
     systemPrompt: PRD_WRITER_PROMPT,
+  },
+  {
+    // Documentation pack: keeps a repository's markdown true to its code, through an agent run
+    // that delivers a draft pull request. Resolved on demand, so it is not in
+    // MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
+    description:
+      'Updates or creates the markdown documentation of a repository so it matches the code, touching nothing else.',
+    key: 'docsMaintainer',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
+    name: 'Docs Maintainer',
+    systemPrompt: DOCS_MAINTAINER_PROMPT,
+  },
+  {
+    // Document review pack: reviews a document against criteria and returns graded, anchored
+    // findings as JSON. Resolved on demand by the generic `agent` node, so it is not in
+    // MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
+    description:
+      'Reviews a document against stated criteria and returns a readiness verdict with graded, located findings.',
+    key: 'docReviewer',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
+    name: 'Document Reviewer',
+    systemPrompt: DOC_REVIEWER_PROMPT,
+  },
+  {
+    // Document review pack: proposes an epic, ticket and sub-task structure from a reviewed
+    // document, for a person to approve. Resolved on demand by the generic `agent` node, so it
+    // is not in MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
+    description:
+      'Proposes an epic, tickets and sub-tasks from a reviewed document, as JSON for a person to approve.',
+    key: 'ticketPlanner',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
+    name: 'Ticket Planner',
+    systemPrompt: TICKET_PLANNER_PROMPT,
   },
   {
     // P3 repo-dependency-graph: proposes LLM-inferred cross-repo edges for

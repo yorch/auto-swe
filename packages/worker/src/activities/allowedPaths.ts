@@ -55,6 +55,28 @@ type Exec = Pick<Workspace, 'exec'> & { gitIdentity?: GitIdentity };
 const guardedGit = (subcommand: string): string =>
   `GIT_NO_REPLACE_OBJECTS=1 ${gitWithAuthHeader(subcommand)}`;
 
+/**
+ * Whether `changedPath` (repo-relative, as git lists it) is covered by an `allowedPaths` entry.
+ * An entry is one of three literal forms, and none is a pattern language:
+ *  - `docs/a.md`: exactly that file;
+ *  - `docs/`: anything under that directory (a trailing slash);
+ *  - `**\/*.md`: any file whose path ends in that extension (a leading `**\/*.`).
+ * Anything else, including an entry with other wildcard characters, matches only itself, so a
+ * mistyped pattern narrows the guard instead of widening it.
+ */
+export function pathAllowed(allowed: readonly string[], changedPath: string): boolean {
+  return allowed.some((entry) => {
+    if (entry === changedPath) {
+      return true;
+    }
+    if (entry.endsWith('/') && entry.length > 1 && !entry.includes('*')) {
+      return changedPath.startsWith(entry);
+    }
+    const extension = /^\*\*\/\*(\.[A-Za-z0-9]+)$/.exec(entry)?.[1];
+    return extension !== undefined && changedPath.endsWith(extension);
+  });
+}
+
 /** What a step's guard refuses beyond `allowedPaths`. */
 export interface PathGuardOptions {
   /** See {@link PathGuard.refuseWorkflowChanges}. */
@@ -215,7 +237,7 @@ export async function assertCommittedTreeWithinAllowedPaths(
     );
   }
   const changed = out.split('\0').filter((p) => p !== '');
-  const outside = changed.filter((p) => !allowed.includes(p));
+  const outside = changed.filter((p) => !pathAllowed(allowed, p));
   if (outside.length > 0) {
     throw ApplicationFailure.nonRetryable(
       `The change touches files this step may not change (${outside.slice(0, 10).join(', ')}` +

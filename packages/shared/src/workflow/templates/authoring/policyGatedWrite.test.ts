@@ -106,4 +106,39 @@ describe('policyGatedWrite', () => {
     expect(nodes.autoWrite).toMatchObject({ next: 'finish' });
     expect(nodes.manualWrite).toMatchObject({ next: 'finish' });
   });
+
+  it('idPrefix: renames every node and every reference to one, so two gates can share a spec', () => {
+    const nodes = policyGatedWrite(opts({ group: 'comments gate', idPrefix: 'comments' }));
+    expect(Object.keys(nodes).sort()).toEqual([
+      'commentsAutoWrite',
+      'commentsCheckAuto',
+      'commentsDoneRejected',
+      'commentsHumanApproval',
+      'commentsManualWrite',
+      'commentsPublishOutcome',
+    ]);
+    expect(nodes.commentsPublishOutcome).toMatchObject({ next: 'commentsCheckAuto' });
+    expect(nodes.commentsCheckAuto).toMatchObject({
+      expr: "nodes.commentsPublishOutcome.output.decision == 'require_approval'",
+      onFalse: 'commentsAutoWrite',
+      onTrue: 'commentsHumanApproval',
+    });
+    expect(nodes.commentsHumanApproval).toMatchObject({
+      approverCount: { from: 'nodes.commentsPublishOutcome.output.approverCount' },
+      onApprove: 'commentsManualWrite',
+      onReject: 'commentsDoneRejected',
+      onTimeout: 'commentsDoneRejected',
+    });
+    for (const node of Object.values(nodes)) {
+      expect(node.group).toBe('comments gate');
+    }
+    expectWellFormed(nodes, 'commentsPublishOutcome', ['done']);
+  });
+
+  it('with no idPrefix or group, emits what it always did', () => {
+    const nodes = policyGatedWrite(opts());
+    for (const node of Object.values(nodes)) {
+      expect(node.group).toBe('policy gate');
+    }
+  });
 });

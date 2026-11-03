@@ -5,6 +5,8 @@ import { ASYNC_SAFETY_SKILL } from './asyncSafety.js';
 import { CONFIGURATION_OVER_HARDCODING_SKILL } from './configurationOverHardcoding.js';
 import { CONTEXT_AMBIGUITY_RESOLUTION_SKILL } from './contextAmbiguityResolution.js';
 import { DESIGN_FIDELITY_SKILL } from './designFidelity.js';
+import { DOCUMENTATION_ACCURACY_SKILL } from './documentationAccuracy.js';
+import { DOCUMENT_REVIEW_RUBRIC_SKILL } from './documentReviewRubric.js';
 import { DOMAIN_LOGIC_INTEGRITY_SKILL } from './domainLogicIntegrity.js';
 import { ERROR_PATH_COVERAGE_SKILL } from './errorPathCoverage.js';
 import { FOLLOW_EXISTING_PATTERNS_SKILL } from './followExistingPatterns.js';
@@ -34,6 +36,7 @@ import { SUPPORT_KB_RETRIEVAL_SKILL } from './supportKbRetrieval.js';
 import { SUPPORT_RESPONSE_TEMPLATES_SKILL } from './supportResponseTemplates.js';
 import { SUPPORT_TICKET_TONE_SKILL } from './supportTicketTone.js';
 import { TEST_FIRST_SKILL } from './testFirst.js';
+import { TICKET_HIERARCHY_PLANNING_SKILL } from './ticketHierarchyPlanning.js';
 import { UI_VERIFICATION_SKILL } from './uiVerification.js';
 
 export interface BuiltinSkillDef {
@@ -88,6 +91,10 @@ export const BUILTIN_SKILLS: BuiltinSkillDef[] = [
   PRD_READINESS_SKILL,
   PRODUCT_ACCEPTANCE_CRITERIA_SKILL,
   STORY_DECOMPOSITION_SKILL,
+  // Documentation and document review
+  DOCUMENTATION_ACCURACY_SKILL,
+  DOCUMENT_REVIEW_RUBRIC_SKILL,
+  TICKET_HIERARCHY_PLANNING_SKILL,
   // Integrations (attached by an admin to agents bound to the connection)
   QODO_CONTEXT_SKILL,
 ];
@@ -100,6 +107,8 @@ export {
   CONFIGURATION_OVER_HARDCODING_SKILL,
   CONTEXT_AMBIGUITY_RESOLUTION_SKILL,
   DESIGN_FIDELITY_SKILL,
+  DOCUMENT_REVIEW_RUBRIC_SKILL,
+  DOCUMENTATION_ACCURACY_SKILL,
   DOMAIN_LOGIC_INTEGRITY_SKILL,
   ERROR_PATH_COVERAGE_SKILL,
   FOLLOW_EXISTING_PATTERNS_SKILL,
@@ -129,5 +138,6 @@ export {
   SUPPORT_RESPONSE_TEMPLATES_SKILL,
   SUPPORT_TICKET_TONE_SKILL,
   TEST_FIRST_SKILL,
+  TICKET_HIERARCHY_PLANNING_SKILL,
   UI_VERIFICATION_SKILL,
 };

@@ -11,11 +11,13 @@ import { prisma } from '@auto-swe/shared/db';
 import { ApplicationFailure } from '@temporalio/activity';
 import { z } from 'zod';
 import {
+  createConfluenceFooterComment,
+  createConfluenceInlineComment,
   createConfluencePage,
   readConfluencePage,
   updateConfluencePage,
 } from '../connectors/confluence.js';
-import { createIssue, fetchIssue } from '../connectors/issueTracker.js';
+import { createIssue, fetchIssue, type IssueResult } from '../connectors/issueTracker.js';
 import {
   appendNotionBlocks,
   createNotionPage,
@@ -25,6 +27,7 @@ import {
 import { postSlackMessage } from '../connectors/slack.js';
 import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
 import { assertConnectionAuthorized } from '../lib/connectionAccess.js';
+import { countOccurrences, MAX_REVIEW_FINDINGS, TicketPlanSchema } from '../lib/documentReview.js';
 import {
   assertApprovalSatisfied,
   findRecordedOutcome,
@@ -82,6 +85,10 @@ export interface WriteOutcomeResult {
   ok: boolean;
   placeholder?: boolean;
   reference?: string;
+  /** Every item a multi-item write created (a ticket plan's issues), epic first. */
+  references?: string[];
+  /** What a comment write left: how many were anchored to a passage and how many sit at the foot. */
+  comments?: { footer: number; inline: number };
 }
 
 export interface RunToolInput {
@@ -413,6 +420,9 @@ async function issueTrackerWriteOutcome(
     throw notSent('issue_tracker writeOutcome data must be an object');
   }
   const d = data as Record<string, unknown>;
+  if (d.plan !== undefined) {
+    return issueTrackerPlanOutcome(connection, token, d);
+  }
   const title = d.title;
   const description = d.description;
   if (typeof title !== 'string') {
@@ -425,6 +435,100 @@ async function issueTrackerWriteOutcome(
     { description: typeof description === 'string' ? description : undefined, projectKey, title }
   );
   return { connectionType: 'issue_tracker', ok: true, reference: result.url };
+}
+
+/** A connector's permanent refusal, as opposed to an outage worth retrying. */
+function isNonRetryable(err: unknown): boolean {
+  return (
+    typeof err === 'object' && err !== null && 'nonRetryable' in err && err.nonRetryable === true
+  );
+}
+
+/** A Jira issue type name from the request, or the default. */
+function issueTypeName(value: unknown, fallback: string): string {
+  return text(value)?.trim().slice(0, 60) ?? fallback;
+}
+
+/** The ticket text: its description, then its acceptance criteria as a list. */
+function ticketBody(description: string, acceptanceCriteria: readonly string[]): string {
+  return acceptanceCriteria.length === 0
+    ? description
+    : `${description}\n\nAcceptance criteria:\n${acceptanceCriteria.map((c) => `- ${c}`).join('\n')}`;
+}
+
+/**
+ * Create a ticket plan: one epic, a ticket under it for each entry, and a sub-task under each
+ * ticket that has any. `data.plan` is validated again here, whatever produced it, and the issue
+ * types come from the request (`epicIssueType`, `storyIssueType`, `subtaskIssueType`; Jira
+ * defaults `Epic`, `Story`, `Sub-task`; Linear has none and nests by parent).
+ *
+ * Creation is sequential and not transactional: a failure part way leaves what was created. The
+ * failure then names every issue created so far and none of the tracker's own text, so a person
+ * can tidy up, and the ledger refuses a blind retry that could create them twice.
+ */
+async function issueTrackerPlanOutcome(
+  connection: { config: unknown },
+  token: string | null,
+  d: Record<string, unknown>
+): Promise<WriteOutcomeResult> {
+  const parsed = TicketPlanSchema.safeParse(d.plan);
+  if (!parsed.success) {
+    throw notSent('issue_tracker writeOutcome plan does not match the ticket plan shape');
+  }
+  const plan = parsed.data;
+  const config = parseIssueTrackerConnectionConfig(connection.config);
+  const conn = { apiToken: requireToken(token), config };
+  const projectKey = text(d.projectKey) ?? config.defaultProjectKey;
+  const epicType = issueTypeName(d.epicIssueType, 'Epic');
+  const storyType = issueTypeName(d.storyIssueType, 'Story');
+  const subtaskType = issueTypeName(d.subtaskIssueType, 'Sub-task');
+  const parentRef = (issue: IssueResult) => issue.identifier ?? issue.id;
+  const created: IssueResult[] = [];
+
+  const make = async (
+    what: string,
+    input: { description: string; issueType: string; parentId?: string; title: string }
+  ): Promise<IssueResult> => {
+    try {
+      const issue = await createIssue(conn, { ...input, projectKey });
+      created.push(issue);
+      return issue;
+    } catch (err) {
+      const so_far = created.map((i) => i.identifier ?? i.url).join(', ') || 'none';
+      const why = isNonRetryable(err) ? 'refused' : 'failed';
+      throw ApplicationFailure.nonRetryable(
+        `The tracker ${why} the ${what} after ${created.length} issue(s) were created (${so_far}).`
+      );
+    }
+  };
+
+  const epic = await make('epic', {
+    description: plan.epic.description,
+    issueType: epicType,
+    title: plan.epic.title,
+  });
+  for (const ticket of plan.tickets) {
+    const issue = await make('ticket', {
+      description: ticketBody(ticket.description, ticket.acceptanceCriteria),
+      issueType: storyType,
+      parentId: parentRef(epic),
+      title: ticket.title,
+    });
+    for (const subtask of ticket.subtasks) {
+      await make('sub-task', {
+        description: subtask.description,
+        issueType: subtaskType,
+        parentId: parentRef(issue),
+        title: subtask.title,
+      });
+    }
+  }
+  return {
+    connectionType: 'issue_tracker',
+    ok: true,
+    reference: epic.url,
+    references: created.map((i) => i.url),
+  };
 }
 
 /**
@@ -457,6 +561,75 @@ function expectedVersion(value: unknown): number | undefined {
   throw notSent('Confluence writeOutcome version must be a positive whole number');
 }
 
+const ReviewCommentsSchema = z
+  .array(z.object({ body: z.string().trim().min(1), quote: z.string().default('') }))
+  .min(1)
+  .max(MAX_REVIEW_FINDINGS + 1);
+
+/**
+ * Leave review comments on a page: `data.pageId` and `data.comments`, each `{ body, quote }`.
+ * A comment whose `quote` is a passage that appears in the page is anchored to it; one whose
+ * passage is missing, or that Confluence refuses to anchor, goes at the foot of the page with the
+ * passage quoted, so no finding is lost to a formatting mismatch. A transient failure is not
+ * caught: the comments already left stay, and the ledger refuses a blind retry.
+ */
+async function confluenceCommentOutcome(
+  connection: { config: unknown },
+  token: string | null,
+  d: Record<string, unknown>
+): Promise<WriteOutcomeResult> {
+  const pageId = text(d.pageId) ?? text(d.targetPageId);
+  if (!pageId) {
+    throw notSent('Confluence writeOutcome comments require a pageId');
+  }
+  const comments = ReviewCommentsSchema.safeParse(d.comments);
+  if (!comments.success) {
+    throw notSent(
+      `Confluence writeOutcome comments must be 1 to ${MAX_REVIEW_FINDINGS + 1} entries, each with a body`
+    );
+  }
+  const conn = {
+    apiToken: requireToken(token),
+    config: parseConfluenceConnectionConfig(connection.config),
+  };
+  const page = await readConfluencePage(conn, pageId);
+  let inline = 0;
+  let footer = 0;
+  for (const comment of comments.data) {
+    const quote = comment.quote.trim();
+    const matchCount = countOccurrences(page.bodyText, quote);
+    if (quote !== '' && matchCount > 0) {
+      try {
+        await createConfluenceInlineComment(conn, {
+          bodyText: comment.body,
+          matchCount,
+          matchIndex: 0,
+          pageId,
+          textSelection: quote,
+        });
+        inline++;
+        continue;
+      } catch (err) {
+        // A refusal falls back to a footer comment; a transient failure is the caller's to retry.
+        if (!isNonRetryable(err)) {
+          throw err;
+        }
+      }
+    }
+    await createConfluenceFooterComment(conn, {
+      bodyText: quote === '' ? comment.body : `${comment.body}\n"${quote}"`,
+      pageId,
+    });
+    footer++;
+  }
+  return {
+    comments: { footer, inline },
+    connectionType: 'confluence',
+    ok: true,
+    reference: page.url,
+  };
+}
+
 /**
  * Create or update a Confluence page.
  *
@@ -486,6 +659,9 @@ async function confluenceWriteOutcome(
     throw notSent('Confluence writeOutcome data must be an object');
   }
   const d = data as Record<string, unknown>;
+  if (d.comments !== undefined) {
+    return confluenceCommentOutcome(connection, token, d);
+  }
   const bodyText = text(d.bodyText) ?? text(d.text);
   if (!bodyText) {
     throw notSent('Confluence writeOutcome requires bodyText');

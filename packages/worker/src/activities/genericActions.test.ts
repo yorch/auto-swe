@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  createConfluenceFooterComment,
+  createConfluenceInlineComment,
   createConfluencePage,
   readConfluencePage,
   updateConfluencePage,
@@ -65,6 +67,8 @@ vi.mock('../connectors/issueTracker.js', () => ({
 }));
 
 vi.mock('../connectors/confluence.js', () => ({
+  createConfluenceFooterComment: vi.fn(),
+  createConfluenceInlineComment: vi.fn(),
   createConfluencePage: vi.fn(),
   readConfluencePage: vi.fn(),
   updateConfluencePage: vi.fn(),
@@ -1229,5 +1233,232 @@ describe('refusals before the provider call leave no claim', () => {
       expect(prisma.workflowOutcomeReference.create).toHaveBeenCalledTimes(1);
       expect(prisma.workflowOutcomeReference.deleteMany).toHaveBeenCalledTimes(1);
     }
+  });
+});
+
+describe('confluence writeOutcome: review comments', () => {
+  const pageUrl = 'https://x.atlassian.net/wiki/pages/9';
+  beforeEach(() => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('confluence', { config: confluenceConfig, token: true })
+    );
+    (readConfluencePage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      bodyText: 'Goals\nShip fast.\nThe API is fast. The API is cheap.',
+      id: '9',
+      title: 'Doc',
+      url: pageUrl,
+      version: 2,
+    });
+    (createConfluenceInlineComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'c1' });
+    (createConfluenceFooterComment as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'c2' });
+  });
+
+  it('anchors a comment to a passage that is on the page, and counts how often it appears', async () => {
+    const result = await writeOutcome({
+      connectionId: confluenceConnectionId,
+      data: { comments: [{ body: '[major] vague', quote: 'The API' }], pageId: '9' },
+    });
+
+    expect(createConfluenceInlineComment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        bodyText: '[major] vague',
+        matchCount: 2,
+        matchIndex: 0,
+        pageId: '9',
+        textSelection: 'The API',
+      })
+    );
+    expect(createConfluenceFooterComment).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      comments: { footer: 0, inline: 1 },
+      connectionType: 'confluence',
+      ok: true,
+      reference: pageUrl,
+    });
+  });
+
+  it('puts a comment with no quote, or a quote that is not on the page, at the foot of the page', async () => {
+    const result = await writeOutcome({
+      connectionId: confluenceConnectionId,
+      data: {
+        comments: [
+          { body: 'Automated review: not ready.', quote: '' },
+          { body: '[minor] missing', quote: 'text the page does not have' },
+        ],
+        pageId: '9',
+      },
+    });
+
+    expect(createConfluenceInlineComment).not.toHaveBeenCalled();
+    expect(createConfluenceFooterComment).toHaveBeenNthCalledWith(1, expect.anything(), {
+      bodyText: 'Automated review: not ready.',
+      pageId: '9',
+    });
+    expect(createConfluenceFooterComment).toHaveBeenNthCalledWith(2, expect.anything(), {
+      bodyText: '[minor] missing\n"text the page does not have"',
+      pageId: '9',
+    });
+    expect(result.comments).toEqual({ footer: 2, inline: 0 });
+  });
+
+  it('falls back to a footer comment when Confluence refuses the anchor, and keeps the passage', async () => {
+    (createConfluenceInlineComment as ReturnType<typeof vi.fn>).mockRejectedValue(
+      Object.assign(new Error('refused'), { nonRetryable: true })
+    );
+    const result = await writeOutcome({
+      connectionId: confluenceConnectionId,
+      data: { comments: [{ body: '[major] vague', quote: 'Ship fast.' }], pageId: '9' },
+    });
+
+    expect(createConfluenceFooterComment).toHaveBeenCalledWith(expect.anything(), {
+      bodyText: '[major] vague\n"Ship fast."',
+      pageId: '9',
+    });
+    expect(result.comments).toEqual({ footer: 1, inline: 0 });
+  });
+
+  it('does not swallow an outage: a transient failure is thrown for the ledger to handle', async () => {
+    (createConfluenceInlineComment as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Confluence API transient error (503)')
+    );
+    await expect(
+      writeOutcome({
+        connectionId: confluenceConnectionId,
+        data: { comments: [{ body: 'x', quote: 'Ship fast.' }], pageId: '9' },
+      })
+    ).rejects.toThrow('transient');
+    expect(createConfluenceFooterComment).not.toHaveBeenCalled();
+  });
+
+  it('refuses comments with no page, an empty list, or an entry with no body, before reading the page', async () => {
+    for (const data of [
+      { comments: [{ body: 'x', quote: '' }] },
+      { comments: [], pageId: '9' },
+      { comments: [{ body: '  ', quote: '' }], pageId: '9' },
+      { comments: 'not a list', pageId: '9' },
+    ]) {
+      await expect(writeOutcome({ connectionId: confluenceConnectionId, data })).rejects.toThrow(
+        /comments/
+      );
+    }
+    expect(readConfluencePage).not.toHaveBeenCalled();
+  });
+});
+
+describe('issue_tracker writeOutcome: ticket plan', () => {
+  const trackerConnectionId = 'bd4483f7-1fcc-4abe-916c-deab2811a4dc';
+  const plan = {
+    epic: { description: 'Deliver the thing', title: 'The thing' },
+    rationale: 'Two tickets',
+    tickets: [
+      {
+        acceptanceCriteria: ['It works'],
+        description: 'Build A',
+        subtasks: [{ description: 'Design A', title: 'Design A' }],
+        title: 'A',
+      },
+      { description: 'Build B', title: 'B' },
+    ],
+  };
+  let n = 0;
+  beforeEach(() => {
+    n = 0;
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('issue_tracker', {
+        config: { baseUrl: 'https://jira.example.com', defaultProjectKey: 'ENG', provider: 'jira' },
+        token: true,
+      })
+    );
+    (createIssue as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      n++;
+      return {
+        id: `id-${n}`,
+        identifier: `ENG-${n}`,
+        url: `https://jira.example.com/browse/ENG-${n}`,
+      };
+    });
+  });
+
+  it('creates the epic, a ticket under it for each entry, and a sub-task under its ticket', async () => {
+    const result = await writeOutcome({
+      connectionId: trackerConnectionId,
+      data: { plan, projectKey: 'PAY' },
+    });
+
+    const calls = (createIssue as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
+    expect(calls).toEqual([
+      expect.objectContaining({ issueType: 'Epic', projectKey: 'PAY', title: 'The thing' }),
+      expect.objectContaining({
+        description: 'Build A\n\nAcceptance criteria:\n- It works',
+        issueType: 'Story',
+        parentId: 'ENG-1',
+        title: 'A',
+      }),
+      expect.objectContaining({ issueType: 'Sub-task', parentId: 'ENG-2', title: 'Design A' }),
+      expect.objectContaining({ issueType: 'Story', parentId: 'ENG-1', title: 'B' }),
+    ]);
+    expect(result).toEqual({
+      connectionType: 'issue_tracker',
+      ok: true,
+      reference: 'https://jira.example.com/browse/ENG-1',
+      references: [1, 2, 3, 4].map((i) => `https://jira.example.com/browse/ENG-${i}`),
+    });
+  });
+
+  it('takes the issue type names from the request, and treats blank ones as unset', async () => {
+    await writeOutcome({
+      connectionId: trackerConnectionId,
+      data: {
+        epicIssueType: 'Initiative',
+        plan,
+        projectKey: '',
+        storyIssueType: '',
+        subtaskIssueType: 'Subtask',
+      },
+    });
+    const calls = (createIssue as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
+    expect(calls.map((c) => c.issueType)).toEqual(['Initiative', 'Story', 'Subtask', 'Story']);
+    // A blank project key falls back to the connection's default, not an empty string.
+    expect(calls[0].projectKey).toBe('ENG');
+  });
+
+  it("stops at the first failure and names what was created, without the tracker's own text", async () => {
+    (createIssue as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        id: 'id-1',
+        identifier: 'ENG-1',
+        url: 'https://jira.example.com/browse/ENG-1',
+      })
+      .mockRejectedValueOnce(
+        Object.assign(new Error('Jira API error (400): secret internal detail'), {
+          nonRetryable: true,
+        })
+      );
+
+    const failure = await writeOutcome({
+      connectionId: trackerConnectionId,
+      data: { plan },
+    }).catch((e: Error) => e);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toBe(
+      'The tracker refused the ticket after 1 issue(s) were created (ENG-1).'
+    );
+    expect(createIssue).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses a plan that does not match the shape, before creating anything', async () => {
+    for (const bad of [
+      'a string',
+      { epic: { title: 'x' }, tickets: [] },
+      { epic: { title: '' }, tickets: [{ title: 'a' }] },
+      { epic: { title: 'x' }, tickets: [{ subtasks: [{ title: '' }], title: 'a' }] },
+    ]) {
+      await expect(
+        writeOutcome({ connectionId: trackerConnectionId, data: { plan: bad } })
+      ).rejects.toThrow('ticket plan shape');
+    }
+    expect(createIssue).not.toHaveBeenCalled();
   });
 });

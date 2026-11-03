@@ -1088,6 +1088,14 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     },
   ],
   [
+    'parseAgentOutput',
+    ({ config, inputs }) =>
+      genericActivities.parseAgentOutput({
+        kind: config.kind === 'ticketPlan' ? 'ticketPlan' : 'docReview',
+        text: inputs.text,
+      }),
+  ],
+  [
     'publishOutcome',
     ({ config, ctx, inputs }) =>
       genericActivities.publishOutcome({

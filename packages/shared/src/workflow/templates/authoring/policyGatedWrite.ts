@@ -20,6 +20,14 @@ export interface PolicyGatedWriteOptions {
   done?: string;
   /** What the run reports when the approver rejects or the approval times out. */
   rejectedResult: Record<string, Binding>;
+  /**
+   * Prefix for every node id the helper emits (`comments` gives `commentsPublishOutcome`,
+   * `commentsCheckAuto`, `commentsAutoWrite`, …), so a template can hold more than one gated
+   * write. Unset, the ids are the plain ones every earlier template uses.
+   */
+  idPrefix?: string;
+  /** The group the nodes carry. Default `policy gate`; a template with two gates names each. */
+  group?: string;
 }
 
 /**
@@ -42,10 +50,12 @@ export interface PolicyGatedWriteOptions {
  * (`builtinTemplates.test.ts` rejects that shape). Entry node: `publishOutcome`.
  */
 export function policyGatedWrite(opts: PolicyGatedWriteOptions): NodeMap {
-  const group = 'policy gate';
+  const group = opts.group ?? 'policy gate';
   const done = opts.done ?? 'done';
-  const autoId = opts.writes === 'split' ? 'autoWrite' : 'writeOutcome';
-  const manualId = opts.writes === 'split' ? 'manualWrite' : 'writeOutcome';
+  const id = (base: string): string =>
+    opts.idPrefix ? `${opts.idPrefix}${base.charAt(0).toUpperCase()}${base.slice(1)}` : base;
+  const autoId = opts.writes === 'split' ? id('autoWrite') : id('writeOutcome');
+  const manualId = opts.writes === 'split' ? id('manualWrite') : id('writeOutcome');
   const write = (title: string) =>
     ({
       // Cloned per node, so the two write nodes never share a mutable object.
@@ -58,45 +68,45 @@ export function policyGatedWrite(opts: PolicyGatedWriteOptions): NodeMap {
       type: 'step',
     }) as const;
   return {
-    checkAuto: {
-      expr: "nodes.publishOutcome.output.decision == 'require_approval'",
+    [id('checkAuto')]: {
+      expr: `nodes.${id('publishOutcome')}.output.decision == 'require_approval'`,
       group,
       onFalse: autoId,
-      onTrue: 'humanApproval',
+      onTrue: id('humanApproval'),
       title: 'Needs approval?',
       type: 'cond',
     },
-    doneRejected: terminate('SUCCESS', {
+    [id('doneRejected')]: terminate('SUCCESS', {
       group,
       result: opts.rejectedResult,
       title: 'Rejected, nothing written',
     }),
-    humanApproval: {
-      approverCount: { from: 'nodes.publishOutcome.output.approverCount' },
+    [id('humanApproval')]: {
+      approverCount: { from: `nodes.${id('publishOutcome')}.output.approverCount` },
       contextFrom: opts.approval.contextFrom,
       description: opts.approval.description,
       group,
       onApprove: manualId,
-      onReject: 'doneRejected',
-      onTimeout: 'doneRejected',
+      onReject: id('doneRejected'),
+      onTimeout: id('doneRejected'),
       timeout: '24h',
       title: opts.approval.title,
       type: 'humanApproval',
     },
-    publishOutcome: {
+    [id('publishOutcome')]: {
       config: { action: opts.action },
       group,
       inputs: { description: { from: opts.describeFrom } },
-      next: 'checkAuto',
+      next: id('checkAuto'),
       step: 'publishOutcome',
       title: 'Check the autonomy policy',
       type: 'step',
     },
     ...(opts.writes === 'split'
       ? {
-          autoWrite: write('Write (no approval needed)'),
-          manualWrite: write('Write (approved)'),
+          [autoId]: write('Write (no approval needed)'),
+          [manualId]: write('Write (approved)'),
         }
-      : { writeOutcome: write('Write the outcome') }),
+      : { [autoId]: write('Write the outcome') }),
   };
 }
