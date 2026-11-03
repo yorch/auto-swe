@@ -1096,5 +1096,7 @@ documentation change as a platform pull request and read the evaluation's reason
   the class is only as good as that review.
 - **`auto` merges use the squash method only.**
 - **GitHub only.** Other source-control hosts are not evaluated.
-- **There is no dashboard page.** The brief lives on the pull request, and the routes in §13 expose
-  the state; the CLI reads it.
+- **The dashboard has no page for the evaluations themselves.** The brief lives on the pull request
+  and the routes in §13 expose the state; the CLI reads it. A single pull request has a review page
+  (`/pull-requests/<id>`, described in [`work-views.md`](./work-views.md)) that draws the stored
+  brief and the live diff together.
