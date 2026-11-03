@@ -28,7 +28,7 @@ starts its template. Automations are opt-in; there are none until someone create
 Each source declares what its automations belong to (its `target`):
 
 - **A repository** (`connectionId`): the rule is on one git repository, its runs act on that
-  repository, and the repository's owning team manages it. The two GitHub sources target a
+  repository, and the repository's owning team manages it. The GitHub sources target a
   repository.
 - **A team** (`teamId`): the rule belongs to a team and has no repository of its own; its runs act
   on none and take the workspace their template declares, unless it names a repository to act on
@@ -105,6 +105,21 @@ leads to the schedule editor at `/admin/schedules`, which keeps its own page and
 Each row says whether the caller may manage it. Schedules come from their own list route,
 `GET /api/v1/scheduled-work-requests`, so their visibility and permission rules stay where they are
 enforced; the dashboard merges them.
+
+### The Triggers card
+
+A template's page (`/library/[id]`) has a **Triggers** card. It is read-only and answers what starts
+the template. It lists:
+
+- the event automations that start this template: those that name it, and those that take the
+  source's default template when that default is this one (see *Limitations*);
+- the cron schedules that name it;
+- a **Webhook** row when the template has a webhook URL, managed in the webhook card (§5.1).
+
+Each row shows its kind, its name, whether the automation is enabled, and its owner (a repository
+or a team). The lists come from the endpoints the Automations page uses, so the card shows only what
+the caller may see. An event source's switch (§3) can turn a listed automation off platform-wide,
+and a listed automation fires only while its source is on.
 
 ### Managing event automations
 
@@ -277,6 +292,8 @@ are environment-only ([configuration.md](./configuration.md)).
 |---|---|---|---|---|
 | `github.workflow_run.failed` | A GitHub Actions run of a `push`, `pull_request` or `schedule` workflow fails ([ci-failure-triggers.md](./ci-failure-triggers.md)) | the commit / the branch | `ci-triage-and-fix` | `github.ciFailureTriggersEnabled` |
 | `github.issues.labeled` | A person adds one of the automation's labels to an open issue (§3.1) | that labelling / the issue | `ticket-to-merge` | `github.issueLabelAutomationsEnabled` (off by default) |
+| `github.pull_request.labeled` | A person adds one of the automation's labels to an open pull request from the repository itself (§3.3) | that labelling / the pull request | `ticket-to-merge` | `github.prLabelAutomationsEnabled` (off by default) |
+| `github.push` | Commits are pushed to a branch the automation names (§3.4) | the commit / the branch | none: the automation names one | `github.pushAutomationsEnabled` (off by default) |
 | `github.pull_request.feedback` | A changes-requested review, an `/auto-swe fix` command, or (opt-in) Qodo's review bot reviewing lands on a pull request ([pr-feedback.md](./pr-feedback.md)) | the review or comment / the pull request | `address-pr-feedback` | `github.prFeedbackAutomationsEnabled` (off by default) |
 | `inbound.event` | A verified event posted to one of the team's event endpoints is of a selected type and meets the automation's conditions ([inbound-events.md](./inbound-events.md)); targets a **team** | the event's subject / its scope (from pointers; by default the event id / its type) | none: the automation names one | `workflow.inboundEventsEnabled` (off by default) |
 | `jira.filter.new_issue` | A poll of the automation's Jira filter (a JQL) finds an issue it has not seen (§3.2) | the issue / the issue | `ticket-to-merge` | `workflow.jiraPollAutomationsEnabled` (off by default) |
@@ -471,10 +488,76 @@ project: it acts on any ticket whose transition reaches its trigger status, when
 has a trigger status configured and exactly one active repository. Where both are true, a ticket
 that the hook and a filter both reach starts two runs, so use one of them.
 
+### 3.3 Pull-request labels
+
+A label added to an open pull request starts the automation's template on the pull request: by
+default `ticket-to-merge`, which implements it and opens a pull request. The filters name the labels
+(at least one, compared without case); the default filter is the `auto-swe` label. The run's
+description is the pull request's title, its body (the first 4,000 characters), and a line naming
+the pull request, its head and base branches, the label, the person who added it, and a link. Its
+ticket is synthetic, `prlabel-<number>-<hash>`.
+
+Pull-request labels follow the rules for issue labels (§3.1) for the switch and for who may trigger
+a run, with these differences:
+
+- **The switch.** `github.prLabelAutomationsEnabled` is off by default (ADMIN, per team or
+  organization).
+- **The pull request.** Only a pull request whose head is in the repository itself is acted on. A
+  pull request from a fork, a pull request that is not open, and a labelling by a bot or an App are
+  ignored before anything is recorded.
+- **The person.** As for issue labels: the labeller's GitHub account, matched by its numeric id, must
+  be linked to an active platform user who is a member of the repository's owning team or of a team
+  it is shared with, and the launch decision must allow them now. Anyone else's labelling is recorded
+  as `SUPPRESSED_PRECONDITION` with the reason.
+- **The run's identity.** As for issue labels: the run records the labeller as its requester and uses
+  the platform credential, never the labeller's saved token.
+- **What the run reads.** The title and body as GitHub shows them, with HTML comments dropped first.
+  The labeller is a member, but the text was written by whoever opened the pull request, who may be
+  outside the repository.
+
+Each labelling is its own subject: the label and the pull request's `updated_at` at the labelling, so
+labelling again later starts again. The pull request is the scope, so a labelling while an earlier
+run on it is open is `SUPPRESSED_IN_FLIGHT`, for up to 14 days.
+
+### 3.4 Pushes
+
+Commits pushed to a branch start the automation's template on the push. The automation names its
+branches: names or globs, where `*` stays within a path segment and `**` crosses them. At least one
+branch is required, and `!` exclusions are not supported. It may also name `paths`, globs over the
+changed files; when set, one changed file must match. There is no default template, so the automation
+names one. The run's description is the head commit's message (the first 2,000 characters, with
+hidden HTML comments dropped), then the branch, the pusher, the number of commits, the new head, and
+a compare link. Its ticket is synthetic, `push-<first eight characters of the new commit>`. The run
+is based on the repository's default branch, not the pushed branch (see *Limitations*).
+
+These are ignored before any filter or query:
+
+- a push that is not to a branch, such as a tag;
+- a branch deletion, and a push with no commits (a push that only moves a branch back to an ancestor);
+- a push by a bot or an App, the platform's own included;
+- a push to one of the platform's own work branches, `<branch prefix>` or `<branch prefix>/…`,
+  compared without case. This follows the prefix configured now.
+
+A force push that moves a branch to a new commit is not ignored: the new commit is a new occurrence.
+
+The pusher must be an active platform user, linked and a member of the repository's owning team or a
+team it is shared with, and the launch decision must allow them now, as for issue labels (§3.1).
+Anyone else's push is recorded as `SUPPRESSED_PRECONDITION` with the reason.
+
+Each decision is recorded per branch and per commit, so a redelivered push is a duplicate. The subject
+is the commit alone, so one commit that reaches two branches starts at most one run on the repository.
+The scope is the branch, so the cooldown and the in-flight check count per branch. The platform's own
+runs push commits too: a CI-fix or pull-request-feedback run that fast-forwards a person's
+pull-request branch records the commit it produced by its raw sha, and that commit is recognised as
+the platform's own output (`SUPPRESSED_OWN_OUTPUT`), so a push automation does not answer it. Such a
+branch is not under the work-branch prefix, so this recognition is the guard that applies there.
+
 ## 4. Permissions on the host
 
 What an occurrence needs from the host is the source's: for CI, the **Workflow run** event and
 **Actions: Read**; for issue labels, the **Issues** event and **Issues: Read**; for pull-request
+labels, the **Pull request** event; for pushes, the **Push** event, with **Contents** access (which
+the platform's runs already hold); for pull-request
 feedback, the **Pull request review**, **Pull request review comment** and **Issue comment**
 events, with **Pull requests: Read & write** for the thread replies
 ([github-app-setup.md](./github-app-setup.md)). A Jira filter needs no GitHub permission of its own
@@ -626,9 +709,10 @@ recorded as `FAILED_TO_START` with its code.
 
 ## Limitations
 
-- **Six event sources.** Failed GitHub Actions runs, issue labels, pull-request review feedback,
-  and new issues or status changes in a Jira filter start automations on a repository, and events posted to a team's
-  endpoints start automations on a team; a pull request label or a push does not.
+- **Eight event sources.** Failed GitHub Actions runs, issue labels, pull-request review feedback,
+  pull-request labels, pushes to a branch, and new issues or status changes in a Jira filter start
+  automations on a repository, and events posted to a team's endpoints start automations on a team.
+  Pull requests that are opened, edited or closed, and tag pushes, start no automation.
 - **Jira polling is Jira Cloud only,** one JQL for each automation, and starts runs on one
   repository. A filter that should feed several repositories is several automations.
 - **A Jira issue is new once.** Under `jira.filter.new_issue` a ticket starts one run however its
@@ -749,3 +833,22 @@ recorded as `FAILED_TO_START` with its code.
 - **The daily cap is the automation's own.** Deleting and recreating an automation starts its cap
   afresh; the repository-wide guards (subject, scope, in flight) and the own-output check, which
   matches the subject across the source's whole ledger, are not affected.
+- **The push prefix guard follows the current prefix only.** A branch under a prefix the operator
+  has since changed is not guarded, so a push to it can start a push automation.
+- **A push with `paths` set and 20 or more commits matches only on a listed file.** GitHub sends at
+  most 20 commits, so the file list may be incomplete. A push none of whose listed files match is
+  refused with that reason, because the matching file may be one GitHub left out.
+- **A push-created run is based on the repository's default branch,** not the pushed branch.
+- **A platform push to a person's pull-request branch is guarded only by own-output recognition.**
+  A CI-fix or pull-request-feedback run pushes to a branch that is not under the prefix. The only
+  check that stops a push automation from acting on that commit is the own-output check (§2), which
+  matches the commit's raw sha. A commit the platform did not record is not recognised.
+- **The Triggers card lists a default-template automation only for a global active template.** An
+  event automation with no template of its own is listed on a template's page only when the source's
+  default template is that template, the template is global and it is active. A team template of the
+  same name is not listed, because the engine does not resolve the default to it either.
+- **Pull-request and commit text is untrusted.** A pull-request label run reads the pull request's
+  title and body, and a push run reads the head commit's message. Both were written by whoever opened
+  the pull request or pushed the commit. After a squash merge the message is the pull request's own
+  title and body, whose author may be outside the repository. Hidden HTML comments are stripped; the
+  rest reaches the run's description, and the run acts on it.
