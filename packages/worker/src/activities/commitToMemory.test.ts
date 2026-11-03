@@ -26,7 +26,7 @@ vi.mock('@mastra/core/agent', () => ({
   }),
 }));
 vi.mock('../lib/activityContext.js', () => ({
-  // The governed mirror reads the running run row for its findings; undefined means none yet.
+  // The findings enrichment reads the running run row; undefined means none yet.
   currentRunningWorkflowRunId: vi.fn(async () => undefined),
   currentWorkflowRunId: vi.fn(async () => 'run-1'),
   persistActivityTrace: persistTraceMock,

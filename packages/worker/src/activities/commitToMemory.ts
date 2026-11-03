@@ -17,10 +17,6 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import {
-  resolveWorkflowKnowledgeEvidence,
-  submitWorkflowLearning,
-} from '../lib/knowledgeRuntime.js';
-import {
   hasMoreThanLatest,
   type LessonAttemptHistory,
   readLessonAttemptHistory,
@@ -363,8 +359,8 @@ export async function commitToMemory(
     attemptHistory(workflowRunId, agentTracer),
     workflowRunId ? transcriptDigest(workflowRunId, agentTracer, activityCtx) : null,
   ]);
-  // The run's own passed steps, as untrusted evidence for the prompt and for the governed
-  // mirror below. Best-effort: a read failure must not stop the lesson.
+  // The run's own passed steps, as untrusted evidence for the prompt.
+  // Best-effort: a read failure must not stop the lesson.
   const findingsRunId = await currentRunningWorkflowRunId();
   const completedFindings = findingsRunId
     ? await prisma.workflowStep
@@ -504,34 +500,6 @@ export async function commitToMemory(
       name: 'memory.lesson_written',
       outputJson: { failureType: lesson.failureType, lessonId },
     });
-
-    // Mirror the lesson into the governed store when a passed step can attest it. The
-    // legacy memory lesson is already saved, so a failure here is a warning, never a
-    // lost lesson.
-    const evidenceStep = completedFindings[0];
-    if (evidenceStep && lesson.lessonSummary.trim().length >= 20) {
-      try {
-        await submitWorkflowLearning(
-          {
-            content:
-              `${lesson.lessonSummary.trim()}\n\nRationale: ${lesson.rationale.trim()}`.slice(
-                0,
-                12_000
-              ),
-            evidence: [{ kind: 'node', reference: evidenceStep.nodeId }],
-            idempotencyKey: `commit-memory:${workflowRunId}:${evidenceStep.nodeId}`,
-            nodeId: evidenceStep.nodeId,
-            title: `Engineering lesson: ${lesson.failureType ?? 'workflow finding'}`.slice(0, 160),
-          },
-          resolveWorkflowKnowledgeEvidence
-        );
-      } catch (error) {
-        logWarn('knowledge learning mirror failed; legacy memory lesson remains saved', {
-          error: error instanceof Error ? error.message : String(error),
-          workflowId: workflow.temporalWorkflowId,
-        });
-      }
-    }
 
     return lessonId;
   } catch (e) {
