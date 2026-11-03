@@ -24,6 +24,14 @@ import {
   type WorkspaceRegistryAccess,
 } from '../lib/registryProxy/workspaceWiring.js';
 import { shellQuote } from '../lib/shellQuote.js';
+import {
+  BUILTIN_TOOL_CATALOG,
+  resolveToolRequests,
+  TOOLS_BIN_DIR,
+  type ToolCatalogEntry,
+  type ToolRequest,
+  toolInstallScript,
+} from '../lib/toolInstall.js';
 import { workspaceBackend } from '../lib/workspaceBackend/index.js';
 import { readSingleFileFromArchive } from '../lib/workspaceBackend/kubernetes/safeTar.js';
 import { agentWorkspaceSpec } from '../lib/workspaceBackend/spec.js';
@@ -620,6 +628,10 @@ export async function createWorkspace(
      * non-npm registries are wired; absent or unusable means "unknown".
      */
     detectedStack?: unknown;
+    /** Catalog tools to install into the workspace before it is handed over (spike). */
+    tools?: ToolRequest[];
+    /** The catalog `tools` resolve against. */
+    toolCatalog?: readonly ToolCatalogEntry[];
   }
 ): Promise<Workspace> {
   // Container caps, default base image and metadata-blocking policy all come
@@ -728,6 +740,9 @@ export async function createWorkspace(
     throw failure;
   }
   let handle: WorkspaceHandle = backend.attach(containerName);
+  // `PATH=…` pair put on every agent-facing exec once tools are installed; empty otherwise.
+  let toolsEnv: string[] = [];
+  const TOOL_INSTALL_TIMEOUT_MS = 300_000;
   try {
     const spec = agentWorkspaceSpec(containerName, effectiveImage, infra, options?.services);
     const gitHost = gitHostOf(cleanUrl);
@@ -823,6 +838,19 @@ export async function createWorkspace(
     await rootExec(
       `cd /workspace/target-repo && git remote set-url origin ${shellQuote(cleanUrl)}`
     );
+
+    // On-demand tools: installed as the exec user into `/workspace/.tools/bin`, then put first on
+    // the PATH of every later exec. A failed install fails creation — the run never starts on a
+    // toolchain the caller said it needs.
+    if (options?.tools?.length) {
+      const entries = resolveToolRequests(
+        options.tools,
+        options.toolCatalog ?? BUILTIN_TOOL_CATALOG
+      );
+      await rootExec(toolInstallScript(entries), TOOL_INSTALL_TIMEOUT_MS);
+      const basePath = (await rootExec('echo "$PATH"')).trim();
+      toolsEnv = [`PATH=${TOOLS_BIN_DIR}:${basePath}`];
+    }
 
     if (registry) {
       const mavenSettings = renderMavenSettings(
@@ -938,7 +966,7 @@ export async function createWorkspace(
     exec: (command: string, options) => {
       const tag = newExecTag();
       return backend.execShell(handle, ['sh', '-c', command], {
-        env: [tag.env],
+        env: [tag.env, ...toolsEnv],
         heartbeatLabel: 'workspace: exec',
         onTimeout: tag.onTimeout,
         ...(options?.secretEnv ? { secretEnv: options.secretEnv } : {}),
@@ -949,7 +977,7 @@ export async function createWorkspace(
     execCapture: (command: string, options) => {
       const tag = newExecTag();
       return backend.exec(handle, ['sh', '-c', command], {
-        env: [tag.env],
+        env: [tag.env, ...toolsEnv],
         heartbeatLabel: 'workspace: exec (capture)',
         onTimeout: tag.onTimeout,
         timeoutMs: options?.timeoutMs ?? 600_000,
@@ -959,7 +987,7 @@ export async function createWorkspace(
     execStdin: async (command: string, stdin: string | Buffer) => {
       const tag = newExecTag();
       const result = await backend.exec(handle, ['sh', '-c', command], {
-        env: [tag.env],
+        env: [tag.env, ...toolsEnv],
         heartbeatLabel: 'workspace: exec (stdin)',
         onTimeout: tag.onTimeout,
         stdin,

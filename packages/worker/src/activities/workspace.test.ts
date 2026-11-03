@@ -10,7 +10,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { teamFindUniqueMock } = vi.hoisted(() => ({
   teamFindUniqueMock: vi.fn(async () => null),
@@ -1475,6 +1475,86 @@ describe('createWorkspace commit identity (execShellAsync mocked)', () => {
     vi.mocked(resolveGitIdentity).mockRejectedValue(new Error('connection reset'));
     await expect(createWorkspace(URL, 'auto/T-1', 'main')).rejects.toThrow('connection reset');
     expect(allCommands().some((c) => c.includes('docker run'))).toBe(false);
+  });
+});
+
+describe('createWorkspace on-demand tools (execShellAsync mocked)', () => {
+  const URL = 'https://github.com/acme/repo.git';
+  const sha256 = 'a'.repeat(64);
+  const catalog = [
+    {
+      archs: {
+        amd64: { sha256, url: 'https://example.test/just-amd64.tar.gz' },
+        arm64: { sha256, url: 'https://example.test/just-arm64.tar.gz' },
+      },
+      key: 'just',
+      member: 'just',
+      version: '1.40.0',
+    },
+  ];
+
+  beforeEach(() => {
+    vi.mocked(resolveGitIdentity).mockReset();
+    vi.mocked(resolveGitIdentity).mockResolvedValue(DEFAULT_GIT_IDENTITY);
+    vi.mocked(execShellAsync).mockReset();
+    vi.mocked(execShellAsync).mockImplementation(async (cmd: string) =>
+      cmd.includes('echo "$PATH"') ? '/usr/local/bin:/usr/bin\n' : okExec(cmd)
+    );
+  });
+
+  // The next describe asserts nothing ran, so leave no recorded calls behind.
+  afterEach(() => vi.mocked(execShellAsync).mockClear());
+
+  const allCommands = () => vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+
+  it('installs requested tools after the clone and puts them first on PATH for agent execs', async () => {
+    const ws = await createWorkspace(URL, 'auto/T-1', 'main', undefined, undefined, undefined, {
+      toolCatalog: catalog,
+      tools: [{ key: 'just' }],
+    });
+    const commands = allCommands();
+    const clone = commands.findIndex((c) => c.includes('git') && c.includes(' clone '));
+    const install = commands.findIndex((c) => c.includes('auto-swe tool install'));
+    expect(clone).toBeGreaterThanOrEqual(0);
+    expect(install).toBeGreaterThan(clone);
+
+    await ws.exec('just --version');
+    const exec = allCommands().at(-1) as string;
+    expect(exec).toContain('PATH=/workspace/.tools/bin:/usr/local/bin:/usr/bin');
+    await ws.destroy();
+  });
+
+  it('changes nothing for a workspace that requests no tools', async () => {
+    const ws = await createWorkspace(URL, 'auto/T-1', 'main');
+    await ws.exec('true');
+    expect(allCommands().some((c) => c.includes('auto-swe tool install'))).toBe(false);
+    expect(allCommands().at(-1)).not.toContain('PATH=');
+    await ws.destroy();
+  });
+
+  it('fails creation and removes the container when a requested tool is not in the catalog', async () => {
+    await expect(
+      createWorkspace(URL, 'auto/T-1', 'main', undefined, undefined, undefined, {
+        toolCatalog: catalog,
+        tools: [{ key: 'python' }],
+      })
+    ).rejects.toThrow(/not in the tool catalog/);
+    expect(allCommands().some((c) => c.includes('docker rm'))).toBe(true);
+  });
+
+  it('fails creation when the install script fails', async () => {
+    vi.mocked(execShellAsync).mockImplementation(async (cmd: string) => {
+      if (cmd.includes('auto-swe tool install')) {
+        throw new Error('just@1.40.0: checksum mismatch');
+      }
+      return okExec(cmd);
+    });
+    await expect(
+      createWorkspace(URL, 'auto/T-1', 'main', undefined, undefined, undefined, {
+        toolCatalog: catalog,
+        tools: [{ key: 'just' }],
+      })
+    ).rejects.toThrow('checksum mismatch');
   });
 });
 
