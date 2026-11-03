@@ -102,6 +102,32 @@ describe.skipIf(!enabled)('memory supersession against Postgres', () => {
     expect(recalled.map((r) => r.id)).toEqual([newer]);
   });
 
+  it('never leaves two similar lessons written concurrently both retired', async () => {
+    vectors.set('migrate before deploy, one', direction(0));
+    vectors.set('migrate before deploy, two', direction(0, 0.1));
+    const ids = await Promise.all([
+      store.insertMemoryItem({
+        lessonSummary: 'migrate before deploy, one',
+        rationale: 'r',
+        repoId: REPO,
+      }),
+      store.insertMemoryItem({
+        lessonSummary: 'migrate before deploy, two',
+        rationale: 'r',
+        repoId: REPO,
+      }),
+    ]);
+
+    const rows = await Promise.all(ids.map((id) => row(id)));
+    // Without the ordering each write retires the other and none is recalled. A commit order that
+    // differs from the creation order can leave both active, which is not what this guards.
+    const active = ids.filter((_, i) => rows[i]?.supersededAt === null);
+    expect(active.length).toBeGreaterThanOrEqual(1);
+    for (const retired of rows.filter((r) => r.supersededAt !== null)) {
+      expect(active).toContain(retired.supersededById);
+    }
+  });
+
   it('leaves a lesson about something else alone', async () => {
     const first = await write('pin the node version', REPO, direction(0));
     await write('lint before pushing', REPO, direction(10));

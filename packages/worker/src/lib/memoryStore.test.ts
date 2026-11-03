@@ -24,6 +24,10 @@ vi.mock('@auto-swe/shared/db', () => {
 vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
   scanSkillContent: vi.fn(async () => ({ incomplete: false, safe: true, warnings: [] })),
 }));
+// Supersession reads its similarity threshold from the setting registry.
+vi.mock('@auto-swe/shared/config', () => ({
+  resolveSetting: vi.fn(async () => 0.92),
+}));
 vi.mock('./embeddings.js', () => ({
   generateEmbeddingWithSpec: generateEmbeddingWithSpecMock,
 }));
@@ -179,6 +183,26 @@ describe('insertMemoryItem', () => {
     const [, ...params] = queryRawUnsafeMock.mock.calls[0];
     expect(params[17]).toBe('document');
     expect(params[18]).toBe('doc-uuid');
+  });
+
+  it('supersedes only rows older than the new item, so concurrent writers cannot retire each other', async () => {
+    generateEmbeddingWithSpecMock.mockResolvedValue({
+      embedding: new Array(1536).fill(0.1),
+      spec: 'spec/1',
+    });
+    queryRawUnsafeMock.mockResolvedValue([{ id: 'mem-new' }]);
+
+    await insertMemoryItem({ lessonSummary: 'lesson', rationale: 'because', repoId: 'repo-uuid' });
+
+    const supersedeCall = executeRawUnsafeMock.mock.calls.find(([sql]) =>
+      String(sql).includes('superseded_by_id')
+    );
+    expect(supersedeCall).toBeDefined();
+    const [sql, id] = supersedeCall as [string, string];
+    expect(sql).toContain(
+      '(created_at, id) < (SELECT created_at, id FROM memory_items WHERE id = $1::uuid)'
+    );
+    expect(id).toBe('mem-new');
   });
 });
 
