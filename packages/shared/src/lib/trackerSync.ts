@@ -274,6 +274,10 @@ export async function loadRunTrackerScope(runInputId: string): Promise<TrackerRe
 export const TRACKER_SYNC_OUT_OF_SCOPE =
   "Tracker sync skipped: the ticket's repository is not one this run targets or the operator allows";
 
+/** The line a GitHub-tracker sync logs when the ticket id resolves to no repository. Fixed: never ticket text. */
+export const TRACKER_SYNC_NO_REPOSITORY =
+  'Tracker sync skipped: the ticket id names no repository this run can write to';
+
 /** The line a failed tracker sync logs. Fixed: it never carries an error or ticket text. */
 export const TRACKER_SYNC_FAILED = 'Tracker sync failed; continuing';
 
@@ -283,7 +287,7 @@ export interface SyncTrackerOptions {
    * targets; with no id there is no such repository, and nothing is written.
    */
   runInputId: string | null | undefined;
-  /** Receives {@link TRACKER_SYNC_OUT_OF_SCOPE} and {@link TRACKER_SYNC_FAILED}. */
+  /** Receives {@link TRACKER_SYNC_OUT_OF_SCOPE}, {@link TRACKER_SYNC_NO_REPOSITORY} and {@link TRACKER_SYNC_FAILED}. */
   warn?: (message: string, meta: Record<string, unknown>) => void;
   /** The provider's logger. Its warnings carry the raw provider error. */
   log?: { warn: (obj: unknown, msg?: string) => void };
@@ -292,8 +296,10 @@ export interface SyncTrackerOptions {
 /**
  * Mirrors a run event onto its ticket. Resolves the class of the first write the tracker refused
  * (a comment, a status transition or a link; never its text), `'out_of_scope'` when the
- * repository check declined a GitHub write, `'unknown'` when the sync itself failed, and null
- * otherwise (including events that write nothing, and a ticket with no matching status).
+ * repository check declined a GitHub write, `'no_repository'` when no repository could be resolved from a GitHub id (a bare number, a URL, a
+ * foreign key),
+ * `'no_transition'` when no transition to a status named like the target was found on a Jira ticket, `'unknown'` when the sync
+ * itself failed, and null otherwise (including events that write nothing).
  */
 export async function syncTrackerOnEvent(
   event: TrackerSyncEvent,
@@ -310,14 +316,17 @@ export async function syncTrackerOnEvent(
       }
       const scope = opts.runInputId ? await loadRunTrackerScope(opts.runInputId) : null;
       if (!scope || !isGitHubTicketInScope(event.issueId, config.baseUrl, scope)) {
-        (opts.warn ?? console.warn)(TRACKER_SYNC_OUT_OF_SCOPE, {
-          event: event.type,
-          runInputId: opts.runInputId ?? null,
-        });
-        // Reported only when the id names a repository, so "a repository this run does not
-        // target" is true. A bare id (`123`, `#123`) names none: a write cannot resolve it
-        // against a default repository, so it stays unwritten and silent, as it always was.
-        return parseGitHubTicketId(event.issueId) ? 'out_of_scope' : null;
+        // An id that parses to a repository is `out_of_scope`: "a repository this run does not
+        // target" is true. Anything `parseGitHubTicketId` cannot parse without a default
+        // repository (`123`, `#123`, an issue URL, `owner/repo`, another tracker's key) is
+        // `no_repository`: a write never resolves it against a default, so it is unwritten, and
+        // said so.
+        const outOfScope = parseGitHubTicketId(event.issueId) !== null;
+        (opts.warn ?? console.warn)(
+          outOfScope ? TRACKER_SYNC_OUT_OF_SCOPE : TRACKER_SYNC_NO_REPOSITORY,
+          { event: event.type, runInputId: opts.runInputId ?? null }
+        );
+        return outOfScope ? 'out_of_scope' : 'no_repository';
       }
     }
     const provider = createIssueTrackerProvider(config, { log: opts.log });

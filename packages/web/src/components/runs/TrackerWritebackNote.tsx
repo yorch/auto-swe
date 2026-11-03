@@ -32,8 +32,21 @@ export const TRACKER_WRITE_LINES = new Map<string, string>([
     'out_of_scope',
     'the ticket is in a repository this run does not target, so the platform did not write to it',
   ],
+  [
+    'no_repository',
+    'the platform could not resolve a repository from the ticket id, so it did not write to it',
+  ],
+  [
+    'no_transition',
+    'no transition to a status named like the one the platform looks for was found on the ticket (the project may name its statuses differently)',
+  ],
   ['unknown', 'the reason is not known'],
 ]);
+
+// The classes for which the platform knows nothing was written. For `no_transition` that holds only
+// because `finalizeRun`, the sole recorder of a write-back, sends no `prUrl`: with one, a Jira
+// remote link could succeed before the move is found missing. Revisit this set if that changes.
+const NOTHING_WRITTEN = new Set(['out_of_scope', 'no_repository', 'no_transition']);
 
 /** The notice that a run could not report its end back to its ticket. */
 export function TrackerWritebackNote({ contextSnapshot }: { contextSnapshot: unknown }) {
@@ -46,8 +59,8 @@ export function TrackerWritebackNote({ contextSnapshot }: { contextSnapshot: unk
     <Alert announce={false} title="The ticket was not updated" variant="warning">
       {writeback.event === 'workflow_completed'
         ? `The run finished, but the ticket could not be updated (${reason}).${
-            // The platform never called the tracker for this class, so nothing is in doubt.
-            writeback.failure === 'out_of_scope' ? '' : ' Its status may not have been moved on.'
+            // For these the platform knows nothing was written, so nothing is in doubt.
+            NOTHING_WRITTEN.has(writeback.failure) ? '' : ' Its status may not have been moved on.'
           }`
         : `The comment saying the run did not finish could not be posted (${reason}). Anyone watching the ticket has not been told.`}
     </Alert>

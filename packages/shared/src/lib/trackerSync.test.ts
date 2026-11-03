@@ -32,6 +32,7 @@ import {
   resolveTrackerIssueRepos,
   syncTrackerOnEvent,
   TRACKER_SYNC_FAILED,
+  TRACKER_SYNC_NO_REPOSITORY,
   TRACKER_SYNC_OUT_OF_SCOPE,
   type TrackerRepoScope,
   type TrackerScopeRepo,
@@ -320,14 +321,14 @@ describe('syncTrackerOnEvent', () => {
   });
 
   it.each([
-    ['a foreign repository', 'attacker/public#1'],
-    ['a bare issue number', '#7'],
-  ])('refuses %s without writing, and logs a fixed line', async (_label, issueId) => {
+    ['a foreign repository', 'attacker/public#1', TRACKER_SYNC_OUT_OF_SCOPE],
+    ['a bare issue number', '#7', TRACKER_SYNC_NO_REPOSITORY],
+  ])('refuses %s without writing, and logs a fixed line', async (_label, issueId, line) => {
     const warn = vi.fn();
     await syncTrackerOnEvent({ ...EVENT, issueId }, GITHUB, { runInputId: 'wr-1', warn });
     expect(mocks.createProvider).not.toHaveBeenCalled();
     expect(mocks.syncOnEvent).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(TRACKER_SYNC_OUT_OF_SCOPE, {
+    expect(warn).toHaveBeenCalledWith(line, {
       event: 'workflow_completed',
       runInputId: 'wr-1',
     });
@@ -498,28 +499,62 @@ describe('syncTrackerOnEvent', () => {
       ).resolves.toBe('out_of_scope');
     });
 
-    it.each(['123', '#123'])(
-      'is null, not out_of_scope, for the bare GitHub id %s: still unwritten, but it names no repository',
-      async (issueId) => {
+    it.each(
+      ['123', '#123'].flatMap((id) =>
+        (['workflow_completed', 'workflow_failed'] as const).map((type) => [id, type] as const)
+      )
+    )(
+      'is no_repository for the bare GitHub id %s on %s: nothing is written, no repository can be resolved from the id',
+      async (issueId, type) => {
         const warn = vi.fn();
         await expect(
-          syncTrackerOnEvent({ ...EVENT, issueId }, GITHUB, { runInputId: 'wr-1', warn })
-        ).resolves.toBeNull();
+          syncTrackerOnEvent({ ...EVENT, issueId, type }, GITHUB, { runInputId: 'wr-1', warn })
+        ).resolves.toBe('no_repository');
         expect(mocks.syncOnEvent).not.toHaveBeenCalled();
-        expect(warn).toHaveBeenCalledWith(TRACKER_SYNC_OUT_OF_SCOPE, {
-          event: 'workflow_completed',
+        expect(warn).toHaveBeenCalledWith(TRACKER_SYNC_NO_REPOSITORY, {
+          event: type,
           runInputId: 'wr-1',
         });
       }
     );
 
-    it('is null for a bare GitHub id when the caller names no run', async () => {
+    it.each(['https://github.com/acme/web/issues/42', 'acme/web', 'UIP-15211'])(
+      'is no_repository for the unparseable GitHub id %s, and the provider is not called',
+      async (issueId) => {
+        const warn = vi.fn();
+        await expect(
+          syncTrackerOnEvent({ ...EVENT, issueId }, GITHUB, { runInputId: 'wr-1', warn })
+        ).resolves.toBe('no_repository');
+        expect(mocks.syncOnEvent).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(TRACKER_SYNC_NO_REPOSITORY, expect.anything());
+        expect(warn).not.toHaveBeenCalledWith(TRACKER_SYNC_OUT_OF_SCOPE, expect.anything());
+      }
+    );
+
+    it('words the two lines apart, without ticket text', () => {
+      expect(TRACKER_SYNC_NO_REPOSITORY).not.toBe(TRACKER_SYNC_OUT_OF_SCOPE);
+      expect(TRACKER_SYNC_NO_REPOSITORY).toMatch(/names no repository/);
+    });
+
+    it('is no_repository for a bare GitHub id when the caller names no run, too', async () => {
       await expect(
         syncTrackerOnEvent({ ...EVENT, issueId: '123' }, GITHUB, {
           runInputId: null,
           warn: vi.fn(),
         })
+      ).resolves.toBe('no_repository');
+      expect(mocks.syncOnEvent).not.toHaveBeenCalled();
+    });
+
+    it('is null for a bare GitHub id on workflow_started, which writes nothing', async () => {
+      const warn = vi.fn();
+      await expect(
+        syncTrackerOnEvent({ ...EVENT, issueId: '123', type: 'workflow_started' }, GITHUB, {
+          runInputId: 'wr-1',
+          warn,
+        })
       ).resolves.toBeNull();
+      expect(warn).not.toHaveBeenCalled();
       expect(mocks.syncOnEvent).not.toHaveBeenCalled();
     });
 

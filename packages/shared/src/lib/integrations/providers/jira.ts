@@ -106,6 +106,17 @@ export function jiraOutcomeKind(failure: TicketFailureClass): 'refused' | 'unava
   return failure === 'not_found' ? 'refused' : 'unavailable';
 }
 
+/**
+ * The Jira status category (`new` | `indeterminate` | `done`) of each status the platform's sync
+ * asks for, by lower-cased name. A target outside the sync set has no category and is compared by
+ * name only.
+ */
+const SYNC_TARGET_CATEGORIES = new Map<string, string>([
+  [JIRA_SYNC_STATUSES.completed.toLowerCase(), 'done'],
+  [JIRA_SYNC_STATUSES.prOpened.toLowerCase(), 'indeterminate'],
+  [JIRA_SYNC_STATUSES.started.toLowerCase(), 'indeterminate'],
+]);
+
 export class JiraProvider implements IssueTrackerProvider {
   private readonly storyPointsFieldId: string;
   private readonly epicIssueType: string;
@@ -337,7 +348,8 @@ export class JiraProvider implements IssueTrackerProvider {
 
   /**
    * Moves the issue to a status; resolves why the tracker refused (the read of its transitions or
-   * the move), or null when it moved or when the issue has no such transition.
+   * the move), `no_transition` when no transition to a status named like it was found and the issue is not
+   * already there, or null when it moved or is already in the status.
    */
   private async moveIssue(
     issueId: string,
@@ -354,9 +366,22 @@ export class JiraProvider implements IssueTrackerProvider {
           t.to?.name?.toLowerCase() === targetStatusName.toLowerCase()
       );
       if (!transition) {
-        // No matching transition: a silent no-op, not a failure. The workflow may simply not
-        // have that status, and nothing was refused.
-        return null;
+        // Jira omits the self-transition, so an issue already in the target status has none to
+        // it: healthy. Only an issue in another status is reported, and a status read that fails
+        // or names none guesses nothing.
+        // "Already there" is the same name, or the same status category: a project's done status
+        // may be "Closed", "Resolved" or localized, and the category key does not change.
+        const status = await this.readStatus(issueId);
+        if (status === null) {
+          return null;
+        }
+        const targetCategory = SYNC_TARGET_CATEGORIES.get(targetStatusName.toLowerCase());
+        const alreadyThere =
+          status.name.toLowerCase() === targetStatusName.toLowerCase() ||
+          (status.category !== null &&
+            targetCategory !== undefined &&
+            status.category === targetCategory);
+        return alreadyThere ? null : 'no_transition';
       }
       await this.client.post(`/rest/api/3/issue/${encodeURIComponent(issueId)}/transitions`, {
         transition: { id: transition.id },
@@ -365,6 +390,25 @@ export class JiraProvider implements IssueTrackerProvider {
     } catch (err) {
       this.log?.warn({ err, issueId, targetStatusName }, 'Jira transitionIssue failed');
       return jiraFailure(err);
+    }
+  }
+
+  /** The issue's current status name and category key, or null when it cannot be read or names no status. */
+  private async readStatus(
+    issueId: string
+  ): Promise<{ category: string | null; name: string } | null> {
+    try {
+      const issue = await this.client.get<{
+        fields?: { status?: { name?: unknown; statusCategory?: { key?: unknown } } };
+      }>(`/rest/api/3/issue/${encodeURIComponent(issueId)}?fields=status`);
+      const name = issue.fields?.status?.name;
+      if (typeof name !== 'string' || !name) {
+        return null;
+      }
+      const category = issue.fields?.status?.statusCategory?.key;
+      return { category: typeof category === 'string' && category ? category : null, name };
+    } catch {
+      return null;
     }
   }
 
