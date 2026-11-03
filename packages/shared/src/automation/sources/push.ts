@@ -11,12 +11,16 @@ import { WORKFLOW_RUN_FAILED } from './workflowRunFailed.js';
 /** The source key stored on an automation that reacts to commits pushed to a branch. */
 export const GITHUB_PUSH = 'github.push';
 
-/** Most changed files a push's facts carry; GitHub itself truncates a push's commit list at 20. */
+/** Most changed files a push's facts carry. */
 export const MAX_PUSH_FILES = 300;
 /** The head commit's message, kept bounded: it is written by whoever pushed. */
 export const MAX_PUSH_MESSAGE_CHARS = 2_000;
-/** GitHub lists at most this many commits in a push event, so a push this size may hold more. */
-export const GITHUB_PUSH_COMMIT_LIMIT = 20;
+/**
+ * GitHub documents a maximum of 2048 commits in a push webhook's `commits` array. What a payload
+ * holds above that, and whether a commit's file lists are cut, is not documented, so a push this
+ * size may hold more than it lists.
+ */
+export const GITHUB_PUSH_COMMIT_LIMIT = 2048;
 
 const MAX_PATTERN_CHARS = 200;
 const Sha = z.string().regex(/^[0-9a-f]{40,64}$/);
@@ -137,7 +141,7 @@ export const pushSource: EventSource<PushFilters, PushFacts> = {
       label: 'Branches',
     },
     {
-      hint: 'Optional globs over changed file paths. When set, at least one file changed by the push must match. GitHub truncates long pushes, so a match is made only against the files it lists.',
+      hint: 'Optional globs over changed file paths. When set, at least one file changed by the push must match. A match is made only against the files the platform keeps: at most 300 changed files, from the at most 2048 commits GitHub sends, so it can be incomplete for a very large push.',
       key: 'paths',
       kind: 'globs',
       label: 'Changed paths',
@@ -170,7 +174,7 @@ export const pushSource: EventSource<PushFilters, PushFacts> = {
       return null;
     }
     return x.filesTruncated
-      ? 'no listed file matches the paths, and the push is too large for GitHub to list them all'
+      ? 'no listed file matches the paths, and the push is too large to list every changed file'
       : `no changed file matches ${f.paths.join(', ')}`;
   },
   // A commit a CI-fix or feedback run fast-forwarded onto a person's branch is the platform's

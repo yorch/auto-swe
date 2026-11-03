@@ -104,9 +104,16 @@ describe('normalizePushEvent', () => {
   });
 
   it('flags a push at GitHub’s commit limit as possibly incomplete', () => {
-    const commits = Array.from({ length: 20 }, () => ({ added: ['a'] }));
+    const commits = Array.from({ length: 2048 }, () => ({ added: ['a'] }));
     expect(normalizePushEvent(body({ commits }))).toMatchObject({
-      facts: { commitCount: 20, filesTruncated: true },
+      facts: { commitCount: 2048, filesTruncated: true },
+    });
+  });
+
+  it('does not flag a push of 25 commits as truncated', () => {
+    const commits = Array.from({ length: 25 }, () => ({ added: ['a'] }));
+    expect(normalizePushEvent(body({ commits }))).toMatchObject({
+      facts: { commitCount: 25, filesTruncated: false },
     });
   });
 });

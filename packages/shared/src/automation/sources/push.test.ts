@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { SETTING_DEFINITIONS } from '../../config/registry.js';
 import { SWE_INPUT_SCHEMA } from '../../workflow/templates/index.js';
 import { EVENT_SOURCES } from '../index.js';
-import { PushFiltersSchema, pushSource as src } from './push.js';
+import {
+  GITHUB_PUSH_COMMIT_LIMIT,
+  PushFactsSchema,
+  PushFiltersSchema,
+  pushSource as src,
+} from './push.js';
 
 const filters = PushFiltersSchema.parse({ branches: ['main', 'release/*'] });
 const facts = src.tester.facts({ branch: 'main' });
@@ -46,6 +51,23 @@ describe('pushSource', () => {
     expect(src.mismatch(f, { ...facts, files: ['src/a.ts'], filesTruncated: true })).toMatch(
       /too large/
     );
+  });
+
+  it('takes the commit cap from GitHub’s documented 2048-commit payload maximum', () => {
+    expect(GITHUB_PUSH_COMMIT_LIMIT).toBe(2048);
+  });
+
+  it('accepts a commit count up to the cap and rejects one above it', () => {
+    expect(PushFactsSchema.safeParse({ ...facts, commitCount: 25 }).success).toBe(true);
+    expect(PushFactsSchema.safeParse({ ...facts, commitCount: 2048 }).success).toBe(true);
+    expect(PushFactsSchema.safeParse({ ...facts, commitCount: 2049 }).success).toBe(false);
+  });
+
+  it('marks the run description with N+ only at the commit cap', () => {
+    const below = src.run({ ...facts, commitCount: 25 }).description;
+    const atCap = src.run({ ...facts, commitCount: 2048 }).description;
+    expect(below).toContain('(25 commit(s)');
+    expect(atCap).toContain('(2048+ commit(s)');
   });
 
   describe('loop safety', () => {
