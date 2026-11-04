@@ -28,8 +28,9 @@ audited admin decision that removes the Qodo guard with it: the connection is th
 `mcp` connection, its stored list is read as written and its results are screened only if
 `scanResults` is set.
 
-The `/mcp` page sets the marker and screening with two checkboxes in the create and edit forms,
-"Qodo integration" and "Screen tool results". Ticking Qodo checks the screening box and locks it,
+The `/mcp` page sets the marker and screening with two checkboxes in the create and edit forms
+(in the create form they sit under its "Advanced" section), "Qodo integration" and "Screen tool
+results". Ticking Qodo checks the screening box and locks it,
 because a marked connection is always screened. The edit form sends a policy field only when it
 differs from the stored value, so saving without touching the boxes changes neither; clearing the
 Qodo box on a marked connection sends `integration: null`, keeps the screening box ticked so that

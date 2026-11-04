@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({ templates: [] as unknown[] }));
 const idle = { isError: false, isLoading: false, isPending: false, mutateAsync: vi.fn() };
 
+const nav = vi.hoisted(() => ({ query: '' }));
 vi.mock('next/navigation', () => ({
+  usePathname: () => '/library',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(nav.query),
 }));
 vi.mock('@/hooks/useTeams', () => ({ useLedTeamIds: () => new Set<string>() }));
 vi.mock('@/hooks/useTemplates', () => ({
@@ -25,9 +28,16 @@ vi.mock('@/hooks/useTemplates', () => ({
   }),
 }));
 
+import { useAuthStore } from '@/stores/authStore';
+import { stubDialogPrototype } from '@/test/rtl-helpers';
 import TemplatesPage from './page';
 
-afterEach(cleanup);
+stubDialogPrototype();
+
+afterEach(() => {
+  cleanup();
+  nav.query = '';
+});
 
 const base = {
   activeVersion: 1,
@@ -73,5 +83,35 @@ describe('Workflow library', () => {
     ).toBeTruthy();
     expect(screen.getByText(/Archived templates are hidden from the default list/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'About Status' })).toBeNull();
+  });
+
+  it('reads the status filter from the address', () => {
+    state.templates = [base, { ...base, id: 't-3', name: 'Old flow', status: 'ARCHIVED' }];
+    nav.query = 'status=archived';
+    render(<TemplatesPage />);
+    expect(screen.getByText('Old flow')).toBeTruthy();
+    expect(screen.queryByText('Ticket to PR')).toBeNull();
+  });
+
+  it('counts each status within the current search', () => {
+    state.templates = [
+      base,
+      { ...base, id: 't-4', name: 'Another', status: 'DRAFT' },
+      { ...base, id: 't-5', name: 'Third', status: 'DRAFT' },
+    ];
+    nav.query = 'q=another';
+    render(<TemplatesPage />);
+    const drafts = screen.getByRole('button', { name: /Drafts/ });
+    expect(drafts.textContent).toContain('1');
+  });
+
+  it('offers blank creation inside the one New workflow dialog', async () => {
+    state.templates = [base];
+    useAuthStore.setState({ user: { role: 'ADMIN' } } as never);
+    render(<TemplatesPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'New workflow' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Blank' }));
+    expect(screen.getByRole('button', { name: 'Create blank workflow' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Or start from a blank workflow' })).toBeNull();
   });
 });

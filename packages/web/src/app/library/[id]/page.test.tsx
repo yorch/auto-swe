@@ -10,7 +10,7 @@ const TEMPLATE_ID = '11111111-1111-4111-8111-111111111111';
 // Stable references: the page re-seeds its editor whenever the query data identity changes.
 const hooks = vi.hoisted(() => ({
   adminTeamIds: null as ReadonlySet<string> | null,
-  editorProps: null as { baseVersion?: number } | null,
+  editorProps: null as { baseVersion?: number; onChange?: (spec: unknown) => void } | null,
   ledTeamIds: new Set<string>() as ReadonlySet<string>,
   mutateAsync: vi.fn(),
   refineProps: null as { onSaved?: (v: number) => void } | null,
@@ -73,9 +73,13 @@ vi.mock('@/hooks/useTeams', () => ({
 vi.mock('@/hooks/useTransientFlag', () => ({ useTransientFlag: () => [false, vi.fn()] }));
 vi.mock('@/components/workflow/WorkflowDag', () => ({ WorkflowDag: () => null }));
 vi.mock('@/components/workflow/TemplateEditor', () => ({
-  TemplateEditor: (props: { baseVersion?: number }) => {
+  TemplateEditor: (props: {
+    actions?: React.ReactNode;
+    baseVersion?: number;
+    onChange?: (spec: unknown) => void;
+  }) => {
     hooks.editorProps = props;
-    return null;
+    return <div>{props.actions}</div>;
   },
 }));
 vi.mock('@/components/workflow/RefineChatPanel', () => ({
@@ -91,7 +95,11 @@ vi.mock('@/components/workflow/templateNav', () => ({
   TemplateSubNav: () => null,
 }));
 vi.mock('./_components/TriggersCard', () => ({ TriggersCard: () => null }));
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/library/x',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 import { useAuthStore } from '@/stores/authStore';
 import TemplateDetailPage from './page';
@@ -254,5 +262,35 @@ describe('the base version Check workflow is given', () => {
     hooks.template.versions = [at(1), at(2), at(3)];
     await openEditor();
     expect(hooks.editorProps?.baseVersion).toBe(3);
+  });
+});
+
+describe('the editor dirty model', () => {
+  it('does not count opening Edit as an edit, and arms no leave prompt until the spec changes', async () => {
+    const add = vi.spyOn(window, 'addEventListener');
+    await renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    await waitFor(() => expect(hooks.editorProps).not.toBeNull());
+    expect(
+      (screen.getByRole('button', { name: 'Save new version' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeTruthy();
+    expect(add.mock.calls.some(([type]) => type === 'beforeunload')).toBe(false);
+    // Refine is not blocked while nothing has changed.
+    expect(
+      (screen.getByRole('button', { name: 'Refine with AI' }) as HTMLButtonElement).disabled
+    ).toBe(false);
+
+    act(() =>
+      hooks.editorProps?.onChange?.({ ...hooks.version.spec, description: 'changed by the author' })
+    );
+    expect(
+      (screen.getByRole('button', { name: 'Save new version' }) as HTMLButtonElement).disabled
+    ).toBe(false);
+    expect(add.mock.calls.some(([type]) => type === 'beforeunload')).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: 'Refine with AI' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    add.mockRestore();
   });
 });

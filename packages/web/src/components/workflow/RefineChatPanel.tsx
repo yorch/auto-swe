@@ -16,6 +16,8 @@ const EXAMPLES = [
 
 type ChatMessage = {
   id: number;
+  /** The version a successful refinement saved. */
+  version?: number;
   role: 'user' | 'assistant';
   text: string;
   /** Advisory validation findings returned with a refinement. */
@@ -35,12 +37,15 @@ export function RefineChatPanel({
   open,
   onClose,
   onSaved,
+  onViewVersion,
   templateId,
 }: {
   open: boolean;
   onClose: () => void;
   /** Called with the version a refinement saved, so the page can tell its own versions apart. */
   onSaved?: (version: number) => void;
+  /** Closes the panel and shows a version a refinement saved. */
+  onViewVersion?: (version: number) => void;
   templateId: string;
 }) {
   const refine = useRefineWorkflowTemplate(templateId);
@@ -85,6 +90,7 @@ export function RefineChatPanel({
       append({
         role: 'assistant',
         text: `Saved as version ${version}.${summary ? ` ${summary}` : ''}`,
+        version,
         warnings: res.warnings,
       });
     } catch (err) {
@@ -101,7 +107,7 @@ export function RefineChatPanel({
       onClose={onClose}
       open={open}
       size="lg"
-      subtitle="Describe a change in plain language. Each message saves a new draft version for you to review on the canvas, then activate."
+      subtitle="Describe a change in plain language. Each message saves a new draft version; use View on a reply to review it on the canvas, then activate."
       title="Refine with AI"
     >
       <div className="space-y-4">
@@ -142,6 +148,19 @@ export function RefineChatPanel({
                     <SparkleIcon className="mr-1 inline-block align-[-2px] text-paper-300" />
                   )}
                   {m.text}
+                  {m.version !== undefined && onViewVersion && (
+                    <div className="mt-2">
+                      <Button
+                        onClick={() => {
+                          onViewVersion(m.version as number);
+                          onClose();
+                        }}
+                        size="sm"
+                      >
+                        View v{m.version}
+                      </Button>
+                    </div>
+                  )}
                   {m.warnings && m.warnings.length > 0 && (
                     <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs text-warning-400">
                       {m.warnings.map((w) => (
@@ -172,7 +191,7 @@ export function RefineChatPanel({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             // Enter sends; Shift+Enter inserts a newline.
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               void handleSend();
             }

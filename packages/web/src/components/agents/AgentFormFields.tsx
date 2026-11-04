@@ -1,7 +1,7 @@
 'use client';
 
 import type { ImplementerRuntimeKind, ReasoningLevel } from '@auto-swe/shared/types/api';
-import { type ReactNode, useState } from 'react';
+import { type ReactNode, useRef, useState } from 'react';
 import { ModelSpecPicker } from '@/components/modelConfig/ModelSpecPicker';
 import { Combobox } from '@/components/ui/Combobox';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
@@ -61,6 +61,11 @@ type FieldName =
 /** Per-field hint and placeholder copy — each caller explains the fields in its own terms. */
 export type AgentFormCopy = Partial<Record<FieldName, { hint?: string; placeholder?: string }>>;
 
+/** What a key may contain; the gateway enforces the same set. */
+export const AGENT_KEY_PATTERN = /^[A-Za-z0-9_.-]+$/;
+export const AGENT_KEY_HINT =
+  'Letters, digits, dot, dash and underscore. It cannot be changed after creation.';
+
 /** An agent a sub-role can inherit its model from. */
 export interface ParentAgentOption {
   key: string;
@@ -84,6 +89,7 @@ function providerOf(spec: string | null | undefined): string | null {
 export function AgentFormFields({
   copy = {},
   credentials,
+  disabled = false,
   mcpConnections,
   mode,
   onChange,
@@ -98,6 +104,8 @@ export function AgentFormFields({
 }: {
   copy?: AgentFormCopy;
   credentials?: ProviderCredentialRow[];
+  /** Every field read-only, for an agent that is deactivated. */
+  disabled?: boolean;
   mcpConnections: McpConnectionRow[];
   mode: 'create' | 'edit';
   onChange: (patch: Partial<AgentFormValue>) => void;
@@ -122,6 +130,13 @@ export function AgentFormFields({
   const [modelMode, setModelMode] = useState<'own' | 'inherit'>(
     !value.modelSpec && value.inheritsModelFrom ? 'inherit' : 'own'
   );
+  // The two model bindings are alternatives, but a mis-click must not destroy typed data:
+  // the side being left is remembered and put back when the person switches back.
+  const stashed = useRef<{
+    modelSpec?: string | null;
+    credentialId?: string | null;
+    inheritsModelFrom?: string | null;
+  }>({});
   const parentSpec = parentAgents?.find((a) => a.key === value.inheritsModelFrom)?.modelSpec;
   const modelProvider = providerOf(modelMode === 'own' ? value.modelSpec : parentSpec);
   // A credential only works for its own provider, so offer just the matching ones — plus the
@@ -138,6 +153,7 @@ export function AgentFormFields({
       label="Name"
       onChange={(e) => onChange({ name: e.target.value })}
       placeholder={copy.name?.placeholder}
+      required
       value={value.name}
     />
   );
@@ -152,15 +168,21 @@ export function AgentFormFields({
   );
 
   return (
-    <div className="max-h-[70vh] space-y-4 overflow-y-auto pr-1">
+    <fieldset className="m-0 min-w-0 space-y-4 border-0 p-0" disabled={disabled}>
       {mode === 'create' ? (
         <>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Input
-              hint={copy.key?.hint}
+              error={
+                value.key && !AGENT_KEY_PATTERN.test(value.key)
+                  ? 'Use letters, digits, dot, dash or underscore only.'
+                  : undefined
+              }
+              hint={copy.key?.hint ?? AGENT_KEY_HINT}
               label="Key"
               onChange={(e) => onChange({ key: e.target.value })}
               placeholder={copy.key?.placeholder}
+              required
               value={value.key ?? ''}
             />
             {nameInput}
@@ -178,11 +200,27 @@ export function AgentFormFields({
         legend="Model"
         name="agent-model-mode"
         onChange={(next) => {
+          if (next === modelMode) {
+            return;
+          }
           setModelMode(next);
-          // The two bindings are alternatives: choosing one clears the other.
-          onChange(
-            next === 'own' ? { inheritsModelFrom: '' } : { credentialId: null, modelSpec: '' }
-          );
+          // The two bindings are alternatives: choosing one clears the other (and remembers it).
+          if (next === 'own') {
+            stashed.current.inheritsModelFrom = value.inheritsModelFrom;
+            onChange({
+              credentialId: stashed.current.credentialId ?? value.credentialId ?? null,
+              inheritsModelFrom: '',
+              modelSpec: stashed.current.modelSpec ?? value.modelSpec ?? '',
+            });
+          } else {
+            stashed.current.modelSpec = value.modelSpec;
+            stashed.current.credentialId = value.credentialId;
+            onChange({
+              credentialId: null,
+              inheritsModelFrom: stashed.current.inheritsModelFrom ?? value.inheritsModelFrom ?? '',
+              modelSpec: '',
+            });
+          }
         }}
         options={[
           {
@@ -202,7 +240,7 @@ export function AgentFormFields({
         <ModelSpecPicker
           hint={copy.modelSpec?.hint}
           kind="CHAT"
-          label={optional('Model spec')}
+          label="Model spec"
           onChange={(modelSpec) => onChange({ modelSpec })}
           placeholder={copy.modelSpec?.placeholder}
           value={value.modelSpec ?? ''}
@@ -311,6 +349,6 @@ export function AgentFormFields({
           value={value.credentialId ?? ''}
         />
       )}
-    </div>
+    </fieldset>
   );
 }

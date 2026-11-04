@@ -4,6 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import StudioMcpConnectionsPage from './page';
 
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/mcp',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
 const CONNECTION = {
   config: { url: 'https://mcp.example.com/mcp' },
   id: 'm1',
@@ -44,6 +50,43 @@ describe('MCP connections page', () => {
     render(withQuery(<StudioMcpConnectionsPage />));
     fireEvent.click(await screen.findByRole('button', { name: 'Test' }));
     expect(await screen.findByText('Could not connect to the server.')).toBeTruthy();
+  });
+
+  it('stamps a Test result and announces it', async () => {
+    setupFetchMock({
+      'GET /api/v1/platform/mcp-connections': () => ({ data: [CONNECTION] }),
+      'GET /api/v1/teams': () => ({ data: [] }),
+      'POST /api/v1/platform/mcp-connections/m1/test': () => ({
+        data: { durationMs: 5, ok: true, toolCount: 1, toolNames: ['search'] },
+      }),
+    });
+    render(withQuery(<StudioMcpConnectionsPage />));
+    fireEvent.click(await screen.findByRole('button', { name: 'Test' }));
+    const status = await screen.findByRole('status');
+    expect(status.textContent).toMatch(/Reachable/);
+    expect(status.textContent).toMatch(/Tested/);
+  });
+
+  it('asks for a team instead of submitting without one', async () => {
+    const spy = setupFetchMock({
+      'GET /api/v1/platform/mcp-connections': () => ({ data: [CONNECTION] }),
+      'GET /api/v1/teams': () => ({
+        data: [
+          { id: 't1', name: 'Platform', slug: 'platform' },
+          { id: 't2', name: 'Other', slug: 'other' },
+        ],
+      }),
+      'POST /api/v1/platform/mcp-connections': () => ({ data: CONNECTION }),
+    });
+    render(withQuery(<StudioMcpConnectionsPage />));
+    fireEvent.click(await screen.findByRole('button', { name: 'Create connection' }));
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'n' } });
+    fireEvent.change(screen.getByLabelText(/^Server URL/), {
+      target: { value: 'https://mcp.example.com/mcp' },
+    });
+    fireEvent.submit(screen.getByLabelText(/^Name/).closest('form') as HTMLFormElement);
+    expect(await screen.findByText('Choose the team that owns this connection.')).toBeTruthy();
+    expect(spy.mock.calls.some(([, i]) => i?.method === 'POST')).toBe(false);
   });
 
   describe('bearer token', () => {

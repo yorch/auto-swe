@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { cleanAgentPayload } from '@/components/agents/AgentEditorFields';
 import {
+  AGENT_KEY_PATTERN,
   type AgentFormCopy,
   AgentFormFields,
   type AgentFormValue,
@@ -42,6 +43,7 @@ import {
   useDeleteAgent,
   useUpdateAgent,
 } from '@/hooks/useAgentLibrary';
+import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { useAdminCredentials } from '@/hooks/useModelConfig';
@@ -50,6 +52,8 @@ import { useSkills } from '@/hooks/useSkills';
 import { useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import {
   missingCredentialProvider,
   modelLabel,
@@ -165,7 +169,23 @@ interface SavedNotice {
   runtimeWarnings: string[];
 }
 
+const ATTENTION_FILTERS = ['deactivated', 'noCredential', 'unverified'] as const;
+type AttentionFilter = (typeof ATTENTION_FILTERS)[number];
+const ATTENTION_LABEL: Record<AttentionFilter, string> = {
+  deactivated: 'Deactivated only',
+  noCredential: 'No credential only',
+  unverified: 'Unverified only',
+};
+
 export default function AgentLibraryPage() {
+  return (
+    <Suspense>
+      <AgentLibraryContent />
+    </Suspense>
+  );
+}
+
+function AgentLibraryContent() {
   // Every scope: filtering to GLOBAL hid organization, team, channel and
   // template overrides from the only page that manages them.
   const {
@@ -179,8 +199,16 @@ export default function AgentLibraryPage() {
   const { data: teams } = useTeams();
   const { data: templates } = useWorkflowTemplates();
   const { data: orgs } = useOrganizationDirectory();
-  const [scopeFilter, setScopeFilter] = useState<'' | AgentScope>('');
-  const [textFilter, setTextFilter] = useState('');
+  // Filters live in the address bar, so a filtered list can be shared and survives a reload.
+  const { params, update } = useUrlFilters();
+  const scopeFilter: '' | AgentScope = SCOPE_ORDER.find((sc) => sc === params.get('scope')) ?? '';
+  const setScopeFilter = (next: '' | AgentScope) => update({ scope: next || null });
+  const attentionFilter: '' | AttentionFilter =
+    ATTENTION_FILTERS.find((f) => f === params.get('attention')) ?? '';
+  const setAttentionFilter = (next: '' | AttentionFilter) => update({ attention: next || null });
+  const [textFilter, setTextFilter] = useDebouncedUrlSearch(params.get('q') ?? '', (value) =>
+    update({ q: value || null })
+  );
   const { data: mcpConnections } = useMcpConnections();
   const { data: skills } = useSkills();
   const { data: credentials } = useAdminCredentials();
@@ -211,6 +239,8 @@ export default function AgentLibraryPage() {
   const [editError, setEditError] = useState<string | null>(null);
   // A row action that failed after the fact, where there is no form to hold the message.
   const [actionError, setActionError] = useState<string | null>(null);
+  // A dismiss of a dirty form asks first; 'create' or 'edit' names the form being discarded.
+  const [discardTarget, setDiscardTarget] = useState<'create' | 'edit' | null>(null);
 
   function finishSave(title: string, res: AgentSaveWarnings & { runtimeWarnings?: string[] }) {
     const scanWarnings = res.scanWarnings ?? [];
@@ -234,8 +264,7 @@ export default function AgentLibraryPage() {
         cleanAgentPayload({ ...createForm }) as CreateAgentBody
       );
       finishSave('Agent created', res);
-      setCreateOpen(false);
-      setCreateForm(EMPTY_CREATE);
+      closeCreate();
     } catch (e) {
       setCreateError(errMsg(e, 'Create failed'));
     }
@@ -261,6 +290,48 @@ export default function AgentLibraryPage() {
       closeEdit();
     } catch (e) {
       setEditError(errMsg(e, 'Update failed'));
+    }
+  }
+
+  const createDirty = JSON.stringify(createForm) !== JSON.stringify(EMPTY_CREATE);
+  const editDirty =
+    editing !== null &&
+    editingOriginal !== null &&
+    Object.keys(buildAgentUpdate(editingOriginal, editing)).length > 0;
+  useUnsavedChangesGuard((createOpen && createDirty) || editDirty);
+
+  function requestCloseCreate() {
+    if (createDirty && !createAgent.isPending) {
+      setDiscardTarget('create');
+      return;
+    }
+    closeCreate();
+  }
+
+  function closeCreate() {
+    setCreateOpen(false);
+    setCreateForm(EMPTY_CREATE);
+    setCreateError(null);
+  }
+
+  function requestCloseEdit() {
+    if (editDirty && !updateAgent.isPending) {
+      setDiscardTarget('edit');
+      return;
+    }
+    closeEdit();
+  }
+
+  async function reactivate(a: AgentRow): Promise<boolean> {
+    setActionError(null);
+    try {
+      await updateAgent.mutateAsync({ body: { isActive: true }, id: a.id });
+      return true;
+    } catch (e) {
+      // A reactivation that fails is otherwise invisible: the list simply stays as
+      // it was, and the operator has no way to tell that anything was attempted.
+      setActionError(errMsg(e, 'Reactivate failed'));
+      return false;
     }
   }
 
@@ -298,6 +369,18 @@ export default function AgentLibraryPage() {
   }
   const visibleAgents = (agents ?? [])
     .filter((a) => !scopeFilter || a.scope === scopeFilter)
+    .filter((a) => {
+      switch (attentionFilter) {
+        case 'deactivated':
+          return !a.isActive;
+        case 'unverified':
+          return !a.isVerified;
+        case 'noCredential':
+          return Boolean(missingCredentialProvider(a, agents ?? [], readiness?.providers ?? []));
+        default:
+          return true;
+      }
+    })
     .filter(
       (a) => !query || `${a.key} ${a.name} ${a.description ?? ''}`.toLowerCase().includes(query)
     )
@@ -307,7 +390,11 @@ export default function AgentLibraryPage() {
         a.key.localeCompare(b.key) ||
         SCOPE_ORDER.indexOf(a.scope) - SCOPE_ORDER.indexOf(b.scope)
     );
-  const filtering = Boolean(scopeFilter || query);
+  const filtering = Boolean(scopeFilter || query || attentionFilter);
+  const clearFilters = () => {
+    setTextFilter('');
+    update({ attention: null, q: null, scope: null });
+  };
   const visibleIds = new Set(visibleAgents.map((agent) => agent.id));
   const selectedVisibleIds = new Set([...selectedIds].filter((id) => visibleIds.has(id)));
   const selectedAgents = visibleAgents.filter((agent) => selectedVisibleIds.has(agent.id));
@@ -378,20 +465,13 @@ export default function AgentLibraryPage() {
                   id: 'reactivate',
                   label: 'Reactivate',
                   onAction: async () => {
-                    setActionError(null);
-                    try {
-                      await updateAgent.mutateAsync({ body: { isActive: true }, id: a.id });
-                    } catch (e) {
-                      // A reactivation that fails is otherwise invisible: the list simply stays as
-                      // it was, and the operator has no way to tell that anything was attempted.
-                      setActionError(errMsg(e, 'Reactivate failed'));
-                    }
+                    await reactivate(a);
                   },
                 },
               ]
             : [
                 {
-                  icon: 'trash' as const,
+                  icon: 'pause' as const,
                   id: 'deactivate',
                   label: 'Deactivate',
                   onAction: () => setDeleting(a),
@@ -602,7 +682,7 @@ export default function AgentLibraryPage() {
           </p>
         }
         learnMore={{ ...HELP_LINKS.agentLibrary, label: 'About the agent library' }}
-        subtitle="Versioned agents."
+        subtitle="Agents pair a model with a prompt, skills and tools. Workflow steps call them by key."
         title="Agent library"
       />
       <SetupBanner items={['credentials']} />
@@ -612,6 +692,30 @@ export default function AgentLibraryPage() {
           <Alert className="mb-3" variant="error">
             {actionError}
           </Alert>
+        )}
+        {/* The agent is saved; the scanner and catalog only advise, so this is a banner, not a gate. */}
+        {saved && (
+          <div className="mb-3 space-y-2">
+            <p className="text-sm font-medium text-paper-100">{saved.title}, with notes:</p>
+            {saved.scanWarnings.length > 0 && (
+              <Alert variant="warning">
+                {scanWarningLead(saved.scanWarnings)}
+                <ul className="mt-1 list-disc pl-5">
+                  {saved.scanWarnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              </Alert>
+            )}
+            <ModelSaveWarnings
+              catalogWarnings={saved.catalogWarnings}
+              credentialWarnings={saved.credentialWarnings}
+              runtimeWarnings={saved.runtimeWarnings}
+            />
+            <Button onClick={() => setSaved(null)} size="sm" variant="ghost">
+              Dismiss
+            </Button>
+          </div>
         )}
         <Toolbar
           end={
@@ -646,15 +750,18 @@ export default function AgentLibraryPage() {
             value={scopeFilter}
           />
           <HelpTip term="scopeCascade" />
+          <Select
+            aria-label="Filter by what needs attention"
+            className="h-8 w-full text-sm sm:w-48"
+            onChange={(v) => setAttentionFilter(v as '' | AttentionFilter)}
+            options={[
+              { label: 'Any status', value: '' },
+              ...ATTENTION_FILTERS.map((f) => ({ label: ATTENTION_LABEL[f], value: f })),
+            ]}
+            value={attentionFilter}
+          />
           {filtering && (
-            <Button
-              onClick={() => {
-                setTextFilter('');
-                setScopeFilter('');
-              }}
-              size="sm"
-              variant="ghost"
-            >
+            <Button onClick={clearFilters} size="sm" variant="ghost">
               Clear filters
             </Button>
           )}
@@ -699,13 +806,7 @@ export default function AgentLibraryPage() {
             filtering ? (
               <EmptyState
                 action={
-                  <Button
-                    onClick={() => {
-                      setTextFilter('');
-                      setScopeFilter('');
-                    }}
-                    size="sm"
-                  >
+                  <Button onClick={clearFilters} size="sm">
                     Clear filters
                   </Button>
                 }
@@ -750,7 +851,7 @@ export default function AgentLibraryPage() {
       )}
 
       {/* ── Create ── */}
-      <Modal onClose={() => setCreateOpen(false)} open={createOpen} size="lg" title="New agent">
+      <Modal onClose={requestCloseCreate} open={createOpen} size="lg" title="New agent">
         <AgentFormFields
           copy={CREATE_COPY}
           credentials={credentials ?? []}
@@ -780,18 +881,27 @@ export default function AgentLibraryPage() {
         />
         {createError && <Alert variant="error">{createError}</Alert>}
         <ModalFooter
-          disabled={!createForm.key || !createForm.name || createScopeIncomplete}
+          disabled={
+            !createForm.key ||
+            !AGENT_KEY_PATTERN.test(createForm.key) ||
+            !createForm.name.trim() ||
+            createScopeIncomplete
+          }
           isPending={createAgent.isPending}
-          onCancel={() => setCreateOpen(false)}
+          onCancel={requestCloseCreate}
           onSubmit={submitCreate}
           pendingLabel="Creating…"
           submitLabel="Create agent"
-        />
+        >
+          {(!createForm.key || !createForm.name.trim()) && (
+            <span className="text-xs text-paper-500">Key and name are required.</span>
+          )}
+        </ModalFooter>
       </Modal>
 
       {/* ── Edit ── */}
       <Modal
-        onClose={closeEdit}
+        onClose={requestCloseEdit}
         open={editing !== null}
         size="lg"
         subtitle={editing ? `${editing.key} · v${editing.version} → v${editing.version + 1}` : ''}
@@ -800,13 +910,30 @@ export default function AgentLibraryPage() {
         {editing ? (
           <>
             {!editing.isActive && (
-              <Alert variant="warning">
+              <Alert
+                action={
+                  <Button
+                    disabled={updateAgent.isPending}
+                    onClick={async () => {
+                      if (await reactivate(editing)) {
+                        setEditing({ ...editing, isActive: true });
+                        setEditingOriginal({ ...editing, isActive: true });
+                      }
+                    }}
+                    size="sm"
+                  >
+                    Reactivate
+                  </Button>
+                }
+                variant="warning"
+              >
                 This agent is deactivated. Reactivate it to change it.
               </Alert>
             )}
             <AgentFormFields
               copy={EDIT_COPY}
               credentials={credentials ?? []}
+              disabled={!editing.isActive}
               mcpConnections={mcpConnections ?? []}
               mode="edit"
               onChange={patchEditing}
@@ -826,8 +953,9 @@ export default function AgentLibraryPage() {
             />
             {editError && <Alert variant="error">{editError}</Alert>}
             <ModalFooter
+              disabled={!editing.isActive}
               isPending={updateAgent.isPending}
-              onCancel={closeEdit}
+              onCancel={requestCloseEdit}
               onSubmit={submitEdit}
               pendingLabel="Saving…"
               submitLabel="Save new version"
@@ -836,33 +964,22 @@ export default function AgentLibraryPage() {
         ) : null}
       </Modal>
 
-      {/* ── Saved, with the scanner's and catalog's findings ── */}
-      <Modal onClose={() => setSaved(null)} open={saved !== null} title={saved?.title ?? 'Saved'}>
-        {saved && (
-          <div className="space-y-4">
-            {saved.scanWarnings.length > 0 && (
-              <Alert variant="warning">
-                {scanWarningLead(saved.scanWarnings)}
-                <ul className="mt-1 list-disc pl-5">
-                  {saved.scanWarnings.map((w) => (
-                    <li key={w}>{w}</li>
-                  ))}
-                </ul>
-              </Alert>
-            )}
-            <ModelSaveWarnings
-              catalogWarnings={saved.catalogWarnings}
-              credentialWarnings={saved.credentialWarnings}
-              runtimeWarnings={saved.runtimeWarnings}
-            />
-            <div className="flex justify-end">
-              <Button onClick={() => setSaved(null)} variant="primary">
-                Done
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
+      <ConfirmModal
+        confirmLabel="Discard changes"
+        dangerous
+        message="You have unsaved changes to this agent. Closing the form discards them."
+        onClose={() => setDiscardTarget(null)}
+        onConfirm={() => {
+          if (discardTarget === 'create') {
+            closeCreate();
+          } else {
+            closeEdit();
+          }
+          setDiscardTarget(null);
+        }}
+        open={discardTarget !== null}
+        title="Discard unsaved changes?"
+      />
 
       {history && (
         <AgentHistoryModal
