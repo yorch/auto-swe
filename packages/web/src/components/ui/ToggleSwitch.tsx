@@ -31,8 +31,11 @@ export function ToggleSwitch({
       aria-checked={checked}
       aria-label={ariaLabel}
       className={cn(
-        'flex items-center gap-2 rounded-full',
+        // `relative` + the ::after inflates the 20px track to the 24px WCAG 2.5.8 floor (44px on
+        // a coarse pointer) without moving its neighbours.
+        'relative flex items-center gap-2 rounded-full after:absolute after:-inset-1 pointer-coarse:after:-inset-3',
         FOCUS_RING,
+        'disabled:cursor-not-allowed disabled:opacity-50',
         label && 'cursor-pointer',
         className
       )}
@@ -45,7 +48,8 @@ export function ToggleSwitch({
       <span
         className={cn(
           'inline-block h-5 w-10 shrink-0 rounded-full transition-colors',
-          checked ? 'bg-accent-400' : 'bg-ink-500'
+          // Off: a field-border ring so the track's edge reads against the card (the fill alone is ~1.3:1).
+          checked ? 'bg-accent-400' : 'bg-ink-500 ring-1 ring-ink-200 ring-inset'
         )}
       >
         <span

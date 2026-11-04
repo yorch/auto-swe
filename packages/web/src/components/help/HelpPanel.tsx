@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef } from 'react';
 import { Icon } from '@/components/ui/Icon';
+import { IconButton } from '@/components/ui/IconButton';
 import { Modal } from '@/components/ui/Modal';
 import { pageTitle } from '@/lib/navigation';
 import { cn, FOCUS_RING } from '@/lib/utils';
@@ -36,23 +37,20 @@ export function HelpButton() {
   }, [pathname, setOpen]);
   return (
     <>
-      <button
+      <IconButton
         aria-controls={HELP_PANEL_ID}
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-label="Help for this page"
-        className={cn(
-          'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-ink-400 text-paper-300 transition-colors hover:border-accent-400/60 hover:text-paper-100',
-          open && 'border-accent-400/60 text-accent-300',
-          FOCUS_RING
-        )}
+        className={cn(open && 'border-accent-400/60 text-accent-300')}
         onClick={() => setOpen(true)}
         ref={buttonRef}
+        shape="round"
         title="Help for this page"
-        type="button"
+        variant="outline"
       >
         <Icon name="help" size={14} />
-      </button>
+      </IconButton>
       <Modal
         onClose={() => {
           setOpen(false);

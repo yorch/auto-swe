@@ -7,6 +7,7 @@ import { BrandMark } from '@/components/layout/AuthLayout';
 import { PALETTE_CHOICES } from '@/components/layout/ThemeToggle';
 import { SupportContact } from '@/components/SupportContact';
 import { Icon, isIconName } from '@/components/ui/Icon';
+import { IconButton } from '@/components/ui/IconButton';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { useApprovalsCount } from '@/hooks/useApprovals';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
@@ -20,7 +21,7 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
     <Link
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors',
+        'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors pointer-coarse:min-h-11',
         FOCUS_RING,
         active
           ? 'bg-ink-600 text-paper-50 before:absolute before:inset-y-1.5 before:-left-2.5 before:w-[3px] before:rounded-r-full before:bg-accent-400'
@@ -38,6 +39,7 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
       {badge !== undefined && badge > 0 && (
         <span className="rounded-full bg-accent-500 px-1.5 py-px text-xs font-semibold tabular-nums text-white">
           {badge}
+          <span className="sr-only"> pending</span>
         </span>
       )}
     </Link>
@@ -100,7 +102,7 @@ function UserMenu() {
         aria-controls={MENU_ID}
         aria-expanded={open}
         className={cn(
-          'flex w-full items-center gap-2.5 rounded-lg border border-ink-500 bg-ink-700/60 px-2.5 py-2 text-left text-sm transition-colors hover:border-ink-300 hover:bg-ink-700',
+          'flex w-full items-center gap-2.5 rounded-lg border border-ink-500 bg-ink-700/60 px-2.5 py-2 text-left text-sm transition-colors pointer-coarse:min-h-11 hover:border-ink-300 hover:bg-ink-700',
           FOCUS_RING
         )}
         onClick={() => setOpen((o) => !o)}
@@ -157,7 +159,7 @@ function UserMenu() {
           </div>
           <Link
             className={cn(
-              'block px-3 py-2 text-sm text-paper-200 no-underline hover:bg-ink-700',
+              'block px-3 py-2 text-sm text-paper-200 no-underline pointer-coarse:min-h-11 pointer-coarse:py-3 hover:bg-ink-700',
               FOCUS_RING
             )}
             href="/settings"
@@ -167,7 +169,7 @@ function UserMenu() {
           </Link>
           <button
             className={cn(
-              'block w-full px-3 py-2 text-left text-sm text-paper-200 hover:bg-ink-700',
+              'block w-full px-3 py-2 text-left text-sm text-paper-200 pointer-coarse:min-h-11 hover:bg-ink-700',
               FOCUS_RING
             )}
             onClick={handleLogout}
@@ -247,29 +249,15 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
         >
           <BrandMark size="sm" />
         </Link>
-        <button
+        <IconButton
           aria-label="Close navigation"
-          className={cn(
-            'mr-3 rounded-md p-2 text-paper-400 hover:text-paper-100 md:hidden',
-            FOCUS_RING
-          )}
+          className="mr-3 md:hidden"
           onClick={onClose}
           ref={closeButtonRef}
-          type="button"
+          size="md"
         >
-          <svg
-            aria-hidden="true"
-            fill="none"
-            height={18}
-            stroke="currentColor"
-            strokeLinecap="round"
-            strokeWidth={2}
-            viewBox="0 0 24 24"
-            width={18}
-          >
-            <path d="M6 6l12 12M18 6L6 18" />
-          </svg>
-        </button>
+          <Icon name="close" size={18} />
+        </IconButton>
       </div>
 
       <UserMenu />
@@ -280,7 +268,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           <Link
             aria-current={isStartWorkPath(pathname) ? 'page' : undefined}
             className={cn(
-              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-accent-500 px-3 py-2 text-sm font-semibold text-white no-underline transition-colors hover:bg-accent-600',
+              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-accent-500 px-3 py-2 text-sm font-semibold text-white no-underline transition-colors pointer-coarse:min-h-11 hover:bg-accent-600',
               FOCUS_RING
             )}
             data-tour="nav:/start"
@@ -290,26 +278,39 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
             Start work
           </Link>
         </div>
-        {groups.map((group) => (
-          <div key={group.label}>
-            {/* A group that is one entry of the same name (Admin) needs no heading over it. */}
-            {group.items.length === 1 && group.items[0].label === group.label ? (
-              <div className="pt-4" />
-            ) : (
-              <div className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600">
-                {group.label}
-              </div>
-            )}
-            {group.items.map((item) => (
-              <NavLink
-                active={activeHref === item.href}
-                badge={item.href === APPROVALS_HREF ? inboxCount : undefined}
-                item={item}
-                key={item.href}
-              />
-            ))}
-          </div>
-        ))}
+        {groups.map((group, index) => {
+          // A group that is one entry of the same name (Admin) needs no heading over it.
+          const headless = group.items.length === 1 && group.items[0].label === group.label;
+          const headingId = `nav-group-${index}`;
+          return (
+            <div key={group.label}>
+              {headless ? (
+                <div className="pt-4" />
+              ) : (
+                <div
+                  className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600"
+                  id={headingId}
+                >
+                  {group.label}
+                </div>
+              )}
+              <ul
+                aria-label={headless ? group.label : undefined}
+                aria-labelledby={headless ? undefined : headingId}
+              >
+                {group.items.map((item) => (
+                  <li key={item.href}>
+                    <NavLink
+                      active={activeHref === item.href}
+                      badge={item.href === APPROVALS_HREF ? inboxCount : undefined}
+                      item={item}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
       </nav>
 
       <SupportContact className="shrink-0 border-t border-ink-500/70 px-[18px] py-3" />

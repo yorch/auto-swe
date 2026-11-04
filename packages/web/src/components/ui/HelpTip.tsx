@@ -4,9 +4,10 @@ import { type ReactNode, useCallback, useEffect, useId, useRef, useState } from 
 import { useOverlayPosition } from 'react-aria';
 import { createPortal } from 'react-dom';
 import { type GlossaryTerm, glossaryEntry } from '@/lib/glossary';
-import { cn, FOCUS_RING } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { DocLink } from './DocLink';
 import { Icon } from './Icon';
+import { IconButton } from './IconButton';
 
 const HIDE_DELAY_MS = 120;
 
@@ -140,17 +141,13 @@ export function HelpTip(props: HelpTipProps) {
 
   return (
     <span className={cn('inline-flex align-middle', className)}>
-      <button
+      <IconButton
         aria-controls={open ? popoverId : undefined}
         aria-describedby={open ? popoverId : undefined}
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-label={buttonName}
-        className={cn(
-          'inline-flex h-5 w-5 items-center justify-center rounded-full text-paper-500 transition-colors hover:text-paper-100',
-          open && 'text-accent-300',
-          FOCUS_RING
-        )}
+        className={cn('hover:bg-transparent', open && 'text-accent-300')}
         onBlur={(event) => {
           pointerDown.current = false;
           if (leftTipFocus(event.relatedTarget)) {
@@ -196,10 +193,11 @@ export function HelpTip(props: HelpTipProps) {
           }
         }}
         ref={buttonRef}
-        type="button"
+        shape="round"
+        size="xs"
       >
         <Icon name="help" size={14} />
-      </button>
+      </IconButton>
       {open &&
         container &&
         createPortal(

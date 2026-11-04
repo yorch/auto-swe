@@ -1,4 +1,14 @@
-import { createContext, type MouseEventHandler, type ReactNode, useContext } from 'react';
+'use client';
+
+import {
+  createContext,
+  type MouseEventHandler,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 type Align = 'left' | 'right' | 'center';
@@ -43,15 +53,44 @@ const STACKED_TABLE =
 export function Table({
   children,
   className,
+  label = 'Scrollable table',
   stacked = false,
 }: {
   children: ReactNode;
   className?: string;
+  /** Names the scroll region for a screen reader, once the table is wide enough to scroll. */
+  label?: string;
   stacked?: boolean;
 }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  // A scrolling region the keyboard cannot reach strands anyone who cannot use a pointer, so it
+  // becomes a focusable, named region exactly when (and only when) it overflows.
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || typeof ResizeObserver === 'undefined') {
+      return;
+    }
+    const measure = () => setOverflows(el.scrollWidth > el.clientWidth + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    const table = el.firstElementChild;
+    if (table) {
+      observer.observe(table);
+    }
+    return () => observer.disconnect();
+  }, []);
+  const regionProps = overflows
+    ? ({ 'aria-label': label, role: 'region', tabIndex: 0 } as const)
+    : {};
   return (
     <StackedContext.Provider value={stacked}>
-      <div className="w-full overflow-x-auto">
+      <div
+        className={cn('w-full overflow-x-auto', overflows && FOCUS_RING)}
+        ref={scroller}
+        {...regionProps}
+      >
         <table className={cn('w-full text-sm', stacked && STACKED_TABLE, className)}>
           {children}
         </table>
@@ -116,7 +155,7 @@ export function Th({
         >
           {children}
           <span aria-hidden="true">
-            {sort === 'descending' ? ' ↓' : sort === 'ascending' ? ' ↑' : ''}
+            {sort === 'descending' ? ' ↓' : sort === 'ascending' ? ' ↑' : ' ↕'}
           </span>
         </button>
       ) : (

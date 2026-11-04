@@ -2,8 +2,9 @@
 
 import { useRouter } from 'next/navigation';
 import { Button as AriaButton, Menu, MenuItem, MenuTrigger, Popover } from 'react-aria-components';
-import { cn, FOCUS_RING } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { Icon, type IconName } from './Icon';
+import { iconButtonClassName } from './IconButton';
 
 export interface ActionMenuItem {
   /** Stable identity within the menu. */
@@ -41,14 +42,7 @@ export function ActionMenu({
   }
   return (
     <MenuTrigger>
-      <AriaButton
-        aria-label={label}
-        className={cn(
-          'inline-flex h-7 w-7 items-center justify-center rounded-md text-paper-500 transition-colors hover:bg-ink-500/60 hover:text-paper-100 data-[pressed]:bg-ink-500/60',
-          FOCUS_RING,
-          className
-        )}
-      >
+      <AriaButton aria-label={label} className={iconButtonClassName({ size: 'sm' }, className)}>
         <Icon name="more" size={18} strokeWidth={2.6} />
       </AriaButton>
       <Popover
@@ -74,7 +68,7 @@ export function ActionMenu({
           {visible.map((item) => (
             <MenuItem
               className={cn(
-                'flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm outline-none',
+                'flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm outline-none pointer-coarse:min-h-11',
                 item.tone === 'danger'
                   ? 'text-danger-400 data-[focused]:bg-danger-400/10'
                   : 'text-paper-200 data-[focused]:bg-ink-600',

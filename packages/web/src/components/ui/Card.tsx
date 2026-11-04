@@ -19,7 +19,7 @@ export function Card({ className, children, variant = 'panel', ...props }: CardP
   return (
     <div
       className={cn(
-        'relative rounded-xl p-6 transition-colors',
+        'relative rounded-xl p-4 transition-colors sm:p-6',
         VARIANT_CLASSES[variant],
         className
       )}
@@ -53,10 +53,19 @@ export function CardHeader({
  * A card's heading, with an optional `hint` under it for what the title alone does
  * not say — the window a chart covers, the order of a list, the test behind a figure.
  */
-export function CardTitle({ children, hint }: { children: React.ReactNode; hint?: string }) {
+export function CardTitle({
+  as: Heading = 'h3',
+  children,
+  hint,
+}: {
+  /** The heading level. `h3` assumes a section heading above; use `h2` directly under a page's `h1`. */
+  as?: 'h2' | 'h3' | 'h4';
+  children: React.ReactNode;
+  hint?: string;
+}) {
   return (
     <div>
-      <h3 className="text-lg font-semibold tracking-tight text-paper-50">{children}</h3>
+      <Heading className="text-lg font-semibold tracking-tight text-paper-50">{children}</Heading>
       {hint && <p className="mt-0.5 text-sm text-paper-500">{hint}</p>}
     </div>
   );

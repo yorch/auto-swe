@@ -88,3 +88,26 @@ describe('Modal', () => {
     expect(dialog.contains(option as HTMLElement)).toBe(true);
   });
 });
+
+describe('Modal initial focus', () => {
+  it('focuses the first field instead of the close button', () => {
+    render(
+      <Modal onClose={() => {}} open title="Edit">
+        <input aria-label="Name" />
+      </Modal>
+    );
+    expect(document.activeElement).toBe(screen.getByLabelText('Name', { selector: 'input' }));
+  });
+
+  it('prefers an element marked data-autofocus', () => {
+    render(
+      <Modal onClose={() => {}} open title="Edit">
+        <input aria-label="Name" />
+        <button data-autofocus="" type="button">
+          Cancel
+        </button>
+      </Modal>
+    );
+    expect(document.activeElement?.textContent).toBe('Cancel');
+  });
+});

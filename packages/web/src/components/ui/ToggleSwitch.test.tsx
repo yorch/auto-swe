@@ -16,4 +16,12 @@ describe('ToggleSwitch', () => {
     render(<ToggleSwitch checked={false} label="Show retired" onChange={() => {}} />);
     expect(screen.getByRole('switch', { name: 'Show retired' })).toBeTruthy();
   });
+
+  it('looks disabled when disabled, and outlines its off track', () => {
+    render(<ToggleSwitch ariaLabel="Active" checked={false} disabled onChange={() => {}} />);
+    const sw = screen.getByRole('switch');
+    expect(sw.className).toContain('disabled:opacity-50');
+    expect(sw.className).toContain('disabled:cursor-not-allowed');
+    expect(sw.querySelector('span')?.className).toContain('ring-ink-200');
+  });
 });

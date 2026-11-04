@@ -1,5 +1,7 @@
-import type { InputHTMLAttributes } from 'react';
-import { cn } from '@/lib/utils';
+'use client';
+
+import { type InputHTMLAttributes, useId } from 'react';
+import { cn, FIELD_FOCUS } from '@/lib/utils';
 import { FieldWrapper, fieldDescribedBy } from './FieldWrapper';
 
 type InputProps = InputHTMLAttributes<HTMLInputElement> & {
@@ -23,7 +25,10 @@ export function Input({
   required,
   ...props
 }: InputProps) {
-  const inputId = id ?? props.name ?? label?.toLowerCase().replace(/\s+/g, '-');
+  // Never derived from the label: two "Name" fields on one page would share an id and break
+  // htmlFor and aria-describedby. `useId` is the last resort, so a bare field still links its hint.
+  const generatedId = useId();
+  const inputId = id ?? props.name ?? generatedId;
   return (
     <FieldWrapper error={error} hint={hint} id={inputId} label={label} required={required}>
       <div className="relative">
@@ -39,11 +44,14 @@ export function Input({
           aria-describedby={fieldDescribedBy(inputId, hint, error)}
           aria-invalid={error ? true : undefined}
           className={cn(
-            'w-full rounded-md border border-ink-200 bg-ink-900 text-paper-100 outline-none transition-colors',
+            'w-full rounded-md border border-ink-200 bg-ink-900 text-paper-100 transition-colors',
+            FIELD_FOCUS,
             compact ? 'h-8 px-2.5 text-sm' : 'h-9 px-3 text-sm',
-            'hover:border-paper-600 focus:border-accent-400 focus:ring-2 focus:ring-accent-400/20',
+            'pointer-coarse:min-h-11',
+            'hover:border-paper-600',
             'placeholder:text-paper-600',
-            error && 'border-danger-400 focus:border-danger-400',
+            error &&
+              'border-danger-400 focus-visible:border-danger-400 focus-visible:outline-danger-400',
             prefix && 'pl-7',
             className
           )}

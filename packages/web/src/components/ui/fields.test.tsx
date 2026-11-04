@@ -50,3 +50,41 @@ describe('required field marker', () => {
     expect((screen.getByRole('checkbox') as HTMLInputElement).required).toBe(false);
   });
 });
+
+describe('field ids and focus', () => {
+  it('gives two same-labelled fields different ids, each linked to its own label', () => {
+    render(
+      <>
+        <Input label="Name" />
+        <Input label="Name" />
+      </>
+    );
+    const [a, b] = screen.getAllByRole('textbox', { name: 'Name' });
+    expect(a.id).not.toBe('');
+    expect(a.id).not.toBe(b.id);
+  });
+
+  it('uses the name before generating an id', () => {
+    render(<Textarea label="Notes" name="notes" />);
+    expect(screen.getByRole('textbox', { name: 'Notes' }).id).toBe('notes');
+  });
+
+  it('shows a solid, full-alpha focus outline on every text field', () => {
+    render(
+      <>
+        <Input aria-label="i" />
+        <Textarea aria-label="t" />
+      </>
+    );
+    for (const el of screen.getAllByRole('textbox')) {
+      expect(el.className).toContain('focus-visible:outline-2');
+      expect(el.className).toContain('focus-visible:outline-accent-400');
+      expect(el.className).not.toContain('ring-accent-400/20');
+    }
+  });
+
+  it('renders prose in the body face when mono is off', () => {
+    render(<Textarea aria-label="p" mono={false} />);
+    expect(screen.getByRole('textbox').className).not.toContain('font-mono');
+  });
+});

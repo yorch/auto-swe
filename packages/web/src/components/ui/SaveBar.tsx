@@ -29,11 +29,15 @@ export function SaveBar({
   return (
     <div
       className={cn(
-        'sticky bottom-0 z-10 flex flex-nowrap items-center justify-between gap-3 rounded-lg border bg-ink-800 px-4 py-3',
+        'sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 rounded-lg border bg-ink-800 px-4 py-3 sm:flex-nowrap',
         dirty ? 'border-warning-400/50' : 'border-ink-400'
       )}
     >
-      <p aria-live="polite" className="min-w-0 text-sm" role={error ? 'alert' : 'status'}>
+      <p
+        aria-live="polite"
+        className="min-w-0 basis-full text-sm sm:basis-auto"
+        role={error ? 'alert' : 'status'}
+      >
         {error ? (
           <span className="text-danger-400">{error}</span>
         ) : dirty ? (
@@ -46,7 +50,7 @@ export function SaveBar({
           <span className="hidden text-paper-500 sm:inline">No unsaved changes</span>
         )}
       </p>
-      <div className="ml-auto flex items-center gap-2">
+      <div className="flex w-full items-center justify-end gap-2 sm:ml-auto sm:w-auto">
         {children}
         <Button disabled={!dirty || pending} onClick={onDiscard} type="button" variant="ghost">
           Discard

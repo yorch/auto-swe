@@ -1,11 +1,11 @@
 'use client';
 
-import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from 'react';
 import { UNSAFE_PortalProvider } from 'react-aria';
 import { createPortal } from 'react-dom';
-import { cn, FOCUS_RING } from '@/lib/utils';
 import { Button, ButtonLink } from './Button';
 import { Icon } from './Icon';
+import { IconButton } from './IconButton';
 
 /**
  * The action row every modal ends with: a `ghost` Cancel on the left of the
@@ -20,6 +20,7 @@ import { Icon } from './Icon';
  * button reads as disabled.
  */
 export function ModalFooter({
+  autoFocusCancel = false,
   cancelLabel = 'Cancel',
   children,
   dangerous = false,
@@ -31,6 +32,8 @@ export function ModalFooter({
   submitHref,
   submitLabel,
 }: {
+  /** Open the dialog with focus on Cancel: for a confirmation, where Enter must not confirm. */
+  autoFocusCancel?: boolean;
   cancelLabel?: string;
   children?: ReactNode;
   dangerous?: boolean;
@@ -48,9 +51,11 @@ export function ModalFooter({
   submitLabel?: string;
 }) {
   return (
-    <div className="flex items-center justify-end gap-3 border-t border-ink-600 pt-4">
+    // Sticky: in a long form the actions stay in view at the dialog's bottom edge.
+    <div className="sticky bottom-0 flex items-center justify-end gap-3 border-t border-ink-600 bg-ink-900 pt-4 pb-1">
       {children && <div className="mr-auto min-w-0">{children}</div>}
       <Button
+        data-autofocus={autoFocusCancel ? '' : undefined}
         disabled={isPending}
         onClick={onCancel}
         type="button"
@@ -59,7 +64,11 @@ export function ModalFooter({
         {cancelLabel}
       </Button>
       {submitLabel && submitHref && (
-        <ButtonLink href={submitHref} onClick={onSubmit} variant={dangerous ? 'danger' : 'primary'}>
+        <ButtonLink
+          href={submitHref}
+          onClick={onSubmit}
+          variant={dangerous ? 'danger-solid' : 'primary'}
+        >
           {submitLabel}
         </ButtonLink>
       )}
@@ -68,7 +77,7 @@ export function ModalFooter({
           disabled={disabled || isPending}
           onClick={onSubmit}
           type={onSubmit ? 'button' : 'submit'}
-          variant={dangerous ? 'danger' : 'primary'}
+          variant={dangerous ? 'danger-solid' : 'primary'}
         >
           {isPending ? (pendingLabel ?? `${submitLabel}…`) : submitLabel}
         </Button>
@@ -86,6 +95,7 @@ export function Modal({
   size = 'md',
   closeOnBackdropClick = true,
   dismissible = true,
+  initialFocusRef,
 }: {
   open: boolean;
   onClose: () => void;
@@ -106,6 +116,12 @@ export function Modal({
    * believe they cancelled something that still completes.
    */
   dismissible?: boolean;
+  /**
+   * Where focus lands when the dialog opens. Without it, focus goes to the first element marked
+   * `data-autofocus`, else (with a mouse or keyboard) the first form control in the body, else
+   * the browser's default, which is the header's close button.
+   */
+  initialFocusRef?: RefObject<HTMLElement | null>;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   // The dialog is portalled to document.body: callers often own a modal from
@@ -126,11 +142,23 @@ export function Modal({
     }
     if (open && !dialog.open) {
       dialog.showModal();
+      // showModal() focuses the first focusable element, which is always the header's close
+      // button. Put focus where the person will act instead.
+      const marked =
+        initialFocusRef?.current ?? dialog.querySelector<HTMLElement>('[data-autofocus]');
+      const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+      // A first field on a touch screen would raise the keyboard before anyone asked for it.
+      const field = coarse
+        ? null
+        : dialog.querySelector<HTMLElement>(
+            'input:not([type=hidden]):not([disabled]), textarea:not([disabled]), select:not([disabled])'
+          );
+      (marked ?? field)?.focus();
     }
     if (!open && dialog.open) {
       dialog.close();
     }
-  }, [open, mounted]);
+  }, [open, mounted, initialFocusRef]);
 
   const width =
     size === 'full'
@@ -157,7 +185,7 @@ export function Modal({
     // biome-ignore lint/a11y/useKeyWithClickEvents: the keyboard equivalent of a backdrop click is Escape, which <dialog> handles natively
     <dialog
       aria-labelledby={titleId}
-      className={`m-auto ${width} border border-ink-400 bg-ink-900 p-0 text-paper-100 backdrop:bg-ink-950/80`}
+      className={`m-auto ${width} border border-ink-400 bg-ink-900 p-0 text-paper-100 backdrop:bg-scrim`}
       onCancel={(e) => {
         // Escape fires `cancel` first; preventing it keeps the dialog open.
         if (!dismissible) {
@@ -182,7 +210,7 @@ export function Modal({
       style={{ borderRadius: 12 }}
     >
       <div className="space-y-6 p-6">
-        <header className="flex items-start justify-between gap-4">
+        <header className="sticky top-0 z-10 -mx-6 -mt-6 flex items-start justify-between gap-4 bg-ink-900 px-6 pt-6 pb-2">
           <div className="space-y-1">
             <h2 className="text-xl font-semibold tracking-[-0.01em] text-paper-50" id={titleId}>
               {title}
@@ -190,18 +218,15 @@ export function Modal({
             {subtitle && <div className="text-sm leading-relaxed text-paper-400">{subtitle}</div>}
           </div>
           {/* close() fires the dialog's close event, which calls onClose once. */}
-          <button
+          <IconButton
             aria-label="Close"
-            className={cn(
-              '-mt-1 -mr-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-paper-500 transition-colors hover:bg-ink-600/60 hover:text-paper-100 disabled:cursor-not-allowed disabled:opacity-40',
-              FOCUS_RING
-            )}
+            className="-mt-1 -mr-1"
             disabled={!dismissible}
             onClick={() => dialogRef.current?.close()}
-            type="button"
+            size="md"
           >
             <Icon name="close" size={16} />
-          </button>
+          </IconButton>
         </header>
         {/* A shown <dialog> sits in the browser's top layer, above everything
             portalled to <body> — so a dropdown opened in here would render

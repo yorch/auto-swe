@@ -1,12 +1,15 @@
 import Link from 'next/link';
-import { cn, FOCUS_RING } from '@/lib/utils';
+import { COARSE_TARGET, cn, FOCUS_RING } from '@/lib/utils';
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'danger-solid';
 type Size = 'sm' | 'md' | 'lg';
 
 const VARIANTS: Record<Variant, string> = {
   danger:
     'border-danger-400/40 bg-transparent text-danger-400 hover:bg-danger-400/10 hover:border-danger-400',
+  // The confirm of a destructive dialog: as heavy as `primary`, in the danger hue. danger-600 is
+  // 4.8:1 against white (darker still in the light theme); hover darkens, so contrast only rises.
+  'danger-solid': 'border-transparent bg-danger-600 text-white hover:brightness-90',
   ghost:
     'border-transparent bg-transparent text-paper-400 hover:text-paper-200 hover:bg-ink-600/50',
   primary:
@@ -54,6 +57,8 @@ export function buttonClassName(variant: Variant, size: Size, className?: string
     // tight table cell "Run →" otherwise broke its arrow onto a second line.
     'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border transition-colors disabled:cursor-not-allowed disabled:opacity-40',
     FOCUS_RING,
+    // A thumb needs 44px; the 14px root makes the desktop heights 28-35px.
+    COARSE_TARGET,
     VARIANTS[variant],
     SIZES[size],
     className

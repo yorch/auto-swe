@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AssistantPanel } from '@/components/assistant/AssistantPanel';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { PageContainer } from '@/components/layout/PageContainer';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { useApprovalsStream } from '@/hooks/useApprovals';
@@ -65,7 +66,7 @@ function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscree
           // Backdrop for the mobile drawer; a click outside the drawer closes it.
           <div
             aria-hidden="true"
-            className="fixed inset-0 z-30 bg-black/60 md:hidden"
+            className="fixed inset-0 z-30 bg-scrim md:hidden"
             onClick={closeNav}
           />
         )}
@@ -90,9 +91,9 @@ function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscree
               id="main-content"
               tabIndex={-1}
             >
-              <div className="mx-auto max-w-[1280px] px-4 pt-6 pb-16 md:px-10 md:pt-10">
+              <PageContainer>
                 <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
-              </div>
+              </PageContainer>
             </main>
           )}
         </div>

@@ -1,7 +1,7 @@
 'use client';
 
 import { Icon, type IconName } from '@/components/ui/Icon';
-import { cn, FOCUS_RING } from '@/lib/utils';
+import { IconButton } from '@/components/ui/IconButton';
 import { type PalettePreference, type ThemePreference, useThemeStore } from '@/stores/themeStore';
 
 /**
@@ -43,17 +43,14 @@ export function ThemeToggle() {
   const next = THEME_CHOICES[(THEME_CHOICES.indexOf(current) + 1) % THEME_CHOICES.length];
   const label = `Theme: ${current.label}. Switch to ${next.label}`;
   return (
-    <button
+    <IconButton
       aria-label={label}
-      className={cn(
-        'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-ink-400 text-paper-300 transition-colors hover:border-accent-400/60 hover:text-paper-100',
-        FOCUS_RING
-      )}
       onClick={() => setPreference(next.value)}
+      shape="round"
       title={label}
-      type="button"
+      variant="outline"
     >
       <Icon name={current.icon} size={14} />
-    </button>
+    </IconButton>
   );
 }

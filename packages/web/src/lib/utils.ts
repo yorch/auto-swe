@@ -19,6 +19,29 @@ export const FOCUS_RING =
   'outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent-400';
 
 /**
+ * Focus indicator for text-entry fields (Input, Textarea, SearchInput, Select, Combobox).
+ * A solid 2px full-alpha accent outline drawn on the field's own edge (offset 0, so it
+ * replaces the 1px border change rather than floating beside it). The old 20%-alpha ring
+ * was close to invisible on ink surfaces; this clears WCAG 1.4.11 in both themes.
+ * `FIELD_FOCUS_DATA` is the same indicator keyed on React Aria's state attributes, for the
+ * dropdown triggers that do not take a native `:focus-visible`.
+ */
+export const FIELD_FOCUS =
+  'outline-none focus-visible:border-accent-400 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-0 focus-visible:outline-accent-400';
+
+export const FIELD_FOCUS_DATA =
+  'data-[focused]:border-accent-400 data-[focused]:outline-2 data-[focused]:outline-solid data-[focused]:outline-offset-0 data-[focused]:outline-accent-400 data-[focus-within]:border-accent-400 data-[focus-within]:outline-2 data-[focus-within]:outline-solid data-[focus-within]:outline-offset-0 data-[focus-within]:outline-accent-400';
+
+/**
+ * Minimum hit area on a touch screen. The root font is 14px, so the rem-based control
+ * heights land at 28-35px; on a coarse pointer these floor every control at 44px
+ * (WCAG 2.5.5 / platform guidance) without changing the desktop look. Pair with
+ * `COARSE_TARGET_W` when the control is square.
+ */
+export const COARSE_TARGET = 'pointer-coarse:min-h-11';
+export const COARSE_TARGET_W = 'pointer-coarse:min-w-11';
+
+/**
  * A secondary action repeated on every row of a list ("Diagnostics ›"): hidden
  * until its row (the nearest `group`) is hovered or holds keyboard focus, and
  * always shown where there is no hover (touch). Opacity, not `hidden`/`invisible`,
@@ -26,6 +49,23 @@ export const FOCUS_RING =
  */
 export const ROW_ACTION =
   'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100';
+
+/**
+ * Whether the reader asked for less motion. The global CSS override stops CSS animations but
+ * cannot reach `scrollTo({ behavior: 'smooth' })`, so scripted scrolls ask here.
+ */
+export function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
+
+/** `behavior` for a scripted scroll: smooth, unless the reader prefers reduced motion. */
+export function scrollBehavior(): ScrollBehavior {
+  return prefersReducedMotion() ? 'auto' : 'smooth';
+}
 
 /** A plain JSON-style object — not null, not an array. */
 export function isRecord(value: unknown): value is Record<string, unknown> {

@@ -13,6 +13,12 @@ export type BadgeTone =
 export type BadgeVariant = 'solid' | 'outline' | 'text';
 
 // Full literal class strings so Tailwind's scanner sees every one.
+const NEUTRAL_TONE: Record<BadgeVariant, string> = {
+  outline: 'border-ink-500 bg-ink-700 text-paper-400',
+  solid: 'bg-ink-600 text-paper-400',
+  text: 'text-paper-400',
+};
+
 const TONE_CLASSES: Record<BadgeTone, Record<BadgeVariant, string>> = {
   accent: {
     outline: 'border-accent-400/30 bg-accent-400/10 text-accent-400',
@@ -34,16 +40,9 @@ const TONE_CLASSES: Record<BadgeTone, Record<BadgeVariant, string>> = {
     solid: 'bg-info-400/20 text-info-400',
     text: 'text-info-400',
   },
-  muted: {
-    outline: 'border-ink-500 bg-ink-700 text-paper-400',
-    solid: 'bg-ink-600 text-paper-400',
-    text: 'text-paper-400',
-  },
-  neutral: {
-    outline: 'border-ink-500 bg-ink-700 text-paper-400',
-    solid: 'bg-ink-600 text-paper-400',
-    text: 'text-paper-400',
-  },
+  // `muted` is a deprecated alias of `neutral`: the two were byte-identical. New code says `neutral`.
+  muted: NEUTRAL_TONE,
+  neutral: NEUTRAL_TONE,
   success: {
     outline: 'border-success-400/30 bg-success-400/10 text-success-400',
     solid: 'bg-success-400/20 text-success-400',

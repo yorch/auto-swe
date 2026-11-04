@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PALETTE_CHOICES, THEME_CHOICES } from '@/components/layout/ThemeToggle';
 import { Icon, isIconName } from '@/components/ui/Icon';
@@ -79,6 +79,11 @@ export function CommandPalette({
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        // A modal <dialog> owns the top layer and makes everything else inert, so a palette
+        // opened over it would be invisible and unreachable. Leave the keypress alone.
+        if (!open && document.querySelector('dialog[open]')) {
+          return;
+        }
         e.preventDefault();
         onOpenChange(!open);
       }
@@ -100,6 +105,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   const [query, setQuery] = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
   const listId = useId();
   const optionId = (i: number) => `${listId}-option-${i}`;
@@ -185,6 +191,28 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   );
   const options = useMemo(() => [...results, ...remoteEntries], [results, remoteEntries]);
 
+  // The palette is modal: make the rest of the page inert (no Tab into it, hidden from AT) and
+  // stop it scrolling behind the veil. Declared before the focus effect so the page is live
+  // again by the time focus is handed back.
+  useEffect(() => {
+    const root = rootRef.current;
+    const made: Element[] = [];
+    for (const child of Array.from(document.body.children)) {
+      if (child !== root && !child.hasAttribute('inert')) {
+        child.setAttribute('inert', '');
+        made.push(child);
+      }
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      for (const child of made) {
+        child.removeAttribute('inert');
+      }
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
   // Focus the search on open; hand focus back to where it was on close.
   useEffect(() => {
     restoreRef.current = document.activeElement as HTMLElement | null;
@@ -216,6 +244,10 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
     if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
+    } else if (e.key === 'Tab') {
+      // The input is the only tab stop: keep focus on it rather than letting it leave.
+      e.preventDefault();
+      inputRef.current?.focus();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setActive((i) => Math.min(i + 1, options.length - 1));
@@ -228,9 +260,59 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
+  // `remoteEntries` arrive grouped (requests, runs, workflows), each group contiguous.
+  const remoteGroups = useMemo(() => {
+    const out: { name: string; start: number; entries: Entry[] }[] = [];
+    remoteEntries.forEach((entry, offset) => {
+      const last = out[out.length - 1];
+      if (last && last.name === entry.group) {
+        last.entries.push(entry);
+      } else {
+        out.push({ entries: [entry], name: entry.group, start: results.length + offset });
+      }
+    });
+    return out;
+  }, [remoteEntries, results.length]);
+
+  const renderRow = (entry: Entry, i: number) => (
+    <div
+      aria-selected={i === active}
+      className={cn(
+        'flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-sm pointer-coarse:min-h-11',
+        i === active ? 'bg-ink-600 text-paper-50' : 'text-paper-300'
+      )}
+      id={optionId(i)}
+      key={entry.id}
+      onClick={() => go(entry)}
+      onKeyDown={onKeyDown}
+      onMouseMove={() => setActive(i)}
+      role="option"
+      tabIndex={-1}
+    >
+      <span
+        className={cn(
+          'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
+          i === active
+            ? 'border-accent-400/40 bg-accent-400/10 text-accent-300'
+            : 'border-ink-500 bg-ink-700 text-paper-500'
+        )}
+      >
+        <Icon name={isIconName(entry.icon) ? entry.icon : 'dashboard'} size={14} />
+      </span>
+      <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+      {entry.hint && (
+        <span className="max-w-[40%] shrink-0 truncate text-xs text-paper-500">{entry.hint}</span>
+      )}
+      {i < results.length && <span className="shrink-0 text-xs text-paper-600">{entry.group}</span>}
+    </div>
+  );
+
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[12vh]">
-      <div aria-hidden="true" className="absolute inset-0 bg-black/60" onClick={onClose} />
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[12vh]"
+      ref={rootRef}
+    >
+      <div aria-hidden="true" className="absolute inset-0 bg-scrim" onClick={onClose} />
       <div
         aria-label="Go to page"
         aria-modal="true"
@@ -245,7 +327,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
             aria-controls={listId}
             aria-expanded={options.length > 0}
             aria-label="Search pages"
-            className="h-12 w-full bg-transparent text-lg text-paper-50 outline-none placeholder:text-paper-600"
+            className="h-12 w-full bg-transparent text-lg text-paper-50 outline-none placeholder:text-paper-600 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-solid focus-visible:outline-accent-400"
             onChange={(e) => {
               setQuery(e.target.value);
               setActive(0);
@@ -275,51 +357,23 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
             </p>
           )}
           <div aria-label="Results" id={listId} role="listbox">
-            {options.map((entry, i) => (
-              <Fragment key={entry.id}>
-                {i >= results.length && entry.group !== options[i - 1]?.group && (
-                  <div
-                    className="px-3 pt-2 pb-1 text-xs font-medium text-paper-600"
-                    role="presentation"
-                  >
-                    {entry.group}
-                  </div>
-                )}
-                <div
-                  aria-selected={i === active}
-                  className={cn(
-                    'flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-sm',
-                    i === active ? 'bg-ink-600 text-paper-50' : 'text-paper-300'
-                  )}
-                  id={optionId(i)}
-                  onClick={() => go(entry)}
-                  onKeyDown={onKeyDown}
-                  onMouseMove={() => setActive(i)}
-                  role="option"
-                  tabIndex={-1}
+            {results.map((entry, i) => renderRow(entry, i))}
+            {/* Remote results sit in labelled groups so AT hears Requests / Runs / Workflows. */}
+            {remoteGroups.map((g) => {
+              const headingId = `${listId}-group-${g.start}`;
+              return (
+                <fieldset
+                  aria-labelledby={headingId}
+                  className="m-0 min-w-0 border-0 p-0"
+                  key={g.name}
                 >
-                  <span
-                    className={cn(
-                      'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
-                      i === active
-                        ? 'border-accent-400/40 bg-accent-400/10 text-accent-300'
-                        : 'border-ink-500 bg-ink-700 text-paper-500'
-                    )}
-                  >
-                    <Icon name={isIconName(entry.icon) ? entry.icon : 'dashboard'} size={14} />
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{entry.label}</span>
-                  {entry.hint && (
-                    <span className="max-w-[40%] shrink-0 truncate text-xs text-paper-500">
-                      {entry.hint}
-                    </span>
-                  )}
-                  {i < results.length && (
-                    <span className="shrink-0 text-xs text-paper-600">{entry.group}</span>
-                  )}
-                </div>
-              </Fragment>
-            ))}
+                  <div className="px-3 pt-2 pb-1 text-xs font-medium text-paper-600" id={headingId}>
+                    {g.name}
+                  </div>
+                  {g.entries.map((entry, offset) => renderRow(entry, g.start + offset))}
+                </fieldset>
+              );
+            })}
           </div>
           {remote.loading && (
             <p className="px-3 py-2 text-xs text-paper-600" data-testid="palette-loading">
@@ -350,7 +404,7 @@ export function CommandPaletteButton({ onClick }: { onClick: () => void }) {
     <button
       aria-keyshortcuts="Meta+K Control+K"
       className={cn(
-        'inline-flex h-8 items-center gap-2 rounded-lg border border-ink-400/80 bg-ink-900/60 px-2.5 text-sm text-paper-500 transition-colors hover:border-ink-300 hover:text-paper-200 lg:w-60',
+        'inline-flex h-8 items-center gap-2 rounded-lg border border-ink-400/80 pointer-coarse:min-h-11 bg-ink-900/60 px-2.5 text-sm text-paper-500 transition-colors hover:border-ink-300 hover:text-paper-200 lg:w-60',
         FOCUS_RING
       )}
       onClick={onClick}

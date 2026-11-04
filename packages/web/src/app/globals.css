@@ -29,6 +29,11 @@
   --color-ink-300: #3f4b6a; /* strong dividers */
   --color-ink-200: #5b6788; /* text-entry field borders */
 
+  /* Veil behind every overlay (modal, command palette, nav drawer, side panels).
+     Not part of the ink ramp: ink-950 is white in the light theme, so a veil
+     built from it would lighten the page instead of dimming it. */
+  --color-scrim: rgb(0 0 0 / 0.6);
+
   /* Text scale — cool blue-grey neutral.
      Contrast ratios are WCAG 2.x against the ink surfaces text sits on
      (ink-950 / 900 / 800 / 700). Every step is used for real text — nav group labels,
@@ -158,6 +163,7 @@
   --color-ink-400: #c9cfdc; /* borders */
   --color-ink-300: #b5bccc; /* strong dividers, hovered borders */
   --color-ink-200: #858ea4; /* text-entry field borders */
+  --color-scrim: rgb(21 26 40 / 0.4);
 
   --color-paper-50: #0f1320;
   --color-paper-100: #151a28;
@@ -305,10 +311,12 @@
     }
   }
 
-  /* Selection uses violet-dim */
+  /* Selection: strongest text on a tint of the accent. Both ends follow the theme
+     (paper-50 is near-white in dark and near-black in light), so the selected
+     text stays readable on either ground. */
   ::selection {
-    color: var(--color-ink-950);
-    background: rgba(124, 108, 255, 0.35);
+    color: var(--color-paper-50);
+    background: color-mix(in srgb, var(--color-accent-400) 30%, transparent);
   }
 
   /* Form elements */
@@ -478,10 +486,10 @@
   @keyframes halo-pulse {
     0%,
     100% {
-      box-shadow: 0 0 0 2px rgba(255, 122, 122, 0.5);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-danger-400) 50%, transparent);
     }
     50% {
-      box-shadow: 0 0 0 6px rgba(255, 122, 122, 0.15);
+      box-shadow: 0 0 0 6px color-mix(in srgb, var(--color-danger-400) 15%, transparent);
     }
   }
   .halo-pulse {
@@ -510,11 +518,11 @@
 
   /* Diagonal hatch fill for failed waterfall bars */
   .hatch-fail {
-    background-color: rgba(255, 122, 122, 0.15);
+    background-color: color-mix(in srgb, var(--color-danger-400) 15%, transparent);
     background-image: repeating-linear-gradient(
       -45deg,
-      rgba(255, 122, 122, 0.25) 0px,
-      rgba(255, 122, 122, 0.25) 2px,
+      color-mix(in srgb, var(--color-danger-400) 25%, transparent) 0px,
+      color-mix(in srgb, var(--color-danger-400) 25%, transparent) 2px,
       transparent 2px,
       transparent 8px
     );

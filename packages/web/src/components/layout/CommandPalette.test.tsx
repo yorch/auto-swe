@@ -101,6 +101,37 @@ describe('CommandPalette', () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it('is modal: the page behind is inert and unscrollable, and Tab stays on the input', async () => {
+    const page = document.createElement('div');
+    document.body.appendChild(page);
+    const onOpenChange = await openPalette();
+    expect(page.hasAttribute('inert')).toBe(true);
+    expect(document.body.style.overflow).toBe('hidden');
+
+    const input = screen.getByRole('combobox');
+    const notPrevented = fireEvent.keyDown(input, { key: 'Tab' });
+    expect(notPrevented).toBe(false);
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    cleanup();
+    expect(page.hasAttribute('inert')).toBe(false);
+    expect(document.body.style.overflow).toBe('');
+    page.remove();
+  });
+
+  it('ignores the shortcut while a modal dialog is open', async () => {
+    const dialog = document.createElement('dialog');
+    dialog.setAttribute('open', '');
+    document.body.appendChild(dialog);
+    const onOpenChange = vi.fn();
+    render(withQuery(<CommandPalette onOpenChange={onOpenChange} open={false} />));
+    fireEvent.keyDown(document, { ctrlKey: true, key: 'k' });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    dialog.remove();
+    fireEvent.keyDown(document, { ctrlKey: true, key: 'k' });
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+  });
+
   it('still opens a page on Enter', async () => {
     await openPalette();
     const input = screen.getByRole('combobox');
