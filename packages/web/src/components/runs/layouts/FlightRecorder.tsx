@@ -246,7 +246,9 @@ export function FlightRecorder({
             filterNodeId={null}
             linker={linker}
             onClearFilter={() => {}}
+            runStartedAt={run.startedAt}
             traces={visibleTraces}
+            windowed={run.tracesTruncated === true}
           />
         )}
       </div>

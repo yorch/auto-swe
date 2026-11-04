@@ -10,6 +10,7 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { Icon } from '@/components/ui/Icon';
 import { exportRunActivity, useHttpCall, useRunActivity } from '@/hooks/useRunActivity';
 import { errMsg } from '@/lib/errors';
 import {
@@ -17,7 +18,8 @@ import {
   specNodeIdOfRecording,
   type TraceLinker,
 } from '@/lib/traceLinkage';
-import { formatDate } from '@/lib/utils';
+import { cn, FOCUS_RING, formatDate } from '@/lib/utils';
+import { RunPanel } from './RunPanel';
 
 function HttpDetail({ runId, callId }: { runId: string; callId: string }) {
   const query = useHttpCall(runId, callId);
@@ -90,10 +92,18 @@ function ActivityRow({ item, runId }: { item: RunActivityItem; runId: string }) 
       {item.kind === 'http_call' ? (
         <button
           aria-expanded={expanded}
-          className="flex w-full flex-wrap items-center gap-2 text-left hover:text-paper-100"
+          className={cn(
+            'flex w-full flex-wrap items-center gap-2 rounded-sm text-left hover:text-paper-100',
+            FOCUS_RING
+          )}
           onClick={() => setExpanded(!expanded)}
           type="button"
         >
+          <Icon
+            className={cn('shrink-0 text-paper-500 transition-transform', expanded && 'rotate-90')}
+            name="chevronRight"
+            size={12}
+          />
           {line}
         </button>
       ) : (
@@ -144,11 +154,16 @@ function ActivityContent({
   );
   return (
     <div className="space-y-3 pt-3">
-      <fieldset aria-label="Activity kinds" className="flex flex-wrap gap-2">
+      <fieldset className="flex flex-wrap items-center gap-2">
+        <legend className="sr-only">Activity kinds</legend>
         {RUN_ACTIVITY_KINDS.map((kind) => (
           <button
             aria-pressed={kinds.includes(kind)}
-            className="rounded border border-ink-600 px-2 py-1 text-xs aria-pressed:bg-ink-600"
+            className={cn(
+              'inline-flex min-h-[40px] items-center gap-1 rounded-md border border-ink-600 px-2.5 py-1 text-xs text-paper-400 transition-colors hover:border-ink-400 hover:text-paper-100 lg:min-h-0',
+              'aria-pressed:border-accent-400/60 aria-pressed:bg-ink-600 aria-pressed:font-medium aria-pressed:text-paper-50',
+              FOCUS_RING
+            )}
             key={kind}
             onClick={() =>
               setKinds((previous) =>
@@ -159,6 +174,7 @@ function ActivityContent({
             }
             type="button"
           >
+            {kinds.includes(kind) && <Icon name="check" size={11} />}
             {kind.replaceAll('_', ' ')}
           </button>
         ))}
@@ -222,12 +238,8 @@ export function RunActivity(props: {
 }) {
   const [open, setOpen] = useState(false);
   return (
-    <details
-      className="shrink-0 border-b border-ink-700 bg-ink-900 px-4 py-3 text-paper-300"
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary className="cursor-pointer text-sm font-medium">Activity</summary>
+    <RunPanel onToggle={setOpen} title="Activity">
       {open && <ActivityContent {...props} />}
-    </details>
+    </RunPanel>
   );
 }

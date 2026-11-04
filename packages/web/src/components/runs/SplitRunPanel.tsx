@@ -17,6 +17,10 @@ interface SplitRunPanelProps {
   onSelectNode: (nodeId: string | null) => void;
   steps: WorkflowStepRecord[];
   traces: AgentTraceRecord[];
+  /** When the run started: the trace time column counts from here. */
+  runStartedAt?: string | null;
+  /** `traces` is only the newest window of a longer run. */
+  windowed?: boolean;
 }
 
 export function SplitRunPanel({
@@ -25,6 +29,8 @@ export function SplitRunPanel({
   onSelectNode,
   steps,
   traces,
+  runStartedAt,
+  windowed,
 }: SplitRunPanelProps) {
   const handleSelect = (nodeId: string) => {
     onSelectNode(selectedNodeId === nodeId ? null : nodeId);
@@ -119,7 +125,9 @@ export function SplitRunPanel({
           filterNodeId={selectedNodeId}
           linker={linker}
           onClearFilter={() => onSelectNode(null)}
+          runStartedAt={runStartedAt}
           traces={traces}
+          windowed={windowed}
         />
       </div>
     </div>

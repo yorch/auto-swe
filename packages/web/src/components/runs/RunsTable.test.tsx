@@ -63,16 +63,22 @@ describe('RunsTable', () => {
     expect(screen.getByText('—')).toBeTruthy();
   });
 
-  it('reveals the repeated diagnostics action on hover or focus, without leaving the tab order', () => {
+  it('always shows the diagnostics link, so a mouse user can see the second destination', () => {
     render(<RunsTable runs={[RUN]} />);
     const action = screen.getByRole('link', { name: /diagnostics/i });
-    const reveal = action.parentElement?.className ?? '';
-    expect(reveal).toContain('opacity-0');
-    expect(reveal).toContain('group-hover:opacity-100');
-    expect(reveal).toContain('group-focus-within:opacity-100');
-    expect(reveal).toContain('[@media(hover:none)]:opacity-100');
-    expect(reveal).not.toMatch(/\b(hidden|invisible)\b/);
+    expect(action.parentElement?.className ?? '').not.toContain('opacity-0');
     expect(action.getAttribute('tabindex')).not.toBe('-1');
-    expect(action.closest('tr')?.className).toContain('group');
+  });
+
+  it('says a request waiting on a person is waiting, not running', () => {
+    const waiting = { ...RUN, endedAt: null, pendingStepCount: 1, status: 'RUNNING' as const };
+    render(<RunsTable runs={[waiting as WorkflowRunSummary]} />);
+    expect(screen.getByText('Waiting for approval')).toBeTruthy();
+    expect(screen.queryByText('Still running')).toBeNull();
+  });
+
+  it('shows a dash, not "Still running", for a finished run with no end time', () => {
+    render(<RunsTable runs={[{ ...RUN, endedAt: null, status: 'FAILED' }]} />);
+    expect(screen.queryByText('Still running')).toBeNull();
   });
 });

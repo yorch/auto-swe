@@ -61,6 +61,7 @@ describe('workflow detail address', () => {
       }),
     });
     await renderPage();
+    expect(await screen.findByRole('status')).toBeTruthy();
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/requests?request=wr-1'));
   });
 
@@ -69,7 +70,7 @@ describe('workflow detail address', () => {
       [`GET /api/v1/workflows/${ID}`]: () => ({ data: { ...workflow, workRequest: null } }),
     });
     await renderPage();
-    expect(await screen.findByText('acme/api')).toBeTruthy();
+    expect(await screen.findByText('Run for acme/api')).toBeTruthy();
     expect(screen.queryByText('Request not found')).toBeNull();
     expect(screen.getByText('auto/JIRA-1')).toBeTruthy();
     expect(screen.getByRole('link', { name: /View pull request/ }).getAttribute('href')).toBe(

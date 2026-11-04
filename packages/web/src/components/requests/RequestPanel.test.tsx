@@ -2,7 +2,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
-import { RequestPanel } from './RequestPanel';
+import { RequestPanel, requestProgress } from './RequestPanel';
 
 vi.mock('@/components/workflow/WorkflowDag', () => ({
   WorkflowDag: () => <div>Workflow diagram</div>,
@@ -130,5 +130,34 @@ describe('request side panel', () => {
       expect(screen.getByRole('alert').textContent).toContain('Could not load request attempts')
     );
     expect(screen.queryByText(/No visible attempts yet/)).toBeNull();
+  });
+});
+
+describe('requestProgress', () => {
+  it('does not read a run that has done 2 of 12 steps as 2 of 2', () => {
+    const p = requestProgress({ passed: 2, recorded: 2, running: true, specStepTotal: 12 });
+    expect(p.label).toBe('2 steps completed, of up to 12.');
+    expect(p.fraction).toBeCloseTo(2 / 12);
+  });
+
+  it('states only the count when the workflow total is unknown', () => {
+    const p = requestProgress({ passed: 1, recorded: 1, running: true, specStepTotal: 0 });
+    expect(p).toEqual({ fraction: 0, label: '1 step completed so far.' });
+  });
+
+  it('measures a finished run against the steps it recorded', () => {
+    const p = requestProgress({ passed: 3, recorded: 4, running: false, specStepTotal: 12 });
+    expect(p).toEqual({ fraction: 0.75, label: '3 of 4 steps passed.' });
+  });
+});
+
+describe('request side panel naming', () => {
+  it('names the dialog after the request once it has loaded', async () => {
+    gateway();
+    render(withQuery(<RequestPanel onClose={vi.fn()} requestId={REQUEST} />));
+    await screen.findByText('Review PR #7');
+    expect(document.querySelector('dialog')?.getAttribute('aria-label')).toBe(
+      'Request: Update dependencies'
+    );
   });
 });

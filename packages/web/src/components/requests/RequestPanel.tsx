@@ -32,6 +32,8 @@ const SUMMARY =
 export function RequestPanel({ requestId, onClose }: { requestId: string; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [mounted, setMounted] = useState(false);
+  // The request's own name, once loaded: it is the dialog's accessible name and the header text.
+  const [title, setTitle] = useState<string | null>(null);
   useEffect(() => setMounted(true), []);
   useEffect(() => {
     if (mounted && !dialog.current?.open) {
@@ -43,14 +45,19 @@ export function RequestPanel({ requestId, onClose }: { requestId: string; onClos
   }
   return createPortal(
     <dialog
-      aria-label="Request details"
-      className="fixed inset-y-0 right-0 left-auto m-0 ml-auto h-dvh max-h-none w-full max-w-none border-l border-ink-400 bg-ink-900 p-0 text-paper-100 shadow-2xl backdrop:bg-black/25 sm:w-[min(640px,85vw)]"
+      aria-label={title ? `Request: ${title}` : 'Request details'}
+      className="fixed inset-y-0 right-0 left-auto m-0 ml-auto h-dvh max-h-none w-full max-w-none border-l border-ink-400 bg-ink-900 p-0 text-paper-100 shadow-2xl backdrop:bg-scrim sm:w-[min(640px,85vw)]"
       onClose={onClose}
       ref={dialog}
     >
       <div className="flex h-full flex-col">
         <header className="flex shrink-0 items-center justify-between border-b border-ink-500 px-6 py-3.5">
-          <h2 className="text-lg font-semibold text-paper-100">Request details</h2>
+          <h2
+            className="min-w-0 truncate text-lg font-semibold text-paper-100"
+            title={title ?? undefined}
+          >
+            {title ?? 'Request details'}
+          </h2>
           <Button
             aria-label="Close request details"
             className="h-8 w-8 px-0"
@@ -62,7 +69,7 @@ export function RequestPanel({ requestId, onClose }: { requestId: string; onClos
         </header>
         <div className="min-h-0 flex-1 overflow-y-auto p-6">
           <UNSAFE_PortalProvider getContainer={() => dialog.current}>
-            <RequestDetail requestId={requestId} />
+            <RequestDetail onTitle={setTitle} requestId={requestId} />
           </UNSAFE_PortalProvider>
         </div>
       </div>
@@ -71,7 +78,13 @@ export function RequestPanel({ requestId, onClose }: { requestId: string; onClos
   );
 }
 
-function RequestDetail({ requestId }: { requestId: string }) {
+function RequestDetail({
+  onTitle,
+  requestId,
+}: {
+  onTitle: (title: string | null) => void;
+  requestId: string;
+}) {
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
   const attempts = useRequestAttempts(requestId, offset);
@@ -92,6 +105,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
     run?.workRequest?.externalTicketId ||
     run?.templateName;
   useDocumentTitle(requestTitle ? `Request · ${requestTitle}` : null);
+  useEffect(() => onTitle(requestTitle ?? null), [onTitle, requestTitle]);
   const total = attempts.data?.meta.total ?? 0;
   return (
     <div className="space-y-6">
@@ -244,6 +258,41 @@ function RequestDetail({ requestId }: { requestId: string }) {
   );
 }
 
+/**
+ * The progress bar and its sentence. Steps are recorded as the run reaches them, so a run that
+ * has done 2 of 12 steps has recorded only 2: dividing by the recorded count reads "2 of 2" and
+ * a full bar. While the run is going the total is the workflow's step count, which is an upper
+ * bound (a branch not taken is never run), so it is worded "up to"; with no readable spec the
+ * bar is left empty and only the count is stated. A finished run is measured against what it
+ * recorded.
+ */
+export function requestProgress({
+  passed,
+  recorded,
+  running,
+  specStepTotal,
+}: {
+  passed: number;
+  recorded: number;
+  running: boolean;
+  specStepTotal: number;
+}): { fraction: number; label: string } {
+  const steps = (n: number) => `${n} ${n === 1 ? 'step' : 'steps'}`;
+  if (!running) {
+    return {
+      fraction: recorded ? passed / recorded : 0,
+      label: `${passed} of ${steps(recorded)} passed.`,
+    };
+  }
+  if (specStepTotal >= Math.max(1, passed)) {
+    return {
+      fraction: Math.min(1, passed / specStepTotal),
+      label: `${steps(passed)} completed, of up to ${specStepTotal}.`,
+    };
+  }
+  return { fraction: 0, label: `${steps(passed)} completed so far.` };
+}
+
 function AttemptContent({
   run,
   isLatest,
@@ -290,6 +339,21 @@ function AttemptContent({
     ).values(),
   ];
   const activeSteps = currentSteps.filter((step) => step.status === 'RUNNING');
+  const specStepTotal = useMemo(() => {
+    try {
+      return Object.values(parseWorkflowSpec(run.specSnapshot).nodes ?? {}).filter(
+        (node) => node.type === 'step'
+      ).length;
+    } catch {
+      return 0;
+    }
+  }, [run.specSnapshot]);
+  const progress = requestProgress({
+    passed: currentSteps.filter((step) => step.status === 'PASSED').length,
+    recorded: currentSteps.length,
+    running: run.status === 'RUNNING',
+    specStepTotal,
+  });
   async function launchRetry(acknowledgeUnchanged?: true) {
     if (!run.workRequest || retryLock.current || retry.isPending || retry.isSuccess) {
       return;
@@ -409,15 +473,10 @@ function AttemptContent({
           <div aria-hidden="true" className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink-600">
             <div
               className="h-full rounded-full bg-success-400"
-              style={{
-                width: `${currentSteps.length ? (currentSteps.filter((step) => step.status === 'PASSED').length / currentSteps.length) * 100 : 0}%`,
-              }}
+              style={{ width: `${progress.fraction * 100}%` }}
             />
           </div>
-          <p className="tabular shrink-0 text-sm text-paper-400">
-            {currentSteps.filter((step) => step.status === 'PASSED').length} of{' '}
-            {currentSteps.length} recorded steps passed.
-          </p>
+          <p className="tabular shrink-0 text-sm text-paper-400">{progress.label}</p>
         </div>
       </section>
       {run.workRequest?.description && (
@@ -487,7 +546,7 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
               </li>
             ))}
           </ul>
-          <h4 className="text-sm font-semibold text-paper-200">Traces</h4>
+          <h4 className="text-sm font-semibold text-paper-200">Trace events</h4>
           <QueryBoundary
             error={traces.error}
             isError={traces.isError}
@@ -495,19 +554,21 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
             isLoading={traces.isLoading}
             label="traces"
             onRetry={() => void traces.refetch()}
-            rows={4}
+            rows={2}
           >
             <p className="text-sm text-paper-400">
-              {traces.data?.traces.length ?? 0} events. Open the full page for complete trace
-              inspection.
+              {traces.data?.traces.length ?? 0} events
+              {(traces.data?.traces ?? []).filter((trace) => trace.error).length > 0 &&
+                `, ${(traces.data?.traces ?? []).filter((trace) => trace.error).length} with errors`}
+              .{' '}
+              <Link
+                className="rounded-sm text-paper-200 underline underline-offset-2 hover:text-paper-50"
+                href={`/runs/${run.id}`}
+              >
+                Open the full run page
+              </Link>{' '}
+              to read, search and filter them.
             </p>
-            {traces.data?.traces.slice(-20).map((trace) => (
-              <div className="border-t border-ink-600 pt-2 text-xs text-paper-400" key={trace.id}>
-                <span className="font-mono text-paper-300">{trace.agentKey}</span> ·{' '}
-                <span className="font-mono">{trace.toolName ?? trace.type}</span>
-                {trace.error && <p className="break-words text-danger-400">{trace.error}</p>}
-              </div>
-            ))}
           </QueryBoundary>
         </div>
       )}

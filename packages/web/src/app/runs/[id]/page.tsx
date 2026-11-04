@@ -11,6 +11,7 @@ import {
 } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
+import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { use, useCallback, useMemo, useRef, useState } from 'react';
 import { HowItWorks } from '@/components/help/HowItWorks';
@@ -24,6 +25,7 @@ import { RunActivity } from '@/components/runs/RunActivity';
 import { RunCallbackDeliveries } from '@/components/runs/RunCallbackDeliveries';
 import { RunEvidence } from '@/components/runs/RunEvidence';
 import { RunLessons } from '@/components/runs/RunLessons';
+import { RunLiveIndicator } from '@/components/runs/RunLiveIndicator';
 import { RunReadingGuide } from '@/components/runs/RunReadingGuide';
 import { RunSummaryBand } from '@/components/runs/RunSummaryBand';
 import { RunTranscripts } from '@/components/runs/RunTranscripts';
@@ -133,6 +135,10 @@ interface PageProps {
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
+const FULL_PAYLOADS_HINT =
+  'Full payloads are fetched once and not refreshed; trim them to resume live updates.';
+const TRIMMED_PAYLOADS_HINT =
+  'Trace payloads are trimmed to 4,000 characters per field while the page polls.';
 const CANCEL_HINT = 'Stop this run now. In-flight steps are aborted.';
 const RE_RUN_HINT = 'Start a new run of the same request. This run is kept as it is.';
 
@@ -157,6 +163,7 @@ export default function RunDetailPage({ params }: PageProps) {
     'Run';
   useDocumentTitle(run ? `Run · ${runTitle}` : null);
   const badge = run ? runtimeBadge(run) : null;
+  const queryClient = useQueryClient();
   const cancelRun = useCancelWorkflowRun(id ?? '');
   // An agent run is re-run through its own endpoint, after a confirmation when it
   // delivers; see `useRunReRun`.
@@ -279,9 +286,18 @@ export default function RunDetailPage({ params }: PageProps) {
       <div className="p-4 md:p-6">
         <Alert
           action={
-            <ButtonLink href="/runs" size="sm">
-              Back to runs
-            </ButtonLink>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                onClick={() => queryClient.invalidateQueries({ queryKey: ['workflow-run', id] })}
+                size="sm"
+                variant="secondary"
+              >
+                Try again
+              </Button>
+              <ButtonLink href="/runs" size="sm">
+                Back to runs
+              </ButtonLink>
+            </div>
           }
           title="Could not load this run"
         >
@@ -293,23 +309,6 @@ export default function RunDetailPage({ params }: PageProps) {
   if (!run) {
     return notFound;
   }
-  if (!spec) {
-    return (
-      <div className="p-4 md:p-6">
-        <Alert
-          action={
-            <ButtonLink href="/runs" size="sm">
-              Back to runs
-            </ButtonLink>
-          }
-          title="This run cannot be drawn"
-        >
-          This run has no readable workflow spec snapshot.
-        </Alert>
-      </div>
-    );
-  }
-
   const traces = run.traces ?? [];
   const Layout = LAYOUTS[layout];
   const failedStep = findFailedStep(run.status, run.steps);
@@ -324,7 +323,7 @@ export default function RunDetailPage({ params }: PageProps) {
     Boolean(run.workRequest);
 
   return (
-    <div className="flex h-full flex-col bg-ink-800 max-lg:min-w-0 max-lg:overflow-y-auto max-lg:overflow-x-hidden">
+    <div className="flex h-full min-w-0 flex-col overflow-y-auto overflow-x-hidden bg-ink-800">
       {/* ── Page header band ──────────────────────────────────────────────── */}
       <header className="shrink-0 border-b border-ink-600/40 bg-ink-900 px-4 pt-3 pb-4 md:px-6">
         <nav
@@ -355,6 +354,7 @@ export default function RunDetailPage({ params }: PageProps) {
               {badge && (
                 <Badge title={badge.title} tone="muted" variant="outline">
                   {badge.label}
+                  <span className="sr-only">. {badge.title}</span>
                 </Badge>
               )}
               {securityEvents.length > 0 && (
@@ -383,21 +383,27 @@ export default function RunDetailPage({ params }: PageProps) {
                 Started {formatRelativeTime(run.startedAt)}
               </span>
             </p>
+            {!isTerminalWorkflowRunStatus(run.status) && (
+              <div className="mt-1.5">
+                <RunLiveIndicator
+                  busy={isPlaceholderData}
+                  fullPayloads={fullTraces}
+                  onResume={toggleFullTraces}
+                  status={run.status}
+                />
+              </div>
+            )}
           </div>
 
           {/* Right side: actions + layout switcher */}
           <div className="flex flex-wrap items-center gap-2 max-lg:w-full max-lg:min-w-0 lg:justify-end">
             {(tracesTrimmed || fullTraces) && (
               <Button
+                aria-describedby="payload-mode-hint"
                 className={TOUCH_SM}
                 disabled={isPlaceholderData}
                 onClick={toggleFullTraces}
                 size="sm"
-                title={
-                  fullTraces
-                    ? 'Full payloads are fetched once and not refreshed; trim them to resume live updates'
-                    : 'Trace payloads are trimmed to 4,000 characters per field while the page polls'
-                }
                 variant="ghost"
               >
                 {isPlaceholderData
@@ -407,6 +413,11 @@ export default function RunDetailPage({ params }: PageProps) {
                     : 'Load full payloads'}
               </Button>
             )}
+            {(tracesTrimmed || fullTraces) && (
+              <span className="sr-only" id="payload-mode-hint">
+                {fullTraces ? FULL_PAYLOADS_HINT : TRIMMED_PAYLOADS_HINT}
+              </span>
+            )}
             {!isTerminalWorkflowRunStatus(run.status) && (
               <Button
                 aria-describedby="cancel-run-hint"
@@ -414,11 +425,15 @@ export default function RunDetailPage({ params }: PageProps) {
                 disabled={cancelRun.isPending}
                 onClick={() => setShowCancelConfirm(true)}
                 size="sm"
-                title={CANCEL_HINT}
                 variant="danger"
               >
                 {cancelRun.isPending ? 'Cancelling…' : 'Cancel run'}
               </Button>
+            )}
+            {!isTerminalWorkflowRunStatus(run.status) && (
+              <span className="sr-only" id="cancel-run-hint">
+                {CANCEL_HINT}
+              </span>
             )}
             {canReRun && (
               <Button
@@ -427,19 +442,17 @@ export default function RunDetailPage({ params }: PageProps) {
                 disabled={reRunLocked}
                 onClick={handleReRun}
                 size="sm"
-                title={RE_RUN_HINT}
                 variant="secondary"
               >
                 <Icon name="refresh" size={13} />
                 {retryRun.isPending ? 'Re-running…' : 'Re-run'}
               </Button>
             )}
-            <span className="sr-only" id="cancel-run-hint">
-              {CANCEL_HINT}
-            </span>
-            <span className="sr-only" id="re-run-hint">
-              {RE_RUN_HINT}
-            </span>
+            {canReRun && (
+              <span className="sr-only" id="re-run-hint">
+                {RE_RUN_HINT}
+              </span>
+            )}
             <LayoutToggle onChange={setLayout} value={layout} />
           </div>
         </div>
@@ -454,8 +467,14 @@ export default function RunDetailPage({ params }: PageProps) {
         <HowItWorks />
         <RunReadingGuide />
 
-        {(fullTracesFailed || retryRun.isSuccess || retryRun.errorView) && (
+        {(!spec || fullTracesFailed || retryRun.isSuccess || retryRun.errorView) && (
           <div className="mt-3 space-y-2">
+            {!spec && (
+              <Alert announce={false} title="The workflow graph cannot be drawn" variant="warning">
+                This run has no readable workflow spec snapshot, so the graph is hidden. Its steps
+                and trace events are shown as a transcript.
+              </Alert>
+            )}
             {fullTracesFailed && (
               <Alert variant="warning">
                 Full payloads failed to load. The trimmed payloads are still shown.
@@ -532,17 +551,32 @@ export default function RunDetailPage({ params }: PageProps) {
       <RunLessons live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
 
       {/* ── Layout body ───────────────────────────────────────────────────── */}
-      <div className="flex flex-1 max-lg:min-w-0 lg:overflow-hidden" ref={traceAnchorRef}>
-        <Layout
-          dagOverlay={dagOverlay}
-          jumpNonce={jumpNonce}
-          linker={linker}
-          run={run}
-          selectedNodeId={selectedNodeId}
-          setSelectedNodeId={setSelectedNodeId}
-          spec={spec}
-          traces={traces}
-        />
+      <div
+        className="flex flex-1 max-lg:min-w-0 lg:min-h-[480px] lg:overflow-hidden"
+        ref={traceAnchorRef}
+      >
+        {spec ? (
+          <Layout
+            dagOverlay={dagOverlay}
+            jumpNonce={jumpNonce}
+            linker={linker}
+            run={run}
+            selectedNodeId={selectedNodeId}
+            setSelectedNodeId={setSelectedNodeId}
+            spec={spec}
+            traces={traces}
+          />
+        ) : (
+          <Transcript
+            dagOverlay={dagOverlay}
+            jumpNonce={jumpNonce}
+            linker={linker}
+            run={run}
+            selectedNodeId={selectedNodeId}
+            setSelectedNodeId={setSelectedNodeId}
+            traces={traces}
+          />
+        )}
       </div>
 
       <ConfirmModal

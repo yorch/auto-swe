@@ -46,7 +46,8 @@ export function SplitConsole({
           <div className={PANEL_BAR}>
             <h2 className={PANEL_TITLE}>Execution graph</h2>
             <span className={PANEL_META}>
-              {Object.keys(spec.nodes ?? {}).length} nodes · drag to pan, scroll to zoom
+              {Object.keys(spec.nodes ?? {}).length} nodes ·{' '}
+              {narrow ? 'drag to pan, pinch to zoom' : 'drag to pan, scroll to zoom'}
             </span>
             <span className="ml-auto text-xs text-paper-500 max-sm:hidden">
               Select a node to filter the console
@@ -97,9 +98,11 @@ export function SplitConsole({
               <SplitRunPanel
                 linker={linker}
                 onSelectNode={setSelectedNodeId}
+                runStartedAt={run.startedAt}
                 selectedNodeId={selectedNodeId}
                 steps={run.steps}
                 traces={traces}
+                windowed={run.tracesTruncated === true}
               />
             ) : (
               <div className="lg:h-full lg:overflow-y-auto">
@@ -107,7 +110,9 @@ export function SplitConsole({
                   filterNodeId={selectedNodeId}
                   linker={linker}
                   onClearFilter={() => setSelectedNodeId(null)}
+                  runStartedAt={run.startedAt}
                   traces={traces}
+                  windowed={run.tracesTruncated === true}
                 />
               </div>
             )}

@@ -61,7 +61,11 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
     );
   }
   if (requestId) {
-    return null;
+    return (
+      <p aria-live="polite" className="p-6 text-sm text-paper-400" role="status">
+        Opening request…
+      </p>
+    );
   }
   if (!workflow) {
     return notFound;
@@ -96,7 +100,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
           </>
         }
         subtitle="The request this run came from is no longer available, so only the run’s own details are shown."
-        title={repo ? `${repo.organizationName}/${repo.repoName}` : 'Run'}
+        title={repo ? `Run for ${repo.organizationName}/${repo.repoName}` : 'Run'}
       />
       <Card className="max-w-3xl">
         <dl className="grid gap-5 text-sm sm:grid-cols-3">

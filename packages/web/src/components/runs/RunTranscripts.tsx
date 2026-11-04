@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
@@ -14,6 +15,8 @@ import {
   useTranscriptLegalHold,
 } from '@/hooks/useTranscripts';
 import { errMsg } from '@/lib/errors';
+import { cn, FOCUS_RING } from '@/lib/utils';
+import { RunPanel } from './RunPanel';
 
 function sizeLabel(bytes: number): string {
   if (bytes < 1024) {
@@ -54,16 +57,14 @@ export function RunTranscripts({ runId }: { runId: string }) {
   };
 
   return (
-    <details className="rounded border border-ink-700 px-4 py-3 text-sm">
-      <summary className="cursor-pointer text-paper-300">
-        Transcripts
-        {data && data.length > 0 && (
-          <span className="ml-2 text-xs text-paper-500">
-            {data.length} {data.length === 1 ? 'attempt' : 'attempts'}
-            {held && ' · legal hold'}
-          </span>
-        )}
-      </summary>
+    <RunPanel
+      meta={
+        data && data.length > 0
+          ? `${data.length} ${data.length === 1 ? 'attempt' : 'attempts'}${held ? ' · legal hold' : ''}`
+          : undefined
+      }
+      title="Transcripts"
+    >
       <QueryBoundary
         error={error}
         isError={isError}
@@ -112,7 +113,7 @@ export function RunTranscripts({ runId }: { runId: string }) {
                       <span className="text-paper-500"> · attempt {t.attempt}</span>
                     </Td>
                     <Td>
-                      {t.status}
+                      <Badge tone="neutral">{t.status.toLowerCase().replaceAll('_', ' ')}</Badge>
                       {t.legalHold && (
                         <>
                           <span aria-hidden className="ml-1 text-warning-400">
@@ -128,7 +129,7 @@ export function RunTranscripts({ runId }: { runId: string }) {
                     <Td>
                       <button
                         aria-label={`Download raw transcript for ${t.activityType} attempt ${t.attempt}`}
-                        className="text-accent-400 hover:underline"
+                        className={cn('rounded-sm text-accent-400 hover:underline', FOCUS_RING)}
                         onClick={() =>
                           void downloadTranscript(t.id, 'raw').catch((err) =>
                             setError(errMsg(err, 'Download failed'))
@@ -141,7 +142,7 @@ export function RunTranscripts({ runId }: { runId: string }) {
                       <span className="mx-1 text-paper-600">/</span>
                       <button
                         aria-label={`Download normalized transcript for ${t.activityType} attempt ${t.attempt}`}
-                        className="text-accent-400 hover:underline"
+                        className={cn('rounded-sm text-accent-400 hover:underline', FOCUS_RING)}
                         onClick={() =>
                           void downloadTranscript(t.id, 'normalized').catch((err) =>
                             setError(errMsg(err, 'Download failed'))
@@ -191,6 +192,6 @@ export function RunTranscripts({ runId }: { runId: string }) {
         </div>
       </Modal>
       {error_ && !dialog && <Alert>{error_}</Alert>}
-    </details>
+    </RunPanel>
   );
 }

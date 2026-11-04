@@ -20,9 +20,9 @@ import {
 /**
  * Runs in a history list. The title opens the request panel (the run's
  * request, with its result and approvals); "Diagnostics" opens the full run
- * page. It is repeated on every row, so it shows only on hover or keyboard
- * focus within the row (always on touch). A run with no request goes straight
- * to diagnostics.
+ * page. It is always visible: for a failed run it is the only way to the trace, and
+ * a link that appears on hover tells a mouse user nothing. A run with no request goes
+ * straight to diagnostics.
  */
 export function RunsTable({
   className,
@@ -65,6 +65,7 @@ export function RunsTable({
       getRowId={(run) => run.id}
       isLoading={isLoading}
       loadingLabel="runs"
+      revealActions={false}
       rowHref={(run) => (run.workRequest ? requestHref(run.workRequest.id) : runHref(run.id))}
       rows={runs}
     />

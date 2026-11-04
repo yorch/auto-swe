@@ -2,8 +2,9 @@
 
 import type { WorkflowStepRecord } from '@auto-swe/shared/types/api';
 import { Alert } from '@/components/ui/Alert';
-import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { CopyButton } from '@/components/ui/CopyButton';
+import { ExpandablePre } from '@/components/ui/ExpandablePre';
 import { Icon } from '@/components/ui/Icon';
 import { cn } from '@/lib/utils';
 
@@ -15,15 +16,17 @@ interface FailureCardProps {
   size?: 'full' | 'inline';
 }
 
-function getErrorCode(error: string | null | undefined): string {
+/**
+ * A rough category read from the message text, used only to word the card's title.
+ * It is a guess, not a code the platform recorded, so it is never shown as one.
+ */
+function getErrorCode(step: WorkflowStepRecord): string {
+  const error = step.error;
   if (!error) {
     return 'UNKNOWN_ERROR';
   }
   if (error.toLowerCase().includes('timeout') || error.toLowerCase().includes('timed out')) {
     return 'ACTIVITY_TIMEOUT';
-  }
-  if (error.toLowerCase().includes('cancel')) {
-    return 'CANCELLED';
   }
   return 'ACTIVITY_FAILED';
 }
@@ -32,8 +35,6 @@ function getErrorTitle(code: string): string {
   switch (code) {
     case 'ACTIVITY_TIMEOUT':
       return 'Activity task timed out';
-    case 'CANCELLED':
-      return 'Activity was cancelled';
     default:
       return 'Activity failed';
   }
@@ -47,7 +48,7 @@ function getSuggestedFix(step: WorkflowStepRecord, code: string): string | null 
 }
 
 export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: FailureCardProps) {
-  const errorCode = getErrorCode(step.error);
+  const errorCode = getErrorCode(step);
   const errorTitle = getErrorTitle(errorCode);
   const suggestedFix = size === 'full' ? getSuggestedFix(step, errorCode) : null;
 
@@ -71,9 +72,6 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
             >
               {errorTitle}
             </h4>
-            <Badge className="font-mono" tone="danger" variant="outline">
-              {errorCode}
-            </Badge>
           </div>
           <div className="mt-1 text-xs text-paper-500 max-lg:break-all">
             at step <span className="font-mono text-paper-300">{step.nodeId}</span>
@@ -81,9 +79,18 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
 
           {/* Error summary: the raw message, so it reads as output */}
           {step.error && (
-            <p className="mt-3 break-words rounded-md border border-ink-500/60 bg-ink-950/50 px-3 py-2 font-mono text-xs leading-relaxed text-paper-300">
-              {step.error.length > 200 ? `${step.error.slice(0, 200)}…` : step.error}
-            </p>
+            <div className="mt-3">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-paper-500">Error message</span>
+                <CopyButton value={step.error} />
+              </div>
+              <ExpandablePre
+                className="whitespace-pre-wrap break-words rounded-md border border-ink-500/60 bg-ink-950/50 px-3 py-2 font-mono text-xs leading-relaxed text-paper-300"
+                collapsedHeight="9rem"
+              >
+                {step.error}
+              </ExpandablePre>
+            </div>
           )}
 
           {/* Suggested fix (full size only) */}

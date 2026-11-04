@@ -3,6 +3,7 @@
 import type { WorkflowRunDetail } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useId, useState } from 'react';
+import { CopyButton } from '@/components/ui/CopyButton';
 import { Icon } from '@/components/ui/Icon';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
 import { runMetaSummary } from '@/lib/runMeta';
@@ -99,7 +100,17 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
           )}
           {totalTraces > 0 && (
             <MetaRow label="Trace events">
-              <Value>{formatCount(totalTraces)}</Value>
+              <Value
+                title={
+                  run.tracesTruncated
+                    ? 'This run recorded more events than one read returns; only the newest are loaded.'
+                    : undefined
+                }
+              >
+                {run.tracesTruncated
+                  ? `${formatCount(totalTraces)} (latest only)`
+                  : formatCount(totalTraces)}
+              </Value>
             </MetaRow>
           )}
           <MetaRow label="Template">
@@ -118,29 +129,40 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
               </Link>
             )}
           </MetaRow>
-          <MetaRow label="Workflow ID">
-            {temporalUrl ? (
-              <a
-                className={cn(
-                  RAIL_CODE,
-                  'block max-w-[150px] truncate rounded-sm text-right text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
-                  FOCUS_RING
-                )}
-                href={temporalUrl}
-                rel="noreferrer"
-                target="_blank"
-                title={`${run.workflowId} — open in Temporal`}
-              >
-                {shortWorkflowId}
-              </a>
-            ) : (
-              <span
-                className={cn(RAIL_CODE, 'block max-w-[150px] truncate text-right')}
-                title={run.workflowId}
-              >
-                {shortWorkflowId}
+          <MetaRow label="Run ID">
+            <div className="flex flex-col items-end gap-1">
+              <span className={cn(RAIL_CODE, 'block max-w-[150px] truncate')} title={run.id}>
+                {run.id.length > 22 ? `${run.id.slice(0, 22)}…` : run.id}
               </span>
-            )}
+              <CopyButton value={run.id} />
+            </div>
+          </MetaRow>
+          <MetaRow label="Workflow ID">
+            <div className="flex flex-col items-end gap-1">
+              {temporalUrl ? (
+                <a
+                  className={cn(
+                    RAIL_CODE,
+                    'block max-w-[150px] truncate rounded-sm text-right text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
+                    FOCUS_RING
+                  )}
+                  href={temporalUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                  title={`${run.workflowId} — open in Temporal`}
+                >
+                  {shortWorkflowId}
+                </a>
+              ) : (
+                <span
+                  className={cn(RAIL_CODE, 'block max-w-[150px] truncate text-right')}
+                  title={run.workflowId}
+                >
+                  {shortWorkflowId}
+                </span>
+              )}
+              <CopyButton value={run.workflowId} />
+            </div>
           </MetaRow>
         </dl>
       </RailSection>

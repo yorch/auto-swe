@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubDialogPrototype } from '@/test/rtl-helpers';
 import { HumanStepCard } from './HumanStepCard';
 
+/** The button that opens a pending step is named for the kind of answer it takes. */
+const RESPOND = /^(Review and decide|Choose|Fill in|Review)$/;
 const mutate = vi.fn();
 const mutateAsync = vi.fn().mockResolvedValue({});
 vi.mock('@/hooks/useApprovals', () => ({
@@ -27,7 +29,7 @@ function inputStep(fields: unknown): HumanStepSummary {
 }
 
 function submit() {
-  fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+  fireEvent.click(screen.getByRole('button', { name: RESPOND }));
   fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 }
 
@@ -79,14 +81,14 @@ function approvalStep(overrides: Partial<HumanStepSummary> = {}): HumanStepSumma
 describe('HumanStepCard approvals', () => {
   it('shows the context without a toggle', () => {
     render(<HumanStepCard step={approvalStep()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
     expect(screen.queryByText('Show context')).toBeNull();
     expect(screen.getAllByText('a.ts').length).toBeGreaterThan(0);
   });
 
   it('approve opens a dialog and sends the optional comment', () => {
     render(<HumanStepCard step={approvalStep()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(mutateAsync).not.toHaveBeenCalled();
     fireEvent.change(screen.getByLabelText('Comment (optional)'), {
@@ -102,7 +104,7 @@ describe('HumanStepCard approvals', () => {
 
   it('reject needs a reason before it submits', () => {
     render(<HumanStepCard step={approvalStep()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
     fireEvent.click(screen.getByRole('button', { name: 'Reject' }));
     const submit = screen.getAllByRole('button', { name: 'Reject' }).at(-1) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
@@ -114,7 +116,7 @@ describe('HumanStepCard approvals', () => {
 
   it('says when the final approval is yours', () => {
     render(<HumanStepCard step={approvalStep({ currentApprovers: 1, requiredApprovers: 2 })} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     expect(screen.getByText(/final required approval/)).toBeTruthy();
   });
@@ -124,7 +126,7 @@ describe('HumanStepCard approvals', () => {
       <HumanStepCard step={approvalStep({ myResponse: 'approve', requiredApprovers: 2 })} />
     );
     expect(screen.getByText('You approved')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Respond' })).toBeNull();
+    expect(screen.queryByRole('button', { name: RESPOND })).toBeNull();
     unmount();
     render(
       <HumanStepCard
@@ -132,7 +134,7 @@ describe('HumanStepCard approvals', () => {
       />
     );
     expect(screen.getByText('Expired')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Respond' })).toBeNull();
+    expect(screen.queryByRole('button', { name: RESPOND })).toBeNull();
   });
 
   it('shows a recorded comment on a resolved step', () => {
@@ -179,7 +181,7 @@ describe('HumanStepCard dialog and responses', () => {
   it('locks the approve dialog against dismissal while the answer is being sent', async () => {
     mutateAsync.mockReturnValueOnce(new Promise(() => {}));
     render(<HumanStepCard step={approvalStep()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     const closeButton = () =>
       screen
@@ -195,7 +197,7 @@ describe('HumanStepCard dialog and responses', () => {
 
   it('caps the note and shows how much of it is used', () => {
     render(<HumanStepCard step={approvalStep()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
     const note = screen.getByLabelText('Comment (optional)') as HTMLTextAreaElement;
     expect(note.maxLength).toBe(2000);
@@ -228,7 +230,7 @@ describe('HumanStepCard dialog and responses', () => {
   it('offers Request changes only when the step carries the marker, and requires feedback', () => {
     // No marker -> no third button.
     render(<HumanStepCard step={approvalStep()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
     expect(screen.queryByRole('button', { name: 'Request changes' })).toBeNull();
   });
 
@@ -240,7 +242,7 @@ describe('HumanStepCard dialog and responses', () => {
         })}
       />
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
     fireEvent.click(screen.getByRole('button', { name: 'Request changes' }));
     const submit = screen
       .getAllByRole('button', { name: 'Request changes' })
@@ -257,5 +259,76 @@ describe('HumanStepCard dialog and responses', () => {
       comment: 'Add a test',
       id: 's2',
     });
+  });
+});
+
+describe('HumanStepCard before it is opened', () => {
+  it('shows what the change is, so a step can be judged without opening it', () => {
+    render(<HumanStepCard step={approvalStep()} />);
+    expect(screen.getByTestId('step-context-excerpt').textContent).toContain(
+      '1 file changed (+1 −1): a.ts'
+    );
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
+    expect(screen.queryByTestId('step-context-excerpt')).toBeNull();
+  });
+
+  it('labels the opening button by the kind of answer it takes', () => {
+    render(<HumanStepCard step={approvalStep()} />);
+    expect(screen.getByRole('button', { name: 'Review and decide' })).toBeTruthy();
+  });
+
+  it('can start open, for an inbox with a single waiting step', () => {
+    render(<HumanStepCard defaultExpanded step={approvalStep()} />);
+    expect(screen.getByRole('button', { name: 'Collapse' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Reject' })).toBeTruthy();
+  });
+
+  it('says what happens next once the deadline has passed', () => {
+    render(
+      <HumanStepCard
+        step={approvalStep({ timeoutAt: new Date(Date.now() - 60_000).toISOString() })}
+      />
+    );
+    expect(screen.getByText(/follows this step’s timeout route/)).toBeTruthy();
+  });
+});
+
+describe('HumanStepCard decisions', () => {
+  const decision = () =>
+    approvalStep({
+      context: null,
+      kind: 'DECISION',
+      options: [
+        { label: 'Ship it', value: 'ship' },
+        { label: 'Hold', value: 'hold' },
+      ],
+    });
+
+  it('asks before a choice is sent, and sends it only on confirmation', () => {
+    render(<HumanStepCard step={decision()} />);
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ship it' }));
+    expect(mutate).not.toHaveBeenCalled();
+    expect(screen.getByText(/cannot be undone/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose “Ship it”' }));
+    expect(mutate.mock.calls[0][0]).toMatchObject({ action: 'select', id: 's2', value: 'ship' });
+  });
+
+  it('sends nothing when the confirmation is cancelled', () => {
+    render(<HumanStepCard step={decision()} />);
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
+    fireEvent.click(screen.getByRole('button', { name: 'Hold' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Cancel' }).at(-1) as HTMLElement);
+    expect(mutate).not.toHaveBeenCalled();
+  });
+
+  it('tells the inbox what was recorded', () => {
+    const onAnswered = vi.fn();
+    mutate.mockImplementationOnce((_input, options) => options?.onSuccess?.());
+    render(<HumanStepCard onAnswered={onAnswered} step={decision()} />);
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ship it' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Choose “Ship it”' }));
+    expect(onAnswered).toHaveBeenCalledWith('Choice recorded for “Approve plan”.');
   });
 });
