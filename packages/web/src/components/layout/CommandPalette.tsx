@@ -6,6 +6,7 @@ import { createPortal } from 'react-dom';
 import { PALETTE_CHOICES, THEME_CHOICES } from '@/components/layout/ThemeToggle';
 import { Icon, isIconName } from '@/components/ui/Icon';
 import { usePaletteSearch } from '@/hooks/usePaletteSearch';
+import { confirmLeave } from '@/hooks/useUnsavedChangesGuard';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
 import { runHref, templateHref } from '@/lib/entityLinks';
 import { flattenNavItems } from '@/lib/navigation';
@@ -230,6 +231,9 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
 
   const go = (entry: Entry | undefined) => {
     if (!entry) {
+      return;
+    }
+    if (!entry.run && entry.href && !confirmLeave()) {
       return;
     }
     onClose();

@@ -124,6 +124,9 @@ export function Modal({
   initialFocusRef?: RefObject<HTMLElement | null>;
 }) {
   const dialogRef = useRef<HTMLDialogElement>(null);
+  // The latest `open`, read from the close handler, which runs outside React's render.
+  const openRef = useRef(open);
+  openRef.current = open;
   // The dialog is portalled to document.body: callers often own a modal from
   // inside a table row or list item, and a <dialog> under <tbody> is invalid
   // HTML that React reports as a hydration error. Portals need the DOM, so
@@ -202,7 +205,18 @@ export function Modal({
           e.currentTarget.close();
         }
       }}
-      onClose={onClose}
+      onClose={() => {
+        onClose();
+        // `close` fires after the browser has already closed the dialog. A caller that refuses to
+        // close (a discard prompt over a dirty form) does so by leaving `open` true, which never
+        // re-runs the effect that shows the dialog. Reopen once the caller's state has settled.
+        setTimeout(() => {
+          const dialog = dialogRef.current;
+          if (openRef.current && dialog?.isConnected && !dialog.open) {
+            dialog.showModal();
+          }
+        }, 0);
+      }}
       onMouseDown={(e) => {
         pressStartedOnBackdrop.current = e.target === e.currentTarget;
       }}
