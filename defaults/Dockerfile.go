@@ -1,5 +1,5 @@
 # Default executor image for Go projects
-FROM golang:1.26-bookworm@sha256:386f0cbb8fb3402ff5a15048c96731e6ff37142d31182f3b72306359a1f5e9b7
+FROM golang:1.27-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9
 
 # git and bash ship in the golang image; tar for copy in/out and ripgrep so Pi's
 # grep honours .gitignore are added.
