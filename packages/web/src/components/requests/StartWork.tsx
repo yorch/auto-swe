@@ -215,7 +215,7 @@ export function StartWork({
     {
       description: canStartEpic
         ? 'Change several repositories at once. A planner splits the brief into ordered per-repository work.'
-        : 'Needs a team lead or administrator.',
+        : 'Requires team lead or administrator.',
       disabled: !canStartEpic,
       icon: 'epics',
       label: 'Run a multi-repo epic',

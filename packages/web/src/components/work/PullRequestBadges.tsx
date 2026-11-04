@@ -10,7 +10,7 @@ export function pullRequestStateMeta(
     return { label: 'Merged', tone: 'accent2' };
   }
   if (status === 'CLOSED') {
-    return { label: 'Closed', tone: 'danger' };
+    return { label: 'Closed', tone: 'neutral' };
   }
   return isDraft ? { label: 'Draft', tone: 'neutral' } : { label: 'Open', tone: 'success' };
 }

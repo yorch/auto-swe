@@ -21,6 +21,7 @@ import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useEpics } from '@/hooks/useEpics';
 import { type RequestState, useRequests } from '@/hooks/useRequests';
 import { parseOffset } from '@/hooks/useUrlFilters';
+import { WORK_SCOPE_OPTIONS } from '@/lib/workScope';
 
 const PAGE_SIZE = 30;
 const STATES: { label: string; value: RequestState }[] = [
@@ -113,10 +114,7 @@ function RequestsWorkspace() {
             <SegmentedControl
               ariaLabel="Request scope"
               onChange={(value) => update({ offset: null, scope: value })}
-              options={[
-                { label: 'My requests', value: 'MINE' },
-                { label: 'Team requests', value: 'TEAM' },
-              ]}
+              options={WORK_SCOPE_OPTIONS}
               value={scope}
             />
           }
@@ -214,7 +212,7 @@ function RequestsWorkspace() {
                 bordered
                 hint={
                   filtered
-                    ? 'Try another search or status, or switch between your requests and the team’s.'
+                    ? 'Try another search or status, or switch between your work and your team’s.'
                     : 'Run a workflow or give an agent a task. Its progress and results collect here.'
                 }
                 icon={filtered ? 'search' : 'inbox'}
