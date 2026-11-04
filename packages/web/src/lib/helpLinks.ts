@@ -21,6 +21,7 @@ export const HELP_LINKS = {
   configuration: { slug: 'configuration' },
   evals: { slug: 'evals' },
   githubAppSetup: { slug: 'github-app-setup' },
+  knowledge: { slug: 'knowledge' },
   mcpServer: { slug: 'mcp-server' },
   modelConfiguration: { slug: 'model-configuration' },
   platformSettingsCascade: { anchor: '2-resolution-order', slug: 'configuration' },

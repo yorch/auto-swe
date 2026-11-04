@@ -28,6 +28,7 @@ import { useTeams } from '@/hooks/useTeams';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { ApiError, api } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -518,7 +519,7 @@ export default function GovernKnowledgePage() {
     <div className="space-y-6">
       <PageHeader
         help={<p>Published summaries do not expose private source evidence.</p>}
-        learnMore={{ label: 'About knowledge', slug: 'knowledge' }}
+        learnMore={{ ...HELP_LINKS.knowledge, label: 'About knowledge' }}
         subtitle="Curated references, decisions and policies that agents recall. Lessons are captured from runs; knowledge is reviewed by people before it is trusted."
         title="Knowledge"
       />
