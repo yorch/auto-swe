@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { type FormEvent, type KeyboardEvent, useEffect, useState } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
@@ -78,6 +78,7 @@ export function SettingRow({
   onSave,
   onClear,
   onEdit,
+  onDirtyChange,
   status,
   sourceHref,
   grantsHref,
@@ -100,6 +101,9 @@ export function SettingRow({
   onClear: () => void;
   /// Called when the person starts editing, so a stale saved/error line clears.
   onEdit: () => void;
+  /// Reports whether this row holds an unsaved draft, so the page can count them, guard
+  /// navigation and keep a dirty row visible. Reports `false` again when the row unmounts.
+  onDirtyChange?: (key: string, dirty: boolean) => void;
   status?: SettingRowStatus;
   /// Where the value shown was set, when that is a view the page can open.
   sourceHref?: string;
@@ -131,8 +135,47 @@ export function SettingRow({
       : isList
         ? parseList(draft)
         : draft;
-  const invalidNumber = isNumber && !Number.isFinite(Number(draft));
+  // `Number('')` is 0, so an emptied field must be refused here or Save would write 0 — which
+  // for a cap, timeout or limit can mean "unlimited" or "off".
+  const numberError = !isNumber
+    ? undefined
+    : draft.trim() === ''
+      ? 'Enter a number'
+      : Number.isFinite(Number(draft))
+        ? undefined
+        : 'Must be a number';
+  const invalidNumber = numberError !== undefined;
   const dirty = isBoolean ? boolDraft !== setting.value : formatValue(setting.value) !== draft;
+  // Thresholds and rates need a decimal keypad on a phone; whole-number knobs keep the numeric one.
+  const decimalNumber = isNumber && !Number.isInteger(setting.defaultValue);
+
+  useEffect(() => {
+    onDirtyChange?.(setting.key, dirty);
+  }, [dirty, onDirtyChange, setting.key]);
+  useEffect(
+    () => () => {
+      onDirtyChange?.(setting.key, false);
+    },
+    [onDirtyChange, setting.key]
+  );
+
+  const discard = () => {
+    onEdit();
+    setDraft(formatValue(setting.value));
+    setBoolDraft(setting.value === true);
+  };
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (dirty && !busy && !invalidNumber && canWriteHere) {
+      onSave(parsedDraft);
+    }
+  };
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key === 'Escape' && dirty && !busy) {
+      event.stopPropagation();
+      discard();
+    }
+  };
 
   const unitId = `setting-${setting.key}-unit`;
   const unit = setting.unit ?? (isList ? 'comma-separated' : undefined);
@@ -146,14 +189,29 @@ export function SettingRow({
     <div
       className={cn(
         'border-t border-ink-600 py-5 first:border-t-0 first:pt-1',
-        dirty && '-mx-3 rounded-lg border-t-transparent bg-warning-400/[0.04] px-3'
+        dirty &&
+          '-mx-3 rounded-lg border-t-transparent border-l-2 border-l-warning-400 bg-warning-400/10 px-3'
       )}
       data-dirty={dirty || undefined}
     >
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_18rem] md:gap-8">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-            <span className="text-sm font-medium text-paper-100">{setting.label}</span>
+            {isBoolean ? (
+              <span className="text-sm font-medium text-paper-100">{setting.label}</span>
+            ) : (
+              <label
+                className="text-sm font-medium text-paper-100"
+                htmlFor={`setting-${setting.key}`}
+              >
+                {setting.label}
+              </label>
+            )}
+            {dirty && (
+              <Badge tone="warning" variant="outline">
+                Unsaved
+              </Badge>
+            )}
             {setting.restartRequired && (
               <Badge tone="warning" variant="outline">
                 Restart required
@@ -202,7 +260,12 @@ export function SettingRow({
           </div>
         </div>
 
-        <div className="flex w-full min-w-0 flex-col gap-2">
+        <form
+          className="flex w-full min-w-0 flex-col gap-2"
+          noValidate
+          onKeyDown={onKeyDown}
+          onSubmit={submit}
+        >
           {isBoolean ? (
             <ToggleSwitch
               checked={boolDraft}
@@ -213,6 +276,7 @@ export function SettingRow({
                 <>
                   <span className="sr-only">{setting.label}: </span>
                   {boolDraft ? 'Enabled' : 'Disabled'}
+                  {dirty && <span className="ml-1.5 text-warning-400">(unsaved)</span>}
                 </>
               }
               onChange={() => {
@@ -225,12 +289,11 @@ export function SettingRow({
               <div className="min-w-0 flex-1">
                 <Input
                   aria-describedby={unit ? unitId : undefined}
-                  aria-label={setting.label}
                   className={cn(isNumber && 'tabular-nums', isList && 'font-mono text-sm')}
                   disabled={!canWriteHere || busy || setting.redacted}
-                  error={invalidNumber ? 'Must be a number' : undefined}
+                  error={numberError}
                   id={`setting-${setting.key}`}
-                  inputMode={isNumber ? 'numeric' : undefined}
+                  inputMode={isNumber ? (decimalNumber ? 'decimal' : 'numeric') : undefined}
                   onChange={(e) => {
                     onEdit();
                     setDraft(e.target.value);
@@ -248,10 +311,9 @@ export function SettingRow({
                 <span
                   className={cn(
                     'shrink-0 pt-2 text-xs text-paper-500',
-                    isList ? 'sr-only' : 'w-16 truncate'
+                    isList ? 'sr-only' : 'max-w-24 break-words'
                   )}
                   id={unitId}
-                  title={unit}
                 >
                   {unit}
                 </span>
@@ -276,29 +338,20 @@ export function SettingRow({
               <Button
                 className={cn(!dirty && 'hidden')}
                 disabled={busy || !dirty || invalidNumber}
-                onClick={() => onSave(parsedDraft)}
                 size="sm"
+                type="submit"
                 variant="primary"
               >
                 {status?.phase === 'saving' ? 'Saving…' : 'Save'}
               </Button>
               {dirty && (
-                <Button
-                  disabled={busy}
-                  onClick={() => {
-                    onEdit();
-                    setDraft(formatValue(setting.value));
-                    setBoolDraft(setting.value === true);
-                  }}
-                  size="sm"
-                  variant="ghost"
-                >
+                <Button disabled={busy} onClick={discard} size="sm" variant="ghost">
                   Discard
                 </Button>
               )}
               {!dirty && hasOverrideHere && (
                 <Button disabled={busy} onClick={onClear} size="sm" variant="ghost">
-                  {busy ? 'Removing…' : 'Remove override'}
+                  {busy ? 'Removing…' : 'Remove override (inherit)'}
                 </Button>
               )}
               {status?.phase === 'saved' && !dirty && (
@@ -349,9 +402,11 @@ export function SettingRow({
             </p>
           )}
           {canWriteHere && hasOverrideHere && setting.source !== 'DEFAULT' && !dirty && (
-            <p className="text-xs text-paper-500">Override set at this scope</p>
+            <p className="text-xs text-paper-500">
+              Override set at this scope. Removing it makes this scope inherit the broader value.
+            </p>
           )}
-        </div>
+        </form>
       </div>
     </div>
   );

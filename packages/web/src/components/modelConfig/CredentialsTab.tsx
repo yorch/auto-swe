@@ -67,6 +67,17 @@ export function usedByLabel(usedBy: string[]): string {
   return `Used by ${count}${embeddings ? ' and embeddings' : ''}: ${names}${more}`;
 }
 
+/** A delete that strands an agent or removes the last platform credential needs typed confirmation. */
+export function needsTypedConfirm(
+  target: ProviderCredentialRow,
+  all: ProviderCredentialRow[]
+): boolean {
+  return (
+    isLastPlatformCredential(target, all) ||
+    (target.usage?.leavesWithoutCredential ?? []).length > 0
+  );
+}
+
 export function deleteMessage(target: ProviderCredentialRow, all: ProviderCredentialRow[]) {
   const usedBy = target.usage?.agents ?? [];
   const embedding = target.usage?.embedding ?? false;
@@ -223,7 +234,7 @@ export function CredentialsTab() {
 
       <Card className="p-5 sm:p-6">
         <CardHeader className="items-start">
-          <CardTitle>API keys</CardTitle>
+          <CardTitle>Stored credentials</CardTitle>
           {(credentials ?? []).length > 0 && (
             <Button onClick={() => openCreate()} size="sm" variant="primary">
               <Icon name="plus" size={14} />
@@ -242,10 +253,14 @@ export function CredentialsTab() {
         >
           {(credentials ?? []).length === 0 ? (
             <EmptyState
+              // While the providers card above lists what is missing, its per-provider buttons are
+              // the way in: a second "New credential" here would be the same action twice.
               action={
-                <Button onClick={() => openCreate()} size="sm" variant="primary">
-                  New credential
-                </Button>
+                missing > 0 ? undefined : (
+                  <Button onClick={() => openCreate()} size="sm" variant="primary">
+                    New credential
+                  </Button>
+                )
               }
               bordered
               hint="Add one before any agent can call a model. Keys are stored encrypted."
@@ -324,14 +339,27 @@ export function CredentialsTab() {
                 {
                   cell: (c) => {
                     const probe = probeResults[c.id];
-                    return probe ? (
-                      <Badge dot tone={probe.ok ? 'success' : 'danger'}>
-                        {probe.ok
-                          ? `OK (${probe.status})`
-                          : (probe.error ?? `HTTP ${probe.status}`)}
-                      </Badge>
-                    ) : (
-                      <span className="text-xs text-paper-500">Not tested</span>
+                    // Announced when a test lands; the error text is clamped so a long message
+                    // cannot blow up the row, and is repeated in full in `title`.
+                    return (
+                      <span aria-live="polite" className="block max-w-[16rem]">
+                        {probe ? (
+                          <Badge
+                            className="max-w-full whitespace-normal break-words text-left"
+                            dot
+                            title={probe.ok ? undefined : (probe.error ?? undefined)}
+                            tone={probe.ok ? 'success' : 'danger'}
+                          >
+                            <span className="line-clamp-2">
+                              {probe.ok
+                                ? `OK (${probe.status})`
+                                : (probe.error ?? `HTTP ${probe.status}`)}
+                            </span>
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-paper-500">Not tested</span>
+                        )}
+                      </span>
                     );
                   },
                   header: 'Last test',
@@ -369,6 +397,11 @@ export function CredentialsTab() {
 
       <ConfirmModal
         confirmLabel="Delete"
+        // Stranding agents or removing the last platform credential fails every model call that
+        // uses the provider, mid-run: that deserves typing the provider to confirm.
+        confirmText={
+          deleting && needsTypedConfirm(deleting, credentials ?? []) ? deleting.provider : undefined
+        }
         dangerous
         message={deleting ? deleteMessage(deleting, credentials ?? []) : ''}
         onClose={() => setDeleting(null)}
@@ -412,28 +445,33 @@ function CredentialModal({
   const { error, saving, submit } = useIntegrationConfigForm();
   const { data: teams } = useTeams();
 
-  const [clientError, setClientError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<
+    Partial<Record<'provider' | 'apiBase' | 'teamId' | 'apiKey', string>>
+  >({});
   const providerName = (existing?.provider ?? provider).trim();
   const needsApiBase =
     providerName !== '' && !BUILTIN_PROVIDERS.includes(providerName as BuiltinProvider);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const problem = existing
-      ? needsApiBase && !apiBase.trim()
-        ? `${providerName} is not a built-in provider, so it needs an API base URL.`
-        : null
-      : !provider.trim()
-        ? 'Enter a provider name.'
-        : needsApiBase && !apiBase.trim()
-          ? `${providerName} is not a built-in provider, so it needs an API base URL.`
-          : scope === 'TEAM' && !teamId
-            ? 'Choose a team for a team-scoped credential.'
-            : !apiKey.trim()
-              ? 'Enter the API key.'
-              : null;
-    setClientError(problem);
-    if (problem) {
+    const problems: typeof fieldErrors = {};
+    if (!existing && !provider.trim()) {
+      problems.provider = 'Enter a provider name.';
+    }
+    if (needsApiBase && !apiBase.trim()) {
+      problems.apiBase = `${providerName} is not a built-in provider, so it needs an API base URL.`;
+    }
+    if (!existing && scope === 'TEAM' && !teamId) {
+      problems.teamId = 'Choose a team for a team-scoped credential.';
+    }
+    if (!existing && !apiKey.trim()) {
+      problems.apiKey = 'Enter the API key.';
+    }
+    setFieldErrors(problems);
+    // Move focus to the first field with a problem, in the order the form shows them.
+    const first = (['provider', 'teamId', 'apiBase', 'apiKey'] as const).find((k) => problems[k]);
+    if (first) {
+      document.getElementById(first)?.focus();
       return;
     }
     void submit(() => {
@@ -463,12 +501,14 @@ function CredentialModal({
       open
       title={existing ? `Edit ${existing.provider}` : 'New provider credential'}
     >
-      <form className="space-y-4" onSubmit={handleSubmit}>
+      <form className="space-y-4" noValidate onSubmit={handleSubmit}>
         {!existing && (
           <>
             <div>
               <Input
+                autoComplete="off"
                 className="font-mono"
+                error={fieldErrors.provider}
                 hint={
                   BUILTIN_PROVIDERS.includes(provider as BuiltinProvider)
                     ? BUILTIN_PROVIDER_HINTS[provider as BuiltinProvider]
@@ -481,6 +521,7 @@ function CredentialModal({
                 list="provider-suggestions"
                 onChange={(e) => setProvider(e.target.value)}
                 placeholder="anthropic / openai / google / openrouter / ..."
+                required
                 value={provider}
               />
               <datalist id="provider-suggestions">
@@ -498,13 +539,14 @@ function CredentialModal({
                 }
               }}
               options={[
-                { label: 'Global (used by every team unless overridden)', value: 'GLOBAL' },
+                { label: 'Platform-wide (used by every team unless overridden)', value: 'GLOBAL' },
                 { label: 'Team', value: 'TEAM' },
               ]}
               value={scope}
             />
             {scope === 'TEAM' && (
               <Combobox
+                error={fieldErrors.teamId}
                 id="teamId"
                 label="Team"
                 onChange={(v) => setTeamId(v)}
@@ -516,24 +558,35 @@ function CredentialModal({
           </>
         )}
         <Input
+          autoComplete="off"
           className="font-mono"
+          error={fieldErrors.apiBase}
           id="apiBase"
           label={needsApiBase ? 'API base URL' : 'API base URL (optional)'}
           onChange={(e) => setApiBase(e.target.value)}
           placeholder="https://opencode.ai/zen/go/v1"
+          required={needsApiBase}
           value={apiBase}
         />
+        {/* A password field after a text field reads as a login form: without these, a browser or
+            password manager fills the admin's own saved password in as the provider's API key. */}
         <Input
+          autoComplete="new-password"
           className="font-mono"
+          data-1p-ignore=""
+          data-bwignore=""
+          data-lpignore="true"
+          error={fieldErrors.apiKey}
           id="apiKey"
           label={existing ? 'API key (leave blank to keep existing)' : 'API key'}
           onChange={(e) => setApiKey(e.target.value)}
           placeholder={existing ? `····${existing.lastFour}` : 'sk-...'}
+          required={!existing}
           type="password"
           value={apiKey}
         />
         <Alert variant="warning">Stored encrypted; it can't be shown again after saving.</Alert>
-        {(clientError ?? error) && <Alert>{clientError ?? error}</Alert>}
+        {error && <Alert>{error}</Alert>}
         <ModalFooter
           isPending={saving}
           onCancel={onClose}

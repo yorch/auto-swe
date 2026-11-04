@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useCallback, useEffect, useState } from 'react';
 import { ProviderMark } from '@/components/auth/ProviderMark';
 import { AuthHeading, AuthLayout, BrandMark } from '@/components/layout/AuthLayout';
 import { SupportContact } from '@/components/SupportContact';
@@ -116,10 +116,36 @@ export default function LoginPage() {
   // keeps the page eligible for SSG while still letting us read the
   // ?bridge=1 hint from the magic-link / social callback.
   return (
-    <Suspense fallback={null}>
+    <Suspense fallback={<LoginFallback />}>
       <LoginPageInner />
     </Suspense>
   );
+}
+
+/** Shown while the page hydrates: the card's outline, so the first frame is not blank. */
+function LoginFallback() {
+  return (
+    <AuthLayout>
+      <div aria-live="polite" className="space-y-4" role="status">
+        <span className="sr-only">Loading sign-in…</span>
+        <Skeleton className="h-6 w-24" />
+        <Skeleton className="h-9 w-full" />
+        <Skeleton className="h-10 w-full" />
+      </div>
+    </AuthLayout>
+  );
+}
+
+/** Seconds before "Resend" works again after a sign-in link is sent. */
+const RESEND_COOLDOWN_SEC = 30;
+
+/** Loose shape check, so an empty or obviously wrong address is reported inline. */
+function emailProblem(value: string): string | undefined {
+  const v = value.trim();
+  if (!v) {
+    return 'Enter your email address.';
+  }
+  return /^\S+@\S+$/.test(v) ? undefined : 'Enter a valid email address, like you@example.com.';
 }
 
 function LoginPageInner() {
@@ -168,6 +194,18 @@ function LoginPageInner() {
   const [error, setError] = useState(() => describeAuthError(searchParams.get('error')) ?? '');
   const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
+  // Inline field errors: the forms use noValidate, so every problem is reported the same way.
+  const [emailError, setEmailError] = useState<string | undefined>();
+  const [passwordError, setPasswordError] = useState<string | undefined>();
+  // The provider whose redirect is under way: its button shows the progress.
+  const [redirectingTo, setRedirectingTo] = useState<SocialProviderId | null>(null);
+  // The address a sign-in link was sent to; set, the magic-link tab shows the confirmation.
+  const [linkSentTo, setLinkSentTo] = useState<string | null>(null);
+  const [resendIn, setResendIn] = useState(0);
+  // Pending-approval screen: a "Check again" in flight, and its last answer.
+  const [recheck, setRecheck] = useState<'idle' | 'checking' | 'still-pending' | 'unavailable'>(
+    'idle'
+  );
   // Set after hydrate when the resolved user has isActive=false. Renders
   // a dedicated approval-pending screen instead of bouncing to /.
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
@@ -266,38 +304,78 @@ function LoginPageInner() {
   // / PHP container) can answer 200 with HTML, which would otherwise leave
   // the page in a quiet "no providers" state instead of telling the user
   // why nothing works.
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await probeGateway('/api/v1/auth/providers', isOkResponse, 5000);
-        if (!res) {
-          // Non-2xx — could be the real gateway throwing, or a wrong server
-          // on the port. Either way the page can't continue, so surface it.
-          setGateway('down');
-          return;
-        }
-        const data = (await res.json()) as unknown;
-        if (!looksLikeProviderResponse(data)) {
-          // 200 OK but the body isn't our shape — almost certainly a different
-          // server bound to the port. Surface as gateway-down.
-          setGateway('down');
-          return;
-        }
-        setProviders({ okta: false, ...data });
-        setGateway('up');
-      } catch {
-        // TypeError: network failure (DNS, server down, CORS rejected).
-        // SyntaxError: 200 OK but body wasn't valid JSON (wrong server bound).
-        // Any other failure still ends the "checking" state, or the form would never appear.
+  // `silent` re-probes without swapping the form for the skeleton, for the automatic retries.
+  const probe = useCallback(async (silent = false) => {
+    if (!silent) {
+      setGateway('checking');
+    }
+    try {
+      const res = await probeGateway('/api/v1/auth/providers', isOkResponse, 5000);
+      if (!res) {
+        // Non-2xx — could be the real gateway throwing, or a wrong server
+        // on the port. Either way the page can't continue, so surface it.
         setGateway('down');
+        return;
       }
-    })();
+      const data = (await res.json()) as unknown;
+      if (!looksLikeProviderResponse(data)) {
+        // 200 OK but the body isn't our shape — almost certainly a different
+        // server bound to the port. Surface as gateway-down.
+        setGateway('down');
+        return;
+      }
+      setProviders({ okta: false, ...data });
+      setGateway('up');
+    } catch {
+      // TypeError: network failure (DNS, server down, CORS rejected).
+      // SyntaxError: 200 OK but body wasn't valid JSON (wrong server bound).
+      // Any other failure still ends the "checking" state, or the form would never appear.
+      setGateway('down');
+    }
   }, []);
+
+  useEffect(() => {
+    void probe();
+  }, [probe]);
+
+  // While the gateway is unreachable, look again when the browser regains the network or the tab
+  // is focused, so the page recovers without a reload.
+  useEffect(() => {
+    if (gateway !== 'down') {
+      return;
+    }
+    const again = () => void probe(true);
+    window.addEventListener('online', again);
+    window.addEventListener('focus', again);
+    return () => {
+      window.removeEventListener('online', again);
+      window.removeEventListener('focus', again);
+    };
+  }, [gateway, probe]);
+
+  // Count the resend cooldown down once a second.
+  useEffect(() => {
+    if (resendIn <= 0) {
+      return;
+    }
+    const t = setTimeout(() => setResendIn((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
+
+  const focusEmail = () => document.getElementById('email')?.focus();
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setInfo('');
+    const emailIssue = emailProblem(email);
+    const passwordIssue = password ? undefined : 'Enter your password.';
+    setEmailError(emailIssue);
+    setPasswordError(passwordIssue);
+    if (emailIssue || passwordIssue) {
+      document.getElementById(emailIssue ? 'email' : 'password')?.focus();
+      return;
+    }
     setLoading(true);
     try {
       const resume = await login(email, password, oauthQuery);
@@ -322,10 +400,13 @@ function LoginPageInner() {
   const handleForgotPassword = async () => {
     setError('');
     setInfo('');
-    if (!email) {
-      setError('Enter the email associated with your account first.');
+    setPasswordError(undefined);
+    if (!email.trim()) {
+      setEmailError('Enter the email for your account, then choose Forgot password.');
+      focusEmail();
       return;
     }
+    setEmailError(undefined);
     setLoading(true);
     try {
       await requestPasswordReset(email);
@@ -345,6 +426,7 @@ function LoginPageInner() {
     setError('');
     setInfo('');
     setLoading(true);
+    setRedirectingTo(provider);
     try {
       // Navigates to the provider on success, so `loading` stays set until
       // the page unloads. It also disables both social buttons for the
@@ -354,30 +436,53 @@ function LoginPageInner() {
     } catch (err: unknown) {
       setError(errMsg(err, `Could not start ${provider} sign-in`));
       setLoading(false);
+      setRedirectingTo(null);
     }
   };
 
-  const handleMagicLinkSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const sendMagicLink = async (address: string) => {
     setError('');
     setInfo('');
-    if (!email) {
-      setError('Enter an email to receive a sign-in link.');
-      return;
-    }
     setLoading(true);
     try {
-      await requestMagicLink(email);
-      setInfo(
-        IS_DEV
-          ? `A sign-in link was sent to ${email}. In dev, the link is logged to the gateway stdout.`
-          : `A sign-in link was sent to ${email}.`
-      );
+      await requestMagicLink(address);
+      setLinkSentTo(address);
+      setResendIn(RESEND_COOLDOWN_SEC);
     } catch (err: unknown) {
       setError(errMsg(err, 'Could not send magic link'));
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleMagicLinkSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const issue = emailProblem(email);
+    setEmailError(issue);
+    if (issue) {
+      setError('');
+      setInfo('');
+      focusEmail();
+      return;
+    }
+    await sendMagicLink(email.trim());
+  };
+
+  // "Check again" on the awaiting-approval screen: the account may have been approved since.
+  const handleRecheck = async () => {
+    setRecheck('checking');
+    const status = await hydrate();
+    if (status === 'unknown') {
+      setRecheck('unavailable');
+      return;
+    }
+    const u = useAuthStore.getState().user;
+    if (status === 'authenticated' && u?.isActive !== false) {
+      setPendingEmail(null);
+      router.replace(destination);
+      return;
+    }
+    setRecheck('still-pending');
   };
 
   const hasSocial = providers.github || providers.google || providers.okta;
@@ -398,10 +503,8 @@ function LoginPageInner() {
       <AuthLayout footer={versionLine}>
         <AuthHeading icon="clock" title="Awaiting approval" tone="warning">
           <p>
-            We received your sign-in for{' '}
-            <span className="break-all font-mono text-sm text-paper-100">{pendingEmail}</span>. An
-            admin needs to approve your account before you can use auto-swe. Ask an admin to approve
-            it, then sign in again.
+            <span className="break-all font-mono text-sm text-paper-100">{pendingEmail}</span> is
+            signed in, but an administrator has to approve the account before you can use auto-swe.
           </p>
         </AuthHeading>
         <div className="mb-6 flex items-center justify-between gap-3 rounded-lg border border-ink-400/60 bg-ink-900/60 px-3.5 py-3">
@@ -410,21 +513,47 @@ function LoginPageInner() {
             Pending approval
           </Badge>
         </div>
-        <Button
-          className="w-full"
-          onClick={async () => {
-            // A pending user can still hold a session; sign it out, or the
-            // sign-in check that runs on '/login' puts this screen straight back.
-            await useAuthStore.getState().logout();
-            setPendingEmail(null);
-            router.replace('/login');
-          }}
-          size="lg"
-          variant="secondary"
-        >
-          <Icon name="arrowLeft" size={15} />
-          Back to sign in
-        </Button>
+        <div aria-live="polite" role="status">
+          {recheck === 'still-pending' && (
+            <p className="mb-3 text-sm text-paper-400">Still waiting for approval.</p>
+          )}
+          {recheck === 'unavailable' && (
+            <p className="mb-3 text-sm text-danger-400">
+              The gateway is unavailable, so approval could not be checked. Try again in a moment.
+            </p>
+          )}
+        </div>
+        <div className="space-y-2.5">
+          <Button
+            className="w-full"
+            disabled={recheck === 'checking'}
+            onClick={handleRecheck}
+            size="lg"
+            variant="primary"
+          >
+            <Icon
+              className={recheck === 'checking' ? 'animate-spin' : undefined}
+              name="refresh"
+              size={15}
+            />
+            {recheck === 'checking' ? 'Checking…' : 'Check again'}
+          </Button>
+          <Button
+            className="w-full"
+            onClick={async () => {
+              // A pending user can still hold a session; sign it out, or the
+              // sign-in check that runs on '/login' puts this screen straight back.
+              await useAuthStore.getState().logout();
+              setPendingEmail(null);
+              router.replace('/login');
+            }}
+            size="lg"
+            variant="secondary"
+          >
+            <Icon name="arrowLeft" size={15} />
+            Back to sign in
+          </Button>
+        </div>
         <SupportContact className="mt-6 text-center" />
       </AuthLayout>
     );
@@ -443,9 +572,11 @@ function LoginPageInner() {
         </header>
 
         <div className="relative z-10 max-w-lg">
-          <h2 className="text-4xl font-semibold leading-[1.1] tracking-[-0.03em] text-paper-50 xl:text-5xl">
+          {/* A paragraph, not a heading: the page's one h1 is the sign-in card, and a
+              screen reader should not meet this slogan first. */}
+          <p className="text-4xl font-semibold leading-[1.1] tracking-[-0.03em] text-paper-50 xl:text-5xl">
             Ticket in, reviewed pull request out.
-          </h2>
+          </p>
           <p className="mt-4 text-base leading-relaxed text-paper-400">
             Durable, governed agent workflows that do the work and leave the decisions to your team.
           </p>
@@ -493,7 +624,16 @@ function LoginPageInner() {
         </AuthHeading>
 
         {gatewayDown && (
-          <Alert className="mb-6" title="Service unavailable" variant="error">
+          <Alert
+            action={
+              <Button onClick={() => void probe()} size="sm">
+                Retry
+              </Button>
+            }
+            className="mb-6"
+            title="Service unavailable"
+            variant="error"
+          >
             {IS_DEV ? (
               <>
                 Can't reach the gateway at{' '}
@@ -508,7 +648,7 @@ function LoginPageInner() {
                 .
               </>
             ) : (
-              'Sign-in is temporarily unavailable. Try again in a moment.'
+              'Sign-in is temporarily unavailable. Choose Retry, or try again in a moment.'
             )}
           </Alert>
         )}
@@ -519,15 +659,24 @@ function LoginPageInner() {
             <div className="space-y-2.5">
               {SOCIAL_BUTTONS.filter((b) => providers[b.id]).map((b) => (
                 <Button
+                  aria-busy={redirectingTo === b.id || undefined}
                   className="w-full"
-                  disabled={loading}
+                  disabled={loading || gatewayDown}
                   key={b.id}
                   onClick={() => handleSocialSignIn(b.id)}
                   size="lg"
                   variant="secondary"
                 >
-                  <ProviderMark id={b.id} />
-                  <span>{b.label}</span>
+                  {redirectingTo === b.id ? (
+                    <Icon className="animate-spin" name="refresh" size={15} />
+                  ) : (
+                    <ProviderMark id={b.id} />
+                  )}
+                  <span>
+                    {redirectingTo === b.id
+                      ? `Redirecting to ${b.label.replace('Continue with ', '')}…`
+                      : b.label}
+                  </span>
                 </Button>
               ))}
             </div>
@@ -548,6 +697,8 @@ function LoginPageInner() {
               setPickedTab(next);
               setError('');
               setInfo('');
+              setEmailError(undefined);
+              setPasswordError(undefined);
             }}
             optionClassName="flex-1 py-1.5 text-sm"
             options={TAB_OPTIONS}
@@ -596,10 +747,47 @@ function LoginPageInner() {
             <Skeleton className="h-9 w-full" />
             <Skeleton className="h-10 w-full" />
           </div>
+        ) : tab === 'magic' && linkSentTo ? (
+          <div aria-live="polite" className="space-y-4 text-center" role="status">
+            <div
+              aria-hidden="true"
+              className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl border border-success-400/30 bg-success-400/10 text-success-400"
+            >
+              <Icon name="inbox" size={20} />
+            </div>
+            <p className="text-base font-medium text-paper-50">Check your inbox</p>
+            <p className="text-sm leading-relaxed text-paper-400">
+              We sent a sign-in link to{' '}
+              <span className="break-all font-mono text-paper-100">{linkSentTo}</span>. It may take
+              a minute to arrive; check spam if it does not.
+              {IS_DEV && ' In dev, the link prints to the gateway stdout.'}
+            </p>
+            <div className="flex flex-col gap-2.5">
+              <Button
+                disabled={loading || resendIn > 0 || gatewayDown}
+                onClick={() => void sendMagicLink(linkSentTo)}
+                size="lg"
+                variant="secondary"
+              >
+                {loading ? 'Sending…' : resendIn > 0 ? `Resend in ${resendIn}s` : 'Resend link'}
+              </Button>
+              <Button
+                onClick={() => {
+                  setLinkSentTo(null);
+                  setResendIn(0);
+                }}
+                size="lg"
+                variant="ghost"
+              >
+                Use a different email
+              </Button>
+            </div>
+          </div>
         ) : tab === 'magic' ? (
-          <form className="space-y-5" onSubmit={handleMagicLinkSubmit}>
+          <form className="space-y-5" noValidate onSubmit={handleMagicLinkSubmit}>
             <Input
               autoComplete="email"
+              error={emailError}
               label="Email"
               name="email"
               onChange={(e) => setEmail(e.target.value)}
@@ -608,7 +796,13 @@ function LoginPageInner() {
               type="email"
               value={email}
             />
-            <Button className="w-full" disabled={loading} size="lg" type="submit" variant="primary">
+            <Button
+              className="w-full"
+              disabled={loading || gatewayDown}
+              size="lg"
+              type="submit"
+              variant="primary"
+            >
               {loading ? 'Sending…' : 'Email me a sign-in link'}
             </Button>
             <p className="text-center text-xs leading-relaxed text-paper-500">
@@ -617,9 +811,10 @@ function LoginPageInner() {
             </p>
           </form>
         ) : (
-          <form className="space-y-5" onSubmit={handlePasswordSubmit}>
+          <form className="space-y-5" noValidate onSubmit={handlePasswordSubmit}>
             <Input
-              autoComplete="email"
+              autoComplete="username"
+              error={emailError}
               label="Email"
               name="email"
               onChange={(e) => setEmail(e.target.value)}
@@ -631,18 +826,18 @@ function LoginPageInner() {
             <div className="space-y-2">
               <Input
                 autoComplete="current-password"
+                error={passwordError}
                 label="Password"
                 name="password"
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••••"
                 required
                 type="password"
                 value={password}
               />
               <div className="flex justify-end">
                 <Button
-                  className="h-auto px-1 py-0.5 text-paper-300 hover:bg-transparent hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
-                  disabled={loading}
+                  className="h-auto min-h-6 px-2 py-1 text-paper-300 hover:bg-transparent hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline pointer-coarse:px-3"
+                  disabled={loading || gatewayDown}
                   onClick={handleForgotPassword}
                   size="sm"
                   variant="ghost"
@@ -651,14 +846,21 @@ function LoginPageInner() {
                 </Button>
               </div>
             </div>
-            <Button className="w-full" disabled={loading} size="lg" type="submit" variant="primary">
+            <Button
+              className="w-full"
+              disabled={loading || gatewayDown}
+              size="lg"
+              type="submit"
+              variant="primary"
+            >
               {loading ? 'Signing in…' : 'Sign in'}
             </Button>
           </form>
         )}
         <p className="mt-6 text-center text-sm leading-relaxed text-paper-500">
-          New here? New accounts usually need an administrator’s approval, or ask an administrator
-          for an invite.
+          {hasSocial
+            ? 'No account yet? Sign in with a provider above and an administrator will approve you, or ask one for an invite.'
+            : 'No account yet? Ask an administrator for an invite. New accounts need their approval.'}
         </p>
         <p className="mt-3 text-center text-sm leading-relaxed text-paper-500 lg:hidden">
           auto-swe turns a ticket into a pull request for you to review and merge.

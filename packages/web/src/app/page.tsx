@@ -8,6 +8,7 @@ import { HowItWorks } from '@/components/help/HowItWorks';
 import { RequestList } from '@/components/requests/RequestList';
 import { FirstRunChecklist } from '@/components/setup/FirstRunChecklist';
 import { GovernanceGuide } from '@/components/setup/GovernanceGuide';
+import { RestoreGuides } from '@/components/setup/RestoreGuides';
 import { SetupReadiness } from '@/components/setup/SetupReadiness';
 import { TourLauncher } from '@/components/tour/TourLauncher';
 import { Alert } from '@/components/ui/Alert';
@@ -20,6 +21,7 @@ import { Skeleton, SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Stat } from '@/components/ui/Stat';
 import { useApprovals } from '@/hooks/useApprovals';
 import { type RequestScope, type RequestState, useRequests } from '@/hooks/useRequests';
 import { deniedMessage } from '@/lib/accessDenied';
@@ -32,8 +34,8 @@ interface Bucket {
   title: string;
   state: RequestState;
   icon: IconName;
-  /** Tile colour when the bucket is non-empty. */
-  tone: string;
+  /** Tile figure colour when the bucket is non-empty. */
+  tone: 'warning' | 'info' | 'success';
   empty: { title: string; hint: string };
 }
 
@@ -47,18 +49,18 @@ const BUCKETS: Bucket[] = [
     id: 'attention',
     state: 'attention',
     title: 'Needs your attention',
-    tone: 'text-warning-400',
+    tone: 'warning',
   },
   {
     empty: {
-      hint: 'Use Start something new to run a workflow, an agent or an epic.',
+      hint: 'Choose Start work to run a workflow, an agent or an epic.',
       title: 'No work in progress',
     },
     icon: 'runs',
     id: 'in-progress',
     state: 'active',
     title: 'In progress',
-    tone: 'text-info-400',
+    tone: 'info',
   },
   {
     empty: {
@@ -69,7 +71,7 @@ const BUCKETS: Bucket[] = [
     id: 'recent-results',
     state: 'success',
     title: 'Recent results',
-    tone: 'text-success-400',
+    tone: 'success',
   },
 ];
 
@@ -82,59 +84,35 @@ function useBucket(scope: RequestScope, state: RequestState) {
   return useRequests({ limit: 5, scope, state });
 }
 
-const TILE = 'flex min-w-0 flex-col rounded-xl border border-ink-400/60 bg-ink-700 p-4';
-
-function TileBody({
-  count,
-  icon,
-  label,
-  loading,
-  tone,
-}: {
-  count: number | undefined;
-  icon: IconName;
-  label: string;
-  loading: boolean;
-  tone: string;
-}) {
-  return (
-    <>
-      <span className="flex items-center justify-between gap-2 text-sm text-paper-400">
-        {label}
-        <Icon
-          className={cn(count ? tone : 'text-paper-600', 'transition-colors')}
-          name={icon}
-          size={16}
-        />
-      </span>
-      {loading ? (
-        <Skeleton className="mt-3 h-8 w-12" />
-      ) : (
-        <span
-          className={cn(
-            'tabular mt-2 text-3xl font-semibold leading-tight tracking-tight',
-            count ? 'text-paper-50' : 'text-paper-500'
-          )}
-        >
-          {count ?? '–'}
-        </span>
-      )}
-    </>
-  );
-}
-
+/**
+ * An overview figure that opens the list it counts. A failed query shows a dash and says so,
+ * rather than reading as an empty bucket.
+ */
 function BucketTile({ bucket, scope }: { bucket: Bucket; scope: RequestScope }) {
   const query = useBucket(scope, bucket.state);
+  const count = query.data?.meta.total;
+  const failed = query.isError && count === undefined;
   return (
-    <div className={TILE}>
-      <TileBody
-        count={query.data?.meta.total}
-        icon={bucket.icon}
-        label={bucket.title}
-        loading={query.isLoading}
-        tone={bucket.tone}
-      />
-    </div>
+    <Link
+      className={cn('block rounded-xl transition-colors hover:[&>div]:border-ink-300', FOCUS_RING)}
+      href={listHref(scope, bucket.state)}
+    >
+      {query.isLoading ? (
+        <div className="rounded-xl border border-ink-400 bg-ink-700 p-4">
+          <div className="text-sm font-medium text-paper-400">{bucket.title}</div>
+          <Skeleton className="mt-3 h-8 w-12" />
+        </div>
+      ) : (
+        <Stat
+          hint={failed ? 'Could not load' : undefined}
+          icon={bucket.icon}
+          label={bucket.title}
+          tone={count ? bucket.tone : 'muted'}
+          value={failed ? '–' : (count ?? 0)}
+          variant="tile"
+        />
+      )}
+    </Link>
   );
 }
 
@@ -146,7 +124,7 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
     <section aria-labelledby={`${bucket.id}-title`} className="scroll-mt-20" id={bucket.id}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2
-          className="flex items-center gap-2 text-base font-semibold text-paper-100"
+          className="flex items-center gap-2 text-lg font-semibold tracking-tight text-paper-100"
           id={`${bucket.id}-title`}
         >
           {bucket.title}
@@ -205,6 +183,22 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
 function WaitingOnYou() {
   const query = useApprovals('PENDING', 'timeoutAt:asc', false, undefined, true);
   const steps = query.data ?? [];
+  // A failed check must not read as "nothing is waiting": say so, with a way to try again.
+  if (query.isError && steps.length === 0) {
+    return (
+      <Alert
+        action={
+          <Button onClick={() => void query.refetch()} size="sm">
+            Retry
+          </Button>
+        }
+        variant="warning"
+      >
+        Could not check for approvals waiting on you.
+      </Alert>
+    );
+  }
+  // Nothing while loading, too: most people have none, and a placeholder would flash and collapse.
   if (steps.length === 0) {
     return null;
   }
@@ -265,7 +259,7 @@ const START_OPTIONS: { href: string; icon: IconName; title: string; hint: string
 function QuickStart() {
   return (
     <Card className="p-5">
-      <h2 className="text-base font-semibold text-paper-100">Start something new</h2>
+      <h2 className="text-lg font-semibold tracking-tight text-paper-100">Start something new</h2>
       <p className="mt-1 text-sm text-paper-400">
         Pick how you want to work. You review everything before it launches.
       </p>
@@ -337,9 +331,16 @@ export default function HomePage() {
       </Suspense>
       <PageHeader
         actions={
-          <ButtonLink href="/library" variant="secondary">
-            Browse workflows
-          </ButtonLink>
+          <>
+            <TourLauncher />
+            <ButtonLink href="/library" variant="secondary">
+              Browse workflows
+            </ButtonLink>
+            <ButtonLink href="/start" variant="primary">
+              <Icon name="plus" size={14} />
+              Start work
+            </ButtonLink>
+          </>
         }
         learnMore={{ ...HELP_LINKS.concepts, label: 'Requests, runs and gates explained' }}
         subtitle="See what needs your attention, follow your work, and review the results."
@@ -347,12 +348,10 @@ export default function HomePage() {
       />
       <HowItWorks />
       <SetupReadiness />
-      <GovernanceGuide />
       <FirstRunChecklist />
-      <TourLauncher />
       <section aria-label="Overview" className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-sm font-medium text-paper-300">Overview</h2>
+          <h2 className="text-lg font-semibold tracking-tight text-paper-100">Overview</h2>
           <SegmentedControl
             ariaLabel="Home scope"
             onChange={setScope}
@@ -380,6 +379,8 @@ export default function HomePage() {
           <QuickStart />
         </aside>
       </div>
+      <GovernanceGuide />
+      <RestoreGuides />
     </div>
   );
 }

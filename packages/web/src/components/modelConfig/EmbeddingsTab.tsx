@@ -37,6 +37,8 @@ export function EmbeddingsTab() {
   const [credentialId, setCredentialId] = useState<string>('');
   const [dirty, setDirty] = useState(false);
   const [catalogWarnings, setCatalogWarnings] = useState<string[]>([]);
+  const [confirming, setConfirming] = useState(false);
+  const { data: reembed } = useMemoryReembedStatus();
   const { error, saved, submit } = useIntegrationConfigForm();
 
   // Sync form state to the query result. Re-keys on the row's updatedAt so a
@@ -73,8 +75,7 @@ export function EmbeddingsTab() {
       (c) => c.scope === 'GLOBAL' && c.provider.toLowerCase() === embeddingProvider
     );
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const save = () =>
     void submit(
       async () => {
         const res = await update.mutateAsync({ credentialId: credentialId || null, modelSpec });
@@ -83,6 +84,16 @@ export function EmbeddingsTab() {
       },
       () => setDirty(false)
     );
+
+  // A different model takes effect at once and leaves existing memory embedded by the old one,
+  // which recall skips until it is re-embedded: say so before it happens.
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (config && modelSpec.trim() !== config.modelSpec) {
+      setConfirming(true);
+      return;
+    }
+    save();
   };
 
   return (
@@ -123,7 +134,7 @@ export function EmbeddingsTab() {
             options={[
               { label: 'Resolve by provider name', value: '' },
               ...(credentials ?? []).map((c) => ({
-                label: `${c.scope} · ${c.provider}/****${c.lastFour}`,
+                label: `${c.scope === 'GLOBAL' ? 'Platform-wide' : 'Team'} · ${c.provider}/****${c.lastFour}`,
                 value: c.id,
               })),
             ]}
@@ -148,6 +159,29 @@ export function EmbeddingsTab() {
         </form>
       </Card>
       <ReembedMemoryCard />
+      <ConfirmModal
+        confirmLabel="Change model"
+        message={
+          <div className="space-y-2">
+            <p>
+              Switch the platform's embedding model from{' '}
+              <span className="font-mono">{config?.modelSpec}</span> to{' '}
+              <span className="font-mono">{modelSpec.trim()}</span>? It applies to every team at
+              once.
+            </p>
+            <p>
+              {reembed && reembed.total > 0
+                ? `The ${reembed.total.toLocaleString()} memory items already stored stay embedded by the old model. Lesson and channel-memory search skips them until you re-embed them from this tab (one embedding call per item).`
+                : 'Memory stored later is embedded by the new model. Anything stored by the old model is skipped by search until it is re-embedded.'}
+            </p>
+            <p>The model must produce 1536-dimensional vectors, or memory writes fail.</p>
+          </div>
+        }
+        onClose={() => setConfirming(false)}
+        onConfirm={save}
+        open={confirming}
+        title="Change the embedding model?"
+      />
     </div>
   );
 }

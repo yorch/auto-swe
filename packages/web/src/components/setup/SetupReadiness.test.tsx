@@ -39,14 +39,19 @@ afterEach(() => {
 });
 
 describe('SetupReadiness', () => {
-  it('reserves space while loading for admins, and nothing for others', () => {
+  it('renders nothing while loading, so a set-up admin never sees a placeholder flash', () => {
     gateway();
-    const { unmount } = render(withQuery(<SetupReadiness />));
-    expect(screen.getByTestId('setup-readiness-loading')).toBeTruthy();
-    unmount();
-    role = 'ENGINEER';
+    const { container } = render(withQuery(<SetupReadiness />));
+    expect(container.textContent).toBe('');
+  });
+
+  it('names the step in each Fix this link for screen readers', async () => {
+    gateway();
     render(withQuery(<SetupReadiness />));
-    expect(screen.queryByTestId('setup-readiness-loading')).toBeNull();
+    expect(
+      await screen.findByRole('link', { name: 'Fix this: Model provider credentials' })
+    ).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Fix this: Repository connection' })).toBeTruthy();
   });
 
   it('lists every step with its progress, linking only the missing ones to their fix', async () => {

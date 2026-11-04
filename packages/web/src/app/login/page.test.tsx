@@ -111,7 +111,7 @@ describe('login page: what it is and how to get in', () => {
     expect(line.closest('aside')).toBeNull();
     expect(
       screen.getByText(
-        'New here? New accounts usually need an administrator’s approval, or ask an administrator for an invite.'
+        'No account yet? Sign in with a provider above and an administrator will approve you, or ask one for an invite.'
       )
     ).toBeTruthy();
   });

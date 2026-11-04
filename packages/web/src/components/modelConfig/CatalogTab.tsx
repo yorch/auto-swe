@@ -138,6 +138,7 @@ export function CatalogTab() {
   const [editing, setEditing] = useState<ModelCatalogEntry | null>(null);
   const [creating, setCreating] = useState<NewEntryDraft | null>(null);
   const [deleting, setDeleting] = useState<ModelCatalogEntry | null>(null);
+  const [resetting, setResetting] = useState<ModelCatalogEntry | null>(null);
   const reset = useResetCatalogEntry();
   const del = useDeleteCatalogEntry();
   const { onSortChange, sort, sortRows } = useDataTableSort(CATALOG_SORT);
@@ -185,22 +186,12 @@ export function CatalogTab() {
                   Edit
                 </Button>
                 {e.isBuiltIn && e.isCustomized && (
-                  <Button
-                    disabled={reset.isPending}
-                    onClick={() => reset.mutate(e.id)}
-                    size="sm"
-                    variant="ghost"
-                  >
+                  <Button onClick={() => setResetting(e)} size="sm" variant="ghost">
                     Reset
                   </Button>
                 )}
                 {!e.isBuiltIn && (
-                  <Button
-                    className="text-danger-400 hover:text-danger-400"
-                    onClick={() => setDeleting(e)}
-                    size="sm"
-                    variant="ghost"
-                  >
+                  <Button onClick={() => setDeleting(e)} size="sm" variant="danger">
                     Delete
                   </Button>
                 )}
@@ -243,6 +234,20 @@ export function CatalogTab() {
           }}
         />
       )}
+      <ConfirmModal
+        confirmLabel="Restore prices"
+        message={`Restore the shipped prices for ${resetting ? entrySpec(resetting) : ''}? Your custom prices are discarded; calls already recorded keep the price they were charged at.`}
+        onClose={() => setResetting(null)}
+        onConfirm={async () => {
+          // Awaited so ConfirmModal keeps the dialog open and shows a failure.
+          if (resetting) {
+            await reset.mutateAsync(resetting.id);
+          }
+        }}
+        open={resetting !== null}
+        pendingLabel="Restoring…"
+        title="Restore shipped prices?"
+      />
       <ConfirmModal
         confirmLabel="Delete"
         dangerous

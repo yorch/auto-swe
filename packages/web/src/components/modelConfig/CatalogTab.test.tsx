@@ -542,3 +542,15 @@ describe('CatalogTab empty discovery states', () => {
     expect(screen.getByText('Nothing new — every listed model is priced.')).toBeTruthy();
   });
 });
+
+describe('CatalogTab: restoring shipped prices', () => {
+  it('asks before discarding custom prices', () => {
+    render(<CatalogTab />);
+    fireEvent.click(
+      within(rowFor('anthropic/claude-sonnet-5-5')).getByRole('button', { name: 'Reset' })
+    );
+    const dialog = within(screen.getByRole('dialog', { name: 'Restore shipped prices?' }));
+    expect(dialog.getByText(/Your custom prices are discarded/)).toBeTruthy();
+    expect(dialog.getByRole('button', { name: 'Restore prices' })).toBeTruthy();
+  });
+});
