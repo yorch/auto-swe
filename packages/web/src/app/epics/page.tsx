@@ -24,7 +24,7 @@ function Epics() {
   // Launching an epic requires LEAD.
   const canCreate = useHasRole('LEAD');
   const { params, update } = useUrlFilters();
-  const scope = params.get('scope') === 'TEAM' ? 'TEAM' : 'MINE';
+  const scope = params.get('scope') === 'MINE' ? 'MINE' : 'TEAM';
   const offset = parseOffset(params.get('offset'));
   const epicsQuery = useEpics({ limit: PAGE_SIZE, offset, scope });
   const epics = epicsQuery.data?.data ?? [];
@@ -92,12 +92,14 @@ function Epics() {
               }
               bordered
               hint={
-                canCreate
-                  ? 'Describe one change once and the planner fans it out across your repositories. For example: “Migrate auth /v1 to /v2 across 5 services” becomes one run per service, in dependency order, each ending in its own pull request for you to review.'
-                  : 'A team lead or administrator can start one to fan work out across repositories.'
+                scope === 'MINE'
+                  ? 'You have not started any epics. Switch to “My team” to see epics your teammates started.'
+                  : canCreate
+                    ? 'Describe one change once and the planner fans it out across your repositories. For example: “Migrate auth /v1 to /v2 across 5 services” becomes one run per service, in dependency order, each ending in its own pull request for you to review.'
+                    : 'A team lead or administrator can start one to fan work out across repositories.'
               }
               icon="epics"
-              title="No epics yet"
+              title={scope === 'MINE' ? 'None of your epics yet' : 'No epics yet'}
             />
           ) : (
             <EpicList epics={epics} />

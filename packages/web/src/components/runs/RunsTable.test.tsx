@@ -70,13 +70,6 @@ describe('RunsTable', () => {
     expect(action.getAttribute('tabindex')).not.toBe('-1');
   });
 
-  it('says a request waiting on a person is waiting, not running', () => {
-    const waiting = { ...RUN, endedAt: null, pendingStepCount: 1, status: 'RUNNING' as const };
-    render(<RunsTable runs={[waiting as WorkflowRunSummary]} />);
-    expect(screen.getByText('Waiting for approval')).toBeTruthy();
-    expect(screen.queryByText('Still running')).toBeNull();
-  });
-
   it('shows a dash, not "Still running", for a finished run with no end time', () => {
     render(<RunsTable runs={[{ ...RUN, endedAt: null, status: 'FAILED' }]} />);
     expect(screen.queryByText('Still running')).toBeNull();

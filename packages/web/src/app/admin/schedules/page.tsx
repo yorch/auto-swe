@@ -279,6 +279,10 @@ function ScheduleFormModal({
                     .join(' · ')
                 : 'none in the next year'}
             </p>
+            <p>
+              Times are UTC. When both day-of-month and day-of-week are set, a run needs both to
+              match. Month and weekday names are not accepted; use numbers.
+            </p>
           </div>
         )}
         {!cronPreview && !cronMalformed && form.cronExpression.trim() !== '' && (

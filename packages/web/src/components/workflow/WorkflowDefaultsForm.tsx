@@ -577,8 +577,11 @@ export function NumberField({
   }, [value]);
 
   const n = Number(text);
-  const error =
-    text.trim() === ''
+  // A disabled field cannot be edited, so it never blocks saving or shows an error the person
+  // cannot fix (the poll fields while the wait mode is not poll).
+  const error = disabled
+    ? undefined
+    : text.trim() === ''
       ? 'Enter a number'
       : !Number.isFinite(n)
         ? 'Must be a number'

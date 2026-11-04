@@ -286,8 +286,8 @@ reload.
   the most PRs opened. A banner says when the row cap cut into the window, and when it cut into the
   previous one so no comparison is shown. The card loads and fails on its own.
 - **Tickets** — a table with the tracker status, request and run counts, the latest run, PR count,
-  cost and last activity. An "Include automated runs" checkbox is off by default. A row expands to the
-  latest request and its pull requests with their states.
+  cost and last activity. An "Include automated runs" checkbox is off by default. The ticket title opens the
+  latest request; its pull requests and their states are listed in the row.
 
 Titles, ticket ids and tracker text render as plain text; a ticket link is followed only for an
 http(s) address.

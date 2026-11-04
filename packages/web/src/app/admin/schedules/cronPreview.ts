@@ -6,51 +6,14 @@
  */
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const NAME_ALIASES: Record<string, number> = {
-  apr: 4,
-  aug: 8,
-  dec: 12,
-  feb: 2,
-  fri: 5,
-  jan: 1,
-  jul: 7,
-  jun: 6,
-  mar: 3,
-  may: 5,
-  mon: 1,
-  nov: 11,
-  oct: 10,
-  sat: 6,
-  sep: 9,
-  sun: 0,
-  thu: 4,
-  tue: 2,
-  wed: 3,
-};
-
 interface Field {
   /** Allowed values. */
   values: Set<number>;
-  // True when the field was a bare star (or a star with step 1): it matters for the day-of-month / day-of-week rule.
-  any: boolean;
 }
 
-function parseField(
-  raw: string,
-  min: number,
-  max: number,
-  names: boolean,
-  wrapSeven = false
-): Field | null {
+function parseField(raw: string, min: number, max: number, wrapSeven = false): Field | null {
   const values = new Set<number>();
-  let any = false;
-  const num = (text: string): number | null => {
-    const lower = text.toLowerCase();
-    if (names && lower in NAME_ALIASES && !/^\d+$/.test(lower)) {
-      return NAME_ALIASES[lower] ?? null;
-    }
-    return /^\d+$/.test(text) ? Number(text) : null;
-  };
+  const num = (text: string): number | null => (/^\d+$/.test(text) ? Number(text) : null);
   for (const part of raw.split(',')) {
     const [range, stepText, extra] = part.split('/');
     if (extra !== undefined || range === undefined || range === '') {
@@ -65,9 +28,6 @@ function parseField(
     if (range === '*') {
       lo = min;
       hi = max;
-      if (step === 1) {
-        any = true;
-      }
     } else if (range.includes('-')) {
       const [a, b, more] = range.split('-');
       if (more !== undefined || a === undefined || b === undefined) {
@@ -87,7 +47,7 @@ function parseField(
       values.add(wrapSeven && v === 7 ? 0 : v);
     }
   }
-  return { any, values };
+  return { values };
 }
 
 export interface CronPreview {
@@ -122,11 +82,11 @@ export function previewCron(expression: string, from: Date = new Date()): CronPr
   if (parts.length !== 5) {
     return null;
   }
-  const minute = parseField(parts[0] ?? '', 0, 59, false);
-  const hour = parseField(parts[1] ?? '', 0, 23, false);
-  const dom = parseField(parts[2] ?? '', 1, 31, false);
-  const month = parseField(parts[3] ?? '', 1, 12, true);
-  const dow = parseField(parts[4] ?? '', 0, 6, true, true);
+  const minute = parseField(parts[0] ?? '', 0, 59);
+  const hour = parseField(parts[1] ?? '', 0, 23);
+  const dom = parseField(parts[2] ?? '', 1, 31);
+  const month = parseField(parts[3] ?? '', 1, 12);
+  const dow = parseField(parts[4] ?? '', 0, 6, true);
   if (!minute || !hour || !dom || !month || !dow) {
     return null;
   }
@@ -134,10 +94,8 @@ export function previewCron(expression: string, from: Date = new Date()): CronPr
   const matchesDay = (d: Date): boolean => {
     const domOk = dom.values.has(d.getUTCDate());
     const dowOk = dow.values.has(d.getUTCDay());
-    // Standard cron: when both day fields are restricted, either may match.
-    if (!dom.any && !dow.any) {
-      return domOk || dowOk;
-    }
+    // Temporal Schedules require both day fields to match; the classic cron "either" rule is not
+    // implemented there.
     return domOk && dowOk;
   };
 

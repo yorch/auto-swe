@@ -77,6 +77,26 @@ describe('RoleSelectCell', () => {
     await waitFor(() => expect(apply).toHaveBeenCalledWith('ADMIN'));
   });
 
+  it('shows a failed confirmed change once, inside the dialog', async () => {
+    const apply = vi.fn(() => Promise.reject(new Error('server said no')));
+    render(
+      <RoleSelectCell
+        apply={apply}
+        ariaLabel="Role for a@x.com"
+        confirm={() => ({
+          confirmLabel: 'Make admin',
+          message: 'Full access.',
+          title: 'Make admin?',
+        })}
+        options={OPTIONS}
+        value="ENGINEER"
+      />
+    );
+    pick('Admin');
+    fireEvent.click(screen.getByRole('button', { name: 'Make admin' }));
+    await waitFor(() => expect(screen.getAllByText('server said no')).toHaveLength(1));
+  });
+
   it('explains in visible text why it is disabled', () => {
     render(
       <RoleSelectCell

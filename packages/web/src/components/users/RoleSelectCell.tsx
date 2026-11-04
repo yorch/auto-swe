@@ -58,7 +58,7 @@ export function RoleSelectCell({
     []
   );
 
-  const run = async (to: string) => {
+  const run = async (to: string, inDialog = false) => {
     setError(null);
     setSaved(false);
     setPending(true);
@@ -67,7 +67,10 @@ export function RoleSelectCell({
       setSaved(true);
       timer.current = setTimeout(() => setSaved(false), 3000);
     } catch (err) {
-      setError(errMsg(err, 'Could not change the role'));
+      // The dialog shows the failure while it is open; the row shows it otherwise.
+      if (!inDialog) {
+        setError(errMsg(err, 'Could not change the role'));
+      }
       throw err;
     } finally {
       setPending(false);
@@ -114,7 +117,7 @@ export function RoleSelectCell({
         onClose={() => setAsking(null)}
         onConfirm={async () => {
           if (asking) {
-            await run(asking.to);
+            await run(asking.to, true);
           }
         }}
         open={asking !== null}

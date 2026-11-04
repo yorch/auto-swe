@@ -65,6 +65,26 @@ describe('NumberField', () => {
     expect(onValidityChange).toHaveBeenLastCalledWith('n', false);
   });
 
+  it('reports valid and shows no error while disabled, so it cannot block saving', () => {
+    const onValidityChange = vi.fn();
+    render(
+      <NumberField
+        disabled
+        hint="h"
+        id="n"
+        label="Count"
+        min={1}
+        onChange={vi.fn()}
+        onValidityChange={onValidityChange}
+        value={5}
+      />
+    );
+    const input = screen.getByLabelText('Count') as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '' } });
+    expect(screen.queryByText('Enter a number')).toBeNull();
+    expect(onValidityChange).toHaveBeenLastCalledWith('n', false);
+  });
+
   it('flags a value outside its range and shows token counts with separators', () => {
     render(
       <NumberField

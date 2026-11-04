@@ -122,8 +122,8 @@ export default function GovernConfigGrantsPage() {
       setTeamId('');
       setOrgId('');
     } catch (err) {
-      setFormError(errMsg(err, 'grant creation failed'));
-      throw err;
+      // Thrown, not shown here: the dialog shows it while open, and the form's own submit shows it.
+      throw new Error(errMsg(err, 'grant creation failed'));
     }
   };
 
@@ -140,7 +140,7 @@ export default function GovernConfigGrantsPage() {
       setRiskOpen(true);
       return;
     }
-    void submitGrant().catch(() => undefined);
+    void submitGrant().catch((err: unknown) => setFormError(errMsg(err, 'grant creation failed')));
   };
 
   const granteeLabel =

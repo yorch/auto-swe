@@ -227,11 +227,14 @@ function GovernApprovals() {
             )}
           </Toolbar>
 
-          {announcement && (
-            <div className="mb-3">
-              <Alert variant="success">{announcement}</Alert>
-            </div>
-          )}
+          {/* The live region stays mounted and only its content changes: one inserted already filled is often not announced. */}
+          <div aria-live="polite" className={announcement ? 'mb-3' : undefined} role="status">
+            {announcement && (
+              <Alert announce={false} variant="success">
+                {announcement}
+              </Alert>
+            )}
+          </div>
 
           <QueryBoundary
             error={error}

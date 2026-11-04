@@ -198,7 +198,7 @@ export default function GovernKnowledgePage() {
   }
 
   /** Runs a lifecycle action; reports success as a status message, failure as an alert. */
-  async function run(action: () => Promise<unknown>, success?: string) {
+  async function run(action: () => Promise<unknown>, success?: string, isDraft = false) {
     setError('');
     setNotice('');
     try {
@@ -208,8 +208,14 @@ export default function GovernKnowledgePage() {
       }
     } catch (e) {
       if (e instanceof ApiError && e.code === 'VERSION_CONFLICT') {
-        // One message: the conflict alert beside the draft carries the explanation.
-        setDraftConflict(true);
+        if (isDraft) {
+          // The conflict alert beside the draft carries the explanation.
+          setDraftConflict(true);
+        } else {
+          setError(
+            'This item changed while you were looking at it. Reload to see the latest version.'
+          );
+        }
       } else if (e instanceof ApiError && e.status === 403) {
         setError("You can't do that here. Ask a lead of this team if you need it.");
         await perms.refetch();
@@ -428,7 +434,7 @@ export default function GovernKnowledgePage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <Button
                         aria-describedby={needsRecipients ? 'publish-hint' : undefined}
-                        disabled={needsRecipients}
+                        disabled={needsRecipients || publish.isPending}
                         onClick={() => {
                           if (visibility === 'TEAM') {
                             void run(
@@ -465,15 +471,19 @@ export default function GovernKnowledgePage() {
                     className="space-y-3 border-t border-ink-400 pt-4"
                     onSubmit={(e) => {
                       e.preventDefault();
-                      void run(async () => {
-                        await revise.mutateAsync({
-                          content: editContent,
-                          expectedVersion: draftVersion ?? selectedItem.version,
-                          id: selectedItem.id,
-                          title: editTitle,
-                        });
-                        setBaseline({ content: editContent, title: editTitle });
-                      }, 'Revision saved as unreviewed.');
+                      void run(
+                        async () => {
+                          await revise.mutateAsync({
+                            content: editContent,
+                            expectedVersion: draftVersion ?? selectedItem.version,
+                            id: selectedItem.id,
+                            title: editTitle,
+                          });
+                          setBaseline({ content: editContent, title: editTitle });
+                        },
+                        'Revision saved as unreviewed.',
+                        true
+                      );
                     }}
                   >
                     <h3 className="text-sm font-semibold text-paper-200">Revise</h3>

@@ -49,6 +49,20 @@ describe('Epics page', () => {
     expect(useEpics).toHaveBeenCalledWith({ limit: 30, offset: 30, scope: 'TEAM' });
   });
 
+  it('defaults to the team scope, as the gateway does', () => {
+    useEpics.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
+    render(<EpicsPage />);
+    expect(useEpics).toHaveBeenCalledWith({ limit: 30, offset: 0, scope: 'TEAM' });
+  });
+
+  it('points a Mine view with no epics at the team view', () => {
+    nav.search = 'scope=MINE';
+    useEpics.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
+    render(<EpicsPage />);
+    expect(screen.getByText('None of your epics yet')).toBeTruthy();
+    expect(screen.getByText(/Switch to “My team”/)).toBeTruthy();
+  });
+
   it('shows a Mine / My team scope control', () => {
     useEpics.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
     render(<EpicsPage />);

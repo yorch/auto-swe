@@ -68,8 +68,9 @@ export function workflowColumn<Row extends WorkflowRunSummary>(
 
 /**
  * What a run with no end time shows. Only a run that is still going says so: a finished run
- * with no recorded end time shows a dash, and a request waiting on a person (rows of the
- * requests list carry the count) says it is waiting rather than running.
+ * with no recorded end time shows a dash, and a request waiting on a person says it is waiting
+ * rather than running. Only the requests list carries that count; the workflow-runs list does not,
+ * so there a run parked on a human gate still reads as running.
  */
 export function openRunLabel(
   row: Pick<WorkflowRunSummary, 'status'> & { pendingStepCount?: number }
