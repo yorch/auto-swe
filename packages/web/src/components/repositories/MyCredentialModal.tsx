@@ -28,6 +28,7 @@ export function MyCredentialModal({
   enabled,
   hosts,
   onClose,
+  onSaved,
 }: {
   repo: RepositorySummary;
   credential: MyCredential | undefined;
@@ -35,6 +36,8 @@ export function MyCredentialModal({
   /** Present for platform admins only. */
   hosts?: string[];
   onClose: () => void;
+  /** Called after a token is saved or removed, with a sentence for a status message. */
+  onSaved?: (message: string) => void;
 }) {
   const [token, setToken] = useState('');
   const [confirmRemove, setConfirmRemove] = useState(false);
@@ -47,11 +50,13 @@ export function MyCredentialModal({
     e.preventDefault();
     await save.mutateAsync(token.trim());
     setToken('');
+    onSaved?.('Token saved and verified. Your runs on this repository now use it.');
     onClose();
   }
 
   async function handleRemove() {
     await remove.mutateAsync();
+    onSaved?.('Token removed. Your runs go back to the platform credential.');
     onClose();
   }
 
@@ -78,12 +83,14 @@ export function MyCredentialModal({
           )}
           {enabled ? (
             <Input
-              autoComplete="off"
+              autoComplete="new-password"
               disabled={busy}
               hint={`A fine-grained token scoped to this repository, with Contents and Pull requests write access, is the narrowest that works.${hosts ? ` Allowed hosts: ${hosts.join(', ') || 'none'}.` : ''}`}
               id="my-credential-token"
               label={credential ? 'Replace token' : 'Personal access token'}
+              name="github-token"
               onChange={(e) => setToken(e.target.value)}
+              spellCheck={false}
               type="password"
               value={token}
             />
@@ -94,7 +101,13 @@ export function MyCredentialModal({
             </Alert>
           )}
 
-          {error && <Alert>{errMsg(error, 'Could not update the credential.')}</Alert>}
+          {error && (
+            <Alert>
+              {errMsg(error, 'Could not update the credential.')}{' '}
+              {save.error &&
+                'Check that the token is valid, has not expired, and has Contents and Pull requests write access to this repository.'}
+            </Alert>
+          )}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-ink-600 pt-4">
             <div>
               {credential && (

@@ -2,16 +2,19 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LessonFlagActions, LessonFlagReasons } from '@/components/lessons/LessonFlags';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
+import { IconButton } from '@/components/ui/IconButton';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -49,6 +52,13 @@ function humanizeEnum(value: string): string {
   const text = value.replace(/_/g, ' ').toLowerCase();
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
+
+/** A long lesson quoted in a dialog must not push the confirm button off screen. */
+const QUOTE_MAX = 120;
+const quoteOf = (text: string) =>
+  text.length > QUOTE_MAX ? `${text.slice(0, QUOTE_MAX).trimEnd()}…` : text;
+
+const ALL_REPOS = '__all__';
 
 /** Below this the lesson writer judged its evidence thin; recall labels it the same way. */
 const LOW_CONFIDENCE = 0.5;
@@ -124,6 +134,22 @@ export default function LessonsPage() {
     'all' | Pick<LessonRepoStats, 'id' | 'organizationName' | 'repoName'> | null
   >(null);
   const [triggerNotice, setTriggerNotice] = useState<string | null>(null);
+  const noticeRef = useRef<HTMLDivElement>(null);
+  // The consolidate buttons sit at the top and in table rows; the result must be seen wherever
+  // the click happened.
+  useEffect(() => {
+    if (triggerNotice) {
+      noticeRef.current?.scrollIntoView?.({ block: 'nearest' });
+    }
+  }, [triggerNotice]);
+  const filtersActive = !!(query || repoFilter || flaggedOnly);
+  const clearFilters = () => {
+    setSearch('');
+    setQuery('');
+    setRepoFilter('');
+    setFlaggedOnly(false);
+    setOffset(0);
+  };
 
   const runConsolidation = async () => {
     const target = consolidating;
@@ -165,7 +191,20 @@ export default function LessonsPage() {
         title="Lessons"
       />
 
-      {triggerNotice && <Alert variant="success">{triggerNotice}</Alert>}
+      {triggerNotice && (
+        <div ref={noticeRef}>
+          <Alert
+            action={
+              <Button onClick={() => setTriggerNotice(null)} size="sm" variant="ghost">
+                Dismiss
+              </Button>
+            }
+            variant="success"
+          >
+            {triggerNotice}
+          </Alert>
+        </div>
+      )}
 
       {isAdmin && <LessonAdministration onAsk={setConsolidating} />}
 
@@ -192,6 +231,11 @@ export default function LessonsPage() {
                   Consolidate this repository
                 </Button>
               )}
+              {filtersActive && (
+                <Button onClick={clearFilters} size="sm" variant="ghost">
+                  Clear filters
+                </Button>
+              )}
               {lessonsMeta && (
                 <span className="text-xs text-paper-500 tabular-nums">
                   {lessonsMeta.total} lesson{lessonsMeta.total === 1 ? '' : 's'}
@@ -204,35 +248,38 @@ export default function LessonsPage() {
             className="sm:w-72"
             label="Search lessons"
             onChange={setSearch}
-            placeholder="Words in a lesson or its rationale"
+            placeholder="Search lessons…"
             value={search}
           />
-          <Select
-            appearance="pill"
+          <Combobox
             aria-label="Repository"
+            className="w-full sm:w-64"
+            compact
+            emptyMessage="No repository matches"
             onChange={(v) => {
-              setRepoFilter(v);
+              setRepoFilter(v === ALL_REPOS ? '' : v);
               setOffset(0);
             }}
             options={[
-              { label: 'All repositories', value: '' },
+              { label: 'All repositories', value: ALL_REPOS },
               ...repoOptions.map((r) => ({
                 label: `${r.organizationName}/${r.repoName}`,
                 value: r.id,
               })),
             ]}
-            value={repoFilter}
+            placeholder="Filter by repository…"
+            value={repoFilter || ALL_REPOS}
           />
           <Select
             appearance="pill"
-            aria-label="Flags"
+            aria-label="Flag filter"
             onChange={(v) => {
               setFlaggedOnly(v === 'flagged');
               setOffset(0);
             }}
             options={[
               { label: 'All lessons', value: '' },
-              { label: 'Flagged as wrong', value: 'flagged' },
+              { label: 'Flagged only', value: 'flagged' },
             ]}
             value={flaggedOnly ? 'flagged' : ''}
           />
@@ -247,19 +294,10 @@ export default function LessonsPage() {
           onRetry={() => void refetchLessons()}
         >
           {!lessons || lessons.length === 0 ? (
-            query || repoFilter || flaggedOnly ? (
+            filtersActive ? (
               <EmptyState
                 action={
-                  <Button
-                    onClick={() => {
-                      setSearch('');
-                      setQuery('');
-                      setRepoFilter('');
-                      setFlaggedOnly(false);
-                      setOffset(0);
-                    }}
-                    size="sm"
-                  >
+                  <Button onClick={clearFilters} size="sm">
                     Clear filters
                   </Button>
                 }
@@ -280,7 +318,10 @@ export default function LessonsPage() {
           ) : (
             <ul className="divide-y divide-ink-600">
               {lessons.map((lesson) => (
-                <li className="group flex items-start gap-4 py-4" key={lesson.id}>
+                <li
+                  className="group flex flex-col gap-3 py-4 sm:flex-row sm:items-start sm:gap-4"
+                  key={lesson.id}
+                >
                   <div className="min-w-0 flex-1">
                     <p className="text-sm leading-relaxed text-paper-100">{lesson.lessonSummary}</p>
                     {lesson.rationale && (
@@ -305,22 +346,21 @@ export default function LessonsPage() {
                         </Badge>
                       )}
                       {lesson.flagCount > 0 && (
-                        <Badge
-                          title="People who read this lesson think it is wrong"
-                          tone="warning"
-                          variant="outline"
-                        >
+                        <Badge tone="warning" variant="outline">
                           Flagged{lesson.flagCount > 1 ? ` · ${lesson.flagCount}` : ''}
+                          <span className="sr-only">: readers think this lesson is wrong</span>
                         </Badge>
                       )}
                       {lesson.confidence !== null && lesson.confidence < LOW_CONFIDENCE && (
-                        <Badge
-                          title="The agent that wrote this lesson judged its evidence thin"
-                          tone="warning"
-                          variant="outline"
-                        >
-                          Low confidence
-                        </Badge>
+                        <>
+                          <Badge tone="warning" variant="outline">
+                            Low confidence
+                            <span className="sr-only">: the agent judged its evidence thin</span>
+                          </Badge>
+                          <HelpTip label="low confidence">
+                            The agent that wrote this lesson judged its evidence thin.
+                          </HelpTip>
+                        </>
                       )}
                       <span aria-hidden>·</span>
                       <Ago iso={lesson.createdAt} />
@@ -338,21 +378,20 @@ export default function LessonsPage() {
                     </div>
                     <LessonFlagReasons lesson={lesson} />
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
+                  <div className="flex flex-wrap items-center gap-1 sm:max-w-xs sm:shrink-0 sm:justify-end">
                     <LessonFlagActions lesson={lesson} manages={canManage(lesson.repository?.id)} />
+                    {canManage(lesson.repository?.id) && (
+                      <IconButton
+                        aria-label="Delete lesson"
+                        className="ml-1 hover:text-danger-400"
+                        onClick={() =>
+                          setDeleting({ id: lesson.id, summary: lesson.lessonSummary })
+                        }
+                      >
+                        <Icon name="trash" size={14} />
+                      </IconButton>
+                    )}
                   </div>
-                  {canManage(lesson.repository?.id) && (
-                    <Button
-                      aria-label="Delete lesson"
-                      className="shrink-0 px-2 text-paper-500 hover:text-danger-400"
-                      onClick={() => setDeleting({ id: lesson.id, summary: lesson.lessonSummary })}
-                      size="sm"
-                      title="Delete lesson"
-                      variant="ghost"
-                    >
-                      <Icon name="trash" size={14} />
-                    </Button>
-                  )}
                 </li>
               ))}
             </ul>
@@ -389,7 +428,14 @@ export default function LessonsPage() {
       <ConfirmModal
         confirmLabel="Delete"
         dangerous
-        message={`Delete "${deleting?.summary}"? This cannot be undone.`}
+        message={
+          <>
+            <blockquote className="whitespace-pre-wrap rounded-md border-l-2 border-ink-300 bg-ink-900/60 px-3 py-2 text-paper-200">
+              {quoteOf(deleting?.summary ?? '')}
+            </blockquote>
+            <p className="mt-2">Delete this lesson? This cannot be undone.</p>
+          </>
+        }
         onClose={() => setDeleting(null)}
         onConfirm={async () => {
           if (deleting) {
@@ -445,7 +491,7 @@ function LessonAdministration({ onAsk }: { onAsk: (repo: LessonRepoStats) => voi
     <>
       {/* Summary stats */}
       <Card className="p-5 sm:p-6">
-        <h2 className="sr-only">Summary</h2>
+        <h2 className="mb-4 text-sm font-semibold text-paper-200">Summary</h2>
         <div className="grid grid-cols-1 gap-x-4 gap-y-8 sm:grid-cols-3">
           <Stat label="Active" value={totalActive} />
           <Stat label="Consolidated" tone="muted" value={totalConsolidated} />
@@ -455,19 +501,18 @@ function LessonAdministration({ onAsk }: { onAsk: (repo: LessonRepoStats) => voi
                 {consolidation?.schedule.nextRunAt && (
                   <>Next run {formatDate(consolidation.schedule.nextRunAt)} · </>
                 )}
-                <Link
-                  className="text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
-                  href="/admin/workflow-defaults#consolidation"
-                >
+                <ButtonLink href="/admin/workflow-defaults#consolidation" size="sm" variant="ghost">
                   Configure
-                </Link>
+                </ButtonLink>
               </>
             }
             label="Schedule"
             tone={
-              consolidation?.schedule.exists && !consolidation.schedule.paused
-                ? 'success'
-                : 'default'
+              consolidation?.schedule.exists
+                ? consolidation.schedule.paused
+                  ? 'warning'
+                  : 'success'
+                : 'warning'
             }
             value={
               consolidation?.schedule.exists

@@ -262,3 +262,76 @@ describe('ConnectionFormModal detected stack coverage', () => {
     expect(screen.queryByText(/Not covered/)).toBeNull();
   });
 });
+
+describe('ConnectionFormModal typed input', () => {
+  beforeAll(() => stubDialogPrototype());
+  beforeEach(() => {
+    update.mutateAsync.mockReset().mockResolvedValue({});
+    auth.role = 'LEAD';
+    auth.teamRole = 'LEAD';
+  });
+
+  it('keeps what was typed when a refetch hands back a new object for the same connection', () => {
+    const view = render(
+      <ConnectionFormModal mode={{ kind: 'edit', repo }} onClose={() => {}} open />
+    );
+    const description = () => screen.getByLabelText('Description') as HTMLInputElement;
+    fireEvent.change(description(), { target: { value: 'half-typed note' } });
+
+    // A window-focus refetch: same id, a fresh object with the server's (older) description.
+    view.rerender(
+      <ConnectionFormModal
+        mode={{ kind: 'edit', repo: { ...repo, description: 'from the server' } }}
+        onClose={() => {}}
+        open
+      />
+    );
+    expect(description().value).toBe('half-typed note');
+  });
+
+  it('resets when a different connection is shown', () => {
+    const view = render(
+      <ConnectionFormModal mode={{ kind: 'edit', repo }} onClose={() => {}} open />
+    );
+    fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'typed' } });
+    view.rerender(
+      <ConnectionFormModal
+        mode={{ kind: 'edit', repo: { ...repo, description: 'other repo', id: 'r2' } }}
+        onClose={() => {}}
+        open
+      />
+    );
+    expect((screen.getByLabelText('Description') as HTMLInputElement).value).toBe('other repo');
+  });
+
+  it('requires an acknowledgement before saving a config that looks like it holds a secret', async () => {
+    const apiConnection = {
+      ...repo,
+      config: { apiKey: 'sk-live-123', baseUrl: 'https://api.example.com' },
+      name: 'Payments API',
+      organizationName: null,
+      repoName: null,
+      type: 'http_api',
+    } as unknown as RepositorySummary;
+    render(
+      <ConnectionFormModal mode={{ kind: 'edit', repo: apiConnection }} onClose={() => {}} open />
+    );
+    const saveButton = screen.getByRole('button', { name: 'Save changes' }) as HTMLButtonElement;
+    expect(saveButton.disabled).toBe(true);
+    fireEvent.click(screen.getByLabelText(/these values are not secrets/));
+    expect(saveButton.disabled).toBe(false);
+  });
+
+  it('preselects the team when the person leads exactly one', () => {
+    render(
+      <ConnectionFormModal
+        mode={{ kind: 'create', prefill: { organizationName: 'acme', repoName: 'api' } }}
+        onClose={() => {}}
+        open
+      />
+    );
+    expect(
+      (screen.getByRole('button', { name: 'Create connection' }) as HTMLButtonElement).disabled
+    ).toBe(false);
+  });
+});

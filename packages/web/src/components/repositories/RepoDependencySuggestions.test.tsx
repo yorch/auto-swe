@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  parseRepoRef,
   RepoDependencySuggestions,
   type UnresolvedDependencySuggestion,
 } from './RepoDependencySuggestions';
@@ -69,5 +70,30 @@ describe('RepoDependencySuggestions', () => {
     const items = screen.getAllByRole('listitem');
     expect(items[0].textContent).toContain('@acme/shared-lib');
     expect(items[1].textContent).toContain('github.com/acme/legacy-tool');
+  });
+
+  it('offers Onboard only for a reference that names an organization and repository', () => {
+    const onOnboard = vi.fn();
+    render(<RepoDependencySuggestions onOnboard={onOnboard} suggestions={suggestions} />);
+    expect(screen.queryByRole('button', { name: 'Onboard @acme/shared-lib' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Onboard github.com/acme/legacy-tool' }));
+    expect(onOnboard).toHaveBeenCalledWith({ organizationName: 'acme', repoName: 'legacy-tool' });
+  });
+
+  it('shows no Onboard button when the viewer cannot add connections', () => {
+    render(<RepoDependencySuggestions suggestions={suggestions} />);
+    expect(screen.queryByRole('button', { name: /^Onboard/ })).toBeNull();
+  });
+});
+
+describe('parseRepoRef', () => {
+  it('reads org/repo, host-prefixed and URL forms, and rejects package names', () => {
+    expect(parseRepoRef('acme/api')).toEqual({ organizationName: 'acme', repoName: 'api' });
+    expect(parseRepoRef('https://github.com/acme/api.git')).toEqual({
+      organizationName: 'acme',
+      repoName: 'api',
+    });
+    expect(parseRepoRef('@acme/shared-lib')).toBeNull();
+    expect(parseRepoRef('lodash')).toBeNull();
   });
 });

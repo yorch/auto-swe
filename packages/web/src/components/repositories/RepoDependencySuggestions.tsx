@@ -3,10 +3,12 @@
 import { useMemo } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { repoRefLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
+import type { ConnectionPrefill } from './ConnectionFormModal';
 
 /** The repo side of an unresolved-edge row — enough to label and link it. */
 export interface SuggestionSourceRepo {
@@ -70,14 +72,47 @@ function groupByToRef(suggestions: UnresolvedDependencySuggestion[]): Suggestion
   return [...groups.values()].sort((a, b) => b.repos.length - a.repos.length);
 }
 
-function SuggestionRow({ group }: { group: SuggestionGroup }) {
+/**
+ * `org/repo`, `github.com/org/repo` or a GitHub URL as the organization and repository it names;
+ * null for a package name or anything else that is not plainly a repository.
+ */
+export function parseRepoRef(ref: string): { organizationName: string; repoName: string } | null {
+  const trimmed = ref
+    .trim()
+    .replace(/^https?:\/\//, '')
+    .replace(/^github\.com\//, '')
+    .replace(/\.git$/, '')
+    .replace(/\/$/, '');
+  const match = /^([A-Za-z0-9][A-Za-z0-9._-]*)\/([A-Za-z0-9._-]+)$/.exec(trimmed);
+  return match?.[1] && match[2] ? { organizationName: match[1], repoName: match[2] } : null;
+}
+
+function SuggestionRow({
+  group,
+  onOnboard,
+}: {
+  group: SuggestionGroup;
+  onOnboard?: (prefill: ConnectionPrefill) => void;
+}) {
+  const parsed = onOnboard ? parseRepoRef(group.toRef) : null;
   return (
     <li className="px-4 py-3">
       <div className="flex items-center justify-between gap-3">
         <span className="truncate font-mono text-sm font-medium text-paper-100">{group.toRef}</span>
-        <Badge className="tabular shrink-0" tone="neutral" variant="outline">
-          {group.repos.length} {group.repos.length === 1 ? 'repo' : 'repos'}
-        </Badge>
+        <span className="flex shrink-0 items-center gap-2">
+          <Badge className="tabular" tone="neutral" variant="outline">
+            {group.repos.length} {group.repos.length === 1 ? 'repo' : 'repos'}
+          </Badge>
+          {parsed && onOnboard && (
+            <Button
+              aria-label={`Onboard ${group.toRef}`}
+              onClick={() => onOnboard(parsed)}
+              size="sm"
+            >
+              Onboard
+            </Button>
+          )}
+        </span>
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-paper-400">
         <span>{group.repos.map(repoRefLabel).join(', ')}</span>
@@ -95,12 +130,15 @@ export function RepoDependencySuggestions({
   isError = false,
   error,
   emptyText = 'No suggestions yet — run Re-scan dependencies to look for repositories to onboard.',
+  onOnboard,
 }: {
   suggestions: UnresolvedDependencySuggestion[] | undefined;
   isLoading?: boolean;
   isError?: boolean;
   error?: unknown;
   emptyText?: string;
+  /** Opens the add-connection form for a suggestion that names an organization and repository. */
+  onOnboard?: (prefill: ConnectionPrefill) => void;
 }) {
   const groups = useMemo(() => groupByToRef(suggestions ?? []), [suggestions]);
 
@@ -118,13 +156,13 @@ export function RepoDependencySuggestions({
 
   return (
     <section className="space-y-3">
-      <p className="text-paper-400 text-sm">
+      <p className="text-sm text-paper-400">
         Dependencies detected in manifests or git signals that don't resolve to an onboarded
         repository yet, grouped by the unresolved reference and ranked by how many repos declare it.
       </p>
       <ul className="divide-y divide-ink-600 overflow-hidden rounded-xl border border-ink-400/60 bg-ink-800/40">
         {groups.map((group) => (
-          <SuggestionRow group={group} key={group.toRef} />
+          <SuggestionRow group={group} key={group.toRef} onOnboard={onOnboard} />
         ))}
       </ul>
     </section>
