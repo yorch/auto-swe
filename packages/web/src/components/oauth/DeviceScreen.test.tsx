@@ -60,6 +60,37 @@ describe('DeviceScreen', () => {
     expect(await screen.findByText('Device approved')).toBeTruthy();
   });
 
+  it('shows the client ID the warning refers to, and no fixed retention period', async () => {
+    mockGateway();
+    render(withQuery(<DeviceScreen search="user_code=ABC-123" />));
+    expect(await screen.findByText('SSH Agent')).toBeTruthy();
+    expect(screen.getByText('c1')).toBeTruthy();
+    expect(screen.getByText('auto.test')).toBeTruthy();
+    expect(screen.getByText(/Stay connected between uses/)).toBeTruthy();
+    expect(screen.queryByText(/14 days/)).toBeNull();
+  });
+
+  it('sends the code trimmed and in capitals, as the person would read it', async () => {
+    const spy = setupFetchMock({
+      '/api/auth/device': () => ({
+        client_id: 'c1',
+        resource: 'https://auto.test/api/v1/mcp',
+        scope: 'mcp:read',
+        status: 'pending',
+      }),
+      '/api/auth/get-session': () => SESSION,
+      '/api/auth/oauth2/public-client': () => ({ client_name: 'SSH Agent' }),
+    });
+    render(withQuery(<DeviceScreen search="" />));
+    fireEvent.change(await screen.findByLabelText(/Device code/), {
+      target: { value: '  abc-123 ' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Review code' }));
+    await waitFor(() =>
+      expect(spy.mock.calls.some(([u]) => String(u).includes('user_code=ABC-123'))).toBe(true)
+    );
+  });
+
   it('still lets the person approve when the app name cannot be looked up', async () => {
     const spy = setupFetchMock({
       '/api/auth/device': () => ({

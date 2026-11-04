@@ -3,6 +3,7 @@ import Link from 'next/link';
 import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Icon } from '@/components/ui/Icon';
 import { isSafeExternalUrl, resolveDocLink } from '@/lib/docLinks';
 import { cn } from '@/lib/utils';
 
@@ -21,12 +22,13 @@ function docAnchor(servedSlugs: ReadonlySet<string>): Components['a'] {
     const resolved = resolveDocLink(href ?? '', servedSlugs);
 
     if (resolved.kind === 'unserved') {
+      // Visible on its own, so touch and keyboard readers see that the reference is not a link here.
       return (
-        <span
-          className="text-paper-400 underline decoration-dotted underline-offset-2"
-          title={`${href} — ${resolved.reason}. It lives in the repository.`}
-        >
+        <span className="text-paper-300">
           {children}
+          <span className="ml-1.5 inline-flex items-center rounded border border-ink-500/70 bg-ink-700 px-1.5 py-px align-middle font-sans text-xs text-paper-500">
+            repo only
+          </span>
         </span>
       );
     }
@@ -34,7 +36,8 @@ function docAnchor(servedSlugs: ReadonlySet<string>): Components['a'] {
     if (isSafeExternalUrl(resolved.href)) {
       return (
         <a href={resolved.href} rel="noopener noreferrer" target="_blank" {...rest}>
-          {children}
+          {children} <Icon className="inline-block align-[-1px]" name="external" size={12} />
+          <span className="sr-only">(opens in a new tab)</span>
         </a>
       );
     }
@@ -62,20 +65,46 @@ function nodeText(node: React.ReactNode): string {
   return '';
 }
 
+/**
+ * A section link beside each h2/h3: hidden until hover, always reachable by keyboard, and named
+ * so a screen reader does not read a bare "#".
+ */
+function SectionLink({ id }: { id: string }) {
+  return (
+    <a
+      className="ml-2 inline-flex translate-y-px rounded-sm text-paper-600 opacity-0 no-underline transition-opacity hover:text-paper-300 focus-visible:opacity-100 group-hover/heading:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-400"
+      href={`#${id}`}
+    >
+      <span aria-hidden="true" className="font-mono text-sm">
+        #
+      </span>
+      <span className="sr-only">Link to this section</span>
+    </a>
+  );
+}
+
 /** h2/h3 with anchor ids matching `extractToc`, in render order. */
 function headingComponents(): Pick<Components, 'h2' | 'h3'> {
   const nextId = headingIdFactory();
   return {
-    h2: ({ children, node: _node, ...rest }) => (
-      <h2 id={nextId(headingText(nodeText(children)))} {...rest}>
-        {children}
-      </h2>
-    ),
-    h3: ({ children, node: _node, ...rest }) => (
-      <h3 id={nextId(headingText(nodeText(children)))} {...rest}>
-        {children}
-      </h3>
-    ),
+    h2: ({ children, node: _node, ...rest }) => {
+      const id = nextId(headingText(nodeText(children)));
+      return (
+        <h2 className="group/heading" id={id} {...rest}>
+          {children}
+          <SectionLink id={id} />
+        </h2>
+      );
+    },
+    h3: ({ children, node: _node, ...rest }) => {
+      const id = nextId(headingText(nodeText(children)));
+      return (
+        <h3 className="group/heading" id={id} {...rest}>
+          {children}
+          <SectionLink id={id} />
+        </h3>
+      );
+    },
   };
 }
 
@@ -93,8 +122,8 @@ const docCode: Components['code'] = ({ children, className, node: _node, ...rest
   return (
     <code className={className} {...rest}>
       {language === 'mermaid' ? (
-        <span className="mb-3 flex items-center gap-1.5 border-b border-ink-600 pb-2 font-sans text-xs text-paper-500">
-          Mermaid diagram source — renders as a diagram in the repository
+        <span className="mb-3 block border-b border-ink-600 pb-2 font-sans text-xs leading-relaxed text-paper-500">
+          Diagram, shown as Mermaid source. Open this file in the repository to see it drawn.
         </span>
       ) : null}
       {children}
@@ -125,7 +154,8 @@ export function Markdown({
   return (
     <div
       className={cn(
-        'max-w-none text-lg leading-7 text-paper-300',
+        // One body size: code and tables are sized relative to it (see below).
+        'max-w-none text-base leading-7 text-paper-300',
         // Headings
         '[&_h1]:mt-0 [&_h1]:mb-6 [&_h1]:text-3xl [&_h1]:font-semibold [&_h1]:leading-tight [&_h1]:tracking-[-0.02em] [&_h1]:text-paper-50 md:[&_h1]:text-4xl',
         '[&_h2]:scroll-mt-20 [&_h2]:mt-12 [&_h2]:mb-4 [&_h2]:border-b [&_h2]:border-ink-600 [&_h2]:pb-2.5 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:leading-snug [&_h2]:tracking-tight [&_h2]:text-paper-50',
@@ -148,7 +178,7 @@ export function Markdown({
         '[&_pre]:my-6 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-ink-500/70 [&_pre]:bg-ink-950 [&_pre]:p-4 [&_pre]:text-sm [&_pre]:leading-6 [&_pre]:text-paper-200',
         '[&_pre_code]:border-0 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-inherit',
         // Tables — the wrapper (see `docTable`) scrolls a wide one sideways
-        '[&_table]:w-full [&_table]:border-collapse [&_table]:text-sm [&_table]:leading-6',
+        '[&_table]:w-full [&_table]:border-collapse [&_table]:text-[0.875em] [&_table]:leading-6',
         '[&_thead]:bg-ink-700/70',
         '[&_th]:border-b [&_th]:border-ink-500 [&_th]:px-3.5 [&_th]:py-2.5 [&_th]:text-left [&_th]:font-semibold [&_th]:whitespace-nowrap [&_th]:text-paper-100',
         '[&_td]:border-t [&_td]:border-ink-600 [&_td]:px-3.5 [&_td]:py-2.5 [&_td]:align-top [&_td_code]:whitespace-nowrap',

@@ -84,7 +84,7 @@ describe('ConsentScreen', () => {
     );
     expect(screen.getByText(/You can disconnect this at any time under/)).toBeTruthy();
     const settings = screen.getByRole('link', {
-      name: 'Settings > Connected apps (opens in a new tab)',
+      name: 'Settings, then Connected apps (opens in a new tab)',
     });
     expect(settings.getAttribute('href')).toBe('/settings');
     expect(settings.getAttribute('target')).toBe('_blank');
@@ -179,6 +179,15 @@ describe('ConsentScreen', () => {
 
     expect(await screen.findByText(/turned off on this deployment/i)).toBeTruthy();
     expect((approve() as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('says why Approve is unavailable when the only access asked for is turned off', async () => {
+    mockGateway({ writeToolsEnabled: false });
+    render(withQuery(<ConsentScreen search={signed('mcp:write offline_access')} />));
+
+    expect(await screen.findByText('Nothing to approve')).toBeTruthy();
+    expect(screen.getByText(/Write access was requested but is turned off/)).toBeTruthy();
+    await waitFor(() => expect(approve().hasAttribute('disabled')).toBe(true));
   });
 
   it('says so, and decides nothing, when opened without a request', async () => {

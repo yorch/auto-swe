@@ -16,6 +16,7 @@ import { TicketTable } from '@/components/work/TicketTable';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { useTickets } from '@/hooks/useWorkViews';
+import { WORK_SCOPE_OPTIONS } from '@/lib/workScope';
 
 const PAGE_SIZE = 30;
 
@@ -60,10 +61,7 @@ function Tickets() {
               <SegmentedControl
                 ariaLabel="Ticket scope"
                 onChange={(value) => update({ offset: null, scope: value })}
-                options={[
-                  { label: 'My requests', value: 'MINE' },
-                  { label: 'Team requests', value: 'TEAM' },
-                ]}
+                options={WORK_SCOPE_OPTIONS}
                 value={scope}
               />
             }
@@ -74,20 +72,20 @@ function Tickets() {
               placeholder="Ticket id or task…"
               value={searchDraft}
             />
-            <Checkbox
-              checked={!includeAutomated}
-              className="px-1"
-              label="Hide automated runs"
-              onChange={(event) =>
-                update({ automated: event.target.checked ? null : '1', offset: null })
-              }
-            />
+            <span className="inline-flex items-center gap-1.5 px-1">
+              <Checkbox
+                checked={includeAutomated}
+                label="Include automated runs"
+                onChange={(event) =>
+                  update({ automated: event.target.checked ? '1' : null, offset: null })
+                }
+              />
+              <HelpTip label="Automated runs">
+                Agent runs, channel tasks and template launches that have no ticket of their own.
+                They are hidden unless this is checked.
+              </HelpTip>
+            </span>
           </Toolbar>
-          <p className="border-b border-ink-600 px-4 py-2 text-xs text-paper-500">
-            {includeAutomated
-              ? 'Including agent runs, channel tasks and launches that have no ticket of their own.'
-              : 'Hidden: agent runs, channel tasks and launches that have no ticket of their own.'}
-          </p>
           <QueryBoundary
             error={error}
             isError={isError}
@@ -111,7 +109,7 @@ function Tickets() {
                   )
                 }
                 hint={
-                  search || includeAutomated
+                  search
                     ? 'Try another search.'
                     : 'Work started with a ticket id appears here, grouped by ticket.'
                 }
