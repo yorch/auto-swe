@@ -9,8 +9,9 @@ import {
   type AutomationRepository,
   RepoAutomationsModal,
 } from '@/components/repositories/RepoAutomationsModal';
+import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { DataTable } from '@/components/ui/DataTable';
@@ -58,6 +59,12 @@ const RUN_TONE: Record<string, BadgeTone> = {
  */
 function isDecision(row: AutomationSummary): boolean {
   return row.kind !== 'tracker_transition' && row.lastActivity?.outcome !== 'fired';
+}
+
+/** A run status as a sentence-case label: `TIMED_OUT` reads "Timed out", not "timed_out". */
+function runStatusLabel(status: string): string {
+  const words = status.toLowerCase().replace(/_/g, ' ');
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 function activityTone(row: AutomationSummary, outcome: string): BadgeTone {
@@ -192,19 +199,16 @@ export default function GovernAutomationsPage() {
               <Icon name="plus" size={14} />
               New event automation
             </Button>
-            <Link
-              className="inline-flex items-center rounded-md border border-ink-500 px-3 py-1.5 text-paper-200 text-sm hover:bg-ink-800"
-              href="/admin/schedules"
-            >
+            <ButtonLink href="/admin/schedules" variant="secondary">
               Schedules
-            </Link>
+            </ButtonLink>
           </div>
         }
         help={
           <p>
-            That covers rules that react to events on a repository, such as a failed CI run, cron
-            schedules, template webhook URLs and the issue-tracker hook. Each says when it fires,
-            what it starts and what it last did.
+            This page lists rules that react to events on a repository (such as a failed CI run),
+            cron schedules, template webhook URLs and the issue-tracker hook. Each says when it
+            fires, what it starts and what it last did.
           </p>
         }
         learnMore={{ ...HELP_LINKS.automations, label: 'About automations' }}
@@ -224,8 +228,8 @@ export default function GovernAutomationsPage() {
       </p>
       <Card>
         <QueryBoundary
-          error={all.error ?? schedules.error}
-          isError={all.isError || schedules.isError}
+          error={all.error}
+          isError={all.isError}
           isFetching={all.isFetching || schedules.isFetching}
           isLoading={all.isLoading || schedules.isLoading}
           label="automations"
@@ -234,9 +238,37 @@ export default function GovernAutomationsPage() {
             void schedules.refetch();
           }}
         >
+          {/* Schedules come from a separate list that some callers may not read. Without it the
+              event automations still show, and the page says the picture is partial. */}
+          {schedules.isError && (
+            <Alert
+              action={
+                <Button onClick={() => void schedules.refetch()} size="sm">
+                  Retry
+                </Button>
+              }
+              className="mb-3"
+              variant="warning"
+            >
+              Schedules could not be loaded, so none are listed here. Other automations are shown.
+            </Alert>
+          )}
           {rows.length === 0 ? (
             <EmptyState
-              hint="React to a failed CI run on a repository, or run a template on a schedule."
+              action={
+                <div className="flex flex-wrap justify-center gap-2">
+                  <Button onClick={() => setPicking(true)} size="sm" variant="primary">
+                    New event automation
+                  </Button>
+                  <ButtonLink href="/admin/schedules" size="sm" variant="secondary">
+                    Create a schedule
+                  </ButtonLink>
+                  <ButtonLink href="/library" size="sm" variant="secondary">
+                    Template webhooks
+                  </ButtonLink>
+                </div>
+              }
+              hint="React to a failed CI run on a repository, run a template on a schedule, or give a template a webhook URL."
               icon="clock"
               title="No automations yet"
             />
@@ -306,29 +338,30 @@ export default function GovernAutomationsPage() {
                         id: 'name',
                         primary: true,
                         secondary: (r) => (
-                          <div className="flex flex-wrap gap-1.5">
-                            <Badge tone="neutral" variant="outline">
-                              {KIND_LABEL[r.kind]}
-                            </Badge>
-                            {!r.enabled && (
-                              <Badge tone="warning" variant="outline">
-                                off
+                          <>
+                            <div className="flex flex-wrap gap-1.5">
+                              <Badge tone="neutral" variant="outline">
+                                {KIND_LABEL[r.kind]}
                               </Badge>
-                            )}
-                            {r.kind === 'template_webhook' && !r.signatureRequired && (
-                              <span
-                                title={
-                                  r.signed
-                                    ? 'Signed calls are checked, but unsigned calls are still accepted'
-                                    : 'Anyone holding the URL can call it: no signing secret'
-                                }
-                              >
+                              {!r.enabled && (
                                 <Badge tone="warning" variant="outline">
-                                  {r.signed ? 'signature optional' : 'unsigned'}
+                                  Off
                                 </Badge>
-                              </span>
+                              )}
+                              {r.kind === 'template_webhook' && !r.signatureRequired && (
+                                <Badge tone="warning" variant="outline">
+                                  {r.signed ? 'Signature optional' : 'Unsigned'}
+                                </Badge>
+                              )}
+                            </div>
+                            {r.kind === 'template_webhook' && !r.signatureRequired && (
+                              <p className="mt-1 text-xs text-paper-400">
+                                {r.signed
+                                  ? 'Signed calls are checked, but unsigned calls are still accepted.'
+                                  : 'Anyone holding the URL can call it: there is no signing secret.'}
+                              </p>
                             )}
-                          </div>
+                          </>
                         ),
                         sortable: true,
                       },
@@ -359,19 +392,27 @@ export default function GovernAutomationsPage() {
                       {
                         cell: (r) =>
                           r.lastActivity ? (
-                            <span
-                              className="flex items-center gap-2"
-                              title={r.lastActivity.reason ?? undefined}
-                            >
-                              <Badge
-                                tone={activityTone(r, r.lastActivity.outcome)}
-                                variant="outline"
-                              >
-                                {isDecision(r)
-                                  ? outcomeLabel(r.lastActivity.outcome)
-                                  : r.lastActivity.outcome.toLowerCase()}
-                              </Badge>
-                              <RelativeTime className="text-paper-500" value={r.lastActivity.at} />
+                            <span className="flex flex-col gap-1">
+                              <span className="flex items-center gap-2">
+                                <Badge
+                                  tone={activityTone(r, r.lastActivity.outcome)}
+                                  variant="outline"
+                                >
+                                  {isDecision(r)
+                                    ? outcomeLabel(r.lastActivity.outcome)
+                                    : runStatusLabel(r.lastActivity.outcome)}
+                                </Badge>
+                                <RelativeTime
+                                  className="text-paper-500"
+                                  value={r.lastActivity.at}
+                                />
+                              </span>
+                              {/* Why it was suppressed or failed: the point of this ledger. */}
+                              {r.lastActivity.reason && (
+                                <span className="max-w-xs break-words text-xs text-paper-400">
+                                  {r.lastActivity.reason}
+                                </span>
+                              )}
                             </span>
                           ) : (
                             <span className="text-paper-600">—</span>

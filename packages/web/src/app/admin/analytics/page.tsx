@@ -14,6 +14,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DataTable } from '@/components/ui/DataTable';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -70,6 +71,19 @@ function successRateClass(rate: number): string {
 function formatPoints(diff: number): string {
   const pts = diff * 100;
   return `${pts > 0 ? '+' : ''}${pts.toFixed(1)} pts`;
+}
+
+/** A gap smaller than this (in rate, 0–1) is noise at typical baseline sizes. */
+const AGENT_VS_HUMAN_MARGIN = 0.02;
+
+function agentVsHumanClass(diff: number, baselineSample: number | null | undefined): string {
+  if (
+    Math.abs(diff) < AGENT_VS_HUMAN_MARGIN ||
+    (baselineSample != null && baselineSample < MIN_BASELINE_SAMPLE)
+  ) {
+    return 'text-paper-200';
+  }
+  return diff > 0 ? 'text-danger-400' : 'text-success-400';
 }
 
 function workspaceTypeLabel(domain: string): string {
@@ -342,7 +356,7 @@ function AnalyticsWorkspace() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Ranked by traffic</CardTitle>
+                <CardTitle>Workflow templates</CardTitle>
               </CardHeader>
               <Toolbar
                 end={
@@ -447,7 +461,11 @@ function AnalyticsWorkspace() {
                       ]}
                       density="compact"
                       getRowId={(row) => row.templateId}
-                      onSortChange={(id) => templateSort.toggle(id as TemplateSort)}
+                      onSortChange={(id) => {
+                        templateSort.toggle(id as TemplateSort);
+                        // Page N of the old order is not page N of the new one.
+                        setPage(0);
+                      }}
                       rowHref={(row) => templateHref(row.templateId)}
                       rows={pageRows}
                       sort={{
@@ -544,8 +562,12 @@ function AnalyticsWorkspace() {
                         sort={domainSort.direction('vsHuman')}
                         variant="compact"
                       >
-                        <span title="Agent error rate minus the human baseline, in percentage points. Needs at least 30 baseline cases.">
+                        <span className="inline-flex items-center gap-1">
                           Agent vs human
+                          <HelpTip label="Agent vs human">
+                            Agent error rate minus the human baseline, in percentage points. Needs
+                            at least {MIN_BASELINE_SAMPLE} baseline cases.
+                          </HelpTip>
                         </span>
                       </Th>
                     </THead>
@@ -581,20 +603,23 @@ function AnalyticsWorkspace() {
                           <Td className="px-4 py-2 text-right tabular-nums" label="Agent vs human">
                             {d.errorRateVsHuman != null ? (
                               // Positive means the agent errs more than the human baseline.
+                              // Colour only a gap that is both sizeable and backed by enough baseline
+                              // cases; a small gap or a thin sample is shown plain.
                               <span
-                                className={
-                                  d.errorRateVsHuman > 0 ? 'text-danger-400' : 'text-success-400'
-                                }
+                                className={agentVsHumanClass(
+                                  d.errorRateVsHuman,
+                                  d.baselineSampleSize
+                                )}
                               >
                                 {formatPoints(d.errorRateVsHuman)}
                               </span>
                             ) : d.baselineSampleSize != null &&
                               d.baselineSampleSize < MIN_BASELINE_SAMPLE ? (
-                              <span
-                                className="text-xs text-paper-400"
-                                title={`Only ${d.baselineSampleSize} baseline cases; at least ${MIN_BASELINE_SAMPLE} are needed to compare.`}
-                              >
-                                Too few baseline cases ({d.baselineSampleSize})
+                              <span className="flex flex-col items-end text-xs text-paper-400">
+                                <span>Too few baseline cases ({d.baselineSampleSize})</span>
+                                <span className="text-paper-500">
+                                  {MIN_BASELINE_SAMPLE} are needed to compare
+                                </span>
                               </span>
                             ) : (
                               '—'
@@ -614,7 +639,7 @@ function AnalyticsWorkspace() {
                   <CardTitle>By integration</CardTitle>
                 </CardHeader>
                 <div className="-mx-4">
-                  <Table>
+                  <Table className="max-sm:px-4" stacked>
                     <THead>
                       <Th
                         className="px-4"
@@ -646,11 +671,13 @@ function AnalyticsWorkspace() {
                     <tbody>
                       {outcomes.map((o) => (
                         <TRow key={o.outcomeType}>
-                          <Td className="px-4 py-2.5 font-medium text-paper-100">
+                          <Td className="px-4 py-2.5 font-medium text-paper-100" primary>
                             {integrationLabel(o.outcomeType)}
                           </Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">{o.runCount}</Td>
-                          <Td className="px-4 py-2 text-right tabular-nums">
+                          <Td className="px-4 py-2 text-right tabular-nums" label="Runs">
+                            {o.runCount}
+                          </Td>
+                          <Td className="px-4 py-2 text-right tabular-nums" label="Total cost">
                             {formatCost(o.totalCost)}
                           </Td>
                         </TRow>

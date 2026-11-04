@@ -2,7 +2,7 @@
 
 import type { BudgetTier, ScheduledWorkRequestSummary } from '@auto-swe/shared/types/api';
 import { BUDGET_TIERS } from '@auto-swe/shared/types/workflow';
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -36,6 +36,7 @@ import { errMsg } from '@/lib/errors';
 import { BUDGET_TIER_OPTIONS } from '@/lib/govLabels';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
+import { previewCron } from './cronPreview';
 
 /** A fire time, relative ("in 3 days") with the exact time on hover; a dash when there is none. */
 function When({ iso }: { iso: string | null | undefined }) {
@@ -122,9 +123,23 @@ function ScheduleFormModal({
     ? form.teamId
     : (eligibleTeams[0]?.id ?? '');
 
+  // A typo here turns a weekly run into an every-minute run, so the schedule is read back in
+  // words and as concrete fire times before saving.
+  const cronPreview = useMemo(() => previewCron(form.cronExpression), [form.cronExpression]);
+  const cronFields = form.cronExpression.trim().split(/\s+/).filter(Boolean).length;
+  // Not five fields is certainly wrong. Five fields the preview cannot read (a scheduler-specific
+  // extension) are left to the server, with a note that there is no preview.
+  const cronMalformed = form.cronExpression.trim() !== '' && cronFields !== 5;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (cronPreview === null) {
+      setError(
+        'The cron expression is not a valid 5-field expression (minute hour day month weekday).'
+      );
+      return;
+    }
     try {
       if (schedule) {
         // The repository, ticket prefix and owning team are fixed at creation.
@@ -194,6 +209,7 @@ function ScheduleFormModal({
         )}
         <div className="grid gap-4 sm:grid-cols-2">
           <Input
+            error={cronMalformed ? 'Needs five fields: minute hour day month weekday' : undefined}
             hint="Minute hour day month weekday, in UTC. 0 3 * * 1 is Mondays at 03:00."
             id={`${uid}-cron`}
             label="Cron (5-field, UTC)"
@@ -247,12 +263,44 @@ function ScheduleFormModal({
           rows={4}
           value={form.description}
         />
-        {editing && (
+        {cronPreview && (
+          <div
+            className="space-y-1 rounded-md border border-ink-500 bg-ink-900/50 px-3 py-2 text-xs text-paper-400"
+            data-testid="cron-preview"
+          >
+            <p className="text-sm text-paper-200">{cronPreview.summary ?? 'Custom schedule'}</p>
+            <p>
+              Next runs:{' '}
+              {cronPreview.next.length > 0
+                ? cronPreview.next
+                    .map(
+                      (d) => `${formatDate(d.toISOString())} (${d.toISOString().slice(11, 16)} UTC)`
+                    )
+                    .join(' · ')
+                : 'none in the next year'}
+            </p>
+          </div>
+        )}
+        {!cronPreview && !cronMalformed && form.cronExpression.trim() !== '' && (
           <p className="text-xs text-paper-500">
-            Saving changes to what the schedule does, when it runs or how much it may spend makes it
-            run as you from now on, using your saved GitHub token. The change is recorded in the
-            audit log.
+            No preview for this expression; it is checked when you save.
           </p>
+        )}
+        {cronPreview?.subHourly && (
+          <Alert variant="warning">
+            This runs more often than once an hour. Each fire starts a full workflow run that spends
+            budget; check the expression is what you meant.
+          </Alert>
+        )}
+        {editing && (
+          <Alert title="Saving makes this schedule run as you" variant="warning">
+            Saving changes to what the schedule does, when it runs or how much it may spend makes it
+            run as you from now on, using your saved GitHub token. It currently runs as{' '}
+            <strong>
+              {schedule?.actsAs ? (schedule.actsAs.name ?? schedule.actsAs.email) : 'the platform'}
+            </strong>
+            . The change is recorded in the audit log.
+          </Alert>
         )}
         {error && <Alert variant="error">{error}</Alert>}
         <ModalFooter
@@ -287,31 +335,42 @@ function ScheduleStatus({ schedule }: { schedule: ScheduledWorkRequestSummary })
         {livePaused ? 'Paused' : 'Active'}
       </Badge>
       {mismatch && (
-        <Badge
-          title={`The dashboard records this schedule as ${schedule.isActive ? 'active' : 'paused'}, but the scheduler has it ${live.paused ? 'paused' : 'running'}. An owning-team lead can pause it again to re-sync it; resuming it makes it run as you.`}
-          tone="danger"
-          variant="outline"
-        >
+        <Badge tone="danger" variant="outline">
           Out of sync
         </Badge>
       )}
       {schedule.schedule.unavailable && (
-        <Badge
-          title="The scheduler cannot be reached right now, so the live state of this schedule is unknown. The dates shown may be out of date."
-          tone="muted"
-          variant="outline"
-        >
+        <Badge tone="muted" variant="outline">
           Scheduler unavailable
         </Badge>
       )}
       {schedule.schedule.exists === false && (
-        <Badge
-          title="The scheduler has no trigger for this schedule. Edit and save it to create the trigger again."
-          tone="danger"
-          variant="outline"
-        >
+        <Badge tone="danger" variant="outline">
           Not running — re-save to repair
         </Badge>
+      )}
+      {/* What each warning means and what to do, as text anyone can reach. */}
+      {mismatch && (
+        <p className="basis-full text-xs text-paper-400">
+          The dashboard records this schedule as {schedule.isActive ? 'active' : 'paused'}, but the
+          scheduler has it {live.paused ? 'paused' : 'running'}. An owning-team lead can pause it
+          again to re-sync it; resuming it makes it run as you.
+        </p>
+      )}
+      {schedule.schedule.unavailable && (
+        <p className="basis-full text-xs text-paper-400">
+          The scheduler cannot be reached right now, so the live state is unknown and the dates may
+          be out of date.
+        </p>
+      )}
+      {schedule.schedule.exists === false && (
+        <p className="basis-full text-xs text-paper-400">
+          The scheduler has no trigger for this schedule. Edit and save it to create the trigger
+          again.
+        </p>
+      )}
+      {livePaused && schedule.schedule.exists !== false && (
+        <p className="basis-full text-xs text-paper-500">Resume it before firing it by hand.</p>
       )}
     </div>
   );
@@ -372,7 +431,6 @@ function ScheduleActions({
             takesOver ? setConfirmFire(true) : run(() => fire.mutateAsync(schedule.id))
           }
           size="sm"
-          title={livePaused ? 'Paused: resume the schedule before firing it' : undefined}
         >
           {fire.isPending ? 'Firing…' : 'Fire now'}
         </Button>
@@ -482,7 +540,7 @@ export default function GovernSchedulesPage() {
         help={
           <p>
             Every run reuses the same ticket and branch, so an open pull request is updated instead
-            of duplicated. Runs appear in your run history. The workflow template is fixed when you
+            of duplicated. Runs appear in your run history. The template version is pinned when you
             save the schedule.
           </p>
         }

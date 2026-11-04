@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Suspense, useMemo, useState } from 'react';
 import { DailyCostChart } from '@/components/charts/DailyCostChart';
 import { Alert } from '@/components/ui/Alert';
@@ -84,6 +85,21 @@ const DIMENSIONS: { label: string; labelHeader: string; value: Dimension }[] = [
 ];
 
 const TOP_N = 10;
+
+/** Share of failed calls at which the headline turns amber, and red. One stray error is noise. */
+const ERROR_RATE_WARN = 0.02;
+const ERROR_RATE_DANGER = 0.1;
+
+function errorRateTone(rate: number | null): 'default' | 'warning' | 'danger' {
+  if (rate === null) {
+    return 'default';
+  }
+  return rate > ERROR_RATE_DANGER ? 'danger' : rate > ERROR_RATE_WARN ? 'warning' : 'default';
+}
+
+function parseDimension(value: string | null): Dimension {
+  return DIMENSIONS.find((d) => d.value === value)?.value ?? 'model';
+}
 
 type Row = UsageBucket & { label: string };
 
@@ -274,7 +290,7 @@ function UsersCard({ data }: { data: PlatformUsage }) {
   return (
     <Card className="overflow-hidden p-0">
       <CardHeader className="px-4 pt-5">
-        <CardTitle>Top 10 users</CardTitle>
+        <CardTitle>{byUser.length > 0 ? `Top ${byUser.length} users` : 'Top users'}</CardTitle>
         <span className="text-xs text-paper-500">By the launcher of the run</span>
       </CardHeader>
       <DataTable
@@ -351,7 +367,9 @@ function UsageWorkspace() {
   const windowDays = rangeDays(range);
   const scopeOptions = useScopeOptions();
   const chosenScope = params.get('scope');
-  const [dimension, setDimension] = useState<Dimension>('model');
+  // In the URL, so a link to "by agent" opens on that breakdown.
+  const dimension = parseDimension(params.get('by'));
+  const setDimension = (next: Dimension) => update({ by: next === 'model' ? null : next });
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   // Until the caller picks one, the first scope they may read: the whole
@@ -459,10 +477,7 @@ function UsageWorkspace() {
           shape="cards"
         >
           {data && (
-            <div
-              aria-busy={isPlaceholderData}
-              className={cn('space-y-6 transition-opacity', isPlaceholderData && 'opacity-50')}
-            >
+            <div aria-busy={isPlaceholderData} className="space-y-6">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-paper-500">
                 {scopeLabel && (
                   <p>
@@ -486,8 +501,9 @@ function UsageWorkspace() {
                   />
                   <Stat label="LLM calls" value={formatCount(data.totals.calls)} />
                   <Stat
+                    hint={`${formatCount(data.totals.errors)} of ${formatCount(data.totals.calls)} calls failed`}
                     label="Error rate"
-                    tone={data.totals.errors > 0 ? 'danger' : 'default'}
+                    tone={errorRateTone(errorRate(data.totals))}
                     value={formatPercent(errorRate(data.totals))}
                   />
                   <Stat
@@ -610,6 +626,14 @@ function UsageWorkspace() {
                       rowHref={(r) => runHref(r.runId)}
                       rows={data.topRuns}
                     />
+                    <p className="border-t border-ink-600 px-4 py-2 text-xs text-paper-500">
+                      <Link
+                        className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
+                        href="/runs"
+                      >
+                        View all runs
+                      </Link>
+                    </p>
                   </Card>
                 </>
               )}

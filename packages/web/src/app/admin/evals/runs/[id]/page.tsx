@@ -7,6 +7,7 @@ import { Alert } from '@/components/ui/Alert';
 import { BackLink } from '@/components/ui/BackLink';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
@@ -162,8 +163,12 @@ function VerdictView({ summary }: { summary: unknown }) {
           <THead>
             <Th variant="plain">Slice</Th>
             <Th align="right" variant="plain">
-              <span title="Cases run on both the baseline and the candidate, so each one is compared like for like">
+              <span className="inline-flex items-center gap-1">
                 Cases compared
+                <HelpTip label="Cases compared">
+                  Cases run on both the baseline and the candidate, so each one is compared like for
+                  like.
+                </HelpTip>
               </span>
             </Th>
             <Th align="right" variant="plain">
@@ -173,13 +178,20 @@ function VerdictView({ summary }: { summary: unknown }) {
               Candidate
             </Th>
             <Th align="right" variant="plain">
-              <span title="Candidate pass rate minus baseline pass rate, in percentage points">
+              <span className="inline-flex items-center gap-1">
                 Difference
+                <HelpTip label="Difference">
+                  Candidate pass rate minus baseline pass rate, in percentage points.
+                </HelpTip>
               </span>
             </Th>
             <Th align="right" variant="plain">
-              <span title="The range the true difference very likely lies in (95% confidence). If it crosses zero, the difference may be noise.">
+              <span className="inline-flex items-center gap-1">
                 Likely range
+                <HelpTip label="Likely range">
+                  The range the true difference very likely lies in (95% confidence). If it crosses
+                  zero, the difference may be noise.
+                </HelpTip>
               </span>
             </Th>
           </THead>
@@ -193,6 +205,10 @@ function VerdictView({ summary }: { summary: unknown }) {
           </tbody>
         </Table>
       </div>
+      <p className="text-xs text-paper-500">
+        Likely range is the 95% confidence range of the difference: if it crosses 0, the difference
+        may be noise, and it is not coloured.
+      </p>
     </div>
   );
 }

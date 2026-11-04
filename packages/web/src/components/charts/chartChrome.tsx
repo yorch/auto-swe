@@ -65,7 +65,7 @@ const TOOLTIP_STYLE: React.CSSProperties = {
   background: 'var(--color-ink-700)',
   border: '1px solid var(--color-ink-400)',
   borderRadius: 8,
-  boxShadow: '0 12px 32px -12px rgba(0,0,0,0.6)',
+  boxShadow: '0 12px 32px -12px var(--color-scrim)',
   color: 'var(--color-paper-200)',
   fontFamily: 'var(--font-sans)',
   fontSize: 12,

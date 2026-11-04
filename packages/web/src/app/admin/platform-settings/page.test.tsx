@@ -2,6 +2,7 @@
 
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubDialogPrototype } from '@/test/rtl-helpers';
 
 const { state } = vi.hoisted(() => ({
   state: {
@@ -35,14 +36,21 @@ vi.mock('@/hooks/useConfigSettings', () => ({
 vi.mock('@/components/settings/SettingRow', () => ({
   SettingRow: ({
     onSave,
+    onDirtyChange,
+    setting,
     status,
   }: {
     onSave: (v: unknown) => void;
+    onDirtyChange?: (key: string, dirty: boolean) => void;
+    setting: { key: string };
     status?: { phase: string };
   }) => (
     <div>
       <button onClick={() => onSave(1)} type="button">
         save
+      </button>
+      <button onClick={() => onDirtyChange?.(setting.key, true)} type="button">
+        edit
       </button>
       <span>status:{status?.phase ?? 'none'}</span>
     </div>
@@ -52,6 +60,7 @@ vi.mock('@/components/settings/SettingRow', () => ({
 const { default: Page } = await import('./page');
 
 beforeEach(() => {
+  stubDialogPrototype();
   state.params = new URLSearchParams();
   state.pending = null;
 });
@@ -101,5 +110,25 @@ describe('platform settings page', () => {
     await act(async () => state.pending?.reject(new Error('late failure')));
     expect(screen.queryByText('status:error')).toBeNull();
     expect(screen.queryByText(/late failure/)).toBeNull();
+  });
+
+  it('names the scope being edited and counts unsaved changes in a bar that stays in view', () => {
+    render(<Page />);
+    const bar = screen.getByTestId('scope-bar');
+    expect(bar.textContent).toMatch(/Editing:\s*Platform-wide/);
+    expect(bar.textContent).toMatch(/saves reach every team/);
+    expect(bar.textContent).toMatch(/No unsaved changes/);
+    expect(bar.className).toContain('sticky');
+    fireEvent.click(screen.getByText('edit'));
+    expect(screen.getByTestId('scope-bar').textContent).toMatch(/1 unsaved change\b/);
+  });
+
+  it('asks before the view changes while a row holds an unsaved draft', () => {
+    render(<Page />);
+    fireEvent.click(screen.getByText('edit'));
+    // The scope picker is a React Aria select: open it and pick another scope.
+    fireEvent.click(screen.getByRole('button', { name: /View settings for/ }));
+    fireEvent.click(screen.getByRole('option', { name: 'A team' }));
+    expect(screen.getByText('Discard unsaved changes?')).toBeTruthy();
   });
 });

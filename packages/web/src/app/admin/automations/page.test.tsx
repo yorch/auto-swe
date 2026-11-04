@@ -86,7 +86,7 @@ describe('GovernAutomationsPage', () => {
     expect(screen.getByText('already handled')).toBeTruthy();
     // A paused schedule reads as off.
     const row = screen.getByText('Weekly deps').closest('tr') as HTMLElement;
-    expect(within(row).getByText('off')).toBeTruthy();
+    expect(within(row).getByText('Off')).toBeTruthy();
   });
 
   it('marks a webhook that accepts unsigned calls, and not one that refuses them', async () => {
@@ -110,11 +110,11 @@ describe('GovernAutomationsPage', () => {
     render(withQuery(<GovernAutomationsPage />));
     const rowOf = async (name: string) =>
       (await screen.findByText(name, { selector: 'div' })).closest('tr') as HTMLElement;
-    expect(within(await rowOf('deploy hook')).getByText('unsigned')).toBeTruthy();
-    expect(within(await rowOf('optional hook')).getByText('signature optional')).toBeTruthy();
+    expect(within(await rowOf('deploy hook')).getByText('Unsigned')).toBeTruthy();
+    expect(within(await rowOf('optional hook')).getByText('Signature optional')).toBeTruthy();
     const signed = await rowOf('signed hook');
-    expect(within(signed).queryByText('unsigned')).toBeNull();
-    expect(within(signed).queryByText('signature optional')).toBeNull();
+    expect(within(signed).queryByText('Unsigned')).toBeNull();
+    expect(within(signed).queryByText('Signature optional')).toBeNull();
   });
 
   it('opens where each kind is edited, as View when the caller may not manage it', async () => {
@@ -174,8 +174,8 @@ describe('GovernAutomationsPage', () => {
     });
     render(withQuery(<GovernAutomationsPage />));
     const row = (await screen.findByText('Weekly deps')).closest('tr') as HTMLElement;
-    expect(within(row).getByText('off')).toBeTruthy();
-    expect(within(row).getByText('fired')).toBeTruthy();
+    expect(within(row).getByText('Off')).toBeTruthy();
+    expect(within(row).getByText('Fired')).toBeTruthy();
   });
 
   it('filters by kind', async () => {

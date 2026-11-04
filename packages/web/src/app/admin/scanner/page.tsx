@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { EntityMetaBadges } from '@/components/library/EntityMetaBadges';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
@@ -29,9 +29,12 @@ import {
   useScannerPatterns,
   useUpdateScannerPattern,
 } from '@/hooks/useAdmin';
+import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import {
+  isScannerPatternType,
   SCANNER_PATTERN_TYPE_INFO,
   SCANNER_PATTERN_TYPE_ORDER,
   type ScannerPatternType,
@@ -56,81 +59,107 @@ type PatternForm = {
   type: PatternType;
 };
 
+const EMPTY_FORM: PatternForm = { flags: 'i', label: '', pattern: '', type: 'INJECTION' };
+
 function CreatePatternModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [form, setForm] = useState<PatternForm>({
-    flags: 'i',
-    label: '',
-    pattern: '',
-    type: 'INJECTION',
-  });
+  const [form, setForm] = useState<PatternForm>(EMPTY_FORM);
   const [error, setError] = useState<string | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const create = useCreateScannerPattern();
+  const dirty =
+    form.label !== '' || form.pattern !== '' || form.flags !== 'i' || form.type !== 'INJECTION';
+
+  /** Closing always starts the next "New pattern" from a blank form. */
+  function close() {
+    setForm(EMPTY_FORM);
+    setError(null);
+    setConfirmDiscard(false);
+    onClose();
+  }
+  /** Closing with typed content asks first, so a stray Escape or backdrop click loses nothing. */
+  function requestClose() {
+    if (dirty && !create.isPending) {
+      setConfirmDiscard(true);
+      return;
+    }
+    close();
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     try {
       await create.mutateAsync(form);
-      onClose();
-      setForm({ flags: 'i', label: '', pattern: '', type: 'INJECTION' });
+      close();
     } catch (err) {
       setError(errMsg(err, 'Failed to create pattern'));
     }
   }
 
   return (
-    <Modal onClose={onClose} open={open} title="New scanner pattern">
-      <form className="space-y-4" onSubmit={handleSubmit}>
-        <Input
-          id="scanner-new-label"
-          label="Label"
-          onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
-          placeholder="my-custom-pattern"
-          required
-          value={form.label}
-        />
-        <Select
-          id="scanner-new-type"
-          label="Type"
-          onChange={(v) => setForm((f) => ({ ...f, type: v as PatternType }))}
-          options={patternTypeOptions}
-          value={form.type}
-        />
-        <Input
-          className="font-mono"
-          hint="JavaScript regex source, without the surrounding slashes"
-          id="scanner-new-pattern"
-          label="Pattern (regex source)"
-          onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
-          placeholder="my\s+pattern"
-          required
-          value={form.pattern}
-        />
-        <Input
-          className="font-mono"
-          hint="Leave blank for no flags. Allowed: i (case-insensitive), m, s, u, v"
-          id="scanner-new-flags"
-          label="Flags"
-          maxLength={10}
-          onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
-          placeholder="i"
-          value={form.flags}
-        />
-        <PatternTester
-          flags={form.flags}
-          idPrefix="scanner-new"
-          pattern={form.pattern}
-          type={form.type}
-        />
-        {error && <Alert>{error}</Alert>}
-        <ModalFooter
-          isPending={create.isPending}
-          onCancel={onClose}
-          pendingLabel="Creating…"
-          submitLabel="Create pattern"
-        />
-      </form>
-    </Modal>
+    <>
+      <Modal onClose={requestClose} open={open} title="New scanner pattern">
+        <form className="space-y-4" onSubmit={handleSubmit}>
+          <Input
+            id="scanner-new-label"
+            label="Label"
+            onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+            placeholder="my-custom-pattern"
+            required
+            value={form.label}
+          />
+          <Select
+            id="scanner-new-type"
+            label="Type"
+            onChange={(v) => setForm((f) => ({ ...f, type: v as PatternType }))}
+            options={patternTypeOptions}
+            value={form.type}
+          />
+          <Input
+            className="font-mono"
+            hint="JavaScript regex source, without the surrounding slashes"
+            id="scanner-new-pattern"
+            label="Pattern (regex source)"
+            onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
+            placeholder="my\s+pattern"
+            required
+            value={form.pattern}
+          />
+          <Input
+            className="font-mono"
+            hint="Leave blank for no flags. Allowed: i (case-insensitive), m, s, u, v"
+            id="scanner-new-flags"
+            label="Flags"
+            maxLength={10}
+            onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
+            placeholder="i"
+            value={form.flags}
+          />
+          <PatternTester
+            flags={form.flags}
+            idPrefix="scanner-new"
+            pattern={form.pattern}
+            type={form.type}
+          />
+          {error && <Alert>{error}</Alert>}
+          <ModalFooter
+            isPending={create.isPending}
+            onCancel={requestClose}
+            pendingLabel="Creating…"
+            submitLabel="Create pattern"
+          />
+        </form>
+      </Modal>
+      <ConfirmModal
+        confirmLabel="Discard"
+        dangerous
+        message="The pattern you started will be lost."
+        onClose={() => setConfirmDiscard(false)}
+        onConfirm={() => close()}
+        open={confirmDiscard}
+        title="Discard this new pattern?"
+      />
+    </>
   );
 }
 
@@ -160,8 +189,15 @@ function PatternDetailModal({
   const [editing, setEditing] = useState(initialEditing && canEdit);
   const [form, setForm] = useState<PatternForm>(() => formOf(pattern));
   const [error, setError] = useState<string | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   const pat = pattern;
+  const dirty =
+    editing &&
+    (form.label !== pat.label ||
+      form.pattern !== pat.pattern ||
+      form.flags !== pat.flags ||
+      form.type !== pat.type);
 
   function startEdit() {
     setForm(formOf(pat));
@@ -179,6 +215,15 @@ function PatternDetailModal({
     setError(null);
   }
 
+  /** Cancel, Escape and the backdrop all ask first when the edit holds changes. */
+  function requestCancel(then: () => void) {
+    if (dirty && !update.isPending) {
+      setConfirmDiscard(true);
+      return;
+    }
+    then();
+  }
+
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -194,120 +239,140 @@ function PatternDetailModal({
   const title = editing ? `Edit "${pattern.label}"` : pattern.label;
 
   return (
-    <Modal
-      onClose={() => {
-        setEditing(false);
-        onClose();
-      }}
-      open
-      size="lg"
-      title={title}
-    >
-      {editing ? (
-        <form className="space-y-4" onSubmit={handleSave}>
-          <Input
-            id="scanner-edit-label"
-            label="Label"
-            onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
-            required
-            value={form.label}
-          />
-          <Select
-            id="scanner-edit-type"
-            label="Type"
-            onChange={(v) => setForm((f) => ({ ...f, type: v as PatternType }))}
-            options={patternTypeOptions}
-            value={form.type}
-          />
-          <Input
-            className="font-mono"
-            id="scanner-edit-pattern"
-            label="Pattern (regex source)"
-            onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
-            required
-            value={form.pattern}
-          />
-          <Input
-            className="font-mono"
-            hint="Leave blank for no flags. Allowed: i (case-insensitive), m, s, u, v"
-            id="scanner-edit-flags"
-            label="Flags"
-            maxLength={10}
-            onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
-            value={form.flags}
-          />
-          <PatternTester
-            flags={form.flags}
-            idPrefix="scanner-edit"
-            pattern={form.pattern}
-            type={form.type}
-          />
-          {error && <Alert>{error}</Alert>}
-          <ModalFooter
-            isPending={update.isPending}
-            onCancel={cancelEdit}
-            pendingLabel="Saving…"
-            submitLabel="Save changes"
-          />
-        </form>
-      ) : (
-        <div className="space-y-5">
-          <EntityMetaBadges
-            isActive={pattern.isActive}
-            isBuiltIn={pattern.isBuiltIn}
-            origin={pattern.origin}
-          >
-            <Badge tone="neutral">
-              {patternTypeOptions.find((o) => o.value === pattern.type)?.label ?? pattern.type}
-            </Badge>
-            <EnforcementBadge type={pattern.type} />
-          </EntityMetaBadges>
+    <>
+      <Modal
+        onClose={() =>
+          requestCancel(() => {
+            setEditing(false);
+            onClose();
+          })
+        }
+        open
+        size="lg"
+        title={title}
+      >
+        {editing ? (
+          <form className="space-y-4" onSubmit={handleSave}>
+            <Input
+              id="scanner-edit-label"
+              label="Label"
+              onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))}
+              required
+              value={form.label}
+            />
+            <Select
+              id="scanner-edit-type"
+              label="Type"
+              onChange={(v) => setForm((f) => ({ ...f, type: v as PatternType }))}
+              options={patternTypeOptions}
+              value={form.type}
+            />
+            <Input
+              className="font-mono"
+              id="scanner-edit-pattern"
+              label="Pattern (regex source)"
+              onChange={(e) => setForm((f) => ({ ...f, pattern: e.target.value }))}
+              required
+              value={form.pattern}
+            />
+            <Input
+              className="font-mono"
+              hint="Leave blank for no flags. Allowed: i (case-insensitive), m, s, u, v"
+              id="scanner-edit-flags"
+              label="Flags"
+              maxLength={10}
+              onChange={(e) => setForm((f) => ({ ...f, flags: e.target.value }))}
+              value={form.flags}
+            />
+            <PatternTester
+              flags={form.flags}
+              idPrefix="scanner-edit"
+              pattern={form.pattern}
+              type={form.type}
+            />
+            {error && <Alert>{error}</Alert>}
+            <ModalFooter
+              isPending={update.isPending}
+              onCancel={() => requestCancel(cancelEdit)}
+              pendingLabel="Saving…"
+              submitLabel="Save changes"
+            />
+          </form>
+        ) : (
+          <div className="space-y-5">
+            <EntityMetaBadges
+              isActive={pattern.isActive}
+              isBuiltIn={pattern.isBuiltIn}
+              origin={pattern.origin}
+            >
+              <Badge tone="neutral">
+                {patternTypeOptions.find((o) => o.value === pattern.type)?.label ?? pattern.type}
+              </Badge>
+              <EnforcementBadge type={pattern.type} />
+            </EntityMetaBadges>
 
-          <p className="text-sm leading-relaxed text-paper-400">
-            {SCANNER_PATTERN_TYPE_INFO[pattern.type].description}
-          </p>
-
-          <div>
-            <div className="mb-1.5 flex items-center justify-between gap-2">
-              <span className="text-xs font-medium text-paper-400">Regex pattern</span>
-              <CopyButton value={pattern.pattern} />
-            </div>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-ink-500 bg-ink-900/70 p-3 font-mono text-sm leading-relaxed text-paper-100">
-              <span className="text-paper-500">/</span>
-              {pattern.pattern}
-              <span className="text-paper-500">/</span>
-              <span className="text-paper-300">{pattern.flags}</span>
-            </pre>
-          </div>
-
-          <PatternTester
-            flags={pattern.flags}
-            idPrefix="scanner-view"
-            pattern={pattern.pattern}
-            type={pattern.type as PatternType}
-          />
-
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-ink-600 pt-4">
-            <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
-              <dt className="text-paper-500">Created</dt>
-              <dd className="text-paper-300">{formatDate(pattern.createdAt)}</dd>
-              <dt className="text-paper-500">Updated</dt>
-              <dd className="text-paper-300">{formatDate(pattern.updatedAt)}</dd>
-            </dl>
-            {canEdit ? (
-              <Button onClick={startEdit} variant="secondary">
-                <Icon name="edit" size={14} />
-                Edit
-              </Button>
-            ) : (
-              <span className="text-xs text-paper-500">
-                Built-in patterns can be toggled, not edited
-              </span>
+            <p className="text-sm leading-relaxed text-paper-400">
+              {SCANNER_PATTERN_TYPE_INFO[pattern.type].description}
+            </p>
+            {MEMORY_NOTE[pattern.type] && (
+              <p className="text-sm leading-relaxed text-paper-300">{MEMORY_NOTE[pattern.type]}</p>
             )}
+
+            <div>
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-paper-400">Regex pattern</span>
+                <CopyButton value={pattern.pattern} />
+              </div>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-ink-500 bg-ink-900/70 p-3 font-mono text-sm leading-relaxed text-paper-100">
+                <span className="text-paper-500">/</span>
+                {pattern.pattern}
+                <span className="text-paper-500">/</span>
+                <span className="text-paper-300">{pattern.flags}</span>
+              </pre>
+            </div>
+
+            <PatternTester
+              flags={pattern.flags}
+              idPrefix="scanner-view"
+              pattern={pattern.pattern}
+              type={pattern.type as PatternType}
+            />
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-ink-600 pt-4">
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
+                <dt className="text-paper-500">Created</dt>
+                <dd className="text-paper-300">{formatDate(pattern.createdAt)}</dd>
+                <dt className="text-paper-500">Updated</dt>
+                <dd className="text-paper-300">{formatDate(pattern.updatedAt)}</dd>
+              </dl>
+              {canEdit ? (
+                <Button onClick={startEdit} variant="secondary">
+                  <Icon name="edit" size={14} />
+                  Edit
+                </Button>
+              ) : (
+                <span className="text-xs text-paper-500">
+                  Built-in patterns can be toggled, not edited
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-      )}
-    </Modal>
+        )}
+      </Modal>
+      <ConfirmModal
+        confirmLabel="Discard changes"
+        dangerous
+        message="Your edits to this pattern will be lost."
+        onClose={() => setConfirmDiscard(false)}
+        onConfirm={() => {
+          setConfirmDiscard(false);
+          setEditing(false);
+          onClose();
+        }}
+        open={confirmDiscard}
+        title="Discard your changes?"
+      />
+    </>
   );
 }
 
@@ -317,10 +382,17 @@ function PatternDetailModal({
 const ENFORCEMENT: Record<PatternType, { label: string; tone: BadgeTone }> = {
   CODE_SECURITY: { label: 'Advisory', tone: 'info' },
   EXFILTRATION: { label: 'Advisory', tone: 'info' },
-  INJECTION: { label: 'Advisory', tone: 'info' },
+  // Advisory for skill text and model output, but the memory guard hard-blocks on these.
+  INJECTION: { label: 'Advisory · blocks memory', tone: 'warning' },
   PII: { label: 'Eval scorer', tone: 'accent2' },
   SENSITIVE_FILE: { label: 'Hard block', tone: 'danger' },
   SHELL_COMMAND: { label: 'Soft block', tone: 'warning' },
+};
+
+/** Where a category does more than its badge's first word says. */
+const MEMORY_NOTE: Partial<Record<PatternType, string>> = {
+  INJECTION:
+    'These patterns are also the memory guard: a memory write that matches one is refused, and a recalled memory item that matches one is dropped before it reaches a prompt. That check fails closed, so a rule turned off here stops guarding memory too.',
 };
 
 function EnforcementBadge({ type }: { type: PatternType }) {
@@ -341,6 +413,17 @@ interface RowActions {
   onError: (message: string | null) => void;
 }
 
+/** What stops being caught when a rule of each category goes off (or is deleted). */
+const PROTECTION_LOSS: Partial<Record<PatternType, string>> = {
+  EXFILTRATION: 'Skill text and model output that this rule flags will no longer be warned about',
+  INJECTION:
+    'Skill text and model output this rule flags will no longer be warned about, and memory writes and recalls it catches will no longer be refused or dropped (memory is replayed into later runs)',
+  SENSITIVE_FILE:
+    'Agents will be able to write to files this rule protects, with no block from the sensitive file scanner',
+  SHELL_COMMAND:
+    'Agents will be able to run shell commands this rule blocks, with no warning from the shell scanner',
+};
+
 /** The on/off switch of one rule, with the confirmation a blocking rule needs before it goes off. */
 function PatternActiveToggle({
   pattern,
@@ -351,11 +434,11 @@ function PatternActiveToggle({
 }) {
   const update = useUpdateScannerPattern();
   const [confirmDisable, setConfirmDisable] = useState(false);
-  // Blocking rules stop agent actions outright, so switching one off needs a confirmation.
-  const blocking = pattern.type === 'SHELL_COMMAND' || pattern.type === 'SENSITIVE_FILE';
+  // Rules that stop an agent action, or guard memory, need a confirmation before they go off.
+  const needsConfirm = pattern.type in PROTECTION_LOSS;
 
   function requestToggle() {
-    if (pattern.isActive && blocking) {
+    if (pattern.isActive && needsConfirm) {
       setConfirmDisable(true);
       return;
     }
@@ -388,11 +471,7 @@ function PatternActiveToggle({
         <ConfirmModal
           confirmLabel="Disable rule"
           dangerous
-          message={
-            pattern.type === 'SENSITIVE_FILE'
-              ? 'Agents will be able to write to files this rule protects, with no block from the sensitive file scanner, until you enable it again.'
-              : 'Agents will be able to run shell commands this rule blocks, with no warning from the shell scanner, until you enable it again.'
-          }
+          message={`${PROTECTION_LOSS[pattern.type]} until you enable it again.`}
           onClose={() => setConfirmDisable(false)}
           onConfirm={() => toggleActive()}
           open
@@ -522,11 +601,7 @@ function PatternSection({
                         Custom
                       </Badge>
                     )}
-                    {pattern.origin && (
-                      <Badge title={`Installed by the ${pattern.origin} bundle`} tone="neutral">
-                        {pattern.origin}
-                      </Badge>
-                    )}
+                    {pattern.origin && <Badge tone="neutral">Bundle: {pattern.origin}</Badge>}
                   </div>
                 ),
                 header: 'Source',
@@ -554,7 +629,7 @@ function PatternSection({
 
 type StatusFilter = '' | 'active' | 'inactive';
 
-export default function GovernScannerPage() {
+function ScannerWorkspace() {
   const [newOpen, setNewOpen] = useState(false);
   const {
     data: patterns,
@@ -572,9 +647,19 @@ export default function GovernScannerPage() {
   } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ScannerPattern | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
-  const [category, setCategory] = useState<'' | PatternType>('');
-  const [status, setStatus] = useState<StatusFilter>('');
+  // Filters live in the URL, like every other admin list, so a filtered view can be shared.
+  const { params, update } = useUrlFilters();
+  const urlSearch = params.get('q') ?? '';
+  // Typing waits for a pause before it changes the URL (and the list).
+  const [search, setSearch] = useDebouncedUrlSearch(urlSearch, (value) =>
+    update({ q: value || null })
+  );
+  const rawCategory = params.get('category') ?? '';
+  const category: '' | PatternType = isScannerPatternType(rawCategory) ? rawCategory : '';
+  const rawStatus = params.get('state');
+  const status: StatusFilter = rawStatus === 'active' || rawStatus === 'inactive' ? rawStatus : '';
+  const setCategory = (v: '' | PatternType) => update({ category: v || null });
+  const setStatus = (v: StatusFilter) => update({ state: v || null });
   const deletePattern = useDeleteScannerPattern();
   const rowActions: RowActions = {
     onDelete: setDeleteTarget,
@@ -605,8 +690,7 @@ export default function GovernScannerPage() {
   const countOf = (type: PatternType) => all.filter((p) => p.type === type).length;
   const clearFilters = () => {
     setSearch('');
-    setStatus('');
-    setCategory('');
+    update({ category: null, q: null, state: null });
   };
 
   return (
@@ -751,7 +835,18 @@ export default function GovernScannerPage() {
         <ConfirmModal
           confirmLabel="Delete"
           dangerous
-          message="This will permanently remove the scanner pattern. This cannot be undone."
+          message={
+            <>
+              This will permanently remove the scanner pattern. This cannot be undone.
+              {deleteTarget.isActive && PROTECTION_LOSS[deleteTarget.type] && (
+                <>
+                  {' '}
+                  While it is gone:{' '}
+                  {PROTECTION_LOSS[deleteTarget.type]?.replace(/^./, (c) => c.toLowerCase())}.
+                </>
+              )}
+            </>
+          }
           onClose={() => setDeleteTarget(null)}
           onConfirm={async () => {
             await deletePattern.mutateAsync(deleteTarget.id);
@@ -762,5 +857,13 @@ export default function GovernScannerPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function GovernScannerPage() {
+  return (
+    <Suspense fallback={null}>
+      <ScannerWorkspace />
+    </Suspense>
   );
 }

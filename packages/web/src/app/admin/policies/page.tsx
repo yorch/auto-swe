@@ -14,6 +14,7 @@ import { DocLink } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
+import { IconButton } from '@/components/ui/IconButton';
 import { Input } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
@@ -141,15 +142,6 @@ function formToBody(form: PolicyForm): AutonomyPolicyForm {
   return body;
 }
 
-/** One line per policy: what each risk class does ("External communication: approval from 1"). */
-function ruleSummary(rules: AutonomyPolicy['rules']): string[] {
-  return Object.entries(rules).map(([riskClass, rule]) =>
-    rule.action === 'auto'
-      ? `${riskClassLabel(riskClass)}: automatic`
-      : `${riskClassLabel(riskClass)}: approval from ${rule.approverCount ?? 1}`
-  );
-}
-
 /** The risk classes still free to pick: the known set minus those other rules use, plus `current`. */
 function riskClassOptions(rules: RuleRow[], current: string) {
   const used = new Set(rules.map((r) => r.riskClass).filter((c) => c && c !== current));
@@ -163,6 +155,25 @@ function riskClassOptions(rules: RuleRow[], current: string) {
     options.push({ label: riskClassLabel(current), value: current });
   }
   return options;
+}
+
+/** Risk classes whose messages leave the team: Auto on one removes the approval a person gave. */
+const EXTERNAL_FACING = ['external_communication', 'mass_communication'];
+
+/** The external-facing classes a form sets to Auto. */
+function autoExternalClasses(form: PolicyForm): string[] {
+  return form.rules
+    .filter((r) => r.action === 'auto' && EXTERNAL_FACING.includes(r.riskClass.trim()))
+    .map((r) => riskClassLabel(r.riskClass.trim()));
+}
+
+/** An approver count the server will accept: a whole number of at least 1, or blank for 1. */
+function approverCountError(rule: RuleRow): string | undefined {
+  if (rule.action !== 'require_approval' || rule.approverCount.trim() === '') {
+    return undefined;
+  }
+  const n = Number(rule.approverCount);
+  return Number.isInteger(n) && n >= 1 ? undefined : 'Whole number, at least 1';
 }
 
 function scopeLabel(policy: AutonomyPolicy): string {
@@ -192,12 +203,20 @@ function PolicyModal({
   const update = useUpdateAutonomyPolicy();
   const [form, setForm] = useState<PolicyForm>(emptyForm());
   const [error, setError] = useState<string | null>(null);
+  const [confirmAuto, setConfirmAuto] = useState(false);
 
+  // Every time the modal opens it starts from the policy being edited, or a blank form: a
+  // cancelled draft must not come back on the next "New policy".
   useEffect(() => {
-    setForm(editing ? policyToForm(editing) : emptyForm());
-  }, [editing]);
+    if (open) {
+      setForm(editing ? policyToForm(editing) : emptyForm());
+      setError(null);
+      setConfirmAuto(false);
+    }
+  }, [editing, open]);
 
   const title = editing ? 'Edit autonomy policy' : 'New autonomy policy';
+  const autoExternal = autoExternalClasses(form);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -229,6 +248,22 @@ function PolicyModal({
       return;
     }
 
+    if (form.rules.some((r) => approverCountError(r))) {
+      setError('Approvers must be a whole number of at least 1.');
+      return;
+    }
+
+    // Letting runs message people outside the team without approval is a trust-boundary change:
+    // it is confirmed at the point of saving, not left to a banner far up the page.
+    if (autoExternal.length > 0) {
+      setConfirmAuto(true);
+      return;
+    }
+    await save();
+  }
+
+  async function save() {
+    setError(null);
     try {
       const body = formToBody(form);
       if (editing) {
@@ -348,7 +383,18 @@ function PolicyModal({
                   aria-label={i === 0 ? undefined : `Action, rule ${i + 1}`}
                   id={`rule-${r.id}-action`}
                   label={i === 0 ? 'Action' : undefined}
-                  onChange={(v) => setRuleField(i, { action: v as RuleRow['action'] })}
+                  onChange={(v) =>
+                    setRuleField(
+                      i,
+                      v === 'auto'
+                        ? // Auto carries no approver count; a stale one would read as if it applied.
+                          { action: 'auto', approverCount: '' }
+                        : {
+                            action: 'require_approval',
+                            approverCount: r.approverCount || '1',
+                          }
+                    )
+                  }
                   options={[
                     { label: 'Auto', value: 'auto' },
                     { label: 'Require approval', value: 'require_approval' },
@@ -358,24 +404,23 @@ function PolicyModal({
                 <Input
                   aria-label={i === 0 ? undefined : `Approvers, rule ${i + 1}`}
                   disabled={r.action !== 'require_approval'}
+                  error={approverCountError(r)}
                   id={`rule-${r.id}-approvers`}
                   label={i === 0 ? 'Approvers' : undefined}
                   min="1"
                   onChange={(e) => setRuleField(i, { approverCount: e.target.value })}
                   placeholder="1"
+                  step="1"
                   type="number"
                   value={r.approverCount}
                 />
-                <Button
+                <IconButton
                   aria-label={`Remove rule ${i + 1}`}
-                  className="h-9 px-0"
                   onClick={() => removeRule(i)}
-                  title="Remove rule"
-                  type="button"
-                  variant="ghost"
+                  size="md"
                 >
                   <Icon name="close" size={14} />
-                </Button>
+                </IconButton>
               </div>
             ))}
             <Button
@@ -394,6 +439,20 @@ function PolicyModal({
             <RiskClassGuide />
           </div>
         </Card>
+        {autoExternal.length > 0 && (
+          <Alert
+            title="This removes the approval step for messages leaving the team"
+            variant="warning"
+          >
+            {autoExternal.join(' and ')} {autoExternal.length === 1 ? 'is' : 'are'} set to Auto, so{' '}
+            {form.scope === 'global'
+              ? 'every run that no team or template policy covers'
+              : form.scope === 'team'
+                ? 'runs of this team that no template policy covers'
+                : 'runs of this template'}{' '}
+            can send messages outside the team without a person approving them.
+          </Alert>
+        )}
         {error && <Alert>{error}</Alert>}
         <ModalFooter
           isPending={create.isPending || update.isPending}
@@ -402,6 +461,15 @@ function PolicyModal({
           submitLabel={editing ? 'Save changes' : 'Create policy'}
         />
       </form>
+      <ConfirmModal
+        confirmLabel="Save with Auto"
+        dangerous
+        message={`This lets runs send messages outside the team without approval (${autoExternal.join(', ')}). A human-gate node in a workflow still waits for a person, but the policy will not.`}
+        onClose={() => setConfirmAuto(false)}
+        onConfirm={() => save()}
+        open={confirmAuto}
+        title="Allow messages without approval?"
+      />
     </Modal>
   );
 }
@@ -447,6 +515,37 @@ export default function AutonomyPoliciesPage() {
     () => [...(policies ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
     [policies]
   );
+  // Most specific first: that is the order a run resolves them in, and policies are not merged.
+  const groups = useMemo(() => {
+    const kind = (p: AutonomyPolicy): 'template' | 'team' | 'global' =>
+      p.templateId ? 'template' : p.teamId ? 'team' : 'global';
+    const defs = [
+      {
+        hint: 'Wins for runs of that template. Beats a team or global policy.',
+        kind: 'template',
+        title: 'Template overrides',
+      },
+      {
+        hint: 'Wins for that team’s runs the template overrides do not cover.',
+        kind: 'team',
+        title: 'Team defaults',
+      },
+      {
+        hint: 'Covers every run that no team or template policy matches.',
+        kind: 'global',
+        title: 'Global defaults',
+      },
+    ] as const;
+    return defs
+      .map((d) => {
+        const items = sorted.filter((p) => kind(p) === d.kind);
+        // Two global policies, or two for the same team or template, are ambiguous: flag them.
+        const scopeKeys = items.map((p) => p.templateId ?? p.teamId ?? 'global');
+        const dupes = new Set(scopeKeys.filter((k, i) => scopeKeys.indexOf(k) !== i));
+        return { ...d, dupes, items };
+      })
+      .filter((g) => g.items.length > 0);
+  }, [sorted]);
 
   function startEdit(policy: AutonomyPolicy) {
     setEditing(policy);
@@ -541,78 +640,101 @@ export default function AutonomyPoliciesPage() {
             title="No autonomy policies yet"
           />
         ) : (
-          <ul className="space-y-3">
-            {sorted.map((p) => {
-              const rules = Object.entries(p.rules);
-              return (
-                <li key={p.id}>
-                  <Card className="p-4 sm:p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h2 className="text-base font-semibold text-paper-50">{p.name}</h2>
-                          <Badge
-                            tone={p.template ? 'accent2' : p.team ? 'info' : 'neutral'}
-                            variant="outline"
-                          >
-                            {scopeLabel(p)}
-                          </Badge>
-                        </div>
-                        {p.description && <p className="text-sm text-paper-400">{p.description}</p>}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        <Button onClick={() => startEdit(p)} size="sm" variant="secondary">
-                          Edit
-                        </Button>
-                        <ActionMenu
-                          items={[
-                            {
-                              disabled: deletePolicy.isPending,
-                              icon: 'trash',
-                              id: 'delete',
-                              label: 'Delete policy',
-                              onAction: () => setDeleteTarget(p),
-                              tone: 'danger',
-                            },
-                          ]}
-                          label={`More actions for ${p.name}`}
-                        />
-                      </div>
-                    </div>
-                    {rules.length > 0 ? (
-                      <ul aria-label="Rules" className="mt-3 flex flex-wrap gap-2">
-                        {rules.map(([riskClass, rule]) => (
-                          <li
-                            className="inline-flex items-center gap-2 rounded-md border border-ink-500 bg-ink-900/50 py-1 pr-1.5 pl-2.5 text-xs"
-                            key={riskClass}
-                            title={ruleSummary({ [riskClass]: rule })[0]}
-                          >
-                            <span className="text-paper-200">{riskClassLabel(riskClass)}</span>
-                            {rule.action === 'auto' ? (
-                              <Badge tone="success">Automatic</Badge>
-                            ) : (
-                              <Badge tone="warning">
-                                {(rule.approverCount ?? 1) === 1
-                                  ? '1 approver'
-                                  : `${rule.approverCount} approvers`}
-                              </Badge>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="mt-3 text-xs text-paper-500">
-                        No rules — every risk class requires approval.
-                      </p>
-                    )}
-                    <p className="mt-3 text-xs text-paper-500">
-                      Updated <RelativeTime value={p.updatedAt} />
-                    </p>
-                  </Card>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="space-y-6">
+            {groups.map((g) => (
+              <section aria-label={g.title} key={g.kind}>
+                <h2 className="text-sm font-semibold text-paper-100">{g.title}</h2>
+                <p className="mt-0.5 mb-3 text-xs text-paper-500">{g.hint}</p>
+                <ul className="space-y-3">
+                  {g.items.map((p) => {
+                    const rules = Object.entries(p.rules);
+                    const duplicate = g.dupes.has(p.templateId ?? p.teamId ?? 'global');
+                    return (
+                      <li key={p.id}>
+                        <Card className="p-4 sm:p-5">
+                          <div className="flex flex-wrap items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h2 className="text-base font-semibold text-paper-50">{p.name}</h2>
+                                <Badge
+                                  tone={p.template ? 'accent2' : p.team ? 'info' : 'neutral'}
+                                  variant="outline"
+                                >
+                                  {scopeLabel(p)}
+                                </Badge>
+                                {duplicate && (
+                                  <Badge tone="warning" variant="outline">
+                                    Another policy has the same scope
+                                  </Badge>
+                                )}
+                              </div>
+                              {p.description && (
+                                <p className="text-sm text-paper-400">{p.description}</p>
+                              )}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <Button onClick={() => startEdit(p)} size="sm" variant="secondary">
+                                Edit
+                              </Button>
+                              <ActionMenu
+                                items={[
+                                  {
+                                    disabled: deletePolicy.isPending,
+                                    icon: 'trash',
+                                    id: 'delete',
+                                    label: 'Delete policy',
+                                    onAction: () => setDeleteTarget(p),
+                                    tone: 'danger',
+                                  },
+                                ]}
+                                label={`More actions for ${p.name}`}
+                              />
+                            </div>
+                          </div>
+                          {rules.length > 0 ? (
+                            <ul aria-label="Rules" className="mt-3 flex flex-wrap gap-2">
+                              {rules.map(([riskClass, rule]) => (
+                                <li
+                                  className="inline-flex items-center gap-2 rounded-md border border-ink-500 bg-ink-900/50 py-1 pr-1.5 pl-2.5 text-xs"
+                                  key={riskClass}
+                                >
+                                  <span className="text-paper-200">
+                                    {riskClassLabel(riskClass)}
+                                  </span>
+                                  {rule.action === 'auto' ? (
+                                    <Badge
+                                      tone={
+                                        EXTERNAL_FACING.includes(riskClass) ? 'warning' : 'neutral'
+                                      }
+                                    >
+                                      Automatic
+                                    </Badge>
+                                  ) : (
+                                    <Badge tone="warning">
+                                      {(rule.approverCount ?? 1) === 1
+                                        ? '1 approver'
+                                        : `${rule.approverCount} approvers`}
+                                    </Badge>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p className="mt-3 text-xs text-paper-500">
+                              No rules — every risk class requires approval.
+                            </p>
+                          )}
+                          <p className="mt-3 text-xs text-paper-500">
+                            Updated <RelativeTime value={p.updatedAt} />
+                          </p>
+                        </Card>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))}
+          </div>
         )}
       </QueryBoundary>
 
@@ -628,7 +750,11 @@ export default function AutonomyPoliciesPage() {
       <ConfirmModal
         confirmLabel="Delete"
         dangerous
-        message={`Delete the "${deleteTarget?.name}" autonomy policy? This cannot be undone.`}
+        message={
+          deleteTarget
+            ? `Delete the "${deleteTarget.name}" autonomy policy? Runs it covered fall back to the next broader policy (team, then global), or to the built-in rules if there is none. This cannot be undone.`
+            : ''
+        }
         onClose={() => setDeleteTarget(null)}
         onConfirm={async () => {
           if (deleteTarget) {

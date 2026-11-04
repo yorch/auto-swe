@@ -59,6 +59,20 @@ export default function GovernWorkflowPage() {
       </Alert>
       <div className="grid gap-10 xl:grid-cols-[minmax(0,56rem)_200px]">
         <div className="min-w-0 space-y-6">
+          <nav aria-label="On this page" className="xl:hidden">
+            <ul className="flex gap-2 overflow-x-auto pb-1">
+              {SECTIONS.map((s) => (
+                <li className="shrink-0" key={s.id}>
+                  <a
+                    className={`inline-flex rounded-full border border-ink-400 px-3 py-1 text-sm text-paper-300 hover:text-paper-100 pointer-coarse:min-h-11 pointer-coarse:items-center ${FOCUS_RING}`}
+                    href={`#${s.id}`}
+                  >
+                    {s.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
           <Section id="defaults">
             <WorkflowDefaultsForm />
           </Section>
@@ -72,7 +86,7 @@ export default function GovernWorkflowPage() {
             <CanaryForm />
           </Section>
         </div>
-        <nav aria-label="On this page" className="hidden xl:block">
+        <nav aria-label="On this page (side)" className="hidden xl:block">
           <div className="sticky top-6">
             <p className="mb-3 text-xs font-medium text-paper-500">On this page</p>
             <ul className="space-y-0.5 border-l border-ink-500">

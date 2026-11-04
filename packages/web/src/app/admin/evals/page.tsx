@@ -61,11 +61,10 @@ function ChangeCell({ value }: { value: number | null }) {
   }
   const up = value > 0;
   return (
-    <span
-      className={cn('text-sm tabular-nums', up ? 'text-success-400' : 'text-danger-400')}
-      title="Latest day's mean minus the first day's mean in this window"
-    >
-      {up ? '▲' : '▼'} {up ? '+' : '−'}
+    <span className={cn('text-sm tabular-nums', up ? 'text-success-400' : 'text-danger-400')}>
+      <span aria-hidden>{up ? '▲' : '▼'} </span>
+      <span className="sr-only">{up ? 'Improved by ' : 'Worsened by '}</span>
+      <span aria-hidden>{up ? '+' : '−'}</span>
       {Math.abs(value).toFixed(2)}
     </span>
   );
@@ -125,8 +124,28 @@ function EvalsWorkspace() {
         >
           {scorer ? <span className="font-mono">{scorer}</span> : 'Scorer trends'}
         </CardTitle>
-        <span className="text-xs text-paper-500">Score 0–1, higher is better</span>
+        <span className="text-xs text-paper-500">
+          Score 0–1, higher is better · filters and date range apply to trends only
+        </span>
       </CardHeader>
+      {/* These two narrow the trend chart and table below, not Latest runs, Datasets, Suite health
+          or Results. The date range in the header is the same: it applies to trends only. */}
+      <Toolbar>
+        <Select
+          appearance="pill"
+          aria-label="Workflow template (trends)"
+          onChange={(v) => update({ template: v || null })}
+          options={templateOptions}
+          value={templateId}
+        />
+        <span className="ml-1 text-xs text-paper-500">Break down by</span>
+        <SegmentedControl
+          ariaLabel="Break trends down by"
+          onChange={(v) => update({ by: v || null })}
+          options={BREAKDOWN_OPTIONS}
+          value={by}
+        />
+      </Toolbar>
       <QueryBoundary
         error={trendsQuery.error}
         isError={trendsQuery.isError}
@@ -167,6 +186,7 @@ function EvalsWorkspace() {
             <div className="-mx-4">
               <p className="mb-2 px-4 text-xs text-paper-500">
                 Choose a scorer to chart it. The one that fell furthest is charted until you do.
+                Change is the latest day&apos;s mean minus the first day&apos;s mean in this window.
               </p>
               <Table>
                 <THead>
@@ -203,7 +223,6 @@ function EvalsWorkspace() {
                               selected ? 'text-accent-300' : 'text-paper-200'
                             )}
                             onClick={() => update({ scorer: t.scorer })}
-                            title="Chart this scorer"
                             type="button"
                           >
                             <span
@@ -264,23 +283,6 @@ function EvalsWorkspace() {
         title="Evals"
       />
 
-      <Toolbar>
-        <Select
-          appearance="pill"
-          aria-label="Workflow template"
-          onChange={(v) => update({ template: v || null })}
-          options={templateOptions}
-          value={templateId}
-        />
-        <span className="ml-1 text-xs text-paper-500">Break down by</span>
-        <SegmentedControl
-          ariaLabel="Break trends down by"
-          onChange={(v) => update({ by: v || null })}
-          options={BREAKDOWN_OPTIONS}
-          value={by}
-        />
-      </Toolbar>
-
       {trendCard}
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -312,7 +314,7 @@ function EvalsWorkspace() {
                         <span className="block truncate text-sm font-medium text-paper-100">
                           {r.datasetName ?? r.datasetSlug ?? 'Benchmark'}
                         </span>
-                        <span className="block truncate font-mono text-xs text-paper-500">
+                        <span className="block break-all font-mono text-xs text-paper-500">
                           {formatArm(r.candidateRef, r.candidateRuntime)} vs{' '}
                           {formatArm(r.baselineRef, r.baselineRuntime)}
                         </span>

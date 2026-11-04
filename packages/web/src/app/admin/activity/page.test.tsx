@@ -54,4 +54,48 @@ describe('UserActivityPage', () => {
       spy.mock.calls.map(([u]) => String(u)).some((u) => u.includes('/activity/summary'))
     ).toBe(true);
   });
+
+  it('shows an error, not zeros, when the summary cannot be loaded', async () => {
+    const fetchSpy = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/activity/summary')) {
+        return new Response(JSON.stringify({ error: { message: 'boom' } }), {
+          headers: { 'content-type': 'application/json' },
+          status: 500,
+        });
+      }
+      return new Response(JSON.stringify({ data: [], meta: { limit: 50, offset: 0, total: 0 } }), {
+        headers: { 'content-type': 'application/json' },
+        status: 200,
+      });
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    render(withQuery(<UserActivityPage />));
+    expect(
+      await screen.findByText(/could not be loaded, so the counts below are unknown/)
+    ).toBeTruthy();
+    // The tiles read as unknown, never as a clean zero.
+    expect(screen.queryByText('0')).toBeNull();
+    expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('raises dropped events as a warning', async () => {
+    setupFetchMock({
+      'GET /api/v1/platform/activity': () => ({
+        data: [],
+        meta: { limit: 50, offset: 0, total: 0 },
+      }),
+      'GET /api/v1/platform/activity/summary': () => ({
+        daily: [],
+        days: 14,
+        dropped: 4,
+        retentionDays: 90,
+        topDenied: [],
+        totals: { denied: 0, export: 0, read: 0, ui: 0 },
+        uiEventsEnabled: true,
+      }),
+    });
+    render(withQuery(<UserActivityPage />));
+    expect(await screen.findByText('Some events were not recorded')).toBeTruthy();
+  });
 });

@@ -1133,7 +1133,7 @@ LEAD or ORG_ADMIN sees names only, and only for launchers who belong to the team
 report is scoped to; every other launcher is folded into one unnamed `outsideScope` row so a scoped
 report does not reveal who else spends elsewhere.
 
-`/admin/usage` renders it as a "Top 10 users" table: the name, and the email only when the API sent
+`/admin/usage` renders it as a "Top N users" table, N being the rows the API returned: the name, and the email only when the API sent
 one, with "Unknown user" for a launcher without a name, an "Outside this scope" row, and a line for
 the unattributed spend. Only the top ten are named, so the rows and that line do not add up to the
 headline spend.

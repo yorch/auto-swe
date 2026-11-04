@@ -72,7 +72,8 @@ describe('GovernSecurityPage', () => {
     // Blocked and advisory are separate groups; the blocked group shows its trend.
     expect(screen.getByText('Blocked')).toBeTruthy();
     expect(screen.getByText('Advisory')).toBeTruthy();
-    expect(screen.getAllByText('Total')).toHaveLength(2);
+    expect(screen.getByText('Blocked events')).toBeTruthy();
+    expect(screen.getByText('Advisory findings')).toBeTruthy();
     expect(screen.getByText(/\+17% vs previous 30 days/)).toBeTruthy();
   });
 
@@ -102,5 +103,30 @@ describe('GovernSecurityPage', () => {
         true
       )
     );
+  });
+
+  it('shows an error with a retry, not skeletons, when the summary fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes('/security-events/summary')) {
+          return new Response(JSON.stringify({ error: { message: 'nope' } }), {
+            headers: { 'content-type': 'application/json' },
+            status: 500,
+          });
+        }
+        return new Response(
+          JSON.stringify({ data: [], meta: { limit: 50, offset: 0, total: 0 } }),
+          {
+            headers: { 'content-type': 'application/json' },
+            status: 200,
+          }
+        );
+      })
+    );
+    render(withQuery(<GovernSecurityPage />));
+    expect(await screen.findByText(/security summary could not be loaded/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
   });
 });

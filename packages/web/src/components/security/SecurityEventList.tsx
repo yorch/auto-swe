@@ -221,33 +221,33 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
   const { primary, secondary } = extractDetail(event);
   const detail = expandedDetail(event);
   const summary = (
-    <div className="flex min-w-0 items-center gap-2.5 text-xs">
-      {detail ? (
-        <Icon
-          className={cn(
-            'shrink-0 text-paper-500 transition-transform',
-            expanded && 'rotate-90 text-paper-300'
-          )}
-          name="chevronRight"
-          size={14}
-        />
-      ) : (
-        <span aria-hidden className="w-3.5 shrink-0" />
-      )}
-      <SecurityEventBadge type={event.eventType} />
-      <span className="min-w-0 truncate font-mono text-sm text-paper-100">{primary}</span>
-      {secondary && (
-        <span className="hidden min-w-0 truncate font-mono text-paper-500 sm:block">
-          {secondary}
-        </span>
-      )}
-      <time
-        className="ml-auto shrink-0 whitespace-nowrap text-paper-500 tabular-nums"
-        dateTime={event.createdAt}
-        title={formatDate(event.createdAt, { showSeconds: true })}
-      >
-        {formatRelativeTime(event.createdAt)}
-      </time>
+    <div className="min-w-0 text-xs">
+      <div className="flex min-w-0 items-start gap-2.5">
+        {detail ? (
+          <Icon
+            className={cn(
+              'mt-0.5 shrink-0 text-paper-500 transition-transform',
+              expanded && 'rotate-90 text-paper-300'
+            )}
+            name="chevronRight"
+            size={14}
+          />
+        ) : (
+          <span aria-hidden className="w-3.5 shrink-0" />
+        )}
+        <SecurityEventBadge type={event.eventType} />
+        {/* Wraps instead of truncating: the path or command is what an admin triages by. */}
+        <span className="min-w-0 flex-1 break-all font-mono text-sm text-paper-100">{primary}</span>
+        <time
+          className="shrink-0 whitespace-nowrap text-paper-500 tabular-nums"
+          dateTime={event.createdAt}
+          title={formatDate(event.createdAt, { showSeconds: true })}
+        >
+          {formatRelativeTime(event.createdAt)}
+        </time>
+      </div>
+      {/* The rule or pattern that fired, on every screen size: it says why this was stopped. */}
+      {secondary && <p className="mt-1 break-words pl-6 font-mono text-paper-400">{secondary}</p>}
     </div>
   );
 
@@ -282,9 +282,10 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
             </Link>
           ) : (
             // Runs that keep no run record (evals, workflow authoring) have no page to link to.
-            <span className="font-mono text-paper-500" title="No run page for this activity">
-              {event.workflowId}
-            </span>
+            <>
+              <span className="font-mono text-paper-500">{event.workflowId}</span>
+              <span className="text-paper-500">(no run page for this activity)</span>
+            </>
           )}
           <span aria-hidden className="text-paper-600">
             ·

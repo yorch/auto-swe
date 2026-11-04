@@ -10,6 +10,7 @@ import {
   YAxis,
 } from 'recharts';
 import { useTokens } from '@/hooks/useTokens';
+import { useThemeStore } from '@/stores/themeStore';
 import {
   AXIS_COMMON_PROPS,
   axisLabel,
@@ -24,7 +25,7 @@ import {
   LINE_WIDTH,
   legendText,
 } from './chartChrome';
-import { trendColors } from './colors';
+import { TREND_DASHES, trendColors } from './colors';
 
 interface Props {
   data: { date: string; completed: number; failed: number; active: number }[];
@@ -33,7 +34,8 @@ interface Props {
 }
 
 export function WorkflowsOverTimeChart({ data, title }: Props) {
-  const trend = trendColors(useTokens());
+  const theme = useThemeStore((s) => s.resolved);
+  const trend = trendColors(theme, useTokens());
   if (data.every((d) => d.completed === 0 && d.failed === 0 && d.active === 0)) {
     return (
       <EmptyChart hint="Try a wider date range, or start work." label="No runs in this range." />
@@ -82,8 +84,9 @@ export function WorkflowsOverTimeChart({ data, title }: Props) {
             name="Completed"
             stackId="1"
             stroke={trend.completed}
+            strokeDasharray={TREND_DASHES.completed}
             strokeWidth={LINE_WIDTH}
-            type="monotone"
+            type="linear"
           />
           <Area
             dataKey="failed"
@@ -92,8 +95,9 @@ export function WorkflowsOverTimeChart({ data, title }: Props) {
             name="Failed"
             stackId="1"
             stroke={trend.failed}
+            strokeDasharray={TREND_DASHES.failed}
             strokeWidth={LINE_WIDTH}
-            type="monotone"
+            type="linear"
           />
           <Area
             dataKey="active"
@@ -102,8 +106,9 @@ export function WorkflowsOverTimeChart({ data, title }: Props) {
             name="Active"
             stackId="1"
             stroke={trend.active}
+            strokeDasharray={TREND_DASHES.active}
             strokeWidth={LINE_WIDTH}
-            type="monotone"
+            type="linear"
           />
         </AreaChart>
       </ResponsiveContainer>

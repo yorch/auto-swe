@@ -15,9 +15,11 @@ import { ApiError, api } from '@/lib/api';
 import {
   customRangeIgnored,
   dateRangePatch,
+  dayRange,
   parseDateRange,
   rangeKey,
   rangeQuery,
+  utcDay,
 } from '@/lib/dateRange';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { DigestsTab } from './DigestsTab';
@@ -47,7 +49,9 @@ function ReportsWorkspace() {
   const activeTab = selectedTab(params.get('tab'));
   const activeDefinition = TABS.find((tab) => tab.id === activeTab) ?? TABS[0];
   const query = new URLSearchParams(rangeQuery(range));
-  const teamId = params.get('teamId') ?? '';
+  // The Team filter is not offered on the Budget tab, so a `teamId` left in the URL from another
+  // tab must not narrow it invisibly.
+  const teamId = activeTab === 'budget' ? '' : (params.get('teamId') ?? '');
   if (teamId) {
     query.set('teamId', teamId);
   }
@@ -58,7 +62,9 @@ function ReportsWorkspace() {
         .get<{ data: ReportTabData }>(`/api/v1/reports/${activeTab}?${query}`)
         .then((response) => response.data),
     queryKey: ['reports', activeTab, rangeKey(range), teamId],
-    refetchInterval: 30_000,
+    // Only a range that still includes today can change underneath the reader; a fixed past
+    // range does not need to re-render under the cursor every 30 seconds.
+    refetchInterval: dayRange(range).to >= utcDay(new Date()) ? 30_000 : false,
   });
 
   function exportCsv() {
@@ -73,7 +79,13 @@ function ReportsWorkspace() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = activeDefinition.filename;
+    // Name the range and team in the file, so two exports are told apart on disk.
+    const days = dayRange(range);
+    const team = teamId ? `-team-${teamId.slice(0, 8)}` : '';
+    link.download = activeDefinition.filename.replace(
+      /\.csv$/,
+      `-${days.from}-to-${days.to}${team}.csv`
+    );
     link.click();
     URL.revokeObjectURL(url);
   }
@@ -84,14 +96,22 @@ function ReportsWorkspace() {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             {activeTab !== 'digests' && (
-              <Button
-                disabled={!reportQuery.data}
-                onClick={exportCsv}
-                size="sm"
-                variant="secondary"
-              >
-                Export CSV
-              </Button>
+              <>
+                <Button
+                  aria-describedby={reportQuery.data ? undefined : 'export-unavailable'}
+                  disabled={!reportQuery.data}
+                  onClick={exportCsv}
+                  size="sm"
+                  variant="secondary"
+                >
+                  Export CSV
+                </Button>
+                {!reportQuery.data && (
+                  <span className="sr-only" id="export-unavailable">
+                    Export is unavailable until the report loads.
+                  </span>
+                )}
+              </>
             )}
             {activeTab !== 'digests' && (
               <DateRangeControl
