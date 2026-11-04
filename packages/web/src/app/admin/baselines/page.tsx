@@ -15,6 +15,7 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
+import { IconButton } from '@/components/ui/IconButton';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -42,12 +43,25 @@ function domainLabel(domain: string): string {
   return isWorkspaceProviderType(domain) ? getWorkspaceProviderMetadata(domain).label : domain;
 }
 
+/** A baseline as a person would name it: its domain, and its outcome type when it has one. */
+function baselineName(b: { domain: string; outcomeType: string | null }): string {
+  return b.outcomeType ? `${domainLabel(b.domain)} / ${b.outcomeType}` : domainLabel(b.domain);
+}
+
 type BaselineForm = {
   domain: string;
   errorCount: string;
   outcomeType: string;
   orgId: string;
   sampleSize: string;
+};
+
+const EMPTY_BASELINE_FORM: BaselineForm = {
+  domain: '',
+  errorCount: '',
+  orgId: '',
+  outcomeType: '',
+  sampleSize: '',
 };
 
 function CreateBaselineModal({
@@ -59,13 +73,7 @@ function CreateBaselineModal({
   open: boolean;
   orgs: { id: string; name: string }[];
 }) {
-  const [form, setForm] = useState<BaselineForm>({
-    domain: '',
-    errorCount: '',
-    orgId: '',
-    outcomeType: '',
-    sampleSize: '',
-  });
+  const [form, setForm] = useState<BaselineForm>(EMPTY_BASELINE_FORM);
   // Falls back to the first org until one is picked. Derived, not seeded into
   // state: the modal mounts before `orgs` loads, so a seeded value stayed ''
   // and the request went out without an org.
@@ -79,9 +87,20 @@ function CreateBaselineModal({
       ? errorN / sampleN
       : null;
 
+  /** Closing starts the next "New baseline" from a blank form with no stale error. */
+  function close() {
+    setForm(EMPTY_BASELINE_FORM);
+    setError(null);
+    onClose();
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!orgId) {
+      setError('Choose an organization');
+      return;
+    }
     if (!form.domain) {
       setError('Choose a domain');
       return;
@@ -108,23 +127,20 @@ function CreateBaselineModal({
         outcomeType: form.outcomeType.trim() || null,
         sampleSize,
       });
-      onClose();
-      setForm({
-        domain: '',
-        errorCount: '',
-        orgId: '',
-        outcomeType: '',
-        sampleSize: '',
-      });
+      close();
     } catch (err) {
       setError(errMsg(err, 'Failed to create baseline'));
     }
   }
 
   return (
-    <Modal onClose={onClose} open={open} title="New human error baseline">
+    <Modal onClose={close} open={open} title="New human error baseline">
       <form className="space-y-4" onSubmit={handleSubmit}>
-        {error && <Alert>{error}</Alert>}
+        {orgs.length === 0 && (
+          <Alert variant="warning">
+            You do not belong to an organization, so a baseline cannot be recorded for one.
+          </Alert>
+        )}
         <Combobox
           id="baseline-org"
           label="Organization"
@@ -181,9 +197,10 @@ function CreateBaselineModal({
             </span>
           </p>
         )}
+        {error && <Alert>{error}</Alert>}
         <ModalFooter
-          isPending={create.isPending}
-          onCancel={onClose}
+          isPending={create.isPending || orgs.length === 0}
+          onCancel={close}
           pendingLabel="Creating…"
           submitLabel="Create baseline"
         />
@@ -195,7 +212,12 @@ function CreateBaselineModal({
 export default function GovernBaselinesPage() {
   const [newOpen, setNewOpen] = useState(false);
   const [selectedOrgId, setSelectedOrgId] = useState<string>('all');
-  const [deleteTarget, setDeleteTarget] = useState<{ id: string; domain: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    domain: string;
+    outcomeType: string | null;
+    sampleSize: number;
+  } | null>(null);
   const deleteBaseline = useDeleteHumanErrorBaseline();
   const {
     data: orgs,
@@ -280,16 +302,12 @@ export default function GovernBaselinesPage() {
             <div className="-mx-4">
               <DataTable
                 actions={(b) => (
-                  <Button
-                    aria-label={`Delete ${domainLabel(b.domain)} baseline`}
-                    className="px-2 text-paper-500 hover:text-danger-400"
+                  <IconButton
+                    aria-label={`Delete ${baselineName(b)} baseline`}
                     onClick={() => setDeleteTarget(b)}
-                    size="sm"
-                    title="Delete baseline"
-                    variant="ghost"
                   >
                     <Icon name="trash" size={14} />
-                  </Button>
+                  </IconButton>
                 )}
                 className="max-sm:px-4"
                 columns={[
@@ -309,12 +327,8 @@ export default function GovernBaselinesPage() {
                     cell: (b) => (
                       <span className="inline-flex items-center justify-end gap-2 tabular-nums">
                         {b.sampleSize < MIN_BASELINE_SAMPLE && (
-                          <Badge
-                            title={`Analytics compares only from ${MIN_BASELINE_SAMPLE} cases`}
-                            tone="warning"
-                            variant="outline"
-                          >
-                            Too small to compare
+                          <Badge tone="warning" variant="outline">
+                            Too small to compare (needs {MIN_BASELINE_SAMPLE})
                           </Badge>
                         )}
                         {b.sampleSize}
@@ -372,7 +386,11 @@ export default function GovernBaselinesPage() {
       <ConfirmModal
         confirmLabel="Delete"
         dangerous
-        message="This will remove the recorded baseline. It cannot be undone."
+        message={
+          deleteTarget
+            ? `This removes the ${baselineName(deleteTarget)} baseline (${deleteTarget.sampleSize} cases). Analytics stops comparing agent runs against it. It cannot be undone.`
+            : ''
+        }
         onClose={() => setDeleteTarget(null)}
         onConfirm={async () => {
           if (deleteTarget) {
@@ -381,7 +399,9 @@ export default function GovernBaselinesPage() {
         }}
         open={deleteTarget !== null}
         pendingLabel="Deleting…"
-        title={`Delete "${domainLabel(deleteTarget?.domain ?? '')}" baseline?`}
+        title={
+          deleteTarget ? `Delete "${baselineName(deleteTarget)}" baseline?` : 'Delete baseline?'
+        }
       />
     </div>
   );

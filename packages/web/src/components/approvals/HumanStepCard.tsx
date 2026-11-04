@@ -3,7 +3,7 @@
 import type { HumanStepSummary } from '@auto-swe/shared/types/api';
 import { approvalAllowsRequestChanges } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -18,6 +18,7 @@ import { useRespondToApproval } from '@/hooks/useApprovals';
 import { errMsg } from '@/lib/errors';
 import { requestHref } from '@/lib/requestDisplay';
 import { cn, FOCUS_RING, formatDate, formatDuration, formatRelativeTime } from '@/lib/utils';
+import { respondLabel, summarizeContext } from './contextSummary';
 import { DiffRenderer } from './DiffRenderer';
 
 const KIND_LABEL: Record<string, string> = {
@@ -76,7 +77,7 @@ const KIND_TONE: Record<string, BadgeTone> = {
 
 const STATUS_TONE: Record<string, BadgeTone> = {
   RESOLVED: 'success',
-  TIMED_OUT: 'muted',
+  TIMED_OUT: 'warning',
 };
 
 /** `TIMED_OUT` → "Timed out". */
@@ -219,14 +220,46 @@ function approveConsequence(step: HumanStepSummary): string {
   return 'The run continues to the next step.';
 }
 
+/** What a recorded answer is called in the confirmation the inbox announces. */
+const ANSWERED_LABEL: Record<string, string> = {
+  approve: 'Approved',
+  reject: 'Rejected',
+  request_changes: 'Changes requested',
+  select: 'Choice recorded for',
+  submit: 'Response submitted for',
+};
+
+/** Re-renders on an interval, so a deadline countdown and its colour do not go stale. */
+function useTick(active: boolean, intervalMs = 30_000) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    const timer = setInterval(() => setTick((n) => n + 1), intervalMs);
+    return () => clearInterval(timer);
+  }, [active, intervalMs]);
+}
+
 export interface HumanStepCardProps {
   step: HumanStepSummary;
   showRunLink?: boolean;
+  /** Open the response form at first render: the inbox does so when only one step is waiting. */
+  defaultExpanded?: boolean;
+  /** Called once an answer is recorded, with a sentence saying what was recorded. */
+  onAnswered?: (message: string) => void;
 }
 
-export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) {
+export function HumanStepCard({
+  step,
+  showRunLink = true,
+  defaultExpanded = false,
+  onAnswered,
+}: HumanStepCardProps) {
   const respond = useRespondToApproval();
-  const [expanded, setExpanded] = useState(false);
+  useTick(step.status === 'PENDING' && !!step.timeoutAt);
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const [choice, setChoice] = useState<DecisionOption | null>(null);
   const [inputValues, setInputValues] = useState<Record<string, unknown>>({});
   const [inputError, setInputError] = useState<string | null>(null);
   const [reviewText, setReviewText] = useState('');
@@ -260,7 +293,11 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
           inFlight.current = false;
           setPendingAction(null);
         },
-        onSuccess: () => setExpanded(false),
+        onSuccess: () => {
+          setExpanded(false);
+          setChoice(null);
+          onAnswered?.(`${ANSWERED_LABEL[action] ?? 'Answered'} “${step.title}”.`);
+        },
       }
     );
   }
@@ -289,6 +326,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
       setDialog(null);
       setComment('');
       setExpanded(false);
+      onAnswered?.(`${ANSWERED_LABEL[action] ?? 'Answered'} “${step.title}”.`);
     } catch (err) {
       setDialogError(errMsg(err, 'Submission failed. Please try again.'));
     } finally {
@@ -314,6 +352,8 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
   const settled = step.status !== 'PENDING' ? settledBadge(step) : null;
   const request = requestLabel(step.run.workRequest);
   const requestedAt = new Date(step.requestedAt);
+  // What a person would decide on, shown before the card is opened.
+  const excerpt = step.status === 'PENDING' && !expanded ? summarizeContext(contextStr) : null;
 
   return (
     <Card className="space-y-3 p-4" variant="inset">
@@ -329,6 +369,14 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-paper-400">
               {step.description}
             </div>
+          )}
+          {excerpt && (
+            <p
+              className="mt-1.5 line-clamp-2 break-words rounded-md border border-ink-600/60 bg-ink-900/60 px-2.5 py-1.5 font-mono text-xs text-paper-300"
+              data-testid="step-context-excerpt"
+            >
+              {excerpt}
+            </p>
           )}
           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-paper-500">
             <span
@@ -400,7 +448,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             </Badge>
           )}
           {expired && (
-            <Badge className="shrink-0" tone="muted">
+            <Badge className="shrink-0" dot tone="danger">
               Expired
             </Badge>
           )}
@@ -417,11 +465,18 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
               size="sm"
               variant={expanded ? 'ghost' : 'secondary'}
             >
-              {expanded ? 'Collapse' : 'Respond'}
+              {expanded ? 'Collapse' : respondLabel(step.kind)}
             </Button>
           )}
         </div>
       </div>
+
+      {expired && (
+        <p className="text-xs text-paper-400">
+          The deadline passed with no answer. The run follows this step’s timeout route, so it can
+          no longer be answered here.
+        </p>
+      )}
 
       {responses.length > 0 && (
         <ul className="space-y-2 border-t border-ink-600 pt-3 text-sm">
@@ -455,7 +510,9 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
         <div className="space-y-4 border-t border-ink-600 pt-4">
           {/* A failed approve or reject is already shown inside its dialog. */}
           {respond.isError &&
-            !['approve', 'reject', 'request_changes'].includes(respond.variables?.action ?? '') && (
+            !['approve', 'reject', 'request_changes', 'select'].includes(
+              respond.variables?.action ?? ''
+            ) && (
               <Alert variant="error">
                 {respond.error?.message ?? 'Submission failed. Please try again.'}
               </Alert>
@@ -519,13 +576,17 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
               <div className="flex flex-wrap gap-2">
                 {step.options.map((opt) => (
                   <Button
+                    className="h-[40px] lg:h-8"
                     disabled={respond.isPending}
                     key={opt.value}
-                    onClick={() => handleRespond('select', opt.value)}
+                    onClick={() => {
+                      respond.reset();
+                      setChoice(opt);
+                    }}
                     size="sm"
                     variant="secondary"
                   >
-                    {respond.isPending && pendingAction === opt.value ? 'Submitting…' : opt.label}
+                    {opt.label}
                   </Button>
                 ))}
               </div>
@@ -585,6 +646,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                 );
               })}
               <Button
+                className="h-[40px] lg:h-8"
                 disabled={respond.isPending}
                 onClick={() => {
                   setInputError(null);
@@ -644,6 +706,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                   value={reviewText}
                 />
                 <Button
+                  className="h-[40px] lg:h-8"
                   disabled={respond.isPending}
                   onClick={() => handleRespond('submit', reviewText)}
                   size="sm"
@@ -656,6 +719,28 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
           )}
         </div>
       )}
+
+      <Modal
+        dismissible={pendingAction === null}
+        onClose={() => setChoice(null)}
+        open={choice !== null}
+        title={choice ? `Choose “${choice.label}”?` : 'Choose'}
+      >
+        <p className="text-sm text-paper-400">
+          The run takes the path for “{choice?.label}” and continues from there. Your choice is
+          recorded and cannot be undone.
+        </p>
+        {respond.isError && respond.variables?.action === 'select' && (
+          <Alert>{respond.error?.message ?? 'Submission failed. Please try again.'}</Alert>
+        )}
+        <ModalFooter
+          isPending={pendingAction !== null && pendingAction === choice?.value}
+          onCancel={() => setChoice(null)}
+          onSubmit={() => choice && handleRespond('select', choice.value)}
+          pendingLabel="Submitting…"
+          submitLabel={choice ? `Choose “${choice.label}”` : 'Choose'}
+        />
+      </Modal>
 
       <Modal
         dismissible={pendingAction === null}

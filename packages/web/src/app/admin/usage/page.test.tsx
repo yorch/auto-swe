@@ -130,24 +130,30 @@ describe('UsagePage', () => {
   });
 
   it('breaks spend down over one table, switched by a control, naming spend no team owns', () => {
-    render(<UsagePage />);
+    const { rerender } = render(<UsagePage />);
 
     // The default breakdown is by model; unresolved models are named in words.
     expect(screen.getByText('Model not resolved')).toBeTruthy();
+    // The breakdown lives in the URL, so a shared link opens on it.
     fireEvent.click(screen.getByRole('button', { name: 'Team' }));
+    expect(nav.replace).toHaveBeenLastCalledWith('/admin/usage?by=team', { scroll: false });
+    nav.params = 'by=team';
+    rerender(<UsagePage />);
     expect(screen.getByText('Not attributed to a team')).toBeTruthy();
     expect(screen.getByText('Payments')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Activity' }));
+    expect(nav.replace).toHaveBeenLastCalledWith('/admin/usage?by=activity', { scroll: false });
+    nav.params = 'by=activity';
+    rerender(<UsagePage />);
     expect(screen.getByText('Execute implementation')).toBeTruthy();
   });
 
   describe('top users', () => {
-    it('is titled as a top 10 and shows names, with an email only when the API sent one', () => {
+    it('counts the users it shows and names them, with an email only when the API sent one', () => {
       render(<UsagePage />);
 
-      // The literal mirrors TOP_USERS in the gateway's usage route; the web package does not
-      // import gateway code, so a change there needs this heading changed with it.
-      expect(screen.getByRole('heading', { name: 'Top 10 users' })).toBeTruthy();
+      // The count is the number of rows the API returned, not a literal that could drift.
+      expect(screen.getByRole('heading', { name: 'Top 3 users' })).toBeTruthy();
       expect(screen.getByText('Ada Lovelace')).toBeTruthy();
       expect(screen.getByText('ada@example.com')).toBeTruthy();
     });

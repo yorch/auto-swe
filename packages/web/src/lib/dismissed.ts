@@ -23,6 +23,25 @@ export function readDismissed(key: string, userId?: string | null): boolean {
   }
 }
 
+/**
+ * Fired on this window whenever a flag is written or cleared (the `storage` event only reaches
+ * other tabs), for a control that lists what is hidden. A callout re-reads on the narrower
+ * `DISMISSED_CLEARED_EVENT`: re-reading after a write would un-dismiss it when storage is
+ * unavailable, because the write did not persist.
+ */
+export const DISMISSED_CHANGE_EVENT = 'auto-swe:dismissed-change';
+export const DISMISSED_CLEARED_EVENT = 'auto-swe:dismissed-cleared';
+
+function announce(...names: string[]): void {
+  try {
+    for (const name of names) {
+      globalThis.window?.dispatchEvent(new Event(name));
+    }
+  } catch {
+    // No window to tell.
+  }
+}
+
 /** Returns whether the flag was persisted; a false return still dismisses for this page view. */
 export function writeDismissed(key: string, userId?: string | null): boolean {
   try {
@@ -30,6 +49,8 @@ export function writeDismissed(key: string, userId?: string | null): boolean {
     return true;
   } catch {
     return false;
+  } finally {
+    announce(DISMISSED_CHANGE_EVENT);
   }
 }
 
@@ -39,6 +60,7 @@ export function clearDismissed(key: string, userId?: string | null): void {
   } catch {
     // Nothing to clear when storage is unavailable.
   }
+  announce(DISMISSED_CLEARED_EVENT, DISMISSED_CHANGE_EVENT);
 }
 
 /**
@@ -69,7 +91,11 @@ export function useDismissed(key: string): {
   // "not ready" until the effect re-reads, never as the previous key's answer.
   const [state, setState] = useState<{ storageKey: string; dismissed: boolean } | null>(null);
   useEffect(() => {
-    setState({ dismissed: readDismissed(key, userId), storageKey });
+    const read = () => setState({ dismissed: readDismissed(key, userId), storageKey });
+    read();
+    // A flag cleared elsewhere on the page ("Show getting-started guides") brings the callout back.
+    window.addEventListener(DISMISSED_CLEARED_EVENT, read);
+    return () => window.removeEventListener(DISMISSED_CLEARED_EVENT, read);
   }, [key, userId, storageKey]);
   const dismiss = useCallback(() => {
     writeDismissed(key, userId);

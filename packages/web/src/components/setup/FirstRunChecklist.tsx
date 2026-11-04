@@ -4,6 +4,7 @@ import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { useAnsweredGate } from '@/hooks/useAnsweredGate';
 import { useHasRole } from '@/hooks/useHasRole';
@@ -80,7 +81,7 @@ function FirstRunChecklistBody() {
     },
     {
       action: 'Open approvals',
-      body: 'When a run reaches a gate, it waits for a person. Answer it in Approvals. A workflow with no gates never needs this step, so the card stays until you dismiss it.',
+      body: 'Optional. When a run reaches a gate, it waits for a person: answer it in Approvals. A workflow with no gates never needs this step, so the card stays until you dismiss it.',
       done: (answered.data?.meta.total ?? 0) > 0,
       href: '/approvals',
       id: 'gate',
@@ -88,7 +89,16 @@ function FirstRunChecklistBody() {
     },
     {
       action: 'Open pull requests',
-      body: 'The run opens a pull request on the repository. Review it and merge it yourself: nothing merges it for you. This step ticks when the platform records the merge, which needs the GitHub webhook to be set up.',
+      body: (
+        <>
+          The run opens a pull request on the repository. Review it and merge it yourself: nothing
+          merges it for you.
+          <HelpTip label="When this step ticks">
+            This step ticks when the platform records the merge, which needs the GitHub webhook to
+            be set up.
+          </HelpTip>
+        </>
+      ),
       done: (merged.meta?.total ?? 0) > 0,
       href: '/pull-requests',
       id: 'merge',

@@ -21,6 +21,7 @@ import {
   useWorkflowTemplateAnalytics,
   useWorkflowTemplateVersion,
 } from '@/hooks/useTemplates';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { errMsg } from '@/lib/errors';
 import { estimatorPricing } from '@/lib/modelCatalog';
 import { hasRole } from '@/lib/roles';
@@ -142,23 +143,29 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     }
   }, [versionDetail]);
 
+  // Dirty means the draft differs from the version on screen. Opening Edit alone is not an edit,
+  // so it arms no prompt and offers nothing to discard.
+  const baselineSpecJson = useMemo(() => {
+    if (!versionDetail) {
+      return null;
+    }
+    try {
+      return JSON.stringify(parseWorkflowSpec(versionDetail.spec));
+    } catch {
+      return JSON.stringify(versionDetail.spec);
+    }
+  }, [versionDetail]);
   const isDirty =
-    mode === 'edit' ||
+    (mode === 'edit' &&
+      editorSpec !== null &&
+      baselineSpecJson !== null &&
+      JSON.stringify(editorSpec) !== baselineSpecJson) ||
     (mode === 'json' &&
       versionDetail !== undefined &&
       editorJson !== JSON.stringify(versionDetail.spec, null, 2));
 
-  // Leaving the page (reload, close, outside link) with unsaved edits loses them.
-  useEffect(() => {
-    if (!isDirty) {
-      return;
-    }
-    const warn = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [isDirty]);
+  // Reload, close, an outside link and any in-app link click ask before losing the draft.
+  useUnsavedChangesGuard(isDirty);
 
   const jsonParsed = useMemo(
     () => (mode === 'json' && editorJson ? tryParseSpec(editorJson) : null),
@@ -305,6 +312,7 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
 
   const canPromote =
     !isDirty &&
+    mode !== 'edit' &&
     canManage &&
     effectiveVersion !== null &&
     (effectiveVersion !== template?.activeVersion || template?.status === 'DRAFT');

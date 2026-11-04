@@ -1,4 +1,5 @@
 import type { WorkflowRunSummary } from '@auto-swe/shared/types/api';
+import { isTerminalWorkflowRunStatus } from '@auto-swe/shared/types/api';
 import type { ReactNode } from 'react';
 import type { DataTableColumn } from '@/components/ui/DataTable';
 import { Icon } from '@/components/ui/Icon';
@@ -65,6 +66,24 @@ export function workflowColumn<Row extends WorkflowRunSummary>(
   };
 }
 
+/**
+ * What a run with no end time shows. Only a run that is still going says so: a finished run
+ * with no recorded end time shows a dash, and a request waiting on a person says it is waiting
+ * rather than running. Only the requests list carries that count; the workflow-runs list does not,
+ * so there a run parked on a human gate still reads as running.
+ */
+export function openRunLabel(
+  row: Pick<WorkflowRunSummary, 'status'> & { pendingStepCount?: number }
+): { text: string; tone: 'info' | 'warning' | 'none' } {
+  if (isTerminalWorkflowRunStatus(row.status)) {
+    return { text: '—', tone: 'none' };
+  }
+  if ((row.pendingStepCount ?? 0) > 0) {
+    return { text: 'Waiting for approval', tone: 'warning' };
+  }
+  return { text: 'Still running', tone: 'info' };
+}
+
 export function durationColumn<Row extends WorkflowRunSummary>(): DataTableColumn<Row> {
   return {
     align: 'right',
@@ -72,6 +91,7 @@ export function durationColumn<Row extends WorkflowRunSummary>(): DataTableColum
       const ms = row.endedAt
         ? Math.max(0, new Date(row.endedAt).getTime() - new Date(row.startedAt).getTime())
         : null;
+      const open = openRunLabel(row);
       return (
         <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs text-paper-400">
           <Icon className="text-paper-600" name="clock" size={13} />
@@ -79,7 +99,17 @@ export function durationColumn<Row extends WorkflowRunSummary>(): DataTableColum
             {ms !== null ? (
               formatDuration(ms)
             ) : (
-              <span className="text-info-400">Still running</span>
+              <span
+                className={
+                  open.tone === 'info'
+                    ? 'text-info-400'
+                    : open.tone === 'warning'
+                      ? 'text-warning-400'
+                      : undefined
+                }
+              >
+                {open.text}
+              </span>
             )}
           </span>
         </span>
@@ -96,7 +126,7 @@ export function costColumn<Row extends WorkflowRunSummary>(): DataTableColumn<Ro
     align: 'right',
     cell: (row) => (
       <span className="tabular text-xs text-paper-400">
-        {row.status === 'RUNNING'
+        {!isTerminalWorkflowRunStatus(row.status)
           ? '—'
           : row.costUsdAccrued === 0
             ? '$0.00'

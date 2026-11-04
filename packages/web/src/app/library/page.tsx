@@ -5,7 +5,7 @@ import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -30,6 +30,7 @@ import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { NODE_TYPE_LABEL } from '@/components/workflow/nodeTypeTone';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
 import { VersionTags } from '@/components/workflow/VersionTags';
+import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useLedTeamIds } from '@/hooks/useTeams';
 import {
@@ -39,6 +40,7 @@ import {
   useWorkflowGenerationJob,
   useWorkflowTemplates,
 } from '@/hooks/useTemplates';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { runHref, templateHref } from '@/lib/entityLinks';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
@@ -78,106 +80,23 @@ function matchesStatusFilter(t: WorkflowTemplateSummary, filter: StatusFilter): 
   }
 }
 
-function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const router = useRouter();
-  const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
-  const createTemplate = useCreateWorkflowTemplate();
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  const handleCreate = async () => {
-    const trimmed = name.trim();
-    if (!trimmed) {
-      setError('Name is required');
-      return;
-    }
-    setError(null);
-    try {
-      const spec: WorkflowSpec = { ...BLANK_SPEC, name: trimmed };
-      const result = await createTemplate.mutateAsync({
-        description: description.trim() || undefined,
-        name: trimmed,
-        spec,
-        teamId: selectedTeamId ?? undefined,
-      });
-      const data = (result as { data: { id: string } }).data;
-      onClose();
-      setName('');
-      setDescription('');
-      router.push(`/library/${data.id}`);
-    } catch (err) {
-      setError(errMsg(err, 'create failed'));
-    }
-  };
-
-  return (
-    <Modal
-      onClose={() => {
-        onClose();
-        setName('');
-        setDescription('');
-        setError(null);
-      }}
-      open={open}
-      title="New workflow"
-    >
-      <div className="space-y-4">
-        {error && <Alert>{error}</Alert>}
-        <Input
-          label="Name"
-          onChange={(e) => setName(e.target.value)}
-          placeholder="my-workflow"
-          value={name}
-        />
-        <Textarea
-          hint="Optional"
-          label="Description"
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="What does this workflow do?"
-          rows={3}
-          value={description}
-        />
-        <ModalFooter
-          isPending={createTemplate.isPending}
-          onCancel={() => {
-            onClose();
-            setName('');
-            setDescription('');
-            setError(null);
-          }}
-          onSubmit={handleCreate}
-          pendingLabel="Creating…"
-          submitLabel="Create blank workflow"
-        />
-      </div>
-    </Modal>
-  );
-}
-
 const JOB_PHASE_LABEL: Record<string, string> = {
   done: 'Finishing…',
   generating: 'Designing the workflow…',
   persisting: 'Saving the draft…',
 };
 
-function NewTemplateModal({
-  open,
-  onClose,
-  onStartBlank,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onStartBlank: () => void;
-}) {
+function NewTemplateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
   const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
   const startJob = useStartWorkflowGenerationJob();
+  const createTemplate = useCreateWorkflowTemplate();
   const [prompt, setPrompt] = useState('');
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
-  const [mode, setMode] = useState<'describe' | 'wizard'>('describe');
+  const [mode, setMode] = useState<'describe' | 'wizard' | 'blank'>('describe');
+  const [blankDescription, setBlankDescription] = useState('');
 
   // Wizard fields: the answers are assembled into a single prompt for the
   // workflow author, so no backend changes are needed.
@@ -199,6 +118,7 @@ function NewTemplateModal({
     setInputs('');
     setSteps('');
     setOutcome('');
+    setBlankDescription('');
   };
 
   // React to terminal job states: route to the canvas on success, surface the
@@ -234,6 +154,30 @@ function NewTemplateModal({
     return parts.filter(Boolean).join('\n');
   };
 
+  const handleCreateBlank = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setError('Name is required');
+      return;
+    }
+    setError(null);
+    try {
+      const spec: WorkflowSpec = { ...BLANK_SPEC, name: trimmed };
+      const result = await createTemplate.mutateAsync({
+        description: blankDescription.trim() || undefined,
+        name: trimmed,
+        spec,
+        teamId: selectedTeamId ?? undefined,
+      });
+      const data = (result as { data: { id: string } }).data;
+      onClose();
+      reset();
+      router.push(`/library/${data.id}`);
+    } catch (err) {
+      setError(errMsg(err, 'create failed'));
+    }
+  };
+
   const handleGenerate = async (forcedPrompt?: string) => {
     const effectivePrompt = (
       forcedPrompt ?? (mode === 'wizard' ? buildWizardPrompt() : prompt)
@@ -263,16 +207,19 @@ function NewTemplateModal({
   // poll error leaves `job` undefined — so the button can't re-enable and let the
   // user start a second (duplicate, billed) generation. The terminal-state effect
   // clears `jobId`, which ends "busy".
-  const busy =
+  const generating =
     startJob.isPending || (jobId !== null && job?.status !== 'done' && job?.status !== 'failed');
+  const busy = generating || createTemplate.isPending;
   const phaseLabel =
     job?.status === 'running' ? (JOB_PHASE_LABEL[job.phase ?? 'generating'] ?? 'Working…') : null;
 
   return (
     <Modal
+      // A generation job is billed and keeps running; closing now would hide its result.
+      dismissible={!busy}
       onClose={() => {
         onClose();
-        reset();
+        setError(null);
       }}
       open={open}
       title="New workflow"
@@ -280,14 +227,23 @@ function NewTemplateModal({
       <div className="space-y-4">
         {error && <Alert>{error}</Alert>}
         <SegmentedControl
-          ariaLabel="How to describe the workflow"
-          onChange={setMode}
+          ariaLabel="How to create the workflow"
+          onChange={(next) => {
+            setMode(next);
+            setError(null);
+          }}
           options={[
             { label: 'Describe', value: 'describe' },
             { label: 'Answer questions', value: 'wizard' },
+            { label: 'Blank', value: 'blank' },
           ]}
           value={mode}
         />
+        {mode === 'blank' && (
+          <p className="text-sm leading-relaxed text-paper-400">
+            Start from an empty canvas with one placeholder step. Nothing is generated.
+          </p>
+        )}
         {mode === 'describe' ? (
           <p className="text-sm leading-relaxed text-paper-400">
             Describe what you want the workflow to do in plain language. An AI agent assembles a
@@ -295,13 +251,22 @@ function NewTemplateModal({
             <span className="font-medium text-paper-300">draft</span> for you to review and edit on
             the canvas before activating.
           </p>
-        ) : (
+        ) : mode === 'wizard' ? (
           <p className="text-sm leading-relaxed text-paper-400">
             Answer a few questions and the AI will assemble a draft workflow from your answers. You
             can refine it on the canvas before activating.
           </p>
-        )}
-        {mode === 'describe' ? (
+        ) : null}
+        {mode === 'blank' ? (
+          <Textarea
+            hint="Optional"
+            label="Description"
+            onChange={(e) => setBlankDescription(e.target.value)}
+            placeholder="What does this workflow do?"
+            rows={3}
+            value={blankDescription}
+          />
+        ) : mode === 'describe' ? (
           <Textarea
             disabled={busy}
             label="Description"
@@ -352,42 +317,35 @@ function NewTemplateModal({
         )}
         <Input
           disabled={busy}
-          hint="Optional — defaults to a name the AI picks"
+          hint={mode === 'blank' ? undefined : 'Optional — defaults to a name the AI picks'}
           label="Name"
           onChange={(e) => setName(e.target.value)}
           placeholder="my-workflow"
+          required={mode === 'blank'}
           value={name}
         />
         <ModalFooter
           isPending={busy}
           onCancel={() => {
+            // Typed text is kept, so reopening does not lose a long prompt.
             onClose();
-            reset();
+            setError(null);
           }}
-          onSubmit={() => handleGenerate()}
-          pendingLabel="Generating…"
-          submitLabel="Generate draft"
+          onSubmit={() => (mode === 'blank' ? handleCreateBlank() : handleGenerate())}
+          pendingLabel={mode === 'blank' ? 'Creating…' : 'Generating…'}
+          submitLabel={mode === 'blank' ? 'Create blank workflow' : 'Generate draft'}
         >
           {phaseLabel && (
             <span aria-live="polite" className="text-xs text-paper-400">
               {phaseLabel}
             </span>
           )}
+          {generating && !phaseLabel && (
+            <span aria-live="polite" className="text-xs text-paper-400">
+              Generation takes a moment. Keep this open; the draft opens when it is ready.
+            </span>
+          )}
         </ModalFooter>
-        <div className="flex justify-end pt-1">
-          <Button
-            disabled={busy}
-            onClick={() => {
-              onClose();
-              reset();
-              onStartBlank();
-            }}
-            size="sm"
-            variant="ghost"
-          >
-            Or start from a blank workflow
-          </Button>
-        </div>
       </div>
     </Modal>
   );
@@ -592,8 +550,23 @@ const templateColumns: DataTableColumn<WorkflowTemplateSummary>[] = [
   },
 ];
 
+const STATUS_FILTERS = ['current', 'active', 'draft', 'archived'] as const;
+
+function parseStatusFilter(raw: string | null): StatusFilter {
+  return STATUS_FILTERS.find((f) => f === raw) ?? 'current';
+}
+
 export default function TemplatesPage() {
+  return (
+    <Suspense>
+      <TemplatesPageContent />
+    </Suspense>
+  );
+}
+
+function TemplatesPageContent() {
   const router = useRouter();
+  const { params, update } = useUrlFilters();
   const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
   const {
     data: templates,
@@ -622,17 +595,22 @@ export default function TemplatesPage() {
       : requiresRoleTitle('LEAD');
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [forkError, setForkError] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
   const [generateOpen, setGenerateOpen] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<{ id: string; name: string } | null>(null);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('current');
-  const [search, setSearch] = useState('');
+  // Status and search live in the address bar, so a filtered list survives a reload and can be shared.
+  const statusFilter = parseStatusFilter(params.get('status'));
+  const setStatusFilter = (next: StatusFilter) =>
+    update({ status: next === 'current' ? null : next });
+  const [search, setSearch] = useDebouncedUrlSearch(params.get('q') ?? '', (value) =>
+    update({ q: value || null })
+  );
   const [restoreError, setRestoreError] = useState<string | null>(null);
   const all = templates ?? [];
-  const inStatus = all.filter((t) => matchesStatusFilter(t, statusFilter));
-  const visibleTemplates = inStatus.filter((t) => matchesSearch(t, search));
+  const searched = all.filter((t) => matchesSearch(t, search));
+  const visibleTemplates = searched.filter((t) => matchesStatusFilter(t, statusFilter));
   const searching = search.trim() !== '';
-  const statusCount = (f: StatusFilter) => all.filter((t) => matchesStatusFilter(t, f)).length;
+  // Counts follow the search, so a badge never promises more rows than the list shows.
+  const statusCount = (f: StatusFilter) => searched.filter((t) => matchesStatusFilter(t, f)).length;
 
   const handleFork = async (starter: StarterTemplate) => {
     setForkingId(starter.id);
@@ -672,16 +650,7 @@ export default function TemplatesPage() {
 
   return (
     <div className="space-y-6">
-      <CreateTemplateModal onClose={() => setCreateOpen(false)} open={createOpen} />
-
-      <NewTemplateModal
-        onClose={() => setGenerateOpen(false)}
-        onStartBlank={() => {
-          setGenerateOpen(false);
-          setCreateOpen(true);
-        }}
-        open={generateOpen}
-      />
+      <NewTemplateModal onClose={() => setGenerateOpen(false)} open={generateOpen} />
 
       <ArchiveConfirmModal onClose={() => setArchiveTarget(null)} target={archiveTarget} />
 
@@ -731,7 +700,7 @@ export default function TemplatesPage() {
           <SegmentedControl
             ariaLabel="Filter workflows by status"
             onChange={setStatusFilter}
-            options={(['current', 'active', 'draft', 'archived'] as const).map((f) => ({
+            options={STATUS_FILTERS.map((f) => ({
               label: templates ? (
                 <>
                   {STATUS_FILTER_LABEL[f]}
@@ -813,7 +782,10 @@ export default function TemplatesPage() {
       </Card>
 
       {/* Starter gallery */}
-      <details className="group rounded-xl border border-ink-500/70 bg-ink-900/30">
+      <details
+        className="group rounded-xl border border-ink-500/70 bg-ink-900/30"
+        open={templates !== undefined && all.length === 0 ? true : undefined}
+      >
         <summary
           className={cn(
             'flex cursor-pointer list-none items-center gap-3 rounded-xl px-5 py-4 [&::-webkit-details-marker]:hidden',

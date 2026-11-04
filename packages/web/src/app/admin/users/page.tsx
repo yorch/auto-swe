@@ -1,7 +1,7 @@
 'use client';
 
 import type { UserSummary } from '@auto-swe/shared/types/api';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -11,19 +11,22 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
-import { Input } from '@/components/ui/Input';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { CreateUserModal } from '@/components/users/CreateUserModal';
+import { InviteUserModal } from '@/components/users/InviteUserModal';
+import { RoleSelectCell } from '@/components/users/RoleSelectCell';
 import { useDataTableSort } from '@/hooks/useDataTableSort';
-import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useUsers';
+import { usePagedRows } from '@/hooks/usePagedRows';
+import { useUpdateUser, useUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
 import { platformRoleLabel, roleChangeNeedsConfirm } from '@/lib/govLabels';
 import { navLabel } from '@/lib/navigation';
-import { cn, plural } from '@/lib/utils';
+import { cn, formatDate, plural } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
 type Role = 'ADMIN' | 'LEAD' | 'ENGINEER';
@@ -42,7 +45,11 @@ function teamNames(u: UserSummary): string {
     .join(', ');
 }
 
-const USER_SORT_KEYS = { email: (u: UserSummary) => u.email.toLowerCase() };
+const USER_SORT_KEYS = {
+  email: (u: UserSummary) => u.email.toLowerCase(),
+  joined: (u: UserSummary) => u.createdAt,
+  role: (u: UserSummary) => u.role,
+};
 
 const ROLE_CONSEQUENCE: Record<Role, string> = {
   ADMIN: 'full access to every team and all platform settings',
@@ -53,26 +60,25 @@ const ROLE_CONSEQUENCE: Record<Role, string> = {
 export default function UsersPage() {
   const { data: users, isLoading, isError, isFetching, error: loadError, refetch } = useUsers();
   const updateUser = useUpdateUser();
-  const inviteUser = useInviteUser();
-  const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<Role>('ENGINEER');
-  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviting, setInviting] = useState(false);
   const [inviteInfo, setInviteInfo] = useState<string | null>(null);
   const [creatingDirect, setCreatingDirect] = useState(false);
   const [approvingId, setApprovingId] = useState<string | null>(null);
   const [approveError, setApproveError] = useState<string | null>(null);
   const currentUserId = useAuthStore((s) => s.user?.sub ?? null);
-  const [roleChange, setRoleChange] = useState<{
-    email: string;
-    from: Role;
-    id: string;
-    to: Role;
-  } | null>(null);
-  const [roleError, setRoleError] = useState<string | null>(null);
   const [suspendTarget, setSuspendTarget] = useState<{ email: string; id: string } | null>(null);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'' | Role>('');
   const { onSortChange, sort, sortRows } = useDataTableSort<UserSummary>(USER_SORT_KEYS);
+
+  // The invite notice is a one-off acknowledgement, not standing state.
+  useEffect(() => {
+    if (!inviteInfo) {
+      return;
+    }
+    const id = setTimeout(() => setInviteInfo(null), 8000);
+    return () => clearTimeout(id);
+  }, [inviteInfo]);
 
   // Partition into pending (sign-ups awaiting approval) vs. active. Pending
   // users get a dedicated top section so admins notice them; the rest go
@@ -90,18 +96,36 @@ export default function UsersPage() {
     return { active: a, pending: p };
   }, [users]);
 
+  const query = search.trim().toLowerCase();
+  const filtering = query !== '' || roleFilter !== '';
+  const visible = active.filter(
+    (u) =>
+      (!roleFilter || u.role === roleFilter) &&
+      (!query ||
+        u.email.toLowerCase().includes(query) ||
+        (u.slackId ?? '').toLowerCase().includes(query) ||
+        teamNames(u).toLowerCase().includes(query))
+  );
+  const pager = usePagedRows(sortRows(visible), 25, `${query}|${roleFilter}`);
   const header = (
     <PageHeader
       actions={
-        <Button onClick={() => setCreatingDirect(true)} variant="secondary">
-          <Icon name="plus" size={14} />
-          Create user directly
-        </Button>
+        <>
+          <Button onClick={() => setCreatingDirect(true)} variant="secondary">
+            Create user directly
+          </Button>
+          <Button onClick={() => setInviting(true)} variant="primary">
+            <Icon name="plus" size={14} />
+            Invite user
+          </Button>
+        </>
       }
       help={
         <p>
-          People who sign up with GitHub, Google or an email link wait in the pending queue until an
-          admin approves them.
+          People who sign up with GitHub, Google or an email link wait in the approval queue until
+          an admin approves them. Invite sends a magic link and needs email delivery; Create user
+          directly makes an active account at once, for service accounts or when email is not
+          configured.
         </p>
       }
       subtitle="Manage who can sign in to the control plane."
@@ -131,15 +155,7 @@ export default function UsersPage() {
     );
   }
 
-  const applyRole = async (id: string, role: Role) => {
-    setRoleError(null);
-    try {
-      await updateUser.mutateAsync({ id, patch: { role } });
-    } catch (err) {
-      setRoleError(errMsg(err, 'Could not change the role'));
-      throw err;
-    }
-  };
+  const applyRole = (id: string, role: Role) => updateUser.mutateAsync({ id, patch: { role } });
 
   const handleApprove = async (id: string) => {
     setApproveError(null);
@@ -153,30 +169,6 @@ export default function UsersPage() {
     }
   };
 
-  const handleInvite = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setInviteError(null);
-    setInviteInfo(null);
-    try {
-      await inviteUser.mutateAsync({ email: inviteEmail, role: inviteRole });
-      setInviteInfo(`Invite sent to ${inviteEmail} — they'll receive a magic-link email.`);
-      setInviteEmail('');
-      setInviteRole('ENGINEER');
-    } catch (err) {
-      setInviteError(errMsg(err, 'invite failed'));
-    }
-  };
-
-  const query = search.trim().toLowerCase();
-  const filtering = query !== '' || roleFilter !== '';
-  const visible = active.filter(
-    (u) =>
-      (!roleFilter || u.role === roleFilter) &&
-      (!query ||
-        u.email.toLowerCase().includes(query) ||
-        (u.slackId ?? '').toLowerCase().includes(query) ||
-        teamNames(u).toLowerCase().includes(query))
-  );
   const clearFilters = () => {
     setSearch('');
     setRoleFilter('');
@@ -186,64 +178,19 @@ export default function UsersPage() {
     <div className="space-y-6">
       {header}
 
-      {/* Invite by email — admin sends a magic-link to the address. The
-          invitee lands pre-active + pre-membered to the default team.
-          For service accounts (or when SMTP/Resend isn't configured),
-          "Create directly" pops the CreateUserModal which posts to
-          POST /api/v1/users and reveals an auto-generated password once. */}
-      <Card className="fade-up stagger-1">
-        <CardHeader className="mb-1">
-          <CardTitle>Invite a teammate</CardTitle>
-        </CardHeader>
-        <p className="mb-4 text-sm text-paper-400">
-          They get a magic-link email and join the default team, already approved.
-        </p>
-        {inviteError && (
-          <Alert className="mb-4" variant="error">
-            {inviteError}
-          </Alert>
-        )}
-        {inviteInfo && (
-          <Alert className="mb-4" variant="success">
-            {inviteInfo}
-          </Alert>
-        )}
-        <form
-          className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_auto]"
-          onSubmit={handleInvite}
-        >
-          <Input
-            label="Email"
-            name="invite-email"
-            onChange={(e) => setInviteEmail(e.target.value)}
-            placeholder="teammate@workshop.dev"
-            required
-            type="email"
-            value={inviteEmail}
-          />
-          <Select
-            id="invite-role"
-            label="Role"
-            onChange={(v) => setInviteRole(v as Role)}
-            options={ROLE_OPTIONS}
-            value={inviteRole}
-          />
-          <Button className="h-9" disabled={inviteUser.isPending} type="submit" variant="primary">
-            {inviteUser.isPending ? 'Sending…' : 'Send invite'}
-          </Button>
-        </form>
-      </Card>
+      {inviteInfo && <Alert variant="success">{inviteInfo}</Alert>}
 
       {pending.length > 0 && (
         <Card className="fade-up stagger-2 border-warning-400/30">
           <CardHeader className="mb-1">
-            <CardTitle>Pending sign-ups</CardTitle>
+            <CardTitle>Awaiting approval</CardTitle>
             <Badge dot tone="warning">
               {pending.length} awaiting approval
             </Badge>
           </CardHeader>
           <p className="mb-2 text-sm text-paper-400">
-            These people signed up but cannot sign in until you approve them.
+            These accounts cannot sign in. New sign-ups wait here for approval, and members you
+            suspend move here too; the directory does not record which is which.
           </p>
           {approveError && (
             <Alert className="mb-3" variant="error">
@@ -257,7 +204,7 @@ export default function UsersPage() {
                   <div className="truncate text-sm font-medium text-paper-100">{u.email}</div>
                   <div className="mt-0.5 text-xs text-paper-500">
                     {platformRoleLabel(u.role)}
-                    {teamNames(u) && <> · {teamNames(u)}</>}
+                    {teamNames(u) && <> · {teamNames(u)}</>} · Joined {formatDate(u.createdAt)}
                   </div>
                 </div>
                 <Button
@@ -307,11 +254,6 @@ export default function UsersPage() {
             </Button>
           )}
         </Toolbar>
-        {roleError && (
-          <Alert className="mb-3" variant="error">
-            {roleError}
-          </Alert>
-        )}
         <div className="-mx-4">
           <DataTable
             actions={(u) =>
@@ -360,28 +302,26 @@ export default function UsersPage() {
                       {platformRoleLabel(u.role)}
                     </Badge>
                   ) : (
-                    <Select
-                      aria-label={`Role for ${u.email}`}
-                      className="w-32"
-                      compact
-                      onChange={(v) => {
-                        const to = v as Role;
-                        const from = u.role as Role;
-                        if (to === from) {
-                          return;
-                        }
-                        if (roleChangeNeedsConfirm(from, to)) {
-                          setRoleChange({ email: u.email, from, id: u.id, to });
-                        } else {
-                          void applyRole(u.id, to).catch(() => undefined);
-                        }
-                      }}
+                    <RoleSelectCell
+                      apply={(to) => applyRole(u.id, to as Role)}
+                      ariaLabel={`Role for ${u.email}`}
+                      confirm={(from, to) =>
+                        roleChangeNeedsConfirm(from, to)
+                          ? {
+                              confirmLabel: to === 'ADMIN' ? 'Make admin' : 'Change role',
+                              dangerous: to === 'ADMIN',
+                              message: `${u.email} will go from ${platformRoleLabel(from)} to ${platformRoleLabel(to)}: ${ROLE_CONSEQUENCE[to as Role]}. The change applies immediately.`,
+                              title: 'Change role?',
+                            }
+                          : null
+                      }
                       options={ROLE_OPTIONS}
                       value={u.role}
                     />
                   ),
                 header: 'Role',
                 id: 'role',
+                sortable: true,
               },
               {
                 cell: (u) =>
@@ -392,6 +332,12 @@ export default function UsersPage() {
                   ),
                 header: 'Slack',
                 id: 'slack',
+              },
+              {
+                cell: (u) => <span className="text-paper-400">{formatDate(u.createdAt)}</span>,
+                header: 'Joined',
+                id: 'joined',
+                sortable: true,
               },
             ]}
             empty={
@@ -408,7 +354,7 @@ export default function UsersPage() {
                 />
               ) : (
                 <EmptyState
-                  hint="Invite a teammate above, or approve a pending sign-up."
+                  hint="Invite a teammate, or approve an account awaiting approval."
                   icon="users"
                   title="No active members"
                 />
@@ -417,34 +363,37 @@ export default function UsersPage() {
             getRowId={(u) => u.id}
             onSortChange={onSortChange}
             revealActions={false}
-            rows={sortRows(visible)}
+            rows={pager.pageRows}
             sort={sort}
           />
         </div>
+        {pager.paged && (
+          <div className="mt-4 border-t border-ink-600 pt-4">
+            <Pagination
+              hasNext={pager.hasNext}
+              hasPrev={pager.hasPrev}
+              onNext={pager.onNext}
+              onPrev={pager.onPrev}
+              rangeEnd={pager.rangeEnd}
+              rangeStart={pager.rangeStart}
+              total={pager.total}
+            />
+          </div>
+        )}
       </Card>
 
       <CreateUserModal onClose={() => setCreatingDirect(false)} open={creatingDirect} />
-      <ConfirmModal
-        confirmLabel={roleChange?.to === 'ADMIN' ? 'Make admin' : 'Change role'}
-        dangerous={roleChange?.to === 'ADMIN'}
-        message={
-          roleChange
-            ? `${roleChange.email} will go from ${platformRoleLabel(roleChange.from)} to ${platformRoleLabel(roleChange.to)}: ${ROLE_CONSEQUENCE[roleChange.to]}. The change applies immediately.`
-            : ''
+      <InviteUserModal
+        onClose={() => setInviting(false)}
+        onInvited={(email) =>
+          setInviteInfo(`Invite sent to ${email}. They will receive a magic-link email.`)
         }
-        onClose={() => setRoleChange(null)}
-        onConfirm={async () => {
-          if (roleChange) {
-            await applyRole(roleChange.id, roleChange.to);
-          }
-        }}
-        open={roleChange !== null}
-        title="Change role?"
+        open={inviting}
       />
       <ConfirmModal
         confirmLabel="Suspend"
         dangerous
-        message={`${suspendTarget?.email ?? 'This user'} will no longer be able to sign in and moves back to the pending queue. You can approve them again later.`}
+        message={`${suspendTarget?.email ?? 'This user'} can no longer sign in, and their active sessions and API tokens stop working immediately. Their team memberships are kept. They move to the Awaiting approval list, where you can approve them again later.`}
         onClose={() => setSuspendTarget(null)}
         onConfirm={async () => {
           if (suspendTarget) {

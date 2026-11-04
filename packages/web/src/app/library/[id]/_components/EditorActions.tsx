@@ -65,7 +65,7 @@ export function EditorActions({
           Edit
         </Button>
       )}
-      {isDirty && (
+      {(isDirty || mode === 'edit') && (
         <Button onClick={onCancel} size="sm" variant="ghost">
           Cancel
         </Button>
@@ -75,10 +75,10 @@ export function EditorActions({
           Fix the JSON to save
         </span>
       )}
-      {isDirty && (
+      {(isDirty || mode === 'edit') && (
         <Button
           aria-describedby={jsonInvalid ? 'save-blocked-reason' : undefined}
-          disabled={savePending || jsonInvalid}
+          disabled={savePending || jsonInvalid || !isDirty}
           onClick={onSave}
           size="sm"
           variant="primary"

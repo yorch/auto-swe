@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PageHelp } from '@/components/help/PageHelp';
 import { SettingRow, type SettingRowStatus } from '@/components/settings/SettingRow';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { DocLink } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
@@ -26,6 +27,7 @@ import {
 import { useHasRole } from '@/hooks/useHasRole';
 import { useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
@@ -77,7 +79,28 @@ export default function GovernSettingsPage() {
   const orgs = useOrganizationDirectory();
   const channels = useSlackChannels();
 
-  const showScope = (nextScope: ViewScope, id = '') => {
+  // Rows holding an unsaved draft. Reported by each row; a row that unmounts reports clean.
+  const [dirtyKeys, setDirtyKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const onDirtyChange = useCallback((key: string, dirty: boolean) => {
+    setDirtyKeys((prev) => {
+      if (prev.has(key) === dirty) {
+        return prev;
+      }
+      const next = new Set(prev);
+      if (dirty) {
+        next.add(key);
+      } else {
+        next.delete(key);
+      }
+      return next;
+    });
+  }, []);
+  const dirtyCount = dirtyKeys.size;
+  useUnsavedChangesGuard(dirtyCount > 0);
+  // A scope change re-seeds every row, so with drafts open it asks first.
+  const [pendingScope, setPendingScope] = useState<{ scope: ViewScope; id: string } | null>(null);
+
+  const applyScope = (nextScope: ViewScope, id = '') => {
     setRowStatus({});
     update({
       channelId: nextScope === 'CHANNEL' ? id : null,
@@ -85,6 +108,13 @@ export default function GovernSettingsPage() {
       scope: nextScope === 'GLOBAL' ? null : nextScope,
       teamId: nextScope === 'TEAM' ? id : null,
     });
+  };
+  const showScope = (nextScope: ViewScope, id = '') => {
+    if (dirtyCount > 0) {
+      setPendingScope({ id, scope: nextScope });
+      return;
+    }
+    applyScope(nextScope, id);
   };
 
   // A narrower view needs its team / organization / channel chosen before it means
@@ -159,6 +189,11 @@ export default function GovernSettingsPage() {
   const visibleGroups = grouped
     .map(([group, items]) => {
       const matches = items.filter((setting) => {
+        // A row with an unsaved draft stays on screen: filtering it out would unmount it and
+        // silently drop the edit.
+        if (dirtyKeys.has(setting.key)) {
+          return true;
+        }
         if (show === 'customised' && setting.source === 'DEFAULT') {
           return false;
         }
@@ -172,6 +207,33 @@ export default function GovernSettingsPage() {
       return [group, matches] as const;
     })
     .filter(([, items]) => items.length > 0);
+  const scopeName = (() => {
+    if (selection.scope === 'GLOBAL') {
+      return 'Platform-wide';
+    }
+    const list =
+      selection.scope === 'TEAM'
+        ? (teams.data ?? []).map((t) => ({ id: t.id, name: t.name }))
+        : selection.scope === 'ORGANIZATION'
+          ? (orgs.data ?? []).map((o) => ({ id: o.id, name: o.name }))
+          : (channels.data ?? []).map((c) => ({
+              id: c.id,
+              name: c.name ? `#${c.name}` : 'Unnamed channel',
+            }));
+    const noun = {
+      CHANNEL: 'channel',
+      ORGANIZATION: 'organization',
+      TEAM: 'team',
+      WORKFLOW_TEMPLATE: 'template',
+    }[selection.scope];
+    return `${list.find((item) => item.id === scopeId)?.name ?? 'Selected'} (${noun})`;
+  })();
+  const scopeEffect =
+    selection.scope === 'GLOBAL'
+      ? 'saves reach every team, channel and template without an override'
+      : selection.scope === 'ORGANIZATION'
+        ? 'saves reach every team in it without an override of its own'
+        : 'saves change only this scope';
   const totalCount = settings.data?.length ?? 0;
   const shownCount = visibleGroups.reduce((n, [, items]) => n + items.length, 0);
   const filtering = needle !== '' || show !== 'all';
@@ -198,14 +260,43 @@ export default function GovernSettingsPage() {
           />
         }
         announce={false}
-        title="Platform-wide saves reach every scope below"
-        variant="warning"
+        title={
+          selection.scope === 'GLOBAL' || selection.scope === 'ORGANIZATION'
+            ? selection.scope === 'GLOBAL'
+              ? 'Platform-wide saves reach every scope below'
+              : 'Organization saves reach every team in it'
+            : `Saves here change only ${scopeName}`
+        }
+        variant={
+          selection.scope === 'GLOBAL' || selection.scope === 'ORGANIZATION' ? 'warning' : 'info'
+        }
       >
-        A value saved while viewing platform-wide is the live value for every team, channel and
-        template that has no override for that key. Check the view scope before you save: a save
-        made while viewing a team or channel changes only that scope, but one made while viewing an
-        organization reaches every team in it that has no override of its own.
+        {selection.scope === 'GLOBAL' || selection.scope === 'ORGANIZATION'
+          ? 'A value saved while viewing platform-wide is the live value for every team, channel and template that has no override for that key. Check the view scope before you save: a save made while viewing a team or channel changes only that scope, but one made while viewing an organization reaches every team in it that has no override of its own.'
+          : 'A value saved here is an override at this scope; broader scopes keep their own values. Check the view scope before you save.'}
       </Alert>
+
+      <div
+        className="sticky top-0 z-10 -mx-1 mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg border border-ink-400 bg-ink-800 px-4 py-2.5 text-sm"
+        data-testid="scope-bar"
+      >
+        <p className="min-w-0 text-paper-300">
+          <span className="text-paper-500">Editing: </span>
+          <strong className="font-semibold text-paper-100">{scopeName}</strong>
+          <span className="text-paper-500"> · {scopeEffect}</span>
+        </p>
+        <p
+          aria-live="polite"
+          className={cn(
+            'text-xs tabular-nums',
+            dirtyCount > 0 ? 'text-warning-400' : 'text-paper-500'
+          )}
+        >
+          {dirtyCount > 0
+            ? `${dirtyCount} unsaved change${dirtyCount === 1 ? '' : 's'}`
+            : 'No unsaved changes'}
+        </p>
+      </div>
 
       <PageHelp>
         <section className="space-y-3">
@@ -277,6 +368,32 @@ export default function GovernSettingsPage() {
                 />
               )}
             </div>
+            {scope !== 'GLOBAL' && (teams.isError || orgs.isError || channels.isError) && (
+              <Alert
+                action={
+                  <Button
+                    onClick={() => {
+                      void teams.refetch();
+                      void orgs.refetch();
+                      void channels.refetch();
+                    }}
+                    size="sm"
+                  >
+                    Retry
+                  </Button>
+                }
+                className="mt-3"
+                variant="error"
+              >
+                The list of{' '}
+                {scope === 'TEAM'
+                  ? 'teams'
+                  : scope === 'ORGANIZATION'
+                    ? 'organizations'
+                    : 'channels'}{' '}
+                could not be loaded.
+              </Alert>
+            )}
             {awaitingChoice && (
               <p className="mt-3 text-xs text-paper-500">
                 Showing platform-wide values until you choose one.
@@ -314,6 +431,27 @@ export default function GovernSettingsPage() {
               value={show}
             />
           </Toolbar>
+
+          {visibleGroups.length > 1 && (
+            <nav aria-label="Setting groups" className="xl:hidden">
+              <ul className="flex gap-2 overflow-x-auto pb-1">
+                {visibleGroups.map(([group, items]) => (
+                  <li className="shrink-0" key={group}>
+                    <a
+                      className={cn(
+                        'inline-flex items-center gap-1.5 rounded-full border border-ink-400 px-3 py-1 text-sm text-paper-300 hover:text-paper-100 pointer-coarse:min-h-[44px]',
+                        FOCUS_RING
+                      )}
+                      href={`#group-${group}`}
+                    >
+                      {GROUP_TITLES[group] ?? group}
+                      <span className="text-xs text-paper-500 tabular-nums">{items.length}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          )}
 
           {settings.isLoading && (
             <Card>
@@ -385,6 +523,7 @@ export default function GovernSettingsPage() {
                     grantsHref={isAdmin ? '/admin/config-grants' : undefined}
                     key={setting.key}
                     onClear={() => track(setting.key, () => clearSetting.mutateAsync(setting.key))}
+                    onDirtyChange={onDirtyChange}
                     onEdit={() =>
                       setRowStatus((prev) => {
                         if (!prev[setting.key] || prev[setting.key].phase === 'saving') {
@@ -410,7 +549,7 @@ export default function GovernSettingsPage() {
         </div>
 
         {visibleGroups.length > 1 && (
-          <nav aria-label="Setting groups" className="hidden xl:block">
+          <nav aria-label="Setting groups (side)" className="hidden xl:block">
             <div className="sticky top-6">
               <p className="mb-3 text-xs font-medium text-paper-500">Groups</p>
               <ul className="space-y-0.5 border-l border-ink-500">
@@ -433,6 +572,22 @@ export default function GovernSettingsPage() {
           </nav>
         )}
       </div>
+
+      <ConfirmModal
+        confirmLabel="Discard and switch"
+        message={`${dirtyCount} unsaved change${dirtyCount === 1 ? '' : 's'} on this page will be discarded when the view changes.`}
+        onClose={() => setPendingScope(null)}
+        onConfirm={() => {
+          if (pendingScope) {
+            // Drafts are dropped by the rows' re-seed on the scope change; clear the count now.
+            setDirtyKeys(new Set());
+            applyScope(pendingScope.scope, pendingScope.id);
+          }
+          setPendingScope(null);
+        }}
+        open={pendingScope !== null}
+        title="Discard unsaved changes?"
+      />
     </div>
   );
 }

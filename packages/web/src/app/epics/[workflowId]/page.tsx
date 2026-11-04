@@ -1,11 +1,11 @@
 'use client';
 
-import { use, useRef } from 'react';
+import { use, useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
-import { ButtonLink } from '@/components/ui/Button';
+import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
-import { DataTable } from '@/components/ui/DataTable';
+import { DataTable, TableLink } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
@@ -35,8 +35,13 @@ const STARTUP_GRACE_MS = 45_000;
 export default function EpicDetailPage({ params }: PageProps) {
   const { workflowId: rawWorkflowId } = use(params);
   const workflowId = validateRouteParam(rawWorkflowId);
-  const mountedAtRef = useRef(Date.now());
-  const { data: epic, isLoading, error } = useEpic(workflowId ?? '');
+  // A timer, not a clock read during render: the grace period ends on its own, even with no re-render.
+  const [graceOver, setGraceOver] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setGraceOver(true), STARTUP_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, []);
+  const { data: epic, isLoading, error, refetch } = useEpic(workflowId ?? '');
   // Every child run shares the epic's work request. The child's ActiveWorkflow
   // row is self-registered without a repository, so /requests/:id cannot show
   // it; its WorkflowRun (keyed by the same Temporal workflow ID) can.
@@ -56,24 +61,35 @@ export default function EpicDetailPage({ params }: PageProps) {
   }
 
   if (!epic) {
-    // Right after creation the epic row may not exist yet — keep polling
-    // quietly (the hook retries + refetches) instead of flashing an error.
-    if (Date.now() - mountedAtRef.current < STARTUP_GRACE_MS) {
+    // A load failure is not a missing epic. The hook has already retried through the window in
+    // which a new epic's row may not exist yet, so a surfaced error is final and is shown at once.
+    if (error) {
+      return (
+        <div className="space-y-6">
+          <BackToEpics />
+          <Alert
+            action={
+              <Button onClick={() => void refetch()} size="sm">
+                Try again
+              </Button>
+            }
+            title="Could not load this epic"
+          >
+            {errMsg(error, `Could not load epic ${workflowId}`)}
+          </Alert>
+        </div>
+      );
+    }
+    // Right after creation the epic row may not exist yet: keep the skeleton until the grace
+    // period ends, then an errorless miss is a missing epic.
+    if (!graceOver) {
       return <SkeletonDetail label="the epic as it starts" />;
     }
-    // A load failure is not a missing epic: only an errorless miss reads as "not found".
-    if (!error) {
-      return <EpicNotFound />;
-    }
-    return (
-      <div className="space-y-6">
-        <BackToEpics />
-        <Alert>{errMsg(error, `Could not load epic ${workflowId}`)}</Alert>
-      </div>
-    );
+    return <EpicNotFound />;
   }
 
   const done = epic.children.filter((child) => child.status === 'SUCCESS').length;
+  const percent = epic.children.length ? Math.round((done / epic.children.length) * 100) : 0;
   return (
     <div className="space-y-6">
       <BackToEpics />
@@ -113,6 +129,23 @@ export default function EpicDetailPage({ params }: PageProps) {
                 {done} of {epic.children.length} finished
               </span>
             </CardHeader>
+            {epic.children.length > 0 && (
+              <div className="px-5 pb-4">
+                <div
+                  aria-label="Child runs finished"
+                  aria-valuemax={epic.children.length}
+                  aria-valuemin={0}
+                  aria-valuenow={done}
+                  className="h-1.5 w-full overflow-hidden rounded-full bg-ink-600"
+                  role="progressbar"
+                >
+                  <div
+                    className="h-full rounded-full bg-accent-400"
+                    style={{ width: `${percent}%` }}
+                  />
+                </div>
+              </div>
+            )}
             <DataTable
               actions={(child) => {
                 const cell = epicChildRunCell(child, runIdByTemporalId, childRunsSettled);
@@ -126,12 +159,13 @@ export default function EpicDetailPage({ params }: PageProps) {
                 }
                 if (cell.kind === 'no-access') {
                   return (
-                    <span
-                      className="inline-flex items-center gap-1 text-xs text-paper-500"
-                      title="This child's run is not visible to you — it likely belongs to a team you are not a member of."
-                    >
+                    <span className="inline-flex items-center gap-1 text-xs text-paper-500">
                       <Icon name="lock" size={12} />
                       No access
+                      <HelpTip label="No access">
+                        This child&apos;s run is not visible to you. It likely belongs to a team you
+                        are not a member of.
+                      </HelpTip>
                     </span>
                   );
                 }
@@ -144,10 +178,17 @@ export default function EpicDetailPage({ params }: PageProps) {
               actionsLabel="Diagnostics"
               columns={[
                 {
-                  cell: (child) =>
-                    child.repoName
+                  cell: (child) => {
+                    const label = child.repoName
                       ? `${child.organizationName}/${child.repoName}`
-                      : (child.repoId ?? '—'),
+                      : (child.repoId ?? '—');
+                    const cell = epicChildRunCell(child, runIdByTemporalId, childRunsSettled);
+                    return cell.kind === 'run' ? (
+                      <TableLink href={`/runs/${cell.runId}`}>{label}</TableLink>
+                    ) : (
+                      label
+                    );
+                  },
                   header: 'Repository',
                   id: 'repository',
                   primary: true,
@@ -174,7 +215,9 @@ export default function EpicDetailPage({ params }: PageProps) {
                   title="No child runs yet"
                 />
               }
-              getRowId={(child) => child.temporalWorkflowId ?? child.repoId ?? child.status}
+              getRowId={(child) =>
+                child.temporalWorkflowId ?? child.repoId ?? `child-${epic.children.indexOf(child)}`
+              }
               revealActions={false}
               rows={epic.children}
             />

@@ -30,35 +30,43 @@ export function VersionsCard({
       <ul className="-mx-1.5 space-y-0.5">
         {template.versions.map((v) => {
           const selected = effectiveVersion === v.version;
+          const content = (
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex flex-wrap items-center gap-1.5">
+                <span className="text-sm font-medium tabular-nums">v{v.version}</span>
+                <VersionTags
+                  active={v.version === template.activeVersion}
+                  experiment={v.version === template.experimentVersion}
+                  needsReview={!!v.generatedBy && !v.reviewedAt}
+                />
+                {v.generatedBy && <span className="text-xs text-paper-500">AI-generated</span>}
+              </span>
+              <span className="shrink-0 text-xs text-paper-500" title={formatDate(v.createdAt)}>
+                {formatRelativeTime(v.createdAt)}
+              </span>
+            </div>
+          );
           return (
             <li key={v.id}>
-              <button
-                aria-current={selected ? 'true' : undefined}
-                className={cn(
-                  'w-full rounded-md px-2.5 py-2 text-left transition-colors',
-                  FOCUS_RING,
-                  selected
-                    ? 'bg-ink-600/70 text-paper-50'
-                    : 'text-paper-300 hover:bg-ink-700/60 hover:text-paper-100'
-                )}
-                disabled={template.versions.length === 1}
-                onClick={() => (isDirty ? onAskDiscard(v.version) : onSelectVersion(v.version))}
-                type="button"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-sm font-medium tabular-nums">v{v.version}</span>
-                    <VersionTags
-                      active={v.version === template.activeVersion}
-                      experiment={v.version === template.experimentVersion}
-                      needsReview={!!v.generatedBy && !v.reviewedAt}
-                    />
-                  </span>
-                  <span className="shrink-0 text-xs text-paper-500" title={formatDate(v.createdAt)}>
-                    {formatRelativeTime(v.createdAt)}
-                  </span>
-                </div>
-              </button>
+              {template.versions.length === 1 ? (
+                // The only version has nothing to switch to: a plain row, not a dead button.
+                <div className="rounded-md bg-ink-600/70 px-2.5 py-2 text-paper-50">{content}</div>
+              ) : (
+                <button
+                  aria-current={selected ? 'true' : undefined}
+                  className={cn(
+                    'w-full rounded-md px-2.5 py-2 text-left transition-colors',
+                    FOCUS_RING,
+                    selected
+                      ? 'bg-ink-600/70 text-paper-50'
+                      : 'text-paper-300 hover:bg-ink-700/60 hover:text-paper-100'
+                  )}
+                  onClick={() => (isDirty ? onAskDiscard(v.version) : onSelectVersion(v.version))}
+                  type="button"
+                >
+                  {content}
+                </button>
+              )}
             </li>
           );
         })}

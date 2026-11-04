@@ -11,6 +11,7 @@ import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import {
   type BundlePreview,
   useBundleMaxBytes,
@@ -21,12 +22,14 @@ import {
   usePreviewBundle,
 } from '@/hooks/useBundles';
 import { ApiError } from '@/lib/api';
-import { readBundleFile } from '@/lib/bundleFile';
+import { DEFAULT_BUNDLE_FILE_BYTES, formatBundleCap, readBundleFile } from '@/lib/bundleFile';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { navLabel } from '@/lib/navigation';
 import { cn } from '@/lib/utils';
 import { BundlePreviewModal } from './BundlePreviewModal';
+
+const SEMVER = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
 export default function StudioBundlesPage() {
   const {
@@ -103,21 +106,29 @@ export default function StudioBundlesPage() {
   async function handleExport() {
     setExportError(null);
     setExportDone(null);
+    if (!exportForm.name.trim()) {
+      setExportError('Give the bundle a name.');
+      return;
+    }
+    if (!SEMVER.test(exportForm.version.trim())) {
+      setExportError('Version must look like 1.0.0 (major.minor.patch).');
+      return;
+    }
     try {
       const manifest = await exportBundle.mutateAsync({
-        name: exportForm.name || 'bundle',
+        name: exportForm.name.trim(),
         origin: exportForm.origin || undefined,
-        version: exportForm.version || '1.0.0',
+        version: exportForm.version.trim(),
       });
       // Download the bundle JSON in the browser.
       const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
       const href = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.download = `${exportForm.name || 'bundle'}.bundle.json`;
+      a.download = `${exportForm.name.trim()}.bundle.json`;
       a.href = href;
       a.click();
       URL.revokeObjectURL(href);
-      setExportDone(`Downloaded ${exportForm.name || 'bundle'}.bundle.json.`);
+      setExportDone(`Downloaded ${exportForm.name.trim()}.bundle.json.`);
     } catch (e) {
       setExportError(errMsg(e, 'Export failed'));
     }
@@ -147,7 +158,15 @@ export default function StudioBundlesPage() {
             Load a bundle from a URL or a file. You review what it contains and what it replaces
             before anything is installed.
           </p>
-          <div className="flex flex-wrap items-end gap-3">
+          <form
+            className="flex flex-wrap items-end gap-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (url.trim() && !previewBundle.isPending) {
+                void handlePreview();
+              }
+            }}
+          >
             <div className="min-w-0 flex-1 basis-64">
               <Input
                 className="font-mono"
@@ -159,12 +178,12 @@ export default function StudioBundlesPage() {
             </div>
             <Button
               disabled={!url.trim() || previewBundle.isPending}
-              onClick={handlePreview}
+              type="submit"
               variant="primary"
             >
               {previewBundle.isPending ? 'Loading…' : 'Preview'}
             </Button>
-          </div>
+          </form>
 
           <div aria-hidden className="my-5 flex items-center gap-3 text-xs text-paper-500">
             <span className="h-px flex-1 bg-ink-600" />
@@ -217,7 +236,8 @@ export default function StudioBundlesPage() {
               type="file"
             />
             <p className="mt-3 text-xs text-paper-500">
-              Choose a file or drop it here. Bundles up to 5 MB.
+              Choose a file or drop it here. Bundles up to{' '}
+              {formatBundleCap(maxBytes ?? DEFAULT_BUNDLE_FILE_BYTES)}.
             </p>
           </div>
           {installError && (
@@ -241,22 +261,24 @@ export default function StudioBundlesPage() {
           </p>
           <div className="space-y-4">
             <Input
-              hint="A blank name downloads as bundle.bundle.json."
+              hint="The file downloads as <name>.bundle.json."
               label="Name"
               onChange={(e) => setExportForm((f) => ({ ...f, name: e.target.value }))}
-              placeholder="bundle"
+              placeholder="my-bundle"
+              required
               value={exportForm.name}
             />
             <div className="grid gap-4 sm:grid-cols-2">
               <Input
                 className="font-mono"
+                hint="major.minor.patch"
                 label="Version"
                 onChange={(e) => setExportForm((f) => ({ ...f, version: e.target.value }))}
                 value={exportForm.version}
               />
               <Input
                 className="font-mono"
-                label="Origin"
+                label="Origin (optional)"
                 onChange={(e) => setExportForm((f) => ({ ...f, origin: e.target.value }))}
                 placeholder="swe-starter"
                 value={exportForm.origin}
@@ -346,6 +368,13 @@ export default function StudioBundlesPage() {
                   ),
                   header: 'Source',
                   id: 'source',
+                },
+                {
+                  cell: (b) => (
+                    <RelativeTime className="text-xs text-paper-400" value={b.updatedAt} />
+                  ),
+                  header: 'Installed',
+                  id: 'installed',
                 },
               ]}
               density="compact"

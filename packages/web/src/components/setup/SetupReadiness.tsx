@@ -5,15 +5,15 @@ import { Alert } from '@/components/ui/Alert';
 import { ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Icon } from '@/components/ui/Icon';
-import { Skeleton } from '@/components/ui/LoadingState';
 import { useHasRole } from '@/hooks/useHasRole';
 import { type ReadinessItemId, useReadiness } from '@/hooks/useReadiness';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 /**
  * Home checklist for admins: every step a first run needs, with what is done ticked off and
- * each missing step linking to the page that fixes it. Shows a placeholder while loading and
- * renders nothing on error or once everything is in place.
+ * each missing step linking to the page that fixes it. Renders nothing while loading, on error
+ * and once everything is in place: a fully set-up admin never sees a placeholder flash and
+ * collapse, and the card appears only when there is something to do.
  */
 export function SetupReadiness() {
   const isAdmin = useHasRole('ADMIN');
@@ -21,23 +21,7 @@ export function SetupReadiness() {
   if (!isAdmin) {
     return null;
   }
-  // Reserve the card's footprint while the check runs so Home does not jump when it lands.
-  if (isLoading) {
-    return (
-      <div
-        aria-hidden="true"
-        className="space-y-4 rounded-xl border border-ink-400/40 bg-ink-800/50 p-6"
-        data-testid="setup-readiness-loading"
-      >
-        <Skeleton className="h-5 w-48" />
-        <Skeleton className="h-1.5 w-full" />
-        <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-10 w-full" />
-      </div>
-    );
-  }
-  if (!data || data.ready) {
+  if (isLoading || !data || data.ready) {
     return null;
   }
   const done = data.items.filter((i) => i.ok).length;
@@ -112,6 +96,7 @@ export function SetupReadiness() {
                 variant={item.id === nextId ? 'primary' : 'secondary'}
               >
                 Fix this
+                <span className="sr-only">: {item.label}</span>
                 <Icon name="arrowRight" size={13} />
               </ButtonLink>
             )}
@@ -156,6 +141,7 @@ export function SetupBanner({
             {item.href !== here ? (
               <Link className={linkClass} href={item.href}>
                 Fix this
+                <span className="sr-only">: {item.label}</span>
                 <Icon name="arrowRight" size={12} />
               </Link>
             ) : (

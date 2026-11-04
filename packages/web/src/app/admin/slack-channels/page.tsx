@@ -10,26 +10,35 @@ import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Select } from '@/components/ui/Select';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { useHasRole } from '@/hooks/useHasRole';
+import { usePagedRows } from '@/hooks/usePagedRows';
 import { type SlackChannel, useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
 import { navLabel } from '@/lib/navigation';
-import { cn, formatCents, formatTotalCost } from '@/lib/utils';
+import { cn, formatCents, formatTotalCost, plural } from '@/lib/utils';
 
 /** This month's spend against the cap: "$3.20 of $50.00", or "$3.20, no cap". */
 function spendLabel(channel: SlackChannel): string {
   const spent = formatTotalCost(channel.currentMonthUsage?.costUsdAccrued ?? 0);
   return channel.monthlyBudgetUsdCents == null
     ? `${spent}, no cap`
-    : `${spent} of ${formatCents(channel.monthlyBudgetUsdCents)}`;
+    : `${spent} of ${formatCents(channel.monthlyBudgetUsdCents)}${overCap(channel) ? ' (over cap)' : ''}`;
+}
+
+function overCap(channel: SlackChannel): boolean {
+  const cap = channel.monthlyBudgetUsdCents;
+  return cap != null && cap > 0 && (channel.currentMonthUsage?.costUsdAccrued ?? 0) * 100 >= cap;
 }
 
 const CHANNEL_SORT_KEYS = {
   name: (ch: SlackChannel) => ch.name?.toLowerCase() ?? null,
   spend: (ch: SlackChannel) => ch.currentMonthUsage?.costUsdAccrued ?? 0,
+  status: (ch: SlackChannel) => (ch.isActive ? 0 : 1),
 };
 
 /**
@@ -75,17 +84,23 @@ export default function GovernSlackChannelsPage() {
   const { data: teams } = useTeams();
   const [registerOpen, setRegisterOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'' | 'active' | 'inactive'>('');
   const { onSortChange, sort, sortRows } = useDataTableSort<SlackChannel>(CHANNEL_SORT_KEYS);
   const teamNames = new Map(teams?.map((t) => [t.id, t.name]));
+  // Until the team list arrives (or when the viewer cannot see a team) say so, rather than "none".
+  const teamLabel = (id: string) => teamNames.get(id) ?? (teams ? 'Unknown team' : 'Loading…');
 
   const needle = query.trim().toLowerCase();
   const shown = (channels ?? []).filter(
     (ch) =>
-      !needle ||
-      [ch.name ?? '', ch.slackChannelId, teamNames.get(ch.teamId) ?? ''].some((text) =>
-        text.toLowerCase().includes(needle)
-      )
+      (statusFilter === '' || (statusFilter === 'active') === ch.isActive) &&
+      (!needle ||
+        [ch.name ?? '', ch.slackChannelId, teamNames.get(ch.teamId) ?? ''].some((text) =>
+          text.toLowerCase().includes(needle)
+        ))
   );
+  const filtering = needle !== '' || statusFilter !== '';
+  const pager = usePagedRows(sortRows(shown), 25, `${needle}|${statusFilter}`);
 
   return (
     <div className="space-y-6">
@@ -135,7 +150,11 @@ export default function GovernSlackChannelsPage() {
                   </Button>
                 ) : undefined
               }
-              hint="Register a channel to let the assistant answer, follow up and remember context there. Each channel belongs to a team and can carry its own spend cap."
+              hint={
+                isAdmin
+                  ? 'Register a channel to let the assistant answer, follow up and remember context there. Each channel belongs to a team and can carry its own spend cap.'
+                  : 'Only platform admins register channels. Ask an admin to register one for your team.'
+              }
               icon="chat"
               title="No Slack channels registered yet"
             />
@@ -144,8 +163,9 @@ export default function GovernSlackChannelsPage() {
               <Toolbar
                 end={
                   <span className="text-xs text-paper-500 tabular-nums">
-                    {needle ? `${shown.length} of ${channels.length}` : channels.length} channel
-                    {channels.length === 1 ? '' : 's'}
+                    {filtering
+                      ? `${shown.length} of ${plural(channels.length, 'channel')}`
+                      : plural(channels.length, 'channel')}
                   </span>
                 }
               >
@@ -155,16 +175,45 @@ export default function GovernSlackChannelsPage() {
                   placeholder="Search channel or team…"
                   value={query}
                 />
+                <Select
+                  aria-label="Filter by status"
+                  className="h-8 w-full text-sm sm:w-40"
+                  onChange={(v) => setStatusFilter(v as '' | 'active' | 'inactive')}
+                  options={[
+                    { label: 'All statuses', value: '' },
+                    { label: 'Active', value: 'active' },
+                    { label: 'Inactive', value: 'inactive' },
+                  ]}
+                  value={statusFilter}
+                />
+                {filtering && (
+                  <Button
+                    onClick={() => {
+                      setQuery('');
+                      setStatusFilter('');
+                    }}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Clear filters
+                  </Button>
+                )}
               </Toolbar>
               {shown.length === 0 ? (
                 <EmptyState
                   action={
-                    <Button onClick={() => setQuery('')} size="sm">
-                      Clear search
+                    <Button
+                      onClick={() => {
+                        setQuery('');
+                        setStatusFilter('');
+                      }}
+                      size="sm"
+                    >
+                      Clear filters
                     </Button>
                   }
                   icon="search"
-                  title="No channels match your search"
+                  title="No channels match these filters"
                 />
               ) : (
                 <div className="-mx-4">
@@ -190,9 +239,7 @@ export default function GovernSlackChannelsPage() {
                       },
                       {
                         cell: (ch) => (
-                          <span className="text-sm text-paper-300">
-                            {teamNames.get(ch.teamId) ?? '—'}
-                          </span>
+                          <span className="text-sm text-paper-300">{teamLabel(ch.teamId)}</span>
                         ),
                         header: 'Team',
                         id: 'team',
@@ -205,6 +252,7 @@ export default function GovernSlackChannelsPage() {
                         ),
                         header: 'Status',
                         id: 'status',
+                        sortable: true,
                       },
                       {
                         align: 'right',
@@ -222,9 +270,22 @@ export default function GovernSlackChannelsPage() {
                     getRowId={(ch) => ch.id}
                     onSortChange={onSortChange}
                     rowHref={(ch) => `/admin/slack-channels/${ch.id}`}
-                    rows={sortRows(shown)}
+                    rows={pager.pageRows}
                     sort={sort}
                   />
+                  {pager.paged && (
+                    <div className="mt-4 border-t border-ink-600 px-4 pt-4">
+                      <Pagination
+                        hasNext={pager.hasNext}
+                        hasPrev={pager.hasPrev}
+                        onNext={pager.onNext}
+                        onPrev={pager.onPrev}
+                        rangeEnd={pager.rangeEnd}
+                        rangeStart={pager.rangeStart}
+                        total={pager.total}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </>

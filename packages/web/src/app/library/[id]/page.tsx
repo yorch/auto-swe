@@ -190,6 +190,10 @@ export default function TemplateDetailPage({ params }: PageProps) {
         <RefineChatPanel
           onClose={() => setRefineOpen(false)}
           onSaved={noteOwnVersion}
+          onViewVersion={(v) => {
+            setMode('view');
+            setSelectedVersion(v);
+          }}
           open={refineOpen}
           templateId={id}
         />
@@ -200,6 +204,11 @@ export default function TemplateDetailPage({ params }: PageProps) {
           onEditInputs={() => setEditSchemaOpen(true)}
           onExplain={() => setExplainOpen(true)}
           onRefine={() => setRefineOpen(true)}
+          refineBlockedReason={
+            isDirty
+              ? 'Save or cancel your unsaved edits first: refining works on the last saved version.'
+              : null
+          }
           template={template}
         />
 
@@ -278,7 +287,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
             {mode === 'view' && visualSpec && (
               <WorkflowDag
-                height="calc(100vh - 360px)"
+                height="max(420px, calc(100dvh - 360px))"
                 onSelect={setSelectedNodeId}
                 outline
                 selectedNodeId={selectedNodeId}
@@ -301,8 +310,17 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
             {mode === 'json' && (
               <>
+                {jsonParsed?.ok === false && (
+                  <div id="spec-json-error">
+                    <Alert className="whitespace-pre-line" title="The JSON does not parse">
+                      {jsonParsed.error}
+                    </Alert>
+                  </div>
+                )}
                 <Textarea
-                  className="h-[520px] p-4 font-mono text-xs leading-relaxed"
+                  aria-describedby={jsonParsed?.ok === false ? 'spec-json-error' : undefined}
+                  aria-invalid={jsonParsed?.ok === false ? true : undefined}
+                  className="h-[60vh] p-4 font-mono text-xs leading-relaxed"
                   compact
                   id="spec-json"
                   onChange={(e) => handleJsonChange(e.target.value)}
@@ -310,11 +328,6 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   spellCheck={false}
                   value={editorJson}
                 />
-                {jsonParsed?.ok === false && (
-                  <Alert className="whitespace-pre-line" title="The JSON does not parse">
-                    {jsonParsed.error}
-                  </Alert>
-                )}
               </>
             )}
           </section>

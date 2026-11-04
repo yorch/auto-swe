@@ -2,7 +2,7 @@
 
 import type { ReactNode } from 'react';
 import { FieldError, Label, ListBoxItem, Popover, Text } from 'react-aria-components';
-import { cn } from '@/lib/utils';
+import { cn, FIELD_FOCUS_DATA } from '@/lib/utils';
 import { RequiredMark } from './FieldWrapper';
 import { Icon } from './Icon';
 
@@ -47,18 +47,19 @@ export function optionText(option: DropdownOption): string {
   return typeof option.label === 'string' ? option.label : option.value;
 }
 
-/** The control's box: matches `Input` (h-10, or h-8 mono when compact). */
+/** The control's box: matches `Input` (h-9, or h-8 when compact). */
 export function fieldBoxClass(compact: boolean, invalid: boolean) {
   return cn(
     'w-full rounded-md border border-ink-200 bg-ink-900 text-paper-100 outline-none transition-colors',
     compact ? 'h-8 px-2.5 text-sm' : 'h-9 px-3 text-sm',
+    'pointer-coarse:min-h-[44px]',
     // data-focused: a Select's trigger button; data-focus-within: a Combobox's
     // Group around its input. Each primitive gets the attribute that applies.
-    'hover:border-paper-600 data-[focused]:border-accent-400 data-[focused]:ring-2 data-[focused]:ring-accent-400/20',
-    'data-[focus-within]:border-accent-400',
+    'hover:border-paper-600',
+    FIELD_FOCUS_DATA,
     'data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50',
     invalid &&
-      'border-danger-400 data-[focused]:border-danger-400 data-[focus-within]:border-danger-400'
+      'border-danger-400 data-[focused]:border-danger-400 data-[focused]:outline-danger-400 data-[focus-within]:border-danger-400 data-[focus-within]:outline-danger-400'
   );
 }
 
@@ -133,12 +134,12 @@ export function DropdownPopover({ children }: { children: ReactNode }) {
   );
 }
 
-export function DropdownItem({ option, compact }: { option: DropdownOption; compact: boolean }) {
+/** `compact` is accepted for call-site symmetry with the field box; rows are one size. */
+export function DropdownItem({ option }: { option: DropdownOption; compact?: boolean }) {
   return (
     <ListBoxItem
       className={cn(
-        'flex cursor-pointer items-start gap-2 rounded-md px-2.5 py-1.5 text-paper-200 outline-none',
-        compact ? 'text-sm' : 'text-sm',
+        'flex cursor-pointer items-start gap-2 rounded-md px-2.5 py-1.5 text-paper-200 outline-none pointer-coarse:min-h-[44px]',
         'data-[focused]:bg-ink-600 data-[selected]:text-accent-400',
         'data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40'
       )}

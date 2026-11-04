@@ -47,6 +47,15 @@ function onClickCapture(event: MouseEvent) {
   }
 }
 
+/**
+ * Ask before a programmatic navigation (`router.push`) drops unsaved edits. The click guard only
+ * sees anchor clicks, so code that navigates itself — the command palette — calls this first.
+ * True when nothing is dirty or the person chose to leave.
+ */
+export function confirmLeave(): boolean {
+  return dirtySources.size === 0 || window.confirm(UNSAVED_CHANGES_PROMPT);
+}
+
 function track(source: symbol) {
   if (dirtySources.size === 0) {
     window.addEventListener('beforeunload', onBeforeUnload);

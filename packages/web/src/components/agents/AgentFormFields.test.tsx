@@ -18,7 +18,7 @@ const VALUE = { key: 'reviewer', name: 'Reviewer' };
 const CREDENTIAL = { id: 'c1', lastFour: 'abcd', provider: 'anthropic' } as ProviderCredentialRow;
 
 describe('AgentFormFields', () => {
-  it('create mode shows the key field and marks optional fields', () => {
+  it('create mode shows the key field and a plain, required Model spec', () => {
     render(
       <AgentFormFields
         mcpConnections={[]}
@@ -29,8 +29,8 @@ describe('AgentFormFields', () => {
       />
     );
 
-    expect(screen.getByLabelText('Key')).toBeTruthy();
-    expect(screen.getByRole('combobox', { name: 'Model spec (optional)' })).toBeTruthy();
+    expect(screen.getByLabelText(/^Key/)).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Model spec' })).toBeTruthy();
   });
 
   it('edit mode has no key field and plain labels', () => {
@@ -44,7 +44,7 @@ describe('AgentFormFields', () => {
       />
     );
 
-    expect(screen.queryByLabelText('Key')).toBeNull();
+    expect(screen.queryByLabelText(/^Key/)).toBeNull();
     expect(screen.getByRole('combobox', { name: 'Model spec' })).toBeTruthy();
   });
 
@@ -87,7 +87,7 @@ describe('AgentFormFields', () => {
       />
     );
 
-    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Critic' } });
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Critic' } });
     expect(onChange).toHaveBeenLastCalledWith({ name: 'Critic' });
 
     const credential = screen.getByRole('combobox', { name: /credential override/i });
@@ -113,11 +113,20 @@ describe('AgentFormFields', () => {
       true
     );
     fireEvent.click(screen.getByRole('radio', { name: /Inherit from another agent/ }));
-    expect(onChange).toHaveBeenLastCalledWith({ credentialId: null, modelSpec: '' });
+    expect(onChange).toHaveBeenLastCalledWith({
+      credentialId: null,
+      inheritsModelFrom: '',
+      modelSpec: '',
+    });
     expect(screen.getByRole('combobox', { name: 'Inherit model from' })).toBeTruthy();
     expect(screen.queryByRole('combobox', { name: 'Model spec' })).toBeNull();
     fireEvent.click(screen.getByRole('radio', { name: /Own model/ }));
-    expect(onChange).toHaveBeenLastCalledWith({ inheritsModelFrom: '' });
+    // Switching back restores what was typed rather than leaving the model blank.
+    expect(onChange).toHaveBeenLastCalledWith({
+      credentialId: null,
+      inheritsModelFrom: '',
+      modelSpec: 'anthropic/x',
+    });
   });
 
   it('starts on inheritance for an agent that only inherits', () => {

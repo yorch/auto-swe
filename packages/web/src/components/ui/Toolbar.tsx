@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { cn } from '@/lib/utils';
+import { cn, FIELD_FOCUS } from '@/lib/utils';
 import { Icon } from './Icon';
 
 /**
@@ -20,7 +20,12 @@ export function Toolbar({
   return (
     <div className={cn('mb-4 flex flex-wrap items-center gap-2', className)}>
       {children}
-      {end && <div className="ml-auto flex flex-wrap items-center gap-2">{end}</div>}
+      {end && (
+        // Polite live region: a result count in here is announced as a filter changes it.
+        <div aria-live="polite" className="ml-auto flex flex-wrap items-center gap-2">
+          {end}
+        </div>
+      )}
     </div>
   );
 }
@@ -52,7 +57,10 @@ export function SearchInput({
       />
       <input
         aria-label={label}
-        className="h-8 w-full rounded-md border border-ink-200 bg-ink-900 pr-2.5 pl-8 text-sm text-paper-100 outline-none transition-colors placeholder:text-paper-600 hover:border-paper-600 focus:border-accent-400 focus:ring-2 focus:ring-accent-400/20"
+        className={cn(
+          'h-8 pointer-coarse:min-h-[44px] w-full rounded-md border border-ink-200 bg-ink-900 pr-2.5 pl-8 text-sm text-paper-100 transition-colors placeholder:text-paper-600 hover:border-paper-600',
+          FIELD_FOCUS
+        )}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         type="search"

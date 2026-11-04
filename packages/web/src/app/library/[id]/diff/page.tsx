@@ -2,7 +2,6 @@
 
 import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
 import { Suspense, use, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -22,6 +21,7 @@ import {
 import { type DiffKind, WorkflowDag } from '@/components/workflow/WorkflowDag';
 import { useLedTeamIds } from '@/hooks/useTeams';
 import { useWorkflowSpecDiff, useWorkflowTemplate } from '@/hooks/useTemplates';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { errMsg } from '@/lib/errors';
 import { validateRouteParam } from '@/lib/routeParams';
 import { diffFields, type FieldChange, orientVersions } from '@/lib/specDiff';
@@ -144,7 +144,7 @@ export default function TemplateDiffPage({ params }: PageProps) {
 function TemplateDiffContent({ params }: PageProps) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const search = useSearchParams();
+  const { params: search, update } = useUrlFilters();
   const {
     data: template,
     isLoading: templateLoading,
@@ -160,18 +160,16 @@ function TemplateDiffContent({ params }: PageProps) {
     () => (template ? [...template.versions].sort((a, b) => b.version - a.version) : []),
     [template]
   );
-  // The user's explicit picks (or the ?a=&b= of a link); until then the active
-  // version against the newest other one.
-  const [picked, setPicked] = useState<{ x: number | null; y: number | null }>(() => {
-    const qa = Number(search.get('a'));
-    const qb = Number(search.get('b'));
-    return {
-      x: Number.isInteger(qa) && qa > 0 ? qa : null,
-      y: Number.isInteger(qb) && qb > 0 ? qb : null,
-    };
-  });
+  // The picked pair and its direction live in the URL (?a=&b=&reversed=1), so a comparison can be
+  // shared or reloaded. Until picked, it is the active version against the newest other one.
+  const qa = Number(search.get('a'));
+  const qb = Number(search.get('b'));
+  const picked = {
+    x: Number.isInteger(qa) && qa > 0 ? qa : null,
+    y: Number.isInteger(qb) && qb > 0 ? qb : null,
+  };
   // `?reversed=1` opens active -> older, the direction promoting an older version would apply.
-  const [reversed, setReversed] = useState(() => search.get('reversed') === '1');
+  const reversed = search.get('reversed') === '1';
   const [promoteOpen, setPromoteOpen] = useState(false);
 
   const defaultX = template?.activeVersion ?? sortedVersions[0]?.version ?? null;
@@ -235,15 +233,28 @@ function TemplateDiffContent({ params }: PageProps) {
   return (
     // Full-screen route: the shell gives this page the whole pane, so it scrolls itself.
     <div className="h-full overflow-y-auto">
-      <div className="space-y-6 px-4 py-6 md:px-10 md:py-8">
+      <div className="mx-auto max-w-[1280px] space-y-6 px-4 py-6 md:px-10 md:py-8">
         <div>
           <TemplateBackLink href={`/library/${id}`} label={template?.name ?? 'Workflow'} />
           <PageHeader
             actions={
-              canPromote && !afterNeedsReview ? (
-                <Button onClick={() => setPromoteOpen(true)} size="sm" variant="primary">
-                  Promote v{after} to active
-                </Button>
+              canPromote ? (
+                <>
+                  <Button
+                    aria-describedby={afterNeedsReview ? 'promote-review-reason' : undefined}
+                    disabled={afterNeedsReview}
+                    onClick={() => setPromoteOpen(true)}
+                    size="sm"
+                    variant="primary"
+                  >
+                    Promote v{after} to active
+                  </Button>
+                  {afterNeedsReview && (
+                    <span className="text-xs text-paper-500" id="promote-review-reason">
+                      Needs review first
+                    </span>
+                  )}
+                </>
               ) : undefined
             }
             className="mt-3 mb-0"
@@ -287,21 +298,21 @@ function TemplateDiffContent({ params }: PageProps) {
             <VersionSelect
               activeVersion={template?.activeVersion ?? null}
               label="Version"
-              onChange={(v) => setPicked({ x: v, y })}
+              onChange={(v) => update({ a: String(v), b: y === null ? null : String(y) })}
               value={x}
               versions={sortedVersions}
             />
             <VersionSelect
               activeVersion={template?.activeVersion ?? null}
               label="Compare with"
-              onChange={(v) => setPicked({ x, y: v })}
+              onChange={(v) => update({ a: x === null ? null : String(x), b: String(v) })}
               value={y}
               versions={sortedVersions}
             />
             <Button
               aria-label="Swap before and after"
               disabled={x === y}
-              onClick={() => setReversed((r) => !r)}
+              onClick={() => update({ reversed: reversed ? null : '1' })}
               size="md"
               title="Swap before and after"
               variant="secondary"

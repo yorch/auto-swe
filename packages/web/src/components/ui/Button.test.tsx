@@ -22,4 +22,16 @@ describe('Button', () => {
     // accent-400 is only 3.9:1 behind white text; 500 and its darker hover clear 4.5:1.
     expect(primary).not.toMatch(/bg-accent-400|gradient|brightness|shadow/);
   });
+
+  it('floors every button at 44px on a coarse pointer', () => {
+    for (const size of ['sm', 'md', 'lg'] as const) {
+      expect(buttonClassName('secondary', size)).toContain('pointer-coarse:min-h-[44px]');
+    }
+  });
+
+  it('has a solid danger variant as heavy as primary', () => {
+    const danger = buttonClassName('danger-solid', 'md');
+    expect(danger).toContain('bg-danger-600');
+    expect(danger).toContain('text-white');
+  });
 });

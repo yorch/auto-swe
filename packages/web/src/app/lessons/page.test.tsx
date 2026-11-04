@@ -69,6 +69,19 @@ describe('LessonsPage', () => {
   });
 });
 
+describe('LessonsPage delete confirmation', () => {
+  it('quotes a long lesson truncated, so the confirm button stays in reach', async () => {
+    const long = `${'word '.repeat(80)}END`;
+    mock([lesson({ lessonSummary: long })]);
+    render(withQuery(<LessonsPage />));
+    await screen.findByText(long);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete lesson' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByText(/END/)).toBeNull();
+    expect(within(dialog).getByText(/…$/)).toBeTruthy();
+  });
+});
+
 /** Every path the page fetched, query strings dropped. */
 function requestedPaths(spy: ReturnType<typeof setupFetchMock>): string[] {
   return spy.mock.calls.map(
@@ -99,8 +112,9 @@ describe('LessonsPage (engineer)', () => {
   it('offers their own repositories as the filter', async () => {
     mock([lesson()]);
     render(withQuery(<LessonsPage />));
-    // The listbox is closed; its hidden native select carries the same options.
-    expect(await screen.findByRole('option', { hidden: true, name: 'acme/api' })).toBeTruthy();
+    await screen.findByText('Run migrations before deploying');
+    fireEvent.click(screen.getByRole('button', { name: 'Show options' }));
+    expect(await screen.findByRole('option', { name: 'acme/api' })).toBeTruthy();
   });
 
   it('shows the outcome, a low-confidence label and a link to the source run', async () => {
@@ -159,7 +173,7 @@ describe('LessonsPage (lead of the repository team)', () => {
     await screen.findByText('Run migrations before deploying');
     expect(screen.queryByRole('button', { name: /consolidate this repository/i })).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: /repository/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show options' }));
     fireEvent.click(await screen.findByRole('option', { name: 'acme/api' }));
     fireEvent.click(await screen.findByRole('button', { name: /consolidate this repository/i }));
     fireEvent.click(await screen.findByRole('button', { name: 'Run consolidation' }));
@@ -230,12 +244,45 @@ describe('LessonsPage flags', () => {
     );
   });
 
+  it('tells a reader when withdrawing their flag fails', async () => {
+    setupFetchMock({
+      '/api/v1/admin/config/consolidation': () => ({ data: null }),
+      'DELETE /api/v1/lessons/l1/flags/mine': () => {
+        throw new Error('flag service down');
+      },
+      'GET /api/v1/lessons': () => ({
+        data: [
+          lesson({
+            flagCount: 1,
+            myFlag: { createdAt: '2026-10-01T00:00:00.000Z', reason: 'outdated' },
+          }),
+        ],
+        meta: { limit: 20, offset: 0, total: 1 },
+      }),
+      'GET /api/v1/lessons/stats': () => ({ data: [] }),
+      'GET /api/v1/repositories': () => ({ data: [], meta: { limit: 100, offset: 0, total: 0 } }),
+    });
+    render(withQuery(<LessonsPage />));
+    fireEvent.click(await screen.findByRole('button', { name: 'Withdraw flag' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('flag service down');
+  });
+
+  it('offers Clear filters while a filter is on, not only on an empty result', async () => {
+    mock([lesson()]);
+    render(withQuery(<LessonsPage />));
+    await screen.findByText('Run migrations before deploying');
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /flag filter/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Flagged only' }));
+    expect(await screen.findByRole('button', { name: 'Clear filters' })).toBeTruthy();
+  });
+
   it('asks the server for flagged lessons only when filtered to them', async () => {
     const fetchSpy = mock([lesson()]);
     render(withQuery(<LessonsPage />));
     await screen.findByText('Run migrations before deploying');
-    fireEvent.click(screen.getByRole('button', { name: /flags/i }));
-    fireEvent.click(await screen.findByRole('option', { name: 'Flagged as wrong' }));
+    fireEvent.click(screen.getByRole('button', { name: /flag filter/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Flagged only' }));
     await vi.waitFor(() =>
       expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('flagged=true'))).toBe(true)
     );

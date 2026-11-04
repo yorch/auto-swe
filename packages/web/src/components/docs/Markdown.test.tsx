@@ -23,6 +23,7 @@ describe('Markdown on the docs surface', () => {
     render(<Markdown servedSlugs={SERVED}>{'See [AGENTS.md](../AGENTS.md).'}</Markdown>);
     expect(screen.queryByRole('link')).toBeNull();
     expect(screen.getByText('AGENTS.md')).toBeTruthy();
+    expect(screen.getByText('repo only')).toBeTruthy();
   });
 
   it('renders a frozen history link as text', () => {
@@ -33,7 +34,7 @@ describe('Markdown on the docs surface', () => {
 
   it('opens external links in a new tab', () => {
     render(<Markdown servedSlugs={SERVED}>{'[Slack](https://api.slack.com/apps)'}</Markdown>);
-    const link = screen.getByRole('link', { name: 'Slack' });
+    const link = screen.getByRole('link', { name: 'Slack (opens in a new tab)' });
     expect(link.getAttribute('target')).toBe('_blank');
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');
   });
@@ -47,12 +48,12 @@ describe('Markdown on the docs surface', () => {
 
   it('labels a mermaid block as diagram source', () => {
     render(<Markdown servedSlugs={SERVED}>{'```mermaid\nflowchart LR\n  A --> B\n```'}</Markdown>);
-    expect(screen.getByText(/Mermaid diagram source/)).toBeTruthy();
+    expect(screen.getByText(/shown as Mermaid source/)).toBeTruthy();
   });
 
   it('leaves other fenced blocks unlabelled', () => {
     render(<Markdown servedSlugs={SERVED}>{'```bash\nyarn build\n```'}</Markdown>);
-    expect(screen.queryByText(/Mermaid diagram source/)).toBeNull();
+    expect(screen.queryByText(/shown as Mermaid source/)).toBeNull();
     expect(screen.getByText(/yarn build/)).toBeTruthy();
   });
 

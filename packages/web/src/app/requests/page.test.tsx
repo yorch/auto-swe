@@ -24,6 +24,24 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe('Requests page clear filters', () => {
+  it('offers Clear filters once the scope or type moves off its default', () => {
+    useRequests.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
+    useEpics.mockReturnValue({ ...settled, data: undefined });
+    nav.search = '';
+    const first = render(<RequestsPage />);
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).toBeNull();
+    first.unmount();
+    nav.search = 'scope=TEAM';
+    const second = render(<RequestsPage />);
+    expect(screen.getAllByRole('button', { name: 'Clear filters' }).length).toBeGreaterThan(0);
+    second.unmount();
+    nav.search = 'type=epics';
+    render(<RequestsPage />);
+    expect(screen.getAllByRole('button', { name: 'Clear filters' }).length).toBeGreaterThan(0);
+  });
+});
+
 describe('Requests page epics', () => {
   it('links to the epics list from the header', () => {
     nav.search = '';

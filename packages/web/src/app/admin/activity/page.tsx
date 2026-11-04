@@ -1,7 +1,10 @@
 'use client';
 
 import { Suspense } from 'react';
+import { ActivityByDayChart } from '@/components/charts/ActivityByDayChart';
+import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -71,14 +74,30 @@ function ActivityWorkspace() {
         title="User activity"
       />
 
+      {summary.isError && (
+        <Alert
+          action={
+            <Button onClick={() => void summary.refetch()} size="sm">
+              Retry
+            </Button>
+          }
+          variant="error"
+        >
+          The activity summary could not be loaded, so the counts below are unknown — not zero.
+          {summary.error instanceof Error && summary.error.message
+            ? ` ${summary.error.message}`
+            : ''}
+        </Alert>
+      )}
+
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         {KINDS.map((k) => (
           <Stat
-            hint={`last ${SUMMARY_DAYS} days`}
+            hint={summary.isLoading ? 'Loading…' : `last ${SUMMARY_DAYS} days`}
             key={k}
             label={KIND_LABEL[k]}
             tone={k === 'denied' && (s?.totals.denied ?? 0) > 0 ? 'danger' : 'default'}
-            value={s?.totals[k] ?? 0}
+            value={s ? s.totals[k] : '—'}
           />
         ))}
       </div>
@@ -86,10 +105,13 @@ function ActivityWorkspace() {
       {s && (
         <p className="text-sm text-paper-400">
           Kept for {s.retentionDays} days. Page views are {s.uiEventsEnabled ? 'on' : 'off'}.
-          {s.dropped > 0
-            ? ` This gateway process dropped ${s.dropped} events since it started (queue full, rate-limited or a failed write).`
-            : ''}
         </p>
+      )}
+      {s && s.dropped > 0 && (
+        <Alert title="Some events were not recorded" variant="warning">
+          This gateway process dropped {s.dropped} events since it started (queue full, rate-limited
+          or a failed write), so the counts above can be lower than what happened.
+        </Alert>
       )}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -98,32 +120,15 @@ function ActivityWorkspace() {
             <CardTitle>By day</CardTitle>
           </CardHeader>
           {s && s.daily.length > 0 ? (
-            <Table>
-              <THead>
-                <tr>
-                  <Th>Day</Th>
-                  {KINDS.map((k) => (
-                    <Th align="right" key={k}>
-                      {KIND_LABEL[k]}
-                    </Th>
-                  ))}
-                </tr>
-              </THead>
-              <tbody>
-                {[...s.daily].reverse().map((d) => (
-                  <TRow key={d.day}>
-                    <Td primary>{d.day}</Td>
-                    {KINDS.map((k) => (
-                      <Td align="right" className="tabular-nums" key={k}>
-                        {d[k]}
-                      </Td>
-                    ))}
-                  </TRow>
-                ))}
-              </tbody>
-            </Table>
-          ) : (
+            <ActivityByDayChart data={s.daily} title="Activity events per day" />
+          ) : summary.isError ? (
+            <EmptyState icon="error" title="Could not load the daily counts" />
+          ) : s ? (
             <EmptyState title="No events in this window" />
+          ) : (
+            <p className="py-6 text-center text-sm text-paper-500" role="status">
+              Loading…
+            </p>
           )}
         </Card>
 
@@ -142,40 +147,47 @@ function ActivityWorkspace() {
                 </li>
               ))}
             </ul>
-          ) : (
+          ) : summary.isError ? (
+            <EmptyState icon="error" title="Could not load denied routes" />
+          ) : s ? (
             <EmptyState title="No denied requests in this window" />
+          ) : (
+            <p className="py-6 text-center text-sm text-paper-500" role="status">
+              Loading…
+            </p>
           )}
         </Card>
       </div>
 
-      <QueryBoundary
-        error={events.error}
-        isError={events.isError}
-        isFetching={events.isFetching}
-        isLoading={events.isLoading}
-        label="activity events"
-        onRetry={() => void events.refetch()}
-      >
-        <Card className="p-4 sm:p-6">
-          <CardHeader>
-            <CardTitle>
-              Recent events
-              {total > 0 && (
-                <span className="ml-2 text-sm font-normal text-paper-400 tabular-nums">
-                  · {total}
-                </span>
-              )}
-            </CardTitle>
-            <div className="w-full sm:w-52">
-              <Select
-                aria-label="Filter by kind"
-                className="h-8 text-sm"
-                onChange={(v) => update({ kind: v || null, offset: null })}
-                options={KIND_OPTIONS}
-                value={kind ?? ''}
-              />
-            </div>
-          </CardHeader>
+      <Card className="p-4 sm:p-6">
+        <CardHeader>
+          <CardTitle>
+            Recent events
+            {total > 0 && (
+              <span className="ml-2 text-sm font-normal text-paper-400 tabular-nums">
+                · {total}
+              </span>
+            )}
+          </CardTitle>
+          {/* Outside the boundary: a filter change refetches, and the control must keep focus. */}
+          <div className="w-full sm:w-52">
+            <Select
+              aria-label="Filter by kind"
+              className="h-8 text-sm"
+              onChange={(v) => update({ kind: v || null, offset: null })}
+              options={KIND_OPTIONS}
+              value={kind ?? ''}
+            />
+          </div>
+        </CardHeader>
+        <QueryBoundary
+          error={events.error}
+          isError={events.isError}
+          isFetching={events.isFetching}
+          isLoading={events.isLoading}
+          label="activity events"
+          onRetry={() => void events.refetch()}
+        >
           {rows.length === 0 ? (
             <EmptyState title="No events recorded" />
           ) : (
@@ -229,8 +241,8 @@ function ActivityWorkspace() {
               />
             </div>
           )}
-        </Card>
-      </QueryBoundary>
+        </QueryBoundary>
+      </Card>
     </div>
   );
 }

@@ -29,10 +29,13 @@ const pr = (over: Partial<PullRequestListItem> = {}): PullRequestListItem => ({
 describe('PullRequestTable', () => {
   it('links the PR on its host, the run and the request', () => {
     render(<PullRequestTable pullRequests={[pr()]} />);
-    const host = screen.getByRole('link', { name: /acme\/api #12/ });
+    const host = screen.getByRole('link', { name: /^acme\/api #12/ });
     expect(host.getAttribute('href')).toBe('https://github.com/acme/api/pull/12');
     expect(host.getAttribute('rel')).toBe('noopener noreferrer');
     expect(host.getAttribute('target')).toBe('_blank');
+    expect(screen.getByRole('link', { name: /Review.*acme\/api #12/ }).getAttribute('href')).toBe(
+      'https://github.com/acme/api/pull/12'
+    );
     expect(screen.getByRole('link', { name: /Open run/ }).getAttribute('href')).toBe('/runs/run-1');
     expect(screen.getByRole('link', { name: 'JIRA-9' }).getAttribute('href')).toBe(
       '/requests?request=wr-1'

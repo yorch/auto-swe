@@ -3,6 +3,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
+import { nav, resetNavigation } from '@/test/mockNavigation';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import TeamDetailPage from './page';
 
@@ -13,6 +14,8 @@ vi.mock('@/components/teams/EventEndpointsCard', () => ({ EventEndpointsCard: ()
 vi.mock('@/components/teams/TeamAgentLibrarySection', () => ({
   TeamAgentLibrarySection: () => null,
 }));
+
+vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
 
 const TEAM_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -33,6 +36,7 @@ const team = (persona: string | null) => ({
 });
 
 beforeEach(() => {
+  resetNavigation('', `/admin/teams/${TEAM_ID}`);
   stubDialogPrototype();
   useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'me' } });
 });
@@ -78,5 +82,31 @@ describe('TeamDetailPage persona', () => {
     expect(spy.mock.calls.some(([, init]) => (init as RequestInit)?.method === 'PATCH')).toBe(
       false
     );
+  });
+});
+
+describe('TeamDetailPage tabs', () => {
+  const mockTeam = () =>
+    setupFetchMock({ [`GET /api/v1/teams/${TEAM_ID}`]: () => team('Be terse.') });
+
+  it('shows the overview first and moves to a section through the URL', async () => {
+    mockTeam();
+    renderPage();
+    await screen.findByLabelText('Persona');
+    expect(screen.getByRole('tab', { name: 'Overview' }).getAttribute('aria-selected')).toBe(
+      'true'
+    );
+    fireEvent.click(screen.getByRole('tab', { name: 'Sandbox policy' }));
+    expect(nav.replace.at(-1)).toBe(`/admin/teams/${TEAM_ID}?tab=sandbox`);
+    expect(screen.queryByLabelText('Persona')).toBeNull();
+  });
+
+  it('offers no sandbox or service-principal section to someone who cannot manage them', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+    mockTeam();
+    renderPage();
+    await screen.findByRole('tab', { name: 'Overview' });
+    expect(screen.queryByRole('tab', { name: 'Sandbox policy' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Service principals' })).toBeNull();
   });
 });

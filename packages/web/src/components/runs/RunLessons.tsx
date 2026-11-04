@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Badge } from '@/components/ui/Badge';
 import { type RunLesson, useRunLessons } from '@/hooks/useLessons';
+import { RunPanel } from './RunPanel';
 
 /** Below this the lesson writer judged its evidence thin; recall labels it the same way. */
 const LOW_CONFIDENCE = 0.5;
@@ -52,11 +53,7 @@ export function RunLessons({ runId, live }: { runId: string; live: boolean }) {
     data.written.length > 0 && `${data.written.length} written`,
   ].filter(Boolean);
   return (
-    <details className="rounded border border-ink-700 px-4 py-3 text-sm">
-      <summary className="cursor-pointer text-paper-300">
-        Lessons
-        <span className="ml-2 text-xs text-paper-500">{parts.join(', ')}</span>
-      </summary>
+    <RunPanel meta={parts.join(', ')} title="Lessons">
       {data.recalled.length > 0 && (
         <section className="mt-3">
           <h3 className="text-xs font-medium uppercase tracking-wide text-paper-500">
@@ -93,6 +90,6 @@ export function RunLessons({ runId, live }: { runId: string; live: boolean }) {
           All lessons
         </Link>
       </p>
-    </details>
+    </RunPanel>
   );
 }

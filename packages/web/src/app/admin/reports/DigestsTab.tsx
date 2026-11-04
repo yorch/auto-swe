@@ -3,8 +3,12 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Select } from '@/components/ui/Select';
 import { ApiError, api } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 
@@ -177,53 +181,50 @@ export function DigestsTab() {
     <section aria-label="Report digests" className="space-y-5">
       <div className="rounded-lg border border-ink-700 p-4">
         <h2 className="font-semibold text-paper-100">Create weekly digest</h2>
-        <div className="mt-3 flex flex-wrap gap-3">
-          <select
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <Select
             aria-label="Digest scope"
-            className="rounded border border-ink-600 bg-ink-900 px-3 py-2"
-            onChange={(event) => setScopeKey(event.target.value)}
+            onChange={(value) => {
+              setScopeKey(value);
+              // A channel belongs to one organization; a new scope may not offer it.
+              setChannelId('');
+            }}
+            options={[
+              { label: 'Choose a manageable scope', value: '' },
+              ...(data?.organizations ?? []).map((org) => ({
+                label: `Organization: ${org.name}`,
+                value: `ORGANIZATION:${org.id}`,
+              })),
+              ...(data?.teams ?? []).map((team) => ({
+                label: `Team: ${team.name}`,
+                value: `TEAM:${team.id}`,
+              })),
+            ]}
+            placeholder="Choose a manageable scope"
             value={scopeKey}
-          >
-            <option value="">Choose a manageable scope</option>
-            {(data?.organizations ?? []).map((org) => (
-              <option key={org.id} value={`ORGANIZATION:${org.id}`}>
-                Organization: {org.name}
-              </option>
-            ))}
-            {(data?.teams ?? []).map((team) => (
-              <option key={team.id} value={`TEAM:${team.id}`}>
-                Team: {team.name}
-              </option>
-            ))}
-          </select>
-          <input
+          />
+          <Input
             aria-label="Email recipients"
-            className="rounded border border-ink-600 bg-ink-900 px-3 py-2"
             onChange={(event) => setEmailText(event.target.value)}
             placeholder="Emails, comma separated"
             value={emailText}
           />
-          <select
+          <Select
             aria-label="Slack channel"
-            className="rounded border border-ink-600 bg-ink-900 px-3 py-2"
-            onChange={(event) => setChannelId(event.target.value)}
+            onChange={setChannelId}
+            options={[
+              { label: 'No Slack channel', value: '' },
+              ...channels.map((channel) => ({ label: channel.name, value: channel.id })),
+            ]}
             value={channelId}
-          >
-            <option value="">No Slack channel</option>
-            {channels.map((channel) => (
-              <option key={channel.id} value={channel.id}>
-                {channel.name}
-              </option>
-            ))}
-          </select>
-          <button
-            className="rounded bg-accent-500 px-3 py-2 text-paper-50 disabled:opacity-50"
+          />
+          <Button
             disabled={!scopeKey || create.isPending}
             onClick={() => create.mutate()}
-            type="button"
+            variant="primary"
           >
             {create.isPending ? 'Creating…' : 'Create'}
-          </button>
+          </Button>
         </div>
         {create.error && (
           <Alert className="mt-2">
@@ -254,44 +255,41 @@ export function DigestsTab() {
                       ? `Organization: ${digest.organization?.name ?? digest.orgId}`
                       : `Team: ${digest.team?.name ?? digest.teamId}`}
                   </strong>
-                  <div className="flex gap-2">
-                    <button
-                      className="rounded border border-ink-600 px-3 py-1"
+                  <div className="flex flex-wrap gap-2">
+                    <Button
                       onClick={() => {
                         setEditing(editing === digest.id ? null : digest.id);
                         setEditEmail(digest.emailRecipients.join(', '));
                         setEditChannel(digest.slackChannelId ?? '');
                       }}
-                      type="button"
+                      size="sm"
                     >
                       Edit
-                    </button>
-                    <button
-                      className="rounded border border-ink-600 px-3 py-1 disabled:opacity-50"
+                    </Button>
+                    <Button
                       disabled={sendTest.isPending && sendTest.variables === digest.id}
                       onClick={() => sendTest.mutate(digest.id)}
-                      type="button"
+                      size="sm"
                     >
                       {sendTest.isPending && sendTest.variables === digest.id
                         ? 'Sending…'
                         : 'Send test'}
-                    </button>
-                    <button
-                      className="rounded border border-danger-400/30 px-3 py-1 disabled:opacity-50"
-                      disabled={remove.isPending}
-                      onClick={() => setDeleteTarget(digest)}
-                      type="button"
-                    >
-                      Delete
-                    </button>
-                    <button
-                      className="rounded border border-ink-600 px-3 py-1 disabled:opacity-50"
+                    </Button>
+                    <Button
                       disabled={update.isPending}
                       onClick={() => update.mutate({ enabled: !digest.enabled, id: digest.id })}
-                      type="button"
+                      size="sm"
                     >
                       {digest.enabled ? 'Disable' : 'Enable'}
-                    </button>
+                    </Button>
+                    <Button
+                      disabled={remove.isPending}
+                      onClick={() => setDeleteTarget(digest)}
+                      size="sm"
+                      variant="danger"
+                    >
+                      Delete
+                    </Button>
                   </div>
                 </div>
                 <p className="mt-2 text-sm text-paper-300">
@@ -338,54 +336,57 @@ export function DigestsTab() {
                       {digest.optedOutEmails.map((email) => (
                         <li className="flex items-center justify-between gap-3" key={email}>
                           <span className="text-sm text-paper-300">{email}</span>
-                          <button
-                            className="rounded border border-ink-600 px-3 py-1 text-sm disabled:opacity-50"
+                          <Button
                             disabled={update.isPending}
                             onClick={() => setReaddTarget({ digest, email })}
-                            type="button"
+                            size="sm"
                           >
                             Re-add
-                          </button>
+                          </Button>
                         </li>
                       ))}
                     </ul>
                   </div>
                 )}
                 {editing === digest.id && (
-                  <div className="mt-3 flex flex-wrap gap-3">
-                    <input
+                  <div className="mt-3 flex flex-wrap items-end gap-3">
+                    <Input
                       aria-label="Edit email recipients"
-                      className="rounded border border-ink-600 bg-ink-900 px-3 py-2"
                       onChange={(event) => setEditEmail(event.target.value)}
                       value={editEmail}
                     />
-                    <select
+                    <Select
                       aria-label="Edit Slack channel"
-                      className="rounded border border-ink-600 bg-ink-900 px-3 py-2"
-                      onChange={(event) => setEditChannel(event.target.value)}
+                      onChange={setEditChannel}
+                      options={[
+                        { label: 'No Slack channel', value: '' },
+                        ...scopedChannels.map((channel) => ({
+                          label: channel.name,
+                          value: channel.id,
+                        })),
+                      ]}
                       value={editChannel}
-                    >
-                      <option value="">No Slack channel</option>
-                      {scopedChannels.map((channel) => (
-                        <option key={channel.id} value={channel.id}>
-                          {channel.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="rounded bg-accent-500 px-3 py-2 disabled:opacity-50"
+                    />
+                    <Button
                       disabled={update.isPending}
                       onClick={() => update.mutate({ id: digest.id })}
-                      type="button"
+                      variant="primary"
                     >
                       {update.isPending ? 'Saving…' : 'Save'}
-                    </button>
+                    </Button>
                   </div>
                 )}
               </article>
             );
           })}
-          {!data?.subscriptions.length && <p>No digest subscriptions.</p>}
+          {!data?.subscriptions.length && (
+            <EmptyState
+              bordered
+              hint="Create a weekly digest above to email or post the report summary."
+              icon="analytics"
+              title="No digest subscriptions."
+            />
+          )}
         </div>
       </QueryBoundary>
       {deleteTarget && (

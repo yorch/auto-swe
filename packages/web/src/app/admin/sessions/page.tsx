@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
@@ -21,9 +22,20 @@ import {
   useAdminRevokeUserSessions,
   useAdminSessions,
 } from '@/hooks/useAdmin';
+import { useDataTableSort } from '@/hooks/useDataTableSort';
+import { usePagedRows } from '@/hooks/usePagedRows';
 import { navLabel } from '@/lib/navigation';
 import { describeUserAgent } from '@/lib/userAgent';
 import { plural } from '@/lib/utils';
+
+type AdminSession = NonNullable<ReturnType<typeof useAdminSessions>['data']>[number];
+
+const SORT_ACCESSORS = {
+  expires: (s: AdminSession) => s.expiresAt,
+  lastActive: (s: AdminSession) => s.updatedAt,
+  started: (s: AdminSession) => s.createdAt,
+  user: (s: AdminSession) => s.user.email.toLowerCase(),
+};
 
 export default function GovernSessionsPage() {
   const {
@@ -40,6 +52,22 @@ export default function GovernSessionsPage() {
   const [userFilter, setUserFilter] = useState('');
   const [revokeAllOpen, setRevokeAllOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [revokeTargetCurrent, setRevokeTargetCurrent] = useState(false);
+  const { onSortChange, sort, sortRows } = useDataTableSort<AdminSession>(SORT_ACCESSORS);
+  const rowsAll = (() => {
+    const all = sessions ?? [];
+    return userFilter ? all.filter((s) => s.user.id === userFilter) : all;
+  })();
+  const pager = usePagedRows(sortRows(rowsAll), 25, userFilter);
+
+  // The notice acknowledges one action; it does not stay on screen.
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+    const id = setTimeout(() => setNotice(null), 8000);
+    return () => clearTimeout(id);
+  }, [notice]);
 
   const header = (
     <PageHeader
@@ -74,7 +102,7 @@ export default function GovernSessionsPage() {
   const users = [...new Map(all.map((s) => [s.user.id, s.user.email])).entries()].sort((a, b) =>
     a[1].localeCompare(b[1])
   );
-  const rows = userFilter ? all.filter((s) => s.user.id === userFilter) : all;
+  const rows = rowsAll;
   const filteredEmail = users.find(([id]) => id === userFilter)?.[1];
   // The caller's own session is kept by a bulk revoke, so the count excludes it.
   const revokableForUser = rows.filter((s) => !s.current).length;
@@ -96,7 +124,7 @@ export default function GovernSessionsPage() {
             <span className="text-xs text-paper-500 tabular-nums">
               {userFilter
                 ? `${rows.length} of ${plural(all.length, 'active session')}`
-                : `${plural(all.length, 'active session')} · newest first`}
+                : plural(all.length, 'active session')}
             </span>
           }
         >
@@ -145,7 +173,10 @@ export default function GovernSessionsPage() {
                     icon: 'lock',
                     id: 'revoke',
                     label: s.current ? 'Revoke (signs you out)' : 'Revoke session',
-                    onAction: () => setRevokeTarget({ email: s.user.email, id: s.id }),
+                    onAction: () => {
+                      setRevokeTargetCurrent(Boolean(s.current));
+                      setRevokeTarget({ email: s.user.email, id: s.id });
+                    },
                     tone: 'danger',
                   },
                 ]}
@@ -182,6 +213,7 @@ export default function GovernSessionsPage() {
                     )}
                   </div>
                 ),
+                sortable: true,
               },
               {
                 cell: (s) => (
@@ -191,6 +223,7 @@ export default function GovernSessionsPage() {
                 ),
                 header: 'Last active',
                 id: 'lastActive',
+                sortable: true,
               },
               {
                 cell: (s) => (
@@ -200,6 +233,7 @@ export default function GovernSessionsPage() {
                 ),
                 header: 'Started',
                 id: 'started',
+                sortable: true,
               },
               {
                 cell: (s) => (
@@ -209,18 +243,7 @@ export default function GovernSessionsPage() {
                 ),
                 header: 'Expires',
                 id: 'expires',
-              },
-              {
-                cell: (s) => (
-                  <span
-                    className="block max-w-[10rem] truncate font-mono text-xs text-paper-500"
-                    title={s.token}
-                  >
-                    {s.token}
-                  </span>
-                ),
-                header: 'Session ID',
-                id: 'sessionId',
+                sortable: true,
               },
             ]}
             empty={
@@ -242,16 +265,35 @@ export default function GovernSessionsPage() {
               />
             }
             getRowId={(s) => s.id}
+            onSortChange={onSortChange}
             revealActions={false}
-            rows={rows}
+            rows={pager.pageRows}
+            sort={sort}
           />
         </div>
+        {pager.paged && (
+          <div className="mt-4 border-t border-ink-600 pt-4">
+            <Pagination
+              hasNext={pager.hasNext}
+              hasPrev={pager.hasPrev}
+              onNext={pager.onNext}
+              onPrev={pager.onPrev}
+              rangeEnd={pager.rangeEnd}
+              rangeStart={pager.rangeStart}
+              total={pager.total}
+            />
+          </div>
+        )}
       </Card>
 
       <ConfirmModal
         confirmLabel="Revoke"
         dangerous
-        message={`${revokeTarget?.email ?? 'The user'} is signed out of this session immediately and must sign in again. This cannot be undone.`}
+        message={
+          revokeTargetCurrent
+            ? 'This is your own session. Revoking it signs you out of the dashboard immediately and you must sign in again. This cannot be undone.'
+            : `${revokeTarget?.email ?? 'The user'} is signed out of this session immediately and must sign in again. This cannot be undone.`
+        }
         onClose={() => setRevokeTarget(null)}
         onConfirm={async () => {
           if (revokeTarget) {

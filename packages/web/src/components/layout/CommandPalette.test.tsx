@@ -1,7 +1,16 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { requestHref } from '@/lib/requestDisplay';
 import { useThemeStore } from '@/stores/themeStore';
 import { withQuery } from '@/test/rtl-helpers';
@@ -99,6 +108,53 @@ describe('CommandPalette', () => {
     expect(document.documentElement.dataset.palette).toBe('graphite');
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(push).not.toHaveBeenCalled();
+  });
+
+  it('is modal: the page behind is inert and unscrollable, and Tab stays on the input', async () => {
+    const page = document.createElement('div');
+    document.body.appendChild(page);
+    const onOpenChange = await openPalette();
+    expect(page.hasAttribute('inert')).toBe(true);
+    expect(document.body.style.overflow).toBe('hidden');
+
+    const input = screen.getByRole('combobox');
+    const notPrevented = fireEvent.keyDown(input, { key: 'Tab' });
+    expect(notPrevented).toBe(false);
+    expect(onOpenChange).not.toHaveBeenCalled();
+
+    cleanup();
+    expect(page.hasAttribute('inert')).toBe(false);
+    expect(document.body.style.overflow).toBe('');
+    page.remove();
+  });
+
+  it('ignores the shortcut while a modal dialog is open', async () => {
+    const dialog = document.createElement('dialog');
+    dialog.setAttribute('open', '');
+    document.body.appendChild(dialog);
+    const onOpenChange = vi.fn();
+    render(withQuery(<CommandPalette onOpenChange={onOpenChange} open={false} />));
+    fireEvent.keyDown(document, { ctrlKey: true, key: 'k' });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    dialog.remove();
+    fireEvent.keyDown(document, { ctrlKey: true, key: 'k' });
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+  });
+
+  it('asks before navigating away from unsaved edits, and stays put on no', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    renderHook(() => useUnsavedChangesGuard(true));
+    await openPalette();
+    const input = screen.getByRole('combobox');
+    fireEvent.change(input, { target: { value: 'runs' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(confirm).toHaveBeenCalledTimes(1);
+    expect(push).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(push).toHaveBeenCalledWith('/runs');
+    confirm.mockRestore();
   });
 
   it('still opens a page on Enter', async () => {

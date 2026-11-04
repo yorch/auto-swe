@@ -1,9 +1,13 @@
-/** A change between two windows, shaped for `Stat`'s `delta` prop. */
+/**
+ * A change between two windows, shaped for `Stat`'s `delta` prop: `direction` is which way the
+ * figure moved (the arrow), `tone` whether that is good news (the colour). A metric with no
+ * better or worse (`higherIsBetter: null`, run volume) is always `neutral`.
+ */
 export function formatDelta(
   current: number | null,
   previous: number | null,
   opts: { higherIsBetter: boolean | null; noun: string; unit?: 'pp' | '%' }
-): { value: string; positive: boolean } | null {
+): { value: string; direction: 'up' | 'down'; tone: 'good' | 'bad' | 'neutral' } | null {
   if (current === null || previous === null) {
     return null;
   }
@@ -27,7 +31,7 @@ export function formatDelta(
     value = `${pct > 0 ? '+' : '−'}${Math.abs(pct).toFixed(0)}%`;
   }
   const rising = diff > 0;
-  // A neutral metric (run volume) is shown in the calm colour either way.
-  const positive = opts.higherIsBetter === null ? true : rising === opts.higherIsBetter;
-  return { positive, value: `${value} ${opts.noun}` };
+  const tone =
+    opts.higherIsBetter === null ? 'neutral' : rising === opts.higherIsBetter ? 'good' : 'bad';
+  return { direction: rising ? 'up' : 'down', tone, value: `${value} ${opts.noun}` };
 }

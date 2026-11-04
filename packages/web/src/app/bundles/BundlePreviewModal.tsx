@@ -25,7 +25,7 @@ function EntryList({ entries, label }: { entries: BundlePreviewEntry[]; label: s
       <div className="label-mono mb-1">
         {label} ({entries.length})
       </div>
-      <ul className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-ink-600 bg-ink-900/40 p-2 text-xs">
+      <ul className="space-y-1 rounded-md border border-ink-600 bg-ink-900/40 p-2 text-xs">
         {entries.map((e) => (
           <li className="flex items-center gap-2" key={e.name}>
             <Badge tone={e.action === 'create' ? 'success' : 'warning'}>

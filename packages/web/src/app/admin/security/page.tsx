@@ -9,6 +9,8 @@ import {
   SecurityEventList,
   securityEventLabel,
 } from '@/components/security/SecurityEventList';
+import { Alert } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { Icon } from '@/components/ui/Icon';
@@ -85,7 +87,7 @@ function SummaryGroups({
                 noun: windowDays ? `vs previous ${windowDays} days` : 'vs the window before',
               })}
               hint={hint}
-              label="Total"
+              label={group === 'blocked' ? 'Blocked events' : 'Advisory findings'}
               tone={now > 0 ? tone : 'default'}
               value={now}
             />
@@ -111,16 +113,17 @@ function SummaryGroups({
                     >
                       <SecurityEventBadge type={type} />
                       {change && (
-                        <span
-                          className="inline-flex items-center gap-0.5 text-paper-500"
-                          title={`${prev} in the window before`}
-                        >
+                        <span className="inline-flex items-center gap-0.5 text-paper-500">
                           <Icon
                             className={change === 'up' ? '-rotate-90' : 'rotate-90'}
                             name="arrowRight"
                             size={11}
                           />
-                          from {prev}
+                          <span className="sr-only">
+                            {change === 'up' ? 'up from' : 'down from'}
+                          </span>
+                          <span aria-hidden>from</span> {prev}
+                          <span className="sr-only"> in the window before</span>
                         </span>
                       )}
                       <span
@@ -161,7 +164,12 @@ function SecurityWorkspace() {
     refetch,
     error: loadError,
   } = useSecurityEvents({ ...bounds, limit: LIMIT, offset, type: typeFilter || undefined });
-  const { data: summary } = useSecurityEventSummary(bounds);
+  const {
+    data: summary,
+    isError: summaryError,
+    error: summaryErr,
+    refetch: refetchSummary,
+  } = useSecurityEventSummary(bounds);
   const events = page?.data ?? [];
   const total = page?.meta.total ?? 0;
 
@@ -189,6 +197,18 @@ function SecurityWorkspace() {
           summary={summary}
           windowDays={range.kind === 'preset' ? range.days : null}
         />
+      ) : summaryError ? (
+        <Alert
+          action={
+            <Button onClick={() => void refetchSummary()} size="sm">
+              Retry
+            </Button>
+          }
+          variant="error"
+        >
+          The security summary could not be loaded, so the counts are unknown — not zero.{' '}
+          {summaryErr instanceof Error ? summaryErr.message : ''}
+        </Alert>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {['blocked', 'advisory'].map((k) => (

@@ -181,8 +181,10 @@ Guided paths build on those pieces:
   viewer's own requests), and the list hides itself once all four are done. A viewer whose runs
   never reach a gate keeps the list until they dismiss it. A gate answered on a run the viewer can
   no longer see does not count, so the step can untick after a team change. Dismissal is
-  remembered in the viewer's browser only.
-- **Home** also offers a short, optional product tour. Take the tour starts it, and nothing starts
+  remembered in the viewer's browser only, and a "Show it again" line at the foot of Home brings
+  the hidden guide back. The setup card stays out of the way until the readiness check has
+  answered, so a fully set-up administrator never sees a placeholder.
+- **Home** also offers a short, optional product tour from its header. Take the tour starts it, and nothing starts
   it automatically. The tour is a card that walks through the sidebar pages the viewer's role can
   open, from Start work, Approvals and Requests to the Workflow library, the Admin entry and Docs;
   the Admin step names more for leads and more again for administrators, who also see the Agents

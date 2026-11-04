@@ -87,8 +87,11 @@ describe('EvalDatasetPage', () => {
 
     expect(await screen.findByText('Auth bench')).toBeTruthy();
     expect(await screen.findByText('https://github.com/acme/api')).toBeTruthy();
-    expect(screen.getByText('Checked (5 runs)')).toBeTruthy();
-    expect(screen.getByText('Flaky (failed a 3-run check)')).toBeTruthy();
+    // Short badges, with the detail as visible text beside them.
+    expect(screen.getAllByText('Checked').length).toBeGreaterThan(0);
+    expect(screen.getByText('5 runs, all passed')).toBeTruthy();
+    expect(screen.getAllByText('Flaky').length).toBeGreaterThan(0);
+    expect(screen.getByText('Failed a 3-run check.')).toBeTruthy();
     expect(await screen.findByText('feat/x')).toBeTruthy();
     const runLink = screen
       .getAllByRole('link')
@@ -136,7 +139,11 @@ describe('EvalDatasetPage', () => {
     });
     render(withQuery(<EvalDatasetPage params={resolvedParams({ id: DS_ID })} />));
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Re-check case case-2' }));
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Re-check case https://github.com/acme/web at abcdef1234',
+      })
+    );
     expect(await screen.findByText('Re-check this case?')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Re-check' }));
 
@@ -189,11 +196,14 @@ describe('EvalDatasetPage', () => {
     });
     render(withQuery(<EvalDatasetPage params={resolvedParams({ id: DS_ID })} />));
 
-    const unset = await screen.findByRole('button', { name: /Stack of case case-1/ });
+    const unset = await screen.findByRole('button', {
+      name: /Stack of case https:\/\/github.com\/acme\/api/,
+    });
     expect(unset.textContent).toContain('node');
-    expect(screen.getByRole('button', { name: /Stack of case case-2/ }).textContent).toContain(
-      'python'
-    );
+    expect(
+      screen.getByRole('button', { name: /Stack of case https:\/\/github.com\/acme\/svc/ })
+        .textContent
+    ).toContain('python');
 
     fireEvent.click(unset);
     fireEvent.click(screen.getByRole('option', { name: 'jvm' }));

@@ -20,8 +20,15 @@ vi.mock('@/components/approvals/HumanStepCard', () => ({
   HumanStepCard: () => <div>step card</div>,
 }));
 vi.mock('@/components/setup/SetupReadiness', () => ({ SetupReadiness: () => null }));
-vi.mock('@/components/setup/GovernanceGuide', () => ({ GovernanceGuide: () => null }));
-vi.mock('@/components/setup/FirstRunChecklist', () => ({ FirstRunChecklist: () => null }));
+vi.mock('@/components/setup/GovernanceGuide', () => ({
+  GOVERNANCE_DISMISS_KEY: 'governance-guide',
+  GovernanceGuide: () => null,
+}));
+vi.mock('@/components/setup/FirstRunChecklist', () => ({
+  FIRST_RUN_DISMISS_KEY: 'first-run-checklist',
+  FirstRunChecklist: () => null,
+}));
+vi.mock('@/components/setup/RestoreGuides', () => ({ RestoreGuides: () => null }));
 
 import HomePage from './page';
 
@@ -66,17 +73,29 @@ describe('Home layout', () => {
     expect(overview.getByText('Recent results')).toBeTruthy();
   });
 
-  it('makes the overview figures plain text, not links that scroll the page', () => {
+  it('makes each overview figure a link to the list it counts', () => {
     useRequests.mockReturnValue(bucket(2));
     render(<HomePage />);
     const overview = within(screen.getByRole('region', { name: 'Overview' }));
-    expect(overview.queryAllByRole('link')).toHaveLength(0);
+    expect(overview.getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual([
+      '/requests?scope=MINE&state=attention',
+      '/requests?scope=MINE&state=active',
+      '/requests?scope=MINE&state=finished',
+    ]);
   });
 
-  it('offers one Start work entry, the quick-start card, and no duplicate shortcuts', () => {
+  it('says a figure could not load instead of showing it as zero', () => {
+    useRequests.mockReturnValue({ ...ready, data: undefined, isError: true, isSuccess: false });
+    render(<HomePage />);
+    const overview = within(screen.getByRole('region', { name: 'Overview' }));
+    expect(overview.getAllByText('Could not load')).toHaveLength(3);
+  });
+
+  it('puts a primary Start work action in the header, beside the quick-start card', () => {
     useRequests.mockReturnValue(bucket(0));
     render(<HomePage />);
-    expect(screen.queryByRole('link', { name: 'Start work' })).toBeNull();
+    const header = within(document.querySelector('header') as HTMLElement);
+    expect(header.getByRole('link', { name: 'Start work' }).getAttribute('href')).toBe('/start');
     expect(screen.getByRole('link', { name: /Run a workflow/ })).toBeTruthy();
     expect(screen.queryByText('Jump to')).toBeNull();
     expect(screen.queryByRole('link', { name: 'Tickets' })).toBeNull();
@@ -84,6 +103,19 @@ describe('Home layout', () => {
 });
 
 describe('Home waiting on you', () => {
+  it('says so, with a Retry, when the approvals check fails', () => {
+    useRequests.mockReturnValue(bucket(0));
+    approvals.mockReturnValue({
+      data: [],
+      isError: true,
+      isLoading: false,
+      refetch: vi.fn(),
+    } as never);
+    render(<HomePage />);
+    expect(screen.getByText('Could not check for approvals waiting on you.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeTruthy();
+  });
+
   it('lists pending approvals in a single section', () => {
     useRequests.mockReturnValue(bucket(0));
     approvals.mockReturnValue({ data: [{ id: 's1' }], isLoading: false });

@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { type ReactNode, Suspense, useState } from 'react';
+import { type ReactNode, Suspense, useEffect, useId, useState } from 'react';
 import {
   TRANSCRIPT_ACCESS_FILTER_KEYS,
   TranscriptAccessLog,
@@ -13,6 +13,7 @@ import { Card } from '@/components/ui/Card';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
+import { IconButton } from '@/components/ui/IconButton';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -106,6 +107,9 @@ function AuditWorkspace() {
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+  // Who the actor filter names, remembered when it is set: the actor may have no row on the
+  // page being viewed, and the chip should still say who.
+  const [actorNames, setActorNames] = useState<Record<string, string>>({});
   const { data, isLoading, isError, isFetching, refetch, error } = useAuditLog({
     ...filters,
     limit: LIMIT,
@@ -131,8 +135,19 @@ function AuditWorkspace() {
     filters.action || filters.actorId || filters.entityType || filters.search || range
   );
   const filteredActor = filters.actorId
-    ? (rows.find((r) => r.actorId === filters.actorId)?.actor?.email ?? 'one person')
+    ? (rows.find((r) => r.actorId === filters.actorId)?.actor?.email ??
+      actorNames[filters.actorId] ??
+      'one person')
     : null;
+
+  // An export notice describes the result set it was made from. A different filter is a
+  // different set, so a stale "only the newest N entries" must not linger above it.
+  const filterSignature = JSON.stringify(filters);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the signature is the trigger
+  useEffect(() => {
+    setExportNotice(null);
+    setExportError(null);
+  }, [filterSignature]);
 
   async function handleExport() {
     setExporting(true);
@@ -240,14 +255,13 @@ function AuditWorkspace() {
               title={filters.actorId}
             >
               Actor: {filteredActor}
-              <button
+              <IconButton
                 aria-label="Remove the actor filter"
-                className={cn('rounded-sm p-0.5 text-paper-500 hover:text-paper-100', FOCUS_RING)}
                 onClick={() => setFilter({ actor: null })}
-                type="button"
+                size="xs"
               >
                 <Icon name="close" size={12} />
-              </button>
+              </IconButton>
             </span>
           )}
           {hasFilters && (
@@ -302,7 +316,12 @@ function AuditWorkspace() {
                 {rows.map((row) => (
                   <AuditRow
                     key={row.id}
-                    onFilterActor={(id) => setFilter({ actor: id })}
+                    onFilterActor={(id, email) => {
+                      if (email) {
+                        setActorNames((prev) => ({ ...prev, [id]: email }));
+                      }
+                      setFilter({ actor: id });
+                    }}
                     row={row}
                   />
                 ))}
@@ -392,7 +411,13 @@ export default function GovernAuditPage() {
  * The actor by email, with the id on hover. Clicking it narrows the log to
  * that actor. A deleted user keeps their id; a system write has neither.
  */
-function AuditActor({ row, onFilter }: { row: AuditLogRow; onFilter: (id: string) => void }) {
+function AuditActor({
+  row,
+  onFilter,
+}: {
+  row: AuditLogRow;
+  onFilter: (id: string, email?: string) => void;
+}) {
   if (!row.actorId) {
     return <span className="text-sm text-paper-500">System</span>;
   }
@@ -403,7 +428,7 @@ function AuditActor({ row, onFilter }: { row: AuditLogRow; onFilter: (id: string
         'rounded-sm text-left text-sm text-paper-200 underline-offset-2 hover:underline focus-visible:underline',
         FOCUS_RING
       )}
-      onClick={() => onFilter(actorId)}
+      onClick={() => onFilter(actorId, row.actor?.email)}
       title={`${actorId} — show only this actor`}
       type="button"
     >
@@ -525,9 +550,10 @@ function AuditRow({
   onFilterActor,
 }: {
   row: AuditLogRow;
-  onFilterActor: (id: string) => void;
+  onFilterActor: (id: string, email?: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const detailsId = useId();
   const href = entityHref(row.entityType, row.entityId, row.workRequestId);
   const shortId = row.entityId.length > 12 ? `${row.entityId.slice(0, 8)}…` : row.entityId;
   return (
@@ -559,6 +585,7 @@ function AuditRow({
         </Td>
         <Td className="px-4 py-3 sm:max-w-md" label="Change">
           <button
+            aria-controls={open ? detailsId : undefined}
             aria-expanded={open}
             className={cn(
               'w-full rounded-sm text-left font-mono text-xs text-paper-300 hover:text-paper-100',
@@ -586,7 +613,7 @@ function AuditRow({
       </TRow>
       {/* Below sm the stacked table makes every row a card; pull this one up against its row. */}
       {open && (
-        <tr className="max-sm:-mt-3! max-sm:rounded-t-none! max-sm:border-t-0!">
+        <tr className="max-sm:-mt-3! max-sm:rounded-t-none! max-sm:border-t-0!" id={detailsId}>
           <td className="border-t border-ink-500 bg-ink-900/40 p-0" colSpan={5}>
             <AuditExpanded row={row} />
           </td>

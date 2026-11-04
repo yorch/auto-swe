@@ -160,7 +160,7 @@ describe('TemplateAnalyticsPage', () => {
   it('shows per-version outcome and merge-rate confidence intervals', async () => {
     renderPage();
     expect(await screen.findByText('Success rate (95% CI)')).toBeTruthy();
-    expect(screen.getByText('Merge rate (resolved PRs, 95% CI)')).toBeTruthy();
+    expect(screen.getByText('Merge rate (95% CI)')).toBeTruthy();
     expect(
       screen.getAllByRole('row').some((row) => row.textContent?.includes('80.0% (40.0%–95.0%)'))
     ).toBe(true);

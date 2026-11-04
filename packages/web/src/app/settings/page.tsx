@@ -2,7 +2,7 @@
 
 import { useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ProviderMark } from '@/components/auth/ProviderMark';
 import { AccessTokensSection } from '@/components/settings/AccessTokensSection';
 import { ConnectedAppsSection } from '@/components/settings/ConnectedAppsSection';
@@ -42,6 +42,7 @@ export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const linkProvider = useAuthStore((s) => s.linkProvider);
+  const requestPasswordReset = useAuthStore((s) => s.requestPasswordReset);
   const qc = useQueryClient();
   const providersQuery = useAuthProviders();
   const linkedQuery = useLinkedAccounts();
@@ -57,6 +58,37 @@ export default function SettingsPage() {
   } | null>(null);
 
   const linkedIds = new Set(linked.map((a) => a.providerId));
+  // better-auth stores a password as a "credential" account. A legacy account that cannot list
+  // its accounts reads as none, so "no password" is never claimed: only "set" is.
+  const hasPassword = linkedIds.has('credential');
+  // The auth service refuses to unlink the last account, so say so before the confirmation.
+  const onlyMethod = linked.length <= 1;
+
+  // A success message clears itself; an error stays until the next action.
+  useEffect(() => {
+    if (!info) {
+      return;
+    }
+    const t = setTimeout(() => setInfo(null), 8000);
+    return () => clearTimeout(t);
+  }, [info]);
+
+  const handlePasswordReset = async () => {
+    if (!user?.email) {
+      return;
+    }
+    setBusy('password');
+    setError(null);
+    setInfo(null);
+    try {
+      await requestPasswordReset(user.email);
+      setInfo(`If an account exists for ${user.email}, a password reset link is on its way.`);
+    } catch (err) {
+      setError(errMsg(err, 'Could not send the reset link'));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const handleLogout = async () => {
     // Same as the TopBar: wait for logout() to clear the session before
@@ -107,13 +139,9 @@ export default function SettingsPage() {
   return (
     <div className="max-w-4xl space-y-6">
       <PageHeader
-        help={<p>Changes apply to your account only.</p>}
-        subtitle="Your profile, how you sign in, and the tokens and apps that act as you."
+        subtitle="Changes apply to your account only: your profile, how you sign in, and the tokens and apps that act as you."
         title="Account settings"
       />
-
-      {error && <Alert variant="error">{error}</Alert>}
-      {info && <Alert variant="success">{info}</Alert>}
 
       <SettingsSection
         actions={
@@ -156,6 +184,17 @@ export default function SettingsPage() {
         id="sign-in"
         title="Sign-in methods"
       >
+        {/* Results of the actions in this section sit with them, not at the top of the page. */}
+        {error && (
+          <Alert className="mt-3" variant="error">
+            {error}
+          </Alert>
+        )}
+        {info && (
+          <Alert className="mt-3" variant="success">
+            {info}
+          </Alert>
+        )}
         <QueryBoundary
           error={providersQuery.error ?? linkedQuery.error}
           isError={providersQuery.isError || linkedQuery.isError}
@@ -170,8 +209,22 @@ export default function SettingsPage() {
         >
           <ul className="divide-y divide-ink-600">
             <SettingsListRow
-              detail="Change your password with Forgot password on the sign-in page. A magic link needs no setup: request one there whenever you need a fresh session."
+              action={
+                user?.email ? (
+                  <Button disabled={busy === 'password'} onClick={handlePasswordReset} size="sm">
+                    {busy === 'password' ? 'Sending…' : 'Email me a reset link'}
+                  </Button>
+                ) : null
+              }
+              detail="Set or change your password with a reset link sent to your email. A magic link needs no setup: request one on the sign-in page whenever you need a fresh session."
               leading={<Icon name="key" size={16} />}
+              status={
+                hasPassword ? (
+                  <Badge dot tone="success" variant="outline">
+                    Password set
+                  </Badge>
+                ) : null
+              }
               title="Email and password"
             />
             {SOCIAL_PROVIDERS.map((p) => {
@@ -183,6 +236,7 @@ export default function SettingsPage() {
                   action={
                     isLinked && account ? (
                       <Button
+                        disabled={onlyMethod}
                         onClick={() =>
                           setUnlinkTarget({
                             accountId: account.id,
@@ -203,16 +257,12 @@ export default function SettingsPage() {
                   }
                   detail={
                     isLinked ? (
-                      account?.accountId ? (
-                        <>
-                          Account{' '}
-                          <span className="font-mono text-xs text-paper-400">
-                            {account.accountId.slice(0, 12)}…
-                          </span>
-                        </>
-                      ) : (
-                        p.description
-                      )
+                      <>
+                        {account?.createdAt
+                          ? `Linked on ${new Date(account.createdAt).toLocaleDateString()}.`
+                          : p.description}
+                        {onlyMethod && ' It is your only sign-in method, so it cannot be unlinked.'}
+                      </>
                     ) : configured ? (
                       p.description
                     ) : (
@@ -256,7 +306,8 @@ export default function SettingsPage() {
                 user?.slackId ? (
                   <>
                     Slack user{' '}
-                    <span className="font-mono text-xs text-paper-400">{user.slackId}</span>
+                    <span className="font-mono text-xs text-paper-400">{user.slackId}</span>. Only
+                    an administrator can disconnect it.
                   </>
                 ) : (
                   <>

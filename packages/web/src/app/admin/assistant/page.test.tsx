@@ -61,7 +61,8 @@ describe('GovernAssistantFailuresPage', () => {
 
     expect(await screen.findByText('Ada Lovelace')).toBeTruthy();
     expect(screen.getByText('ada@example.com')).toBeTruthy();
-    expect(screen.getByText(FAILURE.errorDetail)).toBeTruthy();
+    // Once in the item, once in the summary of common causes on the page.
+    expect(screen.getAllByText(FAILURE.errorDetail)).toHaveLength(2);
     expect(screen.getByText(`Shown to the user: ${FAILURE.error}`)).toBeTruthy();
   });
 

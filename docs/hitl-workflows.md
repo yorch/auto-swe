@@ -160,12 +160,12 @@ The response is recorded before the signal is sent, and what a failed signal doe
 
 ## The inbox UI
 
-All pending steps are visible on the Approvals page (`/approvals`). The page polls every 10 seconds.
+All pending steps are visible on the Approvals page (`/approvals`). The page polls every 10 seconds. The tab, sort, kind, search, deadline filter and page are kept in the address, so a reload or a shared link keeps the view. Kind and search narrow the steps already loaded (the list holds at most 100 pending or 200 of all steps, and the page says so at the cap).
 
 - **Admins** see all pending steps across all teams.
 - **Leads and Engineers** see only steps from runs belonging to their teams.
 
-Each card shows the step title, kind badge, description, and a link to the associated run. Click **Respond** to expand the action form:
+Each card shows the step title, kind badge, description, a one- or two-line excerpt of its context (for a diff, the files and changed lines), and a link to the associated run. The button that opens the action form is named for the kind of answer: **Review and decide**, **Choose**, **Fill in** or **Review**. When only one step is waiting, its form is already open. A decision asks for confirmation before the choice is sent, as approve and reject do. After an answer is recorded, the page announces it in a live region:
 
 | Kind | UI shown |
 | ---- | -------- |

@@ -9,6 +9,7 @@ import { Icon, type IconName } from '@/components/ui/Icon';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import type { DocMeta } from '@/lib/docs';
 import { cn, FOCUS_RING, plural } from '@/lib/utils';
+import { groupDocs } from './docGroups';
 
 /** Where the server-side full-text search answers (`app/docs/search/route.ts`). */
 export const SEARCH_URL = '/docs/search';
@@ -245,7 +246,29 @@ export function DocsIndex({
           />
         ) : (
           <div className="space-y-8">
-            {matches.length > 0 && (
+            {matches.length > 0 && !q && (
+              <div className="space-y-8">
+                {groupDocs(matches).map((group) => (
+                  <section aria-labelledby={`docs-group-${group.id}`} key={group.id}>
+                    <h3
+                      className="mb-3 flex items-baseline gap-2 text-sm font-semibold text-paper-200"
+                      id={`docs-group-${group.id}`}
+                    >
+                      {group.title}
+                      <span className="text-xs font-normal text-paper-500 tabular">
+                        {group.docs.length}
+                      </span>
+                    </h3>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                      {group.docs.map((doc) => (
+                        <DocCard doc={doc} key={doc.slug} />
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </div>
+            )}
+            {matches.length > 0 && q && (
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                 {matches.map((doc) => (
                   <DocCard doc={doc} key={doc.slug} />

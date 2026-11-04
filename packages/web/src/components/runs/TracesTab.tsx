@@ -8,9 +8,21 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ExpandablePre } from '@/components/ui/ExpandablePre';
 import { Icon } from '@/components/ui/Icon';
+import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { SearchInput } from '@/components/ui/Toolbar';
 import { attributeTrace, type TraceLinker, traceMatchesSelection } from '@/lib/traceLinkage';
-import { FILTER_BAR_HEIGHT_VAR, groupHeaderTop } from '@/lib/traceSticky';
-import { cn, FOCUS_RING, formatCount, formatDuration, formatTokens } from '@/lib/utils';
+import { FILTER_BAR_HEIGHT_VAR } from '@/lib/traceSticky';
+import { cn, FOCUS_RING, formatCount, formatDate, formatDuration, formatTokens } from '@/lib/utils';
+import {
+  filterTraces,
+  formatTraceOffset,
+  isTraceFilterActive,
+  NO_TRACE_FILTER,
+  newestTraces,
+  TRACE_RENDER_LIMIT,
+  type TraceFilter,
+  type TraceKindFilter,
+} from './traceFilter';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -129,7 +141,6 @@ function CollapsibleSection({
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        onKeyDown={(e) => e.stopPropagation()}
         type="button"
       >
         <Icon
@@ -227,30 +238,6 @@ function TraceErrorBanner({ children }: { children: ReactNode }) {
   );
 }
 
-// ── TruncatedText ─────────────────────────────────────────────────────────────
-
-const TRUNCATE_LIMIT = 2000;
-
-function TruncatedText({ text }: { text: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const isTruncated = text.length > TRUNCATE_LIMIT;
-  const displayed = isTruncated && !expanded ? text.slice(0, TRUNCATE_LIMIT) : text;
-
-  return (
-    <TracePre
-      expanded={expanded}
-      hasMore={isTruncated}
-      moreLabel={
-        isTruncated ? `show more (${text.length - TRUNCATE_LIMIT} more chars)` : 'show all'
-      }
-      onExpandedChange={setExpanded}
-    >
-      {displayed}
-      {isTruncated && !expanded ? '…' : ''}
-    </TracePre>
-  );
-}
-
 // ── TraceOutput ───────────────────────────────────────────────────────────────
 
 function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
@@ -289,13 +276,13 @@ function TraceOutput({ trace }: { trace: AgentTraceRecord }) {
               {systemPrompt !== null && (
                 <div>
                   <div className={BLOCK_CAPTION}>System prompt</div>
-                  <TruncatedText text={systemPrompt} />
+                  <CappedPre text={systemPrompt} />
                 </div>
               )}
               {userMessage !== null && (
                 <div>
                   <div className={BLOCK_CAPTION}>User message</div>
-                  <TruncatedText text={userMessage} />
+                  <CappedPre text={userMessage} />
                 </div>
               )}
             </div>
@@ -460,11 +447,15 @@ function EventRow({
   trace,
   isExpanded,
   onToggle,
+  runStartedAt,
 }: {
   trace: AgentTraceRecord;
   isExpanded: boolean;
   onToggle: () => void;
+  /** What the time column counts from. */
+  runStartedAt: string | null;
 }) {
+  const offset = formatTraceOffset(trace.createdAt, runStartedAt);
   const { label, detail } = traceSummary(trace);
   const durationLabel = trace.durationMs != null ? formatDuration(trace.durationMs) : '';
   const glyph = TYPE_GLYPH[trace.type] ?? TYPE_GLYPH.tool_call;
@@ -498,6 +489,17 @@ function EventRow({
               name="chevronRight"
               size={12}
             />
+
+            {/* When: time since the run started; the exact time is on hover and in the markup. */}
+            {offset && (
+              <time
+                className="tabular w-14 shrink-0 font-mono text-xs text-paper-500"
+                dateTime={trace.createdAt}
+                title={formatDate(trace.createdAt, { showSeconds: true })}
+              >
+                {offset}
+              </time>
+            )}
 
             {/* Event kind */}
             <Badge
@@ -539,11 +541,16 @@ function EventRow({
           </div>
         </div>
 
-        {isExpanded && (
-          <div id={`trace-output-${trace.id}`}>
-            <TraceOutput trace={trace} />
-          </div>
+        {hasError && !isExpanded && trace.error && (
+          <p className="mt-0.5 truncate pl-6 font-mono text-xs text-danger-400" title={trace.error}>
+            {trace.error.split('\n')[0]}
+          </p>
         )}
+
+        {/* Always in the tree so the toggle's aria-controls never points at a missing id. */}
+        <div hidden={!isExpanded} id={`trace-output-${trace.id}`}>
+          {isExpanded && <TraceOutput trace={trace} />}
+        </div>
       </div>
     </li>
   );
@@ -553,10 +560,12 @@ function TraceEventList({
   traces,
   expandedId,
   onToggle,
+  runStartedAt,
 }: {
   traces: AgentTraceRecord[];
   expandedId: string | null;
   onToggle: (id: string) => void;
+  runStartedAt: string | null;
 }) {
   return (
     <ol>
@@ -565,6 +574,7 @@ function TraceEventList({
           isExpanded={expandedId === t.id}
           key={t.id}
           onToggle={() => onToggle(t.id)}
+          runStartedAt={runStartedAt}
           trace={t}
         />
       ))}
@@ -599,6 +609,8 @@ export function TracesTab({
   onClearFilter,
   compact = false,
   untaggedAmbiguous = false,
+  runStartedAt = null,
+  windowed = false,
 }: {
   traces: AgentTraceRecord[];
   filterNodeId: string | null;
@@ -607,6 +619,10 @@ export function TracesTab({
   compact?: boolean;
   /** The traces were picked for one branch execution, which an untagged trace cannot confirm. */
   untaggedAmbiguous?: boolean;
+  /** When the run started: the time column counts from here. Falls back to the first event. */
+  runStartedAt?: string | null;
+  /** `traces` is only the newest window of a longer run; earlier events are not loaded. */
+  windowed?: boolean;
 }) {
   const noteId = useId();
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -615,11 +631,26 @@ export function TracesTab({
     []
   );
 
-  const filtered = useMemo(
+  const [filter, setFilter] = useState<TraceFilter>(NO_TRACE_FILTER);
+  const [renderLimit, setRenderLimit] = useState(TRACE_RENDER_LIMIT);
+  const endRef = useRef<HTMLDivElement>(null);
+  const origin = runStartedAt ?? traces[0]?.createdAt ?? null;
+
+  const byNode = useMemo(
     () =>
       filterNodeId ? traces.filter((t) => traceMatchesSelection(t, filterNodeId, linker)) : traces,
     [traces, filterNodeId, linker]
   );
+  // The filter bar is for the full stream; the compact per-step panels are never filtered.
+  const matched = useMemo(
+    () => (compact ? byNode : filterTraces(byNode, filter)),
+    [byNode, filter, compact]
+  );
+  const { shown: filtered, hidden: heldBack } = useMemo(
+    () => (compact ? { hidden: 0, shown: matched } : newestTraces(matched, renderLimit)),
+    [matched, renderLimit, compact]
+  );
+  const filterActive = !compact && isTraceFilterActive(filter);
 
   // A recording-id selection names one branch; an old trace cannot say which.
   const selectionNamesBranch =
@@ -662,12 +693,13 @@ export function TracesTab({
   }, [filtered, linker, selectionNamesBranch, untaggedAmbiguous]);
 
   // The filter bar's real height, so sticky group headers clear it (it is taller below lg).
-  const filterBarShowing = !compact && Boolean(filterNodeId);
+  const filterBarShowing = !compact;
+  const filterBarMounted = filterBarShowing && traces.length > 0;
   const filterBarRef = useRef<HTMLDivElement>(null);
   const [filterBarHeight, setFilterBarHeight] = useState<number | null>(null);
   useEffect(() => {
     const el = filterBarRef.current;
-    if (!filterBarShowing || !el) {
+    if (!filterBarMounted || !el) {
       setFilterBarHeight(null);
       return;
     }
@@ -679,7 +711,7 @@ export function TracesTab({
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [filterBarShowing]);
+  }, [filterBarMounted]);
 
   const showBranchHeaders = sections.some((s) => s.branch !== null);
   const anyAmbiguous = sections.some((sec) => sec.groups.some((g) => g.ambiguous));
@@ -703,24 +735,82 @@ export function TracesTab({
           : ({ [FILTER_BAR_HEIGHT_VAR]: `${filterBarHeight}px` } as React.CSSProperties)
       }
     >
-      {!compact && filterNodeId && (
+      {!compact && (
         <div
-          className="sticky top-0 z-10 flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-ink-600/50 bg-ink-900 px-4 py-2 lg:flex-nowrap"
+          className="sticky top-0 z-10 border-b border-ink-600/50 bg-ink-900"
+          data-testid="trace-filter-bar"
           ref={filterBarRef}
         >
-          <span className="text-xs text-paper-500">
-            Filtered to{' '}
-            <span className="rounded-sm bg-ink-600 px-1.5 py-px font-mono text-xs text-paper-200 max-lg:break-all">
-              {filterNodeId}
-            </span>
-          </span>
-          <button
-            className={cn(TEXT_ACTION, 'min-h-[40px] lg:ml-auto lg:min-h-0')}
-            onClick={onClearFilter}
-            type="button"
-          >
-            Show all
-          </button>
+          {filterNodeId && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-ink-600/30 px-4 py-2 lg:flex-nowrap">
+              <span className="text-xs text-paper-500">
+                Filtered to{' '}
+                <span className="rounded-sm bg-ink-600 px-1.5 py-px font-mono text-xs text-paper-200 max-lg:break-all">
+                  {filterNodeId}
+                </span>
+              </span>
+              <button
+                className={cn(TEXT_ACTION, 'min-h-[40px] lg:ml-auto lg:min-h-0')}
+                onClick={onClearFilter}
+                type="button"
+              >
+                Show all
+              </button>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2">
+            <SearchInput
+              className="sm:w-52"
+              label="Search trace events"
+              onChange={(query) => setFilter((f) => ({ ...f, query }))}
+              placeholder="Search events…"
+              value={filter.query}
+            />
+            <SegmentedControl<TraceKindFilter>
+              ariaLabel="Event type"
+              onChange={(kind) => setFilter((f) => ({ ...f, kind }))}
+              optionClassName="px-2 py-0.5 text-xs"
+              options={[
+                { label: 'All', value: 'all' },
+                { label: 'LLM', title: 'Model responses', value: 'llm_response' },
+                { label: 'Tool', title: 'Tool calls', value: 'tool_call' },
+                { label: 'Event', title: 'Activity events', value: 'activity_event' },
+              ]}
+              value={filter.kind}
+            />
+            <Button
+              aria-pressed={filter.errorsOnly}
+              className="max-lg:h-10"
+              onClick={() => setFilter((f) => ({ ...f, errorsOnly: !f.errorsOnly }))}
+              size="sm"
+              variant={filter.errorsOnly ? 'primary' : 'secondary'}
+            >
+              Errors only
+            </Button>
+            <div aria-live="polite" className="ml-auto flex items-center gap-2" role="status">
+              <span className="tabular text-xs text-paper-500">
+                {filterActive || filterNodeId
+                  ? `${formatCount(matched.length)} of ${formatCount(traces.length)} events`
+                  : `${formatCount(traces.length)} events`}
+              </span>
+            </div>
+            <button
+              className={cn(TEXT_ACTION, 'min-h-[40px] lg:min-h-0')}
+              onClick={() => endRef.current?.scrollIntoView?.({ block: 'end' })}
+              type="button"
+            >
+              Jump to latest
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!compact && windowed && (
+        <div className="border-b border-ink-600/40 px-4 py-2">
+          <Alert announce={false} variant="warning">
+            Showing the latest {formatCount(traces.length)} events of this run. Earlier events are
+            not loaded, so the stream starts part-way through.
+          </Alert>
         </div>
       )}
 
@@ -734,7 +824,7 @@ export function TracesTab({
         </p>
       )}
 
-      {filtered.length === 0 ? (
+      {byNode.length === 0 ? (
         <EmptyState
           action={
             compact ? undefined : (
@@ -748,8 +838,43 @@ export function TracesTab({
           icon="filter"
           title="No trace events for this node"
         />
+      ) : matched.length === 0 ? (
+        <EmptyState
+          action={
+            <Button onClick={() => setFilter(NO_TRACE_FILTER)} size="sm">
+              Clear filters
+            </Button>
+          }
+          className="py-12"
+          hint="No event matches the search, type and errors-only settings."
+          icon="filter"
+          title="No events match"
+        />
       ) : (
         <div className="divide-y divide-ink-600/30">
+          {heldBack > 0 && (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2 text-xs text-paper-400">
+              <span>
+                Showing the newest {formatCount(filtered.length)} of {formatCount(matched.length)}{' '}
+                events; {formatCount(heldBack)} older {heldBack === 1 ? 'event is' : 'events are'}{' '}
+                not drawn.
+              </span>
+              <button
+                className={cn(TEXT_ACTION, 'min-h-[40px] lg:min-h-0')}
+                onClick={() => setRenderLimit((n) => n + TRACE_RENDER_LIMIT)}
+                type="button"
+              >
+                Show {formatCount(Math.min(heldBack, TRACE_RENDER_LIMIT))} more
+              </button>
+              <button
+                className={cn(TEXT_ACTION, 'min-h-[40px] lg:min-h-0')}
+                onClick={() => setRenderLimit(Number.MAX_SAFE_INTEGER)}
+                type="button"
+              >
+                Show all
+              </button>
+            </div>
+          )}
           {sections.map((section) => (
             <div key={section.branch ?? 'no-branch'}>
               {showBranchHeaders && section.branch !== null && (
@@ -769,7 +894,7 @@ export function TracesTab({
                     <div
                       className={cn(
                         'sticky z-[5] flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-ink-600/30 bg-ink-800 px-4 py-2 lg:flex-nowrap',
-                        groupHeaderTop(filterBarShowing)
+                        filterBarShowing ? 'top-[var(--trace-filter-bar-h,49px)]' : 'top-0'
                       )}
                     >
                       <span className="font-mono text-xs font-semibold text-paper-100 max-lg:min-w-0 max-lg:break-all">
@@ -807,6 +932,7 @@ export function TracesTab({
                       <TraceEventList
                         expandedId={expandedId}
                         onToggle={handleToggle}
+                        runStartedAt={origin}
                         traces={group.traces}
                       />
                     </div>
@@ -817,6 +943,7 @@ export function TracesTab({
           ))}
         </div>
       )}
+      <div ref={endRef} />
     </div>
   );
 }

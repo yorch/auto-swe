@@ -9,7 +9,7 @@ import { Button, ButtonLink } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { DocLink } from '@/components/ui/DocLink';
 import { Icon } from '@/components/ui/Icon';
-import { SkeletonDetail, SkeletonRows } from '@/components/ui/LoadingState';
+import { Skeleton, SkeletonDetail, SkeletonRows } from '@/components/ui/LoadingState';
 import { useMcpGrants } from '@/hooks/useMcpGrants';
 import { useConsentDecision, useOAuthClientName } from '@/hooks/useOAuthConsent';
 import { errMsg } from '@/lib/errors';
@@ -130,6 +130,10 @@ function ConsentDecision({ search }: { search: string }) {
   // What the app may do depends on the operator's settings; approving before they load
   // could grant a different set than the one shown.
   const grantsReady = grants.isSuccess;
+  // Asked for write, but the operator has writes off: the server would refuse the scope, so the
+  // page drops it and says so rather than hiding the request.
+  const writeRefused = request.scopes.includes(MCP_SCOPE_WRITE) && grantsReady && !writeOffered;
+  const nothingToGrant = grantsReady && !disabled && !grantsAnything;
   const name = client.data ?? null;
 
   async function submit(accept: boolean) {
@@ -149,13 +153,47 @@ function ConsentDecision({ search }: { search: string }) {
   return (
     <AuthLayout embedded>
       <AuthHeading icon="plug" title="Connect an app">
-        <span className="font-semibold text-paper-100">{name ?? 'An app'}</span> wants to act on
-        your behalf in auto-swe.
+        {client.isLoading ? (
+          <span
+            aria-hidden="true"
+            className="skeleton inline-block h-[1em] w-32 rounded-md align-middle"
+          />
+        ) : (
+          <span className="font-semibold text-paper-100">{name ?? 'An app'}</span>
+        )}{' '}
+        wants to act on your behalf in auto-swe.
       </AuthHeading>
       <p className="-mt-2 mb-4 text-sm leading-relaxed text-paper-500">
         MCP (Model Context Protocol) lets an AI app use auto-swe on your behalf.{' '}
         <DocLink label="Learn more about MCP" newTab {...HELP_LINKS.mcpServer} />
       </p>
+
+      {/* Blocking notices sit above the card: a disabled Approve is explained before it is read. */}
+      <div className="mb-4 space-y-3 empty:hidden">
+        {disabled && (
+          <Alert variant="warning">Connecting apps is turned off on this deployment.</Alert>
+        )}
+        {nothingToGrant && (
+          <Alert title="Nothing to approve" variant="warning">
+            This app asked only for access that is not available on this deployment, so approving
+            would grant nothing. Deny this request.
+          </Alert>
+        )}
+        {client.isError && (
+          <Alert variant="warning">
+            Could not look up this app, so its name is not shown. Check the address below before you
+            continue.
+          </Alert>
+        )}
+        {grants.isError && (
+          <Alert>
+            Could not load what this app may be allowed to do, so it cannot be approved yet. Reload
+            the page to try again.
+          </Alert>
+        )}
+        {grants.isLoading && <SkeletonRows label="permissions" rows={2} />}
+        {error && <Alert>{error}</Alert>}
+      </div>
 
       <div className="divide-y divide-ink-600 rounded-xl border border-ink-400/60 bg-ink-900/60">
         <div className="p-4">
@@ -165,7 +203,11 @@ function ConsentDecision({ search }: { search: string }) {
               Unverified
             </Badge>
           </div>
-          <div className="text-sm font-medium text-paper-100">{name ?? 'Unnamed app'}</div>
+          {client.isLoading ? (
+            <Skeleton className="h-4 w-40" />
+          ) : (
+            <div className="text-sm font-medium text-paper-100">{name ?? 'Unnamed app'}</div>
+          )}
           <p className="mt-1 text-xs leading-relaxed text-paper-500">
             The app chose this name itself; auto-swe has not checked it.
           </p>
@@ -212,6 +254,15 @@ function ConsentDecision({ search }: { search: string }) {
                 />
               </li>
             )}
+            {writeRefused && (
+              <li className="flex gap-2.5 text-paper-500">
+                <Icon className="mt-0.5" name="close" size={15} />
+                <span>
+                  Write access was requested but is turned off on this deployment, so this app will
+                  not get it.
+                </span>
+              </li>
+            )}
             {offline && (
               <li className="flex gap-2.5">
                 <Icon className="mt-0.5 text-paper-500" name="clock" size={15} />
@@ -225,26 +276,6 @@ function ConsentDecision({ search }: { search: string }) {
         </div>
       </div>
 
-      <div className="mt-4 space-y-3 empty:hidden">
-        {disabled && (
-          <Alert variant="warning">Connecting apps is turned off on this deployment.</Alert>
-        )}
-        {client.isError && (
-          <Alert variant="warning">
-            Could not look up this app, so its name is not shown. Check the address above before you
-            continue.
-          </Alert>
-        )}
-        {grants.isError && (
-          <Alert>
-            Could not load what this app may be allowed to do, so it cannot be approved yet. Reload
-            the page to try again.
-          </Alert>
-        )}
-        {grants.isLoading && <SkeletonRows label="permissions" rows={2} />}
-        {error && <Alert>{error}</Alert>}
-      </div>
-
       <p className="mt-6 text-sm leading-relaxed text-paper-500">
         You can disconnect this at any time under{' '}
         <Link
@@ -253,7 +284,7 @@ function ConsentDecision({ search }: { search: string }) {
           rel="noopener noreferrer"
           target="_blank"
         >
-          Settings &gt; Connected apps <span className="sr-only">(opens in a new tab)</span>
+          Settings, then Connected apps <span className="sr-only">(opens in a new tab)</span>
         </Link>
         .
       </p>

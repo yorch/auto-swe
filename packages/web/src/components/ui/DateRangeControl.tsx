@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { type DateRange, isIsoDay, MAX_SPAN_DAYS, utcDay } from '@/lib/dateRange';
-import { cn } from '@/lib/utils';
+import { cn, FIELD_FOCUS } from '@/lib/utils';
 import { Button } from './Button';
 import { SegmentedControl } from './SegmentedControl';
 
@@ -71,8 +71,10 @@ export function DateRangeControl({
   const invalid = !isIsoDay(from) || !isIsoDay(to) || from > to || to > today || tooLong;
   const selected =
     customOpen || value?.kind === 'custom' ? 'custom' : value ? String(value.days) : 'all';
-  const inputClass =
-    'h-8 rounded-md border border-ink-200 bg-ink-900 px-2.5 text-sm text-paper-100 outline-none transition-colors hover:border-paper-600 focus:border-accent-400 focus:ring-2 focus:ring-accent-400/20';
+  const inputClass = cn(
+    'h-8 rounded-md border border-ink-200 bg-ink-900 px-2.5 text-sm text-paper-100 transition-colors hover:border-paper-600',
+    FIELD_FOCUS
+  );
 
   return (
     <div className={cn('flex flex-wrap items-center gap-2', className)}>

@@ -91,6 +91,11 @@ export default function GovernOrganizationsPage() {
             label="Alerting only"
             onChange={(e) => update({ alerting: e.target.checked ? '1' : null })}
           />
+          {filtering && (
+            <Button onClick={clearFilters} size="sm" variant="ghost">
+              Clear filters
+            </Button>
+          )}
         </Toolbar>
         <QueryBoundary
           error={loadError}
@@ -125,7 +130,7 @@ export default function GovernOrganizationsPage() {
               <EmptyState
                 hint={
                   isAdmin
-                    ? 'Organizations group teams under a shared monthly budget and membership.'
+                    ? 'Organizations group teams under a shared monthly budget and membership. The dashboard does not create them.'
                     : 'You are not a member of any organization yet.'
                 }
                 icon="building"

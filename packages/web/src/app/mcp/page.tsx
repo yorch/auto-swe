@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -16,6 +17,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { SecretStatusRow } from '@/components/ui/SecretStatusRow';
 import {
   type McpConnectionRow,
@@ -29,6 +31,7 @@ import {
   useUpdateMcpConnection,
 } from '@/hooks/useMcpConnections';
 import { useTeams } from '@/hooks/useTeams';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { scopeLabel } from '@/lib/agentDisplay';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
@@ -77,6 +80,7 @@ function McpTimeoutFields({
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <Input
+        hint="Milliseconds. Blank uses the default (15000, which is 15 s)."
         id={`${idPrefix}-list-timeout`}
         label="List timeout (ms)"
         min={1}
@@ -87,6 +91,7 @@ function McpTimeoutFields({
         value={listTimeoutMs}
       />
       <Input
+        hint="Milliseconds. Blank uses the default (60000, which is 60 s)."
         id={`${idPrefix}-call-timeout`}
         label="Call timeout (ms)"
         min={1}
@@ -339,10 +344,41 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
   const [form, setForm] = useState(initialForm);
   const [headerRows, setHeaderRows] = useState<HeaderRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [teamError, setTeamError] = useState<string | null>(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  // A person on exactly one team has nothing to choose.
+  const teamId = form.teamId || (teams?.length === 1 ? teams[0].id : '');
+  const dirty =
+    JSON.stringify({ ...form, teamId: '' }) !== JSON.stringify({ ...initialForm, teamId: '' }) ||
+    headerRows.length > 0;
+  useUnsavedChangesGuard(open && dirty);
+
+  function reset() {
+    setForm(initialForm);
+    setHeaderRows([]);
+    setError(null);
+    setTeamError(null);
+    setDiscardOpen(false);
+  }
+
+  function requestClose() {
+    if (dirty && !create.isPending) {
+      setDiscardOpen(true);
+      return;
+    }
+    reset();
+    onClose();
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    // The Team picker is not a native control, so its `required` cannot stop the submit.
+    if (!teamId) {
+      setTeamError('Choose the team that owns this connection.');
+      return;
+    }
+    setTeamError(null);
     // Blank → null → omit (loadMcpTools falls back to its own default).
     const parsed = parseTimeoutInputs(form);
     if ('error' in parsed) {
@@ -364,82 +400,106 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
         ...(form.qodo ? { integration: 'qodo' as const } : {}),
         ...(form.qodo || form.scan ? { scanResults: true } : {}),
         name: form.name,
-        teamId: form.teamId,
+        teamId,
         url: form.url,
         ...(parsed.listTimeoutMs !== null ? { listTimeoutMs: parsed.listTimeoutMs } : {}),
         ...(parsed.callTimeoutMs !== null ? { callTimeoutMs: parsed.callTimeoutMs } : {}),
       });
       onClose();
-      setForm(initialForm);
-      setHeaderRows([]);
+      reset();
     } catch (err) {
       setError(errMsg(err, 'Failed to create connection'));
     }
   }
 
   return (
-    <Modal onClose={onClose} open={open} title="New MCP connection">
-      <form className="space-y-4" onSubmit={handleSubmit}>
-        <Input
-          id="mcp-new-name"
-          label="Name"
-          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-          placeholder="docs-server"
-          required
-          value={form.name}
-        />
-        <Input
-          id="mcp-new-server-url"
-          label="Server URL (http/https)"
-          onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
-          placeholder="https://mcp.example.com/mcp"
-          required
-          type="url"
-          value={form.url}
-        />
-        <McpPrivateNetworkField
-          checked={form.allowPrivateNetwork}
-          id="mcp-new-private-network"
-          onChange={(v) => setForm((f) => ({ ...f, allowPrivateNetwork: v }))}
-        />
-        <McpBearerTokenField
-          hasToken={false}
-          id="mcp-new-bearer-token"
-          onChange={(v) => setForm((f) => ({ ...f, bearerToken: v }))}
-          value={form.bearerToken}
-        />
-        <McpHeaderFields idPrefix="mcp-new" onChange={setHeaderRows} rows={headerRows} />
-        <McpQodoFields
-          idPrefix="mcp-new"
-          onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
-          qodo={form.qodo}
-          scan={form.scan}
-        />
-        <Combobox
-          hint="The team owns the connection and manages it. Platform-wide agents can use any connection; a team's own agents can only use that team's."
-          id="mcp-new-team"
-          label="Team"
-          onChange={(v) => setForm((f) => ({ ...f, teamId: v }))}
-          options={(teams ?? []).map((t) => ({ label: t.name, value: t.id }))}
-          placeholder="Select a team…"
-          required
-          value={form.teamId}
-        />
-        <McpTimeoutFields
-          callTimeoutMs={form.callTimeoutMs}
-          idPrefix="mcp-new"
-          listTimeoutMs={form.listTimeoutMs}
-          onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
-        />
-        {error && <Alert>{error}</Alert>}
-        <ModalFooter
-          isPending={create.isPending}
-          onCancel={onClose}
-          pendingLabel="Creating…"
-          submitLabel="Create connection"
-        />
-      </form>
-    </Modal>
+    <>
+      <ConfirmModal
+        confirmLabel="Discard"
+        dangerous
+        message="This connection has not been created. Closing discards what you entered."
+        onClose={() => setDiscardOpen(false)}
+        onConfirm={() => {
+          reset();
+          onClose();
+        }}
+        open={discardOpen}
+        title="Discard this connection?"
+      />
+      <Modal onClose={requestClose} open={open} title="New MCP connection">
+        <form className="space-y-4" onSubmit={handleSubmit}>
+          <Input
+            id="mcp-new-name"
+            label="Name"
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            placeholder="docs-server"
+            required
+            value={form.name}
+          />
+          <Input
+            id="mcp-new-server-url"
+            label="Server URL (http/https)"
+            onChange={(e) => setForm((f) => ({ ...f, url: e.target.value }))}
+            placeholder="https://mcp.example.com/mcp"
+            required
+            type="url"
+            value={form.url}
+          />
+          <Combobox
+            error={teamError ?? undefined}
+            hint="The team owns the connection and manages it. Platform-wide agents can use any connection; a team's own agents can only use that team's."
+            id="mcp-new-team"
+            label="Team"
+            onChange={(v) => {
+              setTeamError(null);
+              setForm((f) => ({ ...f, teamId: v }));
+            }}
+            options={(teams ?? []).map((t) => ({ label: t.name, value: t.id }))}
+            placeholder="Select a team…"
+            required
+            value={teamId}
+          />
+          <McpBearerTokenField
+            hasToken={false}
+            id="mcp-new-bearer-token"
+            onChange={(v) => setForm((f) => ({ ...f, bearerToken: v }))}
+            value={form.bearerToken}
+          />
+          <details className="group rounded-lg border border-ink-600 px-4 py-3">
+            <summary className="cursor-pointer list-none text-sm font-medium text-paper-200 [&::-webkit-details-marker]:hidden">
+              Advanced: network, headers, result screening, timeouts
+            </summary>
+            <div className="mt-4 space-y-4">
+              <McpPrivateNetworkField
+                checked={form.allowPrivateNetwork}
+                id="mcp-new-private-network"
+                onChange={(v) => setForm((f) => ({ ...f, allowPrivateNetwork: v }))}
+              />
+              <McpHeaderFields idPrefix="mcp-new" onChange={setHeaderRows} rows={headerRows} />
+              <McpQodoFields
+                idPrefix="mcp-new"
+                onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+                qodo={form.qodo}
+                scan={form.scan}
+              />
+              <McpTimeoutFields
+                callTimeoutMs={form.callTimeoutMs}
+                idPrefix="mcp-new"
+                listTimeoutMs={form.listTimeoutMs}
+                onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+              />
+            </div>
+          </details>
+          {error && <Alert>{error}</Alert>}
+          <ModalFooter
+            isPending={create.isPending}
+            onCancel={requestClose}
+            pendingLabel="Creating…"
+            submitLabel="Create connection"
+          />
+        </form>
+      </Modal>
+    </>
   );
 }
 
@@ -649,17 +709,28 @@ export default function StudioMcpConnectionsPage() {
   const del = useDeleteMcpConnection();
   const test = useTestMcpConnection();
   const [testing, setTesting] = useState<string | null>(null);
-  const [results, setResults] = useState<Record<string, McpTestResult>>({});
+  const [results, setResults] = useState<Record<string, McpTestResult & { testedAt: string }>>({});
+  // A result describes the connection as it was tested; an edit makes it stale.
+  const clearResult = (id: string) =>
+    setResults((r) => {
+      const { [id]: _stale, ...rest } = r;
+      return rest;
+    });
 
   async function runTest(id: string) {
     setTesting(id);
     try {
       const result = await test.mutateAsync(id);
-      setResults((r) => ({ ...r, [id]: result }));
+      setResults((r) => ({ ...r, [id]: { ...result, testedAt: new Date().toISOString() } }));
     } catch (err) {
       setResults((r) => ({
         ...r,
-        [id]: { durationMs: 0, error: errMsg(err, 'The check could not run.'), ok: false },
+        [id]: {
+          durationMs: 0,
+          error: errMsg(err, 'The check could not run.'),
+          ok: false,
+          testedAt: new Date().toISOString(),
+        },
       }));
     } finally {
       setTesting(null);
@@ -733,14 +804,18 @@ export default function StudioMcpConnectionsPage() {
                   <Button onClick={() => setEditTarget(c)} size="sm" variant="secondary">
                     Edit
                   </Button>
-                  <Button
-                    aria-label={`Delete ${c.name}`}
-                    onClick={() => setDeleteTarget(c)}
-                    size="sm"
-                    variant="ghost"
-                  >
-                    <Icon className="text-danger-400" name="trash" size={14} />
-                  </Button>
+                  <ActionMenu
+                    items={[
+                      {
+                        icon: 'trash',
+                        id: 'delete',
+                        label: 'Delete connection',
+                        onAction: () => setDeleteTarget(c),
+                        tone: 'danger',
+                      },
+                    ]}
+                    label={`More actions for ${c.name}`}
+                  />
                 </>
               )}
               columns={[
@@ -757,7 +832,7 @@ export default function StudioMcpConnectionsPage() {
                           {c.config?.url}
                         </code>
                         {result && (
-                          <div className="mt-1.5 space-y-1">
+                          <div className="mt-1.5 space-y-1 break-words" role="status">
                             <Badge dot tone={result.ok ? 'success' : 'danger'}>
                               {result.ok
                                 ? `Reachable · ${result.toolCount} ${
@@ -765,6 +840,9 @@ export default function StudioMcpConnectionsPage() {
                                   }`
                                 : (result.error ?? 'Not reachable')}
                             </Badge>
+                            <div className="text-paper-500">
+                              Tested <RelativeTime value={result.testedAt} />
+                            </div>
                             {result.ok && (result.toolNames ?? []).length > 0 && (
                               <div className="font-mono">{(result.toolNames ?? []).join(', ')}</div>
                             )}
@@ -864,15 +942,20 @@ export default function StudioMcpConnectionsPage() {
       <EditMcpConnectionModal
         connection={editTarget}
         key={editTarget?.id}
-        onClose={() => setEditTarget(null)}
+        onClose={() => {
+          if (editTarget) {
+            clearResult(editTarget.id);
+          }
+          setEditTarget(null);
+        }}
       />
       <ConfirmModal
         confirmLabel="Delete"
         dangerous
         message={
           (deleteTarget?.usedBy ?? []).length > 0
-            ? `${(deleteTarget?.usedBy ?? []).map((a) => a.name).join(', ')} use this connection and will fall back to their built-in tools. This deactivates the connection; it cannot be undone.`
-            : 'No agent uses this connection. This deactivates it; it cannot be undone.'
+            ? `${(deleteTarget?.usedBy ?? []).map((a) => a.name).join(', ')} use this connection and will fall back to their built-in tools. Deleting it cannot be undone.`
+            : 'No agent uses this connection. Deleting it cannot be undone.'
         }
         onClose={() => setDeleteTarget(null)}
         onConfirm={async () => {

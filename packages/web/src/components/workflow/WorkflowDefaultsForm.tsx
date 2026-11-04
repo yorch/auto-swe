@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { type FormEvent, type ReactNode, useCallback, useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
@@ -16,6 +16,7 @@ import {
 } from '@/hooks/useAdminConfig';
 import { useConfigForm } from '@/hooks/useConfigForm';
 import { errMsg } from '@/lib/errors';
+import { formatCount, formatTokens } from '@/lib/utils';
 
 // Flat form shape: one object instead of ~22 scalar useState hooks. Budgets are
 // nested on the read payload (`budgetTiers`) but flat on the PUT body, so we
@@ -100,9 +101,11 @@ function fromResolved(data: WorkflowDefaultsConfig): FormState {
   };
 }
 
-// Build the PUT body. Text fields are only sent when non-empty (unchanged from
-// the original handler); the Tier-2 numeric knobs are always sent since they're
-// seeded from the server and always carry a valid value.
+// Build the PUT body. The gateway rejects an empty branch prefix, PR title template and team slug
+// (and has no null for them), so those are only sent when non-empty — the form refuses to save a
+// cleared one instead of dropping it silently (`clearedRequired`). The PR body template accepts an
+// empty string, which resolves to the system default, so it is always sent and can be cleared.
+// The Tier-2 numeric knobs are always sent: they are seeded from the server and validated here.
 function toBody(form: FormState): WorkflowDefaultsInput {
   const body: WorkflowDefaultsInput = {
     budgetEpicInputTokens: form.budgetEpicInputTokens,
@@ -130,14 +133,15 @@ function toBody(form: FormState): WorkflowDefaultsInput {
   if (form.prTitleTemplate) {
     body.prTitleTemplate = form.prTitleTemplate;
   }
-  if (form.prBodyTemplate) {
-    body.prBodyTemplate = form.prBodyTemplate;
-  }
+  body.prBodyTemplate = form.prBodyTemplate;
   if (form.defaultTeamSlug) {
     body.defaultTeamSlug = form.defaultTeamSlug;
   }
   return body;
 }
+
+/** Text fields the API cannot clear: an empty value would be dropped and the old one kept. */
+const REQUIRED_TEXT_KEYS = ['branchPrefix', 'prTitleTemplate', 'defaultTeamSlug'] as const;
 
 // Numeric keys of FormState — the fields NumberField edits.
 type NumericKey = {
@@ -180,6 +184,36 @@ export function WorkflowDefaultsForm() {
 
   const num = (key: NumericKey) => (v: number) => setField(key, v);
 
+  // Number fields keep their own text so one can be emptied and retyped; the ones holding an
+  // unusable value report here and block Save until fixed.
+  const [invalidFields, setInvalidFields] = useState<ReadonlySet<string>>(() => new Set());
+  const onValidityChange = useCallback((id: string, invalid: boolean) => {
+    setInvalidFields((prev) => {
+      if (prev.has(id) === invalid) {
+        return prev;
+      }
+      const next = new Set(prev);
+      if (invalid) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+  const [attempted, setAttempted] = useState(false);
+  // Bumped on Discard so every number field re-seeds its text from the restored form.
+  const [resetNonce, setResetNonce] = useState(0);
+
+  const saved0 = data ? fromResolved(data) : null;
+  const clearedRequired = REQUIRED_TEXT_KEYS.filter((k) => saved0?.[k] && !form[k].trim());
+  const blocked = invalidFields.size > 0 || clearedRequired.length > 0;
+  const pollDisabled = form.ciWaitMode === 'signal';
+  const clearedError = (k: (typeof REQUIRED_TEXT_KEYS)[number]) =>
+    clearedRequired.includes(k)
+      ? 'This cannot be cleared yet — enter a value to save (the old one stays in force until then).'
+      : undefined;
+
   if (isLoading) {
     return <SkeletonForm fields={6} label="workflow defaults" />;
   }
@@ -192,13 +226,27 @@ export function WorkflowDefaultsForm() {
   }
 
   return (
-    <form className="space-y-6" onSubmit={submit}>
+    <form
+      className="space-y-6"
+      key={resetNonce}
+      noValidate
+      onSubmit={(e: FormEvent) => {
+        if (blocked) {
+          e.preventDefault();
+          setAttempted(true);
+          return;
+        }
+        setAttempted(false);
+        void submit(e);
+      }}
+    >
       <Card>
         <CardHeader>
           <CardTitle>Branch and pull request templates</CardTitle>
         </CardHeader>
         <div className="space-y-4">
           <Input
+            error={clearedError('branchPrefix')}
             hint={`Branches are created as ${form.branchPrefix || 'auto'}/<ticketId>.`}
             id="branch-prefix"
             label="Branch prefix"
@@ -208,6 +256,7 @@ export function WorkflowDefaultsForm() {
           />
 
           <Input
+            error={clearedError('prTitleTemplate')}
             hint="Available variables: {{ticketId}}, {{description}}."
             id="pr-title-template"
             label="PR title template"
@@ -235,6 +284,7 @@ export function WorkflowDefaultsForm() {
           <CardTitle>Default team</CardTitle>
         </CardHeader>
         <Input
+          error={clearedError('defaultTeamSlug')}
           hint="Work requests without an explicit team are assigned to this team."
           id="default-team-slug"
           label="Default team slug"
@@ -259,6 +309,8 @@ export function WorkflowDefaultsForm() {
               label="Standard · input tokens"
               min={1}
               onChange={num('budgetStandardInputTokens')}
+              onValidityChange={onValidityChange}
+              tokens
               value={form.budgetStandardInputTokens}
             />
             <NumberField
@@ -267,6 +319,8 @@ export function WorkflowDefaultsForm() {
               label="Standard · output tokens"
               min={1}
               onChange={num('budgetStandardOutputTokens')}
+              onValidityChange={onValidityChange}
+              tokens
               value={form.budgetStandardOutputTokens}
             />
             <NumberField
@@ -275,6 +329,8 @@ export function WorkflowDefaultsForm() {
               label="Large · input tokens"
               min={1}
               onChange={num('budgetLargeInputTokens')}
+              onValidityChange={onValidityChange}
+              tokens
               value={form.budgetLargeInputTokens}
             />
             <NumberField
@@ -283,6 +339,8 @@ export function WorkflowDefaultsForm() {
               label="Large · output tokens"
               min={1}
               onChange={num('budgetLargeOutputTokens')}
+              onValidityChange={onValidityChange}
+              tokens
               value={form.budgetLargeOutputTokens}
             />
             <NumberField
@@ -291,6 +349,8 @@ export function WorkflowDefaultsForm() {
               label="Epic · input tokens"
               min={1}
               onChange={num('budgetEpicInputTokens')}
+              onValidityChange={onValidityChange}
+              tokens
               value={form.budgetEpicInputTokens}
             />
             <NumberField
@@ -299,16 +359,27 @@ export function WorkflowDefaultsForm() {
               label="Epic · output tokens"
               min={1}
               onChange={num('budgetEpicOutputTokens')}
+              onValidityChange={onValidityChange}
+              tokens
               value={form.budgetEpicOutputTokens}
             />
           </FieldGroup>
 
           <FieldGroup
-            help="How a run waits for CI on its pull request. In signal mode (the default) it waits up to 4 hours for the CI webhook, then ends as timed out; the poll settings are not used. In poll mode, if no checks appear within the grace period, CI counts as passed, and polling gives up at the deadline."
+            help={
+              <>
+                How a run waits for CI on its pull request. In{' '}
+                <code className="font-mono">signal</code> mode (the default) it waits up to 4 hours
+                for the CI webhook, then ends as timed out; the poll settings below are not used, so
+                they are disabled. In <code className="font-mono">poll</code> mode, if no checks
+                appear within the grace period, CI counts as passed, and polling gives up at the
+                deadline.
+              </>
+            }
             label="CI wait strategy"
           >
             <Select
-              hint="`signal` waits for a GitHub webhook. Use `poll` only where no inbound webhook can reach the gateway (local dev, air-gapped)."
+              hint="Signal waits for a GitHub webhook. Use poll only where no inbound webhook can reach the gateway (local dev, air-gapped)."
               id="ci-wait-mode"
               label="Wait mode"
               onChange={(v) => {
@@ -323,29 +394,35 @@ export function WorkflowDefaultsForm() {
               value={form.ciWaitMode}
             />
             <NumberField
+              disabled={pollDisabled}
               hint="Seconds between CI polls, at most 60 — the gateway clamps larger values. Only used in poll mode."
               id="ci-poll-interval"
               label="Poll interval (s)"
               max={60}
               min={1}
               onChange={num('ciPollIntervalSec')}
+              onValidityChange={onValidityChange}
               value={form.ciPollIntervalSec}
             />
             <NumberField
+              disabled={pollDisabled}
               hint="After this long with no checks present, the poller concludes passed."
               id="ci-poll-grace"
               label="Grace period (s)"
               min={1}
               onChange={num('ciPollGraceSec')}
+              onValidityChange={onValidityChange}
               value={form.ciPollGraceSec}
             />
             <NumberField
+              disabled={pollDisabled}
               hint="Give up waiting for CI after this long, at most 20700 s (5 h 45 min) — the gateway clamps larger values."
               id="ci-poll-deadline"
               label="Deadline (s)"
               max={20_700}
               min={1}
               onChange={num('ciPollDeadlineSec')}
+              onValidityChange={onValidityChange}
               value={form.ciPollDeadlineSec}
             />
           </FieldGroup>
@@ -357,6 +434,7 @@ export function WorkflowDefaultsForm() {
               label="Max TDD iterations"
               min={1}
               onChange={num('maxTddIterations')}
+              onValidityChange={onValidityChange}
               value={form.maxTddIterations}
             />
             <NumberField
@@ -365,6 +443,7 @@ export function WorkflowDefaultsForm() {
               label="Max eval iterations"
               min={1}
               onChange={num('maxEvalIterations')}
+              onValidityChange={onValidityChange}
               value={form.maxEvalIterations}
             />
           </FieldGroup>
@@ -376,6 +455,7 @@ export function WorkflowDefaultsForm() {
               label="Retrieval limit"
               min={1}
               onChange={num('lessonRetrievalLimit')}
+              onValidityChange={onValidityChange}
               value={form.lessonRetrievalLimit}
             />
             <NumberField
@@ -385,6 +465,7 @@ export function WorkflowDefaultsForm() {
               max={1}
               min={0}
               onChange={num('lessonRetrievalThreshold')}
+              onValidityChange={onValidityChange}
               step={0.01}
               value={form.lessonRetrievalThreshold}
             />
@@ -398,6 +479,7 @@ export function WorkflowDefaultsForm() {
               max={1}
               min={0}
               onChange={num('evalHealthMaxFlakeRate')}
+              onValidityChange={onValidityChange}
               step={0.01}
               value={form.evalHealthMaxFlakeRate}
             />
@@ -408,6 +490,7 @@ export function WorkflowDefaultsForm() {
               max={1}
               min={0}
               onChange={num('evalHealthMaxStaleRate')}
+              onValidityChange={onValidityChange}
               step={0.01}
               value={form.evalHealthMaxStaleRate}
             />
@@ -418,6 +501,7 @@ export function WorkflowDefaultsForm() {
               max={1}
               min={0}
               onChange={num('evalHealthMinKappa')}
+              onValidityChange={onValidityChange}
               step={0.01}
               value={form.evalHealthMinKappa}
             />
@@ -428,6 +512,7 @@ export function WorkflowDefaultsForm() {
               max={1}
               min={0}
               onChange={num('evalJudgeThreshold')}
+              onValidityChange={onValidityChange}
               step={0.01}
               value={form.evalJudgeThreshold}
             />
@@ -437,8 +522,12 @@ export function WorkflowDefaultsForm() {
 
       <SaveBar
         dirtyCount={dirtyCount}
-        error={error}
-        onDiscard={discard}
+        error={error ?? (attempted && blocked ? 'Fix the highlighted fields before saving.' : null)}
+        onDiscard={() => {
+          discard();
+          setAttempted(false);
+          setResetNonce((n) => n + 1);
+        }}
         pending={update.isPending}
         saved={saved}
         savedMessage="Workflow defaults saved."
@@ -447,37 +536,86 @@ export function WorkflowDefaultsForm() {
   );
 }
 
-/** A labelled numeric input. */
-function NumberField({
+/**
+ * A labelled numeric input. It keeps its own text, so the field can be emptied and retyped
+ * instead of snapping to 0, and reports an unusable value (empty, not a number, outside
+ * `min`/`max`) to its parent so Save can be held back.
+ */
+export function NumberField({
   id,
   label,
   hint,
   value,
   onChange,
+  onValidityChange,
   min,
   max,
   step,
+  tokens,
+  disabled,
 }: {
   id: string;
   label: string;
   hint: string;
   value: number;
   onChange: (value: number) => void;
+  onValidityChange?: (id: string, invalid: boolean) => void;
   min?: number;
   max?: number;
   step?: number;
+  /** A token count: show it with separators and a compact figure under the field. */
+  tokens?: boolean;
+  disabled?: boolean;
 }) {
+  const [text, setText] = useState(() => String(value));
+  // Follow the form when it changes from outside (a re-seed after load), but never overwrite
+  // what the person is in the middle of typing.
+  useEffect(() => {
+    setText((current) =>
+      current.trim() !== '' && Number(current) === value ? current : String(value)
+    );
+  }, [value]);
+
+  const n = Number(text);
+  // A disabled field cannot be edited, so it never blocks saving or shows an error the person
+  // cannot fix (the poll fields while the wait mode is not poll).
+  const error = disabled
+    ? undefined
+    : text.trim() === ''
+      ? 'Enter a number'
+      : !Number.isFinite(n)
+        ? 'Must be a number'
+        : min !== undefined && n < min
+          ? `Must be at least ${min}`
+          : max !== undefined && n > max
+            ? `Must be at most ${max}`
+            : undefined;
+  const invalid = error !== undefined;
+  useEffect(() => {
+    onValidityChange?.(id, invalid);
+  }, [id, invalid, onValidityChange]);
+  useEffect(() => () => onValidityChange?.(id, false), [id, onValidityChange]);
+
   return (
     <Input
-      hint={hint}
+      disabled={disabled}
+      error={error}
+      hint={tokens && !invalid ? `${hint} ${formatCount(n)} tokens (${formatTokens(n)}).` : hint}
       id={id}
+      inputMode={step !== undefined && step < 1 ? 'decimal' : 'numeric'}
       label={label}
       max={max}
       min={min}
-      onChange={(e) => onChange(Number(e.target.value))}
+      onChange={(e) => {
+        setText(e.target.value);
+        const next = Number(e.target.value);
+        if (e.target.value.trim() !== '' && Number.isFinite(next)) {
+          onChange(next);
+        }
+      }}
       step={step}
       type="number"
-      value={value}
+      value={text}
     />
   );
 }

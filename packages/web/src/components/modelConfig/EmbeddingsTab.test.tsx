@@ -81,4 +81,21 @@ describe('EmbeddingsTab — re-embed older memory', () => {
     expect(await screen.findByText(/Re-embedding is running/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Re-embed \d+ items/ })).toBeNull();
   });
+
+  it('asks before switching to a different embedding model, and saves nothing on cancel', async () => {
+    const spy = mock({ running: false, stale: 0, total: 40 });
+    render(withQuery(<EmbeddingsTab />));
+    const spec = (await screen.findByRole('combobox', { name: /Model spec/ })) as HTMLInputElement;
+    fireEvent.change(spec, { target: { value: 'google/text-embedding-005' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    const dialog = within(
+      await screen.findByRole('dialog', { name: 'Change the embedding model?' })
+    );
+    expect(dialog.getByText(/skips them until you re-embed them|skipped by search/)).toBeTruthy();
+    fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
+    const saved = spy.mock.calls.some(
+      ([, init]) => (init as RequestInit | undefined)?.method === 'PUT'
+    );
+    expect(saved).toBe(false);
+  });
 });

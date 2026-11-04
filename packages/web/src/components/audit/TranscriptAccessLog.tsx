@@ -7,6 +7,7 @@ import { Card } from '@/components/ui/Card';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
+import { IconButton } from '@/components/ui/IconButton';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
@@ -115,14 +116,9 @@ function FilterChip({
       title={title}
     >
       {label}
-      <button
-        aria-label={removeLabel}
-        className={cn('rounded-sm p-0.5 text-paper-500 hover:text-paper-100', FOCUS_RING)}
-        onClick={onRemove}
-        type="button"
-      >
+      <IconButton aria-label={removeLabel} onClick={onRemove} size="xs">
         <Icon name="close" size={12} />
-      </button>
+      </IconButton>
     </span>
   );
 }

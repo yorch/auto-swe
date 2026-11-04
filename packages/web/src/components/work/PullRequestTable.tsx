@@ -1,5 +1,6 @@
 import type { PullRequestListItem } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { BUTTON_STYLE, buttonClassName } from '@/components/ui/Button';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { Icon } from '@/components/ui/Icon';
 import { RelativeTime } from '@/components/ui/RelativeTime';
@@ -72,10 +73,11 @@ const COLUMNS: DataTableColumn<PullRequestListItem>[] = [
       pr.latestRun ? (
         <Link
           aria-label={`Open run, ${pr.latestRun.status.toLowerCase()}`}
-          className="inline-block"
+          className={cn('inline-flex items-center gap-1 hover:underline', FOCUS_RING)}
           href={`/runs/${pr.latestRun.id}`}
         >
           <StatusBadge status={pr.latestRun.status} />
+          <Icon name="arrowRight" size={12} />
         </Link>
       ) : (
         <span className="text-paper-500">—</span>
@@ -107,9 +109,27 @@ const COLUMNS: DataTableColumn<PullRequestListItem>[] = [
 export function PullRequestTable({ pullRequests }: { pullRequests: PullRequestListItem[] }) {
   return (
     <DataTable
+      actions={(pr) => {
+        const url = safeHttpUrl(pr.url);
+        return url ? (
+          <a
+            className={buttonClassName('secondary', 'sm')}
+            href={url}
+            rel="noopener noreferrer"
+            style={BUTTON_STYLE}
+            target="_blank"
+          >
+            Review
+            <span className="sr-only"> {prLabel(pr)} on the host (opens in a new tab)</span>
+            <Icon name="external" size={12} />
+          </a>
+        ) : null;
+      }}
+      actionsLabel="Review"
       caption="Pull requests opened by the platform, newest first"
       columns={COLUMNS}
       getRowId={(pr) => pr.id}
+      revealActions={false}
       rows={pullRequests}
     />
   );

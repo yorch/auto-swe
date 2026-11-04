@@ -89,6 +89,11 @@ function stepSummary(step: WorkflowStepRecord): string {
   return `Step is ${step.status.toLowerCase()}.`;
 }
 
+/** The transcript reads no workflow spec, so a run whose spec cannot be read can still show it. */
+export type TranscriptProps = Omit<RunLayoutProps, 'spec'> & {
+  spec?: RunLayoutProps['spec'] | null;
+};
+
 export function Transcript({
   jumpNonce,
   linker,
@@ -96,7 +101,7 @@ export function Transcript({
   selectedNodeId: selectedId,
   setSelectedNodeId: setSelectedId,
   traces,
-}: RunLayoutProps) {
+}: TranscriptProps) {
   const stepRefs = useRef<Record<string, HTMLElement | null>>({});
   // Stacked below the breakpoint: the step spine becomes a strip across the top and the
   // details rail a collapsible section between it and the narrative.
@@ -206,6 +211,7 @@ export function Transcript({
                     filterNodeId={null}
                     linker={linker}
                     onClearFilter={() => {}}
+                    runStartedAt={run.startedAt}
                     traces={stepTraces}
                     untaggedAmbiguous={step.nodeId !== specNodeIdOfRecording(step.nodeId, linker)}
                   />

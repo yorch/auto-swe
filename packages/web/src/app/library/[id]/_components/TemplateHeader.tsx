@@ -15,6 +15,8 @@ interface TemplateHeaderProps {
   canManage: boolean;
   onExplain: () => void;
   onRefine: () => void;
+  /** Why Refine is unavailable (unsaved edits), or null. */
+  refineBlockedReason?: string | null;
   onEditDetails: () => void;
   onEditInputs: () => void;
 }
@@ -25,6 +27,7 @@ export function TemplateHeader({
   canManage,
   onExplain,
   onRefine,
+  refineBlockedReason = null,
   onEditDetails,
   onEditInputs,
 }: TemplateHeaderProps) {
@@ -42,10 +45,23 @@ export function TemplateHeader({
               </Button>
             )}
             {canManage && (
-              <Button onClick={onRefine} size="sm" variant="secondary">
-                <SparkleIcon />
-                Refine with AI
-              </Button>
+              <>
+                <Button
+                  aria-describedby={refineBlockedReason ? 'refine-blocked-reason' : undefined}
+                  disabled={refineBlockedReason !== null}
+                  onClick={onRefine}
+                  size="sm"
+                  variant="secondary"
+                >
+                  <SparkleIcon />
+                  Refine with AI
+                </Button>
+                {refineBlockedReason && (
+                  <span className="sr-only" id="refine-blocked-reason">
+                    {refineBlockedReason}
+                  </span>
+                )}
+              </>
             )}
             {runnable && (
               <ButtonLink

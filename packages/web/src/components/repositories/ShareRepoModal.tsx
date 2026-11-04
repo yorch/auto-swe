@@ -4,6 +4,7 @@ import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Checkbox } from '@/components/ui/Checkbox';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
@@ -41,10 +42,22 @@ export function ShareRepoModal({
     });
   }
 
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault();
+  const [confirmingRemoveAll, setConfirmingRemoveAll] = useState(false);
+  const currentlyShared = repo.shares?.length ?? 0;
+
+  async function commit() {
     await save.mutateAsync([...selected]);
     onClose();
+  }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    // Saving nothing selected removes access for every team it was shared with.
+    if (selected.size === 0 && currentlyShared > 0) {
+      setConfirmingRemoveAll(true);
+      return;
+    }
+    await commit();
   }
 
   return (
@@ -99,6 +112,17 @@ export function ShareRepoModal({
           submitLabel="Save changes"
         />
       </form>
+      {confirmingRemoveAll && (
+        <ConfirmModal
+          confirmLabel="Remove sharing"
+          dangerous
+          message={`This removes access for ${currentlyShared} team${currentlyShared === 1 ? '' : 's'}. Their members can no longer see this repository or start runs on it.`}
+          onClose={() => setConfirmingRemoveAll(false)}
+          onConfirm={() => commit().catch(() => {})}
+          open
+          title="Stop sharing this repository?"
+        />
+      )}
     </Modal>
   );
 }

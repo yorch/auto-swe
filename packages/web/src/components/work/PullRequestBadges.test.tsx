@@ -12,6 +12,7 @@ describe('pullRequestStateMeta', () => {
     expect(pullRequestStateMeta('OPEN', true).label).toBe('Draft');
     expect(pullRequestStateMeta('MERGED', false).label).toBe('Merged');
     expect(pullRequestStateMeta('CLOSED', false).label).toBe('Closed');
+    expect(pullRequestStateMeta('CLOSED', false).tone).toBe('neutral');
   });
 
   it('never calls a finished PR a draft', () => {

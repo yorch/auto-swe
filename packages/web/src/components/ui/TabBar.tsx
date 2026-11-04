@@ -80,8 +80,10 @@ export function TabBar<T extends string>({
 
   const tabClass = (selected: boolean) =>
     cn(
-      'shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm transition-colors',
+      'shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm transition-colors pointer-coarse:min-h-[44px]',
       FOCUS_RING,
+      // Inside the tab: the scroller clips an outline drawn outside it.
+      'focus-visible:-outline-offset-2',
       selected
         ? 'border-accent-400 text-accent-400'
         : 'border-transparent text-paper-400 hover:text-paper-100'

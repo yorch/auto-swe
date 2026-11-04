@@ -13,10 +13,11 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useTeams } from '@/hooks/useTeams';
+import { navLabel } from '@/lib/navigation';
 import { cn, FOCUS_RING, plural } from '@/lib/utils';
 
 /** Above this many teams the page offers a search box. */
-const SEARCH_THRESHOLD = 6;
+const SEARCH_THRESHOLD = 3;
 
 export default function TeamsPage() {
   const { data: teams, isLoading, isError, isFetching, refetch, error: loadError } = useTeams();
@@ -25,7 +26,7 @@ export default function TeamsPage() {
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState('');
 
-  const all = teams ?? [];
+  const all = [...(teams ?? [])].sort((a, b) => a.name.localeCompare(b.name));
   const query = search.trim().toLowerCase();
   const visible = query
     ? all.filter(
@@ -49,7 +50,7 @@ export default function TeamsPage() {
       <PageHeader
         actions={newTeamButton('md')}
         subtitle="Teams own repositories, members, sandbox allowlists and per-team agent overrides."
-        title="Teams"
+        title={navLabel('/admin/teams')}
       />
       <QueryBoundary
         error={loadError}
@@ -77,7 +78,7 @@ export default function TeamsPage() {
             hint={
               canCreate
                 ? 'Create a team to group members and repositories.'
-                : 'An admin creates teams; ask one to add you.'
+                : 'Only platform admins create teams. Ask one to create a team or add you to one.'
             }
             icon="teams"
             title="No teams yet"
@@ -118,6 +119,7 @@ export default function TeamsPage() {
                 {visible.map((t) => (
                   <li key={t.id}>
                     <Link
+                      aria-label={t.name}
                       className={cn('group block h-full rounded-xl', FOCUS_RING)}
                       href={`/admin/teams/${t.id}`}
                     >

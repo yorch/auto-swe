@@ -9,6 +9,7 @@ import { Icon } from '@/components/ui/Icon';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { SearchInput } from '@/components/ui/Toolbar';
+import { useHasRole } from '@/hooks/useHasRole';
 import type { GitHubRepoInfo } from '@/hooks/useRepositories';
 import { useGitHubAvailableRepos } from '@/hooks/useRepositories';
 import { errMsg } from '@/lib/errors';
@@ -24,6 +25,7 @@ export function ImportFromGitHubModal({
   onSelect: (repo: GitHubRepoInfo) => void;
 }) {
   const [search, setSearch] = useState('');
+  const isAdmin = useHasRole('ADMIN');
   const { data: repos, isLoading, error } = useGitHubAvailableRepos(open);
 
   const filtered = (repos ?? []).filter((r) => {
@@ -51,19 +53,29 @@ export function ImportFromGitHubModal({
           placeholder="Search by org, repo name, or description…"
           value={search}
         />
+        {repos && (
+          <p className="text-xs text-paper-500">
+            {search
+              ? `${filtered.length} of ${repos.length} repositories`
+              : `${repos.length} repositories`}
+          </p>
+        )}
 
         {isLoading && <SkeletonRows label="repositories" rows={5} />}
 
         {error && !isLoading && (
           <Alert
             action={
-              <ButtonLink href="/admin/integrations?tab=github" size="sm">
-                Check GitHub
-              </ButtonLink>
+              isAdmin ? (
+                <ButtonLink href="/admin/integrations?tab=github" size="sm">
+                  Check GitHub
+                </ButtonLink>
+              ) : undefined
             }
             title="Could not load repositories"
           >
             {errMsg(error, 'Failed to load repositories.')}
+            {!isAdmin && ' Ask an administrator to check the GitHub integration.'}
           </Alert>
         )}
 
@@ -85,16 +97,24 @@ export function ImportFromGitHubModal({
               {filtered.map((r) => (
                 <li key={`${r.org}/${r.name}`}>
                   <button
+                    // aria-disabled, not disabled: the row stays reachable by keyboard and a
+                    // screen reader, which read "already imported" instead of skipping it.
+                    aria-disabled={r.alreadyImported || undefined}
                     className={cn(
-                      'group flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-ink-700/60 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent',
+                      'group flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-ink-700/60',
+                      r.alreadyImported && 'cursor-not-allowed opacity-60 hover:bg-transparent',
                       FOCUS_RING
                     )}
-                    disabled={r.alreadyImported}
-                    onClick={() => onSelect(r)}
+                    onClick={() => {
+                      if (!r.alreadyImported) {
+                        onSelect(r);
+                      }
+                    }}
                     type="button"
                   >
                     <Icon className="text-paper-500" name="github" size={16} />
                     <span className="min-w-0 flex-1">
+                      {r.alreadyImported && <span className="sr-only">Already imported: </span>}
                       <span className="block truncate text-sm text-paper-300">
                         {r.org}/<span className="font-medium text-paper-100">{r.name}</span>
                       </span>

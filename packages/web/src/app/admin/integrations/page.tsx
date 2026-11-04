@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { ConfigAuditLogTab } from '@/components/audit/ConfigAuditLogTab';
 import { ConnectionHealthPanel } from '@/components/integrations/ConnectionHealthPanel';
 import { FigmaTab } from '@/components/integrations/FigmaTab';
@@ -15,6 +15,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { HELP_LINKS } from '@/lib/helpLinks';
+import { navLabel } from '@/lib/navigation';
 
 type Tab =
   | 'github'
@@ -67,6 +68,17 @@ function StudioIntegrationsPageInner() {
   if (!opened.has(active)) {
     setOpened(new Set([...opened, active]));
   }
+  // "Enter a token below" may be pressed on another tab: switch to GitHub first, then focus
+  // the field once its panel is visible.
+  const [focusToken, setFocusToken] = useState(false);
+  useEffect(() => {
+    if (focusToken && active === 'github') {
+      const field = document.getElementById('gh-token');
+      field?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      field?.focus();
+      setFocusToken(false);
+    }
+  }, [active, focusToken]);
   const panel = (tab: Tab, content: React.ReactNode) =>
     opened.has(tab) || active === tab ? (
       <div hidden={active !== tab} {...tabPanelProps('integrations', tab)}>
@@ -86,16 +98,17 @@ function StudioIntegrationsPageInner() {
         }
         learnMore={{ ...HELP_LINKS.configuration, label: 'About integration settings' }}
         subtitle="Credentials for GitHub, Slack, your issue tracker, knowledge base and Figma."
-        title="Integrations"
+        title={navLabel('/admin/integrations')}
       />
       <SetupBanner
         here={`/admin/integrations?tab=${active}`}
         inPage={{
           label: 'Enter a token below',
           onClick: () => {
-            const field = document.getElementById('gh-token');
-            field?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            field?.focus();
+            if (active !== 'github') {
+              update({ slack_installed: null, tab: null });
+            }
+            setFocusToken(true);
           },
         }}
         items={['github']}

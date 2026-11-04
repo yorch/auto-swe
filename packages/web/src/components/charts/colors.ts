@@ -101,7 +101,16 @@ export function topNWithOther<T>(
   return [...sorted.slice(0, max - 1), merge(sorted.slice(max - 1))];
 }
 
-/** Colors used for the stacked area / workflow-over-time chart. */
-export function trendColors(t: Tokens) {
-  return { active: t.accent400, completed: t.success400, failed: t.danger400 } as const;
+/**
+ * Colours for the stacked workflow-outcome chart. Completed and failed are the first two
+ * categorical colours (sky blue, orange), not the status green and red: that pair is the one most
+ * common colour blindness cannot tell apart. Status colour stays on badges, where a word sits
+ * beside it. Active runs take the neutral tone.
+ */
+export function trendColors(theme: 'dark' | 'light', t: Tokens) {
+  const palette = theme === 'light' ? CHART_PALETTE_LIGHT : CHART_PALETTE;
+  return { active: t.paper500, completed: palette[0], failed: palette[1] } as const;
 }
+
+/** Stroke dash for each trend series, so the lines also differ by pattern and not only by colour. */
+export const TREND_DASHES = { active: '2 3', completed: undefined, failed: '6 3' } as const;

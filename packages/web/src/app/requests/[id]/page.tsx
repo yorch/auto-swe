@@ -13,6 +13,7 @@ import { useWorkflow } from '@/hooks/useRuns';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
 import { requestHref } from '@/lib/requestDisplay';
 import { validateRouteParam } from '@/lib/routeParams';
+import { safeHttpUrl } from '@/lib/safeUrl';
 import { formatCost } from '@/lib/utils';
 
 /**
@@ -61,7 +62,11 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
     );
   }
   if (requestId) {
-    return null;
+    return (
+      <p aria-live="polite" className="p-6 text-sm text-paper-400" role="status">
+        Opening request…
+      </p>
+    );
   }
   if (!workflow) {
     return notFound;
@@ -71,7 +76,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   const repo = workflow.repository;
   // The gateway resolves the link: a repository with no host of its own lives on the
   // instance's host, which the browser does not know.
-  const prUrl = workflow.pullRequests.find((candidate) => candidate.url)?.url ?? null;
+  const prUrl = safeHttpUrl(workflow.pullRequests.find((candidate) => candidate.url)?.url);
   return (
     <div className="space-y-6">
       <ButtonLink className="-ml-3" href="/requests" size="sm" variant="ghost">
@@ -95,8 +100,8 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
             )}
           </>
         }
-        subtitle="The request this run came from is no longer available, so only the run’s own details are shown."
-        title={repo ? `${repo.organizationName}/${repo.repoName}` : 'Run'}
+        subtitle="The request this run came from is no longer available, so only the run’s own details are shown. Step-by-step diagnostics are not available from here; use Open in Temporal for the execution history."
+        title={repo ? `Run for ${repo.organizationName}/${repo.repoName}` : 'Run'}
       />
       <Card className="max-w-3xl">
         <dl className="grid gap-5 text-sm sm:grid-cols-3">

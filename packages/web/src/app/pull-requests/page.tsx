@@ -6,7 +6,6 @@ import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { HelpTip } from '@/components/ui/HelpTip';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
@@ -20,6 +19,7 @@ import { useRepositories } from '@/hooks/useRepositories';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { usePullRequests } from '@/hooks/useWorkViews';
 import { HELP_LINKS } from '@/lib/helpLinks';
+import { WORK_SCOPE_OPTIONS } from '@/lib/workScope';
 
 const PAGE_SIZE = 30;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -30,6 +30,8 @@ const STATES: { label: string; value: StateFilter }[] = [
   { label: 'Closed', value: 'CLOSED' },
   { label: 'All states', value: 'all' },
 ];
+// The repository filter loads one page of connections; a full page means there may be more.
+const REPOSITORY_PAGE = 100;
 const DRAFTS = [
   { label: 'Drafts and ready', value: 'any' },
   { label: 'Drafts only', value: 'draft' },
@@ -53,7 +55,7 @@ function PullRequests() {
     update({ offset: null, ticket: value })
   );
 
-  const { data: repositories = [] } = useRepositories({ limit: 100 });
+  const { data: repositories = [] } = useRepositories({ limit: REPOSITORY_PAGE });
   const { data, error, isError, isFetching, isLoading, meta, refetch } = usePullRequests({
     draft,
     limit: PAGE_SIZE,
@@ -65,20 +67,28 @@ function PullRequests() {
   });
   const pullRequests = data ?? [];
   const total = meta?.total ?? 0;
-  const filtered = state !== 'OPEN' || draft !== 'any' || repoId || ticket;
+  const filtered = scope !== 'MINE' || state !== 'OPEN' || draft !== 'any' || repoId || ticket;
 
   const clearFilters = () => {
     setTicketDraft('');
-    update({ draft: null, offset: null, repo: null, state: null, ticket: null });
+    update({ draft: null, offset: null, repo: null, scope: null, state: null, ticket: null });
   };
 
   return (
     <div className="space-y-6">
       <PageHeader
         help={
-          <p data-testid="never-merges-note">
-            No built-in step or template merges a pull request; you review and merge it on the host.
-          </p>
+          <>
+            <p data-testid="never-merges-note">
+              No built-in step or template merges a pull request; you review and merge it on the
+              host.
+            </p>
+            <p>
+              State is the pull request’s state on the host: Open, Draft (open but not yet asking
+              for review), Merged or Closed. For an open pull request the CI badge is the latest
+              check result the host reported; “pending” means no result yet.
+            </p>
+          </>
         }
         learnMore={HELP_LINKS.concepts}
         subtitle="Pull requests the platform opened, with their state on the host, CI and the run behind them."
@@ -92,10 +102,7 @@ function PullRequests() {
               <SegmentedControl
                 ariaLabel="Pull request scope"
                 onChange={(value) => update({ offset: null, scope: value })}
-                options={[
-                  { label: 'My requests', value: 'MINE' },
-                  { label: 'Team requests', value: 'TEAM' },
-                ]}
+                options={WORK_SCOPE_OPTIONS}
                 value={scope}
               />
             }
@@ -114,16 +121,12 @@ function PullRequests() {
               prefix="State:"
               value={state}
             />
-            <HelpTip label="State and CI">
-              The pull request’s state on the host: Open, Draft (open but not yet asking for
-              review), Merged or Closed. For an open pull request the CI badge is the latest check
-              result the host reported; “pending” means no result yet.
-            </HelpTip>
             <Select
               appearance="pill"
               aria-label="Draft"
               onChange={(value) => update({ draft: value === 'any' ? null : value, offset: null })}
               options={[...DRAFTS]}
+              prefix="Draft:"
               value={draft}
             />
             <Combobox
@@ -149,6 +152,11 @@ function PullRequests() {
               </Button>
             )}
           </Toolbar>
+          {repositories.length >= REPOSITORY_PAGE && (
+            <p className="border-b border-ink-600 px-4 py-2 text-xs text-paper-500">
+              The repository filter lists the first {REPOSITORY_PAGE} repositories only.
+            </p>
+          )}
           <QueryBoundary
             error={error}
             isError={isError}

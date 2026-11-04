@@ -257,7 +257,7 @@ describe('TraceOutput', () => {
         traces={[trace]}
       />
     );
-    fireEvent.click(screen.getAllByRole('button')[0]);
+    fireEvent.click(screen.getAllByRole('button', { expanded: false })[0]);
   }
 
   it('renders an llm_response Response body and truncates past the cap', () => {
@@ -385,5 +385,102 @@ describe('TraceOutput', () => {
     expand({ ...makeTrace('implement'), type: 'activity_event' });
 
     expect(document.querySelector('pre')).toBeNull();
+  });
+});
+
+describe('TracesTab time, truncation and filters', () => {
+  const at = (id: string, createdAt: string, over: Partial<AgentTraceRecord> = {}) => ({
+    ...makeTrace('implement', id),
+    createdAt,
+    ...over,
+  });
+  const renderTab = (traces: AgentTraceRecord[], extra: Record<string, unknown> = {}) =>
+    render(
+      <TracesTab
+        filterNodeId={null}
+        linker={EMPTY_LINKER}
+        onClearFilter={() => {}}
+        traces={traces}
+        {...extra}
+      />
+    );
+
+  it('shows each event as a time since the run started, with the exact time in the markup', () => {
+    const { container } = renderTab(
+      [at('a', '2026-01-01T00:02:14Z'), at('b', '2026-01-01T01:00:05Z')],
+      { runStartedAt: '2026-01-01T00:00:00Z' }
+    );
+    expect(screen.getByText('+02:14')).toBeTruthy();
+    expect(screen.getByText('+1:00:05')).toBeTruthy();
+    expect(container.querySelector('time[datetime="2026-01-01T00:02:14Z"]')).not.toBeNull();
+  });
+
+  it('says so when the stream is only the newest window of the run', () => {
+    renderTab([at('a', '2026-01-01T00:00:00Z')], { windowed: true });
+    expect(screen.getByText(/Earlier events are not loaded/)).toBeTruthy();
+  });
+
+  it('does not claim a window when the stream is complete', () => {
+    renderTab([at('a', '2026-01-01T00:00:00Z')]);
+    expect(screen.queryByText(/Earlier events are not loaded/)).toBeNull();
+  });
+
+  it('narrows to errored events and counts the matches', () => {
+    renderTab([
+      at('a', '2026-01-01T00:00:00Z', { toolName: 'bash' }),
+      at('b', '2026-01-01T00:00:01Z', { error: 'boom', toolName: 'readFile', type: 'tool_call' }),
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Errors only' }));
+    expect(screen.getByText('1 of 2 events')).toBeTruthy();
+    expect(screen.queryByText('bash')).toBeNull();
+    expect(screen.getByText('read')).toBeTruthy();
+  });
+
+  it('searches payload text and offers to clear when nothing matches', () => {
+    renderTab([
+      at('a', '2026-01-01T00:00:00Z', { inputJson: { command: 'yarn test' }, toolName: 'bash' }),
+      at('b', '2026-01-01T00:00:01Z', { toolName: 'readFile', type: 'tool_call' }),
+    ]);
+    const search = screen.getByRole('searchbox', { name: 'Search trace events' });
+    fireEvent.change(search, { target: { value: 'yarn' } });
+    expect(screen.queryByText('read')).toBeNull();
+    fireEvent.change(search, { target: { value: 'zzz' } });
+    expect(screen.getByText('No events match')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.getByText('read')).toBeTruthy();
+  });
+
+  it('filters by event type', () => {
+    renderTab([
+      at('a', '2026-01-01T00:00:00Z', { toolName: 'bash', type: 'tool_call' }),
+      at('b', '2026-01-01T00:00:01Z', { toolName: 'git.commit_push', type: 'activity_event' }),
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Event' }));
+    expect(screen.queryByText('bash')).toBeNull();
+    expect(screen.getByText('git.commit_push')).toBeTruthy();
+  });
+
+  it('draws only the newest events of a very long stream and lets the reader load the rest', () => {
+    const many = Array.from({ length: 450 }, (_, i) =>
+      at(`t${i}`, '2026-01-01T00:00:00Z', { toolName: `tool${i}`, type: 'tool_call' })
+    );
+    renderTab(many);
+    expect(screen.getByText(/older events are not drawn/)).toBeTruthy();
+    expect(screen.queryByText('tool0')).toBeNull();
+    expect(screen.getByText('tool449')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Show 50 more/ }));
+    expect(screen.getByText('tool0')).toBeTruthy();
+    expect(screen.queryByText(/not drawn/)).toBeNull();
+  });
+
+  it('keeps every row toggle pointing at a region that exists', () => {
+    renderTab([at('a', '2026-01-01T00:00:00Z')]);
+    const toggle = screen.getAllByRole('button', { expanded: false })[0];
+    expect(document.getElementById(toggle.getAttribute('aria-controls') ?? '')).not.toBeNull();
+  });
+
+  it('previews an errored event`s message on its collapsed row', () => {
+    renderTab([at('a', '2026-01-01T00:00:00Z', { error: 'ENOENT: no such file\nstack...' })]);
+    expect(screen.getByText('ENOENT: no such file')).toBeTruthy();
   });
 });

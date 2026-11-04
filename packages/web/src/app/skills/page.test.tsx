@@ -29,7 +29,11 @@ const { state, verify } = vi.hoisted(() => ({
   verify: vi.fn(),
 }));
 vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/skills',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => state.admin }));
 vi.mock('@/hooks/useSkills', () => ({
   useCreateSkill: () => ({ isPending: false, mutateAsync: vi.fn() }),
@@ -113,7 +117,7 @@ describe('Skills studio page', () => {
     );
   });
 
-  const open = (name: string) => fireEvent.click(within(rowOf(name)).getByText('Open'));
+  const open = (name: string) => fireEvent.click(within(rowOf(name)).getByRole('button', { name }));
 
   it('offers no Verify in the list: only after opening the skill and its text', () => {
     render(<StudioSkillsPage />);
@@ -126,6 +130,15 @@ describe('Skills studio page', () => {
     expect(screen.getByText('text')).toBeTruthy();
     fireEvent.click(screen.getByText('Verify revision 4'));
     await waitFor(() => expect(verify).toHaveBeenCalledWith({ id: 'imported', revision: 4 }));
+  });
+
+  it('keeps the modal open after verifying, and shows the new state', async () => {
+    render(<StudioSkillsPage />);
+    open('imported');
+    fireEvent.click(screen.getByText('Verify revision 4'));
+    expect(await screen.findByText('Verified revision 4.')).toBeTruthy();
+    expect(screen.queryByText('Verify revision 4')).toBeNull();
+    expect(screen.getByText('text')).toBeTruthy();
   });
 
   it('does not offer Verify on an already verified skill', () => {
@@ -203,5 +216,6 @@ describe('Skills studio page', () => {
     expect(screen.queryByText('External sources')).toBeNull();
     open('imported');
     expect(screen.queryByText(/^Verify revision/)).toBeNull();
+    expect(screen.getByText(/Ask an admin to verify it/)).toBeTruthy();
   });
 });

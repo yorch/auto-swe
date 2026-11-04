@@ -2,7 +2,11 @@
 
 import { cleanup, render, renderHook } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { UNSAVED_CHANGES_PROMPT, useUnsavedChangesGuard } from './useUnsavedChangesGuard';
+import {
+  confirmLeave,
+  UNSAVED_CHANGES_PROMPT,
+  useUnsavedChangesGuard,
+} from './useUnsavedChangesGuard';
 
 afterEach(() => {
   cleanup();
@@ -56,5 +60,17 @@ describe('useUnsavedChangesGuard', () => {
     const after = new Event('beforeunload', { cancelable: true });
     window.dispatchEvent(after);
     expect(after.defaultPrevented).toBe(false);
+  });
+
+  it('confirmLeave allows a programmatic navigation when clean and asks when dirty', () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    expect(confirmLeave()).toBe(true);
+    expect(confirm).not.toHaveBeenCalled();
+
+    renderHook(() => useUnsavedChangesGuard(true));
+    expect(confirmLeave()).toBe(false);
+    expect(confirm).toHaveBeenCalledWith(UNSAVED_CHANGES_PROMPT);
+    confirm.mockReturnValue(true);
+    expect(confirmLeave()).toBe(true);
   });
 });

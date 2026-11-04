@@ -55,11 +55,11 @@ describe('DigestsTab', () => {
     render(withQuery(<DigestsTab />));
 
     expect(await screen.findByText('No digest subscriptions.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Digest scope/ }));
     expect(screen.getByRole('option', { name: 'Organization: Acme' })).toBeTruthy();
     expect(screen.getByRole('option', { name: 'Team: Platform' })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText('Digest scope'), {
-      target: { value: 'ORGANIZATION:org-1' },
-    });
+    fireEvent.click(screen.getByRole('option', { name: 'Organization: Acme' }));
+    fireEvent.click(screen.getByRole('button', { name: /Slack channel/ }));
     expect(screen.getByRole('option', { name: 'general' })).toBeTruthy();
   });
 
@@ -132,9 +132,8 @@ describe('DigestsTab', () => {
     render(withQuery(<DigestsTab />));
     await screen.findByText('No digest subscriptions.');
 
-    fireEvent.change(screen.getByLabelText('Digest scope'), {
-      target: { value: 'ORGANIZATION:org-1' },
-    });
+    fireEvent.click(screen.getByRole('button', { name: /Digest scope/ }));
+    fireEvent.click(screen.getByRole('option', { name: 'Organization: Acme' }));
     fireEvent.change(screen.getByLabelText('Email recipients'), {
       target: { value: 'outsider@example.test' },
     });

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { useRunEvidence, useRunEvidenceLink } from '@/hooks/useRunEvidence';
 import { API_BASE } from '@/lib/config';
+import { RunPanel } from './RunPanel';
 
 function downloadUrl(url: string) {
   const link = document.createElement('a');
@@ -155,17 +156,12 @@ export function RunEvidence({ runId, live }: { runId: string; live: boolean }) {
     return null;
   }
   return (
-    <section
-      aria-label="Run evidence"
-      className="rounded border border-ink-700 px-4 py-3"
-      id="evidence"
-    >
-      <h2 className="mb-3 text-sm font-medium text-paper-300">Evidence</h2>
-      <div className="grid gap-3 md:grid-cols-2">
+    <RunPanel defaultOpen id="evidence" meta={String(data.length)} title="Evidence">
+      <div className="mt-3 grid max-h-[50vh] gap-3 overflow-y-auto md:grid-cols-2">
         {data.map((item) => (
           <EvidenceCard evidence={item} key={item.id} runId={runId} />
         ))}
       </div>
-    </section>
+    </RunPanel>
   );
 }

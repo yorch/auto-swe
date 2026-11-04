@@ -29,10 +29,25 @@ afterEach(cleanup);
 describe('RunMetaRail beside the console (desktop)', () => {
   it('is the 270px column with its details always showing and no toggle', () => {
     render(<RunMetaRail run={run} />);
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('button', { name: /run details/i })).toBeNull();
     const aside = screen.getByText('Run details').closest('aside');
     expect(aside?.className).toContain('w-[270px]');
     expect(screen.getByText('Fix it')).toBeTruthy();
+  });
+});
+
+describe('RunMetaRail identifiers and trace count', () => {
+  it('shows the run id and workflow id, each with a copy button', () => {
+    render(<RunMetaRail run={run} />);
+    expect(screen.getByText('run-1')).toBeTruthy();
+    expect(screen.getByText('wf-1')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: /copy/i })).toHaveLength(2);
+  });
+
+  it('says the trace count is the latest window when the run was truncated', () => {
+    const long = { ...run, traces: new Array(3).fill({}), tracesTruncated: true };
+    render(<RunMetaRail run={long as unknown as WorkflowRunDetail} />);
+    expect(screen.getByText('3 (latest only)')).toBeTruthy();
   });
 });
 

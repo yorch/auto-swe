@@ -9,6 +9,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { HelpTip } from '@/components/ui/HelpTip';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
@@ -134,7 +135,7 @@ export function EvalResultsTable({
       >
         <Select
           appearance="pill"
-          aria-label="Filter by scorer"
+          aria-label="Filter results by scorer"
           onChange={onScorerChange}
           options={[
             { label: 'All scorers', value: '' },
@@ -167,14 +168,17 @@ export function EvalResultsTable({
             className="max-sm:px-4"
             columns={[
               {
-                cell: (row) => (
-                  <span className="font-mono text-sm" title={row.rationale ?? undefined}>
-                    {row.scorer}
-                  </span>
-                ),
+                cell: (row) => <span className="font-mono text-sm">{row.scorer}</span>,
                 header: 'Scorer',
                 id: 'scorer',
                 primary: true,
+                // The judge's reason for the score, as visible text rather than a hover tip.
+                secondary: (row) =>
+                  row.rationale ? (
+                    <span className="block max-w-prose whitespace-pre-wrap break-words text-paper-400">
+                      {row.rationale}
+                    </span>
+                  ) : null,
               },
               {
                 align: 'right',
@@ -201,8 +205,12 @@ export function EvalResultsTable({
                   </span>
                 ),
                 header: (
-                  <span title="The implementer runtime the candidate arm ran on (and the baseline arm's, when it differs). Offline benchmark rows only.">
+                  <span className="inline-flex items-center gap-1">
                     Runtime
+                    <HelpTip label="Runtime">
+                      The implementer runtime the candidate arm ran on (and the baseline arm&apos;s,
+                      when it differs). Offline benchmark rows only.
+                    </HelpTip>
                   </span>
                 ),
                 id: 'runtime',

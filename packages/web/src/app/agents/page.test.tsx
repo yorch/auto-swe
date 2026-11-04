@@ -51,7 +51,11 @@ vi.mock('@/hooks/useAgentLibrary', async (importOriginal) => ({
   useDeleteAgent: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useUpdateAgent: () => ({ isPending: false, mutateAsync: updateAgent }),
 }));
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/agents',
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
 vi.mock('@/hooks/useAdmin', () => ({ useOrganizationDirectory: () => ({ data: [] }) }));
 vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => state.admin }));
 vi.mock('@/hooks/useMcpConnections', () => ({ useMcpConnections: () => ({ data: [] }) }));
@@ -133,6 +137,36 @@ describe('agent library — activation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit alpha' }));
     expect(screen.getByText('This agent is deactivated. Reactivate it to change it.')).toBeTruthy();
+  });
+
+  it('makes the edit form read-only while the agent is deactivated, and offers Reactivate', () => {
+    state.agents = [{ ...row('a1', 'Alpha', 'alpha'), isActive: false }];
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit alpha' }));
+    expect(screen.getByDisplayValue('Alpha').matches(':disabled')).toBe(true);
+    expect(
+      (screen.getByRole('button', { name: 'Save new version' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Reactivate' }));
+    expect(updateAgent).toHaveBeenCalledWith({ body: { isActive: true }, id: 'a1' });
+  });
+
+  it('asks before discarding an edited agent', () => {
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit alpha' }));
+    fireEvent.change(screen.getByDisplayValue('Alpha'), { target: { value: 'Alpha 2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('heading', { name: 'Discard unsaved changes?' })).toBeTruthy();
+  });
+
+  it('closes an untouched edit form without asking', () => {
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit alpha' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('heading', { name: 'Discard unsaved changes?' })).toBeNull();
   });
 });
 

@@ -8,11 +8,13 @@ import { CommandPalette, CommandPaletteButton } from '@/components/layout/Comman
 import { SIDEBAR_ID } from '@/components/layout/Sidebar';
 import { ThemeToggle } from '@/components/layout/ThemeToggle';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
+import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
+import { Icon } from '@/components/ui/Icon';
+import { IconButton } from '@/components/ui/IconButton';
 import { Select } from '@/components/ui/Select';
 import { type GatewayStatus, useGatewayStatus } from '@/hooks/useGatewayStatus';
 import { useTeams } from '@/hooks/useTeams';
 import { pageSection, pageTitle } from '@/lib/navigation';
-import { cn, FOCUS_RING } from '@/lib/utils';
 import { useTeamStore } from '@/stores/teamStore';
 
 const GATEWAY_TONE: Record<GatewayStatus, BadgeTone> = {
@@ -45,84 +47,80 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
   const section = pageSection(pathname);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
+  const teamOptions = [
+    { label: 'all teams', value: '' },
+    ...(teams ?? []).map((t) => ({ label: t.name, value: t.id })),
+  ];
+
   return (
-    <header className="sticky top-0 z-20 flex h-14 min-w-0 items-center gap-2 border-b border-ink-500/70 bg-ink-950 px-3 sm:gap-3 md:px-6">
-      {/* Menu button — opens the sidebar drawer below md */}
-      <button
-        aria-controls={SIDEBAR_ID}
-        aria-expanded={navOpen}
-        aria-label="Open navigation"
-        className={cn(
-          '-ml-1 shrink-0 rounded-md p-2 text-paper-300 hover:text-paper-100 md:hidden',
-          FOCUS_RING
-        )}
-        onClick={onOpenNav}
-        ref={menuButtonRef}
-        type="button"
-      >
-        <svg
-          aria-hidden="true"
-          fill="none"
-          height={20}
-          stroke="currentColor"
-          strokeLinecap="round"
-          strokeWidth={2}
-          viewBox="0 0 24 24"
-          width={20}
+    <header className="sticky top-0 z-20 min-w-0 border-b border-ink-500/70 bg-ink-950">
+      <div className="flex h-14 min-w-0 items-center gap-2 px-3 sm:gap-3 md:px-6">
+        {/* Menu button — opens the sidebar drawer below md */}
+        <IconButton
+          aria-controls={SIDEBAR_ID}
+          aria-expanded={navOpen}
+          aria-label="Open navigation"
+          className="-ml-1 text-paper-300 md:hidden"
+          onClick={onOpenNav}
+          ref={menuButtonRef}
+          size="md"
         >
-          <path d="M4 6h16M4 12h16M4 18h16" />
-        </svg>
-      </button>
+          <Icon name="menu" size={20} strokeWidth={2} />
+        </IconButton>
 
-      {/* Where you are. A breadcrumb, not a heading: the page's own <h1> carries the
+        {/* Where you are. A breadcrumb, not a heading: the page's own <h1> carries the
           title, so repeating it as a heading made two identical headings per page. */}
-      <nav aria-label="Breadcrumb" className="min-w-0 truncate text-sm text-paper-400">
-        {section && section !== title && (
-          <>
-            <span>{section}</span>
-            <span aria-hidden="true" className="px-1.5 text-paper-600">
-              ›
-            </span>
-          </>
-        )}
-        <span aria-current="page" className="font-semibold text-paper-100">
-          {title}
-        </span>
-      </nav>
+        <Breadcrumbs
+          className="min-w-0"
+          items={[...(section && section !== title ? [{ label: section }] : []), { label: title }]}
+        />
 
-      {/* Team context selector */}
-      <Select
-        appearance="pill"
-        aria-label="Select team"
-        className="shrink sm:ml-2"
-        onChange={(v) => setSelectedTeamId(v || null)}
-        options={[
-          { label: 'all teams', value: '' },
-          ...(teams ?? []).map((t) => ({ label: t.name, value: t.id })),
-        ]}
-        prefix="team:"
-        value={selectedTeamId ?? ''}
-      />
+        {/* Team context selector. Below sm it moves to its own strip under the bar, so it
+          cannot crowd the breadcrumb out. */}
+        <Select
+          appearance="pill"
+          aria-label="Select team"
+          className="shrink max-sm:hidden sm:ml-2"
+          onChange={(v) => setSelectedTeamId(v || null)}
+          options={teamOptions}
+          prefix="team:"
+          value={selectedTeamId ?? ''}
+        />
 
-      {/* Spacer */}
-      <div className="flex-1" />
+        {/* Spacer */}
+        <div className="flex-1" />
 
-      {/* Right side */}
-      <div className="flex shrink-0 items-center gap-3">
-        {/* Gateway reachability — driven by a /health probe, never assumed */}
-        <AssistantToggle />
-        <CommandPaletteButton onClick={() => setPaletteOpen(true)} />
-        <ThemeToggle />
-        <HelpButton />
-        <Badge
-          className="max-sm:hidden"
-          dot={gatewayStatus === 'online' ? 'pulse' : true}
-          title={`Gateway ${GATEWAY_LABEL[gatewayStatus]}`}
-          tone={GATEWAY_TONE[gatewayStatus]}
-          variant="text"
-        >
-          {GATEWAY_LABEL[gatewayStatus]}
-        </Badge>
+        {/* Right side */}
+        <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+          <AssistantToggle />
+          <CommandPaletteButton onClick={() => setPaletteOpen(true)} />
+          {/* The user menu in the drawer carries the same control, so the bar drops it on a phone. */}
+          <span className="max-md:hidden">
+            <ThemeToggle />
+          </span>
+          <HelpButton />
+          {/* Gateway reachability — driven by a /health probe, never assumed */}
+          <Badge
+            className="max-sm:hidden"
+            dot={gatewayStatus === 'online' ? 'pulse' : true}
+            title={`Gateway ${GATEWAY_LABEL[gatewayStatus]}`}
+            tone={GATEWAY_TONE[gatewayStatus]}
+            variant="text"
+          >
+            {GATEWAY_LABEL[gatewayStatus]}
+          </Badge>
+        </div>
+      </div>
+      <div className="flex min-h-10 items-center gap-2 border-t border-ink-500/50 px-3 py-1 sm:hidden">
+        <span className="text-xs text-paper-500">Team</span>
+        <Select
+          aria-label="Select team"
+          className="min-w-0 flex-1"
+          compact
+          onChange={(v) => setSelectedTeamId(v || null)}
+          options={teamOptions}
+          value={selectedTeamId ?? ''}
+        />
       </div>
       <CommandPalette onOpenChange={setPaletteOpen} open={paletteOpen} />
     </header>

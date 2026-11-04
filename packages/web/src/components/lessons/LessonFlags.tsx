@@ -52,10 +52,9 @@ export function LessonFlagActions({ lesson, manages }: { lesson: Lesson; manages
           disabled={withdraw.isPending}
           onClick={() => withdraw.mutate(lesson.id)}
           size="sm"
-          title={`You flagged this: ${lesson.myFlag.reason}`}
           variant="ghost"
         >
-          Withdraw flag
+          {withdraw.isPending ? 'Withdrawing…' : 'Withdraw flag'}
         </Button>
       ) : (
         <Button onClick={() => setFlagging(true)} size="sm" variant="ghost">
@@ -66,6 +65,12 @@ export function LessonFlagActions({ lesson, manages }: { lesson: Lesson; manages
         <Button onClick={() => setClearing(true)} size="sm" variant="ghost">
           Clear flags
         </Button>
+      )}
+      {withdraw.isError && (
+        <Alert className="w-full">{errMsg(withdraw.error, 'Could not withdraw your flag')}</Alert>
+      )}
+      {lesson.myFlag && (
+        <p className="w-full text-xs text-paper-500">You flagged this: {lesson.myFlag.reason}</p>
       )}
       {/* Mounted only while open: the dialog quotes the lesson, and a closed one would repeat
           every lesson's text in the page. */}
@@ -102,7 +107,7 @@ function FlagLessonModal({
     setError(null);
     const text = reason.trim();
     if (!text) {
-      setError('Say what is wrong with it.');
+      setError('Describe what is wrong with this lesson.');
       return;
     }
     try {
@@ -126,15 +131,18 @@ function FlagLessonModal({
           {lesson.lessonSummary}
         </blockquote>
         <Textarea
+          error={error ?? undefined}
           hint={`${reason.length}/${MAX_REASON}`}
           id={`flag-reason-${lesson.id}`}
           label="What is wrong with it"
           maxLength={MAX_REASON}
-          onChange={(e) => setReason(e.target.value)}
+          onChange={(e) => {
+            setReason(e.target.value);
+            setError(null);
+          }}
           rows={3}
           value={reason}
         />
-        {error && <Alert>{error}</Alert>}
         <ModalFooter
           isPending={flag.isPending}
           onCancel={onClose}

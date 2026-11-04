@@ -133,7 +133,7 @@ every write at the 5-minute rate. The span records the counts as `llm.cache_read
 
 **In the dashboard**, `/models` → **Catalog** lists every model with its price, status and
 source — *built-in*, *customized* (an admin's edit, which startup keeps), or *custom* — and, on a
-customized row whose shipped values have since changed, what code now ships beside a **Reset**.
+customized row whose shipped values have since changed, what code now ships beside a **Reset**, which asks for confirmation before it discards the custom prices.
 Above it, *Unpriced in use* lists the models configured or called in the last 30 days that nothing
 prices, each with its likely intended spec and an **Add to catalog** that prefills it. The agent
 and embedding model-spec fields are pickers over the catalog — chat models for agents, embedding

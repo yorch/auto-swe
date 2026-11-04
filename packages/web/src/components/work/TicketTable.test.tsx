@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { TicketGroup } from '@auto-swe/shared/types/api';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runSummary, TicketTable } from './TicketTable';
 
@@ -41,7 +41,7 @@ describe('runSummary', () => {
 describe('TicketTable', () => {
   it('links the ticket in its tracker', () => {
     render(<TicketTable groups={[group()]} />);
-    const link = screen.getByRole('link', { name: /JIRA-1/ });
+    const link = screen.getByRole('link', { name: /JIRA-1.*tracker/ });
     expect(link.getAttribute('href')).toBe('https://jira.test/JIRA-1');
     expect(link.getAttribute('rel')).toBe('noopener noreferrer');
     expect(screen.getByText('Fix login')).toBeTruthy();
@@ -59,27 +59,22 @@ describe('TicketTable', () => {
     expect(container.querySelector('b')).toBeNull();
   });
 
-  it('expands to the latest request and its pull requests', () => {
+  it('opens the latest request from the title and lists pull requests in the row', () => {
     render(<TicketTable groups={[group()]} />);
-    const toggle = screen.getByRole('button', { name: /Show details/ });
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-    // Nothing is controlled until the details row exists.
-    expect(toggle.getAttribute('aria-controls')).toBeNull();
-    expect(screen.queryByRole('link', { name: 'Open latest request' })).toBeNull();
-
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute('aria-expanded')).toBe('true');
-    const controlled = toggle.getAttribute('aria-controls');
-    expect(controlled).toBeTruthy();
-    expect(document.getElementById(controlled as string)).not.toBeNull();
-    expect(screen.getByRole('link', { name: 'Open latest request' }).getAttribute('href')).toBe(
+    expect(screen.getByRole('link', { name: 'Fix login' }).getAttribute('href')).toBe(
       '/requests?request=wr-1'
     );
-    // The requests list can only substring-match a ticket, so it is not linked.
-    expect(screen.queryByRole('link', { name: /All requests/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /details/ })).toBeNull();
     expect(screen.getByRole('link', { name: /acme\/api #3/ }).getAttribute('href')).toBe(
       'https://github.com/acme/api/pull/3'
     );
     expect(screen.getByText('Merged')).toBeTruthy();
+  });
+
+  it('falls back to the ticket id as the row link when there is no title', () => {
+    render(<TicketTable groups={[group({ title: null, url: null })]} />);
+    expect(screen.getByRole('link', { name: 'JIRA-1' }).getAttribute('href')).toBe(
+      '/requests?request=wr-1'
+    );
   });
 });

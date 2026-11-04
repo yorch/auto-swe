@@ -13,9 +13,13 @@ import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { RoleSelectCell } from '@/components/users/RoleSelectCell';
+import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { useHasRole } from '@/hooks/useHasRole';
 import {
   type OrgRole,
@@ -29,6 +33,7 @@ import {
   useRemoveOrgMember,
   useUpsertOrgMember,
 } from '@/hooks/useOrg';
+import { usePagedRows } from '@/hooks/usePagedRows';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { buildBudgetPatch, centsToDollarsInput, removeCapPatch } from '@/lib/budgetPatch';
 import { errMsg } from '@/lib/errors';
@@ -42,6 +47,16 @@ const ORG_ROLES: readonly OrgRole[] = ['ORG_MEMBER', 'ORG_ADMIN'];
 function isOrgRole(value: string): value is OrgRole {
   return (ORG_ROLES as readonly string[]).includes(value);
 }
+
+/** Members below this count are listed without a search box. */
+const MEMBER_SEARCH_THRESHOLD = 10;
+
+type OrgMemberRow = NonNullable<ReturnType<typeof useOrgMembers>['data']>[number];
+
+const MEMBER_SORT = {
+  member: (m: OrgMemberRow) => m.user.email.toLowerCase(),
+  role: (m: OrgMemberRow) => m.role,
+};
 
 export default function OrgAdminPage({ params }: { params: Promise<{ orgId: string }> }) {
   const { orgId: rawOrgId } = use(params);
@@ -78,12 +93,15 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       setOrgSlug(org.slug);
     }
   }, [org]);
-  async function handleToggleTrust(next: boolean) {
-    setOrgError(null);
+  const [confirmTrust, setConfirmTrust] = useState(false);
+  const [trustError, setTrustError] = useState<string | null>(null);
+  async function applyTrust(next: boolean) {
+    setTrustError(null);
     try {
       await patchOrg.mutateAsync({ trustedInvites: next });
     } catch (e) {
-      setOrgError(errMsg(e, 'Failed to update invite trust'));
+      setTrustError(errMsg(e, 'Failed to update invite trust'));
+      throw e;
     }
   }
 
@@ -92,6 +110,12 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<OrgRole>('ORG_MEMBER');
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteNotice, setInviteNotice] = useState<string | null>(null);
+  const [addNotice, setAddNotice] = useState<string | null>(null);
+  const [orgSaved, setOrgSaved] = useState(false);
+  const [budgetSaved, setBudgetSaved] = useState(false);
+  const [memberSearch, setMemberSearch] = useState('');
+  const memberSort = useDataTableSort<OrgMemberRow>(MEMBER_SORT);
   // Prefilled with the stored values so an untouched field is sent back as-is.
   const [budgetInput, setBudgetInput] = usePrefilledField(
     centsToDollarsInput(budget?.monthlyBudgetUsdCents)
@@ -107,6 +131,15 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   );
 
   const memberIds = (members ?? []).map((m) => m.userId);
+  const memberQuery = memberSearch.trim().toLowerCase();
+  const filteredMembers = (members ?? []).filter(
+    (m) =>
+      !memberQuery ||
+      m.user.email.toLowerCase().includes(memberQuery) ||
+      (m.user.name ?? '').toLowerCase().includes(memberQuery)
+  );
+  const memberPager = usePagedRows(memberSort.sortRows(filteredMembers), 25, memberQuery);
+  const adminCount = (members ?? []).filter((m) => m.role === 'ORG_ADMIN').length;
 
   if (!orgId) {
     return (
@@ -125,29 +158,23 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
 
   async function handleAddMember() {
     setError(null);
+    setAddNotice(null);
     if (!addUserId) {
       setError('Pick a user to add');
       return;
     }
     try {
       await upsertMember.mutateAsync({ role: addRole, userId: addUserId });
+      setAddNotice('Member added.');
       setAddUserId('');
     } catch (e) {
       setError(errMsg(e, 'Failed to add member'));
     }
   }
 
-  async function handleRoleChange(userId: string, role: OrgRole) {
-    setError(null);
-    try {
-      await patchMember.mutateAsync({ role, userId });
-    } catch (e) {
-      setError(errMsg(e, 'Failed to update role'));
-    }
-  }
-
   async function handleInvite() {
     setInviteError(null);
+    setInviteNotice(null);
     const email = inviteEmail.trim();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setInviteError('Enter a valid email address');
@@ -155,6 +182,11 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     }
     try {
       await inviteMember.mutateAsync({ email, orgRole: inviteRole });
+      setInviteNotice(
+        isPlatformAdmin || org?.trustedInvites
+          ? `Invite sent to ${email}. Their account is approved when they follow the link.`
+          : `Invite sent to ${email}. They wait in the platform approval queue until an admin approves them.`
+      );
       setInviteEmail('');
       setInviteRole('ORG_MEMBER');
     } catch (e) {
@@ -162,8 +194,11 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     }
   }
 
+  const orgDirty = org != null && (orgName.trim() !== org.name || orgSlug.trim() !== org.slug);
+
   async function handleSaveOrg() {
     setOrgError(null);
+    setOrgSaved(false);
     const name = orgName.trim();
     const slug = orgSlug.trim();
     if (!name || !slug) {
@@ -176,6 +211,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     }
     try {
       await patchOrg.mutateAsync({ name, slug });
+      setOrgSaved(true);
     } catch (e) {
       setOrgError(errMsg(e, 'Failed to update organization'));
     }
@@ -186,8 +222,12 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     monthlyBudgetUsdCents: budget?.monthlyBudgetUsdCents ?? null,
   };
 
+  const budgetDirty =
+    buildBudgetPatch(budgetInput, thresholdInput, currentBudget).kind !== 'unchanged';
+
   async function handleSaveBudget() {
     setBudgetError(null);
+    setBudgetSaved(false);
     const result = buildBudgetPatch(budgetInput, thresholdInput, currentBudget);
     if (result.kind === 'invalid') {
       setBudgetError(result.error);
@@ -198,6 +238,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
     }
     try {
       await patchBudget.mutateAsync(result.body);
+      setBudgetSaved(true);
     } catch (e) {
       setBudgetError(errMsg(e, 'Failed to update budget'));
     }
@@ -274,6 +315,16 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               />
             ) : (
               <div className="-mx-4">
+                {memberCount > MEMBER_SEARCH_THRESHOLD && (
+                  <Toolbar className="px-4">
+                    <SearchInput
+                      label="Search members"
+                      onChange={setMemberSearch}
+                      placeholder="Search members…"
+                      value={memberSearch}
+                    />
+                  </Toolbar>
+                )}
                 <DataTable
                   actions={
                     canAdmin
@@ -319,19 +370,33 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                           {platformRoleLabel(m.user.role)}
                         </span>
                       ),
+                      sortable: true,
                     },
                     {
                       cell: (m) =>
                         canAdmin && m.userId !== authUserId ? (
-                          <Select
-                            aria-label={`Org role for ${m.user.email}`}
+                          <RoleSelectCell
+                            apply={(role) =>
+                              patchMember.mutateAsync({ role: role as OrgRole, userId: m.userId })
+                            }
+                            ariaLabel={`Org role for ${m.user.email}`}
                             className="w-48"
-                            compact
-                            onChange={(role) => {
-                              if (isOrgRole(role)) {
-                                handleRoleChange(m.userId, role);
-                              }
-                            }}
+                            confirm={(_from, to) =>
+                              to === 'ORG_ADMIN'
+                                ? {
+                                    confirmLabel: 'Make organization admin',
+                                    dangerous: true,
+                                    message: `${m.user.email} will be able to manage this organization's members, budget and profile, and to invite people.`,
+                                    title: 'Make organization admin?',
+                                  }
+                                : {
+                                    confirmLabel: 'Remove admin rights',
+                                    message: `${m.user.email} will no longer be able to manage this organization's members, budget or profile.`,
+                                    title: 'Remove organization admin rights?',
+                                  }
+                            }
+                            disabled={m.role === 'ORG_ADMIN' && adminCount <= 1}
+                            disabledReason="The only organization admin"
                             options={ORG_ROLE_OPTIONS}
                             value={m.role}
                           />
@@ -350,22 +415,42 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                         ),
                       header: 'Organization role',
                       id: 'role',
+                      sortable: true,
                     },
                   ]}
                   getRowId={(m) => m.id}
+                  onSortChange={memberSort.onSortChange}
                   revealActions={false}
-                  rows={members ?? []}
+                  rows={memberPager.pageRows}
+                  sort={memberSort.sort}
                 />
+                {memberPager.paged && (
+                  <div className="mt-4 border-t border-ink-600 px-4 pt-4">
+                    <Pagination
+                      hasNext={memberPager.hasNext}
+                      hasPrev={memberPager.hasPrev}
+                      onNext={memberPager.onNext}
+                      onPrev={memberPager.onPrev}
+                      rangeEnd={memberPager.rangeEnd}
+                      rangeStart={memberPager.rangeStart}
+                      total={memberPager.total}
+                    />
+                  </div>
+                )}
               </div>
             )}
             {canAdmin && (
               <div className="mt-6 grid grid-cols-1 gap-6 border-t border-ink-600 pt-5 xl:grid-cols-2">
                 <div className="space-y-3">
                   <h4 className="text-sm font-medium text-paper-100">Add an existing user</h4>
+                  {addNotice ? <Alert variant="success">{addNotice}</Alert> : null}
                   <MemberUserPicker
                     existingUserIds={memberIds}
                     label="User"
-                    onChange={setAddUserId}
+                    onChange={(id) => {
+                      setAddUserId(id);
+                      setAddNotice(null);
+                    }}
                     value={addUserId}
                   />
                   {addUserId !== '' && (
@@ -396,35 +481,47 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 <div className="space-y-3">
                   <h4 className="text-sm font-medium text-paper-100">Invite by email</h4>
                   {inviteError ? <Alert variant="error">{inviteError}</Alert> : null}
-                  <Input
-                    label="Email"
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    placeholder="colleague@example.com"
-                    type="email"
-                    value={inviteEmail}
-                  />
-                  <div className="flex flex-wrap items-end gap-3">
-                    <div className="min-w-0 flex-1">
-                      <Select
-                        label="Role"
-                        onChange={(role) => {
-                          if (isOrgRole(role)) {
-                            setInviteRole(role);
-                          }
-                        }}
-                        options={ORG_ROLE_OPTIONS}
-                        value={inviteRole}
-                      />
+                  {inviteNotice ? <Alert variant="success">{inviteNotice}</Alert> : null}
+                  <form
+                    className="space-y-3"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void handleInvite();
+                    }}
+                  >
+                    <Input
+                      label="Email"
+                      onChange={(e) => {
+                        setInviteEmail(e.target.value);
+                        setInviteNotice(null);
+                      }}
+                      placeholder="colleague@example.com"
+                      type="email"
+                      value={inviteEmail}
+                    />
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div className="min-w-0 flex-1">
+                        <Select
+                          label="Role"
+                          onChange={(role) => {
+                            if (isOrgRole(role)) {
+                              setInviteRole(role);
+                            }
+                          }}
+                          options={ORG_ROLE_OPTIONS}
+                          value={inviteRole}
+                        />
+                      </div>
+                      <Button
+                        className="h-9"
+                        disabled={inviteMember.isPending}
+                        type="submit"
+                        variant="secondary"
+                      >
+                        {inviteMember.isPending ? 'Inviting…' : 'Send invite'}
+                      </Button>
                     </div>
-                    <Button
-                      className="h-9"
-                      disabled={inviteMember.isPending}
-                      onClick={handleInvite}
-                      variant="secondary"
-                    >
-                      {inviteMember.isPending ? 'Inviting…' : 'Send invite'}
-                    </Button>
-                  </div>
+                  </form>
                 </div>
               </div>
             )}
@@ -509,6 +606,11 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                       )}
                     </div>
                   )}
+                  {usedPercent != null && threshold != null && threshold > 0 && threshold < 100 && (
+                    <p className="mt-1 text-xs text-paper-500">
+                      Alert at {formatPercent(threshold / 100)} (marked on the bar)
+                    </p>
+                  )}
                   {budget && (
                     <p className="mt-2 text-xs leading-relaxed text-paper-500">
                       {budget.currentMonthUsage && (
@@ -541,12 +643,21 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                   </div>
                 </dl>
                 {canAdmin && (
-                  <div className="space-y-4 border-t border-ink-600 pt-4">
+                  <form
+                    className="space-y-4 border-t border-ink-600 pt-4"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void handleSaveBudget();
+                    }}
+                  >
                     <Input
                       hint="In dollars, e.g. 100.00. Leave blank for no cap."
                       label="Monthly cap"
                       min="0"
-                      onChange={(e) => setBudgetInput(e.target.value)}
+                      onChange={(e) => {
+                        setBudgetInput(e.target.value);
+                        setBudgetSaved(false);
+                      }}
                       placeholder="No cap"
                       prefix="$"
                       step="0.01"
@@ -556,30 +667,41 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                     <Input
                       hint="Warn when spend crosses this percent of the cap (0–100). Blank disables it."
                       label="Alert threshold (%)"
-                      onChange={(e) => setThresholdInput(e.target.value)}
+                      onChange={(e) => {
+                        setThresholdInput(e.target.value);
+                        setBudgetSaved(false);
+                      }}
                       placeholder="Not set"
                       type="number"
                       value={thresholdInput}
                     />
-                    <div className="flex flex-wrap justify-end gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <span aria-live="polite" className="mr-auto text-xs text-paper-500">
+                        {budgetSaved && !budgetDirty
+                          ? 'Budget saved.'
+                          : budgetDirty
+                            ? 'Unsaved changes'
+                            : ''}
+                      </span>
                       {budget?.monthlyBudgetUsdCents != null && (
                         <Button
                           disabled={patchBudget.isPending}
                           onClick={() => setConfirmRemoveCap(true)}
+                          type="button"
                           variant="ghost"
                         >
                           Remove cap
                         </Button>
                       )}
                       <Button
-                        disabled={patchBudget.isPending}
-                        onClick={handleSaveBudget}
+                        disabled={patchBudget.isPending || !budgetDirty}
+                        type="submit"
                         variant="secondary"
                       >
                         {patchBudget.isPending ? 'Saving…' : 'Save budget'}
                       </Button>
                     </div>
-                  </div>
+                  </form>
                 )}
               </div>
             </QueryBoundary>
@@ -599,34 +721,49 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               onRetry={() => void orgQuery.refetch()}
               rows={2}
             >
-              <div className="space-y-4">
+              <form
+                className="space-y-4"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void handleSaveOrg();
+                }}
+              >
                 {orgError ? <Alert variant="error">{orgError}</Alert> : null}
                 <Input
                   label="Name"
-                  onChange={(e) => setOrgName(e.target.value)}
+                  onChange={(e) => {
+                    setOrgName(e.target.value);
+                    setOrgSaved(false);
+                  }}
                   readOnly={!canAdmin}
                   value={orgName}
                 />
                 <Input
                   className="font-mono"
-                  hint="Lowercase letters, numbers and hyphens"
+                  hint="Lowercase letters, numbers and hyphens. Changing the slug changes this organization's identifier wherever it is referenced by name."
                   label="Slug"
-                  onChange={(e) => setOrgSlug(e.target.value)}
+                  onChange={(e) => {
+                    setOrgSlug(e.target.value);
+                    setOrgSaved(false);
+                  }}
                   readOnly={!canAdmin}
                   value={orgSlug}
                 />
                 {canAdmin && (
-                  <div className="flex justify-end">
+                  <div className="flex items-center justify-end gap-3">
+                    <span aria-live="polite" className="mr-auto text-xs text-paper-500">
+                      {orgSaved && !orgDirty ? 'Profile saved.' : orgDirty ? 'Unsaved changes' : ''}
+                    </span>
                     <Button
-                      disabled={patchOrg.isPending}
-                      onClick={handleSaveOrg}
+                      disabled={patchOrg.isPending || !orgDirty}
+                      type="submit"
                       variant="secondary"
                     >
                       {patchOrg.isPending ? 'Saving…' : 'Save profile'}
                     </Button>
                   </div>
                 )}
-              </div>
+              </form>
             </QueryBoundary>
           </Card>
 
@@ -642,9 +779,15 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                   checked={org.trustedInvites ?? false}
                   disabled={patchOrg.isPending}
                   label="Trust organization admin invites"
-                  onChange={() => handleToggleTrust(!(org.trustedInvites ?? false))}
-                  title={org.trustedInvites ? 'Stop trusting invites' : 'Trust invites'}
+                  onChange={() => {
+                    if (org.trustedInvites) {
+                      void applyTrust(false).catch(() => undefined);
+                    } else {
+                      setConfirmTrust(true);
+                    }
+                  }}
                 />
+                {trustError ? <Alert variant="error">{trustError}</Alert> : null}
                 <p className="text-xs leading-relaxed text-paper-500">
                   When on, an invite from any of this organization&apos;s admins creates an active,
                   approved account instead of waiting in the approval queue.
@@ -654,6 +797,16 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
           )}
         </div>
       </div>
+
+      <ConfirmModal
+        confirmLabel="Trust invites"
+        dangerous
+        message={`Organization admins of ${org?.name ?? 'this organization'} will be able to create active accounts by invite, without a platform admin approving them first. Turn it off again at any time; accounts already created stay active.`}
+        onClose={() => setConfirmTrust(false)}
+        onConfirm={() => applyTrust(true)}
+        open={confirmTrust}
+        title="Trust organization admin invites?"
+      />
 
       <ConfirmModal
         confirmLabel="Remove cap"

@@ -77,12 +77,21 @@ export function AccessTokensSection() {
   const [name, setName] = useState('');
   const [expiresInDays, setExpiresInDays] = useState<string>('90');
   const [error, setError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | undefined>();
+  const [showRevoked, setShowRevoked] = useState(false);
   const [revealed, setRevealed] = useState<PatCreated | null>(null);
   const [revoking, setRevoking] = useState<{ id: string; name: string } | null>(null);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    // Native validation passes whitespace, and the server would reject the trimmed empty name
+    // with a generic message, so the field says it.
+    if (!name.trim()) {
+      setNameError('Give the token a name.');
+      return;
+    }
+    setNameError(undefined);
     try {
       const days = expiresInDays.trim() ? Number(expiresInDays) : undefined;
       const res = await create.mutateAsync({
@@ -98,7 +107,10 @@ export function AccessTokensSection() {
     }
   }
 
-  const list = tokens ?? [];
+  const all = tokens ?? [];
+  const revokedCount = all.filter((t) => t.revokedAt).length;
+  // Revoked tokens are history: hidden until asked for, so the list is what still works.
+  const list = showRevoked ? all : all.filter((t) => !t.revokedAt);
 
   return (
     <>
@@ -128,6 +140,13 @@ export function AccessTokensSection() {
           onRetry={() => void refetch()}
           rows={3}
         >
+          {revokedCount > 0 && (
+            <div className="flex justify-end pt-2">
+              <Button onClick={() => setShowRevoked((v) => !v)} size="sm" variant="ghost">
+                {showRevoked ? 'Hide revoked tokens' : `Show revoked tokens (${revokedCount})`}
+              </Button>
+            </div>
+          )}
           {list.length === 0 ? (
             <EmptyState
               action={
@@ -222,18 +241,28 @@ export function AccessTokensSection() {
         subtitle="Tokens authenticate the CLI and the API as you. The value is shown once, right after you create it, and is never stored."
         title="New API token"
       >
-        <form className="space-y-5" onSubmit={handleCreate}>
+        <form className="space-y-5" noValidate onSubmit={handleCreate}>
+          <Alert variant="info">A token can do everything you can. Keep it secret.</Alert>
           <Input
             autoFocus
+            error={nameError}
             hint="Something that says where it is used, so you know what breaks if you revoke it"
             label="Name"
-            onChange={(e) => setName(e.target.value)}
+            maxLength={100}
+            onChange={(e) => {
+              setName(e.target.value);
+              setNameError(undefined);
+            }}
             placeholder="e.g. laptop, CI deploy job"
             required
             value={name}
           />
           <Input
-            hint="1 to 365 days. Leave blank for a token that never expires."
+            hint={
+              expiresInDays.trim()
+                ? '1 to 365 days.'
+                : 'No expiry: this token works until you revoke it. A date limits the damage if it leaks.'
+            }
             label="Expires in (days)"
             max={365}
             min={1}
@@ -256,7 +285,7 @@ export function AccessTokensSection() {
         closeOnBackdropClick={false}
         onClose={() => setRevealed(null)}
         open={revealed !== null}
-        subtitle={revealed ? `Token "${revealed.name}" is ready to use.` : undefined}
+        subtitle={revealed ? `Token “${revealed.name}” is ready to use.` : undefined}
         title="Copy your new token"
       >
         {revealed && (
@@ -280,7 +309,11 @@ export function AccessTokensSection() {
                 export AUTO_SWE_TOKEN=&lt;paste the token&gt;
               </pre>
             </div>
-            <ModalFooter cancelLabel="Done, I've copied it" onCancel={() => setRevealed(null)} />
+            <div className="flex justify-end border-t border-ink-600 pt-4">
+              <Button onClick={() => setRevealed(null)} variant="primary">
+                Done, I've copied it
+              </Button>
+            </div>
           </div>
         )}
       </Modal>
@@ -288,7 +321,7 @@ export function AccessTokensSection() {
       <ConfirmModal
         confirmLabel="Revoke"
         dangerous
-        message={`Anything using "${revoking?.name}" stops working right away. This cannot be undone.`}
+        message={`Anything using “${revoking?.name}” stops working right away. This cannot be undone.`}
         onClose={() => setRevoking(null)}
         onConfirm={async () => {
           // Awaited so ConfirmModal keeps the dialog open and shows a failure.

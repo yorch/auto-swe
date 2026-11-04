@@ -11,6 +11,8 @@ import {
 } from '@auto-swe/shared/types/api';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
@@ -19,6 +21,7 @@ import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useCreateRepository, useUpdateRepository } from '@/hooks/useRepositories';
 import { useAdminTeamIds, useLedTeamIds, useTeams } from '@/hooks/useTeams';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { api } from '@/lib/api';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import {
@@ -53,6 +56,8 @@ type Mode =
   | { kind: 'edit'; repo: RepositorySummary };
 
 const CONNECTION_TYPE_OPTIONS = selectableConnectionTypes();
+
+const ADMIN_ONLY_HINT = 'Only a platform admin or an admin of the repository’s team can edit this.';
 
 /** `inherit` stores null: the repository follows the team, organization and global setting. */
 type PrTitleFormChoice = 'inherit' | 'template' | 'conventional';
@@ -131,36 +136,56 @@ export function ConnectionFormModal({
   const [error, setError] = useState<string | null>(null);
   const [probe, setProbe] = useState<ExecutorImageProbeResult | null>(null);
   const [probing, setProbing] = useState(false);
+  // Closed when onboarding; open when editing a repository that already sets one of them.
+  const [advancedOpen, setAdvancedOpen] = useState(
+    () =>
+      !!initial &&
+      (initial.gateCommands != null || initial.previewConfig != null || !!initial.detectedStack)
+  );
+
+  const [touched, setTouched] = useState(false);
+  const [acknowledgedSecrets, setAcknowledgedSecrets] = useState(false);
+  useUnsavedChangesGuard(open && touched);
+
+  // Fields reset when the dialog opens or a different connection is shown, never because a
+  // refetch handed back a new object for the same one: that would wipe what the person is
+  // typing. Adjusting state while rendering, keyed on identity rather than on the object, is
+  // the supported way to do that without an effect.
+  const resetKey = open ? (initial?.id ?? 'new') : null;
+  const [seenResetKey, setSeenResetKey] = useState(resetKey);
+  if (seenResetKey !== resetKey) {
+    setSeenResetKey(resetKey);
+    if (resetKey !== null) {
+      setTouched(false);
+      setAcknowledgedSecrets(false);
+      setConnType(initialConnectionType(initial?.type));
+      setOrganizationName(initial?.organizationName ?? prefill?.organizationName ?? '');
+      setRepoName(initial?.repoName ?? prefill?.repoName ?? '');
+      setDefaultBranch(initial?.defaultBranch ?? prefill?.defaultBranch ?? 'main');
+      setExecutorImage(initial?.executorImage ?? '');
+      setGateCommands(gateCommandsForm(initial?.gateCommands));
+      setPreviewConfigJson(
+        initial?.previewConfig != null ? JSON.stringify(initial.previewConfig, null, 2) : ''
+      );
+      setLanguage(initial?.language ?? prefill?.language ?? '');
+      setPrTitleFormat(initial?.prTitleFormat ?? 'inherit');
+      setPrTitleTemplate(initial?.prTitleTemplate ?? '');
+      setName(initial?.name ?? '');
+      setConfigJson(initial?.config != null ? JSON.stringify(initial.config, null, 2) : '');
+      setDescription(initial?.description ?? prefill?.description ?? '');
+      setIsActive(initial?.isActive ?? true);
+      setConsolidationEnabled(initial?.consolidationEnabled ?? true);
+      setError(null);
+    }
+  }
 
   useEffect(() => {
     if (!open) {
       return;
     }
-    setConnType(initialConnectionType(initial?.type));
-    setOrganizationName(initial?.organizationName ?? prefill?.organizationName ?? '');
-    setRepoName(initial?.repoName ?? prefill?.repoName ?? '');
-    setDefaultBranch(initial?.defaultBranch ?? prefill?.defaultBranch ?? 'main');
-    setExecutorImage(initial?.executorImage ?? '');
-    setGateCommands(gateCommandsForm(initial?.gateCommands));
-    setPreviewConfigJson(
-      initial?.previewConfig != null ? JSON.stringify(initial.previewConfig, null, 2) : ''
+    setTeamId(
+      (prev) => prev || initial?.team?.id || (teams.length === 1 ? teams[0]?.id : '') || ''
     );
-    setLanguage(initial?.language ?? prefill?.language ?? '');
-    setPrTitleFormat(initial?.prTitleFormat ?? 'inherit');
-    setPrTitleTemplate(initial?.prTitleTemplate ?? '');
-    setName(initial?.name ?? '');
-    setConfigJson(initial?.config != null ? JSON.stringify(initial.config, null, 2) : '');
-    setDescription(initial?.description ?? prefill?.description ?? '');
-    setIsActive(initial?.isActive ?? true);
-    setConsolidationEnabled(initial?.consolidationEnabled ?? true);
-    setError(null);
-  }, [open, initial, prefill]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    setTeamId((prev) => prev || initial?.team?.id || teams[0]?.id || '');
   }, [open, initial, teams]);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -319,7 +344,7 @@ export function ConnectionFormModal({
       }
       title={mode.kind === 'edit' ? connectionLabel(mode.repo) : 'Add a connection'}
     >
-      <form className="space-y-5" onSubmit={handleSubmit}>
+      <form className="space-y-5" onChange={() => setTouched(true)} onSubmit={handleSubmit}>
         {showTypeSelector && (
           <Select
             id="conn-type"
@@ -363,6 +388,9 @@ export function ConnectionFormModal({
                 value={defaultBranch}
               />
               <Combobox
+                hint={
+                  teams.length > 1 && !teamId ? 'The team that owns this connection.' : undefined
+                }
                 id="team"
                 label="Team"
                 onChange={setTeamId}
@@ -382,14 +410,15 @@ export function ConnectionFormModal({
                   value={executorImage}
                 />
                 {isEdit && isPlatformAdmin && (
-                  <button
-                    className="text-xs text-accent-400 disabled:opacity-50"
+                  <Button
                     disabled={probing}
                     onClick={handleProbe}
+                    size="sm"
                     type="button"
+                    variant="ghost"
                   >
                     {probing ? 'Checking image…' : 'Check image'}
-                  </button>
+                  </Button>
                 )}
               </div>
               <Input
@@ -400,6 +429,11 @@ export function ConnectionFormModal({
                 value={language}
               />
             </div>
+            {!isEdit && (
+              <p className="text-xs text-paper-500">
+                The pull request title format can be set after the connection is created.
+              </p>
+            )}
             {isEdit && (
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <Select
@@ -478,8 +512,8 @@ export function ConnectionFormModal({
                   </p>
                 )}
                 {Object.keys(initial.detectedStack.suggestedGateCommands).length > 0 && (
-                  <button
-                    className="mt-1 text-xs text-accent-400"
+                  <Button
+                    className="mt-1"
                     onClick={() =>
                       setGateCommands((prev) => ({
                         ...prev,
@@ -490,58 +524,71 @@ export function ConnectionFormModal({
                         ),
                       }))
                     }
+                    size="sm"
                     type="button"
+                    variant="ghost"
                   >
                     Use suggested gate commands
-                  </button>
+                  </Button>
                 )}
               </Alert>
             )}
-            <fieldset className="space-y-3">
-              <legend className="text-sm font-medium text-paper-200">Gate commands</legend>
-              <p className="text-xs leading-relaxed text-paper-400">
-                Run by a gate step that sets no command of its own. Blank uses the built-in default.{' '}
-                {GATE_COMMANDS_RULE}
-              </p>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {REPO_GATE_COMMAND_KEYS.map((key) => (
-                  <Input
-                    className="font-mono text-xs"
+            <details
+              className="rounded-lg border border-ink-500/60 bg-ink-800/40 p-4"
+              onToggle={(e) => setAdvancedOpen(e.currentTarget.open)}
+              open={advancedOpen}
+            >
+              <summary className="cursor-pointer text-sm font-medium text-paper-200">
+                Advanced: gate commands and app preview
+              </summary>
+              <div className="mt-4 space-y-5">
+                <fieldset className="space-y-3">
+                  <legend className="text-sm font-medium text-paper-200">Gate commands</legend>
+                  <p className="text-xs leading-relaxed text-paper-400">
+                    Run by a gate step that sets no command of its own. Blank uses the built-in
+                    default. {GATE_COMMANDS_RULE}
+                  </p>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    {REPO_GATE_COMMAND_KEYS.map((key) => (
+                      <Input
+                        className="font-mono text-xs"
+                        disabled={!canEditGateCommands}
+                        hint={canEditGateCommands ? undefined : ADMIN_ONLY_HINT}
+                        id={`gate-command-${key}`}
+                        key={key}
+                        label={GATE_COMMAND_LABELS[key]}
+                        onChange={(e) =>
+                          setGateCommands((prev) => ({ ...prev, [key]: e.target.value }))
+                        }
+                        placeholder="Built-in default"
+                        spellCheck={false}
+                        value={gateCommands[key]}
+                      />
+                    ))}
+                  </div>
+                </fieldset>
+                <fieldset className="space-y-3">
+                  <legend className="text-sm font-medium text-paper-200">App preview</legend>
+                  <p className="text-xs leading-relaxed text-paper-400">
+                    Optional JSON recipe for starting this repository in a workspace. Clearing this
+                    field removes the saved recipe.
+                  </p>
+                  <Textarea
                     disabled={!canEditGateCommands}
-                    id={`gate-command-${key}`}
-                    key={key}
-                    label={GATE_COMMAND_LABELS[key]}
-                    onChange={(e) =>
-                      setGateCommands((prev) => ({ ...prev, [key]: e.target.value }))
+                    hint={canEditGateCommands ? undefined : ADMIN_ONLY_HINT}
+                    id="app-preview-config"
+                    label="App preview (UI validation)"
+                    onChange={(e) => setPreviewConfigJson(e.target.value)}
+                    placeholder={
+                      '{\n  "start": "npm run dev",\n  "readyUrl": "http://localhost:3000"\n}'
                     }
-                    placeholder="Built-in default"
+                    rows={10}
                     spellCheck={false}
-                    value={gateCommands[key]}
+                    value={previewConfigJson}
                   />
-                ))}
+                </fieldset>
               </div>
-            </fieldset>
-            <fieldset className="space-y-3">
-              <legend className="text-sm font-medium text-paper-200">
-                App preview (UI validation)
-              </legend>
-              <p className="text-xs leading-relaxed text-paper-400">
-                Optional JSON recipe for starting this repository in a workspace. Clearing this
-                field removes the saved recipe.
-              </p>
-              <Textarea
-                disabled={!canEditGateCommands}
-                id="app-preview-config"
-                label="App preview (UI validation)"
-                onChange={(e) => setPreviewConfigJson(e.target.value)}
-                placeholder={
-                  '{\n  "start": "npm run dev",\n  "readyUrl": "http://localhost:3000"\n}'
-                }
-                rows={10}
-                spellCheck={false}
-                value={previewConfigJson}
-              />
-            </fieldset>
+            </details>
           </>
         ) : (
           <>
@@ -576,11 +623,26 @@ export function ConnectionFormModal({
               rows={5}
               value={configJson}
             />
-            <Alert variant={secretKeys.length > 0 ? 'warning' : 'info'}>
-              {secretKeys.length > 0 ? `${secretKeys.join(', ')} looks like a credential. ` : ''}
-              Config is stored as plain text and visible to this connection's team. Don't put
-              tokens, passwords or API keys here.
-            </Alert>
+            {secretKeys.length > 0 ? (
+              <Alert title="This looks like a credential" variant="warning">
+                <p>
+                  {secretKeys.join(', ')} in the config. Config is stored as plain text and visible
+                  to this connection's team, so don't put tokens, passwords or API keys here.
+                </p>
+                <div className="mt-2">
+                  <Checkbox
+                    checked={acknowledgedSecrets}
+                    label="I understand, and these values are not secrets"
+                    onChange={(e) => setAcknowledgedSecrets(e.target.checked)}
+                  />
+                </div>
+              </Alert>
+            ) : (
+              <p className="text-xs leading-relaxed text-paper-400">
+                Config is stored as plain text and visible to this connection's team. Don't put
+                tokens, passwords or API keys here.
+              </p>
+            )}
           </>
         )}
 
@@ -599,6 +661,15 @@ export function ConnectionFormModal({
               label="Active — accept new work requests"
               onChange={() => setIsActive((v) => !v)}
             />
+            {!isActive && (
+              <p className="text-xs leading-relaxed text-warning-400">
+                Saving this deactivates the connection: it refuses new work requests
+                {mode.kind === 'edit' && (mode.repo._count?.activeWorkflows ?? 0) > 0
+                  ? ` and ${mode.repo._count.activeWorkflows} workflow${mode.repo._count.activeWorkflows === 1 ? ' is' : 's are'} still running on it`
+                  : ''}
+                . Reactivate it here at any time.
+              </p>
+            )}
             {isGit && (
               <ToggleSwitch
                 checked={consolidationEnabled}
@@ -611,7 +682,7 @@ export function ConnectionFormModal({
 
         {error && <Alert>{error}</Alert>}
         <ModalFooter
-          disabled={!teamId || !!configJsonError}
+          disabled={!teamId || !!configJsonError || (secretKeys.length > 0 && !acknowledgedSecrets)}
           isPending={busy}
           onCancel={onClose}
           pendingLabel="Saving…"

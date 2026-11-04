@@ -38,7 +38,7 @@ describe('StartWork', () => {
     render(withQuery(<StartWork />));
     const radio = screen.getByRole('radio', { name: /multi-repo epic/i }) as HTMLInputElement;
     expect(radio.disabled).toBe(true);
-    expect(screen.getByText('Needs a team lead or administrator.')).toBeTruthy();
+    expect(screen.getByText('Requires team lead or administrator.')).toBeTruthy();
   });
 
   it('starts in the requested mode', () => {

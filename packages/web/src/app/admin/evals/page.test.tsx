@@ -191,8 +191,11 @@ describe('GovernEvalsPage', () => {
     expect(screen.getByRole('button', { name: 'review' }).getAttribute('aria-pressed')).toBe(
       'true'
     );
-    expect(screen.getByText('▼ −0.30')).toBeTruthy();
-    expect(screen.getByText('▲ +0.40')).toBeTruthy();
+    // The glyph is decorative; the words carry the direction for screen readers.
+    expect(screen.getByText('Worsened by')).toBeTruthy();
+    expect(screen.getByText('Improved by')).toBeTruthy();
+    expect(screen.getByText('0.30')).toBeTruthy();
+    expect(screen.getByText('0.40')).toBeTruthy();
   });
 
   it('charts a clicked scorer without narrowing the results to it', async () => {

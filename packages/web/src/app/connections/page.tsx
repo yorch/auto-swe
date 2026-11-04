@@ -12,6 +12,7 @@ import { RepoAutomationsModal } from '@/components/repositories/RepoAutomationsM
 import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
 import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
 import { ShareRepoModal } from '@/components/repositories/ShareRepoModal';
+import { ToggleConnectionActiveModal } from '@/components/repositories/ToggleConnectionActiveModal';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
@@ -51,6 +52,7 @@ type ModalMode =
   | { kind: 'credential'; repo: RepositorySummary }
   | { kind: 'share'; repo: RepositorySummary }
   | { kind: 'test'; repo: RepositorySummary }
+  | { kind: 'toggle'; repo: RepositorySummary }
   | { kind: 'import' }
   | null;
 
@@ -111,6 +113,8 @@ export default function ConnectionsPage() {
   const scan = useTriggerRepoDependencyScan();
   const myCredentials = useMyCredentials();
   const [mode, setMode] = useState<ModalMode>(null);
+  // A saved change (deactivated, token saved) closes its dialog, so say it here.
+  const [notice, setNotice] = useState<string | null>(null);
 
   function handleImportSelect(repo: GitHubRepoInfo) {
     setMode({
@@ -183,6 +187,18 @@ export default function ConnectionsPage() {
         }
         items={['connections']}
       />
+      {notice && (
+        <Alert
+          action={
+            <Button onClick={() => setNotice(null)} size="sm" variant="ghost">
+              Dismiss
+            </Button>
+          }
+          variant="success"
+        >
+          {notice}
+        </Alert>
+      )}
       <section className="space-y-4">
         <Card className="overflow-hidden p-0">
           <Toolbar
@@ -191,6 +207,7 @@ export default function ConnectionsPage() {
               meta !== undefined && (
                 <span className="tabular text-xs text-paper-500">
                   {meta.total} {meta.total === 1 ? 'connection' : 'connections'}
+                  {canManage && showInactive ? ' (including inactive)' : ''}
                 </span>
               )
             }
@@ -219,7 +236,7 @@ export default function ConnectionsPage() {
             isFetching={isFetching}
             isLoading={isLoading}
             label="connections"
-            loading={<SkeletonRows className="px-4 py-4" label="repositories" rows={4} />}
+            loading={<SkeletonRows className="px-4 py-4" label="connections" rows={4} />}
             onRetry={() => void refetch()}
           >
             {rows.length === 0 ? (
@@ -269,7 +286,7 @@ export default function ConnectionsPage() {
                             onAction: () => setMode({ kind: 'dependencies', repo: r }),
                           },
                           {
-                            icon: 'alert' as const,
+                            icon: 'workflows' as const,
                             id: 'automations',
                             label: 'Automations',
                             onAction: () => setMode({ kind: 'automations', repo: r }),
@@ -286,19 +303,6 @@ export default function ConnectionsPage() {
                           },
                         ]
                       : []),
-                    // The server decides, as it does for sharing: only the owning team's
-                    // leads (and platform admins) may check what the platform's
-                    // credential can do with the repository.
-                    ...(canManageTeam(r.team?.id) && isGitRepo
-                      ? [
-                          {
-                            icon: 'checkCircle' as const,
-                            id: 'test-access',
-                            label: 'Test access',
-                            onAction: () => setMode({ kind: 'test', repo: r }),
-                          },
-                        ]
-                      : []),
                     // The server decides: only the owning team's leads (and
                     // platform admins) may change sharing.
                     ...(canManageTeam(r.team?.id) && isGitRepo
@@ -311,9 +315,33 @@ export default function ConnectionsPage() {
                           },
                         ]
                       : []),
+                    ...(canManageTeam(r.team?.id)
+                      ? [
+                          {
+                            icon: (r.isActive ? 'pause' : 'play') as 'pause' | 'play',
+                            id: 'toggle-active',
+                            label: r.isActive ? 'Deactivate' : 'Reactivate',
+                            onAction: () => setMode({ kind: 'toggle', repo: r }),
+                            tone: r.isActive ? ('danger' as const) : ('default' as const),
+                          },
+                        ]
+                      : []),
                   ];
                   return (
                     <>
+                      {canManageTeam(r.team?.id) && isGitRepo && (
+                        // The server decides, as it does for sharing: only the owning team's
+                        // leads (and platform admins) may check what the platform's credential
+                        // can do with the repository.
+                        <Button
+                          aria-label={`Test access for ${label}`}
+                          onClick={() => setMode({ kind: 'test', repo: r })}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          Test access
+                        </Button>
+                      )}
                       {canManageTeam(r.team?.id) && (
                         <Button
                           aria-label={`Edit ${label}`}
@@ -331,17 +359,20 @@ export default function ConnectionsPage() {
                 caption="Connections available to your teams"
                 columns={[
                   {
-                    cell: (r) => <span title={connectionLabel(r)}>{connectionLabel(r)}</span>,
+                    cell: (r) => <span>{connectionLabel(r)}</span>,
                     header: 'Connection',
                     id: 'connection',
                     primary: true,
                     secondary: (r) => {
                       const myCredential = credentialFor(r.id);
                       const showCredential = showsCredential(r);
-                      return r.description || showCredential ? (
+                      const image = !r.type || r.type === 'git_repo' ? r.executorImage : null;
+                      return r.description || showCredential || image ? (
                         <span className="block truncate">
                           {r.description}
-                          {r.description && showCredential && ' · '}
+                          {r.description && (showCredential || image) && ' · '}
+                          {image && `Image ${image}`}
+                          {image && showCredential && ' · '}
                           {showCredential &&
                             (myCredential
                               ? `Your token …${myCredential.lastFour || '????'}${credentialsEnabled ? '' : ' (unused)'}`
@@ -358,8 +389,11 @@ export default function ConnectionsPage() {
                   },
                   {
                     cell: (r) => (
-                      <span className="text-paper-300">
+                      <div className="text-paper-300">
                         <div>{r.team?.name ?? <span className="text-paper-500">None</span>}</div>
+                        {!canManageTeam(r.team?.id) && (
+                          <div className="text-xs text-paper-500">Read-only for you</div>
+                        )}
                         {(r.shares?.length ?? 0) > 0 && (
                           <div
                             className="max-w-48 truncate text-xs text-paper-500"
@@ -368,7 +402,7 @@ export default function ConnectionsPage() {
                             Shared with {(r.shares ?? []).map((sh) => sh.team.name).join(', ')}
                           </div>
                         )}
-                      </span>
+                      </div>
                     ),
                     header: 'Team',
                     id: 'team',
@@ -376,19 +410,12 @@ export default function ConnectionsPage() {
                   {
                     cell: (r) =>
                       !r.type || r.type === 'git_repo' ? (
-                        <>
-                          <div className="font-mono text-xs text-paper-300">{r.defaultBranch}</div>
-                          {r.executorImage && (
-                            <div
-                              className="max-w-48 truncate font-mono text-xs text-paper-500"
-                              title={`Executor image: ${r.executorImage}`}
-                            >
-                              {r.executorImage}
-                            </div>
-                          )}
-                        </>
+                        <span className="font-mono text-xs text-paper-300">{r.defaultBranch}</span>
                       ) : (
-                        <span className="text-paper-500">—</span>
+                        <span className="text-paper-500">
+                          <span aria-hidden>—</span>
+                          <span className="sr-only">Not applicable</span>
+                        </span>
                       ),
                     header: 'Branch',
                     id: 'branch',
@@ -400,7 +427,7 @@ export default function ConnectionsPage() {
                         {r._count?.activeWorkflows ?? 0}
                       </span>
                     ),
-                    header: 'Workflows',
+                    header: 'Active workflows',
                     id: 'workflows',
                   },
                   {
@@ -460,14 +487,27 @@ export default function ConnectionsPage() {
           {scan.isSuccess && !scan.isError && (
             // The POST only *starts* the sweep, so the list below is still
             // pre-scan; say so rather than letting it read as "nothing changed".
-            <Alert variant="success">
+            <Alert
+              action={
+                <Button onClick={() => scan.reset()} size="sm" variant="ghost">
+                  Dismiss
+                </Button>
+              }
+              variant="success"
+            >
               Scan started. Suggestions update as it works through the repositories.
             </Alert>
           )}
           <RepoDependencySuggestions
+            emptyText={
+              isAdmin
+                ? undefined
+                : 'No suggestions yet. An administrator can re-scan dependencies to look for repositories to onboard.'
+            }
             error={suggestions.error}
             isError={suggestions.isError}
             isLoading={suggestions.isLoading}
+            onOnboard={canManage ? (prefill) => setMode({ kind: 'create', prefill }) : undefined}
             suggestions={suggestions.data}
           />
         </div>
@@ -484,6 +524,14 @@ export default function ConnectionsPage() {
       />
 
       {formMode && <ConnectionFormModal mode={formMode} onClose={() => setMode(null)} open />}
+
+      {mode?.kind === 'toggle' && (
+        <ToggleConnectionActiveModal
+          onClose={() => setMode(null)}
+          onDone={setNotice}
+          repo={mode.repo}
+        />
+      )}
 
       {mode?.kind === 'share' && <ShareRepoModal onClose={() => setMode(null)} repo={mode.repo} />}
 
@@ -502,6 +550,7 @@ export default function ConnectionsPage() {
           enabled={credentialsEnabled}
           hosts={myCredentials.data?.hosts}
           onClose={() => setMode(null)}
+          onSaved={setNotice}
           repo={mode.repo}
         />
       )}

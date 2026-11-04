@@ -59,6 +59,13 @@ describe('Pull requests page', () => {
     );
   });
 
+  it('offers Clear filters when only the team scope is set', () => {
+    nav.search = 'scope=TEAM';
+    usePullRequests.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
+    render(<PullRequestsPage />);
+    expect(screen.getAllByRole('button', { name: 'Clear filters' }).length).toBeGreaterThan(0);
+  });
+
   it('does not send a repository that is not a uuid', () => {
     nav.search = 'repo=not-a-uuid';
     usePullRequests.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
@@ -83,7 +90,7 @@ describe('Pull requests page', () => {
     );
   });
 
-  it('keeps the never-merges note visible with many pull requests, and explains State and CI', () => {
+  it('keeps the never-merges note visible with many pull requests, and explains State and CI in the header', () => {
     nav.search = '';
     const row = (id: string) => ({
       ciStatus: 'PENDING',
@@ -109,7 +116,7 @@ describe('Pull requests page', () => {
     });
     render(<PullRequestsPage />);
     expect(screen.getByTestId('never-merges-note')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'About State and CI' })).toBeTruthy();
+    expect(screen.getByText(/State is the pull request’s state on the host/)).toBeTruthy();
     expect(screen.queryByText(/draft pull request/i)).toBeNull();
   });
 });

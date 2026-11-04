@@ -69,7 +69,8 @@ function StudioModelConfigPageInner() {
         title="Model configuration"
       />
       <SetupBanner here={`/models?tab=${active}`} items={['credentials', 'embeddings']} />
-      <MidRunWarning />
+      {/* Not on the audit log: it is a read-only history, so the note has nothing to warn about. */}
+      {active !== 'audit' && <MidRunWarning />}
       <TabBar
         active={active}
         idPrefix="models"

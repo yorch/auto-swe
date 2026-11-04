@@ -83,6 +83,7 @@ export function ConfirmModal({
       {confirmText !== undefined && (
         <Input
           autoComplete="off"
+          data-autofocus=""
           label={`Type ${confirmText} to confirm`}
           onChange={(e) => setTyped(e.target.value)}
           value={typed}
@@ -90,6 +91,7 @@ export function ConfirmModal({
       )}
       {shownError && <Alert>{shownError}</Alert>}
       <ModalFooter
+        autoFocusCancel={confirmText === undefined}
         dangerous={dangerous}
         disabled={confirmText !== undefined && typed !== confirmText}
         isPending={pending}

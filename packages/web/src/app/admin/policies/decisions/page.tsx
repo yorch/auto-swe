@@ -7,6 +7,7 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
+import { CopyButton } from '@/components/ui/CopyButton';
 import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
@@ -16,6 +17,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
 import { useAutonomyDecisions, useAutonomyPolicies } from '@/hooks/useAutonomyPolicies';
+import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { useUsers } from '@/hooks/useUsers';
 import { eventLabel, KNOWN_AUTONOMY_EVENTS, riskClassLabel } from '@/lib/autonomyEvents';
@@ -43,6 +45,8 @@ type Filters = {
 
 const EMPTY: Filters = { actorId: '', event: '', policyName: '', riskClass: '', runId: '' };
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const FILTER_KEYS = ['policyName', 'riskClass', 'event', 'actorId', 'runId'] as const;
 
 export default function AutonomyDecisionsPage() {
@@ -57,13 +61,26 @@ export default function AutonomyDecisionsPage() {
   };
   const offset = parseOffset(params.get('offset'));
 
+  // The run ID box edits a draft; the URL (and the query) take it after a pause, and only once it
+  // is a whole id. A partial id would fire a failing request for every character typed.
+  const [runDraft, setRunDraft] = useDebouncedUrlSearch(
+    filters.runId,
+    (value) => {
+      if (value === '' || UUID_RE.test(value)) {
+        update({ offset: null, runId: value || null });
+      }
+    },
+    { normalize: (value) => value.trim() }
+  );
+  const runIdInvalid = runDraft.trim() !== '' && !UUID_RE.test(runDraft.trim());
+
   const { data, isLoading, isError, isFetching, refetch, error } = useAutonomyDecisions({
     ...filters,
     limit: LIMIT,
     offset,
   });
   const { data: policies } = useAutonomyPolicies();
-  const { data: users } = useUsers();
+  const { data: users, isLoading: usersLoading } = useUsers();
   const emailById = new Map((users ?? []).map((u) => [u.id, u.email]));
 
   function navigate(next: Partial<Filters> & { offset?: number }) {
@@ -76,7 +93,7 @@ export default function AutonomyDecisionsPage() {
 
   const total = data?.meta.total ?? 0;
   const hasMore = offset + (data?.data.length ?? 0) < total;
-  const anyFilter = FILTER_KEYS.some((k) => filters[k]);
+  const anyFilter = FILTER_KEYS.some((k) => filters[k]) || runDraft !== '';
 
   const eventOptions = [
     ...new Set([...KNOWN_AUTONOMY_EVENTS, ...(data?.data ?? []).map((r) => r.event)]),
@@ -128,15 +145,19 @@ export default function AutonomyDecisionsPage() {
           />
           <Input
             className="font-mono"
+            error={runIdInvalid ? 'Enter the full run ID (a UUID)' : undefined}
             hint="Paste a run ID to see only that run's decisions."
             label="Run ID"
-            onChange={(e) => setFilter('runId', e.target.value.trim())}
-            value={filters.runId}
+            onChange={(e) => setRunDraft(e.target.value)}
+            value={runDraft}
           />
           <div className="flex items-start justify-end sm:pt-6">
             <Button
               disabled={!anyFilter}
-              onClick={() => navigate({ ...EMPTY, offset: 0 })}
+              onClick={() => {
+                setRunDraft('');
+                navigate({ ...EMPTY, offset: 0 });
+              }}
               variant="ghost"
             >
               Clear filters
@@ -191,7 +212,12 @@ export default function AutonomyDecisionsPage() {
                     cell: (row) =>
                       row.actorId ? (
                         <span className="text-paper-300">
-                          {emailById.get(row.actorId) ?? 'Unknown user'}
+                          {emailById.get(row.actorId) ??
+                            // Until the directory loads (or if the viewer may not read it), a
+                            // missing name is "not known yet", not "deleted".
+                            (usersLoading
+                              ? 'Loading…'
+                              : `Unknown user (${row.actorId.slice(0, 8)})`)}
                         </span>
                       ) : (
                         <span className="text-paper-500">System</span>
@@ -201,16 +227,18 @@ export default function AutonomyDecisionsPage() {
                   },
                   {
                     cell: (row) => (
-                      <Link
-                        className={cn(
-                          'rounded-sm font-mono text-xs text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
-                          FOCUS_RING
-                        )}
-                        href={`/runs/${row.runId}`}
-                        title={row.runId}
-                      >
-                        {row.runId.slice(0, 8)}
-                      </Link>
+                      <span className="inline-flex items-center gap-2">
+                        <Link
+                          className={cn(
+                            'rounded-sm font-mono text-xs text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
+                            FOCUS_RING
+                          )}
+                          href={`/runs/${row.runId}`}
+                        >
+                          {row.runId.slice(0, 8)}
+                        </Link>
+                        <CopyButton value={row.runId} />
+                      </span>
                     ),
                     header: 'Run',
                     id: 'run',
@@ -229,7 +257,13 @@ export default function AutonomyDecisionsPage() {
                   anyFilter ? (
                     <EmptyState
                       action={
-                        <Button onClick={() => navigate({ ...EMPTY, offset: 0 })} size="sm">
+                        <Button
+                          onClick={() => {
+                            setRunDraft('');
+                            navigate({ ...EMPTY, offset: 0 });
+                          }}
+                          size="sm"
+                        >
                           Clear filters
                         </Button>
                       }

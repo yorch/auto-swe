@@ -1,11 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { EntityMetaBadges } from '@/components/library/EntityMetaBadges';
 import { SkillHistory } from '@/components/skills/SkillHistory';
 import { SkillSourcesTab } from '@/components/skills/SkillSourcesTab';
 import { shortSha } from '@/components/skills/sourceDisplay';
-import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -16,6 +15,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
+import { IconButton } from '@/components/ui/IconButton';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -26,6 +26,7 @@ import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useDataTableSort } from '@/hooks/useDataTableSort';
+import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useHasRole } from '@/hooks/useHasRole';
 import {
   type Skill,
@@ -37,6 +38,8 @@ import {
   useUpdateSkill,
   useVerifySkill,
 } from '@/hooks/useSkills';
+import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
@@ -107,9 +110,21 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
   const [form, setForm] = useState({ description: '', isActive: true, name: '', promptText: '' });
   const [error, setError] = useState<string | null>(null);
   const [scanWarnings, setScanWarnings] = useState<string[]>([]);
+  const [verified, setVerified] = useState(false);
+  const [discardOpen, setDiscardOpen] = useState(false);
   // The revision on screen. Fixed when the modal opens and after an in-modal restore, so the text
   // a reviewer reads and the revision Verify attests never drift apart while the list refetches.
   const [viewed, setViewed] = useState<Skill | null>(skill);
+
+  const base = viewed ?? skill;
+  const formDirty =
+    editing &&
+    base !== null &&
+    (form.name !== base.name ||
+      form.description !== (base.description ?? '') ||
+      form.isActive !== base.isActive ||
+      (!base.isBuiltIn && form.promptText !== base.promptText));
+  useUnsavedChangesGuard(Boolean(formDirty));
 
   if (!skill) {
     if (viewed) {
@@ -180,7 +195,9 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
     setVerifyError(null);
     try {
       await verify.mutateAsync({ id: sk.id, revision: sk.currentRevision });
-      onClose();
+      // Stay open: the reviewer keeps the text they attested and sees the state change.
+      setViewed({ ...sk, isVerified: true });
+      setVerified(true);
     } catch (err) {
       setVerifyError(
         err instanceof ApiError && err.code === 'SKILL_CHANGED'
@@ -192,152 +209,181 @@ function SkillDetailModal({ skill, onClose }: { skill: Skill | null; onClose: ()
 
   const title = editing ? `Edit "${visibleText(sk.name)}"` : visibleText(sk.name);
 
+  function closeModal() {
+    setEditing(false);
+    setScanWarnings([]);
+    setVerifyError(null);
+    setVerified(false);
+    setShowHistory(false);
+    setDiscardOpen(false);
+    onClose();
+  }
+
   return (
-    <Modal
-      onClose={() => {
-        setEditing(false);
-        setScanWarnings([]);
-        setVerifyError(null);
-        setShowHistory(false);
-        onClose();
-      }}
-      open={!!skill}
-      size="lg"
-      title={title}
-    >
-      {editing ? (
-        <form className="space-y-4" onSubmit={handleSave}>
-          <Input
-            id="skill-edit-name"
-            label="Name"
-            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            required
-            value={form.name}
-          />
-          <Input
-            id="skill-edit-description"
-            label="Description"
-            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-            value={form.description}
-          />
-          {sk.isBuiltIn ? (
-            <FieldWrapper hint="Prompt text is locked for built-in skills." label="Prompt text">
-              <pre className="w-full rounded-md border border-ink-500 bg-ink-900 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
-                {sk.promptText}
-              </pre>
-            </FieldWrapper>
-          ) : (
-            <Textarea
-              id="skill-edit-prompt-text"
-              label="Prompt text"
-              onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
+    <>
+      <ConfirmModal
+        confirmLabel="Discard changes"
+        dangerous
+        message="You have unsaved edits to this skill. Closing discards them."
+        onClose={() => setDiscardOpen(false)}
+        onConfirm={closeModal}
+        open={discardOpen}
+        title="Discard unsaved changes?"
+      />
+      <Modal
+        onClose={() => {
+          if (formDirty && !update.isPending) {
+            setDiscardOpen(true);
+            return;
+          }
+          closeModal();
+        }}
+        open={!!skill}
+        size="lg"
+        title={title}
+      >
+        {editing ? (
+          <form className="space-y-4" onSubmit={handleSave}>
+            <Input
+              id="skill-edit-name"
+              label="Name"
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
               required
-              rows={12}
-              value={form.promptText}
+              value={form.name}
             />
-          )}
-          <ToggleSwitch
-            checked={form.isActive}
-            label={form.isActive ? 'Active' : 'Inactive'}
-            onChange={() => setForm((f) => ({ ...f, isActive: !f.isActive }))}
-          />
-          {error && <Alert variant="error">{error}</Alert>}
-          <ModalFooter
-            isPending={update.isPending}
-            onCancel={cancelEdit}
-            pendingLabel="Saving…"
-            submitLabel="Save changes"
-          />
-        </form>
-      ) : (
-        <div className="space-y-5">
-          <ScanWarnings warnings={scanWarnings} />
-          {movedOn && (
-            <Alert variant="warning">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span>This skill changed since you opened it — reload to read the new text.</span>
-                <Button
-                  onClick={() => {
-                    setViewed(live);
-                    setVerifyError(null);
-                  }}
-                  size="sm"
-                  variant="secondary"
-                >
-                  Reload
-                </Button>
-              </div>
-            </Alert>
-          )}
-          <EntityMetaBadges
-            isActive={sk.isActive}
-            isBuiltIn={sk.isBuiltIn}
-            isVerified={sk.isVerified}
-            origin={sk.origin}
-          >
-            <ExternalBadge source={sk.externalSource} />
-            <Badge tone="neutral">
-              used by {sk.usedByCount} agent{sk.usedByCount !== 1 ? 's' : ''}
-            </Badge>
-          </EntityMetaBadges>
-          {sk.description && (
-            <p className="text-sm text-paper-300">{visibleOrNull(sk.description)}</p>
-          )}
-          {sk.scanWarnings.length > 0 && (
-            <Alert title="Scanner findings on this text" variant="warning">
-              <ul className="list-disc space-y-0.5 pl-4 text-xs">
-                {sk.scanWarnings.map((w) => (
-                  <li key={w}>{w}</li>
-                ))}
-              </ul>
-            </Alert>
-          )}
-          <div>
-            <div className="label-mono mb-1.5">Prompt text</div>
-            <pre className="max-h-96 overflow-auto rounded-md border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
-              {visibleText(sk.promptText, { multiline: true })}
-            </pre>
-            {isAdmin && !sk.isVerified && !sk.isBuiltIn && !movedOn && (
-              <div className="mt-3 flex items-center gap-3">
-                <Button disabled={verify.isPending} onClick={handleVerify} variant="secondary">
-                  Verify revision {sk.currentRevision}
-                </Button>
-                <span className="text-xs text-paper-500">
-                  Attests that you read the text above, revision {sk.currentRevision}.
-                </span>
-              </div>
+            <Input
+              id="skill-edit-description"
+              label="Description"
+              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+              value={form.description}
+            />
+            {sk.isBuiltIn ? (
+              <FieldWrapper hint="Prompt text is locked for built-in skills." label="Prompt text">
+                <pre className="w-full rounded-md border border-ink-500 bg-ink-900 px-3 py-2 text-xs text-paper-400 whitespace-pre-wrap break-words">
+                  {sk.promptText}
+                </pre>
+              </FieldWrapper>
+            ) : (
+              <Textarea
+                hint={`${form.promptText.length.toLocaleString()} characters. Saving resets verification.`}
+                id="skill-edit-prompt-text"
+                label="Prompt text"
+                onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
+                required
+                rows={12}
+                value={form.promptText}
+              />
             )}
-            {verifyError && (
-              <Alert className="mt-3" variant="error">
-                {verifyError}
+            <ToggleSwitch
+              checked={form.isActive}
+              label="Active"
+              onChange={() => setForm((f) => ({ ...f, isActive: !f.isActive }))}
+            />
+            {error && <Alert variant="error">{error}</Alert>}
+            <ModalFooter
+              isPending={update.isPending}
+              onCancel={() => (formDirty ? setDiscardOpen(true) : cancelEdit())}
+              pendingLabel="Saving…"
+              submitLabel="Save changes"
+            />
+          </form>
+        ) : (
+          <div className="space-y-5">
+            <ScanWarnings warnings={scanWarnings} />
+            {verified && <Alert variant="success">Verified revision {sk.currentRevision}.</Alert>}
+            {movedOn && (
+              <Alert variant="warning">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>This skill changed since you opened it — reload to read the new text.</span>
+                  <Button
+                    onClick={() => {
+                      setViewed(live);
+                      setVerifyError(null);
+                    }}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    Reload
+                  </Button>
+                </div>
               </Alert>
             )}
-          </div>
-          <div className="flex items-center justify-between border-t border-ink-600 pt-4">
-            <div className="space-y-0.5 text-xs text-paper-500">
-              <div>Created {formatDate(sk.createdAt)}</div>
-              <div>Updated {formatDate(sk.updatedAt)}</div>
+            <EntityMetaBadges
+              isActive={sk.isActive}
+              isBuiltIn={sk.isBuiltIn}
+              isVerified={sk.isVerified}
+              origin={sk.origin}
+            >
+              <ExternalBadge source={sk.externalSource} />
+              <Badge tone="neutral">
+                used by {sk.usedByCount} agent{sk.usedByCount !== 1 ? 's' : ''}
+              </Badge>
+            </EntityMetaBadges>
+            {sk.description && (
+              <p className="text-sm text-paper-300">{visibleOrNull(sk.description)}</p>
+            )}
+            {sk.scanWarnings.length > 0 && (
+              <Alert title="Scanner findings on this text" variant="warning">
+                <ul className="list-disc space-y-0.5 pl-4 text-xs">
+                  {sk.scanWarnings.map((w) => (
+                    <li key={w}>{w}</li>
+                  ))}
+                </ul>
+              </Alert>
+            )}
+            <div>
+              <div className="label-mono mb-1.5">Prompt text</div>
+              <pre className="max-h-96 overflow-auto rounded-md border border-ink-600 bg-ink-900 p-3 text-xs text-paper-200 whitespace-pre-wrap break-words">
+                {visibleText(sk.promptText, { multiline: true })}
+              </pre>
+              {isAdmin && !sk.isVerified && !sk.isBuiltIn && !movedOn && (
+                <div className="mt-3 flex items-center gap-3">
+                  <Button disabled={verify.isPending} onClick={handleVerify} variant="secondary">
+                    Verify revision {sk.currentRevision}
+                  </Button>
+                  <span className="text-xs text-paper-500">
+                    Attests that you read the text above, revision {sk.currentRevision}.
+                  </span>
+                </div>
+              )}
+              {!isAdmin && !sk.isVerified && !sk.isBuiltIn && (
+                <p className="mt-3 text-xs text-paper-500">
+                  Unverified: an admin has not yet read this text. Ask an admin to verify it before
+                  relying on it.
+                </p>
+              )}
+              {verifyError && (
+                <Alert className="mt-3" variant="error">
+                  {verifyError}
+                </Alert>
+              )}
             </div>
-            <div className="flex gap-2">
-              <Button onClick={() => setShowHistory((v) => !v)} variant="ghost">
-                {showHistory ? 'Hide history' : 'History'}
-              </Button>
-              <Button onClick={startEdit} variant="secondary">
-                Edit
-              </Button>
+            <div className="flex items-center justify-between border-t border-ink-600 pt-4">
+              <div className="space-y-0.5 text-xs text-paper-500">
+                <div>Created {formatDate(sk.createdAt)}</div>
+                <div>Updated {formatDate(sk.updatedAt)}</div>
+              </div>
+              <div className="flex gap-2">
+                <Button onClick={() => setShowHistory((v) => !v)} variant="ghost">
+                  {showHistory ? 'Hide history' : 'History'}
+                </Button>
+                <Button onClick={startEdit} variant="secondary">
+                  Edit
+                </Button>
+              </div>
             </div>
+            {showHistory && (
+              <SkillHistory
+                onRestored={(restored, warnings) =>
+                  setViewed({ ...sk, ...restored, scanWarnings: warnings })
+                }
+                skill={sk}
+              />
+            )}
           </div>
-          {showHistory && (
-            <SkillHistory
-              onRestored={(restored, warnings) =>
-                setViewed({ ...sk, ...restored, scanWarnings: warnings })
-              }
-              skill={sk}
-            />
-          )}
-        </div>
-      )}
-    </Modal>
+        )}
+      </Modal>
+    </>
   );
 }
 
@@ -356,10 +402,29 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
   // Set after a save the scanner flagged: the skill exists, the modal stays
   // open only to show the findings.
   const [savedWarnings, setSavedWarnings] = useState<string[] | null>(null);
+  const [discardOpen, setDiscardOpen] = useState(false);
+  const { data: existing } = useSkills();
+  const trimmedName = form.name.trim();
+  const nameTaken =
+    trimmedName !== '' &&
+    (existing ?? []).some((sk) => sk.name.trim().toLowerCase() === trimmedName.toLowerCase());
+  const dirty = form.name !== '' || form.description !== '' || form.promptText !== '';
+  useUnsavedChangesGuard(open && dirty && !savedWarnings);
 
   function close() {
     setSavedWarnings(null);
+    setDiscardOpen(false);
+    setForm({ description: '', name: '', promptText: '' });
+    setError(null);
     onClose();
+  }
+
+  function requestClose() {
+    if (dirty && !savedWarnings && !create.isPending) {
+      setDiscardOpen(true);
+      return;
+    }
+    close();
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -398,38 +463,53 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
   }
 
   return (
-    <Modal onClose={close} open={open} title="New skill">
-      <form className="space-y-4" onSubmit={handleSubmit}>
-        <Input
-          id="skill-new-name"
-          label="Name"
-          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-          required
-          value={form.name}
-        />
-        <Input
-          id="skill-new-description"
-          label="Description"
-          onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-          value={form.description}
-        />
-        <Textarea
-          id="skill-new-prompt-text"
-          label="Prompt text"
-          onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
-          required
-          rows={8}
-          value={form.promptText}
-        />
-        {error && <Alert variant="error">{error}</Alert>}
-        <ModalFooter
-          isPending={create.isPending}
-          onCancel={close}
-          pendingLabel="Creating…"
-          submitLabel="Create skill"
-        />
-      </form>
-    </Modal>
+    <>
+      <ConfirmModal
+        confirmLabel="Discard"
+        dangerous
+        message="This skill has not been created. Closing discards what you typed."
+        onClose={() => setDiscardOpen(false)}
+        onConfirm={close}
+        open={discardOpen}
+        title="Discard this skill?"
+      />
+      <Modal onClose={requestClose} open={open} title="New skill">
+        <form className="space-y-4" onSubmit={handleSubmit}>
+          <Input
+            error={nameTaken ? 'A skill with this name already exists.' : undefined}
+            id="skill-new-name"
+            label="Name"
+            onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            required
+            value={form.name}
+          />
+          <Input
+            hint="What it is for; shown in the list and in the agent's skill menu."
+            id="skill-new-description"
+            label="Description (optional)"
+            onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+            value={form.description}
+          />
+          <Textarea
+            hint={`Injected into the system prompt of every agent that uses this skill. State when to apply it and how to act, in plain instructions. ${form.promptText.length.toLocaleString()} characters.`}
+            id="skill-new-prompt-text"
+            label="Prompt text"
+            onChange={(e) => setForm((f) => ({ ...f, promptText: e.target.value }))}
+            required
+            rows={8}
+            value={form.promptText}
+          />
+          {error && <Alert variant="error">{error}</Alert>}
+          <ModalFooter
+            disabled={nameTaken}
+            isPending={create.isPending}
+            onCancel={requestClose}
+            pendingLabel="Creating…"
+            submitLabel="Create skill"
+          />
+        </form>
+      </Modal>
+    </>
   );
 }
 
@@ -564,6 +644,14 @@ function matchesFilter(skill: Skill, filter: SkillFilter): boolean {
 type Tab = 'skills' | 'external';
 
 export default function StudioSkillsPage() {
+  return (
+    <Suspense>
+      <StudioSkillsContent />
+    </Suspense>
+  );
+}
+
+function StudioSkillsContent() {
   const isAdmin = useHasRole('ADMIN');
   const [tab, setTab] = useState<Tab>('skills');
   const [newOpen, setNewOpen] = useState(false);
@@ -575,8 +663,14 @@ export default function StudioSkillsPage() {
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [toggleError, setToggleError] = useState<string | null>(null);
 
-  const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<SkillFilter>('all');
+  // Search and filter live in the address bar, so a filtered list can be shared and survives a reload.
+  const { params, update: updateUrl } = useUrlFilters();
+  const [query, setQuery] = useDebouncedUrlSearch(params.get('q') ?? '', (value) =>
+    updateUrl({ q: value || null })
+  );
+  const filter: SkillFilter =
+    SKILL_FILTERS.find((f) => f.value === params.get('filter'))?.value ?? 'all';
+  const setFilter = (next: SkillFilter) => updateUrl({ filter: next === 'all' ? null : next });
   const q = query.trim().toLowerCase();
   const visibleSkills = (skills ?? []).filter(
     (sk) =>
@@ -711,7 +805,7 @@ export default function StudioSkillsPage() {
                     <Button
                       onClick={() => {
                         setQuery('');
-                        setFilter('all');
+                        updateUrl({ filter: null, q: null });
                       }}
                       size="sm"
                     >
@@ -724,31 +818,17 @@ export default function StudioSkillsPage() {
                 />
               ) : (
                 <DataTable
-                  actions={(skill) => (
-                    <>
-                      <Button
-                        aria-label={`Open ${visibleText(skill.name)}`}
-                        onClick={() => setViewTarget(skill)}
-                        size="sm"
+                  actions={(skill) =>
+                    skill.isBuiltIn ? null : (
+                      <IconButton
+                        aria-label={`Delete ${visibleText(skill.name)}`}
+                        onClick={() => setDeleteTarget(skill)}
+                        title="Delete skill"
                       >
-                        Open
-                      </Button>
-                      {!skill.isBuiltIn && (
-                        <ActionMenu
-                          items={[
-                            {
-                              icon: 'trash',
-                              id: 'delete',
-                              label: 'Delete skill',
-                              onAction: () => setDeleteTarget(skill),
-                              tone: 'danger',
-                            },
-                          ]}
-                          label={`More actions for ${visibleText(skill.name)}`}
-                        />
-                      )}
-                    </>
-                  )}
+                        <Icon name="trash" size={14} />
+                      </IconButton>
+                    )
+                  }
                   columns={[
                     {
                       // The skill opens in a modal, not on a page of its own, so the title is a button.
@@ -856,7 +936,24 @@ export default function StudioSkillsPage() {
         </div>
       )}
 
-      {tab === 'skills' && <EffectivenessCard />}
+      {tab === 'skills' && (
+        <details className="group rounded-xl border border-ink-500/70 bg-ink-900/30">
+          <summary
+            className={cn(
+              'flex cursor-pointer list-none items-center gap-3 rounded-xl px-5 py-4 text-sm font-semibold text-paper-100 [&::-webkit-details-marker]:hidden',
+              FOCUS_RING
+            )}
+          >
+            <Icon
+              className="text-paper-500 transition-transform group-open:rotate-90"
+              name="chevronRight"
+              size={16}
+            />
+            Skill effectiveness
+          </summary>
+          <EffectivenessCard />
+        </details>
+      )}
 
       <SkillFormModal onClose={() => setNewOpen(false)} open={newOpen} />
       <ConfirmModal

@@ -5,7 +5,12 @@ import { Suspense } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withQuery } from '@/test/rtl-helpers';
 
-const state = vi.hoisted(() => ({ layout: 'A' as 'A' | 'B' | 'C' }));
+const state = vi.hoisted(() => ({
+  fullTraces: false,
+  isError: false,
+  layout: 'A' as 'A' | 'B' | 'C',
+  specReadable: true,
+}));
 const run = {
   agentRuntimes: undefined as Record<string, string> | undefined,
   contextSnapshot: {},
@@ -61,7 +66,12 @@ const idle = { isPending: false, isSuccess: false, mutate: vi.fn(), reset: vi.fn
 vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('@auto-swe/shared/workflow', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  parseWorkflowSpec: () => ({ edges: [], nodes: [] }),
+  parseWorkflowSpec: () => {
+    if (!state.specReadable) {
+      throw new Error('unreadable');
+    }
+    return { edges: [], nodes: [] };
+  },
 }));
 vi.mock('@/hooks/useRuns', () => ({
   useCancelWorkflowRun: () => idle,
@@ -69,9 +79,9 @@ vi.mock('@/hooks/useRuns', () => ({
   useRunDetail: () => ({
     data: run,
     error: null,
-    fullTraces: false,
+    fullTraces: state.fullTraces,
     fullTracesFailed: false,
-    isError: false,
+    isError: state.isError,
     isLoading: false,
     isPlaceholderData: false,
     toggleFullTraces: vi.fn(),
@@ -187,10 +197,22 @@ describe('run page summary band', () => {
     const rerun = screen
       .getAllByRole('button', { name: /Re-run/ })
       .find((button) => button.hasAttribute('aria-describedby')) as HTMLElement;
-    expect(rerun.getAttribute('title')).toMatch(/new run of the same request/);
     expect(rerun.getAttribute('aria-describedby')).toBe('re-run-hint');
     expect(document.getElementById('re-run-hint')?.textContent).toMatch(/This run is kept/);
-    expect(document.getElementById('cancel-run-hint')?.textContent).toMatch(/aborted/);
+    // A finished run has no Cancel button, so its hint is not on the page either.
+    expect(document.getElementById('cancel-run-hint')).toBeNull();
+  });
+
+  it('describes Cancel to assistive tech while the run is going', async () => {
+    state.layout = 'A';
+    run.status = 'RUNNING';
+    try {
+      await renderPage();
+      expect(document.getElementById('cancel-run-hint')?.textContent).toMatch(/aborted/);
+      expect(screen.getByRole('button', { name: 'Cancel run' }).getAttribute('title')).toBeNull();
+    } finally {
+      run.status = 'FAILED';
+    }
   });
 
   it('explains gates once on the page and keeps the lifecycle explainer in the Help panel', async () => {
@@ -262,5 +284,65 @@ describe('run page verdict and reading guide', () => {
       expect(guide?.textContent).toContain(name);
     }
     expect(guide).not.toBe(screen.getByText('How auto-swe works').closest('section'));
+  });
+});
+
+describe('run page live state, load errors and unreadable specs', () => {
+  afterEach(() => {
+    run.status = 'FAILED';
+    state.fullTraces = false;
+    state.isError = false;
+    state.specReadable = true;
+  });
+
+  it('shows a Live chip while the run is going and none once it has finished', async () => {
+    state.layout = 'A';
+    run.status = 'RUNNING';
+    await renderPage();
+    expect(screen.getByText('Live')).toBeTruthy();
+    cleanup();
+    run.status = 'FAILED';
+    await renderPage();
+    expect(screen.queryByText('Live')).toBeNull();
+  });
+
+  it('says the page stopped refreshing after full payloads load on a running run', async () => {
+    state.layout = 'A';
+    run.status = 'RUNNING';
+    state.fullTraces = true;
+    await renderPage();
+    expect(screen.getByText('Paused')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Resume live updates' })).toBeTruthy();
+  });
+
+  it('offers Try again when the run cannot be loaded', async () => {
+    state.isError = true;
+    await renderPage();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+  });
+
+  it('still shows the run as a transcript when its spec cannot be read', async () => {
+    state.layout = 'A';
+    state.specReadable = false;
+    await renderPage();
+    expect(screen.getByText('The workflow graph cannot be drawn')).toBeTruthy();
+    expect(screen.queryByText('diagram')).toBeNull();
+    expect(screen.getAllByText(/Tests would not pass/).length).toBeGreaterThan(0);
+  });
+
+  it('lets the page scroll and keeps the layout a minimum height so it cannot be squeezed away', async () => {
+    state.layout = 'A';
+    const { container } = render(
+      withQuery(
+        <Suspense>
+          <RunDetailPage params={params} />
+        </Suspense>
+      )
+    );
+    await act(async () => {});
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.className).toContain('overflow-y-auto');
+    expect(root.className).not.toContain('max-lg:overflow-y-auto');
+    expect(container.querySelector('[class*="lg:min-h-[480px]"]')).not.toBeNull();
   });
 });

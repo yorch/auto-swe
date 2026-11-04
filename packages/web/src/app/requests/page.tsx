@@ -21,6 +21,7 @@ import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useEpics } from '@/hooks/useEpics';
 import { type RequestState, useRequests } from '@/hooks/useRequests';
 import { parseOffset } from '@/hooks/useUrlFilters';
+import { WORK_SCOPE_OPTIONS } from '@/lib/workScope';
 
 const PAGE_SIZE = 30;
 const STATES: { label: string; value: RequestState }[] = [
@@ -46,7 +47,9 @@ function RequestsWorkspace() {
   const offset = parseOffset(params.get('offset'));
   const type = params.get('type') === 'epics' ? 'epics' : 'all';
   const showEpics = type === 'epics';
-  const filtered = !showEpics && (!!search || state !== 'all');
+  // Anything that moves the view off its default: the scope and the type count, so the reader
+  // can see that a view is narrowed and clear it in one step.
+  const filtered = (!showEpics && (!!search || state !== 'all')) || scope === 'TEAM' || showEpics;
   const query = useRequests(
     { limit: PAGE_SIZE, offset, scope, search, state },
     { enabled: !showEpics }
@@ -80,6 +83,8 @@ function RequestsWorkspace() {
   const [searchDraft, setSearchDraft] = useDebouncedUrlSearch(search, (value) =>
     update({ offset: null, search: value })
   );
+  const clearFilters = () =>
+    update({ offset: null, scope: null, search: null, state: null, type: null });
   return (
     <div className="space-y-6">
       <PageHeader
@@ -109,10 +114,7 @@ function RequestsWorkspace() {
             <SegmentedControl
               ariaLabel="Request scope"
               onChange={(value) => update({ offset: null, scope: value })}
-              options={[
-                { label: 'My requests', value: 'MINE' },
-                { label: 'Team requests', value: 'TEAM' },
-              ]}
+              options={WORK_SCOPE_OPTIONS}
               value={scope}
             />
           }
@@ -147,7 +149,7 @@ function RequestsWorkspace() {
             <Button
               onClick={() => {
                 setSearchDraft('');
-                update({ offset: null, search: null, state: null });
+                clearFilters();
               }}
               size="sm"
               variant="ghost"
@@ -195,7 +197,7 @@ function RequestsWorkspace() {
                     <Button
                       onClick={() => {
                         setSearchDraft('');
-                        update({ offset: null, search: null, state: null });
+                        clearFilters();
                       }}
                       size="sm"
                     >
@@ -210,7 +212,7 @@ function RequestsWorkspace() {
                 bordered
                 hint={
                   filtered
-                    ? 'Try another search or status.'
+                    ? 'Try another search or status, or switch between your work and your team’s.'
                     : 'Run a workflow or give an agent a task. Its progress and results collect here.'
                 }
                 icon={filtered ? 'search' : 'inbox'}

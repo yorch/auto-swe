@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { use, useState } from 'react';
+import { Suspense, use } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
@@ -22,6 +22,7 @@ import {
 } from '@/components/workflow/templateNav';
 import { VersionTags } from '@/components/workflow/VersionTags';
 import { useWorkflowTemplate, useWorkflowTemplateAnalytics } from '@/hooks/useTemplates';
+import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { humanizeKey, outcomeTypeLabel } from '@/lib/govLabels';
 import { nodeTitlesOf } from '@/lib/nodeTitles';
 import { validateRouteParam } from '@/lib/routeParams';
@@ -40,10 +41,27 @@ const MIN_RUNS_OPTIONS = [1, 5, 10, 20] as const;
 const MIN_COMPARISON_RUNS = 30;
 
 export default function TemplateAnalyticsPage({ params }: PageProps) {
+  return (
+    <Suspense>
+      <TemplateAnalyticsContent params={params} />
+    </Suspense>
+  );
+}
+
+function pickOption(raw: string | null, options: readonly number[], fallback: number): number {
+  const n = Number(raw);
+  return options.includes(n) ? n : fallback;
+}
+
+function TemplateAnalyticsContent({ params }: PageProps) {
   const { id: rawId } = use(params);
   const id = validateRouteParam(rawId);
-  const [windowDays, setWindowDays] = useState<number>(30);
-  const [minRuns, setMinRuns] = useState<number>(5);
+  // Window and step floor live in the URL, so a link or a reload keeps the same view.
+  const { params: query, update } = useUrlFilters();
+  const windowDays = pickOption(query.get('window'), WINDOWS, 30);
+  const minRuns = pickOption(query.get('minRuns'), MIN_RUNS_OPTIONS, 5);
+  const setWindowDays = (n: number) => update({ window: n === 30 ? null : String(n) });
+  const setMinRuns = (n: number) => update({ minRuns: n === 5 ? null : String(n) });
   const { data: template } = useWorkflowTemplate(id ?? '');
   const {
     data: stats,
@@ -283,6 +301,50 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
               </Card>
             )}
 
+            {stats.perVersionCounts.length > 1 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Per-version results</CardTitle>
+                </CardHeader>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <THead>
+                      <Th>Version</Th>
+                      <Th align="right">Success rate (95% CI)</Th>
+                      <Th align="right">Avg cost / run</Th>
+                      <Th align="right">p50 duration (approximate)</Th>
+                      <Th align="right">PRs resolved</Th>
+                      <Th align="right">Merge rate (95% CI)</Th>
+                    </THead>
+                    <tbody>
+                      {stats.perVersion.map((v) => (
+                        <TRow key={v.version}>
+                          <Td>v{v.version}</Td>
+                          <Td align="right">
+                            {formatPercent(v.successRate)}
+                            {v.successRateCi95
+                              ? ` (${formatPercent(v.successRateCi95[0])}–${formatPercent(v.successRateCi95[1])})`
+                              : ' (—)'}
+                          </Td>
+                          <Td align="right">{formatCost(v.avgCostPerRun)}</Td>
+                          <Td align="right">{formatDuration(v.p50DurationMs)}</Td>
+                          <Td align="right">
+                            {v.prMerged}/{v.prOpened - v.prOpen} resolved · {v.prOpen} open
+                          </Td>
+                          <Td align="right">
+                            {formatPercent(v.mergeRate)}
+                            {v.mergeRateCi95
+                              ? ` (${formatPercent(v.mergeRateCi95[0])}–${formatPercent(v.mergeRateCi95[1])})`
+                              : ' (—)'}
+                          </Td>
+                        </TRow>
+                      ))}
+                    </tbody>
+                  </Table>
+                </div>
+              </Card>
+            )}
+
             {(stats.perVersionCounts.length > 1 || stats.perOutcome.length > 0) && (
               <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
                 {stats.perVersionCounts.length > 1 && (
@@ -322,39 +384,6 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                         </li>
                       ))}
                     </ul>
-                    <div className="mt-5 overflow-x-auto border-t border-ink-600 pt-4">
-                      <Table>
-                        <THead>
-                          <Th>Version</Th>
-                          <Th align="right">Success rate (95% CI)</Th>
-                          <Th align="right">Avg cost / run</Th>
-                          <Th align="right">p50 duration (approximate)</Th>
-                          <Th align="right">Merge rate (resolved PRs, 95% CI)</Th>
-                        </THead>
-                        <tbody>
-                          {stats.perVersion.map((v) => (
-                            <TRow key={v.version}>
-                              <Td>v{v.version}</Td>
-                              <Td align="right">
-                                {formatPercent(v.successRate)}
-                                {v.successRateCi95
-                                  ? ` (${formatPercent(v.successRateCi95[0])}–${formatPercent(v.successRateCi95[1])})`
-                                  : ' (—)'}
-                              </Td>
-                              <Td align="right">{formatCost(v.avgCostPerRun)}</Td>
-                              <Td align="right">{formatDuration(v.p50DurationMs)}</Td>
-                              <Td align="right">
-                                {v.prMerged}/{v.prOpened - v.prOpen} resolved · {v.prOpen} open ·{' '}
-                                {formatPercent(v.mergeRate)}
-                                {v.mergeRateCi95
-                                  ? ` (${formatPercent(v.mergeRateCi95[0])}–${formatPercent(v.mergeRateCi95[1])})`
-                                  : ' (—)'}
-                              </Td>
-                            </TRow>
-                          ))}
-                        </tbody>
-                      </Table>
-                    </div>
                   </Card>
                 )}
 
@@ -405,7 +434,8 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
               </CardHeader>
               <p className="mb-4 max-w-2xl text-sm text-paper-400">
                 How often each step failed across its executions in this window. Skipped and pending
-                executions are left out. Select a failing step to see its runs.
+                executions are left out. Select a failing step to see its runs. A rate above 25% is
+                shown in red, above 5% in amber.
               </p>
               {steps.length === 0 ? (
                 <EmptyState
@@ -476,7 +506,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                               ? 'text-danger-400'
                               : row.failureRate > 0.05
                                 ? 'text-warning-400'
-                                : 'text-paper-500'
+                                : 'text-paper-400'
                           )}
                         >
                           {formatPercent(row.failureRate)}
