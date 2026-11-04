@@ -15,6 +15,7 @@ import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useSlackChannel } from '@/hooks/useSlackChannels';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
+import { ApiError } from '@/lib/api';
 import { validateRouteParam } from '@/lib/routeParams';
 
 type Tab = 'settings' | 'memory' | 'open-items' | 'activity';
@@ -45,67 +46,79 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
   return (
     <div className="space-y-6">
       <BackLink href="/admin/slack-channels" label="Slack channels" />
-      <QueryBoundary
-        error={error}
-        isError={isError}
-        isFetching={isFetching}
-        isLoading={isLoading}
-        label="Slack channel"
-        onRetry={() => void refetch()}
-        shape="detail"
-      >
-        {!channel ? (
-          <EmptyState
-            action={<ButtonLink href="/admin/slack-channels">Back to Slack channels</ButtonLink>}
-            bordered
-            hint="It may have been removed, or the link is wrong."
-            icon="chat"
-            title="Slack channel not found"
-          />
-        ) : (
-          <>
-            <PageHeader
-              actions={
-                <Badge dot tone={channel.isActive ? 'success' : 'muted'} variant="outline">
-                  {channel.isActive ? 'Active' : 'Inactive'}
-                </Badge>
-              }
-              className="mb-4"
-              help={
-                <p>
-                  Each channel belongs to a team and can set its own agent, schedules and monthly
-                  spend cap.
-                </p>
-              }
-              subtitle={channel.workspace.name || undefined}
-              title={channel.name ? `#${channel.name}` : 'Unnamed channel'}
+      {isError && error instanceof ApiError && error.status === 403 ? (
+        <EmptyState
+          action={<ButtonLink href="/admin/slack-channels">Back to Slack channels</ButtonLink>}
+          bordered
+          hint="A private channel is shown only to the people in it, once your Slack account is linked in Settings."
+          icon="chat"
+          title="You do not have access to this channel"
+        />
+      ) : (
+        <QueryBoundary
+          error={error}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="Slack channel"
+          onRetry={() => void refetch()}
+          shape="detail"
+        >
+          {!channel ? (
+            <EmptyState
+              action={<ButtonLink href="/admin/slack-channels">Back to Slack channels</ButtonLink>}
+              bordered
+              hint="It may have been removed, or the link is wrong."
+              icon="chat"
+              title="Slack channel not found"
             />
-            <TabBar
-              active={tab}
-              ariaLabel="Channel sections"
-              idPrefix="slack-channel"
-              onChange={setTab}
-              tabs={tabs}
-            />
-            <div className="pt-2">
-              {/* Stays mounted while another tab is open, so switching tabs never discards
+          ) : (
+            <>
+              <PageHeader
+                className="mb-4"
+                help={
+                  <p>
+                    Each channel belongs to a team and can set its own agent, schedules and monthly
+                    spend cap.
+                  </p>
+                }
+                subtitle={
+                  <span className="flex flex-wrap items-center gap-2">
+                    <Badge dot tone={channel.isActive ? 'success' : 'muted'} variant="outline">
+                      {channel.isActive ? 'Active' : 'Inactive'}
+                    </Badge>
+                    {channel.workspace.name && <span>{channel.workspace.name}</span>}
+                  </span>
+                }
+                title={channel.name ? `#${channel.name}` : 'Unnamed channel'}
+              />
+              <TabBar
+                active={tab}
+                ariaLabel="Channel sections"
+                idPrefix="slack-channel"
+                onChange={setTab}
+                tabs={tabs}
+              />
+              <div className="pt-2">
+                {/* Stays mounted while another tab is open, so switching tabs never discards
                   edits that have not been saved yet. */}
-              {isAdmin && (
-                <div hidden={tab !== 'settings'} {...tabPanelProps('slack-channel', 'settings')}>
-                  <ChannelSettingsTab channel={channel} key={channel.id} />
-                </div>
-              )}
-              {tab !== 'settings' && (
-                <div {...tabPanelProps('slack-channel', tab)}>
-                  {tab === 'memory' && <ChannelMemoryTab channel={channel} />}
-                  {tab === 'open-items' && <ChannelOpenItemsTab channel={channel} />}
-                  {tab === 'activity' && <ChannelActivityTab channel={channel} />}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-      </QueryBoundary>
+                {isAdmin && (
+                  <div hidden={tab !== 'settings'} {...tabPanelProps('slack-channel', 'settings')}>
+                    <ChannelSettingsTab channel={channel} key={channel.id} />
+                  </div>
+                )}
+                {tab !== 'settings' && (
+                  <div {...tabPanelProps('slack-channel', tab)}>
+                    {tab === 'memory' && <ChannelMemoryTab channel={channel} />}
+                    {tab === 'open-items' && <ChannelOpenItemsTab channel={channel} />}
+                    {tab === 'activity' && <ChannelActivityTab channel={channel} />}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </QueryBoundary>
+      )}
     </div>
   );
 }

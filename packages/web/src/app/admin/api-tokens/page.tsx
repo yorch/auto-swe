@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActionMenu } from '@/components/ui/ActionMenu';
-import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { CopyButton } from '@/components/ui/CopyButton';
 import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonRows } from '@/components/ui/LoadingState';
@@ -18,7 +18,6 @@ import { Select } from '@/components/ui/Select';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useAdminRevokeToken, useAdminTokens } from '@/hooks/useAdmin';
 import { useDataTableSort } from '@/hooks/useDataTableSort';
-import { errMsg } from '@/lib/errors';
 import { navLabel } from '@/lib/navigation';
 import { formatDate } from '@/lib/utils';
 
@@ -35,6 +34,10 @@ function StatusChip({ status }: { status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }) {
 }
 
 const PAGE_SIZE = 25;
+/** A token expiring within this window is flagged. */
+const EXPIRING_SOON_MS = 7 * 24 * 60 * 60 * 1000;
+/** How often statuses are re-derived, so a token that expires while the page is open flips. */
+const CLOCK_TICK_MS = 60_000;
 
 type TokenStatus = 'ACTIVE' | 'EXPIRED' | 'REVOKED';
 
@@ -48,6 +51,8 @@ type Token = NonNullable<ReturnType<typeof useAdminTokens>['data']>[number];
 
 const TOKEN_SORT_KEYS = {
   created: (t: Token) => new Date(t.createdAt).getTime(),
+  // A token that never expires sorts last.
+  expires: (t: Token) => (t.expiresAt ? new Date(t.expiresAt).getTime() : null),
   // A token that was never used sorts last.
   lastUsed: (t: Token) => (t.lastUsedAt ? new Date(t.lastUsedAt).getTime() : null),
   name: (t: Token) => t.name.toLowerCase(),
@@ -77,7 +82,11 @@ export default function GovernAccessTokensPage() {
     }
   };
 
-  const now = Date.now();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
+    return () => clearInterval(id);
+  }, []);
   const statusOf = (t: NonNullable<typeof tokens>[number]): TokenStatus =>
     t.revokedAt
       ? 'REVOKED'
@@ -145,10 +154,6 @@ export default function GovernAccessTokensPage() {
   return (
     <div className="space-y-6">
       {header}
-
-      {revokeToken.isError && (
-        <Alert>Revoke failed: {errMsg(revokeToken.error, 'unknown error')}</Alert>
-      )}
 
       <Card className="fade-up stagger-1 p-4 sm:p-6">
         <Toolbar
@@ -235,7 +240,12 @@ export default function GovernAccessTokensPage() {
                 header: 'Token',
                 id: 'name',
                 primary: true,
-                secondary: (t) => <span className="font-mono">{t.prefix}…</span>,
+                secondary: (t) => (
+                  <span className="flex items-center gap-1.5">
+                    <span className="font-mono">{t.prefix}…</span>
+                    <CopyButton value={t.prefix} />
+                  </span>
+                ),
                 sortable: true,
               },
               {
@@ -245,9 +255,13 @@ export default function GovernAccessTokensPage() {
                   ) : t.servicePrincipal ? (
                     <div className="text-paper-300">
                       <div>{t.servicePrincipal.name}</div>
-                      <div className="mt-0.5 text-xs text-paper-500">
-                        Service principal · {t.servicePrincipal.team.name} ·{' '}
-                        <span className="font-mono">{t.scopes.join(' ')}</span>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-paper-500">
+                        <span>Service principal · {t.servicePrincipal.team.name}</span>
+                        {t.scopes.map((scope) => (
+                          <Badge key={scope} tone="neutral" variant="outline">
+                            {scope}
+                          </Badge>
+                        ))}
                       </div>
                     </div>
                   ) : (
@@ -283,17 +297,21 @@ export default function GovernAccessTokensPage() {
               {
                 cell: (t) =>
                   t.expiresAt ? (
-                    <span
-                      className="whitespace-nowrap text-paper-400"
-                      title={formatDate(t.expiresAt)}
-                    >
-                      {formatDate(t.expiresAt)}
+                    <span className="flex flex-wrap items-center gap-2 text-paper-400">
+                      <span className="whitespace-nowrap">{formatDate(t.expiresAt)}</span>
+                      {statusOf(t) === 'ACTIVE' &&
+                        new Date(t.expiresAt).getTime() - now < EXPIRING_SOON_MS && (
+                          <Badge tone="warning" variant="outline">
+                            Expires soon
+                          </Badge>
+                        )}
                     </span>
                   ) : (
                     <span className="text-paper-500">Never</span>
                   ),
                 header: 'Expires',
                 id: 'expires',
+                sortable: true,
               },
             ]}
             empty={

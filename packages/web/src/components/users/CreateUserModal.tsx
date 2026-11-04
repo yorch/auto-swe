@@ -87,8 +87,10 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
             value={role}
           />
           <Input
+            autoComplete="new-password"
             hint="At least 8 characters. Leave blank to generate one, shown once."
             label="Password (optional)"
+            minLength={8}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="••••••••"
             type="password"
@@ -121,7 +123,7 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
         {revealed?.temporaryPassword && (
           <div className="space-y-4">
             <div className="flex items-center gap-3 rounded-lg border border-warning-400/40 bg-ink-950/70 p-4">
-              <code className="min-w-0 flex-1 break-all font-mono text-sm text-paper-50">
+              <code className="min-w-0 flex-1 select-all break-all font-mono text-sm text-paper-50">
                 {revealed.temporaryPassword}
               </code>
               <CopyButton value={revealed.temporaryPassword} />

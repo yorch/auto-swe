@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { DataTable } from '@/components/ui/DataTable';
+import { DocLink } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
@@ -24,6 +25,8 @@ import {
 } from '@/hooks/useGithubInstallations';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
+import { navLabel } from '@/lib/navigation';
+import { plural } from '@/lib/utils';
 
 function CreateInstallationModal({ onClose, open }: { onClose: () => void; open: boolean }) {
   const [installationId, setInstallationId] = useState('');
@@ -32,9 +35,17 @@ function CreateInstallationModal({ onClose, open }: { onClose: () => void; open:
   const [error, setError] = useState<string | null>(null);
   const create = useCreateGithubInstallation();
 
+  const idProblem =
+    installationId.trim() !== '' && !/^\d+$/.test(installationId.trim())
+      ? 'The installation ID is a number, like 12345678.'
+      : undefined;
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (idProblem) {
+      return;
+    }
     try {
       await create.mutateAsync({
         accountLogin: accountLogin.trim(),
@@ -54,15 +65,17 @@ function CreateInstallationModal({ onClose, open }: { onClose: () => void; open:
     <Modal onClose={onClose} open={open} title="Add GitHub installation">
       <form className="space-y-4" onSubmit={submit}>
         <Input
-          hint="From the installation's settings URL on GitHub: github.com/organizations/<org>/settings/installations/<id>"
+          error={idProblem}
+          hint="The number at the end of the installation's settings URL on GitHub."
           id="gh-install-new-installation-id"
+          inputMode="numeric"
           label="Installation ID"
           onChange={(e) => setInstallationId(e.target.value)}
           placeholder="12345678"
           value={installationId}
         />
         <Input
-          hint="The organization or user the app is installed on. Shown here only — GitHub remains authoritative."
+          hint="The organization or user the app is installed on. Shown here only."
           id="gh-install-new-account"
           label="Account"
           onChange={(e) => setAccountLogin(e.target.value)}
@@ -70,7 +83,7 @@ function CreateInstallationModal({ onClose, open }: { onClose: () => void; open:
           value={accountLogin}
         />
         <Input
-          hint="Leave empty for the instance's own GitHub host. For another host, enter it as it appears under Per-host credentials — the same installation id can exist on two hosts. It cannot be changed later."
+          hint="Leave empty for the instance's own host. Cannot be changed later."
           id="gh-install-new-host"
           label="Host"
           onChange={(e) => setHost(e.target.value)}
@@ -79,7 +92,7 @@ function CreateInstallationModal({ onClose, open }: { onClose: () => void; open:
         />
         {error && <Alert>{error}</Alert>}
         <ModalFooter
-          disabled={!installationId.trim() || !accountLogin.trim()}
+          disabled={!installationId.trim() || !accountLogin.trim() || idProblem !== undefined}
           isPending={create.isPending}
           onCancel={onClose}
           pendingLabel="Adding…"
@@ -124,7 +137,7 @@ function EditInstallationModal({
   }
 
   return (
-    <Modal onClose={onClose} open title={`Edit installation ${installation.installationId}`}>
+    <Modal onClose={onClose} open title={`Edit ${installation.accountLogin}`}>
       <form className="space-y-4" onSubmit={submit}>
         <Input
           id="gh-install-edit-account"
@@ -138,7 +151,7 @@ function EditInstallationModal({
           label="Status"
           onChange={(v) => setIsActive(v)}
           options={[
-            { label: 'In use', value: 'true' },
+            { label: 'Active', value: 'true' },
             { label: 'Retired', value: 'false' },
           ]}
           value={isActive}
@@ -188,7 +201,7 @@ export default function StudioGithubInstallationsPage() {
         }
         learnMore={{ ...HELP_LINKS.githubAppSetup, label: 'GitHub App setup guide' }}
         subtitle="Where the GitHub App is installed."
-        title="GitHub installations"
+        title={navLabel('/admin/github-installations')}
       />
 
       <Card className="p-4 sm:p-6">
@@ -208,7 +221,13 @@ export default function StudioGithubInstallationsPage() {
                   Add installation
                 </Button>
               }
-              hint="A single-organization deployment does not need one. Add these only to reach repositories in more than one GitHub organization."
+              hint={
+                <>
+                  A single-organization deployment does not need one. Add these only to reach
+                  repositories in more than one GitHub organization.{' '}
+                  <DocLink label="GitHub App setup guide" slug={HELP_LINKS.githubAppSetup.slug} />
+                </>
+              }
               icon="github"
               title="No installations recorded"
             />
@@ -228,10 +247,7 @@ export default function StudioGithubInstallationsPage() {
                             disabled: repos > 0,
                             icon: 'trash',
                             id: 'delete',
-                            label:
-                              repos > 0
-                                ? `In use by ${repos} ${repos === 1 ? 'repository' : 'repositories'}`
-                                : 'Delete',
+                            label: 'Delete',
                             onAction: () => setDeleteTarget(i),
                             tone: 'danger',
                           },
@@ -248,6 +264,13 @@ export default function StudioGithubInstallationsPage() {
                     header: 'Account',
                     id: 'account',
                     primary: true,
+                    secondary: (i) =>
+                      (i._count?.connections ?? 0) > 0 ? (
+                        <span>
+                          Cannot be deleted while {plural(i._count?.connections ?? 0, 'repository')}{' '}
+                          use it
+                        </span>
+                      ) : null,
                   },
                   {
                     cell: (i) =>
@@ -279,7 +302,7 @@ export default function StudioGithubInstallationsPage() {
                   {
                     cell: (i) => (
                       <Badge dot tone={i.isActive ? 'success' : 'muted'}>
-                        {i.isActive ? 'In use' : 'Retired'}
+                        {i.isActive ? 'Active' : 'Retired'}
                       </Badge>
                     ),
                     header: 'Status',

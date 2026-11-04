@@ -13,6 +13,7 @@ import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
@@ -24,6 +25,9 @@ import {
   useCreateConfigGrant,
   useRevokeConfigGrant,
 } from '@/hooks/useConfigSettings';
+import { useDataTableSort } from '@/hooks/useDataTableSort';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { usePagedRows } from '@/hooks/usePagedRows';
 import { useTeams } from '@/hooks/useTeams';
 import { useEligibleUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
@@ -34,6 +38,17 @@ import { cn, FOCUS_RING, plural } from '@/lib/utils';
 
 type GrantScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
 type GrantRole = 'ADMIN' | 'LEAD' | 'ENGINEER';
+
+const SORT_ACCESSORS = {
+  created: (g: ConfigGrant) => g.createdAt,
+  grantedTo: (g: ConfigGrant) => g.user?.email ?? g.role ?? '',
+  pattern: (g: ConfigGrant) => g.keyPattern,
+};
+
+/** A pattern that covers every setting, or a whole role on the whole platform, is a broad grant. */
+function isBroadGrant(pattern: string, scope: GrantScope, granteeType: 'role' | 'user') {
+  return pattern.trim() === '*' || (scope === 'GLOBAL' && granteeType === 'role');
+}
 
 export default function GovernConfigGrantsPage() {
   const {
@@ -57,8 +72,11 @@ export default function GovernConfigGrantsPage() {
   const [orgId, setOrgId] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
+  const [riskOpen, setRiskOpen] = useState(false);
 
-  const preview = useConfigGrantPreview(pattern);
+  // The preview is a network call per distinct pattern; wait for typing to pause.
+  const debouncedPattern = useDebouncedValue(pattern);
+  const preview = useConfigGrantPreview(debouncedPattern);
   const eligibleUsers = useEligibleUsers([]);
   const { data: teams } = useTeams();
   const { data: orgs } = useOrganizationDirectory();
@@ -68,23 +86,26 @@ export default function GovernConfigGrantsPage() {
     []
   );
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setFormError(null);
-    setFormSuccess(null);
+  const allGrants = grants ?? [];
+  const { onSortChange, sort, sortRows } = useDataTableSort(SORT_ACCESSORS);
+  const sorted = sortRows(allGrants);
+  const pager = usePagedRows(sorted);
+
+  const validate = (): string | null => {
     // Comboboxes cannot be natively `required`, so check the picks here.
     if (granteeType === 'user' && !userId) {
-      setFormError('Pick the user this grant is for.');
-      return;
+      return 'Pick the user this grant is for.';
     }
     if (scope === 'TEAM' && !teamId) {
-      setFormError('Pick the team this grant is limited to.');
-      return;
+      return 'Pick the team this grant is limited to.';
     }
     if (scope === 'ORGANIZATION' && !orgId) {
-      setFormError('Pick the organization this grant is limited to.');
-      return;
+      return 'Pick the organization this grant is limited to.';
     }
+    return null;
+  };
+
+  const submitGrant = async () => {
     const body: Parameters<typeof createGrant.mutateAsync>[0] = {
       keyPattern: pattern,
       scope,
@@ -92,6 +113,7 @@ export default function GovernConfigGrantsPage() {
       ...(scope === 'TEAM' ? { teamId } : {}),
       ...(scope === 'ORGANIZATION' ? { orgId } : {}),
     };
+    setFormError(null);
     try {
       await createGrant.mutateAsync(body);
       setFormSuccess(`Grant created for ${pattern}`);
@@ -101,8 +123,50 @@ export default function GovernConfigGrantsPage() {
       setOrgId('');
     } catch (err) {
       setFormError(errMsg(err, 'grant creation failed'));
+      throw err;
     }
   };
+
+  const handleCreate = (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError(null);
+    setFormSuccess(null);
+    const problem = validate();
+    if (problem) {
+      setFormError(problem);
+      return;
+    }
+    if (isBroadGrant(pattern, scope, granteeType)) {
+      setRiskOpen(true);
+      return;
+    }
+    void submitGrant().catch(() => undefined);
+  };
+
+  const granteeLabel =
+    granteeType === 'role'
+      ? `${platformRoleLabel(role)} role`
+      : (eligibleUsers.find((u) => u.id === userId)?.email ?? 'the selected user');
+  const scopeLabel =
+    scope === 'GLOBAL'
+      ? 'across the whole platform'
+      : scope === 'TEAM'
+        ? `for ${(teams ?? []).find((t) => t.id === teamId)?.name ?? 'the selected team'}`
+        : `for ${(orgs ?? []).find((o) => o.id === orgId)?.name ?? 'the selected organization'}`;
+  const duplicate = allGrants.some(
+    (g) =>
+      g.keyPattern === pattern.trim() &&
+      g.scope === scope &&
+      (granteeType === 'role' ? g.role === role : g.user?.email === granteeLabel) &&
+      (scope === 'TEAM'
+        ? g.team?.name === (teams ?? []).find((t) => t.id === teamId)?.name
+        : true) &&
+      (scope === 'ORGANIZATION'
+        ? g.organization?.name === (orgs ?? []).find((o) => o.id === orgId)?.name
+        : true)
+  );
+  const matchingKeys =
+    preview.data && preview.data.keyPattern === pattern ? preview.data.keys.length : null;
 
   // Awaited so ConfirmModal keeps the dialog open and shows a failed revoke.
   const confirmRevoke = async () => {
@@ -110,8 +174,6 @@ export default function GovernConfigGrantsPage() {
       await revokeGrant.mutateAsync(revokeTarget.id);
     }
   };
-
-  const allGrants = grants ?? [];
 
   return (
     <div className="space-y-6">
@@ -135,12 +197,6 @@ export default function GovernConfigGrantsPage() {
           Choose which settings, who may change them, and where. The preview shows exactly which
           keys the pattern covers.
         </p>
-        <p className="mb-5 text-sm text-paper-400">
-          A key pattern is an exact setting key, a group prefix such as{' '}
-          <span className="font-mono text-paper-200">channel.*</span>, or{' '}
-          <span className="font-mono text-paper-200">*</span> for every setting. It is not a glob:
-          no other wildcards are supported.
-        </p>
         {formError && <Alert className="mb-4">{formError}</Alert>}
         {formSuccess && (
           <Alert className="mb-4" variant="success">
@@ -152,9 +208,12 @@ export default function GovernConfigGrantsPage() {
             <div className="space-y-2">
               <Input
                 className="font-mono"
-                hint="* for everything, channel.* for a group, or an exact setting key"
+                hint="An exact setting key, a group prefix such as channel.*, or * for every setting. Other wildcards are not supported."
                 label="Key pattern"
-                onChange={(e) => setPattern(e.target.value)}
+                onChange={(e) => {
+                  setPattern(e.target.value);
+                  setFormSuccess(null);
+                }}
                 placeholder="e.g. channel.*"
                 required
                 value={pattern}
@@ -163,7 +222,7 @@ export default function GovernConfigGrantsPage() {
                 <span className="text-xs text-paper-500">Examples:</span>
                 {examplePatterns.map((p) => (
                   <button
-                    aria-pressed={pattern === p}
+                    aria-label={`Use pattern ${p}`}
                     className={cn(
                       'rounded-md border px-1.5 py-0.5 font-mono text-xs transition-colors',
                       pattern === p
@@ -173,7 +232,6 @@ export default function GovernConfigGrantsPage() {
                     )}
                     key={p}
                     onClick={() => setPattern(p)}
-                    title="Fill the key pattern"
                     type="button"
                   >
                     {p}
@@ -248,44 +306,59 @@ export default function GovernConfigGrantsPage() {
             )}
           </div>
 
-          {preview.data &&
-            !preview.isError &&
-            preview.data.keyPattern === pattern &&
-            pattern.length > 0 && (
-              <div className="rounded-lg border border-ink-500 bg-ink-900/40 p-4">
-                <p className="mb-2 flex flex-wrap items-center gap-2 text-sm text-paper-200">
-                  <span className="font-medium">Effective permission</span>
-                  <Badge tone="neutral" variant="outline">
-                    {plural(preview.data.keys.length, 'matching key')}
-                  </Badge>
-                  {preview.data.requiredRole && (
-                    <span className="text-xs text-paper-400">
-                      Highest role floor:{' '}
-                      <span className="text-paper-100">
-                        {platformRoleLabel(preview.data.requiredRole)}
-                      </span>
-                    </span>
-                  )}
-                </p>
-                {preview.data.keys.length === 0 && (
-                  <Alert variant="warning">Pattern does not match any known setting.</Alert>
-                )}
-                {preview.data.keys.length > 0 && (
-                  <ul className="max-h-48 divide-y divide-ink-600 overflow-y-auto text-xs">
-                    {preview.data.settings.map((s) => (
-                      <li className="flex justify-between gap-3 py-1.5" key={s.key}>
-                        <span className="truncate font-mono text-paper-200">{s.key}</span>
-                        <span className="shrink-0 text-paper-500">
-                          {s.group} · {platformRoleLabel(s.requiredRole)}
+          <div aria-live="polite">
+            {preview.data &&
+              !preview.isError &&
+              preview.data.keyPattern === pattern &&
+              pattern.length > 0 && (
+                <div className="rounded-lg border border-ink-500 bg-ink-900/40 p-4">
+                  <p className="mb-2 flex flex-wrap items-center gap-2 text-sm text-paper-200">
+                    <span className="font-medium">Effective permission</span>
+                    <Badge tone="neutral" variant="outline">
+                      {plural(preview.data.keys.length, 'matching key')}
+                    </Badge>
+                    {preview.data.requiredRole && (
+                      <span className="text-xs text-paper-400">
+                        Highest role floor:{' '}
+                        <span className="text-paper-100">
+                          {platformRoleLabel(preview.data.requiredRole)}
                         </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+                      </span>
+                    )}
+                  </p>
+                  {preview.data.keys.length === 0 && (
+                    <Alert variant="warning">Pattern does not match any known setting.</Alert>
+                  )}
+                  {preview.data.keys.length > 0 && (
+                    <ul className="max-h-48 divide-y divide-ink-600 overflow-y-auto text-xs">
+                      {preview.data.settings.map((s) => (
+                        <li className="flex justify-between gap-3 py-1.5" key={s.key}>
+                          <span className="truncate font-mono text-paper-200">{s.key}</span>
+                          <span className="shrink-0 text-paper-500">
+                            {s.group} · {platformRoleLabel(s.requiredRole)}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            {preview.isError && pattern.length > 0 && (
+              <Alert>{errMsg(preview.error, 'preview failed')}</Alert>
             )}
-          {preview.isError && pattern.length > 0 && (
-            <Alert>{errMsg(preview.error, 'preview failed')}</Alert>
+          </div>
+          {isBroadGrant(pattern, scope, granteeType) && pattern.length > 0 && (
+            <Alert variant="warning">
+              {pattern.trim() === '*'
+                ? 'This pattern covers every setting. '
+                : 'This grant applies to everyone with the role, platform-wide. '}
+              You will be asked to confirm before it is created.
+            </Alert>
+          )}
+          {duplicate && (
+            <Alert variant="warning">
+              An identical grant already exists; creating it again adds nothing.
+            </Alert>
           )}
 
           <div className="flex items-center justify-end gap-3 border-t border-ink-600 pt-4">
@@ -350,6 +423,7 @@ export default function GovernConfigGrantsPage() {
                     header: 'Pattern',
                     id: 'pattern',
                     primary: true,
+                    sortable: true,
                   },
                   {
                     cell: (g) =>
@@ -364,6 +438,7 @@ export default function GovernConfigGrantsPage() {
                       ),
                     header: 'Granted to',
                     id: 'grantedTo',
+                    sortable: true,
                   },
                   {
                     cell: (g) => (
@@ -393,16 +468,55 @@ export default function GovernConfigGrantsPage() {
                     ),
                     header: 'Created',
                     id: 'created',
+                    sortable: true,
                   },
                 ]}
                 getRowId={(g) => g.id}
+                onSortChange={onSortChange}
                 revealActions={false}
-                rows={allGrants}
+                rows={pager.pageRows}
+                sort={sort}
               />
+              {pager.paged && (
+                <div className="mt-4 border-t border-ink-600 px-4 pt-4">
+                  <Pagination
+                    hasNext={pager.hasNext}
+                    hasPrev={pager.hasPrev}
+                    onNext={pager.onNext}
+                    onPrev={pager.onPrev}
+                    rangeEnd={pager.rangeEnd}
+                    rangeStart={pager.rangeStart}
+                    total={pager.total}
+                  />
+                </div>
+              )}
             </div>
           )}
         </QueryBoundary>
       </Card>
+
+      <ConfirmModal
+        confirmLabel="Create grant"
+        dangerous
+        message={
+          <>
+            <p>
+              Anyone with the <strong>{granteeLabel}</strong> may change{' '}
+              {matchingKeys === null
+                ? pattern.trim() === '*'
+                  ? 'every setting'
+                  : 'the settings matching this pattern'
+                : plural(matchingKeys, 'setting')}{' '}
+              ({pattern}) {scopeLabel}.
+            </p>
+            <p className="mt-2">Revoke it from Active grants if that is wider than intended.</p>
+          </>
+        }
+        onClose={() => setRiskOpen(false)}
+        onConfirm={submitGrant}
+        open={riskOpen}
+        title="Create a broad grant?"
+      />
 
       <ConfirmModal
         confirmLabel="Revoke"
