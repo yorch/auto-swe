@@ -836,7 +836,7 @@ function LoginPageInner() {
               />
               <div className="flex justify-end">
                 <Button
-                  className="h-auto min-h-6 px-2 py-1 text-paper-300 hover:bg-transparent hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline pointer-coarse:px-3"
+                  className="h-auto min-h-6 px-2 py-1 text-paper-300 hover:bg-transparent hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline pointer-coarse:min-h-[44px] pointer-coarse:px-3"
                   disabled={loading || gatewayDown}
                   onClick={handleForgotPassword}
                   size="sm"

@@ -47,7 +47,7 @@ export function Input({
             'w-full rounded-md border border-ink-200 bg-ink-900 text-paper-100 transition-colors',
             FIELD_FOCUS,
             compact ? 'h-8 px-2.5 text-sm' : 'h-9 px-3 text-sm',
-            'pointer-coarse:min-h-11',
+            'pointer-coarse:min-h-[44px]',
             'hover:border-paper-600',
             'placeholder:text-paper-600',
             error &&

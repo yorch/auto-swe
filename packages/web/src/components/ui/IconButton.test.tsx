@@ -26,8 +26,8 @@ describe('IconButton', () => {
   });
 
   it('meets the touch target floor at every size', () => {
-    expect(iconButtonClassName({ size: 'sm' })).toContain('pointer-coarse:min-h-11');
-    expect(iconButtonClassName({ size: 'md' })).toContain('pointer-coarse:min-w-11');
+    expect(iconButtonClassName({ size: 'sm' })).toContain('pointer-coarse:min-h-[44px]');
+    expect(iconButtonClassName({ size: 'md' })).toContain('pointer-coarse:min-w-[44px]');
     // xs is drawn smaller than 24px, so it must inflate its hit area instead.
     expect(iconButtonClassName({ size: 'xs' })).toContain('after:-inset-1');
     expect(iconButtonClassName({ size: 'xs' })).toContain('pointer-coarse:after:-inset-4');

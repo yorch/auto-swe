@@ -58,7 +58,7 @@ export function SearchInput({
       <input
         aria-label={label}
         className={cn(
-          'h-8 pointer-coarse:min-h-11 w-full rounded-md border border-ink-200 bg-ink-900 pr-2.5 pl-8 text-sm text-paper-100 transition-colors placeholder:text-paper-600 hover:border-paper-600',
+          'h-8 pointer-coarse:min-h-[44px] w-full rounded-md border border-ink-200 bg-ink-900 pr-2.5 pl-8 text-sm text-paper-100 transition-colors placeholder:text-paper-600 hover:border-paper-600',
           FIELD_FOCUS
         )}
         onChange={(e) => onChange(e.target.value)}

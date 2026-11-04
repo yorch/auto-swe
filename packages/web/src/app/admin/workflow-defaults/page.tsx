@@ -64,7 +64,7 @@ export default function GovernWorkflowPage() {
               {SECTIONS.map((s) => (
                 <li className="shrink-0" key={s.id}>
                   <a
-                    className={`inline-flex rounded-full border border-ink-400 px-3 py-1 text-sm text-paper-300 hover:text-paper-100 pointer-coarse:min-h-11 pointer-coarse:items-center ${FOCUS_RING}`}
+                    className={`inline-flex rounded-full border border-ink-400 px-3 py-1 text-sm text-paper-300 hover:text-paper-100 pointer-coarse:min-h-[44px] pointer-coarse:items-center ${FOCUS_RING}`}
                     href={`#${s.id}`}
                   >
                     {s.label}

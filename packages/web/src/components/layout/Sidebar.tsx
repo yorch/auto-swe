@@ -21,7 +21,7 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
     <Link
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors pointer-coarse:min-h-11',
+        'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors pointer-coarse:min-h-[44px]',
         FOCUS_RING,
         active
           ? 'bg-ink-600 text-paper-50 before:absolute before:inset-y-1.5 before:-left-2.5 before:w-[3px] before:rounded-r-full before:bg-accent-400'
@@ -102,7 +102,7 @@ function UserMenu() {
         aria-controls={MENU_ID}
         aria-expanded={open}
         className={cn(
-          'flex w-full items-center gap-2.5 rounded-lg border border-ink-500 bg-ink-700/60 px-2.5 py-2 text-left text-sm transition-colors pointer-coarse:min-h-11 hover:border-ink-300 hover:bg-ink-700',
+          'flex w-full items-center gap-2.5 rounded-lg border border-ink-500 bg-ink-700/60 px-2.5 py-2 text-left text-sm transition-colors pointer-coarse:min-h-[44px] hover:border-ink-300 hover:bg-ink-700',
           FOCUS_RING
         )}
         onClick={() => setOpen((o) => !o)}
@@ -159,7 +159,7 @@ function UserMenu() {
           </div>
           <Link
             className={cn(
-              'block px-3 py-2 text-sm text-paper-200 no-underline pointer-coarse:min-h-11 pointer-coarse:py-3 hover:bg-ink-700',
+              'block px-3 py-2 text-sm text-paper-200 no-underline pointer-coarse:min-h-[44px] pointer-coarse:py-3 hover:bg-ink-700',
               FOCUS_RING
             )}
             href="/settings"
@@ -169,7 +169,7 @@ function UserMenu() {
           </Link>
           <button
             className={cn(
-              'block w-full px-3 py-2 text-left text-sm text-paper-200 pointer-coarse:min-h-11 hover:bg-ink-700',
+              'block w-full px-3 py-2 text-left text-sm text-paper-200 pointer-coarse:min-h-[44px] hover:bg-ink-700',
               FOCUS_RING
             )}
             onClick={handleLogout}
@@ -268,7 +268,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           <Link
             aria-current={isStartWorkPath(pathname) ? 'page' : undefined}
             className={cn(
-              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-accent-500 px-3 py-2 text-sm font-semibold text-white no-underline transition-colors pointer-coarse:min-h-11 hover:bg-accent-600',
+              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-accent-500 px-3 py-2 text-sm font-semibold text-white no-underline transition-colors pointer-coarse:min-h-[44px] hover:bg-accent-600',
               FOCUS_RING
             )}
             data-tour="nav:/start"

@@ -34,12 +34,13 @@ export const FIELD_FOCUS_DATA =
 
 /**
  * Minimum hit area on a touch screen. The root font is 14px, so the rem-based control
- * heights land at 28-35px; on a coarse pointer these floor every control at 44px
+ * heights land at 28-35px, and Tailwind's `min-h-11` would be only 38.5px at this root, so these
+ * use an absolute 44px floor on a coarse pointer
  * (WCAG 2.5.5 / platform guidance) without changing the desktop look. Pair with
  * `COARSE_TARGET_W` when the control is square.
  */
-export const COARSE_TARGET = 'pointer-coarse:min-h-11';
-export const COARSE_TARGET_W = 'pointer-coarse:min-w-11';
+export const COARSE_TARGET = 'pointer-coarse:min-h-[44px]';
+export const COARSE_TARGET_W = 'pointer-coarse:min-w-[44px]';
 
 /**
  * A secondary action repeated on every row of a list ("Diagnostics ›"): hidden

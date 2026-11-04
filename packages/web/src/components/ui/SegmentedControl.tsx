@@ -44,7 +44,7 @@ export function SegmentedControl<T extends string>({
           <button
             aria-pressed={selected}
             className={cn(
-              'whitespace-nowrap rounded-md px-2.5 py-1 text-sm font-medium transition-colors pointer-coarse:min-h-11',
+              'whitespace-nowrap rounded-md px-2.5 py-1 text-sm font-medium transition-colors pointer-coarse:min-h-[44px]',
               FOCUS_RING,
               // Inside the option: the scrolling track clips an outline drawn outside it.
               'focus-visible:-outline-offset-2',

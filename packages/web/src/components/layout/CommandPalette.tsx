@@ -282,7 +282,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
     <div
       aria-selected={i === active}
       className={cn(
-        'flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-sm pointer-coarse:min-h-11',
+        'flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-sm pointer-coarse:min-h-[44px]',
         i === active ? 'bg-ink-600 text-paper-50' : 'text-paper-300'
       )}
       id={optionId(i)}
@@ -408,7 +408,7 @@ export function CommandPaletteButton({ onClick }: { onClick: () => void }) {
     <button
       aria-keyshortcuts="Meta+K Control+K"
       className={cn(
-        'inline-flex h-8 items-center gap-2 rounded-lg border border-ink-400/80 pointer-coarse:min-h-11 bg-ink-900/60 px-2.5 text-sm text-paper-500 transition-colors hover:border-ink-300 hover:text-paper-200 lg:w-60',
+        'inline-flex h-8 items-center gap-2 rounded-lg border border-ink-400/80 pointer-coarse:min-h-[44px] bg-ink-900/60 px-2.5 text-sm text-paper-500 transition-colors hover:border-ink-300 hover:text-paper-200 lg:w-60',
         FOCUS_RING
       )}
       onClick={onClick}

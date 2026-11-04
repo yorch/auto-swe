@@ -9,8 +9,8 @@ type IconButtonVariant = 'ghost' | 'outline';
 // floor, so it grows an invisible `::after` hit area (24.5px; 45px on a coarse pointer) without
 // moving the neighbours. `sm` and `md` already meet the floor and grow to 44px for touch.
 const SIZE: Record<IconButtonSize, string> = {
-  md: 'h-8 w-8 pointer-coarse:min-h-11 pointer-coarse:min-w-11',
-  sm: 'h-7 w-7 pointer-coarse:min-h-11 pointer-coarse:min-w-11',
+  md: 'h-8 w-8 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px]',
+  sm: 'h-7 w-7 pointer-coarse:min-h-[44px] pointer-coarse:min-w-[44px]',
   xs: 'relative h-5 w-5 after:absolute after:-inset-1 pointer-coarse:after:-inset-4',
 };
 

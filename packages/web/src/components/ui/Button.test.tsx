@@ -25,7 +25,7 @@ describe('Button', () => {
 
   it('floors every button at 44px on a coarse pointer', () => {
     for (const size of ['sm', 'md', 'lg'] as const) {
-      expect(buttonClassName('secondary', size)).toContain('pointer-coarse:min-h-11');
+      expect(buttonClassName('secondary', size)).toContain('pointer-coarse:min-h-[44px]');
     }
   });
 
