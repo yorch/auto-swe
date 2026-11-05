@@ -98,6 +98,10 @@ function makeMockPrisma() {
       findMany: vi.fn(async () => []),
       update: vi.fn(async () => ({ id: 'skill-id' })),
     },
+    toolCatalogEntry: {
+      create: vi.fn(async () => ({ id: 'tool-id' })),
+      findMany: vi.fn(async () => []),
+    },
     workflowTemplate: {
       create: vi.fn(async ({ data }: { data: { id?: string; origin: string | null } }) => {
         cap.templateCreates += 1;

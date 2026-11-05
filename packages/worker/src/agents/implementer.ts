@@ -24,6 +24,7 @@ import { BrowserToolset, createMastraBrowserTools } from './browserTools.js';
 import { buildKnowledgeTools } from './knowledgeTools.js';
 import { createLessonTools } from './lessonTools.js';
 import { isMcpToolEnabled, loadMcpTools, type McpToolRecord } from './mcpTools.js';
+import { createProvisionTool } from './provisionTool.js';
 import { buildWorkspaceTools } from './workspaceTools.js';
 
 /**
@@ -191,6 +192,17 @@ export async function createImplementerAgent(
     ...resolvedWorkspaceTools,
     ...(hasSkills ? { loadSkill } : {}),
     ...(options?.lessonRepoId ? createLessonTools(options.lessonRepoId, tracer) : {}),
+    // Like `browser`, granted only by name: a null or unlisted grant never binds it.
+    ...(tools?.includes('provisionTool')
+      ? {
+          provisionTool: createProvisionTool({
+            ctx: { orgId: options?.resolveCtx?.orgId, teamId: options?.resolveCtx?.teamId },
+            toolKeys: tools,
+            tracer,
+            workspace,
+          }),
+        }
+      : {}),
     ...(options?.knowledgeToolKeys?.includes('searchKnowledge')
       ? { searchKnowledge: buildKnowledgeTools(tracer).searchKnowledge }
       : {}),

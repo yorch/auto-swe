@@ -53,6 +53,7 @@ function makeFake() {
     scannerPattern: [] as Row[],
     skill: [] as Row[],
     skillRevision: [] as Row[],
+    toolCatalogEntry: [] as Row[],
     workflowShellAudit: [] as Row[],
     workflowTemplate: [] as Row[],
     workflowTemplateVersion: [] as Row[],

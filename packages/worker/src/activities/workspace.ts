@@ -21,7 +21,7 @@ import {
   gitIdentityConfigScript,
   resolveGitIdentity,
 } from '../lib/gitIdentity.js';
-import { redactExecError } from '../lib/redactToken.js';
+import { redactExecError, redactSecrets } from '../lib/redactToken.js';
 import {
   beginWorkspaceRegistries,
   buildRegistryAllowlist,
@@ -32,18 +32,28 @@ import {
   type WorkspaceRegistryAccess,
 } from '../lib/registryProxy/workspaceWiring.js';
 import { shellQuote } from '../lib/shellQuote.js';
+import { loadToolCatalog } from '../lib/toolCatalogLoader.js';
 import {
-  BUILTIN_TOOL_CATALOG,
   resolveToolRequests,
-  TOOLS_BIN_DIR,
   type ToolCatalogEntry,
+  ToolInstallError,
   type ToolRequest,
-  toolInstallScript,
+  toolsPathEnv,
 } from '../lib/toolInstall.js';
 import { workspaceBackend } from '../lib/workspaceBackend/index.js';
 import { readSingleFileFromArchive } from '../lib/workspaceBackend/kubernetes/safeTar.js';
 import { agentWorkspaceSpec } from '../lib/workspaceBackend/spec.js';
 import type { WorkspaceHandle, WorkspaceServiceSpec } from '../lib/workspaceBackend/types.js';
+import {
+  type InstalledTool,
+  installLateTools,
+  installResolvedTools,
+  planWorkspaceTools,
+  readToolsFileFromBase,
+  recordToolInstallEvent,
+  ToolRefusal,
+  toToolInstallFailure,
+} from '../lib/workspaceTools.js';
 
 export type CapturedExec = CapturedResult;
 
@@ -94,6 +104,21 @@ export interface Workspace {
    * the scrubbed URL explicitly.
    */
   gitAuthed: (subcommand: string) => Promise<string>;
+  /**
+   * Catalog tools installed into `/workspace/.tools/bin` before the workspace was handed over;
+   * `createWorkspace` always sets it (empty when none). Optional in the type only so a test
+   * double built elsewhere need not name it.
+   */
+  installedTools?: InstalledTool[];
+  /**
+   * Install more catalog tools mid-run, on an agent's request: the platform runs the same install
+   * script as the container user, under the connection's authority (its deny list, the per-run
+   * cap, the catalog). Defined only when the workspace was created with `toolsFor`; resolves with
+   * one entry per requested key (a key already installed is returned as it is) and throws a
+   * `ToolInstallError` on refusal or failure. After a success every later `exec`, `execCapture`
+   * and `execStdin` has the tools directory first on `PATH`; `gitAuthed` never does.
+   */
+  installTools?: (requests: ToolRequest[]) => Promise<InstalledTool[]>;
   destroy: () => Promise<void>;
 }
 
@@ -647,9 +672,9 @@ export async function createWorkspace(
      * non-npm registries are wired; absent or unusable means "unknown".
      */
     detectedStack?: unknown;
-    /** Catalog tools to install into the workspace before it is handed over (spike). */
+    /** Catalog tools to install regardless of any setting: the programmatic path. */
     tools?: ToolRequest[];
-    /** The catalog `tools` resolve against. */
+    /** The catalog requests resolve against; when omitted the `ToolCatalogEntry` table is read. */
     toolCatalog?: readonly ToolCatalogEntry[];
     /**
      * The network posture of this workspace. Absent, it is the run's pinned
@@ -658,6 +683,11 @@ export async function createWorkspace(
      * `open` (see `runAgentTask`).
      */
     egressPolicy?: EgressPolicy;
+    /**
+     * Install what this connection declares (its admin list and, when enabled, the base ref's
+     * `.auto-swe/tools.yml`), if `workspace.toolInstall.enabled` is on.
+     */
+    toolsFor?: { connectionId: string };
   }
 ): Promise<Workspace> {
   // Container caps, default base image and metadata-blocking policy all come
@@ -770,7 +800,17 @@ export async function createWorkspace(
   let handle: WorkspaceHandle = backend.attach(containerName);
   // `PATH=…` pair put on every agent-facing exec once tools are installed; empty otherwise.
   let toolsEnv: string[] = [];
-  const TOOL_INSTALL_TIMEOUT_MS = 300_000;
+  let installedTools: InstalledTool[] = [];
+  let installLate: Workspace['installTools'];
+  // What an error text must never carry: scrubbed before it reaches a trace or a log, not only
+  // by the outer catch (a trace is written from inside the try).
+  const redactForRecord = (message: string): string =>
+    redactSecrets(message, [
+      ...cloneSecrets,
+      ...(options?.services ?? []).flatMap((service) => Object.values(service.env ?? {})),
+      registry?.token,
+      egress?.registration.token,
+    ]);
   try {
     const spec = agentWorkspaceSpec(containerName, effectiveImage, infra, options?.services);
     const gitHost = gitHostOf(cleanUrl);
@@ -871,17 +911,143 @@ export async function createWorkspace(
       `cd /workspace/target-repo && git remote set-url origin ${shellQuote(cleanUrl)}`
     );
 
-    // On-demand tools: installed as the exec user into `/workspace/.tools/bin`, then put first on
-    // the PATH of every later exec. A failed install fails creation — the run never starts on a
-    // toolchain the caller said it needs.
-    if (options?.tools?.length) {
-      const entries = resolveToolRequests(
-        options.tools,
-        options.toolCatalog ?? BUILTIN_TOOL_CATALOG
-      );
-      await rootExec(toolInstallScript(entries), TOOL_INSTALL_TIMEOUT_MS);
-      const basePath = (await rootExec('echo "$PATH"')).trim();
-      toolsEnv = [`PATH=${TOOLS_BIN_DIR}:${basePath}`];
+    // On-demand tools: installed as the exec user into `/workspace/.tools/bin`, then put LAST on
+    // the PATH of every later exec (the image's own binaries always win). What a connection declares is read from the BASE ref before
+    // the agent has run (never its branch). A failed install fails creation: the run never starts
+    // on a toolchain it was told it needs.
+    if (options?.tools?.length || options?.toolsFor) {
+      const toolExec = (command: string, timeoutMs?: number) => rootExec(command, timeoutMs);
+      const attempt = { durationMs: 0, installed: [] as InstalledTool[] };
+      let failure: unknown;
+      try {
+        const requests = [...(options.tools ?? [])];
+        if (options.toolsFor) {
+          const baseRef = checkoutSha ?? (existingBranch ? 'FETCH_HEAD' : 'HEAD');
+          const { requests: declared } = await planWorkspaceTools({
+            connectionId: options.toolsFor.connectionId,
+            readFile: () =>
+              readToolsFileFromBase({
+                exec: toolExec,
+                prepare: async () => {
+                  if (!existingBranch || checkoutSha) {
+                    return;
+                  }
+                  // HEAD is a candidate branch that may carry edits: read the default branch.
+                  const fetchScript = [
+                    killStrayProcessesScript(handle.keeperPid),
+                    authedGitScript(
+                      '/workspace/target-repo',
+                      `fetch --depth=1 origin ${shellQuote(defaultBranch)}`,
+                      { authed: Boolean(gitAuthHeader), cleanUrl }
+                    ),
+                  ].join('\n');
+                  const tag = newExecTag();
+                  await backend.execShell(handle, ['sh', '-c', fetchScript], {
+                    env: [tag.env],
+                    ...(cloneSecretEnv ? { secretEnv: cloneSecretEnv } : {}),
+                    heartbeatLabel: 'workspace: fetching base for tools file',
+                    onTimeout: tag.onTimeout,
+                  });
+                },
+                ref: baseRef,
+              }),
+            teamId: options.teamId ?? null,
+          });
+          const explicit = new Set(requests.map((r) => r.key));
+          requests.push(...declared.filter((r) => !explicit.has(r.key)));
+        }
+        if (requests.length > 0) {
+          const catalog = options.toolCatalog ?? (await loadToolCatalog());
+          const resolved = resolveToolRequests(requests, catalog);
+          for (const r of resolved) {
+            if (r.warning) {
+              logWarn(r.warning, { tool: r.entry.key, version: r.entry.version });
+            }
+          }
+          const result = await installResolvedTools(toolExec, resolved);
+          attempt.durationMs = result.durationMs;
+          attempt.installed = result.installed;
+          installedTools = result.installed;
+          const basePath = (await rootExec('echo "$PATH"')).trim();
+          toolsEnv = [toolsPathEnv(basePath)];
+        }
+      } catch (err) {
+        failure = toToolInstallFailure(err);
+        throw failure;
+      } finally {
+        if (attempt.installed.length > 0 || failure !== undefined) {
+          await recordToolInstallEvent({
+            ...attempt,
+            ...(failure !== undefined
+              ? {
+                  error: redactForRecord(
+                    failure instanceof Error ? failure.message : String(failure)
+                  ),
+                }
+              : {}),
+          });
+        }
+      }
+    }
+
+    if (options?.toolsFor) {
+      const { connectionId } = options.toolsFor;
+      let queue: Promise<unknown> = Promise.resolve();
+      let failedInstalls = 0;
+      const installNow = async (requests: ToolRequest[]): Promise<InstalledTool[]> => {
+        let fresh: InstalledTool[] = [];
+        let durationMs = 0;
+        let failure: unknown;
+        try {
+          const outcome = await installLateTools({
+            ...(options.toolCatalog ? { catalog: options.toolCatalog } : {}),
+            connectionId,
+            egressPolicy,
+            exec: (command, timeoutMs) => rootExec(command, timeoutMs),
+            failedAttempts: failedInstalls,
+            installed: installedTools,
+            requests,
+            teamId: options.teamId ?? null,
+          });
+          fresh = outcome.fresh;
+          durationMs = outcome.durationMs;
+          if (fresh.length > 0) {
+            if (toolsEnv.length === 0) {
+              const basePath = (await rootExec('echo "$PATH"')).trim();
+              toolsEnv = [toolsPathEnv(basePath)];
+            }
+            installedTools.push(...fresh);
+          }
+          return outcome.results;
+        } catch (err) {
+          failure = err;
+          // A refusal ran no installer; only a failed install counts toward the cap.
+          if (err instanceof ToolInstallError && !(err instanceof ToolRefusal)) {
+            failedInstalls += 1;
+          }
+          throw err;
+        } finally {
+          if (fresh.length > 0 || failure !== undefined) {
+            await recordToolInstallEvent({
+              durationMs,
+              installed: fresh,
+              ...(failure !== undefined
+                ? {
+                    error: redactForRecord(
+                      failure instanceof Error ? failure.message : String(failure)
+                    ),
+                  }
+                : {}),
+            });
+          }
+        }
+      };
+      // One install at a time: two concurrent calls must not both count the same free slot.
+      installLate = (requests) => {
+        const run = queue.then(() => installNow(requests));
+        queue = run.catch(() => undefined);
+        return run;
+      };
     }
 
     if (registry) {
@@ -1093,6 +1259,8 @@ export async function createWorkspace(
       }
     },
     gitIdentity,
+    installedTools,
+    ...(installLate ? { installTools: installLate } : {}),
     readFile: async (filePath: string, maxBytes: number) => {
       if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
         throw new RangeError('maxBytes must be a non-negative safe integer');

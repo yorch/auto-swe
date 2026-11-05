@@ -59,6 +59,7 @@ import {
   skillContentHash,
 } from './skillRevision.js';
 import { runUnscoped } from './tenantGuard.js';
+import { BUILTIN_TOOLS, type ToolCatalogEntry } from './toolCatalog.js';
 
 /** Provenance tag for all SWE seed content. */
 const SWE_ORIGIN = 'swe-starter';
@@ -192,6 +193,7 @@ export async function seedCoreDefaults(prisma: PrismaClient): Promise<void> {
   await syncScannerPatterns(prisma, 'core');
   await syncAutonomyPolicies(prisma);
   await syncModelCatalog(prisma);
+  await syncToolCatalog(prisma);
 }
 
 /**
@@ -238,6 +240,77 @@ export async function syncModelCatalog(prisma: PrismaClient): Promise<void> {
         row.status !== fromCode.status)
     ) {
       await prisma.modelCatalogEntry.update({ data: fromCode, where: { id: row.id } });
+    }
+  }
+}
+
+/** JSON with object keys sorted, so a jsonb round trip (which reorders keys) compares equal. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(',')}]`;
+  }
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([k, v]) => `${JSON.stringify(k)}:${stableJson(v)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * Seed the tool catalog from {@link BUILTIN_TOOLS}, on the same terms as
+ * {@link syncModelCatalog}: an untouched built-in row follows code (archs, member, libc,
+ * description, status), a customized one is never overwritten, an admin's own row for a
+ * key@version that later ships built-in is adopted as built-in and customized, and nothing is
+ * deleted — a tool dropped from code can still be pinned by a repository that names it.
+ */
+export async function syncToolCatalog(prisma: PrismaClient): Promise<void> {
+  const existing = new Map(
+    (await prisma.toolCatalogEntry.findMany()).map((r) => [`${r.key}@${r.version}`, r])
+  );
+  for (const tool of BUILTIN_TOOLS) {
+    const fromCode = {
+      archs: JSON.parse(JSON.stringify(tool.archs)) as Record<
+        string,
+        { url: string; sha256: string }
+      >,
+      description: tool.description ?? null,
+      libc: tool.libc,
+      member: tool.member,
+      status: tool.status,
+    } satisfies Omit<ToolCatalogEntry, 'key' | 'version'>;
+    const row = existing.get(`${tool.key}@${tool.version}`);
+    if (!row) {
+      try {
+        await prisma.toolCatalogEntry.create({
+          data: { ...fromCode, isBuiltIn: true, key: tool.key, version: tool.version },
+        });
+      } catch (err) {
+        // A gateway booting alongside this one inserted it first.
+        if (!isUniqueViolation(err)) {
+          throw err;
+        }
+      }
+    } else if (!row.isBuiltIn) {
+      // Conditional writes: an admin's edit or revoke landing between the read above and here
+      // marks the row customized, and code values must never overwrite it.
+      await prisma.toolCatalogEntry.updateMany({
+        data: { isBuiltIn: true, isCustomized: true },
+        where: { id: row.id, isBuiltIn: false },
+      });
+    } else if (
+      !row.isCustomized &&
+      (stableJson(row.archs) !== stableJson(fromCode.archs) ||
+        row.member !== fromCode.member ||
+        row.libc !== fromCode.libc ||
+        (row.description ?? null) !== fromCode.description ||
+        row.status !== fromCode.status)
+    ) {
+      await prisma.toolCatalogEntry.updateMany({
+        data: fromCode,
+        where: { id: row.id, isCustomized: false },
+      });
     }
   }
 }

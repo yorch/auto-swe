@@ -170,7 +170,11 @@ async function verify(input: {
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      teamId: repo.teamId,
+      toolsFor: { connectionId: repo.id },
+    }
   );
   try {
     const file = await workspace.execCapture(`cat -- ${shellQuote(path)}`);

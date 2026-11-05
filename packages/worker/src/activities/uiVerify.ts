@@ -88,7 +88,12 @@ async function checkoutWorkspace(
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, services, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      services,
+      teamId: repo.teamId,
+      toolsFor: { connectionId: repo.id },
+    }
   );
   try {
     await workspace.gitAuthed(fetchBranchesSubcommand([branch]));

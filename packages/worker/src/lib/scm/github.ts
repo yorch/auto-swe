@@ -510,6 +510,17 @@ export class GitHubScmProvider implements ScmProvider {
         `${repo.organizationName}/${repo.repoName}#${priorOpenPr.number} is open and ready for review`
       );
     }
+    if (priorOpenPr && input.updateExisting) {
+      // The branch's PR may have been opened by someone else with their own text; the platform's
+      // title and body are the ones that describe what the branch holds.
+      await octokit.pulls.update({
+        body: input.body,
+        owner: repo.organizationName,
+        pull_number: priorOpenPr.number,
+        repo: repo.repoName,
+        title: input.title,
+      });
+    }
     const pr = priorOpenPr ?? (await create());
 
     return { prNumber: pr.number, prUrl: pr.html_url };
@@ -978,6 +989,13 @@ export class GitHubScmProvider implements ScmProvider {
     return {
       aheadBy: data.ahead_by,
       behindBy: data.behind_by,
+      files: truncated
+        ? null
+        : files.map((f) => ({
+            path: f.filename,
+            previousPath: f.previous_filename ?? null,
+            status: f.status,
+          })),
       paths: truncated
         ? null
         : files.flatMap((f) =>

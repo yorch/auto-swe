@@ -17,6 +17,8 @@ import {
 } from '@auto-swe/shared/lib/repoPermission';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { ToolKeySchema } from '@auto-swe/shared/lib/toolCatalog';
+import { MAX_TOOLS_IN_FILE, ToolRequestSchema } from '@auto-swe/shared/lib/toolsFile';
 import { REPO_GATE_COMMAND_KEYS, type RepoGateCommands } from '@auto-swe/shared/types/api';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
@@ -130,6 +132,9 @@ const RepoParamsSchema = z.object({ id: z.string().uuid() });
 /** The full set of further teams to share a repository with; replaces the current set. */
 const SharesSchema = z.object({ teamIds: z.array(z.string().uuid()).max(50) });
 
+/** Tool keys the repository may never install; at most this many, repeats collapsed. */
+const MAX_TOOLS_DENY = 64;
+
 const UpdateRepoSchema = z.object({
   apiToken: z.string().nullable().optional(),
   config: z.record(z.string(), z.unknown()).nullable().optional(),
@@ -176,6 +181,23 @@ const UpdateRepoSchema = z.object({
     .nullable()
     .optional(),
   teamId: z.string().uuid().optional(),
+  /** Tools an admin installs into every run's workspace; null clears. Platform admins only. */
+  tools: z
+    .array(ToolRequestSchema)
+    .max(MAX_TOOLS_IN_FILE)
+    .refine((list) => new Set(list.map((t) => t.key)).size === list.length, {
+      message: 'tools must not repeat a key',
+    })
+    .nullable()
+    .optional(),
+  /** Catalog keys the repository may never install; wins over `tools` and the file. */
+  toolsDeny: z
+    .array(ToolKeySchema)
+    .max(MAX_TOOLS_DENY)
+    .transform((keys) => [...new Set(keys)])
+    .optional(),
+  /** Whether `.auto-swe/tools.yml` on the base ref is honoured. Platform admins only. */
+  toolsFileEnabled: z.boolean().optional(),
 });
 
 /**
@@ -318,6 +340,60 @@ function rejectsInstallationChange(
   installationId: string | null | undefined
 ): boolean {
   return installationId !== undefined && user.role !== Role.ADMIN;
+}
+
+/** A stored or submitted tool list as comparable text; null and empty are the same list. */
+function toolListKey(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return '[]';
+  }
+  return JSON.stringify(
+    value.map((t) => {
+      const { key, version } = t as { key: string; version?: string };
+      return version === undefined ? { key } : { key, version };
+    })
+  );
+}
+
+/** A deny list as comparable text; order does not matter. */
+function toolDenyKey(value: readonly string[] | null | undefined): string {
+  return JSON.stringify([...new Set(value ?? [])].sort());
+}
+
+/**
+ * What the PATCH changes among the tool settings, judged against the row. A value equal to the
+ * stored one is no change, so a lead can still save the rest of a repository an admin configured.
+ */
+function toolSettingChanges(
+  body: { tools?: unknown[] | null; toolsDeny?: string[]; toolsFileEnabled?: boolean },
+  current: { tools: unknown; toolsDeny: string[]; toolsFileEnabled: boolean }
+): {
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  tools: boolean;
+  toolsDeny: boolean;
+  toolsFileEnabled: boolean;
+} {
+  const tools = body.tools !== undefined && toolListKey(body.tools) !== toolListKey(current.tools);
+  const toolsDeny =
+    body.toolsDeny !== undefined && toolDenyKey(body.toolsDeny) !== toolDenyKey(current.toolsDeny);
+  const toolsFileEnabled =
+    body.toolsFileEnabled !== undefined && body.toolsFileEnabled !== current.toolsFileEnabled;
+  const before: Record<string, unknown> = {};
+  const after: Record<string, unknown> = {};
+  if (tools) {
+    before.tools = current.tools ?? null;
+    after.tools = body.tools ?? null;
+  }
+  if (toolsDeny) {
+    before.toolsDeny = current.toolsDeny;
+    after.toolsDeny = body.toolsDeny;
+  }
+  if (toolsFileEnabled) {
+    before.toolsFileEnabled = current.toolsFileEnabled;
+    after.toolsFileEnabled = body.toolsFileEnabled;
+  }
+  return { after, before, tools, toolsDeny, toolsFileEnabled };
 }
 
 /**
@@ -979,6 +1055,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         select: {
           apiKeyCiphertext: true,
           config: true,
+          defaultBranch: true,
           executorImage: true,
           executorImageBuild: true,
           gateCommands: true,
@@ -991,6 +1068,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           previewConfig: true,
           repoName: true,
           teamId: true,
+          tools: true,
+          toolsDeny: true,
+          toolsFileEnabled: true,
           type: true,
         },
         where: { id: request.params.id },
@@ -1036,6 +1116,22 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           403,
           'EXECUTOR_IMAGE_NOT_ALLOWED',
           'Only a platform admin may set executorImageBuild'
+        );
+      }
+
+      // What gets installed into a workspace holding the repository's credential is chosen from
+      // the catalog by a platform admin: the same authority as the executor image. Re-saving a
+      // value the row already holds is allowed.
+      const toolChanges = toolSettingChanges(request.body, repo);
+      if (
+        (toolChanges.tools || toolChanges.toolsDeny || toolChanges.toolsFileEnabled) &&
+        user.role !== Role.ADMIN
+      ) {
+        return sendError(
+          reply,
+          403,
+          'TOOLS_CONFIG_NOT_ALLOWED',
+          "Only a platform admin may change a repository's tool settings"
         );
       }
 
@@ -1253,6 +1349,17 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
               };
 
       const moving = !!newTeamId && newTeamId !== repo.teamId;
+      // An admin enabled `.auto-swe/tools.yml` for THIS repository. A lead who repoints the
+      // row at another repository (its URLs) or another team would carry that trust decision
+      // along, so the flag is cleared in the same write and an admin has to enable it again.
+      // `defaultBranch` counts too: it is the ref the file is read from, so moving it points the
+      // admin's decision at a branch nobody vetted.
+      const identityChanged =
+        moving ||
+        (githubUrl !== undefined && githubUrl !== repo.githubUrl) ||
+        (githubApiUrl !== undefined && githubApiUrl !== repo.githubApiUrl) ||
+        (defaultBranch !== undefined && defaultBranch !== repo.defaultBranch);
+      const clearToolsFile = user.role !== Role.ADMIN && repo.toolsFileEnabled && identityChanged;
       const updateRow = (tx: Prisma.TransactionClient) =>
         tx.connection.update({
           data: {
@@ -1268,6 +1375,19 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             description,
             executorImage,
             ...executorImageBuildUpdate(request.body, repo.executorImage),
+            ...(toolChanges.tools
+              ? {
+                  tools:
+                    request.body.tools == null
+                      ? Prisma.DbNull
+                      : (request.body.tools as Prisma.InputJsonValue),
+                }
+              : {}),
+            ...(toolChanges.toolsDeny ? { toolsDeny: request.body.toolsDeny } : {}),
+            ...(toolChanges.toolsFileEnabled
+              ? { toolsFileEnabled: request.body.toolsFileEnabled }
+              : {}),
+            ...(clearToolsFile ? { toolsFileEnabled: false } : {}),
             ...(gateCommandsChange
               ? {
                   gateCommands:
@@ -1397,6 +1517,31 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           actor: user,
           after: { previewConfig: nextPreviewConfig },
           before: { previewConfig: repo.previewConfig },
+          entityId: repo.id,
+          entityType: 'Connection',
+        });
+      }
+      // What a workspace installs is a security decision, so who changed it is kept.
+      if (toolChanges.tools || toolChanges.toolsDeny || toolChanges.toolsFileEnabled) {
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: user,
+          after: toolChanges.after,
+          before: toolChanges.before,
+          entityId: repo.id,
+          entityType: 'Connection',
+        });
+      }
+
+      if (clearToolsFile) {
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: user,
+          after: {
+            toolsFileEnabled: false,
+            toolsFileEnabledClearedBy: 'repository identity change',
+          },
+          before: { toolsFileEnabled: true },
           entityId: repo.id,
           entityType: 'Connection',
         });

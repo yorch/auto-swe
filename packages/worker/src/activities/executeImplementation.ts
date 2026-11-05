@@ -193,7 +193,12 @@ export async function executeImplementation(
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, services, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      services,
+      teamId: repo.teamId,
+      toolsFor: { connectionId: repo.id },
+    }
   );
 
   const tracer = new AgentTracer();

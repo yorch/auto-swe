@@ -53,6 +53,7 @@ export const AGENT_TOOL_KEYS = [
   ...IMPLEMENTER_TOOL_IDS,
   MCP_TOOL_KEY,
   'browser',
+  'provisionTool',
   ...KNOWLEDGE_TOOL_IDS,
 ] as const;
 export type AgentToolKey = (typeof AGENT_TOOL_KEYS)[number];
