@@ -804,6 +804,8 @@ __metadata:
     "@opentelemetry/sdk-trace-base": "npm:2.12.0"
     "@opentelemetry/sdk-trace-node": "npm:2.12.0"
     "@temporalio/activity": "npm:1.24.0"
+    "@temporalio/client": "npm:1.24.0"
+    "@temporalio/common": "npm:1.24.0"
     "@temporalio/proto": "npm:1.24.0"
     "@temporalio/testing": "npm:1.24.0"
     "@temporalio/worker": "npm:1.24.0"

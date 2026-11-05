@@ -3,15 +3,17 @@ import type { RepoWorkRequest, WorkflowResult } from '@auto-swe/shared/types/wor
 import type { Context } from '@auto-swe/shared/workflow/expr';
 import type { CancellationToken, Dispatcher } from '@auto-swe/shared/workflow/interpreter';
 import type { Duration } from '@temporalio/common';
-import { ApplicationFailure, CancelledFailure, TemporalFailure } from '@temporalio/common';
 import {
+  ApplicationFailure,
   CancellationScope,
+  CancelledFailure,
   condition,
   defineSignal,
   isCancellation,
   log,
   patched,
   setHandler,
+  TemporalFailure,
   workflowInfo,
 } from '@temporalio/workflow';
 import {
