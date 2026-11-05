@@ -180,6 +180,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { querystring: Query },
     },

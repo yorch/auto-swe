@@ -696,6 +696,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/limits',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { querystring: RepoContextQuery },
     },

@@ -10,6 +10,7 @@ import { SignJWT } from 'jose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { mcpBridgePlugin } from '../lib/mcp/bridge.js';
+import { DOMAIN_TOOL_NAMES } from '../lib/mcp/domains/index.js';
 import { createMcpTokenVerifier, type McpTokenRejection } from '../lib/mcpTokenVerifier.js';
 import {
   fakeVerifierDeps,
@@ -35,6 +36,7 @@ const initializeLegacy = {
     protocolVersion: '2025-06-18',
   },
 };
+/** The original eight tools plus every tool a domain declares (`lib/mcp/domains`). */
 const READ_TOOLS = [
   'get_run',
   'list_agents',
@@ -44,7 +46,8 @@ const READ_TOOLS = [
   'list_templates',
   'list_work_requests',
   'wait_for_run',
-];
+  ...DOMAIN_TOOL_NAMES,
+].sort();
 const toolNames = (result: { tools: Array<{ name: string }> }) =>
   result.tools.map((t) => t.name).sort();
 const listToolsLegacy = { id: 2, jsonrpc: '2.0', method: 'tools/list', params: {} };
