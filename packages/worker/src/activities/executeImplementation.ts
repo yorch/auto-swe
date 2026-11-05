@@ -207,6 +207,7 @@ export async function executeImplementation(
       repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
       services,
       teamId: repo.teamId,
+      toolsFor: { connectionId: repo.id },
     }
   );
 

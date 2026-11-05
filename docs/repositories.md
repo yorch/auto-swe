@@ -345,6 +345,73 @@ one that has an `executorImageBuild`, using the recorded settings, so its image 
 base-image fixes. Each stored value is validated before it is used. Rebuilds run four at a time,
 and one repository's failure doesn't stop the others.
 
+### On-demand tools
+
+A repository whose toolchain the executor image lacks (a task runner, say) can have a workspace install
+pinned tools before the run starts, without an admin building a new image. The install runs as the
+container's own user with every capability dropped, so it needs no root and no package manager: each
+tool is a static binary downloaded inside the container, checked against a SHA-256, and placed in
+`/workspace/.tools/bin`, which is appended to `PATH` after the image's own directories for the agent's
+and the gates' commands, so a tool never replaces a binary the image provides (the agent can write there,
+and a planted `git` must not shadow the real one). That directory sits outside the clone, so `git add -A` never sweeps it into a pull request.
+
+**The catalog is the allowlist.** A tool is a row of the tool catalog (`GET /api/v1/platform/tool-catalog`,
+readable by any signed-in user, written only by platform admins and audited per row). A row pins a
+version, one download URL and SHA-256 per architecture, the archive member to extract, and the C
+library the binary needs (`musl`, `glibc`, or `any` for a static build). Everything that asks for a
+tool — a repository's file, the connection's admin list, an agent — can only name a catalog `key`
+and optional `version`; none can supply a URL, a script or a checksum. Without a version the newest
+`ACTIVE` row is used. `DEPRECATED` rows install and record a warning. `REVOKED` rows never install,
+for any repository, from the moment an admin revokes them. Built-in rows are seeded at gateway
+startup and kept in step with code until an admin edits one.
+
+**Who declares what.** Installing is off until the setting `workspace.toolInstall.enabled` is on for
+the run's team or organization. Then a run installs the union of:
+
+- the connection's admin list (`tools`, a platform-admin-only field of the repository PATCH), and
+- the repository's `.auto-swe/tools.yml`, only when a platform admin also set `toolsFileEnabled` on the
+  connection,
+
+minus the connection's `toolsDeny` keys, which win over both. At most `workspace.toolInstall.maxTools`
+tools install per run; a run that declares more fails at setup instead of being truncated.
+
+The file is `version: 1` and a `tools:` list of `{ key, version? }`, at most 8 KB, with unknown keys,
+YAML aliases and a repeated key all refused. It is read from the **base ref** (the default-branch tip
+the workspace was cut from, or the pinned commit), never from the agent's branch, so a run that edits
+the file changes nothing until a person merges it.
+
+**A declared tool that cannot be installed fails workspace creation.** The run never starts on a
+toolchain the repository said it needs. A failed download is retried by the activity's normal retry
+policy; a checksum mismatch, an unknown, revoked or unsupported tool, an unreadable catalog and a
+malformed file fail at once, with a message naming the tool and the reason. An unreadable catalog
+does not fall back to the built-in table, which would bypass a revoked row.
+
+**Egress.** Downloads go directly from the workspace to the catalog's URLs; they do not use the
+package-registry proxy, and the installer clears the workspace's proxy variables, so a team egress
+allowlist does not apply to them. That is deliberate and safe: the install runs before the network is
+locked, from URLs an administrator vetted, and a catalog URL must be a plain `https` URL on a public
+DNS name (no credentials, query, fragment, IP address or internal name). On Kubernetes a NetworkPolicy that blocks those hosts makes every install a
+hard failure, so allow the catalog's download hosts (the built-in rows use `github.com` release
+assets). Tools count against the workspace's ephemeral storage, and the volume must allow executing
+files: an `emptyDir` or node mount mounted `noexec` breaks installs.
+Installs happen before the egress policy locks the network; a tool an agent requests after the workspace
+started (`provisionTool`) is refused under the `blocked` and `restricted` policies. An agent may not pin
+a `DEPRECATED` row, and a workspace stops running installers after `max(3, maxTools)` failed attempts.
+
+**Letting the platform propose the files.** A repository's owning-team lead (or a platform admin)
+can have the platform open a pull request that adds `.auto-swe/tools.yml`, `.auto-swe/pr-policy.yml`
+or both: `POST /api/v1/repositories/:id/onboarding-pr` with the files to include, and
+`GET /api/v1/repositories/:id/onboarding-pr/:workflowId` for the outcome. A team the repository is only
+shared with cannot do this. The tools named must exist in the catalog and not be revoked. The files
+are rendered by the platform from that selection (the request supplies no path and no free-form
+content), cloned from the default branch, committed on `<branch prefix>/onboard-<hash>`, pushed, and
+opened as one ordinary pull request. Asking again with identical content reuses the branch and pull
+request; a file already identical on the branch is skipped; one that differs is changed on the
+branch only, so a person reviews the diff. Nothing is ever merged or force-pushed. Merging the pull
+request enables nothing: `toolsFileEnabled` stays an administrator's separate switch, so the file is
+inert until then. The pull request touches `.auto-swe/**`, a sensitive path in pull request
+evaluation, so it never qualifies for bot-approved auto-merge.
+
 ### Detected stack
 
 The dependency scan also records the repository's stacks on the connection
@@ -828,6 +895,32 @@ longer fit.
 - **Composite gates cover a bounded layout.** More than eight components, or a gate that some
   component has no command for (a Python component has no build or lint default, for example), is
   still unconfigured: set the repository's `gateCommands` for it.
+- **On-demand tools reach only the commands the platform runs through its own exec.** The agent's
+  `bash`, the gates and other workspace commands see `/workspace/.tools/bin` on `PATH`; the Claude Code
+  runtime and any command started outside that exec do not.
+- **A catalog entry is a `.tar.gz` holding one executable.** There is no post-install script, no
+  package-manager install and no heavy toolchain (a full JDK, Rust, .NET); those stay on executor
+  images. A row is as trustworthy as the person who wrote it: the platform verifies the download
+  against the row's digest, not the digest against anything upstream.
+- **The onboarding pull request uses the platform credential only.** A user's own token
+  ([`user-github-credentials.md`](./user-github-credentials.md)) is not used for it, and the repository
+  settings screen has no button for it yet: it is an API call.
+- **A standalone gate run installs no tools.** The path that runs gates outside an implementation
+  run has no connection to read tool declarations from, so a repository whose gates need an
+  on-demand tool fails there with exit 127. Gates inside an implementation, CI verification and UI
+  verification do get them.
+- **A revoked built-in row stops following code.** Resetting a revoked built-in restores the code's
+  values but keeps it revoked and customized, so a later corrected digest in code does not reach it;
+  un-revoke it with an edit, then reset it, to follow code again.
+- **Changing a repository's URLs, team or default branch clears `toolsFileEnabled` when a non-admin
+  does it.** The administrator's decision to honour the file was about that repository at that ref,
+  so an administrator has to enable it again.
+- **There is no download mirror setting.** An air-gapped cluster has to allow the catalog's hosts or
+  carry its own catalog rows pointing at an internal mirror.
+- **Tools are downloaded on every run.** There is no cache across runs, so each run pays the
+  download.
+- **A tool's checksum is verified at install, not afterwards.** The agent can overwrite the binaries
+  in its own container, as it can any file it can write.
 - **A mixed-stack layout has no single image.** Set the repository's `executorImage` to one that
   carries every toolchain, or the components whose tools the default image lacks exit 127.
 - **The composite shares one run's test budget.** The timeout scales with the number of components

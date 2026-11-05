@@ -348,6 +348,22 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/builtinModels.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/toolCatalog',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/toolCatalog.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/toolsFile',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/toolsFile.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/onboardingPrWorkflow',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/onboardingPrWorkflow.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/onboardingPr',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/onboardingPr.ts'),
+      },
+      {
         find: '@auto-swe/shared/scannerPatterns',
         replacement: path.resolve(__dirname, 'packages/shared/src/scannerPatterns/index.ts'),
       },

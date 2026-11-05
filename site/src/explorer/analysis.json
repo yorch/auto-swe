@@ -6109,6 +6109,7 @@
     "SlackWorkspace": "Slack installation and organization binding.",
     "Team": "Team-owned resources, configuration and workflow defaults.",
     "TeamMembership": "Schema entity; inspect fields and relationship declarations below.",
+    "ToolCatalogEntry": "Admin-written allowlist of pinned tool downloads (per-architecture https URL and SHA-256, archive member, libc, status) that a workspace may install on demand; a revoked row blocks installs everywhere.",
     "TranscriptAccessLog": "One transcript content read, download link, verification, export, legal-hold change or identified refusal: actor and role, address, user agent, parameters and how a streamed read ended. No foreign keys, so a row outlives what it names; ADMIN-only and pruned after its own retention.",
     "TrustedKnowledgeEvidence": "Worker-written provenance of a passed quality gate in one execution, the only evidence a learning may cite.",
     "User": "Platform identity with role, team/org memberships and authentication relations; a recorded GitHub login also records the linked account it was read from. approvedAt and approvalSource record when and how a waiting sign-up was approved: by an admin, or on a first GitHub sign-in by membership of an organization the github.signInAutoApproveOrgs setting lists.",
@@ -6194,7 +6195,8 @@
       "WorkflowStep",
       "CallbackEndpoint",
       "RunCallback",
-      "OutboundDelivery"
+      "OutboundDelivery",
+      "ToolCatalogEntry"
     ],
     "Identity & targets": [
       "ApiToken",

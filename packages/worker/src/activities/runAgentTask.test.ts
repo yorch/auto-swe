@@ -580,6 +580,21 @@ describe('tool grants and agent scope', () => {
     expect(granted().some((name) => name.startsWith('browser_'))).toBe(false);
   });
 
+  it.each([[null], [['readFile']], [['mcp', 'bash']]])(
+    'does not bind provisionTool unless the Agent names it: %j',
+    async (toolKeys) => {
+      m.toolKeys = toolKeys;
+      await runAgentTask({ request: request() });
+      expect(granted()).not.toContain('provisionTool');
+    }
+  );
+
+  it('binds provisionTool when the Agent names it', async () => {
+    m.toolKeys = ['provisionTool', 'readFile'];
+    await runAgentTask({ request: request() });
+    expect(granted()).toEqual(expect.arrayContaining(['provisionTool', 'readFile']));
+  });
+
   it('toolKeys [] grants no tools at all', async () => {
     m.toolKeys = [];
     await runAgentTask({ request: request() });

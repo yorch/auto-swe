@@ -225,6 +225,13 @@ jobs:
           EXECUTOR_IMAGES_DOCKER_TEST: '1'
         run: yarn test packages/worker/src/activities/executorImages.docker.test.ts
 
+      # Runs the on-demand tool install script as a non-root user with every capability
+      # dropped, against an archive served from inside the container.
+      - name: Tool install script (Docker-backed)
+        env:
+          TOOL_INSTALL_DOCKER_TEST: '1'
+        run: yarn test packages/worker/src/lib/toolInstall.docker.test.ts
+
       # The same suites through the socket proxy the worker uses in compose, with
       # the same config: the suites cover `run -d`, `exec -i`, `cp`, `pause` and
       # `rm`, and the start step covers volumes, a foreground `run --rm` and `port`.

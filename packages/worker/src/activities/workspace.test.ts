@@ -12,12 +12,31 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { teamFindUniqueMock } = vi.hoisted(() => ({
+const {
+  catalogFindManyMock,
+  connectionFindUniqueMock,
+  persistTraceMock,
+  resolveSettingsMock,
+  teamFindUniqueMock,
+} = vi.hoisted(() => ({
+  catalogFindManyMock: vi.fn(async () => [] as unknown[]),
+  connectionFindUniqueMock: vi.fn(async () => null as unknown),
+  persistTraceMock: vi.fn(async (..._args: unknown[]) => true),
+  resolveSettingsMock: vi.fn(async () => ({
+    'workspace.toolInstall.enabled': false,
+    'workspace.toolInstall.maxTools': 8,
+  })),
   teamFindUniqueMock: vi.fn(async () => null),
 }));
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { team: { findUnique: teamFindUniqueMock } },
+  prisma: {
+    connection: { findUnique: connectionFindUniqueMock },
+    team: { findUnique: teamFindUniqueMock },
+    toolCatalogEntry: { findMany: catalogFindManyMock },
+  },
 }));
+vi.mock('@auto-swe/shared/config', () => ({ resolveSettings: resolveSettingsMock }));
+vi.mock('../lib/activityContext.js', () => ({ persistActivityTrace: persistTraceMock }));
 
 import { ApplicationFailure } from '@temporalio/activity';
 
@@ -44,6 +63,7 @@ vi.mock('../lib/execUtils.js', async (importOriginal) => {
   return {
     ...actual,
     execShellAsync: vi.fn(async () => ''),
+    spawnCaptureAsync: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
     spawnWithStdinAsync: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
   };
 });
@@ -85,7 +105,7 @@ vi.mock('../lib/registryProxy/workspaceWiring.js', async (importOriginal) => {
 });
 
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
-import { execShellAsync, spawnWithStdinAsync } from '../lib/execUtils.js';
+import { execShellAsync, spawnCaptureAsync, spawnWithStdinAsync } from '../lib/execUtils.js';
 import {
   DEFAULT_GIT_IDENTITY,
   type GitIdentity,
@@ -93,7 +113,9 @@ import {
   resolveGitIdentity,
 } from '../lib/gitIdentity.js';
 import { beginWorkspaceRegistries } from '../lib/registryProxy/workspaceWiring.js';
+import { resetToolCatalogCache } from '../lib/toolCatalogLoader.js';
 import { dockerWorkspaceBackend } from '../lib/workspaceBackend/docker.js';
+import { ToolRefusal } from '../lib/workspaceTools.js';
 import {
   authedGitScript,
   buildMetadataBlockArgs,
@@ -112,6 +134,16 @@ import {
 
 /** How an authenticated git call names its header: read from the environment, never embedded. */
 const AUTH_REF = `-c "http.extraheader=\${${GIT_AUTH_ENV}:?git credential not delivered}"`;
+
+/** `installTools` exists only on a workspace created with `toolsFor`; a test that calls it needs it. */
+function requireInstallTools(
+  ws: Awaited<ReturnType<typeof createWorkspace>>
+): NonNullable<Awaited<ReturnType<typeof createWorkspace>>['installTools']> {
+  if (!ws.installTools) {
+    throw new Error('workspace has no installTools');
+  }
+  return ws.installTools;
+}
 
 describe('shellQuote', () => {
   it('wraps a plain string', () => expect(shellQuote('abc')).toBe("'abc'"));
@@ -1764,7 +1796,9 @@ describe('createWorkspace on-demand tools (execShellAsync mocked)', () => {
         arm64: { sha256, url: 'https://example.test/just-arm64.tar.gz' },
       },
       key: 'just',
+      libc: 'any' as const,
       member: 'just',
+      status: 'ACTIVE' as const,
       version: '1.40.0',
     },
   ];
@@ -1783,7 +1817,7 @@ describe('createWorkspace on-demand tools (execShellAsync mocked)', () => {
 
   const allCommands = () => vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
 
-  it('installs requested tools after the clone and puts them first on PATH for agent execs', async () => {
+  it('installs requested tools after the clone and puts them last on PATH for agent execs', async () => {
     const ws = await createWorkspace(URL, 'auto/T-1', 'main', undefined, undefined, undefined, {
       toolCatalog: catalog,
       tools: [{ key: 'just' }],
@@ -1796,7 +1830,40 @@ describe('createWorkspace on-demand tools (execShellAsync mocked)', () => {
 
     await ws.exec('just --version');
     const exec = allCommands().at(-1) as string;
-    expect(exec).toContain('PATH=/workspace/.tools/bin:/usr/local/bin:/usr/bin');
+    expect(exec).toContain('PATH=/usr/local/bin:/usr/bin:/workspace/.tools/bin');
+    await ws.destroy();
+  });
+
+  it('puts the tools dir LAST on PATH, so a planted git or sh can never shadow the image binary', async () => {
+    const ws = await createWorkspace(URL, 'auto/T-1', 'main', undefined, undefined, undefined, {
+      toolCatalog: catalog,
+      tools: [{ key: 'just' }],
+    });
+    await ws.exec('git status');
+    const exec = allCommands().at(-1) as string;
+    const pair = exec.match(/PATH=\S+/)?.[0] as string;
+    // The agent can write `/workspace/.tools/bin/git`; the image's own directories are searched first.
+    expect(pair).toBe('PATH=/usr/local/bin:/usr/bin:/workspace/.tools/bin');
+    expect(pair.endsWith(':/workspace/.tools/bin')).toBe(true);
+    expect(pair.startsWith('PATH=/workspace/.tools/bin')).toBe(false);
+    await ws.destroy();
+  });
+
+  it('installs tools before the egress lock, which a blocked policy applies afterwards', async () => {
+    const lock = vi.spyOn(dockerWorkspaceBackend(), 'lockEgress').mockResolvedValue();
+    const ws = await createWorkspace(URL, 'auto/T-1', 'main', undefined, undefined, undefined, {
+      egressPolicy: 'blocked',
+      toolCatalog: catalog,
+      tools: [{ key: 'just' }],
+    });
+    const calls = vi.mocked(execShellAsync).mock.calls;
+    const install = calls.findIndex((c) => (c[0] as string).includes('auto-swe tool install'));
+    expect(install).toBeGreaterThanOrEqual(0);
+    expect(lock).toHaveBeenCalledOnce();
+    expect(vi.mocked(execShellAsync).mock.invocationCallOrder[install]).toBeLessThan(
+      lock.mock.invocationCallOrder[0] as number
+    );
+    lock.mockRestore();
     await ws.destroy();
   });
 
@@ -1831,6 +1898,605 @@ describe('createWorkspace on-demand tools (execShellAsync mocked)', () => {
         tools: [{ key: 'just' }],
       })
     ).rejects.toThrow('checksum mismatch');
+  });
+});
+
+describe('createWorkspace catalog tools for a connection (execShellAsync mocked)', () => {
+  const URL = 'https://github.com/acme/repo.git';
+  const sha256 = 'a'.repeat(64);
+  const row = {
+    archs: {
+      amd64: { sha256, url: 'https://example.test/just-amd64.tar.gz' },
+      arm64: { sha256, url: 'https://example.test/just-arm64.tar.gz' },
+    },
+    key: 'just',
+    libc: 'any',
+    member: 'just',
+    status: 'ACTIVE',
+    version: '1.40.0',
+  };
+  const TOOLS_YML = 'version: 1\ntools:\n  - key: just\n';
+
+  const setting = (enabled: boolean, maxTools = 8) =>
+    resolveSettingsMock.mockResolvedValue({
+      'workspace.toolInstall.enabled': enabled,
+      'workspace.toolInstall.maxTools': maxTools,
+    });
+  const connection = (over: Record<string, unknown> = {}) =>
+    connectionFindUniqueMock.mockResolvedValue({
+      tools: null,
+      toolsDeny: [],
+      toolsFileEnabled: false,
+      ...over,
+    });
+  /** The tools file as the container would print it for `git show <ref>:path`; null = absent. */
+  let fileText: string | null;
+
+  beforeEach(() => {
+    resetToolCatalogCache();
+    vi.mocked(resolveGitIdentity).mockReset();
+    vi.mocked(resolveGitIdentity).mockResolvedValue(DEFAULT_GIT_IDENTITY);
+    catalogFindManyMock.mockReset();
+    catalogFindManyMock.mockResolvedValue([row]);
+    connectionFindUniqueMock.mockReset();
+    persistTraceMock.mockReset();
+    persistTraceMock.mockResolvedValue(true);
+    setting(true);
+    connection();
+    fileText = null;
+    vi.mocked(execShellAsync).mockReset();
+    vi.mocked(execShellAsync).mockImplementation(async (cmd: string) => {
+      if (cmd.includes('echo "$PATH"')) {
+        return '/usr/local/bin:/usr/bin\n';
+      }
+      if (cmd.includes('git cat-file -s')) {
+        return fileText === null ? 'absent\n' : `present\n${fileText}`;
+      }
+      return okExec(cmd);
+    });
+  });
+
+  afterEach(() => vi.mocked(execShellAsync).mockClear());
+
+  const allCommands = () => vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+  const installed = () => allCommands().some((c) => c.includes('auto-swe tool install'));
+  const removed = () => allCommands().some((c) => c.includes('docker rm'));
+  const create = (
+    over: { checkoutSha?: string; existingBranch?: boolean } = {},
+    options: Parameters<typeof createWorkspace>[6] = { toolsFor: { connectionId: 'c1' } }
+  ) =>
+    createWorkspace(
+      URL,
+      'auto/T-1',
+      'main',
+      undefined,
+      over.checkoutSha,
+      over.existingBranch,
+      options
+    );
+  const failureOf = async (
+    p: Promise<unknown>
+  ): Promise<Error & { nonRetryable?: boolean; type?: string }> => {
+    try {
+      await p;
+    } catch (err) {
+      return err as Error;
+    }
+    throw new Error('expected createWorkspace to reject');
+  };
+
+  it('installs nothing and reads nothing when the setting is off', async () => {
+    setting(false);
+    connection({ tools: [{ key: 'just' }], toolsFileEnabled: true });
+    fileText = TOOLS_YML;
+    const ws = await create();
+    expect(installed()).toBe(false);
+    expect(ws.installedTools).toEqual([]);
+    expect(connectionFindUniqueMock).not.toHaveBeenCalled();
+    expect(allCommands().some((c) => c.includes('git cat-file'))).toBe(false);
+    await ws.destroy();
+  });
+
+  it('installs the connection admin list when the setting is on', async () => {
+    connection({ tools: [{ key: 'just' }] });
+    const ws = await create();
+    expect(installed()).toBe(true);
+    expect(ws.installedTools).toEqual([{ key: 'just', version: '1.40.0' }]);
+    await ws.exec('just --version');
+    expect(allCommands().at(-1)).toContain('PATH=/usr/local/bin:/usr/bin:/workspace/.tools/bin');
+    await ws.destroy();
+  });
+
+  it('installs a tool declared by the file, read from HEAD right after the clone', async () => {
+    connection({ toolsFileEnabled: true });
+    fileText = TOOLS_YML;
+    const ws = await create();
+    const commands = allCommands();
+    const clone = commands.findIndex((c) => c.includes(' clone '));
+    const read = commands.findIndex((c) => c.includes('git cat-file -s'));
+    expect(read).toBeGreaterThan(clone);
+    expect(commands[read]).toMatch(/HEAD:\.auto-swe\/tools\.yml/);
+    expect(commands[read]).not.toContain('target-repo/.auto-swe');
+    expect(ws.installedTools?.map((t) => t.key)).toEqual(['just']);
+    await ws.destroy();
+  });
+
+  it('reads the pinned sha, not the working tree, on the checkoutSha path', async () => {
+    connection({ toolsFileEnabled: true });
+    fileText = TOOLS_YML;
+    const ws = await create({ checkoutSha: 'abc1234' });
+    const read = allCommands().find((c) => c.includes('git cat-file -s')) as string;
+    expect(read).toMatch(/abc1234:\.auto-swe\/tools\.yml/);
+    expect(read).not.toMatch(/HEAD:\.auto-swe/);
+    await ws.destroy();
+  });
+
+  it('fetches the default branch and reads FETCH_HEAD when the clone holds a candidate branch', async () => {
+    connection({ toolsFileEnabled: true });
+    fileText = TOOLS_YML;
+    const ws = await create({ existingBranch: true });
+    const commands = allCommands();
+    const fetch = commands.findIndex((c) => /fetch --depth=1 origin/.test(c));
+    const read = commands.findIndex((c) => c.includes('git cat-file -s'));
+    expect(fetch).toBeGreaterThanOrEqual(0);
+    expect(read).toBeGreaterThan(fetch);
+    expect(commands[read]).toMatch(/FETCH_HEAD:\.auto-swe\/tools\.yml/);
+    await ws.destroy();
+  });
+
+  it('never reads a tools file from the agent branch: every read names a base ref', async () => {
+    connection({ toolsFileEnabled: true });
+    fileText = null;
+    const ws = await create({ existingBranch: true });
+    expect(installed()).toBe(false);
+    const reads = allCommands().filter((c) => c.includes('tools.yml'));
+    expect(reads.length).toBeGreaterThan(0);
+    for (const c of reads) {
+      expect(c).toMatch(/FETCH_HEAD:\.auto-swe\/tools\.yml/);
+      expect(c).not.toMatch(/\bcat\s[^|]*tools\.yml/);
+    }
+    await ws.destroy();
+  });
+
+  it('ignores the file when the connection has not enabled it', async () => {
+    connection({ toolsFileEnabled: false });
+    fileText = TOOLS_YML;
+    const ws = await create();
+    expect(installed()).toBe(false);
+    expect(allCommands().some((c) => c.includes('git cat-file'))).toBe(false);
+    await ws.destroy();
+  });
+
+  it('lets the deny list win over the admin list and the file', async () => {
+    connection({ tools: [{ key: 'just' }], toolsDeny: ['just'], toolsFileEnabled: true });
+    fileText = TOOLS_YML;
+    const ws = await create();
+    expect(installed()).toBe(false);
+    expect(ws.installedTools).toEqual([]);
+    await ws.destroy();
+  });
+
+  it('fails creation when more tools are declared than workspace.toolInstall.maxTools allows', async () => {
+    setting(true, 1);
+    connection({ tools: [{ key: 'just' }, { key: 'jq' }] });
+    const err = await failureOf(create());
+    expect(err.message).toMatch(/at most 1/);
+    expect(err.nonRetryable).toBe(true);
+    expect(installed()).toBe(false);
+    expect(removed()).toBe(true);
+  });
+
+  it('fails non-retryably, removing the container, when a declared key is unknown', async () => {
+    connection({ tools: [{ key: 'python' }] });
+    const err = await failureOf(create());
+    expect(err.message).toMatch(/'python' is not in the tool catalog/);
+    expect(err.nonRetryable).toBe(true);
+    expect(err.type).toBe('TOOL_INSTALL_FAILED');
+    expect(removed()).toBe(true);
+  });
+
+  it('surfaces a retryable download failure as a plain, retryable error naming the tool', async () => {
+    connection({ tools: [{ key: 'just' }] });
+    const base = vi.mocked(execShellAsync).getMockImplementation() as (
+      c: string
+    ) => Promise<string>;
+    vi.mocked(execShellAsync).mockImplementation(async (cmd: string) => {
+      if (cmd.includes('auto-swe tool install')) {
+        throw Object.assign(new Error('Command failed'), {
+          code: 75,
+          stderr:
+            'auto-swe tool install: just@1.40.0: download failed from https://example.test/x\n',
+        });
+      }
+      return base(cmd);
+    });
+    const err = await failureOf(create());
+    expect(err.message).toContain('just@1.40.0: download failed');
+    expect(err.nonRetryable).toBeUndefined();
+    expect(removed()).toBe(true);
+  });
+
+  it('fails closed when the catalog cannot be read: no fallback to the built-in table', async () => {
+    connection({ tools: [{ key: 'just' }] });
+    catalogFindManyMock.mockRejectedValue(new Error('connection refused'));
+    const err = await failureOf(create());
+    expect(err.message).toMatch(/tool catalog is unreadable/);
+    expect(err.nonRetryable).toBeUndefined();
+    expect(installed()).toBe(false);
+    expect(removed()).toBe(true);
+  });
+
+  it('refuses a revoked row, and installs a deprecated one with a warning', async () => {
+    connection({ tools: [{ key: 'just', version: '1.40.0' }] });
+    catalogFindManyMock.mockResolvedValue([{ ...row, status: 'REVOKED' }]);
+    const err = await failureOf(create());
+    expect(err.message).toMatch(/revoked/);
+    expect(installed()).toBe(false);
+
+    resetToolCatalogCache();
+    catalogFindManyMock.mockResolvedValue([{ ...row, status: 'DEPRECATED' }]);
+    const ws = await create();
+    expect(ws.installedTools?.[0]?.warning).toMatch(/deprecated/);
+    await ws.destroy();
+  });
+
+  it('merges explicit options.tools with what the connection declares, once per key', async () => {
+    connection({ tools: [{ key: 'just' }] });
+    const ws = await create({}, { tools: [{ key: 'just' }], toolsFor: { connectionId: 'c1' } });
+    expect(ws.installedTools).toHaveLength(1);
+    await ws.destroy();
+  });
+
+  it('records a workspace.tools_installed event, and a failure records it with the error', async () => {
+    connection({ tools: [{ key: 'just' }] });
+    const ws = await create();
+    expect(persistTraceMock).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(persistTraceMock.mock.calls[0]?.[0])).toContain(
+      'workspace.tools_installed'
+    );
+    await ws.destroy();
+
+    persistTraceMock.mockClear();
+    connection({ tools: [{ key: 'python' }] });
+    await failureOf(create());
+    expect(persistTraceMock).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(persistTraceMock.mock.calls[0]?.[0])).toContain(
+      'not in the tool catalog'
+    );
+  });
+
+  it('redacts the clone credential from the failure recorded in the trace', async () => {
+    connection({ tools: [{ key: 'just' }] });
+    const base = vi.mocked(execShellAsync).getMockImplementation() as (
+      c: string
+    ) => Promise<string>;
+    vi.mocked(execShellAsync).mockImplementation(async (cmd: string) => {
+      if (cmd.includes('auto-swe tool install')) {
+        throw new Error('just@1.40.0: curl failed for ghp_SECRETTOKEN123 at the proxy');
+      }
+      return base(cmd);
+    });
+    const err = await failureOf(
+      createWorkspace(
+        'https://x-access-token:ghp_SECRETTOKEN123@github.com/acme/repo.git',
+        'auto/T-1',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        { toolsFor: { connectionId: 'c1' } }
+      )
+    );
+    expect(err.message).not.toContain('ghp_SECRETTOKEN123');
+    expect(persistTraceMock).toHaveBeenCalledTimes(1);
+    const recorded = JSON.stringify(persistTraceMock.mock.calls[0]?.[0]);
+    expect(recorded).toContain('curl failed for');
+    expect(recorded).not.toContain('ghp_SECRETTOKEN123');
+  });
+
+  it('never fails creation because the trace could not be written', async () => {
+    connection({ tools: [{ key: 'just' }] });
+    persistTraceMock.mockRejectedValue(new Error('db down'));
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const ws = await create();
+    expect(ws.installedTools).toHaveLength(1);
+    await ws.destroy();
+  });
+});
+
+describe('Workspace.installTools: an agent-requested install (execShellAsync mocked)', () => {
+  const URL = 'https://github.com/acme/repo.git';
+  const sha256 = 'a'.repeat(64);
+  const entry = (key: string) => ({
+    archs: {
+      amd64: { sha256, url: `https://example.test/${key}-amd64.tar.gz` },
+      arm64: { sha256, url: `https://example.test/${key}-arm64.tar.gz` },
+    },
+    key,
+    libc: 'any' as const,
+    member: key,
+    status: 'ACTIVE' as const,
+    version: '1.0.0',
+  });
+  const toolCatalog = [entry('just'), entry('jq')];
+  const PATH_PAIR = 'PATH=/usr/local/bin:/usr/bin:/workspace/.tools/bin';
+
+  const setting = (enabled: boolean, maxTools = 8) =>
+    resolveSettingsMock.mockResolvedValue({
+      'workspace.toolInstall.enabled': enabled,
+      'workspace.toolInstall.maxTools': maxTools,
+    });
+
+  beforeEach(() => {
+    vi.mocked(resolveGitIdentity).mockReset();
+    vi.mocked(resolveGitIdentity).mockResolvedValue(DEFAULT_GIT_IDENTITY);
+    persistTraceMock.mockReset();
+    persistTraceMock.mockResolvedValue(true);
+    connectionFindUniqueMock.mockReset();
+    connectionFindUniqueMock.mockResolvedValue({
+      tools: null,
+      toolsDeny: [],
+      toolsFileEnabled: false,
+    });
+    setting(true);
+    vi.mocked(execShellAsync).mockReset();
+    vi.mocked(execShellAsync).mockImplementation(async (cmd: string) =>
+      cmd.includes('echo "$PATH"') ? '/usr/local/bin:/usr/bin\n' : okExec(cmd)
+    );
+    vi.mocked(spawnWithStdinAsync).mockReset();
+    vi.mocked(spawnWithStdinAsync).mockResolvedValue({ exitCode: 0, stderr: '', stdout: '' });
+  });
+
+  afterEach(() => vi.mocked(execShellAsync).mockClear());
+
+  const allCommands = () => vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+  const installScripts = () => allCommands().filter((c) => c.includes('auto-swe tool install'));
+  const create = (withTools = true) =>
+    createWorkspace(
+      URL,
+      'auto/T-1',
+      'main',
+      undefined,
+      undefined,
+      undefined,
+      withTools ? { toolCatalog, toolsFor: { connectionId: 'c1' } } : { toolCatalog }
+    );
+  const lastCommand = () => allCommands().at(-1) as string;
+
+  it('is defined only for a workspace created with toolsFor', async () => {
+    const without = await create(false);
+    expect(without.installTools).toBeUndefined();
+    await without.destroy();
+    const withFor = await create();
+    expect(typeof withFor.installTools).toBe('function');
+    await withFor.destroy();
+  });
+
+  it('starts applying PATH to exec, execCapture and execStdin after a late install, but never to gitAuthed', async () => {
+    const ws = await create();
+    expect(ws.installedTools).toEqual([]);
+    await ws.exec('true');
+    expect(lastCommand()).not.toContain('PATH=');
+
+    const result = await ws.installTools?.([{ key: 'just' }]);
+    expect(result).toEqual([{ key: 'just', version: '1.0.0' }]);
+    expect(ws.installedTools).toEqual([{ key: 'just', version: '1.0.0' }]);
+
+    await ws.exec('just --version');
+    expect(lastCommand()).toContain(PATH_PAIR);
+
+    vi.mocked(execShellAsync).mockClear();
+    vi.mocked(spawnWithStdinAsync).mockClear();
+    vi.mocked(spawnCaptureAsync).mockClear();
+    await ws.execCapture('just --version');
+    await ws.execStdin('cat > x', 'data');
+    const via = [
+      ...vi.mocked(spawnCaptureAsync).mock.calls.map((c) => (c[1] as string[]).join(' ')),
+      ...vi.mocked(spawnWithStdinAsync).mock.calls.map((c) => (c[1] as string[]).join(' ')),
+      ...allCommands(),
+    ];
+    expect(via.filter((s) => s.includes(PATH_PAIR))).toHaveLength(2);
+    expect(via).toHaveLength(2);
+
+    vi.mocked(execShellAsync).mockClear();
+    await ws.gitAuthed('status');
+    expect(lastCommand()).not.toContain('PATH=');
+    await ws.destroy();
+  });
+
+  it('installs only the new entry on a second call and keeps the earlier one', async () => {
+    const ws = await create();
+    await ws.installTools?.([{ key: 'just' }]);
+    expect(installScripts()).toHaveLength(1);
+    expect(installScripts()[0]).toContain('just-amd64');
+
+    await ws.installTools?.([{ key: 'just' }, { key: 'jq' }]);
+    expect(installScripts()).toHaveLength(2);
+    expect(installScripts()[1]).toContain('jq-amd64');
+    expect(installScripts()[1]).not.toContain('just-amd64');
+    expect(ws.installedTools?.map((t) => t.key)).toEqual(['just', 'jq']);
+
+    // Everything already there: nothing runs.
+    await ws.installTools?.([{ key: 'jq' }]);
+    expect(installScripts()).toHaveLength(2);
+    await ws.destroy();
+  });
+
+  it('records a workspace.tools_installed event for the late install', async () => {
+    const ws = await create();
+    persistTraceMock.mockClear();
+    await ws.installTools?.([{ key: 'just' }]);
+    expect(persistTraceMock).toHaveBeenCalledTimes(1);
+    await ws.destroy();
+  });
+
+  it('refuses a denied key, and does not change PATH when nothing was installed', async () => {
+    connectionFindUniqueMock.mockResolvedValue({
+      tools: null,
+      toolsDeny: ['just'],
+      toolsFileEnabled: false,
+    });
+    const ws = await create();
+    await expect(ws.installTools?.([{ key: 'just' }])).rejects.toThrow(/denied/);
+    await ws.exec('true');
+    expect(lastCommand()).not.toContain('PATH=');
+    expect(installScripts()).toHaveLength(0);
+    await ws.destroy();
+  });
+
+  it('enforces the per-run cap across creation and late installs', async () => {
+    setting(true, 1);
+    connectionFindUniqueMock.mockResolvedValue({
+      tools: [{ key: 'just' }],
+      toolsDeny: [],
+      toolsFileEnabled: false,
+    });
+    const ws = await create();
+    expect(ws.installedTools?.map((t) => t.key)).toEqual(['just']);
+    await expect(ws.installTools?.([{ key: 'jq' }])).rejects.toThrow(/limit of 1/);
+    await ws.destroy();
+  });
+
+  it('serialises concurrent installs: with one free slot exactly one succeeds', async () => {
+    setting(true, 1);
+    const ws = await create();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const base = vi.mocked(execShellAsync).getMockImplementation() as (
+      c: string
+    ) => Promise<string>;
+    vi.mocked(execShellAsync).mockImplementation(async (cmd: string) => {
+      if (cmd.includes('auto-swe tool install')) {
+        await gate;
+      }
+      return base(cmd);
+    });
+    const first = ws.installTools?.([{ key: 'just' }]) as Promise<unknown>;
+    const second = ws.installTools?.([{ key: 'jq' }]) as Promise<unknown>;
+    // Let both reach the cap check (or, without the queue, both pass it) before the gate opens.
+    for (let i = 0; i < 20; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    release();
+    const settled = await Promise.allSettled([first, second]);
+    expect(settled.map((r) => r.status)).toEqual(['fulfilled', 'rejected']);
+    expect(String((settled[1] as PromiseRejectedResult).reason)).toMatch(/limit of 1/);
+    expect(installScripts()).toHaveLength(1);
+    expect(ws.installedTools?.map((t) => t.key)).toEqual(['just']);
+    await ws.destroy();
+  });
+
+  it('stops running installers after max(3, maxTools) failed attempts, non-retryably', async () => {
+    setting(true, 1);
+    const ws = await create();
+    const base = vi.mocked(execShellAsync).getMockImplementation() as (
+      c: string
+    ) => Promise<string>;
+    vi.mocked(execShellAsync).mockImplementation(async (cmd: string) => {
+      if (cmd.includes('auto-swe tool install')) {
+        throw Object.assign(new Error('Command failed'), {
+          code: 1,
+          stderr: 'auto-swe tool install: just@1.0.0: checksum mismatch\n',
+        });
+      }
+      return base(cmd);
+    });
+    for (let i = 0; i < 3; i++) {
+      await expect(ws.installTools?.([{ key: 'just' }])).rejects.toThrow(/checksum mismatch/);
+    }
+    expect(installScripts()).toHaveLength(3);
+    const err = await requireInstallTools(ws)([{ key: 'just' }]).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ToolRefusal);
+    expect((err as ToolRefusal).message).toBe('too many failed install attempts in this workspace');
+    expect((err as ToolRefusal).retryable).toBe(false);
+    expect(installScripts()).toHaveLength(3);
+    await ws.destroy();
+  });
+
+  it('does not count refusals toward the failed-attempt cap', async () => {
+    connectionFindUniqueMock.mockResolvedValue({
+      tools: null,
+      toolsDeny: ['just'],
+      toolsFileEnabled: false,
+    });
+    const ws = await create();
+    for (let i = 0; i < 5; i++) {
+      await expect(ws.installTools?.([{ key: 'just' }])).rejects.toThrow(/denied/);
+    }
+    await expect(ws.installTools?.([{ key: 'jq' }])).resolves.toHaveLength(1);
+    await ws.destroy();
+  });
+
+  it('refuses an agent pinning a deprecated catalog row, while creation still installs one', async () => {
+    const deprecated = { ...entry('old'), status: 'DEPRECATED' as const };
+    const ws = await createWorkspace(URL, 'auto/T-1', 'main', undefined, undefined, undefined, {
+      toolCatalog: [deprecated],
+      toolsFor: { connectionId: 'c1' },
+    });
+    const err = await requireInstallTools(ws)([{ key: 'old', version: '1.0.0' }]).catch(
+      (e: unknown) => e
+    );
+    expect(err).toBeInstanceOf(ToolRefusal);
+    expect((err as ToolRefusal).message).toMatch(/'old@1\.0\.0' is deprecated/);
+    expect(installScripts()).toHaveLength(0);
+    await ws.destroy();
+
+    connectionFindUniqueMock.mockResolvedValue({
+      tools: [{ key: 'old', version: '1.0.0' }],
+      toolsDeny: [],
+      toolsFileEnabled: false,
+    });
+    const atCreation = await createWorkspace(
+      URL,
+      'auto/T-1',
+      'main',
+      undefined,
+      undefined,
+      undefined,
+      {
+        toolCatalog: [deprecated],
+        toolsFor: { connectionId: 'c1' },
+      }
+    );
+    expect(atCreation.installedTools?.[0]?.warning).toMatch(/deprecated/);
+    await atCreation.destroy();
+  });
+
+  describe('under an egress policy that locks the network', () => {
+    const createUnder = (egressPolicy: 'open' | 'blocked' | 'restricted') =>
+      createWorkspace(URL, 'auto/T-1', 'main', undefined, undefined, undefined, {
+        egressPolicy,
+        toolCatalog,
+        toolsFor: { connectionId: 'c1' },
+      });
+
+    it.each(['blocked', 'restricted'] as const)(
+      'refuses a late install under %s without running an installer',
+      async (egressPolicy) => {
+        const lock = vi.spyOn(dockerWorkspaceBackend(), 'lockEgress').mockResolvedValue();
+        const ws = await createUnder(egressPolicy);
+        const err = await requireInstallTools(ws)([{ key: 'just' }]).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ToolRefusal);
+        expect((err as ToolRefusal).message).toBe(
+          `tool installs after workspace start are unavailable under the ${egressPolicy} egress policy`
+        );
+        expect((err as ToolRefusal).retryable).toBe(false);
+        expect(installScripts()).toHaveLength(0);
+        lock.mockRestore();
+        await ws.destroy();
+      }
+    );
+
+    it('still installs under open', async () => {
+      const ws = await createUnder('open');
+      await expect(ws.installTools?.([{ key: 'just' }])).resolves.toEqual([
+        { key: 'just', version: '1.0.0' },
+      ]);
+      expect(installScripts()).toHaveLength(1);
+      await ws.destroy();
+    });
   });
 });
 

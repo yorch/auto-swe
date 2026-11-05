@@ -26,6 +26,7 @@ export const ALL_TOOL_KEYS = [
   'bash',
   'mcp',
   'browser',
+  'provisionTool',
   'searchKnowledge',
   'submitLearning',
 ] as const;
@@ -35,6 +36,7 @@ const TOOL_LABELS: Record<(typeof ALL_TOOL_KEYS)[number], string> = {
   browser: 'Use the app browser for UI verification (explicit opt-in)',
   listDirectory: 'List workspace directories',
   mcp: 'Use connected MCP tools',
+  provisionTool: 'Install pinned catalog tools into the workspace (explicit opt-in)',
   readFile: 'Read workspace files',
   searchKnowledge: 'Search governed knowledge (explicit opt-in)',
   submitLearning: 'Submit local learning for human review (explicit opt-in)',

@@ -93,6 +93,7 @@ async function checkoutWorkspace(
       repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
       services,
       teamId: repo.teamId,
+      toolsFor: { connectionId: repo.id },
     }
   );
   try {

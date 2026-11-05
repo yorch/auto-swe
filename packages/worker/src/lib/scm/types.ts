@@ -73,6 +73,11 @@ export interface CreatePullRequestInput {
    */
   reuseExisting?: boolean;
   /**
+   * With `reuseExisting`: when an open PR is found, rewrite its title and body to these instead of
+   * adopting whatever text it carries. Off by default, so a retrying caller keeps a PR's text.
+   */
+  updateExisting?: boolean;
+  /**
    * Open the PR as a draft. When the host cannot (GitHub refuses drafts on
    * private repositories of plans without them), the provider throws
    * {@link DraftPullRequestUnsupportedError} — it never falls back to a
@@ -275,6 +280,12 @@ export interface CommitComparison {
   behindBy: number;
   /** Every path the range touches, both ends of a rename. Null when the host truncated the list. */
   paths: string[] | null;
+  /**
+   * Each file the range touches with the host's change status (`added`, `modified`, `removed`,
+   * `renamed`, …) and, for a rename or copy, where it came from. Null when the host truncated the
+   * list; absent from a provider that does not report it.
+   */
+  files?: { path: string; previousPath: string | null; status: string }[] | null;
 }
 
 /** A normalized CI verdict for a ref, plus an optional link to failing logs. */

@@ -14,6 +14,11 @@ import {
   assistantTitleWorkflowId,
 } from '@auto-swe/shared/lib/assistantConversation';
 import {
+  ONBOARDING_PR_WORKFLOW_TYPE,
+  type OnboardingPrInput,
+  type OnboardingPrResult,
+} from '@auto-swe/shared/lib/onboardingPr';
+import {
   PR_EVALUATION_WORKFLOW_TYPE,
   type PrEvaluationInput,
 } from '@auto-swe/shared/lib/prEvaluationWorkflow';
@@ -99,6 +104,13 @@ export function channelReactiveScheduleId(channelId: string): string {
  * resolution and the standing workRequestId are snapshotted at save time by
  * the gateway route, not at fire time.
  */
+export interface OnboardingPrStatus {
+  status: 'running' | 'completed' | 'failed';
+  result?: OnboardingPrResult;
+  /** A fixed string; never an upstream message or a stack. */
+  error?: string;
+}
+
 export interface WorkRequestScheduleInput {
   scheduleRowId: string;
   cronExpression: string;
@@ -438,6 +450,14 @@ declare module 'fastify' {
         workflowId: string,
         input: { runId: string; attemptId: string; automationId?: string }
       ) => Promise<void>;
+      /**
+       * Open (or update) the pull request that adds a repository's `.auto-swe/` config files.
+       * Joins a run still going under the same id; once it has closed, the same id starts a
+       * fresh run, which finds nothing to do or refreshes the branch.
+       */
+      startOnboardingPrWorkflow: (workflowId: string, input: OnboardingPrInput) => Promise<void>;
+      /** The run's state, with fixed-string failures; null when Temporal has no such execution. */
+      getOnboardingPrStatus: (workflowId: string) => Promise<OnboardingPrStatus | null>;
       startConsolidationWorkflow: (
         workflowId: string,
         input: ConsolidateLessonsInput
@@ -938,6 +958,30 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       }
     },
 
+    async getOnboardingPrStatus(workflowId: string): Promise<OnboardingPrStatus | null> {
+      const handle = client.workflow.getHandle(workflowId);
+      let name: string;
+      try {
+        name = (await handle.describe()).status.name;
+      } catch (err) {
+        if (getErrorName(err) === 'WorkflowNotFoundError') {
+          return null;
+        }
+        throw err;
+      }
+      if (name === 'COMPLETED') {
+        try {
+          return { result: (await handle.result()) as OnboardingPrResult, status: 'completed' };
+        } catch {
+          return { error: 'The pull request result could not be read', status: 'failed' };
+        }
+      }
+      if (isWorkflowStatusFinished(name)) {
+        return { error: 'The onboarding pull request could not be opened', status: 'failed' };
+      }
+      return { status: 'running' };
+    },
+
     async getRepoDependencyScanScheduleStatus(): Promise<RepoDependencyScanScheduleStatus> {
       try {
         const handle = schedules.getHandle(REPO_DEPENDENCY_SCAN_SCHEDULE_ID);
@@ -1302,6 +1346,24 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         workflowId: `knowledge-base-index-${knowledgeBaseId}`,
         workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
       });
+    },
+
+    async startOnboardingPrWorkflow(workflowId: string, input: OnboardingPrInput): Promise<void> {
+      // USE_EXISTING joins a run still going; the default reuse policy allows a new run once the
+      // previous one closed. A server that ignores the conflict policy answers a running id with
+      // WorkflowExecutionAlreadyStartedError, which is the same join.
+      try {
+        await client.workflow.start(ONBOARDING_PR_WORKFLOW_TYPE, {
+          args: [input],
+          taskQueue: 'engineering-workflow',
+          workflowId,
+          workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        });
+      } catch (err) {
+        if (getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError') {
+          throw err;
+        }
+      }
     },
 
     async startPrEvaluationWorkflow(workflowId: string, input: PrEvaluationInput): Promise<void> {
