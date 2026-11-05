@@ -4648,6 +4648,15 @@
       "title": "Gated templates open a ready PR before the gate"
     },
     {
+      "body": "The four-eyes graph requests two sequential approvals but does not enforce different users across those two steps.",
+      "category": "Governance",
+      "detail": "The second sign-off asks for an independent reviewer in its description. Both nodes are separate single-approver steps: the resolver authorizes and records a response per step without comparing the previous gate's actor. Distinct approver counting applies within a multi-approver step, not automatically across sequential gates. Two parallel consensus branches likewise call the same review-network implementation; separate calls do not establish different model or reviewer identities.",
+      "id": "reviewIndependence",
+      "refs": ["signoffActors", "approvalActorScope", "consensus", "review"],
+      "status": "Code-derived caveat",
+      "title": "Two review gates do not prove independent reviewers"
+    },
+    {
       "body": "A host has at most one PAT and at most one App, and a repository on a host with neither is reachable only with a user’s own token.",
       "category": "Coverage",
       "detail": "A repository on another host with no recorded credentials fails with REPO_CREDENTIAL_HOST_MISMATCH unless its launcher saved their own token; two Apps or per-organization PATs on one host are not expressible. A login records the account it was read from, and the takeover check verifies against that account. Only a login with no recorded source (written before it was recorded) held by a user with several linked GitHub accounts is unverifiable, so no takeover is detected for it until a sign-in records one; a non-github.com host with no credential gets none either (a github.com account with no applicable credential is asked unauthenticated, so the check is rate-limited). Installations are registered only by an admin: GitHub’s events can retire, reactivate or rename a registered one, never add one.",
@@ -5819,6 +5828,22 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "firstSignoff: {",
+      "before": 0,
+      "id": "signoffActors",
+      "lines": 38,
+      "path": "packages/shared/src/workflow/templates/fourEyes.ts",
+      "title": "Sequential sign-offs ask for, but do not bind, different actors"
+    },
+    {
+      "anchor": "const approvalCount = await tx.humanApproval.count({",
+      "before": 25,
+      "id": "approvalActorScope",
+      "lines": 110,
+      "path": "packages/gateway/src/lib/hitlResolve.ts",
+      "title": "Distinct approvals are counted per human step"
+    },
     {
       "anchor": "export function createModelProxy(",
       "before": 16,
@@ -13003,13 +13028,21 @@
       "title": "Refresh the built-in model catalog"
     },
     {
-      "body": "Require two human sign-offs, or two independent review-network calls in agreement, on a change whose CI already passed.",
+      "body": "Request two sequential human sign-offs, or two parallel review-network calls in agreement, on a change whose CI already passed.",
       "category": "Governance",
-      "detail": "four-eyes and consensus-review open the pull request and run CI with a fix loop first (two fix attempts, a third failure fails the run); only then do two humans, or two parallel review-network calls, judge the head commit. In four-eyes a sign-off can approve, reject — which stops the run — or request changes: a change request needs a written note, goes to a fix that is told the note, then CI again with a fresh budget and both gates again, with every round creating new pending steps, and a third change request fails the run. In consensus-review a rejecting reviewer sends the change to a fix, CI again and the consensus again; it allows three consensus attempts. A fix that changes nothing never waits for a CI event: a no-op CI fix spends an attempt and a no-op review fix returns straight to the gate.",
+      "detail": "four-eyes and consensus-review open the pull request and run CI with a fix loop first (two fix attempts, a third failure fails the run); only then do two humans, or two parallel review-network calls, judge the head commit. In four-eyes a sign-off can approve, reject — which stops the run — or request changes: a change request needs a written note, goes to a fix that is told the note, then CI again with a fresh budget and both gates again, with every round creating new pending steps, and a third change request fails the run. In consensus-review a rejecting reviewer sends the change to a fix, CI again and the consensus again; it allows three consensus attempts. A fix that changes nothing never waits for a CI event: a no-op CI fix spends an attempt and a no-op review fix returns straight to the gate. Different human identities across the two sign-offs remain a process requirement, not an enforced cross-step constraint; parallel review-network calls also do not guarantee different model identities.",
       "id": "signoff",
-      "refs": ["fourEyes", "fourEyesReject", "consensus", "consensusNoop", "ciNoop"],
+      "refs": [
+        "fourEyes",
+        "fourEyesReject",
+        "consensus",
+        "consensusNoop",
+        "ciNoop",
+        "signoffActors",
+        "approvalActorScope"
+      ],
       "status": "Seeded + executable",
-      "title": "Two-person sign-off on green code"
+      "title": "Sequential sign-off or consensus on green code"
     },
     {
       "body": "Turn a failed GitHub Actions run into a diagnosis, and optionally a draft pull request into the branch that failed.",

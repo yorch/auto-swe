@@ -164,6 +164,28 @@ describe('platform explorer source extraction', () => {
     }
   });
 
+  it('distinguishes sequential sign-offs from cross-step reviewer identity enforcement', () => {
+    const template = data.templates.find((item) => item.spec.name === 'four-eyes');
+    const { firstSignoff, secondSignoff } = template.spec.nodes;
+    expect(firstSignoff).toMatchObject({ onApprove: 'secondSignoff', type: 'humanApproval' });
+    expect(secondSignoff.type).toBe('humanApproval');
+    expect(firstSignoff.approverCount).toBeUndefined();
+    expect(secondSignoff.approverCount).toBeUndefined();
+    const boundary = data.limits.find((item) => item.id === 'reviewIndependence');
+    expect(boundary.refs).toEqual(expect.arrayContaining(['signoffActors', 'approvalActorScope']));
+    expect(boundary.body).toContain('does not enforce different users');
+    const usecase = data.usecases.find((item) => item.id === 'signoff');
+    expect(usecase.detail).toContain('not an enforced cross-step constraint');
+    expect(data.sources.find((item) => item.id === 'approvalActorScope').excerpt).toContain(
+      "where: { action: 'approve', stepId }"
+    );
+    const { dom, errors } = browser();
+    const document = visit(dom, '#governance');
+    expect(document.getElementById('reviewIndependence').textContent).toContain(boundary.body);
+    expect(errors).toEqual([]);
+    dom.window.close();
+  });
+
   // Heavy: runs git against the checked-out repo; a loaded full-suite run overshoots the 5 s default.
   it('detects staged, unstaged, untracked and deleted code before attesting HEAD', async () => {
     const repo = await mkdtemp(join(tmpdir(), 'explorer-git-test-'));

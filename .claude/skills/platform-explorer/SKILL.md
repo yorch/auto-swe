@@ -58,11 +58,21 @@ current. The reviewed commit and generated source commit deliberately have diffe
 1. **Inspect the change set and provenance.** Use the recorded `reviewedCommit` in `analysis.json`:
    ```sh
    git status --short
-   git diff <reviewedCommit>...HEAD -- packages docker-compose.app.yml
+   git diff <reviewedCommit> HEAD -- packages docker-compose.app.yml
    yarn workspace @auto-swe/site sync
    ```
    Review local uncommitted changes too. Missing review history in a shallow clone is a reason to
-   obtain history, not to skip the review. Build/drift detection itself works in shallow clones.
+   obtain history, not to skip the review. A squash-merged review can name a pre-squash commit
+   outside main's ancestry; fetch that exact recorded commit when necessary. Compare the two
+   trees directly as above, not with a three-dot diff: a merge-base diff can include changes
+   already reviewed on that pre-squash branch. Check the stored code fingerprints as well.
+   Build/drift detection itself works in shallow clones.
+
+   When newer explorer maintenance has already covered the requested changes, preserve that
+   narrative rather than replaying an older analysis over it. A bounded correction may leave
+   `reviewedCommit`, `codeHashes` and `sourceHashes` unchanged: do not run the attestation helper
+   unless the entire outstanding code delta has actually been reviewed. Explain the narrower
+   scope and retained drift warning in the pull request.
 
 2. **Read affected implementations and callers.** Follow control flow and side effects, not only
    names, interfaces, comments, or registry descriptions. Source starting points:
