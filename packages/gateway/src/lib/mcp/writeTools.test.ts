@@ -19,6 +19,7 @@ import {
 } from '../../test/mcpTokens.js';
 import { createMcpTokenVerifier } from '../mcpTokenVerifier.js';
 import { mcpBridgePlugin } from './bridge.js';
+import { DOMAIN_TOOL_NAMES } from './domains/index.js';
 
 vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -330,20 +331,23 @@ describe('the write tools', () => {
   describe('which tools exist', () => {
     it('lists the write tools for a write token while writes are enabled', async () => {
       const s = await setup();
-      expect(await toolNames(s, s.writeToken)).toEqual([
-        'cancel_run',
-        'get_run',
-        'list_agents',
-        'list_pending_human_steps',
-        'list_repositories',
-        'list_runs',
-        'list_templates',
-        'list_work_requests',
-        'start_agent_run',
-        'start_template_run',
-        'submit_work_request',
-        'wait_for_run',
-      ]);
+      expect(await toolNames(s, s.writeToken)).toEqual(
+        [
+          'cancel_run',
+          'get_run',
+          'list_agents',
+          'list_pending_human_steps',
+          'list_repositories',
+          'list_runs',
+          'list_templates',
+          'list_work_requests',
+          'start_agent_run',
+          'start_template_run',
+          'submit_work_request',
+          'wait_for_run',
+          ...DOMAIN_TOOL_NAMES,
+        ].sort()
+      );
     });
 
     it('lists no write tool for a read token', async () => {
@@ -354,12 +358,12 @@ describe('the write tools', () => {
 
     it('lists no write tool when the user consented to read only, whatever the token says', async () => {
       const s = await setup({ consentScopes: ['mcp:read', 'offline_access'] });
-      expect(await toolNames(s, s.writeToken)).toHaveLength(8);
+      expect(await toolNames(s, s.writeToken)).toHaveLength(8 + DOMAIN_TOOL_NAMES.length);
     });
 
     it('lists no write tool while writes are disabled, even for a token that carries mcp:write', async () => {
       const s = await setup({ writeToolsEnabled: false });
-      expect(await toolNames(s, s.writeToken)).toHaveLength(8);
+      expect(await toolNames(s, s.writeToken)).toHaveLength(8 + DOMAIN_TOOL_NAMES.length);
     });
 
     it('describes both tools with the right annotations and strict inputs', async () => {

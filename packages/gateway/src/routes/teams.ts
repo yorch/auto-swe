@@ -206,6 +206,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
     },
     async (request) => {
@@ -237,6 +238,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: TeamParamsSchema },
     },

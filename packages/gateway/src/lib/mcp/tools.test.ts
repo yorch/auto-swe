@@ -24,6 +24,7 @@ import {
 } from '../../test/mcpTokens.js';
 import { createMcpTokenVerifier } from '../mcpTokenVerifier.js';
 import { MCP_BRIDGE_HEADER, mcpBridgePlugin } from './bridge.js';
+import { DOMAIN_READ_ROUTES, DOMAIN_TOOL_NAMES } from './domains/index.js';
 import { registerReadTools } from './tools.js';
 
 vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
@@ -663,7 +664,7 @@ describe('the read tools', () => {
     expect(s.seen.urls).toEqual([]);
   });
 
-  it('lists exactly the eight read tools, each read-only with a strict input', async () => {
+  it('lists exactly the original eight read tools and the declared domain tools, each read-only with a strict input', async () => {
     const { app, token } = await setup();
     const res = await app.inject({
       headers: {
@@ -692,7 +693,29 @@ describe('the read tools', () => {
       name: string;
       outputSchema: { properties: Record<string, unknown> };
     }>;
+    const CORE = new Set([
+      'get_run',
+      'list_agents',
+      'list_pending_human_steps',
+      'list_repositories',
+      'list_runs',
+      'list_templates',
+      'list_work_requests',
+      'wait_for_run',
+    ]);
+    // Every tool a domain declares exists beside the original eight, read-only and strict.
+    expect(tools.map((t) => t.name).sort()).toEqual([...CORE, ...DOMAIN_TOOL_NAMES].sort());
+    for (const t of tools.filter((x) => DOMAIN_TOOL_NAMES.includes(x.name))) {
+      expect(t.annotations, t.name).toMatchObject({
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+        readOnlyHint: true,
+      });
+      expect(t.inputSchema.additionalProperties, t.name).toBe(false);
+    }
     const summary = tools
+      .filter((t) => CORE.has(t.name))
       .map((t) => ({
         annotations: t.annotations,
         input: Object.keys(t.inputSchema.properties ?? {}).sort(),
@@ -1200,7 +1223,7 @@ describe('the read tools', () => {
 });
 
 describe('which routes an MCP token may reach', () => {
-  it('registers mcpScope on the five read routes and the two write routes of the real route table and nowhere else', async () => {
+  it('registers mcpScope on the read routes tools call and the write routes of the real route table and nowhere else', async () => {
     // `index.ts` mounts infrastructure and hands every route plugin to `registerApiRoutes`. Each
     // `.register(` call there is cut out whole by matching its parentheses, so a call split over
     // several lines reads like any other; one that is not known infrastructure fails the test, so
@@ -1266,30 +1289,37 @@ describe('which routes an MCP token may reach', () => {
     await app.ready();
     await app.close();
     expect(routes).toBeGreaterThan(250);
-    expect([...new Set(seen)].sort()).toEqual([
-      'GET /api/v1/agent-runs/agents read',
-      'GET /api/v1/human-steps read',
-      // The same human-steps plugin is also mounted as the inbox alias.
-      'GET /api/v1/inbox read',
-      'GET /api/v1/repositories read',
-      'GET /api/v1/work-requests read',
-      'GET /api/v1/workflow-runs read',
-      'GET /api/v1/workflow-runs/:id read',
-      'GET /api/v1/workflow-templates read',
-      'HEAD /api/v1/agent-runs/agents read',
-      'HEAD /api/v1/human-steps read',
-      'HEAD /api/v1/inbox read',
-      'HEAD /api/v1/repositories read',
-      'HEAD /api/v1/work-requests read',
-      'HEAD /api/v1/workflow-runs read',
-      'HEAD /api/v1/workflow-runs/:id read',
-      'HEAD /api/v1/workflow-templates read',
-      // The two write tools' routes, and only those.
-      'POST /api/v1/agent-runs write',
-      'POST /api/v1/work-requests write',
-      'POST /api/v1/workflow-runs/:id/cancel write',
-      'POST /api/v1/workflow-templates/:id/runs write',
-    ]);
+    expect([...new Set(seen)].sort()).toEqual(
+      [
+        'GET /api/v1/agent-runs/agents read',
+        'GET /api/v1/human-steps read',
+        // The same human-steps plugin is also mounted as the inbox alias.
+        'GET /api/v1/inbox read',
+        'GET /api/v1/repositories read',
+        'GET /api/v1/work-requests read',
+        'GET /api/v1/workflow-runs read',
+        'GET /api/v1/workflow-runs/:id read',
+        'GET /api/v1/workflow-templates read',
+        'HEAD /api/v1/agent-runs/agents read',
+        'HEAD /api/v1/human-steps read',
+        'HEAD /api/v1/inbox read',
+        'HEAD /api/v1/repositories read',
+        'HEAD /api/v1/work-requests read',
+        'HEAD /api/v1/workflow-runs read',
+        'HEAD /api/v1/workflow-runs/:id read',
+        'HEAD /api/v1/workflow-templates read',
+        // The two write tools' routes, and only those.
+        'POST /api/v1/agent-runs write',
+        'POST /api/v1/work-requests write',
+        'POST /api/v1/workflow-runs/:id/cancel write',
+        'POST /api/v1/workflow-templates/:id/runs write',
+        // The routes the domain tools call (`lib/mcp/domains`), each as GET and as its implied HEAD.
+        ...DOMAIN_READ_ROUTES.flatMap((route) => [
+          `${route} read`,
+          `${route.replace(/^GET /, 'HEAD ')} read`,
+        ]),
+      ].sort()
+    );
     // Imports (and transforms) every route plugin: ~2 s alone, over the 5 s default under a loaded full-suite run.
   }, 30_000);
 });

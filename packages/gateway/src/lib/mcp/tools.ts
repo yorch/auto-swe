@@ -2,16 +2,11 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { AGENT_REF_RE, AGENT_RUN_MAX_PROMPT_CHARS } from '@auto-swe/shared/lib/agentRun';
 import { BaseBranchSchema } from '@auto-swe/shared/lib/gitRef';
 import { type AuthInfo, McpServer } from '@modelcontextprotocol/server';
-import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../mcpOAuth.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../ticketId.js';
-import {
-  type BridgeResponse,
-  callerFromAuthInfo,
-  type McpBridge,
-  type McpCaller,
-} from './bridge.js';
+import { type BridgeResponse, callerFromAuthInfo, type McpCaller } from './bridge.js';
+import { MCP_DOMAINS } from './domains/index.js';
 import {
   agentRunLimits,
   agentsOutput,
@@ -38,6 +33,19 @@ import {
   waitOutput,
   workRequestsOutput,
 } from './projections.js';
+import {
+  createToolKit,
+  failure,
+  failureFor,
+  type McpToolDeps,
+  ok,
+  pageInput,
+  query,
+  READ_ONLY,
+  type ToolResult,
+} from './toolKit.js';
+
+export type { McpToolDeps } from './toolKit.js';
 
 /**
  * The tools call REST routes through the bridge, so each route's own role
@@ -47,126 +55,11 @@ import {
  * (`lib/mcpWriteGuard.ts`), so a tool is never the control.
  */
 
-export interface McpToolDeps {
-  app: FastifyInstance;
-  bridge: McpBridge;
-  /** The dashboard's public origin, for the links tools return. */
-  dashboardOrigin: string;
-  /** The `host[:port]` of every GitHub this platform is configured for; a PR link must be on one. */
-  getGitHubHosts: () => Promise<readonly string[]>;
-  serverVersion: string;
-}
-
-const pageInput = {
-  limit: z.number().int().min(1).max(100).optional().describe('Page size, 1-100 (default 50)'),
-  offset: z.number().int().min(0).optional().describe('How many results to skip (default 0)'),
-};
-
-const READ_ONLY = {
-  destructiveHint: false,
-  idempotentHint: true,
-  openWorldHint: false,
-  readOnlyHint: true,
-} as const;
-
-type ToolResult = {
-  content: Array<{ type: 'text'; text: string }>;
-  isError?: boolean;
-  structuredContent?: Record<string, unknown>;
-};
-
-function ok(output: Record<string, unknown>): ToolResult {
-  return { content: [{ text: JSON.stringify(output), type: 'text' }], structuredContent: output };
-}
-
-function failure(text: string): ToolResult {
-  return { content: [{ text, type: 'text' }], isError: true };
-}
-
-/**
- * A fixed message per status, never the route's own message: a REST error can echo input or name
- * what exists, and the agent needs only to know what to do next.
- */
-function failureFor(status: number, notFound = 'Not found.'): ToolResult {
-  switch (status) {
-    case 401:
-      return failure('Your access was revoked or has expired. Reconnect to this server.');
-    case 403:
-      return failure('You are not permitted to do that.');
-    case 404:
-      return failure(notFound);
-    case 429:
-      return failure('Rate limited. Wait a moment and try again.');
-    default:
-      return failure(
-        status >= 500
-          ? 'The platform is unavailable. Try again shortly.'
-          : 'The platform refused the request.'
-      );
-  }
-}
-
-const query = (entries: Record<string, string | number | undefined>) => {
-  const params = new URLSearchParams();
-  for (const [key, value] of Object.entries(entries)) {
-    if (value !== undefined) {
-      params.set(key, String(value));
-    }
-  }
-  return params;
-};
-
 /** Register the read tools on `server` for `caller`. */
 export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: McpCaller) {
-  const { app, bridge } = deps;
-  const origin = deps.dashboardOrigin.replace(/\/+$/, '');
-
-  /** One tool: choose the request, run it, reduce the response. */
-  function readTool<Shape extends z.ZodRawShape>(
-    name: string,
-    config: {
-      title: string;
-      description: string;
-      input: Shape;
-      output: z.ZodType;
-      notFound?: string;
-    },
-    run: (args: z.infer<z.ZodObject<Shape>>) => Promise<BridgeResponse>,
-    project: (
-      body: unknown,
-      args: z.infer<z.ZodObject<Shape>>
-    ) => Record<string, unknown> | null | Promise<Record<string, unknown> | null>
-  ) {
-    server.registerTool(
-      name,
-      {
-        annotations: { ...READ_ONLY, title: config.title },
-        description: config.description,
-        inputSchema: z.object(config.input).strict(),
-        outputSchema: config.output,
-        title: config.title,
-      },
-      async (args: z.infer<z.ZodObject<Shape>>): Promise<ToolResult> => {
-        // Nothing thrown below may reach the agent: the SDK would pass an error's message through
-        // as the tool result, and an internal error can name hosts, ports and queries.
-        try {
-          const response = await run(args);
-          if (response.status !== 200) {
-            return failureFor(response.status, config.notFound);
-          }
-          const projected = await project(response.body, args);
-          if (projected === null) {
-            app.log.error({ tool: name }, 'mcp: a route returned a body the tool could not read');
-            return failure('The platform returned an unexpected response.');
-          }
-          return ok(config.output.parse(projected) as Record<string, unknown>);
-        } catch (err) {
-          app.log.error({ err, tool: name }, 'mcp: a tool failed');
-          return failureFor(500);
-        }
-      }
-    );
-  }
+  const { app } = deps;
+  const kit = createToolKit(server, deps, caller);
+  const { get, origin, readTool } = kit;
 
   /** The hosts a PR link may be on. If they cannot be read the run is still returned, without its result. */
   const githubHosts = async (): Promise<readonly string[]> => {
@@ -177,8 +70,6 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
       return [];
     }
   };
-
-  const get = (path: string, params?: URLSearchParams) => bridge.get(app, caller, path, params);
 
   readTool(
     'list_agents',
@@ -511,6 +402,10 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
       };
     }
   );
+
+  for (const domain of MCP_DOMAINS) {
+    domain.register(kit, deps);
+  }
 }
 
 /** The tools that need `mcp:write`. */
