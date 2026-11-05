@@ -3,10 +3,18 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { prisma } from '@auto-swe/shared/db';
+import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { assertShellImageAllowed, DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
-import { beginWorkspaceEgress, gitHostOf } from '../lib/egressWiring.js';
+import { logWarn } from '../lib/activityLog.js';
+import {
+  beginWorkspaceEgress,
+  blockedEgressAllow,
+  egressPolicyFailure,
+  gitHostOf,
+  resolveRunEgressPolicy,
+} from '../lib/egressWiring.js';
 import type { CapturedResult, OnTimeout } from '../lib/execUtils.js';
 import {
   type GitIdentity,
@@ -44,6 +52,8 @@ export { shellQuote };
 
 export interface Workspace {
   containerId: string;
+  /** The network posture this workspace was created under (absent on test doubles). */
+  egressPolicy?: EgressPolicy;
   /** The author and committer every platform commit in this workspace carries. */
   gitIdentity: GitIdentity;
   /**
@@ -525,7 +535,7 @@ export function safeDepDirName(name: string): string {
  * one repo that fails to clone does not fail the run or the other clones.
  */
 export async function cloneDependencyRepos(
-  workspace: Pick<Workspace, 'exec'>,
+  workspace: Pick<Workspace, 'exec' | 'egressPolicy'>,
   deps: DependencyCheckout[]
 ): Promise<{ label: string; path: string }[]> {
   const cloned: { label: string; path: string }[] = [];
@@ -561,7 +571,16 @@ export async function cloneDependencyRepos(
       // Label with the sanitized directory, not the raw name: the caller renders
       // this into an agent prompt, and the sanitized form is also what is on disk.
       cloned.push({ label: dir, path });
-    } catch {
+    } catch (err) {
+      if (workspace.egressPolicy === 'blocked' || workspace.egressPolicy === 'restricted') {
+        // The workspace's network was locked before this checkout: a host other than the
+        // repository's own git host is unreachable, so say why instead of vanishing silently.
+        logWarn('dependency checkout failed in a network-locked workspace', {
+          dependency: dir,
+          egressPolicy: workspace.egressPolicy,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       // Remove a half-cloned directory so the agent never sees a partial repo.
       try {
         await workspace.exec(`rm -rf ${shellQuote(path)}`);
@@ -632,6 +651,13 @@ export async function createWorkspace(
     tools?: ToolRequest[];
     /** The catalog `tools` resolve against. */
     toolCatalog?: readonly ToolCatalogEntry[];
+    /**
+     * The network posture of this workspace. Absent, it is the run's pinned
+     * `workspace.egressPolicy`. A caller passes it only to override that — the trusted
+     * delivery workspace passes `'blocked'` under any restricting policy and `'open'` under
+     * `open` (see `runAgentTask`).
+     */
+    egressPolicy?: EgressPolicy;
   }
 ): Promise<Workspace> {
   // Container caps, default base image and metadata-blocking policy all come
@@ -639,6 +665,8 @@ export async function createWorkspace(
   // override).
   const infra = resolveWorkspaceInfra();
   const effectiveImage = image ?? infra.image;
+  const egressPolicy =
+    options?.egressPolicy ?? (await resolveRunEgressPolicy(options?.teamId ?? null));
 
   if (!DOCKER_IMAGE_REF_RE.test(effectiveImage)) {
     throw new Error(`Invalid Docker image name: ${effectiveImage}`);
@@ -746,7 +774,11 @@ export async function createWorkspace(
   try {
     const spec = agentWorkspaceSpec(containerName, effectiveImage, infra, options?.services);
     const gitHost = gitHostOf(cleanUrl);
-    egress = await beginWorkspaceEgress(options?.teamId ?? null, gitHost ? [gitHost] : []);
+    egress = await beginWorkspaceEgress(
+      options?.teamId ?? null,
+      gitHost ? [gitHost] : [],
+      egressPolicy
+    );
     if (egress) {
       spec.reachWorker = true;
       spec.env = [...(spec.env ?? []), ...egress.env];
@@ -940,6 +972,32 @@ export async function createWorkspace(
         });
       registry.registration.setAllowlist(await buildRegistryAllowlist(registry, ref, execCapture));
     }
+
+    // Provisioning is done (clone, registry wiring) and no agent code has run: cut the network
+    // off now. It fails closed — a throw lands in the catch below, which removes the workspace.
+    // `restricted` is locked too: the egress proxy is only cooperative (`HTTP_PROXY`), so the
+    // network is confined to the proxy's address (plus the model/registry proxies and git host)
+    // and `--noproxy` or a raw socket reaches nothing. `restricted` with an empty team allowlist
+    // has no proxy (`egress` is null) and is locked exactly as `blocked`.
+    if (egressPolicy === 'blocked' || egressPolicy === 'restricted') {
+      try {
+        await backend.lockEgress(
+          handle,
+          blockedEgressAllow(gitHost, {
+            cleanUrl,
+            ...(egressPolicy === 'restricted' && egress
+              ? { egressProxyUrl: egress.registration.url }
+              : {}),
+            registryUrl: registry?.baseUrl,
+          }),
+          { mode: egressPolicy === 'restricted' ? 'restricted' : 'blocked' }
+        );
+      } catch (err) {
+        throw egressPolicyFailure(
+          `egress policy '${egressPolicy}' could not be enforced: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
   } catch (err) {
     await registry?.registration.release().catch(() => {});
     await egress?.registration.release().catch(() => {});
@@ -963,6 +1021,7 @@ export async function createWorkspace(
       await registry?.registration.release().catch(() => {});
       await backend.remove(containerName);
     },
+    egressPolicy,
     exec: (command: string, options) => {
       const tag = newExecTag();
       return backend.execShell(handle, ['sh', '-c', command], {

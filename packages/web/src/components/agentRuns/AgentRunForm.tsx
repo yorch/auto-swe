@@ -27,6 +27,9 @@ import {
   type IdempotencyState,
   idempotencyFor,
   type LaunchErrorView,
+  NETWORK_ACCESS_HINT,
+  NETWORK_ACCESS_OPTIONS,
+  parseNetworkAccess,
   validateAgentRunForm,
 } from '@/lib/agentRun';
 import { connectionLabel } from '@/lib/connectionDisplay';
@@ -40,6 +43,7 @@ const EMPTY: AgentRunFormValues = {
   deliver: 'none',
   maxSteps: '',
   maxWallClockSeconds: '',
+  networkAccess: 'team',
   pinnedVersion: null,
   prompt: '',
   repoId: '',
@@ -221,6 +225,12 @@ export function AgentRunForm({
               value: DELIVER_OPTIONS.find((option) => option.value === values.deliver)?.label,
             },
             {
+              label: 'Network access',
+              value: NETWORK_ACCESS_OPTIONS.find(
+                (option) => option.value === (values.networkAccess ?? 'team')
+              )?.label,
+            },
+            {
               label: 'Limits',
               value: `${values.maxSteps || limits.data?.maxSteps.ceiling || 'Platform default'} steps · ${
                 values.maxWallClockSeconds ||
@@ -358,6 +368,14 @@ export function AgentRunForm({
           on code the agent wrote.
         </Alert>
       )}
+
+      <Select
+        hint={NETWORK_ACCESS_HINT}
+        label="Network access"
+        onChange={(v) => set('networkAccess', parseNetworkAccess(v))}
+        options={NETWORK_ACCESS_OPTIONS}
+        value={values.networkAccess ?? 'team'}
+      />
 
       <fieldset className="border-t border-ink-600 pt-5">
         <legend className="sr-only">Limits</legend>

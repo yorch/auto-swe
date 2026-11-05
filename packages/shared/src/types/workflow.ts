@@ -1,3 +1,4 @@
+import type { EgressPolicy } from '../lib/egressPolicy.js';
 import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
 
 // ── Workflow Types ──
@@ -82,6 +83,12 @@ export interface RunRequest {
   /// submit path when canary config is enabled and the run hashes into the arm.
   canaryAgentKey?: string;
   canaryVersion?: number;
+  /**
+   * The launcher's requested `workspace.egressPolicy` for this run. It can only narrow the
+   * resolved cascade value: the gateway refuses a looser one and the worker re-checks when it
+   * pins the run's settings. Absent means the cascade value.
+   */
+  egressPolicy?: EgressPolicy;
 }
 
 export interface RepoWorkRequest extends RunRequest {

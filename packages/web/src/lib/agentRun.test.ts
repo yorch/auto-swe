@@ -94,6 +94,12 @@ describe('buildLaunchBody', () => {
     });
   });
 
+  it('sends a network choice only when one is made', () => {
+    expect(buildLaunchBody(OK)).not.toHaveProperty('egressPolicy');
+    expect(buildLaunchBody({ ...OK, networkAccess: 'team' })).not.toHaveProperty('egressPolicy');
+    expect(buildLaunchBody({ ...OK, networkAccess: 'blocked' }).egressPolicy).toBe('blocked');
+  });
+
   it('sends caps as numbers', () => {
     const b = buildLaunchBody({ ...OK, maxSteps: ' 12 ', maxWallClockSeconds: '300' });
     expect(b.maxSteps).toBe(12);
@@ -125,6 +131,7 @@ describe('describeLaunchError', () => {
     ['AGENT_NOT_LAUNCHABLE', 400, /cannot be launched/, false],
     ['AGENT_NOT_FOUND', 404, /not found/i, false],
     ['REPO_HOST_NOT_ALLOWED', 422, /host/i, false],
+    ['EGRESS_POLICY_WIDENS', 400, /looser/, false],
   ])('explains %s', (code, status, title, retryable) => {
     const v = describeLaunchError(e(status, code));
     expect(v.title).toMatch(title);

@@ -38,6 +38,11 @@ import { heartbeat } from '@temporalio/activity';
 import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import {
+  assertStepEgressEnforceable,
+  capStepNetwork,
+  resolveRunEgressPolicy,
+} from '../lib/egressWiring.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { executionAudit } from '../lib/executionAudit.js';
 import {
@@ -464,6 +469,19 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     throw err;
   }
 
+  // The run's egress policy caps what the node asked for: `blocked`, or `restricted` with no
+  // team allowlist, leaves the command no network at all.
+  const egressPolicy = await resolveRunEgressPolicy(meta.teamId || null);
+  const cap = capStepNetwork(egressPolicy, meta.teamEgressAllowlist, input.network);
+  const stepNetwork = cap.network;
+  const auditNetwork = cap.capped
+    ? `none (capped by egress policy ${egressPolicy})`
+    : egressPolicy === 'restricted' && stepNetwork === 'egress'
+      ? 'egress (proxy-enforced only; not network-locked)'
+      : stepNetwork;
+  // Under `restricted` a step that keeps `egress` is held to the allowlist by the proxy alone.
+  assertStepEgressEnforceable(egressPolicy, stepNetwork);
+
   const { branchPrefix } = await resolveWorkflowDefaults();
   const branch = input.branch ?? workBranchOf(input.request, branchPrefix);
   const helperImage = await gitHelperImage();
@@ -478,7 +496,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   // nothing, and a proxy advertised at a host other than the Docker alias is
   // unreachable on this network — warn and run without it.
   let registry: WorkspaceRegistryAccess | null = null;
-  if (input.network === 'egress' && workerRegistryProxy()) {
+  if (stepNetwork === 'egress' && workerRegistryProxy()) {
     // Unlike `createWorkspace`, unknown wires nothing but npm: a step's image and command are
     // arbitrary, and GOPROXY / GOTOOLCHAIN=local / PIP_* could break installs that went direct.
     const stacks = detectedStacks(meta.detectedStack);
@@ -593,7 +611,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
           : {}),
         image: input.image,
         memory: input.memory,
-        network: input.network ?? 'none',
+        network: stepNetwork,
         timeoutMs: input.timeoutMs,
         workdir: '/workspace/repo',
         workspaceMount: volumeName,
@@ -608,7 +626,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
         exitCode: out?.exitCode,
         image: input.image,
         name: 'shell',
-        network: input.network ?? 'none',
+        network: auditNetwork,
         stderr: redactToken(out?.stderr ?? '', meta.token),
         stdout: redactToken(out?.stdout ?? '', meta.token),
       });
@@ -659,7 +677,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       exitCode: result.exitCode,
       image: input.image,
       name: 'shell',
-      network: input.network ?? 'none',
+      network: auditNetwork,
       stderr: redactedStderr,
       stdout: redactedStdout,
     });

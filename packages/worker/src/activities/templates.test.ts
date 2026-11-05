@@ -182,7 +182,7 @@ vi.mock('@auto-swe/shared/db', () => {
 
 import { prisma } from '@auto-swe/shared/db';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
-import { logError } from '../lib/activityLog.js';
+import { logError, logWarn } from '../lib/activityLog.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import {
   notifySlackRunComplete,
@@ -195,6 +195,7 @@ import {
   createWorkflowRun,
   finalizeRun,
   finalizeWorkflowRun,
+  narrowPinnedEgressPolicy,
   recordWorkflowStep,
   resolveTemplateForRepo,
 } from './templates.js';
@@ -2349,5 +2350,25 @@ describe('resolveTemplateForRepo', () => {
     await expect(resolveTemplateForRepo('repo-1')).rejects.toThrow(
       /no active default workflow template/
     );
+  });
+});
+
+describe('narrowPinnedEgressPolicy', () => {
+  const pins = { 'other.key': 1, 'workspace.egressPolicy': 'restricted' };
+
+  it('keeps the cascade pin when nothing is requested', () => {
+    expect(narrowPinnedEgressPolicy(pins, undefined, 'wf-1')).toBe(pins);
+  });
+
+  it('pins a stricter request and leaves the other pins alone', () => {
+    expect(narrowPinnedEgressPolicy(pins, 'blocked', 'wf-1')).toEqual({
+      'other.key': 1,
+      'workspace.egressPolicy': 'blocked',
+    });
+  });
+
+  it('falls back to the cascade pin, with a warning, when the request is looser', () => {
+    expect(narrowPinnedEgressPolicy(pins, 'open', 'wf-1')).toBe(pins);
+    expect(vi.mocked(logWarn)).toHaveBeenCalled();
   });
 });

@@ -73,14 +73,16 @@ mcp logout [--url <base>]          Revoke the refresh token and delete local MCP
 
 run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
     [--idempotency-key=<key>] [--acknowledge-unchanged]
+    [--egress-policy=open|restricted|blocked]
                                      Submit a work request and start a run on the default template;
                                      with --idempotency-key a retried submission returns the run it
                                      already started instead of a second one; a request identical to
                                      one that stopped as not actionable in the last 24 hours is
-                                     refused unless --acknowledge-unchanged is passed
+                                     refused unless --acknowledge-unchanged is passed.
 
 agent run <key[@version]> "<prompt>" --repo=<org/name> [--deliver=none|branch|draft_pr]
           [--base=<branch>] [--max-steps=N] [--timeout=SECONDS] [--wait]
+          [--egress-policy=open|restricted|blocked]
                                      Run a library agent on a repository in a throwaway workspace;
                                      --deliver=branch|draft_pr publishes it after the platform's
                                      checks pass (see docs/agent-runs.md)
@@ -92,6 +94,7 @@ workflows export <name> [-o <path>]  Write the active spec to a file (or stdout)
 workflows import <path> [--name=N] [--team=<slug>]
                                      Create a template (or a new version if --name matches)
 workflows run <name> --payload=<json> [--label=<text>] [--acknowledge-unchanged]
+              [--egress-policy=open|restricted|blocked]
                                      Start a run with a generic JSON payload
 workflows generate "<description>" [--name=N] [--team=<slug>]
                                      Generate a DRAFT template from plain language (AI)

@@ -127,6 +127,35 @@ describe('runWorkRequestsCommand', () => {
     expect(out).not.toContain('runs tail <runId>');
   });
 
+  it('sends --egress-policy in the body only when given, and rejects other values', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+      return Promise.resolve({
+        ok: true,
+        status: 201,
+        text: async () =>
+          JSON.stringify({ data: { workflowIds: ['wf-1'], workRequestId: 'wr-1' } }),
+      });
+    }) as unknown as typeof fetch;
+    const base = [
+      '--ticket=T-1',
+      '--description=foo',
+      '--repo-id=550e8400-e29b-41d4-a716-446655440000',
+    ];
+
+    expect(await runWorkRequestsCommand([...base, '--egress-policy=restricted'], ENV)).toBe(0);
+    expect(bodies[0]).toMatchObject({ egressPolicy: 'restricted' });
+    expect(await runWorkRequestsCommand(base, ENV)).toBe(0);
+    expect(bodies[1]).not.toHaveProperty('egressPolicy');
+
+    expect(await runWorkRequestsCommand([...base, '--egress-policy=wide'], ENV)).toBe(1);
+    expect(stderrWrites.join('')).toContain(
+      '--egress-policy must be one of: open, restricted, blocked'
+    );
+    expect(bodies).toHaveLength(2);
+  });
+
   it('rejects an empty --idempotency-key instead of silently dropping it', async () => {
     const code = await runWorkRequestsCommand(
       ['--ticket=T-1', '--description=foo', '--repo=org/repo', '--idempotency-key='],

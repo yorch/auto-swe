@@ -11,7 +11,7 @@ import { buildTar } from './testTar.js';
  * A stand-in `kubectl`: logs every invocation (argv and whatever arrived on
  * stdin) and answers from a plan of `{ match, stdinMatch?, stdout, stderr, code }`
  * rules, first rule whose `match` is in the joined argv (and `stdinMatch`, when
- * given, in stdin) wins.
+ * given, in stdin; and `after`, when given, in an earlier-logged call) wins.
  */
 const FAKE = `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -23,9 +23,13 @@ const stdin = stdinWanted ? fs.readFileSync(0, 'utf8') : null;
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ args, stdin }) + '\\n');
 const plan = JSON.parse(fs.readFileSync(process.env.FAKE_PLAN, 'utf8'));
 const joined = args.join(' ');
+const logged = fs.readFileSync(process.env.FAKE_LOG, 'utf8');
 const rule =
   plan.find(
-    (r) => joined.includes(r.match) && (!r.stdinMatch || (stdin ?? '').includes(r.stdinMatch))
+    (r) =>
+      joined.includes(r.match) &&
+      (!r.stdinMatch || (stdin ?? '').includes(r.stdinMatch)) &&
+      (!r.after || logged.includes(r.after))
   ) ?? {};
 if (rule.stderr) process.stderr.write(rule.stderr);
 // Exit only once a large stdout has drained, or a pipe truncates it.
@@ -498,6 +502,80 @@ describe('what the Kubernetes backend does not do yet', () => {
     for (const host of ['host.docker.internal', 'localhost', '127.0.0.1', '[::1]', '0.0.0.0']) {
       expect(backend.canReachWorkerProxy(`http://${host}:9000`), host).toBe(false);
     }
+  });
+});
+
+describe('lockEgress', () => {
+  const uid = '0b1c2d3e-0000-4000-8000-000000000001';
+  const lockBackend = (bin: string) =>
+    new KubernetesWorkspaceBackend(() => config(bin), {
+      lookup: async () => ['140.82.112.3'],
+      pollIntervalMs: 0,
+      verifyAttempts: 2,
+    });
+
+  it('creates the pod-owned policy from stdin, labels the pod, and verifies by exec', async () => {
+    await setPlan([
+      { match: 'jsonpath={.metadata.uid}', stdout: uid },
+      { after: 'asw/egress=blocked', match: 'exec', stdout: 'asw_probe=closed\n' },
+      { match: 'exec', stdout: 'asw_probe=open\n' },
+    ]);
+    await lockBackend(path.join(dir, 'kubectl')).lockEgress(backend.attach('workspace-t1'), [
+      { host: 'github.com', port: 443 },
+    ]);
+    const all = await calls();
+    const create = all.find((c) => c.args[0] === 'create');
+    expect(create?.args.join(' ')).not.toContain('140.82');
+    expect(create?.stdin).toContain('140.82.112.3/32');
+    expect(create?.stdin).toContain(uid);
+    expect(all.some((c) => c.args[0] === 'label' && c.args.includes('asw/egress=blocked'))).toBe(
+      true
+    );
+    expect(all.some((c) => c.args[0] === 'exec')).toBe(true);
+  });
+
+  it('labels the pod asw/egress=restricted and selects it in the per-pod policy in restricted mode', async () => {
+    await setPlan([
+      { match: 'jsonpath={.metadata.uid}', stdout: uid },
+      { after: 'asw/egress=restricted', match: 'exec', stdout: 'asw_probe=closed\n' },
+      { match: 'exec', stdout: 'asw_probe=open\n' },
+    ]);
+    await lockBackend(path.join(dir, 'kubectl')).lockEgress(
+      backend.attach('workspace-t1'),
+      [{ host: 'github.com', port: 443 }],
+      { mode: 'restricted' }
+    );
+    const all = await calls();
+    expect(all.some((c) => c.args[0] === 'label' && c.args.includes('asw/egress=restricted'))).toBe(
+      true
+    );
+    expect(all.some((c) => c.args.includes('asw/egress=blocked'))).toBe(false);
+    expect(all.find((c) => c.args[0] === 'create')?.stdin).toContain('"asw/egress":"restricted"');
+  });
+
+  it('throws, so the caller removes the pod, when the pod can still reach the internet', async () => {
+    await setPlan([{ match: 'exec', stdout: 'asw_probe=open\n' }]);
+    await expect(
+      lockBackend(path.join(dir, 'kubectl')).lockEgress(backend.attach('workspace-t1'), [])
+    ).rejects.toThrow(/egress is not blocked/);
+  });
+
+  it('fails closed, without labelling, when no public address was reachable before the lock', async () => {
+    await setPlan([{ match: 'exec', stdout: 'asw_probe=closed\n' }]);
+    await expect(
+      lockBackend(path.join(dir, 'kubectl')).lockEgress(backend.attach('workspace-t1'), [])
+    ).rejects.toThrow(/cannot verify the egress lock/);
+    expect((await calls()).some((c) => c.args[0] === 'label')).toBe(false);
+  });
+
+  it('throws when labelling is refused (no patch right)', async () => {
+    await setPlan([
+      { code: 1, match: 'label', stderr: 'pods is forbidden' },
+      { match: 'exec', stdout: 'asw_probe=open\n' },
+    ]);
+    await expect(
+      lockBackend(path.join(dir, 'kubectl')).lockEgress(backend.attach('workspace-t1'), [])
+    ).rejects.toThrow(/could not label/);
   });
 });
 

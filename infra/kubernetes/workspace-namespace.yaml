@@ -26,9 +26,15 @@ metadata:
   name: workspace-egress
   namespace: auto-swe-workspaces
 spec:
+  # A pod the worker has locked carries asw/egress=blocked (egress policy `blocked`) or
+  # asw/egress=restricted (egress policy `restricted`) and stops matching this policy: policies
+  # are additive, so a pod can only be narrowed by leaving the broad one. It is then governed by
+  # `workspace-egress-blocked` or `workspace-egress-restricted` below.
   podSelector:
     matchLabels:
       asw/role: workspace
+    matchExpressions:
+      - { key: asw/egress, operator: NotIn, values: [blocked, restricted] }
   policyTypes: [Ingress, Egress]
   ingress: []
   egress:
@@ -69,6 +75,94 @@ spec:
               - fc00::/7
               - fe80::/10
 ---
+# What a locked workspace (egress policy `blocked`) may reach: DNS and the worker's model and
+# registry proxies, nothing else. The egress forwarding proxy (EGRESS_PROXY_PORT) is deliberately
+# absent: a blocked workspace has no business making outbound HTTP(S) calls through it; a
+# `restricted` workspace does, and is governed by `workspace-egress-restricted` below. The
+# repository's git host is not here: the worker resolves it when it locks the pod and adds a
+# per-pod policy (`<pod>-egress`, owned by the pod) for those addresses, so that an address is
+# never admitted for any other pod.
+# DNS stays open because the proxy URLs are Service names and the pod resolves its git host. A
+# NetworkPolicy cannot filter by name, so kube-dns will recurse any query a locked pod sends: a
+# workspace can still exfiltrate data, slowly, by encoding it in lookups for a domain whose
+# authoritative server it controls. Closing that takes a DNS-level policy (see docs/deployment.md).
+# KEEP the model and registry ports, and the worker selector, identical to `workspace-egress` above.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workspace-egress-blocked
+  namespace: auto-swe-workspaces
+spec:
+  podSelector:
+    matchLabels:
+      asw/role: workspace
+      asw/egress: blocked
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auto-swe
+          podSelector:
+            matchLabels:
+              app: worker
+      ports:
+        - { protocol: TCP, port: 8790 } # HARNESS_MODEL_PROXY_PORT
+        - { protocol: TCP, port: 8791 } # REGISTRY_PROXY_PORT
+---
+# What a locked workspace with egress policy `restricted` may reach: everything `blocked` may, plus
+# the worker's egress forwarding proxy (EGRESS_PROXY_PORT, 8792), admitted by selecting the worker
+# pods rather than by address (traffic addressed to a Service IP has no defined NetworkPolicy
+# semantics, and most CNIs match the post-DNAT pod IP). The repository's git host is added per pod
+# exactly as for `blocked`. The same DNS caveat applies.
+# KEEP the ports, and the worker selector, identical to `workspace-egress` above.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workspace-egress-restricted
+  namespace: auto-swe-workspaces
+spec:
+  podSelector:
+    matchLabels:
+      asw/role: workspace
+      asw/egress: restricted
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # ADJUST: the worker pods that serve the model, registry and egress proxies.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auto-swe
+          podSelector:
+            matchLabels:
+              app: worker
+      ports:
+        - { protocol: TCP, port: 8790 } # HARNESS_MODEL_PROXY_PORT
+        - { protocol: TCP, port: 8791 } # REGISTRY_PROXY_PORT
+        - { protocol: TCP, port: 8792 } # EGRESS_PROXY_PORT
+---
 # ADJUST: caps what pods awaiting the orphan sweep or a burst of runs can hold.
 apiVersion: v1
 kind: ResourceQuota
@@ -88,6 +182,13 @@ spec:
 # already owned by its pod (so it is garbage-collected with the pod) and deletes it; it never
 # reads one, and no verb here gets, lists or patches them. No cluster-wide verbs.
 # `list` and `delete` on pods are also what the orphan sweep (ScheduledWorkspaceReaperWorkflow) uses.
+# `patch` on pods is how a workspace is locked (`kubectl label`: egress policy `blocked` or `restricted`), and
+# `create` on networkpolicies adds that pod's allow policy (owned by the pod, so it is garbage
+# collected with it). Withholding `update`, `patch` and `delete` stops the worker editing or
+# removing the namespace's own policies, but NetworkPolicies are additive: `create` alone lets a
+# holder of the worker's token add a policy that admits any egress to any workspace pod. Set a
+# ValidatingAdmissionPolicy (the commented example at the end of this file) to constrain what the
+# worker may create.
 # `pods/exec` is a shell in every workspace, so keep anything else out of this namespace
 # and never put another Secret here: anyone with `get secrets` can read the token.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -98,13 +199,16 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [pods]
-    verbs: [create, get, list, watch, delete]
+    verbs: [create, get, list, watch, patch, delete]
   - apiGroups: [""]
     resources: [pods/exec]
     verbs: [create]
   - apiGroups: [""]
     resources: [secrets]
     verbs: [create, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create]
 ---
 # ADJUST: the ServiceAccount the worker pod runs as.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -120,3 +224,48 @@ subjects:
   - kind: ServiceAccount
     name: auto-swe-worker
     namespace: auto-swe
+# ---
+# OPTIONAL, NOT ENABLED: bounds what the worker's ServiceAccount can create as a NetworkPolicy, so
+# that a stolen worker token cannot admit all egress. A create must select a single workspace pod
+# by its asw/workspace label, be owned by a pod, and admit only single addresses (/32 or /128).
+# Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA). Uncomment, adjust the ServiceAccount
+# name and namespace, and test with a locked run before relying on it.
+#
+# apiVersion: admissionregistration.k8s.io/v1
+# kind: ValidatingAdmissionPolicy
+# metadata:
+#   name: workspace-networkpolicy-bounds
+# spec:
+#   failurePolicy: Fail
+#   matchConstraints:
+#     resourceRules:
+#       - apiGroups: [networking.k8s.io]
+#         apiVersions: [v1]
+#         operations: [CREATE, UPDATE]
+#         resources: [networkpolicies]
+#   matchConditions:
+#     - name: from-the-worker
+#       expression: "request.userInfo.username == 'system:serviceaccount:auto-swe:auto-swe-worker'"
+#   validations:
+#     - expression: "has(object.spec.podSelector.matchLabels) && 'asw/workspace' in object.spec.podSelector.matchLabels"
+#       message: "must select a single workspace pod by asw/workspace"
+#     - expression: "has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(o, o.kind == 'Pod')"
+#       message: "must be owned by a pod"
+#     - expression: >-
+#         !has(object.spec.ingress) && object.spec.policyTypes == ['Egress'] &&
+#         (!has(object.spec.egress) || object.spec.egress.all(r, has(r.to) && r.to.all(t,
+#         has(t.ipBlock) && !has(t.ipBlock.except) &&
+#         (t.ipBlock.cidr.endsWith('/32') || t.ipBlock.cidr.endsWith('/128')))))
+#       message: "egress may admit only single addresses"
+# ---
+# apiVersion: admissionregistration.k8s.io/v1
+# kind: ValidatingAdmissionPolicyBinding
+# metadata:
+#   name: workspace-networkpolicy-bounds
+# spec:
+#   policyName: workspace-networkpolicy-bounds
+#   validationActions: [Deny]
+#   matchResources:
+#     namespaceSelector:
+#       matchLabels:
+#         kubernetes.io/metadata.name: auto-swe-workspaces

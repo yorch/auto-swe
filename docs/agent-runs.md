@@ -442,10 +442,15 @@ takes no new slot.
 - **MCP next to a workspace is an exfiltration channel.** An agent with an MCP connection and a
   readable repository can send source anywhere that connection reaches, steered by text in the
   repository. MCP binds per the agent's own configuration; it is not switched off for agent runs. The
-  workspace itself also keeps outbound network access (git and package installs need it).
-- **A write-capable agent has `bash` in a container with open egress.** The trusted-container design
-  protects what is *published* and the push credential; it does not stop the agent doing anything it
-  likes inside its own sandbox, including reaching the network.
+  workspace itself keeps outbound network access under the default `open` egress policy (git and
+  package installs need it); `restricted` and `blocked` lock it down, see
+  [run egress policy](./run-activity.md#run-egress-policy).
+- **A write-capable agent has `bash` in a container with open egress by default.** The trusted-container
+  design protects what is *published* and the push credential; it does not stop the agent doing
+  anything it likes inside its own sandbox. Under the `workspace.egressPolicy` setting (`restricted`
+  or `blocked`, which a launch may also request with `egressPolicy`) the workspace is network-locked
+  and the delivery workspace is created `blocked`; the remaining gaps are listed in
+  [run activity, Limitations](./run-activity.md#limitations).
 - **The gate is a model reading attacker-influenced text.** Everything that must not be argued with is
   deterministic and runs first, but the secret-in-code and injection judgement itself is the
   `securityReview` model's, which a prompt-injected diff can try to talk round. The PR body, the agent's

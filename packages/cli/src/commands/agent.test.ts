@@ -123,6 +123,24 @@ describe('auto-swe agent', () => {
     expect(calls[0]?.headers['Idempotency-Key']).toBe('abc');
   });
 
+  it('sends the egress policy only when given', async () => {
+    await runAgentCommand(
+      ['run', 'a', 'p', `--repo-id=${REPO_ID}`, '--egress-policy=blocked'],
+      ENV
+    );
+    expect(calls[0]?.body).toMatchObject({ egressPolicy: 'blocked' });
+    await runAgentCommand(['run', 'a', 'p', `--repo-id=${REPO_ID}`], ENV);
+    expect(calls[1]?.body).not.toHaveProperty('egressPolicy');
+  });
+
+  it('rejects an egress policy outside open, restricted and blocked before launching', async () => {
+    expect(
+      await runAgentCommand(['run', 'a', 'p', `--repo-id=${REPO_ID}`, '--egress-policy=wide'], ENV)
+    ).toBe(1);
+    expect(err.join('')).toContain('--egress-policy must be one of: open, restricted, blocked');
+    expect(calls).toHaveLength(0);
+  });
+
   it('reads the prompt from a file, for a long prompt or one starting with a dash', async () => {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'agent-cli-'));
     const file = path.join(dir, 'p.txt');

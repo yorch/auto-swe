@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { Prisma } from '@auto-swe/shared';
 import { resolveSettings } from '@auto-swe/shared/config';
 import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
+import { egressPolicySchema } from '@auto-swe/shared/lib/egressPolicy';
 import { inputSchemaProblems, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { CallbackRequestSchema } from '@auto-swe/shared/lib/runCallbacks';
 import { findUnauditedNodes, recordShellAudit } from '@auto-swe/shared/lib/shellAudit';
@@ -44,6 +45,7 @@ import { advisoryWarnings } from '../lib/advisoryWarnings.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { csvRow } from '../lib/csv.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
+import { refuseWideningEgressPolicy } from '../lib/egressPolicyLaunch.js';
 import { experimentBucket } from '../lib/experimentBucket.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
@@ -2197,6 +2199,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     acknowledgeUnchanged: z.boolean().optional(),
     /** Where to report the run's outcome (docs/run-callbacks.md). */
     callback: CallbackRequestSchema.optional(),
+    /** Network egress for this run's containers; can only be stricter than the configured policy. */
+    egressPolicy: egressPolicySchema.optional(),
     label: z.string().max(200).optional(),
     payload: z.record(z.string(), z.unknown()).optional().default({}),
   });
@@ -2483,6 +2487,18 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      // A launch may narrow the network egress policy for its run, never widen it. Resolved at the
+      // tenant the worker pins the run at: the connection's team and org, and none for a
+      // connection-less run (the template's own team does not count there).
+      const wideningEgress = await refuseWideningEgressPolicy(reply, request.body.egressPolicy, {
+        orgId: connectionResult.source?.orgId,
+        teamId: connectionResult.source?.teamId,
+        workflowTemplateId: tpl.id,
+      });
+      if (wideningEgress) {
+        return reply;
+      }
+
       // An optional `baseBranch` in the payload: the branch the run's change is cut from
       // and its pull request targets (unset: the repository's default branch).
       const base = await launchBaseBranch(payload, reply);
@@ -2530,6 +2546,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         budgetTier,
         connectionId,
         description,
+        ...(request.body.egressPolicy ? { egressPolicy: request.body.egressPolicy } : {}),
         externalTicketId,
         // A service principal's run uses the platform credential.
         ...(user ? { launchedById: user.sub } : {}),
@@ -2588,7 +2605,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
                 }),
               }
             : { guard: mcpWrite.launchGuard }),
-          audit: { actor: user ?? null, source: service ? 'service-token' : 'template-run' },
+          audit: {
+            actor: user ?? null,
+            ...(request.body.egressPolicy ? { egressPolicy: request.body.egressPolicy } : {}),
+            source: service ? 'service-token' : 'template-run',
+          },
           log: fastify.log,
           sourceAuthorization: user ? { actor: user } : {},
         }

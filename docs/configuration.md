@@ -31,7 +31,8 @@ than settings because the gateway applies them to Temporal once, at startup, so 
 would not take effect until a restart. Past boot the resolvers fall back to defaults instead of throwing, because they
 run on paths (the scanners) that must never abort their caller.
 
-One workspace value stays in the registry: `workspace.gitHelperImage`, which cascades to team and
+Two workspace values besides the agent-run bounds live in the registry: `workspace.egressPolicy` (the run egress
+policy) and `workspace.gitHelperImage`, which cascades to team and
 organization because a team on an isolated network may need its own mirror. The bounds on agent runs
 (`workspace.agentRunMaxSteps`, `workspace.agentRunMaxWallClockSeconds`,
 `workspace.agentRunMaxConcurrentGlobal`, `workspace.agentRunMaxConcurrentPerTeam` and
@@ -553,6 +554,11 @@ The optional container egress proxy is configured by worker bootstrap env: `EGRE
 boundaries are described in [run activity](./run-activity.md#container-egress-proxy). HTTP capture
 and retention use `workflow.httpCaptureEnabled`, `workflow.httpCaptureBodyMaxBytes`, and
 `workflow.httpCaptureRetentionDays` in the setting registry; HTTP pruning shares the transcript sweep.
+
+`workspace.egressPolicy` (`open`, `restricted` or `blocked`; ADMIN-only, run-pinned, overridable at
+workflow template, team and organization scope) sets how much outbound network access a run's
+containers get. A launch can only narrow it. See
+[run egress policy](./run-activity.md#run-egress-policy).
 
 The `uiValidation` group contains ADMIN-only, GLOBAL-only settings for run evidence:
 `uiValidation.maxScreenshotBytes` (5,000,000 bytes), `uiValidation.maxVideoBytes` (50,000,000

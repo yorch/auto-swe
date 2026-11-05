@@ -9,6 +9,7 @@ import {
 import type { BudgetTier, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { requireUser } from '../plugins/auth.js';
+import { egressPolicyForRerun, storedEgressPolicy } from './egressPolicyLaunch.js';
 import { authorizeLaunch, sendLaunchRefusal } from './launchAuthorization.js';
 import { launchBaseBranch } from './launchBaseBranch.js';
 import { validateRunConnection } from './runConnection.js';
@@ -172,10 +173,18 @@ export async function retryTemplateRequest(
   const budgetTier: BudgetTier =
     stored.budget === 'LARGE' || stored.budget === 'EPIC' ? stored.budget : 'STANDARD';
   const temporalWorkflowId = `wf-${template.id.replace(/-/g, '').slice(0, 8)}-${crypto.randomUUID().replace(/-/g, '')}`;
+  const retryEgress = await egressPolicyForRerun(storedEgressPolicy(input.requestPayload), {
+    orgId: connection.source?.orgId,
+    teamId: connection.source?.teamId,
+    workflowTemplateId: template.id,
+  });
   const runRequest: RepoWorkRequest = {
     budgetTier,
     connectionId: input.connectionId,
     description,
+    // The launcher's stored egress choice, held at least as strict as the cascade the worker
+    // pins at: a connection's team and org, none for a connection-less run.
+    ...(retryEgress ? { egressPolicy: retryEgress } : {}),
     externalTicketId: input.externalTicketId,
     launchedById: user.sub,
     payload,
@@ -222,6 +231,7 @@ export async function retryTemplateRequest(
         : {}),
       audit: {
         actor: user,
+        ...(retryEgress ? { egressPolicy: retryEgress } : {}),
         source: 'template-retry',
         templateId: input.templateId as string,
       },

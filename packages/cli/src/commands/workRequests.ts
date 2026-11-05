@@ -1,3 +1,4 @@
+import { EGRESS_POLICIES } from '@auto-swe/shared/lib/egressPolicy';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { BUDGET_TIERS } from '@auto-swe/shared/types/workflow';
 import { apiRequest, apiRequestFull, runWithExitCodes, withAcknowledgeHint } from '../lib/api.js';
@@ -7,7 +8,7 @@ import { missingValue, parseFlags } from '../lib/flags.js';
 const SUB_HELP = `auto-swe run — submit a work request
 
   run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
-      [--idempotency-key=<key>] [--acknowledge-unchanged]
+      [--egress-policy=<policy>] [--idempotency-key=<key>] [--acknowledge-unchanged]
 
   FLAGS
     --ticket=<id>           External ticket ID (e.g. JIRA-123, GH-42)
@@ -16,6 +17,8 @@ const SUB_HELP = `auto-swe run — submit a work request
     --description=<text>    What the agent should implement
     --budget=STANDARD|LARGE|EPIC
                             Budget tier for the run (default: STANDARD)
+    --egress-policy=open|restricted|blocked
+                            Network egress for the run (omit it for the platform default)
     --idempotency-key=<key> Make a retried submission return the run it already started
                             instead of a second one (same key, ticket, repo,
                             description and budget tier, else it is refused; a key
@@ -99,6 +102,7 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     'repo',
     'repo-id',
     'budget',
+    'egress-policy',
     'idempotency-key'
   );
   if (bare) {
@@ -144,6 +148,12 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     return 1;
   }
 
+  const egressPolicy = flags['egress-policy'];
+  if (egressPolicy !== undefined && !EGRESS_POLICIES.some((p) => p === egressPolicy)) {
+    process.stderr.write(`--egress-policy must be one of: ${EGRESS_POLICIES.join(', ')}\n`);
+    return 1;
+  }
+
   // Resolve the repo ID — skip the lookup when --repo-id is already a UUID.
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   let resolvedRepoId: string;
@@ -174,6 +184,7 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
   const body: Record<string, unknown> = {
     ...(flags['acknowledge-unchanged'] ? { acknowledgeUnchanged: true } : {}),
     budgetTier: budget,
+    ...(egressPolicy !== undefined ? { egressPolicy } : {}),
     description: flags.description,
     externalTicketId: flags.ticket,
     repoIds: [resolvedRepoId],

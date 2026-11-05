@@ -4,6 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearStopNodeCache } from '../lib/unchangedRerun.js';
 import { workRequestRoutes } from './workRequests.js';
 
+const egress = vi.hoisted(() => ({ ceiling: 'open' as string }));
+vi.mock('@auto-swe/shared/config', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/config')>()),
+  resolveSetting: vi.fn(async () => egress.ceiling),
+}));
+
 /**
  * `POST /work-requests/:id/retry` answers with the Temporal workflow id it
  * started. The WorkflowRun row is created later by the worker, keyed by that
@@ -30,6 +36,8 @@ type LedgerWhere = {
 describe('POST /work-requests/:id/retry', () => {
   let app: FastifyInstance;
   let started: string[];
+  let startedRequests: Record<string, unknown>[];
+  let storedRequestPayload: string | null;
   /** The snapshot template row the retry looks up; null = an ordinary template. */
   let snapshotTemplate: { origin: string | null; teamId: string | null } | null;
   /** The launchable row (ACTIVE + visible to the caller); null = archived or off-team. */
@@ -56,6 +64,9 @@ describe('POST /work-requests/:id/retry', () => {
     stopLookups = 0;
     clearStopNodeCache();
     started = [];
+    startedRequests = [];
+    storedRequestPayload = null;
+    egress.ceiling = 'open';
     snapshotTemplate = null;
     launchable = { inputSchema: null };
     launchWhere = undefined;
@@ -148,7 +159,7 @@ describe('POST /work-requests/:id/retry', () => {
           externalTicketId: 'T-1',
           id: WORK_REQUEST_ID,
           payload,
-          requestPayload: null,
+          requestPayload: storedRequestPayload,
           templateId: 'tpl-1',
           templateVersion: 2,
         }),
@@ -180,8 +191,12 @@ describe('POST /work-requests/:id/retry', () => {
     };
     app.decorate('prisma', prismaMock as unknown as never);
     app.decorate('temporal', {
-      startRunnableWorkflow: async (workflowId: string) => {
+      startRunnableWorkflow: async (
+        workflowId: string,
+        input: { request: Record<string, unknown> }
+      ) => {
         started.push(workflowId);
+        startedRequests.push(input.request);
       },
       workflowSettledStatus: async (workflowId: string) => {
         const answer = settle[workflowId] ?? null;
@@ -214,6 +229,36 @@ describe('POST /work-requests/:id/retry', () => {
     expect(data.temporalWorkflowId).toBe(started[0]);
     expect(data.workRequestId).toBe(WORK_REQUEST_ID);
     expect(data.workflowIds).toEqual(['aw-new']);
+  });
+
+  describe('egress policy', () => {
+    const retry = () =>
+      app.inject({
+        headers: { authorization: 'Bearer t' },
+        method: 'POST',
+        payload: {},
+        url: `/api/v1/work-requests/${WORK_REQUEST_ID}/retry`,
+      });
+
+    it('carries the launcher’s stored policy onto the retried run', async () => {
+      storedRequestPayload = JSON.stringify({ egressPolicy: 'blocked' });
+      egress.ceiling = 'restricted';
+      expect((await retry()).statusCode).toBe(201);
+      expect(startedRequests[0]).toMatchObject({ egressPolicy: 'blocked' });
+    });
+
+    it('holds a stored policy to a cascade tightened since, instead of refusing', async () => {
+      storedRequestPayload = JSON.stringify({ egressPolicy: 'open' });
+      egress.ceiling = 'blocked';
+      expect((await retry()).statusCode).toBe(201);
+      expect(startedRequests[0]).toMatchObject({ egressPolicy: 'blocked' });
+    });
+
+    it('adds none when the request stored none', async () => {
+      storedRequestPayload = JSON.stringify({ description: 'x' });
+      expect((await retry()).statusCode).toBe(201);
+      expect(startedRequests[0]).not.toHaveProperty('egressPolicy');
+    });
   });
 
   describe('of a request that stopped as not actionable', () => {

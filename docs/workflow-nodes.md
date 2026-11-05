@@ -449,7 +449,7 @@ run's branch, and push any changes it makes.
 | `image` | yes | The image to run in. It must be on the team's effective allowlist: the built-in images (for example `node:24-alpine`, `python:3.13-alpine`, `eclipse-temurin:21-jdk-alpine`, `golang:1.26-alpine`, `alpine:latest`) plus the team's additions. |
 | `command` | yes | The shell command, up to 8000 characters. |
 | `inputs` | no | Bindings. Only three are read: `inputs.command` and `inputs.image` replace the node's own when they resolve to strings, and `inputs.branch` names the branch to check out and to push changes to (default the run's work branch). |
-| `network` | no | `"none"` (default) or `"egress"` for outbound traffic, filtered by the team's egress allowlist (see Pitfalls for what that filter does). |
+| `network` | no | `"none"` (default) or `"egress"` for outbound traffic, filtered by the team's egress allowlist (see Pitfalls for what that filter does). The run's [egress policy](./run-activity.md#run-egress-policy) can cap `"egress"` to `"none"`. |
 | `memory` | no | A Docker memory limit such as `"512m"` (the default) or `"1g"`. |
 | `cpus` | no | A CPU limit from 0.1 to 8 (default 1). |
 | `timeoutMs` | no | The command's wall clock, 1000–3600000 ms (default 600000), capped at 50 minutes when it runs. |
@@ -523,7 +523,10 @@ workspace volume cannot be created.
   example above reads a file and writes nothing, so it runs with the defaults.
 - The egress allowlist filters by name, not by address. With entries, the container's DNS answers
   only for the listed hosts; a connection to a literal IP address is not blocked. With an empty
-  allowlist, `"egress"` permits unrestricted outbound access through that DNS policy. The optional
+  allowlist, `"egress"` permits unrestricted outbound access through that DNS policy, unless the
+  run's [egress policy](./run-activity.md#run-egress-policy) says otherwise: `blocked` forces
+  `"none"`, and `restricted` with an empty allowlist forces `"none"` (with an allowlist the step is
+  held to it by the proxy and DNS filter, not a network lock). The optional
   [audited egress proxy](./run-activity.md#container-egress-proxy) also enforces the allowlist and
   rejects unsafe resolved addresses for HTTP/CONNECT traffic sent through it. Clients that ignore
   proxy env and direct sockets bypass the proxy; the DNS filter remains.
@@ -547,7 +550,7 @@ JSON, and the container answers with JSON. Untrusted code runs in the same locke
 | `inputs` | no | Bindings. The resolved object is passed as JSON in the `CONTAINER_STEP_INPUT` environment variable (and as the request body for `sidecar`). |
 | `transport` | no | How the result comes back: `"stdout"` (default, one JSON value printed), `"ndjson"` (a stream of JSON lines; the result is the last `{ "type": "result", "result": … }` event, else the last JSON line) or `"sidecar"` (the image serves HTTP and the worker POSTs to it). |
 | `sidecar` | for `sidecar` | `port` (required), `requestPath` (default `/`), `readinessPath` (polled before the request; default the request path) and `readyTimeoutMs` (default 30000). |
-| `network` | no | `"none"` (default) or `"egress"`. A `sidecar` always runs on bridge networking, under the egress allowlist. |
+| `network` | no | `"none"` (default) or `"egress"`, capped by the run's [egress policy](./run-activity.md#run-egress-policy). A `sidecar` always runs on bridge networking, under the egress allowlist, and is refused where the policy forbids network access. |
 | `memory`, `cpus` | no | As for `shell`. |
 | `timeoutMs` | no | The command's wall clock (default 600000 ms), capped at 50 minutes. For `sidecar` it bounds the HTTP request; waiting for readiness is bounded separately by `readyTimeoutMs`. |
 

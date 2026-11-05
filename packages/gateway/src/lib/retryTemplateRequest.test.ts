@@ -7,6 +7,8 @@ import { retryTemplateRequest } from './retryTemplateRequest.js';
 import { validateRunConnection } from './runConnection.js';
 import { clearStopNodeCache } from './unchangedRerun.js';
 
+const resolved = vi.hoisted(() => ({ egress: 'open' as string }));
+vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: vi.fn(async () => resolved.egress) }));
 vi.mock('./runConnection.js', () => ({ validateRunConnection: vi.fn() }));
 vi.mock('./launchAuthorization.js', () => ({
   authorizeLaunch: vi.fn(),
@@ -173,6 +175,33 @@ describe('generic workflow retry', () => {
     });
     expect(prisma.workflowRun.findFirst.mock.calls[0][0]).toHaveProperty('where.AND');
     await app.close();
+  });
+
+  it('carries the stored egress policy to the run, held at the cascade value when that is stricter', async () => {
+    resolved.egress = 'restricted';
+    const stored = { ...input, requestPayload: '{"egressPolicy":"open"}' };
+    const { app, start } = await harness(true, stored);
+    expect((await app.inject({ headers: auth, method: 'POST', url: '/retry' })).statusCode).toBe(
+      201
+    );
+    expect(start).toHaveBeenCalledWith(expect.any(String), {
+      request: expect.objectContaining({ egressPolicy: 'restricted' }),
+      templateId: input.templateId,
+      templateVersion: 3,
+    });
+    await app.close();
+  });
+
+  it('adds no egress policy when the request stored none or a malformed one', async () => {
+    for (const requestPayload of ['{"label":"x"}', '{"egressPolicy":"nope"}', 'not json']) {
+      const { app, start } = await harness(true, { ...input, requestPayload });
+      expect((await app.inject({ headers: auth, method: 'POST', url: '/retry' })).statusCode).toBe(
+        201
+      );
+      const sent = start.mock.calls[0] as unknown as [string, { request: object }];
+      expect(sent[1].request).not.toHaveProperty('egressPolicy');
+      await app.close();
+    }
   });
 
   it('does not launch a request the caller cannot see', async () => {
