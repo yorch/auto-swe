@@ -15,6 +15,7 @@ import { CiBadge, PullRequestStateBadge } from '@/components/work/PullRequestBad
 import { useDiffMode } from '@/hooks/useDiffMode';
 import { useIsNarrow } from '@/hooks/useMediaQuery';
 import { useSetFilesViewed } from '@/hooks/usePullRequestCockpit';
+import { findMovedBlocks } from '@/lib/movedBlocks';
 import {
   type FileFilter,
   filesUnavailableMessage,
@@ -97,6 +98,17 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
   const parsed = useMemo(
     () => new Map(items.map((f) => [f.path, f.patch === null ? null : parseFilePatch(f.patch)])),
     [items]
+  );
+  // A move usually crosses files, so it is looked for across the whole change, once.
+  const moved = useMemo(
+    () =>
+      findMovedBlocks(
+        items.flatMap((f) => {
+          const lines = parsed.get(f.path);
+          return lines ? [{ lines: lines.lines, path: f.path }] : [];
+        })
+      ),
+    [items, parsed]
   );
   const annotations = useMemo(() => {
     const byFile = new Map<string, Map<number, ReactNode>>();
@@ -404,6 +416,7 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
                       }
                       lines={lines.lines}
                       mode={layout}
+                      moved={moved.get(file.path)}
                       name={file.path}
                       onToggle={() => setOpen((c) => ({ ...c, [file.path]: !isOpen(file.path) }))}
                       open={isOpen(file.path)}

@@ -400,6 +400,46 @@ describe('viewing files', () => {
   });
 });
 
+describe('moved code and edited words', () => {
+  const BLOCK = ['function total(items) {', '  const sum = items.reduce(add, 0);', '  return sum;'];
+  const patchOf = (sign: '+' | '-', lines: string[]) =>
+    [`@@ -1,${lines.length} +1,${lines.length} @@`, ...lines.map((l) => `${sign}${l}`)].join('\n');
+
+  it('flags a block removed from one file and added to another, on both', () => {
+    show(
+      withFiles([
+        file({ patch: patchOf('-', BLOCK), path: 'a.ts' }),
+        file({ patch: patchOf('+', BLOCK), path: 'b.ts' }),
+      ])
+    );
+    expect(document.querySelectorAll('.border-info-400')).toHaveLength(6);
+    expect(document.body.textContent?.match(/Moved: /g)).toHaveLength(6);
+  });
+
+  it('flags nothing when the same lines are only added', () => {
+    show(withFiles([file({ patch: patchOf('+', BLOCK), path: 'b.ts' })]));
+    expect(document.querySelectorAll('.border-info-400')).toHaveLength(0);
+  });
+
+  it('marks the words that changed in an edited line', () => {
+    show(
+      withFiles([
+        file({
+          patch: [
+            '@@ -1,1 +1,1 @@',
+            '-const total = price * count;',
+            '+const total = price * quantity;',
+          ].join('\n'),
+        }),
+      ])
+    );
+    expect([...document.querySelectorAll('mark')].map((m) => m.textContent)).toEqual([
+      'count',
+      'quantity',
+    ]);
+  });
+});
+
 describe('the diff layout', () => {
   const splitGrids = () => document.querySelectorAll('.grid.grid-cols-2').length;
   const layoutButton = (name: string) =>

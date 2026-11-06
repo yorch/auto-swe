@@ -245,3 +245,112 @@ describe('DiffFile in split mode', () => {
     expect(container.textContent).toContain('<img src=x onerror=alert(1)>');
   });
 });
+
+describe('the changed words of an edited line', () => {
+  const EDIT = [
+    '@@ -1,2 +1,2 @@',
+    ' keep',
+    '-const total = price * count;',
+    '+const total = price * quantity;',
+  ].join('\n');
+  const edit = (over: Partial<DiffFileProps> = {}) => {
+    const parsed = parseFilePatch(EDIT);
+    return props({ added: parsed.added, lines: parsed.lines, removed: parsed.removed, ...over });
+  };
+  const marked = (container: HTMLElement) =>
+    [...container.querySelectorAll('mark')].map((m) => m.textContent);
+
+  it.each(['unified', 'split'] as const)('are marked, and only they, in %s mode', (mode) => {
+    const { container } = render(<DiffFile {...edit({ mode })} />);
+    expect(marked(container)).toEqual(['count', 'quantity']);
+  });
+
+  it('keep the patch’s own marker out of the marks in unified mode', () => {
+    const { container } = render(<DiffFile {...edit()} />);
+    expect(container.textContent).toContain('+const total = price * quantity;');
+    expect(container.textContent).toContain('-const total = price * count;');
+    expect(marked(container).join('')).not.toMatch(/[+-]/);
+  });
+
+  it('are not marked for a rewrite, where almost nothing is shared', () => {
+    const parsed = parseFilePatch(
+      ['@@ -1 +1 @@', '-return a;', '+throw new Error("nope");'].join('\n')
+    );
+    const { container } = render(<DiffFile {...props({ ...parsed })} />);
+    expect(marked(container)).toEqual([]);
+  });
+
+  it('are not marked for an addition with nothing removed, or an unchanged line', () => {
+    const parsed = parseFilePatch(['@@ -1,1 +1,2 @@', ' keep', '+brand new line'].join('\n'));
+    const { container } = render(<DiffFile {...props({ ...parsed })} />);
+    expect(marked(container)).toEqual([]);
+  });
+
+  it('leave the text of the line whole', () => {
+    const { container } = render(<DiffFile {...edit()} />);
+    const text = container.textContent ?? '';
+    expect(text).toContain('const total = price * count;');
+    expect(text).toContain('const total = price * quantity;');
+  });
+
+  it('still show hidden characters, inside a mark or outside one', () => {
+    const parsed = parseFilePatch(['@@ -1 +1 @@', '-let a = one‮;', '+let a = two‮;'].join('\n'));
+    const { container } = render(<DiffFile {...props({ ...parsed })} />);
+    expect(container.textContent).toContain('⟨U+202E⟩');
+    expect(container.textContent).not.toContain('‮');
+  });
+
+  it('are not worked out while the file is closed', () => {
+    const { container } = render(<DiffFile {...edit({ open: false })} />);
+    expect(marked(container)).toEqual([]);
+  });
+
+  it('are drawn only for the lines that are drawn', () => {
+    const pairs = Array.from({ length: 40 }, (_, i) => [
+      `-let value${i} = first;`,
+      `+let value${i} = second;`,
+    ]).flat();
+    const parsed = parseFilePatch(['@@ -1,40 +1,40 @@', ...pairs].join('\n'));
+    const { container } = render(<DiffFile {...props({ ...parsed, rowLimit: 4 })} />);
+    // Four lines are drawn: the header, one edit pair and the removal of the next, so a few marks,
+    // not the eighty a full draw would give.
+    expect(container.querySelectorAll('mark').length).toBeGreaterThan(0);
+    expect(container.querySelectorAll('mark').length).toBeLessThan(10);
+  });
+});
+
+describe('moved lines', () => {
+  const PATCH_MOVED = ['@@ -1,3 +1,3 @@', ' keep', '-moved away', '+moved here'].join('\n');
+  const moved = (...indexes: number[]) => new Set(indexes);
+  const parsed = parseFilePatch(PATCH_MOVED);
+  // 0 is the hunk header, 1 the unchanged line, 2 the removed one, 3 the added one.
+  const flagged = (container: HTMLElement) => container.querySelectorAll('.border-info-400');
+
+  it.each(['unified', 'split'] as const)(
+    'are marked, with a name for a screen reader, in %s mode',
+    (mode) => {
+      const { container } = render(
+        <DiffFile {...props({ ...parsed, mode, moved: moved(2, 3) })} />
+      );
+      expect(flagged(container)).toHaveLength(2);
+      expect(container.textContent?.match(/Moved: /g)).toHaveLength(2);
+    }
+  );
+
+  it('mark a removed line and an added one independently', () => {
+    const { container } = render(<DiffFile {...props({ ...parsed, moved: moved(3) })} />);
+    expect(flagged(container)).toHaveLength(1);
+    expect(flagged(container)[0]?.textContent).toContain('moved here');
+  });
+
+  it('never mark an unchanged line, whatever index is given', () => {
+    const { container } = render(<DiffFile {...props({ ...parsed, moved: moved(1) })} />);
+    expect(flagged(container)).toHaveLength(0);
+  });
+
+  it('mark nothing when none are given', () => {
+    const { container } = render(<DiffFile {...props({ ...parsed })} />);
+    expect(flagged(container)).toHaveLength(0);
+    expect(container.textContent).not.toContain('Moved: ');
+  });
+});
