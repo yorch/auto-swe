@@ -447,6 +447,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PUT /api/v1/platform/config/workflow-defaults': 'confirm',
   'PUT /api/v1/platform/credentials/:id': { never: 'secret' },
   'PUT /api/v1/platform/embedding-config': { never: 'secret' },
+  'PUT /api/v1/platform/evals/:id/setup-secrets-repository': { never: 'secret' },
   'PUT /api/v1/platform/model-catalog/:id': 'confirm',
   'PUT /api/v1/platform/scanner-patterns/:id': 'confirm',
   'PUT /api/v1/platform/skills/:id': 'confirm',

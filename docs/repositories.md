@@ -737,8 +737,9 @@ longer fit.
   (base64 in an `.npmrc` `_auth`, say), split, or to a path outside the checkout and the home
   directory (`/tmp`) is not caught, nor is a value under 8 characters. A process a step leaves
   running keeps whatever it read.
-- **An eval case has no repository to read setup secrets from**, so an eval whose pinned setup names
-  secrets fails setup.
+- **An eval reads setup secrets only through its dataset's linked repository.** A dataset with no
+  linked repository runs setup with no secrets, so a case whose pinned setup names one fails setup
+  ([evals.md](./evals.md#3-offline-harness)).
 - **The access test does not look at webhooks.** Listing a repository's hooks needs an
   administrative permission the platform's credential does not otherwise hold, so a missing or
   mis-signed webhook is not found by it. An installation token reports no permission level for a

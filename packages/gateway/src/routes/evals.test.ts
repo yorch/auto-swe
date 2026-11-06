@@ -27,6 +27,7 @@ function newMockPrisma() {
       async (fn: (tx: unknown) => Promise<unknown>): Promise<unknown> => fn(prisma)
     ),
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
+    connection: { findUnique: vi.fn() },
     evalCase: {
       count: vi.fn().mockResolvedValue(0),
       findFirst: vi.fn().mockResolvedValue(null),
@@ -39,6 +40,7 @@ function newMockPrisma() {
       create: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
+      update: vi.fn().mockResolvedValue({}),
     },
     evalResult: {
       count: vi.fn().mockResolvedValue(0),
@@ -1286,5 +1288,71 @@ describe('evalRoutes', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json().data.stack).toBe('go');
     });
+  });
+});
+
+describe('PUT /evals/:id/setup-secrets-repository', () => {
+  const put = (app: Awaited<ReturnType<typeof buildApp>>['app'], connectionId: string | null) =>
+    app.inject({
+      headers: AUTH,
+      method: 'PUT',
+      payload: { connectionId },
+      url: '/api/v1/platform/evals/00000000-0000-4000-8000-000000000001/setup-secrets-repository',
+    });
+  const REPO = '00000000-0000-4000-8000-0000000000aa';
+  const teamDataset = {
+    id: 'd1',
+    scope: 'TEAM',
+    setupSecretsConnectionId: null,
+    teamId: 'team-a',
+  };
+
+  it('links a repository of the dataset team and audits the change', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.evalDataset.findUnique.mockResolvedValue(teamDataset);
+    prisma.connection.findUnique.mockResolvedValue({ teamId: 'team-a', type: 'git_repo' });
+    const res = await put(app, REPO);
+    expect(res.statusCode).toBe(200);
+    expect(prisma.evalDataset.update).toHaveBeenCalledWith({
+      data: { setupSecretsConnectionId: REPO },
+      where: { id: 'd1' },
+    });
+    expect(prisma.configAuditLog.create).toHaveBeenCalledOnce();
+  });
+
+  it("refuses another team's repository for a team dataset", async () => {
+    const { app, prisma } = await buildApp();
+    prisma.evalDataset.findUnique.mockResolvedValue(teamDataset);
+    prisma.connection.findUnique.mockResolvedValue({ teamId: 'team-b', type: 'git_repo' });
+    const res = await put(app, REPO);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('REPO_NOT_IN_DATASET_TEAM');
+    expect(prisma.evalDataset.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a connection that is not a repository', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.evalDataset.findUnique.mockResolvedValue(teamDataset);
+    prisma.connection.findUnique.mockResolvedValue({ teamId: 'team-a', type: 'jira' });
+    expect((await put(app, REPO)).statusCode).toBe(404);
+    expect(prisma.evalDataset.update).not.toHaveBeenCalled();
+  });
+
+  it('clears the link', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.evalDataset.findUnique.mockResolvedValue({
+      ...teamDataset,
+      setupSecretsConnectionId: REPO,
+    });
+    expect((await put(app, null)).statusCode).toBe(200);
+    expect(prisma.evalDataset.update).toHaveBeenCalledWith({
+      data: { setupSecretsConnectionId: null },
+      where: { id: 'd1' },
+    });
+  });
+
+  it('is platform-admin only', async () => {
+    const { app } = await buildApp('ENGINEER');
+    expect((await put(app, REPO)).statusCode).toBe(403);
   });
 });

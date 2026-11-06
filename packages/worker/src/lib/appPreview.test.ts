@@ -12,6 +12,11 @@ import {
   startAppPreview,
 } from './appPreview.js';
 
+const loadSetupSecrets = vi.fn();
+vi.mock('./repoSetupRun.js', () => ({
+  loadSetupSecrets: (...args: unknown[]) => loadSetupSecrets(...args),
+}));
+
 const config = {
   env: { GREETING: "hello ' preview" },
   readyUrl: 'http://localhost:4173/health',
@@ -60,6 +65,33 @@ describe('startAppPreview', () => {
     await expect(preview.logTail(32)).resolves.toBe('password=***\n');
     await preview.stop();
     expect(exec.mock.calls.at(-1)?.[0]).toContain('process.kill(-pgid');
+  });
+
+  it('adds the named setup secrets to the env and masks them in the log tail', async () => {
+    loadSetupSecrets.mockResolvedValueOnce({ API_KEY: 'secret-value' });
+    const preview = await startAppPreview(
+      workspace,
+      { ...config, secrets: ['API_KEY'], setup: 'npm run seed' },
+      { connectionId: 'repo-1' }
+    );
+    expect(loadSetupSecrets).toHaveBeenCalledWith('repo-1', ['API_KEY']);
+    const secretEnv = { ...config.env, API_KEY: 'secret-value' };
+    expect(exec.mock.calls[0]?.[1]).toMatchObject({ secretEnv });
+    expect(exec.mock.calls[1]?.[1]).toMatchObject({ secretEnv });
+    for (const [command] of exec.mock.calls) {
+      expect(command).not.toContain('secret-value');
+    }
+    await expect(preview.logTail(32)).resolves.toBe('password=***\n');
+  });
+
+  it('fails before running anything when a named secret has no value', async () => {
+    loadSetupSecrets.mockRejectedValueOnce(
+      new Error('workspace setup: setup secret API_KEY has no value')
+    );
+    await expect(
+      startAppPreview(workspace, { ...config, secrets: ['API_KEY'] }, { connectionId: 'repo-1' })
+    ).rejects.toThrow('App preview: setup secret API_KEY has no value');
+    expect(exec).not.toHaveBeenCalled();
   });
 
   it('throws PreviewNotReadyError with a redacted log tail and stops the app on timeout', async () => {

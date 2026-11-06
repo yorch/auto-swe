@@ -1409,6 +1409,8 @@ export interface EvalDatasetSummary {
 
 export interface EvalDatasetDetail extends EvalDatasetSummary {
   cases: EvalCaseDto[];
+  /** The repository whose setup secrets the cases' workspace setup reads; null reads none. */
+  setupSecretsRepository: { id: string; name: string } | null;
 }
 
 export interface EvalRunDto {

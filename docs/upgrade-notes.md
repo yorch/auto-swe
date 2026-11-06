@@ -809,6 +809,28 @@ relying on provider connectivity.
 
 ---
 
+### UN-13. App preview recipes: secret values in `previewConfig.env`
+
+**Affected.** Deployments with a repository whose app preview recipe holds a secret (an API key, a
+database password) under `env`. Those values are stored as plain JSON on the connection and shown
+to anyone who can open the repository form.
+
+**What changes.** A recipe can name the repository's encrypted setup secrets under `secrets`; the
+preview's commands receive them as `env` values were received. `env` keeps working unchanged, and
+nothing is moved automatically. The migration `20261106220000_eval_dataset_setup_secrets` (an
+optional repository link on eval datasets) applies with the normal rollout.
+
+**Actions.** For each such repository, open it in the dashboard and choose **Move env values to
+setup secrets** under App preview (or `POST /api/v1/repositories/:id/preview/env-to-secrets`), then
+rotate any credential that was ever stored in `env`, since it may already have been read. Roll the
+workers out before using `secrets` in a recipe: an older worker ignores the field, so the preview
+starts without those variables.
+
+**Verify.** The repository's recipe shows no `env` values that are secret, and its setup-secrets
+panel lists the moved names.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

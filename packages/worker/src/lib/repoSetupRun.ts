@@ -310,6 +310,20 @@ export async function fetchSubmodules(
 }
 
 /**
+ * The LFS filter, set for the call: hardened git reads no global or system config, where
+ * `git lfs install` would have put it, and without it `git lfs pull` downloads the objects but
+ * leaves the pointer files in the checkout ("Git LFS is not installed").
+ */
+const LFS_FILTER_CONFIG = [
+  'filter.lfs.clean=git-lfs clean -- %f',
+  'filter.lfs.smudge=git-lfs smudge -- %f',
+  'filter.lfs.process=git-lfs filter-process',
+  'filter.lfs.required=true',
+]
+  .map((kv) => `-c ${shellQuote(kv)}`)
+  .join(' ');
+
+/**
  * Download the checkout's LFS objects. The endpoint is pinned to the repository's own URL, so an
  * `lfs.url` in a checked-in `.lfsconfig` cannot send the credential elsewhere.
  */
@@ -326,7 +340,12 @@ export async function pullLfs(
     // send its credential, or the LFS traffic, anywhere else.
     const endpoint = `${cleanUrl.replace(/\.git$/, '')}.git/info/lfs`;
     try {
-      await host.git(dir, `-c lfs.url=${shellQuote(endpoint)} lfs pull`, authHeader, 900_000);
+      await host.git(
+        dir,
+        `${LFS_FILTER_CONFIG} -c lfs.url=${shellQuote(endpoint)} lfs pull`,
+        authHeader,
+        900_000
+      );
     } catch (err) {
       const where = dir === REPO_DIR ? '' : ` in ${dir.slice(REPO_DIR.length + 1)}`;
       throw setupRunFailure(

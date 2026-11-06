@@ -297,7 +297,15 @@ export function starterRepoSetup(detectedStack: unknown): RepoSetup {
   );
 }
 
-const SETUP_KEY_ORDER = ['submodules', 'lfs', 'env', 'secrets', 'steps', 'cleanup', 'cache'] as const;
+const SETUP_KEY_ORDER = [
+  'submodules',
+  'lfs',
+  'env',
+  'secrets',
+  'steps',
+  'cleanup',
+  'cache',
+] as const;
 const STEP_KEY_ORDER = ['name', 'run', 'workdir', 'timeoutSeconds'] as const;
 
 /**

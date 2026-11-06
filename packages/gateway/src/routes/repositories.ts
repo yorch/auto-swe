@@ -1895,7 +1895,12 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       const next = { ...rest, secrets: [...(rest.secrets ?? []), ...names] };
       const checked = PreviewConfigInputSchema.safeParse(next);
       if (!checked.success) {
-        return sendError(reply, 400, 'INVALID_PREVIEW_CONFIG', checked.error.issues[0]?.message ?? 'invalid');
+        return sendError(
+          reply,
+          400,
+          'INVALID_PREVIEW_CONFIG',
+          checked.error.issues[0]?.message ?? 'invalid'
+        );
       }
       await fastify.prisma.$transaction([
         ...names.map((name) => {

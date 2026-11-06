@@ -19,8 +19,11 @@ import {
   useEvalDataset,
   useEvalRuns,
   useRescreenEvalCases,
+  useSetEvalSetupSecretsRepository,
   useUpdateEvalCaseStack,
 } from '@/hooks/useAdmin';
+import { useRepositories } from '@/hooks/useRepositories';
+import { errMsg } from '@/lib/errors';
 import { formatArm } from '@/lib/evalRuntime';
 import { formatPoints } from '@/lib/evalVerdict';
 import { validateRouteParam } from '@/lib/routeParams';
@@ -79,6 +82,14 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
   const [confirmRescreen, setConfirmRescreen] = useState<{ caseId?: string } | null>(null);
   const [rescreenNote, setRescreenNote] = useState<string | null>(null);
   const updateStack = useUpdateEvalCaseStack(id ?? '');
+  const setSecretsRepo = useSetEvalSetupSecretsRepository(id ?? '');
+  const repositories = useRepositories({ limit: 500 });
+  const repoOptions = [
+    { label: 'None', value: '' },
+    ...(repositories.data ?? [])
+      .filter((r) => r.type === 'git_repo')
+      .map((r) => ({ label: `${r.organizationName}/${r.repoName}`, value: r.id })),
+  ];
   // The stack change awaiting confirmation; it re-screens the case.
   const [confirmStack, setConfirmStack] = useState<{ caseId: string; stack: Stack } | null>(null);
   const ds = dataset.data;
@@ -125,7 +136,29 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                   {ds.cases.filter((c) => c.flakeScreened).length} of {ds.cases.length}
                 </dd>
               </div>
+              <div>
+                <dt className="text-xs text-paper-500">
+                  Setup secrets from
+                  <HelpTip label="Setup secrets from">
+                    The repository whose setup secrets the cases' workspace setup receives. A team
+                    dataset can only use a repository of its team.
+                  </HelpTip>
+                </dt>
+                <dd className="mt-0.5">
+                  <Select
+                    aria-label="Repository whose setup secrets the cases use"
+                    compact
+                    disabled={setSecretsRepo.isPending}
+                    onChange={(v) => setSecretsRepo.mutate(v || null)}
+                    options={repoOptions}
+                    value={ds.setupSecretsRepository?.id ?? ''}
+                  />
+                </dd>
+              </div>
             </dl>
+            {setSecretsRepo.isError && (
+              <Alert variant="error">{errMsg(setSecretsRepo.error)}</Alert>
+            )}
 
             <Card>
               <CardHeader>

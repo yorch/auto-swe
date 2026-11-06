@@ -94,6 +94,9 @@ beforeEach(() => {
   h.settings['workspace.repoSetupStackDefaults'] = false;
 });
 
+const LFS_FILTER =
+  "-c 'filter.lfs.clean=git-lfs clean -- %f' -c 'filter.lfs.smudge=git-lfs smudge -- %f' -c 'filter.lfs.process=git-lfs filter-process' -c 'filter.lfs.required=true' ";
+
 describe('submoduleRepo', () => {
   it('resolves relative, absolute and scp-style URLs on the same host', () => {
     expect(submoduleRepo('../lib.git', PARENT, 'github.com')).toEqual({
@@ -280,13 +283,13 @@ describe('runSetupGitPhase', () => {
     expect(pulls).toEqual([
       [
         '/workspace/target-repo',
-        "-c lfs.url='https://github.com/acme/app.git/info/lfs' lfs pull",
+        `${LFS_FILTER}-c lfs.url='https://github.com/acme/app.git/info/lfs' lfs pull`,
         'AUTHORIZATION: basic parent',
         900_000,
       ],
       [
         '/workspace/target-repo/vendor/lib',
-        "-c lfs.url='https://github.com/acme/lib.git/info/lfs' lfs pull",
+        `${LFS_FILTER}-c lfs.url='https://github.com/acme/lib.git/info/lfs' lfs pull`,
         'AUTHORIZATION: basic acme-lib',
         900_000,
       ],

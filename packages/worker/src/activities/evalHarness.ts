@@ -54,6 +54,8 @@ export interface EvalCaseRow {
   input: unknown; // EvalCase.input (Json) — task/prompt payload for the implementer
   /** The owning dataset's team; null for a GLOBAL dataset. */
   teamId?: string | null;
+  /** The repository whose setup secrets the case's setup reads (`EvalDataset.setupSecretsConnectionId`). */
+  setupSecretsConnectionId?: string | null;
 }
 
 /** A case as the harness loads it: with its flake-screen state, which decides whether it is scored. */
@@ -127,7 +129,7 @@ async function defaultLoadCases(datasetId: string): Promise<HarnessCaseRow[]> {
     .findMany({
       select: {
         baselineSha: true,
-        dataset: { select: { teamId: true } },
+        dataset: { select: { setupSecretsConnectionId: true, teamId: true } },
         flakeRuns: true,
         flakeScreened: true,
         goldenTest: true,
@@ -139,7 +141,13 @@ async function defaultLoadCases(datasetId: string): Promise<HarnessCaseRow[]> {
       },
       where: { datasetId, quarantined: false },
     })
-    .then((rows) => rows.map(({ dataset, ...r }) => ({ ...r, teamId: dataset?.teamId ?? null })));
+    .then((rows) =>
+      rows.map(({ dataset, ...r }) => ({
+        ...r,
+        setupSecretsConnectionId: dataset?.setupSecretsConnectionId ?? null,
+        teamId: dataset?.teamId ?? null,
+      }))
+    );
 }
 
 /** Split loaded cases into the scored (flake-screened) ones and the report of the rest. */
@@ -256,7 +264,10 @@ export async function runCaseDefault(
       evalWorkspaceImageFor(caseRow.stack),
       caseRow.baselineSha,
       undefined,
-      { repoSetup: { field: null }, teamId: scope.teamId ?? caseRow.teamId ?? null }
+      {
+        repoSetup: { connectionId: caseRow.setupSecretsConnectionId ?? null, field: null },
+        teamId: scope.teamId ?? caseRow.teamId ?? null,
+      }
     );
 
     // Built exactly as production builds it (`buildImplementerTurnRunner`), so the

@@ -457,6 +457,21 @@ describe('runCaseDefault iteration cap', () => {
     recordLlmUsage.mockClear();
   });
 
+  it("reads setup secrets from the dataset's linked repository", async () => {
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 1 } as never);
+    const { createWorkspace } = await import('./workspace.js');
+    vi.mocked(createWorkspace).mockClear();
+    await runCaseDefault({ ...cases[0], setupSecretsConnectionId: 'repo-1' }, 'implementer');
+    await runCaseDefault(cases[0], 'implementer');
+    const setups = vi
+      .mocked(createWorkspace)
+      .mock.calls.map((call) => (call[6] as { repoSetup?: unknown }).repoSetup);
+    expect(setups).toEqual([
+      { connectionId: 'repo-1', field: null },
+      { connectionId: null, field: null },
+    ]);
+  });
+
   it('traces and bills every implementer call and persists the trace', async () => {
     generate.mockResolvedValue({ text: 'done', usage: { inputTokens: 10, outputTokens: 5 } });
     vi.mocked(resolveWorkflowDefaults).mockResolvedValueOnce({ maxEvalIterations: 2 } as never);

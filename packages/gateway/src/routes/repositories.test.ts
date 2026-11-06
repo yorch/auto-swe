@@ -73,14 +73,18 @@ async function buildApp() {
   const authState: AuthState = { role: 'ADMIN', sub: 'admin-1' };
 
   const mockPrisma = {
-    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
-      fn({
-        $queryRaw: vi.fn(),
-        connection: { update: (...args: unknown[]) => mockPrisma.connection.update(...args) },
-        connectionTeamShare: { deleteMany: vi.fn() },
-        knowledgeItem: { count: (...args: unknown[]) => mockPrisma.knowledgeItem.count(...args) },
-        team: { findUnique: (...args: unknown[]) => mockPrisma.team.findUnique(...args) },
-      })
+    $transaction: vi.fn(async (fn: ((tx: unknown) => unknown) | Promise<unknown>[]) =>
+      Array.isArray(fn)
+        ? Promise.all(fn)
+        : fn({
+            $queryRaw: vi.fn(),
+            connection: { update: (...args: unknown[]) => mockPrisma.connection.update(...args) },
+            connectionTeamShare: { deleteMany: vi.fn() },
+            knowledgeItem: {
+              count: (...args: unknown[]) => mockPrisma.knowledgeItem.count(...args),
+            },
+            team: { findUnique: (...args: unknown[]) => mockPrisma.team.findUnique(...args) },
+          })
     ),
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: {
@@ -89,6 +93,7 @@ async function buildApp() {
       findFirst: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       update: vi.fn(),
     },
     connectionTeamShare: { deleteMany: vi.fn() },
@@ -96,6 +101,7 @@ async function buildApp() {
     prEvaluation: { findMany: vi.fn() },
     repoSetupSecret: {
       count: vi.fn(),
+      create: vi.fn(),
       deleteMany: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
@@ -1823,6 +1829,66 @@ describe('repositoryRoutes', () => {
         name: 'NPM_TOKEN',
         updatedAt,
         valueLastFour: 'cdef',
+      });
+    });
+
+    describe('moving the app preview env into setup secrets', () => {
+      const move = () =>
+        ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'POST',
+          url: `/api/v1/repositories/${REPO_ID}/preview/env-to-secrets`,
+        });
+      const recipe = {
+        env: { API_KEY: 'sk_live_preview_value' },
+        readyUrl: 'http://localhost:3000/',
+        secrets: ['DB_URL'],
+        start: 'npm start',
+      };
+
+      it('stores each value encrypted, names it under secrets and drops env', async () => {
+        ctx.mockPrisma.connection.findUniqueOrThrow.mockResolvedValue({ previewConfig: recipe });
+        ctx.mockPrisma.repoSetupSecret.findMany.mockResolvedValue([{ name: 'DB_URL' }]);
+        ctx.mockPrisma.repoSetupSecret.create.mockResolvedValue({});
+        ctx.mockPrisma.connection.update.mockResolvedValue({});
+        const res = await move();
+        expect(res.statusCode).toBe(200);
+        expect(res.json().data).toMatchObject({
+          moved: ['API_KEY'],
+          previewConfig: { secrets: ['DB_URL', 'API_KEY'], start: 'npm start' },
+        });
+        expect(res.json().data.previewConfig.env).toBeUndefined();
+        const created = ctx.mockPrisma.repoSetupSecret.create.mock.calls[0]?.[0] as {
+          data: Record<string, unknown>;
+        };
+        expect(created.data).toMatchObject({ connectionId: REPO_ID, name: 'API_KEY' });
+        const written = JSON.stringify([
+          created,
+          ctx.mockPrisma.connection.update.mock.calls,
+          ctx.mockPrisma.configAuditLog.create.mock.calls,
+        ]);
+        expect(written).not.toContain('sk_live_preview_value');
+        expect(res.body).not.toContain('sk_live_preview_value');
+      });
+
+      it('refuses the whole move when a name is already a setup secret', async () => {
+        ctx.mockPrisma.connection.findUniqueOrThrow.mockResolvedValue({
+          previewConfig: { ...recipe, secrets: [] },
+        });
+        ctx.mockPrisma.repoSetupSecret.findMany.mockResolvedValue([{ name: 'API_KEY' }]);
+        const res = await move();
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error.code).toBe('SETUP_SECRET_EXISTS');
+        expect(ctx.mockPrisma.repoSetupSecret.create).not.toHaveBeenCalled();
+      });
+
+      it('refuses a recipe with no env', async () => {
+        ctx.mockPrisma.connection.findUniqueOrThrow.mockResolvedValue({
+          previewConfig: { readyUrl: 'http://localhost:3000/', start: 'npm start' },
+        });
+        const res = await move();
+        expect(res.statusCode).toBe(400);
+        expect(res.json().error.code).toBe('NO_PREVIEW_ENV');
       });
     });
 
