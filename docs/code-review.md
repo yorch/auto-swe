@@ -71,8 +71,9 @@ their results on the run without posting a PR comment.
 Publication requests a fresh [PR evaluation](./pr-evaluation.md). Evaluation and the reviewer brief
 also read successful linked reviews of the current PR head. Severity is **worst-of**, with strict
 **never-lower** behavior: a linked WARNING/CRITICAL or rejected approval raises risk to HIGH; a
-clean linked review cannot lower an original WARNING or substitute for a missing original review
-at that head. Findings are bounded, deduplicated, and labelled with the review run. Different-head,
+clean linked review cannot lower an original WARNING. When the original run has no review result
+at that head, eligible linked reviews supply the review signal: a clean result removes the missing-review
+risk bump. Findings are bounded, deduplicated, and labelled with the review run. Different-head,
 unsuccessful, stored, and unverified reviews do not contribute linked evidence.
 
 ## Fix mode
@@ -140,5 +141,5 @@ review template with `REVIEW_TEMPLATE_NEEDS_SOURCE`.
 - PR reevaluation waits up to five minutes for the publishing review run to reach SUCCESS.
   Unsuccessful or unfinished reviews are skipped; scheduling reevaluation is best-effort and a
   scheduling failure records an activity event rather than failing publication.
-- A different-head review does not replace review evidence for the current head. A missing
-  original review at head remains missing even when a linked review is clean.
+- A different-head review does not replace review evidence for the current head. Missing review
+  evidence raises risk unless an eligible linked review supplies a result at that head.

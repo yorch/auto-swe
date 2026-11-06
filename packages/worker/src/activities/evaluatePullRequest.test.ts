@@ -591,13 +591,33 @@ describe('linked review evaluation', () => {
     }
   );
 
-  it('preserves missing-original classification even with a clean linked review', async () => {
+  it('fills missing original evidence with a clean linked review at head', async () => {
     m.steps.mockResolvedValue([]);
     m.linkedRuns.mockResolvedValue([linked({ approved: true, severity: 'PASS' })]);
-    expect(await loadMaxReviewSeverity(WORKFLOW_ID, HEAD)).toBeNull();
-    expect((await evaluatePullRequestWith(INPUT, depsWith(fakeScm()))).riskClass).toBe('HIGH');
-    expect(JSON.stringify(m.created[0]?.reasons)).toContain('review-signal-missing');
+    expect(await loadMaxReviewSeverity(WORKFLOW_ID, HEAD)).toBe('PASS');
+    expect((await evaluatePullRequestWith(INPUT, depsWith(fakeScm()))).riskClass).toBe('LOW');
+    expect(JSON.stringify(m.created[0]?.reasons)).not.toContain('review-signal-missing');
   });
+
+  it('uses worst-of linked reviews when the original has no result at head', async () => {
+    m.steps.mockResolvedValue([]);
+    m.linkedRuns.mockResolvedValue([
+      linked({ approved: true, severity: 'PASS' }),
+      linked({ severity: 'WARNING' }),
+    ]);
+    expect(await loadMaxReviewSeverity(WORKFLOW_ID, HEAD)).toBe('WARNING');
+    expect((await evaluatePullRequestWith(INPUT, depsWith(fakeScm()))).riskClass).toBe('HIGH');
+  });
+
+  it.each([{ head: OLD_HEAD }, { mode: 'stored' }])(
+    'keeps missing-review risk when linked evidence is ineligible %j',
+    async (options) => {
+      m.steps.mockResolvedValue([]);
+      m.linkedRuns.mockResolvedValue([linked({ ...options, approved: true, severity: 'PASS' })]);
+      expect(await loadMaxReviewSeverity(WORKFLOW_ID, HEAD)).toBeNull();
+      expect((await evaluatePullRequestWith(INPUT, depsWith(fakeScm()))).riskClass).toBe('HIGH');
+    }
+  );
 
   it.each([
     { severity: 'CRITICAL' },
