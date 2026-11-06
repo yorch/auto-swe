@@ -236,6 +236,16 @@ describe('platform explorer source extraction', { timeout: 20_000 }, () => {
     }
   }, 30_000);
 
+  it('classifies and describes every current model exactly once', () => {
+    const names = data.models.map((model) => model.name).sort();
+    expect(Object.values(analysis.modelGroups).flat().sort()).toEqual(names);
+    expect(Object.keys(analysis.modelDescriptions).sort()).toEqual(names);
+    expect(data.models.filter((model) => model.group === 'Unclassified')).toEqual([]);
+    expect(Object.values(analysis.modelDescriptions).every((text) => text.trim().length > 0)).toBe(
+      true
+    );
+  });
+
   it('detects added, modified and removed code without needing Git history', () => {
     expect(changedCodePaths({ a: 'old', b: 'old' }, { a: 'new', c: 'new' })).toEqual([
       'a',
