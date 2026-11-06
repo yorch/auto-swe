@@ -1,5 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -337,6 +337,50 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
     return team ? { orgId: team.orgId, teamId } : null;
   }
 
+  async function validateLinkKnowledgeBase(
+    target: { orgId: string | null; teamId: string | null },
+    knowledgeBaseId: string,
+    exclude: boolean,
+    reply: FastifyReply
+  ): Promise<boolean> {
+    const kb = await fastify.prisma.knowledgeBase.findFirst({
+      where: {
+        id: knowledgeBaseId,
+        ...(target.orgId ? { orgId: target.orgId } : {}),
+        ...(!exclude
+          ? target.teamId && target.orgId
+            ? attachableKnowledgeBaseWhere(target.teamId, target.orgId)
+            : { status: 'OK', visibility: 'ORG' }
+          : {}),
+      },
+    });
+    if (!kb) {
+      sendError(
+        reply,
+        400,
+        'KNOWLEDGE_BASE_UNAVAILABLE',
+        'Knowledge base is not attachable by target team'
+      );
+      return false;
+    }
+    if (
+      exclude &&
+      target.teamId &&
+      (await fastify.prisma.knowledgeBaseLink.findFirst({
+        where: { knowledgeBaseId, mandatory: true, scope: 'TEAM', teamId: target.teamId },
+      }))
+    ) {
+      sendError(
+        reply,
+        400,
+        'KNOWLEDGE_BASE_MANDATORY',
+        'Mandatory knowledge bases cannot be excluded'
+      );
+      return false;
+    }
+    return true;
+  }
+
   app.get(
     '/knowledge-base-links',
     { ...auth, schema: { querystring: Target } },
@@ -368,21 +412,15 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
       if (!target) {
         return sendError(reply, 403, 'FORBIDDEN', 'Target LEAD required');
       }
-      const kb = await fastify.prisma.knowledgeBase.findFirst({
-        where: {
-          id: request.body.knowledgeBaseId,
-          ...(target.teamId && target.orgId
-            ? attachableKnowledgeBaseWhere(target.teamId, target.orgId)
-            : { status: 'OK', visibility: 'ORG' }),
-        },
-      });
-      if (!kb) {
-        return sendError(
-          reply,
-          400,
-          'KNOWLEDGE_BASE_UNAVAILABLE',
-          'Knowledge base is not attachable by target team'
-        );
+      if (
+        !(await validateLinkKnowledgeBase(
+          target,
+          request.body.knowledgeBaseId,
+          request.body.exclude,
+          reply
+        ))
+      ) {
+        return;
       }
       try {
         const row = await fastify.prisma.knowledgeBaseLink.create({
@@ -439,21 +477,15 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
           'mandatory requires TEAM; exclude requires TEMPLATE'
         );
       }
-      const kb = await fastify.prisma.knowledgeBase.findFirst({
-        where: {
-          id: row.knowledgeBaseId,
-          ...(target.teamId && target.orgId
-            ? attachableKnowledgeBaseWhere(target.teamId, target.orgId)
-            : { status: 'OK', visibility: 'ORG' }),
-        },
-      });
-      if (!kb) {
-        return sendError(
-          reply,
-          400,
-          'KNOWLEDGE_BASE_UNAVAILABLE',
-          'Knowledge base is not attachable by target team'
-        );
+      if (
+        !(await validateLinkKnowledgeBase(
+          target,
+          row.knowledgeBaseId,
+          request.body.exclude ?? row.exclude,
+          reply
+        ))
+      ) {
+        return;
       }
       const updated = await fastify.prisma.knowledgeBaseLink.update({
         data: request.body,

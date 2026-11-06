@@ -405,6 +405,132 @@ describe('knowledge base routes', () => {
 
 describe('knowledge base links and effective preview', () => {
   const body = { knowledgeBaseId: KB, mandatory: true, scope: 'TEAM', teamId: TEAM };
+  const templateLink = {
+    exclude: false,
+    id: KB,
+    knowledgeBaseId: KB,
+    mandatory: false,
+    repoId: null,
+    scope: 'TEMPLATE',
+    teamId: null,
+    templateId: TEMPLATE,
+  };
+
+  describe.each(['POST', 'PATCH'] as const)('%s template links', (method) => {
+    const write = (exclude: boolean) =>
+      app.inject({
+        headers: AUTH,
+        method,
+        payload:
+          method === 'POST'
+            ? { exclude, knowledgeBaseId: KB, scope: 'TEMPLATE', templateId: TEMPLATE }
+            : { exclude },
+        url: `/api/v1/knowledge-base-links${method === 'PATCH' ? `/${KB}` : ''}`,
+      });
+
+    beforeEach(() => {
+      prisma.knowledgeBaseLink.findUnique.mockResolvedValue(templateLink);
+      prisma.knowledgeBaseLink.create.mockResolvedValue(templateLink);
+      prisma.knowledgeBaseLink.update.mockResolvedValue(templateLink);
+    });
+
+    it.each(['TEAM', 'SHARED', 'ORG'])('allows GLOBAL exclusions of %s KBs', async (visibility) => {
+      role = 'ADMIN';
+      prisma.workflowTemplate.findUnique.mockResolvedValue({ teamId: null });
+      prisma.knowledgeBase.findFirst.mockResolvedValue({ ...row, status: 'DISABLED', visibility });
+      expect((await write(true)).statusCode).toBe(method === 'POST' ? 201 : 200);
+      expect(prisma.knowledgeBase.findFirst).toHaveBeenCalledWith({ where: { id: KB } });
+      expect(prisma.knowledgeBaseLink.findFirst).not.toHaveBeenCalled();
+    });
+
+    it.each(['TEAM', 'SHARED', 'ORG'])(
+      'restricts GLOBAL additions to ORG, not %s',
+      async (visibility) => {
+        role = 'ADMIN';
+        prisma.workflowTemplate.findUnique.mockResolvedValue({ teamId: null });
+        prisma.knowledgeBase.findFirst.mockImplementation(async ({ where }) =>
+          where.visibility === visibility ? { ...row, visibility } : null
+        );
+        if (method === 'PATCH') {
+          prisma.knowledgeBaseLink.findUnique.mockResolvedValue({ ...templateLink, exclude: true });
+        }
+        const response = await write(false);
+        expect(response.statusCode).toBe(
+          visibility === 'ORG' ? (method === 'POST' ? 201 : 200) : 400
+        );
+        expect(prisma.knowledgeBase.findFirst).toHaveBeenCalledWith({
+          where: { id: KB, status: 'OK', visibility: 'ORG' },
+        });
+        if (visibility !== 'ORG') {
+          expect(response.json().error.code).toBe('KNOWLEDGE_BASE_UNAVAILABLE');
+          expect(prisma.knowledgeBaseLink.create).not.toHaveBeenCalled();
+          expect(prisma.knowledgeBaseLink.update).not.toHaveBeenCalled();
+        }
+      }
+    );
+
+    it('requires ADMIN for GLOBAL exclusions', async () => {
+      prisma.workflowTemplate.findUnique.mockResolvedValue({ teamId: null });
+      expect((await write(true)).statusCode).toBe(403);
+      expect(prisma.knowledgeBase.findFirst).not.toHaveBeenCalled();
+    });
+
+    it('allows same-org exclusions without attachment access', async () => {
+      prisma.knowledgeBase.findFirst.mockResolvedValue({ ...row, status: 'DISABLED' });
+      expect((await write(true)).statusCode).toBe(method === 'POST' ? 201 : 200);
+      expect(prisma.knowledgeBase.findFirst).toHaveBeenCalledWith({
+        where: { id: KB, orgId: ORG },
+      });
+      expect(prisma.knowledgeBaseLink.findFirst).toHaveBeenCalledWith({
+        where: { knowledgeBaseId: KB, mandatory: true, scope: 'TEAM', teamId: TEAM },
+      });
+    });
+
+    it('refuses exclusions outside the target organization', async () => {
+      prisma.knowledgeBase.findFirst.mockImplementation(async ({ where }) =>
+        where.orgId === ORG ? null : row
+      );
+      const response = await write(true);
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('KNOWLEDGE_BASE_UNAVAILABLE');
+      expect(prisma.knowledgeBaseLink.create).not.toHaveBeenCalled();
+      expect(prisma.knowledgeBaseLink.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses exclusions of known mandatory team defaults', async () => {
+      prisma.knowledgeBaseLink.findFirst.mockResolvedValue({ ...body, id: KB });
+      const response = await write(true);
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error.code).toBe('KNOWLEDGE_BASE_MANDATORY');
+      expect(prisma.knowledgeBaseLink.create).not.toHaveBeenCalled();
+      expect(prisma.knowledgeBaseLink.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses exclusions of missing KBs', async () => {
+      role = 'ADMIN';
+      prisma.workflowTemplate.findUnique.mockResolvedValue({ teamId: null });
+      prisma.knowledgeBase.findFirst.mockResolvedValue(null);
+      expect((await write(true)).statusCode).toBe(400);
+      expect(prisma.knowledgeBaseLink.create).not.toHaveBeenCalled();
+      expect(prisma.knowledgeBaseLink.update).not.toHaveBeenCalled();
+    });
+  });
+
+  it('preserves a GLOBAL exclusion when PATCH omits the exclude flag', async () => {
+    role = 'ADMIN';
+    prisma.workflowTemplate.findUnique.mockResolvedValue({ teamId: null });
+    prisma.knowledgeBaseLink.findUnique.mockResolvedValue({ ...templateLink, exclude: true });
+    prisma.knowledgeBaseLink.update.mockResolvedValue(templateLink);
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { ref: 'release' },
+      url: `/api/v1/knowledge-base-links/${KB}`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(prisma.knowledgeBase.findFirst).toHaveBeenCalledWith({ where: { id: KB } });
+  });
+
   it('creates team defaults and records their owner', async () => {
     prisma.knowledgeBaseLink.create.mockResolvedValue({ ...body, id: KB });
     expect(
