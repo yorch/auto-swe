@@ -758,6 +758,16 @@ export function useRescreenEvalCases(datasetId: string) {
  * Change one case's stack (`null` clears it). The gateway resets the case's flake-screen
  * state and starts the dataset's screen, so the dataset is refetched (ADMIN).
  */
+/** Link (or unlink, with null) the repository whose setup secrets a dataset's cases read. */
+export function useSetEvalSetupSecretsRepository(datasetId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (connectionId: string | null) =>
+      api.put(`/api/v1/platform/evals/${datasetId}/setup-secrets-repository`, { connectionId }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['eval-dataset', datasetId] }),
+  });
+}
+
 export function useUpdateEvalCaseStack(datasetId: string) {
   const qc = useQueryClient();
   return useMutation({

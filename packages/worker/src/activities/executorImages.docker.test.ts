@@ -66,6 +66,7 @@ function run(stack: string, script: string) {
 // Alpine without it, and the harness installs it where it can or says it cannot.
 const CONTRACT = [
   ['git', 'git --version'],
+  ['git-lfs', 'git lfs version'],
   ['tar', 'tar --version || tar --help'],
   ['ripgrep', 'rg --version'],
   ['sha256sum', 'sha256sum /dev/null'],

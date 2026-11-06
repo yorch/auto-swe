@@ -700,6 +700,8 @@ model Connection {
   /// Per-user GitHub tokens for this repository (see `ConnectionCredential`).
   credentials           ConnectionCredential[]
   setupSecrets          RepoSetupSecret[]
+  /// Eval datasets whose cases read this repository's setup secrets.
+  evalDatasetsUsingSetupSecrets EvalDataset[] @relation("EvalDatasetSetupSecrets")
   /// Further teams whose members may see and launch on this repository. The
   /// owning team (`teamId`) keeps management, budgets and settings.
   shares                ConnectionTeamShare[]
@@ -2673,6 +2675,10 @@ model EvalDataset {
 
   cases EvalCase[]
   runs  EvalRun[]
+
+  /// The repository whose setup secrets the cases' workspace setup reads; null reads none.
+  setupSecretsConnectionId String?     @map("setup_secrets_connection_id") @db.Uuid
+  setupSecretsConnection   Connection? @relation("EvalDatasetSetupSecrets", fields: [setupSecretsConnectionId], references: [id], onDelete: SetNull)
 
   @@index([scope, teamId])
   @@index([slug])

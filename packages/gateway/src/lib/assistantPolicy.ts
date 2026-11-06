@@ -388,6 +388,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/repositories/:id/dependencies/infer': 'confirm',
   // Starts a workspace container on a candidate image — it may not be driven by a tool call.
   'POST /api/v1/repositories/:id/executor-image/probe': { never: 'runsWorkload' },
+  'POST /api/v1/repositories/:id/preview/env-to-secrets': { never: 'secret' },
   'POST /api/v1/repositories/:id/setup/pull-request': 'confirm',
   'POST /api/v1/repositories/:id/test-access': 'confirm',
   'POST /api/v1/repositories/dependencies/scan': 'confirm',
@@ -446,6 +447,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PUT /api/v1/platform/config/workflow-defaults': 'confirm',
   'PUT /api/v1/platform/credentials/:id': { never: 'secret' },
   'PUT /api/v1/platform/embedding-config': { never: 'secret' },
+  'PUT /api/v1/platform/evals/:id/setup-secrets-repository': { never: 'secret' },
   'PUT /api/v1/platform/model-catalog/:id': 'confirm',
   'PUT /api/v1/platform/scanner-patterns/:id': 'confirm',
   'PUT /api/v1/platform/skills/:id': 'confirm',

@@ -310,6 +310,20 @@ export async function fetchSubmodules(
 }
 
 /**
+ * The LFS filter, set for the call: hardened git reads no global or system config, where
+ * `git lfs install` would have put it, and without it `git lfs pull` downloads the objects but
+ * leaves the pointer files in the checkout ("Git LFS is not installed").
+ */
+const LFS_FILTER_CONFIG = [
+  'filter.lfs.clean=git-lfs clean -- %f',
+  'filter.lfs.smudge=git-lfs smudge -- %f',
+  'filter.lfs.process=git-lfs filter-process',
+  'filter.lfs.required=true',
+]
+  .map((kv) => `-c ${shellQuote(kv)}`)
+  .join(' ');
+
+/**
  * Download the checkout's LFS objects. The endpoint is pinned to the repository's own URL, so an
  * `lfs.url` in a checked-in `.lfsconfig` cannot send the credential elsewhere.
  */
@@ -326,7 +340,12 @@ export async function pullLfs(
     // send its credential, or the LFS traffic, anywhere else.
     const endpoint = `${cleanUrl.replace(/\.git$/, '')}.git/info/lfs`;
     try {
-      await host.git(dir, `-c lfs.url=${shellQuote(endpoint)} lfs pull`, authHeader, 900_000);
+      await host.git(
+        dir,
+        `${LFS_FILTER_CONFIG} -c lfs.url=${shellQuote(endpoint)} lfs pull`,
+        authHeader,
+        900_000
+      );
     } catch (err) {
       const where = dir === REPO_DIR ? '' : ` in ${dir.slice(REPO_DIR.length + 1)}`;
       throw setupRunFailure(
@@ -579,6 +598,74 @@ async function runSteps(
   return done;
 }
 
+/** Shortest secret value the leak scan looks for; shorter values match too much by chance. */
+export const MIN_SCANNED_SECRET_CHARS = 8;
+const SCAN_TIMEOUT_MS = 300_000;
+const SCAN_MAX_FILE_KB = 20 * 1024;
+const SCAN_MAX_REPORTED = 20;
+
+/** A setup path as a shell word: `~/…` under the workspace user's home, else in the checkout. */
+function setupPathWord(p: string): string {
+  return p.startsWith('~/') ? `"$HOME"/${shellQuote(p.slice(2))}` : shellQuote(`${REPO_DIR}/${p}`);
+}
+
+/** Delete the files the definition lists under `cleanup`, as the workspace user. */
+async function runCleanup(host: RepoSetupHost, setup: RepoSetup): Promise<void> {
+  const paths = setup.cleanup ?? [];
+  if (paths.length === 0) {
+    return;
+  }
+  const result = await host.capture(`rm -rf -- ${paths.map(setupPathWord).join(' ')}`, {
+    timeoutMs: 120_000,
+  });
+  if (result.exitCode !== 0) {
+    throw setupRunFailure(`cleanup failed: ${tail(host, result)}`);
+  }
+}
+
+/**
+ * Fail setup when a secret value is still in a file the agent or the cache could read: the
+ * checkout or the workspace user's home, which holds every `~/` cache path. Each value is
+ * searched as a literal through secret environment, never the command line; a multi-line value
+ * by its longest line. Only the file names are reported.
+ */
+async function scanForSecrets(
+  host: RepoSetupHost,
+  secretEnv: Record<string, string>
+): Promise<void> {
+  const needles = Object.values(secretEnv)
+    .map((v) => v.split(/\r?\n/).reduce((a, b) => (b.trim().length > a.length ? b.trim() : a), ''))
+    .filter((v) => v.length >= MIN_SCANNED_SECRET_CHARS);
+  if (needles.length === 0) {
+    return;
+  }
+  const scanEnv = Object.fromEntries(needles.map((v, i) => [`AUTO_SWE_SCAN_${i}`, v]));
+  const patterns = needles.map((_, i) => `-e "$AUTO_SWE_SCAN_${i}"`).join(' ');
+  const script = [
+    `find ${shellQuote(REPO_DIR)} "$HOME" -xdev -type f -size -${SCAN_MAX_FILE_KB}k -print0 2>/dev/null`,
+    `| xargs -0 -r grep -lF ${patterns} -- 2>/dev/null`,
+    `| head -n ${SCAN_MAX_REPORTED}`,
+    `| sed -e ${shellQuote(`s|^${REPO_DIR}/||`)} -e "s|^$HOME/|~/|"; true`,
+  ].join(' ');
+  let result: CapturedResult;
+  try {
+    result = await host.capture(script, { secretEnv: scanEnv, timeoutMs: SCAN_TIMEOUT_MS });
+  } catch (err) {
+    throw setupRunFailure(
+      `the secret scan did not finish: ${host.redact(err instanceof Error ? err.message : String(err))}`
+    );
+  }
+  const files = result.stdout
+    .split('\n')
+    .map((f) => f.trim())
+    .filter(Boolean);
+  if (files.length) {
+    throw setupConfigFailure(
+      `setup left a secret value in ${host.redact(files.join(', '))}; list those files under cleanup, or have the step not write the value to disk`
+    );
+  }
+}
+
 /**
  * The git half of setup: submodules, then LFS in the checkout and in every fetched submodule. It runs while the git host is reachable and
  * before any repository code has run, so it is provisioning like the clone itself.
@@ -628,6 +715,8 @@ export async function runSetupStepsPhase(
     }
   }
   const steps = await runSteps(host, setup, secretEnv);
+  await runCleanup(host, setup);
+  await scanForSecrets(host, secretEnv);
   if (cacheKey && cache === 'miss') {
     try {
       cache = await saveCache(host, setup, cacheKey, inputs.cleanUrl, maxBytes);

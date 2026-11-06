@@ -4,7 +4,7 @@ FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c
 # git is required for workspace operations, tar for copy in/out, bash for the
 # agent's shell tooling, ripgrep so Pi's grep honours .gitignore.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ripgrep tar bash \
+    && apt-get install -y --no-install-recommends git git-lfs ripgrep tar bash \
     && rm -rf /var/lib/apt/lists/*
 
 # uv as the package/manager front-end, pinned to a release at least 7 days old

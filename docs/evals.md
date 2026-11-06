@@ -161,6 +161,15 @@ uses, so the runtime, tool keys, skills, MCP binding and step budgets a TEAM or 
 override gives that tenant's runs are what the eval grades. A GLOBAL dataset resolves at GLOBAL
 scope. It then runs a bounded TDD loop scoring the golden test's exit code.
 
+**Setup secrets come from a linked repository.** A case's workspace runs the
+[workspace setup](./repositories.md#workspace-setup) its pinned commit's `.auto-swe/setup.yml`
+defines. A dataset may name one repository (`EvalDataset.setupSecretsConnectionId`, set on the
+dataset page or with `PUT /api/v1/platform/evals/:id/setup-secrets-repository`, platform ADMIN,
+audited); every case's setup — the candidate's workspace, the flake screen and re-validation —
+then reads the setup secrets that repository holds. A TEAM dataset may only name a repository of
+its own team. With no repository named, setup runs with no secrets, and a setup that names one
+fails with `WORKSPACE_SETUP_FAILED`. Deleting the repository clears the link.
+
 **Only flake-screened cases are scored.** A case is scored once its reference passed every run of
 its flake screen (§4). A case never screened, or whose screen failed, is skipped — as is a case
 re-validation quarantined — so a flaky floor cannot move the verdict. Every run's summary carries

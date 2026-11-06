@@ -99,6 +99,11 @@ export const RepoSetupCacheSchema = z
 export const RepoSetupSchema = z
   .object({
     cache: RepoSetupCacheSchema.optional(),
+    /**
+     * Files the steps leave behind that must not reach the agent or the cache, such as an
+     * `.npmrc` a step wrote a token into; deleted after the steps, before the secret scan.
+     */
+    cleanup: z.array(CachePathSchema).max(20).optional(),
     env: EnvironmentSchema.optional(),
     lfs: z.boolean().optional(),
     /**
@@ -292,7 +297,15 @@ export function starterRepoSetup(detectedStack: unknown): RepoSetup {
   );
 }
 
-const SETUP_KEY_ORDER = ['submodules', 'lfs', 'env', 'secrets', 'steps', 'cache'] as const;
+const SETUP_KEY_ORDER = [
+  'submodules',
+  'lfs',
+  'env',
+  'secrets',
+  'steps',
+  'cleanup',
+  'cache',
+] as const;
 const STEP_KEY_ORDER = ['name', 'run', 'workdir', 'timeoutSeconds'] as const;
 
 /**
@@ -317,7 +330,7 @@ export function repoSetupToYaml(setup: RepoSetup): string {
   }
   return [
     `# ${REPO_SETUP_FILE}: run in every auto-swe workspace after the checkout.`,
-    '# Fields: submodules, lfs, env, secrets, steps[name, run, workdir, timeoutSeconds],',
+    '# Fields: submodules, lfs, env, secrets, steps[name, run, workdir, timeoutSeconds], cleanup,',
     '# cache[paths, keyFiles]. See docs/repositories.md, "Workspace setup".',
     stringifyYaml(ordered, { lineWidth: 0 }).trimEnd(),
     '',

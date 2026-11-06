@@ -120,6 +120,8 @@ const CreateDatasetBody = z.object({
     .regex(/^[a-z0-9_-]+$/),
 });
 
+const SetupSecretsRepoBody = z.object({ connectionId: z.string().uuid().nullable() }).strict();
+
 const StartRunBody = z.object({
   baselineRef: z.string().min(1).max(200),
   /**
@@ -347,7 +349,11 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: adminOnly, schema: { params: IdParam } },
     async (request, reply) => {
       const ds = await fastify.prisma.evalDataset.findUnique({
-        include: { _count: { select: { cases: true } }, cases: { orderBy: { createdAt: 'asc' } } },
+        include: {
+          _count: { select: { cases: true } },
+          cases: { orderBy: { createdAt: 'asc' } },
+          setupSecretsConnection: { select: { id: true, organizationName: true, repoName: true } },
+        },
         where: { id: request.params.id },
       });
       if (!ds) {
@@ -361,9 +367,65 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         id: ds.id,
         name: ds.name,
         scope: ds.scope,
+        setupSecretsRepository: ds.setupSecretsConnection
+          ? {
+              id: ds.setupSecretsConnection.id,
+              name: `${ds.setupSecretsConnection.organizationName}/${ds.setupSecretsConnection.repoName}`,
+            }
+          : null,
         slug: ds.slug,
+        teamId: ds.teamId,
       };
       return { data };
+    }
+  );
+
+  // ── Link the repository whose setup secrets the cases' setup reads ──
+  // A TEAM dataset may only link a repository of its own team, so a platform admin cannot hand one
+  // team's secrets to another team's fixtures; other scopes may link any repository.
+  app.put(
+    '/evals/:id/setup-secrets-repository',
+    { onRequest: adminOnly, schema: { body: SetupSecretsRepoBody, params: IdParam } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const { connectionId } = request.body;
+      const ds = await fastify.prisma.evalDataset.findUnique({
+        select: { id: true, scope: true, setupSecretsConnectionId: true, teamId: true },
+        where: { id: request.params.id },
+      });
+      if (!ds) {
+        return sendError(reply, 404, 'DATASET_NOT_FOUND', 'Eval dataset not found');
+      }
+      if (connectionId) {
+        const repo = await fastify.prisma.connection.findUnique({
+          select: { teamId: true, type: true },
+          where: { id: connectionId },
+        });
+        if (repo?.type !== 'git_repo') {
+          return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+        }
+        if (ds.scope === 'TEAM' && repo.teamId !== ds.teamId) {
+          return sendError(
+            reply,
+            400,
+            'REPO_NOT_IN_DATASET_TEAM',
+            "A team dataset can only use a repository of the dataset's team"
+          );
+        }
+      }
+      await fastify.prisma.evalDataset.update({
+        data: { setupSecretsConnectionId: connectionId },
+        where: { id: ds.id },
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor,
+        after: { setupSecretsConnectionId: connectionId },
+        before: { setupSecretsConnectionId: ds.setupSecretsConnectionId },
+        entityId: ds.id,
+        entityType: 'EvalDataset',
+      });
+      return { data: { setupSecretsConnectionId: connectionId } };
     }
   );
 

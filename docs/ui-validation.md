@@ -92,6 +92,16 @@ hosts, smoke paths, optional end-to-end command and results directory, and servi
 Changing a recipe takes the same team shell-authoring role as changing gate commands; unchanged
 recipes can be saved by other repository editors.
 
+`env` holds values that are not secret: it is stored as plain JSON on the connection and shown in
+the repository form. A secret goes under `secrets` instead, a list of names of the repository's
+[setup secrets](./repositories.md#workspace-setup), which are stored encrypted. The preview's setup
+and start commands get both as environment variables through the workspace's secret channel, and
+the values are masked in the log tail. A named secret the repository holds no value for fails the
+preview; a name may not be both an `env` key and a secret. When a recipe still has `env` values,
+the form offers to move them: `POST /api/v1/repositories/:id/preview/env-to-secrets` stores each
+one as a setup secret of the same name, drops `env` and names them under `secrets`, refusing the
+whole move when a name is already a setup secret. The audit log records the names only.
+
 Configured services start as workspace sidecars before preview setup runs. Docker joins each service
 to the workspace network namespace, so the app reaches it through `localhost`; Kubernetes places
 services in the workspace pod. Service images must be on the team's shell image allowlist. Service
@@ -143,6 +153,8 @@ dropped.
 
 ## Limitations
 
+- Moving `env` into setup secrets is offered, not forced: a recipe that keeps secret values in
+  `env` stores them as plain JSON, readable by anyone who can open the repository form.
 - Kubernetes preview services with `runAsUser` run under Pod Security `restricted`; services that
   run as root still require `baseline`. The workspace container keeps its non-root,
   dropped-capability security context.

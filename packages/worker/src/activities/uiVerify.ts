@@ -175,7 +175,10 @@ export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult>
   try {
     heartbeat('uiVerify: starting preview');
     try {
-      preview = await startAppPreview(workspace, config, { timeoutMs: config.readyTimeoutMs });
+      preview = await startAppPreview(workspace, config, {
+        connectionId: repoId,
+        timeoutMs: config.readyTimeoutMs,
+      });
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
       if (error instanceof PreviewNotReadyError) {

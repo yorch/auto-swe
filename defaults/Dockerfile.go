@@ -4,7 +4,7 @@ FROM golang:1.26-bookworm@sha256:386f0cbb8fb3402ff5a15048c96731e6ff37142d31182f3
 # git and bash ship in the golang image; tar for copy in/out and ripgrep so Pi's
 # grep honours .gitignore are added.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ripgrep tar bash \
+    && apt-get install -y --no-install-recommends git git-lfs ripgrep tar bash \
     && rm -rf /var/lib/apt/lists/*
 
 # The base image's GOPATH (/go) is root-owned, so the module and build caches

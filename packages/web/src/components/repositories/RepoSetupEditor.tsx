@@ -197,6 +197,17 @@ export function RepoSetupEditor({
               value={draft.cacheKeyFiles}
             />
           </div>
+          <Textarea
+            compact
+            disabled={disabled}
+            hint="Deleted after the steps, before the agent starts or the cache is saved: files a step wrote a secret into. Setup fails if a secret value is left anywhere in the checkout or the home directory."
+            label="Cleanup"
+            onChange={(e) => set({ cleanup: e.target.value })}
+            placeholder="~/.npmrc"
+            rows={2}
+            spellCheck={false}
+            value={draft.cleanup}
+          />
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">

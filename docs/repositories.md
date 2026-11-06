@@ -556,6 +556,17 @@ holds no value for, or one that cannot be decrypted, fails setup with `WORKSPACE
 name may not be both an `env` key and a secret. Saving and deleting are written to the audit log,
 by name only.
 
+**Keeping secrets out of the tree.** A step that writes a secret to disk — an `.npmrc` with an auth
+token, say — lists that file under `cleanup` (`cleanup: [~/.npmrc]`; paths relative to the
+checkout, or `~/` under the home directory, at most 20). The files are deleted after the steps.
+Then, when the definition names secrets, every file of up to 20 MiB in the checkout (`.git`
+included) and in the workspace user's home directory, which holds every `~/` cache path, is
+searched for each secret value as a literal string: a multi-line value by its longest line, and a
+value shorter than 8 characters not at all. A match fails setup with `WORKSPACE_SETUP_FAILED`,
+naming up to 20 files and never the value, before the cache is saved or any agent runs. The search
+gets the values through the workspace's secret channel, like the steps, and a search that does not
+finish within 5 minutes fails setup too.
+
 A file is at most 64 KiB and 20 steps; unknown keys, absolute paths and `..` are refused. Setting
 or changing the field takes the same permission as [gate commands](#gate-commands) and is written
 to the audit log; re-saving an unchanged value needs none.
@@ -569,7 +580,8 @@ asks for runs after the network lock, as the workspace's normal user:
    needs the App installed on the submodule's repository. Another host, scheme or shape fails setup.
    `recursive` follows nested submodules three levels deep, 25 in all.
 2. **LFS**: `git lfs pull` in the repository and in every submodule fetched in step 1, each against
-   its own repository's LFS endpoint with its own credential. The image needs `git-lfs`. Under a
+   its own repository's LFS endpoint with its own credential. The image needs `git-lfs`, which
+   every default executor image has. Under a
    `blocked` or `restricted` egress policy, the lock also admits the storage hosts that
    `workspace.lfsStorageHosts` lists for the repository's git host when the definition asks for
    LFS. That platform-admin setting holds `git-host=storage-host` entries (host or `host:port`) and
@@ -579,7 +591,8 @@ asks for runs after the network lock, as the workspace's normal user:
    timeout. The network
    is what the egress policy leaves, so installs go through the
    [registry proxy](./package-registries.md).
-4. **Cache save** on a miss, before any agent has run.
+4. **Cleanup** of the `cleanup` paths, then the **secret scan** (see above).
+5. **Cache save** on a miss, before any agent has run.
 
 A failing step fails the workspace with `WORKSPACE_SETUP_FAILED` and the redacted tail of its
 output; an invalid definition fails it without a retry. Each run of setup writes a
@@ -720,10 +733,13 @@ longer fit.
   scope.
 - **Setup `env` values are passed on the command line of the exec**, so they are not for secrets;
   setup secrets are the way to give a step a credential.
-- **Setup secrets reach the setup steps' processes.** A step can write a secret into the tree or a
-  file the agent later reads; the platform masks it only in the output tail it records.
-- **An eval case has no repository to read setup secrets from**, so an eval whose pinned setup names
-  secrets fails setup.
+- **The secret scan looks only for the literal value.** A step that writes a secret encoded
+  (base64 in an `.npmrc` `_auth`, say), split, or to a path outside the checkout and the home
+  directory (`/tmp`) is not caught, nor is a value under 8 characters. A process a step leaves
+  running keeps whatever it read.
+- **An eval reads setup secrets only through its dataset's linked repository.** A dataset with no
+  linked repository runs setup with no secrets, so a case whose pinned setup names one fails setup
+  ([evals.md](./evals.md#3-offline-harness)).
 - **The access test does not look at webhooks.** Listing a repository's hooks needs an
   administrative permission the platform's credential does not otherwise hold, so a missing or
   mis-signed webhook is not found by it. An installation token reports no permission level for a

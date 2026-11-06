@@ -11,6 +11,7 @@ import {
   type RepositorySummary,
 } from '@auto-swe/shared/types/api';
 import { useEffect, useMemo, useState } from 'react';
+import { PreviewEnvToSecrets } from '@/components/repositories/PreviewEnvToSecrets';
 import { RepoSetupEditor } from '@/components/repositories/RepoSetupEditor';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -595,7 +596,8 @@ export function ConnectionFormModal({
                   <p className="text-xs leading-relaxed text-paper-400">
                     Optional JSON recipe for starting this repository in a workspace. Its setup
                     command runs after Workspace setup, in preview sessions only, with the recipe's
-                    env: keep dependency installs in Workspace setup. Clearing this field removes
+                    env and the setup secrets it names under "secrets" (env is stored as plain
+                    text): keep dependency installs in Workspace setup. Clearing this field removes
                     the saved recipe.
                   </p>
                   <Textarea
@@ -611,6 +613,17 @@ export function ConnectionFormModal({
                     spellCheck={false}
                     value={previewConfigJson}
                   />
+                  {isEdit && initial?.id && (
+                    <PreviewEnvToSecrets
+                      disabled={!canEditGateCommands}
+                      envNames={Object.keys(
+                        (initial.previewConfig as { env?: Record<string, string> } | null)?.env ??
+                          {}
+                      )}
+                      onMoved={(next) => setPreviewConfigJson(JSON.stringify(next, null, 2))}
+                      repositoryId={initial.id}
+                    />
+                  )}
                 </fieldset>
                 <fieldset className="min-w-0 space-y-3">
                   <legend className="text-sm font-medium text-paper-200">Workspace setup</legend>

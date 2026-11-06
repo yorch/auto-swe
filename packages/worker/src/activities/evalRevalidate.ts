@@ -65,9 +65,10 @@ export async function revalidateDataset(
 }
 
 async function defaultLoadCases(datasetId: string): Promise<RevalCaseRow[]> {
-  return prisma.evalCase.findMany({
+  const rows = await prisma.evalCase.findMany({
     select: {
       baselineSha: true,
+      dataset: { select: { setupSecretsConnectionId: true, teamId: true } },
       goldenTest: true,
       id: true,
       input: true,
@@ -78,6 +79,11 @@ async function defaultLoadCases(datasetId: string): Promise<RevalCaseRow[]> {
     },
     where: { datasetId },
   });
+  return rows.map(({ dataset, ...rest }) => ({
+    ...rest,
+    setupSecretsConnectionId: dataset?.setupSecretsConnectionId ?? null,
+    teamId: dataset?.teamId ?? null,
+  }));
 }
 
 /**
@@ -92,6 +98,7 @@ export function runCaseReference(c: EvalCaseRow): Promise<GateResult> {
     branch: 'eval-reval',
     checkoutSha: c.baselineSha,
     command: c.goldenTest,
+    connectionId: c.setupSecretsConnectionId ?? null,
     defaultBranch: 'main',
     gate: 'runTests',
     image: evalWorkspaceImageFor(c.stack),
