@@ -330,7 +330,9 @@ reload.
   suggests: a header with the state, CI, risk class and head; what was asked and how the run settled
   each open question; what the run verified; the review findings, drawn under the line they name;
   and the diff, with the files to verify marked, the ones proven skimmable marked, each file
-  collapsible and the first three open. A rail lists the files with a filter (all, to verify,
+  collapsible and the first three open, in one column or, on a wide screen, split with the old
+  version beside the new (a per-viewer choice kept in the browser; a narrow screen always uses one
+  column). A rail lists the files with a filter (all, to verify,
   unviewed, skim) and a count of those viewed; `j` and `k` move between files and `v` marks one
   viewed. Marking a file viewed collapses it. A banner says when the evaluation covers an earlier
   commit, when the host could not be read, when files were cut off, and when the pull request is no
@@ -359,7 +361,7 @@ text with invisible and direction-changing characters made visible, never markup
 ## Limitations
 
 - The review page cannot comment, approve or request changes: review decisions are made on the
-  host. It has no side-by-side view and no syntax colouring.
+  host. It has no syntax colouring.
 - Each visit and each refresh of the review page asks the host for the pull request, and for its
   files when the head has moved or the copy is older than five minutes. The pull request read is
   conditional, so an unchanged one is cheap, but a changed one and every page of files are not. The

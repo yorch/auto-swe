@@ -160,3 +160,88 @@ describe('DiffFile', () => {
     expect(onToggle).not.toHaveBeenCalled();
   });
 });
+
+describe('DiffFile in split mode', () => {
+  const split = (over: Partial<DiffFileProps> = {}) => props({ mode: 'split', ...over });
+  /** The two sides of every row that has a pair, as text. */
+  const sides = (container: HTMLElement) =>
+    [...container.querySelectorAll('.grid.grid-cols-2')].map((grid) =>
+      [...grid.children].map((cell) => cell.textContent?.replace(/^\d*/, '') ?? '')
+    );
+
+  it('draws the old line beside the new one, and an unchanged line on both sides', () => {
+    const { container } = render(<DiffFile {...split()} />);
+    expect(sides(container)).toEqual([
+      ['keep', 'keep'],
+      ['old', 'new'],
+      ['', 'extra'],
+    ]);
+  });
+
+  it('leaves unified mode as it was by default', () => {
+    const { container } = render(<DiffFile {...props()} />);
+    expect(container.querySelectorAll('.grid.grid-cols-2')).toHaveLength(0);
+  });
+
+  it('numbers each side from its own counter, and hides the gutters from a screen reader', () => {
+    const { container } = render(<DiffFile {...split()} />);
+    const first = container.querySelector('.grid.grid-cols-2');
+    const gutters = [...(first?.querySelectorAll('[aria-hidden="true"]') ?? [])];
+    expect(gutters.map((g) => g.textContent)).toEqual(['10', '10']);
+  });
+
+  it('puts the anchor on the new side only, and never on a removed line', () => {
+    const { container } = render(<DiffFile {...split({ anchorId: 'f-1' })} />);
+    expect(container.querySelector('#f-1-L10')).toBeTruthy();
+    expect(container.querySelector('#f-1-L11')).toBeTruthy();
+    expect(container.querySelector('#f-1-L12')).toBeTruthy();
+    expect(container.querySelectorAll('[id^="f-1-L"]')).toHaveLength(3);
+    const removed = [...container.querySelectorAll('.grid.grid-cols-2')][1]?.children[0];
+    expect(removed?.id).toBe('');
+    expect(removed?.textContent).toContain('old');
+  });
+
+  it('draws a note under the row of the new line it names, across both sides', () => {
+    render(
+      <DiffFile {...split({ annotations: new Map([[11, <p key="n">a finding on line 11</p>]]) })} />
+    );
+    const note = screen.getByText('a finding on line 11');
+    const row = note.closest('div[class*="border-y"]')?.previousElementSibling;
+    expect(row?.textContent).toContain('old');
+    expect(row?.textContent).toContain('new');
+  });
+
+  it('draws a hunk header across both sides', () => {
+    const { container } = render(<DiffFile {...split()} />);
+    expect(container.textContent).toContain('@@ -10,3 +10,4 @@ fn');
+    expect(container.querySelectorAll('.grid.grid-cols-2')).toHaveLength(3);
+  });
+
+  it('caps rows, not lines, and offers the rest', () => {
+    const many = parseFilePatch(
+      ['@@ -1,30 +1,30 @@', ...Array.from({ length: 30 }, (_, i) => ` line ${i}`)].join('\n')
+    );
+    render(<DiffFile {...split({ lines: many.lines, rowLimit: 10 })} />);
+    // A header row and 29 unchanged ones are left after the first ten rows.
+    expect(screen.getByText(/21 more rows not drawn/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show all' }));
+    expect(screen.queryByText(/more rows not drawn/)).toBeNull();
+    // An unchanged line is drawn once on each side.
+    expect(screen.getAllByText('line 29', { exact: false })).toHaveLength(2);
+  });
+
+  it('draws nothing while closed', () => {
+    const { container } = render(<DiffFile {...split({ open: false })} />);
+    expect(container.querySelectorAll('.grid.grid-cols-2')).toHaveLength(0);
+  });
+
+  it('shows hidden characters in either side, and markup as text', () => {
+    const parsed = parseFilePatch(
+      ['@@ -1 +1 @@', '-a‮', '+<img src=x onerror=alert(1)>'].join('\n')
+    );
+    const { container } = render(<DiffFile {...split({ ...parsed })} />);
+    expect(container.textContent).toContain('a⟨U+202E⟩');
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.textContent).toContain('<img src=x onerror=alert(1)>');
+  });
+});
