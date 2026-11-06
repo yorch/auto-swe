@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -1521,8 +1521,9 @@ describe('fetchBranchesSubcommand', () => {
 });
 
 describe('killStrayProcessesScript', () => {
-  // Not executed for real: outside a container it would kill every process
-  // the test runner's user owns. Its structure is what these assert.
+  // The unfiltered sweep is not executed on the host, where it could signal
+  // other processes owned by the test user. The real-process test filters its
+  // signals to the spawned child.
   const script = killStrayProcessesScript(42);
 
   it('stops everything before killing anything', () => {
@@ -1538,6 +1539,49 @@ describe('killStrayProcessesScript', () => {
     );
     expect(script).toContain('if [ "$asw_a" = "$$" ]; then return 0; fi');
   });
+
+  it('captures the sweep mount namespace once and skips other or unreadable namespaces', () => {
+    const ownNamespace = script.indexOf('asw_mnt=$(readlink "/proc/$$/ns/mnt" 2>/dev/null)');
+    expect(ownNamespace).toBeGreaterThanOrEqual(0);
+    expect(ownNamespace).toBeLessThan(script.indexOf('asw_sweep STOP'));
+    expect(script).toContain('asw_ns=$(readlink "$asw_d/ns/mnt" 2>/dev/null) || continue');
+    expect(script).toContain('[ "$asw_ns" = "$asw_mnt" ] || continue');
+  });
+
+  it.skipIf(process.platform !== 'linux')(
+    'kills a real stray process in its mount namespace',
+    async () => {
+      const child = spawn('/bin/sleep', ['300'], { stdio: 'ignore' });
+      const pid = child.pid;
+      if (pid === undefined) {
+        child.kill('SIGKILL');
+        throw new Error('sleep did not start');
+      }
+
+      const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+        (resolve) => {
+          const timeout = setTimeout(() => resolve({ code: null, signal: null }), 5000);
+          child.once('exit', (code, signal) => {
+            clearTimeout(timeout);
+            resolve({ code, signal });
+          });
+        }
+      );
+      try {
+        const script = [
+          `kill() { if [ "$2" = "${pid}" ]; then command kill "$@"; fi; }`,
+          killStrayProcessesScript(process.pid),
+        ].join('\n');
+        execFileSync('/bin/sh', ['-c', script], { timeout: 30_000 });
+        expect(await exited).toEqual({ code: null, signal: 'SIGKILL' });
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill('SIGKILL');
+          await new Promise<void>((resolve) => child.once('exit', () => resolve()));
+        }
+      }
+    }
+  );
 
   it('uses the keeper pid the driver recorded, rather than inferring one', () => {
     expect(script).toContain('asw_keeper=42');

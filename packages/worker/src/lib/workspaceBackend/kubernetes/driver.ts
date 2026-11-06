@@ -17,7 +17,6 @@ import {
 } from '../../execUtils.js';
 import { redactExecError } from '../../redactToken.js';
 import { shellQuote } from '../../shellQuote.js';
-import { keeperPidProbeScript } from '../docker.js';
 import {
   type ListedPod,
   MAX_REAPED_PER_SWEEP,
@@ -37,6 +36,7 @@ import type {
   WorkspaceSpawnOptions,
 } from '../types.js';
 import { type EgressLockDeps, lockPodEgress } from './egressLock.js';
+import { kubernetesKeeperPidProbeScript } from './keeperPidProbe.js';
 import {
   createFromStdinArgs,
   createPodArgs,
@@ -253,14 +253,17 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
       throw new Error(`workspace ${spec.name}: the pod did not become ready: ${ready.stderr}`);
     }
 
-    // Record the keeper PID now, while `sleep` is provably the only child of
-    // the pod's PID 1 (`shareProcessNamespace` makes that the `pause` process,
-    // which reaps orphans like Docker's `--init`), before any exec leaves a
-    // sibling behind. Zero or several candidates fail creation closed.
-    const probe = await this.exec(this.attach(spec.name), ['sh', '-c', keeperPidProbeScript()], {
-      heartbeatLabel: 'workspace: identifying keeper process',
-      timeoutMs: 30_000,
-    });
+    // Containerd reports top-level processes in the shared pod PID namespace
+    // with PPid 0. Match the workspace container's mount namespace before any
+    // other exec leaves a sibling process behind.
+    const probe = await this.exec(
+      this.attach(spec.name),
+      ['sh', '-c', kubernetesKeeperPidProbeScript()],
+      {
+        heartbeatLabel: 'workspace: identifying keeper process',
+        timeoutMs: 30_000,
+      }
+    );
     const candidates = probe.stdout
       .split('\n')
       .map((line) => line.trim())
@@ -268,7 +271,8 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
       .map(Number);
     if (probe.exitCode !== 0 || candidates.length !== 1) {
       throw new Error(
-        `workspace ${spec.name}: expected exactly one keeper process (the child of PID 1), ` +
+        `workspace ${spec.name}: expected exactly one keeper process ` +
+          `(the workspace container's top-level process), ` +
           `found ${candidates.length} — the image must run \`sleep infinity\` ` +
           `(probe exit ${probe.exitCode}: ${probe.stderr.slice(0, 200)})`
       );

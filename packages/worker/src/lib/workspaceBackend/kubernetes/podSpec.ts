@@ -167,9 +167,10 @@ export function buildWorkspaceSecret(
  *    first thing evicted under node pressure;
  *  - the GCP metadata hostnames resolve to 0.0.0.0, as the Docker
  *    `--add-host` pair does (the IP form is NetworkPolicy's job);
- *  - `shareProcessNamespace` makes the pod's `pause` process PID 1 — it reaps
- *    orphans, the role `--init` plays under Docker — and leaves `sleep` as its
- *    only child, which is what the keeper-PID probe looks for;
+ *  - `shareProcessNamespace` gives the pod one PID namespace with `pause` as
+ *    PID 1. Containerd reports container top-level processes with PPid 0, so
+ *    the keeper probe matches `sleep` by the workspace container's mount
+ *    namespace while excluding the other containers' processes;
  *  - `activeDeadlineSeconds` is a hard lifetime the kubelet enforces even if
  *    the worker dies.
  *
