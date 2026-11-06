@@ -332,3 +332,138 @@ describe('readPullFiles', () => {
     });
   });
 });
+
+describe('reading economically', () => {
+  const etagged = (body: unknown, etag: string) => json(body, 200, { etag });
+  const unchanged = () => new Response(null, { status: 304 });
+
+  /** A host whose answers to the pull request come from a script, one per call. */
+  function scripted(pulls: Response[], pages: (unknown[] | Response)[] = [[file()]]) {
+    const hits: Hit[] = [];
+    let call = 0;
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      hits.push({ init, url });
+      if (url.includes('/files?')) {
+        const reply = pages[Number(new URL(url).searchParams.get('page')) - 1] ?? [];
+        return reply instanceof Response ? reply : json(reply);
+      }
+      const next = pulls[Math.min(call, pulls.length - 1)];
+      call += 1;
+      return next ?? json(PULL);
+    }) as typeof fetch;
+    return { fetchImpl, hits };
+  }
+  const conditional = (hit: Hit | undefined): string | undefined =>
+    (hit?.init?.headers as Record<string, string> | undefined)?.['If-None-Match'];
+  const pullHits = (hits: Hit[]) => hits.filter((h) => !h.url.includes('/files?'));
+  const fileHits = (hits: Hit[]) => hits.filter((h) => h.url.includes('/files?'));
+
+  it('asks with the ETag it was given, and a 304 reuses the facts and the cached files', async () => {
+    const { fetchImpl, hits } = scripted([etagged(PULL, '"v1"'), unchanged()]);
+    const first = await readPullFiles(REPO, 7, { fetchImpl, target });
+    const second = await readPullFiles(REPO, 7, { fetchImpl, target });
+    expect(conditional(pullHits(hits)[0])).toBeUndefined();
+    expect(conditional(pullHits(hits)[1])).toBe('"v1"');
+    expect(second).toMatchObject({ headSha: 'abc123', state: 'open', type: 'ok' });
+    expect(second).toEqual(first);
+    expect(fileHits(hits)).toHaveLength(1);
+  });
+
+  it('sends no condition when the host gave no ETag', async () => {
+    const { fetchImpl, hits } = scripted([json(PULL), json(PULL)]);
+    await readPullFiles(REPO, 7, { fetchImpl, target });
+    await readPullFiles(REPO, 7, { fetchImpl, target });
+    expect(pullHits(hits).map(conditional)).toEqual([undefined, undefined]);
+  });
+
+  it('keeps an ETag per repository and pull request', async () => {
+    const { fetchImpl, hits } = scripted([etagged(PULL, '"v1"'), json(PULL), json(PULL)]);
+    await readPullFiles(REPO, 7, { fetchImpl, target });
+    await readPullFiles({ ...REPO, id: 'conn-2' }, 7, { fetchImpl, target });
+    await readPullFiles(REPO, 8, { fetchImpl, target });
+    expect(pullHits(hits).map(conditional)).toEqual([undefined, undefined, undefined]);
+  });
+
+  it('forgets an ETag when the next answer carries none', async () => {
+    const { fetchImpl, hits } = scripted([etagged(PULL, '"v1"'), json(PULL), json(PULL)]);
+    for (let i = 0; i < 3; i++) {
+      await readPullFiles(REPO, 7, { fetchImpl, target });
+    }
+    expect(pullHits(hits).map(conditional)).toEqual([undefined, '"v1"', undefined]);
+  });
+
+  it('takes the state from the fresh read, not from the cached files', async () => {
+    const closed = { ...PULL, state: 'closed' };
+    const { fetchImpl, hits } = scripted([etagged(PULL, '"v1"'), etagged(closed, '"v2"')]);
+    const open = await readPullFiles(REPO, 7, { fetchImpl, target });
+    const now = await readPullFiles(REPO, 7, { fetchImpl, target });
+    expect(open).toMatchObject({ state: 'open' });
+    expect(now).toMatchObject({ headSha: 'abc123', state: 'closed', type: 'ok' });
+    // Same head, so the files were not read again.
+    expect(fileHits(hits)).toHaveLength(1);
+  });
+
+  it('answers a later 304 with the newest facts it holds', async () => {
+    const closed = { ...PULL, state: 'closed' };
+    const { fetchImpl } = scripted([etagged(PULL, '"v1"'), etagged(closed, '"v2"'), unchanged()]);
+    await readPullFiles(REPO, 7, { fetchImpl, target });
+    await readPullFiles(REPO, 7, { fetchImpl, target });
+    expect(await readPullFiles(REPO, 7, { fetchImpl, target })).toMatchObject({ state: 'closed' });
+  });
+
+  it('treats a 304 to a read that was not conditional as the host failing', async () => {
+    const { fetchImpl } = scripted([json(PULL)], [unchanged()]);
+    expect(await readPullFiles(REPO, 7, { fetchImpl, target })).toEqual({
+      reason: 'failed',
+      type: 'unavailable',
+    });
+  });
+
+  it('stops asking the host when the whole read has run out of time', async () => {
+    const hanging = ((_input: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      })) as typeof fetch;
+    expect(await readPullFiles(REPO, 7, { deadlineMs: 20, fetchImpl: hanging, target })).toEqual({
+      reason: 'failed',
+      type: 'unavailable',
+    });
+  });
+
+  it('does not drop a newer read when an older one for the same head fails late', async () => {
+    let now = 1_000;
+    let release: (reply: Response) => void = () => undefined;
+    const slow = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    let reachedFiles: () => void = () => undefined;
+    const filesAsked = new Promise<void>((resolve) => {
+      reachedFiles = resolve;
+    });
+    const older = (async (input: string | URL | Request) => {
+      if (String(input).includes('/files?')) {
+        reachedFiles();
+        return slow;
+      }
+      return json(PULL);
+    }) as typeof fetch;
+    const first = readPullFiles(REPO, 7, { fetchImpl: older, now: () => now, target });
+    await filesAsked;
+
+    // Past the lifetime, so a second read of the same head replaces the first entry.
+    now += 5 * 60_000 + 1;
+    const newer = scripted([json(PULL)]);
+    expect(
+      (await readPullFiles(REPO, 7, { fetchImpl: newer.fetchImpl, now: () => now, target })).type
+    ).toBe('ok');
+
+    release(json({}, 500));
+    expect((await first).type).toBe('unavailable');
+    await Promise.resolve();
+
+    const third = scripted([json(PULL)]);
+    await readPullFiles(REPO, 7, { fetchImpl: third.fetchImpl, now: () => now, target });
+    expect(fileHits(third.hits)).toHaveLength(0);
+  });
+});

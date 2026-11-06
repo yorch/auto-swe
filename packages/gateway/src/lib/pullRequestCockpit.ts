@@ -94,6 +94,9 @@ export type EvaluationRow = {
 
 const RISK_CLASSES = ['LOW', 'STANDARD', 'HIGH'] as const;
 
+/** The most patch text one answer carries; the host allows 3000 files of up to 200 000 each. */
+export const MAX_TOTAL_PATCH_CHARS = 3_000_000;
+
 /** A class this code does not know reads as HIGH, as the evaluator fails closed. */
 function riskClassOf(value: string): 'LOW' | 'STANDARD' | 'HIGH' {
   return RISK_CLASSES.find((c) => c === value) ?? 'HIGH';
@@ -122,17 +125,24 @@ export function assembleCockpit(input: {
   const patchOf = new Map<string, string>();
   if (read.type === 'ok') {
     const digestOf = new Map(read.files.map((f) => [f.path, f.patchDigest]));
+    // Patches go out in reading order until the answer would pass the cap; a file past it is
+    // named but has no patch, exactly like a binary or oversized one, and so cannot be marked
+    // viewed. The files a reviewer reads first are the ones that keep theirs.
+    let patchChars = 0;
     const items: PullRequestCockpitFile[] = readingOrder(read.files).map((file) => {
       const stored = pathByFile.get(file.path);
-      if (file.patch !== undefined) {
+      const room =
+        file.patch !== undefined && patchChars + file.patch.length <= MAX_TOTAL_PATCH_CHARS;
+      if (room && file.patch !== undefined) {
+        patchChars += file.patch.length;
         patchOf.set(file.path, file.patch);
       }
       return {
         additions: file.additions,
         deletions: file.deletions,
         flagged: stored?.flagged ?? false,
-        patch: file.patch ?? null,
-        patchDigest: digestOf.get(file.path) ?? null,
+        patch: room ? (file.patch ?? null) : null,
+        patchDigest: room ? (digestOf.get(file.path) ?? null) : null,
         path: file.path,
         previousPath: file.previousPath ?? null,
         skim: skimByFile.get(file.path) ?? null,

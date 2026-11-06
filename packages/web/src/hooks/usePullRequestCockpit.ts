@@ -7,10 +7,21 @@ import { applyViewed, type ViewedChange } from '@/lib/reviewModel';
 
 export const cockpitKey = (id: string) => ['pull-request-cockpit', id] as const;
 
+/** How often an open pull request is read again; a closed or merged one is not. */
+export const COCKPIT_POLL_MS = 60_000;
+
 /**
- * The review page's data. Each read asks the host for the files, which is what keeps a reviewer on
- * the head the host reports, so it polls slowly: the gateway answers a repeat of one head from a
- * short-lived copy, but it still asks the host which head that is.
+ * Whether, and when, to read the cockpit again. A pull request the host reports as no longer open
+ * will not change under the reviewer, so polling it only spends the host's rate limit.
+ */
+export function cockpitRefetchInterval(data: PullRequestCockpit | undefined): number | false {
+  return data?.files.type === 'ok' && data.files.state !== 'open' ? false : COCKPIT_POLL_MS;
+}
+
+/**
+ * The review page's data. Each read asks the host for the pull request, which is what keeps a
+ * reviewer on the head the host reports; the gateway asks conditionally, so a poll that finds
+ * nothing changed costs the host's rate limit nothing.
  */
 export function usePullRequestCockpit(id: string) {
   return useQuery({
@@ -20,7 +31,7 @@ export function usePullRequestCockpit(id: string) {
         .get<{ data: PullRequestCockpit }>(`/api/v1/pull-requests/${id}/cockpit`)
         .then((r) => r.data),
     queryKey: cockpitKey(id),
-    refetchInterval: 30_000,
+    refetchInterval: (query) => cockpitRefetchInterval(query.state.data),
     // A pull request that is not there, or not theirs to see, will not appear on a retry.
     retry: (failures, error) =>
       !(error instanceof ApiError && error.status >= 400 && error.status < 500) && failures < 2,

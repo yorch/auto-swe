@@ -645,8 +645,9 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       ]);
       const parts = assembleCockpit({ evaluation, files, storedHeadSha: row.headSha });
+      // `pull` first: the in-app assistant keeps only the start of a long answer, and the title,
+      // state and CI are what it must not lose to the patches that follow.
       const data: PullRequestCockpit = {
-        ...parts,
         pull: {
           ciStatus: row.ciStatus,
           closedAt: row.closedAt?.toISOString() ?? null,
@@ -673,6 +674,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
             : null,
           workRequestId: ledger?.workRequest?.id ?? null,
         },
+        ...parts,
         viewed: viewedPaths(parts.files, viewedRows),
       };
       return { data };

@@ -145,6 +145,8 @@ describe('GET /api/v1/pull-requests/:id/cockpit', () => {
     const res = await get(b);
     expect(res.statusCode).toBe(200);
     const { data } = res.json();
+    // `pull` leads: the in-app assistant keeps only the start of a long answer.
+    expect(Object.keys(data)).toEqual(['pull', 'evaluation', 'files', 'viewed']);
     expect(data.pull).toMatchObject({
       headSha: HEAD,
       id: PR_ID,

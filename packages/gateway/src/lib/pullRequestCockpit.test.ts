@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { PullFilesResult, ReviewFile } from './githubPullFiles.js';
-import { assembleCockpit, type EvaluationRow, viewedPaths } from './pullRequestCockpit.js';
+import {
+  assembleCockpit,
+  type EvaluationRow,
+  MAX_TOTAL_PATCH_CHARS,
+  viewedPaths,
+} from './pullRequestCockpit.js';
 
 const HEAD = 'abc123';
 const PATCH = ['@@ -1,2 +1,3 @@', ' keep', '+added', ' tail'].join('\n');
@@ -115,6 +120,51 @@ describe('assembleCockpit', () => {
     expect(byPath.get('src/moved.ts')).toMatchObject({
       previousPath: 'src/old.ts',
       skim: 'exact-rename',
+    });
+  });
+
+  describe('the cap on patch text', () => {
+    const big = (name: string, chars: number) =>
+      file({ patch: 'x'.repeat(chars), patchDigest: `d-${name}`, path: `src/${name}.ts` });
+
+    it('keeps every patch while they fit', () => {
+      const { files } = run(null, ok([big('a', 1_000), big('b', 1_000)]));
+      if (files.type !== 'ok') {
+        throw new Error('unreachable');
+      }
+      expect(files.items.every((f) => f.patch !== null && f.patchDigest !== null)).toBe(true);
+    });
+
+    it('names a file past the cap but gives it no patch and no digest', () => {
+      const chunk = MAX_TOTAL_PATCH_CHARS / 3;
+      const { files } = run(
+        null,
+        ok([big('a', chunk), big('b', chunk), big('c', chunk), big('d', 1_000)])
+      );
+      if (files.type !== 'ok') {
+        throw new Error('unreachable');
+      }
+      expect(files.items).toHaveLength(4);
+      const without = files.items.filter((f) => f.patch === null);
+      expect(without).toHaveLength(1);
+      expect(without[0]?.patchDigest).toBeNull();
+      const total = files.items.reduce((sum, f) => sum + (f.patch?.length ?? 0), 0);
+      expect(total).toBeLessThanOrEqual(MAX_TOTAL_PATCH_CHARS);
+    });
+
+    it('never lists a file without a patch as viewed, and never anchors a finding on one', () => {
+      const chunk = MAX_TOTAL_PATCH_CHARS / 2;
+      const result = run(
+        evaluation({}, { findings: [finding({ file: 'src/b.ts', line: 1 })] }),
+        ok([big('a', chunk), big('b', chunk + 1)])
+      );
+      if (result.files.type !== 'ok') {
+        throw new Error('unreachable');
+      }
+      const omitted = result.files.items.find((f) => f.patch === null);
+      expect(omitted?.path).toBe('src/b.ts');
+      expect(viewedPaths(result.files, [{ patchDigest: 'd-b', path: 'src/b.ts' }])).toEqual([]);
+      expect(result.evaluation?.findings[0]?.anchored).toBe(false);
     });
   });
 
