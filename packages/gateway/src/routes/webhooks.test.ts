@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { Readable } from 'node:stream';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyError, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
@@ -255,6 +256,8 @@ import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredentia
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import { AutomationStartError, handleOccurrence } from '../lib/automations/engine.js';
+import { registerFormBodyParser } from '../lib/formBody.js';
+import { GITHUB_WEBHOOK_MAX_BODY_BYTES } from '../lib/github.js';
 import { clearWebhookSecretCache } from '../lib/githubWebhookSecret.js';
 import { logRequestError } from '../lib/requestErrorLog.js';
 import { ipRateLimitKey } from '../plugins/auth.js';
@@ -348,6 +351,7 @@ describe('webhook routes', () => {
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     await app.register(fastifyRawBody, { encoding: 'utf8', global: false, runFirst: true });
+    registerFormBodyParser(app);
 
     app.decorate('prisma', {
       $transaction: async (ops: Promise<unknown>[]) => Promise.all(ops),
@@ -1164,6 +1168,243 @@ describe('webhook routes', () => {
       expect(vi.mocked(handleOccurrence).mock.calls[0]?.[1]).toMatchObject({ key: 'github.push' });
       expect(vi.mocked(handleOccurrence).mock.calls[0]?.[2]).toMatchObject({
         facts: { branch: 'main', senderId: '42' },
+      });
+    });
+
+    it("accepts a signed push larger than 1 MiB, under GitHub's 25 MB payload cap", async () => {
+      const big = JSON.stringify({
+        ...JSON.parse(pushed),
+        head_commit: { message: 'x'.repeat(2 * 1024 * 1024) },
+      });
+      expect(Buffer.byteLength(big)).toBeGreaterThan(1024 * 1024);
+      const res = await inject('/api/v1/webhooks/git', big, sign(big), PUSH);
+      expect(res.statusCode).toBe(200);
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[1]).toMatchObject({ key: 'github.push' });
+    });
+
+    it('refuses a push over the webhook body limit with 413', async () => {
+      const huge = JSON.stringify({
+        ...JSON.parse(pushed),
+        head_commit: { message: 'x'.repeat(GITHUB_WEBHOOK_MAX_BODY_BYTES + 1) },
+      });
+      const res = await inject('/api/v1/webhooks/git', huge, sign(huge), PUSH);
+      expect(res.statusCode).toBe(413);
+      expect(handleOccurrence).not.toHaveBeenCalled();
+    });
+
+    it('refuses an unsigned delivery over the body limit with 401, not 413', async () => {
+      // Only the preParsing hook can answer 401 here: the body limit would answer 413.
+      const junk = Buffer.alloc(GITHUB_WEBHOOK_MAX_BODY_BYTES + 1024, 'x');
+      const res = await app.inject({
+        headers: { 'content-type': 'application/json', 'x-github-event': 'push' },
+        method: 'POST',
+        payload: junk,
+        url: '/api/v1/webhooks/git',
+      });
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.payload).error).toEqual({
+        code: 'WEBHOOK_AUTH_FAILED',
+        message: 'Missing signature',
+      });
+    });
+
+    it('verifies the signature before parsing: a wrong signature on invalid JSON is a 401', async () => {
+      const res = await inject('/api/v1/webhooks/git', '{ not json', sign('other'), PUSH);
+      expect(res.statusCode).toBe(401);
+      expect(JSON.parse(res.payload).error.message).toBe('Invalid signature');
+      expect(handleOccurrence).not.toHaveBeenCalled();
+    });
+
+    it('accepts a signed push of exactly the body limit and refuses one byte more', async () => {
+      const base = JSON.parse(pushed);
+      const empty = JSON.stringify({ ...base, head_commit: { message: '' } });
+      const sized = (bytes: number): string =>
+        JSON.stringify({
+          ...base,
+          head_commit: { message: 'x'.repeat(bytes - Buffer.byteLength(empty)) },
+        });
+      const exact = sized(GITHUB_WEBHOOK_MAX_BODY_BYTES);
+      expect(Buffer.byteLength(exact)).toBe(GITHUB_WEBHOOK_MAX_BODY_BYTES);
+      const ok = await inject('/api/v1/webhooks/git', exact, sign(exact), PUSH);
+      expect(ok.statusCode).toBe(200);
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[1]).toMatchObject({ key: 'github.push' });
+
+      const over = sized(GITHUB_WEBHOOK_MAX_BODY_BYTES + 1);
+      const res = await inject('/api/v1/webhooks/git', over, sign(over), PUSH);
+      expect(res.statusCode).toBe(413);
+    });
+
+    it('refuses a streamed push over the body limit with 413, with no length declared', async () => {
+      const huge = Buffer.from(
+        JSON.stringify({
+          ...JSON.parse(pushed),
+          head_commit: { message: 'x'.repeat(GITHUB_WEBHOOK_MAX_BODY_BYTES + 1) },
+        })
+      );
+      const step = 1024 * 1024;
+      const stream = Readable.from(
+        (function* () {
+          for (let i = 0; i < huge.length; i += step) {
+            yield huge.subarray(i, i + step);
+          }
+        })()
+      );
+      const res = await app.inject({
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'push',
+          'x-hub-signature-256': sign(huge.toString('utf8')),
+        },
+        method: 'POST',
+        payload: stream,
+        url: '/api/v1/webhooks/git',
+      });
+      expect(res.statusCode).toBe(413);
+      expect(handleOccurrence).not.toHaveBeenCalled();
+    });
+
+    it('accepts a signed form-encoded delivery and refuses an unsigned one', async () => {
+      const form = `payload=${encodeURIComponent(pushed)}`;
+      const send = (signature?: string) =>
+        app.inject({
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded',
+            'x-github-event': 'push',
+            ...(signature === undefined ? {} : { 'x-hub-signature-256': signature }),
+          },
+          method: 'POST',
+          payload: form,
+          url: '/api/v1/webhooks/git',
+        });
+      expect((await send(sign(form))).statusCode).toBe(200);
+      expect((await send()).statusCode).toBe(401);
+      expect((await send(sign('other'))).statusCode).toBe(401);
+    });
+
+    it('verifies the exact bytes received, not a decoded copy of them', async () => {
+      // One byte that is not valid UTF-8, inside an otherwise well-formed string value.
+      const [head = '', tail = ''] = JSON.stringify({
+        ...JSON.parse(pushed),
+        head_commit: { message: 'MARK' },
+      }).split('MARK');
+      const raw = Buffer.concat([Buffer.from(head), Buffer.from([0xff]), Buffer.from(tail)]);
+      const send = (signature: string) =>
+        app.inject({
+          headers: {
+            'content-type': 'application/json',
+            'x-github-event': 'push',
+            'x-hub-signature-256': signature,
+          },
+          method: 'POST',
+          payload: raw,
+          url: '/api/v1/webhooks/git',
+        });
+      const overBytes = `sha256=${crypto.createHmac('sha256', SECRET).update(raw).digest('hex')}`;
+      expect((await send(overBytes)).statusCode).toBe(200);
+      expect((await send(sign(raw.toString('utf8')))).statusCode).toBe(401);
+    });
+
+    describe('body parsing', () => {
+      const send = (
+        payload: string | Buffer,
+        headers: Record<string, string>,
+        signature?: string | null
+      ) => {
+        const raw = typeof payload === 'string' ? Buffer.from(payload) : payload;
+        const sig =
+          signature === null
+            ? undefined
+            : (signature ??
+              `sha256=${crypto.createHmac('sha256', SECRET).update(raw).digest('hex')}`);
+        return app.inject({
+          headers: {
+            'x-github-event': 'push',
+            ...(sig === undefined ? {} : { 'x-hub-signature-256': sig }),
+            ...headers,
+          },
+          method: 'POST',
+          payload: raw,
+          url: '/api/v1/webhooks/git',
+        });
+      };
+      // The test app keeps Fastify's default error handler, which puts the code at the top level.
+      const code = (res: { payload: string }): string => {
+        const body = JSON.parse(res.payload);
+        return body.code ?? body.error?.code;
+      };
+
+      it('accepts only JSON and form content types: text/plain is 401 unsigned and 415 signed', async () => {
+        const plain = { 'content-type': 'text/plain' };
+        const unsigned = await send(pushed, plain, null);
+        expect(unsigned.statusCode).toBe(401);
+        const signed = await send(pushed, plain);
+        expect(signed.statusCode).toBe(415);
+        expect(code(signed)).toBe('FST_ERR_CTP_INVALID_MEDIA_TYPE');
+        expect(handleOccurrence).not.toHaveBeenCalled();
+      });
+
+      it('routes a mixed-case form content type with a charset to the form parser', async () => {
+        const form = `payload=${encodeURIComponent(pushed)}`;
+        const res = await send(form, {
+          'content-type': 'Application/X-WWW-Form-Urlencoded; charset=UTF-8',
+        });
+        expect(res.statusCode).toBe(200);
+      });
+
+      it('accepts application/json with a charset parameter', async () => {
+        const res = await send(pushed, { 'content-type': 'application/json; charset=utf-8' });
+        expect(res.statusCode).toBe(200);
+      });
+
+      it('refuses a signed body with a __proto__ key with 400', async () => {
+        const poisoned = '{"__proto__":{"admin":true},"action":"closed"}';
+        const res = await send(poisoned, { 'content-type': 'application/json' });
+        expect(res.statusCode).toBe(400);
+        expect(code(res)).toBe('FST_ERR_CTP_INVALID_JSON_BODY');
+      });
+
+      it('refuses signed invalid and empty JSON with the codes Fastify uses elsewhere', async () => {
+        const json = { 'content-type': 'application/json' };
+        const invalid = await send('{ not json', json);
+        expect(invalid.statusCode).toBe(400);
+        expect(code(invalid)).toBe('FST_ERR_CTP_INVALID_JSON_BODY');
+        const empty = await send('', json);
+        expect(empty.statusCode).toBe(400);
+        expect(code(empty)).toBe('FST_ERR_CTP_EMPTY_JSON_BODY');
+      });
+
+      it("strips a leading byte order mark as Fastify's own JSON parser does", async () => {
+        const withBom = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(pushed)]);
+        const res = await send(withBom, { 'content-type': 'application/json' });
+        expect(res.statusCode).toBe(200);
+        expect(vi.mocked(handleOccurrence).mock.calls[0]?.[1]).toMatchObject({
+          key: 'github.push',
+        });
+      });
+
+      it('refuses an unapproved host before the body is parsed', async () => {
+        hostSecrets.rows.set('ghe.corp', 'ghe-secret');
+        hostPolicy.approved = [];
+        const res = await send(
+          '{ not json',
+          { 'content-type': 'application/json', 'x-github-enterprise-host': 'ghe.corp' },
+          sign('{ not json', 'ghe-secret')
+        );
+        expect(res.statusCode).toBe(401);
+        expect(JSON.parse(res.payload).error).toEqual({
+          code: 'WEBHOOK_AUTH_FAILED',
+          message: 'Webhook host is not an approved host',
+        });
+      });
+
+      it('answers 400 for a delivery with no content type, as it did with no raw body', async () => {
+        const res = await app.inject({
+          headers: { 'x-github-event': 'push', 'x-hub-signature-256': sign('') },
+          method: 'POST',
+          url: '/api/v1/webhooks/git',
+        });
+        expect(res.statusCode).toBe(400);
+        expect(JSON.parse(res.payload).error.message).toBe('Missing raw body');
       });
     });
 
@@ -3244,6 +3485,7 @@ describe('webhook rate limiting', () => {
   const WEBHOOK_MAX = 12;
   const ping = JSON.stringify({ action: 'closed', zen: 'Design for failure.' });
   const logLines: string[] = [];
+  const findHostSecret = vi.fn(async (): Promise<{ host: string } | null> => null);
   let limited: ReturnType<typeof Fastify>;
   let previousMax: string | undefined;
 
@@ -3260,7 +3502,7 @@ describe('webhook rate limiting', () => {
       timeWindow: 60_000,
     });
     limited.decorate('prisma', {
-      gitHubHostWebhookSecret: { findMany: async () => [], findUnique: async () => null },
+      gitHubHostWebhookSecret: { findMany: async () => [], findUnique: findHostSecret },
     } as unknown as never);
     limited.setErrorHandler(
       async (error: FastifyError, request: FastifyRequest, reply: FastifyReply) => {
@@ -3330,6 +3572,65 @@ describe('webhook rate limiting', () => {
     }
     expect((await deliver('/api/v1/webhooks/git', '192.0.2.70', sign(ping))).statusCode).toBe(429);
     expect((await deliver('/api/v1/webhooks/ci', '192.0.2.70', sign(ping))).statusCode).toBe(200);
+  });
+
+  describe('a /git delivery the header checks refuse', () => {
+    const wellFormed = sign(ping);
+    const cases: Array<{ headers: Record<string, string>; name: string }> = [
+      { headers: {}, name: 'unsigned' },
+      { headers: { 'x-hub-signature-256': 'sha256=nothex' }, name: 'malformed signature' },
+      {
+        headers: { 'x-github-enterprise-host': 'gone.corp', 'x-hub-signature-256': wellFormed },
+        name: 'unapproved host',
+      },
+    ];
+
+    it.each(cases)(
+      'is counted: a $name delivery beyond the ceiling is 429',
+      async ({ headers }) => {
+        const ip = `192.0.2.${100 + cases.findIndex((c) => c.headers === headers)}`;
+        // A row exists for `gone.corp` but the host is not approved, so the hook refuses it.
+        findHostSecret.mockImplementation(async () => ({ host: 'gone.corp' }));
+        const send = () =>
+          limited.inject({
+            headers: { 'content-type': 'application/json', ...headers },
+            method: 'POST',
+            payload: ping,
+            remoteAddress: ip,
+            url: '/api/v1/webhooks/git',
+          });
+        for (let i = 0; i < WEBHOOK_MAX; i++) {
+          expect((await send()).statusCode).toBe(401);
+        }
+        expect((await send()).statusCode).toBe(429);
+      }
+    );
+
+    it('does not look up a secret for a delivery over the ceiling', async () => {
+      const ip = '192.0.2.120';
+      const send = (host: string) =>
+        limited.inject({
+          headers: {
+            'content-type': 'application/json',
+            'x-github-enterprise-host': host,
+            'x-hub-signature-256': wellFormed,
+          },
+          method: 'POST',
+          payload: ping,
+          remoteAddress: ip,
+          url: '/api/v1/webhooks/git',
+        });
+      findHostSecret.mockReset();
+      findHostSecret.mockResolvedValue(null);
+      for (let i = 0; i < WEBHOOK_MAX; i++) {
+        expect((await send(`h${i}.example`)).statusCode).not.toBe(429);
+      }
+      expect(findHostSecret).toHaveBeenCalledTimes(WEBHOOK_MAX);
+      for (let i = 0; i < 3; i++) {
+        expect((await send(`over${i}.example`)).statusCode).toBe(429);
+      }
+      expect(findHostSecret).toHaveBeenCalledTimes(WEBHOOK_MAX);
+    });
   });
 
   it('logs the refusal as one WARN line with the route', async () => {
