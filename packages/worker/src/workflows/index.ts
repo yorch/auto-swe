@@ -20,6 +20,7 @@ export { prEvaluationWorkflow } from './prEvaluation.js';
 export { ReembedMemoryWorkflow, ReembedStaleMemoryWorkflow } from './reembedMemory.js';
 export { RepoDependencyScanOneWorkflow } from './repoDependencyScanOne.js';
 export { RepoSetupFileProposalWorkflow } from './repoSetupFileProposal.js';
+export { reviewFixRetryWorkflow } from './reviewFixRetry.js';
 export { RunnableWorkflow } from './runnable.js';
 export { ScheduledAgentTraceRollupWorkflow } from './scheduledAgentTraceRollup.js';
 export { ScheduledAgentTranscriptPruneWorkflow } from './scheduledAgentTranscriptPrune.js';

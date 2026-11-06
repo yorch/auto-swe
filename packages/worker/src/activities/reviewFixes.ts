@@ -1,3 +1,4 @@
+import type { Prisma } from '@auto-swe/shared';
 import {
   decideUnderLock,
   PR_FEEDBACK,
@@ -15,7 +16,7 @@ import {
   PR_FEEDBACK_TEMPLATE_NAME,
   PrFeedbackPayloadSchema,
 } from '@auto-swe/shared/lib/prFeedback';
-import { reviewRunId } from '@auto-swe/shared/lib/reviewLaunch';
+import { reviewFixRetryState, reviewRunId } from '@auto-swe/shared/lib/reviewLaunch';
 import { resolveGitHubConfig, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -31,7 +32,9 @@ export type ReviewFixResult =
 
 export async function startReviewFix(
   payload: ReviewRunPayload,
-  runId: string
+  runId: string,
+  attemptId?: string,
+  automationId?: string
 ): Promise<ReviewFixResult> {
   const skip = (reason: string): ReviewFixResult => ({ reason, status: 'skipped' });
   if (payload.reviewOf.mode !== 'pr' || payload.onBlocking !== 'fix') {
@@ -42,7 +45,10 @@ export async function startReviewFix(
   if (!review) {
     return skip('no verified stored review target');
   }
-  const dedupeKey = `review-fix:${runId}`;
+  if (attemptId && (review.status !== 'SUCCESS' || review.approved !== false)) {
+    return skip('the review is not a successful blocking review');
+  }
+  const dedupeKey = `review-fix:${runId}${attemptId ? `:${attemptId}` : ''}`;
   const already = await prisma.automationFire.findUnique({ where: { dedupeKey } });
   if (
     already?.outcome === 'STARTED' &&
@@ -73,6 +79,7 @@ export async function startReviewFix(
   const automations = await prisma.automation.findMany({
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     where: {
+      ...(automationId ? { id: automationId } : {}),
       connection: { teamId: repo.teamId },
       connectionId: repo.id,
       enabled: true,
@@ -174,11 +181,11 @@ export async function startReviewFix(
     repoHostFamily(ref, await resolveGitHubConfig()),
     `${repo.organizationName}/${repo.repoName}`
   );
-  const subjectKey = reviewFeedbackSubject(prNumber, runId);
+  const subjectKey = reviewFeedbackSubject(prNumber, runId, attemptId);
   const scopeKey = `pr-${prNumber}`;
-  const workflowId = `prfb-review-${runId}`;
+  const workflowId = `prfb-review-${runId}${attemptId ? `-${attemptId}` : ''}`;
   const workRequestId = reviewRunId(workflowId, 'review-fix-input');
-  const ticket = `prfb-review-${runId}`;
+  const ticket = workflowId;
   const { branchPrefix } = await resolveWorkflowDefaults();
   const workBranch = `${branchPrefix}/${ticket}`;
   const feedbackPayload = { ...options.data, baseBranch: pr.headRef };
@@ -239,7 +246,11 @@ export async function startReviewFix(
         automationId: automation.id,
         connectionId: repo.id,
         dedupeKey,
-        facts: { headSha: review.headSha, reviewRunId: runId },
+        facts: {
+          headSha: review.headSha,
+          reviewRunId: runId,
+          ...(attemptId ? { reviewFixAttemptId: attemptId } : {}),
+        },
         outcome: blocked?.outcome ?? (reason ? 'SUPPRESSED_PRECONDITION' : 'STARTED'),
         ownerKey,
         reason: reason ?? 'starting',
@@ -339,4 +350,35 @@ export async function startReviewFix(
     source: 'code-review',
   });
   return { status: 'started', workflowId, workRequestId };
+}
+
+export async function retryReviewFix(input: {
+  runId: string;
+  attemptId: string;
+  automationId?: string;
+}): Promise<ReviewFixResult> {
+  const state = await reviewFixRetryState(prisma, input.runId);
+  if (!state.allowed || state.attemptId !== input.attemptId) {
+    return { reason: 'The fix decision is no longer retryable', status: 'skipped' as const };
+  }
+  let result: ReviewFixResult;
+  try {
+    result = await startReviewFix(state.payload, input.runId, input.attemptId, input.automationId);
+  } catch {
+    result = { reason: 'the fix launch failed', status: 'skipped' };
+  }
+  await prisma.workflowStep.update({
+    data: {
+      outputs: {
+        ...state.summary,
+        fix: {
+          ...result,
+          attemptId: input.attemptId,
+          decidedAt: new Date().toISOString(),
+        },
+      } as Prisma.InputJsonObject,
+    },
+    where: { id: state.step.id },
+  });
+  return result;
 }

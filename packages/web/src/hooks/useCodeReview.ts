@@ -62,6 +62,15 @@ export function useRunReview(runId: string) {
     },
   });
 }
+export function useRetryReviewFix(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post(`/api/v1/workflow-runs/${runId}/reviews/fix-retry`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workflow-run', runId] });
+    },
+  });
+}
 export function useReviewPresets() {
   return useQuery({
     queryFn: () => api.get<{ data: ReviewPreset[] }>(base).then((r) => r.data),

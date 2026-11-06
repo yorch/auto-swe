@@ -4,6 +4,7 @@ import type { Prisma, PrismaClient } from '../generated/prisma/client.js';
 import type { RepoWorkRequest } from '../types/workflow.js';
 import { AGENT_RUN_TEMPLATE_ORIGIN } from './agentRun.js';
 import {
+  isTransientReviewFixReason,
   type ReviewRunPayload,
   ReviewRunPayloadSchema,
   type ReviewSourceFacts,
@@ -270,6 +271,7 @@ export async function reviewRunMetadata(db: PrismaClient, runId: string) {
   });
   return {
     reviewable: resolved.ok,
+    ...(source?.reviewOfRun ? { fixRetry: await reviewFixRetryMetadata(db, runId) } : {}),
     ...(!resolved.ok ? { reason: resolved.code } : {}),
     ...(source?.reviewOfRun
       ? {
@@ -297,4 +299,74 @@ export async function reviewRunMetadata(db: PrismaClient, runId: string) {
       };
     }),
   };
+}
+
+export async function reviewFixRetryState(db: PrismaClient, runId: string) {
+  const run = await db.workflowRun.findUnique({
+    include: {
+      steps: {
+        orderBy: [{ attempt: 'desc' }, { endedAt: 'desc' }],
+        take: 1,
+        where: { status: 'PASSED', stepName: 'publishReviewResult' },
+      },
+      template: { select: { kind: true } },
+      workRequest: { select: { payload: true } },
+    },
+    where: { id: runId },
+  });
+  const payload = ReviewRunPayloadSchema.safeParse(run?.workRequest?.payload);
+  const step = run?.steps[0];
+  const summary = object(step?.outputs);
+  if (
+    run?.status !== 'SUCCESS' ||
+    run.template.kind !== 'review' ||
+    !step ||
+    !payload.success ||
+    payload.data.onBlocking !== 'fix' ||
+    payload.data.reviewOf.mode !== 'pr' ||
+    run.reviewOfRunId !== payload.data.sourceRunId ||
+    summary.approved !== false
+  ) {
+    return {
+      allowed: false as const,
+      reason: 'A successful blocking PR review with fix policy is required',
+    };
+  }
+  const fire = await db.automationFire.findFirst({
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    where: {
+      connectionId: payload.data.connectionId,
+      facts: { equals: runId, path: ['reviewRunId'] },
+      source: 'github.pull_request.feedback',
+    },
+  });
+  const fix = object(summary.fix);
+  const summaryIsNewer =
+    typeof fix.decidedAt === 'string' &&
+    Date.parse(fix.decidedAt) > (fire?.createdAt?.getTime() ?? 0);
+  const reason = summaryIsNewer ? fix.reason : (fire?.reason ?? fix.reason);
+  const retryableDecision =
+    fire && !summaryIsNewer
+      ? fire.outcome === 'FAILED_TO_START' || fire.outcome.startsWith('SUPPRESSED_')
+      : fix.status === 'skipped';
+  if (fire?.outcome === 'STARTED' || !retryableDecision || !isTransientReviewFixReason(reason)) {
+    return {
+      allowed: false as const,
+      reason: typeof reason === 'string' ? reason : 'No retryable fix decision',
+    };
+  }
+  const decisionKey = `${fire?.id ?? step.id}:${typeof fix.attemptId === 'string' ? fix.attemptId : 'initial'}`;
+  return {
+    allowed: true as const,
+    attemptId: reviewRunId(`${runId}:${decisionKey}`, 'fix-retry'),
+    fire,
+    payload: payload.data,
+    step,
+    summary,
+  };
+}
+
+export async function reviewFixRetryMetadata(db: PrismaClient, runId: string) {
+  const state = await reviewFixRetryState(db, runId);
+  return { allowed: state.allowed, ...(!state.allowed ? { reason: state.reason } : {}) };
 }

@@ -40,6 +40,9 @@ const fakeActivities = {
     }
     return RESULT;
   },
+  async retryReviewFix(input: { runId: string; attemptId: string }) {
+    return { reason: `${input.runId}:${input.attemptId}`, status: 'skipped' };
+  },
   async reviewRunStatusForEvaluation(runId: string): Promise<string> {
     statusReads.push(runId);
     return reviewStatuses.shift() ?? 'SUCCESS';
@@ -98,6 +101,15 @@ describe('PrEvaluationWorkflow in the test server', () => {
     prNumber: 42,
     trigger: 'pull_request.synchronize',
   };
+
+  it('dispatches fix retries through the guarded worker activity', async () => {
+    const result = await env.client.workflow.execute('reviewFixRetryWorkflow', {
+      args: [{ attemptId: 'attempt-2', runId: 'review-run' }],
+      taskQueue: TASK_QUEUE,
+      workflowId: 'review-fix-retry-test',
+    });
+    expect(result).toEqual({ reason: 'review-run:attempt-2', status: 'skipped' });
+  });
 
   it('returns the activity result and passes it the exact input', async () => {
     const result = await env.client.workflow.execute(PR_EVALUATION_WORKFLOW_TYPE, {

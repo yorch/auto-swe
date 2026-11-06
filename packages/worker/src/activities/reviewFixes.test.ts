@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { startReviewFix } from './reviewFixes.js';
+import { retryReviewFix, startReviewFix } from './reviewFixes.js';
 
 const m = vi.hoisted(() => ({
   active: vi.fn(),
@@ -11,12 +11,18 @@ const m = vi.hoisted(() => ({
   hostPr: vi.fn(),
   pr: vi.fn(),
   repo: vi.fn(),
+  retryState: vi.fn(),
   review: vi.fn(),
   runInput: vi.fn(),
   savedInput: vi.fn(),
   settings: {} as Record<string, unknown>,
   start: vi.fn(),
   template: vi.fn(),
+  updateStep: vi.fn(),
+}));
+vi.mock('@auto-swe/shared/lib/reviewLaunch', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/lib/reviewLaunch')>()),
+  reviewFixRetryState: m.retryState,
 }));
 vi.mock('@auto-swe/shared/automation', async (orig) => ({
   ...(await orig<typeof import('@auto-swe/shared/automation')>()),
@@ -75,6 +81,7 @@ vi.mock('@auto-swe/shared/db', () => {
     connection: { findUnique: m.repo },
     pullRequest: { findFirst: m.pr },
     runInput: { create: m.runInput, findUnique: m.savedInput },
+    workflowStep: { update: m.updateStep },
     workflowTemplate: { findFirst: m.template },
   };
   return { prisma: { ...db, $transaction: async (fn: (tx: unknown) => unknown) => fn(db) } };
@@ -95,11 +102,12 @@ beforeEach(() => {
   m.fires.clear();
   m.settings = { 'github.ciFixNeverPushBranches': [], 'github.prFeedbackAutomationsEnabled': true };
   m.review.mockResolvedValue({
+    approved: false,
     headSha: HEAD,
     origin: 'workflow',
     sourceRunId: SOURCE,
     sourceWorkflowId: 'source-wf',
-    status: 'RUNNING',
+    status: 'SUCCESS',
     texts: [],
   });
   m.repo.mockResolvedValue({
@@ -141,6 +149,75 @@ beforeEach(() => {
 });
 
 describe('review fix launches', () => {
+  it('retries a cooldown suppression without bypassing the automation guards', async () => {
+    m.decision.mockResolvedValueOnce({
+      outcome: 'SUPPRESSED_COOLDOWN',
+      reason: 'a run started for pr-9 within the last 5 minutes',
+    });
+    expect(await startReviewFix(payload, RUN)).toMatchObject({ status: 'skipped' });
+    expect(await startReviewFix(payload, RUN, 'after-cooldown')).toMatchObject({
+      status: 'started',
+    });
+    expect(m.decision).toHaveBeenCalledTimes(2);
+    expect(m.start).toHaveBeenCalledTimes(1);
+  });
+  it('retries a failed start with a new subject, dedupe key and workflow, preserving guards', async () => {
+    m.start.mockRejectedValueOnce(new Error('offline'));
+    expect(await startReviewFix(payload, RUN)).toMatchObject({ status: 'skipped' });
+    const retry = await startReviewFix(payload, RUN, 'attempt-2');
+    expect(retry).toMatchObject({ status: 'started', workflowId: `prfb-review-${RUN}-attempt-2` });
+    expect(m.fires.get(`review-fix:${RUN}:attempt-2`)).toMatchObject({
+      facts: { reviewFixAttemptId: 'attempt-2', reviewRunId: RUN },
+      subjectKey: `pr-9@review-${RUN}:attempt-attempt-2`,
+    });
+    expect(m.review).toHaveBeenCalledTimes(2);
+    expect(m.decision).toHaveBeenCalledTimes(2);
+    expect(await startReviewFix(payload, RUN, 'attempt-2')).toEqual(retry);
+    expect(m.start).toHaveBeenCalledTimes(2);
+  });
+  it('records retry results on the review verdict and rejects stale queued attempts', async () => {
+    m.retryState.mockResolvedValue({
+      allowed: true,
+      attemptId: 'attempt-2',
+      payload,
+      step: { id: 'publish' },
+      summary: { approved: false, findings: [] },
+    });
+    expect(await retryReviewFix({ attemptId: 'attempt-2', runId: RUN })).toMatchObject({
+      status: 'started',
+    });
+    expect(m.updateStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          outputs: expect.objectContaining({
+            approved: false,
+            fix: expect.objectContaining({ attemptId: 'attempt-2', status: 'started' }),
+          }),
+        },
+      })
+    );
+    expect(await retryReviewFix({ attemptId: 'stale', runId: RUN })).toMatchObject({
+      status: 'skipped',
+    });
+    expect(m.start).toHaveBeenCalledTimes(1);
+  });
+  it('still skips retry attempts when the reviewed head moved or round limit is exhausted', async () => {
+    m.hostPr.mockResolvedValueOnce({
+      headRepositoryFullName: 'acme/api',
+      headSha: 'b'.repeat(40),
+      state: 'open',
+    });
+    expect(await startReviewFix(payload, RUN, 'attempt-2')).toMatchObject({
+      reason: 'the reviewed head moved',
+      status: 'skipped',
+    });
+    m.count.mockResolvedValueOnce(99);
+    expect(await startReviewFix(payload, RUN, 'attempt-3')).toMatchObject({
+      reason: 'round limit reached',
+      status: 'skipped',
+    });
+    expect(m.start).not.toHaveBeenCalled();
+  });
   it('launches an opted-in built-in feedback round with a real fire and stable ledger identity', async () => {
     const result = await startReviewFix(payload, RUN);
     expect(result.status).toBe('started');

@@ -23,6 +23,7 @@ import {
   isRecordNotFoundError,
   isUniqueConstraintError,
 } from '../lib/prismaErrors.js';
+import { queueReviewFixRetry } from '../lib/reviewFixRetry.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { buildWorkflowRunControlFilter } from '../lib/runVisibility.js';
 import { teamMembershipFilter } from '../lib/templateLaunch.js';
@@ -63,6 +64,54 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const engineer = requireAuth({ requiredRole: 'ENGINEER' });
   const admin = requireAuth({ requiredRole: 'ADMIN' });
+
+  app.post(
+    '/workflow-runs/:id/reviews/fix-retry',
+    { onRequest: engineer, schema: { params: Id } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const mcp = await assertMcpWriteAllowed(request, reply, {
+        submit: { budgetTier: 'STANDARD', idempotencyKey: undefined },
+        tool: 'start_template_run',
+      });
+      if (mcp.refused) {
+        return mcp.refused;
+      }
+      const run = await fastify.prisma.workflowRun.findFirst({
+        include: { workRequest: { select: { connectionId: true } } },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunControlFilter(user, request.repoAccessGate),
+        },
+      });
+      if (!run) {
+        return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
+      }
+      const access = await validateRunConnection(
+        {
+          connectionId: run.connectionId ?? run.workRequest?.connectionId ?? '',
+          gate: request.repoAccessGate,
+          log: request.log,
+          prisma: fastify.prisma,
+          providerMeta: null,
+          templateTeamId: null,
+          user,
+        },
+        reply
+      );
+      if (!access.ok) {
+        return;
+      }
+      try {
+        return reply.status(202).send({ data: await queueReviewFixRetry(fastify, user, run.id) });
+      } catch (error) {
+        if (error instanceof ReviewLaunchError) {
+          return sendError(reply, error.status, error.code, error.message);
+        }
+        throw error;
+      }
+    }
+  );
 
   app.post(
     '/workflow-runs/:id/reviews',

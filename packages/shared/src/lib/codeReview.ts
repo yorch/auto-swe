@@ -127,3 +127,21 @@ export function reviewWorkflowId(repoId: string, hexId: string): string {
     .toLowerCase();
   return `review-${repo}-${hex}`;
 }
+
+export function isTransientReviewFixReason(reason: unknown): boolean {
+  return (
+    typeof reason === 'string' &&
+    (/within the last \d+ minutes|still in progress|last 24 hours/.test(reason) ||
+      [
+        'repository is unavailable',
+        'pull request feedback automations are switched off',
+        'no enabled repository feedback automation opts in to review_findings with the default template',
+        'the feedback automation has invalid options',
+        'the source run is still working on the pull request',
+        'the organization is over its monthly budget',
+        'the built-in address-pr-feedback template is unavailable',
+        'the fix workflow could not start',
+        'the fix launch failed',
+      ].includes(reason))
+  );
+}

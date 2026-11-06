@@ -12,7 +12,7 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import { useReviewChoices, useRunReview } from '@/hooks/useCodeReview';
+import { useRetryReviewFix, useReviewChoices, useRunReview } from '@/hooks/useCodeReview';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 
@@ -105,8 +105,30 @@ function LaunchReview({ runId, onClose }: { runId: string; onClose: () => void }
   );
 }
 
+function RetryFixButton({ runId }: { runId: string }) {
+  const retryFix = useRetryReviewFix(runId);
+  return (
+    <>
+      <Button
+        disabled={retryFix.isPending || retryFix.isSuccess}
+        onClick={() => retryFix.mutate()}
+        variant="secondary"
+      >
+        {retryFix.isSuccess ? 'Fix retry queued' : 'Retry fix'}
+      </Button>
+      {retryFix.isError && <Alert variant="error">{reviewError(retryFix.error)}</Alert>}
+    </>
+  );
+}
+
 export function RunReviews({ run }: { run: WorkflowRunDetail }) {
   const [open, setOpen] = useState(false);
+  const summary = record(
+    [...run.steps]
+      .sort((a, b) => b.attempt - a.attempt)
+      .find((s) => s.stepName === 'publishReviewResult' && s.status === 'PASSED')?.outputs
+  );
+  const fix = record(summary.fix);
   const review = run.review;
   if (!review) {
     return null;
@@ -117,12 +139,6 @@ export function RunReviews({ run }: { run: WorkflowRunDetail }) {
       : !review.reviewable
         ? (reasons[review.reason ?? ''] ?? review.reason ?? 'This run has nothing to review.')
         : undefined;
-  const summary = record(
-    [...run.steps]
-      .sort((a, b) => b.attempt - a.attempt)
-      .find((s) => s.stepName === 'publishReviewResult' && s.status === 'PASSED')?.outputs
-  );
-  const fix = record(summary.fix);
   const findings = Array.isArray(summary.findings)
     ? [
         ...new Set(
@@ -176,6 +192,9 @@ export function RunReviews({ run }: { run: WorkflowRunDetail }) {
                   {typeof fix.reason === 'string' ? `: ${fix.reason}` : ''}
                   {typeof fix.workflowId === 'string' ? ` · ${fix.workflowId}` : ''}
                 </p>
+              )}
+              {review.canControl && review.fixRetry?.allowed && (
+                <RetryFixButton key={String(fix.attemptId ?? 'initial')} runId={run.id} />
               )}
             </>
           ) : (

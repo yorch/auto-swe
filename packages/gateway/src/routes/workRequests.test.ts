@@ -288,6 +288,7 @@ describe('POST /api/v1/work-requests', () => {
       startReembedStaleMemory: async () => true,
       startRepoDependencyInference: async () => {},
       startRepoDependencyScan: async () => {},
+      startReviewFixRetry: async () => {},
       startRunnableWorkflow: async (id: string, input: { request: unknown }) => {
         startedRequests.push(input.request);
         startedWorkflowIds.push(id);

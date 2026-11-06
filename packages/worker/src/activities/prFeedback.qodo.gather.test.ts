@@ -196,6 +196,19 @@ describe('gatherPrFeedback — stored review findings', () => {
     expect((await gatherPrFeedback({ request: reviewRequest() })).decision).toBe('skip');
     expect(m.findReview).not.toHaveBeenCalled();
   });
+
+  it('accepts retry subjects only when the attempt is bound in stored fire facts', async () => {
+    storedRound();
+    m.findFire.mockResolvedValue({
+      ...fire(),
+      facts: { reviewFixAttemptId: 'retry-2', reviewRunId: REVIEW_RUN },
+      subjectKey: `pr-9@review-${REVIEW_RUN}:attempt-retry-2`,
+    });
+    const result = await gatherPrFeedback({ request: reviewRequest() });
+    expect(result).toMatchObject({ decision: 'fix' });
+    expect(JSON.stringify(result)).toContain('DB finding only');
+    expect(JSON.stringify(result)).not.toContain('PAYLOAD LIE');
+  });
   it('skips missing stored review evidence', async () => {
     storedRound();
     m.findReview.mockResolvedValue(null);

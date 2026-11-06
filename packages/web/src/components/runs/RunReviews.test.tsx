@@ -22,6 +22,59 @@ const run = (over: Record<string, unknown> = {}) =>
     ...over,
   }) as unknown as WorkflowRunDetail;
 describe('run reviews', () => {
+  const retryable = (allowed = true, canControl = true) =>
+    run({
+      review: {
+        canControl,
+        fixRetry: { allowed },
+        reviewable: false,
+        reviewOf: { runId: 'original', templateName: 'Source' },
+        reviews: [],
+      },
+      steps: [
+        {
+          attempt: 1,
+          outputs: {
+            approved: false,
+            fix: { reason: 'the fix launch failed', status: 'skipped' },
+            worstSeverity: 'WARNING',
+          },
+          status: 'PASSED',
+          stepName: 'publishReviewResult',
+        },
+      ],
+    });
+  it('queues a fix retry from the review verdict', async () => {
+    const fetch = setupFetchMock({
+      'POST /api/v1/workflow-runs/source-1/reviews/fix-retry': () => ({
+        data: { workflowId: 'retry' },
+      }),
+    });
+    render(withQuery(<RunReviews run={retryable()} />));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry fix' }));
+    await screen.findByRole('button', { name: 'Fix retry queued' });
+    expect(fetch.mock.calls.some((call) => String(call[0]).endsWith('/reviews/fix-retry'))).toBe(
+      true
+    );
+  });
+  it.each([
+    [false, true],
+    [true, false],
+  ])('hides a fix retry without eligibility or control', (allowed, canControl) => {
+    render(withQuery(<RunReviews run={retryable(allowed, canControl)} />));
+    expect(screen.queryByRole('button', { name: 'Retry fix' })).toBeNull();
+  });
+  it('shows retry errors without losing the verdict', async () => {
+    setupFetchMock({
+      'POST /api/v1/workflow-runs/source-1/reviews/fix-retry': () => {
+        throw new Error('Retry offline');
+      },
+    });
+    render(withQuery(<RunReviews run={retryable()} />));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry fix' }));
+    await screen.findByText('Retry offline');
+    expect(screen.getByText(/Changes requested/)).toBeTruthy();
+  });
   it.each([false, true])(
     'launches the default preset for workflow and agent runs (agent=%s)',
     async (isAgentRun) => {

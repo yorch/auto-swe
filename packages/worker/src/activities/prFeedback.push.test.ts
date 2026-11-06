@@ -176,6 +176,27 @@ describe('pushPrFeedbackToPullRequest — authority', () => {
     expect(r.pushed).toBe(false);
     expect(m.ffw).not.toHaveBeenCalled();
   });
+
+  it('accepts a fix retry with its matching attempt-bound fire', async () => {
+    const reviewRunId = '22222222-2222-4222-8222-222222222222';
+    base({
+      fire: {
+        facts: { reviewFixAttemptId: 'retry-2', reviewRunId },
+        subjectKey: `pr-9@review-${reviewRunId}:attempt-retry-2`,
+      },
+    });
+    m.storedReview.mockResolvedValue({ approved: false, headSha: HEAD, status: 'SUCCESS' });
+    m.pullRequestInfo.mockResolvedValue({ headSha: HEAD });
+    expect(
+      (
+        await push(gather(), {
+          feedbackEventId: reviewRunId,
+          feedbackEventKind: 'review_findings',
+          feedbackTrigger: 'review_findings',
+        })
+      ).pushed
+    ).toBe(true);
+  });
   it('refuses a run launched by a user', async () => {
     base();
     const req = request() as RepoWorkRequest & { launchedById?: string };

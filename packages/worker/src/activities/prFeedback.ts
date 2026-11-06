@@ -438,7 +438,11 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
     if (isReview) {
       if (
         fire.subjectKey !==
-          reviewFeedbackSubject(payload.pullRequestNumber, payload.feedbackEventId) ||
+          reviewFeedbackSubject(
+            payload.pullRequestNumber,
+            payload.feedbackEventId,
+            (fire.facts as Record<string, unknown>)?.reviewFixAttemptId
+          ) ||
         (fire.facts as Record<string, unknown>)?.reviewRunId !== payload.feedbackEventId
       ) {
         return skip('the review trigger does not belong to this automation fire', { silent: true });
@@ -1144,7 +1148,11 @@ async function pushPrFeedbackToPullRequestImpl(input: {
       );
       if (
         fire.subjectKey !==
-          reviewFeedbackSubject(payload.pullRequestNumber, payload.feedbackEventId) ||
+          reviewFeedbackSubject(
+            payload.pullRequestNumber,
+            payload.feedbackEventId,
+            (fire.facts as Record<string, unknown>)?.reviewFixAttemptId
+          ) ||
         (fire.facts as Record<string, unknown>)?.reviewRunId !== payload.feedbackEventId ||
         !review ||
         review.status !== 'SUCCESS' ||

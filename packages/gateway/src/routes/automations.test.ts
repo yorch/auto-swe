@@ -56,6 +56,8 @@ vi.mock('@auto-swe/shared/lib/integrations/registry', async (orig) => ({
 }));
 
 const engine = vi.hoisted(() => ({ decideAndStart: vi.fn() }));
+const reviewRetry = vi.hoisted(() => vi.fn());
+vi.mock('../lib/reviewFixRetry.js', () => ({ queueReviewFixRetry: reviewRetry }));
 vi.mock('../lib/automations/engine.js', async (orig) => ({
   ...(await orig<typeof import('../lib/automations/engine.js')>()),
   decideAndStart: engine.decideAndStart,
@@ -380,6 +382,24 @@ describe('automationRoutes (event automations)', () => {
         ownerKey: 'github.com/acme/api',
         retry: { fireId: FIRE, kind: 'manual' },
       });
+      expect(authorizeLaunch).toHaveBeenCalled();
+    });
+
+    it('queues trusted review findings by database review id rather than host occurrence facts', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.automation.findUnique.mockResolvedValue(
+        stored({ source: PR_FEEDBACK, templateId: null })
+      );
+      ctx.prisma.automationFire.findFirst.mockResolvedValue(fire({ facts: { reviewRunId: FIRE } }));
+      reviewRetry.mockResolvedValue({ workflowId: 'retry-review' });
+      const res = await retry();
+      expect(res.statusCode).toBe(202);
+      expect(reviewRetry).toHaveBeenCalledWith(expect.anything(), expect.anything(), FIRE, {
+        automationId: AUTOMATION,
+        connectionId: REPO,
+        fireId: FIRE,
+      });
+      expect(engine.decideAndStart).not.toHaveBeenCalled();
       expect(authorizeLaunch).toHaveBeenCalled();
     });
 

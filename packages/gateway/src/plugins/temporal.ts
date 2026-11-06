@@ -428,6 +428,10 @@ declare module 'fastify' {
        * redelivery (even after the first run finished) is a no-op rather than an error.
        */
       startPrEvaluationWorkflow: (workflowId: string, input: PrEvaluationInput) => Promise<void>;
+      startReviewFixRetry: (
+        workflowId: string,
+        input: { runId: string; attemptId: string; automationId?: string }
+      ) => Promise<void>;
       startConsolidationWorkflow: (
         workflowId: string,
         input: ConsolidateLessonsInput
@@ -1327,6 +1331,24 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
           taskQueue: 'engineering-workflow',
           workflowId: `repo-dependency-scan-${repoId}`,
           workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        });
+      } catch (err) {
+        if (getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError') {
+          throw err;
+        }
+      }
+    },
+
+    async startReviewFixRetry(
+      workflowId: string,
+      input: { runId: string; attemptId: string; automationId?: string }
+    ): Promise<void> {
+      try {
+        await client.workflow.start('reviewFixRetryWorkflow', {
+          args: [input],
+          taskQueue: 'engineering-workflow',
+          workflowId,
+          workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
         });
       } catch (err) {
         if (getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError') {

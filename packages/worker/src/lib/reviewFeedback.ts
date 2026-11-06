@@ -8,8 +8,12 @@ function object(value: unknown): Record<string, unknown> {
     : {};
 }
 
-export function reviewFeedbackSubject(prNumber: number, runId: string): string {
-  return `pr-${prNumber}@review-${runId}`;
+export function reviewFeedbackSubject(
+  prNumber: number,
+  runId: string,
+  attemptId?: unknown
+): string {
+  return `pr-${prNumber}@review-${runId}${typeof attemptId === 'string' ? `:attempt-${attemptId}` : ''}`;
 }
 
 interface ReviewFeedback {

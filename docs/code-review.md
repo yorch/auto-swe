@@ -116,6 +116,7 @@ routes require ENGINEER, with source control and repository checks on launch.
 | Method and path | Request / result |
 |---|---|
 | `POST /workflow-runs/:id/reviews` | Exactly `{ "presetId": "<uuid>" }` or `{ "templateId": "<uuid>" }`; optional `Idempotency-Key`; returns 201 with `data: { runId, workflowId }`. |
+| `POST /workflow-runs/:id/reviews/fix-retry` | ENGINEER with review-run control and repository authorization; queues a guarded fix retry and returns 202 with `data: { workflowId }`. |
 | `GET /review-presets` | Enabled presets and active review templates for the picker. |
 | `GET /workflow-runs/:id` | The `review` field describes eligibility, control, source linkage, and linked review summaries. Step outputs carry the publication summary. |
 | `GET /platform/review-presets` | Presets with template metadata and attachments. |
@@ -136,8 +137,11 @@ review template with `REVIEW_TEMPLATE_NEEDS_SOURCE`.
 - Stored diffs are unverified. They never count toward PR evaluation and cannot start a fix round.
 - A review does not run tests merely by loading the diff, and oversized diffs fail rather than
   receive partial review. Findings displayed/published by the summary are bounded.
-- Fix fires are not retryable through the generic automation-fire retry endpoint. A failed or
-  suppressed fix decision is not re-launched as another round for the same review run.
+- Fix retries apply only to successful blocking PR reviews with fix policy and a transient
+  failed, suppressed, or skipped decision (for example cooldown, budget, unavailable configuration,
+  or a failed start). The run's **Retry fix** action and the generic automation-fire retry endpoint
+  create a new attempt, reread stored findings, and recheck all guards and limits. A moved head,
+  closed/fork PR, protected/never-push branch, or exhausted round limit is not retryable.
 - PR reevaluation waits up to five minutes for the publishing review run to reach SUCCESS.
   Unsuccessful or unfinished reviews are skipped; scheduling reevaluation is best-effort and a
   scheduling failure records an activity event rather than failing publication.

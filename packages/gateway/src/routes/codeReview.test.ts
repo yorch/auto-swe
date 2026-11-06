@@ -2,6 +2,7 @@ import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { queueReviewFixRetry } from '../lib/reviewFixRetry.js';
 import { codeReviewRoutes } from './codeReview.js';
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
@@ -69,6 +70,7 @@ async function fixture(role = 'ENGINEER') {
       }),
       findUnique: vi.fn(async ({ where }) => ledgers.get(where.temporalWorkflowId) ?? null),
     },
+    automationFire: { findFirst: vi.fn().mockResolvedValue(null), updateMany: vi.fn() },
     configAuditLog: { create: vi.fn(async () => ({})) },
     connection: {
       findUnique: vi.fn().mockResolvedValue({
@@ -117,15 +119,106 @@ async function fixture(role = 'ENGINEER') {
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: SOURCE }),
   } as never);
-  app.decorate('temporal', { startRunnableWorkflow: start } as never);
+  const retryStart = vi.fn();
+  app.decorate('temporal', {
+    startReviewFixRetry: retryStart,
+    startRunnableWorkflow: start,
+  } as never);
   await app.register(codeReviewRoutes, { prefix: '/api/v1' });
   await app.ready();
-  return { app, db, preset, source, start, template };
+  return { app, db, preset, retryStart, source, start, template };
 }
 
 beforeEach(() => {
   guard.allowed = true;
   guard.validate.mockClear();
+});
+
+describe('review fix retry route', () => {
+  const url = `${launchUrl}/fix-retry`;
+  const ready = async () => {
+    const ctx = await fixture();
+    Object.assign(ctx.source, {
+      reviewOfRunId: TEMPLATE,
+      steps: [
+        {
+          id: 'publish',
+          outputs: { approved: false, fix: { reason: 'the fix launch failed', status: 'skipped' } },
+        },
+      ],
+      template: { kind: 'review' },
+      workRequest: {
+        connectionId: REPO,
+        payload: {
+          connectionId: REPO,
+          onBlocking: 'fix',
+          reviewOf: { mode: 'pr', prNumber: 7 },
+          sourceRunId: TEMPLATE,
+        },
+      },
+    });
+    return ctx;
+  };
+  it('queues a guarded retry and coalesces identical submissions', async () => {
+    const { app, retryStart, db } = await ready();
+    const req = { headers: AUTH, method: 'POST' as const, url };
+    expect((await app.inject(req)).statusCode).toBe(202);
+    expect((await app.inject(req)).statusCode).toBe(202);
+    expect(retryStart.mock.calls[0]).toEqual(retryStart.mock.calls[1]);
+    expect(retryStart.mock.calls[0]?.[1]).toMatchObject({
+      attemptId: expect.any(String),
+      runId: SOURCE,
+    });
+    expect(db.workflowRun.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: SOURCE, OR: expect.any(Array) },
+      })
+    );
+    await app.close();
+  });
+  it.each(['VIEWER', undefined])('denies unauthenticated or viewer callers (%s)', async (role) => {
+    const { app, retryStart } = await fixture(role);
+    const res = await app.inject({ method: 'POST', url, ...(role ? { headers: AUTH } : {}) });
+    expect(res.statusCode).toBe(role ? 403 : 401);
+    expect(retryStart).not.toHaveBeenCalled();
+    await app.close();
+  });
+  it('returns 404 outside the run control filter', async () => {
+    const { app, db } = await ready();
+    db.workflowRun.findFirst.mockResolvedValue(null);
+    expect((await app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(404);
+    await app.close();
+  });
+  it('binds generic fire retries to the same latest decision, automation and repository', async () => {
+    const { app, retryStart, db } = await ready();
+    const user = { exp: 1, iat: 1, role: 'ENGINEER' as const, sub: SOURCE };
+    db.automationFire.findFirst.mockResolvedValue({
+      automationId: TEMPLATE,
+      id: PRESET,
+      outcome: 'FAILED_TO_START',
+      reason: 'the fix launch failed',
+    } as never);
+    await expect(
+      queueReviewFixRetry(app, user, SOURCE, {
+        automationId: TEMPLATE,
+        connectionId: 'other-repo',
+        fireId: PRESET,
+      })
+    ).rejects.toMatchObject({ code: 'NOT_RETRYABLE' });
+    expect(retryStart).not.toHaveBeenCalled();
+    await app.close();
+  });
+  it('refuses missing decisions, repository denial and failed scheduling', async () => {
+    const { app, source, retryStart } = await ready();
+    guard.allowed = false;
+    expect((await app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(403);
+    guard.allowed = true;
+    retryStart.mockRejectedValueOnce(new Error('Temporal unavailable'));
+    expect((await app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(500);
+    Object.assign(source, { steps: [] });
+    expect((await app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(409);
+    await app.close();
+  });
 });
 
 describe('review launch route', () => {
