@@ -273,10 +273,10 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       undefined,
       {
         detectedStack: repo.detectedStack,
-        repoSetup: { field: repo.setup },
         egressPolicy,
         knowledgeBaseSnapshotIds: references.snapshotIds,
         knowledgeBases: references.checkouts,
+        repoSetup: { field: repo.setup },
         services,
         teamId: repo.teamId,
       }

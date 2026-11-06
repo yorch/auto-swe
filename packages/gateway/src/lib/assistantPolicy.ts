@@ -58,10 +58,10 @@ export type AssistantAccess = 'read' | 'confirm' | 'never';
 
 export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> = {
   'DELETE /api/v1/integrations/github-approver-app': { never: 'secret' },
-  'DELETE /api/v1/platform/review-presets/:id': 'confirm',
-  'DELETE /api/v1/platform/review-presets/:id/attachments': 'confirm',
   'DELETE /api/v1/knowledge-base-links/:id': 'confirm',
   'DELETE /api/v1/knowledge-bases/:id': 'confirm',
+  'DELETE /api/v1/platform/review-presets/:id': 'confirm',
+  'DELETE /api/v1/platform/review-presets/:id/attachments': 'confirm',
   'DELETE /api/v1/report-digests/:id': 'confirm',
   'GET /api/v1/agent-runs/agents': 'read',
   'GET /api/v1/agent-runs/limits': 'read',

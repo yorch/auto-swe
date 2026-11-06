@@ -202,9 +202,9 @@ export async function executeImplementation(
     undefined,
     {
       detectedStack: repo.detectedStack,
-      repoSetup: { defer: true, field: repo.setup },
       knowledgeBaseSnapshotIds: references.snapshotIds,
       knowledgeBases: references.checkouts,
+      repoSetup: { defer: true, field: repo.setup },
       services,
       teamId: repo.teamId,
     }

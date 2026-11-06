@@ -466,6 +466,7 @@ describe('runAgentNode', () => {
       destroy: vi.fn(async () => {}),
       exec: vi.fn(async () => ''),
       gitAuthed: vi.fn(async () => ''),
+      runSetup: vi.fn(async () => null),
     };
 
     beforeEach(() => {
@@ -519,6 +520,13 @@ describe('runAgentNode', () => {
       );
       expect(workspace.gitAuthed).toHaveBeenCalledWith('fetch origin auto/JIRA-1-sub');
       expect(workspace.exec).toHaveBeenCalledWith("git reset --hard origin/'auto/JIRA-1-sub'");
+      expect(workspace.runSetup).toHaveBeenCalledTimes(1);
+      expect(workspace.exec.mock.invocationCallOrder[0]).toBeLessThan(
+        workspace.runSetup.mock.invocationCallOrder[0]
+      );
+      expect(workspace.runSetup.mock.invocationCallOrder[0]).toBeLessThan(
+        mockedRunAgent.mock.invocationCallOrder[0]
+      );
       // `toolKeys: null` grants the read tools only, as an agent run does.
       expect(mockedResolveSpec).toHaveBeenCalledWith(
         expect.objectContaining({ availableTools: { listDirectory: 'L', readFile: 'R' } }),
@@ -555,11 +563,26 @@ describe('runAgentNode', () => {
       expect(vi.mocked(createWorkspace).mock.calls[0]?.[1]).toBe('auto/JIRA-1');
       expect(workspace.gitAuthed).toHaveBeenCalledWith('fetch origin auto/JIRA-1');
       expect(workspace.exec).not.toHaveBeenCalled();
+      expect(workspace.runSetup).toHaveBeenCalledTimes(1);
       expect(events).toHaveBeenCalledWith({
         name: 'agent.runtime',
         outputJson: expect.objectContaining({ checkout: 'main' }),
       });
       events.mockRestore();
+    });
+
+    it('destroys the checkout without running the agent when deferred setup fails', async () => {
+      workspace.runSetup.mockRejectedValueOnce(new Error('setup failed'));
+
+      await expect(
+        runAgentNode({
+          agentRef: 'reviewer',
+          workspace: { repoId: 'repo-1', ticketId: 'JIRA-1' },
+        })
+      ).rejects.toThrow('setup failed');
+
+      expect(workspace.destroy).toHaveBeenCalledTimes(1);
+      expect(mockedRunAgent).not.toHaveBeenCalled();
     });
 
     it('runs one harness turn in the checkout when the run pinned the agent to it', async () => {
