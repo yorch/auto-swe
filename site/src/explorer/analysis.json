@@ -2698,6 +2698,31 @@
   ],
   "features": [
     {
+      "body": "Seeded graphs maintain repository documentation, remediate a reported vulnerability, or review a Confluence document before planning tickets.",
+      "category": "Library content",
+      "detail": "docs-refresh uses the implementation step with allowedPaths, stops without a PR on an empty change, otherwise opens a draft without an in-run human gate or CI loop. Its prompt asks for markdown-only edits, but the executable guard permits markdown anywhere and any file under docs/. vulnerability-remediation consumes an advisory supplied in the request: it does not discover advisories. A no-change result succeeds without a PR; otherwise the graph runs the vulnerability and test gates, opens a draft and enters the shared bounded CI-fix loop. Both gates are advisory (onFail: warn), so a failed test or scan alone does not block the draft, and a scan is not assurance that the advisory is resolved. confluence-review-to-tickets uses separate reviewer and planner agents and checked JSON replies; a blocker or major finding forces not-ready. It policy-gates page comments, stops after comments when not ready, and otherwise asks a person to approve the proposed ticket structure, allowing bounded revisions, before a separate policy gate for ticket creation. Invalid review output terminates before comments; invalid plan output terminates before tickets, but comments may already exist. Neither automatically opens a human correction step.",
+      "id": "reviewedLibraryPacks",
+      "refs": [
+        "docsRefreshGraph",
+        "vulnerabilityGraph",
+        "documentReviewGraph",
+        "documentReplyParse",
+        "documentReadyRule",
+        "implementationPathGuard"
+      ],
+      "status": "Seeded + executable",
+      "title": "Documentation, vulnerability and document-review library packs"
+    },
+    {
+      "body": "Review-loop templates stop when a rejected review repeats its prior findings, rather than spending the remaining fix rounds on the same rejection.",
+      "category": "Orchestration",
+      "detail": "The reviewLoop helper passes the previous rejection fingerprint into runReviewNetwork. The activity marks a non-approved result stalled when a non-empty fingerprint matches. The graph stores the rejection, checks stalled before its retry limit, and routes to its configured exhausted path. Approval clears the fingerprint. The fix node can inherit a template's explicit fixConfig, including allowedPaths; constraints on an initial implementation are not automatically universal constraints on every future session. Built-in template sync appends changed specs and promotes a still-active built-in version only when it is not in a live experiment; admin versions and deactivations are preserved. Review-kind metadata is filled separately when absent, without rewriting existing specs.",
+      "id": "reviewLoopStall",
+      "refs": ["reviewLoopGraph", "reviewStallCheck", "builtinTemplateSync"],
+      "status": "Implemented + seeded templates",
+      "title": "Repeated review findings stop the fix loop"
+    },
+    {
       "body": "Review a finished workflow or agent run manually or through attached presets, with separate results and optional guarded fix rounds.",
       "category": "Engineering",
       "detail": "Review-kind library templates provide network, Qodo and human-review variants. Launch preparation checks source control, repository access, review.enabled and template/preset scope. Global presets are platform-admin managed; team presets require that team's lead/admin membership and cannot be attached or launched across teams. The source-run picker exposes globals plus that source's team. Successful non-review runs enqueue independent global and team attachment intents, dispatched with durable claims and a stale-intent sweep. PR and branch reviews verify recorded heads; stored diffs are checked and applied at the recorded base into a local-only commit. Optional runTests runs the repository's test gate on a verified checkout. Large changes are reviewed in bounded chunks inside one network step, merging worst-of verdicts and deduplicated findings. The run page links reviews and shows verification, verdicts and fix status. PR-mode publication posts a marked comment and requests reevaluation; successful verified current-head linked reviews can supply otherwise missing PR review evidence, but cannot lower original evidence. PR fixes use an opted-in review_findings feedback automation and its existing guards; stored fixes launch a same-agent deliver:none follow-up. Transient failures can be retried with distinct, deduplicated attempts and DB-backed findings.",
@@ -4383,6 +4408,21 @@
   ],
   "limits": [
     {
+      "body": "Checked model output and approval do not make document comments or ticket-plan creation atomic.",
+      "category": "External effects",
+      "detail": "The document-review pack checks bounded JSON shapes, not the truth or completeness of the review and plan. A quoted passage is anchored when found; an unsupported anchor falls back to a footer comment with the quote. Comments are sent sequentially, and a transient error can leave earlier comments behind. Ticket-plan creation likewise creates an epic, tickets and subtasks sequentially without rollback; a failure reports the items created so far. These writes use the outcome ledger rather than blindly retrying an uncertain partial effect. A valid plan still needs a person's structure approval even if the autonomy policy allows the later tracker write automatically.",
+      "id": "documentWriteBounds",
+      "refs": [
+        "documentReadyRule",
+        "documentReviewGraph",
+        "documentCommentWrite",
+        "documentPlanWrite",
+        "externalWrite"
+      ],
+      "status": "Confirmed boundary",
+      "title": "Document-review writes can leave partial effects"
+    },
+    {
       "body": "A review is bounded evidence about one change, not proof of correctness or a promise that a fix starts.",
       "category": "Engineering",
       "detail": "Network chunks see the full file list but only their part of the diff, so cross-chunk interactions may be missed. Changes above the hard size cap are refused. Stored verification rejects unsupported or unsafe patch forms; failures remain explicitly unverified and skip the optional test gate. Even verified stored reviews have no PR and never feed PR evaluation. Tests are opt-in, not an implied successful gate. PR fixes need an enabled repository automation opted into review_findings, the matching open platform PR and unchanged head, push eligibility, budget and remaining rounds; a skipped decision is surfaced rather than treated as a successful fix. Stored fixes remain unpublished agent runs. Retry eligibility is limited to recorded transient decisions and rechecks guards. Publication waits up to five minutes for review completion before reevaluation, which rereads the PR's current head.",
@@ -4778,9 +4818,17 @@
     {
       "body": "The pull request exists, ready for review, before any person has signed off; in consensus-review it also precedes every reviewer agent (four-eyes runs its agent review loop first).",
       "category": "Publication order",
-      "detail": "four-eyes and consensus-review open a non-draft pull request and run CI before their gate, so opening it can notify Slack, sync trackers and request CODEOWNERS reviewers early, and a run that ends FAILED or TIMED_OUT leaves it open. Of the built-in templates only model-catalog-refresh and ci-triage-and-fix request a draft pull request, and there is no step that marks a draft ready. Only these two templates and ci-triage-and-fix guard a no-op CI fix with retryIfUnchanged; the other repush templates can still wait out a CI signal that never comes.",
+      "detail": "four-eyes and consensus-review open a non-draft pull request and run CI before their gate, so opening it can notify Slack, sync trackers and request CODEOWNERS reviewers early, and a run that ends FAILED or TIMED_OUT leaves it open. Draft-producing library graphs include model-catalog-refresh, ci-triage-and-fix, docs-refresh and vulnerability-remediation; there is no step that marks a draft ready. four-eyes, consensus-review and ci-triage-and-fix guard a no-op CI fix with retryIfUnchanged; the other repush templates can still wait out a CI signal that never comes. docs-refresh has no CI-fix loop.",
       "id": "readyPrBeforeGate",
-      "refs": ["fourEyes", "consensus", "ciNoop", "catalogScope", "ciTriageDraft"],
+      "refs": [
+        "fourEyes",
+        "consensus",
+        "ciNoop",
+        "catalogScope",
+        "ciTriageDraft",
+        "docsRefreshGraph",
+        "vulnerabilityGraph"
+      ],
       "status": "Confirmed boundary",
       "title": "Gated templates open a ready PR before the gate"
     },
@@ -5983,6 +6031,83 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "async function confluenceCommentOutcome(",
+      "id": "documentCommentWrite",
+      "lines": 65,
+      "path": "packages/worker/src/activities/genericActions.ts",
+      "title": "Sequential Confluence comments anchor or fall back to footer comments"
+    },
+    {
+      "anchor": "async function issueTrackerPlanOutcome(",
+      "id": "documentPlanWrite",
+      "lines": 65,
+      "path": "packages/worker/src/activities/genericActions.ts",
+      "title": "Ticket plans are revalidated and created sequentially without rollback"
+    },
+    {
+      "anchor": "export const DOCS_REFRESH_SPEC:",
+      "id": "docsRefreshGraph",
+      "lines": 65,
+      "path": "packages/shared/src/workflow/templates/docsRefresh.ts",
+      "title": "Documentation maintenance is a path-restricted draft-PR graph"
+    },
+    {
+      "anchor": "export const VULNERABILITY_REMEDIATION_SPEC:",
+      "id": "vulnerabilityGraph",
+      "lines": 65,
+      "path": "packages/shared/src/workflow/templates/vulnerabilityRemediation.ts",
+      "title": "An advisory-driven graph scans, tests and opens a draft"
+    },
+    {
+      "anchor": "export const CONFLUENCE_REVIEW_TO_TICKETS_SPEC:",
+      "id": "documentReviewGraph",
+      "lines": 90,
+      "path": "packages/shared/src/workflow/templates/confluenceReviewToTickets.ts",
+      "title": "Document review validates model replies before gated writes"
+    },
+    {
+      "anchor": "export async function parseAgentOutput(",
+      "id": "documentReplyParse",
+      "lines": 60,
+      "path": "packages/worker/src/activities/parseAgentOutput.ts",
+      "title": "Malformed document reviews and ticket plans return invalid output"
+    },
+    {
+      "anchor": "export function parseDocReview(raw: string)",
+      "id": "documentReadyRule",
+      "lines": 35,
+      "path": "packages/worker/src/lib/documentReview.ts",
+      "title": "Blocking document findings override a model's ready claim"
+    },
+    {
+      "anchor": "export async function assertCommittedTreeWithinAllowedPaths(",
+      "id": "implementationPathGuard",
+      "lines": 43,
+      "path": "packages/worker/src/activities/allowedPaths.ts",
+      "title": "The committed tree is checked against allowed paths before push"
+    },
+    {
+      "anchor": "export function reviewLoop(opts:",
+      "id": "reviewLoopGraph",
+      "lines": 90,
+      "path": "packages/shared/src/workflow/templates/authoring/reviewLoop.ts",
+      "title": "A repeated rejection takes the review loop's exhausted path"
+    },
+    {
+      "anchor": "export function isStalled(",
+      "id": "reviewStallCheck",
+      "lines": 16,
+      "path": "packages/worker/src/activities/runReviewNetwork.ts",
+      "title": "Only matching non-empty rejected-review fingerprints stall"
+    },
+    {
+      "anchor": "async function syncBuiltinTemplate(",
+      "id": "builtinTemplateSync",
+      "lines": 90,
+      "path": "packages/shared/src/lib/syncBuiltins.ts",
+      "title": "Seed synchronization fills review kind separately from spec versions"
+    },
     {
       "anchor": "export async function refuseWideningEgressPolicy(",
       "id": "egressLaunch",
@@ -13374,6 +13499,15 @@
   ],
   "usecases": [
     {
+      "body": "Review a Confluence page against criteria, leave comments, then propose a ticket hierarchy for a person to approve.",
+      "category": "Product",
+      "detail": "confluence-review-to-tickets is ordinary document-workspace library content. Its source page and target tracker are separate declared connections. Not-ready documents stop after gated comments so the author can edit and restart. A ready document proceeds through checked planning output, bounded human revisions, structure approval and a separate tracker-write policy gate. Malformed output stops the graph; this is not an automatic document-editing or ticket-execution workflow.",
+      "id": "reviewDocumentToTickets",
+      "refs": ["documentReviewGraph", "documentReplyParse", "documentPlanWrite"],
+      "status": "Seeded + executable",
+      "title": "Review a document before creating engineering tickets"
+    },
+    {
       "body": "Ask for another review of a completed change without repeating the implementation run.",
       "category": "Engineering",
       "detail": "Choose an enabled global or source-team preset from a controllable run, or select a review template in Advanced mode. Attach presets to a repository or workflow template to review successful runs automatically. A network review can be complemented by Qodo at the reviewed head or an explicit human decision. Read the linked verdict, verification and optional test results on the review run; a PR review also posts a comment and contributes current-head evaluation evidence. Fix mode can request a guarded PR feedback round or an unpublished same-agent follow-up for a verified stored change, with reasons when it cannot start.",
@@ -13410,9 +13544,9 @@
     {
       "body": "Use schedules to launch repeatable repository tasks such as dependency updates or security triage.",
       "category": "Engineering",
-      "detail": "The dependency-update and security-triage templates are library content; schedule rows point at a saved template/version and target repository.",
+      "detail": "The dependency-update, security-triage, docs-refresh and vulnerability-remediation templates are library content; schedule rows point at a saved template/version and target repository. Documentation refresh avoids a PR when unchanged. Vulnerability remediation needs a supplied advisory and is not a vulnerability discovery feed.",
       "id": "maintenance",
-      "refs": ["templates", "gateway"],
+      "refs": ["templates", "gateway", "docsRefreshGraph", "vulnerabilityGraph"],
       "status": "Seeded + executable",
       "title": "Recurring dependency and maintenance work"
     },

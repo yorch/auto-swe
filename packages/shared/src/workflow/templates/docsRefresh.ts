@@ -30,7 +30,7 @@ export const DOCS_REFRESH_SPEC: WorkflowSpec = {
   description:
     'Keep the repository documentation true to its code: read the markdown, check each claim ' +
     'against the source, fix what has drifted and write what is missing (a README when there ' +
-    'is none), then open a draft pull request. Only markdown can change. A run with nothing ' +
+    'is none), then open a draft pull request. Only markdown files or files under docs/ can change. A run with nothing ' +
     'to change opens none, so it suits a schedule.',
   entry: 'setImplementing',
   name: 'docs-refresh',

@@ -1065,9 +1065,9 @@ register({
   description:
     "Check a document-review agent's JSON reply against its shape and render it for a person to read. " +
     "Reads `inputs.text` (the agent node's `output.text`). Output: `valid` (false with a fixed `error` " +
-    'when the reply is not the expected JSON, which the template routes to a person), `markdown`, and by kind: ' +
+    'when the reply is not the expected JSON, which the template can branch on), `markdown`, and by kind: ' +
     '`ready`, `summary`, `findingCount`, `blockingCount`, `comments` for a review (a review that lists a ' +
-    'blocker or a major finding is never ready), or `plan`, `ticketCount`, `subtaskCount` for a plan. Never fails the run.',
+    'blocker or a major finding is never ready), or `plan`, `ticketCount`, `subtaskCount` for a plan. Returns invalid output rather than throwing on malformed replies.',
   label: 'Check agent output',
   name: 'parseAgentOutput',
 });

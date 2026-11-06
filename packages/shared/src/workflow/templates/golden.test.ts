@@ -945,6 +945,16 @@ const INTENDED_CHANGES: Record<
   string,
   { reason: string; apply: (g: WorkflowSpec) => WorkflowSpec }
 > = {
+  'docs-refresh': {
+    apply: (g) => ({
+      ...g,
+      description: g.description?.replace(
+        'Only markdown can change.',
+        'Only markdown files or files under docs/ can change.'
+      ),
+    }),
+    reason: 'the description distinguishes the markdown prompt from the docs-directory path guard',
+  },
   // Seven templates stamped COMPLETED just before their SUCCESS terminate. The finalizer
   // (`finalizeWorkflowRun`) already writes COMPLETED on a SUCCESS run, so the node was a
   // second write of the same fact. Removing it retargets what pointed at it to `done`.
