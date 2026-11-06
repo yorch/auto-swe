@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type { PullRequestCockpit, PullRequestCockpitFile } from '@auto-swe/shared/types/api';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { syntaxForDiff } from '@/lib/diffSyntax';
@@ -119,7 +120,10 @@ const headerOf = (name: string) => {
 
 const show = (data: PullRequestCockpit) => render(withQuery(<PullRequestReview data={data} />));
 const fetchSpy = () =>
-  setupFetchMock({ 'PUT /api/v1/pull-requests/pr-1/viewed': () => ({ data: { updated: 1 } }) });
+  setupFetchMock({
+    'POST /api/v1/pull-requests/pr-1/visit': () => ({ data: { recorded: true } }),
+    'PUT /api/v1/pull-requests/pr-1/viewed': () => ({ data: { updated: 1 } }),
+  });
 
 beforeEach(() => {
   fetchSpy();
@@ -572,5 +576,140 @@ describe('the diff layout', () => {
     show(data);
     fireEvent.click(layoutButton('Split'));
     expect(screen.getByText(/off by one in the loop/)).toBeTruthy();
+  });
+});
+
+describe('since the reviewer last looked', () => {
+  const earlier = {
+    commits: [{ sha: 'c1c1c1c1c1', subject: 'fix the retry' }],
+    fromHeadSha: 'a'.repeat(40),
+    lastVisitedAt: new Date(Date.now() - 3_600_000).toISOString(),
+    rewritten: false,
+    totalCommits: 1,
+  };
+  const visitsOf = (spy: ReturnType<typeof vi.fn>) =>
+    spy.mock.calls.filter(
+      ([url, init]) =>
+        String(url).endsWith('/api/v1/pull-requests/pr-1/visit') &&
+        (init as RequestInit | undefined)?.method === 'POST'
+    );
+  const headsPosted = (spy: ReturnType<typeof vi.fn>) =>
+    visitsOf(spy).map(([, init]) => {
+      const sent = JSON.parse(String((init as RequestInit).body)) as { headSha: string };
+      return sent.headSha;
+    });
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+  /** One client for the whole test, so a redraw with new data is a refresh of the same page. */
+  function mount(data: PullRequestCockpit) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ui = (next: PullRequestCockpit) => (
+      <QueryClientProvider client={qc}>
+        <PullRequestReview data={next} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(ui(data));
+    return (next: PullRequestCockpit) => rerender(ui(next));
+  }
+
+  it('records the head the page shows, after it has drawn', async () => {
+    const spy = fetchSpy();
+    show(cockpit());
+    await waitFor(() => expect(visitsOf(spy)).toHaveLength(1));
+    expect(bodyOf(spy, '/api/v1/pull-requests/pr-1/visit')).toEqual({ headSha: 'abc1234def' });
+  });
+
+  it('records it once however often the page draws again', async () => {
+    const spy = fetchSpy();
+    const redraw = mount(cockpit());
+    await waitFor(() => expect(visitsOf(spy)).toHaveLength(1));
+    redraw(cockpit());
+    redraw(cockpit());
+    await settle();
+    expect(visitsOf(spy)).toHaveLength(1);
+  });
+
+  it('records the new head when the pull request moves while the page is open', async () => {
+    const spy = fetchSpy();
+    const redraw = mount(cockpit());
+    await waitFor(() => expect(visitsOf(spy)).toHaveLength(1));
+    redraw(
+      withFiles([file()], {
+        files: {
+          headSha: 'def5678abc',
+          items: [file()],
+          state: 'open',
+          truncated: false,
+          type: 'ok',
+        },
+      })
+    );
+    await waitFor(() => expect(visitsOf(spy)).toHaveLength(2));
+    expect(headsPosted(spy)).toEqual(['abc1234def', 'def5678abc']);
+  });
+
+  it('records nothing while the host cannot say what the head is', async () => {
+    const spy = fetchSpy();
+    show(cockpit({ files: { reason: 'failed', type: 'unavailable' } }));
+    await settle();
+    expect(visitsOf(spy)).toHaveLength(0);
+  });
+
+  it('shows nothing about an earlier visit on a first look', () => {
+    show(cockpit());
+    expect(screen.queryByText('Since you last looked')).toBeNull();
+  });
+
+  it('says what came in since the last visit', () => {
+    show(cockpit({ sinceLastVisit: earlier }));
+    expect(screen.getByText('Since you last looked')).toBeTruthy();
+    expect(screen.getByText(/fix the retry/)).toBeTruthy();
+    expect(screen.getByText('aaaaaaa')).toBeTruthy();
+  });
+
+  it('keeps saying it when a refresh, made after the visit was recorded, comes back without it', async () => {
+    const redraw = mount(cockpit({ sinceLastVisit: earlier }));
+    expect(screen.getByText('Since you last looked')).toBeTruthy();
+    redraw(cockpit({ sinceLastVisit: null }));
+    await settle();
+    expect(screen.getByText('Since you last looked')).toBeTruthy();
+  });
+
+  it('replaces it when the head moves again', () => {
+    const redraw = mount(cockpit({ sinceLastVisit: earlier }));
+    redraw(
+      cockpit({
+        sinceLastVisit: {
+          ...earlier,
+          commits: [{ sha: 'e3e3e3e3e3', subject: 'a later commit' }],
+          fromHeadSha: 'b'.repeat(40),
+        },
+      })
+    );
+    expect(screen.getByText(/a later commit/)).toBeTruthy();
+    expect(screen.queryByText(/fix the retry/)).toBeNull();
+  });
+
+  it('shows no summary while the host cannot say what the head is', () => {
+    show(cockpit({ files: { reason: 'failed', type: 'unavailable' }, sinceLastVisit: earlier }));
+    expect(screen.queryByText('Since you last looked')).toBeNull();
+  });
+
+  it('marks a file whose patch changed since it was viewed, in the list and on the file', () => {
+    show(cockpit({ changedSinceViewed: ['src/a.ts'] }));
+    // The rail's marker for screen readers, and the badge on the file's header.
+    expect(screen.getAllByText('Changed since you viewed it')).toHaveLength(2);
+  });
+
+  it('marks nothing when no viewed file has changed', () => {
+    show(cockpit());
+    expect(screen.queryByText('Changed since you viewed it')).toBeNull();
+  });
+
+  it('stops marking a file once it is marked viewed again', () => {
+    const redraw = mount(cockpit({ changedSinceViewed: ['src/a.ts'] }));
+    expect(screen.getAllByText('Changed since you viewed it')).toHaveLength(2);
+    redraw(cockpit({ changedSinceViewed: ['src/a.ts'], viewed: ['src/a.ts'] }));
+    expect(screen.queryByText('Changed since you viewed it')).toBeNull();
   });
 });

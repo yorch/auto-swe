@@ -14,7 +14,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { CiBadge, PullRequestStateBadge } from '@/components/work/PullRequestBadges';
 import { useDiffMode } from '@/hooks/useDiffMode';
 import { useIsNarrow } from '@/hooks/useMediaQuery';
-import { useSetFilesViewed } from '@/hooks/usePullRequestCockpit';
+import { useRecordVisit, useSetFilesViewed } from '@/hooks/usePullRequestCockpit';
 import { findMovedBlocks } from '@/lib/movedBlocks';
 import {
   type FileFilter,
@@ -32,6 +32,7 @@ import { visibleText } from '@/lib/visibleText';
 import { FindingNote } from './FindingNote';
 import { ReviewBrief } from './ReviewBrief';
 import { ReviewDiffFile } from './ReviewDiffFile';
+import { SinceLastVisit } from './SinceLastVisit';
 
 /** Files open when the page loads; the rest wait to be opened, so a big change draws a few. */
 const OPEN_BY_DEFAULT = 3;
@@ -84,7 +85,28 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
   const setViewed = useSetFilesViewed(pull.id);
   const items = useMemo(() => (files.type === 'ok' ? files.items : []), [files]);
   const viewed = useMemo(() => new Set(data.viewed), [data.viewed]);
+  // A file marked viewed again is no longer "changed since": the mark was made on the new patch.
+  const changedSince = useMemo(
+    () => new Set(data.changedSinceViewed.filter((path) => !viewed.has(path))),
+    [data.changedSinceViewed, viewed]
+  );
   const findings = evaluation?.findings ?? [];
+
+  // The head the page shows is recorded once, after it has drawn, never on a refresh. That is
+  // also why the summary is kept here: the refresh after it is answered without one.
+  const { mutate: recordVisit } = useRecordVisit(pull.id);
+  const seenHead = files.type === 'ok' ? files.headSha : null;
+  useEffect(() => {
+    if (seenHead !== null) {
+      recordVisit(seenHead);
+    }
+  }, [seenHead, recordVisit]);
+  const [since, setSince] = useState(data.sinceLastVisit);
+  useEffect(() => {
+    if (data.sinceLastVisit !== null) {
+      setSince(data.sinceLastVisit);
+    }
+  }, [data.sinceLastVisit]);
 
   const { mode, setMode } = useDiffMode();
   // Two panes need room: a phone-width page keeps one column whatever was chosen.
@@ -278,6 +300,9 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
           This pull request is {files.state} on the host.
         </Alert>
       ) : null}
+      {since !== null && files.type === 'ok' ? (
+        <SinceLastVisit since={since} toHead={files.headSha} />
+      ) : null}
 
       <ReviewBrief evaluation={evaluation} pull={pull} />
 
@@ -338,6 +363,12 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
                     <span className="min-w-0 flex-1 break-all font-mono text-paper-200">
                       {visibleText(file.path)}
                     </span>
+                    {changedSince.has(file.path) ? (
+                      <span className="shrink-0 text-info-400">
+                        <span aria-hidden="true">●</span>
+                        <span className="sr-only">Changed since you viewed it</span>
+                      </span>
+                    ) : null}
                     {file.flagged ? (
                       <span className="shrink-0 text-warning-400">
                         <span aria-hidden="true">⚑</span>
@@ -394,6 +425,11 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
                       annotations={annotations.get(file.path)}
                       headerExtra={
                         <span className="flex items-center gap-2">
+                          {changedSince.has(file.path) ? (
+                            <Badge tone="info" variant="outline">
+                              Changed since you viewed it
+                            </Badge>
+                          ) : null}
                           {here > 0 ? (
                             <Badge tone="warning" variant="outline">
                               {plural(here, 'finding')}
