@@ -124,6 +124,84 @@ describe('startAppPreview', () => {
     }
   });
 
+  it('uses tini as the process-group leader when it is executable on PATH', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'asw-preview-tini-launcher-'));
+    const bin = path.join(dir, 'bin');
+    const pgidFile = path.join(dir, 'preview.pgid');
+    const logFile = path.join(dir, 'preview.log');
+    const markFile = `${pgidFile}.mark`;
+    const sinceFile = `${pgidFile}.since`;
+    let group = 0;
+    try {
+      await fs.mkdir(bin);
+      await fs.symlink('/bin/sh', path.join(bin, 'sh'));
+      await fs.symlink('/bin/sleep', path.join(bin, 'sleep'));
+      await fs.writeFile(
+        path.join(bin, 'tini'),
+        '#!/bin/sh\nwhile [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n',
+        { mode: 0o755 }
+      );
+      execFileSync(
+        process.execPath,
+        ['-e', APP_PREVIEW_LAUNCHER, 'sleep 30', pgidFile, logFile, markFile, sinceFile],
+        { env: { ...process.env, PATH: bin } }
+      );
+      group = Number(await fs.readFile(pgidFile, 'utf8'));
+
+      expect(group).toBeGreaterThan(1);
+      expect(await fs.readFile(`${pgidFile}.reaper`, 'utf8')).toBe('1');
+      expect(groupAlive(group)).toBe(true);
+      execFileSync(process.execPath, ['-e', previewStopScript(pgidFile)]);
+      expect(await waitForGone(group)).toBe(true);
+      await expect(fs.access(`${pgidFile}.reaper`)).rejects.toThrow();
+    } finally {
+      if (group > 1 && groupAlive(group)) {
+        try {
+          process.kill(-group, 'SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+      await fs.rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it('keeps the original shell launcher when tini is absent from PATH', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'asw-preview-no-tini-launcher-'));
+    const bin = path.join(dir, 'bin');
+    const pgidFile = path.join(dir, 'preview.pgid');
+    const logFile = path.join(dir, 'preview.log');
+    const markFile = `${pgidFile}.mark`;
+    const sinceFile = `${pgidFile}.since`;
+    let group = 0;
+    try {
+      await fs.mkdir(bin);
+      await fs.symlink('/bin/sh', path.join(bin, 'sh'));
+      await fs.symlink('/bin/sleep', path.join(bin, 'sleep'));
+      execFileSync(
+        process.execPath,
+        ['-e', APP_PREVIEW_LAUNCHER, 'sleep 30', pgidFile, logFile, markFile, sinceFile],
+        { env: { ...process.env, PATH: bin } }
+      );
+      group = Number(await fs.readFile(pgidFile, 'utf8'));
+
+      expect(group).toBeGreaterThan(1);
+      await expect(fs.access(`${pgidFile}.reaper`)).rejects.toThrow();
+      expect(groupAlive(group)).toBe(true);
+      execFileSync(process.execPath, ['-e', previewStopScript(pgidFile)]);
+      expect(await waitForGone(group)).toBe(true);
+    } finally {
+      if (group > 1 && groupAlive(group)) {
+        try {
+          process.kill(-group, 'SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+      await fs.rm(dir, { force: true, recursive: true });
+    }
+  });
+
   it.skipIf(process.platform !== 'linux')(
     'stops a daemonized preview child by its inherited environment mark',
     async () => {
