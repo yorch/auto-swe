@@ -95,7 +95,8 @@ before the app preview starts. Kubernetes keeps service environment values in th
 per-pod Secret rather than the Pod manifest. Agent workspaces receive the recipe's services only
 when the agent has an explicit `browser` grant.
 
-The worker's `startAppPreview` helper runs optional setup, starts the app in its own session (so
+The worker's `startAppPreview` helper runs the recipe's optional setup (after the repository's
+[workspace setup](./repositories.md#workspace-setup), with the recipe's env), starts the app in its own session (so
 its pid is its process-group id and `stop()` can kill the whole tree), polls the readiness URL from
 inside the workspace and returns a stop function and bounded, redacted log tail. It uses the
 recipe's base URL, or the readiness URL's origin when none is supplied.

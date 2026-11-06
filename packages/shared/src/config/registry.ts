@@ -1772,7 +1772,7 @@ export const SETTING_DEFINITIONS = {
   'workspace.repoSetupStackDefaults': defineSetting({
     defaultValue: false,
     description:
-      'Whether a repository with no setup of its own (no repository setup and no `.auto-swe/setup.yml`) gets one from its detected stack: the lockfile-faithful install for a Node root or single component (`npm ci`, `pnpm install --frozen-lockfile`, `yarn install --immutable` or `--frozen-lockfile`), with `node_modules` cached by the lockfile. Other stacks get none. A failing install fails the workspace, as configured setup does.',
+      'Whether a repository with no setup of its own (no repository setup and no `.auto-swe/setup.yml`) gets one from its detected stack, for a root or single component whose directory holds the file its install needs: Node through its lockfile (`npm ci`, `pnpm install --frozen-lockfile`, `yarn install --immutable` or `--frozen-lockfile`), Python through `uv.lock` (`uv sync --frozen`) or `requirements.txt` (into a `.venv`), Go through `go.sum` (`go mod download`), Maven (`mvn dependency:go-offline`) and Gradle through `gradlew`, each cached by its lockfile or build files. Anything else gets none. A failing install fails the workspace, as configured setup does.',
     group: 'workspace',
     label: 'Stack-default repository setup',
     overridableAt: ['TEAM', 'ORGANIZATION'],

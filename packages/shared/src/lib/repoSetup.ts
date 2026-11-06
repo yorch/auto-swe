@@ -1,6 +1,6 @@
-import { parse as parseYaml } from 'yaml';
+import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { z } from 'zod';
-import { detectedTarget } from './stackDetection.js';
+import { type DetectedTarget, detectedTarget } from './stackDetection.js';
 
 /** Where a repository checks its setup definition in, read from the base (or pinned) commit. */
 export const REPO_SETUP_FILE = '.auto-swe/setup.yml';
@@ -125,29 +125,95 @@ const NODE_INSTALL: Record<string, { run: string; keyFile: string }> = {
   'yarn-classic': { keyFile: 'yarn.lock', run: 'yarn install --frozen-lockfile' },
 };
 
+const GRADLE_BUILD_FILES = [
+  'build.gradle',
+  'build.gradle.kts',
+  'settings.gradle',
+  'settings.gradle.kts',
+] as const;
+
+interface StackInstall {
+  run: string;
+  /** Files hashed into the cache key, relative to the target directory. */
+  keyFiles: string[];
+  /** Cached paths: relative to the target directory, or `~/…` under the home directory. */
+  paths: string[];
+}
+
+/** The install a detected target gets, from the lockfile or build file in its directory. */
+function stackInstall(target: DetectedTarget): StackInstall | null {
+  const has = (f: string) => target.rootFiles.has(f);
+  switch (target.stack) {
+    case 'node': {
+      const pm =
+        target.packageManager === 'yarn'
+          ? `yarn-${target.yarnFlavor ?? 'berry'}`
+          : (target.packageManager ?? null);
+      const install = pm ? NODE_INSTALL[pm] : undefined;
+      return install && has(install.keyFile)
+        ? { keyFiles: [install.keyFile], paths: ['node_modules'], run: install.run }
+        : null;
+    }
+    case 'python':
+      if (has('uv.lock')) {
+        return { keyFiles: ['uv.lock'], paths: ['.venv'], run: 'uv sync --frozen' };
+      }
+      return has('requirements.txt')
+        ? {
+            keyFiles: ['requirements.txt'],
+            paths: ['.venv'],
+            run: 'python -m venv .venv && .venv/bin/pip install -r requirements.txt',
+          }
+        : null;
+    case 'go':
+      return has('go.sum')
+        ? { keyFiles: ['go.mod', 'go.sum'], paths: ['~/go/pkg/mod'], run: 'go mod download' }
+        : null;
+    case 'jvm':
+      if (has('pom.xml')) {
+        return {
+          keyFiles: ['pom.xml'],
+          paths: ['~/.m2/repository'],
+          run: 'mvn -B -q dependency:go-offline',
+        };
+      }
+      return has('gradlew')
+        ? {
+            keyFiles: [
+              ...GRADLE_BUILD_FILES.filter(has),
+              'gradle/libs.versions.toml',
+              'gradle/wrapper/gradle-wrapper.properties',
+            ],
+            paths: ['~/.gradle/caches', '~/.gradle/wrapper'],
+            run: './gradlew --no-daemon dependencies',
+          }
+        : null;
+    default:
+      return null;
+  }
+}
+
 /**
  * The setup a repository gets from its stored stack detection when it configures none and
- * the `workspace.repoSetupStackDefaults` setting is on: the lockfile-faithful install for a
- * Node root or single component, cached by its lockfile. Null when there is no single,
- * unambiguous Node target with a known package manager; other stacks get none, because
- * their dependency caches live outside the checkout and a guessed command fails setup.
+ * the `workspace.repoSetupStackDefaults` setting is on: the lockfile-faithful install for the
+ * root or single component, cached by its lockfile or build files. Node installs with its
+ * package manager's frozen install, Python with `uv sync --frozen` (else a `.venv` from
+ * `requirements.txt`), Go with `go mod download`, Maven with `dependency:go-offline` and
+ * Gradle through its wrapper. Null when there is no single, unambiguous target, or its
+ * directory has none of the files its install needs: a guessed command would fail setup.
  */
 export function stackDefaultSetup(detectedStack: unknown): RepoSetup | null {
   const target = detectedTarget(detectedStack);
-  if (!target || target === 'ambiguous' || target.stack !== 'node') {
+  if (!target || target === 'ambiguous') {
     return null;
   }
-  const pm =
-    target.packageManager === 'yarn'
-      ? `yarn-${target.yarnFlavor ?? 'berry'}`
-      : (target.packageManager ?? null);
-  const install = pm ? NODE_INSTALL[pm] : undefined;
-  if (!install || !target.rootFiles.has(install.keyFile)) {
+  const install = stackInstall(target);
+  if (!install) {
     return null;
   }
-  const prefix = target.dir ? `${target.dir}/` : '';
+  const inDir = (p: string) => (p.startsWith('~/') || !target.dir ? p : `${target.dir}/${p}`);
   return {
-    cache: { keyFiles: [`${prefix}${install.keyFile}`], paths: [`${prefix}node_modules`] },
+    cache: { keyFiles: install.keyFiles.map(inDir), paths: install.paths.map(inDir) },
     steps: [
       {
         name: 'install dependencies',
@@ -156,6 +222,53 @@ export function stackDefaultSetup(detectedStack: unknown): RepoSetup | null {
       },
     ],
   };
+}
+
+/** What a repository starts from when it has no setup: an empty definition to fill in. */
+export const EMPTY_REPO_SETUP: RepoSetup = { steps: [] };
+
+/**
+ * A starting `.auto-swe/setup.yml` for a repository: its stack default when the stored
+ * detection names one, else a single placeholder step to edit.
+ */
+export function starterRepoSetup(detectedStack: unknown): RepoSetup {
+  return (
+    stackDefaultSetup(detectedStack) ?? {
+      steps: [{ name: 'install dependencies', run: 'echo "replace with your install command"' }],
+    }
+  );
+}
+
+const SETUP_KEY_ORDER = ['submodules', 'lfs', 'env', 'steps', 'cache'] as const;
+const STEP_KEY_ORDER = ['name', 'run', 'workdir', 'timeoutSeconds'] as const;
+
+/**
+ * A setup definition as `.auto-swe/setup.yml` text, keys in the documented order, under a
+ * header naming the file and where its schema is described. Parses back to the same value.
+ */
+export function repoSetupToYaml(setup: RepoSetup): string {
+  const ordered: Record<string, unknown> = {};
+  for (const key of SETUP_KEY_ORDER) {
+    const value = setup[key];
+    if (value === undefined) {
+      continue;
+    }
+    ordered[key] =
+      key === 'steps'
+        ? (value as RepoSetupStep[]).map((step) =>
+            Object.fromEntries(
+              STEP_KEY_ORDER.filter((k) => step[k] !== undefined).map((k) => [k, step[k]])
+            )
+          )
+        : value;
+  }
+  return [
+    `# ${REPO_SETUP_FILE}: run in every auto-swe workspace after the checkout.`,
+    '# Fields: submodules, lfs, env, steps[name, run, workdir, timeoutSeconds],',
+    '# cache[paths, keyFiles]. See docs/repositories.md, "Workspace setup".',
+    stringifyYaml(ordered, { lineWidth: 0 }).trimEnd(),
+    '',
+  ].join('\n');
 }
 
 export type ResolvedRepoSetup =

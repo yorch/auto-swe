@@ -444,6 +444,14 @@ export interface ScmProvider {
   /** Delete a branch; best-effort, resolves false when it could not. */
   deleteBranch(repo: RepoRef, branch: string): Promise<boolean>;
   /**
+   * Commit one new file to an existing branch through the host's API (no clone). Throws when the
+   * file already exists on that branch: it never overwrites.
+   */
+  createFile(
+    repo: RepoRef,
+    input: { branch: string; path: string; content: string; message: string }
+  ): Promise<void>;
+  /**
    * Create a comment on an issue or pull request, or update the existing one that carries
    * `marker` (a hidden HTML comment), so repeated reports on one PR edit one comment rather
    * than stacking new ones.

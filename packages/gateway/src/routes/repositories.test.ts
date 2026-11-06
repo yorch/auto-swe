@@ -106,6 +106,7 @@ async function buildApp() {
 
   const mockTemporal = {
     probeExecutorImage: vi.fn(),
+    proposeRepoSetupFile: vi.fn(),
     startPrEvaluationWorkflow: vi.fn(),
     startRepoDependencyScan: vi.fn().mockResolvedValue(undefined),
   };
@@ -1689,6 +1690,85 @@ describe('repositoryRoutes', () => {
         url: '/api/v1/repositories/not-a-uuid',
       });
       expect(res.statusCode).toBe(400);
+    });
+  });
+
+  describe('POST /api/v1/repositories/:id/setup/pull-request', () => {
+    const setup = { steps: [{ run: 'yarn install --immutable' }] };
+    const asTeamMember = (role: 'LEAD' | 'ADMIN') => {
+      ctx.authState.role = 'LEAD';
+      ctx.authState.sub = 'lead-1';
+      ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+        role,
+        team: { isActive: true },
+      });
+    };
+    const post = (payload: unknown) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: payload as never,
+        url: `/api/v1/repositories/${REPO_ID}/setup/pull-request`,
+      });
+
+    beforeEach(() => {
+      ctx.mockTemporal.proposeRepoSetupFile.mockReset().mockResolvedValue({
+        branch: 'auto/setup-yml-1a2b3c4d',
+        ok: true,
+        prNumber: 7,
+        prUrl: 'https://github.com/acme/widgets/pull/7',
+      });
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        id: REPO_ID,
+        teamId: TEAM_ID,
+        type: 'git_repo',
+      });
+    });
+
+    it('opens the pull request for a team admin and audits it', async () => {
+      asTeamMember('ADMIN');
+      const res = await post({ setup });
+      expect(res.statusCode, res.payload).toBe(200);
+      expect(JSON.parse(res.payload).data.prUrl).toBe('https://github.com/acme/widgets/pull/7');
+      const [workflowId, input] = ctx.mockTemporal.proposeRepoSetupFile.mock.calls[0] as [
+        string,
+        unknown,
+      ];
+      expect(workflowId).toContain(`repo-setup-file-${REPO_ID}`);
+      expect(input).toEqual({ connectionId: REPO_ID, setup });
+      expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'CREATE',
+          afterJson: { setupFilePullRequest: 'https://github.com/acme/widgets/pull/7' },
+        }),
+      });
+    });
+
+    it('refuses a team lead', async () => {
+      asTeamMember('LEAD');
+      const res = await post({ setup });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error.code).toBe('REPO_SETUP_FORBIDDEN');
+      expect(ctx.mockTemporal.proposeRepoSetupFile).not.toHaveBeenCalled();
+    });
+
+    it('rejects an invalid definition before starting anything', async () => {
+      asTeamMember('ADMIN');
+      const res = await post({ setup: { steps: [{ run: 'x', workdir: '../etc' }] } });
+      expect(res.statusCode).toBe(400);
+      expect(ctx.mockTemporal.proposeRepoSetupFile).not.toHaveBeenCalled();
+    });
+
+    it('answers 409 when the default branch already has the file', async () => {
+      asTeamMember('ADMIN');
+      ctx.mockTemporal.proposeRepoSetupFile.mockResolvedValue({
+        detail: 'main already has .auto-swe/setup.yml',
+        ok: false,
+        reason: 'exists',
+      });
+      const res = await post({ setup });
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('REPO_SETUP_FILE_EXISTS');
     });
   });
 

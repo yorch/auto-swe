@@ -3,7 +3,7 @@
 import type { ConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
 import { isPrTitleFormat } from '@auto-swe/shared/lib/prTitle';
-import { parseRepoSetup, type RepoSetup } from '@auto-swe/shared/lib/repoSetup';
+import type { RepoSetup } from '@auto-swe/shared/lib/repoSetup';
 import { MAX_UNCOVERED_COMPONENTS, uncoveredComponents } from '@auto-swe/shared/lib/stackDetection';
 import {
   type ExecutorImageProbeResult,
@@ -11,6 +11,7 @@ import {
   type RepositorySummary,
 } from '@auto-swe/shared/types/api';
 import { useEffect, useMemo, useState } from 'react';
+import { RepoSetupEditor } from '@/components/repositories/RepoSetupEditor';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
@@ -39,6 +40,7 @@ import {
   gateCommandsForm,
   gateCommandsPatch,
 } from '@/lib/gateCommandsForm';
+import { draftToSetup, type RepoSetupDraft, setupDraft } from '@/lib/repoSetupDraft';
 import { canAuthorTeamCode, canWriteTeamResource } from '@/lib/teamPermissions';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -113,8 +115,8 @@ export function ConnectionFormModal({
   const [previewConfigJson, setPreviewConfigJson] = useState(() =>
     initial?.previewConfig != null ? JSON.stringify(initial.previewConfig, null, 2) : ''
   );
-  const [setupJson, setSetupJson] = useState(() =>
-    initial?.setup != null ? JSON.stringify(initial.setup, null, 2) : ''
+  const [setup, setSetup] = useState<RepoSetupDraft>(() =>
+    setupDraft(initial?.setup as RepoSetup | null | undefined)
   );
   const [language, setLanguage] = useState(initial?.language ?? prefill?.language ?? '');
   const [prTitleFormat, setPrTitleFormat] = useState<PrTitleFormChoice>(
@@ -174,7 +176,7 @@ export function ConnectionFormModal({
       setPreviewConfigJson(
         initial?.previewConfig != null ? JSON.stringify(initial.previewConfig, null, 2) : ''
       );
-      setSetupJson(initial?.setup != null ? JSON.stringify(initial.setup, null, 2) : '');
+      setSetup(setupDraft(initial?.setup as RepoSetup | null | undefined));
       setLanguage(initial?.language ?? prefill?.language ?? '');
       setPrTitleFormat(initial?.prTitleFormat ?? 'inherit');
       setPrTitleTemplate(initial?.prTitleTemplate ?? '');
@@ -228,17 +230,8 @@ export function ConnectionFormModal({
       parsedPreviewConfig = null;
     }
     let parsedSetup: RepoSetup | null | undefined;
-    if (connType === 'git_repo' && setupJson.trim()) {
-      let value: unknown;
-      try {
-        value = JSON.parse(setupJson);
-      } catch (err) {
-        setError(
-          `Workspace setup JSON is invalid: ${err instanceof Error ? err.message : String(err)}`
-        );
-        return;
-      }
-      const checked = parseRepoSetup(value);
+    if (connType === 'git_repo' && setup.enabled) {
+      const checked = draftToSetup(setup);
       if (!checked.ok) {
         setError(`Workspace setup is invalid: ${checked.error}`);
         return;
@@ -600,8 +593,10 @@ export function ConnectionFormModal({
                 <fieldset className="space-y-3">
                   <legend className="text-sm font-medium text-paper-200">App preview</legend>
                   <p className="text-xs leading-relaxed text-paper-400">
-                    Optional JSON recipe for starting this repository in a workspace. Clearing this
-                    field removes the saved recipe.
+                    Optional JSON recipe for starting this repository in a workspace. Its setup
+                    command runs after Workspace setup, in preview sessions only, with the recipe's
+                    env: keep dependency installs in Workspace setup. Clearing this field removes
+                    the saved recipe.
                   </p>
                   <Textarea
                     disabled={!canEditGateCommands}
@@ -617,25 +612,22 @@ export function ConnectionFormModal({
                     value={previewConfigJson}
                   />
                 </fieldset>
-                <fieldset className="space-y-3">
+                <fieldset className="min-w-0 space-y-3">
                   <legend className="text-sm font-medium text-paper-200">Workspace setup</legend>
                   <p className="text-xs leading-relaxed text-paper-400">
-                    Optional JSON run in every workspace after the checkout: submodules, LFS,
-                    install steps and a dependency cache. Set, it replaces the repository's
-                    .auto-swe/setup.yml; empty, that file is used.
+                    Run in every workspace after the checkout, evals included: submodules, LFS,
+                    install steps and a dependency cache.
                   </p>
-                  <Textarea
+                  <RepoSetupEditor
+                    detectedStack={initial?.detectedStack}
                     disabled={!canEditGateCommands}
-                    hint={canEditGateCommands ? undefined : ADMIN_ONLY_HINT}
-                    id="workspace-setup-config"
-                    label="Workspace setup"
-                    onChange={(e) => setSetupJson(e.target.value)}
-                    placeholder={
-                      '{\n  "steps": [{ "run": "yarn install --immutable" }],\n  "cache": { "paths": ["node_modules"], "keyFiles": ["yarn.lock"] }\n}'
-                    }
-                    rows={8}
-                    spellCheck={false}
-                    value={setupJson}
+                    disabledHint={ADMIN_ONLY_HINT}
+                    draft={setup}
+                    onChange={(next) => {
+                      setTouched(true);
+                      setSetup(next);
+                    }}
+                    repositoryId={isEdit ? initial?.id : undefined}
                   />
                 </fieldset>
               </div>

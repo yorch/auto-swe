@@ -340,11 +340,15 @@ function cacheTarPaths(paths: readonly string[]): string {
     .join(' ');
 }
 
-/** The identity of a dependency cache: repository, definition, key files, image, architecture. */
+/**
+ * The identity of a dependency cache: team, repository, definition, key files, image and
+ * architecture. The team keeps one team's cache from ever restoring into another's workspaces;
+ * repositories without a team share one scope.
+ */
 async function setupCacheKey(
   host: RepoSetupHost,
   setup: RepoSetup,
-  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image'>
+  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId'>
 ): Promise<string> {
   const files = setup.cache?.keyFiles ?? [];
   const script = [
@@ -365,7 +369,8 @@ async function setupCacheKey(
         image: inputs.image,
         repository: repositoryId(inputs.cleanUrl),
         setup: canonical(setup),
-        v: 1,
+        team: inputs.teamId ?? null,
+        v: 2,
       })
     )
     .digest('hex');
@@ -509,7 +514,7 @@ export async function runSetupGitPhase(
 export async function runSetupStepsPhase(
   host: RepoSetupHost,
   setup: RepoSetup,
-  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image'>
+  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId'>
 ): Promise<Pick<RepoSetupReport, 'cache' | 'steps'>> {
   const maxBytes = setup.cache && setup.steps?.length ? await cacheLimitBytes() : 0;
   let cacheKey: string | null = null;

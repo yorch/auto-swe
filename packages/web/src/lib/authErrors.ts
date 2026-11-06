@@ -2,17 +2,23 @@ const RESTART = 'The sign-in attempt expired or was interrupted. Start again.';
 const UNAVAILABLE =
   'Sign-in is not available right now, or is misconfigured. Try again, and if it keeps happening ask an administrator.';
 const NOT_LINKABLE = 'That account is already linked to a different user, or does not match.';
+const LINK_USED =
+  'This sign-in link has expired or was already used. Each link works once, for 10 minutes. Request a new one.';
 
 // better-auth's OAuth callback failures. Each reaches the login page as `?error=<code>` once the
 // sign-in request names an errorCallbackURL; without one the browser lands on the gateway's root.
+// The magic-link verify endpoint uses upper-case codes: a link that is unknown, consumed or past
+// its expiry comes back as INVALID_TOKEN (or EXPIRED_TOKEN).
 const MESSAGES: Record<string, string> = {
   access_denied: 'Sign-in was cancelled or denied at the provider.',
   account_already_linked_to_different_user: NOT_LINKABLE,
+  EXPIRED_TOKEN: LINK_USED,
   email_does_not_match: NOT_LINKABLE,
   email_not_found:
     'Your account has no verified email address, which sign-in requires. Verify your primary email with the provider and try again.',
   email_not_verified:
     'Your account has no verified email address, which sign-in requires. Verify your primary email with the provider and try again.',
+  INVALID_TOKEN: LINK_USED,
   invalid_callback_request: RESTART,
   invalid_code: RESTART,
   issuer_mismatch: UNAVAILABLE,

@@ -237,7 +237,7 @@ describe('resolveWorkspaceSetup', () => {
 });
 
 describe('runSetupStepsPhase', () => {
-  const inputs = { cleanUrl: PARENT, image: 'node:26' };
+  const inputs = { cleanUrl: PARENT, image: 'node:26', teamId: 'team-a' };
   const setup: RepoSetup = {
     cache: { keyFiles: ['yarn.lock'], paths: ['node_modules', '~/.cache/yarn'] },
     env: { CI: '1' },
@@ -273,6 +273,16 @@ describe('runSetupStepsPhase', () => {
     expect(host.stdin).toHaveBeenCalledWith('tar -xzf - -C /', Buffer.from('tgz'));
     expect(artifacts.putArtifact).not.toHaveBeenCalled();
     expect(cache.update).toHaveBeenCalled();
+  });
+
+  it('scopes the cache key by team, with team-less repositories in one shared scope', async () => {
+    const keys: unknown[] = [];
+    for (const teamId of ['team-a', 'team-b', null, null]) {
+      await runSetupStepsPhase(fakeHost(), setup, { ...inputs, teamId });
+      keys.push(JSON.stringify((cache.findUnique.mock.calls.at(-1) as unknown[] | undefined)?.[0]));
+    }
+    expect(new Set(keys).size).toBe(3);
+    expect(keys[2]).toBe(keys[3]);
   });
 
   it('skips the cache on the Postgres artifact backend', async () => {

@@ -268,6 +268,11 @@ export interface ExecutorImageProbeCheck {
   required: boolean;
 }
 
+/** The outcome of opening a pull request that adds `.auto-swe/setup.yml` to a repository. */
+export type RepoSetupFileProposal =
+  | { ok: true; branch: string; prNumber: number; prUrl: string }
+  | { ok: false; reason: 'exists' | 'invalid' | 'not_found' | 'no_base'; detail: string };
+
 export interface ExecutorImageProbeResult {
   image: string;
   /** True when every required check passed. */

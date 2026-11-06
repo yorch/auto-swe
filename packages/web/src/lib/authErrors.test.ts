@@ -22,6 +22,8 @@ describe('describeAuthError', () => {
     ['unable_to_link_account', /link/i],
     ['oauth_provider_not_found', /not available|misconfigured|administrator/i],
     ['no_callback_url', /not available|misconfigured|administrator/i],
+    ['INVALID_TOKEN', /expired or was already used/i],
+    ['EXPIRED_TOKEN', /expired or was already used/i],
   ])('explains %s in plain language', (code, expected) => {
     expect(describeAuthError(code)).toMatch(expected);
   });

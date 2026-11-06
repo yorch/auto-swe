@@ -487,13 +487,26 @@ The definition is one schema (`RepoSetupSchema`, in `@auto-swe/shared/lib/repoSe
 the first of:
 
 1. the repository's `setup` field (`Connection.setup`), set in the connection form's **Workspace
-   setup** section, with `auto-swe repos setup <org/name> --file=setup.yml`, or as `setup` on
+   setup** section (fields for submodules, LFS, steps, cache and env; no JSON to write), with
+   `auto-swe repos setup <org/name> --file=setup.yml`, or as `setup` on
    `POST`/`PATCH /api/v1/repositories`;
 2. `.auto-swe/setup.yml` in the commit the workspace was cut from — the run's base branch, never
    the working tree a run changed — and, for an eval, its pinned commit;
 3. defaults inferred from the [detected stack](#detected-stack), only when
-   `workspace.repoSetupStackDefaults` is on (off by default): for a single Node target with a
-   lockfile, the package manager's frozen install, caching `node_modules`.
+   `workspace.repoSetupStackDefaults` is on (off by default), for a single target whose directory
+   holds the file its install needs:
+
+   | Target | Needs | Install | Cached |
+   |---|---|---|---|
+   | Node | its package manager's lockfile | `npm ci`, `pnpm install --frozen-lockfile`, `yarn install --immutable` (Classic: `--frozen-lockfile`) | `node_modules` |
+   | Python | `uv.lock` | `uv sync --frozen` | `.venv` |
+   | Python | `requirements.txt` (no `uv.lock`) | `python -m venv .venv && .venv/bin/pip install -r requirements.txt` | `.venv` |
+   | Go | `go.sum` | `go mod download` | `~/go/pkg/mod` |
+   | JVM | `pom.xml` | `mvn -B -q dependency:go-offline` | `~/.m2/repository` |
+   | JVM | `gradlew` (no `pom.xml`) | `./gradlew --no-daemon dependencies` | `~/.gradle/caches`, `~/.gradle/wrapper` |
+
+   The lockfile or build files are the cache's key files. Anything else — Poetry, a `pyproject.toml`
+   without `uv.lock`, Gradle without its wrapper, several targets — gets no default.
 
 ```yaml
 submodules: recursive   # false | true | recursive
@@ -509,6 +522,20 @@ cache:
   paths: [node_modules, ~/.cache/yarn]
   keyFiles: [yarn.lock]
 ```
+
+**Writing the file.** Three ways start one from the same stack defaults:
+
+- the form's **Keep it in the repository** panel shows the definition its fields describe (or, with
+  the section off, a starter from the detected stack) as `.auto-swe/setup.yml`, to copy or
+  download;
+- `auto-swe repos setup init [dir]` writes the starter into a local checkout, detecting the stack
+  from its tracked files, without a token;
+- the panel's **Open a PR adding .auto-swe/setup.yml** button (`POST
+  /api/v1/repositories/:id/setup/pull-request` with `{ setup }`) commits the file through the
+  host's API to a fresh `<BRANCH_PREFIX>/setup-yml-<hex8>` branch cut from the default branch and
+  opens a pull request, under the same permission as the field and written to the audit log. It is
+  refused (409 `REPO_SETUP_FILE_EXISTS`) when the default branch already has the file: it never
+  edits one.
 
 A file is at most 64 KiB and 20 steps; unknown keys, absolute paths and `..` are refused. Setting
 or changing the field takes the same permission as [gate commands](#gate-commands) and is written
@@ -538,13 +565,19 @@ agent's tree runs none.
 
 **Dependency cache.** With `cache`, the listed paths (relative to the checkout, or `~/` for the
 home directory) are saved as one gzipped tarball in the artifact store after a successful setup,
-and restored before the steps of the next workspace with the same key: the repository, the
-definition, the contents of `keyFiles`, the image and the CPU architecture. The steps still run,
+and restored before the steps of the next workspace with the same key: the repository's team, the
+repository, the definition, the contents of `keyFiles`, the image and the CPU architecture. Teams
+never share a cache; repositories with no team share one scope. The steps still run,
 so an install on a restored tree is quick rather than skipped. The tarball is capped by
 `workspace.setupCacheMaxMb` (1024 by default, `0` turns caching off); a larger one is not stored. A
 cache works on both workspace backends but only on the S3 and filesystem artifact backends; on the
 Postgres backend it is skipped. A cache nobody restored for 14 days is deleted with its tarball by
 the transcript-retention sweep. A cache that cannot be read or written costs only time.
+
+**Preview setup.** An [app preview](./ui-validation.md) recipe's own `setup` command is separate:
+it runs only in preview sessions, after workspace setup, with the recipe's `env` (which may carry
+secrets). Dependency installs belong in workspace setup, where every workspace and the cache get
+them; the preview's `setup` is for what only a running app needs, such as seeding its database.
 
 ### Pull request titles
 
@@ -652,10 +685,14 @@ longer fit.
 - **LFS objects are fetched for the top-level repository only**, not inside submodules. Off
   github.com, an LFS server that hands out object URLs on another host is not admitted by the
   network lock.
-- **A dependency cache is shared by everyone whose workspace has the same key.** The key covers the
-  repository, the definition, the key files, the image and the architecture, not the team or the
-  run, and a hit is restored before the steps run. It is saved before any agent code runs, but the
-  setup steps themselves run the repository's code.
+- **A dependency cache is shared within a team by every workspace with the same key.** The key
+  covers the team, the repository, the definition, the key files, the image and the architecture,
+  not the run, and a hit is restored before the steps run. It is saved before any agent code runs,
+  but the setup steps themselves run the repository's code. Repositories with no team share one
+  scope.
+- **Stack-default cache keys miss nested build files.** A Gradle default keys on the root build
+  and settings files, the version catalog and the wrapper properties; a dependency declared only in
+  a subproject's build file does not start a fresh cache (the install still fetches it).
 - **Setup `env` values are passed on the command line of the exec**, so they are not for secrets.
 - **The access test does not look at webhooks.** Listing a repository's hooks needs an
   administrative permission the platform's credential does not otherwise hold, so a missing or

@@ -8,7 +8,7 @@ import { runConnectionsCommand } from './commands/connections.js';
 import { runEvalsCommand } from './commands/evals.js';
 import { runMcpCommand } from './commands/mcp.js';
 import { runPrPolicyCommand } from './commands/prPolicy.js';
-import { runReposCommand } from './commands/repos.js';
+import { runReposCommand, runReposSetupInit } from './commands/repos.js';
 import { runRunsCommand } from './commands/runs.js';
 import { runSkillsCommand } from './commands/skills.js';
 import { runTokensCommand } from './commands/tokens.js';
@@ -54,6 +54,8 @@ COMMANDS
         [--vuln-scan=CMD] [--perf-bench=CMD] [--clear]
                                        Print a repository's gate commands, or set them (an empty
                                        value removes one); setting needs team admin
+  repos setup init [dir] [--force]     Write a starter .auto-swe/setup.yml into a local checkout
+                                       from its detected stack (local, no token)
   repos test-access <org/name> [--json]
                                        Check what a run on the repository could do with its
                                        credentials (exit 1 on a failing step); needs team lead
@@ -142,6 +144,10 @@ async function main(argv: string[]): Promise<number> {
   // `pr-policy` init/validate are local too; status/mode load credentials themselves.
   if (cmd === 'pr-policy') {
     return await runPrPolicyCommand(rest, loadCliEnv);
+  }
+  // `repos setup init` writes a file into a local checkout and needs no gateway.
+  if (cmd === 'repos' && rest[0] === 'setup' && rest[1] === 'init') {
+    return await runReposSetupInit(rest.slice(2));
   }
   let env: CliEnv;
   try {

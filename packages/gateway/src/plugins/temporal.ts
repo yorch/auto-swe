@@ -19,7 +19,11 @@ import {
 } from '@auto-swe/shared/lib/prEvaluationWorkflow';
 import { resolveTemporalAddress } from '@auto-swe/shared/lib/systemConfig';
 import { traceContextClientInterceptor } from '@auto-swe/shared/lib/temporalTracing';
-import type { ExecutorImageProbeResult, ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
+import type {
+  ExecutorImageProbeResult,
+  ImplementerRuntimeKind,
+  RepoSetupFileProposal,
+} from '@auto-swe/shared/types/api';
 import type {
   ChannelAssistantTurnInput,
   ConsolidateLessonsInput,
@@ -381,6 +385,11 @@ declare module 'fastify' {
         workflowId: string,
         input: { detectedStack?: unknown; image?: string }
       ) => Promise<ExecutorImageProbeResult>;
+      /** Open a pull request adding `.auto-swe/setup.yml` to a repository (request/response). */
+      proposeRepoSetupFile: (
+        workflowId: string,
+        input: { connectionId: string; setup: unknown }
+      ) => Promise<RepoSetupFileProposal>;
       /** Start an async NL-generation job (does NOT await the result). */
       startWorkflowAuthorJob: (workflowId: string, input: WorkflowAuthorJobInput) => Promise<void>;
       /** Poll an async NL-generation job's status/progress/result. */
@@ -1134,6 +1143,18 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         workflowExecutionTimeout: '11 minutes',
         workflowId,
       })) as ExecutorImageProbeResult;
+    },
+
+    async proposeRepoSetupFile(
+      workflowId: string,
+      input: { connectionId: string; setup: unknown }
+    ): Promise<RepoSetupFileProposal> {
+      return (await client.workflow.execute('RepoSetupFileProposalWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: '3 minutes',
+        workflowId,
+      })) as RepoSetupFileProposal;
     },
 
     async sendAssistantTurn(input, turn) {
