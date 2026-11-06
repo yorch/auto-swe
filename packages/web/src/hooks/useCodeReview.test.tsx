@@ -5,7 +5,14 @@ import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@/lib/api';
 import { setupFetchMock } from '@/test/rtl-helpers';
-import { useReviewAttachment, useReviewRepositories, useRunReview } from './useCodeReview';
+import {
+  useReviewAttachment,
+  useReviewChoices,
+  useReviewPresets,
+  useReviewRepositories,
+  useRunReview,
+  useSaveReviewPreset,
+} from './useCodeReview';
 
 afterEach(() => {
   cleanup();
@@ -19,6 +26,30 @@ function wrapper() {
   );
 }
 describe('review mutations', () => {
+  it('binds picker caches and management requests to the selected source/team', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue({ data: [], templates: [] });
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} });
+    const { result } = renderHook(
+      () => ({
+        choices: useReviewChoices(true, { sourceRunId: 'source' }),
+        presets: useReviewPresets('team'),
+        save: useSaveReviewPreset('team'),
+      }),
+      { wrapper: wrapper() }
+    );
+    await waitFor(() =>
+      expect(result.current.choices.isSuccess && result.current.presets.isSuccess).toBe(true)
+    );
+    expect(get).toHaveBeenCalledWith('/api/v1/review-presets?sourceRunId=source');
+    expect(get).toHaveBeenCalledWith('/api/v1/platform/review-presets?teamId=team');
+    await act(async () => {
+      await result.current.save.mutateAsync({ body: { name: 'Review', templateId: 'template' } });
+    });
+    expect(post).toHaveBeenCalledWith(
+      '/api/v1/platform/review-presets?teamId=team',
+      expect.objectContaining({ name: 'Review' })
+    );
+  });
   it('keeps the same idempotency key after a failed launch and rotates it for a changed choice', async () => {
     const fetch = vi
       .spyOn(api, 'fetch')

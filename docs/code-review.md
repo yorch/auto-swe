@@ -16,8 +16,17 @@ exposes **Review template (requires a source run)**. The built-in choices are:
 | `human-review-of-run` | A person reviews the diff and chooses approve or request changes; the human note accompanies the result. |
 
 A preset selects a review template and supplies a name, description, optional reviewer system
-prompt, enabled flag, and `onBlocking: report | fix`. Platform administrators manage presets at
-`/admin/review-presets`. `report` publishes the result without starting a fix.
+prompt, enabled flag, and `onBlocking: report | fix`. Platform administrators manage global presets at
+`/admin/review-presets`. Team leads and team administrators with platform LEAD access manage their
+team's presets at `/review-presets`. Names are unique within a team or within the global scope.
+Team presets use a global or same-team review template, attach only to that team's source templates
+and repositories, and review only that team's runs. Global and team attachments both auto-start.
+`report` publishes the result without starting a fix.
+
+The picker accepts `sourceRunId` and returns global presets plus that authorized source run's team
+presets. Without a source or team selection it returns only global presets. Management requests to
+`/api/v1/platform/review-presets` and its resource/attachment routes select a team with the `teamId`
+query parameter; omitting it selects the ADMIN-only global scope. Scope is immutable through edits.
 
 An attachment associates one preset with either a source workflow template (`templateId`) or a
 repository (`connectionId`), not both. Enabled presets attached through either source are selected

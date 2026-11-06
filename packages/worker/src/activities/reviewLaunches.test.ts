@@ -90,13 +90,34 @@ describe('finalization review intents', () => {
       select: { presetId: true },
       where: {
         OR: [{ templateId: 'template' }, { connectionId: 'repo' }],
-        preset: { enabled: true },
+        preset: { enabled: true, OR: [{ teamId: null }, { teamId: 'team' }] },
       },
     });
     expect(mocks.db.reviewLaunchIntent.createMany).toHaveBeenCalledWith({
       data: [{ presetId: 'p', sourceRunId: 'source' }],
       skipDuplicates: true,
     });
+  });
+  it('queues both global and own-team attachments with independent intents', async () => {
+    mocks.db.reviewPresetAttachment.findMany.mockResolvedValue([
+      { presetId: 'global' },
+      { presetId: 'team' },
+    ]);
+    await enqueueReviewLaunchIntents(tx, source, 'SUCCESS');
+    expect(mocks.db.reviewLaunchIntent.createMany).toHaveBeenCalledWith({
+      data: [
+        { presetId: 'global', sourceRunId: 'source' },
+        { presetId: 'team', sourceRunId: 'source' },
+      ],
+      skipDuplicates: true,
+    });
+    expect(mocks.db.reviewPresetAttachment.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          preset: { enabled: true, OR: [{ teamId: null }, { teamId: 'team' }] },
+        }),
+      })
+    );
   });
   it.each(['CANCELLED', 'FAILED', 'SKIPPED', 'TIMED_OUT'])(
     'never inserts for effective %s status',
@@ -123,7 +144,10 @@ describe('finalization review intents', () => {
     );
     expect(mocks.db.reviewPresetAttachment.findMany).toHaveBeenCalledWith({
       select: { presetId: true },
-      where: { OR: [{ templateId: 'template' }], preset: { enabled: true } },
+      where: {
+        OR: [{ templateId: 'template' }],
+        preset: { enabled: true, OR: [{ teamId: null }] },
+      },
     });
     expect(mocks.db.reviewLaunchIntent.createMany).toHaveBeenCalledOnce();
   });

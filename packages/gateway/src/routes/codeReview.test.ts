@@ -28,8 +28,116 @@ const REPO = '22222222-2222-4222-8222-222222222222';
 const TEMPLATE = '33333333-3333-4333-8333-333333333333';
 const PRESET = '44444444-4444-4444-8444-444444444444';
 const AUTH = { authorization: 'Bearer fake' };
+const TEAM = '55555555-5555-4555-8555-555555555555';
 const launchUrl = `/api/v1/workflow-runs/${SOURCE}/reviews`;
 const adminUrl = '/api/v1/platform/review-presets';
+
+describe('team review preset scoping', () => {
+  it('lets a team lead manage only the selected team, with audit records', async () => {
+    const { app, db, preset } = await fixture('LEAD');
+    preset.teamId = TEAM;
+    const scope = `?teamId=${TEAM}`;
+    expect((await app.inject({ headers: AUTH, url: `${adminUrl}${scope}` })).statusCode).toBe(200);
+    expect(db.reviewPreset.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { teamId: TEAM } })
+    );
+    expect(
+      (
+        await app.inject({
+          headers: AUTH,
+          method: 'POST',
+          payload: { name: 'Team review', templateId: TEMPLATE },
+          url: `${adminUrl}${scope}`,
+        })
+      ).statusCode
+    ).toBe(201);
+    expect(db.reviewPreset.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ teamId: TEAM }) })
+    );
+    expect(
+      (
+        await app.inject({
+          headers: AUTH,
+          method: 'PATCH',
+          payload: { enabled: false },
+          url: `${adminUrl}/${PRESET}${scope}`,
+        })
+      ).statusCode
+    ).toBe(200);
+    expect(
+      (await app.inject({ headers: AUTH, method: 'DELETE', url: `${adminUrl}/${PRESET}${scope}` }))
+        .statusCode
+    ).toBe(200);
+    expect(db.configAuditLog.create).toHaveBeenCalledTimes(3);
+    expect((await app.inject({ headers: AUTH, url: adminUrl })).statusCode).toBe(403);
+    await app.close();
+  });
+  it('denies non-leads and nonmembers, and hides presets outside the authorized scope', async () => {
+    const { app, db, preset } = await fixture('LEAD');
+    const url = `${adminUrl}/${PRESET}?teamId=${TEAM}`;
+    preset.teamId = REPO;
+    expect((await app.inject({ headers: AUTH, url })).statusCode).toBe(404);
+    for (const role of ['ENGINEER', null]) {
+      db.teamMembership.findUnique.mockResolvedValue(role ? { role } : null);
+      expect((await app.inject({ headers: AUTH, url })).statusCode).toBe(403);
+    }
+    expect(db.reviewPreset.update).not.toHaveBeenCalled();
+    await app.close();
+  });
+  it('rejects cross-team attachments and review templates', async () => {
+    const { app, db, preset } = await fixture('LEAD');
+    preset.teamId = TEAM;
+    expect(
+      (
+        await app.inject({
+          headers: AUTH,
+          method: 'POST',
+          payload: { connectionId: REPO },
+          url: `${adminUrl}/${PRESET}/attachments?teamId=${TEAM}`,
+        })
+      ).statusCode
+    ).toBe(409);
+    expect(db.reviewPresetAttachment.create).not.toHaveBeenCalled();
+    db.workflowTemplate.findUnique.mockResolvedValue({ kind: 'review', teamId: REPO } as never);
+    expect(
+      (
+        await app.inject({
+          headers: AUTH,
+          method: 'PATCH',
+          payload: { templateId: TEMPLATE },
+          url: `${adminUrl}/${PRESET}?teamId=${TEAM}`,
+        })
+      ).statusCode
+    ).toBe(409);
+    await app.close();
+  });
+  it('scopes the picker to globals by default and globals plus the authorized source team', async () => {
+    const { app, db } = await fixture();
+    expect((await app.inject({ headers: AUTH, url: '/api/v1/review-presets' })).statusCode).toBe(
+      200
+    );
+    expect(db.reviewPreset.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ OR: [{ teamId: null }] }) })
+    );
+    expect(
+      (await app.inject({ headers: AUTH, url: `/api/v1/review-presets?sourceRunId=${SOURCE}` }))
+        .statusCode
+    ).toBe(200);
+    expect(db.reviewPreset.findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ OR: [{ teamId: null }, { teamId: 'team' }] }),
+      })
+    );
+    db.workflowRun.findFirst.mockResolvedValue(null);
+    db.reviewPreset.findMany.mockClear();
+    expect(
+      (await app.inject({ headers: AUTH, url: `/api/v1/review-presets?sourceRunId=${SOURCE}` }))
+        .statusCode
+    ).toBe(404);
+    expect(db.reviewPreset.findMany).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
 
 async function fixture(role = 'ENGINEER') {
   const source = {
@@ -50,6 +158,7 @@ async function fixture(role = 'ENGINEER') {
     name: 'Review',
     onBlocking: 'report',
     systemPrompt: null,
+    teamId: null as string | null,
     templateId: TEMPLATE,
   };
   const template = {
@@ -100,6 +209,7 @@ async function fixture(role = 'ENGINEER') {
         return data;
       }),
     },
+    teamMembership: { findUnique: vi.fn().mockResolvedValue({ role: 'LEAD' }) },
     workflowRun: {
       findFirst: vi.fn().mockResolvedValue(source),
       findUnique: vi.fn().mockResolvedValue(source),

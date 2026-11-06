@@ -39,7 +39,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function LaunchReview({ runId, onClose }: { runId: string; onClose: () => void }) {
-  const choices = useReviewChoices();
+  const choices = useReviewChoices(true, { sourceRunId: runId });
   const launch = useRunReview(runId);
   const router = useRouter();
   const [advanced, setAdvanced] = useState(false);

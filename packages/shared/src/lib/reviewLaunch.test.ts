@@ -196,6 +196,29 @@ function fake() {
 beforeEach(() => setting.mockResolvedValue(true));
 
 describe('review launch preparation', () => {
+  it('accepts global and own-team presets but refuses another team at the shared launch boundary', async () => {
+    const { db, prisma } = fake();
+    const preset = await db.reviewPreset.findUnique();
+    for (const teamId of [null, 'team']) {
+      db.reviewPreset.findUnique.mockResolvedValue({ ...preset, teamId } as never);
+      await expect(
+        prepareReviewLaunch(prisma, { presetId: PRESET, sourceRunId: SOURCE })
+      ).resolves.toBeDefined();
+    }
+    db.reviewPreset.findUnique.mockResolvedValue({ ...preset, teamId: 'other-team' } as never);
+    await expect(
+      prepareReviewLaunch(prisma, { presetId: PRESET, sourceRunId: SOURCE })
+    ).rejects.toMatchObject({ code: 'REVIEW_PRESET_NOT_FOUND', status: 404 });
+    db.workflowTemplate.findUnique.mockResolvedValue({
+      activeVersion: 2,
+      kind: 'review',
+      status: 'ACTIVE',
+      teamId: 'other-team',
+    } as never);
+    await expect(
+      prepareReviewLaunch(prisma, { sourceRunId: SOURCE, templateId: TEMPLATE })
+    ).rejects.toMatchObject({ code: 'REVIEW_TEMPLATE_INVALID' });
+  });
   it('builds a scoped payload and ledger from a workflow CodeResult, and records ledger before a caller starts Temporal', async () => {
     const { db, prisma } = fake();
     const prepared = await prepareReviewLaunch(prisma, {

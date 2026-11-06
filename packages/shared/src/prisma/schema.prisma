@@ -1158,6 +1158,7 @@ model Team {
   scheduledWorkRequests ScheduledWorkRequest[] @relation("ScheduleTeam")
   /// Event automations this team owns that belong to no repository (`Automation.teamId`).
   automations           Automation[]
+  reviewPresets         ReviewPreset[]
   /// URLs other services post signed events to (`EventEndpoint`).
   eventEndpoints        EventEndpoint[]
   workflowTemplates     WorkflowTemplate[]
@@ -3254,7 +3255,9 @@ model AutonomyPolicy {
 
 model ReviewPreset {
   id            String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name          String                   @unique
+  name          String
+  teamId        String?                  @map("team_id") @db.Uuid
+  team          Team?                    @relation(fields: [teamId], references: [id], onDelete: Cascade)
   description   String                   @default("")
   templateId    String                   @map("template_id") @db.Uuid
   template      WorkflowTemplate         @relation(fields: [templateId], references: [id], onDelete: Restrict)
@@ -3270,6 +3273,7 @@ model ReviewPreset {
   runs          WorkflowRun[]
   launchIntents ReviewLaunchIntent[]
 
+  @@unique([teamId, name])
   @@index([templateId])
   @@index([createdById])
   @@map("review_presets")

@@ -136,6 +136,17 @@ export async function prepareReviewLaunch(db: PrismaClient, input: PrepareReview
   if (input.presetId && !preset?.enabled) {
     throw new ReviewLaunchError('REVIEW_PRESET_DISABLED', 'Review preset is missing or disabled');
   }
+  if (
+    preset?.teamId &&
+    (preset.teamId !== repo.teamId ||
+      (source.attributedTeamId && source.attributedTeamId !== preset.teamId))
+  ) {
+    throw new ReviewLaunchError(
+      'REVIEW_PRESET_NOT_FOUND',
+      'Review preset is unavailable for this source',
+      404
+    );
+  }
   const templateId = preset?.templateId ?? input.templateId;
   if (!templateId) {
     throw new ReviewLaunchError('REVIEW_TEMPLATE_INVALID', 'Review template is missing');
@@ -143,6 +154,12 @@ export async function prepareReviewLaunch(db: PrismaClient, input: PrepareReview
   const template = await db.workflowTemplate.findUnique({ where: { id: templateId } });
   if (template?.kind !== 'review' || template.status !== 'ACTIVE' || !template.activeVersion) {
     throw new ReviewLaunchError('REVIEW_TEMPLATE_INVALID', 'Choose an active review-kind template');
+  }
+  if (template.teamId && template.teamId !== repo.teamId) {
+    throw new ReviewLaunchError(
+      'REVIEW_TEMPLATE_INVALID',
+      'Review template is unavailable for this source'
+    );
   }
   const payload: ReviewRunPayload = ReviewRunPayloadSchema.parse({
     connectionId,

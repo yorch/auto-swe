@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { roleMeets } from '@auto-swe/shared/config/permissions';
 import {
   ReviewPresetAttachmentSchema,
   ReviewPresetCreateSchema,
@@ -6,11 +7,12 @@ import {
   reviewWorkflowId,
 } from '@auto-swe/shared/lib/codeReview';
 import {
+  loadReviewSource,
   prepareReviewLaunch,
   ReviewLaunchError,
   reviewRunId,
 } from '@auto-swe/shared/lib/reviewLaunch';
-import type { FastifyPluginAsync, FastifyReply } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -31,6 +33,7 @@ import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const Id = z.object({ id: z.string().uuid() });
+const Scope = z.object({ teamId: z.string().uuid().optional() });
 const Choice = z.union([
   z.strictObject({ presetId: z.string().uuid() }),
   z.strictObject({ templateId: z.string().uuid() }),
@@ -63,7 +66,28 @@ function writeRefusal(reply: FastifyReply, err: unknown) {
 export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const engineer = requireAuth({ requiredRole: 'ENGINEER' });
-  const admin = requireAuth({ requiredRole: 'ADMIN' });
+  async function scopeFor(request: FastifyRequest, reply: FastifyReply, write = true) {
+    const user = requireUser(request);
+    const teamId = (request.query as { teamId?: string }).teamId ?? null;
+    if (user.role === 'ADMIN') {
+      return { teamId };
+    }
+    if (teamId && (!write || roleMeets(user.role, 'LEAD'))) {
+      const membership = await fastify.prisma.teamMembership.findUnique({
+        where: { userId_teamId: { teamId, userId: user.sub } },
+      });
+      if (membership && roleMeets(membership.role, write ? 'LEAD' : 'ENGINEER')) {
+        return { teamId };
+      }
+    }
+    sendError(
+      reply,
+      403,
+      'FORBIDDEN',
+      'Requires platform ADMIN or LEAD membership in the selected team'
+    );
+    return null;
+  }
 
   app.post(
     '/workflow-runs/:id/reviews/fix-retry',
@@ -270,65 +294,121 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  app.get('/review-presets', { onRequest: engineer }, async (request) => {
-    const user = requireUser(request);
-    const templates = await asPlatformAdmin(
-      user,
-      'review picker lists launchable review templates',
-      ['WorkflowTemplate'],
-      () =>
-        fastify.prisma.workflowTemplate.findMany({
-          orderBy: { name: 'asc' },
-          select: { id: true, name: true },
+  app.get(
+    '/review-presets',
+    {
+      onRequest: engineer,
+      schema: { querystring: Scope.extend({ sourceRunId: z.string().uuid().optional() }) },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      let teamId = request.query.teamId;
+      if (request.query.sourceRunId) {
+        const source = await fastify.prisma.workflowRun.findFirst({
           where: {
-            activeVersion: { not: null },
-            kind: 'review',
-            status: 'ACTIVE',
-            ...teamMembershipFilter(user),
+            id: request.query.sourceRunId,
+            ...buildWorkflowRunControlFilter(user, request.repoAccessGate),
           },
-        })
-    );
-    const presets = await fastify.prisma.reviewPreset.findMany({
-      orderBy: { name: 'asc' },
-      select: {
-        description: true,
-        id: true,
-        name: true,
-        template: { select: { id: true, name: true } },
-      },
-      where: { enabled: true, templateId: { in: templates.map((t) => t.id) } },
-    });
-    return { data: presets, templates };
-  });
+        });
+        if (!source) {
+          return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
+        }
+        const facts = await loadReviewSource(fastify.prisma, source.id);
+        const repo = facts.connectionId
+          ? await fastify.prisma.connection.findUnique({
+              select: { teamId: true },
+              where: { id: facts.connectionId },
+            })
+          : null;
+        teamId = source.attributedTeamId ?? repo?.teamId;
+      } else if (teamId && !(await scopeFor(request, reply, false))) {
+        return;
+      }
+      const templates = await asPlatformAdmin(
+        user,
+        'review picker lists launchable review templates',
+        ['WorkflowTemplate'],
+        () =>
+          fastify.prisma.workflowTemplate.findMany({
+            orderBy: { name: 'asc' },
+            select: { id: true, name: true },
+            where: {
+              activeVersion: { not: null },
+              kind: 'review',
+              status: 'ACTIVE',
+              ...teamMembershipFilter(user),
+              ...(teamId ? { AND: [{ OR: [{ teamId: null }, { teamId }] }] } : {}),
+            },
+          })
+      );
+      const presets = await fastify.prisma.reviewPreset.findMany({
+        orderBy: { name: 'asc' },
+        select: {
+          description: true,
+          id: true,
+          name: true,
+          template: { select: { id: true, name: true } },
+        },
+        where: {
+          enabled: true,
+          OR: [{ teamId: null }, ...(teamId ? [{ teamId }] : [])],
+          templateId: { in: templates.map((t) => t.id) },
+        },
+      });
+      return { data: presets, templates };
+    }
+  );
 
-  app.get('/platform/review-presets', { onRequest: admin }, async () => ({
-    data: await fastify.prisma.reviewPreset.findMany({
-      include: { attachments: true, template: { select: { id: true, name: true } } },
-      orderBy: { name: 'asc' },
-    }),
-  }));
+  app.get(
+    '/platform/review-presets',
+    { onRequest: engineer, schema: { querystring: Scope } },
+    async (request, reply) => {
+      const scope = await scopeFor(request, reply);
+      if (!scope) {
+        return;
+      }
+      return {
+        data: await fastify.prisma.reviewPreset.findMany({
+          include: { attachments: true, template: { select: { id: true, name: true } } },
+          orderBy: { name: 'asc' },
+          where: scope,
+        }),
+      };
+    }
+  );
   app.get(
     '/platform/review-presets/:id',
-    { onRequest: admin, schema: { params: Id } },
+    { onRequest: engineer, schema: { params: Id, querystring: Scope } },
     async (request, reply) => {
+      const scope = await scopeFor(request, reply);
+      if (!scope) {
+        return;
+      }
       const row = await fastify.prisma.reviewPreset.findUnique({
         include: { attachments: true },
         where: { id: request.params.id },
       });
-      return row
+      return row && (row.teamId ?? null) === scope.teamId
         ? { data: row }
         : sendError(reply, 404, 'REVIEW_PRESET_NOT_FOUND', 'Review preset not found');
     }
   );
   app.post(
     '/platform/review-presets',
-    { onRequest: admin, schema: { body: ReviewPresetCreateSchema } },
+    { onRequest: engineer, schema: { body: ReviewPresetCreateSchema, querystring: Scope } },
     async (request, reply) => {
+      const scope = await scopeFor(request, reply);
+      if (!scope) {
+        return;
+      }
       const user = requireUser(request);
       const template = await fastify.prisma.workflowTemplate.findUnique({
         where: { id: request.body.templateId },
       });
-      if (template?.kind !== 'review') {
+      if (
+        template?.kind !== 'review' ||
+        (scope.teamId && template.teamId && template.teamId !== scope.teamId)
+      ) {
         return sendError(
           reply,
           409,
@@ -338,7 +418,7 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
       }
       try {
         const row = await fastify.prisma.reviewPreset.create({
-          data: { ...request.body, createdById: user.sub },
+          data: { ...request.body, ...scope, createdById: user.sub },
         });
         await writeAuditLog(fastify, {
           action: 'CREATE',
@@ -355,21 +435,30 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   );
   app.patch(
     '/platform/review-presets/:id',
-    { onRequest: admin, schema: { body: ReviewPresetUpdateSchema, params: Id } },
+    {
+      onRequest: engineer,
+      schema: { body: ReviewPresetUpdateSchema, params: Id, querystring: Scope },
+    },
     async (request, reply) => {
+      const scope = await scopeFor(request, reply);
+      if (!scope) {
+        return;
+      }
       const before = await fastify.prisma.reviewPreset.findUnique({
         where: { id: request.params.id },
       });
-      if (!before) {
+      if (!before || (before.teamId ?? null) !== scope.teamId) {
         return sendError(reply, 404, 'REVIEW_PRESET_NOT_FOUND', 'Review preset not found');
       }
-      if (
-        request.body.templateId &&
-        (
-          await fastify.prisma.workflowTemplate.findUnique({
+      const target = request.body.templateId
+        ? await fastify.prisma.workflowTemplate.findUnique({
             where: { id: request.body.templateId },
           })
-        )?.kind !== 'review'
+        : null;
+      if (
+        request.body.templateId &&
+        (target?.kind !== 'review' ||
+          (scope.teamId && target.teamId && target.teamId !== scope.teamId))
       ) {
         return sendError(
           reply,
@@ -399,12 +488,16 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   );
   app.delete(
     '/platform/review-presets/:id',
-    { onRequest: admin, schema: { params: Id } },
+    { onRequest: engineer, schema: { params: Id, querystring: Scope } },
     async (request, reply) => {
+      const scope = await scopeFor(request, reply);
+      if (!scope) {
+        return;
+      }
       const before = await fastify.prisma.reviewPreset.findUnique({
         where: { id: request.params.id },
       });
-      if (!before) {
+      if (!before || (before.teamId ?? null) !== scope.teamId) {
         return sendError(reply, 404, 'REVIEW_PRESET_NOT_FOUND', 'Review preset not found');
       }
       try {
@@ -424,8 +517,35 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   );
   app.post(
     '/platform/review-presets/:id/attachments',
-    { onRequest: admin, schema: { body: Attachment, params: Id } },
+    { onRequest: engineer, schema: { body: Attachment, params: Id, querystring: Scope } },
     async (request, reply) => {
+      const scope = await scopeFor(request, reply);
+      if (!scope) {
+        return;
+      }
+      const preset = await fastify.prisma.reviewPreset.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!preset || (preset.teamId ?? null) !== scope.teamId) {
+        return sendError(reply, 404, 'REVIEW_PRESET_NOT_FOUND', 'Review preset not found');
+      }
+      if (scope.teamId) {
+        const target = request.body.templateId
+          ? await fastify.prisma.workflowTemplate.findUnique({
+              where: { id: request.body.templateId },
+            })
+          : await fastify.prisma.connection.findUnique({
+              where: { id: request.body.connectionId },
+            });
+        if (target?.teamId !== scope.teamId) {
+          return sendError(
+            reply,
+            409,
+            'REVIEW_INVALID_REFERENCE',
+            'Attachment must belong to the preset team'
+          );
+        }
+      }
       try {
         const data = ReviewPresetAttachmentSchema.parse({
           ...request.body,
@@ -449,8 +569,18 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
   );
   app.delete(
     '/platform/review-presets/:id/attachments',
-    { onRequest: admin, schema: { body: Attachment, params: Id } },
+    { onRequest: engineer, schema: { body: Attachment, params: Id, querystring: Scope } },
     async (request, reply) => {
+      const scope = await scopeFor(request, reply);
+      if (!scope) {
+        return;
+      }
+      const preset = await fastify.prisma.reviewPreset.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!preset || (preset.teamId ?? null) !== scope.teamId) {
+        return sendError(reply, 404, 'REVIEW_PRESET_NOT_FOUND', 'Review preset not found');
+      }
       const before = await fastify.prisma.reviewPresetAttachment.findFirst({
         where: { ...request.body, presetId: request.params.id },
       });

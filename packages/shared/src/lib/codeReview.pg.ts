@@ -38,6 +38,65 @@ describe.skipIf(!enabled)('review persistence constraints', () => {
     await client.query('ROLLBACK');
   });
 
+  async function teams() {
+    const org = randomUUID();
+    const first = randomUUID();
+    const second = randomUUID();
+    await client.query(
+      'INSERT INTO organizations (id, name, slug, updated_at) VALUES ($1::uuid, $1::text, $1::text, now())',
+      [org]
+    );
+    await client.query(
+      'INSERT INTO teams (id, name, slug, org_id, updated_at) VALUES ($1::uuid, $1::text, $1::text, $3, now()), ($2::uuid, $2::text, $2::text, $3, now())',
+      [first, second, org]
+    );
+    return { first, second };
+  }
+  it('allows equal names across team/global scopes but not within a team', async () => {
+    const { first, second } = await teams();
+    const sql = 'INSERT INTO review_presets (name, team_id, template_id) VALUES ($1, $2, $3)';
+    await client.query(sql, ['security', first, templateId]);
+    await client.query(sql, ['security', second, templateId]);
+    await expect(client.query(sql, ['security', first, templateId])).rejects.toMatchObject({
+      code: '23505',
+    });
+  });
+  it('retains global name uniqueness', async () => {
+    await expect(
+      client.query('INSERT INTO review_presets (name, template_id) VALUES ($1, $2)', [
+        'security',
+        templateId,
+      ])
+    ).rejects.toMatchObject({ code: '23505' });
+  });
+  it('accepts only same-team attachments and prevents reassignment of attached resources', async () => {
+    const { first, second } = await teams();
+    await client.query('UPDATE review_presets SET team_id = $1 WHERE id = $2', [first, presetId]);
+    await client.query('UPDATE workflow_templates SET team_id = $1 WHERE id = $2', [
+      first,
+      sourceTemplateId,
+    ]);
+    await client.query(
+      'INSERT INTO review_preset_attachments (preset_id, template_id) VALUES ($1, $2)',
+      [presetId, sourceTemplateId]
+    );
+    await expect(
+      client.query('UPDATE workflow_templates SET team_id = $1 WHERE id = $2', [
+        second,
+        sourceTemplateId,
+      ])
+    ).rejects.toMatchObject({ code: '23514' });
+  });
+  it('rejects a cross-team or global template attachment for a team preset', async () => {
+    const { first } = await teams();
+    await client.query('UPDATE review_presets SET team_id = $1 WHERE id = $2', [first, presetId]);
+    await expect(
+      client.query(
+        'INSERT INTO review_preset_attachments (preset_id, template_id) VALUES ($1, $2)',
+        [presetId, sourceTemplateId]
+      )
+    ).rejects.toMatchObject({ code: '23514' });
+  });
   it('defaults presets and intents and accepts both template kinds', async () => {
     const preset = await client.query(
       'SELECT on_blocking, enabled FROM review_presets WHERE id = $1',

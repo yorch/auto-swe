@@ -267,6 +267,12 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/models', icon: 'sliders', label: 'Model configuration', minRole: 'ADMIN' },
       { href: '/mcp', icon: 'plug', label: 'MCP connections', minRole: 'ADMIN' },
       { href: '/bundles', icon: 'package', label: 'Bundles', minRole: 'ADMIN' },
+      {
+        href: '/review-presets',
+        icon: 'checkCircle',
+        label: 'Team review presets',
+        minRole: 'LEAD',
+      },
     ],
     label: 'Build',
   },
