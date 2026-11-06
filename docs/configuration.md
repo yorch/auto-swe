@@ -116,6 +116,18 @@ sweeps, so it is environment-only and applied once at gateway startup (a change 
 and `SKILL_SOURCE_SYNC_CRON` (five-field cron, UTC, default `41 5 * * *`). The gateway refuses to start on
 a value it cannot use. See [agents.md](./agents.md#66-external-skill-sources).
 
+### Knowledge-base synchronization
+
+Repository-backed KB synchronization is environment-only and applied at gateway startup:
+`KNOWLEDGE_BASE_SYNC_ENABLED` defaults to `true`; `KNOWLEDGE_BASE_SYNC_CRON` defaults to
+`*/30 * * * *` (UTC). The gateway synchronizes the Temporal schedule, and the worker indexes
+active KBs at their configured default ref. Restart the gateway after changing these values.
+Disabling the sweep does not disable explicit reindexing, push-triggered indexing or synchronous
+run-start indexing. See [knowledge-bases.md](./knowledge-bases.md) and
+[.env.example](../.env.example) for the environment template.
+
+### Other scheduled sweeps
+
 The Slack channel sync, which re-checks each channel's privacy and records who is in each private
 one, is a sweep too: `SLACK_CHANNEL_SYNC_ENABLED` (default `false`: it needs the bot's `channels:read`
 and `groups:read` scopes, and its member lists show a private channel's content to its members),

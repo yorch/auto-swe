@@ -41,6 +41,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [nl-workflow-authoring.md](./nl-workflow-authoring.md) | Describing an automation in natural language and getting a validated `WorkflowSpec` back |
 | [figma-integration.md](./figma-integration.md) | Design context — the `design-fidelity` skill and submit-time Figma enrichment |
 | [knowledge.md](./knowledge.md) | Governed reusable knowledge — local capture, evidence, review/publication scopes, retrieval and trust boundaries |
+| [knowledge-bases.md](./knowledge-bases.md) | Repository-backed references — attachments, pinned snapshots, read-only files, indexing, search and trust boundaries |
 | [repo-dependency-graph.md](./repo-dependency-graph.md) | Directed dependency edges between git repos — the `RepoDependency` model, the cross-team edge API and management UI, and the neighbour resolver |
 | [bundles.md](./bundles.md) | Signed, versioned distribution of reusable agents, skills, scanner patterns, and templates across deployments |
 | [qodo.md](./qodo.md) | Reading Qodo's review of a pull request through a team's read-only Qodo MCP connection — setup, output screening, the shared findings client and the `qodo.enabled` switch |

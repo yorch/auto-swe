@@ -312,6 +312,7 @@ system prompt, the skills and the tools; the node supplies the message.
 | `inputs` | no | Bindings. Without `userMessage`, a single string input is sent as the message itself, and anything else is sent as the inputs' JSON. |
 | `systemPrompt` | no | Replaces the Agent's own system prompt for this node. |
 | `workspace` | no | `true` runs the agent in a throwaway checkout of the run's repository, at the run's branch (the base branch before the run has pushed one), with the workspace tools its Agent grants. Nothing it changes is kept. |
+| `knowledgeBases` | no | Defaults to `true`. With `workspace: true`, mounts the run's pinned read-only [KB references](./knowledge-bases.md) and binds their search scope; `false` omits both for this node. |
 | `spanName` | no | The trace and cost-attribution name (default `llm.agent_node`). |
 
 **Edges.** `next`.

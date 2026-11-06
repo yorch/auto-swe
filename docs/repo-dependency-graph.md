@@ -10,6 +10,10 @@ the repo it **depends on** (`to`). Edges carry a `kind` (`code` / `runtime` / `b
 
 ## What the graph stores
 
+[Repository-backed knowledge bases](./knowledge-bases.md) attach documentation/reference repos
+independently of dependency edges. They pin read-only files and searchable snapshots; adding a KB
+does not declare that one application depends on another.
+
 Each edge is one `repo_dependencies` row. Its columns:
 
 | Column | Meaning |

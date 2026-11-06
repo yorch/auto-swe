@@ -2689,6 +2689,15 @@
   ],
   "features": [
     {
+      "body": "Attach Git-backed reference material at team, repository, template and run scope, pin snapshots and expose bounded read-only files and cited search results.",
+      "category": "Knowledge",
+      "detail": "Knowledge bases are separate from governed KnowledgeItems: Git is the source of truth, with no approval lifecycle. Same-organization TEAM, SHARED and ORG visibility gates attachment. Additive resolution selects at most four references, preserving mandatory team status and the most specific overrides. A Temporal execution pins SHAs and snapshot IDs; later resolutions recheck attachability. Indexing scans text files for injection, excludes flagged or incompletely scanned files and fails closed on truncated trees. Workspace agents receive read-only files and an untrusted prompt block; the text-only decomposition planner and trusted delivery workspace do not. Explicitly granted Mastra searchKnowledge and retrieveKnowledge merge only pinned chunks, matching the configured embedding model or reporting text fallback, with recall-time injection filtering. Harnesses receive files, not server-side search tools. The dashboard manages KBs, links, shares and launch overrides.",
+      "id": "repoKnowledgeBases",
+      "refs": ["kbModel", "kbIndex", "kbRunResolution", "kbCheckout", "kbSearch", "kbPage"],
+      "status": "Implemented",
+      "title": "Repository-backed knowledge bases"
+    },
+    {
       "body": "Execute versioned JSON graphs on Temporal, including bounded loops, signals, parallel branches and human pauses.",
       "category": "Orchestration",
       "detail": "The shared interpreter owns graph semantics; RunnableWorkflow supplies activity dispatch, signal waits, persistence and cancellation. A graph is not necessarily acyclic. A graph failure ends the run once, as a non-retryable WORKFLOW_SPEC_FAILED. A cancellation of the whole run bypasses onError, onFail and onBranchFail and ends the run CANCELLED, even inside a fan-out branch. A node’s retries stop at a failure the activity marks non-retryable, after which its onFail mode decides. A dispatch node that fails before its first attempt records a FAILED step. Inside concurrent fan-out branches, a signal waiter woken by a delivery another branch consumed waits out the rest of its own timeout instead of taking onTimeout at once. These paths are patched, so older histories replay the earlier behaviour.",
@@ -4304,6 +4313,15 @@
   ],
   "limits": [
     {
+      "body": "References are capped, indexing and checkout are best-effort, and revocation cannot recall content already handed to an agent.",
+      "category": "Knowledge",
+      "detail": "Indexing limits file count, individual and total bytes; checkout has a separate byte cap. Mandatory references still face the run cap and operational failures. New runs and later resolutions recheck attachability, but existing workspaces and bound search tools are not actively scrubbed or cancelled. Snapshots have no dedicated retention sweep. Live authenticated GitHub, embedding-provider and vector-search integration and the KB dashboard browser UI are not end-to-end verified by the mock/component tests.",
+      "id": "repoKnowledgeBaseBounds",
+      "refs": ["kbIndex", "kbRunResolution", "kbCheckout", "kbSearch", "kbPage"],
+      "status": "Confirmed boundary",
+      "title": "KB snapshots are bounded reference context, not revocable instructions"
+    },
+    {
       "body": "HubSpot and generic HTTP API lack concrete genericActions handlers.",
       "category": "Coverage",
       "detail": "readSource/writeOutcome/runTool return ok:true with placeholder:true for several types. Notion, Zendesk, tracker and Slack have specific real handlers; MCP is executed separately.",
@@ -5258,7 +5276,12 @@
     "InstalledBundle": "Installed content identity/hash/signature trust record.",
     "IssueTrackerConfig": "Schema entity; inspect fields and relationship declarations below.",
     "Jwks": "Rotated signing keys for issued JWTs.",
+    "KnowledgeBase": "Git-backed reference source owned through its connection team, with organization visibility, a path/default ref and indexing metadata.",
+    "KnowledgeBaseChunk": "Snapshot-scoped text chunk with heading, content digest and optional model-labelled vector embedding.",
     "KnowledgeBaseConfig": "Schema entity; inspect fields and relationship declarations below.",
+    "KnowledgeBaseLink": "TEAM, REPO or TEMPLATE attachment with ref/mount overrides, mandatory TEAM defaults or TEMPLATE exclusions.",
+    "KnowledgeBaseSnapshot": "Immutable KB commit/path index with status, file/chunk/byte counts and flagged/skipped file findings.",
+    "KnowledgeBaseTeamShare": "A same-organization team permitted to attach a SHARED knowledge base.",
     "KnowledgeItem": "Governed knowledge: owner and origin team, organization, optional repository, type, status, visibility, version, producer provenance and evidence.",
     "KnowledgeItemEvent": "Append-only lifecycle event of a knowledge item: action, actor and version.",
     "KnowledgeItemTeamGrant": "A team a selected-teams knowledge item is published to.",
@@ -5348,6 +5371,11 @@
       "KnowledgeItem",
       "KnowledgeItemTeamGrant",
       "KnowledgeItemEvent",
+      "KnowledgeBase",
+      "KnowledgeBaseTeamShare",
+      "KnowledgeBaseLink",
+      "KnowledgeBaseSnapshot",
+      "KnowledgeBaseChunk",
       "TrustedKnowledgeEvidence",
       "LessonFlag",
       "AgentTraceDailyUsage",
@@ -5828,6 +5856,54 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "model KnowledgeBase {",
+      "before": 0,
+      "id": "kbModel",
+      "lines": 44,
+      "path": "packages/shared/src/prisma/schema.prisma",
+      "title": "Repository-backed KB ownership, visibility and snapshots"
+    },
+    {
+      "anchor": "export async function indexKnowledgeBaseSnapshot(",
+      "before": 0,
+      "id": "kbIndex",
+      "lines": 150,
+      "path": "packages/worker/src/lib/knowledgeBaseIndex.ts",
+      "title": "Idempotent snapshot indexing, file caps and injection exclusion"
+    },
+    {
+      "anchor": "export async function loadRunKnowledgeBases(",
+      "before": 0,
+      "id": "kbRunResolution",
+      "lines": 180,
+      "path": "packages/worker/src/lib/runKnowledgeBases.ts",
+      "title": "Execution pinning and renewed attachability checks"
+    },
+    {
+      "anchor": "export async function cloneKnowledgeBases(",
+      "before": 0,
+      "id": "kbCheckout",
+      "lines": 125,
+      "path": "packages/worker/src/activities/workspace.ts",
+      "title": "Read-only pinned checkout with flagged-file deletion and cleanup"
+    },
+    {
+      "anchor": "export async function searchKnowledgeBaseChunks(",
+      "before": 0,
+      "id": "kbSearch",
+      "lines": 120,
+      "path": "packages/worker/src/lib/knowledgeBaseSearch.ts",
+      "title": "Snapshot-bound vector/text search and recall injection gate"
+    },
+    {
+      "anchor": "export default function KnowledgeBasesPage()",
+      "before": 0,
+      "id": "kbPage",
+      "lines": 110,
+      "path": "packages/web/src/app/knowledge-bases/page.tsx",
+      "title": "KB dashboard visibility and lead-only management actions"
+    },
     {
       "anchor": "firstSignoff: {",
       "before": 0,
