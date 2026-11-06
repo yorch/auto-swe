@@ -36,6 +36,7 @@ export const MAX_CROSS_REPO_NEIGHBORS = 8;
  * defaults OFF (it clones repos).
  */
 export interface CrossRepoStepOptions {
+  knowledgeBases?: boolean;
   /** Clone upstream dependency repos into `/workspace/deps/*` (expensive tier). */
   crossRepoCheckout?: boolean;
   /** Inject the dependency-graph prompt block. Defaults to true when omitted. */

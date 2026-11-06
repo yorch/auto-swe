@@ -97,20 +97,19 @@ function resolveConnectionId(step: string, ctx: Context, inputs: Record<string, 
  * through, so `undefined` reaches the activity as "unset" and the activity's own
  * default applies.
  */
-/**
- * What a step's `config` asks of an implementer step beyond the defaults:
- * `refuseWorkflowChanges` and (for the CI fix) `untrustedCiLogs`. Undefined when it asks for
- * neither — so a step that does not set them calls its activity exactly as before.
- */
+/** Per-step fix-session options, omitted when none are explicitly configured. */
 function guardOptionsConfig(
   config: Record<string, unknown>
-): { refuseWorkflowChanges?: true; untrustedCiLogs?: true } | undefined {
+): { refuseWorkflowChanges?: true; untrustedCiLogs?: true; knowledgeBases?: boolean } | undefined {
   const refuse = config.refuseWorkflowChanges === true;
   const untrusted = config.untrustedCiLogs === true;
-  if (!refuse && !untrusted) {
+  if (!refuse && !untrusted && typeof config.knowledgeBases !== 'boolean') {
     return undefined;
   }
   return {
+    ...(typeof config.knowledgeBases === 'boolean'
+      ? { knowledgeBases: config.knowledgeBases }
+      : {}),
     ...(refuse ? { refuseWorkflowChanges: true as const } : {}),
     ...(untrusted ? { untrustedCiLogs: true as const } : {}),
   };
@@ -152,10 +151,14 @@ function allowedPathsConfig(config: Record<string, unknown>): string[] | undefin
 }
 
 function crossRepoOptions(config: Record<string, unknown>): {
+  knowledgeBases?: boolean;
   crossRepoCheckout?: boolean;
   crossRepoContext?: boolean;
 } {
   return {
+    ...(typeof config.knowledgeBases === 'boolean'
+      ? { knowledgeBases: config.knowledgeBases }
+      : {}),
     ...(typeof config.crossRepoCheckout === 'boolean'
       ? { crossRepoCheckout: config.crossRepoCheckout }
       : {}),
@@ -316,6 +319,9 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         // signal buffer; the activity prepends it as a labeled prompt block.
         ...(config.steering ? { steering: config.steering as string[] } : {}),
         systemPrompt: config.systemPrompt as string | undefined,
+        ...(typeof config.knowledgeBases === 'boolean'
+          ? { knowledgeBases: config.knowledgeBases }
+          : {}),
         userMessage: config.userMessage as string | undefined,
       };
       if (config.workspace !== true) {
@@ -340,7 +346,13 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     // Internal step of the Agent Run system template. The activity re-checks that
     // it is running for that template; nothing here is trusted to have been checked.
     'runAgentTask',
-    ({ request }) => agentTaskActivities.runAgentTask({ request }),
+    ({ request, config }) =>
+      agentTaskActivities.runAgentTask({
+        request,
+        ...(typeof config.knowledgeBases === 'boolean'
+          ? { knowledgeBases: config.knowledgeBases }
+          : {}),
+      }),
   ],
   [
     // Evals P2 declarative eval node: score a target value with a list of scorers.
@@ -669,7 +681,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'runAgentPrFeedbackTask',
-    ({ ctx, request, inputs }) => {
+    ({ ctx, request, config, inputs }) => {
       const gather = (inputs.gather ?? lookupPath(ctx, 'context.prFeedback')) as
         | activitiesType.GatherResult
         | undefined;
@@ -678,6 +690,9 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       }
       const ciLogs = inputs.ciLogs as string | undefined;
       return prFeedbackAgentTaskActivities.runAgentPrFeedbackTask({
+        ...(typeof config.knowledgeBases === 'boolean'
+          ? { knowledgeBases: config.knowledgeBases }
+          : {}),
         gather,
         request,
         ...(ciLogs ? { ciLogs } : {}),
@@ -929,6 +944,9 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         (inputs.maxAttemptsPerBranch as number | undefined) ??
         (config.maxAttemptsPerBranch as number | undefined);
       return conflictActivities.resolveMergeConflict({
+        ...(typeof config.knowledgeBases === 'boolean'
+          ? { knowledgeBases: config.knowledgeBases }
+          : {}),
         ...(config.mergeMessagePrefix
           ? { mergeMessagePrefix: config.mergeMessagePrefix as string }
           : {}),
@@ -986,6 +1004,9 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       }
       const prev = withRunBase(pickCodeResult(inputs.previousCodeResult, ctx), request);
       return agentActivities.executeGateFixImplementation({
+        ...(typeof config.knowledgeBases === 'boolean'
+          ? { knowledgeBases: config.knowledgeBases }
+          : {}),
         gateName,
         gateOutput,
         previousCodeResult: prev,

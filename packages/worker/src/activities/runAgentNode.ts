@@ -25,8 +25,10 @@ import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
+import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
+import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
 import { runAgent } from './runAgent.js';
@@ -43,6 +45,7 @@ export interface RunAgentNodeInput {
   spanName?: string;
   /** Per-node system-prompt override (wins over the Agent's own prompt). */
   systemPrompt?: string;
+  knowledgeBases?: boolean;
   /**
    * Channel assistant (Phase A): SlackChannel.id the run originated from. When
    * set, the agent resolves the CHANNEL config tier (per-channel tools/MCP/model)
@@ -287,6 +290,13 @@ async function runInCheckout(args: {
     {
       detectedStack: repo.detectedStack,
       repoSetup: { defer: true, field: repo.setup },
+      knowledgeBases: (
+        await loadRunKnowledgeBases({
+          knowledgeBases: input.knowledgeBases,
+          repoId: repo.id,
+          teamId: repo.teamId,
+        })
+      ).checkouts,
       teamId: repo.teamId,
     }
   );
@@ -334,7 +344,8 @@ async function runInCheckout(args: {
       context: { agentNode: input.agentRef },
       role: key,
       runtime,
-      system: `${systemPrompt}\n\n${CHECKOUT_PREAMBLE}`.trim(),
+      system:
+        `${systemPrompt}\n\n${CHECKOUT_PREAMBLE}${await knowledgeBasePromptBlock(workspace)}`.trim(),
       tracer,
       usageEvent: spanName,
       user: args.userMessage,
@@ -364,7 +375,8 @@ async function runInCheckout(args: {
     },
     resolveCtx
   );
-  spec.systemPrompt = `${spec.systemPrompt}\n\n${CHECKOUT_PREAMBLE}`.trim();
+  spec.systemPrompt =
+    `${spec.systemPrompt}\n\n${CHECKOUT_PREAMBLE}${await knowledgeBasePromptBlock(workspace)}`.trim();
   const mcpTools = await bindMcpTools(key, resolveCtx, tracer, onOpen);
   if (mcpTools) {
     spec.tools = { ...mcpTools, ...spec.tools } as AgentTools;

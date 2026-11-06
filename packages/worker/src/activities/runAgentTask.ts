@@ -44,9 +44,11 @@ import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { resolveRunEgressPolicy } from '../lib/egressWiring.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
+import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
+import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -63,6 +65,7 @@ import { parseDiffToFileChanges } from './utils.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
 export interface RunAgentTaskInput {
+  knowledgeBases?: boolean;
   /** The run's request: `payload` carries the launch parameters, `description` the prompt. */
   request: RepoWorkRequest;
 }
@@ -118,6 +121,7 @@ export async function runAgentTask(input: RunAgentTaskInput): Promise<RunAgentTa
  * ceilings were already decided, and whether the gated commit is pushed.
  */
 export interface AgentTaskCoreInput {
+  knowledgeBases?: boolean;
   /** The `git_repo` connection row, with its installation. */
   repo: Parameters<typeof toRepoRef>[0] & {
     detectedStack?: unknown;
@@ -264,8 +268,15 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       undefined,
       {
         detectedStack: repo.detectedStack,
-        egressPolicy,
         repoSetup: { field: repo.setup },
+        egressPolicy,
+        knowledgeBases: (
+          await loadRunKnowledgeBases({
+            knowledgeBases: input.knowledgeBases,
+            repoId: repo.id,
+            teamId: repo.teamId,
+          })
+        ).checkouts,
         services,
         teamId: repo.teamId,
       }
@@ -392,7 +403,10 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
   }
 }
 
-async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgentTaskResult> {
+async function runAgentTaskImpl({
+  request,
+  knowledgeBases,
+}: RunAgentTaskInput): Promise<RunAgentTaskResult> {
   const repoId = requireRepoId(request, 'runAgentTask');
   const workflowId = currentWorkflowId();
 
@@ -506,6 +520,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     deliver: payload.deliver === 'none' ? 'none' : 'push',
     effective,
     key,
+    knowledgeBases,
     prompt: request.description,
     repo,
     skillRevisions: baseCtx.skillRevisions,
@@ -659,7 +674,8 @@ async function runOnMastra(
   if (browserTools) {
     spec.tools = { ...browserTools, ...spec.tools } as AgentTools;
   }
-  spec.systemPrompt = `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}`.trim();
+  spec.systemPrompt =
+    `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}${await knowledgeBasePromptBlock(input.workspace)}`.trim();
 
   // MCP per the agent's own configuration (a known exfiltration channel next
   // to a workspace; documented in docs/agent-runs.md). The agent resolves with
@@ -742,7 +758,8 @@ async function runOnHarness(
       context: { agentRun: true },
       role: key,
       runtime,
-      system: `${systemPrompt}\n\n${WORKSPACE_PREAMBLE}`.trim(),
+      system:
+        `${systemPrompt}\n\n${WORKSPACE_PREAMBLE}${await knowledgeBasePromptBlock(input.workspace)}`.trim(),
       tracer,
       usageEvent: 'llm.agent_run',
       user: input.prompt,

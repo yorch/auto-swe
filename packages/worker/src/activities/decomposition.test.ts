@@ -1,5 +1,10 @@
 import { ApplicationFailure } from '@temporalio/activity';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
+
+vi.mock('../lib/runKnowledgeBases.js', () => ({
+  loadRunKnowledgeBases: vi.fn(async () => ({ checkouts: [], snapshotIds: [] })),
+}));
 
 // Which loop drives the implementer is a run-pinned setting; these tests are about
 // the Mastra loop, so the registry read answers without a database.
@@ -217,6 +222,7 @@ const mockedFindUnique = vi.mocked(prisma.connection.findUniqueOrThrow);
 const mockedRecordLesson = vi.mocked(recordLessonBackground);
 
 afterEach(() => {
+  vi.mocked(loadRunKnowledgeBases).mockClear();
   fakeWorkspace.gitIdentity = { author: BOT, committer: BOT };
   mockedFindUnique.mockReset();
   fakeWorkspace.exec.mockReset();
@@ -462,6 +468,17 @@ function execCommands(): string[] {
 }
 
 describe('resolveMergeConflict', () => {
+  it('allows this agent workspace to opt out of knowledge bases', async () => {
+    primeRepo();
+    fakeWorkspace.exec.mockImplementation(() => '');
+    await resolveMergeConflict({
+      knowledgeBases: false,
+      request: baseRequest,
+      sourceBranches: ['auto/TICK-1/auth'],
+      targetBranch: 'auto/TICK-1',
+    });
+    expect(loadRunKnowledgeBases).not.toHaveBeenCalled();
+  });
   function primeRepo() {
     mockedFindUnique.mockResolvedValue({
       defaultBranch: 'main',

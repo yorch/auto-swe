@@ -96,6 +96,15 @@ const CROSS_REPO_CHECKOUT_FIELD = {
   type: 'boolean' as const,
 } as const;
 
+const KNOWLEDGE_BASES_FIELD = {
+  default: true,
+  description:
+    'Mount the run’s knowledge bases as read-only, untrusted reference material. On by default; uncheck to omit them for this step.',
+  key: 'knowledgeBases',
+  label: 'Knowledge bases',
+  type: 'boolean' as const,
+} as const;
+
 const ALLOWED_PATHS_FIELD = {
   description:
     'JSON array of what this step may change: a repo-relative file ("docs/a.md"), a directory by a trailing slash ("docs/"), or an extension ("**/*.md"). A change that touches any other file fails the step before it is committed or pushed. Leave empty for no restriction.',
@@ -114,7 +123,23 @@ const IMPLEMENTER_TOOLS_FIELD = {
 } as const;
 
 function register(meta: StepMetadata): void {
-  REGISTRY.set(meta.name, meta);
+  const workspaceAgent = [
+    'executeImplementation',
+    'executeCIFixImplementation',
+    'executeReviewFixImplementation',
+    'executeGateFixImplementation',
+    'executePrFeedbackImplementation',
+    'runAgentPrFeedbackTask',
+    'resolveMergeConflict',
+    'runAgentNode',
+    'runAgentTask',
+  ].includes(meta.name);
+  REGISTRY.set(
+    meta.name,
+    workspaceAgent
+      ? { ...meta, configFields: [...(meta.configFields ?? []), KNOWLEDGE_BASES_FIELD] }
+      : meta
+  );
 }
 
 register({

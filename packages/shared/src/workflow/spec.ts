@@ -206,6 +206,7 @@ const AgentNodeSchema = z.object({
   agentRef: z.string().min(1),
   heartbeatTimeout: z.string().optional(),
   inputs: InputMapSchema.optional(),
+  knowledgeBases: z.boolean().optional(),
   next: NodeIdSchema.optional(),
   onError: OnErrorSchema.optional(),
   onFail: OnFailSchema.optional(),

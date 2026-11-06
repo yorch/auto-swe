@@ -9,6 +9,28 @@ import {
 } from './stepRegistry.js';
 
 describe('stepRegistry', () => {
+  it('offers knowledge bases on workspace agent steps only, enabled by default', () => {
+    for (const step of [
+      'executeImplementation',
+      'executeCIFixImplementation',
+      'executeReviewFixImplementation',
+      'executeGateFixImplementation',
+      'executePrFeedbackImplementation',
+      'runAgentPrFeedbackTask',
+      'resolveMergeConflict',
+      'runAgentNode',
+      'runAgentTask',
+    ]) {
+      expect(
+        getStepMetadata(step).configFields.find((field) => field.key === 'knowledgeBases')
+      ).toMatchObject({ default: true, type: 'boolean' });
+    }
+    for (const step of ['planDecomposition', 'mergeBranches', 'runTests', 'runContainerStep']) {
+      expect(
+        getStepMetadata(step).configFields.find((field) => field.key === 'knowledgeBases')
+      ).toBeUndefined();
+    }
+  });
   it('registers every builtin step the worker promises to handle', () => {
     expect(() => assertBuiltinStepsRegistered()).not.toThrow();
     for (const name of BUILTIN_STEPS) {

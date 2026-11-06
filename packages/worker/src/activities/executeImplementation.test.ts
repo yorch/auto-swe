@@ -1,6 +1,10 @@
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../lib/runKnowledgeBases.js', () => ({
+  loadRunKnowledgeBases: vi.fn(async () => ({ checkouts: [], snapshotIds: [] })),
+}));
+
 /**
  * Covers the cross-repo dependency block reaching the implementer's system
  * prompt (repo dependency graph, P2). Everything the activity touches outside

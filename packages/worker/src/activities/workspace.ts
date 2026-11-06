@@ -40,6 +40,7 @@ import {
   runSetupGitPhase,
   runSetupStepsPhase,
 } from '../lib/repoSetupRun.js';
+import type { KnowledgeBaseCheckout, MountedKnowledgeBase } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import type { RepoRef } from '../lib/scm/types.js';
 import { shellQuote } from '../lib/shellQuote.js';
@@ -62,6 +63,7 @@ export { buildMetadataBlockArgs } from '../lib/workspaceBackend/docker.js';
 export { shellQuote };
 
 export interface Workspace {
+  knowledgeBases?: MountedKnowledgeBase[];
   containerId: string;
   /** The network posture this workspace was created under (absent on test doubles). */
   egressPolicy?: EgressPolicy;
@@ -611,6 +613,87 @@ export async function cloneDependencyRepos(
   return cloned;
 }
 
+export async function cloneKnowledgeBases(
+  workspace: Pick<Workspace, 'exec'>,
+  bases: KnowledgeBaseCheckout[]
+): Promise<MountedKnowledgeBase[]> {
+  const mounted: MountedKnowledgeBase[] = [];
+  const used = new Set<string>();
+  for (const kb of bases.slice(0, MAX_DEPENDENCY_CHECKOUTS)) {
+    let name = safeDepDirName(kb.mountName);
+    while (used.has(name)) {
+      name = `${name}-x`;
+    }
+    used.add(name);
+    const destination = `/workspace/kb/${name}`;
+    const staging = `/workspace/.kb-checkout-${name}`;
+    try {
+      const basePath = kb.path.replace(/\/+$/, '');
+      const safePath = (value: string) =>
+        !value.startsWith('/') &&
+        !value.includes('\\') &&
+        value.split('/').every((part) => part !== '.' && part !== '..' && part !== '');
+      if (
+        !/^[0-9a-f]{40,64}$/i.test(kb.sha) ||
+        (kb.path !== '' && !safePath(basePath)) ||
+        kb.flaggedFiles.some((file) => !safePath(file))
+      ) {
+        throw new Error('invalid knowledge base checkout');
+      }
+      const { cleanUrl, gitAuthHeader } = splitCloneCredential(kb.authedCloneUrl);
+      const source = basePath ? `${staging}/${basePath}` : staging;
+      const script = [
+        'set -eu',
+        `mkdir -p /workspace/kb ${shellQuote(staging)}`,
+        `cd ${shellQuote(staging)}`,
+        'git init -q',
+        `git remote add origin ${shellQuote(cleanUrl)}`,
+        ...(basePath
+          ? [
+              'git sparse-checkout init --cone',
+              `git sparse-checkout set -- ${shellQuote(basePath)}`,
+            ]
+          : []),
+        gitWithAuthHeader(
+          `fetch --depth=1 --no-tags origin ${shellQuote(kb.sha)}`,
+          Boolean(gitAuthHeader)
+        ),
+        'git -c core.hooksPath=/dev/null checkout --detach FETCH_HEAD',
+        `find ${shellQuote(staging)} -type l -delete`,
+        ...kb.flaggedFiles.map((file) => `rm -f -- ${shellQuote(`${staging}/${file}`)}`),
+        `rm -rf -- ${shellQuote(`${staging}/.git`)}`,
+        `test -d ${shellQuote(source)}`,
+        `test "$(find ${shellQuote(source)} -type f -exec sh -c 'for file do wc -c < "$file"; done' sh {} + | awk '{bytes += $1} END {print bytes+0}')" -le 52428800`,
+        `mkdir ${shellQuote(destination)}`,
+        `cp -a ${shellQuote(source)}/. ${shellQuote(destination)}/`,
+        `rm -rf -- ${shellQuote(staging)}`,
+        `find ${shellQuote(destination)} -type f -exec chmod 444 {} +`,
+        `find ${shellQuote(destination)} -type d -exec chmod 555 {} +`,
+      ].join('\n');
+      await workspace.exec(script, {
+        secretEnv: gitAuthSecretEnv(gitAuthHeader),
+        timeoutMs: 600_000,
+      });
+      mounted.push({
+        knowledgeBaseId: kb.knowledgeBaseId,
+        mountPath: destination,
+        owner: kb.owner,
+        repo: kb.repo,
+        sha: kb.sha,
+        snapshotId: kb.snapshotId,
+      });
+    } catch {
+      logWarn('knowledge base checkout failed; continuing without this reference');
+      try {
+        await workspace.exec(
+          `chmod -R u+w ${shellQuote(destination)} 2>/dev/null || true; rm -rf -- ${shellQuote(destination)} ${shellQuote(staging)}`
+        );
+      } catch {}
+    }
+  }
+  return mounted;
+}
+
 /**
  * Provision an ephemeral Docker workspace with the repo cloned at the default
  * branch and a fresh local branch checked out. `authedRepoUrl` must already
@@ -658,6 +741,7 @@ export async function createWorkspace(
    */
   existingBranch?: boolean,
   options?: {
+    knowledgeBases?: KnowledgeBaseCheckout[];
     teamId?: string | null;
     services?: WorkspaceServiceSpec[];
     /**
@@ -934,6 +1018,7 @@ export async function createWorkspace(
   };
   // `PATH=…` pair put on every agent-facing exec once tools are installed; empty otherwise.
   let toolsEnv: string[] = [];
+  let mountedKnowledgeBases: MountedKnowledgeBase[] = [];
   const TOOL_INSTALL_TIMEOUT_MS = 300_000;
   try {
     const spec = agentWorkspaceSpec(containerName, effectiveImage, infra, options?.services);
@@ -1151,6 +1236,11 @@ export async function createWorkspace(
       });
     }
 
+    mountedKnowledgeBases = await cloneKnowledgeBases(
+      { exec: (command, options) => rootExec(command, options?.timeoutMs, options?.secretEnv) },
+      options?.knowledgeBases ?? []
+    );
+
     // Provisioning is done (clone, registry wiring) and no agent code has run: cut the network
     // off now. It fails closed — a throw lands in the catch below, which removes the workspace.
     // `restricted` is locked too: the egress proxy is only cooperative (`HTTP_PROXY`), so the
@@ -1278,6 +1368,7 @@ export async function createWorkspace(
       }
     },
     gitIdentity,
+    knowledgeBases: mountedKnowledgeBases,
     readFile: readWorkspaceFile,
     ...(options?.repoSetup
       ? {

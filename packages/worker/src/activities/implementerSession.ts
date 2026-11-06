@@ -16,10 +16,12 @@ import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
+import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
+import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -74,6 +76,7 @@ export interface FixSessionInput {
   /** Built-in system prompt for this mode (resolveSystemPrompt handles DB/step overrides). */
   defaultSystemPrompt: string;
   systemPromptOverride?: string;
+  knowledgeBases?: boolean;
   /** When set, the change may touch only these paths; anything else fails before the push. */
   allowedPaths?: string[];
   /** Refuse, before the push, a change to a GitHub Actions workflow or action. */
@@ -164,6 +167,13 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     {
       detectedStack: repo.detectedStack,
       repoSetup: { defer: true, field: repo.setup },
+      knowledgeBases: (
+        await loadRunKnowledgeBases({
+          knowledgeBases: input.knowledgeBases,
+          repoId: repo.id,
+          teamId: repo.teamId,
+        })
+      ).checkouts,
       teamId: repo.teamId,
     }
   );
@@ -233,7 +243,10 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
           tracer,
         })
       : '';
-    const fullSystemPrompt = turns.systemPrompt(systemPrompt) + lessonsContext;
+    const fullSystemPrompt =
+      turns.systemPrompt(systemPrompt) +
+      lessonsContext +
+      (await knowledgeBasePromptBlock(workspace));
     const userMessage = JSON.stringify({
       mode,
       previousDiff: previousCodeResult.diff.slice(-20_000),

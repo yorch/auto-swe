@@ -1,5 +1,10 @@
 import { ApplicationFailure } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
+
+vi.mock('../lib/runKnowledgeBases.js', () => ({
+  loadRunKnowledgeBases: vi.fn(async () => ({ checkouts: [], snapshotIds: [] })),
+}));
 
 const m = vi.hoisted(() => ({
   agentWs: {
@@ -607,6 +612,37 @@ describe('deliver none', () => {
 });
 
 describe('delivery: trust boundary and gate-before-push', () => {
+  it('forwards resolved checkouts to the agent workspace only', async () => {
+    const checkout = {
+      authedCloneUrl: 'https://x:secret@h/o/reference.git',
+      flaggedFiles: [],
+      knowledgeBaseId: 'kb',
+      mountName: 'reference',
+      owner: 'owner',
+      path: 'docs',
+      repo: 'reference',
+      sha: 'a'.repeat(40),
+      snapshotId: 'snapshot',
+    };
+    vi.mocked(loadRunKnowledgeBases).mockResolvedValueOnce({
+      checkouts: [checkout],
+      snapshotIds: ['snapshot'],
+    });
+    await runAgentTask({ request: deliver('branch') });
+    expect(vi.mocked(createWorkspace).mock.calls[0][6]).toHaveProperty('knowledgeBases', [
+      checkout,
+    ]);
+    expect(vi.mocked(createWorkspace).mock.calls[1][6]).not.toHaveProperty('knowledgeBases');
+    expect(loadRunKnowledgeBases).toHaveBeenCalledTimes(1);
+  });
+  it('keeps KBs out of the trusted delivery workspace and forwards the opt-out to resolution', async () => {
+    await runAgentTask({ knowledgeBases: false, request: deliver('branch') });
+    expect(loadRunKnowledgeBases).toHaveBeenLastCalledWith(
+      expect.objectContaining({ knowledgeBases: false })
+    );
+    expect(vi.mocked(createWorkspace).mock.calls[0][6]).toHaveProperty('knowledgeBases', []);
+    expect(vi.mocked(createWorkspace).mock.calls[1][6]).not.toHaveProperty('knowledgeBases');
+  });
   const deliver = (d: 'branch' | 'draft_pr') =>
     request({ payload: { agentRef: 'contentWriter', deliver: d } });
 

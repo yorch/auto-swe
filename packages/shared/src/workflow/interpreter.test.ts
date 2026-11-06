@@ -1842,7 +1842,13 @@ describe('agent node (P2)', () => {
       entry: 'a',
       name: 'agent-workspace',
       nodes: {
-        a: { agentRef: 'reviewer', next: 'done', type: 'agent', workspace: true },
+        a: {
+          agentRef: 'reviewer',
+          knowledgeBases: false,
+          next: 'done',
+          type: 'agent',
+          workspace: true,
+        },
         done: { status: 'SUCCESS', type: 'terminate' },
       },
       schemaVersion: SPEC_SCHEMA_VERSION,
@@ -1853,6 +1859,7 @@ describe('agent node (P2)', () => {
     });
     await runSpec(spec, baseCtx(), dispatcher);
     expect(calls[0].config.workspace).toBe(true);
+    expect(calls[0].config.knowledgeBases).toBe(false);
   });
 
   it('does not set config.steering when the dispatcher has no drainSteering hook', async () => {

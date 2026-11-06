@@ -38,6 +38,7 @@ export async function fetchCILogs(logsUrl?: string, repoId?: string): Promise<st
 
 /** What a template step asks of a fix session beyond the defaults. */
 export interface FixSessionOptions {
+  knowledgeBases?: boolean;
   /** `config.refuseWorkflowChanges`: refuse a workflow or action change before the push. */
   refuseWorkflowChanges?: boolean;
   /**
@@ -72,6 +73,9 @@ export async function executeCIFixImplementation(
     failureContext = fenceCiLogs(redacted);
   }
   return runImplementerFixSession({
+    ...(typeof options.knowledgeBases === 'boolean'
+      ? { knowledgeBases: options.knowledgeBases }
+      : {}),
     ...(options.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
     agentKey: 'ciFixer',
     commitMessage: `auto: fix CI for ${previousCodeResult.branch}`,
@@ -119,6 +123,9 @@ export async function executeReviewFixImplementation(
 ): Promise<CodeResult> {
   const rejectionSummary = rejectionText(rejection);
   return runImplementerFixSession({
+    ...(typeof options.knowledgeBases === 'boolean'
+      ? { knowledgeBases: options.knowledgeBases }
+      : {}),
     ...(options.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
     agentKey: 'reviewFixer',
     allowedPaths,

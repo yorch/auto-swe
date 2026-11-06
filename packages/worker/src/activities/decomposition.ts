@@ -40,11 +40,13 @@ import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorOutput } from '../lib/errors.js';
 import { withCoAuthorTrailer } from '../lib/gitIdentity.js';
+import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
+import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -198,6 +200,7 @@ export function subtaskBranchName(featureBranch: string, subtask: Pick<Subtask, 
 }
 
 export interface ResolveMergeConflictInput {
+  knowledgeBases?: boolean;
   request: RepoWorkRequest;
   /** Target branch that all sources should be merged into (e.g. the feature branch). */
   targetBranch: string;
@@ -250,7 +253,8 @@ export async function resolveMergeConflict(
     request,
     targetBranch,
     sourceBranches,
-    'resolveMergeConflict'
+    'resolveMergeConflict',
+    input.knowledgeBases !== false
   );
   const merged: string[] = [];
   const unmerged: string[] = [];
@@ -404,7 +408,8 @@ async function provisionMergeWorkspace(
   request: RepoWorkRequest,
   targetBranch: string,
   sourceBranches: string[],
-  label: string
+  label: string,
+  knowledgeBases = false
 ): Promise<{ workspace: Workspace; log: string[]; baseBranch: string }> {
   const repo = await withRunDetection(
     await prisma.connection.findUniqueOrThrow({
@@ -428,6 +433,12 @@ async function provisionMergeWorkspace(
       detectedStack: repo.detectedStack,
       repoSetup: { defer: true, field: repo.setup },
       teamId: repo.teamId,
+      ...(knowledgeBases
+        ? {
+            knowledgeBases: (await loadRunKnowledgeBases({ repoId: repo.id, teamId: repo.teamId }))
+              .checkouts,
+          }
+        : {}),
     }
   );
   heartbeat(`${label}: workspace provisioned`);
@@ -536,7 +547,8 @@ async function mergeOneWithResolver(
     MERGE_CONFLICT_RESOLVER_PROMPT
   );
   const turns = await opts.turns();
-  const fullSystemPrompt = turns.systemPrompt(systemPrompt);
+  const fullSystemPrompt =
+    turns.systemPrompt(systemPrompt) + (await knowledgeBasePromptBlock(workspace));
 
   for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
     throwIfActivityCancelled();

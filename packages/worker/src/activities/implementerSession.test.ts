@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('../lib/runKnowledgeBases.js', () => ({
+  loadRunKnowledgeBases: vi.fn(async () => ({ checkouts: [], snapshotIds: [] })),
+}));
+
 // Which loop drives the implementer is a run-pinned setting; these tests are about
 // the Mastra loop, so the registry read answers without a database.
 vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
