@@ -2744,18 +2744,23 @@
       "title": "Documentation, vulnerability and document-review library packs"
     },
     {
-      "body": "Review-loop templates stop when a rejected review repeats its prior findings, rather than spending the remaining fix rounds on the same rejection.",
+      "body": "Review-loop templates stop when a rejected review repeats its coarse rejection fingerprint, even if the finding text or line numbers differ.",
       "category": "Orchestration",
-      "detail": "The reviewLoop helper passes the previous rejection fingerprint into runReviewNetwork. The activity marks a non-approved result stalled when a non-empty fingerprint matches. The graph stores the rejection, checks stalled before its retry limit, and routes to its configured exhausted path. Approval clears the fingerprint. The fix node can inherit a template's explicit fixConfig, including allowedPaths; constraints on an initial implementation are not automatically universal constraints on every future session. Built-in template sync appends changed specs and promotes a still-active built-in version only when it is not in a live experiment; admin versions and deactivations are preserved. Review-kind metadata is filled separately when absent, without rewriting existing specs.",
+      "detail": "The reviewLoop helper passes the previous rejection fingerprint into runReviewNetwork. The activity marks a non-approved result stalled when a non-empty fingerprint matches. The fingerprint counts rejecting findings by reviewer, category and file, excluding reviewer crashes; it ignores finding text and line numbers, so a match is not proof of identical findings. The graph stores the rejection, checks stalled before its retry limit, and routes to its configured exhausted path. Approval clears the fingerprint. The fix node can inherit a template's explicit fixConfig, including allowedPaths; constraints on an initial implementation are not automatically universal constraints on every future session. Built-in template sync appends changed specs and promotes a still-active built-in version only when it is not in a live experiment; admin versions and deactivations are preserved. Review-kind metadata is filled separately when absent, without rewriting existing specs.",
       "id": "reviewLoopStall",
-      "refs": ["reviewLoopGraph", "reviewStallCheck", "builtinTemplateSync"],
+      "refs": [
+        "reviewLoopGraph",
+        "reviewStallCheck",
+        "reviewCoarseFingerprint",
+        "builtinTemplateSync"
+      ],
       "status": "Implemented + seeded templates",
-      "title": "Repeated review findings stop the fix loop"
+      "title": "Repeated rejection fingerprints stop the fix loop"
     },
     {
       "body": "Review a finished workflow or agent run manually or through attached presets, with separate results and optional guarded fix rounds.",
       "category": "Engineering",
-      "detail": "Review-kind library templates provide network, Qodo and human-review variants. Launch preparation checks source control, repository access, review.enabled and template/preset scope. Global presets are platform-admin managed; team presets require that team's lead/admin membership and cannot be attached or launched across teams. The source-run picker exposes globals plus that source's team. Successful non-review runs enqueue independent global and team attachment intents, dispatched with durable claims and a stale-intent sweep. PR and branch reviews verify recorded heads; stored diffs are checked and applied at the recorded base into a local-only commit. Optional runTests runs the repository's test gate on a verified checkout. Large changes are reviewed in bounded chunks inside one network step, merging worst-of verdicts and deduplicated findings. The run page links reviews and shows verification, verdicts and fix status. PR-mode publication posts a marked comment and requests reevaluation; successful PR/branch linked reviews with a matching head and no explicit unverified flag can supply otherwise missing PR review evidence, but cannot lower original evidence. PR fixes use an opted-in review_findings feedback automation and its existing guards; stored fixes launch a same-agent deliver:none follow-up. Transient failures can be retried with distinct, deduplicated attempts and DB-backed findings.",
+      "detail": "Review-kind library templates provide network, Qodo and human-review variants. Manual launch checks source-run control and repository access; launch preparation checks review.enabled and template/preset scope. Global presets are platform-admin managed; team presets require that team's lead/admin membership and cannot be attached or launched across teams. The source-run picker exposes globals plus that source's team. Successful non-review runs enqueue independent global and team attachment intents, dispatched with durable claims and a stale-intent sweep, with bounded attempts rather than indefinite retries. PR and branch reviews verify recorded heads; stored diffs are checked and applied at the recorded base into a local-only commit. Optional runTests runs the repository's test gate on a verified checkout. Large changes are reviewed in bounded chunks inside one network step, merging worst-of verdicts and deduplicated findings. The run page links reviews and shows verification, verdicts and fix status. PR-mode publication posts a marked comment and requests reevaluation; successful PR/branch linked reviews with a matching head and no explicit unverified flag can supply otherwise missing PR review evidence, but cannot lower original evidence. PR fixes use an opted-in review_findings feedback automation and its existing guards; stored fixes launch a same-agent deliver:none follow-up. Transient failures can be retried with distinct, deduplicated attempts and DB-backed findings.",
       "id": "postRunReview",
       "refs": [
         "postRunLaunch",
@@ -4438,6 +4443,23 @@
   ],
   "limits": [
     {
+      "body": "Automatic review intents have bounded recovery; a recorded start or queued retry is not proof that a worker consumed it.",
+      "category": "Reliability",
+      "detail": "Successful non-review finalization inserts attached-preset intents in the terminal transaction; an insertion failure rolls that bookkeeping back. Dispatch happens afterward, so dispatch failure does not undo committed source completion. A stale-intent sweep retries unexpected failures within an attempt budget, but classified launch errors become skipped and are not automatically revived when configuration changes. Dispatch records RunInput and ActiveWorkflow before starting Temporal; WorkflowRun may not exist until setup runs. Manual launch therefore opens the existing request panel rather than a nonexistent reserved run page. Fix retries persist a queued marker after Temporal acceptance and update the decision when the worker processes the attempt. Stable review/attempt identities coalesce duplicates; these markers do not promise worker availability or immediate execution.",
+      "id": "reviewDispatchBounds",
+      "refs": [
+        "reviewIntentTransaction",
+        "postRunIntents",
+        "reviewIntentDispatch",
+        "reviewIntentSweep",
+        "reviewRetryQueued",
+        "reviewRetryCompleted",
+        "reviewRequestNavigation"
+      ],
+      "status": "Confirmed boundary",
+      "title": "Review acceptance and execution are separate states"
+    },
+    {
       "body": "Inline review findings are optional, advisory comments, not approval requests or verified fixes.",
       "category": "Engineering",
       "detail": "prEvaluation.postReviewFindings controls posting. Selection takes warning/critical findings on changed files, excludes reviewer-crash placeholders, and suppresses lint/style/type categories when CI already failed. Only lines anchorable on the new side of the diff become inline comments; unanchorable selected findings can still appear in the bounded brief. Posting checks existing finding markers and rereads the head immediately before creating a comment-only review. A moved head, host refusal or read/post error returns a reason without failing evaluation, so inline delivery is not guaranteed. Suggested fixes are escaped prose, not click-to-apply suggestion blocks, and /auto-swe is neutralized. The human-thread feedback gatherer ignores marked platform finding comments; the explicit review_findings trigger reads review-run data instead.",
@@ -4470,7 +4492,7 @@
     {
       "body": "A review is bounded evidence about one change, not proof of correctness or a promise that a fix starts.",
       "category": "Engineering",
-      "detail": "Network chunks see the full file list but only their part of the diff, so cross-chunk interactions may be missed. Changes above the hard size cap are refused. Stored verification rejects unsupported or unsafe patch forms; failures remain explicitly unverified and skip the optional test gate. Even verified stored reviews have no PR and never feed PR evaluation. Tests are opt-in, not an implied successful gate. PR fixes need an enabled repository automation opted into review_findings, the matching open platform PR and unchanged head, push eligibility, budget and remaining rounds; a skipped decision is surfaced rather than treated as a successful fix. Stored fixes remain unpublished agent runs. Retry eligibility is limited to recorded transient decisions and rechecks guards. Publication waits up to five minutes for review completion before reevaluation, which rereads the PR's current head.",
+      "detail": "Network chunks see the full file list but only their part of the diff, so cross-chunk interactions may be missed. Changes above the hard size cap are refused. Stored verification rejects unsupported or unsafe patch forms; failures remain explicitly unverified and skip the optional test gate. Even verified stored reviews have no PR and never feed PR evaluation. Tests are opt-in, not an implied successful gate. PR fixes need an enabled repository automation opted into review_findings, the matching open platform PR and unchanged head, push eligibility, budget and remaining rounds; a skipped decision is surfaced rather than treated as a successful fix. Stored fixes remain unpublished agent runs. Retry eligibility is limited to recorded transient decisions and rechecks guards. Publication waits up to five minutes for review completion before reevaluation, which rereads the PR's current head. Branch-only reviews have no fix hook. The opt-in test result is input to the review, not a separate hard approval gate. A retry's queued marker is durable publication-step JSON written after Temporal accepts the request; it is not a live worker-health or progress check.",
       "id": "postRunReviewBounds",
       "refs": [
         "postRunLoad",
@@ -6076,6 +6098,57 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "const endedWith = endedStatus(ended);",
+      "before": 7,
+      "id": "reviewIntentTransaction",
+      "lines": 29,
+      "path": "packages/worker/src/activities/templates.ts",
+      "title": "Terminal bookkeeping and review intents share a transaction"
+    },
+    {
+      "anchor": "async function dispatch(runId:",
+      "id": "reviewIntentDispatch",
+      "lines": 110,
+      "path": "packages/worker/src/activities/reviewLaunches.ts",
+      "title": "Durable intent claims, saved launch input and bounded attempts"
+    },
+    {
+      "anchor": "export async function sweepReviewLaunches(",
+      "id": "reviewIntentSweep",
+      "lines": 40,
+      "path": "packages/worker/src/activities/reviewLaunches.ts",
+      "title": "The reaper recovers stale intents without unlimited retries"
+    },
+    {
+      "anchor": "export async function queueReviewFixRetry(",
+      "id": "reviewRetryQueued",
+      "lines": 59,
+      "path": "packages/gateway/src/lib/reviewFixRetry.ts",
+      "title": "Temporal acceptance precedes a conditional durable queued marker"
+    },
+    {
+      "anchor": "export async function retryReviewFix(",
+      "id": "reviewRetryCompleted",
+      "lines": 44,
+      "path": "packages/worker/src/activities/reviewFixes.ts",
+      "title": "The worker rechecks eligibility and records the retry decision"
+    },
+    {
+      "anchor": "router.push(requestHref(result.workRequestId));",
+      "before": 7,
+      "id": "reviewRequestNavigation",
+      "lines": 13,
+      "path": "packages/web/src/components/runs/RunReviews.tsx",
+      "title": "Accepted reviews open the pending-capable request panel"
+    },
+    {
+      "anchor": "function fingerprintRejections(",
+      "id": "reviewCoarseFingerprint",
+      "lines": 31,
+      "path": "packages/worker/src/agents/reviewNetwork.ts",
+      "title": "Stall fingerprints count reviewer/category/file findings, not text"
+    },
     {
       "anchor": "export async function readReviewFeedback(",
       "id": "reviewFindingDatabaseRead",
