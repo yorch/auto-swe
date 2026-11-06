@@ -92,7 +92,7 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
   const load = (id: string, user: JwtPayload) =>
     fastify.prisma.knowledgeBase.findFirst({
       include: {
-        connection: { select: { teamId: true } },
+        connection: { select: { team: { select: { id: true, name: true } }, teamId: true } },
         shares: true,
         snapshots: { orderBy: { indexedAt: 'desc' }, take: 10 },
       },
@@ -106,6 +106,9 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
       ['KnowledgeBase'],
       () =>
         fastify.prisma.knowledgeBase.findMany({
+          include: {
+            connection: { select: { team: { select: { id: true, name: true } }, teamId: true } },
+          },
           orderBy: { name: 'asc' },
           take: 500,
           where: {
@@ -501,6 +504,48 @@ export const knowledgeBaseRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'KnowledgeBaseLink',
       });
       return reply.code(204).send();
+    }
+  );
+
+  app.get(
+    '/teams/:id/knowledge-bases/effective',
+    {
+      ...auth,
+      schema: { params: Id, querystring: z.object({ templateId: z.string().uuid().optional() }) },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const team = await asPlatformAdmin(
+        user,
+        'administrators preview team knowledge bases',
+        ['Team'],
+        () =>
+          fastify.prisma.team.findFirst({
+            where: {
+              id: request.params.id,
+              isActive: true,
+              ...(user.role === 'ADMIN' ? {} : memberTeams(user)),
+            },
+          })
+      );
+      if (!team) {
+        return sendError(reply, 404, 'NOT_FOUND', 'Team not found');
+      }
+      if (request.query.templateId) {
+        const template = await fastify.prisma.workflowTemplate.findFirst({
+          where: { id: request.query.templateId, OR: [{ teamId: null }, { teamId: team.id }] },
+        });
+        if (!template) {
+          return sendError(reply, 404, 'NOT_FOUND', 'Template not found');
+        }
+      }
+      return {
+        data: await effectiveKnowledgeBases(fastify.prisma, {
+          orgId: team.orgId,
+          teamId: team.id,
+          templateId: request.query.templateId,
+        }),
+      };
     }
   );
 

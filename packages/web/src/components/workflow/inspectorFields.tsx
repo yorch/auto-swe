@@ -190,7 +190,7 @@ export function SchemaAwareForm({
   return (
     <InspectorSubsection title="Step settings">
       {fields.map((f) => {
-        const current = values[f.key];
+        const current = values[f.key] ?? f.default;
         return (
           <SchemaField field={f} key={f.key} onChange={(v) => onChange(f.key, v)} value={current} />
         );

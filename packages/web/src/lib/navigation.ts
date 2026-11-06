@@ -275,6 +275,12 @@ export const NAV_GROUPS: NavGroup[] = [
     // they can reach; each page keeps its own management controls for those who hold them.
     items: [
       { href: '/knowledge', icon: 'layers', label: 'Knowledge', minRole: 'ENGINEER' },
+      {
+        href: '/knowledge-bases',
+        icon: 'repositories',
+        label: 'Knowledge bases',
+        minRole: 'ENGINEER',
+      },
       { href: '/lessons', icon: 'memory', label: 'Lessons', minRole: 'ENGINEER' },
     ],
     label: 'Knowledge',

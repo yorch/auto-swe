@@ -4,6 +4,7 @@ import { getConnectionTypeMetadata, isConnectionType } from '@auto-swe/shared/li
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useCallback, useEffect, useState } from 'react';
 import { ProbeModal } from '@/components/integrations/ProbeModal';
+import { KnowledgeBaseLinksSection } from '@/components/knowledgeBases/KnowledgeBaseLinksSection';
 import type { ConnectionPrefill } from '@/components/repositories/ConnectionFormModal';
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
@@ -26,6 +27,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { SkeletonRows } from '@/components/ui/LoadingState';
+import { Modal } from '@/components/ui/Modal';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -48,6 +50,7 @@ type ModalMode =
   | { kind: 'create'; prefill?: ConnectionPrefill }
   | { kind: 'edit'; repo: RepositorySummary }
   | { kind: 'dependencies'; repo: RepositorySummary }
+  | { kind: 'knowledge-bases'; repo: RepositorySummary }
   | { kind: 'automations'; repo: RepositorySummary }
   | { kind: 'credential'; repo: RepositorySummary }
   | { kind: 'share'; repo: RepositorySummary }
@@ -284,6 +287,12 @@ export default function ConnectionsPage() {
                             id: 'dependencies',
                             label: 'Dependencies',
                             onAction: () => setMode({ kind: 'dependencies', repo: r }),
+                          },
+                          {
+                            icon: 'layers' as const,
+                            id: 'knowledge-bases',
+                            label: 'Knowledge bases',
+                            onAction: () => setMode({ kind: 'knowledge-bases', repo: r }),
                           },
                           {
                             icon: 'workflows' as const,
@@ -559,6 +568,20 @@ export default function ConnectionsPage() {
         <RepoAutomationsModal onClose={() => setMode(null)} repo={mode.repo} />
       )}
 
+      {mode?.kind === 'knowledge-bases' && (
+        <Modal
+          onClose={() => setMode(null)}
+          open
+          size="lg"
+          title={`Knowledge bases · ${connectionLabel(mode.repo)}`}
+        >
+          <KnowledgeBaseLinksSection
+            canManage={canManageTeam(mode.repo.team.id)}
+            target={{ repoId: mode.repo.id, scope: 'REPO' }}
+            teamId={mode.repo.team.id}
+          />
+        </Modal>
+      )}
       {mode?.kind === 'dependencies' && (
         <RepoDependenciesModal
           canManage={canManageTeam(mode.repo.team?.id)}

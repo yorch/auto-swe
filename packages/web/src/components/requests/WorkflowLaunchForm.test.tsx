@@ -66,6 +66,47 @@ function gateway() {
 }
 
 describe('workflow launch', () => {
+  it('sends knowledge base additions and refs for a repo-less team template', async () => {
+    const bodies: unknown[] = [];
+    setupFetchMock({
+      'GET /api/v1/knowledge-bases': () => ({ data: [{ id: 'kb1', name: 'Docs', status: 'OK' }] }),
+      'GET /api/v1/repositories': () => ({ data: [], meta: { total: 0 } }),
+      'GET /api/v1/teams/team1/knowledge-bases/effective': () => ({
+        data: { dropped: [], refusedExclusions: [], selected: [] },
+      }),
+      'GET /api/v1/workflow-templates/template-1': () => ({
+        data: { ...template, activeVersionSpec: { spec: null } },
+      }),
+      'POST /api/v1/workflow-templates/template-1/runs': (body) => {
+        bodies.push(body);
+        return { data: { workRequestId: 'request-1' } };
+      },
+    });
+    render(
+      withQuery(
+        <WorkflowLaunchForm
+          onLaunched={vi.fn()}
+          template={{ ...template, team: { id: 'team1', name: 'Platform', slug: 'platform' } }}
+        />
+      )
+    );
+    fireEvent.change(screen.getByLabelText(/Task name/), { target: { value: 'Summarize' } });
+    fireEvent.change(screen.getByLabelText(/Description/), { target: { value: 'Notes' } });
+    const details = screen.getByText('Knowledge bases · optional').closest('details');
+    if (!details) {
+      throw new Error('missing picker');
+    }
+    details.open = true;
+    fireEvent(details, new Event('toggle'));
+    fireEvent.click(await screen.findByRole('button', { name: /Add knowledge base/ }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Docs' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.change(screen.getByLabelText('Docs ref'), { target: { value: 'release' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Launch workflow' }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({ knowledgeBases: { add: [{ id: 'kb1', ref: 'release' }] } });
+  });
   it('validates inputs, preserves them on Back, and launches once after review', async () => {
     const bodies = gateway();
     const launched = vi.fn();

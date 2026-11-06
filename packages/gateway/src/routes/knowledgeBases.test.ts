@@ -18,7 +18,7 @@ const ORG = '44444444-4444-4444-8444-444444444444';
 const TEMPLATE = '55555555-5555-4555-8555-555555555555';
 const AUTH = { authorization: 'Bearer fake' };
 const row = {
-  connection: { teamId: TEAM },
+  connection: { team: { id: TEAM, name: 'Platform' }, teamId: TEAM },
   connectionId: REPO,
   id: KB,
   mountName: 'docs',
@@ -91,6 +91,109 @@ afterEach(async () => {
 
 const create = { connectionId: REPO, mountName: 'docs', name: 'Docs' };
 describe('knowledge base routes', () => {
+  it('includes only the public owner-team summary on list and detail', async () => {
+    prisma.knowledgeBase.findMany.mockResolvedValue([row]);
+    for (const url of ['/api/v1/knowledge-bases', `/api/v1/knowledge-bases/${KB}`]) {
+      const response = await app.inject({ headers: AUTH, method: 'GET', url });
+      expect(response.statusCode).toBe(200);
+      expect(
+        Array.isArray(response.json().data)
+          ? response.json().data[0].connection.team
+          : response.json().data.connection.team
+      ).toEqual({ id: TEAM, name: 'Platform' });
+    }
+    expect(prisma.knowledgeBase.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: {
+          connection: { select: { team: { select: { id: true, name: true } }, teamId: true } },
+        },
+      })
+    );
+  });
+  it('allows an engineer member to preview team defaults and checks membership in the query', async () => {
+    role = 'ENGINEER';
+    prisma.team.findFirst.mockResolvedValue({ id: TEAM, orgId: ORG });
+    prisma.knowledgeBaseLink.findMany.mockResolvedValue([
+      { knowledgeBaseId: KB, mandatory: true, scope: 'TEAM' },
+    ]);
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/teams/${TEAM}/knowledge-bases/effective`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data.selected).toEqual([
+      expect.objectContaining({ knowledgeBaseId: KB, mandatory: true, source: 'TEAM' }),
+    ]);
+    expect(prisma.team.findFirst).toHaveBeenCalledWith({
+      where: { id: TEAM, isActive: true, memberships: { some: { userId: 'user' } } },
+    });
+    expect(prisma.knowledgeBaseLink.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ OR: [{ scope: 'TEAM', teamId: TEAM }] }),
+      })
+    );
+  });
+  it('hides inaccessible and inactive teams without resolving links', async () => {
+    role = 'ENGINEER';
+    prisma.team.findFirst.mockResolvedValue(null);
+    expect(
+      (
+        await app.inject({
+          headers: AUTH,
+          method: 'GET',
+          url: `/api/v1/teams/${TEAM}/knowledge-bases/effective`,
+        })
+      ).statusCode
+    ).toBe(404);
+    expect(prisma.knowledgeBaseLink.findMany).not.toHaveBeenCalled();
+  });
+  it('supports team-owned and global template previews, but hides other-team templates', async () => {
+    prisma.team.findFirst.mockResolvedValue({ id: TEAM, orgId: ORG });
+    for (const teamId of [TEAM, null]) {
+      prisma.workflowTemplate.findFirst.mockResolvedValue({ id: TEMPLATE, teamId });
+      expect(
+        (
+          await app.inject({
+            headers: AUTH,
+            method: 'GET',
+            url: `/api/v1/teams/${TEAM}/knowledge-bases/effective?templateId=${TEMPLATE}`,
+          })
+        ).statusCode
+      ).toBe(200);
+    }
+    expect(prisma.workflowTemplate.findFirst).toHaveBeenCalledWith({
+      where: { id: TEMPLATE, OR: [{ teamId: null }, { teamId: TEAM }] },
+    });
+    prisma.workflowTemplate.findFirst.mockResolvedValue(null);
+    expect(
+      (
+        await app.inject({
+          headers: AUTH,
+          method: 'GET',
+          url: `/api/v1/teams/${TEAM}/knowledge-bases/effective?templateId=${TEMPLATE}`,
+        })
+      ).statusCode
+    ).toBe(404);
+  });
+  it('allows an admin team preview without pretending to be a member', async () => {
+    role = 'ADMIN';
+    prisma.team.findFirst.mockImplementation(async (args) => {
+      expect(isUnscoped('Team')).toBe(true);
+      expect(args.where).toEqual({ id: TEAM, isActive: true });
+      return { id: TEAM, orgId: ORG };
+    });
+    expect(
+      (
+        await app.inject({
+          headers: AUTH,
+          method: 'GET',
+          url: `/api/v1/teams/${TEAM}/knowledge-bases/effective`,
+        })
+      ).statusCode
+    ).toBe(200);
+    expect(isUnscoped('Team')).toBe(false);
+  });
   it('marks only the platform admin listing as intentionally cross-tenant', async () => {
     role = 'ADMIN';
     prisma.knowledgeBase.findMany.mockImplementation(async () => {
@@ -196,7 +299,7 @@ describe('knowledge base routes', () => {
     expect(prisma.knowledgeBase.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         include: expect.objectContaining({
-          connection: { select: { teamId: true } },
+          connection: { select: { team: { select: { id: true, name: true } }, teamId: true } },
           snapshots: expect.objectContaining({ take: 10 }),
         }),
       })

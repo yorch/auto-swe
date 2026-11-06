@@ -18,6 +18,7 @@ import { useRef } from 'react';
 import { api } from '@/lib/api';
 import { type DateRange, rangeKey, rangeQuery } from '@/lib/dateRange';
 import { randomId } from '@/lib/randomId';
+import type { KnowledgeBaseRunOverrides } from './useKnowledgeBases';
 
 export function useWorkflowTemplates(teamId?: string | null) {
   return useQuery({
@@ -343,6 +344,7 @@ export function useRunTemplate(templateId: string) {
   return useMutation({
     mutationFn: (body: {
       acknowledgeUnchanged?: true;
+      knowledgeBases?: KnowledgeBaseRunOverrides;
       egressPolicy?: EgressPolicy;
       payload?: Record<string, unknown>;
       label?: string;

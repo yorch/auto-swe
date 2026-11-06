@@ -1,6 +1,7 @@
 'use client';
 
 import type { StepMetadata } from '@auto-swe/shared/workflow';
+import { KnowledgeBaseLinksPanel } from '@/components/knowledgeBases/KnowledgeBaseLinksSection';
 import { Alert } from '@/components/ui/Alert';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
@@ -213,6 +214,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
         />
 
         <TemplateSubNav active="editor" templateId={id} />
+        <KnowledgeBaseLinksPanel
+          canManage={canManage}
+          global={!template.team}
+          target={{ scope: 'TEMPLATE', templateId: id }}
+          teamId={template.team?.id}
+        />
 
         <p className="max-w-3xl text-sm leading-relaxed text-paper-400" id="versioning-note">
           Saving creates a new immutable version; it never edits an old one, and runs already in
