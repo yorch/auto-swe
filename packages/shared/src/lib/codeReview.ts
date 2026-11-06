@@ -5,7 +5,9 @@ export const REVIEW_TEMPLATE_KIND = 'review';
 export const REVIEW_COMMENT_MARKER_PREFIX = '<!-- auto-swe:code-review:';
 export const REVIEW_ON_BLOCKING = ['report', 'fix'] as const;
 export const REVIEW_INTENT_STATUSES = ['pending', 'started', 'skipped', 'failed'] as const;
+export const REVIEW_MAX_DIFF_CHARS = 300_000;
 export const REVIEW_ERROR_CODES = {
+  DIFF_TOO_LARGE: 'REVIEW_DIFF_TOO_LARGE',
   DISABLED: 'REVIEW_DISABLED',
   HEAD_CHANGED: 'REVIEW_HEAD_CHANGED',
   NOTHING_TO_REVIEW: 'REVIEW_NOTHING_TO_REVIEW',

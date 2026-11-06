@@ -1,3 +1,5 @@
+export type { PublishReviewInput } from './codeReview.js';
+export { loadChangeForReview, publishReviewResult } from './codeReview.js';
 // In-app assistant — one conversation turn, and the reply it leaves when a turn cannot run
 
 export { nameAssistantConversationNow } from './assistantTitle.js';

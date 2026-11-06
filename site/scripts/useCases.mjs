@@ -97,6 +97,30 @@ export const USE_CASE_GROUPS = [
  */
 // biome-ignore assist/source/useSortedKeys: the order is the sidebar's reading order.
 export const USE_CASES = {
+  'code-review': {
+    group: 'engineering',
+    maturity: 'composed',
+    source: 'packages/shared/src/workflow/templates/codeReview.ts',
+    summary:
+      'Reviews a finished run change with security, domain and performance reviewers and publishes findings without modifying the source change.',
+    title: 'Review a finished run',
+  },
+  'code-review-qodo': {
+    group: 'engineering',
+    maturity: 'composed',
+    source: 'packages/shared/src/workflow/templates/codeReviewQodo.ts',
+    summary:
+      'Combines the reviewer network with current-head Qodo findings for pull requests, or uses the reviewer network alone for branch and stored changes.',
+    title: 'Review a finished run with Qodo',
+  },
+  'human-review-of-run': {
+    group: 'people',
+    maturity: 'composed',
+    source: 'packages/shared/src/workflow/templates/humanReviewOfRun.ts',
+    summary:
+      'Shows a finished run diff to a human, collects their note and approval or request for changes, and publishes the decision without changing code.',
+    title: 'Human review of a finished run',
+  },
   'ticket-to-merge': {
     group: 'engineering',
     maturity: 'flagship',

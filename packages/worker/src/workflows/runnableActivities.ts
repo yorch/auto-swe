@@ -337,6 +337,14 @@ export const ciPollActivities = proxyActivities<Pick<typeof activitiesType, 'wai
   startToCloseTimeout: '6h',
 });
 
+export const codeReviewActivities = proxyActivities<
+  Pick<typeof activitiesType, 'loadChangeForReview' | 'publishReviewResult'>
+>({
+  heartbeatTimeout: T_2M,
+  retry: RETRY_SANDBOX,
+  startToCloseTimeout: T_15M,
+});
+
 // `awaitQodoReview` polls Qodo, inside the activity, for at most 600 s (the node's wait is
 // clamped to that) and heartbeats while it does. It never throws, so there is nothing for a
 // retry to recover, and a second attempt would only wait again: a single attempt, with a

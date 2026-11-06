@@ -58,6 +58,8 @@ export const BUILTIN_STEPS = [
   'postTicketComment',
   'executeImplementation',
   'runReviewNetwork',
+  'loadChangeForReview',
+  'publishReviewResult',
   'executeReviewFixImplementation',
   'executeCIFixImplementation',
   'createOrUpdatePullRequest',

@@ -7,6 +7,8 @@ import { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
 import { APPROVE_BEFORE_PR_SPEC } from './approveBeforePr.js';
 import { CI_TRIAGE_AND_FIX_SPEC, CI_TRIAGE_INPUT_SCHEMA } from './ciTriageAndFix.js';
 import { CODE_AND_CI_SPEC } from './codeAndCi.js';
+import { CODE_REVIEW_SPEC } from './codeReview.js';
+import { CODE_REVIEW_QODO_SPEC } from './codeReviewQodo.js';
 import { CONFLUENCE_REVIEW_TO_TICKETS_SPEC } from './confluenceReviewToTickets.js';
 import { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
 import { CREATE_ISSUE_SPEC } from './createIssue.js';
@@ -19,6 +21,7 @@ import { FOUR_EYES_SPEC } from './fourEyes.js';
 import { FULLY_SUPERVISED_SPEC } from './fullySupervised.js';
 import { HOTFIX_SPEC } from './hotfix.js';
 import { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
+import { HUMAN_REVIEW_OF_RUN_SPEC } from './humanReviewOfRun.js';
 import { ISSUE_TO_CONFLUENCE_PAGE_SPEC } from './issueToConfluencePage.js';
 import { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
 import { NOTION_CONTENT_BRAND_REVIEW_SPEC } from './notionContentBrandReview.js';
@@ -37,6 +40,7 @@ import { VULNERABILITY_REMEDIATION_SPEC } from './vulnerabilityRemediation.js';
 import { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';
 
 export interface BuiltinTemplate {
+  kind?: 'review';
   name: string;
   description: string;
   spec: WorkflowSpec;
@@ -388,12 +392,20 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     name: PRD_DECOMPOSITION_SPEC.name,
     spec: PRD_DECOMPOSITION_SPEC,
   },
+  ...[CODE_REVIEW_SPEC, CODE_REVIEW_QODO_SPEC, HUMAN_REVIEW_OF_RUN_SPEC].map((spec) => ({
+    description: spec.description,
+    kind: 'review' as const,
+    name: spec.name,
+    spec,
+  })),
 ];
 
 export { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
 export { APPROVE_BEFORE_PR_SPEC } from './approveBeforePr.js';
 export { CI_TRIAGE_AND_FIX_SPEC, CI_TRIAGE_INPUT_SCHEMA } from './ciTriageAndFix.js';
 export { CODE_AND_CI_SPEC } from './codeAndCi.js';
+export { CODE_REVIEW_SPEC } from './codeReview.js';
+export { CODE_REVIEW_QODO_SPEC } from './codeReviewQodo.js';
 export { CONFLUENCE_REVIEW_TO_TICKETS_SPEC } from './confluenceReviewToTickets.js';
 export { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
 export { CREATE_ISSUE_SPEC } from './createIssue.js';
@@ -406,6 +418,7 @@ export { FOUR_EYES_SPEC } from './fourEyes.js';
 export { FULLY_SUPERVISED_SPEC } from './fullySupervised.js';
 export { HOTFIX_SPEC } from './hotfix.js';
 export { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
+export { HUMAN_REVIEW_OF_RUN_SPEC } from './humanReviewOfRun.js';
 export { ISSUE_TO_CONFLUENCE_PAGE_SPEC } from './issueToConfluencePage.js';
 export { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
 export { NOTION_CONTENT_BRAND_REVIEW_SPEC } from './notionContentBrandReview.js';

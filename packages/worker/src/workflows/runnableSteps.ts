@@ -30,6 +30,7 @@ import {
   ciPollActivities,
   ciTriageActivities,
   ciVerifyActivities,
+  codeReviewActivities,
   conflictActivities,
   containerStepActivities,
   contextActivities,
@@ -210,6 +211,17 @@ function criteriaFromStep(inputs: Record<string, unknown>): string[] | undefined
 }
 
 const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepExecutor>([
+  ['loadChangeForReview', ({ request }) => codeReviewActivities.loadChangeForReview(request)],
+  [
+    'publishReviewResult',
+    ({ request, inputs }) =>
+      codeReviewActivities.publishReviewResult({
+        human: inputs.human as activitiesType.PublishReviewInput['human'],
+        qodo: inputs.qodo as activitiesType.PublishReviewInput['qodo'],
+        request,
+        review: inputs.review as activitiesType.PublishReviewInput['review'],
+      }),
+  ],
   [
     'retrieveKnowledge',
     ({ config, inputs }) =>
@@ -464,7 +476,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       return agentActivities.runReviewNetwork(
         codeResult,
         successCriteria,
-        config.systemPrompt as string | undefined,
+        ((inputs.systemPrompt ?? config.systemPrompt) as string | undefined) || undefined,
         crossRepoOptions(config),
         (inputs.previousFingerprint as string | undefined) || undefined
       );

@@ -166,6 +166,22 @@ function versionsOf(tables: ReturnType<typeof makeFake>['tables'], templateId: s
 }
 
 describe('syncBuiltins — templates', () => {
+  it('persists review kind on creation and fills it without changing existing specs', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const reviews = ['code-review', 'code-review-qodo', 'human-review-of-run'];
+    for (const name of reviews) {
+      const row = template(tables, name);
+      expect(row.kind).toBe('review');
+      row.kind = null;
+    }
+    const versionCount = tables.workflowTemplateVersion.length;
+    await seedSweStarter(prisma);
+    for (const name of reviews) {
+      expect(template(tables, name).kind).toBe('review');
+    }
+    expect(tables.workflowTemplateVersion).toHaveLength(versionCount);
+  });
   it('is a no-op on a second boot: no new versions, nothing re-activated', async () => {
     const { prisma, tables } = makeFake();
     await seedSweStarter(prisma);
