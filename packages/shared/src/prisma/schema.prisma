@@ -582,6 +582,8 @@ model Connection {
 
   @@index([teamId])
   @@index([installationId])
+  reviewPresetAttachments ReviewPresetAttachment[]
+
   @@map("connections")
 }
 
@@ -1418,6 +1420,8 @@ model ChannelBudgetHold {
 }
 
 model User {
+  createdReviewPresets           ReviewPreset[]           @relation("ReviewPresetCreator")
+  createdReviewPresetAttachments ReviewPresetAttachment[] @relation("ReviewPresetAttachmentCreator")
   id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email                String    @unique
   /// Legacy bcrypt hash. Optional because OAuth-only / magic-link-only
@@ -1981,6 +1985,13 @@ model TrustedKnowledgeEvidence {
 /// One execution of a template. `specSnapshot` is the parsed WorkflowSpec at
 /// start time, so live edits to the template do not affect this run.
 model WorkflowRun {
+  reviewOfRunId         String?              @map("review_of_run_id") @db.Uuid
+  reviewOfRun           WorkflowRun?         @relation("RunReviews", fields: [reviewOfRunId], references: [id], onDelete: SetNull)
+  reviews               WorkflowRun[]        @relation("RunReviews")
+  reviewPresetId        String?              @map("review_preset_id") @db.Uuid
+  reviewPreset          ReviewPreset?        @relation(fields: [reviewPresetId], references: [id], onDelete: SetNull)
+  reviewLaunchIntents   ReviewLaunchIntent[]  @relation("ReviewIntentSource")
+  launchedReviewIntents ReviewLaunchIntent[]  @relation("ReviewIntentResult")
   id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workflowId        String            @unique @map("workflow_id")
   templateId        String            @map("template_id") @db.Uuid
@@ -2155,6 +2166,8 @@ model WorkflowRun {
   @@index([status, startedAt])
   @@index([endedAt, startedAt])
   @@index([updatedAt, startedAt])
+  @@index([reviewOfRunId])
+  @@index([reviewPresetId])
   @@map("workflow_runs")
 }
 
@@ -2992,6 +3005,7 @@ model HumanApproval {
 /// a new WorkflowTemplateVersion. Exactly one version may be marked active per
 /// template (enforced in application code).
 model WorkflowTemplate {
+  kind                                   String?
   id                                     String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   teamId                                 String?                @map("team_id") @db.Uuid
   /// Restrict, not SetNull: a null `teamId` means GLOBAL, so nulling it on team
@@ -3045,6 +3059,8 @@ model WorkflowTemplate {
   updatedAt                              DateTime               @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   versions              WorkflowTemplateVersion[]
+  reviewPresets         ReviewPreset[]
+  reviewPresetAttachments ReviewPresetAttachment[]
   workflowRuns          WorkflowRun[]
   attributedPullRequests PullRequest[]
   agents                Agent[]
@@ -3078,6 +3094,68 @@ model AutonomyPolicy {
   @@index([teamId])
   @@index([templateId])
   @@map("autonomy_policies")
+}
+
+model ReviewPreset {
+  id            String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String                   @unique
+  description   String                   @default("")
+  templateId    String                   @map("template_id") @db.Uuid
+  template      WorkflowTemplate         @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  systemPrompt  String?                  @map("system_prompt")
+  onBlocking    String                   @default("report") @map("on_blocking")
+  enabled       Boolean                  @default(true)
+  createdById   String?                  @map("created_by_id") @db.Uuid
+  createdBy     User?                    @relation("ReviewPresetCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt     DateTime                 @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime                 @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  attachments   ReviewPresetAttachment[]
+  runs          WorkflowRun[]
+  launchIntents ReviewLaunchIntent[]
+
+  @@index([templateId])
+  @@index([createdById])
+  @@map("review_presets")
+}
+
+model ReviewPresetAttachment {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  presetId     String            @map("preset_id") @db.Uuid
+  preset       ReviewPreset      @relation(fields: [presetId], references: [id], onDelete: Cascade)
+  templateId   String?           @map("template_id") @db.Uuid
+  template     WorkflowTemplate? @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  connectionId String?           @map("connection_id") @db.Uuid
+  connection   Connection?       @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  createdById  String?           @map("created_by_id") @db.Uuid
+  createdBy    User?             @relation("ReviewPresetAttachmentCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([presetId, templateId])
+  @@unique([presetId, connectionId])
+  @@index([templateId])
+  @@index([connectionId])
+  @@index([createdById])
+  @@map("review_preset_attachments")
+}
+
+model ReviewLaunchIntent {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sourceRunId String       @map("source_run_id") @db.Uuid
+  sourceRun   WorkflowRun  @relation("ReviewIntentSource", fields: [sourceRunId], references: [id], onDelete: Cascade)
+  presetId    String       @map("preset_id") @db.Uuid
+  preset      ReviewPreset @relation(fields: [presetId], references: [id], onDelete: Cascade)
+  status      String       @default("pending")
+  reason      String?
+  reviewRunId String?      @map("review_run_id") @db.Uuid
+  reviewRun   WorkflowRun? @relation("ReviewIntentResult", fields: [reviewRunId], references: [id], onDelete: SetNull)
+  attempts    Int          @default(0)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([sourceRunId, presetId])
+  @@index([presetId])
+  @@index([reviewRunId])
+  @@index([status, updatedAt])
+  @@map("review_launch_intents")
 }
 
 /// Immutable snapshot of a template at version N. `spec` is validated against
