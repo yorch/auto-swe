@@ -6,6 +6,7 @@ import {
   CHANNEL_TASK_TEMPLATE_NAME,
 } from '@auto-swe/shared/lib/channelTask';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
+import { reviewRunMetadata } from '@auto-swe/shared/lib/reviewLaunch';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { EvalResultDto, RunEvidenceDto } from '@auto-swe/shared/types/api';
 import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
@@ -1016,6 +1017,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           isAgentRun:
             run.template.teamId === null && run.template.origin === AGENT_RUN_TEMPLATE_ORIGIN,
           result: (run.contextSnapshot as { result?: unknown })?.result ?? null,
+          review: await reviewRunMetadata(fastify.prisma, run.id),
           // Absent, not null, when the caller declined it: null is a spec a run can have.
           specSnapshot: includeSpec ? (run as { specSnapshot?: unknown }).specSnapshot : undefined,
           startedAt: run.startedAt,

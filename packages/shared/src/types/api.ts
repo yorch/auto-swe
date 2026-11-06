@@ -882,6 +882,21 @@ export interface AgentTraceRecord {
 
 /** Shape returned by GET /api/v1/workflow-runs/:id (detail) */
 export interface WorkflowRunDetail extends WorkflowRunSummary {
+  review?: {
+    reviewable: boolean;
+    reason?: string;
+    reviewOf?: { runId: string; templateName: string };
+    reviews: Array<{
+      runId: string;
+      workflowId: string;
+      status: string;
+      templateName: string;
+      presetName: string | null;
+      approved: boolean | null;
+      worstSeverity: string | null;
+      startedAt: string;
+    }>;
+  };
   /** Denormalized USD spend for this run, populated by `finalizeWorkflowRun`.
    *  Detail-only — the list projection does not carry it. */
   costUsdAccrued: number;

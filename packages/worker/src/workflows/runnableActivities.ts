@@ -44,6 +44,14 @@ export const stateActivities = proxyActivities<
   startToCloseTimeout: T_30S,
 });
 
+export const reviewLaunchActivities = proxyActivities<
+  Pick<typeof activitiesType, 'dispatchReviewLaunches'>
+>({
+  heartbeatTimeout: T_2M,
+  retry: { initialInterval: '5s', maximumAttempts: 3, maximumInterval: '30s' },
+  startToCloseTimeout: T_5M,
+});
+
 export const genericActivities = proxyActivities<
   Pick<
     typeof activitiesType,

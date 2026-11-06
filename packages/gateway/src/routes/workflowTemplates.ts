@@ -276,6 +276,7 @@ const VersionParam = z.object({ id: z.string().uuid(), version: z.coerce.number(
 
 const CreateTemplateBody = z.object({
   description: z.string().max(2000).optional(),
+  kind: z.literal('review').nullable().optional(),
   name: z.string().min(1).max(120),
   spec: z.unknown(),
   teamId: z.string().uuid().nullable().optional(),
@@ -299,6 +300,7 @@ const UpdateTemplateBody = z.object({
       }
     }),
   isDefault: z.boolean().optional(),
+  kind: z.literal('review').nullable().optional(),
   name: z.string().min(1).max(120).optional(),
   status: z.enum(WORKFLOW_TEMPLATE_STATUSES).optional(),
   workspaceProvider: WorkspaceProviderTypeSchema.nullable().optional(),
@@ -380,6 +382,7 @@ async function createTemplateWithInitialVersion(
     egressAllowlist: string[];
     workspaceProvider: string | null;
     generatedBy?: string | null;
+    kind?: 'review' | null;
   }
 ): Promise<TemplateWithIncludes> {
   return prisma.$transaction(async (tx) => {
@@ -387,6 +390,7 @@ async function createTemplateWithInitialVersion(
       data: {
         activeVersion: 1,
         description: args.description,
+        kind: args.kind ?? null,
         name: args.name,
         status: args.status,
         teamId: args.teamId,
@@ -1369,6 +1373,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           authorUserId: user.sub,
           description: description ?? '',
           egressAllowlist,
+          kind: request.body.kind,
           name,
           specJson: parsed as object,
           status: 'ACTIVE',
@@ -2264,6 +2269,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           experimentVersion: true,
           id: true,
           inputSchema: true,
+          kind: true,
           name: true,
           team: {
             select: {
@@ -2283,6 +2289,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!tpl) {
         return sendTemplateNotLaunchable(reply);
+      }
+      if (tpl.kind === 'review') {
+        return sendError(
+          reply,
+          409,
+          'REVIEW_TEMPLATE_NEEDS_SOURCE',
+          'Review templates must be launched for a finished source run'
+        );
       }
       // The platform starts the Channel Assistant from Slack; a hand-launched run would
       // have no channel to answer in.

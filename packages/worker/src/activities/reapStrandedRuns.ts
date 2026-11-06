@@ -19,6 +19,7 @@ import { WorkflowNotFoundError } from '@temporalio/client';
 import { logWarn } from '../lib/activityLog.js';
 import { getTemporalClient } from '../lib/temporalClient.js';
 import { finalizeChannelRun } from './channelRun.js';
+import { sweepReviewLaunches } from './reviewLaunches.js';
 import { finalizeRun } from './templates.js';
 
 /** A run younger than this is never looked up: its workflow is still starting up. */
@@ -212,6 +213,11 @@ export async function reapStrandedRuns(now = new Date()): Promise<ReapStrandedRu
     logWarn('run reaper checked a full batch; the rest are reached by later sweeps in rotation', {
       max: REAPER_MAX_CHECKS,
     });
+  }
+  try {
+    await sweepReviewLaunches(now);
+  } catch (err) {
+    logWarn('run reaper could not dispatch pending review launches', { err: String(err) });
   }
   return result;
 }

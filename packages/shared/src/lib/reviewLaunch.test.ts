@@ -1,0 +1,232 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PrismaClient } from '../generated/prisma/client.js';
+import { AGENT_RUN_TEMPLATE_ORIGIN } from './agentRun.js';
+import {
+  loadReviewSource,
+  prepareReviewLaunch,
+  recordReviewLaunch,
+  reviewRunId,
+  reviewRunMetadata,
+} from './reviewLaunch.js';
+
+const setting = vi.hoisted(() => vi.fn(async () => true));
+vi.mock('../config/index.js', () => ({ resolveSetting: setting }));
+const SOURCE = '11111111-1111-4111-8111-111111111111';
+const REPO = '22222222-2222-4222-8222-222222222222';
+const TEMPLATE = '33333333-3333-4333-8333-333333333333';
+const PRESET = '44444444-4444-4444-8444-444444444444';
+const HEAD = 'a'.repeat(40);
+
+function fake() {
+  const source = {
+    connectionId: REPO,
+    contextSnapshot: {
+      context: { currentCodeResult: { baseBranch: 'main', branch: 'auto/change', headSha: HEAD } },
+    },
+    id: SOURCE,
+    launchedById: 'launcher',
+    reviewOfRun: null,
+    reviewOfRunId: null,
+    status: 'SUCCESS',
+    steps: [],
+    template: { kind: null, origin: null, teamId: null },
+    workflowId: 'wf-source',
+    workRequest: null,
+  };
+  const template = { activeVersion: 2, id: TEMPLATE, kind: 'review', status: 'ACTIVE' };
+  const db = {
+    $transaction: vi.fn(),
+    activeWorkflow: { create: vi.fn(), findUnique: vi.fn().mockResolvedValue(null) },
+    connection: {
+      findUnique: vi.fn().mockResolvedValue({
+        id: REPO,
+        isActive: true,
+        team: { orgId: 'org' },
+        teamId: 'team',
+        type: 'git_repo',
+      }),
+    },
+    pullRequest: { findFirst: vi.fn().mockResolvedValue(null) },
+    reviewPreset: {
+      findUnique: vi.fn().mockResolvedValue({
+        enabled: true,
+        id: PRESET,
+        onBlocking: 'fix',
+        systemPrompt: 'Instructions',
+        templateId: TEMPLATE,
+      }),
+    },
+    runInput: { create: vi.fn() },
+    workflowRun: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(source),
+    },
+    workflowTemplate: { findUnique: vi.fn().mockResolvedValue(template) },
+  };
+  db.$transaction.mockImplementation((fn) => fn(db));
+  return { db, prisma: db as unknown as PrismaClient, source, template };
+}
+
+beforeEach(() => setting.mockResolvedValue(true));
+
+describe('review launch preparation', () => {
+  it('builds a scoped payload and ledger from a workflow CodeResult, and records ledger before a caller starts Temporal', async () => {
+    const { db, prisma } = fake();
+    const prepared = await prepareReviewLaunch(prisma, {
+      launchedById: 'caller',
+      nonceHex: 'deadbeef',
+      presetId: PRESET,
+      sourceRunId: SOURCE,
+    });
+    expect(prepared.workflowId).toBe('review-22222222-deadbeef');
+    expect(prepared.payload).toMatchObject({
+      connectionId: REPO,
+      onBlocking: 'fix',
+      presetId: PRESET,
+      reviewOf: { baseBranch: 'main', branch: 'auto/change', headSha: HEAD, mode: 'branch' },
+      sourceRunId: SOURCE,
+      systemPrompt: 'Instructions',
+    });
+    expect(prepared.request.launchedById).toBe('caller');
+    expect(prepared.runInput).toMatchObject({
+      knowledgeSourceKind: 'REPOSITORY',
+      knowledgeSourceRepoId: REPO,
+      requestedById: 'caller',
+    });
+    await recordReviewLaunch(prisma, prepared);
+    expect(db.runInput.create).toHaveBeenCalledOnce();
+    expect(db.activeWorkflow.create).toHaveBeenCalledOnce();
+    expect(prepared.runId).toBe(reviewRunId(prepared.workflowId));
+    expect(prepared.runId).not.toBe(prepared.request.workRequestId);
+  });
+
+  it('prioritizes open PRs and supports legacy ledger linkage', async () => {
+    const { db, prisma } = fake();
+    db.pullRequest.findFirst.mockResolvedValue({ prNumber: 8, status: 'OPEN' });
+    expect(
+      (await prepareReviewLaunch(prisma, { sourceRunId: SOURCE, templateId: TEMPLATE })).payload
+        .reviewOf
+    ).toEqual({ mode: 'pr', prNumber: 8 });
+    expect(db.pullRequest.findFirst.mock.calls[0]?.[0]).toMatchObject({
+      where: {
+        OR: [{ runId: SOURCE }, { runId: null, workflow: { temporalWorkflowId: 'wf-source' } }],
+      },
+    });
+  });
+
+  it('supports deliver-none agent results in step outputs', async () => {
+    const { db, prisma, source } = fake();
+    db.workflowRun.findUnique.mockResolvedValue({
+      ...source,
+      contextSnapshot: null,
+      steps: [{ outputs: { deliver: 'none', diff: 'stored bytes' } }],
+      template: { kind: null, origin: AGENT_RUN_TEMPLATE_ORIGIN, teamId: null },
+    });
+    expect(
+      (await prepareReviewLaunch(prisma, { sourceRunId: SOURCE, templateId: TEMPLATE })).payload
+        .reviewOf
+    ).toEqual({ mode: 'stored' });
+  });
+
+  it.each(['RUNNING', 'review', 'empty', 'missing'])('rejects %s source runs', async (kind) => {
+    const { db, prisma, source } = fake();
+    db.workflowRun.findUnique.mockResolvedValue(
+      kind === 'missing'
+        ? null
+        : {
+            ...source,
+            ...(kind === 'RUNNING'
+              ? { status: 'RUNNING' }
+              : kind === 'review'
+                ? { reviewOfRunId: SOURCE }
+                : { contextSnapshot: null }),
+          }
+    );
+    await expect(
+      prepareReviewLaunch(prisma, { sourceRunId: SOURCE, templateId: TEMPLATE })
+    ).rejects.toMatchObject({
+      code:
+        kind === 'missing'
+          ? 'REVIEW_SOURCE_NOT_FOUND'
+          : kind === 'RUNNING'
+            ? 'REVIEW_SOURCE_NOT_FINISHED'
+            : kind === 'review'
+              ? 'REVIEW_SOURCE_IS_REVIEW'
+              : 'REVIEW_NOTHING_TO_REVIEW',
+    });
+    expect(db.runInput.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses disabled presets, non-review templates, disabled scope and invalid choices', async () => {
+    const { db, prisma, template } = fake();
+    db.reviewPreset.findUnique.mockResolvedValue({ enabled: false });
+    await expect(
+      prepareReviewLaunch(prisma, { presetId: PRESET, sourceRunId: SOURCE })
+    ).rejects.toMatchObject({ code: 'REVIEW_PRESET_DISABLED' });
+    db.workflowTemplate.findUnique.mockResolvedValue({ ...template, kind: null });
+    await expect(
+      prepareReviewLaunch(prisma, { sourceRunId: SOURCE, templateId: TEMPLATE })
+    ).rejects.toMatchObject({ code: 'REVIEW_TEMPLATE_INVALID' });
+    setting.mockResolvedValue(false);
+    await expect(
+      prepareReviewLaunch(prisma, { sourceRunId: SOURCE, templateId: TEMPLATE })
+    ).rejects.toMatchObject({ code: 'REVIEW_DISABLED' });
+    await expect(prepareReviewLaunch(prisma, { sourceRunId: SOURCE })).rejects.toMatchObject({
+      code: 'REVIEW_TEMPLATE_INVALID',
+    });
+  });
+
+  it('adopts an immutable recorded launch after a failed start acknowledgement', async () => {
+    const { db, prisma } = fake();
+    const prepared = await prepareReviewLaunch(prisma, {
+      sourceRunId: SOURCE,
+      templateId: TEMPLATE,
+    });
+    db.activeWorkflow.findUnique.mockResolvedValue({
+      workRequest: {
+        id: prepared.request.workRequestId,
+        payload: { ...prepared.payload, reviewOf: { mode: 'pr', prNumber: 9 } },
+        templateId: TEMPLATE,
+        templateVersion: 1,
+      },
+    });
+    expect(await recordReviewLaunch(prisma, prepared)).toMatchObject({
+      request: { payload: { reviewOf: { mode: 'pr', prNumber: 9 } } },
+      templateVersion: 1,
+    });
+    expect(db.runInput.create).not.toHaveBeenCalled();
+  });
+
+  it('reports linked review summaries and the reviewed source', async () => {
+    const { db, prisma, source } = fake();
+    db.workflowRun.findUnique.mockResolvedValue({
+      ...source,
+      reviewOfRun: { id: 'original', template: { name: 'Agent Run' } },
+      reviewOfRunId: 'original',
+    });
+    db.workflowRun.findMany.mockResolvedValue([
+      {
+        id: 'review',
+        reviewPreset: { name: 'Security' },
+        startedAt: new Date('2026-01-01Z'),
+        status: 'SUCCESS',
+        steps: [{ outputs: { approved: false, worstSeverity: 'CRITICAL' } }],
+        template: { name: 'code-review' },
+        workflowId: 'review-wf',
+      },
+    ]);
+    expect(await reviewRunMetadata(prisma, SOURCE)).toMatchObject({
+      reason: 'REVIEW_SOURCE_IS_REVIEW',
+      reviewable: false,
+      reviewOf: { runId: 'original', templateName: 'Agent Run' },
+      reviews: [{ approved: false, presetName: 'Security', worstSeverity: 'CRITICAL' }],
+    });
+  });
+
+  it('uses a ledger repository when the source has no direct connection', async () => {
+    const { db, prisma, source } = fake();
+    db.workflowRun.findUnique.mockResolvedValue({ ...source, connectionId: null });
+    db.activeWorkflow.findUnique.mockResolvedValue({ repoId: REPO });
+    expect((await loadReviewSource(prisma, SOURCE)).connectionId).toBe(REPO);
+  });
+});

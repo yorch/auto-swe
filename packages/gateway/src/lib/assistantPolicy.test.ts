@@ -73,6 +73,13 @@ const decided = () =>
   routes.filter((r) => r.method !== 'DELETE' && !RECEIVERS.test(r.url) && !ALIASES.test(r.url));
 
 describe('assistant route policy', () => {
+  it('confirms review launches and administrator preset mutations', () => {
+    expect(ASSISTANT_ROUTE_POLICY['POST /api/v1/workflow-runs/:id/reviews']).toBe('confirm');
+    expect(ASSISTANT_ROUTE_POLICY['POST /api/v1/platform/review-presets']).toBe('confirm');
+    expect(ASSISTANT_ROUTE_POLICY['DELETE /api/v1/platform/review-presets/:id/attachments']).toBe(
+      'confirm'
+    );
+  });
   it('walks a realistic route table', () => {
     expect(decided().length).toBeGreaterThan(250);
   });

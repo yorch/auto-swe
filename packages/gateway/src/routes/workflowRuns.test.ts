@@ -18,6 +18,13 @@ const { recordRunFinalized, getArtifact, getArtifactStream } = vi.hoisted(() => 
   recordRunFinalized: vi.fn(),
 }));
 vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
+vi.mock('@auto-swe/shared/lib/reviewLaunch', () => ({
+  reviewRunMetadata: vi.fn(async () => ({
+    reason: 'REVIEW_NOTHING_TO_REVIEW',
+    reviewable: false,
+    reviews: [],
+  })),
+}));
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({ getArtifact, getArtifactStream }));
 vi.mock('@auto-swe/shared/lib/repoAccessGate', () => ({
   resolveRepoAccessGateOrLastKnown: vi.fn().mockResolvedValue(null),

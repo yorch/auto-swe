@@ -15,6 +15,10 @@ vi.mock('../lib/activityLog.js', () => ({ logWarn: (...a: unknown[]) => logWarn(
 
 const finalizeRun = vi.fn();
 vi.mock('./templates.js', () => ({ finalizeRun: (...a: unknown[]) => finalizeRun(...a) }));
+const sweepReviews = vi.fn(async (..._args: unknown[]) => undefined);
+vi.mock('./reviewLaunches.js', () => ({
+  sweepReviewLaunches: (...args: unknown[]) => sweepReviews(...args),
+}));
 const finalizeChannelRun = vi.fn();
 vi.mock('./channelRun.js', () => ({
   finalizeChannelRun: (...a: unknown[]) => finalizeChannelRun(...a),
@@ -61,6 +65,13 @@ describe('reapedStatusFor', () => {
 });
 
 describe('reapStrandedRuns', () => {
+  it('sweeps review intents even with no stranded runs, without failing on dispatch errors', async () => {
+    findMany.mockResolvedValue([]);
+    sweepReviews.mockRejectedValueOnce(new Error('review dispatcher unavailable'));
+    const now = new Date();
+    await expect(reapStrandedRuns(now)).resolves.toEqual({ checked: 0, reaped: 0, unreachable: 0 });
+    expect(sweepReviews).toHaveBeenCalledWith(now);
+  });
   it('asks only for old unfinalized runs, never-checked first, then the longest unchecked', async () => {
     findMany.mockResolvedValue([]);
     const now = new Date('2026-10-04T12:00:00Z');

@@ -10,12 +10,18 @@ import {
 import { billedOrgId, currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { CHANNEL_TASK_WORKFLOW_PREFIX } from '@auto-swe/shared/lib/channelTask';
 import {
+  ReviewRunPayloadSchema,
+  resolveReviewOf,
+  reviewWorkflowId,
+} from '@auto-swe/shared/lib/codeReview';
+import {
   type EgressPolicy,
   egressPolicySchema,
   narrowEgressPolicy,
 } from '@auto-swe/shared/lib/egressPolicy';
 import { isInputSchema, runAuthorizedConnectionIds } from '@auto-swe/shared/lib/inputSchema';
 import type { TrackerWriteback } from '@auto-swe/shared/lib/integrations/ticketFailure';
+import { loadReviewSource, reviewRunId } from '@auto-swe/shared/lib/reviewLaunch';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { isTrackerTicket, syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
@@ -52,6 +58,7 @@ import {
 } from '../lib/slackNotify.js';
 import { sumRunTraceUsage } from '../lib/traceTotals.js';
 import { accrueChannelUsage } from './channelAssistant.js';
+import { enqueueReviewLaunchIntents } from './reviewLaunches.js';
 import {
   assertScheduledFireAuthorized,
   assertScheduledFireSourceSnapshot,
@@ -524,6 +531,7 @@ export async function createWorkflowRun(
         select: {
           estimatedHumanTimeSavedMinutes: true,
           inputSchema: true,
+          kind: true,
           origin: true,
           team: { select: attributionTeamSelect },
           workspaceProvider: true,
@@ -538,6 +546,23 @@ export async function createWorkflowRun(
   }
 
   let spec: WorkflowSpec;
+  const reviewPayload =
+    version.template?.kind === 'review' ? ReviewRunPayloadSchema.safeParse(input.payload) : null;
+  if (reviewPayload) {
+    if (!reviewPayload.success) {
+      await retireFailedLaunch(input);
+      return { error: 'REVIEW_TEMPLATE_NEEDS_SOURCE: review templates require a source run' };
+    }
+    const source = await loadReviewSource(prisma, reviewPayload.data.sourceRunId);
+    if (
+      !resolveReviewOf(source.facts).ok ||
+      source.connectionId !== reviewPayload.data.connectionId ||
+      reviewPayload.data.connectionId !== input.runConnectionId
+    ) {
+      await retireFailedLaunch(input);
+      return { error: 'REVIEW_SOURCE_INVALID: source run cannot be reviewed on this connection' };
+    }
+  }
   try {
     const migrated = migrateSpec(version.spec, SPEC_SCHEMA_VERSION);
     spec = parseWorkflowSpec(migrated);
@@ -654,6 +679,14 @@ export async function createWorkflowRun(
   });
   const runUpsert: Prisma.WorkflowRunUpsertArgs = {
     create: {
+      ...(reviewPayload?.success
+        ? {
+            connectionId: reviewPayload.data.connectionId,
+            id: reviewRunId(input.workflowId),
+            reviewOfRunId: reviewPayload.data.sourceRunId,
+            reviewPresetId: reviewPayload.data.presetId ?? null,
+          }
+        : {}),
       agentVersions,
       attributedOrgId: attribution.attributedOrgId,
       attributedRepoId: attribution.attributedRepoId,
@@ -704,6 +737,27 @@ export async function createWorkflowRun(
           return tx.workflowRun.upsert(runUpsert);
         })
       : await prisma.workflowRun.upsert(runUpsert);
+
+  if (reviewPayload?.success && reviewPayload.data.presetId) {
+    const intent = await prisma.reviewLaunchIntent.findUnique({
+      where: {
+        sourceRunId_presetId: {
+          presetId: reviewPayload.data.presetId,
+          sourceRunId: reviewPayload.data.sourceRunId,
+        },
+      },
+    });
+    if (
+      intent &&
+      input.workflowId ===
+        reviewWorkflowId(reviewPayload.data.connectionId, intent.id.replace(/-/g, ''))
+    ) {
+      await prisma.reviewLaunchIntent.updateMany({
+        data: { reviewRunId: run.id },
+        where: { id: intent.id, reviewRunId: null },
+      });
+    }
+  }
 
   // Pin the stack detection of every connection the run may use, so a scan landing mid-run cannot
   // move a later step to another image or directory. Best-effort: without a pin the run reads the
@@ -1014,10 +1068,13 @@ export async function finalizeRun(
   // time. Read the workRequest → activeWorkflows join once, sum, then write back.
   const run = await prisma.workflowRun.findUnique({
     select: {
-      connection: { select: { team: { select: { orgId: true } } } },
+      connection: { select: { team: { select: { id: true, orgId: true } } } },
       connectionId: true,
       endedAt: true,
+      reviewOfRunId: true,
       startedAt: true,
+      template: { select: { kind: true } },
+      templateId: true,
       workflowId: true,
       workRequest: {
         select: {
@@ -1031,7 +1088,7 @@ export async function finalizeRun(
           },
           billingOrgId: true,
           connection: {
-            select: { team: { select: { orgId: true } } },
+            select: { team: { select: { id: true, orgId: true } } },
           },
           connectionId: true,
           externalTicketId: true,
@@ -1232,6 +1289,19 @@ export async function finalizeRun(
         return ended; // already finalized by a concurrent attempt
       }
       const endedWith = endedStatus(ended);
+      await enqueueReviewLaunchIntents(
+        tx,
+        {
+          connectionId: run?.connectionId ?? run?.workRequest?.connectionId,
+          id: runId,
+          orgId: (run?.connection ?? run?.workRequest?.connection)?.team?.orgId,
+          reviewOfRunId: run?.reviewOfRunId,
+          teamId: (run?.connection ?? run?.workRequest?.connection)?.team?.id,
+          templateId: run?.templateId ?? '',
+          templateKind: run?.template?.kind,
+        },
+        endedWith
+      );
       const delivery = completionDelivery(endedWith, terminalUpdate.endedAt);
       if (delivery) {
         await insertCallbackDelivery(tx, delivery);
@@ -1270,6 +1340,17 @@ export async function finalizeRun(
         return ended; // already finalized by a concurrent attempt
       }
       const delivery = completionDelivery(endedStatus(ended), terminalUpdate.endedAt);
+      await enqueueReviewLaunchIntents(
+        tx,
+        {
+          connectionId: run?.connectionId ?? run?.workRequest?.connectionId,
+          id: runId,
+          reviewOfRunId: run?.reviewOfRunId,
+          templateId: run?.templateId ?? '',
+          templateKind: run?.template?.kind,
+        },
+        endedStatus(ended)
+      );
       if (delivery) {
         await insertCallbackDelivery(tx, delivery);
       }

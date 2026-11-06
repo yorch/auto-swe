@@ -26,7 +26,7 @@ import {
 } from '../lib/workflowEngine.js';
 import type { NodeTag } from './nodeTag.js';
 import { runWithNodeTag } from './nodeTagScope.js';
-import { shellActivities, stateActivities } from './runnableActivities.js';
+import { reviewLaunchActivities, shellActivities, stateActivities } from './runnableActivities.js';
 import { boundForRecord, boundString, snapshotContext } from './runnableContext.js';
 import { dispatchStepImpl } from './runnableSteps.js';
 
@@ -345,6 +345,16 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
       });
     }
     await stateActivities.finalizeWorkflowRun(runId, finalStatus, finalContext);
+    if (patched('dispatch-review-launches')) {
+      try {
+        await reviewLaunchActivities.dispatchReviewLaunches(runId);
+      } catch (err) {
+        log.warn('Review launch dispatch failed; the run reaper will retry pending intents', {
+          error: String(err),
+          runId,
+        });
+      }
+    }
   });
 
   if (runError) {

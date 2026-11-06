@@ -38,6 +38,8 @@ export type AuditEntityType =
   | 'PersonalAccessToken'
   | 'ProviderCredential'
   | 'ReportDigestSubscription'
+  | 'ReviewPreset'
+  | 'ReviewPresetAttachment'
   | 'ScannerPattern'
   | 'ScheduledWorkRequest'
   | 'ServicePrincipal'
