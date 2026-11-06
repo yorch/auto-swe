@@ -50,8 +50,20 @@ describe('pruneUiEvidence', () => {
   it('deletes the public copy a pull request published for a screenshot', async () => {
     process.env.UI_EVIDENCE_PUBLIC_BUCKET = 'ui-evidence-bucket';
     prisma.runEvidence.findMany.mockResolvedValueOnce([
-      { artifactId: 'artifact-1', id: 'evidence-1', kind: 'screenshot', runId: 'run-1' },
-      { artifactId: 'artifact-2', id: 'evidence-2', kind: 'video', runId: 'run-1' },
+      {
+        artifactId: 'artifact-1',
+        id: 'evidence-1',
+        kind: 'screenshot',
+        publicBucket: null,
+        runId: 'run-1',
+      },
+      {
+        artifactId: 'artifact-2',
+        id: 'evidence-2',
+        kind: 'video',
+        publicBucket: null,
+        runId: 'run-1',
+      },
     ]);
 
     await expect(pruneUiEvidence()).resolves.toMatchObject({ publicCopiesDeleted: 1 });
@@ -64,6 +76,43 @@ describe('pruneUiEvidence', () => {
       'ui-evidence-bucket',
       'ui-evidence/run-1/evidence-1.png'
     );
+  });
+
+  it('uses the recorded bucket even when the environment names a different one', async () => {
+    process.env.UI_EVIDENCE_PUBLIC_BUCKET = 'current-bucket';
+    prisma.runEvidence.findMany.mockResolvedValueOnce([
+      {
+        artifactId: 'artifact-1',
+        id: 'evidence-1',
+        kind: 'screenshot',
+        publicBucket: 'original-bucket',
+        runId: 'run-1',
+      },
+    ]);
+
+    await expect(pruneUiEvidence()).resolves.toMatchObject({ publicCopiesDeleted: 1 });
+
+    expect(deleteObjectFromBucket).toHaveBeenCalledWith(
+      'original-bucket',
+      publicEvidenceKey('run-1', 'evidence-1')
+    );
+  });
+
+  it('skips public-copy deletion when neither the row nor environment names a bucket', async () => {
+    prisma.runEvidence.findMany.mockResolvedValueOnce([
+      {
+        artifactId: 'artifact-1',
+        id: 'evidence-1',
+        kind: 'screenshot',
+        publicBucket: null,
+        runId: 'run-1',
+      },
+    ]);
+
+    await expect(pruneUiEvidence()).resolves.toMatchObject({ publicCopiesDeleted: 0 });
+
+    expect(deleteArtifact).toHaveBeenCalledWith('artifact-1');
+    expect(deleteObjectFromBucket).not.toHaveBeenCalled();
   });
 
   it('keeps pruning when a public copy cannot be deleted', async () => {
