@@ -154,8 +154,13 @@ nothing is read from the host until that is decided. The answer has four parts:
 A patch is never stored. The gateway keeps one read in memory for five minutes, per repository,
 pull request and head, for at most twenty reads, and does not keep a read holding more than five
 million characters of patch. The pull request itself is read on every request, because that is how
-the current head is known. The host lists at most 3000 files, so `truncated` says when more exist,
-and a patch over 200,000 characters is treated as absent, as the evaluator does. Titles, paths,
+the current head and state are known; the read is conditional on the ETag of the last one, so an
+unchanged pull request is answered with a 304 that does not count against the host's rate limit, and
+`state` always comes from that read, never from the held files. The whole read, the pull request and
+up to 30 pages of files, is bounded to a minute. The host lists at most 3000 files, so `truncated` says
+when more exist, and a patch over 200,000 characters is treated as absent, as the evaluator does. The
+answer as a whole carries at most three million characters of patch: in reading order, a file past
+that is named without its patch, like a binary one, and cannot be marked viewed. Titles, paths,
 patches and findings are untrusted text.
 
 ## 2.2 `PUT /api/v1/pull-requests/:id/viewed`
@@ -375,8 +380,10 @@ text with invisible and direction-changing characters made visible, never markup
 - The review page cannot comment, approve or request changes: review decisions are made on the
   host. It has no side-by-side view and no syntax colouring.
 - Each visit and each refresh of the review page asks the host for the pull request, and for its
-  files when the head has moved or the copy is older than five minutes, so a page left open adds
-  requests to the host's rate limit. It refreshes every 30 seconds.
+  files when the head has moved or the copy is older than five minutes. The pull request read is
+  conditional, so an unchanged one is cheap, but a changed one and every page of files are not. The
+  page refreshes every minute while the pull request is open and stops once the host reports it closed
+  or merged.
 - Up to 3000 files are listed. A binary file, or a patch over 200,000 characters, is named but not
   shown. A file without a patch cannot be marked viewed.
 - An evaluation written before the intent, evidence and findings were stored shows only the reading

@@ -23,9 +23,13 @@ const PER_PAGE = 100;
 /** A patch longer than this is treated as absent, as the evaluator does. */
 const MAX_PATCH_CHARS = 200_000;
 const REQUEST_TIMEOUT_MS = 15_000;
+/** One read of a pull request is the pull plus up to 30 pages of files; this bounds all of them. */
+const OVERALL_TIMEOUT_MS = 60_000;
 
 const CACHE_TTL_MS = 5 * 60_000;
 const CACHE_MAX_ENTRIES = 20;
+/** Pull requests whose ETag is remembered; the facts are small, so far more than the file reads. */
+const PULL_FACTS_MAX_ENTRIES = 500;
 /** A read holding more patch text than this is served but not kept. */
 const CACHE_MAX_PATCH_CHARS = 5_000_000;
 
@@ -64,6 +68,8 @@ export type PullFilesResult =
 export type PullFilesDeps = {
   fetchImpl?: typeof fetch;
   now?: () => number;
+  /** Bounds the whole read; replaced in tests. */
+  deadlineMs?: number;
   /** Where the platform credential comes from; replaced in tests. */
   target?: (
     repo: PullFilesRepo
@@ -73,9 +79,29 @@ export type PullFilesDeps = {
 type CachedRead = { at: number; read: Promise<PullFilesResult> };
 const cache = new Map<string, CachedRead>();
 
-/** Forgets every cached read. For tests. */
+/**
+ * What the last full read of a pull request said, with the ETag it came with, so the next read can
+ * ask "has it changed" and be answered with a 304, which costs the host's rate limit nothing.
+ */
+type PullFacts = { etag: string; changedFiles: number | undefined; headSha: string; state: string };
+const pullFacts = new Map<string, PullFacts>();
+
+/** Forgets every cached read and ETag. For tests. */
 export function resetPullFilesCache(): void {
   cache.clear();
+  pullFacts.clear();
+}
+
+function rememberPullFacts(key: string, facts: PullFacts): void {
+  pullFacts.delete(key);
+  pullFacts.set(key, facts);
+  while (pullFacts.size > PULL_FACTS_MAX_ENTRIES) {
+    const oldest = pullFacts.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    pullFacts.delete(oldest);
+  }
 }
 
 async function platformTarget(
@@ -149,12 +175,17 @@ function toReviewFile(f: z.infer<typeof FileSchema>): ReviewFile {
   };
 }
 
-type Reply = { ok: true; body: unknown } | { ok: false; reason: PullFilesUnavailable };
+type Reply =
+  | { ok: true; body: unknown; etag: string | null }
+  /** The host answered 304 to a conditional read: what the caller already holds is current. */
+  | { ok: true; notModified: true }
+  | { ok: false; reason: PullFilesUnavailable };
 
 async function get(
   doFetch: typeof fetch,
   target: { apiUrl: string; token: string },
-  path: string
+  path: string,
+  options: { deadline: AbortSignal; etag?: string }
 ): Promise<Reply> {
   try {
     const res = await doFetch(`${target.apiUrl.replace(/\/$/, '')}${path}`, {
@@ -163,10 +194,14 @@ async function get(
         Authorization: `Bearer ${target.token}`,
         'User-Agent': 'auto-swe/1.0',
         'X-GitHub-Api-Version': '2022-11-28',
+        ...(options.etag !== undefined && { 'If-None-Match': options.etag }),
       },
       redirect: 'error',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT_MS), options.deadline]),
     });
+    if (res.status === 304 && options.etag !== undefined) {
+      return { notModified: true, ok: true };
+    }
     if (res.status === 404 || res.status === 410) {
       return { ok: false, reason: 'not-found' };
     }
@@ -180,7 +215,7 @@ async function get(
     if (!res.ok) {
       return { ok: false, reason: 'failed' };
     }
-    return { body: await res.json(), ok: true };
+    return { body: await res.json(), etag: res.headers.get('etag'), ok: true };
   } catch {
     return { ok: false, reason: 'failed' };
   }
@@ -193,7 +228,8 @@ async function readFiles(
   prNumber: number,
   headSha: string,
   state: string,
-  changedFiles: number | undefined
+  changedFiles: number | undefined,
+  deadline: AbortSignal
 ): Promise<PullFilesResult> {
   const files: ReviewFile[] = [];
   let listed = 0;
@@ -201,10 +237,15 @@ async function readFiles(
     const reply = await get(
       doFetch,
       target,
-      `${repoPath}/pulls/${prNumber}/files?per_page=${PER_PAGE}&page=${page}`
+      `${repoPath}/pulls/${prNumber}/files?per_page=${PER_PAGE}&page=${page}`,
+      { deadline }
     );
     if (!reply.ok) {
       return { reason: reply.reason, type: 'unavailable' };
+    }
+    if ('notModified' in reply) {
+      // Not asked conditionally, so never answered so; treat it as the host misbehaving.
+      return { reason: 'failed', type: 'unavailable' };
     }
     const parsed = z.array(FileSchema).safeParse(reply.body);
     if (!parsed.success) {
@@ -252,31 +293,70 @@ export async function readPullFiles(
     createGuardedFetch({ allowPrivate: hostFamily(target.apiUrl) !== 'github.com' });
   const repoPath = `/repos/${encodeURIComponent(repo.organizationName)}/${encodeURIComponent(repo.repoName)}`;
 
-  const pull = await get(doFetch, target, `${repoPath}/pulls/${prNumber}`);
+  const deadline = AbortSignal.timeout(deps.deadlineMs ?? OVERALL_TIMEOUT_MS);
+
+  // The pull request is read on every call, because that is how the current head and state are
+  // known; asked with the last ETag, an unchanged one costs a 304 and no rate limit.
+  const factsKey = `${repo.id}:${prNumber}`;
+  const known = pullFacts.get(factsKey);
+  const pull = await get(doFetch, target, `${repoPath}/pulls/${prNumber}`, {
+    deadline,
+    ...(known !== undefined && { etag: known.etag }),
+  });
   if (!pull.ok) {
     return { reason: pull.reason, type: 'unavailable' };
   }
-  const head = PullSchema.safeParse(pull.body);
-  if (!head.success) {
-    return { reason: 'failed', type: 'unavailable' };
+  let head: { changedFiles: number | undefined; sha: string; state: string };
+  if ('notModified' in pull) {
+    if (known === undefined) {
+      return { reason: 'failed', type: 'unavailable' };
+    }
+    head = { changedFiles: known.changedFiles, sha: known.headSha, state: known.state };
+  } else {
+    const parsed = PullSchema.safeParse(pull.body);
+    if (!parsed.success) {
+      return { reason: 'failed', type: 'unavailable' };
+    }
+    head = {
+      changedFiles: parsed.data.changed_files,
+      sha: parsed.data.head.sha,
+      state: parsed.data.state,
+    };
+    if (pull.etag !== null) {
+      rememberPullFacts(factsKey, {
+        changedFiles: head.changedFiles,
+        etag: pull.etag,
+        headSha: head.sha,
+        state: head.state,
+      });
+    } else {
+      pullFacts.delete(factsKey);
+    }
   }
 
+  // The files are what is cached; the state is not, since a pull request can close or merge at the
+  // head it was read at, and the page must say so now and not in five minutes.
+  const withLiveState = (result: PullFilesResult): PullFilesResult =>
+    result.type === 'ok' ? { ...result, state: head.state } : result;
+
   const now = (deps.now ?? Date.now)();
-  const key = `${repo.id}:${prNumber}:${head.data.head.sha}`;
+  const key = `${repo.id}:${prNumber}:${head.sha}`;
   const hit = cache.get(key);
   if (hit && now - hit.at < CACHE_TTL_MS) {
-    return hit.read;
+    return hit.read.then(withLiveState);
   }
   const read = readFiles(
     doFetch,
     target,
     repoPath,
     prNumber,
-    head.data.head.sha,
-    head.data.state,
-    head.data.changed_files
+    head.sha,
+    head.state,
+    head.changedFiles,
+    deadline
   );
-  cache.set(key, { at: now, read });
+  const entry: CachedRead = { at: now, read };
+  cache.set(key, entry);
   while (cache.size > CACHE_MAX_ENTRIES) {
     const oldest = cache.keys().next().value;
     if (oldest === undefined) {
@@ -284,14 +364,17 @@ export async function readPullFiles(
     }
     cache.delete(oldest);
   }
-  // Only a complete, modest read is reused; the next view asks a failed or huge one again.
-  void read.then(
-    (result) => {
-      if (result.type !== 'ok' || patchChars(result) > CACHE_MAX_PATCH_CHARS) {
-        cache.delete(key);
-      }
-    },
-    () => cache.delete(key)
-  );
-  return read;
+  // Only a complete, modest read is reused; the next view asks a failed or huge one again. This
+  // removes its own entry only: a newer read of the same key may have replaced it since.
+  const forgetIfUnusable = () => {
+    if (cache.get(key) === entry) {
+      cache.delete(key);
+    }
+  };
+  void read.then((result) => {
+    if (result.type !== 'ok' || patchChars(result) > CACHE_MAX_PATCH_CHARS) {
+      forgetIfUnusable();
+    }
+  }, forgetIfUnusable);
+  return read.then(withLiveState);
 }

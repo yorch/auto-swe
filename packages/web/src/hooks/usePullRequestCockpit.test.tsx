@@ -6,7 +6,13 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bodyOf, setupFetchMock } from '@/test/rtl-helpers';
-import { cockpitKey, usePullRequestCockpit, useSetFilesViewed } from './usePullRequestCockpit';
+import {
+  COCKPIT_POLL_MS,
+  cockpitKey,
+  cockpitRefetchInterval,
+  usePullRequestCockpit,
+  useSetFilesViewed,
+} from './usePullRequestCockpit';
 
 const ID = '00000000-0000-4000-8000-0000000000aa';
 
@@ -54,7 +60,28 @@ describe('usePullRequestCockpit', () => {
     await waitFor(() => expect(result.current.data?.pull.id).toBe(ID));
     expect(spy).toHaveBeenCalledTimes(1);
     const options = qc.getQueryCache().find({ queryKey: cockpitKey(ID) })?.observers[0]?.options;
-    expect(options?.refetchInterval).toBe(30_000);
+    expect(typeof options?.refetchInterval).toBe('function');
+  });
+
+  describe('the polling interval', () => {
+    const withState = (state: string): PullRequestCockpit => ({
+      ...data(),
+      files: { headSha: 'abc', items: [], state, truncated: false, type: 'ok' },
+    });
+
+    it('is a minute while the pull request is open, and before anything has loaded', () => {
+      expect(cockpitRefetchInterval(withState('open'))).toBe(COCKPIT_POLL_MS);
+      expect(cockpitRefetchInterval(undefined)).toBe(COCKPIT_POLL_MS);
+      expect(COCKPIT_POLL_MS).toBe(60_000);
+    });
+
+    it('stops once the host reports the pull request closed', () => {
+      expect(cockpitRefetchInterval(withState('closed'))).toBe(false);
+    });
+
+    it('keeps polling while the files cannot be read, since the state is then unknown', () => {
+      expect(cockpitRefetchInterval(data())).toBe(COCKPIT_POLL_MS);
+    });
   });
 
   it('reads nothing without an id', () => {
