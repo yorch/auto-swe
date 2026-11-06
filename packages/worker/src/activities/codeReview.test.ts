@@ -155,6 +155,35 @@ function verdict(approved = true): AggregatedReviewResult {
 }
 
 describe('loadChangeForReview', () => {
+  it('runs the repository gate only when requested and feeds its real evidence to the code result', async () => {
+    const f = fixture();
+    const capture = vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'Tests  2 passed (2)' }));
+    f.change.createWorkspace = vi.fn(
+      async () =>
+        ({
+          destroy: f.destroy,
+          exec: f.exec,
+          execCapture: capture,
+          gitAuthed: f.gitAuthed,
+        }) as unknown as Workspace
+    );
+    const req = request();
+    req.payload = { ...(req.payload as object), runTests: true };
+    expect((await loadChangeForReviewWith(req, f.change)).testResults).toMatchObject({
+      passed: true,
+      passing: 2,
+    });
+    expect(capture).toHaveBeenCalledOnce();
+    await loadChangeForReviewWith(request(), f.change);
+    expect(capture).toHaveBeenCalledOnce();
+    capture.mockResolvedValueOnce({ exitCode: 1, stderr: '', stdout: 'Tests  1 failed (1)' });
+    expect((await loadChangeForReviewWith(req, f.change)).testResults.passed).toBe(false);
+    capture.mockRejectedValueOnce(new Error('test infrastructure failed'));
+    await expect(loadChangeForReviewWith(req, f.change)).rejects.toThrow(
+      'test infrastructure failed'
+    );
+    expect(f.destroy).toHaveBeenCalledTimes(4);
+  });
   beforeEach(() => db.source.mockReset());
 
   it('pins a host PR head, verifies it, fetches the base and produces a hardened merge-base diff', async () => {
@@ -176,7 +205,7 @@ describe('loadChangeForReview', () => {
       undefined,
       HEAD,
       false,
-      { detectedStack: null, teamId: null }
+      { detectedStack: null, repoSetup: { field: undefined }, teamId: null }
     );
     expect(
       f.exec.mock.calls.some(
@@ -265,7 +294,7 @@ describe('loadChangeForReview', () => {
             if (kind === 'diff error') {
               throw new Error('git failed');
             }
-            return 'x'.repeat(300_001);
+            return 'x'.repeat(900_001);
           }
           return HEAD;
         });
@@ -286,7 +315,7 @@ describe('loadChangeForReview', () => {
     });
     expect(f.change.createWorkspace).not.toHaveBeenCalled();
     expect(f.change.loadStored).toHaveBeenCalledWith(SOURCE, REPO);
-    f.change.loadStored = async () => 'x'.repeat(300_001);
+    f.change.loadStored = async () => 'x'.repeat(900_001);
     await expect(
       loadChangeForReviewWith(request({ mode: 'stored' }), f.change)
     ).rejects.toMatchObject({ type: 'REVIEW_DIFF_TOO_LARGE' });

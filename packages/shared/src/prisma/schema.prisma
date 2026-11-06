@@ -3261,6 +3261,7 @@ model ReviewPreset {
   systemPrompt  String?                  @map("system_prompt")
   onBlocking    String                   @default("report") @map("on_blocking")
   enabled       Boolean                  @default(true)
+  runTests      Boolean                  @default(false) @map("run_tests")
   createdById   String?                  @map("created_by_id") @db.Uuid
   createdBy     User?                    @relation("ReviewPresetCreator", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt     DateTime                 @default(now()) @map("created_at") @db.Timestamptz

@@ -25,6 +25,7 @@ export interface ReviewPreset extends ReviewChoice {
   templateId: string;
   systemPrompt: string | null;
   onBlocking: 'report' | 'fix';
+  runTests?: boolean;
   enabled: boolean;
   attachments: ReviewAttachment[];
   template: ReviewChoice;

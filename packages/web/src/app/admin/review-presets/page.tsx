@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { DataTable } from '@/components/ui/DataTable';
@@ -34,6 +35,7 @@ function PresetForm({ preset, onClose }: { preset: ReviewPreset | null; onClose:
   const [prompt, setPrompt] = useState(preset?.systemPrompt ?? '');
   const [onBlocking, setBlocking] = useState<'report' | 'fix'>(preset?.onBlocking ?? 'report');
   const [enabled, setEnabled] = useState(preset?.enabled ?? true);
+  const [runTests, setRunTests] = useState(preset?.runTests ?? false);
   const templates = [...(choices.data?.templates ?? [])];
   if (preset && !templates.some((t) => t.id === preset.templateId)) {
     templates.push(preset.template);
@@ -63,6 +65,7 @@ function PresetForm({ preset, onClose }: { preset: ReviewPreset | null; onClose:
                 enabled,
                 name: name.trim(),
                 onBlocking,
+                runTests,
                 systemPrompt: prompt.trim() ? prompt : null,
                 templateId: selected,
               },
@@ -123,6 +126,11 @@ function PresetForm({ preset, onClose }: { preset: ReviewPreset | null; onClose:
           apply.
         </p>
         <ToggleSwitch checked={enabled} label="Enabled" onChange={() => setEnabled(!enabled)} />
+        <Checkbox
+          checked={runTests}
+          label="Run repository tests before review"
+          onChange={(e) => setRunTests(e.target.checked)}
+        />
         {save.error && <Alert>{errMsg(save.error)}</Alert>}
         <ModalFooter
           disabled={!name.trim() || !selected || choices.isError || choices.isLoading}

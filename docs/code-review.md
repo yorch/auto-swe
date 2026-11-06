@@ -52,9 +52,14 @@ Source selection takes the first available mode in this order:
    proves this diff, and the result is explicitly unverified.
 
 PR and branch diffs use the merge base of the base branch with hardened git-diff options. A diff
-larger than 300,000 characters fails with `REVIEW_DIFF_TOO_LARGE`; it is not silently truncated.
-Workspaces are destroyed after loading. The code result explicitly says tests are **not run** by
-the review loader; review is not fresh test evidence. A finished source with no eligible change
+larger than 300,000 characters is reviewed in file-aligned chunks (oversized files split by hunk,
+and oversized hunks by lines). At most two chunks run concurrently; each names its position and
+the full file list. Verdicts merge worst-of with deduplicated findings in the single
+`runReviewNetwork` output. The hard limits are 900,000 diff characters and 1.2 MB of serialized
+change data; exceeding either fails with `REVIEW_DIFF_TOO_LARGE`, without truncation.
+Workspaces are destroyed after loading. Presets default `runTests` to false. Enabling it runs the
+repository test gate on the reviewed checkout and feeds its actual output into the review.
+Without it, tests are explicitly **not run**. A finished source with no eligible change
 returns `REVIEW_NOTHING_TO_REVIEW`. A review run cannot itself be a review source.
 
 ## Results and PR evaluation
@@ -135,8 +140,9 @@ review template with `REVIEW_TEMPLATE_NEEDS_SOURCE`.
 - Review templates cannot launch standalone: they require a finished source run and an eligible
   change. Automatic review applies only to successful non-review sources.
 - Stored diffs are unverified. They never count toward PR evaluation and cannot start a fix round.
-- A review does not run tests merely by loading the diff, and oversized diffs fail rather than
-  receive partial review. Findings displayed/published by the summary are bounded.
+- Test execution is opt-in. Unverified stored diffs skip tests. Changes above the hard limits fail
+  rather than receive partial review. Chunk-local review cannot guarantee whole-change reasoning.
+  Findings displayed/published by the summary are bounded.
 - Fix retries apply only to successful blocking PR reviews with fix policy and a transient
   failed, suppressed, or skipped decision (for example cooldown, budget, unavailable configuration,
   or a failed start). The run's **Retry fix** action and the generic automation-fire retry endpoint

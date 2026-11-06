@@ -43,7 +43,7 @@ import { withRunDetection } from '../lib/runDetection.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { DEFAULT_COMMANDS, gateCommandFor } from './gateCommand.js';
 import { runImplementerFixSession } from './implementerSession.js';
-import { testRunTimeoutMs, testStatusWord } from './utils.js';
+import { parseTestOutput, testRunTimeoutMs, testStatusWord } from './utils.js';
 import {
   createWorkspace,
   fetchBranchesSubcommand,
@@ -97,6 +97,23 @@ export interface GateResult {
 }
 
 export { DEFAULT_COMMANDS };
+
+export async function runReviewTestGate(
+  workspace: Workspace,
+  repo: Parameters<typeof gateCommandFor>[2]
+) {
+  const command = gateCommandFor('runTests', undefined, repo);
+  if (!command) {
+    return parseTestOutput('Tests not run: no repository test gate is configured.', 0, 1);
+  }
+  const started = Date.now();
+  const result = await workspace.execCapture(command, { timeoutMs: 600_000 });
+  return parseTestOutput(
+    `${result.stdout}\n${result.stderr}${result.signal ? `\nStopped by ${result.signal}` : ''}`,
+    Date.now() - started,
+    result.signal ? 1 : result.exitCode
+  );
+}
 
 type TrustedKnowledgeEvidenceWriter = {
   createMany(args: {

@@ -6,6 +6,7 @@ export const REVIEW_COMMENT_MARKER_PREFIX = '<!-- auto-swe:code-review:';
 export const REVIEW_ON_BLOCKING = ['report', 'fix'] as const;
 export const REVIEW_INTENT_STATUSES = ['pending', 'started', 'skipped', 'failed'] as const;
 export const REVIEW_MAX_DIFF_CHARS = 300_000;
+export const REVIEW_HARD_MAX_DIFF_CHARS = 900_000;
 export const REVIEW_ERROR_CODES = {
   DIFF_TOO_LARGE: 'REVIEW_DIFF_TOO_LARGE',
   DISABLED: 'REVIEW_DISABLED',
@@ -36,6 +37,7 @@ export const ReviewRunPayloadSchema = z.strictObject({
   onBlocking: z.enum(REVIEW_ON_BLOCKING).default('report'),
   presetId: z.string().uuid().optional(),
   reviewOf: ReviewOfSchema,
+  runTests: z.boolean().optional(),
   sourceRunId: z.string().uuid(),
   systemPrompt: z.string().max(100_000).optional(),
 });
@@ -46,6 +48,7 @@ export const ReviewPresetCreateSchema = z.strictObject({
   enabled: z.boolean().default(true),
   name: z.string().trim().min(1).max(200),
   onBlocking: z.enum(REVIEW_ON_BLOCKING).default('report'),
+  runTests: z.boolean().default(false),
   systemPrompt: z.string().max(100_000).nullable().optional(),
   templateId: z.string().uuid(),
 });
@@ -54,6 +57,7 @@ export const ReviewPresetUpdateSchema = ReviewPresetCreateSchema.extend({
   description: z.string().max(4000),
   enabled: z.boolean(),
   onBlocking: z.enum(REVIEW_ON_BLOCKING),
+  runTests: z.boolean(),
 })
   .partial()
   .refine((value) => Object.values(value).some((field) => field !== undefined), {

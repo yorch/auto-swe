@@ -152,6 +152,7 @@ export async function prepareReviewLaunch(db: PrismaClient, input: PrepareReview
       ? {
           onBlocking: preset.onBlocking,
           presetId: preset.id,
+          runTests: preset.runTests,
           ...(preset.systemPrompt ? { systemPrompt: preset.systemPrompt } : {}),
         }
       : {}),

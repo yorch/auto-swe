@@ -3,7 +3,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import {
   REVIEW_COMMENT_MARKER_PREFIX,
-  REVIEW_MAX_DIFF_CHARS,
+  REVIEW_HARD_MAX_DIFF_CHARS,
   type ReviewRunPayload,
   ReviewRunPayloadSchema,
 } from '@auto-swe/shared/lib/codeReview';
@@ -30,6 +30,7 @@ import { getScmProvider, type RepoRef, type ScmProvider, toRepoRef } from '../li
 import { getTemporalClient } from '../lib/temporalClient.js';
 import type { QodoReviewResult } from './awaitQodoReview.js';
 import { neutralizeCommentText } from './ciTriage.js';
+import { runReviewTestGate } from './qualityGates.js';
 import { type ReviewFixResult, startReviewFix } from './reviewFixes.js';
 import { parseDiffToFileChanges } from './utils.js';
 import { createWorkspace, fetchBranchesSubcommand, shellQuote } from './workspace.js';
@@ -140,13 +141,13 @@ export async function loadChangeForReviewWith(
     diff: string,
     identity: Pick<ReviewChange, 'branch' | 'headSha' | 'diffVerified'> & Partial<ReviewChange>
   ): ReviewChange => {
-    if (diff.length > REVIEW_MAX_DIFF_CHARS) {
+    if (diff.length > REVIEW_HARD_MAX_DIFF_CHARS) {
       return refuse(
         'REVIEW_DIFF_TOO_LARGE',
-        `Review diff exceeds ${REVIEW_MAX_DIFF_CHARS} characters`
+        `Review diff exceeds ${REVIEW_HARD_MAX_DIFF_CHARS} characters`
       );
     }
-    return {
+    const result = {
       implementationNotes: identity.diffVerified
         ? 'Read-only review of the published change.'
         : 'UNVERIFIED stored agent diff; no published commit was verified.',
@@ -154,8 +155,12 @@ export async function loadChangeForReviewWith(
       ...identity,
       diff,
       filesChanged: parseDiffToFileChanges(diff),
-      testResults: noTests,
+      testResults: identity.testResults ?? noTests,
     };
+    if (Buffer.byteLength(JSON.stringify(result)) > 1_200_000) {
+      return refuse('REVIEW_DIFF_TOO_LARGE', 'Review change exceeds the 1.2 MB payload hard cap');
+    }
+    return result;
   };
   if (payload.reviewOf.mode === 'stored') {
     return finish(await deps.loadStored(payload.sourceRunId, payload.connectionId), {
@@ -199,7 +204,7 @@ export async function loadChangeForReviewWith(
     executorImageFor(repo),
     payload.reviewOf.mode === 'pr' ? headSha : undefined,
     payload.reviewOf.mode === 'branch',
-    { detectedStack: repo.detectedStack, teamId: repo.teamId }
+    { detectedStack: repo.detectedStack, repoSetup: { field: repo.setup }, teamId: repo.teamId }
   );
   try {
     const actual = (await workspace.exec(`${GIT} rev-parse HEAD`)).trim().toLowerCase();
@@ -233,6 +238,7 @@ export async function loadChangeForReviewWith(
       branch,
       diffVerified: true,
       headSha,
+      ...(payload.runTests ? { testResults: await runReviewTestGate(workspace, repo) } : {}),
       ...(prUrl ? { prUrl } : {}),
     });
   } finally {

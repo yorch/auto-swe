@@ -5,7 +5,12 @@ import {
   PERFORMANCE_REVIEWER_PROMPT,
   SECURITY_AUDITOR_PROMPT,
 } from '../agents/prompts.js';
-import { REVIEWER_AGENT_KEYS, runReviewNetwork as runReview } from '../agents/reviewNetwork.js';
+import {
+  fingerprintRejections,
+  REVIEWER_AGENT_KEYS,
+  runReviewNetwork as runReview,
+  summarizeRejections,
+} from '../agents/reviewNetwork.js';
 import { currentWorkflowRunId, persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
@@ -19,6 +24,7 @@ import {
   loadRepoDependencyContext,
   wantsCrossRepoContext,
 } from '../lib/repoDependencyContext.js';
+import { mergeChunkVerdicts, reviewChunks } from '../lib/reviewChunks.js';
 
 /** Two prompts are the same text if they differ only in surrounding whitespace. */
 function samePrompt(a: string, b: string): boolean {
@@ -170,7 +176,7 @@ async function runReviewNetworkImpl(
       tracer,
     });
 
-    const result = await runReview(codeResult, {
+    const reviewOptions = {
       crossRepoContext: crossRepoContext || undefined,
       domainLogicPrompt: reviewerPersonaPrompt(
         domainAgent.model.systemPrompt,
@@ -194,7 +200,44 @@ async function runReviewNetworkImpl(
       successCriteria,
       systemPromptOverride,
       tracer,
-    });
+    };
+    const chunks = 'diffVerified' in codeResult ? reviewChunks(codeResult.diff) : [codeResult.diff];
+    const results: AggregatedReviewResult[] = new Array(chunks.length);
+    let next = 0;
+    const workers = await Promise.allSettled(
+      Array.from({ length: Math.min(2, chunks.length) }, async () => {
+        while (next < chunks.length) {
+          const index = next++;
+          const diff = chunks[index] ?? '';
+          const chunk =
+            chunks.length === 1
+              ? codeResult
+              : {
+                  ...codeResult,
+                  diff,
+                  implementationNotes: `${codeResult.implementationNotes}\nChunk ${index + 1}/${chunks.length} of a larger change. Review only this portion; other chunks may contain related changes. Full file list: ${JSON.stringify(codeResult.filesChanged.map((f) => f.path))}`,
+                };
+          results[index] = await runReview(chunk, reviewOptions);
+        }
+      })
+    );
+    const failed = workers.find((worker) => worker.status === 'rejected');
+    if (failed?.status === 'rejected') {
+      throw failed.reason;
+    }
+    const verdicts = mergeChunkVerdicts(results.flatMap((result) => result.verdicts));
+    const approved =
+      results.every((result) => result.approved) && verdicts.every((v) => v.approved);
+    const result: AggregatedReviewResult =
+      chunks.length === 1
+        ? (results[0] as AggregatedReviewResult)
+        : {
+            approved,
+            codeResult,
+            rejectionFingerprint: approved ? undefined : fingerprintRejections(verdicts),
+            rejectionSummary: approved ? undefined : summarizeRejections(verdicts),
+            verdicts,
+          };
 
     heartbeat(`review complete: ${result.approved ? 'approved' : 'rejected'}`);
 
