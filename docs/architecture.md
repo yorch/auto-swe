@@ -1902,9 +1902,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   it is read out of the container and written to the store. Reads are streamed (`getArtifactStream`)
   where the response is the raw payload — run evidence — and still buffered for the transcript and
   text views that transform the bytes.
-- **The browser image is not published with the executor images, and it is not the default image.**
-  `docker.yml` builds and publishes `executor-node`, `executor-python`, `executor-jvm` and
-  `executor-go`; `defaults/Dockerfile.node-browser` is built only by the CI browser job. A
-  deployment that wants UI validation builds it and names it as the repository's executor image
-  (or leaves the repository without a preview recipe, which skips the step). A preview service
-  sidecar running under Kubernetes as root or with added capabilities needs a namespace exception.
+- **The browser image is not the default image.** `docker.yml` publishes `executor-node-browser`
+  beside the other curated executor images, and `build-executor.yml` can build it for one repository
+  with `stack: node-browser`. A deployment that wants UI validation sets it as the repository's
+  executor image (or leaves the repository without a preview recipe, which skips the step). A
+  preview service sidecar running under Kubernetes as root or with added capabilities needs a
+  namespace exception.

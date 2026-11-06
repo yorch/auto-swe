@@ -30,29 +30,31 @@ Only a platform admin may set a connection's executor image; a team lead may cle
 connection with the image it already has. The team shell-image allowlist does not apply: its entries
 are approved for sandboxed shell steps, which never hold a credential. `build-executor.yml` writes
 each freshly tagged image to its repository, so its `GATEWAY_TOKEN` must belong to a platform
-admin. It builds `defaults/Dockerfile.node` unless a run sets `use_repo_dockerfile`, which builds the
-repository's own `.auto-swe/Dockerfile` instead. `defaults/` also carries `Dockerfile.python` and
-`Dockerfile.jvm` and `Dockerfile.go`; the `stack` input (`node`|`python`|`jvm`|`go`, default `node`) selects which curated
-Dockerfile is built.
+admin. It builds `defaults/Dockerfile.node` unless `use_repo_dockerfile` is true, which builds the
+repository's own `.auto-swe/Dockerfile` instead. `defaults/` also carries `Dockerfile.node-browser`,
+`Dockerfile.python`, `Dockerfile.jvm` and `Dockerfile.go`; the `stack` input
+(`node`|`node-browser`|`python`|`jvm`|`go`, default `node`) selects the curated Dockerfile.
 
-**Prebuilt executor images.** `docker.yml` builds the four curated Dockerfiles on every pull request
+**Prebuilt executor images.** `docker.yml` builds the five curated Dockerfiles on every pull request
 and, after the same CI gate as the app images, publishes them beside them as
-`ghcr.io/<repository>/executor-node`, `executor-python`, `executor-jvm` and `executor-go` (and to
+`ghcr.io/<repository>/executor-node`, `executor-node-browser`, `executor-python`, `executor-jvm`
+and `executor-go` (and to
 `EXTERNAL_REGISTRY_URL` when that is set), tagged `main`, `latest` and `<timestamp>-<commit>`. Point
 `WORKSPACE_IMAGE` (the Node image) and `WORKSPACE_IMAGE_PYTHON`, `_JVM` and `_GO` at them to give a
 repository the image for its detected stack ([`repositories.md`](./repositories.md#executor-images)).
+`executor-node-browser` is a Node variant rather than a detected stack; use it as the repository's
+`executorImage` when UI validation needs Chromium.
 Reference them by **digest** (`…@sha256:<digest>`), not by a tag: the image runs next to the clone
 credential, and a tag that moves changes what runs there without a deploy. A GHCR package is private
 until its visibility is changed, so a worker, and on Kubernetes the pull secret named in
 `K8S_WORKSPACE_IMAGE_PULL_SECRETS`, needs access to it.
 
-The browser image is a fifth curated Dockerfile, `defaults/Dockerfile.node-browser`, and `docker.yml`
-does **not** build it — only the CI browser test does. Build it where the workers can pull it
-(`docker build -f defaults/Dockerfile.node-browser -t <registry>/executor-node-browser:<tag> defaults`)
-and set it as a repository's executor image when the run should verify the app preview
-([`ui-validation.md`](./ui-validation.md)). It is Debian-based because Playwright's Chromium needs
-glibc, and it carries the same Node toolchain as the Node image (Corepack, Yarn and pnpm) so a
-repository's own gates still run in it. A repository without it simply skips the preview check.
+For a repository-specific browser image, dispatch `build-executor.yml` with `stack: node-browser`
+and `use_repo_dockerfile: false`; the workflow builds the curated Dockerfile and writes the image
+and build settings to that connection ([`ui-validation.md`](./ui-validation.md)). It is Debian-based
+because Playwright's Chromium needs glibc, and it carries the same Node toolchain as the Node image
+(Corepack, Yarn and pnpm) so a repository's own gates still run in it. A repository without it
+simply skips the preview check.
 
 Each build also records its settings on the connection (`executorImageBuild`). A weekly schedule
 (`cron: '0 6 * * 1'`) rebuilds every active repository that has such a record, so the workflow's

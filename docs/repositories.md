@@ -321,16 +321,17 @@ short `ExecutorImageProbeWorkflow` on the worker, which starts the image as a
 hardened workspace container, runs the contract checks inside it, removes the
 container, and returns each check with `required`/`ok`/`detail`.
 
-`defaults/` holds curated executor bases — `Dockerfile.node`, plus
-`Dockerfile.python` (Python slim + `uv`), `Dockerfile.go` (Go on Debian) and `Dockerfile.jvm` (Temurin JDK +
-Maven, daemons off). `build-executor.yml` builds one of them per run: the
-`stack` input (`node`|`python`|`jvm`|`go`, default `node`) selects it, unless
+`defaults/` holds curated executor bases — `Dockerfile.node`, `Dockerfile.node-browser`,
+`Dockerfile.python` (Python slim + `uv`), `Dockerfile.go` (Go on Debian) and `Dockerfile.jvm`
+(Temurin JDK + Maven, daemons off). `build-executor.yml` builds one of them per run: the `stack`
+input (`node`|`node-browser`|`python`|`jvm`|`go`, default `node`) selects it, unless
 `use_repo_dockerfile` builds the repository's own Dockerfile instead.
 
-`defaults/Dockerfile.node-browser` is a fifth base — Debian with Playwright's Chromium and the same
-Node toolchain — for a repository whose run should verify its app preview. `docker.yml` does not
-publish it and `build-executor.yml` does not build it, so a deployer builds it and sets it as the
-connection's executor image ([deployment.md](./deployment.md) and
+`Dockerfile.node-browser` is the browser-enabled Node variant: Debian with Playwright's Chromium
+and the same Node toolchain, for repositories that verify app previews. Select `node-browser` with
+`use_repo_dockerfile` false in `build-executor.yml` to build it for a repository; the workflow records
+the resulting image and build settings on that connection. It is a repository executor-image choice,
+not a detected stack for `WORKSPACE_IMAGE_<STACK>` ([deployment.md](./deployment.md) and
 [ui-validation.md](./ui-validation.md)).
 
 **Recording the build.** A build writes the image back to the connection together with

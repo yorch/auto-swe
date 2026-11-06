@@ -618,7 +618,7 @@ model Connection {
   /// resolves at /admin/workflow.
   executorImage        String?             @map("executor_image")
   /// How the executor image was built, for the scheduled rebuild workflow:
-  /// { stack: 'node'|'python'|'jvm'|'go', useRepoDockerfile: boolean }.
+  /// { stack: 'node'|'node-browser'|'python'|'jvm'|'go', useRepoDockerfile: boolean }.
   executorImageBuild   Json?               @map("executor_image_build")
   /// Per-repository PR evaluation mode: 'off' | 'advisory' | 'enforce' | 'auto'. NULL means
   /// "inherit `prEvaluation.defaultMode`", and it must stay NULL-able with NO column

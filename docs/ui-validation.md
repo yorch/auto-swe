@@ -6,6 +6,12 @@ image is `defaults/Dockerfile.node-browser`; it includes the pinned Playwright r
 `BrowserSession` drives the in-container browser, restricts navigation to configured hosts, and can
 capture screenshots, video, traces and events.
 
+Build a repository's browser executor by dispatching `build-executor.yml` for that repository with
+`stack: node-browser` and `use_repo_dockerfile: false`. The workflow builds the curated image and
+records the image and build settings on the repository connection. `docker.yml` also publishes
+`executor-node-browser` for deployments that manage their own image references; set it as the
+repository's `executorImage` when UI validation needs Chromium.
+
 ## Run evidence
 
 Screenshots, recordings, traces and text logs use the workflow artifact store and carry run

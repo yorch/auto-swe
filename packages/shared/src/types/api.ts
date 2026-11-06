@@ -330,7 +330,7 @@ export interface RepositorySummary {
   executorImage: string | null;
   /** How the executor image was built (for scheduled rebuilds); null when unset. */
   executorImageBuild?: {
-    stack: 'node' | 'python' | 'jvm' | 'go';
+    stack: 'node' | 'node-browser' | 'python' | 'jvm' | 'go';
     useRepoDockerfile: boolean;
   } | null;
   /** Per-gate command overrides; null when the repository overrides none. */
