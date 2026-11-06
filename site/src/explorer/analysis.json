@@ -2718,6 +2718,47 @@
       "title": "Code review after a run"
     },
     {
+      "body": "Prepare repository workspaces with submodules, LFS and ordered install commands, optionally restoring a matching dependency cache.",
+      "category": "Execution",
+      "detail": "A repository's saved setup definition takes precedence over .auto-swe/setup.yml read from the workspace's base or pinned commit; only when neither exists does workspace.repoSetupStackDefaults enable detected-stack installs. A present invalid definition fails instead of falling through, and an explicit empty definition suppresses the fallbacks. Workspace creation resolves setup before the egress lock and executes it after the lock, as the workspace user; callers that first move to the work branch defer execution until that checkout is ready. Submodules are fetched only from the repository's own host, with separately minted credentials, then LFS objects, then cache restore and sequential shell steps. Steps still run on a cache hit. Cache identity includes team, repository, definition, key-file hashes, image and architecture; caching is disabled with PostgreSQL artifact storage, and cache read/write failures do not fail otherwise successful setup. Platform admins or the owning team's admin members can manage the saved definition. The repository editor can copy or download the YAML or request a PR adding it; the proposal refuses an existing file on the default branch. The CLI can also generate a starter file locally without a token.",
+      "id": "repoSetup",
+      "refs": [
+        "setupResolve",
+        "setupWorkspace",
+        "workspaceEgressLock",
+        "setupGit",
+        "setupSteps",
+        "setupCache",
+        "setupCacheStorage",
+        "setupAdmin",
+        "setupRole",
+        "setupProposal",
+        "setupCli"
+      ],
+      "status": "Implemented",
+      "title": "Repository workspace setup and dependency caches"
+    },
+    {
+      "body": "Choose open, restricted or blocked workspace egress; a launch may narrow the configured policy, never widen it.",
+      "category": "Isolation",
+      "detail": "workspace.egressPolicy is run-pinned at the template/team/organization scope, with open as the default. The gateway rejects a widening request; the worker rechecks when pinning and retains the configured ceiling if another launch path asks for a looser policy. Restricted requires the team allowlist and a forwarding proxy when it is non-empty; an empty list locks down like blocked. Before setup or agent code, restricted and blocked repository workspaces are network-locked to the repository's git host and configured model/registry proxies, plus the forwarding proxy only for restricted and LFS storage hosts when setup needs them. Docker resolves destinations to IP rules, pins hostnames and verifies default-deny INPUT/OUTPUT policies; Kubernetes creates pod-owned allow policies, changes the pod's policy-selection label and verifies loss of direct access to a previously reachable public destination. A failed lock destroys the workspace. This does not impose the same firewall on ephemeral shell/container steps or on worker-originated MCP and connector calls.",
+      "id": "runEgressPolicy",
+      "refs": [
+        "egressLaunch",
+        "egressPin",
+        "workspaceEgressLock",
+        "workspaceEgressAllow",
+        "workspaceEgressProxy",
+        "dockerEgressRules",
+        "dockerEgressResolve",
+        "k8sEgressLock",
+        "k8sEgressAllow",
+        "stepEgressPolicy"
+      ],
+      "status": "Implemented",
+      "title": "Run-scoped workspace egress policy"
+    },
+    {
       "body": "Attach Git-backed reference material at team, repository, template and run scope, pin snapshots and expose bounded read-only files and cited search results.",
       "category": "Knowledge",
       "detail": "Knowledge bases are separate from governed KnowledgeItems: Git is the source of truth, with no approval lifecycle. Same-organization TEAM, SHARED and ORG visibility gates attachment. Additive resolution selects at most four references, preserving mandatory team status and the most specific overrides. A Temporal execution pins SHAs and snapshot IDs; later resolutions recheck attachability. Indexing scans text files for injection, excludes flagged or incompletely scanned files and fails closed on truncated trees. Workspace agents receive read-only files and an untrusted prompt block; the text-only decomposition planner and trusted delivery workspace do not. Explicitly granted Mastra searchKnowledge and retrieveKnowledge merge only pinned chunks, matching the configured embedding model or reporting text fallback, with recall-time injection filtering. Harnesses receive files, not server-side search tools. The dashboard manages KBs, links, shares and launch overrides.",
@@ -4429,20 +4470,51 @@
       "title": "Scoped agent versions remain live"
     },
     {
-      "body": "Opt-in egress uses bridge networking, unreachable DNS and add-host entries.",
-      "category": "Isolation",
-      "detail": "Direct-IP traffic is not blocked by this allowlist; wildcard entries are skipped. The resolvers an agent repository workspace is given come from WORKSPACE_DNS, a deployer’s choice and not a boundary: pointing them at an internal resolver lets code in the workspace resolve every name that resolver knows. Docker shares the host kernel. The worker reaches the daemon through a socket proxy that allowlists API paths, not the options a container is created with, and the proxy runs as root to open the socket. Treat that host as a privileged trust boundary. This describes the Docker backend; the Kubernetes backend’s boundary is described separately.",
-      "id": "egress",
-      "refs": ["sandbox", "infra", "workspaceDnsRun", "dockerProxy"],
+      "body": "Workspace setup executes repository-controlled shell commands and restores dependency artifacts, not a separately sandboxed or approved build recipe.",
+      "category": "Execution",
+      "detail": "Saved definitions require platform ADMIN or owning-team admin membership; checked-in definitions follow repository write access instead. Setup selection is not a frozen content snapshot: the file comes from the recorded base/pin, while callers pass the repository's saved field when creating the workspace. Commands execute after the egress lock with the workspace user's permissions; normal steps run even after a cache restore. A definition error is non-retryable, whereas a failed shell step is retryable, so commands must tolerate activity retries. Cache keys segregate teams, repositories, definitions, key files, images and architectures, but a cache hit is not dependency verification. Caching requires non-PostgreSQL artifact storage and a positive size limit; it is optional, restores tar data into the workspace and falls back to executing the steps when cache operations fail. Unused entries are swept after the retention window. The file-proposal action only adds a missing setup file and never updates an existing one.",
+      "id": "repoSetupBounds",
+      "refs": [
+        "setupAdmin",
+        "setupRole",
+        "setupResolve",
+        "setupWorkspace",
+        "setupSteps",
+        "setupCache",
+        "setupCacheStorage",
+        "setupCacheRestore",
+        "setupCacheSweep",
+        "setupProposal"
+      ],
       "status": "Confirmed boundary",
-      "title": "DNS egress filtering is not a network firewall"
+      "title": "Setup commands and caches inherit workspace trust"
     },
     {
-      "body": "On Kubernetes, egress is whatever NetworkPolicy the deployer applies; container-step sandboxes are not available and several Docker workspace controls do not apply.",
+      "body": "Restricted and blocked repository workspaces have network locks; ephemeral shell/container-step egress does not have the same boundary.",
       "category": "Isolation",
-      "detail": "The pod cannot filter its own network, so egress control is entirely the namespace’s NetworkPolicy, and the boot probe proves only that metadata and the cluster API are unreachable, not what else is; an operator can switch the probe off, which only logs a warning. WORKSPACE_DNS, the workspace network setting and the Docker metadata-block sidecar are not applied: pods use cluster DNS. There is no per-pod PID limit beyond the node’s, and pods share the node kernel unless a runtime class such as gVisor or Kata is configured. Shell steps, container steps, sidecars and helper containers fail non-retryably with WORKSPACE_BACKEND_UNSUPPORTED, so templates that use them need a Docker worker. Pod deletion is forced and not retried: a failed delete is only logged, and the pod keeps running until its hard lifetime ends it. The worker’s power over the cluster is its RBAC on pods, pod exec and creating and deleting Secrets in the workspace namespace, and the boot check confirms the proxy URL’s form, not that the Service behind it exists or is reachable.",
+      "detail": "An ephemeral step that retains egress uses bridge networking with DNS filtering and add-host entries, not a network lock: direct-IP traffic can bypass its cooperative proxy, and wildcard DNS entries are skipped. Blocked, or restricted with an empty team allowlist, forces these steps to network none; a sidecar that needs bridge networking is refused instead. Restricted steps that retain egress require the forwarding proxy but remain cooperative. Repository workspaces differ: Docker locks restricted/blocked workspaces with IPv4/IPv6 rules, refuses its embedded DNS resolver, pins permitted hostnames and fails closed when the lock cannot be installed or verified. Open workspaces are not locked; WORKSPACE_DNS is a deployer's resolver choice, not a security boundary. Policies govern container traffic, not worker-originated connector or MCP calls. Docker shares the host kernel, and the daemon's socket proxy allowlists API paths rather than container options, so the Docker host remains a privileged trust boundary.",
+      "id": "egress",
+      "refs": [
+        "sandbox",
+        "stepNetworkCap",
+        "stepEgressPolicy",
+        "stepSidecarPolicy",
+        "dockerEgressRules",
+        "dockerEgressResolve",
+        "workspaceDnsRun",
+        "dockerProxy"
+      ],
+      "status": "Confirmed boundary",
+      "title": "Workspace locks and step egress have different boundaries"
+    },
+    {
+      "body": "Kubernetes workspace locks depend on enforcing, correctly scoped NetworkPolicies; container-step sandboxes are not available and several Docker workspace controls do not apply.",
+      "category": "Isolation",
+      "detail": "Restricted/blocked locks add a pod-owned IP allow policy and switch the pod away from the namespace's broad egress policy. NetworkPolicies are additive: another matching broad policy can defeat narrowing. Each lock requires a public destination reachable before locking and two consecutive closed probes afterwards; no suitable baseline or probe tool fails closed. This is a sampled reachability check, not proof of every forbidden destination. DNS remains reachable through cluster DNS, leaving a low-bandwidth exfiltration channel. The separate boot probe covers metadata and the cluster API only and can be disabled; that does not disable per-workspace lock verification. Creating a per-pod policy requires NetworkPolicy create permission, which the boot RBAC check does not test. WORKSPACE_DNS, the Docker workspace network setting and metadata-block sidecar do not apply. Pods share the node kernel unless a runtime class such as gVisor or Kata is configured, and have no per-pod PID limit beyond the node's. Shell/container steps, sidecars and helpers fail non-retryably with WORKSPACE_BACKEND_UNSUPPORTED. Pod deletion is forced and not retried: a failed delete is logged and the hard lifetime is the fallback. The worker's RBAC also controls pods, exec and Secrets; the boot check validates the model-proxy URL's form, not its Service's reachability.",
       "id": "kubernetesBounds",
       "refs": [
+        "k8sEgressLock",
+        "k8sEgressAllow",
         "k8sNetworkCheck",
         "k8sPodSpec",
         "k8sUnsupported",
@@ -5302,7 +5374,7 @@
     "ConfigAuditLog": "Before/after change audit for configuration entities.",
     "ConfigPermission": "Scoped configuration write grant subject to role floors.",
     "ConfigSetting": "Validated registry value at a configuration scope.",
-    "Connection": "Team-owned typed integration target; repo coordinates or generic config plus an encrypted token and, for mcp connections, an encrypted set of custom request headers.",
+    "Connection": "Team-owned typed integration target; repo coordinates or generic config plus an encrypted token and, for mcp connections, an encrypted set of custom request headers. Git repositories can also store a workspace setup definition that overrides the checked-in setup file.",
     "ConnectionCredential": "Schema entity; inspect fields and relationship declarations below.",
     "ConnectionTeamShare": "Schema entity; inspect fields and relationship declarations below.",
     "ContextSnapshot": "Captured request context: ticket, knowledge, Figma design and success criteria.",
@@ -5384,7 +5456,8 @@
     "WorkflowShellAudit": "Who let one container node or authored command run in a template version: node, image, command, network and egress snapshot, written at save, at serving sign-off, by a bundle install or by the built-in sync (no author).",
     "WorkflowStep": "One node attempt with inputs, outputs, timing and error.",
     "WorkflowTemplate": "Named reusable workflow definition, input/provider contract and webhook token with optional signing secrets.",
-    "WorkflowTemplateVersion": "Immutable spec JSON and input schema at a version; generated versions carry review metadata."
+    "WorkflowTemplateVersion": "Immutable spec JSON and input schema at a version; generated versions carry review metadata.",
+    "WorkspaceSetupCache": "Dependency-cache artifact identity, repository, byte size and last-used time; the key incorporates team, repository, setup definition, key-file hashes, image and architecture."
   },
   "modelGroups": {
     "Agents & configuration": [
@@ -5433,6 +5506,7 @@
       "AgentTranscriptPart"
     ],
     "Execution": [
+      "WorkspaceSetupCache",
       "ActiveWorkflow",
       "ContextSnapshot",
       "PullRequest",
@@ -5909,6 +5983,176 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "export async function refuseWideningEgressPolicy(",
+      "id": "egressLaunch",
+      "lines": 44,
+      "path": "packages/gateway/src/lib/egressPolicyLaunch.ts",
+      "title": "A launcher may narrow but not widen the configured egress policy"
+    },
+    {
+      "anchor": "export function narrowPinnedEgressPolicy(",
+      "id": "egressPin",
+      "lines": 29,
+      "path": "packages/worker/src/activities/templates.ts",
+      "title": "The worker narrows the run's pinned egress policy or keeps its ceiling"
+    },
+    {
+      "anchor": "if (egressPolicy === 'blocked' || egressPolicy === 'restricted') {",
+      "id": "workspaceEgressLock",
+      "lines": 34,
+      "path": "packages/worker/src/activities/workspace.ts",
+      "title": "Restricted and blocked workspaces are locked before setup executes"
+    },
+    {
+      "anchor": "export function blockedEgressAllow(",
+      "id": "workspaceEgressAllow",
+      "lines": 40,
+      "path": "packages/worker/src/lib/egressWiring.ts",
+      "title": "Workspace locks retain proxies, git-host ports and optional LFS hosts"
+    },
+    {
+      "anchor": "export async function beginWorkspaceEgress(",
+      "id": "workspaceEgressProxy",
+      "lines": 32,
+      "path": "packages/worker/src/lib/egressWiring.ts",
+      "title": "Restricted needs an allowlist and refuses a missing forwarding proxy"
+    },
+    {
+      "anchor": "export function buildEgressLockScript(allow: ResolvedAllow[]): string {",
+      "id": "dockerEgressRules",
+      "lines": 60,
+      "path": "packages/worker/src/lib/workspaceBackend/docker.ts",
+      "title": "Docker locks IPv4 and IPv6, blocks embedded DNS and reports kernel policies"
+    },
+    {
+      "anchor": "export async function resolveEgressTargets(",
+      "id": "dockerEgressResolve",
+      "lines": 58,
+      "path": "packages/worker/src/lib/workspaceBackend/docker.ts",
+      "title": "Allowed hostnames resolve once to IP rules and hosts-file pins"
+    },
+    {
+      "anchor": "export async function lockPodEgress(",
+      "id": "k8sEgressLock",
+      "lines": 76,
+      "path": "packages/worker/src/lib/workspaceBackend/kubernetes/egressLock.ts",
+      "title": "A pod lock creates an allow policy, switches labels and verifies lost reachability"
+    },
+    {
+      "anchor": "export function buildEgressAllowPolicy(",
+      "before": 13,
+      "id": "k8sEgressAllow",
+      "lines": 49,
+      "path": "packages/worker/src/lib/workspaceBackend/kubernetes/egressLock.ts",
+      "title": "Per-pod allow policies are pod-owned and supplement shared DNS/proxy policies"
+    },
+    {
+      "anchor": "export function assertStepEgressEnforceable(",
+      "before": 12,
+      "id": "stepEgressPolicy",
+      "lines": 27,
+      "path": "packages/worker/src/lib/egressWiring.ts",
+      "title": "Restricted ephemeral steps require a proxy but are not network-locked"
+    },
+    {
+      "anchor": "export function capStepNetwork(",
+      "id": "stepNetworkCap",
+      "lines": 15,
+      "path": "packages/worker/src/lib/egressWiring.ts",
+      "title": "Blocked or restricted with an empty team list caps steps to no network"
+    },
+    {
+      "anchor": "if (capStepNetwork(egressPolicy, egressAllowlist, 'egress').capped) {",
+      "id": "stepSidecarPolicy",
+      "lines": 24,
+      "path": "packages/worker/src/activities/containerStep.ts",
+      "title": "A sidecar is refused when its required bridge network exceeds the policy"
+    },
+    {
+      "anchor": "export function resolveRepoSetup(input: {",
+      "id": "setupResolve",
+      "lines": 32,
+      "path": "packages/shared/src/lib/repoSetup.ts",
+      "title": "Setup precedence is saved repository field, base-ref file, then enabled stack default"
+    },
+    {
+      "anchor": "const runResolvedSetup = async (): Promise<RepoSetupReport | null> => {",
+      "id": "setupWorkspace",
+      "lines": 23,
+      "path": "packages/worker/src/activities/workspace.ts",
+      "title": "Resolved setup runs git provisioning before cache and shell steps"
+    },
+    {
+      "anchor": "export async function runSetupGitPhase(",
+      "id": "setupGit",
+      "lines": 17,
+      "path": "packages/worker/src/lib/repoSetupRun.ts",
+      "title": "Submodules and LFS are prepared before setup commands"
+    },
+    {
+      "anchor": "export async function runSetupStepsPhase(",
+      "id": "setupSteps",
+      "lines": 35,
+      "path": "packages/worker/src/lib/repoSetupRun.ts",
+      "title": "Cache failures are non-blocking, steps always run, and misses save a cache"
+    },
+    {
+      "anchor": "async function setupCacheKey(",
+      "id": "setupCache",
+      "lines": 39,
+      "path": "packages/worker/src/lib/repoSetupRun.ts",
+      "title": "Dependency caches bind team, repository, definition, key files, image and architecture"
+    },
+    {
+      "anchor": "async function cacheLimitBytes(): Promise<number> {",
+      "id": "setupCacheStorage",
+      "lines": 8,
+      "path": "packages/worker/src/lib/repoSetupRun.ts",
+      "title": "PostgreSQL artifact storage disables dependency caching"
+    },
+    {
+      "anchor": "async function restoreCache(host: RepoSetupHost, cacheKey: string): Promise<boolean> {",
+      "id": "setupCacheRestore",
+      "lines": 14,
+      "path": "packages/worker/src/lib/repoSetupRun.ts",
+      "title": "A cache hit extracts the artifact into the workspace and refreshes last use"
+    },
+    {
+      "anchor": "export async function sweepSetupCaches(now = new Date()): Promise<number> {",
+      "id": "setupCacheSweep",
+      "lines": 27,
+      "path": "packages/worker/src/lib/repoSetupRun.ts",
+      "title": "Unused cache entries are removed artifact-first in bounded sweeps"
+    },
+    {
+      "anchor": "async function setupProblem(",
+      "id": "setupAdmin",
+      "lines": 29,
+      "path": "packages/gateway/src/routes/repositories.ts",
+      "title": "Saved setup changes use the shell-author check for the owning team"
+    },
+    {
+      "anchor": "export async function isShellAuthor(",
+      "id": "setupRole",
+      "lines": 16,
+      "path": "packages/gateway/src/lib/specCheck.ts",
+      "title": "Shell authors are platform admins or members with ADMIN role in the target team"
+    },
+    {
+      "anchor": "export async function proposeRepoSetupFile(",
+      "id": "setupProposal",
+      "lines": 50,
+      "path": "packages/worker/src/activities/proposeRepoSetupFile.ts",
+      "title": "A setup-file proposal adds a missing file on a new branch and opens a PR"
+    },
+    {
+      "anchor": "export async function runReposSetupInit(args: string[]): Promise<number> {",
+      "id": "setupCli",
+      "lines": 39,
+      "path": "packages/cli/src/commands/repos.ts",
+      "title": "The CLI generates a local starter setup from detected checkout files"
+    },
     {
       "anchor": "export async function prepareReviewLaunch(",
       "id": "postRunLaunch",
