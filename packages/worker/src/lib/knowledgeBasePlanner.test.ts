@@ -114,10 +114,41 @@ describe('text-only decomposition KB context', () => {
       );
     }
   );
-  it('omits context rather than using a missing or non-ready snapshot', async () => {
+  it('omits context when no pinned snapshots are ready', async () => {
     h.snapshots.mockResolvedValue([]);
     expect(await knowledgeBasePlannerContext(request)).toBe('');
     expect(h.search).not.toHaveBeenCalled();
+  });
+  it('skips missing and non-ready pins while summarizing and retrieving the ready pins in pinned order', async () => {
+    h.load.mockResolvedValue({ snapshotIds: ['missing', 'pin-a', 'indexing', 'pin-b'] });
+    h.snapshots.mockResolvedValue([
+      {
+        ...snapshot,
+        id: 'pin-b',
+        knowledgeBase: { ...snapshot.knowledgeBase, name: 'Secondary reference' },
+      },
+      snapshot,
+    ]);
+    const block = await knowledgeBasePlannerContext(request);
+    expect(block).toContain('Parser reference');
+    expect(block).toContain('Secondary reference');
+    expect(block.indexOf('Parser reference')).toBeLessThan(block.indexOf('Secondary reference'));
+    expect(block).toContain('README summary');
+    expect(block).toContain('Retrieved parser usage');
+    expect(h.snapshots).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: ['missing', 'pin-a', 'indexing', 'pin-b'] }, status: 'READY' },
+      })
+    );
+    expect(h.chunks.mock.calls.map(([options]) => options.where.snapshotId)).toEqual([
+      'pin-a',
+      'pin-b',
+    ]);
+    expect(h.search).toHaveBeenCalledExactlyOnceWith(
+      'T-1\nimplement parser',
+      ['pin-a', 'pin-b'],
+      5
+    );
   });
   it('bounds query, summaries, excerpts and the overall prompt block', async () => {
     const ids = ['a', 'b', 'c', 'd'];

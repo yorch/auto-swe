@@ -113,6 +113,7 @@ workspace, tools or clone credentials. It lists each pinned KB's name and owner/
 bounded indexed README/INDEX summary, then retrieves up to five chunks for one ticket/request
 query. Summaries and excerpts pass recall-time injection filtering and are labelled untrusted
 reference data; citations accompany the excerpts. The block is capped at 12,000 characters.
+Missing or non-READY snapshots are skipped; the READY pins still supply summaries and retrieval.
 `knowledgeBases: false` omits it, and any loading, summary or retrieval failure omits the whole block.
 
 KB vector search is an exact cosine scan over the run's pinned snapshots, not an approximate HNSW
