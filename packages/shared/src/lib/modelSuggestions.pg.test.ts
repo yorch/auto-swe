@@ -1,7 +1,11 @@
 import '../workflow/runAttribution.pg.js';
 import './codeReview.pg.js';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db.js';
+import { deletePendingArtifact, getArtifact, putArtifact } from './artifactStore.js';
 import type { ProviderDiscovery } from './modelDiscovery.js';
 import { recordDiscovery } from './modelSuggestions.js';
 
@@ -108,5 +112,63 @@ describe.skipIf(!enabled)('recordDiscovery against Postgres', () => {
     const rows = await prisma.modelSuggestion.findMany();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ dismissedAt: T1, firstSeenAt: T1 });
+  });
+
+  it('streams pg artifact chunks and cascades their deletion', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'asw-artifact-pg-'));
+    const filePath = path.join(dir, 'recording.bin');
+    const payload = Buffer.alloc(1024 * 1024 + 19, 0x5a);
+    const previousBackend = process.env.ARTIFACT_WRITE_BACKEND;
+    let artifactId: string | undefined;
+    await fs.writeFile(filePath, payload);
+    process.env.ARTIFACT_WRITE_BACKEND = 'pg';
+    try {
+      const ref = await putArtifact({
+        body: { filePath, sizeBytes: payload.byteLength },
+        kind: 'ui.video',
+      });
+      artifactId = ref.id;
+      const row = await prisma.workflowArtifact.findUniqueOrThrow({
+        include: { chunks: true },
+        where: { id: ref.id },
+      });
+      expect(row).toMatchObject({
+        inlineBlob: null,
+        sizeBytes: payload.byteLength,
+        status: 'ready',
+      });
+      expect(row.chunks.map((chunk) => chunk.seq)).toEqual([0, 1]);
+      await expect(getArtifact(ref.id)).resolves.toMatchObject({ body: payload });
+
+      const pending = await prisma.workflowArtifact.create({
+        data: {
+          backend: 'pg',
+          contentType: 'application/octet-stream',
+          kind: 'ui.video',
+          sizeBytes: 1,
+          status: 'pending',
+        },
+      });
+      await prisma.workflowArtifactChunk.create({
+        data: { artifactId: pending.id, data: new Uint8Array([1]), seq: 0 },
+      });
+      expect(await prisma.workflowArtifactChunk.count({ where: { artifactId: pending.id } })).toBe(
+        1
+      );
+      await expect(deletePendingArtifact(pending.id)).resolves.toBe(true);
+      expect(await prisma.workflowArtifactChunk.count({ where: { artifactId: pending.id } })).toBe(
+        0
+      );
+    } finally {
+      if (previousBackend === undefined) {
+        delete process.env.ARTIFACT_WRITE_BACKEND;
+      } else {
+        process.env.ARTIFACT_WRITE_BACKEND = previousBackend;
+      }
+      if (artifactId) {
+        await prisma.workflowArtifact.deleteMany({ where: { id: artifactId } });
+      }
+      await fs.rm(dir, { force: true, recursive: true });
+    }
   });
 });

@@ -483,7 +483,7 @@ The artifact store holds what would otherwise bloat the workflow context or the 
 |---|---|---|
 | **S3-compatible** | `ARTIFACT_S3_BUCKET` | The bundled Garage or any S3/R2/B2 endpoint. Objects are written, read and deleted (`PutObject`, `GetObject`, `DeleteObject`); the choice of provider is operational, not one of compatibility. |
 | **Filesystem** | `ARTIFACT_FS_DIR` | A directory mounted into the worker (writes) **and** the gateway (reads). Single host; §5c below. |
-| **Postgres inline** | neither | `workflow_artifacts.inline_blob`. Fine for small installs and local dev; recordings and screenshots inflate the app DB and its backups. |
+| **Postgres** | neither | Small bodies use `workflow_artifacts.inline_blob`; file-backed bodies use 1 MiB `bytea` chunks in `workflow_artifact_chunks`. Fine for small installs and local dev; recordings and screenshots still inflate the app DB and its backups. |
 
 `ARTIFACT_WRITE_BACKEND` (`fs`, `s3`, `pg`) overrides the derived choice when more than one store is configured. Old rows keep working after a switch because reads dispatch on the row's recorded backend: keep `ARTIFACT_FS_DIR` set to read filesystem artifacts, and the S3 bucket/credentials reachable to read S3 ones. Setting a directory and a bucket together without `ARTIFACT_WRITE_BACKEND` is refused at boot rather than guessed.
 

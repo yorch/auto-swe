@@ -11,8 +11,8 @@
  *            artifacts — the worker writes, the gateway serves evidence and
  *            transcripts from it. ENOSPC and a wrong mount are the failure
  *            modes; `artifactFsStore.ts` owns the layout and the store identity.
- *   - "pg" : Postgres BYTEA column on workflow_artifacts. Default for local dev
- *            so contributors need no object store running at all.
+ *   - "pg" : small bodies use workflow_artifacts.inline_blob; file bodies use
+ *            1 MiB rows in workflow_artifact_chunks. Default for local dev.
  *
  * New artifacts go to `ARTIFACT_WRITE_BACKEND` (derived from `ARTIFACT_FS_DIR` /
  * `ARTIFACT_S3_BUCKET` when unset). Reads dispatch on the row's own backend, so a
@@ -25,7 +25,6 @@
  */
 
 import { createReadStream } from 'node:fs';
-import fs from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { prisma } from '../db.js';
 import {
@@ -59,11 +58,17 @@ export interface PutArtifactInput {
   body: Buffer | string | { filePath: string; sizeBytes: number };
 }
 
+const PG_ARTIFACT_CHUNK_BYTES = 1024 * 1024;
+
 function copyToUint8Array(buf: Buffer): Uint8Array<ArrayBuffer> {
   const ab: ArrayBuffer = new ArrayBuffer(buf.byteLength);
   const out = new Uint8Array(ab);
   out.set(buf);
   return out as Uint8Array<ArrayBuffer>;
+}
+
+function bufferView(buf: Buffer): Uint8Array<ArrayBuffer> {
+  return new Uint8Array(buf.buffer as ArrayBuffer, buf.byteOffset, buf.byteLength);
 }
 
 // Lazy-loaded S3 client. Worker images that never touch S3 don't need the SDK,
@@ -283,15 +288,57 @@ export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef>
     return { backend: 's3', contentType, id: row.id, kind: input.kind, sizeBytes };
   }
 
+  if (fileBody) {
+    const row = await prisma.workflowArtifact.create({
+      data: {
+        backend: 'pg',
+        contentType,
+        inlineBlob: null,
+        kind: input.kind,
+        runId: input.runId,
+        sizeBytes,
+        status: 'pending',
+      },
+    });
+    try {
+      let bytesWritten = 0;
+      let seq = 0;
+      for await (const chunk of createReadStream(fileBody.filePath, {
+        highWaterMark: PG_ARTIFACT_CHUNK_BYTES,
+      })) {
+        const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        await prisma.workflowArtifactChunk.create({
+          data: { artifactId: row.id, data: bufferView(data), seq },
+        });
+        bytesWritten += data.byteLength;
+        seq += 1;
+      }
+      if (bytesWritten !== sizeBytes) {
+        throw new Error(
+          `artifact ${row.id} size mismatch: expected ${sizeBytes} bytes, wrote ${bytesWritten}`
+        );
+      }
+      const marked = await prisma.workflowArtifact.updateMany({
+        data: { status: 'ready' },
+        where: { id: row.id, status: 'pending' },
+      });
+      if (marked.count === 0) {
+        throw new Error(`artifact ${row.id} was claimed by retention before it was published`);
+      }
+      return { backend: 'pg', contentType, id: row.id, kind: input.kind, sizeBytes };
+    } catch (error) {
+      await deletePendingArtifact(row.id).catch(() => undefined);
+      throw error;
+    }
+  }
+
   const row = await prisma.workflowArtifact.create({
     data: {
       backend: 'pg',
       contentType,
       // Prisma's Bytes maps to Uint8Array<ArrayBuffer>; copy through a fresh
       // ArrayBuffer to ensure the underlying buffer is not a SharedArrayBuffer.
-      inlineBlob: copyToUint8Array(
-        fileBody ? await fs.readFile(fileBody.filePath) : (body as Buffer)
-      ),
+      inlineBlob: copyToUint8Array(body as Buffer),
       kind: input.kind,
       runId: input.runId,
       sizeBytes,
@@ -339,13 +386,51 @@ export async function getArtifactStream(
   if (row.backend !== 'pg') {
     throw new Error(`artifact ${id} has unknown backend "${row.backend}"`);
   }
-  if (!row.inlineBlob) {
-    throw new Error(`artifact ${id} has backend=pg but no inlineBlob`);
+  if (row.inlineBlob !== null) {
+    return {
+      ref,
+      sizeBytes: row.inlineBlob.byteLength,
+      stream: Readable.from([Buffer.from(row.inlineBlob)]),
+    };
   }
+  const stream = Readable.from(
+    (async function* () {
+      let nextSeq = 0;
+      let bytesRead = 0;
+      while (true) {
+        const chunks = await prisma.workflowArtifactChunk.findMany({
+          orderBy: { seq: 'asc' },
+          select: { data: true, seq: true },
+          take: 4,
+          where: { artifactId: id, seq: { gte: nextSeq } },
+        });
+        if (chunks.length === 0) {
+          break;
+        }
+        for (const chunk of chunks) {
+          if (chunk.seq !== nextSeq) {
+            throw new Error(`artifact ${id} is missing chunk ${nextSeq}`);
+          }
+          const data = Buffer.from(chunk.data);
+          bytesRead += data.byteLength;
+          nextSeq += 1;
+          yield data;
+        }
+        if (chunks.length < 4) {
+          break;
+        }
+      }
+      if (bytesRead !== row.sizeBytes) {
+        throw new Error(
+          `artifact ${id} size mismatch: expected ${row.sizeBytes} bytes, read ${bytesRead}`
+        );
+      }
+    })()
+  );
   return {
     ref,
-    sizeBytes: row.inlineBlob.byteLength,
-    stream: Readable.from([Buffer.from(row.inlineBlob)]),
+    sizeBytes: row.sizeBytes,
+    stream,
   };
 }
 
