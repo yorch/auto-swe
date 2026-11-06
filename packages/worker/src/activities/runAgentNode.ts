@@ -160,26 +160,29 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
     // typed to the SWE role union. basePrompt is empty — the Agent supplies its
     // own system prompt (custom agents set one; sub-roles inherit). Governed
     // knowledge tools need no workspace: they call activities, and
-    // `resolveAgentSpec` intersects them with the Agent's `toolKeys`, so an agent
-    // that does not name `searchKnowledge`/`submitLearning` binds neither.
+    // Governed search and learning submission require explicit grants. Pinned KBs
+    // additionally bind KB-only search after the tool-key intersection.
     const resolvedKnowledgeAgent = await resolveAgent(key, resolveCtx);
-    const references = resolvedKnowledgeAgent.toolKeys?.includes('searchKnowledge')
-      ? await loadRunKnowledgeBases({
-          checkoutCredentials: false,
-          knowledgeBases: input.knowledgeBases,
-        })
-      : { snapshotIds: [] };
+    const references = await loadRunKnowledgeBases({
+      checkoutCredentials: false,
+      knowledgeBases: input.knowledgeBases,
+    });
+    const knowledgeTools = buildKnowledgeTools(tracer, {
+      includeGoverned: resolvedKnowledgeAgent.toolKeys?.includes('searchKnowledge') ?? false,
+      snapshotIds: references.snapshotIds,
+    });
     const spec = await resolveAgentSpec(
       {
         agentKey: key as ModelBackedAgentKey,
-        availableTools: buildKnowledgeTools(tracer, {
-          snapshotIds: references.snapshotIds,
-        }) as AgentTools,
+        availableTools: knowledgeTools as AgentTools,
         basePrompt: '',
         promptOverride: input.systemPrompt,
       },
       resolveCtx
     );
+    if (references.snapshotIds.length) {
+      spec.tools = { ...spec.tools, searchKnowledge: knowledgeTools.searchKnowledge } as AgentTools;
+    }
     // loadMcpTools is failure-isolated, so a bad server degrades to no tools.
     const mcpTools = await bindMcpTools(key, resolveCtx, tracer, onOpen);
     if (mcpTools) {
@@ -339,6 +342,7 @@ async function runInCheckout(args: {
       maxTurns: await resolveSetting('workspace.agentMaxSteps', resolveCtx),
       // The connection the Mastra loop would bind, relayed from the worker.
       mcp: await resolveAgentMcpUrl(key, resolveCtx, { tracer }),
+      toolKeys: resolved.toolKeys,
       tracer,
       workspace,
     });
@@ -365,6 +369,7 @@ async function runInCheckout(args: {
   const maxToolOutputChars = await resolveSetting('workspace.maxToolOutputChars', resolveCtx);
   const built = buildWorkspaceTools(workspace, tracer, maxToolOutputChars);
   const knowledgeTools = buildKnowledgeTools(tracer, {
+    includeGoverned: resolved.toolKeys?.includes('searchKnowledge') ?? false,
     snapshotIds: workspace.knowledgeBaseSnapshotIds ?? [],
   });
   const spec = await resolveAgentSpec(
@@ -386,6 +391,9 @@ async function runInCheckout(args: {
     },
     resolveCtx
   );
+  if (workspace.knowledgeBaseSnapshotIds?.length) {
+    spec.tools = { ...spec.tools, searchKnowledge: knowledgeTools.searchKnowledge } as AgentTools;
+  }
   spec.systemPrompt =
     `${spec.systemPrompt}\n\n${CHECKOUT_PREAMBLE}${await knowledgeBasePromptBlock(workspace)}`.trim();
   const mcpTools = await bindMcpTools(key, resolveCtx, tracer, onOpen);

@@ -1,3 +1,4 @@
+import { Agent } from '@mastra/core/agent';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { generateMock } = vi.hoisted(() => ({ generateMock: vi.fn() }));
@@ -46,6 +47,20 @@ beforeEach(() => {
 });
 
 describe('planDecomposition structured output', () => {
+  it('appends KB context to the system prompt, without giving the text-only planner tools', async () => {
+    generateMock.mockResolvedValue({ object: { subtasks: [subtask('a')] } });
+    await planDecomposition(
+      REQUEST,
+      undefined,
+      'Custom prompt',
+      'Skills',
+      '\n\nUNTRUSTED KB context'
+    );
+    expect(Agent).toHaveBeenCalledWith(
+      expect.objectContaining({ instructions: 'Custom prompt\n\nSkills\n\nUNTRUSTED KB context' })
+    );
+    expect(vi.mocked(Agent).mock.calls[0][0]).not.toHaveProperty('tools');
+  });
   it('returns the validated subtasks', async () => {
     generateMock.mockResolvedValue({ object: { subtasks: [subtask('a'), subtask('b')] } });
     const result = await planDecomposition(REQUEST);

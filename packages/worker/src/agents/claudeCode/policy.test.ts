@@ -37,6 +37,18 @@ beforeEach(() => {
 });
 
 describe('the tool allowlist', () => {
+  it('allows the worker-owned knowledge tool only when its binding is in the policy context', async () => {
+    const name = 'mcp__knowledge__searchKnowledge';
+    await expect(decideToolCall(name, { query: 'parser' }, ctx)).resolves.toMatchObject({
+      allow: false,
+    });
+    await expect(
+      decideToolCall(name, { query: 'parser' }, { ...ctx, mcpTools: [name] })
+    ).resolves.toEqual({ allow: true });
+    await expect(
+      decideToolCall('mcp__knowledge__submitLearning', {}, { ...ctx, mcpTools: [name] })
+    ).resolves.toMatchObject({ allow: false });
+  });
   it('names the same capability as the four Mastra workspace tools', () => {
     expect([...HARNESS_TOOLS].sort()).toEqual(['Bash', 'Edit', 'Glob', 'Grep', 'Read', 'Write']);
   });

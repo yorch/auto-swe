@@ -1,6 +1,15 @@
 import { ApplicationFailure } from '@temporalio/activity';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { planDecomposition as decomposerPlan } from '../agents/decomposer.js';
+import { knowledgeBasePlannerContext } from '../lib/knowledgeBasePlanner.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
+
+vi.mock('../lib/knowledgeBasePlanner.js', () => ({
+  knowledgeBasePlannerContext: vi.fn(async () => '\nKB context'),
+}));
+vi.mock('../agents/decomposer.js', () => ({
+  planDecomposition: vi.fn(async () => ({ subtasks: [] })),
+}));
 
 vi.mock('../lib/runKnowledgeBases.js', () => ({
   loadRunKnowledgeBases: vi.fn(async () => ({ checkouts: [], snapshotIds: [] })),
@@ -206,6 +215,7 @@ import { recordLessonBackground } from './commitToMemory.js';
 import {
   CONFLICT_MARKER_ERE,
   mergeBranches,
+  planDecomposition,
   resolveMergeConflict,
   subtaskBranchName,
 } from './decomposition.js';
@@ -220,6 +230,25 @@ const baseRequest = {
 const mockedFindUnique = vi.mocked(prisma.connection.findUniqueOrThrow);
 
 const mockedRecordLesson = vi.mocked(recordLessonBackground);
+
+describe('text-only decomposition context', () => {
+  it.each([false, true])(
+    'forwards the KB flag %s and appends the best-effort context',
+    async (enabled) => {
+      vi.mocked(knowledgeBasePlannerContext).mockClear();
+      vi.mocked(decomposerPlan).mockClear();
+      await planDecomposition(baseRequest, 'Planner prompt', enabled);
+      expect(knowledgeBasePlannerContext).toHaveBeenCalledExactlyOnceWith(baseRequest, enabled);
+      expect(decomposerPlan).toHaveBeenCalledWith(
+        baseRequest,
+        expect.anything(),
+        'Planner prompt',
+        undefined,
+        '\nKB context'
+      );
+    }
+  );
+});
 
 afterEach(() => {
   vi.mocked(loadRunKnowledgeBases).mockClear();

@@ -40,6 +40,7 @@ import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorOutput } from '../lib/errors.js';
 import { withCoAuthorTrailer } from '../lib/gitIdentity.js';
+import { knowledgeBasePlannerContext } from '../lib/knowledgeBasePlanner.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { resolveSystemPrompt } from '../lib/models.js';
@@ -60,7 +61,8 @@ import {
 
 export async function planDecomposition(
   request: RepoWorkRequest,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  knowledgeBases = true
 ): Promise<DecompositionResult> {
   heartbeat('plan decomposition: calling agent');
   const tracer = new AgentTracer();
@@ -73,7 +75,8 @@ export async function planDecomposition(
       request,
       tracer,
       systemPromptOverride,
-      skillSuffix || undefined
+      skillSuffix || undefined,
+      await knowledgeBasePlannerContext(request, knowledgeBases)
     );
     return result;
   } finally {

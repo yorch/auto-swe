@@ -31,6 +31,8 @@ vi.mock('@mastra/core', () => ({
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
+const knowledgeSearch = vi.hoisted(() => vi.fn());
+vi.mock('../lib/knowledgeBaseSearch.js', () => ({ searchRunKnowledge: knowledgeSearch }));
 vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/config')>()),
   resolveSettings: vi.fn(async () => ({
@@ -110,6 +112,58 @@ beforeEach(() => {
   vi.clearAllMocks();
   sensitiveMock.mockResolvedValue(null);
   shellScanMock.mockResolvedValue(null);
+});
+
+describe('Mastra knowledge search binding', () => {
+  it.each([false, true])('binds pinned KBs with governed grant=%s', async (granted) => {
+    const ids = ['pin-a'];
+    const { agent } = await createImplementerAgent(
+      { ...workspace, knowledgeBaseSnapshotIds: ids },
+      undefined,
+      null,
+      [],
+      { knowledgeToolKeys: granted ? ['searchKnowledge'] : [] },
+      {} as never
+    );
+    ids[0] = 'another-run';
+    const tools = (agent as unknown as { tools: Record<string, ToolDef<unknown, unknown>> }).tools;
+    knowledgeSearch.mockResolvedValue({ injectionDropped: 0, mode: 'text', results: [] });
+    await tools.searchKnowledge.execute({ query: 'parser', snapshotIds: ['another-run'] });
+    expect(knowledgeSearch).toHaveBeenCalledWith('parser', {
+      includeGoverned: granted,
+      limit: undefined,
+      snapshotIds: ['pin-a'],
+    });
+  });
+  it.each(['no snapshots', 'KB flag off'])(
+    'does not offer a tool with %s and no grant',
+    async () => {
+      const { agent } = await createImplementerAgent(
+        { ...workspace, knowledgeBaseSnapshotIds: [] },
+        undefined,
+        null,
+        [],
+        { knowledgeToolKeys: [] },
+        {} as never
+      );
+      expect((agent as unknown as { tools: Record<string, unknown> }).tools).not.toHaveProperty(
+        'searchKnowledge'
+      );
+    }
+  );
+  it('retains explicitly granted governed search without KB snapshots', async () => {
+    const { agent } = await createImplementerAgent(
+      workspace,
+      undefined,
+      null,
+      [],
+      { knowledgeToolKeys: ['searchKnowledge'] },
+      {} as never
+    );
+    expect((agent as unknown as { tools: Record<string, unknown> }).tools).toHaveProperty(
+      'searchKnowledge'
+    );
+  });
 });
 
 describe('implementer writeFile tool', () => {

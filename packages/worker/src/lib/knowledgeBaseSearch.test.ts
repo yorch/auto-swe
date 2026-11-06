@@ -69,6 +69,25 @@ beforeEach(() => {
 });
 
 describe('snapshot-scoped knowledge base search', () => {
+  it('searches pinned KBs without querying governed items or requiring their execution scope', async () => {
+    mocks.scope.mockRejectedValue(new Error('no governed execution scope'));
+    const result = await searchRunKnowledge('parser', {
+      includeGoverned: false,
+      snapshotIds: ['pin-a'],
+    });
+    expect(result.results.map((row) => row.sourceKind)).toEqual(['knowledge_base']);
+    expect(mocks.governed).not.toHaveBeenCalled();
+    expect(mocks.scope).not.toHaveBeenCalled();
+  });
+  it('returns no governed items when KB-only search has no snapshots', async () => {
+    expect(await searchRunKnowledge('parser', { includeGoverned: false })).toEqual({
+      injectionDropped: 0,
+      mode: 'semantic',
+      results: [],
+    });
+    expect(mocks.governed).not.toHaveBeenCalled();
+    expect(mocks.rows).not.toHaveBeenCalled();
+  });
   it('falls back to text when compatible vectors are absent, keeping unembedded snapshots searchable', async () => {
     mocks.query.mockResolvedValue([]);
     mocks.rows.mockResolvedValue([chunk('one', { embeddingModel: null })]);

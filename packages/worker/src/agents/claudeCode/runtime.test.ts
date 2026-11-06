@@ -26,6 +26,8 @@ interface QueryOptions {
 }
 
 const { BINARY_SHA } = vi.hoisted(() => ({ BINARY_SHA: 'ab'.repeat(32) }));
+const knowledgeSearch = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/knowledgeBaseSearch.js', () => ({ searchRunKnowledge: knowledgeSearch }));
 
 const h = vi.hoisted(() => ({
   activityCancellationSignal: vi.fn((): AbortSignal | undefined => undefined),
@@ -80,6 +82,11 @@ vi.mock('../../lib/transcriptRecorder.js', async (importOriginal) => ({
   currentTranscriptRecorder: () => h.transcriptRecorder,
 }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  createSdkMcpServer: vi.fn((options) => ({
+    instance: { tools: options.tools },
+    name: options.name,
+    type: 'sdk',
+  })),
   query: ({ options, prompt }: { options: QueryOptions; prompt: string }) => {
     h.queryCalls.push({ options, prompt });
     const [messages = [], failure, gate] = h.script.shift() ?? [];
@@ -93,6 +100,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
       }
     })();
   },
+  tool: vi.fn((name, _description, _schema, handler) => ({ handler, name })),
 }));
 
 import type { AgentTracer } from '../../lib/agentTracer.js';
@@ -143,7 +151,7 @@ const success = (result: string, modelUsage: Record<string, unknown> = {}) => ({
 
 const API_KEY = 'sk-ant-test-key-do-not-leak';
 
-function setup(overrides: Record<string, unknown> = {}) {
+function setup(overrides: Record<string, unknown> = {}, snapshotIds?: string[]) {
   const exec = vi.fn(async (_c: string) => '');
   // The hash of what is at the binary's path in the container ('' = nothing there).
   const container = { installed: '' };
@@ -169,6 +177,7 @@ function setup(overrides: Record<string, unknown> = {}) {
           : { exitCode: 0, stderr: '', stdout: '' }
     ),
     execStdin: vi.fn(async () => ''),
+    knowledgeBaseSnapshotIds: snapshotIds,
   };
   const toolCalls: Record<string, unknown>[] = [];
   const tracer = { addToolCall: (c: Record<string, unknown>) => toolCalls.push(c) };
@@ -1801,6 +1810,77 @@ describe('Claude Code turn and session-file records', () => {
     expect(sessionReads(exec)).toEqual([]);
     expect(exec.mock.calls.map((c) => c[0]).join('\n')).not.toContain('rm -rf');
     expect(rec.addHarnessSessionFile).not.toHaveBeenCalled();
+  });
+});
+
+describe('worker-bound knowledge search', () => {
+  it.each([false, true])(
+    'serves pinned search through SDK MCP with governed grant=%s',
+    async (granted) => {
+      const rec = {
+        acceptsRecords: vi.fn(() => true),
+        addHarnessMessage: vi.fn(),
+        addHarnessSessionFile: vi.fn(),
+        addHarnessTurn: vi.fn(),
+        addHttpCall: vi.fn(),
+        setRuntime: vi.fn(),
+        trackCapture: vi.fn(),
+      };
+      h.transcriptRecorder = rec;
+      const ids = ['pin-a'];
+      const { runtime } = setup({ toolKeys: granted ? ['searchKnowledge'] : [] }, ids);
+      ids[0] = 'another-run';
+      h.script.push([[init('s1'), success('done')]]);
+      await runtime.runTurn({ system: 'S', user: 'U' });
+      const options = h.queryCalls[0].options;
+      const servers = options.mcpServers as Record<
+        string,
+        {
+          instance: { tools: { name: string; handler: (input: unknown) => Promise<unknown> }[] };
+          type: string;
+        }
+      >;
+      expect(servers.knowledge.type).toBe('sdk');
+      expect(servers.knowledge.instance.tools[0].name).toBe('searchKnowledge');
+      knowledgeSearch.mockResolvedValue({ injectionDropped: 0, mode: 'text', results: [] });
+      await servers.knowledge.instance.tools[0].handler({
+        query: 'parser',
+        snapshotIds: ['another-run'],
+      });
+      expect(knowledgeSearch).toHaveBeenCalledWith('parser', {
+        includeGoverned: granted,
+        limit: undefined,
+        snapshotIds: ['pin-a'],
+      });
+      expect(rec.addHarnessTurn).toHaveBeenCalledWith(
+        expect.objectContaining({ mcpServers: ['knowledge'] })
+      );
+      await options.hooks.PreToolUse[0]?.hooks[0]?.(
+        { tool_input: { query: 'parser' }, tool_name: 'mcp__knowledge__searchKnowledge' },
+        't'
+      );
+      expect(h.decideToolCall).toHaveBeenCalledWith(
+        'mcp__knowledge__searchKnowledge',
+        { query: 'parser' },
+        expect.objectContaining({ mcpTools: ['mcp__knowledge__searchKnowledge'] }),
+        undefined
+      );
+      await runtime.close?.();
+    }
+  );
+  it.each(['no KBs', 'KB flag off'])('has no search server with %s and no grant', async () => {
+    const { runtime } = setup({ toolKeys: [] }, []);
+    h.script.push([[init('s1'), success('done')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    expect(h.queryCalls[0].options.mcpServers).toBeUndefined();
+    await runtime.close?.();
+  });
+  it('retains explicitly granted governed search when KBs are off', async () => {
+    const { runtime } = setup({ toolKeys: ['searchKnowledge'] }, []);
+    h.script.push([[init('s1'), success('done')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    expect(h.queryCalls[0].options.mcpServers).toHaveProperty('knowledge');
+    await runtime.close?.();
   });
 });
 

@@ -7,6 +7,7 @@ const calls = vi.hoisted(() => ({
   gate: vi.fn(),
   implement: vi.fn(),
   node: vi.fn(),
+  plan: vi.fn(),
   pr: vi.fn(),
   retrieve: vi.fn(),
   review: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock('./runnableActivities.js', async (importOriginal) => {
       executeImplementation: calls.implement,
       executePrFeedbackImplementation: calls.pr,
       executeReviewFixImplementation: calls.review,
+      planDecomposition: calls.plan,
     },
     agentNodeWorkspaceActivities: { runAgentNode: calls.node },
     agentTaskActivities: { runAgentTask: calls.task },
@@ -59,6 +61,7 @@ describe('workspace agent knowledge base step flags', () => {
         'executePrFeedbackImplementation',
         'runAgentPrFeedbackTask',
         'retrieveKnowledge',
+        'planDecomposition',
       ]) {
         await dispatchStepImpl(
           step,
@@ -73,6 +76,7 @@ describe('workspace agent knowledge base step flags', () => {
       expect(calls.ci.mock.calls[0][3]).toMatchObject({ knowledgeBases: enabled });
       expect(calls.review.mock.calls[0][4]).toMatchObject({ knowledgeBases: enabled });
       expect(calls.pr.mock.calls[0][0].options).toMatchObject({ knowledgeBases: enabled });
+      expect(calls.plan).toHaveBeenCalledWith(request, undefined, enabled);
       for (const fn of [
         calls.gate,
         calls.node,

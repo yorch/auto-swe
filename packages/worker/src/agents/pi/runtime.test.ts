@@ -10,6 +10,8 @@ const { checkSensitiveFilePath, openMcpRelay, scanShellCommand } = vi.hoisted(()
 vi.mock('../../lib/sensitiveFileScanner.js', () => ({ checkSensitiveFilePath }));
 vi.mock('../../lib/shellCommandScanner.js', () => ({ scanShellCommand }));
 vi.mock('../harness/mcpRelay.js', () => ({ openMcpRelay }));
+const knowledgeSearch = vi.hoisted(() => vi.fn());
+vi.mock('../../lib/knowledgeBaseSearch.js', () => ({ searchRunKnowledge: knowledgeSearch }));
 
 import type { Workspace } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
@@ -169,6 +171,50 @@ beforeEach(() => {
 });
 
 describe('a Pi turn', () => {
+  it.each([false, true])('offers a pinned AgentTool with governed grant=%s', async (granted) => {
+    const ids = ['pin-a'];
+    const { model, prompts } = scriptedModel([
+      { calls: [{ input: { query: 'parser' }, name: 'searchKnowledge' }] },
+      { text: 'done' },
+    ]);
+    const adapter = adapterFor(model, {
+      toolKeys: granted ? ['searchKnowledge'] : [],
+      workspace: { ...workspace, knowledgeBaseSnapshotIds: ids },
+    });
+    ids[0] = 'another-run';
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+    knowledgeSearch.mockResolvedValue({ injectionDropped: 0, mode: 'text', results: [] });
+    await adapter.runTurn(turn as unknown as HarnessTurn, { system: 'S', user: 'U' });
+    expect(knowledgeSearch).toHaveBeenCalledWith('parser', {
+      includeGoverned: granted,
+      limit: undefined,
+      snapshotIds: ['pin-a'],
+    });
+    expect(turn.decide).toHaveBeenCalledWith(
+      expect.any(String),
+      'searchKnowledge',
+      { query: 'parser' },
+      REPO
+    );
+    expect(JSON.stringify(prompts[0])).toContain('searchKnowledge');
+    await adapter.close?.();
+  });
+  it.each(['no KBs', 'KB flag off'])('offers no search with %s and no grant', async () => {
+    const { model, prompts } = scriptedModel([{ text: 'done' }]);
+    const adapter = adapterFor(model, {
+      toolKeys: [],
+      workspace: { ...workspace, knowledgeBaseSnapshotIds: [] },
+    });
+    await adapter.runTurn(fakeTurn(adapter, fakeContainer().exec) as unknown as HarnessTurn, {
+      system: 'S',
+      user: 'U',
+    });
+    expect(JSON.stringify(prompts[0])).not.toContain('searchKnowledge');
+    expect(await adapter.decide('searchKnowledge', { query: 'parser' })).toMatchObject({
+      allow: false,
+    });
+    await adapter.close?.();
+  });
   it('runs in the worker: nothing is provisioned in the container', () => {
     const adapter = adapterFor(scriptedModel([]).model);
     expect(adapter.provisioning).toBeUndefined();

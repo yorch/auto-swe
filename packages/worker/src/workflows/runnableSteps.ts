@@ -898,7 +898,11 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   [
     'planDecomposition',
     ({ request, config }) =>
-      agentActivities.planDecomposition(request, config.systemPrompt as string | undefined),
+      agentActivities.planDecomposition(
+        request,
+        config.systemPrompt as string | undefined,
+        config.knowledgeBases !== false
+      ),
   ],
   [
     // General-route decomposition planner. `task` binds from request.description;

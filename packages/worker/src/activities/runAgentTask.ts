@@ -633,6 +633,7 @@ async function runOnMastra(
   const { agentCtx, key, resolved, tracer } = input;
   const built = buildWorkspaceTools(input.workspace, tracer, input.maxToolOutputChars);
   const knowledgeTools = buildKnowledgeTools(tracer, {
+    includeGoverned: resolved.toolKeys?.includes('searchKnowledge') ?? false,
     snapshotIds: input.workspace.knowledgeBaseSnapshotIds ?? [],
   });
   const closeFns: Array<() => Promise<void>> = [];
@@ -675,6 +676,9 @@ async function runOnMastra(
   // already checked by `grantsBrowserTool`, so bind them here.
   if (browserTools) {
     spec.tools = { ...browserTools, ...spec.tools } as AgentTools;
+  }
+  if (input.workspace.knowledgeBaseSnapshotIds?.length) {
+    spec.tools = { ...spec.tools, searchKnowledge: knowledgeTools.searchKnowledge } as AgentTools;
   }
   spec.systemPrompt =
     `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}${await knowledgeBasePromptBlock(input.workspace)}`.trim();
@@ -732,6 +736,7 @@ async function runOnHarness(
   const systemPrompt = composeAgentPrompt(resolved);
   const runtime = harness.build({
     deadline: input.deadline,
+    toolKeys: resolved.toolKeys,
     ...(grantsBrowserTool(resolved.toolKeys)
       ? {
           browserToolset: new BrowserToolset({

@@ -16,6 +16,8 @@ import {
 import { type McpRelay, openMcpRelay } from '../harness/mcpRelay.js';
 import { type HarnessRuntime, harnessRuntime } from '../harness/runtime.js';
 import { summedCallsUsage, type UsageTotals } from '../harness/usage.js';
+import { piKnowledgeTool } from '../knowledgeSearchBindings.js';
+import { bindKnowledgeSearch } from '../knowledgeTools.js';
 import {
   type CompactionResult,
   compactMessages,
@@ -172,6 +174,10 @@ function traceInput(toolName: string, args: Record<string, unknown>): unknown {
 export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageReport> {
   const { access, loadProjectSettings, maxTurns, workspace } = options;
   const tools = options.tools ? [...options.tools] : piToolsFor(options.toolKeys);
+  const knowledgeSearch = bindKnowledgeSearch(
+    workspace.knowledgeBaseSnapshotIds ?? [],
+    options.toolKeys?.includes('searchKnowledge') ?? false
+  );
   const policy: PiPolicyContext = {
     browserTools: options.browserToolset ? BROWSER_TOOLS.map((entry) => entry.name) : [],
     containerId: workspace.containerId,
@@ -201,9 +207,12 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
         options.maxToolOutputChars ??
         getSettingDefinition('workspace.maxToolOutputChars').defaultValue;
       relay = options.mcp ? await openMcpRelay(options.mcp, options.tracer) : null;
-      const mcpTools = relay
-        ? piMcpTools({ maxToolOutputChars, relay, tracer: options.tracer, workspace })
-        : [];
+      const mcpTools = [
+        ...(relay
+          ? piMcpTools({ maxToolOutputChars, relay, tracer: options.tracer, workspace })
+          : []),
+        ...(knowledgeSearch ? [piKnowledgeTool(knowledgeSearch)] : []),
+      ];
       policy.mcpTools = mcpTools.map((t) => t.name);
       const own = await buildPiTools({ granted: tools, holder, maxToolOutputChars, workspace });
       const browserTools = options.browserToolset
