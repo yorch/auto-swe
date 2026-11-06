@@ -72,6 +72,18 @@ function EvidenceCard({ evidence, runId }: { evidence: RunEvidenceDto; runId: st
     }
   };
 
+  const openTraceViewer = async () => {
+    const result = await link.refetch();
+    if (result.data) {
+      const traceUrl = new URL(`${API_BASE}${result.data.url}`, window.location.href).toString();
+      window.open(
+        `/trace-viewer/index.html?trace=${encodeURIComponent(traceUrl)}`,
+        '_blank',
+        'noopener'
+      );
+    }
+  };
+
   return (
     <div className="rounded border border-ink-700 p-3" ref={container}>
       <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
@@ -85,9 +97,16 @@ function EvidenceCard({ evidence, runId }: { evidence: RunEvidenceDto; runId: st
           </div>
         </div>
         {!media && (
-          <Button onClick={() => void download()} size="sm" variant="secondary">
-            Download {evidence.kind}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {evidence.kind === 'trace' && (
+              <Button onClick={() => void openTraceViewer()} size="sm" variant="secondary">
+                Open trace viewer
+              </Button>
+            )}
+            <Button onClick={() => void download()} size="sm" variant="secondary">
+              Download {evidence.kind}
+            </Button>
+          </div>
         )}
       </div>
       {media && link.data && evidence.kind === 'screenshot' && (

@@ -46,6 +46,7 @@ interface PodShape {
       resources: { limits: Record<string, string>; requests: Record<string, string> };
       securityContext: Record<string, unknown>;
       volumeMounts: { mountPath: string; name: string }[];
+      workingDir?: string;
     }[];
     enableServiceLinks: boolean;
     hostAliases: { hostnames: string[]; ip: string }[];
@@ -135,6 +136,10 @@ describe('buildWorkspacePod', () => {
     expect(s.restartPolicy).toBe('Never');
   });
 
+  it('runs the workspace container from the writable workspace volume', () => {
+    expect(pod().spec.containers[0].workingDir).toBe('/workspace');
+  });
+
   it('adds root-starting service sidecars without changing workspace security', () => {
     const servicePod = buildWorkspacePod(
       {
@@ -153,6 +158,7 @@ describe('buildWorkspacePod', () => {
     const workspace = servicePod.spec.containers[0];
     const service = servicePod.spec.containers[1];
     expect(workspace?.name).toBe('workspace');
+    expect(workspace?.workingDir).toBe('/workspace');
     expect(workspace?.securityContext).toMatchObject({
       allowPrivilegeEscalation: false,
       capabilities: { drop: ['ALL'] },
@@ -160,6 +166,7 @@ describe('buildWorkspacePod', () => {
       runAsUser: 1000,
     });
     expect(service?.name).toBe('postgres');
+    expect(service?.workingDir).toBeUndefined();
     expect(service?.image).toBe('mirror.gcr.io/library/postgres:18');
     expect(service?.securityContext).toMatchObject({
       allowPrivilegeEscalation: false,

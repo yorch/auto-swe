@@ -757,6 +757,7 @@ __metadata:
     dagre: "npm:0.8.5"
     jsdom: "npm:30.1.3"
     next: "npm:16.4.2"
+    playwright-core: "npm:1.64.1"
     react: "npm:19.3.1"
     react-aria: "npm:3.53.1"
     react-aria-components: "npm:1.22.1"
@@ -13275,6 +13276,15 @@ __metadata:
     exsolve: "npm:^1.0.8"
     pathe: "npm:^2.0.3"
   checksum: 10c0/dd9b20682426abaddcac9dc786aa22542e12df15a03dea2afa7bf54da0933358c6c7f545c0c3c1c7b24a2904ab4a451bf4e34a50c6837e458359eea30c257ed4
+  languageName: node
+  linkType: hard
+
+"playwright-core@npm:1.64.1":
+  version: 1.64.1
+  resolution: "playwright-core@npm:1.64.1"
+  bin:
+    playwright-core: cli.js
+  checksum: 10c0/91c4f5ed1cff4b0e18b6ac62f66770f5f1b6c204d4aebd6a321c07466dca18a70822ac692597c6059705a703f9768097ac551df179fb49294d639509148e04f3
   languageName: node
   linkType: hard
 

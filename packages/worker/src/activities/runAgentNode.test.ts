@@ -10,7 +10,12 @@ vi.mock('../lib/knowledgeBaseSearch.js', () => ({
   searchRunKnowledge: vi.fn(async () => ({ injectionDropped: 0, mode: 'text', results: [] })),
 }));
 
-const { findChannel, findRepo, harness } = vi.hoisted(() => ({
+const { browser, findChannel, findRepo, harness } = vi.hoisted(() => ({
+  browser: {
+    close: vi.fn(async () => {}),
+    construct: vi.fn(),
+    tool: { name: 'browser-start-app' },
+  },
   findChannel: vi.fn(),
   findRepo: vi.fn(),
   harness: {
@@ -33,6 +38,16 @@ vi.mock('../lib/config/agentRuntime.js', () => ({
   resolveAgentRuntime: vi.fn().mockResolvedValue({ runtime: 'mastra', source: 'default' }),
 }));
 vi.mock('../agents/harnessRegistry.js', () => ({ HARNESSES: { select: harness.select } }));
+vi.mock('../agents/browserTools.js', () => ({
+  BrowserToolset: class {
+    close = browser.close;
+
+    constructor(options: unknown) {
+      browser.construct(options);
+    }
+  },
+  createMastraBrowserTools: vi.fn(() => ({ browser_start_app: browser.tool })),
+}));
 vi.mock('../agents/implementerRuntime.js', () => ({
   runImplementerTurn: vi.fn().mockResolvedValue({ text: 'harness verdict' }),
 }));
@@ -91,6 +106,7 @@ vi.mock('../lib/activityContext.js', () => ({
 vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
 
 import { ApplicationFailure } from '@temporalio/activity';
+import { createMastraBrowserTools } from '../agents/browserTools.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
@@ -140,6 +156,18 @@ describe('runAgentNode', () => {
       }
     }
   );
+
+  it('does not bind the browser tool on a non-workspace node, even with the grant', async () => {
+    vi.mocked(resolveAgent).mockResolvedValueOnce({ toolKeys: ['browser'] } as never);
+
+    await runAgentNode({ agentRef: 'reviewer', userMessage: 'inspect the preview' });
+
+    expect(vi.mocked(createWorkspace)).not.toHaveBeenCalled();
+    expect(browser.construct).not.toHaveBeenCalled();
+    expect(vi.mocked(createMastraBrowserTools)).not.toHaveBeenCalled();
+    expect(mockedRunAgent.mock.calls[0]?.[0].tools ?? {}).not.toHaveProperty('browser_start_app');
+  });
+
   it.each([true, false])(
     'binds pinned search ids with knowledgeBases=%s for an explicitly granted non-workspace agent',
     async (enabled) => {
@@ -495,6 +523,7 @@ describe('runAgentNode', () => {
       );
     });
     const workspace = {
+      containerId: 'workspace-1',
       destroy: vi.fn(async () => {}),
       exec: vi.fn(async () => ''),
       gitAuthed: vi.fn(async () => ''),
@@ -522,6 +551,105 @@ describe('runAgentNode', () => {
       harness.build.mockReturnValue({ close: harness.close, runTurn: vi.fn() });
       harness.bind.mockReturnValue({ build: harness.build, kind: 'claude-code' });
       harness.select.mockReturnValue({ bind: harness.bind });
+    });
+
+    it('binds browser tools and preview services for a granted Mastra workspace node, then closes them', async () => {
+      const previewConfig = {
+        readyUrl: 'http://localhost:4173/health',
+        services: [{ image: 'redis:7', name: 'redis', port: 6379 }],
+        start: 'npm run dev',
+      };
+      findRepo.mockResolvedValueOnce({
+        defaultBranch: 'main',
+        executorImage: null,
+        id: 'repo-1',
+        installation: null,
+        previewConfig,
+      });
+      vi.mocked(resolveAgent).mockResolvedValueOnce({
+        model: { apiKey: 'k', spec: 'anthropic/claude-sonnet-5-5' },
+        toolKeys: ['browser'],
+      } as never);
+      mockedRunAgent.mockRejectedValueOnce(new Error('model down'));
+
+      await expect(
+        runAgentNode({
+          agentRef: 'reviewer',
+          userMessage: 'inspect the preview',
+          workspace: { repoId: 'repo-1', ticketId: 'JIRA-1' },
+        })
+      ).rejects.toThrow('model down');
+
+      expect(vi.mocked(createWorkspace).mock.calls[0]?.[6]).toMatchObject({
+        services: previewConfig.services,
+      });
+      expect(browser.construct).toHaveBeenCalledWith(
+        expect.objectContaining({
+          containerId: 'workspace-1',
+          repoId: 'repo-1',
+          workspace,
+        })
+      );
+      expect(vi.mocked(createMastraBrowserTools)).toHaveBeenCalledTimes(1);
+      expect(mockedRunAgent.mock.calls[0]?.[0].tools).toEqual(
+        expect.objectContaining({ browser_start_app: browser.tool })
+      );
+      expect(browser.close).toHaveBeenCalledTimes(1);
+      expect(workspace.destroy).toHaveBeenCalledTimes(1);
+    });
+
+    it('passes the browser toolset to a granted harness workspace node and closes it', async () => {
+      vi.mocked(resolveAgentRuntime).mockResolvedValueOnce({
+        runtime: 'claude-code',
+        source: 'run',
+      });
+      vi.mocked(resolveAgent).mockResolvedValueOnce({
+        id: 'agent-1',
+        model: { apiKey: 'k', spec: 'anthropic/claude-sonnet-5-5' },
+        skills: [],
+        systemPrompt: 'Review the repository.',
+        toolKeys: ['browser'],
+        version: 1,
+      } as never);
+
+      await runAgentNode({
+        agentRef: 'reviewer',
+        userMessage: 'inspect the preview',
+        workspace: { repoId: 'repo-1', ticketId: 'JIRA-1' },
+      });
+
+      expect(harness.build.mock.calls[0]?.[0]).toEqual(
+        expect.objectContaining({ browserToolset: expect.anything() })
+      );
+      expect(browser.construct).toHaveBeenCalledTimes(1);
+      expect(browser.close).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not bind browser tools or preview services without the explicit grant', async () => {
+      const previewConfig = {
+        readyUrl: 'http://localhost:4173/health',
+        services: [{ image: 'redis:7', name: 'redis', port: 6379 }],
+        start: 'npm run dev',
+      };
+      findRepo.mockResolvedValueOnce({
+        defaultBranch: 'main',
+        executorImage: null,
+        id: 'repo-1',
+        installation: null,
+        previewConfig,
+      });
+
+      await runAgentNode({
+        agentRef: 'reviewer',
+        userMessage: 'inspect the preview',
+        workspace: { repoId: 'repo-1', ticketId: 'JIRA-1' },
+      });
+
+      const options = vi.mocked(createWorkspace).mock.calls[0]?.[6];
+      expect(options).not.toHaveProperty('services');
+      expect(browser.construct).not.toHaveBeenCalled();
+      expect(vi.mocked(createMastraBrowserTools)).not.toHaveBeenCalled();
+      expect(mockedRunAgent.mock.calls[0]?.[0].tools ?? {}).not.toHaveProperty('browser_start_app');
     });
 
     it("checks out the run's code branch and gives the Mastra loop the agent-run read tools", async () => {

@@ -361,9 +361,10 @@ export function fetchBranchesSubcommand(branches: string[]): string {
 
 /**
  * Shell script that SIGKILLs every process in the agent workspace except
- * PID 1 (`docker-init`), the container's `sleep infinity` keeper, and the
- * script's own process tree. `gitAuthed` runs it first, in the same exec as
- * the config rewrite and the credential-bearing git call, for two reasons:
+ * PID 1 (the container or pod init process), the workspace's `sleep infinity`
+ * keeper, and the script's own process tree. `gitAuthed` runs it first, in the
+ * same exec as the config rewrite and the credential-bearing git call, for two
+ * reasons:
  *
  *  - The credential is in git's environment and `-c http.extraheader=…` is
  *    expanded into its command line, so a process the agent left running
@@ -373,18 +374,21 @@ export function fetchBranchesSubcommand(branches: string[]): string {
  *
  * Processes are stopped (twice, to catch a child forked mid-scan) before any
  * is killed, as in {@link killTaggedProcessesScript}. The keeper's PID comes
- * from the workspace driver, which records it at creation when the `sleep
- * infinity` process is provably the only child of PID 1 — it is not found
- * here because a Kubernetes pod has no `--init`: there the keeper is itself
- * PID 1, so "the lowest-numbered child of PID 1" would name the agent's
- * first process instead, and sparing it would leave it alive to read the
- * git credential off git's command line. Uses only `/proc`, `sed` and `kill`.
+ * from the workspace driver. The sweep captures its own mount namespace and
+ * skips processes in other or unreadable mount namespaces, so Kubernetes
+ * service sidecars are not signalled even though their PIDs are visible.
+ * Workspace processes have no `CAP_SYS_ADMIN` and use the runtime-default
+ * seccomp profile, which prevents them from calling `unshare` or `setns` to
+ * move into another mount namespace and evade the sweep. Uses `/proc`,
+ * `readlink`, `sed` and `kill`.
  */
 export function killStrayProcessesScript(keeperPid: number): string {
   if (!Number.isInteger(keeperPid) || keeperPid <= 0) {
     throw new Error(`invalid keeper pid: ${keeperPid}`);
   }
   return [
+    'asw_mnt=$(readlink "/proc/$$/ns/mnt" 2>/dev/null) || asw_mnt=',
+    'if [ -z "$asw_mnt" ]; then echo "stray-process sweep: cannot read own mount namespace" >&2; exit 1; fi',
     'asw_ppid() { sed -n \'s/^PPid:[[:space:]]*//p\' "/proc/$1/status" 2>/dev/null; }',
     'asw_mine() {',
     '  asw_a=$1',
@@ -398,6 +402,8 @@ export function killStrayProcessesScript(keeperPid: number): string {
     'asw_sweep() {',
     '  for asw_d in /proc/[0-9]*; do',
     `    asw_p=\${asw_d#/proc/}`,
+    '    asw_ns=$(readlink "$asw_d/ns/mnt" 2>/dev/null) || continue',
+    '    [ "$asw_ns" = "$asw_mnt" ] || continue',
     '    if [ "$asw_p" = 1 ] || [ "$asw_p" = "$asw_keeper" ] || asw_mine "$asw_p"; then continue; fi',
     '    kill -"$1" "$asw_p" 2>/dev/null || true',
     '  done',

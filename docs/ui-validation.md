@@ -17,11 +17,12 @@ repository's `executorImage` when UI validation needs Chromium.
 Screenshots, recordings, traces and text logs use the workflow artifact store and carry run
 metadata such as source, caption, page URL, workflow node, attempt and image dimensions. The run's
 Evidence panel lists ready items, loads media through short-lived user-bound links and offers trace
-and log downloads. Each content request reloads the link owner's active account and role and checks
-current run visibility before returning bytes. Only PNG, JPEG, WebP, WebM, ZIP and plain text
-content types are served as media; other content is an opaque download. The content route returns
-the whole object and does not implement range requests, so a recording downloads in full before it
-can seek.
+and log downloads. Trace cards also open a self-hosted Playwright viewer at `/trace-viewer`, using
+a freshly minted signed evidence URL. Each content request reloads the link owner's active account
+and role and checks current run visibility before returning bytes. Only PNG, JPEG, WebP, WebM, ZIP
+and plain text content types are served as media; other content is an opaque download. The content
+route returns the whole object and does not implement range requests, so a recording downloads in
+full before it can seek.
 
 An item is kept only when the recording succeeds and the configured limits allow it: a screenshot
 over `uiValidation.maxScreenshotBytes`, a video over `uiValidation.maxVideoBytes`, or an item past
@@ -59,12 +60,12 @@ Browser sessions are closed and their video and trace evidence is saved even whe
 
 Mastra, Pi and Claude Code agents can use the browser tool only when `browser` appears explicitly in
 their `toolKeys`. A null tool list never grants it. It reaches the implementer path on every runtime,
-and an agent run; an `agent` node in a throwaway checkout does not bind it. The toolset starts the
-configured preview on its first call, defaults its navigation host allowlist to empty, and records
-screenshots before returning their evidence identifiers. Snapshot, title and console text is screened
-before it is returned to the agent. Session cleanup waits for a start already in flight, then saves
-video and trace evidence and stops the app preview. One session serves the whole toolset, so
-concurrent tool calls in a single model step share it.
+agent runs, and `agent` nodes with `workspace: true`; a node without a workspace has no browser tools.
+The toolset starts the configured preview on its first call, defaults its navigation host allowlist to
+empty, and records screenshots before returning their evidence identifiers. Snapshot, title and
+console text is screened before it is returned to the agent. Session cleanup waits for a start already
+in flight, then saves video and trace evidence and stops the app preview. One session serves the
+whole toolset, so concurrent tool calls in a single model step share it.
 
 ## PR evidence
 
@@ -101,18 +102,52 @@ its pid is its process-group id and `stop()` can kill the whole tree), polls the
 inside the workspace and returns a stop function and bounded, redacted log tail. It uses the
 recipe's base URL, or the readiness URL's origin when none is supplied.
 
+## Kubernetes kind integration test
+
+`packages/worker/src/lib/workspaceBackend/kubernetes/driver.kind.test.ts` exercises the workspace
+backend against the current Kubernetes context. It requires Docker, `kubectl` on `PATH`, the
+`auto-swe-workspaces` namespace manifest applied, a CNI that enforces NetworkPolicy, and the
+`auto-swe/node-browser:phase-a` and `mirror.gcr.io/library/postgres:18` images loaded on the
+cluster's nodes. The test uses the caller's kubeconfig identity; it does not require a worker
+ServiceAccount.
+
+Run it with `K8S_KIND_TEST=1`. `K8S_KUBECTL` selects the kubectl binary, while
+`K8S_WORKSPACE_NAMESPACE` and `K8S_WORKSPACE_RUN_AS_UID` select the namespace and workspace UID.
+`K8S_KIND_EVIDENCE_DIR` is test-only and receives `workspace-preview.png`.
+
+```bash
+mkdir -p /path/to/k8s-evidence
+set -o pipefail
+K8S_KIND_TEST=1 \
+K8S_KUBECTL=kubectl \
+K8S_WORKSPACE_NAMESPACE=auto-swe-workspaces \
+K8S_WORKSPACE_RUN_AS_UID=1000 \
+K8S_KIND_EVIDENCE_DIR=/path/to/k8s-evidence \
+yarn vitest run packages/worker/src/lib/workspaceBackend/kubernetes/driver.kind.test.ts \
+  2>&1 | tee /path/to/k8s-evidence/kind-test.log
+kubectl get events -n auto-swe-workspaces --sort-by=.lastTimestamp \
+  > /path/to/k8s-evidence/events.log
+```
+
+The end-to-end case temporarily changes only the namespace's Pod Security `enforce` label from
+`restricted` to `baseline` so the root-starting Postgres service can run, then restores `restricted`.
+The separate admission case confirms that the root service is rejected under `restricted`; the
+workspace container remains non-root with all capabilities dropped.
+
 ## Limitations
 
-- Kubernetes sidecars that run as root or add the service capabilities require a namespace policy
-  that permits those per-container settings (typically Pod Security `privileged` or an equivalent
-  exception). The workspace container keeps its non-root, dropped-capability security context.
+- Kubernetes preview services that run as root or add service capabilities need a namespace policy
+  less restrictive than Pod Security `restricted` (`baseline` permits the current service settings).
+  The workspace container keeps its non-root, dropped-capability security context.
+- The stray-process sweep scopes signals to the workspace mount namespace. It relies on the workspace
+  having no `CAP_SYS_ADMIN` and using the runtime-default seccomp profile to prevent `unshare` or
+  `setns` from moving a process into another mount namespace to evade the sweep.
 - Public PR images are intentionally unavailable unless both environment values and the explicit
   admin setting are enabled. The public bucket's access policy is operator-managed. Renaming the
   bucket after copies exist leaves the old copies behind: retention can only delete from the bucket
   the environment currently names.
-- `stop()` signals the preview's process group, which `startAppPreview` creates with a detached
-  Node launcher (`spawn(..., { detached: true })` calls `setsid`). A process that double-forks and
-  leaves the session — a daemonized child of the app — is not in that group and still outlives
+- `stop()` signals the preview's process group and processes that retain its random environment
+  mark. A daemon that scrubs the mark, or runs as a UID the worker cannot signal, can outlive
   `stop()` until the workspace is destroyed.
 - A worker that dies between writing an artifact and creating its `RunEvidence` row leaves a ready
   `ui.*` artifact that no evidence row points at. The daily transcript sweep deletes those, and a
@@ -121,9 +156,10 @@ recipe's base URL, or the readiness URL's origin when none is supplied.
   and written to the artifact store in memory, so the `uiValidation.maxVideoBytes` cap bounds a
   single worker's memory use, and the step's wall-clock budget has to cover the transfer as well as
   the recording. Serving is streamed from the store, not buffered.
-- The `browser` tool is bound to the implementer path and to agent runs, not to a generic `agent`
-  node in a checkout. A node that needs to look at a page must be an implementer-family step or an
-  agent run whose Agent grants `browser`.
+- A generic `agent` node can use the browser only with `workspace: true` and an explicit `browser`
+  grant; a node without a workspace has no browser tools.
+- Trace snapshots replay on the dashboard origin. Playwright strips scripts from snapshot HTML, but
+  the content comes from the app under test.
 - The browser tool's `browser_screenshot` persists the image as evidence but returns the accessible
   page snapshot and the evidence id to the model, not the pixels: an agent reads the page as text,
   and a person sees the picture on the run page.

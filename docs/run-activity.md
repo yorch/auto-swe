@@ -173,8 +173,10 @@ binary data. How the `uiVerify` step and the agent browser tool produce this evi
 per-repository preview recipe behind it, are in [ui-validation.md](./ui-validation.md).
 
 Evidence items are limited by `uiValidation.maxScreenshotBytes`, `uiValidation.maxVideoBytes` and
-`uiValidation.maxEvidencePerRun`. Trace files can be opened with
-`npx playwright show-trace <file>`.
+`uiValidation.maxEvidencePerRun`. A trace card opens its trace in the self-hosted Playwright viewer
+on the dashboard origin. The download also works with `npx playwright show-trace <file>`. Snapshots
+replay on the dashboard origin. Playwright strips scripts from snapshot HTML, but the content comes
+from the app under test.
 
 ## Retention
 
