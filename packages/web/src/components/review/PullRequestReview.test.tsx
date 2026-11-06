@@ -35,6 +35,7 @@ const file = (over: Partial<PullRequestCockpitFile> = {}): PullRequestCockpitFil
 function cockpit(over: Partial<PullRequestCockpit> = {}): PullRequestCockpit {
   return {
     changedSinceViewed: [],
+    drafts: [],
     evaluation: {
       claimsToVerify: [],
       createdAt: '2026-11-03T10:00:00.000Z',

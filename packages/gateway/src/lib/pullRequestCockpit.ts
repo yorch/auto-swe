@@ -8,6 +8,7 @@
  */
 import { lineInDiff, readingOrder } from '@auto-swe/shared/lib/prEvaluation';
 import type {
+  PullRequestCockpitDraft,
   PullRequestCockpitEvaluation,
   PullRequestCockpitFile,
   PullRequestCockpitFiles,
@@ -248,6 +249,51 @@ export function changedSinceViewed(
       return marked !== undefined && item.patchDigest !== null && marked !== item.patchDigest;
     })
     .map((item) => item.path);
+}
+
+/** A stored draft as the route selects it. */
+export type DraftRow = {
+  body: string;
+  createdAt: Date;
+  headSha: string;
+  id: string;
+  line: number;
+  patchDigest: string;
+  path: string;
+};
+
+/**
+ * Whether a draft can still be sent as written: the file's patch is the one it was written
+ * against, and the line is still in it. Used by the page to flag a draft, and by the submit to
+ * refuse one, so the two cannot disagree.
+ */
+export function draftIsCurrent(
+  draft: Pick<DraftRow, 'line' | 'patchDigest' | 'path'>,
+  files: ReadonlyMap<string, { patch?: string; patchDigest?: string }>
+): boolean {
+  const file = files.get(draft.path);
+  return (
+    file !== undefined &&
+    file.patchDigest === draft.patchDigest &&
+    lineInDiff(file.patch, draft.line)
+  );
+}
+
+/** The caller's drafts for the page, each marked with whether it can still be sent. */
+export function draftsFor(
+  files: PullFilesResult,
+  rows: readonly DraftRow[]
+): PullRequestCockpitDraft[] {
+  const byPath = files.type === 'ok' ? new Map(files.files.map((f) => [f.path, f])) : null;
+  return rows.map((row) => ({
+    body: row.body,
+    createdAt: row.createdAt.toISOString(),
+    headSha: row.headSha,
+    id: row.id,
+    line: row.line,
+    outdated: byPath !== null && !draftIsCurrent(row, byPath),
+    path: row.path,
+  }));
 }
 
 /** What a stored mark needs to be checked against the file it was made on. */
