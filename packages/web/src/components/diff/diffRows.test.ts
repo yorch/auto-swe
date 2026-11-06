@@ -15,8 +15,8 @@ describe('pairSideBySide', () => {
     const [header, row] = rowsOf(['@@ -10,1 +20,1 @@', ' keep'].join('\n'));
     expect(header?.type).toBe('full');
     expect(row).toEqual({
-      left: { kind: 'ctx', no: 10, text: 'keep' },
-      right: { kind: 'ctx', no: 20, text: 'keep' },
+      left: { index: 1, kind: 'ctx', no: 10, text: 'keep' },
+      right: { index: 1, kind: 'ctx', no: 20, text: 'keep' },
       type: 'pair',
     });
   });
@@ -125,6 +125,19 @@ describe('pairSideBySide', () => {
       return count + (row.left ? 1 : 0) + (row.right ? 1 : 0);
     }, 0);
     expect(drawn).toBe(lines.length);
+  });
+
+  it('records which line each cell came from', () => {
+    // 0 is the hunk header, 1 the unchanged line, 2 the removed one, 3 and 4 the added ones.
+    const rows = rowsOf(['@@ -1,2 +1,3 @@', ' keep', '-gone', '+one', '+two'].join('\n'));
+    const pairs = rows.filter((r) => r.type === 'pair');
+    expect(
+      pairs.map((r) => (r.type === 'pair' ? [r.left?.index ?? null, r.right?.index ?? null] : null))
+    ).toEqual([
+      [1, 1],
+      [2, 3],
+      [null, 4],
+    ]);
   });
 
   it('answers no rows for no lines', () => {

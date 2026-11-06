@@ -2,6 +2,8 @@ import type { ParsedDiffLine } from '../approvals/diffParse';
 
 /** One side of a split row: a removed, added or unchanged line, without its leading marker. */
 export type DiffCell = {
+  /** The position of the line in the file's lines, to look up anything known about that line. */
+  index: number;
   kind: 'add' | 'del' | 'ctx';
   /** The line number on this side. */
   no: number | null;
@@ -39,20 +41,20 @@ export function pairSideBySide(lines: readonly ParsedDiffLine[]): DiffRow[] {
     added = [];
   };
 
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     if (line.kind === 'del') {
       // A removed line after added ones starts the next edit.
       if (added.length > 0) {
         flush();
       }
-      removed.push({ kind: 'del', no: line.oldNo, text: unmarked(line.text) });
+      removed.push({ index, kind: 'del', no: line.oldNo, text: unmarked(line.text) });
     } else if (line.kind === 'add') {
-      added.push({ kind: 'add', no: line.newNo, text: unmarked(line.text) });
+      added.push({ index, kind: 'add', no: line.newNo, text: unmarked(line.text) });
     } else if (line.kind === 'ctx') {
       flush();
       rows.push({
-        left: { kind: 'ctx', no: line.oldNo, text: unmarked(line.text) },
-        right: { kind: 'ctx', no: line.newNo, text: unmarked(line.text) },
+        left: { index, kind: 'ctx', no: line.oldNo, text: unmarked(line.text) },
+        right: { index, kind: 'ctx', no: line.newNo, text: unmarked(line.text) },
         type: 'pair',
       });
     } else {

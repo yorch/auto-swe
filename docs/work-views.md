@@ -332,7 +332,9 @@ reload.
   and the diff, with the files to verify marked, the ones proven skimmable marked, each file
   collapsible and the first three open, in one column or, on a wide screen, split with the old
   version beside the new (a per-viewer choice kept in the browser; a narrow screen always uses one
-  column). A rail lists the files with a filter (all, to verify,
+  column). Within an edited line the words that changed are marked, and a block of code removed in
+  one place and added in another (in this file or another) is marked as moved on both sides. A rail
+  lists the files with a filter (all, to verify,
   unviewed, skim) and a count of those viewed; `j` and `k` move between files and `v` marks one
   viewed. Marking a file viewed collapses it. A banner says when the evaluation covers an earlier
   commit, when the host could not be read, when files were cut off, and when the pull request is no
@@ -367,6 +369,10 @@ text with invisible and direction-changing characters made visible, never markup
   conditional, so an unchanged one is cheap, but a changed one and every page of files are not. The
   page refreshes every minute while the pull request is open and stops once the host reports it closed
   or merged.
+- Changed words are marked only for a removed line and the added line that replaces it, when both
+  are at most 500 characters and share a good part of their words; a rewrite is left plain. Moved
+  code is found only by exact match, ignoring indentation and blank lines, in runs of at least three
+  lines with some content: a block that was moved and also edited is shown as removed and added.
 - Up to 3000 files are listed. A binary file, or a patch over 200,000 characters, is named but not
   shown. A file without a patch cannot be marked viewed.
 - An evaluation written before the intent, evidence and findings were stored shows only the reading
