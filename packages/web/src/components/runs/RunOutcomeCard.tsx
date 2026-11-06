@@ -9,6 +9,7 @@ import { Icon, type IconName } from '@/components/ui/Icon';
 import { cn, FOCUS_RING, isRecord } from '@/lib/utils';
 import { AgentRunOutcomeCard } from './AgentRunOutcomeCard';
 import { ArtifactAwareText } from './ArtifactAwareText';
+import { ReviewPageLink } from './ReviewPageLink';
 
 interface RunOutcomeCardProps {
   result: unknown;
@@ -17,6 +18,8 @@ interface RunOutcomeCardProps {
   templateName: string;
   /** A run of the hidden Agent Run template, as the gateway reports it (not inferred from the name). */
   isAgentRun?: boolean;
+  /** The review page of the pull request the run opened, when the caller may open it. */
+  pullRequestId?: string | null | undefined;
 }
 
 function truncate(value: unknown, maxChars = 240): string {
@@ -184,24 +187,37 @@ function OutcomeText({ runId, value }: { runId: string; value: unknown }) {
   );
 }
 
-export function RunOutcomeCard({ result, runId, templateName, isAgentRun }: RunOutcomeCardProps) {
+export function RunOutcomeCard({
+  result,
+  runId,
+  templateName,
+  isAgentRun,
+  pullRequestId,
+}: RunOutcomeCardProps) {
   if (!isRecord(result)) {
     return null;
   }
 
   if (isAgentRun) {
-    return <AgentRunOutcomeCard result={result} runId={runId} />;
+    return <AgentRunOutcomeCard pullRequestId={pullRequestId} result={result} runId={runId} />;
   }
 
   if (typeof result.prUrl === 'string' && isSafeWebUrl(result.prUrl)) {
+    const number = typeof result.prNumber === 'number' ? `#${result.prNumber}` : null;
     return (
       <OutcomeShell icon="pullRequest" title="Pull request">
+        {pullRequestId ? <ReviewPageLink pullRequestId={pullRequestId} /> : null}
         <OutcomeLink
           href={result.prUrl}
+          // With the review page offered, the host link says where it goes instead of repeating "review".
           label={
-            typeof result.prNumber === 'number'
-              ? `Review PR #${result.prNumber}`
-              : 'Review pull request'
+            pullRequestId
+              ? number
+                ? `PR ${number} on the host`
+                : 'Pull request on the host'
+              : number
+                ? `Review PR ${number}`
+                : 'Review pull request'
           }
         />
       </OutcomeShell>

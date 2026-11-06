@@ -58,6 +58,7 @@ export type AssistantAccess = 'read' | 'confirm' | 'never';
 
 export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> = {
   'DELETE /api/v1/integrations/github-approver-app': { never: 'secret' },
+  'DELETE /api/v1/pull-requests/:id/drafts/:draftId': { never: 'humanDecision' },
   'DELETE /api/v1/report-digests/:id': 'confirm',
   'GET /api/v1/agent-runs/agents': 'read',
   'GET /api/v1/agent-runs/limits': 'read',
@@ -256,6 +257,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PATCH /api/v1/platform/slack-channels/:id': 'confirm',
   'PATCH /api/v1/platform/slack-channels/:id/memory/:memoryId': 'confirm',
   'PATCH /api/v1/platform/slack-channels/:id/open-items/:itemId': 'confirm',
+  'PATCH /api/v1/pull-requests/:id/drafts/:draftId': { never: 'humanDecision' },
   'PATCH /api/v1/report-digests/:id': 'confirm',
   'PATCH /api/v1/repositories/:id': 'confirm',
   'PATCH /api/v1/repositories/:id/dependencies/:edgeId': 'confirm',
@@ -358,6 +360,10 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/platform/slack-channels/:id/budget/reset': 'confirm',
   'POST /api/v1/platform/slack-channels/memory/erase-user': { never: 'destructive' },
   'POST /api/v1/prd-runs': 'confirm',
+  'POST /api/v1/pull-requests/:id/drafts': { never: 'humanDecision' },
+  'POST /api/v1/pull-requests/:id/review': { never: 'humanDecision' },
+  'POST /api/v1/pull-requests/:id/send-back': { never: 'humanDecision' },
+  'POST /api/v1/pull-requests/:id/visit': { never: 'humanDecision' },
   'POST /api/v1/report-digests': 'confirm',
   'POST /api/v1/report-digests/:id/send-test': 'confirm',
   'POST /api/v1/report-digests/unsubscribe': { never: 'secret' },

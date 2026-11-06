@@ -83,6 +83,38 @@ function median(values: number[]): number | null {
   return Math.round(value * 10) / 10;
 }
 
+/** One person's first visit to the review page of one pull request. */
+export type FirstViewRow = { firstVisitedAt: Date; openedAt: Date; pullRequestId: string };
+
+export type FirstViewSummary = {
+  /** Pull requests in the window that someone opened on the review page. */
+  pullRequestsViewed: number;
+  /** Median minutes from a pull request opening to its first view there; null with none. */
+  medianMinutesToFirstView: number | null;
+};
+
+/**
+ * How long a pull request waits before anyone opens it on the review page: the earliest visit per
+ * pull request, whoever made it. It says when a reviewer began, not that they reviewed.
+ */
+export function summarizeFirstViews(rows: readonly FirstViewRow[]): FirstViewSummary {
+  const earliest = new Map<string, number>();
+  const opened = new Map<string, number>();
+  for (const row of rows) {
+    const at = row.firstVisitedAt.getTime();
+    const known = earliest.get(row.pullRequestId);
+    if (known === undefined || at < known) {
+      earliest.set(row.pullRequestId, at);
+    }
+    opened.set(row.pullRequestId, row.openedAt.getTime());
+  }
+  // A visit dated before the pull request opened reads as no wait, like a review does.
+  const waits = [...earliest].map(([id, at]) =>
+    Math.max(0, (at - (opened.get(id) as number)) / 60_000)
+  );
+  return { medianMinutesToFirstView: median(waits), pullRequestsViewed: earliest.size };
+}
+
 export function summarizeBriefEngagement(rows: readonly EngagementRow[]): BriefEngagementSummary {
   const reviewed = rows.filter((row) => row.firstHumanReviewAt !== null);
   // A review that landed before the evaluation's row was written reads as no wait at all.

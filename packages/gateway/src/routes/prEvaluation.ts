@@ -4,6 +4,7 @@ import {
   autoArmingRefusals,
   type BranchRulesLike,
   summarizeBriefEngagement,
+  summarizeFirstViews,
 } from '@auto-swe/shared/lib/prEvaluation';
 import {
   autoEvidenceAssessment,
@@ -52,6 +53,8 @@ const EngagementQuery = z.object({
 });
 /** Evaluations read for one engagement summary; a window with more says so in `capped`. */
 const ENGAGEMENT_ROW_CAP = 5000;
+/** First visits read for the same summary; the same cap, the same flag. */
+const FIRST_VIEW_ROW_CAP = 5000;
 
 const THRESHOLD_KEYS = [
   'prEvaluation.maxLowLines',
@@ -400,6 +403,25 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       const user = requireUser(request);
       const { days, repoId } = request.query;
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      const visits = await fastify.prisma.prReviewVisit.findMany({
+        orderBy: [{ firstVisitedAt: 'desc' }, { id: 'desc' }],
+        select: {
+          firstVisitedAt: true,
+          pullRequest: { select: { openedAt: true } },
+          pullRequestId: true,
+        },
+        take: FIRST_VIEW_ROW_CAP + 1,
+        where: {
+          pullRequest: {
+            openedAt: { gte: since },
+            ...(user.role === Role.ADMIN
+              ? {}
+              : { repository: reachableConnections(user, request.repoAccessGate) }),
+            ...(repoId ? { repoId } : {}),
+          },
+        },
+      });
       const rows = await fastify.prisma.prEvaluation.findMany({
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         select: {
@@ -412,7 +434,7 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
         },
         take: ENGAGEMENT_ROW_CAP + 1,
         where: {
-          createdAt: { gte: new Date(Date.now() - days * 24 * 60 * 60 * 1000) },
+          createdAt: { gte: since },
           ...(user.role === Role.ADMIN
             ? {}
             : { connection: reachableConnections(user, request.repoAccessGate) }),
@@ -421,9 +443,16 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
       });
       return {
         data: {
-          capped: rows.length > ENGAGEMENT_ROW_CAP,
+          capped: rows.length > ENGAGEMENT_ROW_CAP || visits.length > FIRST_VIEW_ROW_CAP,
           windowDays: days,
           ...summarizeBriefEngagement(rows.slice(0, ENGAGEMENT_ROW_CAP)),
+          ...summarizeFirstViews(
+            visits.slice(0, FIRST_VIEW_ROW_CAP).map((v) => ({
+              firstVisitedAt: v.firstVisitedAt,
+              openedAt: v.pullRequest.openedAt,
+              pullRequestId: v.pullRequestId,
+            }))
+          ),
         },
       };
     }

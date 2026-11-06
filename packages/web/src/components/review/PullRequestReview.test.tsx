@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
 
 import type { PullRequestCockpit, PullRequestCockpitFile } from '@auto-swe/shared/types/api';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { syntaxForDiff } from '@/lib/diffSyntax';
+import { clearViewport, mockViewport } from '@/test/matchMedia';
+import { installMemoryStorage } from '@/test/memoryStorage';
 import { bodyOf, setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import { PullRequestReview } from './PullRequestReview';
+
+// The real highlighter is exercised in its own tests; here the page only needs to know what it asks.
+vi.mock('@/lib/diffSyntax', () => ({ syntaxForDiff: vi.fn(async () => null) }));
+const syntaxFor = vi.mocked(syntaxForDiff);
 
 const DIGEST = 'a'.repeat(64);
 const PATCH = ['@@ -1,2 +1,3 @@', ' keep', '+added', ' tail'].join('\n');
@@ -26,6 +34,8 @@ const file = (over: Partial<PullRequestCockpitFile> = {}): PullRequestCockpitFil
 
 function cockpit(over: Partial<PullRequestCockpit> = {}): PullRequestCockpit {
   return {
+    changedSinceViewed: [],
+    drafts: [],
     evaluation: {
       claimsToVerify: [],
       createdAt: '2026-11-03T10:00:00.000Z',
@@ -66,7 +76,14 @@ function cockpit(over: Partial<PullRequestCockpit> = {}): PullRequestCockpit {
       url: 'https://github.com/acme/api/pull/7',
       workRequestId: 'wr-1',
     },
+    sinceLastVisit: null,
     viewed: [],
+    write: {
+      approvalMayNotCount: false,
+      available: false,
+      feedbackLoopEnabled: false,
+      reason: 'no-token',
+    },
     ...over,
   };
 }
@@ -110,7 +127,10 @@ const headerOf = (name: string) => {
 
 const show = (data: PullRequestCockpit) => render(withQuery(<PullRequestReview data={data} />));
 const fetchSpy = () =>
-  setupFetchMock({ 'PUT /api/v1/pull-requests/pr-1/viewed': () => ({ data: { updated: 1 } }) });
+  setupFetchMock({
+    'POST /api/v1/pull-requests/pr-1/visit': () => ({ data: { recorded: true } }),
+    'PUT /api/v1/pull-requests/pr-1/viewed': () => ({ data: { updated: 1 } }),
+  });
 
 beforeEach(() => {
   fetchSpy();
@@ -395,5 +415,520 @@ describe('viewing files', () => {
     expect(
       spy.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')
     ).toBe(false);
+  });
+});
+
+describe('syntax colouring', () => {
+  beforeEach(() => {
+    syntaxFor.mockReset();
+    syntaxFor.mockResolvedValue(null);
+  });
+
+  const four = ['a.ts', 'b.ts', 'c.ts', 'd.ts'].map((path) => file({ path }));
+  const askedFor = () => syntaxFor.mock.calls.map(([path]) => path).sort();
+
+  it('is worked out for the files that are open, and not for the ones that are closed', async () => {
+    show(withFiles(four));
+    await waitFor(() => expect(askedFor()).toEqual(['a.ts', 'b.ts', 'c.ts']));
+    expect(askedFor()).not.toContain('d.ts');
+  });
+
+  it('is worked out for a file when it is opened', async () => {
+    show(withFiles(four));
+    await waitFor(() => expect(syntaxFor).toHaveBeenCalledTimes(3));
+    fireEvent.click(
+      screen
+        .getAllByRole('button', { name: /d\.ts/ })
+        .find((b) => b.hasAttribute('aria-expanded')) as HTMLElement
+    );
+    await waitFor(() => expect(askedFor()).toContain('d.ts'));
+  });
+
+  it('is not worked out again for a file that was closed and opened', async () => {
+    show(withFiles([file({ path: 'a.ts' })]));
+    await waitFor(() => expect(syntaxFor).toHaveBeenCalledTimes(1));
+    const header = () =>
+      screen
+        .getAllByRole('button', { name: /a\.ts/ })
+        .find((b) => b.hasAttribute('aria-expanded')) as HTMLElement;
+    fireEvent.click(header());
+    fireEvent.click(header());
+    await waitFor(() => expect(header().getAttribute('aria-expanded')).toBe('true'));
+    expect(syntaxFor).toHaveBeenCalledTimes(1);
+  });
+
+  it('is drawn when it arrives, with the text unchanged', async () => {
+    // 0 is the hunk header, 1 ' keep', 2 '+added', 3 ' tail'.
+    syntaxFor.mockResolvedValue(
+      new Map([
+        [2, [{ bold: false, dark: '#112233', italic: false, light: '#445566', text: 'added' }]],
+      ])
+    );
+    show(withFiles([file({ path: 'a.ts' })]));
+    await waitFor(() => expect(document.querySelectorAll('.syn')).toHaveLength(1));
+    const el = document.querySelector('.syn') as HTMLElement;
+    expect(el.textContent).toBe('added');
+    expect(el.style.getPropertyValue('--syn-light')).toBe('#445566');
+    expect(el.style.getPropertyValue('--syn-dark')).toBe('#112233');
+    expect(document.body.textContent).toContain('+added');
+  });
+
+  it('leaves a file that cannot be coloured as plain text', async () => {
+    show(withFiles([file({ path: 'photo.bin' })]));
+    await waitFor(() => expect(syntaxFor).toHaveBeenCalled());
+    expect(document.querySelectorAll('.syn')).toHaveLength(0);
+    expect(document.body.textContent).toContain('+added');
+  });
+});
+
+describe('moved code and edited words', () => {
+  const BLOCK = ['function total(items) {', '  const sum = items.reduce(add, 0);', '  return sum;'];
+  const patchOf = (sign: '+' | '-', lines: string[]) =>
+    [`@@ -1,${lines.length} +1,${lines.length} @@`, ...lines.map((l) => `${sign}${l}`)].join('\n');
+
+  it('flags a block removed from one file and added to another, on both', () => {
+    show(
+      withFiles([
+        file({ patch: patchOf('-', BLOCK), path: 'a.ts' }),
+        file({ patch: patchOf('+', BLOCK), path: 'b.ts' }),
+      ])
+    );
+    expect(document.querySelectorAll('.border-info-400')).toHaveLength(6);
+    expect(document.body.textContent?.match(/Moved: /g)).toHaveLength(6);
+  });
+
+  it('flags nothing when the same lines are only added', () => {
+    show(withFiles([file({ patch: patchOf('+', BLOCK), path: 'b.ts' })]));
+    expect(document.querySelectorAll('.border-info-400')).toHaveLength(0);
+  });
+
+  it('marks the words that changed in an edited line', () => {
+    show(
+      withFiles([
+        file({
+          patch: [
+            '@@ -1,1 +1,1 @@',
+            '-const total = price * count;',
+            '+const total = price * quantity;',
+          ].join('\n'),
+        }),
+      ])
+    );
+    expect([...document.querySelectorAll('mark')].map((m) => m.textContent)).toEqual([
+      'count',
+      'quantity',
+    ]);
+  });
+});
+
+describe('the diff layout', () => {
+  const splitGrids = () => document.querySelectorAll('.grid.grid-cols-2').length;
+  const layoutButton = (name: string) =>
+    within(screen.getByRole('group', { name: 'Diff layout' })).getByRole('button', { name });
+
+  beforeEach(() => {
+    installMemoryStorage();
+  });
+  afterEach(() => {
+    clearViewport();
+  });
+
+  it('starts unified, and offers split', () => {
+    mockViewport(1280);
+    show(withFiles([file()]));
+    expect(splitGrids()).toBe(0);
+    expect(layoutButton('Unified').getAttribute('aria-pressed')).toBe('true');
+    expect(layoutButton('Split').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('draws old beside new once split is chosen, and remembers the choice', () => {
+    mockViewport(1280);
+    const { unmount } = show(withFiles([file()]));
+    fireEvent.click(layoutButton('Split'));
+    expect(splitGrids()).toBeGreaterThan(0);
+    expect(layoutButton('Split').getAttribute('aria-pressed')).toBe('true');
+    unmount();
+    show(withFiles([file()]));
+    expect(splitGrids()).toBeGreaterThan(0);
+  });
+
+  it('goes back to one column when unified is chosen again', () => {
+    mockViewport(1280);
+    show(withFiles([file()]));
+    fireEvent.click(layoutButton('Split'));
+    fireEvent.click(layoutButton('Unified'));
+    expect(splitGrids()).toBe(0);
+  });
+
+  it('keeps one column, and offers no choice, on a narrow screen, whatever was chosen', () => {
+    mockViewport(1280);
+    const { unmount } = show(withFiles([file()]));
+    fireEvent.click(layoutButton('Split'));
+    unmount();
+    mockViewport(480);
+    show(withFiles([file()]));
+    expect(splitGrids()).toBe(0);
+    expect(screen.queryByRole('group', { name: 'Diff layout' })).toBeNull();
+  });
+
+  it('offers no choice when there are no files to lay out', () => {
+    mockViewport(1280);
+    show(withFiles([]));
+    expect(screen.queryByRole('group', { name: 'Diff layout' })).toBeNull();
+  });
+
+  it('still draws a finding on an added line once the layout is split', () => {
+    mockViewport(1280);
+    const data = withFindings([finding({ line: 2 })]);
+    show(data);
+    fireEvent.click(layoutButton('Split'));
+    expect(screen.getByText(/off by one in the loop/)).toBeTruthy();
+  });
+});
+
+describe('since the reviewer last looked', () => {
+  const earlier = {
+    commits: [{ sha: 'c1c1c1c1c1', subject: 'fix the retry' }],
+    fromHeadSha: 'a'.repeat(40),
+    lastVisitedAt: new Date(Date.now() - 3_600_000).toISOString(),
+    rewritten: false,
+    totalCommits: 1,
+  };
+  const visitsOf = (spy: ReturnType<typeof vi.fn>) =>
+    spy.mock.calls.filter(
+      ([url, init]) =>
+        String(url).endsWith('/api/v1/pull-requests/pr-1/visit') &&
+        (init as RequestInit | undefined)?.method === 'POST'
+    );
+  const headsPosted = (spy: ReturnType<typeof vi.fn>) =>
+    visitsOf(spy).map(([, init]) => {
+      const sent = JSON.parse(String((init as RequestInit).body)) as { headSha: string };
+      return sent.headSha;
+    });
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+  /** One client for the whole test, so a redraw with new data is a refresh of the same page. */
+  function mount(data: PullRequestCockpit) {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const ui = (next: PullRequestCockpit) => (
+      <QueryClientProvider client={qc}>
+        <PullRequestReview data={next} />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(ui(data));
+    return (next: PullRequestCockpit) => rerender(ui(next));
+  }
+
+  it('records the head the page shows, after it has drawn', async () => {
+    const spy = fetchSpy();
+    show(cockpit());
+    await waitFor(() => expect(visitsOf(spy)).toHaveLength(1));
+    expect(bodyOf(spy, '/api/v1/pull-requests/pr-1/visit')).toEqual({ headSha: 'abc1234def' });
+  });
+
+  it('records it once however often the page draws again', async () => {
+    const spy = fetchSpy();
+    const redraw = mount(cockpit());
+    await waitFor(() => expect(visitsOf(spy)).toHaveLength(1));
+    redraw(cockpit());
+    redraw(cockpit());
+    await settle();
+    expect(visitsOf(spy)).toHaveLength(1);
+  });
+
+  it('records the new head when the pull request moves while the page is open', async () => {
+    const spy = fetchSpy();
+    const redraw = mount(cockpit());
+    await waitFor(() => expect(visitsOf(spy)).toHaveLength(1));
+    redraw(
+      withFiles([file()], {
+        files: {
+          headSha: 'def5678abc',
+          items: [file()],
+          state: 'open',
+          truncated: false,
+          type: 'ok',
+        },
+      })
+    );
+    await waitFor(() => expect(visitsOf(spy)).toHaveLength(2));
+    expect(headsPosted(spy)).toEqual(['abc1234def', 'def5678abc']);
+  });
+
+  it('records nothing while the host cannot say what the head is', async () => {
+    const spy = fetchSpy();
+    show(cockpit({ files: { reason: 'failed', type: 'unavailable' } }));
+    await settle();
+    expect(visitsOf(spy)).toHaveLength(0);
+  });
+
+  it('shows nothing about an earlier visit on a first look', () => {
+    show(cockpit());
+    expect(screen.queryByText('Since you last looked')).toBeNull();
+  });
+
+  it('says what came in since the last visit', () => {
+    show(cockpit({ sinceLastVisit: earlier }));
+    expect(screen.getByText('Since you last looked')).toBeTruthy();
+    expect(screen.getByText(/fix the retry/)).toBeTruthy();
+    expect(screen.getByText('aaaaaaa')).toBeTruthy();
+  });
+
+  it('keeps saying it when a refresh, made after the visit was recorded, comes back without it', async () => {
+    const redraw = mount(cockpit({ sinceLastVisit: earlier }));
+    expect(screen.getByText('Since you last looked')).toBeTruthy();
+    redraw(cockpit({ sinceLastVisit: null }));
+    await settle();
+    expect(screen.getByText('Since you last looked')).toBeTruthy();
+  });
+
+  it('replaces it when the head moves again', () => {
+    const redraw = mount(cockpit({ sinceLastVisit: earlier }));
+    redraw(
+      cockpit({
+        sinceLastVisit: {
+          ...earlier,
+          commits: [{ sha: 'e3e3e3e3e3', subject: 'a later commit' }],
+          fromHeadSha: 'b'.repeat(40),
+        },
+      })
+    );
+    expect(screen.getByText(/a later commit/)).toBeTruthy();
+    expect(screen.queryByText(/fix the retry/)).toBeNull();
+  });
+
+  it('shows no summary while the host cannot say what the head is', () => {
+    show(cockpit({ files: { reason: 'failed', type: 'unavailable' }, sinceLastVisit: earlier }));
+    expect(screen.queryByText('Since you last looked')).toBeNull();
+  });
+
+  it('marks a file whose patch changed since it was viewed, in the list and on the file', () => {
+    show(cockpit({ changedSinceViewed: ['src/a.ts'] }));
+    // The rail's marker for screen readers, and the badge on the file's header.
+    expect(screen.getAllByText('Changed since you viewed it')).toHaveLength(2);
+  });
+
+  it('marks nothing when no viewed file has changed', () => {
+    show(cockpit());
+    expect(screen.queryByText('Changed since you viewed it')).toBeNull();
+  });
+
+  it('stops marking a file once it is marked viewed again', () => {
+    const redraw = mount(cockpit({ changedSinceViewed: ['src/a.ts'] }));
+    expect(screen.getAllByText('Changed since you viewed it')).toHaveLength(2);
+    redraw(cockpit({ changedSinceViewed: ['src/a.ts'], viewed: ['src/a.ts'] }));
+    expect(screen.queryByText('Changed since you viewed it')).toBeNull();
+  });
+});
+
+describe('commenting on a line from the page', () => {
+  const canWrite = {
+    approvalMayNotCount: false,
+    available: true,
+    feedbackLoopEnabled: true,
+    reason: null,
+  };
+  const draft = (over: Record<string, unknown> = {}) => ({
+    body: 'use <=',
+    createdAt: '2026-11-04T10:00:00.000Z',
+    headSha: 'abc1234def',
+    id: 'd-1',
+    line: 2,
+    outdated: false,
+    path: 'src/a.ts',
+    ...over,
+  });
+  const commentButtons = () => screen.queryAllByRole('button', { name: /^Comment on line/ });
+  const draftsUrl = '/api/v1/pull-requests/pr-1/drafts';
+
+  function gateway(extra: Record<string, (body?: unknown) => unknown> = {}) {
+    return setupFetchMock({
+      'POST /api/v1/pull-requests/pr-1/visit': () => ({ data: { recorded: true } }),
+      [`POST ${draftsUrl}`]: () => ({ data: draft({ outdated: undefined }) }),
+      ...extra,
+    });
+  }
+
+  it('offers no comment on a line without a token of the reviewer’s own', () => {
+    gateway();
+    show(cockpit());
+    expect(commentButtons()).toHaveLength(0);
+  });
+
+  it('offers a comment on each added and unchanged line when the reviewer can write', () => {
+    gateway();
+    show(cockpit({ write: canWrite }));
+    expect(commentButtons().map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Comment on line 1',
+      'Comment on line 2',
+      'Comment on line 3',
+    ]);
+  });
+
+  it('offers none once the pull request is no longer open', () => {
+    gateway();
+    show(
+      cockpit({
+        files: {
+          headSha: 'abc1234def',
+          items: [file()],
+          state: 'closed',
+          truncated: false,
+          type: 'ok',
+        },
+        write: canWrite,
+      })
+    );
+    expect(commentButtons()).toHaveLength(0);
+  });
+
+  it('opens a box under the line, and closes it again on cancel without sending anything', () => {
+    const spy = gateway();
+    show(cockpit({ write: canWrite }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on line 2' }));
+    expect(screen.getByRole('textbox', { name: 'Comment on line 2' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('textbox', { name: 'Comment on line 2' })).toBeNull();
+    expect(
+      spy.mock.calls.some(
+        ([url, init]) =>
+          String(url).endsWith('/drafts') && (init as RequestInit | undefined)?.method === 'POST'
+      )
+    ).toBe(false);
+  });
+
+  it('keeps what was written as a draft on this file and line, at the head the page showed', async () => {
+    const spy = gateway();
+    show(cockpit({ write: canWrite }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on line 2' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Comment on line 2' }), {
+      target: { value: 'use <=' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() =>
+      expect(bodyOf(spy, draftsUrl)).toEqual({
+        body: 'use <=',
+        headSha: 'abc1234def',
+        line: 2,
+        patchDigest: DIGEST,
+        path: 'src/a.ts',
+      })
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Comment on line 2' })).toBeNull()
+    );
+  });
+
+  it('cannot save an empty comment', () => {
+    gateway();
+    show(cockpit({ write: canWrite }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on line 2' }));
+    expect((screen.getByRole('button', { name: 'Save draft' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'Comment on line 2' }), {
+      target: { value: '   ' },
+    });
+    expect((screen.getByRole('button', { name: 'Save draft' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+  });
+
+  it('shows the gateway’s reason and keeps the box open when the comment is refused', async () => {
+    const spy = setupFetchMock({
+      'POST /api/v1/pull-requests/pr-1/visit': () => ({ data: { recorded: true } }),
+    });
+    spy.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes('/drafts')
+        ? new Response(
+            JSON.stringify({
+              error: { code: 'REVIEW_TEXT_REFUSED', message: 'Write something first.' },
+            }),
+            { headers: { 'content-type': 'application/json' }, status: 400 }
+          )
+        : new Response(JSON.stringify({ data: { recorded: true } }), {
+            headers: { 'content-type': 'application/json' },
+          })
+    );
+    show(cockpit({ write: canWrite }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on line 2' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Comment on line 2' }), {
+      target: { value: 'x' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    expect(await screen.findByText('Write something first.')).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Comment on line 2' })).toBeTruthy();
+  });
+
+  it('draws a saved draft under its line, as text', () => {
+    gateway();
+    show(cockpit({ drafts: [draft({ body: '<img src=x onerror=alert(1)>' })], write: canWrite }));
+    expect(screen.getByText('Draft comment')).toBeTruthy();
+    expect(document.querySelector('img')).toBeNull();
+    expect(screen.getByText(/<img src=x onerror=alert\(1\)>/)).toBeTruthy();
+  });
+
+  it('draws the draft beside a finding on the same line', () => {
+    gateway();
+    const withNote = withFindings([finding({ line: 2 })]);
+    show({ ...withNote, drafts: [draft()], write: canWrite });
+    expect(screen.getByText(/off by one in the loop/)).toBeTruthy();
+    expect(screen.getByText('Draft comment')).toBeTruthy();
+  });
+
+  it('does not draw a draft on a file that is not in the change', () => {
+    gateway();
+    show(cockpit({ drafts: [draft({ path: 'src/gone.ts' })], write: canWrite }));
+    expect(screen.queryByText('Draft comment')).toBeNull();
+  });
+
+  it('draws an outdated draft in the review panel and not under a line', () => {
+    gateway();
+    show(cockpit({ drafts: [draft({ outdated: true })], write: canWrite }));
+    expect(screen.getAllByText('Draft comment')).toHaveLength(1);
+    expect(screen.getByText('Some drafts no longer fit the diff')).toBeTruthy();
+    expect(screen.getByText('src/a.ts:2')).toBeTruthy();
+  });
+
+  it('changes a draft in place', async () => {
+    const spy = gateway({
+      [`PATCH ${draftsUrl}/d-1`]: () => ({ data: draft({ body: 'better', outdated: undefined }) }),
+    });
+    show(cockpit({ drafts: [draft()], write: canWrite }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const box = screen.getByRole('textbox', { name: 'Draft comment on line 2' });
+    expect((box as HTMLTextAreaElement).value).toBe('use <=');
+    fireEvent.change(box, { target: { value: 'better' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() =>
+      expect(bodyOf(spy, `${draftsUrl}/d-1`, 'PATCH')).toEqual({ body: 'better' })
+    );
+  });
+
+  it('discards a draft', async () => {
+    const spy = gateway({ [`DELETE ${draftsUrl}/d-1`]: () => ({ data: { deleted: true } }) });
+    show(cockpit({ drafts: [draft()], write: canWrite }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() =>
+      expect(
+        spy.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith('/drafts/d-1') &&
+            (init as RequestInit | undefined)?.method === 'DELETE'
+        )
+      ).toBe(true)
+    );
+  });
+
+  it('keeps the other drafts and files as they were while one is being written', () => {
+    gateway();
+    show({
+      ...withFiles([file(), file({ path: 'src/b.ts' })]),
+      drafts: [draft()],
+      write: canWrite,
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Comment on line 2' })[1] as HTMLElement);
+    expect(screen.getAllByText('Draft comment')).toHaveLength(1);
+    expect(screen.getAllByRole('textbox', { name: 'Comment on line 2' })).toHaveLength(1);
   });
 });

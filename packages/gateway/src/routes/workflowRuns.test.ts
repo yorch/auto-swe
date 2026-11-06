@@ -36,6 +36,9 @@ function newMockPrisma() {
     configAuditLog: {
       create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
     },
+    pullRequest: {
+      findFirst: vi.fn().mockResolvedValue(null),
+    },
     runEvidence: {
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
@@ -228,6 +231,57 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().data.traces).toEqual([]);
     expect(prisma.agentTrace.findMany).not.toHaveBeenCalled();
+  });
+
+  describe('the review page of the pull request the run opened', () => {
+    const detail = (app: Awaited<ReturnType<typeof buildApp>>['app']) =>
+      app.inject({ headers: AUTH, method: 'GET', url: `/api/v1/workflow-runs/${runId}` });
+    const whereOf = (prisma: ReturnType<typeof newMockPrisma>) =>
+      prisma.pullRequest.findFirst.mock.calls[0]?.[0].where as Record<string, unknown>;
+
+    it('names the pull request, looked up by the run, newest first, and only one with a number', async () => {
+      const { app, prisma } = await buildApp('ADMIN');
+      mockRun(prisma);
+      prisma.pullRequest.findFirst.mockResolvedValue({ id: 'pr-1' });
+      const res = await detail(app);
+      expect(res.json().data.pullRequestId).toBe('pr-1');
+      expect(whereOf(prisma)).toEqual({ prNumber: { not: null }, runId });
+      expect(prisma.pullRequest.findFirst.mock.calls[0]?.[0].orderBy).toEqual([
+        { openedAt: 'desc' },
+        { id: 'desc' },
+      ]);
+    });
+
+    it('limits an engineer to repositories they can reach, so the link never leads to a 404', async () => {
+      const { app, prisma } = await buildApp('ENGINEER');
+      mockRun(prisma);
+      prisma.pullRequest.findFirst.mockResolvedValue({ id: 'pr-1' });
+      await detail(app);
+      const where = whereOf(prisma);
+      expect(where.runId).toBe(runId);
+      expect(where.repository).toBeDefined();
+    });
+
+    it('applies no repository filter for an admin', async () => {
+      const { app, prisma } = await buildApp('ADMIN');
+      mockRun(prisma);
+      await detail(app);
+      expect(whereOf(prisma)).not.toHaveProperty('repository');
+    });
+
+    it('is null when the run opened no pull request the caller may open', async () => {
+      const { app, prisma } = await buildApp('ENGINEER');
+      mockRun(prisma);
+      const res = await detail(app);
+      expect(res.json().data.pullRequestId).toBeNull();
+    });
+
+    it('is not looked up for a run the caller cannot read', async () => {
+      const { app, prisma } = await buildApp('ENGINEER');
+      const res = await detail(app);
+      expect(res.statusCode).toBe(404);
+      expect(prisma.pullRequest.findFirst).not.toHaveBeenCalled();
+    });
   });
 
   it.each([
@@ -1025,6 +1079,34 @@ describe('workflowRunRoutes with a service principal token', () => {
       id: RUN,
       workRequest: { requestedByServiceId: SP },
     });
+  });
+
+  it('gives a principal no review page, and does not look one up', async () => {
+    const { app, prisma } = await buildServiceApp(['runs:read']);
+    prisma.workflowRun.findFirst.mockResolvedValue({
+      contextSnapshot: null,
+      costUsdAccrued: 0,
+      endedAt: null,
+      id: RUN,
+      startedAt: new Date(),
+      status: 'RUNNING',
+      steps: [],
+      template: { name: 'Some Template' },
+      templateId: 't-1',
+      templateVersion: 1,
+      tokensInputTotal: 0,
+      tokensOutputTotal: 0,
+      workflowId: 'wf-1',
+      workRequest: null,
+    });
+    const res = await app.inject({
+      headers: SERVICE,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${RUN}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.pullRequestId).toBeNull();
+    expect(prisma.pullRequest.findFirst).not.toHaveBeenCalled();
   });
 
   it('refuses traces to a principal, on the run detail and the traces route', async () => {

@@ -1,11 +1,15 @@
 'use client';
 
-import { memo, type ReactNode, useState } from 'react';
+import { type CSSProperties, memo, type ReactNode, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
+import type { LineSyntax } from '@/lib/diffSyntax';
+import { intraLineDiff, type Segment } from '@/lib/intraLineDiff';
+import { composePieces, type SyntaxToken } from '@/lib/linePieces';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { visibleText } from '@/lib/visibleText';
 import type { ParsedDiffLine } from '../approvals/diffParse';
+import { type DiffCell, type DiffRow, pairSideBySide } from './diffRows';
 
 const LINE_CLASS: Record<ParsedDiffLine['kind'], string> = {
   add: 'bg-success-400/10 text-success-400',
@@ -23,29 +27,268 @@ export function diffLineId(anchorId: string, newNo: number): string {
   return `${anchorId}-L${newNo}`;
 }
 
-function DiffLine({ id, line }: { id: string | undefined; line: ParsedDiffLine }) {
+/** The mark on the words an edit changed; the line's own colour shows through the rest. */
+const CHANGED_CLASS = {
+  add: 'rounded-sm bg-success-400/30 text-inherit',
+  del: 'rounded-sm bg-danger-400/30 text-inherit',
+} as const;
+
+/** The left edge of a line that was moved rather than written, and its name for a screen reader. */
+const MOVED_CLASS = 'border-l-2 border-info-400';
+
+/**
+ * The colours of a token as inline custom properties, which `globals.css` turns into the colour
+ * for the viewer's theme. Only hex colours reach here (see `colorOrNull`), and a token with none
+ * draws in the line's own colour.
+ */
+function tokenStyle(token: SyntaxToken): CSSProperties {
+  return {
+    ...(token.dark !== null && { '--syn-dark': token.dark }),
+    ...(token.light !== null && { '--syn-light': token.light }),
+    ...(token.italic && { fontStyle: 'italic' }),
+    ...(token.bold && { fontWeight: 600 }),
+  } as CSSProperties;
+}
+
+/**
+ * A line's text: the words an edit changed are marked and the grammar's colours drawn, whichever of
+ * the two it has. It is repository text throughout: invisible and direction-changing characters are
+ * made visible, and it is never markup. A tab is layout, so `multiline` keeps it.
+ */
+function LineText({
+  kind,
+  segments,
+  text,
+  tokens,
+}: {
+  kind: 'add' | 'del' | 'plain';
+  segments: readonly Segment[] | undefined;
+  text: string;
+  tokens: readonly SyntaxToken[] | undefined;
+}) {
+  const pieces = composePieces(text, tokens, kind === 'plain' ? undefined : segments);
+  const only = pieces[0];
+  if (pieces.length === 1 && only && !only.changed && only.token === null) {
+    return <>{visibleText(text, { multiline: true }) || ' '}</>;
+  }
   return (
-    <div className={cn('flex', LINE_CLASS[line.kind])} id={id}>
+    <>
+      {pieces.map((piece, i) => {
+        const className = cn(
+          piece.token && 'syn',
+          piece.changed && kind !== 'plain' && CHANGED_CLASS[kind]
+        );
+        const style = piece.token ? tokenStyle(piece.token) : undefined;
+        const content = visibleText(piece.text, { multiline: true });
+        return piece.changed ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: pieces are positional
+          <mark className={className} key={i} style={style}>
+            {content}
+          </mark>
+        ) : (
+          // biome-ignore lint/suspicious/noArrayIndexKey: pieces are positional
+          <span className={className || undefined} key={i} style={style}>
+            {content}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+const GUTTER = 'tabular w-10 shrink-0 select-none border-r border-ink-600/60 pr-2 text-right';
+
+/**
+ * The line number of the new side. With a handler, it is a button that starts a comment on that
+ * line; a `+` appears on hover or focus, and the number stays where it is.
+ */
+function NewNumber({
+  no,
+  onComment,
+}: {
+  no: number | null;
+  onComment: ((line: number) => void) | undefined;
+}) {
+  if (no === null || onComment === undefined) {
+    return (
+      <span aria-hidden="true" className={cn(GUTTER, 'text-paper-600')}>
+        {no ?? ''}
+      </span>
+    );
+  }
+  return (
+    <button
+      aria-label={`Comment on line ${no}`}
+      className={cn(
+        GUTTER,
+        FOCUS_RING,
+        'group cursor-pointer text-paper-600 hover:text-accent-400'
+      )}
+      onClick={() => onComment(no)}
+      type="button"
+    >
+      <span
+        aria-hidden="true"
+        className="mr-1 hidden text-accent-400 group-hover:inline group-focus-visible:inline"
+      >
+        +
+      </span>
+      {no}
+    </button>
+  );
+}
+
+function DiffLine({
+  id,
+  line,
+  moved = false,
+  onComment,
+  segments,
+  tokens,
+}: {
+  id: string | undefined;
+  line: ParsedDiffLine;
+  moved?: boolean;
+  onComment?: ((line: number) => void) | undefined;
+  segments?: readonly Segment[] | undefined;
+  tokens?: readonly SyntaxToken[] | undefined;
+}) {
+  const hasMarker = line.kind === 'add' || line.kind === 'del' || line.kind === 'ctx';
+  return (
+    <div className={cn('flex', LINE_CLASS[line.kind], moved && MOVED_CLASS)} id={id}>
+      {moved ? <span className="sr-only">Moved: </span> : null}
       <span
         aria-hidden="true"
         className="tabular w-10 shrink-0 select-none border-r border-ink-600/60 pr-2 text-right text-paper-600"
       >
         {line.oldNo ?? ''}
       </span>
-      <span
-        aria-hidden="true"
-        className="tabular w-10 shrink-0 select-none border-r border-ink-600/60 pr-2 text-right text-paper-600"
-      >
-        {line.newNo ?? ''}
-      </span>
-      {/* Repository text: invisible and direction-changing characters are made visible, and the
-          text is never markup. A tab is layout, so `multiline` keeps it. */}
+      <NewNumber no={line.newNo} onComment={line.kind === 'del' ? undefined : onComment} />
       <span className="whitespace-pre px-2">
-        {visibleText(line.text, { multiline: true }) || ' '}
+        {hasMarker ? (
+          <>
+            {/* The patch's `+`, `-` or space, kept out of the words so it is never marked or coloured. */}
+            {visibleText(line.text.slice(0, 1))}
+            <LineText
+              kind={line.kind === 'ctx' ? 'plain' : (line.kind as 'add' | 'del')}
+              segments={segments}
+              text={line.text.slice(1)}
+              tokens={tokens}
+            />
+          </>
+        ) : (
+          <LineText kind="plain" segments={undefined} text={line.text} tokens={undefined} />
+        )}
       </span>
     </div>
   );
 }
+
+/** One side of a split row. An empty side is drawn as a plain, quiet block. */
+function SplitCell({
+  borderRight,
+  cell,
+  id,
+  moved,
+  onComment,
+  segments,
+  tokens,
+}: {
+  borderRight: boolean;
+  cell: DiffCell | null;
+  id: string | undefined;
+  moved: boolean;
+  onComment?: ((line: number) => void) | undefined;
+  segments: readonly Segment[] | undefined;
+  tokens: readonly SyntaxToken[] | undefined;
+}) {
+  if (cell === null) {
+    return (
+      <div
+        aria-hidden="true"
+        className={cn('bg-ink-900/40', borderRight && 'border-r border-ink-600/60')}
+      />
+    );
+  }
+  return (
+    <div
+      className={cn(
+        'flex min-w-0',
+        LINE_CLASS[cell.kind],
+        borderRight && 'border-r border-ink-600/60',
+        moved && MOVED_CLASS
+      )}
+      id={id}
+    >
+      {moved ? <span className="sr-only">Moved: </span> : null}
+      <NewNumber no={cell.no} onComment={onComment} />
+      {/* Wrapped, not scrolled: two panes that scrolled sideways on their own would drift apart. */}
+      <span className="min-w-0 whitespace-pre-wrap break-words px-2">
+        <LineText
+          kind={cell.kind === 'ctx' ? 'plain' : cell.kind}
+          segments={segments}
+          text={cell.text}
+          tokens={tokens}
+        />
+      </span>
+    </div>
+  );
+}
+
+function SplitRow({
+  anchorId,
+  annotations,
+  edits,
+  moved,
+  onComment,
+  row,
+  syntax,
+}: {
+  anchorId: string | undefined;
+  annotations: ReadonlyMap<number, ReactNode> | undefined;
+  edits: ReadonlyMap<number, readonly Segment[]> | null;
+  moved: ReadonlySet<number> | undefined;
+  onComment: ((line: number) => void) | undefined;
+  row: DiffRow;
+  syntax: LineSyntax | undefined;
+}) {
+  if (row.type === 'full') {
+    return <DiffLine id={undefined} line={row.line} />;
+  }
+  // Notes and links belong to the new side: a removed line has no place there to hang one.
+  const newNo = row.right?.no ?? null;
+  const note = newNo !== null ? annotations?.get(newNo) : undefined;
+  const lineId = anchorId !== undefined && newNo !== null ? diffLineId(anchorId, newNo) : undefined;
+  return (
+    <div>
+      <div className="grid grid-cols-2">
+        <SplitCell
+          borderRight
+          cell={row.left}
+          id={undefined}
+          moved={row.left?.kind === 'del' && moved?.has(row.left.index) === true}
+          segments={row.left ? edits?.get(row.left.index) : undefined}
+          tokens={row.left ? syntax?.get(row.left.index) : undefined}
+        />
+        <SplitCell
+          borderRight={false}
+          cell={row.right}
+          id={lineId}
+          moved={row.right?.kind === 'add' && moved?.has(row.right.index) === true}
+          onComment={onComment}
+          segments={row.right ? edits?.get(row.right.index) : undefined}
+          tokens={row.right ? syntax?.get(row.right.index) : undefined}
+        />
+      </div>
+      {note !== undefined ? (
+        <div className="border-y border-ink-600/60 bg-ink-900 px-3 py-2 font-sans">{note}</div>
+      ) : null}
+    </div>
+  );
+}
+
+/** How a file's lines are laid out: one column as the patch has them, or old beside new. */
+export type DiffMode = 'unified' | 'split';
 
 export type DiffFileProps = {
   /** Removed and added line counts, shown in the header. */
@@ -66,7 +309,47 @@ export type DiffFileProps = {
   headerExtra?: ReactNode;
   /** Rows drawn before "Show more"; only an open file draws any. */
   rowLimit?: number;
+  /** Unified (the default) or split, old beside new. */
+  mode?: DiffMode;
+  /**
+   * The indexes, in `lines`, of the removed and added lines that are part of a block moved from or
+   * to somewhere else in the change. They are marked, not otherwise changed. Keep it stable.
+   */
+  moved?: ReadonlySet<number> | undefined;
+  /**
+   * The grammar's colours for the lines, by the index of the line, once they have been worked out;
+   * absent until then, and for a file whose language is not known. The lines draw plain meanwhile.
+   */
+  syntax?: LineSyntax | null | undefined;
+  /**
+   * Makes the number of every added and unchanged line a button that starts a comment on it; the
+   * argument is the line's number on the new side. Absent, the numbers are plain. Keep it stable.
+   */
+  onLineComment?: ((line: number) => void) | undefined;
 };
+
+/**
+ * The changed words of each edited line pair that is about to be drawn, by the index of the line.
+ * Only pairs within `upTo` lines are compared: a file asked to draw its first screenful does not
+ * pay to compare the rest of a large rewrite.
+ */
+function wordEdits(rows: readonly DiffRow[], upTo: number): Map<number, readonly Segment[]> {
+  const edits = new Map<number, readonly Segment[]>();
+  for (const row of rows) {
+    if (row.type !== 'pair' || row.left?.kind !== 'del' || row.right?.kind !== 'add') {
+      continue;
+    }
+    if (row.right.index >= upTo) {
+      break;
+    }
+    const diff = intraLineDiff(row.left.text, row.right.text);
+    if (diff) {
+      edits.set(row.left.index, diff.removed);
+      edits.set(row.right.index, diff.added);
+    }
+  }
+  return edits;
+}
 
 /**
  * One file of a diff: a header that toggles the body, and the body's lines. A closed file draws no
@@ -79,16 +362,27 @@ function DiffFileImpl({
   annotations,
   headerExtra,
   lines,
+  mode = 'unified',
+  moved,
   name,
+  onLineComment,
   onToggle,
   open,
   previousName,
   removed,
   rowLimit = DEFAULT_ROW_LIMIT,
+  syntax,
 }: DiffFileProps) {
   const [limit, setLimit] = useState(rowLimit);
+  // Paired only while the file is open: a closed file draws, and so computes, nothing. Both layouts
+  // read the pairs, the split one to draw them and the unified one to find the edited words.
+  const paired = useMemo(() => (open ? pairSideBySide(lines) : null), [lines, open]);
+  const edits = useMemo(() => (paired ? wordEdits(paired, limit * 2) : null), [paired, limit]);
+  const rows = mode === 'split' ? paired : null;
+  const total = rows ? rows.length : lines.length;
   const shown = open ? lines.slice(0, limit) : [];
-  const hidden = open ? lines.length - shown.length : 0;
+  const shownRows = rows ? rows.slice(0, limit) : [];
+  const hidden = open ? total - (rows ? shownRows.length : shown.length) : 0;
   return (
     <section
       className="overflow-hidden rounded-lg border border-ink-500/60 bg-ink-950/50"
@@ -126,33 +420,56 @@ function DiffFileImpl({
       </div>
       {open && (
         <div className="overflow-x-auto border-t border-ink-600/60 font-mono text-xs leading-5">
-          <div className="w-max min-w-full py-1">
-            {shown.map((line, n) => {
-              const note = line.newNo !== null ? annotations?.get(line.newNo) : undefined;
-              const lineId =
-                anchorId !== undefined && line.newNo !== null && line.kind !== 'del'
-                  ? diffLineId(anchorId, line.newNo)
-                  : undefined;
-              return (
-                // biome-ignore lint/suspicious/noArrayIndexKey: diff lines are positional
-                <div key={n}>
-                  <DiffLine id={lineId} line={line} />
-                  {note !== undefined && line.kind !== 'del' ? (
-                    <div className="border-y border-ink-600/60 bg-ink-900 px-3 py-2 font-sans">
-                      {note}
+          <div className={cn('py-1', rows ? 'w-full' : 'w-max min-w-full')}>
+            {rows
+              ? shownRows.map((row, n) => (
+                  <SplitRow
+                    anchorId={anchorId}
+                    annotations={annotations}
+                    edits={edits}
+                    // biome-ignore lint/suspicious/noArrayIndexKey: diff rows are positional
+                    key={n}
+                    moved={moved}
+                    onComment={onLineComment}
+                    row={row}
+                    syntax={syntax ?? undefined}
+                  />
+                ))
+              : shown.map((line, n) => {
+                  const note = line.newNo !== null ? annotations?.get(line.newNo) : undefined;
+                  const lineId =
+                    anchorId !== undefined && line.newNo !== null && line.kind !== 'del'
+                      ? diffLineId(anchorId, line.newNo)
+                      : undefined;
+                  return (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: diff lines are positional
+                    <div key={n}>
+                      <DiffLine
+                        id={lineId}
+                        line={line}
+                        moved={moved?.has(n) === true && line.kind !== 'ctx'}
+                        onComment={onLineComment}
+                        segments={edits?.get(n)}
+                        tokens={syntax?.get(n)}
+                      />
+                      {note !== undefined && line.kind !== 'del' ? (
+                        <div className="border-y border-ink-600/60 bg-ink-900 px-3 py-2 font-sans">
+                          {note}
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
-                </div>
-              );
-            })}
+                  );
+                })}
           </div>
           {hidden > 0 && (
             <div className="flex items-center gap-2 border-t border-ink-600/60 px-3 py-2 font-sans">
-              <span className="text-paper-400">{hidden} more lines not drawn.</span>
+              <span className="text-paper-400">
+                {hidden} more {rows ? 'rows' : 'lines'} not drawn.
+              </span>
               <Button onClick={() => setLimit((l) => l + rowLimit)} size="sm" variant="ghost">
                 Show more
               </Button>
-              <Button onClick={() => setLimit(lines.length)} size="sm" variant="ghost">
+              <Button onClick={() => setLimit(total)} size="sm" variant="ghost">
                 Show all
               </Button>
             </div>

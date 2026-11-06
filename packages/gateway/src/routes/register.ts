@@ -36,6 +36,7 @@ import { orgMembersRoutes } from './orgMembers.js';
 import { packageRegistryRoutes } from './packageRegistries.js';
 import { prdRunRoutes } from './prdRuns.js';
 import { prEvaluationRoutes } from './prEvaluation.js';
+import { pullRequestReviewRoutes } from './pullRequestReview.js';
 import { pullRequestRoutes } from './pullRequests.js';
 import { readinessRoutes } from './readiness.js';
 import { repoDependencyRoutes } from './repoDependencies.js';
@@ -83,6 +84,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(scheduledWorkRequestRoutes, { prefix: '/api/v1/scheduled-work-requests' });
   await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });
   await app.register(pullRequestRoutes, { prefix: '/api/v1/pull-requests' });
+  await app.register(pullRequestReviewRoutes, { prefix: '/api/v1/pull-requests' });
   await app.register(ticketRoutes, { prefix: '/api/v1/tickets' });
   await app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
   await app.register(reportsRoutes, { prefix: '/api/v1/reports' });
