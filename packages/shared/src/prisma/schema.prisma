@@ -450,6 +450,8 @@ model PullRequest {
   @@index([mergedAt, runId])
   @@index([closedAt, runId])
   @@index([updatedAt, runId])
+  // A run's detail looks up the pull request it opened.
+  @@index([runId])
   @@map("pull_requests")
 }
 
