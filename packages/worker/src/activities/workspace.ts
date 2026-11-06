@@ -387,8 +387,8 @@ export function killStrayProcessesScript(keeperPid: number): string {
     throw new Error(`invalid keeper pid: ${keeperPid}`);
   }
   return [
-    'asw_mnt=$(readlink "/proc/$$/ns/mnt" 2>/dev/null) || exit 0',
-    '[ -n "$asw_mnt" ] || exit 0',
+    'asw_mnt=$(readlink "/proc/$$/ns/mnt" 2>/dev/null) || asw_mnt=',
+    'if [ -z "$asw_mnt" ]; then echo "stray-process sweep: cannot read own mount namespace" >&2; exit 1; fi',
     'asw_ppid() { sed -n \'s/^PPid:[[:space:]]*//p\' "/proc/$1/status" 2>/dev/null; }',
     'asw_mine() {',
     '  asw_a=$1',
