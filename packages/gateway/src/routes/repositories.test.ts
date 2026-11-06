@@ -891,6 +891,27 @@ describe('repositoryRoutes', () => {
       expect('executorImageBuild' in lastData()).toBe(false);
     });
 
+    it('lets a platform admin store a node-browser executor image build', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        executorImage: null,
+        id: REPO_ID,
+        teamId: TEAM_ID,
+      });
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+
+      const build = { stack: 'node-browser', useRepoDockerfile: false };
+      const res = await patch({
+        executorImage: 'registry.acme.dev/executor-node-browser:latest',
+        executorImageBuild: build,
+      });
+
+      expect(res.statusCode).toBe(200);
+      const update = ctx.mockPrisma.connection.update.mock.calls.at(-1) as unknown as [
+        { data: { executorImageBuild: unknown } },
+      ];
+      expect(update[0].data.executorImageBuild).toEqual(build);
+    });
+
     it('refuses a non-admin setting a build, but allows clearing one', async () => {
       asTeamLead();
       ctx.mockPrisma.connection.findUnique.mockResolvedValue({
