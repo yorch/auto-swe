@@ -118,7 +118,8 @@ function externalAssetViolations(document) {
   return found;
 }
 
-describe('platform explorer source extraction', () => {
+// Each JSDOM render takes well under a second locally but several on a loaded CI runner.
+describe('platform explorer source extraction', { timeout: 20_000 }, () => {
   it('derives complete inventories from the checked-out code, without frozen counts', async () => {
     const schema = await readFile(
       join(REPO_ROOT, 'packages/shared/src/prisma/schema.prisma'),
@@ -346,7 +347,7 @@ app.register(exampleRoutes, { prefix: '/api/v1/example' });`;
   }, 30_000);
 });
 
-describe('public explorer interactions', () => {
+describe('public explorer interactions', { timeout: 20_000 }, () => {
   it('checks rendered publication links and rejects a double-prefixed sidebar route', () => {
     const landing = '<a href="/auto-swe/platform-explorer/">Explorer</a>';
     const explorer = renderExplorer(shell, data);
