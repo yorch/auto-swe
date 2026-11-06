@@ -124,7 +124,7 @@ export { countUnscreenedCasesActivity, screenDatasetCasesActivity } from './eval
 export { runEvalHarnessActivity } from './evalHarness.js';
 export { revalidateDatasetActivity } from './evalRevalidate.js';
 export type { EvaluatePullRequestResult } from './evaluatePullRequest.js';
-export { evaluatePullRequest } from './evaluatePullRequest.js';
+export { evaluatePullRequest, reviewRunStatusForEvaluation } from './evaluatePullRequest.js';
 export { executeImplementation } from './executeImplementation.js';
 // Natural-language workflow authoring — explain an existing WorkflowSpec
 export type {

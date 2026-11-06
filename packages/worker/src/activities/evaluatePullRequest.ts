@@ -66,7 +66,12 @@ import {
 } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 import { logWarn } from '../lib/activityLog.js';
-import { loadBriefEvidence, loadReviewedOutputsSafe } from '../lib/briefEvidence.js';
+import {
+  type LinkedReviewOutputs,
+  loadBriefEvidence,
+  loadLinkedReviewOutputs,
+  loadReviewedOutputsSafe,
+} from '../lib/briefEvidence.js';
 import { postFindingComments } from '../lib/briefFindings.js';
 import { scanDiffForCodeIssuesDetailed } from '../lib/codeSecurityScanner.js';
 import { splitSuccessCriteria } from '../lib/contextAmbiguity.js';
@@ -229,7 +234,8 @@ function isSeverity(value: unknown): value is ReviewSeverity {
  */
 export async function loadMaxReviewSeverity(
   temporalWorkflowId: string,
-  headSha: string
+  headSha: string,
+  linkedReviews?: LinkedReviewOutputs[]
 ): Promise<ReviewSeverity | null> {
   const steps = await prisma.workflowStep.findMany({
     orderBy: { endedAt: 'desc' },
@@ -260,6 +266,17 @@ export async function loadMaxReviewSeverity(
         return null;
       }
       if (max === null || SEVERITY_ORDER[verdict.severity] > SEVERITY_ORDER[max]) {
+        max = verdict.severity;
+      }
+    }
+  }
+  if (max === null) {
+    return null;
+  }
+  for (const review of linkedReviews ??
+    (await loadLinkedReviewOutputs(temporalWorkflowId, headSha))) {
+    for (const verdict of review.verdicts) {
+      if (isSeverity(verdict.severity) && SEVERITY_ORDER[verdict.severity] > SEVERITY_ORDER[max]) {
         max = verdict.severity;
       }
     }
@@ -444,6 +461,14 @@ export async function evaluatePullRequest(
     scan: scanDiffForCodeIssuesDetailed,
     scm: getScmProvider(),
   });
+}
+
+export async function reviewRunStatusForEvaluation(runId: string): Promise<string | null> {
+  const run = await prisma.workflowRun.findUnique({
+    select: { status: true },
+    where: { id: runId },
+  });
+  return run?.status ?? null;
 }
 
 function reasonCodes(reasons: unknown): string[] {
@@ -1271,7 +1296,16 @@ export async function evaluatePullRequestWith(
       errors.push('code security scan failed');
     }
 
-    const maxReviewSeverity = await loadMaxReviewSeverity(temporalWorkflowId, pr.headSha);
+    const linkedReviews = await loadLinkedReviewOutputs(
+      temporalWorkflowId,
+      pr.headSha,
+      platformPr.runId
+    );
+    const maxReviewSeverity = await loadMaxReviewSeverity(
+      temporalWorkflowId,
+      pr.headSha,
+      linkedReviews
+    );
 
     const signals: EvaluationSignals = {
       draft: pr.draft,
@@ -1517,6 +1551,7 @@ export async function evaluatePullRequestWith(
     const reviewed = await loadReviewedOutputsSafe({
       connectionId: connection.id,
       headSha: pr.headSha,
+      linkedReviews,
       prNumber: input.prNumber,
       temporalWorkflowId,
     });

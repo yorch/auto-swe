@@ -11,17 +11,41 @@ import {
   loadChangeForReviewWith,
   type PublishReviewDeps,
   publishReviewResultWith,
+  requestReviewReevaluation,
 } from './codeReview.js';
 import type { Workspace } from './workspace.js';
 
-const db = vi.hoisted(() => ({ source: vi.fn() }));
+const db = vi.hoisted(() => ({ source: vi.fn(), start: vi.fn() }));
 vi.mock('@auto-swe/shared/db', () => ({ prisma: { workflowRun: { findUnique: db.source } } }));
+vi.mock('../lib/temporalClient.js', () => ({
+  getTemporalClient: () => ({ workflow: { start: db.start } }),
+}));
 
 const REPO = '11111111-1111-4111-8111-111111111111';
 const SOURCE = '22222222-2222-4222-8222-222222222222';
 const HEAD = 'a'.repeat(40);
 const BASE = 'b'.repeat(40);
 const DIFF = 'diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-old\n+new\n';
+it('starts a fresh reevaluation of the same PR with the publishing run identity', async () => {
+  db.start.mockClear();
+  const payload = {
+    connectionId: REPO,
+    onBlocking: 'report' as const,
+    reviewOf: { mode: 'pr' as const, prNumber: 7 },
+    sourceRunId: SOURCE,
+  };
+  await requestReviewReevaluation(payload, SOURCE);
+  await requestReviewReevaluation(payload, SOURCE);
+  expect(db.start).toHaveBeenCalledWith(
+    'prEvaluationWorkflow',
+    expect.objectContaining({
+      args: [{ connectionId: REPO, prNumber: 7, reviewRunId: SOURCE, trigger: 'review_run' }],
+      taskQueue: 'engineering-workflow',
+    })
+  );
+  const ids = db.start.mock.calls.map((call) => (call[1] as { workflowId: string }).workflowId);
+  expect(new Set(ids).size).toBe(2);
+});
 const repo = {
   defaultBranch: 'main',
   detectedStack: null,

@@ -270,6 +270,31 @@ export interface PublishReviewDeps {
   requestReviewFix: (payload: ReviewRunPayload, summary: ReviewSummary) => Promise<void>;
 }
 
+export async function requestReviewReevaluation(
+  payload: ReviewRunPayload,
+  runId: string
+): Promise<void> {
+  if (payload.reviewOf.mode !== 'pr') {
+    return;
+  }
+  await getTemporalClient().workflow.start(PR_EVALUATION_WORKFLOW_TYPE, {
+    args: [
+      {
+        connectionId: payload.connectionId,
+        prNumber: payload.reviewOf.prNumber,
+        reviewRunId: runId,
+        trigger: 'review_run',
+      },
+    ],
+    taskQueue: 'engineering-workflow',
+    workflowId: prEvaluationWorkflowId(
+      payload.connectionId,
+      payload.reviewOf.prNumber,
+      `${randomBytes(4).toString('hex')}${runId}`
+    ),
+  });
+}
+
 export async function requestReviewFix(
   _payload: ReviewRunPayload,
   _summary: ReviewSummary
@@ -400,26 +425,7 @@ export async function publishReviewResult(input: PublishReviewInput): Promise<Re
         input,
         {
           loadRepo,
-          reevaluate: async (payload, runId) => {
-            if (payload.reviewOf.mode !== 'pr') {
-              return;
-            }
-            await getTemporalClient().workflow.start(PR_EVALUATION_WORKFLOW_TYPE, {
-              args: [
-                {
-                  connectionId: payload.connectionId,
-                  prNumber: payload.reviewOf.prNumber,
-                  trigger: 'review_run',
-                },
-              ],
-              taskQueue: 'engineering-workflow',
-              workflowId: prEvaluationWorkflowId(
-                payload.connectionId,
-                payload.reviewOf.prNumber,
-                `${randomBytes(4).toString('hex')}${runId}`
-              ),
-            });
-          },
+          reevaluate: requestReviewReevaluation,
           requestReviewFix,
           runId: currentWorkflowRunId,
           scm: getScmProvider,
