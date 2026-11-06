@@ -156,6 +156,7 @@ dropped.
 - `stop()` also stops orphaned processes in the workspace mount namespace whose start time is at
   or after the preview starts and whose parent chain reaches PID 1. This includes an orphaned
   process from any command started after the preview, not only one started by the preview command.
+  The sweep runs only when `stop()` executes inside a workspace exec session.
 - A worker that dies between writing an artifact and creating its `RunEvidence` row leaves a ready
   `ui.*` artifact that no evidence row points at. The daily transcript sweep deletes those, and a
   pending write, after a day; until then the object is stored but unreachable from any run.

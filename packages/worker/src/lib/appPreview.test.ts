@@ -136,9 +136,7 @@ describe('startAppPreview', () => {
       let group = 0;
       let mark = '';
       try {
-        const command =
-          `env -i PATH="$PATH" setsid sh -c 'echo $$ >${daemonPidFile}; exec sleep 300' ` +
-          '>/dev/null 2>&1 & sleep 300';
+        const command = `setsid sh -c 'echo $$ >${daemonPidFile}; exec sleep 300' >/dev/null 2>&1 & sleep 300`;
         execFileSync(process.execPath, [
           '-e',
           APP_PREVIEW_LAUNCHER,
@@ -181,6 +179,66 @@ describe('startAppPreview', () => {
     }
   );
 
+  it.skipIf(process.platform !== 'linux')(
+    'leaves an unrelated host orphan started after the preview alive',
+    async () => {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'asw-preview-host-sweep-'));
+      const pgidFile = path.join(dir, 'preview.pgid');
+      const markFile = `${pgidFile}.mark`;
+      const sinceFile = `${pgidFile}.since`;
+      const daemonPidFile = path.join(dir, 'unrelated.pid');
+      const logFile = path.join(dir, 'preview.log');
+      let group = 0;
+      let daemonPid = 0;
+      let mark = '';
+      try {
+        execFileSync(process.execPath, [
+          '-e',
+          APP_PREVIEW_LAUNCHER,
+          'sleep 300',
+          pgidFile,
+          logFile,
+          markFile,
+          sinceFile,
+        ]);
+        group = Number(await fs.readFile(pgidFile, 'utf8'));
+        mark = await fs.readFile(markFile, 'utf8');
+        const command = `setsid sh -c 'echo $$ >${daemonPidFile}; exec sleep 300' >/dev/null 2>&1 &`;
+        execFileSync('sh', ['-c', command]);
+        daemonPid = Number(await waitForFile(daemonPidFile));
+
+        const since = Number(await fs.readFile(sinceFile, 'utf8'));
+        const daemon = processStat(daemonPid);
+        expect(daemon).toMatchObject({ ppid: 1 });
+        expect(daemon?.pgrp).not.toBe(group);
+        expect(daemon?.startTime).toBeGreaterThanOrEqual(since);
+        expect(markedProcesses(mark)).not.toContain(daemonPid);
+
+        execFileSync(process.execPath, ['-e', previewStopScript(pgidFile, markFile, sinceFile)]);
+
+        expect(processStat(daemonPid)?.state).not.toBeUndefined();
+        expect(processStat(daemonPid)?.state).not.toBe('Z');
+      } finally {
+        if (daemonPid > 1) {
+          try {
+            process.kill(daemonPid, 'SIGKILL');
+          } catch {
+            // Already gone.
+          }
+          await waitForProcessGone(daemonPid);
+        }
+        if (group > 1 && groupAlive(group)) {
+          try {
+            process.kill(-group, 'SIGKILL');
+          } catch {
+            // Already gone.
+          }
+        }
+        await fs.rm(dir, { force: true, recursive: true });
+      }
+    }
+  );
+
   it('exposes the typed readiness error', () => {
     expect(new PreviewNotReadyError('not ready', 'log')).toMatchObject({
       logTail: 'log',
@@ -195,6 +253,29 @@ function groupAlive(pgid: number): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function processStat(pid: number): {
+  pgrp: number;
+  ppid: number;
+  startTime: number;
+  state: string;
+} | null {
+  try {
+    const stat = fsSync.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat
+      .slice(stat.lastIndexOf(')') + 2)
+      .trim()
+      .split(/\s+/);
+    return {
+      pgrp: Number(fields[2]),
+      ppid: Number(fields[1]),
+      startTime: Number(fields[19]),
+      state: fields[0] ?? '',
+    };
+  } catch {
+    return null;
   }
 }
 
