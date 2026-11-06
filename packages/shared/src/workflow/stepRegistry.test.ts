@@ -9,6 +9,16 @@ import {
 } from './stepRegistry.js';
 
 describe('stepRegistry', () => {
+  it('describes stored verification and opt-in tests without promising a published review commit', () => {
+    const { description } = getStepMetadata('loadChangeForReview');
+    expect(description).toContain('safely reapply a stored diff at its recorded base');
+    expect(description).toContain('local-only commit');
+    expect(description).toContain('cannot be verified remain explicitly unverified');
+    expect(description).toContain('review preset enables runTests');
+    expect(description).toContain('never push');
+    expect(description).not.toContain('Never runs tests');
+  });
+
   it('offers knowledge bases on workspace agent steps and text-only decomposition, enabled by default', () => {
     for (const step of [
       'executeImplementation',
