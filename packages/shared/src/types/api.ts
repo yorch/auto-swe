@@ -1613,6 +1613,25 @@ export interface PullRequestCockpitDraft {
   outdated: boolean;
 }
 
+/** Whether the caller can send reviews and comments from the page, as themselves. */
+export interface PullRequestCockpitWrite {
+  /** They have a saved token for this repository that may be used now. */
+  available: boolean;
+  /**
+   * Why not, when not. `disabled`: saved tokens are off on this platform. `no-token`: none saved for
+   * this repository. `unusable`: one is saved but may not be used now. `unreadable`: it cannot be
+   * decrypted.
+   */
+  reason: 'disabled' | 'no-token' | 'unreadable' | 'unusable' | null;
+  /**
+   * They launched a run of this work or requested it, so the platform sets their approval aside; the
+   * host may still show it. Known only for the latest run and the requester.
+   */
+  approvalMayNotCount: boolean;
+  /** Sending back starts a run only while feedback automations are on for the repository. */
+  feedbackLoopEnabled: boolean;
+}
+
 /** Response data of GET /api/v1/pull-requests/:id/cockpit. */
 export interface PullRequestCockpit {
   pull: PullRequestListItem & { headSha: string };
@@ -1621,6 +1640,8 @@ export interface PullRequestCockpit {
   files: PullRequestCockpitFiles;
   /** Paths of the files the caller marked viewed and whose patch has not changed since. */
   viewed: string[];
+  /** What the caller can do from the page beyond reading it. */
+  write: PullRequestCockpitWrite;
   /** Paths the caller marked viewed whose patch has changed since the mark. */
   changedSinceViewed: string[];
   /** The caller's own unsent line comments, oldest first. */
