@@ -2760,7 +2760,7 @@
     {
       "body": "Review a finished workflow or agent run manually or through attached presets, with separate results and optional guarded fix rounds.",
       "category": "Engineering",
-      "detail": "Review-kind library templates provide network, Qodo and human-review variants. Manual launch checks source-run control and repository access; launch preparation checks review.enabled and template/preset scope. Global presets are platform-admin managed; team presets require that team's lead/admin membership and cannot be attached or launched across teams. The source-run picker exposes globals plus that source's team. Successful non-review runs enqueue independent global and team attachment intents, dispatched with durable claims and a stale-intent sweep, with bounded attempts rather than indefinite retries. PR and branch reviews verify recorded heads; stored diffs are checked and applied at the recorded base into a local-only commit. Optional runTests runs the repository's test gate on a verified checkout. Large changes are reviewed in bounded chunks inside one network step, merging worst-of verdicts and deduplicated findings. The run page links reviews and shows verification, verdicts and fix status. PR-mode publication posts a marked comment and requests reevaluation; successful PR/branch linked reviews with a matching head and no explicit unverified flag can supply otherwise missing PR review evidence, but cannot lower original evidence. PR fixes use an opted-in review_findings feedback automation and its existing guards; stored fixes launch a same-agent deliver:none follow-up. Transient failures can be retried with distinct, deduplicated attempts and DB-backed findings.",
+      "detail": "Review-kind library templates provide network, Qodo and human-review variants. Manual launch checks source-run control and repository access; launch preparation checks review.enabled and template/preset scope. Global presets are platform-admin managed; non-platform-admin preset management requires both a platform LEAD-or-higher role and LEAD-or-higher membership in the selected team. Team presets cannot be attached or launched across teams. The source-run picker exposes globals plus that source's team. Successful non-review runs enqueue independent global and team attachment intents, dispatched with durable claims and a stale-intent sweep, with bounded attempts rather than indefinite retries. PR and branch reviews verify recorded heads; stored diffs are checked and applied at the recorded base into a local-only commit. Optional runTests runs the repository's test gate on a verified checkout. Large changes are reviewed in bounded chunks inside one network step, merging worst-of verdicts and deduplicated findings. The run page links reviews and shows verification, verdicts and fix status. PR-mode publication posts a marked comment and requests reevaluation; successful PR/branch linked reviews with a matching head and no explicit unverified flag can supply otherwise missing PR review evidence, but cannot lower original evidence. PR fixes use an opted-in review_findings feedback automation and its existing guards; stored fixes launch a same-agent deliver:none follow-up. Transient failures can be retried with distinct, deduplicated attempts and DB-backed findings.",
       "id": "postRunReview",
       "refs": [
         "postRunLaunch",
@@ -2772,7 +2772,8 @@
         "postRunFix",
         "postRunStoredFix",
         "postRunUI",
-        "postRunScope"
+        "postRunScope",
+        "reviewPresetManagementScope"
       ],
       "status": "Implemented + seeded templates",
       "title": "Code review after a run"
@@ -3362,7 +3363,7 @@
     {
       "body": "Scope resources by organization/team, share repositories with teams and apply role-based permissions.",
       "category": "Governance",
-      "detail": "Repository reachability combines ownership/sharing with optional host-permission checks. Per-user credentials are bound to their verified origins and the current run launcher. Query guards supplement route-specific authorization. A repository on another approved GitHub host is reached only with that host’s own credentials or the launcher’s own token, never the instance’s; with neither, the run is refused (see per-host GitHub credentials). A team’s own page also lists the repositories shared with it (sharedRepositories on GET /teams/:id), read-only, active rows only, and under an enforcing repo-access gate only those the caller’s own GitHub permission reaches; a platform ADMIN is not gated. A non-admin onboarding a repository, or moving it to another host, must hold at least read access on GitHub through their own verified login, asked live and failing closed (no access and no such repository answer alike). Only a platform ADMIN may name a repository’s executor image, because it holds the run’s GitHub credential; and a connection whose destination (base URL, tracker provider, Zendesk subdomain) changes while its stored token is kept is refused with 409 TOKEN_ORIGIN_CHANGE. An organization admin’s invitee waits for platform approval unless a platform ADMIN has marked the organization’s invites trusted.",
+      "detail": "Repository reachability combines ownership/sharing with optional host-permission checks. Per-user credentials are bound to their verified origins and the current run launcher. Query guards supplement route-specific authorization; they detect missing tenant predicates on selected multi-row ORM calls, not whether a predicate names a team the caller may access. ReviewPreset and knowledge-base models participate in that guard. A repository on another approved GitHub host is reached only with that host’s own credentials or the launcher’s own token, never the instance’s; with neither, the run is refused (see per-host GitHub credentials). A team’s own page also lists the repositories shared with it (sharedRepositories on GET /teams/:id), read-only, active rows only, and under an enforcing repo-access gate only those the caller’s own GitHub permission reaches; a platform ADMIN is not gated. A non-admin onboarding a repository, or moving it to another host, must hold at least read access on GitHub through their own verified login, asked live and failing closed (no access and no such repository answer alike). Only a platform ADMIN may name a repository’s executor image, because it holds the run’s GitHub credential; and a connection whose destination (base URL, tracker provider, Zendesk subdomain) changes while its stored token is kept is refused with 409 TOKEN_ORIGIN_CHANGE. An organization admin’s invitee waits for platform approval unless a platform ADMIN has marked the organization’s invites trusted.",
       "id": "tenancy",
       "refs": [
         "tenant",
@@ -3374,7 +3375,8 @@
         "onboardingAccess",
         "executorImageAdmin",
         "credentialMoveRefused",
-        "trustedInvites"
+        "trustedInvites",
+        "tenantPredicateShape"
       ],
       "status": "Implemented",
       "title": "Organizations, teams & repository access"
@@ -3925,7 +3927,7 @@
     {
       "body": "A repository’s team can attach rules that start a template when a signed GitHub delivery matches (a failed Actions run, a label added to an issue or to a pull request, review feedback on a pull request, commits pushed to a branch) or when a Jira filter the gateway polls shows a new ticket or a status change; a team can attach rules to signed events posted to its own endpoints.",
       "category": "Operations",
-      "detail": "An Automation row holds the when (an event source and its filters), the what (a template and its options) and the limits (a cooldown, 30 minutes by default, and a daily cap, 10 runs by default). An automation belongs to a repository, or, for a source that targets a team, to a team. The sources are inbound.event (team-owned; see the inbound events card), github.workflow_run.failed (a completed, failed or timed-out run of a push, pull-request or scheduled workflow, from a branch of the repository itself, never a fork) and github.issues.labeled (a person labelling an open issue; bots, Apps and pull requests are ignored before any query), github.pull_request.labeled (a person labelling an open pull request of the repository itself, never a fork; its default template is ticket-to-merge, and its title and body are untrusted text written by whoever opened it), github.push (a person pushing commits to a branch the automation names, optionally narrowed by changed-file globs; it has no default template, so the automation must name one, and the head commit message is untrusted text), github.pull_request.feedback (a review requesting changes or a /auto-swe fix command from a member of the repository, or an allowlisted Qodo review; see the Qodo cards), and the two polled sources jira.filter.new_issue and jira.filter.status_changed, which decide what a poll of Jira returns rather than a delivery (see the Jira filter card). A signed webhook is normalized into an occurrence and handed to an engine that decides from the delivery alone, without calling the host (Temporal is asked only to confirm an in-flight run). A push reaches the gateway for every repository whose webhook or App subscribes to Push, and one to a repository with no push automation is answered after a repository lookup, before any automation decision or settings read. It takes the first matching enabled automation (oldest repository row, then oldest automation), so one occurrence starts at most one run however many rows match. Before the limits, the source’s own ignore rule applies (the platform’s own work branches never react, and a push source never selects a branch under the work-branch prefix whatever its branch patterns say), the per-team or per-organization kill switch must be on (github.ciFailureTriggersEnabled is on by default; github.issueLabelAutomationsEnabled, github.prLabelAutomationsEnabled, github.pushAutomationsEnabled, github.prFeedbackAutomationsEnabled and workflow.jiraPollAutomationsEnabled are off), a source precondition holds (a pull-request failure needs an open pull request), a source that acts for a person finds one, the organization is within its monthly budget, and the automation’s template (its own, or the source’s built-in default) is active and one its source can start. The limits are then judged under an advisory lock on the decision’s owner (a repository, or a team’s endpoint) across that owner’s whole ledger: not a commit the platform itself produced (for a push source, a commit a CI-fix or pull-request-feedback run pushed onto a person’s own pull-request branch counts as that output), not a subject (a commit, an issue, one labelling of a pull request) that already started a run, not inside the cooldown for its scope (a branch, an issue, a pull request), no earlier run for that scope, started within the source’s lookback (36 hours for CI, 14 days for issue labels, pull-request labels, pushes and Jira tickets, where the two Jira sources count as one, 24 hours for pull-request feedback and inbound events), still open (the ledger row is confirmed against Temporal, and a Temporal that cannot answer counts as running), and the automation’s rolling 24-hour cap. Each decision is one AutomationFire row: STARTED, a SUPPRESSED_* outcome or FAILED_TO_START. The workflow start is tried three times; if it never lands, the row becomes FAILED_TO_START and the delivery answers 503 so it can be sent again (a Jira poll instead stops and leaves the issue unseen for its next poll), and a redelivery or a manager’s retry takes a FAILED_TO_START decision again. A manager can retry any decision that started no run; every limit applies again and the earlier row stays, marked retried. One builder makes a run’s options at save time and at fire time and checks them against the template’s input schema; a fire also decides every connection those options declare with the owning team’s reach and re-runs the source’s template check, so a template retyped after the save cannot let an event choose a connection. Saving an enabled automation, or enabling one, is a launch decision for the saver; managing needs ADMIN, or a LEAD or ADMIN member of the owning team, and reading needs repository membership, a shared team included, and, under an enforcing access gate, a current host permission.",
+      "detail": "An Automation row holds the when (an event source and its filters), the what (a template and its options) and the limits (a cooldown, 30 minutes by default, and a daily cap, 10 runs by default). An automation belongs to a repository, or, for a source that targets a team, to a team. The sources are inbound.event (team-owned; see the inbound events card), github.workflow_run.failed (a completed, failed or timed-out run of a push, pull-request or scheduled workflow, from a branch of the repository itself, never a fork) and github.issues.labeled (a person labelling an open issue; bots, Apps and pull requests are ignored before any query), github.pull_request.labeled (a person labelling an open pull request of the repository itself, never a fork; its default template is ticket-to-merge, and its title and body are untrusted text written by whoever opened it), github.push (a person pushing commits to a branch the automation names, optionally narrowed by changed-file globs; it has no default template, so the automation must name one, and the head commit message is untrusted text), github.pull_request.feedback (a review requesting changes or a /auto-swe fix command from a member of the repository, an allowlisted Qodo review, or explicit DB-backed review_findings from a blocking review run; see the review cards), and the two polled sources jira.filter.new_issue and jira.filter.status_changed, which decide what a poll of Jira returns rather than a delivery (see the Jira filter card). A signed webhook is normalized into an occurrence. Event text comes from those facts, but a person's actor check can make a live host-permission lookup when the repository access gate is enabled; feedback enrichment may also reread the host. Temporal confirms potentially in-flight runs. A push reaches the gateway for every repository whose webhook or App subscribes to Push, and one to a repository with no push automation skips the engine's settings and decisions after a repository lookup; independent knowledge-base push synchronization may still run. It takes the first matching enabled automation (oldest repository row, then oldest automation), so one occurrence starts at most one run however many rows match. Before the limits, the source’s own ignore rule applies (the platform’s own work branches never react, and a push source never selects a branch under the work-branch prefix whatever its branch patterns say), the per-team or per-organization kill switch must be on (github.ciFailureTriggersEnabled is on by default; github.issueLabelAutomationsEnabled, github.prLabelAutomationsEnabled, github.pushAutomationsEnabled, github.prFeedbackAutomationsEnabled and workflow.jiraPollAutomationsEnabled are off), a source precondition holds (a pull-request failure needs an open pull request), a source that acts for a person finds one, the organization is within its monthly budget, and the automation’s template (its own, or the source’s built-in default) is active and one its source can start. The limits are then judged under an advisory lock on the decision’s owner (a repository, or a team’s endpoint) across that owner’s whole ledger: not a commit the platform itself produced (for a push source, a commit a CI-fix or pull-request-feedback run pushed onto a person’s own pull-request branch counts as that output), not a subject (a commit, an issue, one labelling of a pull request) that already started a run, not inside the cooldown for its scope (a branch, an issue, a pull request), no earlier run for that scope, started within the source’s lookback (36 hours for CI, 14 days for issue labels, pull-request labels, pushes and Jira tickets, where the two Jira sources count as one, 24 hours for pull-request feedback and inbound events), still open (the ledger row is confirmed against Temporal, and a Temporal that cannot answer counts as running), and the automation’s rolling 24-hour cap. Each decision is one AutomationFire row: STARTED, a SUPPRESSED_* outcome or FAILED_TO_START. The workflow start is tried three times; if it never lands, the row becomes FAILED_TO_START and the delivery answers 503 so it can be sent again (a Jira poll instead stops and leaves the issue unseen for its next poll), and a redelivery or a manager’s retry takes a FAILED_TO_START decision again. A manager can retry ordinary event decisions that started no run; every limit applies again and the earlier row stays, marked retried. Review-findings fixes instead take the review-specific retry path: only eligible transient decisions can be retried, with fresh attempt identities, findings reread from the review run and the same push guards. One builder makes a run’s options at save time and at fire time and checks them against the template’s input schema; a fire also decides every connection those options declare with the owning team’s reach and re-runs the source’s template check, so a template retyped after the save cannot let an event choose a connection. Saving an enabled automation, or enabling one, is a launch decision for the saver; managing needs ADMIN, or a LEAD or ADMIN member of the owning team, and reading needs repository membership, a shared team included, and, under an enforcing access gate, a current host permission.",
       "id": "eventAutomations",
       "refs": [
         "automationEngine",
@@ -3954,7 +3956,9 @@
         "pushOwnOutput",
         "settingPrLabels",
         "settingPushAutomations",
-        "pushDeliveryRoute"
+        "pushDeliveryRoute",
+        "actorLaunchDecisionChain",
+        "actorLivePermission"
       ],
       "status": "Implemented",
       "title": "Event automations start runs from GitHub events, signed inbound events and polled Jira filters"
@@ -4442,6 +4446,37 @@
     }
   ],
   "limits": [
+    {
+      "body": "PR-label and push automations turn event text into work; their recorded branch and commit are not automatically a review target or checkout pin.",
+      "category": "Automation",
+      "detail": "The PR-label source creates a synthetic ticket from the label occurrence and describes the pull request's title, body and refs. Its default ticket-to-merge template is not the PR-feedback push path. The push source similarly describes the pushed commits and supplies no extra event-derived template fields. Both use the shared payload builder, which combines template defaults, saved automation options and the source's explicit fields; it does not automatically turn an event head into baseBranch or reviewOf. The chosen template and configured options determine the work. A label or push therefore does not promise a review of that exact head or a fix on the existing PR branch. Push path filtering sees only the bounded webhook file list; a truncated list with no matching file is a non-match, not permission to assume omitted paths matched.",
+      "id": "automationEventContext",
+      "refs": [
+        "prLabelNormalize",
+        "prLabelTaskContext",
+        "pushNormalize",
+        "pushOwnOutput",
+        "automationPayloadBuild",
+        "pushSourceIgnore"
+      ],
+      "status": "Confirmed boundary",
+      "title": "An event reference is not an exact-head execution contract"
+    },
+    {
+      "body": "The tenant query guard detects missing filters; it does not establish a caller's authority or provide database row-level security.",
+      "category": "Governance",
+      "detail": "The ORM extension checks an allowlist of tenant-scoped models and multi-row operations for a structurally narrowing predicate. It does not inject the caller's tenant or check that a supplied team id belongs to them. Single-row findUnique/findFirst operations are outside the guard, raw SQL bypasses it, and intentional runUnscoped regions exempt named models. Warning mode logs and permits a violation. Route-specific role, membership and ownership checks remain necessary. Review-preset management illustrates the distinction: global scope requires platform ADMIN; a non-admin managing a selected team needs both platform LEAD-or-higher and that team's LEAD-or-higher membership. Assistant confirm policy is another layer, not a replacement for those checks.",
+      "id": "tenantPredicateBounds",
+      "refs": [
+        "tenant",
+        "tenantPredicateShape",
+        "tenantMassOperations",
+        "reviewPresetManagementScope",
+        "assistantPolicyTable"
+      ],
+      "status": "Confirmed boundary",
+      "title": "A tenant-shaped query is not an authorization decision"
+    },
     {
       "body": "Automatic review intents have bounded recovery; a recorded start or queued retry is not proof that a worker consumed it.",
       "category": "Reliability",
@@ -5122,7 +5157,7 @@
     {
       "body": "The saver passes a launch decision when an enabled automation is saved or enabled; when it fires, nothing re-checks the saver.",
       "category": "Governance",
-      "detail": "A fire checks the repository, the kill switch, the organization’s monthly budget, the limits and the connections its options declare (with the owning team’s reach), not the saver’s continued access or role. The run carries no launchedById and uses the platform credential. Four sources are the exception, in attribution only: for an issue label or a pull-request label the person who added it, for a push the person who pushed, and for pull-request feedback the reviewer or commenter behind a changes-requested review or a fix command, must be an active platform user whose linked GitHub account matches, a member of the repository, and pass the launch decision at that moment; that user is recorded as requestedById and the run still acts as the platform. A Qodo-triggered feedback round has no person behind it, so it makes no such check and records no requester. For labels the check matters because an issue form adds labels on behalf of whoever opens the issue, so the label alone says nothing about who asked.",
+      "detail": "A fire checks the repository, the kill switch, the organization’s monthly budget, the limits and the connections its options declare (with the owning team’s reach), not the saver’s continued access or role. The run carries no launchedById and uses the platform credential. Person-triggered sources check the event actor rather than the saver: for an issue label or a pull-request label the person who added it, for a push the person who pushed, and for pull-request feedback the reviewer or commenter behind a changes-requested review or a fix command, must be an active platform user whose linked GitHub account matches, a member of the repository, and pass the launch decision at that moment; that user is recorded as requestedById and the run still acts as the platform. Qodo-triggered feedback and PR review-findings fixes have no human trigger actor, so they do not perform that requester check. A review-findings fix instead binds to the successful blocking review's database output and unchanged PR head. For labels the check matters because an issue form adds labels on behalf of whoever opens the issue, so the label alone says nothing about who asked.",
       "id": "automationSavedByNotRechecked",
       "refs": ["automationSave", "automationActor", "automationEngine", "prFeedbackActor"],
       "status": "Confirmed boundary",
@@ -6098,6 +6133,55 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "run: (x) => ({",
+      "id": "prLabelTaskContext",
+      "lines": 18,
+      "path": "packages/shared/src/automation/sources/prLabeled.ts",
+      "title": "PR labels supply descriptive work and a synthetic ticket, not checkout fields"
+    },
+    {
+      "anchor": "export function buildAutomationPayload<F, X>(",
+      "id": "automationPayloadBuild",
+      "lines": 58,
+      "path": "packages/shared/src/automation/inputs.ts",
+      "title": "Automation payloads combine explicit options, defaults and source fields"
+    },
+    {
+      "anchor": "export function hasTenantPredicate(where:",
+      "id": "tenantPredicateShape",
+      "lines": 38,
+      "path": "packages/shared/src/lib/tenantGuard.ts",
+      "title": "Tenant predicate detection checks query shape, not caller membership"
+    },
+    {
+      "anchor": "export const GUARDED_OPERATIONS = new Set([",
+      "id": "tenantMassOperations",
+      "lines": 12,
+      "path": "packages/shared/src/lib/tenantGuard.ts",
+      "title": "Only selected multi-row ORM operations take the tenant guard"
+    },
+    {
+      "anchor": "async function scopeFor(request:",
+      "id": "reviewPresetManagementScope",
+      "lines": 29,
+      "path": "packages/gateway/src/routes/codeReview.ts",
+      "title": "Preset management distinguishes platform ADMIN and two-layer team LEAD checks"
+    },
+    {
+      "anchor": "export async function decideRepoLaunch(",
+      "id": "actorLivePermission",
+      "lines": 90,
+      "path": "packages/shared/src/lib/repoAccessGate.ts",
+      "title": "An enabled access gate can perform a live host-permission lookup"
+    },
+    {
+      "anchor": "export async function authorizeLaunch(",
+      "id": "actorLaunchDecisionChain",
+      "lines": 46,
+      "path": "packages/gateway/src/lib/launchAuthorization.ts",
+      "title": "Actor launch checks call the repository access decision"
+    },
     {
       "anchor": "const endedWith = endedStatus(ended);",
       "before": 7,
