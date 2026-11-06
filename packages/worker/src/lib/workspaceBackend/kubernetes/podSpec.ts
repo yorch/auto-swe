@@ -165,6 +165,8 @@ export function buildWorkspaceSecret(
  *    privilege escalation off, the runtime-default seccomp profile;
  *  - requests equal limits (Guaranteed QoS), so a running agent is not the
  *    first thing evicted under node pressure;
+ *  - `workingDir` is the mounted volume, so the runtime does not create the
+ *    image's `WORKDIR` inside the `emptyDir` as root;
  *  - the GCP metadata hostnames resolve to 0.0.0.0, as the Docker
  *    `--add-host` pair does (the IP form is NetworkPolicy's job);
  *  - `shareProcessNamespace` gives the pod one PID namespace with `pause` as
@@ -214,6 +216,7 @@ export function buildWorkspacePod(
             seccompProfile: { type: 'RuntimeDefault' },
           },
           volumeMounts: [{ mountPath: WORKSPACE_MOUNT, name: 'workspace' }],
+          workingDir: WORKSPACE_MOUNT,
         },
         ...(spec.services ?? []).map((service) => {
           if (!/^[a-z][a-z0-9-]{0,30}$/.test(service.name)) {
