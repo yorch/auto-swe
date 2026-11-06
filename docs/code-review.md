@@ -48,8 +48,9 @@ Source selection takes the first available mode in this order:
    base, refuses closed or fork PRs, clones the head, and verifies the checkout matches that SHA.
 2. **Branch:** the source's recorded branch and head SHA. The checkout must still equal that SHA;
    a moved branch fails with `REVIEW_HEAD_CHANGED` rather than reviewing a different commit.
-3. **Stored:** an agent run with `deliver: none` and a nonempty stored diff. No repository checkout
-   proves this diff, and the result is explicitly unverified.
+3. **Stored:** an agent run with `deliver: none` and a nonempty stored diff. The worker checks out
+   the source's recorded base commit, checks and applies the patch, and creates a local review
+   commit that is never pushed. The run page shows verified/unverified status and a failure reason.
 
 PR and branch diffs use the merge base of the base branch with hardened git-diff options. A diff
 larger than 300,000 characters is reviewed in file-aligned chunks (oversized files split by hunk,
@@ -113,6 +114,13 @@ Missing configuration or failed eligibility records a skipped reason in the publ
 and an activity event instead of failing the review. The PR comment includes
 `fix not started: <reason>`.
 
+For a verified stored review, fix policy launches the original agent through the built-in Agent Run
+template with `deliver: none`, without a PR automation. The follow-up checks the completed review,
+reapplies the exact reviewed diff on its recorded base, and supplies stored, screened findings to
+the same agent with its original launch parameters. Agent enablement, concurrency, tool permissions,
+budget and runtime ceilings still apply. The review run and attempt deduplicate the ledger and
+workflow; transient skips and launch failures use the run's **Retry fix** action.
+
 ## API
 
 All paths below have the `/api/v1` prefix. Preset administration requires ADMIN; launch and picker
@@ -125,7 +133,7 @@ routes require ENGINEER, with source control and repository checks on launch.
 | `GET /review-presets` | Enabled presets and active review templates for the picker. |
 | `GET /workflow-runs/:id` | The `review` field describes eligibility, control, source linkage, and linked review summaries. Step outputs carry the publication summary. |
 | `GET /platform/review-presets` | Presets with template metadata and attachments. |
-| `POST /platform/review-presets` | Create with `name`, `templateId`, optional `description`, `systemPrompt`, `onBlocking`, and `enabled`. |
+| `POST /platform/review-presets` | Create with `name`, `templateId`, optional `description`, `systemPrompt`, `onBlocking`, `runTests`, and `enabled`. |
 | `PATCH /platform/review-presets/:id` | Update supplied preset fields. |
 | `DELETE /platform/review-presets/:id` | Delete the preset and its attachments; existing review runs remain. |
 | `POST /platform/review-presets/:id/attachments` | Exactly `{ "templateId": "<uuid>" }` or `{ "connectionId": "<uuid>" }`. |
@@ -139,14 +147,18 @@ review template with `REVIEW_TEMPLATE_NEEDS_SOURCE`.
 
 - Review templates cannot launch standalone: they require a finished source run and an eligible
   change. Automatic review applies only to successful non-review sources.
-- Stored diffs are unverified. They never count toward PR evaluation and cannot start a fix round.
+- Stored verification refuses binary patches, symlinks, submodules, traversal, renames, and
+  quoted/unsupported paths. Missing base commits or patches that cannot be safely applied remain
+  unverified with a reason and cannot start a fix. Even verified stored reviews never count toward
+  PR evaluation because they have no PR target. Their local commits are never pushed.
 - Test execution is opt-in. Unverified stored diffs skip tests. Changes above the hard limits fail
   rather than receive partial review. Chunk-local review cannot guarantee whole-change reasoning.
   Findings displayed/published by the summary are bounded.
-- Fix retries apply only to successful blocking PR reviews with fix policy and a transient
-  failed, suppressed, or skipped decision (for example cooldown, budget, unavailable configuration,
+- Fix retries apply only to successful blocking PR or verified stored reviews with fix policy and a
+  transient failed, suppressed, or skipped decision (for example cooldown, budget, unavailable configuration,
   or a failed start). The run's **Retry fix** action and the generic automation-fire retry endpoint
-  create a new attempt, reread stored findings, and recheck all guards and limits. A moved head,
+  create a new attempt, reread stored findings, and recheck all guards and limits. The generic
+  endpoint applies to PR automation fires; stored reviews use the run action. A moved head,
   closed/fork PR, protected/never-push branch, or exhausted round limit is not retryable.
 - PR reevaluation waits up to five minutes for the publishing review run to reach SUCCESS.
   Unsuccessful or unfinished reviews are skipped; scheduling reevaluation is best-effort and a

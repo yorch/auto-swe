@@ -120,10 +120,10 @@ function PresetForm({ preset, onClose }: { preset: ReviewPreset | null; onClose:
           value={onBlocking}
         />
         <p className="text-sm text-paper-400">
-          Fix requires an enabled repository feedback automation opted in to{' '}
+          PR fixes require an enabled repository feedback automation opted in to{' '}
           <code>review_findings</code>, using the default address-pr-feedback template, and the
           pull-request feedback automation setting enabled. Existing round limits and push rules
-          apply.
+          apply. Verified stored changes use a same-agent follow-up with no delivery.
         </p>
         <ToggleSwitch checked={enabled} label="Enabled" onChange={() => setEnabled(!enabled)} />
         <Checkbox

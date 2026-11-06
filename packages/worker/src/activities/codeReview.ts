@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
-import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import {
   REVIEW_COMMENT_MARKER_PREFIX,
   REVIEW_HARD_MAX_DIFF_CHARS,
@@ -27,6 +26,8 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { withHeartbeat } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, type RepoRef, type ScmProvider, toRepoRef } from '../lib/scm/index.js';
+import { loadStoredAgentChange } from '../lib/storedAgentChange.js';
+import { applyStoredPatch, StoredPatchError } from '../lib/storedPatch.js';
 import { getTemporalClient } from '../lib/temporalClient.js';
 import type { QodoReviewResult } from './awaitQodoReview.js';
 import { neutralizeCommentText } from './ciTriage.js';
@@ -46,6 +47,7 @@ type Severity = (typeof SEVERITIES)[number];
 
 export interface ReviewChange extends CodeResult {
   diffVerified: boolean;
+  verificationReason?: string;
   prUrl?: string;
 }
 
@@ -75,51 +77,14 @@ async function loadRepo(id: string) {
   return repo;
 }
 
-const StoredResultSchema = z.object({
-  deliver: z.literal('none'),
-  diff: z.string(),
-  diffTruncated: z.boolean().optional(),
-});
-
-async function loadStored(sourceRunId: string, repoId: string): Promise<string> {
-  const source = await prisma.workflowRun.findUnique({
-    include: {
-      steps: {
-        orderBy: { endedAt: 'desc' },
-        take: 1,
-        where: { status: 'PASSED', stepName: 'runAgentTask' },
-      },
-      template: { select: { origin: true, teamId: true } },
-      workRequest: { select: { connectionId: true } },
-    },
-    where: { id: sourceRunId },
-  });
-  if (
-    !source?.endedAt ||
-    source.reviewOfRunId ||
-    source.template.teamId !== null ||
-    source.template.origin !== AGENT_RUN_TEMPLATE_ORIGIN ||
-    (source.connectionId ?? source.workRequest?.connectionId) !== repoId
-  ) {
-    return refuse(
-      'REVIEW_NOTHING_TO_REVIEW',
-      'Source is not a finished agent run on this repository'
-    );
-  }
-  const snapshot = source.contextSnapshot as { result?: unknown } | null;
-  const parsed = StoredResultSchema.safeParse(snapshot?.result ?? source.steps[0]?.outputs);
-  if (!parsed.success || !parsed.data.diff.trim()) {
-    return refuse('REVIEW_NOTHING_TO_REVIEW', 'Source has no stored agent diff');
-  }
-  if (parsed.data.diffTruncated) {
-    return refuse('REVIEW_DIFF_TOO_LARGE', 'The source agent diff was truncated');
-  }
-  return parsed.data.diff;
-}
+const loadStored = loadStoredAgentChange;
 
 export interface LoadReviewDeps {
   loadRepo: typeof loadRepo;
-  loadStored: typeof loadStored;
+  loadStored: (
+    sourceRunId: string,
+    repoId: string
+  ) => Promise<{ diff: string; baseSha?: string; baseBranch?: string }>;
   scm: (repo: RepoRef) => ScmProvider;
   createWorkspace: typeof createWorkspace;
 }
@@ -163,11 +128,67 @@ export async function loadChangeForReviewWith(
     return result;
   };
   if (payload.reviewOf.mode === 'stored') {
-    return finish(await deps.loadStored(payload.sourceRunId, payload.connectionId), {
-      branch: '',
-      diffVerified: false,
-      headSha: '',
-    });
+    const stored = await deps.loadStored(payload.sourceRunId, payload.connectionId);
+    if (stored.diff.length > REVIEW_HARD_MAX_DIFF_CHARS) {
+      return refuse('REVIEW_DIFF_TOO_LARGE', 'Stored diff exceeds the hard cap');
+    }
+    const unverified = (verificationReason: string) =>
+      finish(stored.diff, {
+        branch: '',
+        diffVerified: false,
+        headSha: '',
+        testResults: { ...noTests, stdout: `Tests not run: ${verificationReason}` },
+        verificationReason,
+      });
+    if (!stored.baseSha || !SHA.safeParse(stored.baseSha).success) {
+      return unverified('The source has no valid recorded base commit.');
+    }
+    let workspace: Awaited<ReturnType<typeof createWorkspace>> | undefined;
+    let identity: Pick<ReviewChange, 'headSha' | 'baseSha' | 'baseBranch'>;
+    try {
+      const repo = await deps.loadRepo(payload.connectionId);
+      const ref = toRepoRef(repo);
+      const { authedCloneUrl } = await deps.scm(ref).cloneCredentials(ref);
+      const baseBranch = BaseBranchSchema.parse(stored.baseBranch ?? repo.defaultBranch);
+      workspace = await deps.createWorkspace(
+        authedCloneUrl,
+        baseBranch,
+        baseBranch,
+        executorImageFor(repo),
+        stored.baseSha,
+        false,
+        { detectedStack: repo.detectedStack, repoSetup: { field: repo.setup }, teamId: repo.teamId }
+      );
+      try {
+        const headSha = await applyStoredPatch(
+          workspace,
+          { baseSha: stored.baseSha, diff: stored.diff },
+          true
+        );
+        identity = { baseBranch, baseSha: stored.baseSha, headSha };
+      } catch (error) {
+        return unverified(
+          error instanceof StoredPatchError
+            ? error.message
+            : 'The stored diff could not be safely applied at the recorded base commit.'
+        );
+      }
+      return finish(stored.diff, {
+        ...identity,
+        branch: '',
+        diffVerified: true,
+        implementationNotes:
+          'Verified stored diff reapplied at its recorded base commit; local review commit is never pushed.',
+        ...(payload.runTests ? { testResults: await runReviewTestGate(workspace, repo) } : {}),
+      });
+    } catch (error) {
+      if (workspace) {
+        throw error;
+      }
+      return unverified('The recorded base checkout is unavailable.');
+    } finally {
+      await workspace?.destroy();
+    }
   }
   const repo = await deps.loadRepo(payload.connectionId);
   const ref = toRepoRef(repo);
@@ -395,7 +416,7 @@ export async function publishReviewResultWith(
   if (!runId) {
     return refuse('REVIEW_RUN_MISSING', 'Review run identity is unavailable');
   }
-  if (payload.onBlocking === 'fix' && payload.reviewOf.mode === 'pr' && !approved) {
+  if (payload.onBlocking === 'fix' && payload.reviewOf.mode !== 'branch' && !approved) {
     try {
       const fix = await deps.requestReviewFix(payload, summary, runId);
       if (fix) {

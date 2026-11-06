@@ -129,6 +129,18 @@ describe('review fix retry eligibility', () => {
     fire.mockRejectedValue(new Error('offline'));
     await expect(reviewFixRetryState(db, PRESET)).rejects.toThrow('offline');
   });
+  it('allows stored transient retries only after verified application and never reads PR fires', async () => {
+    const { db, run, fire, step } = fixture('agent runs are at their concurrency limit');
+    Object.assign(run.workRequest.payload, { reviewOf: { mode: 'stored' } });
+    const loaded = vi.fn().mockResolvedValue({ outputs: { diffVerified: false } });
+    Object.assign(db, { workflowStep: { findFirst: loaded } });
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: false });
+    loaded.mockResolvedValue({ outputs: { diffVerified: true } });
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: true });
+    expect(fire).not.toHaveBeenCalled();
+    step.outputs.fix.status = 'started';
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: false });
+  });
 });
 
 function fake() {

@@ -129,6 +129,11 @@ export function RunReviews({ run }: { run: WorkflowRunDetail }) {
       .find((s) => s.stepName === 'publishReviewResult' && s.status === 'PASSED')?.outputs
   );
   const fix = record(summary.fix);
+  const change = record(
+    [...run.steps]
+      .sort((a, b) => b.attempt - a.attempt)
+      .find((step) => step.stepName === 'loadChangeForReview' && step.status === 'PASSED')?.outputs
+  );
   const review = run.review;
   if (!review) {
     return null;
@@ -171,6 +176,14 @@ export function RunReviews({ run }: { run: WorkflowRunDetail }) {
               {review.reviewOf.templateName}
             </Link>
           </p>
+          {typeof change.diffVerified === 'boolean' && (
+            <p>
+              Change {change.diffVerified ? 'verified' : 'unverified'}
+              {typeof change.verificationReason === 'string'
+                ? `: ${change.verificationReason}`
+                : ''}
+            </p>
+          )}
           {typeof summary.approved === 'boolean' ? (
             <>
               <p>

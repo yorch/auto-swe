@@ -324,23 +324,35 @@ export async function reviewFixRetryState(db: PrismaClient, runId: string) {
     !step ||
     !payload.success ||
     payload.data.onBlocking !== 'fix' ||
-    payload.data.reviewOf.mode !== 'pr' ||
+    payload.data.reviewOf.mode === 'branch' ||
     run.reviewOfRunId !== payload.data.sourceRunId ||
     summary.approved !== false
   ) {
     return {
       allowed: false as const,
-      reason: 'A successful blocking PR review with fix policy is required',
+      reason: 'A successful blocking review with fix policy is required',
     };
   }
-  const fire = await db.automationFire.findFirst({
-    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-    where: {
-      connectionId: payload.data.connectionId,
-      facts: { equals: runId, path: ['reviewRunId'] },
-      source: 'github.pull_request.feedback',
-    },
-  });
+  if (payload.data.reviewOf.mode === 'stored') {
+    const loaded = await db.workflowStep.findFirst({
+      orderBy: { attempt: 'desc' },
+      where: { runId, status: 'PASSED', stepName: 'loadChangeForReview' },
+    });
+    if (object(loaded?.outputs).diffVerified !== true) {
+      return { allowed: false as const, reason: 'The stored diff is unverified' };
+    }
+  }
+  const fire =
+    payload.data.reviewOf.mode === 'stored'
+      ? null
+      : await db.automationFire.findFirst({
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          where: {
+            connectionId: payload.data.connectionId,
+            facts: { equals: runId, path: ['reviewRunId'] },
+            source: 'github.pull_request.feedback',
+          },
+        });
   const fix = object(summary.fix);
   const summaryIsNewer =
     typeof fix.decidedAt === 'string' &&

@@ -93,6 +93,7 @@ export const AgentRunPayloadSchema = z.object({
   /** Per-launch caps. Can only lower the platform ceilings. */
   maxSteps: z.number().int().min(1).max(500).optional(),
   maxWallClockSeconds: z.number().int().min(60).max(14_400).optional(),
+  reviewFixOfRunId: z.string().uuid().optional(),
 });
 export type AgentRunPayload = z.infer<typeof AgentRunPayloadSchema>;
 

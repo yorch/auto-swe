@@ -100,7 +100,7 @@ function fixture() {
   const change: LoadReviewDeps = {
     createWorkspace: vi.fn(async () => workspace),
     loadRepo: vi.fn(async () => repo),
-    loadStored: vi.fn(async () => DIFF),
+    loadStored: vi.fn(async () => ({ diff: DIFF })),
     scm: () => scm,
   };
   const publish: PublishReviewDeps = {
@@ -155,6 +155,84 @@ function verdict(approved = true): AggregatedReviewResult {
 }
 
 describe('loadChangeForReview', () => {
+  it('preserves a safe, specific rejection reason for unsupported stored patches', async () => {
+    const f = fixture();
+    f.change.loadStored = async () => ({ baseSha: BASE, diff: `${DIFF}\nnew file mode 120000` });
+    expect(await loadChangeForReviewWith(request({ mode: 'stored' }), f.change)).toMatchObject({
+      diffVerified: false,
+      headSha: '',
+      verificationReason: expect.stringContaining('symlink'),
+    });
+    expect(f.destroy).toHaveBeenCalledOnce();
+  });
+  it('verifies a stored diff on its recorded base and runs opt-in tests on that checkout', async () => {
+    const f = fixture();
+    f.change.loadStored = async () => ({ baseBranch: 'release/1', baseSha: BASE, diff: DIFF });
+    let reads = 0;
+    f.exec.mockImplementation(async (cmd) =>
+      cmd.includes('rev-parse HEAD') ? (++reads === 1 ? BASE : HEAD) : ''
+    );
+    const apply = vi.fn(async (_command: string, _input: string) => '');
+    const capture = vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'Tests  2 passed (2)' }));
+    f.change.createWorkspace = vi.fn(
+      async () =>
+        ({
+          destroy: f.destroy,
+          exec: f.exec,
+          execCapture: capture,
+          execStdin: apply,
+        }) as unknown as Workspace
+    );
+    f.change.loadRepo = async () => ({ ...repo, detectedStack: { primaryStack: 'node' } });
+    const req = request({ mode: 'stored' });
+    req.payload = { ...(req.payload as object), runTests: true };
+    expect(await loadChangeForReviewWith(req, f.change)).toMatchObject({
+      baseSha: BASE,
+      diffVerified: true,
+      headSha: HEAD,
+      testResults: { passed: true, passing: 2 },
+    });
+    expect(f.change.createWorkspace).toHaveBeenCalledWith(
+      expect.any(String),
+      'release/1',
+      'release/1',
+      undefined,
+      BASE,
+      false,
+      expect.any(Object)
+    );
+    expect(apply.mock.calls[0]?.[0]).toContain('apply --check');
+    expect(apply.mock.calls[1]?.[0]).toContain('apply --index');
+    expect(f.destroy).toHaveBeenCalledOnce();
+  });
+  it('keeps an unsafe or unapplicable stored patch unverified, skips tests and destroys the checkout', async () => {
+    const f = fixture();
+    f.change.loadStored = async () => ({ baseSha: BASE, diff: DIFF });
+    f.exec.mockResolvedValue(BASE);
+    const apply = vi.fn(async () => {
+      throw new Error('patch failed');
+    });
+    const capture = vi.fn();
+    f.change.createWorkspace = vi.fn(
+      async () =>
+        ({
+          destroy: f.destroy,
+          exec: f.exec,
+          execCapture: capture,
+          execStdin: apply,
+        }) as unknown as Workspace
+    );
+    const req = request({ mode: 'stored' });
+    req.payload = { ...(req.payload as object), runTests: true };
+    expect(await loadChangeForReviewWith(req, f.change)).toMatchObject({
+      diffVerified: false,
+      headSha: '',
+      testResults: { passed: false, stdout: expect.stringContaining('Tests not run:') },
+      verificationReason: expect.stringContaining('could not be safely applied'),
+    });
+    expect(capture).not.toHaveBeenCalled();
+    expect(f.destroy).toHaveBeenCalledOnce();
+  });
   it('runs the repository gate only when requested and feeds its real evidence to the code result', async () => {
     const f = fixture();
     const capture = vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'Tests  2 passed (2)' }));
@@ -315,7 +393,7 @@ describe('loadChangeForReview', () => {
     });
     expect(f.change.createWorkspace).not.toHaveBeenCalled();
     expect(f.change.loadStored).toHaveBeenCalledWith(SOURCE, REPO);
-    f.change.loadStored = async () => 'x'.repeat(900_001);
+    f.change.loadStored = async () => ({ diff: 'x'.repeat(900_001) });
     await expect(
       loadChangeForReviewWith(request({ mode: 'stored' }), f.change)
     ).rejects.toMatchObject({ type: 'REVIEW_DIFF_TOO_LARGE' });
@@ -459,7 +537,7 @@ describe('publishReviewResult', () => {
     ['fix', false, 'pr', true],
     ['report', false, 'pr', false],
     ['fix', true, 'pr', false],
-    ['fix', false, 'stored', false],
+    ['fix', false, 'stored', true],
   ] as const)(
     'calls the fix hook only for blocking fix policy (%s, %s)',
     async (policy, approved, mode, called) => {

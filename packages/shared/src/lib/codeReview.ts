@@ -146,6 +146,9 @@ export function isTransientReviewFixReason(reason: unknown): boolean {
         'the built-in address-pr-feedback template is unavailable',
         'the fix workflow could not start',
         'the fix launch failed',
+        'agent runs are disabled',
+        'agent runs are at their concurrency limit',
+        'the built-in agent run template is unavailable',
       ].includes(reason))
   );
 }

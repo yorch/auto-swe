@@ -22,6 +22,33 @@ const run = (over: Record<string, unknown> = {}) =>
     ...over,
   }) as unknown as WorkflowRunDetail;
 describe('run reviews', () => {
+  it.each([true, false])('shows the change verification status and failure reason', (verified) => {
+    const detail = run({
+      review: {
+        canControl: true,
+        reviewable: false,
+        reviewOf: { runId: 'source', templateName: 'Agent Run' },
+        reviews: [],
+      },
+      steps: [
+        {
+          attempt: 1,
+          outputs: {
+            diffVerified: verified,
+            verificationReason: verified ? undefined : 'Recorded base unavailable',
+          },
+          status: 'PASSED',
+          stepName: 'loadChangeForReview',
+        },
+      ],
+    });
+    render(withQuery(<RunReviews run={detail} />));
+    expect(
+      screen.getByText(
+        verified ? 'Change verified' : 'Change unverified: Recorded base unavailable'
+      )
+    ).toBeTruthy();
+  });
   const retryable = (allowed = true, canControl = true) =>
     run({
       review: {

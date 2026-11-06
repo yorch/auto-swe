@@ -25,6 +25,7 @@ import { recordWorkerLaunchAudit } from '../lib/launchAudit.js';
 import { readReviewFeedback, reviewFeedbackSubject } from '../lib/reviewFeedback.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { getTemporalClient } from '../lib/temporalClient.js';
+import { startStoredReviewFix } from './storedReviewFix.js';
 
 export type ReviewFixResult =
   | { status: 'started'; workflowId: string; workRequestId: string }
@@ -37,6 +38,9 @@ export async function startReviewFix(
   automationId?: string
 ): Promise<ReviewFixResult> {
   const skip = (reason: string): ReviewFixResult => ({ reason, status: 'skipped' });
+  if (payload.onBlocking === 'fix' && payload.reviewOf.mode === 'stored') {
+    return startStoredReviewFix(payload, runId, attemptId);
+  }
   if (payload.reviewOf.mode !== 'pr' || payload.onBlocking !== 'fix') {
     return skip('fix policy requires a pull request');
   }
