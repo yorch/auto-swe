@@ -23,9 +23,10 @@ The `github.pull_request.feedback` event source starts a run of the built-in
 opt-in `review_findings` trigger. Its findings come from the review run's stored database verdicts,
 not host reviews or comments; it does not require a fabricated review ID or a fix-command comment.
 The review run must succeed before gather uses its findings. Agent-origin rounds keep the original
-agent, and the existing PR/head, push, budget, and round-limit guards remain in force. Fix fires
-cannot use the generic fire retry endpoint, and a failed or suppressed decision does not relaunch
-for the same review run. See [the administrator setup](./code-review.md#fix-mode).
+agent, and the existing PR/head, push, budget, and round-limit guards remain in force. Transient
+failed or suppressed fix decisions support the generic fire retry endpoint and the review run's
+**Retry fix** action. Each retry uses a new attempt and rereads the stored findings, without
+bypassing any guards or limits. See [the administrator setup](./code-review.md#fix-mode).
 
 A feedback round **gathers** the open member review threads on the pull request, **fixes**
 them on a work branch, **pushes** the fix onto the pull request's own branch as a fast-forward,

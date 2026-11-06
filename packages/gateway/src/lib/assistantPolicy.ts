@@ -411,6 +411,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/workflow-runs/:id/cancel': 'confirm',
   'POST /api/v1/workflow-runs/:id/evidence/:evidenceId/link': { never: 'secret' },
   'POST /api/v1/workflow-runs/:id/reviews': 'confirm',
+  'POST /api/v1/workflow-runs/:id/reviews/fix-retry': 'confirm',
   'POST /api/v1/workflow-templates': 'confirm',
   'POST /api/v1/workflow-templates/:id/explain': {
     read: 'describes a template and stores nothing',

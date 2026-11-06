@@ -5,7 +5,14 @@ import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '@/lib/api';
 import { setupFetchMock } from '@/test/rtl-helpers';
-import { useReviewAttachment, useReviewRepositories, useRunReview } from './useCodeReview';
+import {
+  useReviewAttachment,
+  useReviewChoices,
+  useReviewPresets,
+  useReviewRepositories,
+  useRunReview,
+  useSaveReviewPreset,
+} from './useCodeReview';
 
 afterEach(() => {
   cleanup();
@@ -19,12 +26,38 @@ function wrapper() {
   );
 }
 describe('review mutations', () => {
+  it('binds picker caches and management requests to the selected source/team', async () => {
+    const get = vi.spyOn(api, 'get').mockResolvedValue({ data: [], templates: [] });
+    const post = vi.spyOn(api, 'post').mockResolvedValue({ data: {} });
+    const { result } = renderHook(
+      () => ({
+        choices: useReviewChoices(true, { sourceRunId: 'source' }),
+        presets: useReviewPresets('team'),
+        save: useSaveReviewPreset('team'),
+      }),
+      { wrapper: wrapper() }
+    );
+    await waitFor(() =>
+      expect(result.current.choices.isSuccess && result.current.presets.isSuccess).toBe(true)
+    );
+    expect(get).toHaveBeenCalledWith('/api/v1/review-presets?sourceRunId=source');
+    expect(get).toHaveBeenCalledWith('/api/v1/platform/review-presets?teamId=team');
+    await act(async () => {
+      await result.current.save.mutateAsync({ body: { name: 'Review', templateId: 'template' } });
+    });
+    expect(post).toHaveBeenCalledWith(
+      '/api/v1/platform/review-presets?teamId=team',
+      expect.objectContaining({ name: 'Review' })
+    );
+  });
   it('keeps the same idempotency key after a failed launch and rotates it for a changed choice', async () => {
     const fetch = vi
       .spyOn(api, 'fetch')
       .mockRejectedValueOnce(new Error('unavailable'))
       .mockRejectedValueOnce(new Error('unavailable'))
-      .mockResolvedValue({ data: { runId: 'review-1', workflowId: 'workflow-1' } });
+      .mockResolvedValue({
+        data: { runId: 'review-1', workflowId: 'workflow-1', workRequestId: 'request-1' },
+      });
     const { result } = renderHook(() => useRunReview('source-1'), { wrapper: wrapper() });
     await act(async () => {
       await expect(result.current.mutateAsync({ presetId: 'preset-1' })).rejects.toThrow();
@@ -43,7 +76,7 @@ describe('review mutations', () => {
     expect(JSON.parse(String(fetch.mock.calls[2]?.[1]?.body))).toEqual({
       templateId: 'template-1',
     });
-    await waitFor(() => expect(result.current.data?.runId).toBe('review-1'));
+    await waitFor(() => expect(result.current.data?.workRequestId).toBe('request-1'));
   });
   it.each([{ templateId: 'template-1' }, { connectionId: 'repo-1' }])(
     'sends the attachment target on both POST and DELETE',

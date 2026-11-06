@@ -13,6 +13,11 @@ it('classifies team knowledge-base previews as reads, not link-management grants
   expect(assistantAccess('GET', '/api/v1/teams/:id/knowledge-bases/effective')).toBe('read');
   expect(assistantAccess('POST', '/api/v1/knowledge-base-links')).toBe('confirm');
 });
+it('keeps scoped review preset reads and writes under the existing read/confirm policy', () => {
+  expect(assistantAccess('GET', '/api/v1/platform/review-presets')).toBe('read');
+  expect(assistantAccess('POST', '/api/v1/platform/review-presets')).toBe('confirm');
+  expect(assistantAccess('PATCH', '/api/v1/platform/review-presets/:id')).toBe('confirm');
+});
 
 /**
  * The policy table against the routes production registers. Every route must have a decision, every

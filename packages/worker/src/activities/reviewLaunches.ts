@@ -46,7 +46,10 @@ export async function enqueueReviewLaunchIntents(
         { templateId: source.templateId },
         ...(source.connectionId ? [{ connectionId: source.connectionId }] : []),
       ],
-      preset: { enabled: true },
+      preset: {
+        enabled: true,
+        OR: [{ teamId: null }, ...(source.teamId ? [{ teamId: source.teamId }] : [])],
+      },
     },
   });
   const presets = [...new Set(attachments.map((a) => a.presetId))];

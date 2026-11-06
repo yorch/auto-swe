@@ -89,6 +89,9 @@ describe('review preset administration', () => {
       target: { value: 'New policy' },
     });
     expect(within(dialog).getByText('review_findings')).toBeTruthy();
+    fireEvent.click(
+      within(dialog).getByRole('checkbox', { name: 'Run repository tests before review' })
+    );
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save preset' }));
     await screen.findByText('New policy');
     const call = fetch.mock.calls.find((c) => c[1]?.method === 'POST');
@@ -96,6 +99,7 @@ describe('review preset administration', () => {
       enabled: true,
       name: 'New policy',
       onBlocking: 'report',
+      runTests: true,
       systemPrompt: null,
       templateId: 'template-1',
     });

@@ -6,6 +6,7 @@ export const REVIEW_COMMENT_MARKER_PREFIX = '<!-- auto-swe:code-review:';
 export const REVIEW_ON_BLOCKING = ['report', 'fix'] as const;
 export const REVIEW_INTENT_STATUSES = ['pending', 'started', 'skipped', 'failed'] as const;
 export const REVIEW_MAX_DIFF_CHARS = 300_000;
+export const REVIEW_HARD_MAX_DIFF_CHARS = 900_000;
 export const REVIEW_ERROR_CODES = {
   DIFF_TOO_LARGE: 'REVIEW_DIFF_TOO_LARGE',
   DISABLED: 'REVIEW_DISABLED',
@@ -36,6 +37,7 @@ export const ReviewRunPayloadSchema = z.strictObject({
   onBlocking: z.enum(REVIEW_ON_BLOCKING).default('report'),
   presetId: z.string().uuid().optional(),
   reviewOf: ReviewOfSchema,
+  runTests: z.boolean().optional(),
   sourceRunId: z.string().uuid(),
   systemPrompt: z.string().max(100_000).optional(),
 });
@@ -46,6 +48,7 @@ export const ReviewPresetCreateSchema = z.strictObject({
   enabled: z.boolean().default(true),
   name: z.string().trim().min(1).max(200),
   onBlocking: z.enum(REVIEW_ON_BLOCKING).default('report'),
+  runTests: z.boolean().default(false),
   systemPrompt: z.string().max(100_000).nullable().optional(),
   templateId: z.string().uuid(),
 });
@@ -54,6 +57,7 @@ export const ReviewPresetUpdateSchema = ReviewPresetCreateSchema.extend({
   description: z.string().max(4000),
   enabled: z.boolean(),
   onBlocking: z.enum(REVIEW_ON_BLOCKING),
+  runTests: z.boolean(),
 })
   .partial()
   .refine((value) => Object.values(value).some((field) => field !== undefined), {
@@ -126,4 +130,25 @@ export function reviewWorkflowId(repoId: string, hexId: string): string {
     .slice(0, 8)
     .toLowerCase();
   return `review-${repo}-${hex}`;
+}
+
+export function isTransientReviewFixReason(reason: unknown): boolean {
+  return (
+    typeof reason === 'string' &&
+    (/within the last \d+ minutes|still in progress|last 24 hours/.test(reason) ||
+      [
+        'repository is unavailable',
+        'pull request feedback automations are switched off',
+        'no enabled repository feedback automation opts in to review_findings with the default template',
+        'the feedback automation has invalid options',
+        'the source run is still working on the pull request',
+        'the organization is over its monthly budget',
+        'the built-in address-pr-feedback template is unavailable',
+        'the fix workflow could not start',
+        'the fix launch failed',
+        'agent runs are disabled',
+        'agent runs are at their concurrency limit',
+        'the built-in agent run template is unavailable',
+      ].includes(reason))
+  );
 }

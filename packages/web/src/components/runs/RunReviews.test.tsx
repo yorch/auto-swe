@@ -22,6 +22,97 @@ const run = (over: Record<string, unknown> = {}) =>
     ...over,
   }) as unknown as WorkflowRunDetail;
 describe('run reviews', () => {
+  it.each([true, false])('shows the change verification status and failure reason', (verified) => {
+    const detail = run({
+      review: {
+        canControl: true,
+        reviewable: false,
+        reviewOf: { runId: 'source', templateName: 'Agent Run' },
+        reviews: [],
+      },
+      steps: [
+        {
+          attempt: 1,
+          outputs: {
+            diffVerified: verified,
+            verificationReason: verified ? undefined : 'Recorded base unavailable',
+          },
+          status: 'PASSED',
+          stepName: 'loadChangeForReview',
+        },
+      ],
+    });
+    render(withQuery(<RunReviews run={detail} />));
+    expect(
+      screen.getByText(
+        verified ? 'Change verified' : 'Change unverified: Recorded base unavailable'
+      )
+    ).toBeTruthy();
+  });
+  const retryable = (allowed = true, canControl = true) =>
+    run({
+      review: {
+        canControl,
+        fixRetry: { allowed },
+        reviewable: false,
+        reviewOf: { runId: 'original', templateName: 'Source' },
+        reviews: [],
+      },
+      steps: [
+        {
+          attempt: 1,
+          outputs: {
+            approved: false,
+            fix: { reason: 'the fix launch failed', status: 'skipped' },
+            worstSeverity: 'WARNING',
+          },
+          status: 'PASSED',
+          stepName: 'publishReviewResult',
+        },
+      ],
+    });
+  it('queues a fix retry from the review verdict', async () => {
+    const fetch = setupFetchMock({
+      'POST /api/v1/workflow-runs/source-1/reviews/fix-retry': () => ({
+        data: { workflowId: 'retry' },
+      }),
+    });
+    render(withQuery(<RunReviews run={retryable()} />));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry fix' }));
+    await screen.findByRole('button', { name: 'Fix retry queued' });
+    expect(fetch.mock.calls.some((call) => String(call[0]).endsWith('/reviews/fix-retry'))).toBe(
+      true
+    );
+  });
+  it.each([true, false])(
+    'shows a durable queued retry after reload (canControl=%s)',
+    (canControl) => {
+      const detail = retryable(false, canControl);
+      Object.assign(detail.review?.fixRetry ?? {}, { status: 'queued' });
+      render(withQuery(<RunReviews run={detail} />));
+      const button = screen.getByRole('button', { name: 'Fix retry queued' }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(screen.queryByRole('button', { name: 'Retry fix' })).toBeNull();
+    }
+  );
+  it.each([
+    [false, true],
+    [true, false],
+  ])('hides a fix retry without eligibility or control', (allowed, canControl) => {
+    render(withQuery(<RunReviews run={retryable(allowed, canControl)} />));
+    expect(screen.queryByRole('button', { name: 'Retry fix' })).toBeNull();
+  });
+  it('shows retry errors without losing the verdict', async () => {
+    setupFetchMock({
+      'POST /api/v1/workflow-runs/source-1/reviews/fix-retry': () => {
+        throw new Error('Retry offline');
+      },
+    });
+    render(withQuery(<RunReviews run={retryable()} />));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry fix' }));
+    await screen.findByText('Retry offline');
+    expect(screen.getByText(/Changes requested/)).toBeTruthy();
+  });
   it.each([false, true])(
     'launches the default preset for workflow and agent runs (agent=%s)',
     async (isAgentRun) => {
@@ -31,7 +122,7 @@ describe('run reviews', () => {
           templates: [{ id: 'template-1', name: 'Code review' }],
         }),
         'POST /api/v1/workflow-runs/source-1/reviews': () => ({
-          data: { runId: 'review-1', workflowId: 'wf-review' },
+          data: { runId: 'review-1', workflowId: 'wf-review', workRequestId: 'request-1' },
         }),
       });
       render(withQuery(<RunReviews run={run({ isAgentRun })} />));
@@ -39,7 +130,8 @@ describe('run reviews', () => {
       const dialog = screen.getByRole('dialog');
       await within(dialog).findAllByText('Default review');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Run review' }));
-      await waitFor(() => expect(push).toHaveBeenCalledWith('/runs/review-1'));
+      await waitFor(() => expect(push).toHaveBeenCalledWith('/requests?request=request-1'));
+      expect(push).not.toHaveBeenCalledWith('/runs/review-1');
       const call = fetch.mock.calls.find((c) => c[1]?.method === 'POST');
       expect(JSON.parse(String(call?.[1]?.body))).toEqual({ presetId: 'preset-1' });
       const headers = call?.[1]?.headers as Record<string, string> | undefined;
@@ -52,14 +144,16 @@ describe('run reviews', () => {
         data: [],
         templates: [{ id: 'template-1', name: 'Code review' }],
       }),
-      '/api/v1/workflow-runs/source-1/reviews': () => ({ data: { runId: 'review-1' } }),
+      '/api/v1/workflow-runs/source-1/reviews': () => ({
+        data: { runId: 'review-1', workflowId: 'wf-review', workRequestId: 'request-1' },
+      }),
     });
     render(withQuery(<RunReviews run={run()} />));
     fireEvent.click(screen.getByRole('button', { name: 'Run review' }));
     await screen.findByText(/No enabled presets/);
     fireEvent.click(screen.getByRole('switch', { name: /Advanced/ }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Run review' }));
-    await waitFor(() => expect(push).toHaveBeenCalled());
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/requests?request=request-1'));
     expect(
       JSON.parse(String(fetch.mock.calls.find((c) => c[1]?.method === 'POST')?.[1]?.body))
     ).toEqual({ templateId: 'template-1' });

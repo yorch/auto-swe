@@ -15,12 +15,14 @@ vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
 
 vi.mock('../agents/reviewNetwork.js', () => ({
+  fingerprintRejections: () => 'merged',
   REVIEWER_AGENT_KEYS: {
     DOMAIN_LOGIC: 'domainLogicReviewer',
     PERFORMANCE: 'performanceReviewer',
     SECURITY: 'securityReviewer',
   },
   runReviewNetwork: runReviewMock,
+  summarizeRejections: () => 'merged findings',
 }));
 
 vi.mock('../lib/activityContext.js', () => ({
@@ -130,6 +132,38 @@ describe('runReviewNetwork activity stall detection', () => {
 });
 
 describe('runReviewNetwork activity', () => {
+  it('reviews bounded chunks with concurrency two and returns the merged result at the original head', async () => {
+    const code = {
+      ...CODE_RESULT,
+      diff: ['a', 'b', 'c']
+        .map((name) => `diff --git a/${name} b/${name}\n${'x'.repeat(160_000)}\n`)
+        .join(''),
+      diffVerified: true,
+    };
+    let active = 0;
+    let peak = 0;
+    runReviewMock.mockImplementation(async () => {
+      peak = Math.max(peak, ++active);
+      await Promise.resolve();
+      active--;
+      return { approved: true, codeResult: code, verdicts: [] };
+    });
+    const result = await runReviewNetwork(code);
+    expect(runReviewMock).toHaveBeenCalledTimes(3);
+    expect(peak).toBe(2);
+    expect(result.codeResult).toBe(code);
+    expect(result.approved).toBe(true);
+    for (const [chunk] of runReviewMock.mock.calls) {
+      expect(chunk.diff.length).toBeLessThanOrEqual(300_000);
+      expect(chunk.implementationNotes).toContain('/3 of a larger change');
+      expect(chunk.implementationNotes).toContain('Full file list:');
+    }
+  });
+  it('does not publish partial chunk results when any chunk fails', async () => {
+    runReviewMock.mockRejectedValueOnce(new Error('chunk failed'));
+    const code = { ...CODE_RESULT, diff: 'x'.repeat(300_001), diffVerified: true };
+    await expect(runReviewNetwork(code)).rejects.toThrow('chunk failed');
+  });
   it('loads the dependency graph for the code result repo in the run org', async () => {
     await runReviewNetwork(CODE_RESULT);
     expect(loadMock).toHaveBeenCalledWith('repo-1', 'org-1');

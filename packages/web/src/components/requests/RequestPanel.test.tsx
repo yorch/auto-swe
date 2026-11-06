@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import { RequestPanel, requestProgress } from './RequestPanel';
@@ -62,6 +63,37 @@ beforeEach(stubDialogPrototype);
 afterEach(() => vi.unstubAllGlobals());
 
 describe('request side panel', () => {
+  it('waits for a queued review request without reading its reserved run, then shows the execution', async () => {
+    let started = false;
+    const fetch = setupFetchMock({
+      'GET /api/v1/human-steps': () => ({ data: [] }),
+      'GET /api/v1/workflow-runs': () => ({
+        data: started ? [{ ...success, id: 'review-1' }] : [],
+        meta: { limit: 20, offset: 0, total: started ? 1 : 0 },
+      }),
+      'GET /api/v1/workflow-runs/requests': () => ({ data: [], meta: { total: 0 } }),
+      'GET /api/v1/workflow-runs/review-1': () => ({ data: { ...success, id: 'review-1' } }),
+    });
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <RequestPanel onClose={vi.fn()} requestId={REQUEST} />
+      </QueryClientProvider>
+    );
+    await screen.findByText(/No visible attempts yet/);
+    expect(fetch.mock.calls.some(([url]) => String(url).includes('/workflow-runs/review-1'))).toBe(
+      false
+    );
+    expect(screen.queryByText(/Could not load/)).toBeNull();
+    started = true;
+    await act(async () => {
+      await qc.invalidateQueries();
+    });
+    const link = await screen.findByRole('link', { name: /Open full diagnostics/ });
+    expect(link.getAttribute('href')).toBe('/runs/review-1');
+    expect(screen.queryByText(/No visible attempts yet/)).toBeNull();
+  });
+
   it('leads with the latest result and does not resurrect a recovered step failure', async () => {
     const spy = gateway();
     render(withQuery(<RequestPanel onClose={vi.fn()} requestId={REQUEST} />));

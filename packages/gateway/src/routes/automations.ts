@@ -36,6 +36,7 @@ import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { AtlassianError } from '@auto-swe/shared/lib/integrations/atlassianClient';
 import { createIssueTrackerProvider } from '@auto-swe/shared/lib/integrations/registry';
 import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
+import { ReviewLaunchError } from '@auto-swe/shared/lib/reviewLaunch';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -64,6 +65,7 @@ import { loadTargetConnection, TARGET_UNAVAILABLE } from '../lib/automations/inb
 import { hasBalancedParentheses, wrapJqlInProjects } from '../lib/automations/jiraPoller.js';
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { queueReviewFixRetry } from '../lib/reviewFixRetry.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
 import { teamMembershipFilter, templateWriteFilter } from '../lib/templateLaunch.js';
 import { signatureRequiredByPolicy } from '../lib/templateWebhookSigning.js';
@@ -1121,6 +1123,34 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
             ? 'The decision started a run'
             : 'The decision was already taken again'
         );
+      }
+      const reviewRunId = (fire.facts as { reviewRunId?: unknown } | null)?.reviewRunId;
+      if (automation.source === 'github.pull_request.feedback' && typeof reviewRunId === 'string') {
+        if (access.kind !== 'repository' || !automation.enabled || automation.templateId !== null) {
+          return sendError(
+            reply,
+            409,
+            'NOT_RETRYABLE',
+            'The repository feedback automation is unavailable'
+          );
+        }
+        if (!(await mayLaunch(request, reply, user, access, null))) {
+          return;
+        }
+        try {
+          return reply.status(202).send({
+            data: await queueReviewFixRetry(fastify, user, reviewRunId, {
+              automationId: automation.id,
+              connectionId: access.repo.id,
+              fireId: fire.id,
+            }),
+          });
+        } catch (error) {
+          if (error instanceof ReviewLaunchError) {
+            return sendError(reply, error.status, error.code, error.message);
+          }
+          throw error;
+        }
       }
       const source = eventSource(automation.source);
       const facts = source?.facts.safeParse(fire.facts);

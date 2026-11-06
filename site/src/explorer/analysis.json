@@ -2534,6 +2534,15 @@
   },
   "concepts": [
     {
+      "body": "A review is a separate run linked to a finished source; a requested fix is another attempt, not a change to that source run.",
+      "category": "Engineering",
+      "detail": "Review-kind templates need a source run and cannot use the ordinary standalone template launch. Presets select a review template, prompt, optional tests and blocking action. Attachments request automatic reviews after successful source completion; each preset gets its own durable launch intent. Review verdicts and fix decisions remain on the review run, with links back to the source and onward to a fix run when one starts.",
+      "id": "sourceReviewFix",
+      "refs": ["postRunLaunch", "postRunIntents", "postRunMetadata"],
+      "status": "Implemented",
+      "title": "Source run ≠ review run ≠ fix attempt"
+    },
+    {
       "body": "A reusable named definition differs from one execution of a particular version.",
       "category": "Execution",
       "detail": "WorkflowTemplate owns activeVersion and inputSchema; WorkflowTemplateVersion owns spec JSON; WorkflowRun stores specSnapshot, timing, status and lineage.",
@@ -2688,6 +2697,26 @@
     }
   ],
   "features": [
+    {
+      "body": "Review a finished workflow or agent run manually or through attached presets, with separate results and optional guarded fix rounds.",
+      "category": "Engineering",
+      "detail": "Review-kind library templates provide network, Qodo and human-review variants. Launch preparation checks source control, repository access, review.enabled and template/preset scope. Global presets are platform-admin managed; team presets require that team's lead/admin membership and cannot be attached or launched across teams. The source-run picker exposes globals plus that source's team. Successful non-review runs enqueue independent global and team attachment intents, dispatched with durable claims and a stale-intent sweep. PR and branch reviews verify recorded heads; stored diffs are checked and applied at the recorded base into a local-only commit. Optional runTests runs the repository's test gate on a verified checkout. Large changes are reviewed in bounded chunks inside one network step, merging worst-of verdicts and deduplicated findings. The run page links reviews and shows verification, verdicts and fix status. PR-mode publication posts a marked comment and requests reevaluation; successful verified current-head linked reviews can supply otherwise missing PR review evidence, but cannot lower original evidence. PR fixes use an opted-in review_findings feedback automation and its existing guards; stored fixes launch a same-agent deliver:none follow-up. Transient failures can be retried with distinct, deduplicated attempts and DB-backed findings.",
+      "id": "postRunReview",
+      "refs": [
+        "postRunLaunch",
+        "postRunIntents",
+        "postRunLoad",
+        "postRunPublish",
+        "postRunChunks",
+        "postRunEvidence",
+        "postRunFix",
+        "postRunStoredFix",
+        "postRunUI",
+        "postRunScope"
+      ],
+      "status": "Implemented + seeded templates",
+      "title": "Code review after a run"
+    },
     {
       "body": "Attach Git-backed reference material at team, repository, template and run scope, pin snapshots and expose bounded read-only files and cited search results.",
       "category": "Knowledge",
@@ -4313,6 +4342,24 @@
   ],
   "limits": [
     {
+      "body": "A review is bounded evidence about one change, not proof of correctness or a promise that a fix starts.",
+      "category": "Engineering",
+      "detail": "Network chunks see the full file list but only their part of the diff, so cross-chunk interactions may be missed. Changes above the hard size cap are refused. Stored verification rejects unsupported or unsafe patch forms; failures remain explicitly unverified and skip the optional test gate. Even verified stored reviews have no PR and never feed PR evaluation. Tests are opt-in, not an implied successful gate. PR fixes need an enabled repository automation opted into review_findings, the matching open platform PR and unchanged head, push eligibility, budget and remaining rounds; a skipped decision is surfaced rather than treated as a successful fix. Stored fixes remain unpublished agent runs. Retry eligibility is limited to recorded transient decisions and rechecks guards. Publication waits up to five minutes for review completion before reevaluation, which rereads the PR's current head.",
+      "id": "postRunReviewBounds",
+      "refs": [
+        "postRunLoad",
+        "postRunPatch",
+        "postRunChunks",
+        "postRunFix",
+        "postRunStoredFix",
+        "postRunEvidence",
+        "postRunRetry",
+        "postRunReevaluation"
+      ],
+      "status": "Confirmed boundary",
+      "title": "Review evidence and fix attempts have explicit limits"
+    },
+    {
       "body": "References are capped, indexing and checkout are best-effort, and revocation cannot recall content already handed to an agent.",
       "category": "Knowledge",
       "detail": "Indexing limits file count, individual and total bytes; checkout has a separate byte cap. Mandatory references still face the run cap and operational failures. New runs and later resolutions recheck attachability, but existing workspaces and bound search tools are not actively scrubbed or cancelled. Snapshots have no dedicated retention sweep. Live authenticated GitHub, embedding-provider and vector-search integration and the KB dashboard browser UI are not end-to-end verified by the mock/component tests.",
@@ -5306,6 +5353,9 @@
     "PullRequest": "SCM pull-request tracking linked to a workflow and connection: OPEN/MERGED/CLOSED state, draft flag, capped title, and open, merge and close times.",
     "RepoAccess": "Schema entity; inspect fields and relationship declarations below.",
     "RepoDependency": "Directed repository dependency with source/provenance and contracts.",
+    "ReviewLaunchIntent": "Durable source-run/preset automatic-review decision with claim state, attempts, prepared launch identity and a started, skipped or failed outcome.",
+    "ReviewPreset": "Global or team-owned named review configuration: review-kind template, optional reviewer prompt, test-gate choice, enabled state and report/fix action. Names are unique per team or global scope.",
+    "ReviewPresetAttachment": "A preset attached to one workflow template or repository for automatic review; team-scoped presets require a target in the same team.",
     "RunCallback": "The callback one launch asked for, with its URL encrypted; reports only the execution that asked.",
     "RunInput": "Stored submitted payload and request history, reused by runs: the organization a connection-free launch was gated against, the service principal that requested it, and whether the platform generated its ticket id.",
     "ScannerPattern": "Schema entity; inspect fields and relationship declarations below.",
@@ -5436,6 +5486,9 @@
       "SlackChannelMember"
     ],
     "Workflow & governance": [
+      "ReviewPreset",
+      "ReviewPresetAttachment",
+      "ReviewLaunchIntent",
       "HumanErrorBaseline",
       "AutonomyDecision",
       "WorkflowHumanStep",
@@ -5856,6 +5909,104 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "export async function prepareReviewLaunch(",
+      "id": "postRunLaunch",
+      "lines": 90,
+      "path": "packages/shared/src/lib/reviewLaunch.ts",
+      "title": "Source-bound review launch preparation"
+    },
+    {
+      "anchor": "export async function reviewRunMetadata(",
+      "id": "postRunMetadata",
+      "lines": 52,
+      "path": "packages/shared/src/lib/reviewLaunch.ts",
+      "title": "Linked reviews and published verdict projection"
+    },
+    {
+      "anchor": "export async function enqueueReviewLaunchIntents(",
+      "id": "postRunIntents",
+      "lines": 70,
+      "path": "packages/worker/src/activities/reviewLaunches.ts",
+      "title": "Global and team automatic-review intents"
+    },
+    {
+      "anchor": "export async function loadChangeForReviewWith(",
+      "id": "postRunLoad",
+      "lines": 90,
+      "path": "packages/worker/src/activities/codeReview.ts",
+      "title": "Review checkout, identity verification and optional tests"
+    },
+    {
+      "anchor": "export async function publishReviewResultWith(",
+      "id": "postRunPublish",
+      "lines": 90,
+      "path": "packages/worker/src/activities/codeReview.ts",
+      "title": "Published review summary, fix decision and PR reevaluation"
+    },
+    {
+      "anchor": "export function reviewChunks(",
+      "id": "postRunChunks",
+      "lines": 72,
+      "path": "packages/worker/src/lib/reviewChunks.ts",
+      "title": "File and hunk chunking with worst-of verdict merging"
+    },
+    {
+      "anchor": "export async function applyStoredPatch(",
+      "id": "postRunPatch",
+      "lines": 75,
+      "path": "packages/worker/src/lib/storedPatch.ts",
+      "title": "Stored patch path validation and check-before-apply"
+    },
+    {
+      "anchor": "export async function loadLinkedReviewOutputs(",
+      "id": "postRunEvidence",
+      "lines": 90,
+      "path": "packages/worker/src/lib/briefEvidence.ts",
+      "title": "Successful linked evidence at the current PR head"
+    },
+    {
+      "anchor": "export async function startReviewFix(",
+      "id": "postRunFix",
+      "lines": 90,
+      "path": "packages/worker/src/activities/reviewFixes.ts",
+      "title": "Opted-in PR review-fix eligibility and durable decisions"
+    },
+    {
+      "anchor": "export async function startStoredReviewFix(",
+      "id": "postRunStoredFix",
+      "lines": 90,
+      "path": "packages/worker/src/activities/storedReviewFix.ts",
+      "title": "Same-agent unpublished stored-review follow-up"
+    },
+    {
+      "anchor": "export async function reviewFixRetryState(",
+      "id": "postRunRetry",
+      "lines": 75,
+      "path": "packages/shared/src/lib/reviewLaunch.ts",
+      "title": "Recorded transient fix-retry eligibility"
+    },
+    {
+      "anchor": "export function RunReviews(",
+      "id": "postRunUI",
+      "lines": 75,
+      "path": "packages/web/src/components/runs/RunReviews.tsx",
+      "title": "Source-run review action and linked-review verdict UI"
+    },
+    {
+      "anchor": "async function scopeFor(",
+      "id": "postRunScope",
+      "lines": 55,
+      "path": "packages/gateway/src/routes/codeReview.ts",
+      "title": "Global-admin and team-lead review preset authorization"
+    },
+    {
+      "anchor": "if (input.trigger === 'review_run' && input.reviewRunId)",
+      "id": "postRunReevaluation",
+      "lines": 45,
+      "path": "packages/worker/src/workflows/prEvaluation.ts",
+      "title": "Review-completion wait before PR-head reevaluation"
+    },
     {
       "anchor": "model KnowledgeBase {",
       "before": 0,
@@ -12978,6 +13129,22 @@
     }
   ],
   "usecases": [
+    {
+      "body": "Ask for another review of a completed change without repeating the implementation run.",
+      "category": "Engineering",
+      "detail": "Choose an enabled global or source-team preset from a controllable run, or select a review template in Advanced mode. Attach presets to a repository or workflow template to review successful runs automatically. A network review can be complemented by Qodo at the reviewed head or an explicit human decision. Read the linked verdict, verification and optional test results on the review run; a PR review also posts a comment and contributes current-head evaluation evidence. Fix mode can request a guarded PR feedback round or an unpublished same-agent follow-up for a verified stored change, with reasons when it cannot start.",
+      "id": "reviewFinishedRun",
+      "refs": [
+        "postRunLaunch",
+        "postRunUI",
+        "postRunIntents",
+        "postRunPublish",
+        "postRunFix",
+        "postRunStoredFix"
+      ],
+      "status": "Dedicated launch path + seeded templates",
+      "title": "Review a finished workflow or agent run"
+    },
     {
       "body": "A developer submits a repository, ticket and description, then receives reviewed code and a PR.",
       "category": "Engineering",

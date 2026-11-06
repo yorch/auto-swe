@@ -270,13 +270,13 @@ export async function loadMaxReviewSeverity(
       }
     }
   }
-  if (max === null) {
-    return null;
-  }
   for (const review of linkedReviews ??
     (await loadLinkedReviewOutputs(temporalWorkflowId, headSha))) {
     for (const verdict of review.verdicts) {
-      if (isSeverity(verdict.severity) && SEVERITY_ORDER[verdict.severity] > SEVERITY_ORDER[max]) {
+      if (
+        isSeverity(verdict.severity) &&
+        (max === null || SEVERITY_ORDER[verdict.severity] > SEVERITY_ORDER[max])
+      ) {
         max = verdict.severity;
       }
     }

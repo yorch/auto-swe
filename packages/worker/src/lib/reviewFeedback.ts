@@ -8,11 +8,17 @@ function object(value: unknown): Record<string, unknown> {
     : {};
 }
 
-export function reviewFeedbackSubject(prNumber: number, runId: string): string {
-  return `pr-${prNumber}@review-${runId}`;
+export function reviewFeedbackSubject(
+  prNumber: number,
+  runId: string,
+  attemptId?: unknown
+): string {
+  return `pr-${prNumber}@review-${runId}${typeof attemptId === 'string' ? `:attempt-${attemptId}` : ''}`;
 }
 
 interface ReviewFeedback {
+  launchedById?: string | null;
+  storedChange?: { baseSha: string; diff: string };
   approved: unknown;
   headSha: string;
   origin: 'agent_run' | 'workflow';
@@ -25,7 +31,7 @@ interface ReviewFeedback {
 export async function readReviewFeedback(
   runId: string,
   connectionId: string,
-  prNumber: number
+  prNumber?: number
 ): Promise<ReviewFeedback | null> {
   const run = await prisma.workflowRun.findUnique({
     include: {
@@ -51,8 +57,9 @@ export async function readReviewFeedback(
     !payload.success ||
     payload.data.onBlocking !== 'fix' ||
     payload.data.connectionId !== connectionId ||
-    payload.data.reviewOf.mode !== 'pr' ||
-    payload.data.reviewOf.prNumber !== prNumber ||
+    (prNumber === undefined
+      ? payload.data.reviewOf.mode !== 'stored'
+      : payload.data.reviewOf.mode !== 'pr' || payload.data.reviewOf.prNumber !== prNumber) ||
     run.reviewOfRunId !== payload.data.sourceRunId ||
     !['RUNNING', 'SUCCESS'].includes(run.status)
   ) {
@@ -67,6 +74,11 @@ export async function readReviewFeedback(
   const code = Object.keys(loaded).length ? loaded : object(networks[0]?.codeResult);
   if (
     code.diffVerified === false ||
+    (prNumber === undefined && code.diffVerified !== true) ||
+    (prNumber === undefined &&
+      (typeof code.baseSha !== 'string' ||
+        !/^[a-f0-9]{40}$/i.test(code.baseSha) ||
+        typeof code.diff !== 'string')) ||
     typeof code.headSha !== 'string' ||
     !/^[a-f0-9]{40}$/i.test(code.headSha)
   ) {
@@ -107,8 +119,12 @@ export async function readReviewFeedback(
     texts.push(summary.humanNote.slice(0, 4_000));
   }
   return {
+    ...(prNumber === undefined
+      ? { storedChange: { baseSha: code.baseSha as string, diff: code.diff as string } }
+      : {}),
     approved: summary.approved,
     headSha: code.headSha,
+    launchedById: run.launchedById,
     origin:
       run.reviewOfRun.template.origin === AGENT_RUN_TEMPLATE_ORIGIN &&
       run.reviewOfRun.template.teamId === null

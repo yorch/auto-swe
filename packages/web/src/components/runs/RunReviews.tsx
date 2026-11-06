@@ -12,9 +12,10 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
-import { useReviewChoices, useRunReview } from '@/hooks/useCodeReview';
+import { useRetryReviewFix, useReviewChoices, useRunReview } from '@/hooks/useCodeReview';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
+import { requestHref } from '@/lib/requestDisplay';
 
 const reasons: Record<string, string> = {
   REVIEW_DISABLED: 'Code reviews are disabled for this repository.',
@@ -39,7 +40,7 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 function LaunchReview({ runId, onClose }: { runId: string; onClose: () => void }) {
-  const choices = useReviewChoices();
+  const choices = useReviewChoices(true, { sourceRunId: runId });
   const launch = useRunReview(runId);
   const router = useRouter();
   const [advanced, setAdvanced] = useState(false);
@@ -66,7 +67,7 @@ function LaunchReview({ runId, onClose }: { runId: string; onClose: () => void }
           }
           launch.mutate(advanced ? { templateId: selected } : { presetId: selected }, {
             onSuccess: (result) => {
-              router.push(`/runs/${result.runId}`);
+              router.push(requestHref(result.workRequestId));
               onClose();
             },
           });
@@ -105,8 +106,35 @@ function LaunchReview({ runId, onClose }: { runId: string; onClose: () => void }
   );
 }
 
+function RetryFixButton({ runId }: { runId: string }) {
+  const retryFix = useRetryReviewFix(runId);
+  return (
+    <>
+      <Button
+        disabled={retryFix.isPending || retryFix.isSuccess}
+        onClick={() => retryFix.mutate()}
+        variant="secondary"
+      >
+        {retryFix.isSuccess ? 'Fix retry queued' : 'Retry fix'}
+      </Button>
+      {retryFix.isError && <Alert variant="error">{reviewError(retryFix.error)}</Alert>}
+    </>
+  );
+}
+
 export function RunReviews({ run }: { run: WorkflowRunDetail }) {
   const [open, setOpen] = useState(false);
+  const summary = record(
+    [...run.steps]
+      .sort((a, b) => b.attempt - a.attempt)
+      .find((s) => s.stepName === 'publishReviewResult' && s.status === 'PASSED')?.outputs
+  );
+  const fix = record(summary.fix);
+  const change = record(
+    [...run.steps]
+      .sort((a, b) => b.attempt - a.attempt)
+      .find((step) => step.stepName === 'loadChangeForReview' && step.status === 'PASSED')?.outputs
+  );
   const review = run.review;
   if (!review) {
     return null;
@@ -117,12 +145,6 @@ export function RunReviews({ run }: { run: WorkflowRunDetail }) {
       : !review.reviewable
         ? (reasons[review.reason ?? ''] ?? review.reason ?? 'This run has nothing to review.')
         : undefined;
-  const summary = record(
-    [...run.steps]
-      .sort((a, b) => b.attempt - a.attempt)
-      .find((s) => s.stepName === 'publishReviewResult' && s.status === 'PASSED')?.outputs
-  );
-  const fix = record(summary.fix);
   const findings = Array.isArray(summary.findings)
     ? [
         ...new Set(
@@ -155,6 +177,14 @@ export function RunReviews({ run }: { run: WorkflowRunDetail }) {
               {review.reviewOf.templateName}
             </Link>
           </p>
+          {typeof change.diffVerified === 'boolean' && (
+            <p>
+              Change {change.diffVerified ? 'verified' : 'unverified'}
+              {typeof change.verificationReason === 'string'
+                ? `: ${change.verificationReason}`
+                : ''}
+            </p>
+          )}
           {typeof summary.approved === 'boolean' ? (
             <>
               <p>
@@ -177,6 +207,13 @@ export function RunReviews({ run }: { run: WorkflowRunDetail }) {
                   {typeof fix.workflowId === 'string' ? ` · ${fix.workflowId}` : ''}
                 </p>
               )}
+              {review.fixRetry?.status === 'queued' ? (
+                <Button disabled variant="secondary">
+                  Fix retry queued
+                </Button>
+              ) : review.canControl && review.fixRetry?.allowed ? (
+                <RetryFixButton key={String(fix.attemptId ?? 'initial')} runId={run.id} />
+              ) : null}
             </>
           ) : (
             <p>No published verdict yet.</p>

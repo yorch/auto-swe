@@ -41,6 +41,7 @@ export const UI_ROUTE_TEMPLATES: readonly string[] = [
   '/admin/users',
   '/admin/workflow-defaults',
   '/agent-runs',
+  '/review-presets',
   '/agents',
   '/approvals',
   '/bundles',

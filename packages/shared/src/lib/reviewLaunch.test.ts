@@ -5,6 +5,8 @@ import {
   loadReviewSource,
   prepareReviewLaunch,
   recordReviewLaunch,
+  reviewFixRetryMetadata,
+  reviewFixRetryState,
   reviewRunId,
   reviewRunMetadata,
 } from './reviewLaunch.js';
@@ -16,6 +18,190 @@ const REPO = '22222222-2222-4222-8222-222222222222';
 const TEMPLATE = '33333333-3333-4333-8333-333333333333';
 const PRESET = '44444444-4444-4444-8444-444444444444';
 const HEAD = 'a'.repeat(40);
+
+describe('review fix retry eligibility', () => {
+  const fixture = (reason = 'the fix workflow could not start') => {
+    const step = {
+      id: 'publish',
+      outputs: { approved: false, fix: { reason, status: 'skipped' } },
+    };
+    const run = {
+      reviewOfRunId: SOURCE,
+      status: 'SUCCESS',
+      steps: [step],
+      template: { kind: 'review' },
+      workRequest: {
+        payload: {
+          connectionId: REPO,
+          onBlocking: 'fix',
+          reviewOf: { mode: 'pr', prNumber: 7 },
+          sourceRunId: SOURCE,
+        },
+      },
+    };
+    const fire = vi.fn().mockResolvedValue(null);
+    const db = {
+      automationFire: { findFirst: fire },
+      workflowRun: { findUnique: vi.fn().mockResolvedValue(run) },
+    };
+    return { db: db as unknown as PrismaClient, fire, run, step };
+  };
+  it.each([
+    'the fix workflow could not start',
+    'repository is unavailable',
+    'the organization is over its monthly budget',
+    'a run started for pr-7 within the last 5 minutes',
+    'an earlier run for pr-7 is still in progress',
+    'the automation started 10 runs in the last 24 hours (cap 10)',
+  ])('allows a transient decision: %s', async (reason) => {
+    const { db, fire } = fixture(reason);
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: true });
+    expect(fire).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          connectionId: REPO,
+          facts: { equals: PRESET, path: ['reviewRunId'] },
+          source: 'github.pull_request.feedback',
+        },
+      })
+    );
+  });
+  it.each([
+    'round limit reached',
+    'the reviewed head moved',
+    'the branch is listed as never push',
+    'the pull request is not open',
+    'the pull request is from a fork',
+    undefined,
+  ])('refuses a permanent or empty decision: %s', async (reason) => {
+    const { db, step } = fixture();
+    Object.assign(step.outputs.fix, { reason });
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: false });
+  });
+  it.each(['RUNNING', 'FAILED'])('requires a successful review, not %s', async (status) => {
+    const { db, run } = fixture();
+    run.status = status;
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: false });
+  });
+  it('refuses approved results and decisions that started a fix', async () => {
+    const { db, step, fire } = fixture();
+    step.outputs.approved = true;
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: false });
+    step.outputs.approved = false;
+    fire.mockResolvedValue({ id: 'fire', outcome: 'STARTED', reason: null });
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: false });
+  });
+  it.each(['started', 'unknown'])('requires a skipped summary, not %s', async (status) => {
+    const { db, step } = fixture();
+    step.outputs.fix.status = status;
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: false });
+  });
+  it.each(['FAILED_TO_START', 'SUPPRESSED_COOLDOWN', 'SUPPRESSED_DAILY_CAP'])(
+    'allows a transient fire decision: %s',
+    async (outcome) => {
+      const { db, fire } = fixture();
+      fire.mockResolvedValue({ id: 'fire', outcome, reason: 'the fix workflow could not start' });
+      expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: true });
+    }
+  );
+  it('gives concurrent submissions the same attempt, and a new decision a new attempt', async () => {
+    const { db, step } = fixture();
+    const first = await reviewFixRetryState(db, PRESET);
+    expect(await reviewFixRetryState(db, PRESET)).toEqual(first);
+    Object.assign(step.outputs.fix, { attemptId: 'previous-retry' });
+    expect(await reviewFixRetryState(db, PRESET)).not.toEqual(first);
+  });
+  it.each(['pr', 'stored'])(
+    'reports a durable queued %s retry until its decision resolves',
+    async (mode) => {
+      const { db, run, step } = fixture();
+      if (mode === 'stored') {
+        Object.assign(run.workRequest.payload, { reviewOf: { mode: 'stored' } });
+        Object.assign(db, {
+          workflowStep: {
+            findFirst: vi.fn().mockResolvedValue({ outputs: { diffVerified: true } }),
+          },
+        });
+      }
+      expect(await reviewFixRetryMetadata(db, PRESET)).toEqual({ allowed: true });
+      const state = await reviewFixRetryState(db, PRESET);
+      if (!state.allowed) {
+        throw new Error('Expected a retryable decision');
+      }
+      Object.assign(step.outputs, { fixRetry: { attemptId: state.attemptId, status: 'queued' } });
+      expect(await reviewFixRetryMetadata(db, PRESET)).toEqual({
+        allowed: false,
+        status: 'queued',
+      });
+      expect(await reviewFixRetryState(db, PRESET)).toMatchObject({
+        allowed: true,
+        attemptId: state.attemptId,
+      });
+      Object.assign(step.outputs.fix, { attemptId: state.attemptId, status: 'skipped' });
+      expect(await reviewFixRetryMetadata(db, PRESET)).toEqual({ allowed: true });
+      step.outputs.fix.status = 'started';
+      expect(await reviewFixRetryMetadata(db, PRESET)).toMatchObject({ allowed: false });
+      expect(await reviewFixRetryMetadata(db, PRESET)).not.toHaveProperty('status');
+    }
+  );
+  it('ignores a queued marker whose attempt has already resolved', async () => {
+    const { db, step } = fixture();
+    Object.assign(step.outputs, { fixRetry: { attemptId: 'older', status: 'queued' } });
+    Object.assign(step.outputs.fix, { attemptId: 'older' });
+    expect(await reviewFixRetryMetadata(db, PRESET)).toEqual({ allowed: true });
+  });
+  it.each(['STARTED', 'FAILED_TO_START', 'SUPPRESSED_COOLDOWN'])(
+    'keeps the retry pending while its worker records a new %s fire',
+    async (outcome) => {
+      const { db, step, fire } = fixture();
+      const state = await reviewFixRetryState(db, PRESET);
+      if (!state.allowed) {
+        throw new Error('Expected a retryable decision');
+      }
+      Object.assign(step.outputs, { fixRetry: { attemptId: state.attemptId, status: 'queued' } });
+      fire.mockResolvedValue({
+        id: 'retry-fire',
+        outcome,
+        reason: 'the fix workflow could not start',
+      });
+      expect(await reviewFixRetryMetadata(db, PRESET)).toEqual({
+        allowed: false,
+        status: 'queued',
+      });
+    }
+  );
+  it('does not let an older fire override a newer permanent skip', async () => {
+    const { db, step, fire } = fixture();
+    fire.mockResolvedValue({
+      createdAt: new Date(0),
+      id: 'old',
+      outcome: 'FAILED_TO_START',
+      reason: 'the fix workflow could not start',
+    });
+    Object.assign(step.outputs.fix, {
+      decidedAt: new Date().toISOString(),
+      reason: 'the reviewed head moved',
+    });
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: false });
+  });
+  it('propagates database failures instead of allowing an unverified retry', async () => {
+    const { db, fire } = fixture();
+    fire.mockRejectedValue(new Error('offline'));
+    await expect(reviewFixRetryState(db, PRESET)).rejects.toThrow('offline');
+  });
+  it('allows stored transient retries only after verified application and never reads PR fires', async () => {
+    const { db, run, fire, step } = fixture('agent runs are at their concurrency limit');
+    Object.assign(run.workRequest.payload, { reviewOf: { mode: 'stored' } });
+    const loaded = vi.fn().mockResolvedValue({ outputs: { diffVerified: false } });
+    Object.assign(db, { workflowStep: { findFirst: loaded } });
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: false });
+    loaded.mockResolvedValue({ outputs: { diffVerified: true } });
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: true });
+    expect(fire).not.toHaveBeenCalled();
+    step.outputs.fix.status = 'started';
+    expect(await reviewFixRetryState(db, PRESET)).toMatchObject({ allowed: false });
+  });
+});
 
 function fake() {
   const source = {
@@ -70,6 +256,29 @@ function fake() {
 beforeEach(() => setting.mockResolvedValue(true));
 
 describe('review launch preparation', () => {
+  it('accepts global and own-team presets but refuses another team at the shared launch boundary', async () => {
+    const { db, prisma } = fake();
+    const preset = await db.reviewPreset.findUnique();
+    for (const teamId of [null, 'team']) {
+      db.reviewPreset.findUnique.mockResolvedValue({ ...preset, teamId } as never);
+      await expect(
+        prepareReviewLaunch(prisma, { presetId: PRESET, sourceRunId: SOURCE })
+      ).resolves.toBeDefined();
+    }
+    db.reviewPreset.findUnique.mockResolvedValue({ ...preset, teamId: 'other-team' } as never);
+    await expect(
+      prepareReviewLaunch(prisma, { presetId: PRESET, sourceRunId: SOURCE })
+    ).rejects.toMatchObject({ code: 'REVIEW_PRESET_NOT_FOUND', status: 404 });
+    db.workflowTemplate.findUnique.mockResolvedValue({
+      activeVersion: 2,
+      kind: 'review',
+      status: 'ACTIVE',
+      teamId: 'other-team',
+    } as never);
+    await expect(
+      prepareReviewLaunch(prisma, { sourceRunId: SOURCE, templateId: TEMPLATE })
+    ).rejects.toMatchObject({ code: 'REVIEW_TEMPLATE_INVALID' });
+  });
   it('builds a scoped payload and ledger from a workflow CodeResult, and records ledger before a caller starts Temporal', async () => {
     const { db, prisma } = fake();
     const prepared = await prepareReviewLaunch(prisma, {

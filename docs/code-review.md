@@ -16,8 +16,17 @@ exposes **Review template (requires a source run)**. The built-in choices are:
 | `human-review-of-run` | A person reviews the diff and chooses approve or request changes; the human note accompanies the result. |
 
 A preset selects a review template and supplies a name, description, optional reviewer system
-prompt, enabled flag, and `onBlocking: report | fix`. Platform administrators manage presets at
-`/admin/review-presets`. `report` publishes the result without starting a fix.
+prompt, enabled flag, and `onBlocking: report | fix`. Platform administrators manage global presets at
+`/admin/review-presets`. Team leads and team administrators with platform LEAD access manage their
+team's presets at `/review-presets`. Names are unique within a team or within the global scope.
+Team presets use a global or same-team review template, attach only to that team's source templates
+and repositories, and review only that team's runs. Global and team attachments both auto-start.
+`report` publishes the result without starting a fix.
+
+The picker accepts `sourceRunId` and returns global presets plus that authorized source run's team
+presets. Without a source or team selection it returns only global presets. Management requests to
+`/api/v1/platform/review-presets` and its resource/attachment routes select a team with the `teamId`
+query parameter; omitting it selects the ADMIN-only global scope. Scope is immutable through edits.
 
 An attachment associates one preset with either a source workflow template (`templateId`) or a
 repository (`connectionId`), not both. Enabled presets attached through either source are selected
@@ -30,7 +39,9 @@ run reaper also sweeps stale pending intents. Review runs do not recursively lau
 
 On `/runs/<id>`, **Run review** selects a preset by default. **Advanced** selects an active review
 template directly. The button explains why a run is not reviewable or the caller cannot control it.
-The same run viewer serves agent runs. Successful submission opens the new review run.
+The same run viewer serves agent runs. Successful submission opens the review's request panel,
+which refreshes automatically while waiting for execution to start. Diagnostics become available
+when the worker creates the review run.
 
 Manual launches require ENGINEER access, control of the source run, repository launch authorization,
 and launch budget. Send an `Idempotency-Key` to retry a submission without creating another run.
@@ -48,13 +59,19 @@ Source selection takes the first available mode in this order:
    base, refuses closed or fork PRs, clones the head, and verifies the checkout matches that SHA.
 2. **Branch:** the source's recorded branch and head SHA. The checkout must still equal that SHA;
    a moved branch fails with `REVIEW_HEAD_CHANGED` rather than reviewing a different commit.
-3. **Stored:** an agent run with `deliver: none` and a nonempty stored diff. No repository checkout
-   proves this diff, and the result is explicitly unverified.
+3. **Stored:** an agent run with `deliver: none` and a nonempty stored diff. The worker checks out
+   the source's recorded base commit, checks and applies the patch, and creates a local review
+   commit that is never pushed. The run page shows verified/unverified status and a failure reason.
 
 PR and branch diffs use the merge base of the base branch with hardened git-diff options. A diff
-larger than 300,000 characters fails with `REVIEW_DIFF_TOO_LARGE`; it is not silently truncated.
-Workspaces are destroyed after loading. The code result explicitly says tests are **not run** by
-the review loader; review is not fresh test evidence. A finished source with no eligible change
+larger than 300,000 characters is reviewed in file-aligned chunks (oversized files split by hunk,
+and oversized hunks by lines). At most two chunks run concurrently; each names its position and
+the full file list. Verdicts merge worst-of with deduplicated findings in the single
+`runReviewNetwork` output. The hard limits are 900,000 diff characters and 1.2 MB of serialized
+change data; exceeding either fails with `REVIEW_DIFF_TOO_LARGE`, without truncation.
+Workspaces are destroyed after loading. Presets default `runTests` to false. Enabling it runs the
+repository test gate on the reviewed checkout and feeds its actual output into the review.
+Without it, tests are explicitly **not run**. A finished source with no eligible change
 returns `REVIEW_NOTHING_TO_REVIEW`. A review run cannot itself be a review source.
 
 ## Results and PR evaluation
@@ -71,8 +88,9 @@ their results on the run without posting a PR comment.
 Publication requests a fresh [PR evaluation](./pr-evaluation.md). Evaluation and the reviewer brief
 also read successful linked reviews of the current PR head. Severity is **worst-of**, with strict
 **never-lower** behavior: a linked WARNING/CRITICAL or rejected approval raises risk to HIGH; a
-clean linked review cannot lower an original WARNING or substitute for a missing original review
-at that head. Findings are bounded, deduplicated, and labelled with the review run. Different-head,
+clean linked review cannot lower an original WARNING. When the original run has no review result
+at that head, eligible linked reviews supply the review signal: a clean result removes the missing-review
+risk bump. Findings are bounded, deduplicated, and labelled with the review run. Different-head,
 unsuccessful, stored, and unverified reviews do not contribute linked evidence.
 
 ## Fix mode
@@ -107,6 +125,13 @@ Missing configuration or failed eligibility records a skipped reason in the publ
 and an activity event instead of failing the review. The PR comment includes
 `fix not started: <reason>`.
 
+For a verified stored review, fix policy launches the original agent through the built-in Agent Run
+template with `deliver: none`, without a PR automation. The follow-up checks the completed review,
+reapplies the exact reviewed diff on its recorded base, and supplies stored, screened findings to
+the same agent with its original launch parameters. Agent enablement, concurrency, tool permissions,
+budget and runtime ceilings still apply. The review run and attempt deduplicate the ledger and
+workflow; transient skips and launch failures use the run's **Retry fix** action.
+
 ## API
 
 All paths below have the `/api/v1` prefix. Preset administration requires ADMIN; launch and picker
@@ -114,11 +139,12 @@ routes require ENGINEER, with source control and repository checks on launch.
 
 | Method and path | Request / result |
 |---|---|
-| `POST /workflow-runs/:id/reviews` | Exactly `{ "presetId": "<uuid>" }` or `{ "templateId": "<uuid>" }`; optional `Idempotency-Key`; returns 201 with `data: { runId, workflowId }`. |
+| `POST /workflow-runs/:id/reviews` | Exactly `{ "presetId": "<uuid>" }` or `{ "templateId": "<uuid>" }`; optional `Idempotency-Key`; returns 201 with `data: { runId, workflowId, workRequestId }`. |
+| `POST /workflow-runs/:id/reviews/fix-retry` | ENGINEER with review-run control and repository authorization; queues a guarded fix retry and returns 202 with `data: { workflowId }`. |
 | `GET /review-presets` | Enabled presets and active review templates for the picker. |
 | `GET /workflow-runs/:id` | The `review` field describes eligibility, control, source linkage, and linked review summaries. Step outputs carry the publication summary. |
 | `GET /platform/review-presets` | Presets with template metadata and attachments. |
-| `POST /platform/review-presets` | Create with `name`, `templateId`, optional `description`, `systemPrompt`, `onBlocking`, and `enabled`. |
+| `POST /platform/review-presets` | Create with `name`, `templateId`, optional `description`, `systemPrompt`, `onBlocking`, `runTests`, and `enabled`. |
 | `PATCH /platform/review-presets/:id` | Update supplied preset fields. |
 | `DELETE /platform/review-presets/:id` | Delete the preset and its attachments; existing review runs remain. |
 | `POST /platform/review-presets/:id/attachments` | Exactly `{ "templateId": "<uuid>" }` or `{ "connectionId": "<uuid>" }`. |
@@ -132,13 +158,21 @@ review template with `REVIEW_TEMPLATE_NEEDS_SOURCE`.
 
 - Review templates cannot launch standalone: they require a finished source run and an eligible
   change. Automatic review applies only to successful non-review sources.
-- Stored diffs are unverified. They never count toward PR evaluation and cannot start a fix round.
-- A review does not run tests merely by loading the diff, and oversized diffs fail rather than
-  receive partial review. Findings displayed/published by the summary are bounded.
-- Fix fires are not retryable through the generic automation-fire retry endpoint. A failed or
-  suppressed fix decision is not re-launched as another round for the same review run.
+- Stored verification refuses binary patches, symlinks, submodules, traversal, renames, and
+  quoted/unsupported paths. Missing base commits or patches that cannot be safely applied remain
+  unverified with a reason and cannot start a fix. Even verified stored reviews never count toward
+  PR evaluation because they have no PR target. Their local commits are never pushed.
+- Test execution is opt-in. Unverified stored diffs skip tests. Changes above the hard limits fail
+  rather than receive partial review. Chunk-local review cannot guarantee whole-change reasoning.
+  Findings displayed/published by the summary are bounded.
+- Fix retries apply only to successful blocking PR or verified stored reviews with fix policy and a
+  transient failed, suppressed, or skipped decision (for example cooldown, budget, unavailable configuration,
+  or a failed start). The run's **Retry fix** action and the generic automation-fire retry endpoint
+  create a new attempt, reread stored findings, and recheck all guards and limits. The generic
+  endpoint applies to PR automation fires; stored reviews use the run action. A moved head,
+  closed/fork PR, protected/never-push branch, or exhausted round limit is not retryable.
 - PR reevaluation waits up to five minutes for the publishing review run to reach SUCCESS.
   Unsuccessful or unfinished reviews are skipped; scheduling reevaluation is best-effort and a
   scheduling failure records an activity event rather than failing publication.
-- A different-head review does not replace review evidence for the current head. A missing
-  original review at head remains missing even when a linked review is clean.
+- A different-head review does not replace review evidence for the current head. Missing review
+  evidence raises risk unless an eligible linked review supplies a result at that head.

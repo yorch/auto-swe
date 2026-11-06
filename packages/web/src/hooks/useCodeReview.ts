@@ -21,23 +21,29 @@ export interface ReviewAttachment {
   connectionId: string | null;
 }
 export interface ReviewPreset extends ReviewChoice {
+  teamId?: string | null;
   description: string;
   templateId: string;
   systemPrompt: string | null;
   onBlocking: 'report' | 'fix';
+  runTests?: boolean;
   enabled: boolean;
   attachments: ReviewAttachment[];
   template: ReviewChoice;
 }
 const base = '/api/v1/platform/review-presets';
-export function useReviewChoices(enabled = true) {
+const scopeQuery = (teamId?: string) => (teamId ? `?teamId=${encodeURIComponent(teamId)}` : '');
+export function useReviewChoices(
+  enabled = true,
+  scope: { teamId?: string; sourceRunId?: string } = {}
+) {
   return useQuery({
     enabled,
     queryFn: () =>
       api.get<{ data: (ReviewChoice & { description: string })[]; templates: ReviewChoice[] }>(
-        '/api/v1/review-presets'
+        `/api/v1/review-presets${scope.sourceRunId ? `?sourceRunId=${encodeURIComponent(scope.sourceRunId)}` : scopeQuery(scope.teamId)}`
       ),
-    queryKey: ['review-choices'],
+    queryKey: ['review-choices', scope.teamId, scope.sourceRunId],
   });
 }
 export function useRunReview(runId: string) {
@@ -50,7 +56,7 @@ export function useRunReview(runId: string) {
         submission.current = { body: `${runId}:${body}`, key: randomId() };
       }
       return api
-        .fetch<{ data: { runId: string; workflowId: string } }>(
+        .fetch<{ data: { runId: string; workflowId: string; workRequestId: string } }>(
           `/api/v1/workflow-runs/${runId}/reviews`,
           { body, headers: { 'Idempotency-Key': submission.current.key }, method: 'POST' }
         )
@@ -62,13 +68,23 @@ export function useRunReview(runId: string) {
     },
   });
 }
-export function useReviewPresets() {
-  return useQuery({
-    queryFn: () => api.get<{ data: ReviewPreset[] }>(base).then((r) => r.data),
-    queryKey: ['review-presets'],
+export function useRetryReviewFix(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post(`/api/v1/workflow-runs/${runId}/reviews/fix-retry`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['workflow-run', runId] });
+    },
   });
 }
-export function useSaveReviewPreset() {
+export function useReviewPresets(teamId?: string) {
+  return useQuery({
+    queryFn: () =>
+      api.get<{ data: ReviewPreset[] }>(`${base}${scopeQuery(teamId)}`).then((r) => r.data),
+    queryKey: ['review-presets', teamId],
+  });
+}
+export function useSaveReviewPreset(teamId?: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
@@ -77,24 +93,27 @@ export function useSaveReviewPreset() {
     }: {
       id?: string;
       body: ReviewPresetCreateInput | ReviewPresetUpdateInput;
-    }) => (id ? api.patch(`${base}/${id}`, body) : api.post(base, body)),
+    }) =>
+      id
+        ? api.patch(`${base}/${id}${scopeQuery(teamId)}`, body)
+        : api.post(`${base}${scopeQuery(teamId)}`, body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['review-presets'] });
       qc.invalidateQueries({ queryKey: ['review-choices'] });
     },
   });
 }
-export function useDeleteReviewPreset() {
+export function useDeleteReviewPreset(teamId?: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete(`${base}/${id}`),
+    mutationFn: (id: string) => api.delete(`${base}/${id}${scopeQuery(teamId)}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['review-presets'] });
       qc.invalidateQueries({ queryKey: ['review-choices'] });
     },
   });
 }
-export function useReviewAttachment() {
+export function useReviewAttachment(teamId?: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({
@@ -106,14 +125,14 @@ export function useReviewAttachment() {
       target: { templateId: string } | { connectionId: string };
       remove?: boolean;
     }) =>
-      api.fetch(`${base}/${id}/attachments`, {
+      api.fetch(`${base}/${id}/attachments${scopeQuery(teamId)}`, {
         body: JSON.stringify(target),
         method: remove ? 'DELETE' : 'POST',
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['review-presets'] }),
   });
 }
-export function useReviewRepositories() {
+export function useReviewRepositories(teamId?: string) {
   return useQuery({
     queryFn: async () => {
       const rows: RepositorySummary[] = [];
@@ -123,10 +142,10 @@ export function useReviewRepositories() {
         );
         rows.push(...page.data);
         if (!page.data.length || rows.length >= page.meta.total) {
-          return rows.filter((r) => r.type === 'git_repo');
+          return rows.filter((r) => r.type === 'git_repo' && (!teamId || r.team?.id === teamId));
         }
       }
     },
-    queryKey: ['review-repositories'],
+    queryKey: ['review-repositories', teamId],
   });
 }

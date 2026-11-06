@@ -1,8 +1,10 @@
 # Pull-request evaluation
 
 [Code reviews of finished runs](./code-review.md) add successful, verified evidence at the current
-PR head. Linked findings are worst-of and never lower the original review classification or replace
-a missing original review; publication requests reevaluation after the review finishes.
+PR head. Linked findings are worst-of and never lower an existing original review classification.
+When the original run has no review result at that head, eligible linked reviews supply the review
+signal, so a clean result avoids the missing-review risk bump. Publication requests reevaluation
+after the review finishes.
 
 > How the platform judges the risk of a pull request it opened, tells reviewers where to look,
 > publishes a commit status, and, only where an admin opted a repository in, asks GitHub to

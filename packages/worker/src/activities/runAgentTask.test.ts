@@ -18,6 +18,7 @@ const m = vi.hoisted(() => ({
     })),
     gitAuthed: vi.fn(async () => ''),
   },
+  applyStored: vi.fn(async () => ''),
   assertBudget: vi.fn(async (_label?: string) => {}),
   claudeCodeRuntime: vi.fn(),
   closeRows: vi.fn(async (_args: unknown) => ({ count: 1 })),
@@ -52,6 +53,7 @@ const m = vi.hoisted(() => ({
     'workspace.maxToolOutputChars': 20000,
   } as Record<string, unknown>,
   slots: [] as Array<{ workflowId: string; teamId: string | null; launchedAt: Date }>,
+  storedInput: vi.fn(),
   /** Per workflow id: `finished` or `down`; anything else is running. */
   temporal: {} as Record<string, 'finished' | 'down'>,
   toolKeys: null as string[] | null,
@@ -153,6 +155,8 @@ vi.mock('../lib/costTracking.js', () => ({
   assertBudgetAvailable: m.assertBudget,
   recordLlmUsage: m.recordUsage,
 }));
+vi.mock('../lib/storedAgentChange.js', () => ({ storedFixInput: m.storedInput }));
+vi.mock('../lib/storedPatch.js', () => ({ applyStoredPatch: m.applyStored }));
 vi.mock('../lib/llmOutputScan.js', () => ({ recordSuspiciousLlmOutput: vi.fn(async () => {}) }));
 // The REAL resolveAgentSpec runs (it intersects the offered tools with the
 // agent's toolKeys again), so the tool tests see what the agent is really given.
@@ -262,6 +266,7 @@ beforeEach(() => {
   m.temporal = {};
   m.toolKeys = null;
   m.previewConfig = null;
+  m.storedInput.mockResolvedValue({ baseSha: 'a'.repeat(40), diff: 'stored diff' });
   // A test may replace the implementation; clearAllMocks does not restore it.
   vi.mocked(resolveAgent).mockImplementation(defaultResolveAgent as never);
   m.runtime = null;
@@ -322,6 +327,46 @@ describe('authority checks (the worker does not trust the gateway)', () => {
     expect((await failureOf(runAgentTask({ request: request() }))).type).toBe(
       'AGENT_RUN_REPO_MISMATCH'
     );
+  });
+  it('reapplies the verified change before a same-agent deliver:none session on the recorded base', async () => {
+    await runAgentTask({
+      request: request({
+        payload: {
+          agentRef: 'contentWriter',
+          deliver: 'none',
+          reviewFixOfRunId: '11111111-1111-4111-8111-111111111111',
+        },
+      }),
+    });
+    expect(m.storedInput).toHaveBeenCalledWith(
+      '11111111-1111-4111-8111-111111111111',
+      'repo-1',
+      'contentWriter'
+    );
+    expect(vi.mocked(createWorkspace).mock.calls[0]?.[4]).toBe('a'.repeat(40));
+    expect(m.applyStored).toHaveBeenCalledWith(m.agentWs, {
+      baseSha: 'a'.repeat(40),
+      diff: 'stored diff',
+    });
+    expect(m.applyStored.mock.invocationCallOrder[0]).toBeLessThan(
+      m.runAgent.mock.invocationCallOrder[0] ?? 0
+    );
+    expect(m.push).not.toHaveBeenCalled();
+  });
+  it('refuses stored follow-ups that request delivery', async () => {
+    const failure = await failureOf(
+      runAgentTask({
+        request: request({
+          payload: {
+            agentRef: 'contentWriter',
+            deliver: 'draft_pr',
+            reviewFixOfRunId: '11111111-1111-4111-8111-111111111111',
+          },
+        }),
+      })
+    );
+    expect(failure.type).toBe('REVIEW_FIX_INVALID');
+    expect(createWorkspace).not.toHaveBeenCalled();
   });
 
   it.each([

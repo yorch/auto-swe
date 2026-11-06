@@ -51,6 +51,8 @@ import { withRunDetection } from '../lib/runDetection.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
+import { storedFixInput } from '../lib/storedAgentChange.js';
+import { applyStoredPatch } from '../lib/storedPatch.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
 import {
   commitTrustedTree,
@@ -121,6 +123,7 @@ export async function runAgentTask(input: RunAgentTaskInput): Promise<RunAgentTa
  * ceilings were already decided, and whether the gated commit is pushed.
  */
 export interface AgentTaskCoreInput {
+  initialChange?: { baseSha: string; diff: string };
   knowledgeBases?: boolean;
   /** The `git_repo` connection row, with its installation. */
   repo: Parameters<typeof toRepoRef>[0] & {
@@ -269,7 +272,7 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       branch,
       baseBranch,
       executorImageFor(repo),
-      undefined,
+      input.initialChange?.baseSha,
       undefined,
       {
         detectedStack: repo.detectedStack,
@@ -282,6 +285,12 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       }
     );
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
+    if (input.initialChange) {
+      if (deliver !== 'none') {
+        throw refuse('Stored fixes cannot publish a branch', 'REVIEW_FIX_INVALID');
+      }
+      await applyStoredPatch(agentWs, input.initialChange);
+    }
 
     tracer.addActivityEvent({
       name: 'agent.runtime',
@@ -507,6 +516,12 @@ async function runAgentTaskImpl({
   // repository's default. Refused before any container exists when it is not one a run
   // may use.
   const baseBranch = await resolveRunBaseBranch(payload.baseBranch, repo);
+  if (payload.reviewFixOfRunId && payload.deliver !== 'none') {
+    throw refuse('Stored fixes must use deliver:none', 'REVIEW_FIX_INVALID');
+  }
+  const initialChange = payload.reviewFixOfRunId
+    ? await storedFixInput(payload.reviewFixOfRunId, repoId, payload.agentRef)
+    : undefined;
   let pr: { prNumber: number; prUrl: string } | undefined;
   const repoRef = toRepoRef(repo);
   const scm = getScmProvider(repoRef);
@@ -519,6 +534,7 @@ async function runAgentTaskImpl({
     commitMessage: `auto: agent run ${request.externalTicketId} (${payload.agentRef})`,
     deliver: payload.deliver === 'none' ? 'none' : 'push',
     effective,
+    initialChange,
     key,
     knowledgeBases,
     prompt: request.description,

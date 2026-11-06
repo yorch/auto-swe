@@ -4,6 +4,7 @@ import type { Prisma, PrismaClient } from '../generated/prisma/client.js';
 import type { RepoWorkRequest } from '../types/workflow.js';
 import { AGENT_RUN_TEMPLATE_ORIGIN } from './agentRun.js';
 import {
+  isTransientReviewFixReason,
   type ReviewRunPayload,
   ReviewRunPayloadSchema,
   type ReviewSourceFacts,
@@ -135,6 +136,17 @@ export async function prepareReviewLaunch(db: PrismaClient, input: PrepareReview
   if (input.presetId && !preset?.enabled) {
     throw new ReviewLaunchError('REVIEW_PRESET_DISABLED', 'Review preset is missing or disabled');
   }
+  if (
+    preset?.teamId &&
+    (preset.teamId !== repo.teamId ||
+      (source.attributedTeamId && source.attributedTeamId !== preset.teamId))
+  ) {
+    throw new ReviewLaunchError(
+      'REVIEW_PRESET_NOT_FOUND',
+      'Review preset is unavailable for this source',
+      404
+    );
+  }
   const templateId = preset?.templateId ?? input.templateId;
   if (!templateId) {
     throw new ReviewLaunchError('REVIEW_TEMPLATE_INVALID', 'Review template is missing');
@@ -142,6 +154,12 @@ export async function prepareReviewLaunch(db: PrismaClient, input: PrepareReview
   const template = await db.workflowTemplate.findUnique({ where: { id: templateId } });
   if (template?.kind !== 'review' || template.status !== 'ACTIVE' || !template.activeVersion) {
     throw new ReviewLaunchError('REVIEW_TEMPLATE_INVALID', 'Choose an active review-kind template');
+  }
+  if (template.teamId && template.teamId !== repo.teamId) {
+    throw new ReviewLaunchError(
+      'REVIEW_TEMPLATE_INVALID',
+      'Review template is unavailable for this source'
+    );
   }
   const payload: ReviewRunPayload = ReviewRunPayloadSchema.parse({
     connectionId,
@@ -151,6 +169,7 @@ export async function prepareReviewLaunch(db: PrismaClient, input: PrepareReview
       ? {
           onBlocking: preset.onBlocking,
           presetId: preset.id,
+          runTests: preset.runTests,
           ...(preset.systemPrompt ? { systemPrompt: preset.systemPrompt } : {}),
         }
       : {}),
@@ -270,6 +289,7 @@ export async function reviewRunMetadata(db: PrismaClient, runId: string) {
   });
   return {
     reviewable: resolved.ok,
+    ...(source?.reviewOfRun ? { fixRetry: await reviewFixRetryMetadata(db, runId) } : {}),
     ...(!resolved.ok ? { reason: resolved.code } : {}),
     ...(source?.reviewOfRun
       ? {
@@ -297,4 +317,97 @@ export async function reviewRunMetadata(db: PrismaClient, runId: string) {
       };
     }),
   };
+}
+
+export async function reviewFixRetryState(db: PrismaClient, runId: string) {
+  const run = await db.workflowRun.findUnique({
+    include: {
+      steps: {
+        orderBy: [{ attempt: 'desc' }, { endedAt: 'desc' }],
+        take: 1,
+        where: { status: 'PASSED', stepName: 'publishReviewResult' },
+      },
+      template: { select: { kind: true } },
+      workRequest: { select: { payload: true } },
+    },
+    where: { id: runId },
+  });
+  const payload = ReviewRunPayloadSchema.safeParse(run?.workRequest?.payload);
+  const step = run?.steps[0];
+  const summary = object(step?.outputs);
+  if (
+    run?.status !== 'SUCCESS' ||
+    run.template.kind !== 'review' ||
+    !step ||
+    !payload.success ||
+    payload.data.onBlocking !== 'fix' ||
+    payload.data.reviewOf.mode === 'branch' ||
+    run.reviewOfRunId !== payload.data.sourceRunId ||
+    summary.approved !== false
+  ) {
+    return {
+      allowed: false as const,
+      reason: 'A successful blocking review with fix policy is required',
+    };
+  }
+  if (payload.data.reviewOf.mode === 'stored') {
+    const loaded = await db.workflowStep.findFirst({
+      orderBy: { attempt: 'desc' },
+      where: { runId, status: 'PASSED', stepName: 'loadChangeForReview' },
+    });
+    if (object(loaded?.outputs).diffVerified !== true) {
+      return { allowed: false as const, reason: 'The stored diff is unverified' };
+    }
+  }
+  const fire =
+    payload.data.reviewOf.mode === 'stored'
+      ? null
+      : await db.automationFire.findFirst({
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          where: {
+            connectionId: payload.data.connectionId,
+            facts: { equals: runId, path: ['reviewRunId'] },
+            source: 'github.pull_request.feedback',
+          },
+        });
+  const fix = object(summary.fix);
+  const summaryIsNewer =
+    typeof fix.decidedAt === 'string' &&
+    Date.parse(fix.decidedAt) > (fire?.createdAt?.getTime() ?? 0);
+  const reason = summaryIsNewer ? fix.reason : (fire?.reason ?? fix.reason);
+  const retryableDecision =
+    fire && !summaryIsNewer
+      ? fire.outcome === 'FAILED_TO_START' || fire.outcome.startsWith('SUPPRESSED_')
+      : fix.status === 'skipped';
+  if (fire?.outcome === 'STARTED' || !retryableDecision || !isTransientReviewFixReason(reason)) {
+    return {
+      allowed: false as const,
+      reason: typeof reason === 'string' ? reason : 'No retryable fix decision',
+      summary,
+    };
+  }
+  const decisionKey = `${fire?.id ?? step.id}:${typeof fix.attemptId === 'string' ? fix.attemptId : 'initial'}`;
+  return {
+    allowed: true as const,
+    attemptId: reviewRunId(`${runId}:${decisionKey}`, 'fix-retry'),
+    fire,
+    payload: payload.data,
+    step,
+    summary,
+  };
+}
+
+export async function reviewFixRetryMetadata(db: PrismaClient, runId: string) {
+  const state = await reviewFixRetryState(db, runId);
+  if (state.summary) {
+    const retry = object(state.summary.fixRetry);
+    if (
+      typeof retry.attemptId === 'string' &&
+      retry.attemptId !== object(state.summary.fix).attemptId &&
+      retry.status === 'queued'
+    ) {
+      return { allowed: false, status: 'queued' as const };
+    }
+  }
+  return { allowed: state.allowed, ...(!state.allowed ? { reason: state.reason } : {}) };
 }

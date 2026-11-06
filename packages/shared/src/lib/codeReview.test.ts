@@ -154,6 +154,7 @@ describe('review input schemas', () => {
       enabled: true,
       name: 'Security',
       onBlocking: 'report',
+      runTests: false,
       templateId: ID,
     });
     expect(ReviewPresetUpdateSchema.parse({ enabled: false })).toEqual({ enabled: false });
