@@ -642,6 +642,7 @@ export async function runPerfBench(input: GateInput): Promise<GateResult> {
  * the failed gate's output via `inputs.gateOutput`.
  */
 export interface GateFixInput {
+  knowledgeBases?: boolean;
   /** Name of the gate that failed (e.g. 'runTests'). */
   gateName: string;
   /** Result returned by the failed gate. The activity loads full logs from artifactId if present. */
@@ -670,6 +671,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
   }
 
   return runImplementerFixSession({
+    ...(typeof input.knowledgeBases === 'boolean' ? { knowledgeBases: input.knowledgeBases } : {}),
     ...(input.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
     // Re-run the failed gate against the fixed code (mirrors the system
     // prompt's "Re-run the affected gate locally" instruction). Tests still

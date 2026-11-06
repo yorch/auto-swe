@@ -192,7 +192,11 @@ export async function createImplementerAgent(
     ...(hasSkills ? { loadSkill } : {}),
     ...(options?.lessonRepoId ? createLessonTools(options.lessonRepoId, tracer) : {}),
     ...(options?.knowledgeToolKeys?.includes('searchKnowledge')
-      ? { searchKnowledge: buildKnowledgeTools(tracer).searchKnowledge }
+      ? {
+          searchKnowledge: buildKnowledgeTools(tracer, {
+            snapshotIds: workspace.knowledgeBaseSnapshotIds ?? [],
+          }).searchKnowledge,
+        }
       : {}),
     ...(options?.knowledgeToolKeys?.includes('submitLearning')
       ? { submitLearning: buildKnowledgeTools(tracer).submitLearning }

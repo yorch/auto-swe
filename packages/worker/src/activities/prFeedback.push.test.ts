@@ -313,8 +313,12 @@ describe('executePrFeedbackImplementation notes', () => {
   it('words the test outcome as passing, failing or not run', async () => {
     await executePrFeedbackImplementation({
       brief: 'b',
+      options: { knowledgeBases: false },
       previousCodeResult: {} as CodeResult,
     });
+    expect(fixSessionMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ knowledgeBases: false })
+    );
     const { notes } = (
       fixSessionMock.mock.calls.at(-1) as unknown as [
         { notes: (t: Record<string, unknown>) => string },

@@ -399,6 +399,7 @@ export interface ScmProvider {
    * when the tree cannot be listed (404); other errors propagate.
    */
   listTree(repo: RepoRef, ref?: string): Promise<{ paths: string[]; truncated: boolean } | null>;
+  resolveRef(repo: RepoRef, ref: string): Promise<string | null>;
   /**
    * Whether `branch` exists on the host, how many commits it has that `baseBranch`
    * lacks (null when it does not exist), and the open PR from it if any. Lets a run

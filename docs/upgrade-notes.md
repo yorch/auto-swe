@@ -23,7 +23,8 @@ needs nothing from you.
 
 ## 1. Is your worker running a fix?
 
-Every SHA below is a commit on `main`. The worker image carries the commit it was built from:
+SHAs below identify source changes; squashed histories require comparing source instead of commit
+ancestry. The worker image carries the commit it was built from:
 
 ```bash
 # in the running worker container (or: docker inspect <image> --format '{{.Config.Env}}')
@@ -42,8 +43,9 @@ git merge-base --is-ancestor <fix-sha> <your-build-sha> && echo "contains the fi
 "Contains" means the build commit descends from the fix commit. An image built by a pull-request
 run takes `COMMIT_HASH` from the pull request's merge ref, which is not a commit on `main`, so the
 command above can fail for it; use an image built from a `main` commit, or compare the source it
-was built from. Only the worker image matters for every entry here: the gateway and web images
-never run a workspace command.
+was built from. For workspace credential entries, only the worker image matters: the gateway and
+web images never run a workspace command. Database and scheduling entries also require the
+gateway and migration rollout described in their Actions.
 
 ---
 
@@ -778,6 +780,32 @@ before the gateway: an older worker neither pins `workspace.egressPolicy` nor re
 **Verify.** `kubectl -n auto-swe-workspaces get networkpolicy workspace-egress-blocked workspace-egress-restricted`,
 and `kubectl auth can-i patch pods` and `kubectl auth can-i create networkpolicies` as the worker's
 ServiceAccount answer `yes`.
+
+---
+
+### Repository-backed knowledge bases: migration and default-on indexing (`78fb6827`, `1ca52a51`)
+
+**Affected.** Deployments whose database does not contain migration
+`20261106130000_repo_knowledge_bases`, or whose gateway/worker predates KB workflow registration.
+
+**What changes.** The migration adds KBs, shares, links, snapshots and vector chunks, plus run
+override/pinning fields. KB vector search uses snapshot-scoped exact cosine scans, not an HNSW
+index. Gateway startup synchronizes a default-on
+Temporal indexing sweep. With no configured KBs the sweep has nothing to index; configured KBs
+can consume SCM requests and embedding-provider usage.
+
+**Actions.** Back up the database and apply the normal `yarn db:deploy` migration rollout before
+starting code that reads these tables. Use PostgreSQL with pgvector and regenerate Prisma clients
+when building from source (`yarn db:generate`). Roll out compatible workers before the gateway
+starts KB workflows. Set `KNOWLEDGE_BASE_SYNC_ENABLED=false` before gateway startup if automatic
+periodic indexing is unwanted; otherwise the default cron is `*/30 * * * *` (UTC). Restart the
+gateway to apply environment changes. This switch controls the sweep, not manual, push or
+run-start indexing. See [knowledge-bases.md](./knowledge-bases.md).
+
+**Verify.** The migration is applied; the gateway and worker boot with KB workflow/activity
+registration, and the Temporal schedule `auto-swe-knowledge-base-sync` matches the enabled/cron
+configuration. For a configured KB, request reindexing and inspect its snapshot status before
+relying on provider connectivity.
 
 ---
 

@@ -57,6 +57,7 @@ export const CONSOLIDATION_SCHEDULE_ID = 'auto-swe-lesson-consolidation';
 export const EVAL_SCHEDULE_ID = 'auto-swe-eval-regression';
 export const REVALIDATION_SCHEDULE_ID = 'auto-swe-eval-revalidation';
 export const REPO_DEPENDENCY_SCAN_SCHEDULE_ID = 'auto-swe-repo-dependency-scan';
+export const KNOWLEDGE_BASE_SYNC_SCHEDULE_ID = 'auto-swe-knowledge-base-sync';
 export const REPO_ACCESS_SYNC_SCHEDULE_ID = 'auto-swe-repo-access-sync';
 export const MODEL_DISCOVERY_SCHEDULE_ID = 'auto-swe-model-discovery';
 export const RUN_REAPER_SCHEDULE_ID = 'auto-swe-run-reaper';
@@ -331,6 +332,7 @@ declare module 'fastify' {
       whenConnected: () => Promise<void>;
     };
     temporal: {
+      startKnowledgeBaseIndex: (knowledgeBaseId: string) => Promise<void>;
       startRunnableWorkflow: (
         workflowId: string,
         input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
@@ -446,6 +448,7 @@ declare module 'fastify' {
       getRevalidationScheduleStatus: () => Promise<RevalidationScheduleStatus>;
       triggerRevalidationNow: () => Promise<void>;
       syncRepoDependencyScanSchedule: (config: RepoDependencyScanScheduleConfig) => Promise<void>;
+      syncKnowledgeBaseSyncSchedule: (config: RepoDependencyScanScheduleConfig) => Promise<void>;
       syncRepoAccessSyncSchedule: (config: RepoAccessSyncScheduleConfig) => Promise<void>;
       syncModelDiscoverySchedule: (config: ModelDiscoveryScheduleConfig) => Promise<void>;
       syncRunReaperSchedule: (config: RunReaperScheduleConfig) => Promise<void>;
@@ -1230,6 +1233,15 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       }
     },
 
+    async startKnowledgeBaseIndex(knowledgeBaseId: string): Promise<void> {
+      await client.workflow.start('IndexKnowledgeBaseWorkflow', {
+        args: [{ knowledgeBaseId }],
+        taskQueue: 'engineering-workflow',
+        workflowId: `knowledge-base-index-${knowledgeBaseId}`,
+        workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+      });
+    },
+
     async startPrEvaluationWorkflow(workflowId: string, input: PrEvaluationInput): Promise<void> {
       // REJECT_DUPLICATE: the id names a delivery, and a redelivered one must not evaluate
       // again, whether the first run is still going or already closed.
@@ -1425,6 +1437,14 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       };
       await upsertSchedule(EVAL_SCHEDULE_ID, {
         action: makeEvalScheduleAction(input),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    async syncKnowledgeBaseSyncSchedule(config: RepoDependencyScanScheduleConfig): Promise<void> {
+      await upsertSchedule(KNOWLEDGE_BASE_SYNC_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledKnowledgeBaseSyncWorkflow'),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

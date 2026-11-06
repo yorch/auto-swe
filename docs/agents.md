@@ -278,6 +278,13 @@ by the same MCP result screen before the model sees it. See
 
 Governed knowledge adds two separate tool IDs, `searchKnowledge` and `submitLearning`. They are not workspace tools and are excluded when `toolKeys` is null or legacy. Grant each explicitly on the resolved Agent to enable it. Search returns bounded, cited, trust-labeled knowledge as untrusted context; submission captures only local LEARNING items and requires persisted evidence. See [knowledge.md](./knowledge.md) for scope, lifecycle, and limitations.
 
+`searchKnowledge` also merges [repository-backed KB chunks](./knowledge-bases.md) from snapshots
+pinned for the current run, with `kb:owner/repo@sha7 path` citations and an untrusted third-party
+source label. The explicit grant remains required. Workspace agents receive read-only KB files
+and a bounded reference prompt by default; `knowledgeBases: false` opts a step out. Harnesses
+receive those files/prompts, not server-side knowledge tools. Text-only decomposition planning
+receives neither; its merge-conflict-resolver workspace can receive KBs.
+
 ### 3.2 `loadSkill` Tool (always present when skills exist)
 
 When `skills` is non-empty, a further tool — `loadSkill` — is automatically added alongside the workspace tools. It is **not** listed in `IMPLEMENTER_TOOL_IDS` and is **not** part of `Agent.toolKeys` (it is auto-added).

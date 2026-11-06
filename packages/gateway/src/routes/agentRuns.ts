@@ -40,6 +40,11 @@ import { egressPolicyForRerun, refuseWideningEgressPolicy } from '../lib/egressP
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import {
+  KnowledgeBaseOverridesSchema,
+  storedKnowledgeBases,
+  validateKnowledgeBaseOverrides,
+} from '../lib/knowledgeBases.js';
+import {
   assertMcpWriteAllowed,
   mcpWriteAuditHook,
   mcpWriteBegin,
@@ -84,6 +89,7 @@ const CreateAgentRunBody = z.object({
   deliver: z.enum(AGENT_RUN_DELIVERIES).default('none'),
   /** Network egress for this run's containers; can only be stricter than the configured policy. */
   egressPolicy: egressPolicySchema.optional(),
+  knowledgeBases: KnowledgeBaseOverridesSchema.optional(),
   /** Can only lower the platform ceiling. */
   maxSteps: z.number().int().min(1).max(500).optional(),
   maxWallClockSeconds: z.number().int().min(60).max(14_400).optional(),
@@ -117,6 +123,7 @@ function error(reply: FastifyReply, status: number, code: string, message: strin
 }
 
 interface LaunchInput {
+  knowledgeBases?: z.infer<typeof KnowledgeBaseOverridesSchema>;
   agent: string;
   baseBranch?: string;
   budgetTier: BudgetTier;
@@ -335,6 +342,15 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       );
     }
 
+    const knowledgeBaseOverrides = await validateKnowledgeBaseOverrides(
+      fastify.prisma,
+      reply,
+      { orgId: repo.team.orgId, repoId: repo.id, teamId: repo.teamId, templateId: template.id },
+      input.knowledgeBases
+    );
+    if (knowledgeBaseOverrides === false) {
+      return;
+    }
     const requestPayload = JSON.stringify(AgentRunReplayInput.parse(input));
     const repo8 = repo.id.replace(/-/g, '').slice(0, 8);
     const caller8 = idempotencyCallerScope(caller);
@@ -478,6 +494,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       requestPayload,
       workRequestId,
       workspaceProvider: 'git_repo',
+      ...(knowledgeBaseOverrides ? { knowledgeBaseOverrides } : {}),
     };
 
     // Ledger rows first, workflow second, rolled back if the start fails. The
@@ -743,6 +760,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         ...(b.callback ? { callback: b.callback } : {}),
         caller,
         deliver: b.deliver,
+        ...(b.knowledgeBases ? { knowledgeBases: b.knowledgeBases } : {}),
         ...(b.egressPolicy ? { egressPolicy: b.egressPolicy } : {}),
         idempotencyKey: request.headers['idempotency-key'],
         maxSteps: b.maxSteps,
@@ -769,7 +787,13 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const prev = await fastify.prisma.runInput.findUnique({
-        select: { connectionId: true, description: true, payload: true, templateId: true },
+        select: {
+          connectionId: true,
+          description: true,
+          payload: true,
+          requestPayload: true,
+          templateId: true,
+        },
         where: { id: request.params.workRequestId },
       });
       const template = prev?.templateId
@@ -815,6 +839,9 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         maxWallClockSeconds: p.maxWallClockSeconds,
         prompt,
         repoId: prev.connectionId,
+        ...(storedKnowledgeBases(prev.requestPayload)
+          ? { knowledgeBases: storedKnowledgeBases(prev.requestPayload) }
+          : {}),
         workRequestId: request.params.workRequestId,
       });
     }

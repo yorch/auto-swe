@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { use, useState } from 'react';
+import { KnowledgeBaseLinksPanel } from '@/components/knowledgeBases/KnowledgeBaseLinksSection';
 import { AddMemberModal } from '@/components/teams/AddMemberModal';
 import { EgressAllowlistEditor } from '@/components/teams/EgressAllowlistEditor';
 import { EventEndpointsCard } from '@/components/teams/EventEndpointsCard';
@@ -538,6 +539,11 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       {tab === 'automation' && (
         <div className="space-y-6" {...tabPanelProps('team', 'automation')}>
           <EventEndpointsCard team={{ id, name: team.name }} />
+          <KnowledgeBaseLinksPanel
+            canManage={canManage}
+            target={{ scope: 'TEAM', teamId: id }}
+            teamId={id}
+          />
           {canManageTeamAgents && <TeamAgentLibrarySection teamId={id} />}
           {canManageCallbacks && (
             <TeamCallbackEndpointsSection isPlatformAdmin={isPlatformAdmin} teamId={id} />

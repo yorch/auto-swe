@@ -1496,7 +1496,7 @@ export interface ExecutePrFeedbackInput {
   /** Gather's synthesized CodeResult: the workspace starts from the pull request's head. */
   previousCodeResult: CodeResult;
   systemPromptOverride?: string;
-  options?: { refuseWorkflowChanges?: boolean };
+  options?: { refuseWorkflowChanges?: boolean; knowledgeBases?: boolean };
 }
 
 /**
@@ -1510,6 +1510,9 @@ export async function executePrFeedbackImplementation(
   const { runImplementerFixSession } = await import('./implementerSession.js');
   const { PR_FEEDBACK_SYSTEM_PROMPT } = await import('@auto-swe/shared/lib/agentPrompts');
   return runImplementerFixSession({
+    ...(typeof input.options?.knowledgeBases === 'boolean'
+      ? { knowledgeBases: input.options.knowledgeBases }
+      : {}),
     ...(input.options?.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
     agentKey: 'reviewFixer',
     commitMessage: `auto: address review feedback for ${input.previousCodeResult.branch}`,
@@ -1544,6 +1547,7 @@ export interface RunAgentPrFeedbackTaskResult {
  * but NOT the concurrency admission, which a follow-up does not take a slot for.
  */
 export async function runAgentPrFeedbackTask(input: {
+  knowledgeBases?: boolean;
   request: RepoWorkRequest;
   gather: GatherResult;
   /** Raw CI logs for the follow-up round, when one runs — screened and fenced here. */
@@ -1553,6 +1557,7 @@ export async function runAgentPrFeedbackTask(input: {
 }
 
 async function runAgentPrFeedbackTaskImpl(input: {
+  knowledgeBases?: boolean;
   request: RepoWorkRequest;
   gather: GatherResult;
   ciLogs?: string;
@@ -1696,6 +1701,7 @@ async function runAgentPrFeedbackTaskImpl(input: {
   });
   const { runAgentTaskCore } = await import('./runAgentTask.js');
   const core = await runAgentTaskCore({
+    ...(typeof input.knowledgeBases === 'boolean' ? { knowledgeBases: input.knowledgeBases } : {}),
     agentVersions: baseCtx.agentVersions,
     allowWorkflowChanges: false,
     baseBranch: payload.baseBranch,

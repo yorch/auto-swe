@@ -84,6 +84,7 @@ describe('POST /api/v1/work-requests', () => {
     temporalWorkflowId: string;
   }> = [];
   const startedWorkflowIds: string[] = [];
+  const startedRequests: unknown[] = [];
   const snapshotUpserts: Record<string, unknown>[] = [];
   // Per-test control over the resolved template's inputSchema (P3). Null =
   // no schema → submit validation is skipped (the default for most tests).
@@ -179,6 +180,8 @@ describe('POST /api/v1/work-requests', () => {
           return { id: 'cs-1' };
         },
       },
+      knowledgeBase: { findMany: async () => [{ id: '11111111-1111-4111-8111-111111111111' }] },
+      knowledgeBaseLink: { findMany: async () => [] },
       organizationMembership: {
         findUnique: async () => (orgMembershipRole ? { role: orgMembershipRole } : null),
       },
@@ -278,12 +281,14 @@ describe('POST /api/v1/work-requests', () => {
       startEpicWorkflow: async () => {},
       startEvalRunWorkflow: async () => {},
       startEvalScreenWorkflow: async () => {},
+      startKnowledgeBaseIndex: async () => {},
       startPrEvaluationWorkflow: async () => {},
       startReembedMemory: async () => {},
       startReembedStaleMemory: async () => true,
       startRepoDependencyInference: async () => {},
       startRepoDependencyScan: async () => {},
-      startRunnableWorkflow: async (id: string) => {
+      startRunnableWorkflow: async (id: string, input: { request: unknown }) => {
+        startedRequests.push(input.request);
         startedWorkflowIds.push(id);
       },
       startWorkflowAuthorJob: async () => {},
@@ -297,6 +302,7 @@ describe('POST /api/v1/work-requests', () => {
       syncChannelReactiveSchedule: async () => {},
       syncConsolidationSchedule: async () => {},
       syncEvalSchedule: async () => {},
+      syncKnowledgeBaseSyncSchedule: async () => {},
       syncModelDiscoverySchedule: async () => {},
       syncRepoAccessSyncSchedule: async () => {},
       syncRepoDependencyScanSchedule: async () => {},
@@ -407,6 +413,28 @@ describe('POST /api/v1/work-requests', () => {
     const body = JSON.parse(res.payload);
     expect(body.data.workRequestId).toBeDefined();
     expect(startedWorkflowIds.at(-1)).toBe('eng-org-test-JIRA-1');
+  });
+
+  it('accepts and carries normalized knowledge base overrides to the workflow', async () => {
+    existingWorkflows = [];
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: {
+        description: 'KB launch',
+        externalTicketId: 'JIRA-KB',
+        knowledgeBases: { add: [{ id: '11111111-1111-4111-8111-111111111111', ref: 'v1' }] },
+        repoIds: ['00000000-0000-4000-8000-000000000001'],
+      },
+      url: '/api/v1/work-requests',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(startedRequests.at(-1)).toMatchObject({
+      knowledgeBaseOverrides: {
+        add: [{ knowledgeBaseId: '11111111-1111-4111-8111-111111111111', ref: 'v1' }],
+        exclude: [],
+      },
+    });
   });
 
   it('returns 403 when the submitter is not a member of the org (P5 row isolation)', async () => {

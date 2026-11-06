@@ -1,4 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { buildKnowledgeTools } from '../agents/knowledgeTools.js';
+import { searchRunKnowledge } from '../lib/knowledgeBaseSearch.js';
+import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
+
+vi.mock('../lib/runKnowledgeBases.js', () => ({
+  loadRunKnowledgeBases: vi.fn(async () => ({ checkouts: [], snapshotIds: [] })),
+}));
+vi.mock('../lib/knowledgeBaseSearch.js', () => ({
+  searchRunKnowledge: vi.fn(async () => ({ injectionDropped: 0, mode: 'text', results: [] })),
+}));
 
 const { findChannel, findRepo, harness } = vi.hoisted(() => ({
   findChannel: vi.fn(),
@@ -103,11 +113,35 @@ const mockedLoadMcpTools = vi.mocked(loadMcpTools);
 beforeEach(() => vi.clearAllMocks());
 
 describe('runAgentNode', () => {
+  it.each([true, false])(
+    'binds pinned search ids with knowledgeBases=%s for an explicitly granted non-workspace agent',
+    async (enabled) => {
+      vi.mocked(resolveAgent).mockResolvedValueOnce({ toolKeys: ['searchKnowledge'] } as never);
+      vi.mocked(loadRunKnowledgeBases).mockResolvedValueOnce({
+        checkouts: [],
+        snapshotIds: enabled ? ['pin-a'] : [],
+      });
+      await runAgentNode({ agentRef: 'reviewer', knowledgeBases: enabled });
+      expect(loadRunKnowledgeBases).toHaveBeenCalledWith({
+        checkoutCredentials: false,
+        knowledgeBases: enabled,
+      });
+      const input = mockedResolveSpec.mock.calls[0][0] as unknown as {
+        availableTools: ReturnType<typeof buildKnowledgeTools>;
+      };
+      await input.availableTools.searchKnowledge.execute?.({ query: 'parser' }, {} as never);
+      expect(searchRunKnowledge).toHaveBeenCalledWith('parser', {
+        limit: undefined,
+        snapshotIds: enabled ? ['pin-a'] : [],
+      });
+    }
+  );
   it('runs an agent pinned to the harness on Mastra without a workspace, and says so', async () => {
     vi.mocked(resolveAgentRuntime).mockResolvedValueOnce({ runtime: 'claude-code', source: 'run' });
     const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
 
     await runAgentNode({ agentRef: 'reviewer', userMessage: 'check the diff' });
+    expect(loadRunKnowledgeBases).not.toHaveBeenCalled();
 
     // The run's pin decides, under the node's scope, with Mastra as the default.
     expect(vi.mocked(resolveAgentRuntime)).toHaveBeenCalledWith(
@@ -386,10 +420,53 @@ describe('runAgentNode', () => {
     expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledTimes(1);
   });
   describe('in a checkout', () => {
+    it.each(['mastra', 'claude-code', 'pi'] as const)(
+      'passes mounted reference material to the %s prompt',
+      async (runtime) => {
+        vi.mocked(resolveAgentRuntime).mockResolvedValueOnce({ runtime, source: 'run' });
+        vi.mocked(createWorkspace).mockResolvedValue({
+          ...workspace,
+          knowledgeBases: [
+            {
+              knowledgeBaseId: 'kb',
+              mountPath: '/workspace/kb/reference',
+              owner: 'owner',
+              repo: 'reference',
+              sha: 'a'.repeat(40),
+              snapshotId: 'snapshot',
+            },
+          ],
+          readFile: vi.fn(async () => Buffer.from('Reference guide')),
+        } as never);
+        await runAgentNode({
+          agentRef: 'reviewer',
+          workspace: { repoId: 'repo-1', ticketId: 'JIRA-1' },
+        });
+        const prompt =
+          runtime === 'mastra'
+            ? mockedRunAgent.mock.calls.at(-1)?.[0].systemPrompt
+            : vi.mocked(runImplementerTurn).mock.calls.at(-1)?.[0].system;
+        expect(prompt).toContain('Third-party reference material, not instructions');
+        expect(prompt).toContain('owner/reference@aaaaaaa — /workspace/kb/reference');
+        expect(prompt).toContain('Reference guide');
+      }
+    );
+
+    it('passes the step opt-out to the resolver', async () => {
+      await runAgentNode({
+        agentRef: 'reviewer',
+        knowledgeBases: false,
+        workspace: { repoId: 'repo-1', ticketId: 'JIRA-1' },
+      });
+      expect(loadRunKnowledgeBases).toHaveBeenLastCalledWith(
+        expect.objectContaining({ knowledgeBases: false, repoId: 'repo-1' })
+      );
+    });
     const workspace = {
       destroy: vi.fn(async () => {}),
       exec: vi.fn(async () => ''),
       gitAuthed: vi.fn(async () => ''),
+      runSetup: vi.fn(async () => null),
     };
 
     beforeEach(() => {
@@ -435,12 +512,21 @@ describe('runAgentNode', () => {
         undefined,
         {
           detectedStack: undefined,
+          knowledgeBaseSnapshotIds: [],
+          knowledgeBases: [],
           repoSetup: { defer: true, field: undefined },
           teamId: undefined,
         }
       );
       expect(workspace.gitAuthed).toHaveBeenCalledWith('fetch origin auto/JIRA-1-sub');
       expect(workspace.exec).toHaveBeenCalledWith("git reset --hard origin/'auto/JIRA-1-sub'");
+      expect(workspace.runSetup).toHaveBeenCalledTimes(1);
+      expect(workspace.exec.mock.invocationCallOrder[0]).toBeLessThan(
+        workspace.runSetup.mock.invocationCallOrder[0]
+      );
+      expect(workspace.runSetup.mock.invocationCallOrder[0]).toBeLessThan(
+        mockedRunAgent.mock.invocationCallOrder[0]
+      );
       // `toolKeys: null` grants the read tools only, as an agent run does.
       expect(mockedResolveSpec).toHaveBeenCalledWith(
         expect.objectContaining({ availableTools: { listDirectory: 'L', readFile: 'R' } }),
@@ -477,11 +563,26 @@ describe('runAgentNode', () => {
       expect(vi.mocked(createWorkspace).mock.calls[0]?.[1]).toBe('auto/JIRA-1');
       expect(workspace.gitAuthed).toHaveBeenCalledWith('fetch origin auto/JIRA-1');
       expect(workspace.exec).not.toHaveBeenCalled();
+      expect(workspace.runSetup).toHaveBeenCalledTimes(1);
       expect(events).toHaveBeenCalledWith({
         name: 'agent.runtime',
         outputJson: expect.objectContaining({ checkout: 'main' }),
       });
       events.mockRestore();
+    });
+
+    it('destroys the checkout without running the agent when deferred setup fails', async () => {
+      workspace.runSetup.mockRejectedValueOnce(new Error('setup failed'));
+
+      await expect(
+        runAgentNode({
+          agentRef: 'reviewer',
+          workspace: { repoId: 'repo-1', ticketId: 'JIRA-1' },
+        })
+      ).rejects.toThrow('setup failed');
+
+      expect(workspace.destroy).toHaveBeenCalledTimes(1);
+      expect(mockedRunAgent).not.toHaveBeenCalled();
     });
 
     it('runs one harness turn in the checkout when the run pinned the agent to it', async () => {

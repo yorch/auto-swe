@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useRef, useState } from 'react';
+import { KnowledgeBasePicker } from '@/components/knowledgeBases/KnowledgeBasePicker';
 import { LaunchCardHeader, ReviewList } from '@/components/requests/LaunchSteps';
 import { SampleTaskButton } from '@/components/requests/SampleTaskButton';
 import { Alert } from '@/components/ui/Alert';
@@ -14,6 +15,10 @@ import { RadioGroup } from '@/components/ui/RadioGroup';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { useAgentRunAgents, useAgentRunLimits, useLaunchAgentRun } from '@/hooks/useAgentRuns';
+import {
+  type KnowledgeBaseRunOverrides,
+  knowledgeBaseOverrideBody,
+} from '@/hooks/useKnowledgeBases';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useRetriedRun } from '@/hooks/useRuns';
 import {
@@ -81,6 +86,10 @@ export function AgentRunForm({
   const [reviewing, setReviewing] = useState(false);
   const [values, setValues] = useState<AgentRunFormValues>(EMPTY);
   const [attempted, setAttempted] = useState(false);
+  const [referenceSelections, setReferenceSelections] = useState<
+    Record<string, KnowledgeBaseRunOverrides>
+  >({});
+  const references = referenceSelections[values.repoId] ?? {};
   // One idempotency key per distinct submission; see `idempotencyFor`.
   const idempotency = useRef<IdempotencyState | null>(null);
   const submitting = useRef(false);
@@ -130,7 +139,7 @@ export function AgentRunForm({
       return;
     }
     submitting.current = true;
-    const body = buildLaunchBody(effective);
+    const body = { ...buildLaunchBody(effective), ...knowledgeBaseOverrideBody(references) };
     idempotency.current = idempotencyFor(idempotency.current, body);
     launch.mutate(
       { body, idempotencyKey: idempotency.current.key },
@@ -211,6 +220,14 @@ export function AgentRunForm({
         />
         <ReviewList
           items={[
+            ...(references.add?.length || references.exclude?.length
+              ? [
+                  {
+                    label: 'Knowledge bases',
+                    value: `${references.add?.length ?? 0} additions, ${references.exclude?.length ?? 0} exclusions. Mandatory defaults remain enabled.`,
+                  },
+                ]
+              : []),
             {
               label: 'Repository',
               value: selectedRepo ? connectionLabel(selectedRepo) : values.repoId,
@@ -412,6 +429,14 @@ export function AgentRunForm({
         </div>
       </fieldset>
 
+      <KnowledgeBasePicker
+        key={values.repoId}
+        onChange={(value) =>
+          setReferenceSelections((current) => ({ ...current, [values.repoId]: value }))
+        }
+        repoId={values.repoId}
+        value={references}
+      />
       <div className="flex justify-end border-t border-ink-600 pt-4">
         <Button
           disabled={!canSubmit}

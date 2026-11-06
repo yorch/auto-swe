@@ -62,6 +62,9 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
       canaryAgentKey: input.request.canaryAgentKey,
       canaryVersion: input.request.canaryVersion,
       egressPolicy: input.request.egressPolicy,
+      ...(input.request.knowledgeBaseOverrides
+        ? { knowledgeBaseOverrides: input.request.knowledgeBaseOverrides }
+        : {}),
       launchedById: input.request.launchedById,
       payload: input.request.payload,
       runConnectionId: input.request.connectionId ?? input.request.repoId ?? null,

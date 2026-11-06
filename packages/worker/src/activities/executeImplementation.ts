@@ -39,6 +39,7 @@ import { splitSuccessCriteria } from '../lib/contextAmbiguity.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { formatCriteriaContext } from '../lib/criteriaContext.js';
 import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
+import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { parseOpenQuestionNotes } from '../lib/openQuestionNotes.js';
@@ -52,6 +53,7 @@ import {
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
+import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { resolveTicketContext } from '../lib/ticketFallback.js';
@@ -186,6 +188,11 @@ export async function executeImplementation(
     }
   }
 
+  const references = await loadRunKnowledgeBases({
+    knowledgeBases: crossRepoOptions?.knowledgeBases,
+    repoId: repo.id,
+    teamId: repo.teamId,
+  });
   const workspace = await createWorkspace(
     authedCloneUrl,
     branch,
@@ -195,6 +202,8 @@ export async function executeImplementation(
     undefined,
     {
       detectedStack: repo.detectedStack,
+      knowledgeBaseSnapshotIds: references.snapshotIds,
+      knowledgeBases: references.checkouts,
       repoSetup: { defer: true, field: repo.setup },
       services,
       teamId: repo.teamId,
@@ -367,7 +376,8 @@ export async function executeImplementation(
       designContext +
       ticketContext +
       formatCriteriaContext(successCriteria) +
-      crossRepoContext;
+      crossRepoContext +
+      (await knowledgeBasePromptBlock(workspace));
 
     // TDD loop — bound by the DB-backed workflow default (falls back to 5).
     const maxTddIterations = workflowDefaults.maxTddIterations;

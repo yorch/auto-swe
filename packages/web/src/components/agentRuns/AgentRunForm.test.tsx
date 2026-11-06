@@ -39,6 +39,7 @@ const LIMITS = {
 };
 
 interface Stub {
+  secondRepo?: boolean;
   limits?: unknown;
   launch?: () => Response;
 }
@@ -55,10 +56,23 @@ function stubGateway(stub: Stub = {}) {
     const path = url.replace(/^https?:\/\/[^/]+/, '').split('?')[0];
     const method = (init?.method ?? 'GET').toUpperCase();
     if (method === 'GET' && path === '/api/v1/repositories') {
-      return json({ data: [REPO, NOT_GIT], meta: { limit: 500, offset: 0, total: 2 } });
+      return json({
+        data: [
+          REPO,
+          NOT_GIT,
+          ...(stub.secondRepo ? [{ ...REPO, id: 'repo-2', repoName: 'other' }] : []),
+        ],
+        meta: { limit: 500, offset: 0, total: stub.secondRepo ? 3 : 2 },
+      });
     }
     if (method === 'GET' && path === '/api/v1/agent-runs/agents') {
       return json({ data: AGENTS });
+    }
+    if (method === 'GET' && path === '/api/v1/knowledge-bases') {
+      return json({ data: [{ id: 'kb1', name: 'Docs', status: 'OK' }] });
+    }
+    if (method === 'GET' && path?.endsWith('/knowledge-bases/effective')) {
+      return json({ data: { dropped: [], refusedExclusions: [], selected: [] } });
     }
     if (method === 'GET' && path === '/api/v1/agent-runs/limits') {
       return json({ data: stub.limits ?? LIMITS });
@@ -121,6 +135,43 @@ async function fill(prompt = 'fix the typo') {
 // jsdom render plus several waitFor polls per case (slowest measured ~4s). The describe timeout raises
 // the jsdom default of 20s to 30s for headroom under load.
 describe('AgentRunForm', { timeout: 30_000 }, () => {
+  it.each([false, true])(
+    'binds knowledge-base launch overrides to their chosen repository (switch=%s)',
+    async (switchRepo) => {
+      const { launches } = stubGateway({ secondRepo: true });
+      render(withQuery(<AgentRunForm />));
+      await fill();
+      const details = screen.getByText('Knowledge bases · optional').closest('details');
+      if (!details) {
+        throw new Error('missing picker');
+      }
+      details.open = true;
+      fireEvent(details, new Event('toggle'));
+      fireEvent.click(await screen.findByRole('button', { name: /Add knowledge base/ }));
+      fireEvent.click(await screen.findByRole('option', { name: 'Docs' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+      fireEvent.change(screen.getByLabelText('Docs ref'), { target: { value: 'v2' } });
+      if (switchRepo) {
+        pick(/repository/i, 'other', /acme\/other/);
+        await waitFor(() =>
+          expect(
+            (screen.getByRole('combobox', { name: /^agent/i }) as HTMLInputElement).placeholder
+          ).not.toMatch(/loading/i)
+        );
+        await screen.findByText(/Platform ceiling: 50\./);
+        pick(/^agent/i, 'content', /Content writer/);
+      }
+      fireEvent.click(screen.getByRole('button', { name: /run agent/i }));
+      await waitFor(() => expect(launches).toHaveLength(1));
+      if (switchRepo) {
+        expect(launches[0].body).not.toHaveProperty('knowledgeBases');
+      } else {
+        expect(launches[0].body).toMatchObject({
+          knowledgeBases: { add: [{ id: 'kb1', ref: 'v2' }] },
+        });
+      }
+    }
+  );
   it('offers git repositories only, and shows the platform ceilings once a repository is chosen', async () => {
     stubGateway();
     render(withQuery(<AgentRunForm />));

@@ -738,6 +738,23 @@ export class GitHubScmProvider implements ScmProvider {
     }
   }
 
+  async resolveRef(repo: RepoRef, ref: string): Promise<string | null> {
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.repos.getCommit({
+        owner: repo.organizationName,
+        ref,
+        repo: repo.repoName,
+      });
+      return data.sha;
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
   async listTree(
     repo: RepoRef,
     ref?: string

@@ -51,6 +51,7 @@ export const UI_ROUTE_TEMPLATES: readonly string[] = [
   '/epics',
   '/epics/[workflowId]',
   '/knowledge',
+  '/knowledge-bases',
   '/lessons',
   '/library',
   '/library/[id]',

@@ -16,6 +16,13 @@ Authorized governance roles can review, revise, reject and publish items. Reposi
 
 The worker lazily embeds up to ten recently eligible summaries per retrieval using the configured embedding model. It embeds only title and content, and writes vectors only when the current content digest, version and lifecycle still match. Search compares only vectors for the current model and matching content digest. Embedding or indexing failure degrades to bounded, authorized text matching; this mode is explicitly reported as text, not semantic search. Legacy memory remains a separate store and retrieval path.
 
+## Repository-backed references
+
+[Repository-backed knowledge bases](./knowledge-bases.md) are a separate Git-backed reference store,
+not governed KnowledgeItems. Search merges only a run's pinned KB snapshots, with separate source
+kinds and untrusted citations; workspace-capable agents can also receive read-only reference files.
+KBs have no knowledge-item review/publication lifecycle.
+
 ## Limitations
 
 - Human-curated items are not scanned when they are written; only the recall filter applies to them. A pattern added later protects every future recall but not the text already stored.

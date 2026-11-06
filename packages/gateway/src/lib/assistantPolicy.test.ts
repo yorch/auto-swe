@@ -9,6 +9,11 @@ import {
   policyPatternFor,
 } from './assistantPolicy.js';
 
+it('classifies team knowledge-base previews as reads, not link-management grants', () => {
+  expect(assistantAccess('GET', '/api/v1/teams/:id/knowledge-bases/effective')).toBe('read');
+  expect(assistantAccess('POST', '/api/v1/knowledge-base-links')).toBe('confirm');
+});
+
 /**
  * The policy table against the routes production registers. Every route must have a decision, every
  * decision must name a real route, and the categories the assistant may never touch must be refused

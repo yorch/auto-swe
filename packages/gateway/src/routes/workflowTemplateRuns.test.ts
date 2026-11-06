@@ -67,6 +67,8 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
       connection: {
         findUnique: async () => null,
       },
+      knowledgeBase: { findMany: async () => [{ id: '11111111-1111-4111-8111-111111111111' }] },
+      knowledgeBaseLink: { findMany: async () => [] },
       organizationMembership: {
         findUnique: async () => (isOrgMember ? { role: 'ORG_MEMBER' } : null),
       },
@@ -91,6 +93,7 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
             team: {
               id: 'team-1',
               organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+              orgId: 'org-1',
             },
             teamId: 'team-1',
             workspaceProvider: 'api_only',
@@ -139,6 +142,24 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
     expect(response.statusCode).toBe(404);
     const body = JSON.parse(response.payload);
     expect(body.error.code).toBe('TEMPLATE_NOT_FOUND');
+  });
+
+  it('passes team-scoped knowledge base overrides to a generic run', async () => {
+    const response = await app.inject({
+      headers: { authorization: 'Bearer test-token' },
+      method: 'POST',
+      payload: { knowledgeBases: { add: [{ id: '11111111-1111-4111-8111-111111111111' }] } },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+    expect(response.statusCode).toBe(201);
+    expect(startedWorkflows.at(-1)?.input).toMatchObject({
+      request: {
+        knowledgeBaseOverrides: {
+          add: [{ knowledgeBaseId: '11111111-1111-4111-8111-111111111111' }],
+          exclude: [],
+        },
+      },
+    });
   });
 
   it('returns 402 when the organization is over its monthly budget cap', async () => {

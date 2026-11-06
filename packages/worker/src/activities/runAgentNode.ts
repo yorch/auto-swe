@@ -25,8 +25,10 @@ import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
+import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
+import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
 import { runAgent } from './runAgent.js';
@@ -43,6 +45,7 @@ export interface RunAgentNodeInput {
   spanName?: string;
   /** Per-node system-prompt override (wins over the Agent's own prompt). */
   systemPrompt?: string;
+  knowledgeBases?: boolean;
   /**
    * Channel assistant (Phase A): SlackChannel.id the run originated from. When
    * set, the agent resolves the CHANNEL config tier (per-channel tools/MCP/model)
@@ -159,10 +162,19 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
     // knowledge tools need no workspace: they call activities, and
     // `resolveAgentSpec` intersects them with the Agent's `toolKeys`, so an agent
     // that does not name `searchKnowledge`/`submitLearning` binds neither.
+    const resolvedKnowledgeAgent = await resolveAgent(key, resolveCtx);
+    const references = resolvedKnowledgeAgent.toolKeys?.includes('searchKnowledge')
+      ? await loadRunKnowledgeBases({
+          checkoutCredentials: false,
+          knowledgeBases: input.knowledgeBases,
+        })
+      : { snapshotIds: [] };
     const spec = await resolveAgentSpec(
       {
         agentKey: key as ModelBackedAgentKey,
-        availableTools: buildKnowledgeTools(tracer) as AgentTools,
+        availableTools: buildKnowledgeTools(tracer, {
+          snapshotIds: references.snapshotIds,
+        }) as AgentTools,
         basePrompt: '',
         promptOverride: input.systemPrompt,
       },
@@ -277,6 +289,11 @@ async function runInCheckout(args: {
   const baseBranch = await resolveRunBaseBranch(args.workspace.baseBranch, repo);
   // The clone credential is never written into the container: only `gitAuthed`
   // injects it, and only here, before the agent has started.
+  const references = await loadRunKnowledgeBases({
+    knowledgeBases: input.knowledgeBases,
+    repoId: repo.id,
+    teamId: repo.teamId,
+  });
   const workspace = await createWorkspace(
     authedCloneUrl,
     branch,
@@ -286,6 +303,8 @@ async function runInCheckout(args: {
     undefined,
     {
       detectedStack: repo.detectedStack,
+      knowledgeBaseSnapshotIds: references.snapshotIds,
+      knowledgeBases: references.checkouts,
       repoSetup: { defer: true, field: repo.setup },
       teamId: repo.teamId,
     }
@@ -334,7 +353,8 @@ async function runInCheckout(args: {
       context: { agentNode: input.agentRef },
       role: key,
       runtime,
-      system: `${systemPrompt}\n\n${CHECKOUT_PREAMBLE}`.trim(),
+      system:
+        `${systemPrompt}\n\n${CHECKOUT_PREAMBLE}${await knowledgeBasePromptBlock(workspace)}`.trim(),
       tracer,
       usageEvent: spanName,
       user: args.userMessage,
@@ -344,7 +364,9 @@ async function runInCheckout(args: {
 
   const maxToolOutputChars = await resolveSetting('workspace.maxToolOutputChars', resolveCtx);
   const built = buildWorkspaceTools(workspace, tracer, maxToolOutputChars);
-  const knowledgeTools = buildKnowledgeTools(tracer);
+  const knowledgeTools = buildKnowledgeTools(tracer, {
+    snapshotIds: workspace.knowledgeBaseSnapshotIds ?? [],
+  });
   const spec = await resolveAgentSpec(
     {
       agentKey: key as ModelBackedAgentKey,
@@ -364,7 +386,8 @@ async function runInCheckout(args: {
     },
     resolveCtx
   );
-  spec.systemPrompt = `${spec.systemPrompt}\n\n${CHECKOUT_PREAMBLE}`.trim();
+  spec.systemPrompt =
+    `${spec.systemPrompt}\n\n${CHECKOUT_PREAMBLE}${await knowledgeBasePromptBlock(workspace)}`.trim();
   const mcpTools = await bindMcpTools(key, resolveCtx, tracer, onOpen);
   if (mcpTools) {
     spec.tools = { ...mcpTools, ...spec.tools } as AgentTools;

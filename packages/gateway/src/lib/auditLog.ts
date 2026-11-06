@@ -28,6 +28,8 @@ export type AuditEntityType =
   | 'McpGrant'
   | 'McpToolCall'
   | 'MemoryItem'
+  | 'KnowledgeBase'
+  | 'KnowledgeBaseLink'
   | 'ModelCatalogEntry'
   | 'ModelSuggestion'
   | 'OktaOAuthConfig'

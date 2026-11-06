@@ -8,6 +8,7 @@ import {
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useId, useRef, useState } from 'react';
+import { KnowledgeBasePicker } from '@/components/knowledgeBases/KnowledgeBasePicker';
 import { LaunchCardHeader, ReviewList } from '@/components/requests/LaunchSteps';
 import { SampleTaskButton } from '@/components/requests/SampleTaskButton';
 import { WorkflowLaunchSummary } from '@/components/requests/WorkflowLaunchSummary';
@@ -23,6 +24,10 @@ import {
   SchemaFieldInput,
   validatePayload,
 } from '@/components/workflow/schemaForm';
+import {
+  type KnowledgeBaseRunOverrides,
+  knowledgeBaseOverrideBody,
+} from '@/hooks/useKnowledgeBases';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useRunTemplate } from '@/hooks/useTemplates';
 import {
@@ -65,6 +70,12 @@ export function WorkflowLaunchForm({
   const [label, setLabel] = useState('');
   const [networkAccess, setNetworkAccess] = useState<NetworkAccess>('team');
   const [review, setReview] = useState(false);
+  const [referenceSelections, setReferenceSelections] = useState<
+    Record<string, KnowledgeBaseRunOverrides>
+  >({});
+  const referenceRepoId = typeof payload.connectionId === 'string' ? payload.connectionId : '';
+  const referenceKey = `${template.id}:${referenceRepoId}`;
+  const references = referenceSelections[referenceKey] ?? {};
   const [attempted, setAttempted] = useState(false);
   const lock = useRef(false);
   const launch = useRunTemplate(template.id);
@@ -108,6 +119,7 @@ export function WorkflowLaunchForm({
       const result = await launch.mutateAsync({
         label: label.trim(),
         payload,
+        ...knowledgeBaseOverrideBody(references),
         ...egressPolicyFor(networkAccess),
         ...(acknowledgeUnchanged ? { acknowledgeUnchanged } : {}),
       });
@@ -150,6 +162,14 @@ export function WorkflowLaunchForm({
           <ReviewList
             items={[
               { label: 'Task', value: label },
+              ...(references.add?.length || references.exclude?.length
+                ? [
+                    {
+                      label: 'Knowledge bases',
+                      value: `${references.add?.length ?? 0} additions, ${references.exclude?.length ?? 0} exclusions. Mandatory defaults remain enabled.`,
+                    },
+                  ]
+                : []),
               {
                 label: 'Workflow',
                 value: `${template.name} · active version ${template.activeVersion}`,
@@ -241,6 +261,24 @@ export function WorkflowLaunchForm({
               value={typeof payload.connectionId === 'string' ? payload.connectionId : ''}
             />
           )}
+          <KnowledgeBasePicker
+            key={referenceKey}
+            onChange={(value) =>
+              setReferenceSelections((current) => ({ ...current, [referenceKey]: value }))
+            }
+            repoId={
+              connections.find((connection) => connection.id === referenceRepoId)?.type ===
+              'git_repo'
+                ? referenceRepoId
+                : undefined
+            }
+            teamId={
+              connections.find((connection) => connection.id === referenceRepoId)?.team?.id ??
+              template.team?.id
+            }
+            templateId={template.id}
+            value={references}
+          />
           <Select
             hint={NETWORK_ACCESS_HINT}
             label="Network access"

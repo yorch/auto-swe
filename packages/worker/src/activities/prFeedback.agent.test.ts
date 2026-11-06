@@ -70,6 +70,7 @@ vi.mock('../lib/scm/index.js', () => ({
 }));
 
 import { type GatherResult, runAgentPrFeedbackTask } from './prFeedback.js';
+import { runAgentTaskCore } from './runAgentTask.js';
 
 const CONN = '11111111-1111-4111-8111-111111111111';
 const WID = 'prfb-wf-1';
@@ -199,7 +200,14 @@ describe('runAgentPrFeedbackTask — checks', () => {
 describe('runAgentPrFeedbackTask — prompt and CI logs', () => {
   it('prompts with the original task + fenced brief; never request.description', async () => {
     base();
-    const r = await runAgentPrFeedbackTask({ gather: gather(), request: request() });
+    const r = await runAgentPrFeedbackTask({
+      gather: gather(),
+      knowledgeBases: false,
+      request: request(),
+    });
+    expect(runAgentTaskCore).toHaveBeenLastCalledWith(
+      expect.objectContaining({ knowledgeBases: false })
+    );
     expect(r.codeResult.branch).toBe('auto/prfb-9-777');
     const prompt = m.prompts[0];
     expect(prompt).toContain('the original task');

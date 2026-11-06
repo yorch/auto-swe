@@ -426,6 +426,69 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
       await ws.destroy();
     });
 
+    it('clones knowledge bases before locking egress and returns only successful mounts', async () => {
+      policy.value = 'blocked';
+      const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+      const checkout = {
+        authedCloneUrl: 'https://x:kb-secret@ghe.other.test/owner/reference.git',
+        flaggedFiles: ['docs/flagged.md'],
+        knowledgeBaseId: 'kb',
+        mountName: 'reference',
+        owner: 'owner',
+        path: 'docs',
+        repo: 'reference',
+        sha: 'a'.repeat(40),
+        snapshotId: 'snapshot',
+      };
+      const ws = await createWorkspace(
+        'https://github.com/acme/repo.git',
+        'b',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        { knowledgeBases: [checkout] }
+      );
+      const fetchIndex = vi
+        .mocked(execShellAsync)
+        .mock.calls.findIndex(([command]) => command.includes('sparse-checkout'));
+      expect(fetchIndex).toBeGreaterThan(-1);
+      expect(vi.mocked(execShellAsync).mock.invocationCallOrder[fetchIndex]).toBeLessThan(
+        lock.mock.invocationCallOrder[0]
+      );
+      expect(ws.knowledgeBases).toEqual([
+        {
+          knowledgeBaseId: 'kb',
+          mountPath: '/workspace/kb/reference',
+          owner: 'owner',
+          repo: 'reference',
+          sha: checkout.sha,
+          snapshotId: 'snapshot',
+        },
+      ]);
+      expect(ws.knowledgeBaseSnapshotIds).toEqual(['snapshot']);
+      expect(vi.mocked(execShellAsync).mock.calls[fetchIndex][0]).not.toContain('kb-secret');
+      lock.mockRestore();
+      await ws.destroy();
+    });
+
+    it('keeps pinned search scope independently of successful file mounts', async () => {
+      const ids = ['snapshot'];
+      const ws = await createWorkspace(
+        'https://github.com/acme/repo.git',
+        'b',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        { knowledgeBaseSnapshotIds: ids, knowledgeBases: [] }
+      );
+      ids[0] = 'other-run';
+      expect(ws.knowledgeBases).toEqual([]);
+      expect(ws.knowledgeBaseSnapshotIds).toEqual(['snapshot']);
+      await ws.destroy();
+    });
+
     it('fails closed: a lock failure removes the workspace and throws a non-retryable failure', async () => {
       policy.value = 'blocked';
       const lock = vi.spyOn(backend, 'lockEgress').mockRejectedValue(new Error('lock failed'));

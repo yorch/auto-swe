@@ -50,6 +50,10 @@ import { experimentBucket } from '../lib/experimentBucket.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import {
+  KnowledgeBaseOverridesSchema,
+  validateKnowledgeBaseOverrides,
+} from '../lib/knowledgeBases.js';
+import {
   authorizeLaunch,
   authorizeServiceLaunch,
   sendLaunchRefusal,
@@ -2207,6 +2211,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     callback: CallbackRequestSchema.optional(),
     /** Network egress for this run's containers; can only be stricter than the configured policy. */
     egressPolicy: egressPolicySchema.optional(),
+    knowledgeBases: KnowledgeBaseOverridesSchema.optional(),
     label: z.string().max(200).optional(),
     payload: z.record(z.string(), z.unknown()).optional().default({}),
   });
@@ -2557,7 +2562,24 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         return;
       }
 
+      const kbSource =
+        connectionResult.source ??
+        (tpl.teamId && tpl.team?.orgId
+          ? { orgId: tpl.team.orgId, teamId: tpl.teamId }
+          : caller.kind === 'service' && billingOrgId
+            ? { orgId: billingOrgId, teamId: caller.principal.teamId }
+            : undefined);
+      const knowledgeBaseOverrides = await validateKnowledgeBaseOverrides(
+        fastify.prisma,
+        reply,
+        kbSource ? { ...kbSource, templateId: tpl.id } : undefined,
+        request.body.knowledgeBases
+      );
+      if (knowledgeBaseOverrides === false) {
+        return;
+      }
       const repoWorkRequest: RepoWorkRequest = {
+        ...(knowledgeBaseOverrides ? { knowledgeBaseOverrides } : {}),
         budgetTier,
         connectionId,
         description,

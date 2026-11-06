@@ -56,6 +56,7 @@ import { resolveWebhookSecret } from '../lib/githubWebhookSecret.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { applyInstallationEvent, INSTALLATION_EVENT_TYPES } from '../lib/installationWebhook.js';
+import { triggerKnowledgeBasePush } from '../lib/knowledgeBasePush.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
 import { handleBriefEngagementDelivery } from '../lib/prBriefEngagement.js';
@@ -695,11 +696,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           verified.host
         );
       }
-      // Commits pushed to a branch, for push automations. No other handler reads `push`. Every
-      // push to every repository arrives here, so one with no push automation is answered
-      // after a single lookup, before the engine resolves settings and loads the repository.
-      // Whether the source is switched on stays the engine's to decide.
+      // Knowledge-base indexing is independent of push automations. Without a configured
+      // automation, skip the engine's settings and repository reads.
       if (eventType === 'push') {
+        await triggerKnowledgeBasePush(fastify, request.body, verified.host).catch(() => {
+          fastify.log.warn('knowledge base push sync failed');
+        });
         return handleSourceDelivery(
           fastify,
           pushSource,
