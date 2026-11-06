@@ -6,6 +6,7 @@ import { redactString } from './agentTracer.js';
 const PREVIEW_LOG = '/tmp/.asw/preview.log';
 const PREVIEW_PGID = '/tmp/.asw/preview.pgid';
 const PREVIEW_MARK = `${PREVIEW_PGID}.mark`;
+const PREVIEW_SINCE = `${PREVIEW_PGID}.since`;
 const SETUP_BUDGET_MS = 15 * 60 * 1000;
 
 export class PreviewNotReadyError extends Error {
@@ -52,15 +53,17 @@ function tailScript(maxBytes: number): string {
 
 /**
  * Launch the preview in its own session for process-group cleanup.
- * `detached` spawning calls setsid(2); the environment mark lets `stop()` find
- * descendants that daemonize out of the group.
+ * `detached` spawning calls setsid(2); the environment mark and start time let
+ * `stop()` find descendants that daemonize out of the group.
  */
 export const APP_PREVIEW_LAUNCHER = [
   'const crypto = require("node:crypto");',
   'const { spawn } = require("node:child_process");',
   'const fs = require("node:fs");',
-  'const [command, pgidFile, logFile, markFile] = process.argv.slice(1);',
+  'const [command, pgidFile, logFile, markFile, sinceFile] = process.argv.slice(1);',
   'const mark = crypto.randomBytes(16).toString("hex");',
+  'const stat = fs.readFileSync("/proc/self/stat", "utf8");',
+  'const since = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\\s+/)[19];',
   'const out = fs.openSync(logFile, "a");',
   'const child = spawn("sh", ["-c", command], {',
   '  detached: true,',
@@ -74,6 +77,7 @@ export const APP_PREVIEW_LAUNCHER = [
   'child.on("spawn", () => {',
   '  fs.writeFileSync(pgidFile, String(child.pid));',
   '  fs.writeFileSync(markFile, mark);',
+  '  fs.writeFileSync(sinceFile, since);',
   '  child.unref();',
   '});',
 ].join('\n');
@@ -81,19 +85,26 @@ export const APP_PREVIEW_LAUNCHER = [
 /** The stop side of {@link APP_PREVIEW_LAUNCHER}; exported for its contract test. */
 export function previewStopScript(
   pgidPath: string = PREVIEW_PGID,
-  markPath: string = `${pgidPath}.mark`
+  markPath: string = `${pgidPath}.mark`,
+  sincePath: string = `${pgidPath}.since`
 ): string {
   return [
     '(async () => {',
     'const fs = require("node:fs");',
     `const pgidPath = ${JSON.stringify(pgidPath)};`,
     `const markPath = ${JSON.stringify(markPath)};`,
+    `const sincePath = ${JSON.stringify(sincePath)};`,
     'let pgid = 0;',
     'try { pgid = Number(fs.readFileSync(pgidPath, "utf8").trim()); } catch {}',
     'const hasGroup = Number.isSafeInteger(pgid) && pgid > 1;',
     'let mark = "";',
     'try { mark = fs.readFileSync(markPath, "utf8").trim(); } catch {}',
     'const hasMark = /^[a-f0-9]{32}$/.test(mark);',
+    'let since = -1;',
+    'try { since = Number(fs.readFileSync(sincePath, "utf8").trim()); } catch {}',
+    'const hasSince = Number.isSafeInteger(since) && since >= 0;',
+    'let ownMountNs = "";',
+    'try { ownMountNs = fs.readlinkSync("/proc/self/ns/mnt"); } catch {}',
     'const signalMarked = (signal) => {',
     '  if (!hasMark) return;',
     '  let entries;',
@@ -109,16 +120,50 @@ export function previewStopScript(
     '    } catch {}',
     '  }',
     '};',
+    'const parseStat = (pid) => {',
+    '  try {',
+    '    const stat = fs.readFileSync("/proc/" + pid + "/stat", "utf8");',
+    '    const fields = stat.slice(stat.lastIndexOf(")") + 2).trim().split(/\\s+/);',
+    '    return { ppid: Number(fields[1]), startTime: Number(fields[19]) };',
+    '  } catch { return null; }',
+    '};',
+    'const signalSince = (signal) => {',
+    '  if (!hasSince || !ownMountNs) return;',
+    '  let entries;',
+    '  try { entries = fs.readdirSync("/proc"); } catch { return; }',
+    '  for (const entry of entries) {',
+    '    if (!/^\\d+$/.test(entry)) continue;',
+    '    const pid = Number(entry);',
+    '    if (pid <= 1 || pid === process.pid) continue;',
+    '    try { if (fs.readlinkSync("/proc/" + entry + "/ns/mnt") !== ownMountNs) continue; } catch { continue; }',
+    '    const candidate = parseStat(pid);',
+    '    if (!candidate || candidate.startTime < since) continue;',
+    '    let current = pid;',
+    '    const seen = new Set();',
+    '    let reachesInit = false;',
+    '    while (current !== 1) {',
+    '      if (current <= 1 || current === process.pid || seen.has(current)) break;',
+    '      seen.add(current);',
+    '      const info = parseStat(current);',
+    '      if (!info || info.ppid === 0 || info.ppid === process.pid) break;',
+    '      current = info.ppid;',
+    '    }',
+    '    if (current === 1) reachesInit = true;',
+    '    if (reachesInit) { try { process.kill(pid, signal); } catch {} }',
+    '  }',
+    '};',
     'if (hasGroup) {',
     '  try { process.kill(-pgid, "SIGTERM"); } catch {}',
     '}',
     'signalMarked("SIGTERM");',
+    'signalSince("SIGTERM");',
     'await new Promise((resolve) => setTimeout(resolve, 1500));',
     'if (hasGroup) {',
     '  try { process.kill(-pgid, "SIGKILL"); } catch {}',
     '}',
     'signalMarked("SIGKILL");',
-    'for (const file of [pgidPath, markPath]) {',
+    'signalSince("SIGKILL");',
+    'for (const file of [pgidPath, markPath, sincePath]) {',
     '  try { fs.unlinkSync(file); } catch {}',
     '}',
     '})().catch(() => {});',
@@ -150,9 +195,9 @@ export async function startAppPreview(
   }
 
   const startCommand =
-    `mkdir -p /tmp/.asw && rm -f ${shellQuote(PREVIEW_PGID)} ${shellQuote(PREVIEW_MARK)} ${shellQuote(PREVIEW_LOG)} && ` +
+    `mkdir -p /tmp/.asw && rm -f ${shellQuote(PREVIEW_PGID)} ${shellQuote(PREVIEW_MARK)} ${shellQuote(PREVIEW_SINCE)} ${shellQuote(PREVIEW_LOG)} && ` +
     `node -e ${shellQuote(APP_PREVIEW_LAUNCHER)} -- ${shellQuote(config.start)} ` +
-    `${shellQuote(PREVIEW_PGID)} ${shellQuote(PREVIEW_LOG)} ${shellQuote(PREVIEW_MARK)}`;
+    `${shellQuote(PREVIEW_PGID)} ${shellQuote(PREVIEW_LOG)} ${shellQuote(PREVIEW_MARK)} ${shellQuote(PREVIEW_SINCE)}`;
   try {
     await workspace.exec(startCommand, execOptions(10_000));
   } catch (error) {

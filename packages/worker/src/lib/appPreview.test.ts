@@ -84,6 +84,7 @@ describe('startAppPreview', () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'asw-preview-'));
     const pgidFile = path.join(dir, 'preview.pgid');
     const markFile = `${pgidFile}.mark`;
+    const sinceFile = `${pgidFile}.since`;
     const logFile = path.join(dir, 'preview.log');
     let group = 0;
     try {
@@ -94,19 +95,23 @@ describe('startAppPreview', () => {
         pgidFile,
         logFile,
         markFile,
+        sinceFile,
       ]);
       group = Number(await fs.readFile(pgidFile, 'utf8'));
 
       expect(Number.isInteger(group) && group > 1).toBe(true);
+      expect(Number(await fs.readFile(sinceFile, 'utf8'))).toBeGreaterThan(0);
       expect(groupAlive(group)).toBe(true);
       // Older launchers have no mark file and still get process-group cleanup.
       await fs.unlink(markFile);
+      await fs.unlink(sinceFile);
       // The whole tree: `sh -c` and the command it started share the group.
       execFileSync(process.execPath, ['-e', previewStopScript(pgidFile)]);
 
       expect(await waitForGone(group)).toBe(true);
       await expect(fs.access(pgidFile)).rejects.toThrow();
       await expect(fs.access(markFile)).rejects.toThrow();
+      await expect(fs.access(sinceFile)).rejects.toThrow();
     } finally {
       if (group > 1 && groupAlive(group)) {
         try {
@@ -125,11 +130,15 @@ describe('startAppPreview', () => {
       const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'asw-preview-mark-'));
       const pgidFile = path.join(dir, 'preview.pgid');
       const markFile = `${pgidFile}.mark`;
+      const sinceFile = `${pgidFile}.since`;
+      const daemonPidFile = path.join(dir, 'daemon.pid');
       const logFile = path.join(dir, 'preview.log');
       let group = 0;
       let mark = '';
       try {
-        const command = 'setsid sh -c "sleep 300" >/dev/null 2>&1 & sleep 300';
+        const command =
+          `env -i PATH="$PATH" setsid sh -c 'echo $$ >${daemonPidFile}; exec sleep 300' ` +
+          '>/dev/null 2>&1 & sleep 300';
         execFileSync(process.execPath, [
           '-e',
           APP_PREVIEW_LAUNCHER,
@@ -137,17 +146,21 @@ describe('startAppPreview', () => {
           pgidFile,
           logFile,
           markFile,
+          sinceFile,
         ]);
         group = Number(await fs.readFile(pgidFile, 'utf8'));
         mark = await fs.readFile(markFile, 'utf8');
+        const daemonPid = Number(await waitForFile(daemonPidFile));
 
         expect(mark).toMatch(/^[a-f0-9]{32}$/);
         expect(await waitForMarkedProcess(mark)).toBe(true);
         execFileSync(process.execPath, ['-e', previewStopScript(pgidFile)]);
 
+        expect(await waitForProcessGone(daemonPid)).toBe(true);
         expect(await waitForMarkedProcessesGone(mark)).toBe(true);
         await expect(fs.access(pgidFile)).rejects.toThrow();
         await expect(fs.access(markFile)).rejects.toThrow();
+        await expect(fs.access(sinceFile)).rejects.toThrow();
       } finally {
         if (group > 1 && groupAlive(group)) {
           try {
@@ -212,6 +225,36 @@ async function waitForMarkedProcess(mark: string): Promise<boolean> {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return markedProcesses(mark).length > 0;
+}
+
+async function waitForFile(file: string): Promise<string> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    try {
+      return await fs.readFile(file, 'utf8');
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  throw new Error(`timed out waiting for ${file}`);
+}
+
+async function waitForProcessGone(pid: number): Promise<boolean> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } catch {
+      return true;
+    }
+  }
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 async function waitForMarkedProcessesGone(mark: string): Promise<boolean> {

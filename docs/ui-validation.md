@@ -148,9 +148,9 @@ dropped.
   admin setting are enabled. The public bucket's access policy is operator-managed. Renaming the
   bucket after copies exist leaves the old copies behind: retention can only delete from the bucket
   the environment currently names.
-- `stop()` signals the preview's process group and processes that retain its random environment
-  mark. A daemon that scrubs the mark, or runs as a UID the worker cannot signal, can outlive
-  `stop()` until the workspace is destroyed.
+- `stop()` also stops orphaned processes in the workspace mount namespace whose start time is at
+  or after the preview starts and whose parent chain reaches PID 1. This includes an orphaned
+  process from any command started after the preview, not only one started by the preview command.
 - A worker that dies between writing an artifact and creating its `RunEvidence` row leaves a ready
   `ui.*` artifact that no evidence row points at. The daily transcript sweep deletes those, and a
   pending write, after a day; until then the object is stored but unreachable from any run.
