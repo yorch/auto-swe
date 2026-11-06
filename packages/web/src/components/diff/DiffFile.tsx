@@ -1,11 +1,12 @@
 'use client';
 
-import { memo, type ReactNode, useState } from 'react';
+import { memo, type ReactNode, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { visibleText } from '@/lib/visibleText';
 import type { ParsedDiffLine } from '../approvals/diffParse';
+import { type DiffCell, type DiffRow, pairSideBySide } from './diffRows';
 
 const LINE_CLASS: Record<ParsedDiffLine['kind'], string> = {
   add: 'bg-success-400/10 text-success-400',
@@ -47,6 +48,79 @@ function DiffLine({ id, line }: { id: string | undefined; line: ParsedDiffLine }
   );
 }
 
+/** One side of a split row. An empty side is drawn as a plain, quiet block. */
+function SplitCell({
+  borderRight,
+  cell,
+  id,
+}: {
+  borderRight: boolean;
+  cell: DiffCell | null;
+  id: string | undefined;
+}) {
+  if (cell === null) {
+    return (
+      <div
+        aria-hidden="true"
+        className={cn('bg-ink-900/40', borderRight && 'border-r border-ink-600/60')}
+      />
+    );
+  }
+  return (
+    <div
+      className={cn(
+        'flex min-w-0',
+        LINE_CLASS[cell.kind],
+        borderRight && 'border-r border-ink-600/60'
+      )}
+      id={id}
+    >
+      <span
+        aria-hidden="true"
+        className="tabular w-10 shrink-0 select-none border-r border-ink-600/60 pr-2 text-right text-paper-600"
+      >
+        {cell.no ?? ''}
+      </span>
+      {/* Wrapped, not scrolled: two panes that scrolled sideways on their own would drift apart. */}
+      <span className="min-w-0 whitespace-pre-wrap break-words px-2">
+        {visibleText(cell.text, { multiline: true }) || ' '}
+      </span>
+    </div>
+  );
+}
+
+function SplitRow({
+  anchorId,
+  annotations,
+  row,
+}: {
+  anchorId: string | undefined;
+  annotations: ReadonlyMap<number, ReactNode> | undefined;
+  row: DiffRow;
+}) {
+  if (row.type === 'full') {
+    return <DiffLine id={undefined} line={row.line} />;
+  }
+  // Notes and links belong to the new side: a removed line has no place there to hang one.
+  const newNo = row.right?.no ?? null;
+  const note = newNo !== null ? annotations?.get(newNo) : undefined;
+  const lineId = anchorId !== undefined && newNo !== null ? diffLineId(anchorId, newNo) : undefined;
+  return (
+    <div>
+      <div className="grid grid-cols-2">
+        <SplitCell borderRight cell={row.left} id={undefined} />
+        <SplitCell borderRight={false} cell={row.right} id={lineId} />
+      </div>
+      {note !== undefined ? (
+        <div className="border-y border-ink-600/60 bg-ink-900 px-3 py-2 font-sans">{note}</div>
+      ) : null}
+    </div>
+  );
+}
+
+/** How a file's lines are laid out: one column as the patch has them, or old beside new. */
+export type DiffMode = 'unified' | 'split';
+
 export type DiffFileProps = {
   /** Removed and added line counts, shown in the header. */
   added: number;
@@ -66,6 +140,8 @@ export type DiffFileProps = {
   headerExtra?: ReactNode;
   /** Rows drawn before "Show more"; only an open file draws any. */
   rowLimit?: number;
+  /** Unified (the default) or split, old beside new. */
+  mode?: DiffMode;
 };
 
 /**
@@ -79,6 +155,7 @@ function DiffFileImpl({
   annotations,
   headerExtra,
   lines,
+  mode = 'unified',
   name,
   onToggle,
   open,
@@ -87,8 +164,15 @@ function DiffFileImpl({
   rowLimit = DEFAULT_ROW_LIMIT,
 }: DiffFileProps) {
   const [limit, setLimit] = useState(rowLimit);
+  // Paired only while the file is open and split: a closed file draws, and so computes, nothing.
+  const rows = useMemo(
+    () => (open && mode === 'split' ? pairSideBySide(lines) : null),
+    [lines, mode, open]
+  );
+  const total = rows ? rows.length : lines.length;
   const shown = open ? lines.slice(0, limit) : [];
-  const hidden = open ? lines.length - shown.length : 0;
+  const shownRows = rows ? rows.slice(0, limit) : [];
+  const hidden = open ? total - (rows ? shownRows.length : shown.length) : 0;
   return (
     <section
       className="overflow-hidden rounded-lg border border-ink-500/60 bg-ink-950/50"
@@ -126,33 +210,40 @@ function DiffFileImpl({
       </div>
       {open && (
         <div className="overflow-x-auto border-t border-ink-600/60 font-mono text-xs leading-5">
-          <div className="w-max min-w-full py-1">
-            {shown.map((line, n) => {
-              const note = line.newNo !== null ? annotations?.get(line.newNo) : undefined;
-              const lineId =
-                anchorId !== undefined && line.newNo !== null && line.kind !== 'del'
-                  ? diffLineId(anchorId, line.newNo)
-                  : undefined;
-              return (
-                // biome-ignore lint/suspicious/noArrayIndexKey: diff lines are positional
-                <div key={n}>
-                  <DiffLine id={lineId} line={line} />
-                  {note !== undefined && line.kind !== 'del' ? (
-                    <div className="border-y border-ink-600/60 bg-ink-900 px-3 py-2 font-sans">
-                      {note}
+          <div className={cn('py-1', rows ? 'w-full' : 'w-max min-w-full')}>
+            {rows
+              ? shownRows.map((row, n) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: diff rows are positional
+                  <SplitRow anchorId={anchorId} annotations={annotations} key={n} row={row} />
+                ))
+              : shown.map((line, n) => {
+                  const note = line.newNo !== null ? annotations?.get(line.newNo) : undefined;
+                  const lineId =
+                    anchorId !== undefined && line.newNo !== null && line.kind !== 'del'
+                      ? diffLineId(anchorId, line.newNo)
+                      : undefined;
+                  return (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: diff lines are positional
+                    <div key={n}>
+                      <DiffLine id={lineId} line={line} />
+                      {note !== undefined && line.kind !== 'del' ? (
+                        <div className="border-y border-ink-600/60 bg-ink-900 px-3 py-2 font-sans">
+                          {note}
+                        </div>
+                      ) : null}
                     </div>
-                  ) : null}
-                </div>
-              );
-            })}
+                  );
+                })}
           </div>
           {hidden > 0 && (
             <div className="flex items-center gap-2 border-t border-ink-600/60 px-3 py-2 font-sans">
-              <span className="text-paper-400">{hidden} more lines not drawn.</span>
+              <span className="text-paper-400">
+                {hidden} more {rows ? 'rows' : 'lines'} not drawn.
+              </span>
               <Button onClick={() => setLimit((l) => l + rowLimit)} size="sm" variant="ghost">
                 Show more
               </Button>
-              <Button onClick={() => setLimit(lines.length)} size="sm" variant="ghost">
+              <Button onClick={() => setLimit(total)} size="sm" variant="ghost">
                 Show all
               </Button>
             </div>

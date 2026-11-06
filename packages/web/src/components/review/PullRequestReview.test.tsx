@@ -3,6 +3,8 @@
 import type { PullRequestCockpit, PullRequestCockpitFile } from '@auto-swe/shared/types/api';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearViewport, mockViewport } from '@/test/matchMedia';
+import { installMemoryStorage } from '@/test/memoryStorage';
 import { bodyOf, setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import { PullRequestReview } from './PullRequestReview';
 
@@ -395,5 +397,70 @@ describe('viewing files', () => {
     expect(
       spy.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')
     ).toBe(false);
+  });
+});
+
+describe('the diff layout', () => {
+  const splitGrids = () => document.querySelectorAll('.grid.grid-cols-2').length;
+  const layoutButton = (name: string) =>
+    within(screen.getByRole('group', { name: 'Diff layout' })).getByRole('button', { name });
+
+  beforeEach(() => {
+    installMemoryStorage();
+  });
+  afterEach(() => {
+    clearViewport();
+  });
+
+  it('starts unified, and offers split', () => {
+    mockViewport(1280);
+    show(withFiles([file()]));
+    expect(splitGrids()).toBe(0);
+    expect(layoutButton('Unified').getAttribute('aria-pressed')).toBe('true');
+    expect(layoutButton('Split').getAttribute('aria-pressed')).toBe('false');
+  });
+
+  it('draws old beside new once split is chosen, and remembers the choice', () => {
+    mockViewport(1280);
+    const { unmount } = show(withFiles([file()]));
+    fireEvent.click(layoutButton('Split'));
+    expect(splitGrids()).toBeGreaterThan(0);
+    expect(layoutButton('Split').getAttribute('aria-pressed')).toBe('true');
+    unmount();
+    show(withFiles([file()]));
+    expect(splitGrids()).toBeGreaterThan(0);
+  });
+
+  it('goes back to one column when unified is chosen again', () => {
+    mockViewport(1280);
+    show(withFiles([file()]));
+    fireEvent.click(layoutButton('Split'));
+    fireEvent.click(layoutButton('Unified'));
+    expect(splitGrids()).toBe(0);
+  });
+
+  it('keeps one column, and offers no choice, on a narrow screen, whatever was chosen', () => {
+    mockViewport(1280);
+    const { unmount } = show(withFiles([file()]));
+    fireEvent.click(layoutButton('Split'));
+    unmount();
+    mockViewport(480);
+    show(withFiles([file()]));
+    expect(splitGrids()).toBe(0);
+    expect(screen.queryByRole('group', { name: 'Diff layout' })).toBeNull();
+  });
+
+  it('offers no choice when there are no files to lay out', () => {
+    mockViewport(1280);
+    show(withFiles([]));
+    expect(screen.queryByRole('group', { name: 'Diff layout' })).toBeNull();
+  });
+
+  it('still draws a finding on an added line once the layout is split', () => {
+    mockViewport(1280);
+    const data = withFindings([finding({ line: 2 })]);
+    show(data);
+    fireEvent.click(layoutButton('Split'));
+    expect(screen.getByText(/off by one in the loop/)).toBeTruthy();
   });
 });

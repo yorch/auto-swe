@@ -4,7 +4,7 @@ import type { PullRequestCockpit, PullRequestCockpitFile } from '@auto-swe/share
 import Link from 'next/link';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { parseFilePatch } from '@/components/approvals/diffParse';
-import { DiffFile } from '@/components/diff/DiffFile';
+import { DiffFile, type DiffMode } from '@/components/diff/DiffFile';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { ButtonLink } from '@/components/ui/Button';
@@ -12,6 +12,8 @@ import { Card } from '@/components/ui/Card';
 import { Icon } from '@/components/ui/Icon';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { CiBadge, PullRequestStateBadge } from '@/components/work/PullRequestBadges';
+import { useDiffMode } from '@/hooks/useDiffMode';
+import { useIsNarrow } from '@/hooks/useMediaQuery';
 import { useSetFilesViewed } from '@/hooks/usePullRequestCockpit';
 import {
   type FileFilter,
@@ -45,6 +47,11 @@ const FILTERS: { label: string; value: FileFilter }[] = [
   { label: 'Skim', value: 'skim' },
 ];
 
+const LAYOUTS: { label: string; value: DiffMode }[] = [
+  { label: 'Unified', value: 'unified' },
+  { label: 'Split', value: 'split' },
+];
+
 const fileAnchor = (index: number) => `review-file-${index}`;
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -76,6 +83,11 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
   const items = useMemo(() => (files.type === 'ok' ? files.items : []), [files]);
   const viewed = useMemo(() => new Set(data.viewed), [data.viewed]);
   const findings = evaluation?.findings ?? [];
+
+  const { mode, setMode } = useDiffMode();
+  // Two panes need room: a phone-width page keeps one column whatever was chosen.
+  const narrow = useIsNarrow();
+  const layout: DiffMode = narrow ? 'unified' : mode;
 
   const [filter, setFilter] = useState<FileFilter>('all');
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -337,6 +349,16 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
                 The host lists no changed files for this pull request.
               </Alert>
             ) : null}
+            {items.length > 0 && !narrow ? (
+              <div className="flex justify-end">
+                <SegmentedControl
+                  ariaLabel="Diff layout"
+                  onChange={setMode}
+                  options={LAYOUTS}
+                  value={mode}
+                />
+              </div>
+            ) : null}
             {items.map((file, index) => {
               if (!shown.some((f) => f.path === file.path)) {
                 return null;
@@ -381,6 +403,7 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
                         </span>
                       }
                       lines={lines.lines}
+                      mode={layout}
                       name={file.path}
                       onToggle={() => setOpen((c) => ({ ...c, [file.path]: !isOpen(file.path) }))}
                       open={isOpen(file.path)}
