@@ -315,6 +315,7 @@ model PullRequest {
   mergedAt   DateTime?       @map("merged_at") @db.Timestamptz
   closedAt   DateTime?       @map("closed_at") @db.Timestamptz
   updatedAt  DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  fileViews  PrFileView[]
 
   @@index([workflowId])
   @@index([repoId])
@@ -326,6 +327,25 @@ model PullRequest {
   @@index([closedAt, runId])
   @@index([updatedAt, runId])
   @@map("pull_requests")
+}
+
+/// A file of a pull request that a person marked viewed in the review page. Per person: nobody
+/// else sees it. The mark counts only while `patchDigest` equals the digest of the file's current
+/// patch, so a push that changes the file un-views it. `path` is repository text, untrusted and
+/// capped on write (a btree key cannot hold an arbitrarily long one).
+model PrFileView {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String      @map("user_id") @db.Uuid
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pullRequestId String      @map("pull_request_id") @db.Uuid
+  pullRequest   PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  path          String
+  patchDigest   String      @map("patch_digest")
+  viewedAt      DateTime    @default(now()) @map("viewed_at") @db.Timestamptz
+
+  @@unique([userId, pullRequestId, path])
+  @@index([pullRequestId])
+  @@map("pr_file_views")
 }
 
 /// One risk evaluation of a platform-opened pull request at a head commit. The class
@@ -1485,6 +1505,7 @@ model User {
   configPermissions     ConfigPermission[]
   repoAccess            RepoAccess[]
   connectionCredentials ConnectionCredential[]
+  prFileViews           PrFileView[]
   knowledgeApprovals    KnowledgeItem[]         @relation("KnowledgeItemApprover")
   knowledgeEvents       KnowledgeItemEvent[]    @relation("KnowledgeEventActor")
   launchedRuns          WorkflowRun[]            @relation("WorkflowRunLauncher")

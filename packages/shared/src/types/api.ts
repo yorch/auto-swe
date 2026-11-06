@@ -1501,6 +1501,93 @@ export interface PullRequestListItem {
   costUsd: number | null;
 }
 
+/** One changed file of the review page. Every string is host or repository text: plain text only. */
+export interface PullRequestCockpitFile {
+  path: string;
+  previousPath: string | null;
+  status: 'added' | 'modified' | 'removed' | 'renamed';
+  additions: number;
+  deletions: number;
+  /** Null for a binary file or one whose patch is too large to show. */
+  patch: string | null;
+  /** Identifies the patch a reviewer marked viewed; null when there is no patch. */
+  patchDigest: string | null;
+  /** The evaluation flagged the file as one to verify. */
+  flagged: boolean;
+  why: string | null;
+  verify: string | null;
+  /** Why the file is safe to skim, when the evaluation proved it; null otherwise. */
+  skim: string | null;
+}
+
+/** A finding of the review network. Model text: plain text only. */
+export interface PullRequestCockpitFinding {
+  /** The line is inside the file's patch at the head the page was read at. */
+  anchored: boolean;
+  category: string;
+  description: string;
+  file: string;
+  line: number | null;
+  reviewer: string;
+  severity: 'WARNING' | 'CRITICAL';
+  suggestedFix: string;
+}
+
+export interface PullRequestCockpitEvaluation {
+  id: string;
+  headSha: string;
+  createdAt: string;
+  riskClass: 'LOW' | 'STANDARD' | 'HIGH';
+  mode: string;
+  statusState: string;
+  requiredApprovers: number;
+  reasons: { code: string; severity: string; message: string; paths: string[] }[];
+  claimsToVerify: string[];
+  /** Null for an evaluation written before the intent was stored. */
+  intent: {
+    criteria: string[];
+    handled: { note: string; question: string; resolution: 'implemented' | 'left-unchanged' }[];
+    openQuestions: string[];
+  } | null;
+  /** Null for an evaluation written before the evidence was stored. */
+  evidence: {
+    ci: 'passed' | 'failed' | 'pending' | 'none' | null;
+    runUrl: string | null;
+    tests: { failing: number; passing: number; total: number } | null;
+    ui: { screenshots: number; traces: number; videos: number } | null;
+  } | null;
+  findings: PullRequestCockpitFinding[];
+  /** The evaluation covers a head other than the one the page shows. */
+  stale: boolean;
+}
+
+export type PullRequestCockpitFiles =
+  | {
+      type: 'ok';
+      /** The head the host reports now. */
+      headSha: string;
+      /** The host's state for the pull request: `open` or `closed`. */
+      state: string;
+      /** The host lists more files than are shown. */
+      truncated: boolean;
+      /** In reading order. */
+      items: PullRequestCockpitFile[];
+    }
+  | {
+      type: 'unavailable';
+      reason: 'host-not-approved' | 'no-credential' | 'not-found' | 'rate-limited' | 'failed';
+    };
+
+/** Response data of GET /api/v1/pull-requests/:id/cockpit. */
+export interface PullRequestCockpit {
+  pull: PullRequestListItem & { headSha: string };
+  /** The latest evaluation of this pull request; null when none exists. */
+  evaluation: PullRequestCockpitEvaluation | null;
+  files: PullRequestCockpitFiles;
+  /** Paths of the files the caller marked viewed and whose patch has not changed since. */
+  viewed: string[];
+}
+
 /** Outcome figures for a cohort of pull requests opened in one window. */
 export interface PullRequestOutcomeSummary {
   opened: number;

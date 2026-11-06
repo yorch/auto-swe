@@ -61,6 +61,7 @@ export const UI_ROUTE_TEMPLATES: readonly string[] = [
   '/models',
   '/oauth/consent',
   '/pull-requests',
+  '/pull-requests/[id]',
   '/requests',
   '/requests/[id]',
   '/reset-password',
