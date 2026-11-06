@@ -284,7 +284,11 @@ async function runInCheckout(args: {
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      repoSetup: { defer: true, field: repo.setup },
+      teamId: repo.teamId,
+    }
   );
   onOpen(workspace.destroy);
   let checkedOut = branch;
@@ -294,6 +298,7 @@ async function runInCheckout(args: {
   } catch {
     checkedOut = baseBranch;
   }
+  await workspace.runSetup?.();
   tracer.addActivityEvent({
     name: 'agent.runtime',
     outputJson: {

@@ -32,6 +32,8 @@ export interface StandaloneGateInput {
   command?: string;
   /** The run's team, for team-scoped workspace wiring (package registries). */
   teamId?: string | null;
+  /** The repository's `Connection.setup`, when known; absent, `.auto-swe/setup.yml` at the checkout. */
+  setup?: unknown;
   image?: string;
   timeoutMs?: number;
 }
@@ -66,7 +68,7 @@ export async function runGateStandalone(input: StandaloneGateInput): Promise<Gat
     input.image,
     input.checkoutSha,
     input.existingBranch,
-    { teamId: input.teamId ?? null }
+    { repoSetup: { field: input.setup ?? null }, teamId: input.teamId ?? null }
   );
   try {
     const result = await workspace.execCapture(command, { timeoutMs: input.timeoutMs });

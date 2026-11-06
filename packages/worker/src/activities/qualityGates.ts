@@ -252,7 +252,11 @@ async function provisionGateWorkspace(
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      repoSetup: { defer: true, field: repo.setup },
+      teamId: repo.teamId,
+    }
   );
 
   // createWorkspace produces a fresh local branch from the base branch.
@@ -273,6 +277,12 @@ async function provisionGateWorkspace(
         `cannot run against the change (refusing to run it against '${baseBranch}'): ` +
         getErrorMessage(err).slice(0, 500)
     );
+  }
+  try {
+    await workspace.runSetup?.();
+  } catch (err) {
+    await workspace.destroy();
+    throw err;
   }
   return { branch, workspace };
 }

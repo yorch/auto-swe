@@ -1343,6 +1343,92 @@ describe('repositoryRoutes', () => {
     });
   });
 
+  describe('workspace setup', () => {
+    const setup = { steps: [{ run: 'yarn install --immutable' }], submodules: true };
+    const patch = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload,
+        url: `/api/v1/repositories/${REPO_ID}`,
+      });
+    const asTeamMember = (role: 'LEAD' | 'ADMIN') => {
+      ctx.authState.role = 'LEAD';
+      ctx.authState.sub = 'lead-1';
+      ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+        role,
+        team: { isActive: true },
+      });
+    };
+    const stored = (value: unknown) =>
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        apiKeyCiphertext: null,
+        config: null,
+        executorImage: null,
+        executorImageBuild: null,
+        gateCommands: null,
+        githubApiUrl: null,
+        githubUrl: null,
+        id: REPO_ID,
+        installation: null,
+        installationId: null,
+        organizationName: 'acme',
+        previewConfig: null,
+        repoName: 'widgets',
+        setup: value,
+        teamId: TEAM_ID,
+        type: 'git_repo',
+      });
+
+    beforeEach(() => {
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+    });
+
+    it('requires the shell-authoring role to change it', async () => {
+      asTeamMember('LEAD');
+      stored(null);
+      const res = await patch({ setup });
+
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error.code).toBe('REPO_SETUP_FORBIDDEN');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('stores and audits a team admin change', async () => {
+      asTeamMember('ADMIN');
+      stored(null);
+      const res = await patch({ setup });
+      const update = ctx.mockPrisma.connection.update.mock.calls.at(-1)?.[0] as {
+        data: Record<string, unknown>;
+      };
+
+      expect(res.statusCode, res.payload).toBe(200);
+      expect(update.data.setup).toEqual(setup);
+      expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'UPDATE',
+          afterJson: { setup },
+          beforeJson: { setup: null },
+          entityType: 'Connection',
+        }),
+      });
+    });
+
+    it('lets anyone save an unchanged setup, and refuses an invalid one', async () => {
+      asTeamMember('LEAD');
+      stored(setup);
+      const same = await patch({ setup });
+      expect(same.statusCode, same.payload).toBe(200);
+      const update = ctx.mockPrisma.connection.update.mock.calls.at(-1)?.[0] as {
+        data: Record<string, unknown>;
+      };
+      expect(update.data).not.toHaveProperty('setup');
+
+      const bad = await patch({ setup: { steps: [{ run: 'x', workdir: '../out' }] } });
+      expect(bad.statusCode).toBe(400);
+    });
+  });
+
   describe('a stored credential and a changed destination', () => {
     const patch = (payload: Record<string, unknown>) =>
       ctx.app.inject({

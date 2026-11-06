@@ -138,6 +138,10 @@ vi.mock('@auto-swe/shared/db', () => ({
       deleteMany: vi.fn(async () => ({ count: 0 })),
       findMany: vi.fn(async () => []),
     },
+    workspaceSetupCache: {
+      delete: vi.fn(async () => ({})),
+      findMany: vi.fn(async () => []),
+    },
   },
 }));
 

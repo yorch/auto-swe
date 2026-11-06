@@ -433,7 +433,11 @@ describe('runAgentNode', () => {
         undefined,
         undefined,
         undefined,
-        { teamId: undefined }
+        {
+          detectedStack: undefined,
+          repoSetup: { defer: true, field: undefined },
+          teamId: undefined,
+        }
       );
       expect(workspace.gitAuthed).toHaveBeenCalledWith('fetch origin auto/JIRA-1-sub');
       expect(workspace.exec).toHaveBeenCalledWith("git reset --hard origin/'auto/JIRA-1-sub'");

@@ -110,6 +110,12 @@ repos gate-commands <org/name> [--lint=CMD] [--typecheck=CMD] [--tests=CMD] [--b
                                      Setting needs a platform admin or the team's admin
                                      (see docs/repositories.md)
 
+repos setup <org/name> [--file=PATH | --clear]
+                                     Print a repository's workspace setup, set it from a YAML or
+                                     JSON file (the .auto-swe/setup.yml schema), or remove it so
+                                     workspaces read the repository's own file. Setting needs a
+                                     platform admin or the team's admin (see docs/repositories.md)
+
 repos test-access <org/name> [--json]
                                      Check what a run on the repository could do with its
                                      credentials: token, repository, push, default branch. Exits

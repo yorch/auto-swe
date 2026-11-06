@@ -3,6 +3,7 @@
 import type { ConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
 import { isPrTitleFormat } from '@auto-swe/shared/lib/prTitle';
+import { parseRepoSetup, type RepoSetup } from '@auto-swe/shared/lib/repoSetup';
 import { MAX_UNCOVERED_COMPONENTS, uncoveredComponents } from '@auto-swe/shared/lib/stackDetection';
 import {
   type ExecutorImageProbeResult,
@@ -112,6 +113,9 @@ export function ConnectionFormModal({
   const [previewConfigJson, setPreviewConfigJson] = useState(() =>
     initial?.previewConfig != null ? JSON.stringify(initial.previewConfig, null, 2) : ''
   );
+  const [setupJson, setSetupJson] = useState(() =>
+    initial?.setup != null ? JSON.stringify(initial.setup, null, 2) : ''
+  );
   const [language, setLanguage] = useState(initial?.language ?? prefill?.language ?? '');
   const [prTitleFormat, setPrTitleFormat] = useState<PrTitleFormChoice>(
     initial?.prTitleFormat ?? 'inherit'
@@ -140,7 +144,10 @@ export function ConnectionFormModal({
   const [advancedOpen, setAdvancedOpen] = useState(
     () =>
       !!initial &&
-      (initial.gateCommands != null || initial.previewConfig != null || !!initial.detectedStack)
+      (initial.gateCommands != null ||
+        initial.previewConfig != null ||
+        initial.setup != null ||
+        !!initial.detectedStack)
   );
 
   const [touched, setTouched] = useState(false);
@@ -167,6 +174,7 @@ export function ConnectionFormModal({
       setPreviewConfigJson(
         initial?.previewConfig != null ? JSON.stringify(initial.previewConfig, null, 2) : ''
       );
+      setSetupJson(initial?.setup != null ? JSON.stringify(initial.setup, null, 2) : '');
       setLanguage(initial?.language ?? prefill?.language ?? '');
       setPrTitleFormat(initial?.prTitleFormat ?? 'inherit');
       setPrTitleTemplate(initial?.prTitleTemplate ?? '');
@@ -219,6 +227,26 @@ export function ConnectionFormModal({
     } else if (mode.kind === 'edit' && initial?.previewConfig != null) {
       parsedPreviewConfig = null;
     }
+    let parsedSetup: RepoSetup | null | undefined;
+    if (connType === 'git_repo' && setupJson.trim()) {
+      let value: unknown;
+      try {
+        value = JSON.parse(setupJson);
+      } catch (err) {
+        setError(
+          `Workspace setup JSON is invalid: ${err instanceof Error ? err.message : String(err)}`
+        );
+        return;
+      }
+      const checked = parseRepoSetup(value);
+      if (!checked.ok) {
+        setError(`Workspace setup is invalid: ${checked.error}`);
+        return;
+      }
+      parsedSetup = checked.setup;
+    } else if (mode.kind === 'edit' && initial?.setup != null) {
+      parsedSetup = null;
+    }
 
     try {
       if (mode.kind === 'create') {
@@ -233,6 +261,7 @@ export function ConnectionFormModal({
             ...(parsedPreviewConfig !== undefined
               ? { previewConfig: parsedPreviewConfig as PreviewConfig }
               : {}),
+            ...(parsedSetup ? { setup: parsedSetup } : {}),
             githubApiUrl: prefill?.githubApiUrl || undefined,
             githubUrl: prefill?.githubUrl || undefined,
             language: language.trim() || undefined,
@@ -260,6 +289,7 @@ export function ConnectionFormModal({
             executorImage: executorImage.trim() || null,
             ...(gatePatch !== undefined ? { gateCommands: gatePatch } : {}),
             ...(parsedPreviewConfig !== undefined ? { previewConfig: parsedPreviewConfig } : {}),
+            ...(parsedSetup !== undefined ? { setup: parsedSetup } : {}),
             isActive,
             language: language.trim() || null,
             prTitleFormat: prTitleFormat === 'inherit' ? null : prTitleFormat,
@@ -585,6 +615,27 @@ export function ConnectionFormModal({
                     rows={10}
                     spellCheck={false}
                     value={previewConfigJson}
+                  />
+                </fieldset>
+                <fieldset className="space-y-3">
+                  <legend className="text-sm font-medium text-paper-200">Workspace setup</legend>
+                  <p className="text-xs leading-relaxed text-paper-400">
+                    Optional JSON run in every workspace after the checkout: submodules, LFS,
+                    install steps and a dependency cache. Set, it replaces the repository's
+                    .auto-swe/setup.yml; empty, that file is used.
+                  </p>
+                  <Textarea
+                    disabled={!canEditGateCommands}
+                    hint={canEditGateCommands ? undefined : ADMIN_ONLY_HINT}
+                    id="workspace-setup-config"
+                    label="Workspace setup"
+                    onChange={(e) => setSetupJson(e.target.value)}
+                    placeholder={
+                      '{\n  "steps": [{ "run": "yarn install --immutable" }],\n  "cache": { "paths": ["node_modules"], "keyFiles": ["yarn.lock"] }\n}'
+                    }
+                    rows={8}
+                    spellCheck={false}
+                    value={setupJson}
                   />
                 </fieldset>
               </div>

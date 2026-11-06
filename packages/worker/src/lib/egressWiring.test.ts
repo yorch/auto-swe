@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const h = vi.hoisted(() => ({
   enabled: true,
@@ -41,6 +41,7 @@ import {
   blockedEgressAllow,
   capStepNetwork,
   gitHostOf,
+  lfsStorageHosts,
   resolveRunEgressPolicy,
 } from './egressWiring.js';
 
@@ -224,4 +225,18 @@ it('adds the egress proxy to the lock only when asked', () => {
     { host: 'egress.internal', port: 8792 },
     { host: 'github.com', port: 443 },
   ]);
+});
+
+describe('lfsStorageHosts', () => {
+  it("admits github.com's LFS content hosts and nothing for a self-hosted server", () => {
+    expect(lfsStorageHosts('github.com')).toEqual([
+      'github-cloud.githubusercontent.com',
+      'media.githubusercontent.com',
+    ]);
+    expect(lfsStorageHosts('ghe.example.com')).toEqual([]);
+    expect(blockedEgressAllow(null, { lfsHosts: ['media.githubusercontent.com'] })).toContainEqual({
+      host: 'media.githubusercontent.com',
+      port: 443,
+    });
+  });
 });

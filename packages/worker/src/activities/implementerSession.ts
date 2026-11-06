@@ -161,7 +161,11 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      repoSetup: { defer: true, field: repo.setup },
+      teamId: repo.teamId,
+    }
   );
 
   const tracer = new AgentTracer();
@@ -186,6 +190,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       // Branch may not exist remotely yet; proceed against the local clone.
       heartbeat(`${mode}: remote branch not found, using clone HEAD`);
     }
+    await workspace.runSetup?.();
 
     // After the sync to the work branch, before any agent turn: this session's change is
     // checked against the branch tip it started from, so an older branch base never matters.

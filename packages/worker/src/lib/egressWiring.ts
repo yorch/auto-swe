@@ -221,7 +221,12 @@ function gitPorts(cleanUrl: string | undefined): number[] {
  */
 export function blockedEgressAllow(
   gitHost: string | null,
-  options: { cleanUrl?: string; egressProxyUrl?: string; registryUrl?: string | null } = {}
+  options: {
+    cleanUrl?: string;
+    egressProxyUrl?: string;
+    lfsHosts?: readonly string[];
+    registryUrl?: string | null;
+  } = {}
 ): EgressAllowEntry[] {
   const infra = resolveWorkspaceInfra();
   const entries: EgressAllowEntry[] = [];
@@ -240,5 +245,18 @@ export function blockedEgressAllow(
       entries.push({ host: gitHost.replace(/^\[|\]$/g, ''), port });
     }
   }
+  for (const host of options.lfsHosts ?? []) {
+    entries.push({ host, port: 443 });
+  }
   return entries;
+}
+
+/**
+ * Where the git host serves LFS objects from, when that is not the git host itself: github.com
+ * hands out object URLs on its content hosts. A self-hosted server serves them itself.
+ */
+export function lfsStorageHosts(gitHost: string | null): string[] {
+  return gitHost?.toLowerCase() === 'github.com'
+    ? ['github-cloud.githubusercontent.com', 'media.githubusercontent.com']
+    : [];
 }

@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { parseRepoSetupYaml } from '@auto-swe/shared/lib/repoSetup';
 import {
   REPO_GATE_COMMAND_KEYS,
   type RepoGateCommandKey,
@@ -17,6 +19,9 @@ import { findRepoByName } from './workRequests.js';
  * the repository. A change is sent as the full set, like the connection form sends it; the
  * gateway refuses it (exit 2) unless the caller is a platform admin or an admin of the
  * repository's team.
+ *
+ * `setup` shows or replaces the repository's workspace setup, the definition that otherwise
+ * comes from its `.auto-swe/setup.yml`, under the same role.
  */
 
 /** The flag for each gate, in the order `REPO_GATE_COMMAND_KEYS` lists them. */
@@ -38,6 +43,12 @@ const SUB_HELP = `auto-swe repos — repository settings
                                       gate's command, --clear removes every one first. A gate with
                                       no command runs the built-in default. Changing them needs a
                                       platform admin or an admin of the repository's team.
+  repos setup <org/name>              Print the repository's workspace setup
+  repos setup <org/name> --file=PATH  Set it from a YAML or JSON file (the .auto-swe/setup.yml
+                                      schema); it then replaces the repository's own file
+  repos setup <org/name> --clear      Remove it, so workspaces read .auto-swe/setup.yml again.
+                                      Changing it needs a platform admin or an admin of the
+                                      repository's team.
   repos test-access <org/name> [--json]
                                       Check what a run on the repository could do: the platform
                                       credential for its host mints a token, sees the repository
@@ -56,6 +67,9 @@ export async function runReposCommand(args: string[], env: CliEnv): Promise<numb
   const handled = await runWithExitCodes(async () => {
     if (sub === 'gate-commands') {
       return await cmdGateCommands(rest, env);
+    }
+    if (sub === 'setup') {
+      return await cmdSetup(rest, env);
     }
     if (sub === 'test-access') {
       return await cmdTestAccess(rest, env);
@@ -121,6 +135,62 @@ async function cmdGateCommands(args: string[], env: CliEnv): Promise<number> {
   );
   printGateCommands(updated.gateCommands ?? null);
   return 0;
+}
+
+async function cmdSetup(args: string[], env: CliEnv): Promise<number> {
+  const { positional, flags } = parseFlags(args);
+  const ref = positional[0];
+  const [org, name, extra] = ref?.split('/') ?? [];
+  const unknown = Object.keys(flags).find((f) => f !== 'file' && f !== 'clear');
+  if (!org || !name || extra !== undefined || positional.length > 1 || unknown) {
+    process.stderr.write(
+      `${unknown ? `Unknown flag: --${unknown}\n` : ''}Usage: repos setup <org/name> [--file=PATH | --clear]\n${SUB_HELP}`
+    );
+    return 1;
+  }
+  if ('file' in flags && 'clear' in flags) {
+    process.stderr.write('--file and --clear cannot be combined\n');
+    return 1;
+  }
+  const file = flags.file;
+  if (file === FLAG_PRESENT || file === '') {
+    process.stderr.write('--file needs a path\n');
+    return 1;
+  }
+  let next: unknown;
+  if (file !== undefined) {
+    const parsed = parseRepoSetupYaml(await readFile(file, 'utf8'));
+    if (!parsed.ok) {
+      process.stderr.write(`${file}: ${parsed.error}\n`);
+      return 1;
+    }
+    next = parsed.setup;
+  }
+  const repo = await findRepoByName(env, org, name);
+  if (!repo) {
+    process.stderr.write(`Repository "${ref}" not found.\n`);
+    return 1;
+  }
+  if (file === undefined && !('clear' in flags)) {
+    printSetup(repo.setup ?? null);
+    return 0;
+  }
+  const updated = await apiRequest<RepositorySummary>(
+    env,
+    'PATCH',
+    `/api/v1/repositories/${repo.id}`,
+    { setup: next ?? null }
+  );
+  printSetup(updated.setup ?? null);
+  return 0;
+}
+
+function printSetup(setup: unknown): void {
+  process.stdout.write(
+    setup == null
+      ? "(none: workspaces read the repository's .auto-swe/setup.yml)\n"
+      : `${JSON.stringify(setup, null, 2)}\n`
+  );
 }
 
 interface AccessResult {

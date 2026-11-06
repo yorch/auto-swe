@@ -475,6 +475,76 @@ The repository edit form shows the detection as a suggestion: the detected stack
 the suggested `defaults/Dockerfile.<stack>` for `build-executor.yml`, and a **Use suggested gate
 commands** button that fills the gate fields without saving them.
 
+### Workspace setup
+
+A repository can say how a fresh checkout is prepared before anything works on it: install its
+dependencies, fetch its submodules and Git LFS objects, run a code generator. Every workspace runs
+it — the agent's, the quality gates', UI and CI verification, merges and evals — so each sees the
+tree the agent worked in.
+
+The definition is one schema (`RepoSetupSchema`, in `@auto-swe/shared/lib/repoSetup`), read from
+the first of:
+
+1. the repository's `setup` field (`Connection.setup`), set in the connection form's **Workspace
+   setup** section, with `auto-swe repos setup <org/name> --file=setup.yml`, or as `setup` on
+   `POST`/`PATCH /api/v1/repositories`;
+2. `.auto-swe/setup.yml` in the commit the workspace was cut from — the run's base branch, never
+   the working tree a run changed — and, for an eval, its pinned commit;
+3. defaults inferred from the [detected stack](#detected-stack), only when
+   `workspace.repoSetupStackDefaults` is on (off by default): for a single Node target with a
+   lockfile, the package manager's frozen install, caching `node_modules`.
+
+```yaml
+submodules: recursive   # false | true | recursive
+lfs: true
+env: { CI: "1" }        # upper-case names; not for secrets
+steps:
+  - name: install
+    run: yarn install --immutable
+    timeoutSeconds: 600   # default 600, at most 3600
+  - run: ./scripts/codegen.sh
+    workdir: packages/api # relative to the checkout
+cache:
+  paths: [node_modules, ~/.cache/yarn]
+  keyFiles: [yarn.lock]
+```
+
+A file is at most 64 KiB and 20 steps; unknown keys, absolute paths and `..` are refused. Setting
+or changing the field takes the same permission as [gate commands](#gate-commands) and is written
+to the audit log; re-saving an unchanged value needs none.
+
+**How it runs.** The definition is resolved while the workspace is provisioned, and everything it
+asks for runs after the network lock, as the workspace's normal user:
+
+1. **Submodules**, shallow. Each URL in `.gitmodules` — relative, `https://` or `git@host:` — must
+   name an `owner/repo` on the repository's own host. Its URL is pinned in `.git/config` and the
+   fetch carries a credential minted for that repository, never the parent's; on a GitHub App that
+   needs the App installed on the submodule's repository. Another host, scheme or shape fails setup.
+   `recursive` follows nested submodules three levels deep, 25 in all.
+2. **LFS**: `git lfs pull` against the repository's own LFS endpoint. The image needs `git-lfs`.
+   Under a `blocked` or `restricted` egress policy, the lock also admits github.com's LFS content
+   hosts when the definition asks for LFS.
+3. **Cache restore**, then the **steps** in order, each with `env` and its own timeout. The network
+   is what the egress policy leaves, so installs go through the
+   [registry proxy](./package-registries.md).
+4. **Cache save** on a miss, before any agent has run.
+
+A failing step fails the workspace with `WORKSPACE_SETUP_FAILED` and the redacted tail of its
+output; an invalid definition fails it without a retry. Each run of setup writes a
+`workspace.setup` audit line with its source, steps, timings and cache outcome. A caller that moves
+the checkout to the run's branch runs setup after the move; the trusted workspace that commits an
+agent's tree runs none.
+
+**Dependency cache.** With `cache`, the listed paths (relative to the checkout, or `~/` for the
+home directory) are saved as one gzipped tarball in the artifact store after a successful setup,
+and restored before the steps of the next workspace with the same key: the repository, the
+definition, the contents of `keyFiles`, the image and the CPU architecture. The steps still run,
+so an install on a restored tree is quick rather than skipped. The tarball is capped by
+`workspace.setupCacheMaxMb` (1024 by default, `0` turns caching off); a larger one is not stored. A
+cache works on both workspace backends but only on the S3 and filesystem artifact backends; on the
+Postgres backend it is skipped. A cache nobody restored for 14 days is deleted with its tarball by
+the transcript-retention sweep. A cache that cannot be read or written costs only time.
+
 ### Pull request titles
 
 A repository can choose how the pull requests opened for it are titled (`Connection.prTitleFormat`
@@ -575,6 +645,17 @@ longer fit.
 
 ## Limitations
 
+- **Workspace setup files that git tracks become part of the change.** Setup runs on the tree the
+  agent then edits, so a step that rewrites a tracked file puts that rewrite in the diff. Keep setup
+  output in ignored paths.
+- **LFS objects are fetched for the top-level repository only**, not inside submodules. Off
+  github.com, an LFS server that hands out object URLs on another host is not admitted by the
+  network lock.
+- **A dependency cache is shared by everyone whose workspace has the same key.** The key covers the
+  repository, the definition, the key files, the image and the architecture, not the team or the
+  run, and a hit is restored before the steps run. It is saved before any agent code runs, but the
+  setup steps themselves run the repository's code.
+- **Setup `env` values are passed on the command line of the exec**, so they are not for secrets.
 - **The access test does not look at webhooks.** Listing a repository's hooks needs an
   administrative permission the platform's credential does not otherwise hold, so a missing or
   mis-signed webhook is not found by it. An installation token reports no permission level for a

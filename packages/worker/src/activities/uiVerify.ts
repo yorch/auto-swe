@@ -88,11 +88,17 @@ async function checkoutWorkspace(
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, services, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      repoSetup: { defer: true, field: repo.setup },
+      services,
+      teamId: repo.teamId,
+    }
   );
   try {
     await workspace.gitAuthed(fetchBranchesSubcommand([branch]));
     await workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
+    await workspace.runSetup?.();
   } catch (error) {
     await workspace.destroy();
     throw error;
