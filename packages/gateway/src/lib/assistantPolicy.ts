@@ -164,6 +164,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/platform/slack-channels/:id/memory': 'read',
   'GET /api/v1/platform/slack-channels/:id/open-items': 'read',
   'GET /api/v1/platform/slack-channels/workspaces': 'read',
+  'GET /api/v1/platform/tool-catalog': 'read',
   'GET /api/v1/platform/transcripts/access-log': { never: 'secret' },
   'GET /api/v1/platform/transcripts/export': { never: 'secret' },
   'GET /api/v1/platform/usage': 'read',
@@ -184,6 +185,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/reports/quality': 'read',
   'GET /api/v1/repositories': 'read',
   'GET /api/v1/repositories/:id/dependencies': 'read',
+  'GET /api/v1/repositories/:id/onboarding-pr/:workflowId': 'read',
   'GET /api/v1/repositories/:id/pr-evaluation': 'read',
   'GET /api/v1/repositories/:id/share-candidates': 'read',
   'GET /api/v1/repositories/credentials/mine': { never: 'secret' },
@@ -356,6 +358,11 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/platform/slack-channels': 'confirm',
   'POST /api/v1/platform/slack-channels/:id/budget/reset': 'confirm',
   'POST /api/v1/platform/slack-channels/memory/erase-user': { never: 'destructive' },
+  // A row is a download that runs in agent workspaces. The admin cannot vet a URL and digest from a
+  // confirmation dialog, so a prompt-injected assistant must not be able to propose one.
+  'POST /api/v1/platform/tool-catalog': { never: 'runsWorkload' },
+  'POST /api/v1/platform/tool-catalog/:id/reset': 'confirm',
+  'POST /api/v1/platform/tool-catalog/:id/revoke': 'confirm',
   'POST /api/v1/prd-runs': 'confirm',
   'POST /api/v1/report-digests': 'confirm',
   'POST /api/v1/report-digests/:id/send-test': 'confirm',
@@ -365,6 +372,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/repositories/:id/dependencies/infer': 'confirm',
   // Starts a workspace container on a candidate image — it may not be driven by a tool call.
   'POST /api/v1/repositories/:id/executor-image/probe': { never: 'runsWorkload' },
+  'POST /api/v1/repositories/:id/onboarding-pr': 'confirm',
   'POST /api/v1/repositories/:id/test-access': 'confirm',
   'POST /api/v1/repositories/dependencies/scan': 'confirm',
   'POST /api/v1/scheduled-work-requests': 'confirm',
@@ -422,6 +430,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PUT /api/v1/platform/model-catalog/:id': 'confirm',
   'PUT /api/v1/platform/scanner-patterns/:id': 'confirm',
   'PUT /api/v1/platform/skills/:id': 'confirm',
+  'PUT /api/v1/platform/tool-catalog/:id': { never: 'runsWorkload' },
   'PUT /api/v1/repositories/:id/credential': { never: 'secret' },
   'PUT /api/v1/repositories/:id/pr-evaluation': { never: 'humanDecision' },
   'PUT /api/v1/repositories/:id/shares': 'confirm',

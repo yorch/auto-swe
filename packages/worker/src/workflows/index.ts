@@ -12,6 +12,7 @@ export { EvalRunWorkflow } from './evalRun.js';
 export { EvalScreenWorkflow } from './evalScreen.js';
 export { ExecutorImageProbeWorkflow } from './executorImageProbe.js';
 export { InferRepoDependenciesWorkflow } from './inferRepoDependencies.js';
+export { onboardingPrWorkflow } from './onboardingPr.js';
 export { prEvaluationWorkflow } from './prEvaluation.js';
 export { ReembedMemoryWorkflow, ReembedStaleMemoryWorkflow } from './reembedMemory.js';
 export { RepoDependencyScanOneWorkflow } from './repoDependencyScanOne.js';

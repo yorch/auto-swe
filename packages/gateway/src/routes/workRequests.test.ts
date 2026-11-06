@@ -247,6 +247,7 @@ describe('POST /api/v1/work-requests', () => {
         nextRunAt: null,
         paused: false,
       }),
+      getOnboardingPrStatus: async () => null,
       getRepoDependencyScanScheduleStatus: async () => ({
         exists: false,
         lastRunAt: null,
@@ -278,6 +279,7 @@ describe('POST /api/v1/work-requests', () => {
       startEpicWorkflow: async () => {},
       startEvalRunWorkflow: async () => {},
       startEvalScreenWorkflow: async () => {},
+      startOnboardingPrWorkflow: async () => {},
       startPrEvaluationWorkflow: async () => {},
       startReembedMemory: async () => {},
       startReembedStaleMemory: async () => true,

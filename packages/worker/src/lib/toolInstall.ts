@@ -1,112 +1,120 @@
+import {
+  BUILTIN_TOOLS,
+  resolveToolRequests,
+  type ToolCatalogEntry,
+  ToolInstallError,
+  type ToolRequest,
+} from '@auto-swe/shared/lib/toolCatalog';
 import { shellQuote } from './shellQuote.js';
+
+export type { ToolCatalogEntry, ToolRequest };
+export { resolveToolRequests, ToolInstallError };
 
 /** Where on-demand tools land: outside the clone, so `git add -A` never sweeps them in. */
 export const TOOLS_DIR = '/workspace/.tools';
 export const TOOLS_BIN_DIR = `${TOOLS_DIR}/bin`;
 
-export type ToolArch = 'amd64' | 'arm64';
-
-export interface ToolCatalogEntry {
-  key: string;
-  version: string;
-  /** One verified download per architecture; an arch with no entry fails the install. */
-  archs: Partial<Record<ToolArch, { url: string; sha256: string }>>;
-  /** Path of the executable inside the `.tar.gz`. */
-  member: string;
+/**
+ * The `PATH=` pair for an exec once tools are installed. The tools directory goes LAST: the agent
+ * can write there, so a planted `git` or `sh` must never shadow the image's own binary (the
+ * platform's guards and credentialed commands run through `PATH`). A catalog tool can only add
+ * names the image lacks.
+ */
+export function toolsPathEnv(basePath: string): string {
+  const usable = basePath.split(':').every((element) => element.startsWith('/'));
+  return `PATH=${usable ? basePath : FALLBACK_BASE_PATH}:${TOOLS_BIN_DIR}`;
 }
 
-export interface ToolRequest {
-  key: string;
-  version?: string;
-}
+/**
+ * Used when the container's own `PATH` is empty or has an empty or relative element. An empty
+ * element means the current directory, and execs run in the agent-writable clone, so passing it
+ * through would let a planted binary there shadow the image's. This is the standard Linux path.
+ */
+const FALLBACK_BASE_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 
-const KEY_RE = /^[a-z0-9][a-z0-9._-]*$/;
-const VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._+-]*$/;
-const SHA256_RE = /^[0-9a-f]{64}$/;
-const MEMBER_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+/** Kept for callers that still import the built-in list from here. */
+export const BUILTIN_TOOL_CATALOG = BUILTIN_TOOLS;
 
-/** Tools a workspace can install today. Every row is trusted code: pin the version and the digest. */
-export const BUILTIN_TOOL_CATALOG: readonly ToolCatalogEntry[] = [
-  {
-    archs: {
-      amd64: {
-        sha256: '181b91d0ceebe8a57723fb648ed2ce1a44d849438ce2e658339df4f8db5f1263',
-        url: 'https://github.com/casey/just/releases/download/1.40.0/just-1.40.0-x86_64-unknown-linux-musl.tar.gz',
-      },
-      arm64: {
-        sha256: 'd065d0df1a1f99529869fba8a5b3e0a25c1795b9007099b00dfabe29c7c1f7b6',
-        url: 'https://github.com/casey/just/releases/download/1.40.0/just-1.40.0-aarch64-unknown-linux-musl.tar.gz',
-      },
-    },
-    key: 'just',
-    member: 'just',
-    version: '1.40.0',
-  },
-];
+/** `sh` exit code for a failure a retry can fix (sysexits EX_TEMPFAIL): the download. */
+export const TOOL_INSTALL_RETRYABLE_EXIT = 75;
 
-export class ToolInstallError extends Error {}
-
-/** Check one entry's shape; a catalog row is trusted code, so a malformed one fails loudly. */
-export function assertValidEntry(entry: ToolCatalogEntry): void {
-  if (!KEY_RE.test(entry.key) || !VERSION_RE.test(entry.version)) {
-    throw new ToolInstallError(`tool catalog entry has an invalid key or version: ${entry.key}`);
-  }
-  if (!MEMBER_RE.test(entry.member) || entry.member.split('/').includes('..')) {
-    throw new ToolInstallError(`tool ${entry.key}: unsafe archive member '${entry.member}'`);
-  }
-  for (const [arch, download] of Object.entries(entry.archs)) {
-    if (!download || !SHA256_RE.test(download.sha256) || !download.url.startsWith('https://')) {
-      throw new ToolInstallError(`tool ${entry.key}: invalid ${arch} download`);
-    }
-  }
-}
-
-/** Resolve requests against a catalog; an omitted version takes the highest-listed one. */
-export function resolveToolRequests(
-  requests: ToolRequest[],
-  catalog: readonly ToolCatalogEntry[]
-): ToolCatalogEntry[] {
-  return requests.map((request) => {
-    const candidates = catalog.filter(
-      (entry) =>
-        entry.key === request.key && (!request.version || entry.version === request.version)
-    );
-    const entry = candidates.at(-1);
-    if (!entry) {
-      throw new ToolInstallError(
-        `tool '${request.key}${request.version ? `@${request.version}` : ''}' is not in the tool catalog`
-      );
-    }
-    assertValidEntry(entry);
-    return entry;
-  });
+/**
+ * Turn a failed install script into a {@link ToolInstallError}. Only the retryable exit code (a
+ * network failure) is marked retryable; a checksum, libc, arch or archive failure never is.
+ */
+export function classifyToolInstallFailure(
+  exitCode: number | null,
+  message: string,
+  tool?: string
+): ToolInstallError {
+  const text = tool && !message.includes(tool) ? `${tool}: ${message}` : message;
+  return new ToolInstallError(text, { retryable: exitCode === TOOL_INSTALL_RETRYABLE_EXIT });
 }
 
 /**
  * `sh` script that installs the entries into `<dir>/bin` as the container's own user (no root, no
- * package manager). It picks the download for the container's architecture, checks its SHA-256
- * before extracting, and exits non-zero with a message naming the tool on any failure.
+ * package manager). It picks the download for the container's architecture, refuses a binary built
+ * for the other C library, checks its SHA-256 before extracting, and exits non-zero with a message
+ * naming the tool (and only the download's host) on any failure: 75 for a network failure, a
+ * timeout or an HTTP 408/429/5xx (retryable), 1 for everything else.
  */
-export function toolInstallScript(entries: ToolCatalogEntry[], dir: string = TOOLS_DIR): string {
+export function toolInstallScript(
+  entries: readonly ToolCatalogEntry[],
+  dir: string = TOOLS_DIR
+): string {
   const q = shellQuote;
   const lines = [
     'set -eu',
-    'fail() { echo "auto-swe tool install: $1" >&2; exit 1; }',
+    // Every proxy variable is cleared. This is safe because a creation-time install runs before
+    // `lockEgress` (a late install is refused under blocked/restricted egress), and the downloads
+    // come from catalog URLs an admin vetted. Left set, the team's allowlisting proxy would 403 a
+    // release download's redirect to another host (curl exit 56) and burn the activity's retries.
+    // With the proxy out of the path, exit 56 is a genuine network failure and stays retryable.
+    'unset HTTPS_PROXY https_proxy HTTP_PROXY http_proxy ALL_PROXY all_proxy NO_PROXY no_proxy',
+    'fail() { echo "auto-swe tool install: $1" >&2; exit "${2:-1}"; }',
     'case "$(uname -m)" in',
     '  x86_64|amd64) arch=amd64 ;;',
     '  aarch64|arm64) arch=arm64 ;;',
     '  *) fail "unsupported architecture $(uname -m)" ;;',
     'esac',
-    'if command -v curl >/dev/null 2>&1; then fetch() { curl -fsSL --retry 2 -o "$2" "$1"; }',
-    'elif command -v wget >/dev/null 2>&1; then fetch() { wget -q -O "$2" "$1"; }',
-    'else fail "neither curl nor wget is available"; fi',
+    'libc=glibc',
+    'for f in /lib/ld-musl-* /usr/lib/ld-musl-*; do if [ -e "$f" ]; then libc=musl; fi; done',
+    'if [ "$libc" = glibc ] && ldd --version 2>&1 | grep -qi musl; then libc=musl; fi',
+    // `fetch URL OUT NAME`: the message names only the HOST (the catalog schema guarantees an
+    // https URL without userinfo or query, but a URL is never echoed whole). A transport failure
+    // and HTTP 408/429/5xx are retryable (75); any other HTTP status is permanent.
+    'fetch() {',
+    '  host=${1#*://}; host=${host%%[/?#]*}; host=${host##*@}',
+    '  rc=0',
+    '  if command -v curl >/dev/null 2>&1; then',
+    '    code=$(curl -sSL --globoff --retry 2 --connect-timeout 20 --max-time 240 --proto "=https" --proto-redir "=https" -o "$2" -w "%{http_code}" "$1" 2>/dev/null) || rc=$?',
+    '    if [ "$rc" -ne 0 ]; then',
+    '      case "$rc" in 1|2|3) fail "$3: download failed from $host (curl exit $rc)" 1 ;; esac',
+    '      fail "$3: download failed from $host" 75',
+    '    fi',
+    '    case "$code" in',
+    '      2??) return 0 ;;',
+    '      408|429|5??) fail "$3: HTTP $code from $host" 75 ;;',
+    '      *) fail "$3: HTTP $code from $host" 1 ;;',
+    '    esac',
+    '  elif command -v wget >/dev/null 2>&1; then',
+    '    # wget cannot be restricted to https redirects; integrity is the SHA-256, not the transport.',
+    '    # busybox wget reports no HTTP status: its exit 8 covers every 4xx and 5xx alike, so it',
+    '    # cannot tell a missing file from an outage. Every wget failure is treated as retryable.',
+    '    wget -q -T 60 -O "$2" "$1" >/dev/null 2>&1 || rc=$?',
+    '    if [ "$rc" -ne 0 ]; then fail "$3: download failed from $host" 75; fi',
+    '  else fail "neither curl nor wget is available"; fi',
+    '}',
     `mkdir -p ${q(`${dir}/bin`)}`,
     `tmp=$(mktemp -d ${q(`${dir}/tmp.XXXXXX`)})`,
     'trap \'rm -rf "$tmp"\' EXIT',
   ];
   for (const entry of entries) {
     const name = `${entry.key}@${entry.version}`;
-    lines.push('case "$arch" in');
+    lines.push(
+      `case ${q(entry.libc)} in any) ;; "$libc") ;; *) fail ${q(`${name}: needs a ${entry.libc} container, but this one is `)}"$libc" ;; esac`,
+      'case "$arch" in'
+    );
     for (const arch of ['amd64', 'arm64'] as const) {
       const download = entry.archs[arch];
       lines.push(
@@ -117,11 +125,11 @@ export function toolInstallScript(entries: ToolCatalogEntry[], dir: string = TOO
     }
     lines.push(
       'esac',
-      `fetch "$url" "$tmp/archive" || fail ${q(`${name}: download failed from `)}"$url"`,
+      `fetch "$url" "$tmp/archive" ${q(name)}`,
       `echo "$sha  $tmp/archive" | sha256sum -c - >/dev/null 2>&1 || fail ${q(`${name}: checksum mismatch`)}`,
-      `tar -xzf "$tmp/archive" -C "$tmp" ${q(entry.member)} || fail ${q(`${name}: archive has no ${entry.member}`)}`,
-      `mv "$tmp"/${q(entry.member)} ${q(`${dir}/bin/${entry.key}`)}`,
-      `chmod 755 ${q(`${dir}/bin/${entry.key}`)}`
+      `tar -xzf "$tmp/archive" -C "$tmp" -- ${q(entry.member)} || fail ${q(`${name}: archive has no ${entry.member}`)}`,
+      `mv -- "$tmp"/${q(entry.member)} ${q(`${dir}/bin/${entry.key}`)}`,
+      `chmod -- 755 ${q(`${dir}/bin/${entry.key}`)}`
     );
   }
   return lines.join('\n');

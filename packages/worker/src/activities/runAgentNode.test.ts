@@ -433,7 +433,7 @@ describe('runAgentNode', () => {
         undefined,
         undefined,
         undefined,
-        { teamId: undefined }
+        { teamId: undefined, toolsFor: { connectionId: 'repo-1' } }
       );
       expect(workspace.gitAuthed).toHaveBeenCalledWith('fetch origin auto/JIRA-1-sub');
       expect(workspace.exec).toHaveBeenCalledWith("git reset --hard origin/'auto/JIRA-1-sub'");
@@ -459,6 +459,44 @@ describe('runAgentNode', () => {
       expect(workspace.destroy).toHaveBeenCalledTimes(1);
       expect(result).toEqual({ object: undefined, text: 'verdict' });
       events.mockRestore();
+    });
+
+    describe('provisionTool grant', () => {
+      const withKeys = (toolKeys: string[] | null) => {
+        vi.mocked(resolveAgent).mockResolvedValue({
+          model: { apiKey: 'k', spec: 'anthropic/claude-sonnet-5-5', systemPrompt: 'Review.' },
+          runtime: null,
+          skills: [],
+          toolKeys,
+        } as never);
+      };
+      const offered = (): string[] => {
+        const arg = mockedResolveSpec.mock.calls[0]?.[0] as
+          | { availableTools: Record<string, unknown> }
+          | undefined;
+        return Object.keys(arg?.availableTools ?? {});
+      };
+
+      it.each([[null], [['readFile']], [['bash', 'mcp']]])(
+        'does not offer provisionTool unless the Agent names it: %j',
+        async (toolKeys) => {
+          withKeys(toolKeys);
+          await runAgentNode({
+            agentRef: 'reviewer',
+            workspace: { repoId: 'repo-1', ticketId: 'JIRA-1' },
+          });
+          expect(offered()).not.toContain('provisionTool');
+        }
+      );
+
+      it('offers provisionTool when the Agent names it', async () => {
+        withKeys(['provisionTool']);
+        await runAgentNode({
+          agentRef: 'reviewer',
+          workspace: { repoId: 'repo-1', ticketId: 'JIRA-1' },
+        });
+        expect(offered()).toContain('provisionTool');
+      });
     });
 
     it("defaults to the run's own branch, and reads the default branch until it is pushed", async () => {

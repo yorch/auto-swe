@@ -42,6 +42,7 @@ import { repoDependencyRoutes } from './repoDependencies.js';
 import { reportDigestRoutes } from './reportDigests.js';
 import { reportsRoutes } from './reports.js';
 import { repositoryRoutes } from './repositories.js';
+import { repositoryOnboardingRoutes } from './repositoryOnboarding.js';
 import { scannerPatternRoutes } from './scannerPatterns.js';
 import { scheduledWorkRequestRoutes } from './scheduledWorkRequests.js';
 import { securityEventRoutes } from './securityEvents.js';
@@ -55,6 +56,7 @@ import { systemConfigRoutes } from './systemConfig.js';
 import { teamRoutes } from './teams.js';
 import { ticketRoutes } from './tickets.js';
 import { tokenRoutes } from './tokens.js';
+import { toolCatalogRoutes } from './toolCatalog.js';
 import { transcriptRoutes } from './transcripts.js';
 import { usageRoutes } from './usage.js';
 import { userRoutes } from './users.js';
@@ -108,6 +110,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(prEvaluationRoutes, { prefix: '/api/v1' });
   await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
   await app.register(repoDependencyRoutes, { prefix: '/api/v1/repositories' });
+  await app.register(repositoryOnboardingRoutes, { prefix: '/api/v1' });
   await app.register(automationRoutes, { prefix: '/api/v1/automations' });
   await app.register(connectionCredentialRoutes, { prefix: '/api/v1/repositories' });
   await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
@@ -127,6 +130,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   // Deprecated alias — kept for one release.
   await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
   await app.register(modelCatalogRoutes, { prefix: '/api/v1/platform' });
+  await app.register(toolCatalogRoutes, { prefix: '/api/v1/platform' });
   await app.register(systemConfigRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });

@@ -28,6 +28,7 @@ import { HARNESSES } from '../agents/harnessRegistry.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import { buildKnowledgeTools } from '../agents/knowledgeTools.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
+import { createProvisionTool, grantsProvisionTool } from '../agents/provisionTool.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
@@ -260,7 +261,13 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       executorImageFor(repo),
       undefined,
       undefined,
-      { detectedStack: repo.detectedStack, egressPolicy, services, teamId: repo.teamId }
+      {
+        detectedStack: repo.detectedStack,
+        egressPolicy,
+        services,
+        teamId: repo.teamId,
+        toolsFor: { connectionId: repo.id },
+      }
     );
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
 
@@ -623,6 +630,16 @@ async function runOnMastra(
     closeFns.push(browserToolset.close.bind(browserToolset));
   }
   const browserTools = browserToolset ? createMastraBrowserTools(browserToolset) : undefined;
+  const provisionTools = grantsProvisionTool(resolved.toolKeys)
+    ? {
+        provisionTool: createProvisionTool({
+          ctx: input.settingsCtx,
+          toolKeys: resolved.toolKeys,
+          tracer,
+          workspace: input.workspace,
+        }),
+      }
+    : undefined;
   onMcp(async () => {
     await Promise.allSettled(closeFns.map((close) => close()));
   });
@@ -634,6 +651,7 @@ async function runOnMastra(
       availableTools: {
         ...selectAgentRunTools(built, resolved.toolKeys),
         ...(browserTools ?? {}),
+        ...(provisionTools ?? {}),
         ...(resolved.toolKeys?.includes('searchKnowledge')
           ? { searchKnowledge: knowledgeTools.searchKnowledge }
           : {}),
@@ -650,6 +668,10 @@ async function runOnMastra(
   // already checked by `grantsBrowserTool`, so bind them here.
   if (browserTools) {
     spec.tools = { ...browserTools, ...spec.tools } as AgentTools;
+  }
+  // Likewise the `provisionTool` grant: named explicitly, checked by `grantsProvisionTool`.
+  if (provisionTools) {
+    spec.tools = { ...provisionTools, ...spec.tools } as AgentTools;
   }
   spec.systemPrompt = `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}`.trim();
 
@@ -673,7 +695,7 @@ async function runOnMastra(
     perStepAccounting: true,
     // The workspace and MCP tools record their own calls on this tracer; any
     // other tool's calls are recorded from the loop's steps.
-    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools, browserTools),
+    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools, browserTools, provisionTools),
     spanName: 'llm.agent_run',
     tracer,
   });

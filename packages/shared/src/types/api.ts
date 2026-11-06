@@ -332,6 +332,12 @@ export interface RepositorySummary {
     stack: 'node' | 'python' | 'jvm' | 'go';
     useRepoDockerfile: boolean;
   } | null;
+  /** Whether `.auto-swe/tools.yml` on the base ref is honoured for this repository. */
+  toolsFileEnabled?: boolean;
+  /** Tools an admin installs into every run's workspace; null when none. */
+  tools?: { key: string; version?: string }[] | null;
+  /** Catalog tool keys this repository may never install. */
+  toolsDeny?: string[];
   /** Per-gate command overrides; null when the repository overrides none. */
   gateCommands?: RepoGateCommands | null;
   /** Validated per-repository application preview recipe. */

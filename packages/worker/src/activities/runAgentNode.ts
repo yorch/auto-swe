@@ -8,6 +8,7 @@ import { HARNESSES } from '../agents/harnessRegistry.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import { buildKnowledgeTools } from '../agents/knowledgeTools.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
+import { createProvisionTool, grantsProvisionTool } from '../agents/provisionTool.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
@@ -284,7 +285,11 @@ async function runInCheckout(args: {
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      teamId: repo.teamId,
+      toolsFor: { connectionId: repo.id },
+    }
   );
   onOpen(workspace.destroy);
   let checkedOut = branch;
@@ -340,6 +345,17 @@ async function runInCheckout(args: {
   const maxToolOutputChars = await resolveSetting('workspace.maxToolOutputChars', resolveCtx);
   const built = buildWorkspaceTools(workspace, tracer, maxToolOutputChars);
   const knowledgeTools = buildKnowledgeTools(tracer);
+  // Offered only when the Agent names `provisionTool`; `null` never implies it.
+  const provisionTools = grantsProvisionTool(resolved.toolKeys)
+    ? {
+        provisionTool: createProvisionTool({
+          ctx: { orgId: resolveCtx?.orgId, teamId: resolveCtx?.teamId },
+          toolKeys: resolved.toolKeys,
+          tracer,
+          workspace,
+        }),
+      }
+    : undefined;
   const spec = await resolveAgentSpec(
     {
       agentKey: key as ModelBackedAgentKey,
@@ -353,6 +369,7 @@ async function runInCheckout(args: {
         ...(resolved.toolKeys?.includes('submitLearning')
           ? { submitLearning: knowledgeTools.submitLearning }
           : {}),
+        ...(provisionTools ?? {}),
       } as unknown as AgentTools,
       basePrompt: '',
       promptOverride: input.systemPrompt,
@@ -369,7 +386,7 @@ async function runInCheckout(args: {
     ctx: resolveCtx,
     // The workspace and MCP tools record their own calls on this tracer; any
     // other tool's calls are recorded from the loop's steps.
-    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools),
+    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools, provisionTools),
     spanName,
     tracer,
   });

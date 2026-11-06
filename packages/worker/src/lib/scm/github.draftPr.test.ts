@@ -20,16 +20,19 @@ vi.mock('@auto-swe/shared/lib/connectionCredential', () => ({
 }));
 vi.mock('../runLauncher.js', () => ({ currentRunLauncherId: vi.fn(async () => null) }));
 
-const { createMock, listMock, getMock, getBranchMock, compareMock } = vi.hoisted(() => ({
-  compareMock: vi.fn(),
-  createMock: vi.fn(),
-  getBranchMock: vi.fn(),
-  getMock: vi.fn(),
-  listMock: vi.fn(),
-}));
+const { createMock, listMock, getMock, getBranchMock, compareMock, updateMock } = vi.hoisted(
+  () => ({
+    compareMock: vi.fn(),
+    createMock: vi.fn(),
+    getBranchMock: vi.fn(),
+    getMock: vi.fn(),
+    listMock: vi.fn(),
+    updateMock: vi.fn(),
+  })
+);
 vi.mock('@octokit/rest', () => ({
   Octokit: class {
-    pulls = { create: createMock, get: getMock, list: listMock };
+    pulls = { create: createMock, get: getMock, list: listMock, update: updateMock };
     repos = { compareCommits: compareMock, getBranch: getBranchMock };
   },
 }));
@@ -50,6 +53,7 @@ beforeEach(() => {
   getMock.mockReset();
   getBranchMock.mockReset();
   compareMock.mockReset();
+  updateMock.mockReset();
 });
 
 describe('GitHubScmProvider.createOrUpdatePullRequest draft', () => {
@@ -115,6 +119,47 @@ describe('draft requests never reuse a ready-for-review PR', () => {
     await expect(
       new GitHubScmProvider().createOrUpdatePullRequest({ ...base, reuseExisting: true })
     ).resolves.toMatchObject({ prNumber: 9 });
+  });
+});
+
+describe('reusing an open pull request', () => {
+  const open = { data: [{ draft: false, html_url: 'https://x/pull/9', number: 9 }] };
+
+  it('rewrites the title and body only when asked to update the reused PR', async () => {
+    listMock.mockResolvedValue(open);
+    updateMock.mockResolvedValue({ data: {} });
+    await expect(
+      new GitHubScmProvider().createOrUpdatePullRequest({
+        ...base,
+        reuseExisting: true,
+        updateExisting: true,
+      })
+    ).resolves.toEqual({ prNumber: 9, prUrl: 'https://x/pull/9' });
+    expect(updateMock).toHaveBeenCalledWith({
+      body: 'b',
+      owner: 'acme',
+      pull_number: 9,
+      repo: 'api',
+      title: 't',
+    });
+    expect(createMock).not.toHaveBeenCalled();
+  });
+
+  it('leaves the reused PR text alone for a caller that did not ask', async () => {
+    listMock.mockResolvedValue(open);
+    await new GitHubScmProvider().createOrUpdatePullRequest({ ...base, reuseExisting: true });
+    expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it('does not update when it had to create the PR', async () => {
+    listMock.mockResolvedValue({ data: [] });
+    createMock.mockResolvedValue({ data: { html_url: 'https://x/pull/1', number: 1 } });
+    await new GitHubScmProvider().createOrUpdatePullRequest({
+      ...base,
+      reuseExisting: true,
+      updateExisting: true,
+    });
+    expect(updateMock).not.toHaveBeenCalled();
   });
 });
 

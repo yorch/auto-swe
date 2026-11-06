@@ -494,6 +494,14 @@ model Connection {
   /// How the executor image was built, for the scheduled rebuild workflow:
   /// { stack: 'node'|'python'|'jvm'|'go', useRepoDockerfile: boolean }.
   executorImageBuild   Json?               @map("executor_image_build")
+  /// Whether the repository's `.auto-swe/tools.yml` is honoured. Admin-only, default off: the
+  /// file only ever names catalog entries, but which repositories may ask is the admin's call.
+  toolsFileEnabled     Boolean             @default(false) @map("tools_file_enabled")
+  /// Admin-declared tools, `[{ key, version? }]`, installed whether or not the file is honoured.
+  /// NULL means none.
+  tools                Json?
+  /// Catalog keys this repository may never install; wins over the file and over `tools`.
+  toolsDeny            String[]            @default([]) @map("tools_deny")
   /// Per-repository PR evaluation mode: 'off' | 'advisory' | 'enforce' | 'auto'. NULL means
   /// "inherit `prEvaluation.defaultMode`", and it must stay NULL-able with NO column
   /// default: a default writes a literal into every row and shadows the registry value.
@@ -3221,6 +3229,40 @@ model ModelCatalogEntry {
 
   @@unique([provider, modelId])
   @@map("model_catalog_entries")
+}
+
+/// Whether a tool catalog row may be installed. REVOKED blocks every install at once (a
+/// compromised release is a row edit, not a deploy); DEPRECATED installs with a warning event.
+enum ToolStatus {
+  ACTIVE
+  DEPRECATED
+  REVOKED
+}
+
+/// One pinned download of a tool a workspace may install on demand. The catalog is the allowlist:
+/// a repository's `.auto-swe/tools.yml` or an agent can only name a row here, never supply a URL,
+/// script or checksum. Only platform admins write rows.
+model ToolCatalogEntry {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  key          String
+  version      String
+  /// `{ "amd64"?: { url, sha256 }, "arm64"?: { url, sha256 } }`; every URL is https.
+  archs        Json
+  /// Path of the executable inside the `.tar.gz`.
+  member       String
+  /// `musl` | `glibc` | `any`: the C library the binary needs. `any` is a static build.
+  libc         String     @default("any")
+  description  String?
+  status       ToolStatus @default(ACTIVE)
+  notes        String?
+  isBuiltIn    Boolean    @default(false) @map("is_built_in")
+  /// Set by any admin edit to a built-in row; seeding then leaves it alone.
+  isCustomized Boolean    @default(false) @map("is_customized")
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([key, version])
+  @@map("tool_catalog_entries")
 }
 
 /// Why a model is on the discovery list. NEW: a provider lists it and nothing

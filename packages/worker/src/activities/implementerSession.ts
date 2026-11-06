@@ -161,7 +161,11 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      teamId: repo.teamId,
+      toolsFor: { connectionId: repo.id },
+    }
   );
 
   const tracer = new AgentTracer();

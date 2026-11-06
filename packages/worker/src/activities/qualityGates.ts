@@ -252,7 +252,11 @@ async function provisionGateWorkspace(
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      teamId: repo.teamId,
+      toolsFor: { connectionId: repo.id },
+    }
   );
 
   // createWorkspace produces a fresh local branch from the base branch.

@@ -102,7 +102,9 @@ function selectTools(available: AgentTools | undefined, enabled: string[] | null
   const pool = available as Record<string, unknown>;
   if (enabled === null) {
     const picked = Object.fromEntries(
-      Object.entries(pool).filter(([key]) => key !== 'searchKnowledge' && key !== 'submitLearning')
+      Object.entries(pool).filter(
+        ([key]) => key !== 'searchKnowledge' && key !== 'submitLearning' && key !== 'provisionTool'
+      )
     );
     return picked as AgentTools;
   }
