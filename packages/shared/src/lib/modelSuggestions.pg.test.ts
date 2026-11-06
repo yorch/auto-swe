@@ -170,5 +170,5 @@ describe.skipIf(!enabled)('recordDiscovery against Postgres', () => {
       }
       await fs.rm(dir, { force: true, recursive: true });
     }
-  });
+  }, 15_000);
 });
