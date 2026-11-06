@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { API_BASE } from '@/lib/config';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import { RunEvidence } from './RunEvidence';
 
@@ -49,6 +52,19 @@ beforeEach(() => {
 });
 
 describe('RunEvidence', () => {
+  it('keeps the viewer and browser executor on the same pinned Playwright version', async () => {
+    const [webPackage, browserDockerfile] = await Promise.all([
+      readFile(resolve(process.cwd(), 'packages/web/package.json'), 'utf8'),
+      readFile(resolve(process.cwd(), 'defaults/Dockerfile.node-browser'), 'utf8'),
+    ]);
+    const webVersion = (JSON.parse(webPackage) as { devDependencies: Record<string, string> })
+      .devDependencies['playwright-core'];
+    const imageVersion = browserDockerfile.match(/playwright@(\d+\.\d+\.\d+)/)?.[1];
+
+    expect(webVersion).toBe('1.64.1');
+    expect(imageVersion).toBe(webVersion);
+  });
+
   it('is collapsed without minting links, then opens screenshots in a lightbox', async () => {
     const fetchSpy = setupEvidenceFetch([image]);
     render(withQuery(<RunEvidence live={false} runId="run-1" />));
@@ -114,6 +130,35 @@ describe('RunEvidence', () => {
     fireEvent.click(await screen.findByText('Evidence', { selector: 'summary' }));
     expect(await screen.findByText(/npx playwright show-trace/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Download trace' })).toBeTruthy();
+  });
+
+  it('opens a trace in the dashboard viewer using a freshly minted absolute link', async () => {
+    const fetchSpy = setupEvidenceFetch([
+      { ...image, contentType: 'application/zip', id: 'trace-1', kind: 'trace' },
+    ]);
+    const open = vi.fn();
+    vi.stubGlobal('open', open);
+    render(withQuery(<RunEvidence live={false} runId="run-1" />));
+    fireEvent.click(await screen.findByText('Evidence', { selector: 'summary' }));
+
+    const openViewer = await screen.findByRole('button', { name: 'Open trace viewer' });
+    const postRequests = () =>
+      fetchSpy.mock.calls.filter(
+        ([, init]) => (init as RequestInit | undefined)?.method === 'POST'
+      );
+    await waitFor(() => expect(postRequests()).toHaveLength(1));
+    fireEvent.click(openViewer);
+
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    const traceUrl = new URL(`${API_BASE}/evidence.png`, window.location.href).toString();
+    expect(open).toHaveBeenCalledWith(
+      `/trace-viewer/index.html?trace=${encodeURIComponent(traceUrl)}`,
+      '_blank',
+      'noopener'
+    );
+    expect(postRequests()).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Download trace' })).toBeTruthy();
+    expect(screen.getByText(/npx playwright show-trace/)).toBeTruthy();
   });
 
   it('renders no section when the run has no evidence', async () => {

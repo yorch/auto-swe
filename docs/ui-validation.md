@@ -17,11 +17,12 @@ repository's `executorImage` when UI validation needs Chromium.
 Screenshots, recordings, traces and text logs use the workflow artifact store and carry run
 metadata such as source, caption, page URL, workflow node, attempt and image dimensions. The run's
 Evidence panel lists ready items, loads media through short-lived user-bound links and offers trace
-and log downloads. Each content request reloads the link owner's active account and role and checks
-current run visibility before returning bytes. Only PNG, JPEG, WebP, WebM, ZIP and plain text
-content types are served as media; other content is an opaque download. The content route returns
-the whole object and does not implement range requests, so a recording downloads in full before it
-can seek.
+and log downloads. Trace cards also open a self-hosted Playwright viewer at `/trace-viewer`, using
+a freshly minted signed evidence URL. Each content request reloads the link owner's active account
+and role and checks current run visibility before returning bytes. Only PNG, JPEG, WebP, WebM, ZIP
+and plain text content types are served as media; other content is an opaque download. The content
+route returns the whole object and does not implement range requests, so a recording downloads in
+full before it can seek.
 
 An item is kept only when the recording succeeds and the configured limits allow it: a screenshot
 over `uiValidation.maxScreenshotBytes`, a video over `uiValidation.maxVideoBytes`, or an item past
@@ -122,6 +123,8 @@ recipe's base URL, or the readiness URL's origin when none is supplied.
   the recording. Serving is streamed from the store, not buffered.
 - A generic `agent` node can use the browser only with `workspace: true` and an explicit `browser`
   grant; a node without a workspace has no browser tools.
+- Trace snapshots replay on the dashboard origin. Playwright strips scripts from snapshot HTML, but
+  the content comes from the app under test.
 - The browser tool's `browser_screenshot` persists the image as evidence but returns the accessible
   page snapshot and the evidence id to the model, not the pixels: an agent reads the page as text,
   and a person sees the picture on the run page.

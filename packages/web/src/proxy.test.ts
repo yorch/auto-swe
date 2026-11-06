@@ -24,6 +24,20 @@ describe('proxy', () => {
     }
   });
 
+  it('keeps trace viewer assets behind login without denying their snapshot frames', () => {
+    const paths = ['/trace-viewer/index.html', '/trace-viewer/snapshot.html'];
+    for (const path of paths) {
+      const unauthenticated = proxy(req(path));
+      expect(unauthenticated.status, path).toBe(307);
+      expect(unauthenticated.headers.get('location'), path).toContain('/login?redirect=');
+
+      const authenticated = proxy(req(path, true));
+      expect(authenticated.status, path).toBe(200);
+      expect(authenticated.headers.get('content-security-policy'), path).toBeNull();
+      expect(authenticated.headers.get('x-frame-options'), path).toBeNull();
+    }
+  });
+
   it('runs on the docs search path (the matcher does not exclude it)', () => {
     const matcher = new RegExp(`^${config.matcher[0]}$`);
     expect(matcher.test('/docs/search')).toBe(true);
