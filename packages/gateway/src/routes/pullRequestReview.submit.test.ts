@@ -9,9 +9,15 @@ vi.mock('@auto-swe/shared/lib/repoAccessGate', async (orig) => ({
 }));
 
 const m = vi.hoisted(() => ({
+  loopOn: vi.fn(),
+  postIssueComment: vi.fn(),
   postReview: vi.fn(),
   readPullFiles: vi.fn(),
   reviewerWrite: vi.fn(),
+}));
+vi.mock('@auto-swe/shared/config', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/config')>()),
+  resolveSetting: m.loopOn,
 }));
 vi.mock('../lib/githubPullFiles.js', async (orig) => ({
   ...(await orig<typeof import('../lib/githubPullFiles.js')>()),
@@ -19,12 +25,14 @@ vi.mock('../lib/githubPullFiles.js', async (orig) => ({
 }));
 vi.mock('../lib/githubReviewWrite.js', async (orig) => ({
   ...(await orig<typeof import('../lib/githubReviewWrite.js')>()),
+  postIssueComment: m.postIssueComment,
   postReview: m.postReview,
 }));
 vi.mock('../lib/reviewerCredential.js', () => ({ resolveReviewerWrite: m.reviewerWrite }));
 
+import { parseFeedbackCommand } from '@auto-swe/shared/automation';
 import { reachableConnections } from '../lib/tenantScope.js';
-import { pullRequestReviewRoutes } from './pullRequestReview.js';
+import { pullRequestReviewRoutes, sendBackText } from './pullRequestReview.js';
 
 const AUTH = { authorization: 'Bearer fake' };
 const PR_ID = '00000000-0000-4000-8000-0000000000aa';
@@ -75,6 +83,7 @@ async function buildApp(role: Role = 'ENGINEER') {
   };
   const prisma = {
     $transaction: vi.fn(async (run: (client: typeof tx) => Promise<unknown>) => run(tx)),
+    configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     prReviewDraft: { findMany: vi.fn().mockResolvedValue([draft()]) },
     pullRequest: {
       findFirst: vi.fn().mockResolvedValue({ id: PR_ID, prNumber: 7, repository }),
@@ -108,6 +117,14 @@ const review = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  m.loopOn.mockReset();
+  m.loopOn.mockResolvedValue(true);
+  m.postIssueComment.mockReset();
+  m.postIssueComment.mockResolvedValue({
+    id: 55,
+    type: 'ok',
+    url: 'https://github.com/acme/api/pull/7#issuecomment-55',
+  });
   m.postReview.mockReset();
   m.postReview.mockResolvedValue({
     id: 99,
@@ -228,6 +245,7 @@ describe('POST /api/v1/pull-requests/:id/review', () => {
         githubReviewId: 99,
         hasBody: true,
         headSha: HEAD,
+        kind: 'review',
         prNumber: 7,
         repositoryId: REPO_ID,
       });
@@ -438,5 +456,194 @@ describe('POST /api/v1/pull-requests/:id/review', () => {
       expect(res.json().error.message).toContain('may or may not have been sent');
       expect(m.postReview).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('sendBackText', () => {
+  it('is the command alone when there is no note', () => {
+    expect(sendBackText('')).toBe('/auto-swe fix');
+  });
+
+  it('is read by the feedback loop as the command, with the note as its notes', () => {
+    expect(parseFeedbackCommand(sendBackText(''))).toEqual({ notes: '' });
+    expect(parseFeedbackCommand(sendBackText('Handle the empty list.'))).toEqual({
+      notes: 'Handle the empty list.',
+    });
+    expect(parseFeedbackCommand(sendBackText('line one\nline two'))).toEqual({
+      notes: 'line one\nline two',
+    });
+  });
+});
+
+describe('POST /api/v1/pull-requests/:id/send-back', () => {
+  const sendBack = (b: Built, payload: unknown, id = PR_ID) =>
+    b.app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: payload as never,
+      url: `/api/v1/pull-requests/${id}/send-back`,
+    });
+  const body = (over: Record<string, unknown> = {}) => ({ headSha: HEAD, ...over });
+
+  it('leaves /auto-swe fix on the pull request as the caller, with their own token', async () => {
+    const b = await buildApp();
+    const res = await sendBack(b, body());
+    expect(res.statusCode).toBe(200);
+    expect(m.postIssueComment).toHaveBeenCalledTimes(1);
+    expect(m.postIssueComment).toHaveBeenCalledWith(
+      { apiUrl: 'https://api.github.com', token: TOKEN },
+      { organizationName: 'acme', repoName: 'api' },
+      7,
+      '/auto-swe fix'
+    );
+    expect(m.reviewerWrite).toHaveBeenCalledWith(b.prisma, {
+      connectionId: REPO_ID,
+      userId: 'user-1',
+    });
+    expect(res.json().data).toEqual({
+      commentId: 55,
+      url: 'https://github.com/acme/api/pull/7#issuecomment-55',
+    });
+    expect(res.body).not.toContain(TOKEN);
+  });
+
+  it('carries a note after the command', async () => {
+    const b = await buildApp();
+    await sendBack(b, body({ note: '  Handle the empty list.  ' }));
+    expect(m.postIssueComment.mock.calls[0]?.[3]).toBe('/auto-swe fix\n\nHandle the empty list.');
+  });
+
+  it.each([
+    ['carries the platform marker', 'x <!-- auto-swe:brief -->'],
+    ['would be a second command', '/auto-swe fix again'],
+    ['is past the limit', 'x'.repeat(4001)],
+  ])('refuses a note that %s', async (_name, note) => {
+    const b = await buildApp();
+    const res = await sendBack(b, body({ note }));
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('REVIEW_TEXT_REFUSED');
+    expect(m.postIssueComment).not.toHaveBeenCalled();
+  });
+
+  it('asks whether the feedback automations are on at the repository’s scope, and sends nothing when off', async () => {
+    const b = await buildApp();
+    b.prisma.pullRequest.findFirst.mockResolvedValue({
+      id: PR_ID,
+      prNumber: 7,
+      repository: { ...repository, team: { orgId: 'org-1' }, teamId: 'team-1' },
+    });
+    m.loopOn.mockResolvedValue(false);
+    const res = await sendBack(b, body());
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('FEEDBACK_LOOP_OFF');
+    expect(m.loopOn).toHaveBeenCalledWith('github.prFeedbackAutomationsEnabled', {
+      orgId: 'org-1',
+      teamId: 'team-1',
+    });
+    expect(m.postIssueComment).not.toHaveBeenCalled();
+    expect(m.reviewerWrite).not.toHaveBeenCalled();
+  });
+
+  it.each(['disabled', 'no-token', 'unusable', 'unreadable'] as const)(
+    'sends nothing when the caller cannot write as themselves (%s), and never uses the platform’s identity',
+    async (reason) => {
+      const b = await buildApp();
+      m.reviewerWrite.mockResolvedValue({ available: false, reason });
+      const res = await sendBack(b, body());
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('NO_USER_CREDENTIAL');
+      expect(m.postIssueComment).not.toHaveBeenCalled();
+    }
+  );
+
+  it('sends nothing to a pull request that is closed, or whose head has moved', async () => {
+    const b = await buildApp();
+    m.readPullFiles.mockResolvedValue(liveFiles({ state: 'merged' }));
+    expect((await sendBack(b, body())).json().error.code).toBe('PULL_REQUEST_NOT_OPEN');
+    m.readPullFiles.mockResolvedValue(liveFiles({ headSha: 'd'.repeat(40) }));
+    expect((await sendBack(b, body())).json().error).toMatchObject({
+      code: 'STALE_HEAD',
+      details: { currentHeadSha: 'd'.repeat(40) },
+    });
+    expect(m.postIssueComment).not.toHaveBeenCalled();
+  });
+
+  it('sends nothing when the pull request cannot be read', async () => {
+    const b = await buildApp();
+    m.readPullFiles.mockResolvedValue({ reason: 'failed', type: 'unavailable' });
+    expect((await sendBack(b, body())).json().error.code).toBe('FILES_UNAVAILABLE');
+    expect(m.postIssueComment).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a pull request the caller cannot reach, and does nothing', async () => {
+    const b = await buildApp('ENGINEER');
+    b.prisma.pullRequest.findFirst.mockResolvedValue(null);
+    expect((await sendBack(b, body())).statusCode).toBe(404);
+    expect(b.prisma.pullRequest.findFirst.mock.calls[0]?.[0].where).toEqual({
+      id: PR_ID,
+      repository: reachableConnections({ sub: 'user-1' }, GATE),
+    });
+    expect(m.loopOn).not.toHaveBeenCalled();
+    expect(m.postIssueComment).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a pull request with no place on the host', async () => {
+    const b = await buildApp();
+    b.prisma.pullRequest.findFirst.mockResolvedValue({ id: PR_ID, prNumber: null, repository });
+    expect((await sendBack(b, body())).statusCode).toBe(404);
+  });
+
+  it.each([
+    ['forbidden', 'HOST_FORBIDDEN'],
+    ['not-found', 'HOST_NOT_FOUND'],
+    ['rate-limited', 'HOST_RATE_LIMITED'],
+    ['rejected', 'HOST_REJECTED'],
+    ['unknown', 'OUTCOME_UNKNOWN'],
+  ] as const)('answers 502 %s as %s and records nothing', async (reason, code) => {
+    const b = await buildApp();
+    m.postIssueComment.mockResolvedValue({ reason, type: 'failed' });
+    const res = await sendBack(b, body());
+    expect(res.statusCode).toBe(502);
+    expect(res.json().error).toMatchObject({ code, details: { reason } });
+    expect(b.prisma.configAuditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('records it, without the note or the token', async () => {
+    const b = await buildApp();
+    await sendBack(b, body({ note: 'Handle the empty list.' }));
+    const entry = b.prisma.configAuditLog.create.mock.calls[0]?.[0].data;
+    expect(entry).toMatchObject({
+      action: 'CREATE',
+      actorId: 'user-1',
+      entityId: PR_ID,
+      entityType: 'PullRequestReview',
+    });
+    expect(entry.afterJson).toEqual({
+      githubCommentId: 55,
+      hasNote: true,
+      headSha: HEAD,
+      kind: 'send-back',
+      prNumber: 7,
+      repositoryId: REPO_ID,
+    });
+    expect(JSON.stringify(entry)).not.toContain('empty list');
+    expect(JSON.stringify(entry)).not.toContain(TOKEN);
+  });
+
+  it('still says it was sent when recording it fails', async () => {
+    const b = await buildApp();
+    b.prisma.configAuditLog.create.mockRejectedValue(new Error('database down'));
+    const res = await sendBack(b, body());
+    expect(res.statusCode).toBe(200);
+    expect(m.postIssueComment).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['a head that is not a commit id', { headSha: 'main' }],
+    ['no head', { headSha: undefined }],
+  ])('rejects %s before reading anything', async (_name, over) => {
+    const b = await buildApp();
+    expect((await sendBack(b, body(over))).statusCode).toBe(400);
+    expect(b.prisma.pullRequest.findFirst).not.toHaveBeenCalled();
   });
 });
