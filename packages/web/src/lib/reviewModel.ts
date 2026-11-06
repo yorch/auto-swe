@@ -82,6 +82,22 @@ export function applyViewed(viewed: readonly string[], change: ViewedChange): st
   return [...viewed, ...[...named].filter((path) => !kept.has(path))];
 }
 
+/**
+ * The viewed paths with the named ones put back to whether they were viewed before a change, and
+ * every other path left as it is now. Undoing a failed change this way, not by restoring a snapshot
+ * of the whole list, keeps a later change that succeeded in the meantime.
+ */
+export function restoreViewed(
+  current: readonly string[],
+  paths: readonly string[],
+  before: ReadonlySet<string>
+): string[] {
+  const named = new Set(paths);
+  const kept = current.filter((path) => !named.has(path) || before.has(path));
+  const present = new Set(kept);
+  return [...kept, ...[...named].filter((path) => before.has(path) && !present.has(path))];
+}
+
 export function shortSha(sha: string): string {
   return sha.slice(0, 7);
 }
