@@ -4,12 +4,19 @@
  * request in a repository they can reach; one they cannot is a 404, as on the read routes.
  */
 
+import { resolveSetting } from '@auto-swe/shared/config';
+import type { UsableCredential } from '@auto-swe/shared/lib/connectionCredential';
 import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
-import { COMMIT_SHA, readPullFiles } from '../lib/githubPullFiles.js';
-import { postReview, WRITE_FAILURE_MESSAGES, type WriteFailure } from '../lib/githubReviewWrite.js';
+import { COMMIT_SHA, type PullFilesResult, readPullFiles } from '../lib/githubPullFiles.js';
+import {
+  postIssueComment,
+  postReview,
+  WRITE_FAILURE_MESSAGES,
+  type WriteFailure,
+} from '../lib/githubReviewWrite.js';
 import { sendError } from '../lib/httpErrors.js';
 import { draftIsCurrent } from '../lib/pullRequestCockpit.js';
 import { resolveReviewerWrite, type WriteUnavailable } from '../lib/reviewerCredential.js';
@@ -41,6 +48,19 @@ const ReviewBody = z.object({
   /** The head the page showed; a review is sent only while the host still has it. */
   headSha: z.string().regex(COMMIT_SHA),
 });
+
+const SendBackBody = z.object({
+  headSha: z.string().regex(COMMIT_SHA),
+  /** What the agent should know, read from the line after the command. */
+  note: z.string().optional(),
+});
+
+/**
+ * The comment that sends a pull request back: the command on a line of its own, then the note. The
+ * feedback loop reads everything after the command as the note, so it is what the agent is told.
+ */
+export const sendBackText = (note: string): string =>
+  note === '' ? '/auto-swe fix' : `/auto-swe fix\n\n${note}`;
 
 /** What to tell a reviewer who cannot write as themselves, by why. */
 const NO_CREDENTIAL_MESSAGES: Record<WriteUnavailable, string> = {
@@ -100,6 +120,8 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
             installation: { select: { host: true, installationId: true } },
             organizationName: true,
             repoName: true,
+            team: { select: { orgId: true } },
+            teamId: true,
           },
         },
       },
@@ -110,6 +132,27 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
           : { repository: reachableConnections(user, request.repoAccessGate) }),
       },
     });
+  };
+
+  /** The pull request with where it lives on the host, or null when it has no such place. */
+  const locate = (pull: Awaited<ReturnType<typeof reachablePull>>) => {
+    const repository = pull?.repository;
+    if (
+      !pull ||
+      !repository ||
+      pull.prNumber === null ||
+      repository.organizationName === null ||
+      repository.repoName === null
+    ) {
+      return null;
+    }
+    return {
+      id: pull.id,
+      organizationName: repository.organizationName,
+      prNumber: pull.prNumber,
+      repoName: repository.repoName,
+      repository,
+    };
   };
 
   // POST /api/v1/pull-requests/:id/drafts — keep a line comment for the caller until they send a
@@ -154,6 +197,64 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.code(201).send({ data: draftOf(row) });
     }
   );
+
+  /**
+   * What every write to the host needs first, in this order so the cheapest refusals come first:
+   * the caller's own saved token (never the platform's), a live read of the pull request, that it
+   * is still open, and that the head is the one the page showed. A failure is the answer to send.
+   */
+  const readyToWrite = async (args: {
+    headSha: string;
+    prNumber: number;
+    repository: NonNullable<Awaited<ReturnType<typeof reachablePull>>>['repository'] & object;
+    userId: string;
+  }): Promise<
+    | { credential: UsableCredential; live: Extract<PullFilesResult, { type: 'ok' }>; ok: true }
+    | { code: string; details?: unknown; message: string; ok: false; status: number }
+  > => {
+    const write = await resolveReviewerWrite(fastify.prisma, {
+      connectionId: args.repository.id,
+      userId: args.userId,
+    });
+    if (!write.available) {
+      return {
+        code: 'NO_USER_CREDENTIAL',
+        details: { reason: write.reason },
+        message: NO_CREDENTIAL_MESSAGES[write.reason],
+        ok: false,
+        status: 409,
+      };
+    }
+    const live = await readPullFiles(args.repository, args.prNumber);
+    if (live.type !== 'ok') {
+      return {
+        code: 'FILES_UNAVAILABLE',
+        details: { reason: live.reason },
+        message: 'The pull request could not be read from the host, so nothing was sent.',
+        ok: false,
+        status: 409,
+      };
+    }
+    if (live.state !== 'open') {
+      return {
+        code: 'PULL_REQUEST_NOT_OPEN',
+        message: `This pull request is ${live.state} on the host, so nothing was sent.`,
+        ok: false,
+        status: 409,
+      };
+    }
+    if (live.headSha.toLowerCase() !== args.headSha.toLowerCase()) {
+      return {
+        code: 'STALE_HEAD',
+        details: { currentHeadSha: live.headSha },
+        message:
+          'The pull request has new commits since you opened the page. Reload it and look again before you send.',
+        ok: false,
+        status: 409,
+      };
+    }
+    return { credential: write.credential, live, ok: true };
+  };
 
   // PATCH /api/v1/pull-requests/:id/drafts/:draftId — change the text of one of the caller's drafts.
   app.patch(
@@ -215,18 +316,11 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
     { onRequest: engineerOnly, schema: { body: ReviewBody, params: PullParams } },
     async (request, reply) => {
       const user = requireUser(request);
-      const pull = await reachablePull(request, request.params.id);
-      const { repository, prNumber } = pull ?? {};
-      if (
-        !pull ||
-        !repository ||
-        prNumber === null ||
-        prNumber === undefined ||
-        repository.organizationName === null ||
-        repository.repoName === null
-      ) {
+      const pull = locate(await reachablePull(request, request.params.id));
+      if (!pull) {
         return sendError(reply, 404, 'PULL_REQUEST_NOT_FOUND', 'Pull request not found');
       }
+      const { prNumber, repository } = pull;
       const { event, headSha } = request.body;
       const text = (request.body.body ?? '').trim();
       const problem = text === '' ? null : reviewTextProblem(text);
@@ -264,43 +358,16 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
-      const write = await resolveReviewerWrite(fastify.prisma, {
-        connectionId: repository.id,
+      const ready = await readyToWrite({
+        headSha,
+        prNumber,
+        repository,
         userId: user.sub,
       });
-      if (!write.available) {
-        return sendError(reply, 409, 'NO_USER_CREDENTIAL', NO_CREDENTIAL_MESSAGES[write.reason], {
-          reason: write.reason,
-        });
+      if (!ready.ok) {
+        return sendError(reply, ready.status, ready.code, ready.message, ready.details);
       }
-
-      const live = await readPullFiles(repository, prNumber);
-      if (live.type !== 'ok') {
-        return sendError(
-          reply,
-          409,
-          'FILES_UNAVAILABLE',
-          'The pull request could not be read from the host, so nothing was sent.',
-          { reason: live.reason }
-        );
-      }
-      if (live.state !== 'open') {
-        return sendError(
-          reply,
-          409,
-          'PULL_REQUEST_NOT_OPEN',
-          `This pull request is ${live.state} on the host, so nothing was sent.`
-        );
-      }
-      if (live.headSha.toLowerCase() !== headSha.toLowerCase()) {
-        return sendError(
-          reply,
-          409,
-          'STALE_HEAD',
-          'The pull request has new commits since you opened the page. Reload it and look again before you send.',
-          { currentHeadSha: live.headSha }
-        );
-      }
+      const { credential: write, live } = ready;
       const byPath = new Map(live.files.map((f) => [f.path, f]));
       const outdated = drafts.filter((d) => !draftIsCurrent(d, byPath)).map((d) => d.id);
       if (outdated.length > 0) {
@@ -314,8 +381,8 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const result = await postReview(
-        { apiUrl: write.credential.apiUrl, token: write.credential.token },
-        { organizationName: repository.organizationName, repoName: repository.repoName },
+        { apiUrl: write.apiUrl, token: write.token },
+        { organizationName: pull.organizationName, repoName: pull.repoName },
         prNumber,
         {
           body: text,
@@ -351,6 +418,7 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
               githubReviewId: result.id,
               hasBody: text !== '',
               headSha: live.headSha,
+              kind: 'review',
               prNumber,
               repositoryId: repository.id,
             },
@@ -366,6 +434,88 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
       return {
         data: { comments: drafts.length, draftsKept, event, reviewId: result.id, url: result.url },
       };
+    }
+  );
+
+  // POST /api/v1/pull-requests/:id/send-back — ask the agent to address the review so far, by
+  // leaving `/auto-swe fix` on the pull request as the caller. That is exactly what a person typing
+  // it on the host does, so the webhook path decides the rest with its own checks: the caller's
+  // linked account and write permission, the round limit and the kill switch. Nothing is started
+  // from here, and this refuses while the feedback automations are off, since the comment would
+  // then sit on the pull request doing nothing. Same rules as a review: the caller's own token, an
+  // open pull request, the head the page showed, one send and no retry.
+  app.post(
+    '/:id/send-back',
+    { onRequest: engineerOnly, schema: { body: SendBackBody, params: PullParams } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const pull = locate(await reachablePull(request, request.params.id));
+      if (!pull) {
+        return sendError(reply, 404, 'PULL_REQUEST_NOT_FOUND', 'Pull request not found');
+      }
+      const { prNumber, repository } = pull;
+      const note = (request.body.note ?? '').trim();
+      const problem = note === '' ? null : reviewTextProblem(note);
+      if (problem) {
+        return sendError(reply, 400, 'REVIEW_TEXT_REFUSED', REVIEW_TEXT_MESSAGES[problem], {
+          problem,
+        });
+      }
+      const loopOn = await resolveSetting('github.prFeedbackAutomationsEnabled', {
+        ...(repository.team?.orgId ? { orgId: repository.team.orgId } : {}),
+        teamId: repository.teamId,
+      });
+      if (!loopOn) {
+        return sendError(
+          reply,
+          409,
+          'FEEDBACK_LOOP_OFF',
+          'Pull-request feedback automations are off for this repository, so sending it back would start nothing.'
+        );
+      }
+      const ready = await readyToWrite({
+        headSha: request.body.headSha,
+        prNumber,
+        repository,
+        userId: user.sub,
+      });
+      if (!ready.ok) {
+        return sendError(reply, ready.status, ready.code, ready.message, ready.details);
+      }
+      const result = await postIssueComment(
+        { apiUrl: ready.credential.apiUrl, token: ready.credential.token },
+        { organizationName: pull.organizationName, repoName: pull.repoName },
+        prNumber,
+        sendBackText(note)
+      );
+      if (result.type === 'failed') {
+        return sendError(
+          reply,
+          502,
+          HOST_ERROR_CODES[result.reason],
+          WRITE_FAILURE_MESSAGES[result.reason],
+          { reason: result.reason }
+        );
+      }
+      try {
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor: user,
+          after: {
+            githubCommentId: result.id,
+            hasNote: note !== '',
+            headSha: ready.live.headSha,
+            kind: 'send-back',
+            prNumber,
+            repositoryId: repository.id,
+          },
+          entityId: pull.id,
+          entityType: 'PullRequestReview',
+        });
+      } catch (err) {
+        request.log.error({ err }, 'sent back, but recording it failed');
+      }
+      return { data: { commentId: result.id, url: result.url } };
     }
   );
 };
