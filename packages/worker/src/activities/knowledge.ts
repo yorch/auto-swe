@@ -1,16 +1,24 @@
 import type { KnowledgeEvidence } from '@auto-swe/shared';
 import { ApplicationFailure } from '@temporalio/activity';
 import { LEARNING_REFUSED_MESSAGE } from '../agents/knowledgeTools.js';
+import { searchRunKnowledge } from '../lib/knowledgeBaseSearch.js';
 import {
   resolveWorkflowKnowledgeEvidence,
-  searchWorkflowKnowledge,
   submitWorkflowLearning,
 } from '../lib/knowledgeRuntime.js';
 import { MemoryContentRefusedError } from '../lib/memoryGuard.js';
+import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 
-export async function retrieveKnowledge(input: { query: string; limit?: number }) {
-  const result = await searchWorkflowKnowledge(input.query, { limit: input.limit });
-  return { mode: result.mode, results: result.results };
+export async function retrieveKnowledge(input: {
+  query: string;
+  limit?: number;
+  knowledgeBases?: boolean;
+}) {
+  const { snapshotIds } = await loadRunKnowledgeBases({
+    checkoutCredentials: false,
+    knowledgeBases: input.knowledgeBases,
+  });
+  return searchRunKnowledge(input.query, { limit: input.limit, snapshotIds });
 }
 
 export async function captureLearning(input: {

@@ -466,8 +466,26 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
           snapshotId: 'snapshot',
         },
       ]);
+      expect(ws.knowledgeBaseSnapshotIds).toEqual(['snapshot']);
       expect(vi.mocked(execShellAsync).mock.calls[fetchIndex][0]).not.toContain('kb-secret');
       lock.mockRestore();
+      await ws.destroy();
+    });
+
+    it('keeps pinned search scope independently of successful file mounts', async () => {
+      const ids = ['snapshot'];
+      const ws = await createWorkspace(
+        'https://github.com/acme/repo.git',
+        'b',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        { knowledgeBaseSnapshotIds: ids, knowledgeBases: [] }
+      );
+      ids[0] = 'other-run';
+      expect(ws.knowledgeBases).toEqual([]);
+      expect(ws.knowledgeBaseSnapshotIds).toEqual(['snapshot']);
       await ws.destroy();
     });
 

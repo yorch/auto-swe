@@ -188,6 +188,11 @@ export async function executeImplementation(
     }
   }
 
+  const references = await loadRunKnowledgeBases({
+    knowledgeBases: crossRepoOptions?.knowledgeBases,
+    repoId: repo.id,
+    teamId: repo.teamId,
+  });
   const workspace = await createWorkspace(
     authedCloneUrl,
     branch,
@@ -198,13 +203,8 @@ export async function executeImplementation(
     {
       detectedStack: repo.detectedStack,
       repoSetup: { defer: true, field: repo.setup },
-      knowledgeBases: (
-        await loadRunKnowledgeBases({
-          knowledgeBases: crossRepoOptions?.knowledgeBases,
-          repoId: repo.id,
-          teamId: repo.teamId,
-        })
-      ).checkouts,
+      knowledgeBaseSnapshotIds: references.snapshotIds,
+      knowledgeBases: references.checkouts,
       services,
       teamId: repo.teamId,
     }

@@ -8,6 +8,7 @@ const calls = vi.hoisted(() => ({
   implement: vi.fn(),
   node: vi.fn(),
   pr: vi.fn(),
+  retrieve: vi.fn(),
   review: vi.fn(),
   task: vi.fn(),
 }));
@@ -26,6 +27,7 @@ vi.mock('./runnableActivities.js', async (importOriginal) => {
     agentNodeWorkspaceActivities: { runAgentNode: calls.node },
     agentTaskActivities: { runAgentTask: calls.task },
     conflictActivities: { resolveMergeConflict: calls.conflict },
+    knowledgeActivities: { retrieveKnowledge: calls.retrieve },
     prFeedbackAgentTaskActivities: { runAgentPrFeedbackTask: calls.agentPr },
   };
 });
@@ -56,6 +58,7 @@ describe('workspace agent knowledge base step flags', () => {
         'resolveMergeConflict',
         'executePrFeedbackImplementation',
         'runAgentPrFeedbackTask',
+        'retrieveKnowledge',
       ]) {
         await dispatchStepImpl(
           step,
@@ -70,7 +73,14 @@ describe('workspace agent knowledge base step flags', () => {
       expect(calls.ci.mock.calls[0][3]).toMatchObject({ knowledgeBases: enabled });
       expect(calls.review.mock.calls[0][4]).toMatchObject({ knowledgeBases: enabled });
       expect(calls.pr.mock.calls[0][0].options).toMatchObject({ knowledgeBases: enabled });
-      for (const fn of [calls.gate, calls.node, calls.task, calls.conflict, calls.agentPr]) {
+      for (const fn of [
+        calls.gate,
+        calls.node,
+        calls.task,
+        calls.conflict,
+        calls.agentPr,
+        calls.retrieve,
+      ]) {
         expect(fn.mock.calls[0][0]).toMatchObject({ knowledgeBases: enabled });
       }
     }

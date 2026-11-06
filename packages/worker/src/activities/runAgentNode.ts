@@ -162,10 +162,19 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
     // knowledge tools need no workspace: they call activities, and
     // `resolveAgentSpec` intersects them with the Agent's `toolKeys`, so an agent
     // that does not name `searchKnowledge`/`submitLearning` binds neither.
+    const resolvedKnowledgeAgent = await resolveAgent(key, resolveCtx);
+    const references = resolvedKnowledgeAgent.toolKeys?.includes('searchKnowledge')
+      ? await loadRunKnowledgeBases({
+          checkoutCredentials: false,
+          knowledgeBases: input.knowledgeBases,
+        })
+      : { snapshotIds: [] };
     const spec = await resolveAgentSpec(
       {
         agentKey: key as ModelBackedAgentKey,
-        availableTools: buildKnowledgeTools(tracer) as AgentTools,
+        availableTools: buildKnowledgeTools(tracer, {
+          snapshotIds: references.snapshotIds,
+        }) as AgentTools,
         basePrompt: '',
         promptOverride: input.systemPrompt,
       },
@@ -280,6 +289,11 @@ async function runInCheckout(args: {
   const baseBranch = await resolveRunBaseBranch(args.workspace.baseBranch, repo);
   // The clone credential is never written into the container: only `gitAuthed`
   // injects it, and only here, before the agent has started.
+  const references = await loadRunKnowledgeBases({
+    knowledgeBases: input.knowledgeBases,
+    repoId: repo.id,
+    teamId: repo.teamId,
+  });
   const workspace = await createWorkspace(
     authedCloneUrl,
     branch,
@@ -290,13 +304,8 @@ async function runInCheckout(args: {
     {
       detectedStack: repo.detectedStack,
       repoSetup: { defer: true, field: repo.setup },
-      knowledgeBases: (
-        await loadRunKnowledgeBases({
-          knowledgeBases: input.knowledgeBases,
-          repoId: repo.id,
-          teamId: repo.teamId,
-        })
-      ).checkouts,
+      knowledgeBaseSnapshotIds: references.snapshotIds,
+      knowledgeBases: references.checkouts,
       teamId: repo.teamId,
     }
   );
@@ -355,7 +364,9 @@ async function runInCheckout(args: {
 
   const maxToolOutputChars = await resolveSetting('workspace.maxToolOutputChars', resolveCtx);
   const built = buildWorkspaceTools(workspace, tracer, maxToolOutputChars);
-  const knowledgeTools = buildKnowledgeTools(tracer);
+  const knowledgeTools = buildKnowledgeTools(tracer, {
+    snapshotIds: workspace.knowledgeBaseSnapshotIds ?? [],
+  });
   const spec = await resolveAgentSpec(
     {
       agentKey: key as ModelBackedAgentKey,

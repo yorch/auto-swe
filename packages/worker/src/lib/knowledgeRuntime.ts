@@ -51,6 +51,10 @@ type TrustedEvidenceDelegate = {
 };
 
 export interface KnowledgeSearchResult {
+  sourceKind?: 'governed' | 'knowledge_base';
+  snapshotId?: string;
+  path?: string;
+  heading?: string | null;
   id: string;
   title: string;
   content: string;

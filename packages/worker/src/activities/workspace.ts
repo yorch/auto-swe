@@ -63,6 +63,7 @@ export { buildMetadataBlockArgs } from '../lib/workspaceBackend/docker.js';
 export { shellQuote };
 
 export interface Workspace {
+  knowledgeBaseSnapshotIds?: string[];
   knowledgeBases?: MountedKnowledgeBase[];
   containerId: string;
   /** The network posture this workspace was created under (absent on test doubles). */
@@ -741,6 +742,7 @@ export async function createWorkspace(
    */
   existingBranch?: boolean,
   options?: {
+    knowledgeBaseSnapshotIds?: string[];
     knowledgeBases?: KnowledgeBaseCheckout[];
     teamId?: string | null;
     services?: WorkspaceServiceSpec[];
@@ -1368,6 +1370,11 @@ export async function createWorkspace(
       }
     },
     gitIdentity,
+    knowledgeBaseSnapshotIds: [
+      ...(options?.knowledgeBaseSnapshotIds ??
+        options?.knowledgeBases?.map((kb) => kb.snapshotId) ??
+        []),
+    ],
     knowledgeBases: mountedKnowledgeBases,
     readFile: readWorkspaceFile,
     ...(options?.repoSetup

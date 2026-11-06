@@ -229,6 +229,9 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     'retrieveKnowledge',
     ({ config, inputs }) =>
       knowledgeActivities.retrieveKnowledge({
+        ...(typeof config.knowledgeBases === 'boolean'
+          ? { knowledgeBases: config.knowledgeBases }
+          : {}),
         limit: Number(inputs.limit ?? config.limit ?? 5),
         query: String(inputs.query ?? config.query ?? ''),
       }),

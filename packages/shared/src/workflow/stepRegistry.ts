@@ -514,6 +514,7 @@ register({
   configFields: [
     { key: 'query', label: 'Query', required: true, type: 'string' },
     { default: 5, key: 'limit', label: 'Maximum results', type: 'number' },
+    KNOWLEDGE_BASES_FIELD,
   ],
   description: 'Retrieve authorized governed knowledge as untrusted evidence.',
   label: 'Retrieve knowledge',

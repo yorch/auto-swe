@@ -259,6 +259,11 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
     // it) but the credential is never written into it: origin is the clean URL
     // and only `gitAuthed` injects the header, which the agent run never calls
     // on this workspace.
+    const references = await loadRunKnowledgeBases({
+      knowledgeBases: input.knowledgeBases,
+      repoId: repo.id,
+      teamId: repo.teamId,
+    });
     agentWs = await createWorkspace(
       authedCloneUrl,
       branch,
@@ -270,13 +275,8 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
         detectedStack: repo.detectedStack,
         repoSetup: { field: repo.setup },
         egressPolicy,
-        knowledgeBases: (
-          await loadRunKnowledgeBases({
-            knowledgeBases: input.knowledgeBases,
-            repoId: repo.id,
-            teamId: repo.teamId,
-          })
-        ).checkouts,
+        knowledgeBaseSnapshotIds: references.snapshotIds,
+        knowledgeBases: references.checkouts,
         services,
         teamId: repo.teamId,
       }
@@ -632,7 +632,9 @@ async function runOnMastra(
 ): Promise<AgentLoopResult> {
   const { agentCtx, key, resolved, tracer } = input;
   const built = buildWorkspaceTools(input.workspace, tracer, input.maxToolOutputChars);
-  const knowledgeTools = buildKnowledgeTools(tracer);
+  const knowledgeTools = buildKnowledgeTools(tracer, {
+    snapshotIds: input.workspace.knowledgeBaseSnapshotIds ?? [],
+  });
   const closeFns: Array<() => Promise<void>> = [];
   const browserToolset = grantsBrowserTool(resolved.toolKeys)
     ? new BrowserToolset({

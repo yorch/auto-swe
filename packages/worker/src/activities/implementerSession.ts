@@ -157,6 +157,11 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
   // carried was always cut from the default branch.
   const baseBranch = await resolveRunBaseBranch(previousCodeResult.baseBranch, repo);
 
+  const references = await loadRunKnowledgeBases({
+    knowledgeBases: input.knowledgeBases,
+    repoId: repo.id,
+    teamId: repo.teamId,
+  });
   const workspace = await createWorkspace(
     authedCloneUrl,
     previousCodeResult.branch,
@@ -167,13 +172,8 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     {
       detectedStack: repo.detectedStack,
       repoSetup: { defer: true, field: repo.setup },
-      knowledgeBases: (
-        await loadRunKnowledgeBases({
-          knowledgeBases: input.knowledgeBases,
-          repoId: repo.id,
-          teamId: repo.teamId,
-        })
-      ).checkouts,
+      knowledgeBaseSnapshotIds: references.snapshotIds,
+      knowledgeBases: references.checkouts,
       teamId: repo.teamId,
     }
   );

@@ -633,6 +633,12 @@ describe('delivery: trust boundary and gate-before-push', () => {
       checkout,
     ]);
     expect(vi.mocked(createWorkspace).mock.calls[1][6]).not.toHaveProperty('knowledgeBases');
+    expect(vi.mocked(createWorkspace).mock.calls[0][6]).toHaveProperty('knowledgeBaseSnapshotIds', [
+      'snapshot',
+    ]);
+    expect(vi.mocked(createWorkspace).mock.calls[1][6]).not.toHaveProperty(
+      'knowledgeBaseSnapshotIds'
+    );
     expect(loadRunKnowledgeBases).toHaveBeenCalledTimes(1);
   });
   it('keeps KBs out of the trusted delivery workspace and forwards the opt-out to resolution', async () => {

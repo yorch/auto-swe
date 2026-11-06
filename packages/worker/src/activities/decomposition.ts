@@ -422,6 +422,9 @@ async function provisionMergeWorkspace(
 
   // The run's base: the feature branch and its subtask branches were all cut from it.
   const baseBranch = await resolveRequestBaseBranch(request, repo);
+  const references = knowledgeBases
+    ? await loadRunKnowledgeBases({ repoId: repo.id, teamId: repo.teamId })
+    : { checkouts: [], snapshotIds: [] };
   const workspace = await createWorkspace(
     authedCloneUrl,
     targetBranch,
@@ -435,8 +438,8 @@ async function provisionMergeWorkspace(
       teamId: repo.teamId,
       ...(knowledgeBases
         ? {
-            knowledgeBases: (await loadRunKnowledgeBases({ repoId: repo.id, teamId: repo.teamId }))
-              .checkouts,
+            knowledgeBaseSnapshotIds: references.snapshotIds,
+            knowledgeBases: references.checkouts,
           }
         : {}),
     }
