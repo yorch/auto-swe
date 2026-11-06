@@ -2822,7 +2822,7 @@
     {
       "body": "Attach Git-backed reference material at team, repository, template and run scope, pin snapshots and expose bounded read-only files and cited search results.",
       "category": "Knowledge",
-      "detail": "Knowledge bases are separate from governed KnowledgeItems: Git is the source of truth, with no approval lifecycle. Same-organization TEAM, SHARED and ORG visibility gates attachment. Additive resolution selects at most four references, preserving mandatory team status and the most specific overrides. A Temporal execution pins SHAs and snapshot IDs; later resolutions recheck attachability. Indexing scans text files for injection, excludes flagged or incompletely scanned files and fails closed on truncated trees. Workspace agents receive read-only files and an untrusted prompt block. The text-only decomposition planner receives a separate bounded block of summaries and cited excerpts from pinned READY snapshots unless knowledgeBases is false; it requests no checkout credentials and mounts no reference files. The trusted delivery workspace does not mount KB files. Explicitly granted Mastra searchKnowledge and retrieveKnowledge merge only pinned chunks, matching the configured embedding model or reporting text fallback, with recall-time injection filtering. Harnesses receive files, not server-side search tools. The dashboard manages KBs, links, shares and launch overrides.",
+      "detail": "Knowledge bases are separate from governed KnowledgeItems: Git is the source of truth, with no approval lifecycle. Same-organization TEAM, SHARED and ORG visibility gates attachment. Additive resolution selects at most four references, preserving mandatory team status and the most specific overrides. A Temporal execution pins SHAs and snapshot IDs; later resolutions recheck attachability. Indexing scans text files for injection, excludes flagged or incompletely scanned files and fails closed on truncated trees. Workspace agents receive read-only files and an untrusted prompt block. The text-only decomposition planner receives a separate bounded block of summaries and cited excerpts from pinned READY snapshots unless knowledgeBases is false; it requests no checkout credentials and mounts no reference files. The trusted delivery workspace does not mount KB files. Pinned KB snapshots make searchKnowledge available in Mastra and through worker-backed Claude Code and Pi tool bridges; an explicit searchKnowledge grant separately enables governed KnowledgeItems. The retrieveKnowledge activity can also merge governed results with pinned KB chunks. KB search matches the configured embedding model or reports text fallback and screens returned chunks again at recall time. File checkout and indexed search have different content boundaries; a failed checkout does not necessarily remove a ready snapshot from search. The dashboard manages KBs, links, shares and launch overrides.",
       "id": "repoKnowledgeBases",
       "refs": [
         "kbModel",
@@ -2834,7 +2834,14 @@
         "kbPlannerContext",
         "kbPlannerActivity",
         "kbPlannerAgent",
-        "kbPlannerDispatch"
+        "kbPlannerDispatch",
+        "kbSearchBinding",
+        "kbClaudeSearch",
+        "kbPiSearch",
+        "kbMastraSearch",
+        "kbRetrieval",
+        "kbSnapshotSearchPin",
+        "kbSearchBridges"
       ],
       "status": "Implemented",
       "title": "Repository-backed knowledge bases"
@@ -4458,6 +4465,15 @@
   ],
   "limits": [
     {
+      "body": "Indexed KB search and filesystem reference copies do not expose exactly the same files.",
+      "category": "Knowledge",
+      "detail": "The index accepts selected text extensions under per-file, file-count and total-byte caps, records skipped files separately from injection-flagged files, and refuses a truncated repository tree. Checkout instead fetches the configured subtree at the pinned SHA, deletes symlinks, Git metadata and files listed as flagged, and applies a separate total-byte cap. It does not delete every file skipped by the index, so an unsupported extension or an indexing cap is not a filesystem exclusion. The checkout sets file permissions to 444 and directory permissions to 555; this is a permission-restricted copy, not a read-only bind mount. Prompt summaries and search excerpts are untrusted reference data, not approval of every file available in that copy. Ready snapshot IDs can remain searchable even when that reference's file checkout fails.",
+      "id": "kbIndexCheckoutBoundary",
+      "refs": ["kbIndex", "kbCheckout", "kbSnapshotSearchPin", "kbSearch"],
+      "status": "Confirmed boundary",
+      "title": "An indexing skip is not a checkout exclusion"
+    },
+    {
       "body": "PR-label and push automations turn event text into work; their recorded branch and commit are not automatically a review target or checkout pin.",
       "category": "Automation",
       "detail": "The PR-label source creates a synthetic ticket from the label occurrence and describes the pull request's title, body and refs. Its default ticket-to-merge template is not the PR-feedback push path. The push source similarly describes the pushed commits and supplies no extra event-derived template fields. Both use the shared payload builder, which combines template defaults, saved automation options and the source's explicit fields; it does not automatically turn an event head into baseBranch or reviewOf. The chosen template and configured options determine the work. A label or push therefore does not promise a review of that exact head or a fix on the existing PR branch. Push path filtering sees only the bounded webhook file list; a truncated list with no matching file is a non-match, not permission to assume omitted paths matched.",
@@ -4556,7 +4572,7 @@
     {
       "body": "References are capped, indexing and checkout are best-effort, and revocation cannot recall content already handed to an agent.",
       "category": "Knowledge",
-      "detail": "Indexing limits file count, individual and total bytes; checkout has a separate byte cap. Mandatory references still face the run cap and operational failures. New runs and later resolutions recheck attachability, but existing workspaces and bound search tools are not actively scrubbed or cancelled. The text-only planner requests no checkout credentials, but reference resolution and indexing may still authenticate to the host. Its context is best-effort: no ready pins means no block, and an error while assembling or retrieving context omits the block rather than failing the plan. Sanitized, quoted summaries and untrusted-data instructions do not prove immunity to prompt injection. Snapshots have no dedicated retention sweep. Live authenticated GitHub, embedding-provider and vector-search integration and the KB dashboard browser UI are not end-to-end verified by the mock/component tests.",
+      "detail": "Indexing limits file count, individual and total bytes; checkout has a separate byte cap. Mandatory references still face the run cap and operational failures. New runs and later resolutions recheck attachability, but existing workspaces and tools bound to copied snapshot IDs are not actively scrubbed or cancelled. Reindex requests coalesce on the KB workflow ID, and a READY snapshot for the same KB/SHA/path is reused rather than rebuilt. A changed scanner or embedding configuration alone therefore does not force that snapshot to be rescanned or re-embedded. The text-only planner requests no checkout credentials, but reference resolution and indexing may still authenticate to the host. Its context is best-effort: no ready pins means no block, and an error while assembling or retrieving context omits the block rather than failing the plan. Sanitized, quoted summaries and untrusted-data instructions do not prove immunity to prompt injection. Snapshots have no dedicated retention sweep. Live authenticated GitHub, embedding-provider and vector-search integration and the KB dashboard browser UI are not end-to-end verified by the mock/component tests.",
       "id": "repoKnowledgeBaseBounds",
       "refs": [
         "kbIndex",
@@ -4564,7 +4580,10 @@
         "kbCheckout",
         "kbSearch",
         "kbPage",
-        "kbPlannerContext"
+        "kbPlannerContext",
+        "kbSearchBinding",
+        "kbSnapshotReuse",
+        "kbIndexStart"
       ],
       "status": "Confirmed boundary",
       "title": "KB snapshots are bounded reference context, not revocable instructions"
@@ -6151,6 +6170,70 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "export function claudeKnowledgeServer(",
+      "id": "kbSearchBridges",
+      "lines": 39,
+      "path": "packages/worker/src/agents/knowledgeSearchBindings.ts",
+      "title": "Claude Code and Pi expose worker-backed search callbacks"
+    },
+    {
+      "anchor": "export function bindKnowledgeSearch(",
+      "id": "kbSearchBinding",
+      "lines": 22,
+      "path": "packages/worker/src/agents/knowledgeTools.ts",
+      "title": "Pinned KB search and explicitly granted governed search are separate inputs"
+    },
+    {
+      "anchor": "const knowledgeSearch = bindKnowledgeSearch(",
+      "id": "kbClaudeSearch",
+      "lines": 12,
+      "path": "packages/worker/src/agents/claudeCode/runtime.ts",
+      "title": "Claude Code binds knowledge search to workspace snapshot IDs"
+    },
+    {
+      "anchor": "const knowledgeSearch = bindKnowledgeSearch(",
+      "id": "kbPiSearch",
+      "lines": 48,
+      "path": "packages/worker/src/agents/pi/runtime.ts",
+      "title": "Pi adds a worker-backed knowledge search tool for pinned references"
+    },
+    {
+      "anchor": "const resolvedActiveTools = {",
+      "id": "kbMastraSearch",
+      "lines": 24,
+      "path": "packages/worker/src/agents/implementer.ts",
+      "title": "Mastra includes pinned KB search even without a governed-knowledge grant"
+    },
+    {
+      "anchor": "export async function retrieveKnowledge(input:",
+      "id": "kbRetrieval",
+      "lines": 13,
+      "path": "packages/worker/src/activities/knowledge.ts",
+      "title": "Knowledge retrieval resolves pinned KB snapshots without checkout credentials"
+    },
+    {
+      "anchor": "knowledgeBaseSnapshotIds: [",
+      "id": "kbSnapshotSearchPin",
+      "lines": 10,
+      "path": "packages/worker/src/activities/workspace.ts",
+      "title": "Search snapshot IDs are separate from successfully mounted reference copies"
+    },
+    {
+      "anchor": "if (current.status === 'READY') {",
+      "before": 18,
+      "id": "kbSnapshotReuse",
+      "lines": 29,
+      "path": "packages/worker/src/lib/knowledgeBaseIndex.ts",
+      "title": "The immutable KB/SHA/path key reuses an existing READY snapshot"
+    },
+    {
+      "anchor": "async startKnowledgeBaseIndex(knowledgeBaseId:",
+      "id": "kbIndexStart",
+      "lines": 10,
+      "path": "packages/gateway/src/plugins/temporal.ts",
+      "title": "KB index requests use one workflow ID with USE_EXISTING conflict policy"
+    },
     {
       "anchor": "export async function knowledgeBasePlannerContext(",
       "id": "kbPlannerContext",
