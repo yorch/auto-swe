@@ -2698,6 +2698,39 @@
   ],
   "features": [
     {
+      "body": "Run stored connection checks together, or inspect a repository's platform credential and the caller's saved token separately.",
+      "category": "Operations",
+      "detail": "The ADMIN-only platform connections/test route checks configured GitHub, Slack, tracker, external knowledge and Figma integrations, per-host GitHub credentials, the configured approver App, active package registries and model-provider keys across scopes. Unconfigured integrations are skipped; the tracker also needs a real ticket ID. Per-probe exceptions become failed entries. The dashboard starts these checks only when requested and groups failures, working connections and skips. Batch checks use stored configuration; individual integration forms can also test supported draft values. GitHub App testing validates identity, mints the configured installation token and asks which repositories it reaches. A repository's separate test-access route requires platform LEAD plus owning-team management (or ADMIN); it checks platform credentials and, when present, the caller's own token against that repository and its saved default branch. The batch does not include MCP servers or per-repository access.",
+      "id": "connectionDiagnostics",
+      "refs": [
+        "connectionHealthRoute",
+        "connectionHealthBatch",
+        "connectionHealthEntry",
+        "connectionHealthPanel",
+        "connectionAppProbe",
+        "connectionRepositoryProbe",
+        "connectionRepositoryChecks"
+      ],
+      "status": "Implemented",
+      "title": "On-demand connection diagnostics"
+    },
+    {
+      "body": "A run can finish while its tracker update fails; terminal write-back failures have a separate, classified notice.",
+      "category": "Operations",
+      "detail": "After finalizing a run, the worker best-effort syncs a real tracker ticket when notifications are enabled: SUCCESS sends workflow_completed, while FAILED or TIMED_OUT sends workflow_failed. The terminal event carries no PR URL. A returned failure is merged into contextSnapshot.trackerWriteback as the event and a closed-set failure class, never provider response text. GitHub scope refusal distinguishes an out-of-scope repository from a ticket ID that resolves to no repository. Providers report their first refused write; the run page parses the marker and uses fixed wording to distinguish a failed completion update from a missing failure comment. The notice does not change the run's terminal status.",
+      "id": "trackerWritebackDiagnostics",
+      "refs": [
+        "trackerTerminalWriteback",
+        "trackerWritebackStore",
+        "trackerSyncResult",
+        "trackerWritebackRead",
+        "trackerWritebackNotice",
+        "trackerSummaryNotice"
+      ],
+      "status": "Implemented",
+      "title": "Tracker write-back is separate from run success"
+    },
+    {
       "body": "PR evaluation combines matching source-run and successful linked-review verdicts; a clean linked review can fill absent evidence, not erase an existing warning.",
       "category": "Engineering",
       "detail": "The severity reader considers source-run network outputs for the exact current head and takes worst-of with successful linked runs in PR or branch mode. Linked outputs must name that head and must not explicitly say diffVerified: false; stored mode is excluded. Network rejections and a negative published summary contribute at least WARNING even if their findings list is empty. When no matching original result exists, eligible linked verdicts supply the signal. A matching original with missing, empty or malformed verdicts returns missing instead of being rescued by a clean linked review. Brief findings merge separately, deduplicate by file/line/category/description, and retain linked-run attribution. The signal does not by itself grant low risk or approval; all other evaluation rules still apply.",
@@ -4465,6 +4498,24 @@
   ],
   "limits": [
     {
+      "body": "A working probe is not proof of an executable workflow, and no tracker marker is not proof that every tracker write landed.",
+      "category": "Operations",
+      "detail": "Connection tests sample particular requests, not a clone, push, private-package install or full workflow. A registry 404 or redirect counts as reached without confirming its credential; a public success response does not establish private-package access. A GitHub host App identity can pass even when its installation listing is unavailable, and a repository token that reports no permission flags is described as visible rather than proven push-capable. Tracker write-back recording covers eligible terminal notifications, not every PR link, CI comment, transition or webhook. Jira treats a matching current status name or category as already there when no named transition exists; if the status read fails, it records no missing-transition claim. Linear can silently leave an unmapped or already-current state unchanged. Finalization side effects run after the terminal transaction and are not replayed by an activity retry that finds the run already ended. Writing the notice is itself best-effort. The marker is neither an external delivery receipt nor a durable retry outbox.",
+      "id": "diagnosticEvidenceBounds",
+      "refs": [
+        "connectionRegistryProbe",
+        "connectionRepositoryChecks",
+        "connectionAppIdentityProbe",
+        "trackerTerminalWriteback",
+        "trackerWritebackStore",
+        "trackerJiraMove",
+        "trackerJiraCategories",
+        "trackerLinearMove"
+      ],
+      "status": "Confirmed boundary",
+      "title": "Diagnostic success has a narrow scope"
+    },
+    {
       "body": "Indexed KB search and filesystem reference copies do not expose exactly the same files.",
       "category": "Knowledge",
       "detail": "The index accepts selected text extensions under per-file, file-count and total-byte caps, records skipped files separately from injection-flagged files, and refuses a truncated repository tree. Checkout instead fetches the configured subtree at the pinned SHA, deletes symlinks, Git metadata and files listed as flagged, and applies a separate total-byte cap. It does not delete every file skipped by the index, so an unsupported extension or an indexing cap is not a filesystem exclusion. The checkout sets file permissions to 444 and directory permissions to 555; this is a permission-restricted copy, not a read-only bind mount. Prompt summaries and search excerpts are untrusted reference data, not approval of every file available in that copy. Ready snapshot IDs can remain searchable even when that reference's file checkout fails.",
@@ -6170,6 +6221,135 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "export const systemConfigRoutes:",
+      "id": "connectionHealthRoute",
+      "lines": 75,
+      "path": "packages/gateway/src/routes/systemConfig.ts",
+      "title": "ADMIN gates stored connection checks"
+    },
+    {
+      "anchor": "export async function checkAllConnections(",
+      "id": "connectionHealthBatch",
+      "lines": 125,
+      "path": "packages/gateway/src/lib/connectionHealth.ts",
+      "title": "Stored integration, host, registry and provider checks with explicit skips"
+    },
+    {
+      "anchor": "async function entry(",
+      "id": "connectionHealthEntry",
+      "lines": 25,
+      "path": "packages/gateway/src/lib/connectionHealth.ts",
+      "title": "Per-probe exceptions are failed diagnostic entries"
+    },
+    {
+      "anchor": "export function ConnectionHealthPanel()",
+      "id": "connectionHealthPanel",
+      "lines": 75,
+      "path": "packages/web/src/components/integrations/ConnectionHealthPanel.tsx",
+      "title": "The dashboard starts checks on demand and displays each outcome"
+    },
+    {
+      "anchor": "export async function probeAppInstallation(",
+      "id": "connectionAppProbe",
+      "lines": 74,
+      "path": "packages/gateway/src/lib/connectionProbes.ts",
+      "title": "App identity, installation-token minting and visible repository count"
+    },
+    {
+      "anchor": "'/:id/test-access',",
+      "before": 2,
+      "id": "connectionRepositoryProbe",
+      "lines": 35,
+      "path": "packages/gateway/src/routes/repositories.ts",
+      "title": "Repository diagnostics require platform LEAD and owning-team management"
+    },
+    {
+      "anchor": "async function repositoryChecks(",
+      "id": "connectionRepositoryChecks",
+      "lines": 64,
+      "path": "packages/gateway/src/lib/connectionProbes.ts",
+      "title": "Repository permission flags and default-branch checks"
+    },
+    {
+      "anchor": "export async function probePackageRegistry(",
+      "id": "connectionRegistryProbe",
+      "lines": 84,
+      "path": "packages/gateway/src/lib/connectionProbes.ts",
+      "title": "Registry reachability is distinct from credential verification"
+    },
+    {
+      "anchor": "async function probeApp(",
+      "id": "connectionAppIdentityProbe",
+      "lines": 35,
+      "path": "packages/gateway/src/lib/connectionProbes.ts",
+      "title": "App identity can pass when installation listing is unavailable"
+    },
+    {
+      "anchor": "const externalTicketId = run?.workRequest?.externalTicketId;",
+      "before": 47,
+      "id": "trackerTerminalWriteback",
+      "lines": 88,
+      "path": "packages/worker/src/activities/templates.ts",
+      "title": "Terminal tracker sync follows finalization and skips already-ended retries"
+    },
+    {
+      "anchor": "async function recordTrackerWriteback(",
+      "id": "trackerWritebackStore",
+      "lines": 30,
+      "path": "packages/worker/src/activities/templates.ts",
+      "title": "Best-effort event and failure-class storage in the terminal snapshot"
+    },
+    {
+      "anchor": "export async function syncTrackerOnEvent(",
+      "id": "trackerSyncResult",
+      "lines": 57,
+      "path": "packages/shared/src/lib/trackerSync.ts",
+      "title": "Repository-scoped tracker sync returns classified failures"
+    },
+    {
+      "anchor": "export function readTrackerWriteback(",
+      "id": "trackerWritebackRead",
+      "lines": 26,
+      "path": "packages/shared/src/lib/integrations/ticketFailure.ts",
+      "title": "Only recognized terminal events and failure classes become notices"
+    },
+    {
+      "anchor": "export function TrackerWritebackNote(",
+      "id": "trackerWritebackNotice",
+      "lines": 22,
+      "path": "packages/web/src/components/runs/TrackerWritebackNote.tsx",
+      "title": "Fixed run-page notices distinguish completed and failed-run writes"
+    },
+    {
+      "anchor": "<TrackerWritebackNote contextSnapshot={run.contextSnapshot} />",
+      "before": 4,
+      "id": "trackerSummaryNotice",
+      "lines": 6,
+      "path": "packages/web/src/components/runs/RunSummary.tsx",
+      "title": "The run summary renders the persisted tracker notice"
+    },
+    {
+      "anchor": "private async moveIssue(",
+      "id": "trackerJiraMove",
+      "lines": 77,
+      "path": "packages/shared/src/lib/integrations/providers/jira.ts",
+      "title": "Jira status name/category fallback and unknown-status silence"
+    },
+    {
+      "anchor": "const SYNC_TARGET_CATEGORIES =",
+      "id": "trackerJiraCategories",
+      "lines": 6,
+      "path": "packages/shared/src/lib/integrations/providers/jira.ts",
+      "title": "Jira sync target categories"
+    },
+    {
+      "anchor": "private async moveIssue(",
+      "id": "trackerLinearMove",
+      "lines": 53,
+      "path": "packages/shared/src/lib/integrations/providers/linear.ts",
+      "title": "Linear unmapped states no-op and explicit false mutations are rejected"
+    },
     {
       "anchor": "export function claudeKnowledgeServer(",
       "id": "kbSearchBridges",
@@ -13920,6 +14100,21 @@
     }
   ],
   "usecases": [
+    {
+      "body": "Separate a connection problem from a run that completed but could not update its ticket.",
+      "category": "Operations",
+      "detail": "An administrator can request stored connection checks, supplying a real ticket ID to include tracker access. A platform LEAD who also manages the owning team (or an ADMIN) can check one repository's platform and personal credentials and default branch separately. A run's terminal tracker notice identifies a classified refusal without exposing provider response text. These diagnostics guide configuration or ticket-workflow investigation; they do not repair credentials, retry a tracker write or prove that a full run will succeed.",
+      "id": "diagnoseConnectionAndWriteback",
+      "refs": [
+        "connectionHealthRoute",
+        "connectionHealthBatch",
+        "connectionRepositoryProbe",
+        "trackerTerminalWriteback",
+        "trackerWritebackNotice"
+      ],
+      "status": "Inferred from code",
+      "title": "Diagnose connection and ticket write-back failures"
+    },
     {
       "body": "Review a Confluence page against criteria, leave comments, then propose a ticket hierarchy for a person to approve.",
       "category": "Product",
