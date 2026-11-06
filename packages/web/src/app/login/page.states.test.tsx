@@ -9,12 +9,13 @@ const h = vi.hoisted(() => ({
   probe: vi.fn(),
   replace: vi.fn(),
   reset: vi.fn(),
+  search: '',
   user: null as { email?: string; isActive?: boolean } | null,
 }));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: h.replace }),
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => new URLSearchParams(h.search),
 }));
 vi.mock('@/hooks/useGatewayStatus', () => ({
   isOkResponse: () => true,
@@ -45,6 +46,7 @@ const MAGIC = { github: false, google: false, magicLink: true, okta: false };
 const PASSWORD = { github: false, google: false, magicLink: false, okta: false };
 
 beforeEach(() => {
+  h.search = '';
   h.user = null;
   h.hydrate.mockReset().mockResolvedValue('unauthenticated');
   h.magic.mockReset().mockResolvedValue(undefined);
@@ -129,5 +131,14 @@ describe('login page: awaiting approval', () => {
     h.user = { email: 'new@example.com', isActive: true };
     fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
     await waitFor(() => expect(h.replace).toHaveBeenCalledWith('/'));
+  });
+});
+
+describe('login page: a used magic link', () => {
+  it('says the link expired or was used, rather than looking for a session', async () => {
+    h.search = 'bridge=1&error=INVALID_TOKEN';
+    render(<LoginPage />);
+    expect(await screen.findByText(/expired or was already used/i)).toBeTruthy();
+    expect(screen.queryByText(/no session was found/i)).toBeNull();
   });
 });

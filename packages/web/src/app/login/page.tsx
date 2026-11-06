@@ -219,7 +219,9 @@ function LoginPageInner() {
   // surface the pending-approval screen depending on isActive.
   // biome-ignore lint/correctness/useExhaustiveDependencies: bridgeAttempt is the retry trigger.
   useEffect(() => {
-    if (searchParams.get('bridge') !== '1') {
+    // A failed verification (a used or expired magic link) comes back with ?error= as well; its
+    // message is already shown, and there is no session to look for.
+    if (searchParams.get('bridge') !== '1' || searchParams.get('error')) {
       return;
     }
     // ?reauth=1 marks a server-side role guard that found the hour-long
