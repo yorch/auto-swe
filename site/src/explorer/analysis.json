@@ -2698,6 +2698,36 @@
   ],
   "features": [
     {
+      "body": "PR evaluation combines matching source-run and successful linked-review verdicts; a clean linked review can fill absent evidence, not erase an existing warning.",
+      "category": "Engineering",
+      "detail": "The severity reader considers source-run network outputs for the exact current head and takes worst-of with successful linked runs in PR or branch mode. Linked outputs must name that head and must not explicitly say diffVerified: false; stored mode is excluded. Network rejections and a negative published summary contribute at least WARNING even if their findings list is empty. When no matching original result exists, eligible linked verdicts supply the signal. A matching original with missing, empty or malformed verdicts returns missing instead of being rescued by a clean linked review. Brief findings merge separately, deduplicate by file/line/category/description, and retain linked-run attribution. The signal does not by itself grant low risk or approval; all other evaluation rules still apply.",
+      "id": "linkedReviewSignal",
+      "refs": [
+        "reviewSeverityMerge",
+        "postRunEvidence",
+        "reviewSignalClassification",
+        "reviewBriefInputs"
+      ],
+      "status": "Implemented",
+      "title": "Linked review evidence fills gaps without lowering original severity"
+    },
+    {
+      "body": "The PR comment provides a deterministic reading guide alongside the evaluation, not another verdict or a test run.",
+      "category": "Engineering",
+      "detail": "The brief separates extracted ticket criteria and open questions, recorded test counts, captured browser-evidence counts, current CI and selected current-head review findings. Optional brief-only reads fail to unknown, rather than independently raising the risk class. Tests and UI are recorded evidence, not coverage verification or a fresh browser run. Reading order puts contracts/manifests before directory-grouped source with heuristically paired tests. Skim claims require a same-directory exact rename without content changes or a narrowly checked whitespace-only patch; paths excluded by skim policy or risk flags cannot qualify, and whitespace-significant formats cannot qualify on the whitespace proof. Model prose is bounded and escaped; claimed handling of open questions is explicitly the run's own account, not independent verification.",
+      "id": "reviewerReadingGuide",
+      "refs": [
+        "reviewBriefInputs",
+        "reviewBriefEvidence",
+        "reviewBriefBuild",
+        "reviewBriefOrder",
+        "reviewBriefSkim",
+        "reviewBriefIntent"
+      ],
+      "status": "Implemented advisory output",
+      "title": "A reviewer brief separates intent, evidence and a reading path"
+    },
+    {
       "body": "Seeded graphs maintain repository documentation, remediate a reported vulnerability, or review a Confluence document before planning tickets.",
       "category": "Library content",
       "detail": "docs-refresh uses the implementation step with allowedPaths, stops without a PR on an empty change, otherwise opens a draft without an in-run human gate or CI loop. Its prompt asks for markdown-only edits, but the executable guard permits markdown anywhere and any file under docs/. vulnerability-remediation consumes an advisory supplied in the request: it does not discover advisories. A no-change result succeeds without a PR; otherwise the graph runs the vulnerability and test gates, opens a draft and enters the shared bounded CI-fix loop. Both gates are advisory (onFail: warn), so a failed test or scan alone does not block the draft, and a scan is not assurance that the advisory is resolved. confluence-review-to-tickets uses separate reviewer and planner agents and checked JSON replies; a blocker or major finding forces not-ready. It policy-gates page comments, stops after comments when not ready, and otherwise asks a person to approve the proposed ticket structure, allowing bounded revisions, before a separate policy gate for ticket creation. Invalid review output terminates before comments; invalid plan output terminates before tickets, but comments may already exist. Neither automatically opens a human correction step.",
@@ -2725,7 +2755,7 @@
     {
       "body": "Review a finished workflow or agent run manually or through attached presets, with separate results and optional guarded fix rounds.",
       "category": "Engineering",
-      "detail": "Review-kind library templates provide network, Qodo and human-review variants. Launch preparation checks source control, repository access, review.enabled and template/preset scope. Global presets are platform-admin managed; team presets require that team's lead/admin membership and cannot be attached or launched across teams. The source-run picker exposes globals plus that source's team. Successful non-review runs enqueue independent global and team attachment intents, dispatched with durable claims and a stale-intent sweep. PR and branch reviews verify recorded heads; stored diffs are checked and applied at the recorded base into a local-only commit. Optional runTests runs the repository's test gate on a verified checkout. Large changes are reviewed in bounded chunks inside one network step, merging worst-of verdicts and deduplicated findings. The run page links reviews and shows verification, verdicts and fix status. PR-mode publication posts a marked comment and requests reevaluation; successful verified current-head linked reviews can supply otherwise missing PR review evidence, but cannot lower original evidence. PR fixes use an opted-in review_findings feedback automation and its existing guards; stored fixes launch a same-agent deliver:none follow-up. Transient failures can be retried with distinct, deduplicated attempts and DB-backed findings.",
+      "detail": "Review-kind library templates provide network, Qodo and human-review variants. Launch preparation checks source control, repository access, review.enabled and template/preset scope. Global presets are platform-admin managed; team presets require that team's lead/admin membership and cannot be attached or launched across teams. The source-run picker exposes globals plus that source's team. Successful non-review runs enqueue independent global and team attachment intents, dispatched with durable claims and a stale-intent sweep. PR and branch reviews verify recorded heads; stored diffs are checked and applied at the recorded base into a local-only commit. Optional runTests runs the repository's test gate on a verified checkout. Large changes are reviewed in bounded chunks inside one network step, merging worst-of verdicts and deduplicated findings. The run page links reviews and shows verification, verdicts and fix status. PR-mode publication posts a marked comment and requests reevaluation; successful PR/branch linked reviews with a matching head and no explicit unverified flag can supply otherwise missing PR review evidence, but cannot lower original evidence. PR fixes use an opted-in review_findings feedback automation and its existing guards; stored fixes launch a same-agent deliver:none follow-up. Transient failures can be retried with distinct, deduplicated attempts and DB-backed findings.",
       "id": "postRunReview",
       "refs": [
         "postRunLaunch",
@@ -4408,6 +4438,21 @@
   ],
   "limits": [
     {
+      "body": "Inline review findings are optional, advisory comments, not approval requests or verified fixes.",
+      "category": "Engineering",
+      "detail": "prEvaluation.postReviewFindings controls posting. Selection takes warning/critical findings on changed files, excludes reviewer-crash placeholders, and suppresses lint/style/type categories when CI already failed. Only lines anchorable on the new side of the diff become inline comments; unanchorable selected findings can still appear in the bounded brief. Posting checks existing finding markers and rereads the head immediately before creating a comment-only review. A moved head, host refusal or read/post error returns a reason without failing evaluation, so inline delivery is not guaranteed. Suggested fixes are escaped prose, not click-to-apply suggestion blocks, and /auto-swe is neutralized. The human-thread feedback gatherer ignores marked platform finding comments; the explicit review_findings trigger reads review-run data instead.",
+      "id": "advisoryFindingComments",
+      "refs": [
+        "reviewFindingSelection",
+        "reviewFindingPosting",
+        "reviewFindingFeedbackFilter",
+        "reviewFindingDatabaseRead",
+        "reviewFindingCommentOnly"
+      ],
+      "status": "Confirmed boundary",
+      "title": "Inline findings are best-effort advice, not an approval gate"
+    },
+    {
       "body": "Checked model output and approval do not make document comments or ticket-plan creation atomic.",
       "category": "External effects",
       "detail": "The document-review pack checks bounded JSON shapes, not the truth or completeness of the review and plan. A quoted passage is anchored when found; an unsupported anchor falls back to a footer comment with the quote. Comments are sent sequentially, and a transient error can leave earlier comments behind. Ticket-plan creation likewise creates an epic, tickets and subtasks sequentially without rollback; a failure reports the items created so far. These writes use the outcome ledger rather than blindly retrying an uncertain partial effect. A valid plan still needs a person's structure approval even if the autonomy policy allows the later tracker write automatically.",
@@ -6031,6 +6076,97 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "export async function readReviewFeedback(",
+      "id": "reviewFindingDatabaseRead",
+      "lines": 90,
+      "path": "packages/worker/src/lib/reviewFeedback.ts",
+      "title": "Explicit review feedback re-reads bounded stored review evidence from the database"
+    },
+    {
+      "anchor": "async createReview(",
+      "id": "reviewFindingCommentOnly",
+      "lines": 31,
+      "path": "packages/worker/src/lib/scm/github.ts",
+      "title": "The GitHub findings writer fixes its event to COMMENT"
+    },
+    {
+      "anchor": "export async function loadMaxReviewSeverity(",
+      "id": "reviewSeverityMerge",
+      "lines": 65,
+      "path": "packages/worker/src/activities/evaluatePullRequest.ts",
+      "title": "Current-head worst-of severity preserves malformed-original missing evidence"
+    },
+    {
+      "anchor": "if (signals.maxReviewSeverity === null)",
+      "id": "reviewSignalClassification",
+      "lines": 14,
+      "path": "packages/shared/src/lib/prEvaluation/classify.ts",
+      "title": "Missing and warning/critical review signals exclude low risk"
+    },
+    {
+      "anchor": "const reviewed = await loadReviewedOutputsSafe({",
+      "id": "reviewBriefInputs",
+      "lines": 44,
+      "path": "packages/worker/src/activities/evaluatePullRequest.ts",
+      "title": "Evaluation gathers advisory intent/evidence/findings and optionally posts inline comments"
+    },
+    {
+      "anchor": "export async function loadBriefEvidence(input:",
+      "id": "reviewBriefEvidence",
+      "lines": 38,
+      "path": "packages/worker/src/lib/briefEvidence.ts",
+      "title": "Recorded counters and best-effort CI reads feed the brief"
+    },
+    {
+      "anchor": "export function buildBrief(",
+      "id": "reviewBriefBuild",
+      "lines": 53,
+      "path": "packages/shared/src/lib/prEvaluation/brief.ts",
+      "title": "The brief partitions flagged reading paths and deterministic skim proofs"
+    },
+    {
+      "anchor": "export function readingOrder(",
+      "id": "reviewBriefOrder",
+      "lines": 78,
+      "path": "packages/shared/src/lib/prEvaluation/brief.ts",
+      "title": "Reading order heuristically pairs tests with source after contracts"
+    },
+    {
+      "anchor": "export function skimProof(",
+      "id": "reviewBriefSkim",
+      "lines": 27,
+      "path": "packages/shared/src/lib/prEvaluation/brief.ts",
+      "title": "Only unchanged same-directory renames or checked whitespace qualify for skimming"
+    },
+    {
+      "anchor": "function pushIntent(",
+      "id": "reviewBriefIntent",
+      "lines": 52,
+      "path": "packages/shared/src/lib/prEvaluation/brief.ts",
+      "title": "Ticket requirements and run-supplied question handling are labelled unverified"
+    },
+    {
+      "anchor": "export function selectReviewFindings(",
+      "id": "reviewFindingSelection",
+      "lines": 74,
+      "path": "packages/shared/src/lib/prEvaluation/findings.ts",
+      "title": "Bounded changed-file warning/critical findings omit crash and CI-covered categories"
+    },
+    {
+      "anchor": "export async function postFindingComments(input:",
+      "id": "reviewFindingPosting",
+      "lines": 80,
+      "path": "packages/worker/src/lib/briefFindings.ts",
+      "title": "Marked inline comments recheck the head and never approve or request changes"
+    },
+    {
+      "anchor": "if (isFindingComment(c.body))",
+      "id": "reviewFindingFeedbackFilter",
+      "lines": 15,
+      "path": "packages/worker/src/activities/prFeedback.ts",
+      "title": "Human-thread feedback ignores the platform's own finding comments"
+    },
     {
       "anchor": "async function confluenceCommentOutcome(",
       "id": "documentCommentWrite",
