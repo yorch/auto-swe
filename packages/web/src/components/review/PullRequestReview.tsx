@@ -29,9 +29,11 @@ import {
 import { safeHttpUrl } from '@/lib/safeUrl';
 import { cn, FOCUS_RING, plural } from '@/lib/utils';
 import { visibleText } from '@/lib/visibleText';
+import { DraftNote, NewDraft } from './DraftComments';
 import { FindingNote } from './FindingNote';
 import { ReviewBrief } from './ReviewBrief';
 import { ReviewDiffFile } from './ReviewDiffFile';
+import { ReviewPanel } from './ReviewPanel';
 import { SinceLastVisit } from './SinceLastVisit';
 
 /** Files open when the page loads; the rest wait to be opened, so a big change draws a few. */
@@ -156,6 +158,62 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
     }
     return byFile;
   }, [items, findings]);
+  // A comment can be written only where the reviewer may send one: with a token of their own, on a
+  // pull request that is still open.
+  const canComment = data.write.available && files.type === 'ok' && files.state === 'open';
+  const [composing, setComposing] = useState<{ line: number; path: string } | null>(null);
+  const startComment = useCallback(
+    (path: string, line: number) => setComposing({ line, path }),
+    []
+  );
+  const headSha = files.type === 'ok' ? files.headSha : null;
+  // Findings and the reviewer's drafts share a line's note. A file with neither keeps the stable map
+  // it already had, so writing on one file does not redraw the rest.
+  const fileAnnotations = useMemo(() => {
+    const merged = new Map(annotations);
+    // An outdated draft may name a line the patch no longer has; those are listed in the review
+    // panel instead, where they can be deleted.
+    const here = data.drafts.filter((d) => !d.outdated);
+    const touched = new Set([...here.map((d) => d.path), ...(composing ? [composing.path] : [])]);
+    for (const path of touched) {
+      const file = items.find((f) => f.path === path);
+      if (!file) {
+        continue;
+      }
+      const lines = new Map(annotations.get(path));
+      const added = new Map<number, ReactNode[]>();
+      const add = (line: number, node: ReactNode) =>
+        added.set(line, [...(added.get(line) ?? []), node]);
+      for (const draft of here.filter((d) => d.path === path)) {
+        add(draft.line, <DraftNote draft={draft} key={draft.id} pullId={pull.id} />);
+      }
+      if (composing?.path === path && headSha !== null && file.patchDigest !== null) {
+        add(
+          composing.line,
+          <NewDraft
+            headSha={headSha}
+            key="new-draft"
+            line={composing.line}
+            onDone={() => setComposing(null)}
+            patchDigest={file.patchDigest}
+            path={path}
+            pullId={pull.id}
+          />
+        );
+      }
+      for (const [line, nodes] of added) {
+        lines.set(
+          line,
+          <div className="space-y-2" key={`line-${line}`}>
+            {lines.get(line) ?? null}
+            {nodes}
+          </div>
+        );
+      }
+      merged.set(path, lines);
+    }
+    return merged;
+  }, [annotations, composing, data.drafts, headSha, items, pull.id]);
   const counts = useMemo(() => findingCounts(findings), [findings]);
   const unplaced = useMemo(() => unanchoredFindings(findings), [findings]);
 
@@ -318,6 +376,8 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
         </Card>
       ) : null}
 
+      <ReviewPanel data={data} />
+
       {files.type === 'ok' ? (
         <div className="grid gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
           <nav
@@ -422,7 +482,7 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
                     <ReviewDiffFile
                       added={lines.added}
                       anchorId={fileAnchor(index)}
-                      annotations={annotations.get(file.path)}
+                      annotations={fileAnnotations.get(file.path)}
                       headerExtra={
                         <span className="flex items-center gap-2">
                           {changedSince.has(file.path) ? (
@@ -455,6 +515,7 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
                       mode={layout}
                       moved={moved.get(file.path)}
                       name={file.path}
+                      onComment={canComment ? startComment : undefined}
                       onToggle={() => setOpen((c) => ({ ...c, [file.path]: !isOpen(file.path) }))}
                       open={isOpen(file.path)}
                       path={file.path}

@@ -495,3 +495,51 @@ describe('syntax colouring', () => {
     expect(container.querySelectorAll('.syn').length).toBeGreaterThan(0);
   });
 });
+
+describe('commenting on a line', () => {
+  const commentButtons = () => screen.queryAllByRole('button', { name: /^Comment on line/ });
+
+  it('has plain line numbers when nothing handles a comment', () => {
+    render(<DiffFile {...props()} />);
+    expect(commentButtons()).toHaveLength(0);
+  });
+
+  it('turns the new number of each added and unchanged line into a button, and none for a removed one', () => {
+    render(<DiffFile {...props({ onLineComment: () => undefined })} />);
+    expect(commentButtons().map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Comment on line 10',
+      'Comment on line 11',
+      'Comment on line 12',
+    ]);
+  });
+
+  it('says which line of the new side was chosen', () => {
+    const onLineComment = vi.fn();
+    render(<DiffFile {...props({ onLineComment })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on line 11' }));
+    expect(onLineComment).toHaveBeenCalledTimes(1);
+    expect(onLineComment).toHaveBeenCalledWith(11);
+  });
+
+  it('keeps the number visible in the button', () => {
+    render(<DiffFile {...props({ onLineComment: () => undefined })} />);
+    expect(screen.getByRole('button', { name: 'Comment on line 12' }).textContent).toContain('12');
+  });
+
+  it('offers it on the new side only when the layout is split', () => {
+    const onLineComment = vi.fn();
+    render(<DiffFile {...props({ mode: 'split', onLineComment })} />);
+    expect(commentButtons().map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Comment on line 10',
+      'Comment on line 11',
+      'Comment on line 12',
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on line 12' }));
+    expect(onLineComment).toHaveBeenCalledWith(12);
+  });
+
+  it('draws no buttons for a closed file', () => {
+    render(<DiffFile {...props({ onLineComment: () => undefined, open: false })} />);
+    expect(commentButtons()).toHaveLength(0);
+  });
+});
