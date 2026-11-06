@@ -25,6 +25,15 @@ them on a work branch, **pushes** the fix onto the pull request's own branch as 
 answered thread), **watches** the pull request's CI on the pushed commit, and runs **at most
 one CI follow-up** on the same fixer path.
 
+The `/auto-swe fix` command can also be left from the platform's review page: **Send back to the
+agent** on `/pull-requests/<id>` posts it as the reviewer, with their own saved GitHub token and
+an optional note after the command
+([`work-views.md`](./work-views.md) §2.6). That is the same comment a person types on the host, so
+every check below applies to it as to any other: nothing is started from the page, and it is refused
+there while `github.prFeedbackAutomationsEnabled` is off. A review sent from the page with the
+verdict "request changes" is a review that requests changes and starts a round the same way, on a
+pull request the platform opened.
+
 Two filters shape what a trigger selects:
 
 - `triggers` — `changes_requested`, `command` and/or `qodo_findings` (default the first two;
@@ -221,6 +230,9 @@ and the run records no `requestedById`. The organization budget is still checked
 
 ## Limitations
 
+- A send-back from the review page leaves the comment and cannot tell whether a round started: the
+  reviewer's linked account, write permission, the round limit and the kill switch are decided on
+  the webhook path afterwards, and a refusal there is not shown on the page.
 - GitHub only. Review threads are read through the GraphQL API; a GHES host resolves its own
   `…/api/graphql` endpoint from the repository's API base.
 - At most 100 threads and 50 comments each are read; a non-member-authored thread is dropped
