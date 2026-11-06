@@ -1376,6 +1376,18 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       }
     },
 
+    async startRepoSetupFileProposal(
+      workflowId: string,
+      input: { connectionId: string; setup: unknown }
+    ): Promise<void> {
+      await client.workflow.start('RepoSetupFileProposalWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: REPO_SETUP_FILE_PROPOSAL_TIMEOUT,
+        workflowId,
+      });
+    },
+
     async startReviewFixRetry(
       workflowId: string,
       input: { runId: string; attemptId: string; automationId?: string }
@@ -1392,18 +1404,6 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
           throw err;
         }
       }
-    },
-
-    async startRepoSetupFileProposal(
-      workflowId: string,
-      input: { connectionId: string; setup: unknown }
-    ): Promise<void> {
-      await client.workflow.start('RepoSetupFileProposalWorkflow', {
-        args: [input],
-        taskQueue: 'engineering-workflow',
-        workflowExecutionTimeout: REPO_SETUP_FILE_PROPOSAL_TIMEOUT,
-        workflowId,
-      });
     },
 
     async startRunnableWorkflow(
