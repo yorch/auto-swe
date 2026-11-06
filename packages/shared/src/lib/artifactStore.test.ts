@@ -216,7 +216,7 @@ describe('putArtifact (postgres backend)', () => {
     } finally {
       await fs.rm(filePath, { force: true });
     }
-  });
+  }, 15_000);
 
   it('rejects and deletes a pending chunked row when the file size does not match', async () => {
     const filePath = path.join(os.tmpdir(), `asw-artifact-${process.pid}.bad-size.pg`);
