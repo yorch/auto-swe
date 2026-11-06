@@ -144,6 +144,11 @@ describe('review fix launches', () => {
   it('launches an opted-in built-in feedback round with a real fire and stable ledger identity', async () => {
     const result = await startReviewFix(payload, RUN);
     expect(result.status).toBe('started');
+    expect(m.automations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ connection: { teamId: 'team' }, connectionId: REPO }),
+      })
+    );
     const fire = m.fires.get(`review-fix:${RUN}`);
     expect(fire).toMatchObject({
       facts: { headSha: HEAD, reviewRunId: RUN },

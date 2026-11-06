@@ -173,6 +173,7 @@ const fakeActivities = {
     runId: 'run-test-1',
     spec: currentSpec,
   }),
+  dispatchReviewLaunches: async () => {},
   executeCIFixImplementation: async (_failureContext: string, previous: CodeResultLike) =>
     fixSession('ciFix', previous),
   executeImplementation: async () => pushImplementation(),

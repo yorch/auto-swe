@@ -636,13 +636,14 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'gatherPrFeedback',
-    ({ request }) =>
+    ({ request }) => {
       // The trigger is part of the run's payload, so the choice is the same on every replay.
-      ['qodo_findings', 'review_findings'].includes(
-        String((request.payload as { feedbackTrigger?: unknown } | undefined)?.feedbackTrigger)
-      )
+      const trigger = (request.payload as { feedbackTrigger?: unknown } | undefined)
+        ?.feedbackTrigger;
+      return trigger === 'qodo_findings' || trigger === 'review_findings'
         ? prFeedbackQodoGatherActivities.gatherPrFeedback({ request })
-        : prFeedbackActivities.gatherPrFeedback({ request }),
+        : prFeedbackActivities.gatherPrFeedback({ request });
+    },
   ],
   [
     'executePrFeedbackImplementation',

@@ -72,7 +72,13 @@ export async function startReviewFix(
   }
   const automations = await prisma.automation.findMany({
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-    where: { connectionId: repo.id, enabled: true, source: PR_FEEDBACK, templateId: null },
+    where: {
+      connection: { teamId: repo.teamId },
+      connectionId: repo.id,
+      enabled: true,
+      source: PR_FEEDBACK,
+      templateId: null,
+    },
   });
   const automation = automations.find((a) => {
     const parsed = PrFeedbackFiltersSchema.safeParse(a.filters);
