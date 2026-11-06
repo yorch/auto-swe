@@ -1668,6 +1668,53 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
+  // POST /api/v1/repositories/:id/setup/pull-request — open a pull request that adds
+  // `.auto-swe/setup.yml`, written from the given definition, to the repository's default branch.
+  // The same role as changing the setup field: the file is code every workspace runs. Refused
+  // (409) when the default branch already has the file; this never edits one.
+  app.post(
+    '/:id/setup/pull-request',
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: { body: z.object({ setup: RepoSetupSchema }), params: RepoParamsSchema },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const repo = await fastify.prisma.connection.findUnique({
+        select: { id: true, teamId: true, type: true },
+        where: { id: request.params.id },
+      });
+      if (repo?.type !== 'git_repo') {
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      if (!(await isShellAuthor(fastify, user, repo.teamId))) {
+        return sendError(
+          reply,
+          403,
+          'REPO_SETUP_FORBIDDEN',
+          'Proposing a workspace setup file requires team-admin role'
+        );
+      }
+      const result = await fastify.temporal.proposeRepoSetupFile(
+        `repo-setup-file-${repo.id}-${crypto.randomBytes(8).toString('hex')}`,
+        { connectionId: repo.id, setup: request.body.setup }
+      );
+      if (!result.ok) {
+        return result.reason === 'exists'
+          ? sendError(reply, 409, 'REPO_SETUP_FILE_EXISTS', result.detail)
+          : sendError(reply, 400, 'VALIDATION_ERROR', result.detail);
+      }
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor: user,
+        after: { setupFilePullRequest: result.prUrl },
+        entityId: repo.id,
+        entityType: 'Connection',
+      });
+      return { data: result };
+    }
+  );
+
   // POST /api/v1/repositories/:id/executor-image/probe — check an executor
   // image against the workspace contract by starting it as a hardened
   // workspace container and running the contract probe inside it. Platform

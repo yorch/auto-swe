@@ -2,7 +2,11 @@
 
 import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
 import type { RepoSetup } from '@auto-swe/shared/lib/repoSetup';
-import type { RepoGateCommands, RepositorySummary } from '@auto-swe/shared/types/api';
+import type {
+  RepoGateCommands,
+  RepoSetupFileProposal,
+  RepositorySummary,
+} from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
 import { READINESS_KEY } from '@/hooks/useReadiness';
@@ -164,6 +168,19 @@ export function useMyCredentials() {
     queryFn: () =>
       api.get<{ data: MyCredentials }>('/api/v1/repositories/credentials/mine').then((r) => r.data),
     queryKey: ['my-repo-credentials'],
+  });
+}
+
+/** Open a pull request adding `.auto-swe/setup.yml`, written from `setup`, to the repository. */
+export function useProposeSetupFile(connectionId: string) {
+  return useMutation({
+    mutationFn: (setup: RepoSetup) =>
+      api
+        .post<{ data: Extract<RepoSetupFileProposal, { ok: true }> }>(
+          `/api/v1/repositories/${connectionId}/setup/pull-request`,
+          { setup }
+        )
+        .then((r) => r.data),
   });
 }
 

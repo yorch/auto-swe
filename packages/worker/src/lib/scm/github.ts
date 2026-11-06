@@ -1041,6 +1041,22 @@ export class GitHubScmProvider implements ScmProvider {
     }
   }
 
+  async createFile(
+    repo: RepoRef,
+    input: { branch: string; path: string; content: string; message: string }
+  ): Promise<void> {
+    const octokit = await octokitFor(repo);
+    // No `sha`: GitHub then only creates, and refuses (422) a path that already exists.
+    await octokit.repos.createOrUpdateFileContents({
+      branch: input.branch,
+      content: Buffer.from(input.content, 'utf-8').toString('base64'),
+      message: input.message,
+      owner: repo.organizationName,
+      path: input.path,
+      repo: repo.repoName,
+    });
+  }
+
   async upsertMarkedComment(
     repo: RepoRef,
     issueNumber: number,

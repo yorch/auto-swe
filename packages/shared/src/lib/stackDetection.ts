@@ -22,6 +22,13 @@ const SIGNALS: Record<Stack, string[]> = {
   python: ['pyproject.toml', 'requirements.txt', 'setup.py'],
 };
 
+/** Files beside a stack signal that pick its dependency install (`stackDefaultSetup`). */
+const INSTALL_EVIDENCE: Partial<Record<Stack, string[]>> = {
+  go: ['go.sum'],
+  jvm: ['gradlew'],
+  python: ['uv.lock'],
+};
+
 const NODE_LOCKFILES: Array<{ file: string; pm: NodePackageManager }> = [
   { file: 'package-lock.json', pm: 'npm' },
   { file: 'yarn.lock', pm: 'yarn' },
@@ -611,6 +618,19 @@ export function detectStack(
   for (const { file } of NODE_LOCKFILES) {
     for (const f of filtered) {
       if (f.split('/').pop() === file) {
+        evidence.push(f);
+      }
+    }
+  }
+  // Only beside the stack's own signal, so a stray lockfile in a directory of another stack is
+  // not evidence.
+  const signalDirsOf = (stack: Stack) =>
+    new Set(components.filter((c) => c.stacks.includes(stack)).map((c) => c.path));
+  for (const stack of stacks) {
+    const dirs = signalDirsOf(stack);
+    for (const f of filtered) {
+      const dir = f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '';
+      if (dirs.has(dir) && INSTALL_EVIDENCE[stack]?.includes(f.split('/').pop() ?? '')) {
         evidence.push(f);
       }
     }

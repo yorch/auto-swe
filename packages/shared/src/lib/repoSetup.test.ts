@@ -3,9 +3,12 @@ import {
   parseRepoSetup,
   parseRepoSetupYaml,
   REPO_SETUP_FILE,
+  repoSetupToYaml,
   resolveRepoSetup,
   stackDefaultSetup,
+  starterRepoSetup,
 } from './repoSetup.js';
+import { detectStack } from './stackDetection.js';
 
 const nodeStack = (packageManager: string, evidence: string[], yarnFlavor?: string) => ({
   evidence,
@@ -77,9 +80,112 @@ describe('stackDefaultSetup', () => {
     expect(stackDefaultSetup(nodeStack('npm', ['package.json']))).toBeNull();
   });
 
-  it('gives nothing for other stacks or no detection', () => {
+  it('gives nothing without a detection, or without the file an install needs', () => {
     expect(stackDefaultSetup(null)).toBeNull();
     expect(stackDefaultSetup({ evidence: ['go.mod'], primary: 'go', stacks: ['go'] })).toBeNull();
+    expect(
+      stackDefaultSetup({ evidence: ['pyproject.toml'], primary: 'python', stacks: ['python'] })
+    ).toBeNull();
+    expect(
+      stackDefaultSetup({ evidence: ['build.gradle'], primary: 'jvm', stacks: ['jvm'] })
+    ).toBeNull();
+  });
+
+  const one = (stack: string, evidence: string[]) => ({
+    evidence,
+    primary: stack,
+    stacks: [stack],
+  });
+
+  it.each([
+    [
+      'python',
+      ['pyproject.toml', 'uv.lock', 'requirements.txt'],
+      'uv sync --frozen',
+      { keyFiles: ['uv.lock'], paths: ['.venv'] },
+    ],
+    [
+      'python',
+      ['requirements.txt'],
+      'python -m venv .venv && .venv/bin/pip install -r requirements.txt',
+      { keyFiles: ['requirements.txt'], paths: ['.venv'] },
+    ],
+    [
+      'go',
+      ['go.mod', 'go.sum'],
+      'go mod download',
+      { keyFiles: ['go.mod', 'go.sum'], paths: ['~/go/pkg/mod'] },
+    ],
+    [
+      'jvm',
+      ['pom.xml'],
+      'mvn -B -q dependency:go-offline',
+      { keyFiles: ['pom.xml'], paths: ['~/.m2/repository'] },
+    ],
+    [
+      'jvm',
+      ['settings.gradle.kts', 'gradlew'],
+      './gradlew --no-daemon dependencies',
+      {
+        keyFiles: [
+          'settings.gradle.kts',
+          'gradle/libs.versions.toml',
+          'gradle/wrapper/gradle-wrapper.properties',
+        ],
+        paths: ['~/.gradle/caches', '~/.gradle/wrapper'],
+      },
+    ],
+  ])('installs %s from %j', (stack, evidence, run, cache) => {
+    expect(stackDefaultSetup(one(stack, evidence))).toEqual({
+      cache,
+      steps: [{ name: 'install dependencies', run }],
+    });
+  });
+
+  it('reads the install files from a fresh detection', () => {
+    expect(
+      stackDefaultSetup(detectStack(['go.mod', 'go.sum', 'docs/uv.lock']))?.steps?.[0]?.run
+    ).toBe('go mod download');
+    expect(detectStack(['go.mod', 'docs/uv.lock']).evidence).toEqual(['go.mod']);
+    expect(stackDefaultSetup(detectStack(['pom.xml', 'gradlew']))?.steps?.[0]?.run).toBe(
+      'mvn -B -q dependency:go-offline'
+    );
+  });
+
+  it('runs a single component in its directory, keeping home paths as they are', () => {
+    const detected = {
+      components: [{ path: 'svc', stacks: ['go'] }],
+      evidence: ['svc/go.mod', 'svc/go.sum'],
+      primary: 'go',
+      stacks: ['go'],
+    };
+    expect(stackDefaultSetup(detected)).toEqual({
+      cache: { keyFiles: ['svc/go.mod', 'svc/go.sum'], paths: ['~/go/pkg/mod'] },
+      steps: [{ name: 'install dependencies', run: 'go mod download', workdir: 'svc' }],
+    });
+  });
+});
+
+describe('repoSetupToYaml', () => {
+  it('writes a commented file that parses back to the same definition', () => {
+    const setup = {
+      cache: { keyFiles: ['yarn.lock'], paths: ['node_modules'] },
+      env: { CI: '1' },
+      lfs: true,
+      steps: [{ name: 'install', run: 'yarn install --immutable', timeoutSeconds: 900 }],
+      submodules: 'recursive' as const,
+    };
+    const text = repoSetupToYaml(setup);
+    expect(text.startsWith('# .auto-swe/setup.yml')).toBe(true);
+    expect(text.indexOf('submodules:')).toBeLessThan(text.indexOf('steps:'));
+    expect(parseRepoSetupYaml(text)).toEqual({ ok: true, setup });
+  });
+
+  it('starts from the stack default, else a placeholder step', () => {
+    expect(starterRepoSetup(nodeStack('npm', ['package-lock.json']))?.steps?.[0]?.run).toBe(
+      'npm ci'
+    );
+    expect(parseRepoSetup(starterRepoSetup(null)).ok).toBe(true);
   });
 });
 

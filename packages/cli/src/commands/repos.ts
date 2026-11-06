@@ -1,5 +1,14 @@
-import { readFile } from 'node:fs/promises';
-import { parseRepoSetupYaml } from '@auto-swe/shared/lib/repoSetup';
+import { execFile } from 'node:child_process';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import { promisify } from 'node:util';
+import {
+  parseRepoSetupYaml,
+  REPO_SETUP_FILE,
+  repoSetupToYaml,
+  starterRepoSetup,
+} from '@auto-swe/shared/lib/repoSetup';
+import { detectStack } from '@auto-swe/shared/lib/stackDetection';
 import {
   REPO_GATE_COMMAND_KEYS,
   type RepoGateCommandKey,
@@ -43,6 +52,10 @@ const SUB_HELP = `auto-swe repos — repository settings
                                       gate's command, --clear removes every one first. A gate with
                                       no command runs the built-in default. Changing them needs a
                                       platform admin or an admin of the repository's team.
+  repos setup init [dir] [--force]    Write a starter .auto-swe/setup.yml into a local checkout
+                                      (default: the current directory), with the install for the
+                                      stack its files show. Local, no token; refuses to replace an
+                                      existing file without --force
   repos setup <org/name>              Print the repository's workspace setup
   repos setup <org/name> --file=PATH  Set it from a YAML or JSON file (the .auto-swe/setup.yml
                                       schema); it then replaces the repository's own file
@@ -67,6 +80,9 @@ export async function runReposCommand(args: string[], env: CliEnv): Promise<numb
   const handled = await runWithExitCodes(async () => {
     if (sub === 'gate-commands') {
       return await cmdGateCommands(rest, env);
+    }
+    if (sub === 'setup' && rest[0] === 'init') {
+      return await runReposSetupInit(rest.slice(1));
     }
     if (sub === 'setup') {
       return await cmdSetup(rest, env);
@@ -134,6 +150,79 @@ async function cmdGateCommands(args: string[], env: CliEnv): Promise<number> {
     }
   );
   printGateCommands(updated.gateCommands ?? null);
+  return 0;
+}
+
+const execFileAsync = promisify(execFile);
+const WALK_SKIP = new Set(['.git', 'node_modules', '.venv', 'vendor', 'target', 'build', 'dist']);
+const WALK_MAX_FILES = 20_000;
+
+/** The checkout's tracked files, else a bounded walk of the directory for a non-git one. */
+async function listCheckoutFiles(dir: string): Promise<string[]> {
+  try {
+    const { stdout } = await execFileAsync('git', ['-C', dir, 'ls-files'], {
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return stdout.split('\n').filter(Boolean);
+  } catch {
+    const files: string[] = [];
+    const walk = async (rel: string): Promise<void> => {
+      for (const entry of await readdir(path.join(dir, rel), { withFileTypes: true })) {
+        if (files.length >= WALK_MAX_FILES) {
+          return;
+        }
+        const child = rel ? `${rel}/${entry.name}` : entry.name;
+        if (entry.isDirectory() && !WALK_SKIP.has(entry.name)) {
+          await walk(child);
+        } else if (entry.isFile()) {
+          files.push(child);
+        }
+      }
+    };
+    await walk('');
+    return files;
+  }
+}
+
+/**
+ * `repos setup init [dir] [--force]`: write a starter `.auto-swe/setup.yml` into a local
+ * checkout, from the same stack detection and defaults the platform uses. Needs no token.
+ */
+export async function runReposSetupInit(args: string[]): Promise<number> {
+  const { positional, flags } = parseFlags(args);
+  const unknown = Object.keys(flags).find((f) => f !== 'force');
+  if (unknown || positional.length > 1) {
+    process.stderr.write(
+      `${unknown ? `Unknown flag: --${unknown}\n` : ''}Usage: repos setup init [dir] [--force]\n`
+    );
+    return 1;
+  }
+  const dir = path.resolve(positional[0] ?? '.');
+  const target = path.join(dir, REPO_SETUP_FILE);
+  const exists = await readFile(target).then(
+    () => true,
+    () => false
+  );
+  if (exists && !('force' in flags)) {
+    process.stderr.write(`${target} already exists; pass --force to replace it\n`);
+    return 1;
+  }
+  let files: string[];
+  try {
+    files = await listCheckoutFiles(dir);
+  } catch (err) {
+    process.stderr.write(`${dir}: ${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+  const detected = detectStack(files);
+  const text = repoSetupToYaml(starterRepoSetup(detected));
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, text, 'utf8');
+  process.stdout.write(
+    `Wrote ${path.relative(process.cwd(), target) || target}` +
+      `${detected.stacks.length ? ` (detected: ${detected.stacks.join(', ')})` : ''}.\n` +
+      'Review it, commit it, and every workspace of the repository runs it.\n'
+  );
   return 0;
 }
 

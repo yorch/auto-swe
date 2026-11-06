@@ -21,6 +21,7 @@ vi.mock('@/hooks/useTeams', () => ({
 }));
 vi.mock('@/hooks/useRepositories', () => ({
   useCreateRepository: () => ({ isPending: false, mutateAsync: create.mutateAsync }),
+  useProposeSetupFile: () => ({ data: undefined, isPending: false, mutate: vi.fn() }),
   useUpdateRepository: () => ({ isPending: false, mutateAsync: update.mutateAsync }),
 }));
 
@@ -333,5 +334,57 @@ describe('ConnectionFormModal typed input', () => {
     expect(
       (screen.getByRole('button', { name: 'Create connection' }) as HTMLButtonElement).disabled
     ).toBe(false);
+  });
+});
+
+describe('ConnectionFormModal workspace setup', () => {
+  beforeAll(() => stubDialogPrototype());
+  beforeEach(() => {
+    update.mutateAsync.mockReset().mockResolvedValue({});
+    auth.role = 'LEAD';
+    auth.teamRole = 'ADMIN';
+  });
+
+  const withSetup = {
+    ...repo,
+    setup: { cache: { paths: ['node_modules'] }, steps: [{ name: 'install', run: 'npm ci' }] },
+  } as unknown as RepositorySummary;
+
+  it('edits the stored definition as fields and saves the result', async () => {
+    renderEdit(withSetup);
+    const command = screen.getByLabelText('Step 1 command') as HTMLTextAreaElement;
+    expect(command.value).toBe('npm ci');
+    fireEvent.change(command, { target: { value: 'npm ci --ignore-scripts' } });
+    fireEvent.click(screen.getByLabelText('Fetch Git LFS objects'));
+    save();
+    await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
+    expect(update.mutateAsync.mock.calls[0]?.[0].setup).toEqual({
+      cache: { paths: ['node_modules'] },
+      lfs: true,
+      steps: [{ name: 'install', run: 'npm ci --ignore-scripts' }],
+    });
+  });
+
+  it('clears the definition when the section is turned off', async () => {
+    renderEdit(withSetup);
+    fireEvent.click(screen.getByLabelText(/Define workspace setup here/));
+    save();
+    await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
+    expect(update.mutateAsync.mock.calls[0]?.[0].setup).toBeNull();
+  });
+
+  it('refuses an invalid field without saving', async () => {
+    renderEdit(withSetup);
+    fireEvent.change(screen.getByLabelText('Directory'), { target: { value: '../up' } });
+    save();
+    await waitFor(() =>
+      expect(screen.getAllByText(/Workspace setup is invalid/).length).toBeGreaterThan(0)
+    );
+    expect(update.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('shows the definition as setup.yml text to copy', () => {
+    renderEdit(withSetup);
+    expect(screen.getByText(/run: npm ci/)).toBeTruthy();
   });
 });

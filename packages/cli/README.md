@@ -110,6 +110,12 @@ repos gate-commands <org/name> [--lint=CMD] [--typecheck=CMD] [--tests=CMD] [--b
                                      Setting needs a platform admin or the team's admin
                                      (see docs/repositories.md)
 
+repos setup init [dir] [--force]
+                                     Write a starter .auto-swe/setup.yml into a local checkout
+                                     (default: the current directory), with the install for the
+                                     stack its tracked files show. Local, no token; refuses to
+                                     replace an existing file without --force
+
 repos setup <org/name> [--file=PATH | --clear]
                                      Print a repository's workspace setup, set it from a YAML or
                                      JSON file (the .auto-swe/setup.yml schema), or remove it so

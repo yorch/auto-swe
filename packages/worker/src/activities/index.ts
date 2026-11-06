@@ -215,6 +215,7 @@ export {
   runAgentPrFeedbackTask,
 } from './prFeedback.js';
 export { probeExecutorImage } from './probeExecutorImage.js';
+export { proposeRepoSetupFile } from './proposeRepoSetupFile.js';
 export type { PruneAgentTranscriptsResult } from './pruneAgentTranscripts.js';
 export { pruneAgentTranscripts } from './pruneAgentTranscripts.js';
 export type { PruneAuditAndActivityResult } from './pruneAuditAndActivity.js';
