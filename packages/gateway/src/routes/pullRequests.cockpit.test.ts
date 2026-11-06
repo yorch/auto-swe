@@ -12,8 +12,12 @@ vi.mock('@auto-swe/shared/lib/systemConfig', async (orig) => ({
   resolveGitHubBaseUrl: async () => 'https://github.com',
 }));
 
-const m = vi.hoisted(() => ({ readPullFiles: vi.fn() }));
-vi.mock('../lib/githubPullFiles.js', () => ({ readPullFiles: m.readPullFiles }));
+const m = vi.hoisted(() => ({ readCompare: vi.fn(), readPullFiles: vi.fn() }));
+vi.mock('../lib/githubPullFiles.js', async (orig) => ({
+  ...(await orig<typeof import('../lib/githubPullFiles.js')>()),
+  readCompare: m.readCompare,
+  readPullFiles: m.readPullFiles,
+}));
 
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { reachableConnections } from '../lib/tenantScope.js';
@@ -117,6 +121,10 @@ async function buildApp(role: Role = 'ENGINEER') {
       findMany: vi.fn().mockResolvedValue([]),
       upsert: vi.fn(async (args: { update: { patchDigest: string } }) => args),
     },
+    prReviewVisit: {
+      findUnique: vi.fn().mockResolvedValue(null),
+      upsert: vi.fn().mockResolvedValue({}),
+    },
     pullRequest: { findFirst: vi.fn().mockResolvedValue(pullRow()) },
     teamMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     workflowRun: { findFirst: vi.fn().mockResolvedValue({ id: 'run-1', status: 'COMPLETED' }) },
@@ -135,6 +143,7 @@ const get = (b: Built, id = PR_ID) =>
   b.app.inject({ headers: AUTH, method: 'GET', url: `/api/v1/pull-requests/${id}/cockpit` });
 
 beforeEach(() => {
+  m.readCompare.mockReset();
   m.readPullFiles.mockReset();
   m.readPullFiles.mockResolvedValue(okFiles);
 });
@@ -146,7 +155,14 @@ describe('GET /api/v1/pull-requests/:id/cockpit', () => {
     expect(res.statusCode).toBe(200);
     const { data } = res.json();
     // `pull` leads: the in-app assistant keeps only the start of a long answer.
-    expect(Object.keys(data)).toEqual(['pull', 'evaluation', 'files', 'viewed']);
+    expect(Object.keys(data)).toEqual([
+      'pull',
+      'evaluation',
+      'files',
+      'changedSinceViewed',
+      'sinceLastVisit',
+      'viewed',
+    ]);
     expect(data.pull).toMatchObject({
       headSha: HEAD,
       id: PR_ID,
@@ -313,6 +329,158 @@ describe('the viewed marks in the cockpit', () => {
     m.readPullFiles.mockResolvedValue({ reason: 'failed', type: 'unavailable' });
     b.prisma.prFileView.findMany.mockResolvedValue([{ patchDigest: 'digest', path: 'src/a.ts' }]);
     expect((await get(b)).json().data.viewed).toEqual([]);
+  });
+});
+
+describe('what changed since the caller last looked', () => {
+  const OLD_HEAD = 'a'.repeat(40);
+  const NEW_HEAD = 'b'.repeat(40);
+  const visited = { lastHeadSha: OLD_HEAD, lastVisitedAt: new Date('2026-11-02T08:00:00.000Z') };
+  const moved = { ...okFiles, headSha: NEW_HEAD };
+
+  it('names the files marked viewed whose patch has changed since the mark', async () => {
+    const b = await buildApp();
+    b.prisma.prFileView.findMany.mockResolvedValue([
+      { patchDigest: 'older-digest', path: 'src/a.ts' },
+      { patchDigest: 'x', path: 'src/gone.ts' },
+    ]);
+    const { data } = (await get(b)).json();
+    expect(data.viewed).toEqual([]);
+    expect(data.changedSinceViewed).toEqual(['src/a.ts']);
+  });
+
+  it('has no earlier visit to report on a first look', async () => {
+    const b = await buildApp();
+    const { data } = (await get(b)).json();
+    expect(data.sinceLastVisit).toBeNull();
+    expect(m.readCompare).not.toHaveBeenCalled();
+  });
+
+  it("reads only the caller's own visit, for this pull request", async () => {
+    const b = await buildApp();
+    await get(b);
+    expect(b.prisma.prReviewVisit.findUnique.mock.calls[0]?.[0].where).toEqual({
+      userId_pullRequestId: { pullRequestId: PR_ID, userId: 'user-1' },
+    });
+  });
+
+  it('says nothing when the head is the one the caller saw, in any case', async () => {
+    const b = await buildApp();
+    b.prisma.prReviewVisit.findUnique.mockResolvedValue({ ...visited, lastHeadSha: 'ABC123' });
+    expect((await get(b)).json().data.sinceLastVisit).toBeNull();
+    expect(m.readCompare).not.toHaveBeenCalled();
+  });
+
+  it('lists the commits between the head they saw and the head now', async () => {
+    const b = await buildApp();
+    m.readPullFiles.mockResolvedValue(moved);
+    b.prisma.prReviewVisit.findUnique.mockResolvedValue(visited);
+    m.readCompare.mockResolvedValue({
+      commits: [{ sha: 'c1', subject: 'fix it' }],
+      rewritten: false,
+      totalCommits: 1,
+      type: 'ok',
+    });
+    const { data } = (await get(b)).json();
+    expect(data.sinceLastVisit).toEqual({
+      commits: [{ sha: 'c1', subject: 'fix it' }],
+      fromHeadSha: OLD_HEAD,
+      lastVisitedAt: '2026-11-02T08:00:00.000Z',
+      rewritten: false,
+      totalCommits: 1,
+    });
+    expect(m.readCompare).toHaveBeenCalledWith(repository, OLD_HEAD, NEW_HEAD);
+  });
+
+  it('passes a rewritten branch on', async () => {
+    const b = await buildApp();
+    m.readPullFiles.mockResolvedValue(moved);
+    b.prisma.prReviewVisit.findUnique.mockResolvedValue(visited);
+    m.readCompare.mockResolvedValue({ commits: [], rewritten: true, totalCommits: 0, type: 'ok' });
+    expect((await get(b)).json().data.sinceLastVisit).toMatchObject({ rewritten: true });
+  });
+
+  it('still says the head moved, without commits, when the host cannot be asked', async () => {
+    const b = await buildApp();
+    m.readPullFiles.mockResolvedValue(moved);
+    b.prisma.prReviewVisit.findUnique.mockResolvedValue(visited);
+    m.readCompare.mockResolvedValue({ reason: 'rate-limited', type: 'unavailable' });
+    expect((await get(b)).json().data.sinceLastVisit).toMatchObject({
+      commits: null,
+      fromHeadSha: OLD_HEAD,
+      rewritten: false,
+    });
+  });
+
+  it('reports nothing while the host cannot say what the head is now', async () => {
+    const b = await buildApp();
+    m.readPullFiles.mockResolvedValue({ reason: 'failed', type: 'unavailable' });
+    b.prisma.prReviewVisit.findUnique.mockResolvedValue(visited);
+    expect((await get(b)).json().data.sinceLastVisit).toBeNull();
+    expect(m.readCompare).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/v1/pull-requests/:id/visit', () => {
+  const SHA = 'c'.repeat(40);
+  const post = (b: Built, body: unknown, id = PR_ID) =>
+    b.app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: body as never,
+      url: `/api/v1/pull-requests/${id}/visit`,
+    });
+
+  it('records the head for the caller, keeping the first visit time', async () => {
+    const b = await buildApp();
+    const res = await post(b, { headSha: SHA });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toEqual({ recorded: true });
+    expect(b.prisma.prReviewVisit.upsert).toHaveBeenCalledWith({
+      create: {
+        firstVisitedAt: expect.any(Date),
+        lastHeadSha: SHA,
+        lastVisitedAt: expect.any(Date),
+        pullRequestId: PR_ID,
+        userId: 'user-1',
+      },
+      update: { lastHeadSha: SHA, lastVisitedAt: expect.any(Date) },
+      where: { userId_pullRequestId: { pullRequestId: PR_ID, userId: 'user-1' } },
+    });
+  });
+
+  it('limits an engineer to repositories they can reach, and answers 404 otherwise', async () => {
+    const b = await buildApp('ENGINEER');
+    b.prisma.pullRequest.findFirst.mockResolvedValue(null);
+    expect((await post(b, { headSha: SHA })).statusCode).toBe(404);
+    expect(b.prisma.pullRequest.findFirst.mock.calls[0]?.[0].where).toEqual({
+      id: PR_ID,
+      repository: reachableConnections({ sub: 'user-1' }, GATE),
+    });
+    expect(b.prisma.prReviewVisit.upsert).not.toHaveBeenCalled();
+  });
+
+  it('applies no reach filter for an admin', async () => {
+    const b = await buildApp('ADMIN');
+    await post(b, { headSha: SHA });
+    expect(b.prisma.pullRequest.findFirst.mock.calls[0]?.[0].where).toEqual({ id: PR_ID });
+  });
+
+  it.each([
+    ['no head', {}],
+    ['a branch name', { headSha: 'main' }],
+    ['a path', { headSha: `${SHA}/../x` }],
+    ['a short id', { headSha: 'c'.repeat(39) }],
+  ])('rejects %s before reading anything', async (_name, body) => {
+    const b = await buildApp();
+    expect((await post(b, body)).statusCode).toBe(400);
+    expect(b.prisma.pullRequest.findFirst).not.toHaveBeenCalled();
+    expect(b.prisma.prReviewVisit.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects an id that is not a uuid', async () => {
+    const b = await buildApp();
+    expect((await post(b, { headSha: SHA }, 'nope')).statusCode).toBe(400);
   });
 });
 

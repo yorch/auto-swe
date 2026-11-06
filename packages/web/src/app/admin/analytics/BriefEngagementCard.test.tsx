@@ -17,6 +17,8 @@ const response = (over: Partial<PrEngagementResponse> = {}): PrEngagementRespons
   comments: { elsewhere: 2, flagged: 6, flaggedShare: 0.6, skimmed: 2, skimmedShare: 0.2 },
   evaluations: 8,
   medianMinutesToFirstReview: 90,
+  medianMinutesToFirstView: 12,
+  pullRequestsViewed: 5,
   reviewed: 4,
   windowDays: 30,
   ...over,
@@ -43,6 +45,19 @@ describe('BriefEngagementCard', () => {
     expect(
       screen.getByText('6 on flagged files, 2 on files marked safe to skim, 2 elsewhere')
     ).toBeTruthy();
+  });
+
+  it('shows how soon a pull request is first opened on the review page', async () => {
+    renderCard(response());
+    expect(await screen.findByText('Time to first view, median')).toBeTruthy();
+    expect(screen.getByText('12m')).toBeTruthy();
+    expect(screen.getByText(/across 5 pull requests/)).toBeTruthy();
+  });
+
+  it('shows a dash for it when nobody has opened the page', async () => {
+    renderCard(response({ medianMinutesToFirstView: null, pullRequestsViewed: 0 }));
+    expect(await screen.findByText('Time to first view, median')).toBeTruthy();
+    expect(screen.getByText(/across 0 pull requests/)).toBeTruthy();
   });
 
   it('asks for the window it was given', async () => {

@@ -12,9 +12,10 @@ import type {
   PullRequestCockpitFile,
   PullRequestCockpitFiles,
   PullRequestCockpitFinding,
+  PullRequestCockpitSinceVisit,
 } from '@auto-swe/shared/types/api';
 import { z } from 'zod';
-import type { PullFilesResult } from './githubPullFiles.js';
+import type { CompareResult, PullFilesResult } from './githubPullFiles.js';
 
 const PathEntry = z.object({
   flagged: z.boolean(),
@@ -194,6 +195,59 @@ export function assembleCockpit(input: {
     statusState: input.evaluation.statusState,
   };
   return { evaluation, files };
+}
+
+/**
+ * What a reviewer last saw, set against the head the page shows now. Nothing when they have not
+ * been here, are up to date, or the host could not say what the head is now: with no live head
+ * there is nothing to compare against, and the stored one may lag.
+ */
+export function sinceLastVisit(input: {
+  visit: { lastHeadSha: string; lastVisitedAt: Date } | null;
+  files: PullFilesResult;
+  compare: (base: string, head: string) => Promise<CompareResult>;
+}): Promise<PullRequestCockpitSinceVisit | null> {
+  const { files, visit } = input;
+  if (visit === null || files.type !== 'ok') {
+    return Promise.resolve(null);
+  }
+  if (visit.lastHeadSha.toLowerCase() === files.headSha.toLowerCase()) {
+    return Promise.resolve(null);
+  }
+  const moved = {
+    fromHeadSha: visit.lastHeadSha,
+    lastVisitedAt: visit.lastVisitedAt.toISOString(),
+  };
+  return input.compare(visit.lastHeadSha, files.headSha).then((compared) =>
+    compared.type === 'ok'
+      ? {
+          ...moved,
+          commits: compared.commits,
+          rewritten: compared.rewritten,
+          totalCommits: compared.totalCommits,
+        }
+      : { ...moved, commits: null, rewritten: false, totalCommits: 0 }
+  );
+}
+
+/**
+ * The files a person marked viewed whose patch is no longer the one they marked. The mark is kept
+ * in the table, but `viewedPaths` leaves it out, so the page can say why the file is unread again.
+ */
+export function changedSinceViewed(
+  files: PullRequestCockpitFiles,
+  rows: readonly ViewedRow[]
+): string[] {
+  if (files.type !== 'ok') {
+    return [];
+  }
+  const digestOf = new Map(rows.map((row) => [row.path, row.patchDigest]));
+  return files.items
+    .filter((item) => {
+      const marked = digestOf.get(item.path);
+      return marked !== undefined && item.patchDigest !== null && marked !== item.patchDigest;
+    })
+    .map((item) => item.path);
 }
 
 /** What a stored mark needs to be checked against the file it was made on. */

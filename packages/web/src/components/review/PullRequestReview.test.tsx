@@ -33,6 +33,7 @@ const file = (over: Partial<PullRequestCockpitFile> = {}): PullRequestCockpitFil
 
 function cockpit(over: Partial<PullRequestCockpit> = {}): PullRequestCockpit {
   return {
+    changedSinceViewed: [],
     evaluation: {
       claimsToVerify: [],
       createdAt: '2026-11-03T10:00:00.000Z',
@@ -73,6 +74,7 @@ function cockpit(over: Partial<PullRequestCockpit> = {}): PullRequestCockpit {
       url: 'https://github.com/acme/api/pull/7',
       workRequestId: 'wr-1',
     },
+    sinceLastVisit: null,
     viewed: [],
     ...over,
   };

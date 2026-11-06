@@ -54,11 +54,20 @@ export function BriefEngagementCard({ windowDays }: { windowDays: number }) {
                 No pull requests were evaluated in the last {plural(data.windowDays, 'day')}.
               </p>
             ) : (
-              <div className="grid grid-cols-1 gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid grid-cols-1 gap-x-4 gap-y-8 sm:grid-cols-2 lg:grid-cols-5">
                 <Stat
                   hint={`${data.reviewed} of ${plural(data.evaluations, 'evaluation')} reviewed by a person`}
                   label="Reviewed"
                   value={formatPercent(data.reviewed / data.evaluations)}
+                />
+                <Stat
+                  hint={`From the pull request opening to someone opening it on the review page, across ${plural(data.pullRequestsViewed, 'pull request')}`}
+                  label="Time to first view, median"
+                  value={
+                    data.medianMinutesToFirstView === null
+                      ? '—'
+                      : formatDuration(data.medianMinutesToFirstView * 60_000)
+                  }
                 />
                 <Stat
                   hint="From the evaluation to the first review"
