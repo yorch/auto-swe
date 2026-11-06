@@ -1649,6 +1649,23 @@ export interface PullRequestCockpitSinceVisit {
   totalCommits: number;
 }
 
+/** A line comment the caller has written and not yet sent. */
+export interface PullRequestCockpitDraft {
+  id: string;
+  path: string;
+  /** A line of the file's new side. */
+  line: number;
+  body: string;
+  /** The head the line number was taken at. */
+  headSha: string;
+  createdAt: string;
+  /**
+   * The file changed since the comment was written, or the line is no longer in its patch, so the
+   * comment cannot be sent as it is. False while the files cannot be read: nothing can be said.
+   */
+  outdated: boolean;
+}
+
 /** Response data of GET /api/v1/pull-requests/:id/cockpit. */
 export interface PullRequestCockpit {
   pull: PullRequestListItem & { headSha: string };
@@ -1659,6 +1676,8 @@ export interface PullRequestCockpit {
   viewed: string[];
   /** Paths the caller marked viewed whose patch has changed since the mark. */
   changedSinceViewed: string[];
+  /** The caller's own unsent line comments, oldest first. */
+  drafts: PullRequestCockpitDraft[];
   /** Set only when the caller has opened this page before and the head has moved since. */
   sinceLastVisit: PullRequestCockpitSinceVisit | null;
 }

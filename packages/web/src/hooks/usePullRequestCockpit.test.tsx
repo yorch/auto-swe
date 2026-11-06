@@ -18,6 +18,7 @@ const ID = '00000000-0000-4000-8000-0000000000aa';
 
 const data = (viewed: string[] = []): PullRequestCockpit => ({
   changedSinceViewed: [],
+  drafts: [],
   evaluation: null,
   files: { reason: 'failed', type: 'unavailable' },
   pull: {

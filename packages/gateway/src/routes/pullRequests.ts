@@ -30,6 +30,7 @@ import { paginationQuery } from '../lib/pagination.js';
 import {
   assembleCockpit,
   changedSinceViewed,
+  draftsFor,
   sinceLastVisit,
   viewedPaths,
 } from '../lib/pullRequestCockpit.js';
@@ -39,6 +40,7 @@ import { assertTeamParam } from '../lib/teamParam.js';
 import { teamMembershipFilter } from '../lib/templateLaunch.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
+import { MAX_DRAFTS_PER_PULL_REQUEST } from './pullRequestReview.js';
 
 const Query = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
   draft: z.enum(['any', 'draft', 'ready']).default('any'),
@@ -630,50 +632,66 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'PULL_REQUEST_NOT_FOUND', 'Pull request not found');
       }
       const ledger = row.workflow && row.workflow.repoId === row.repoId ? row.workflow : null;
-      const [instanceBaseUrl, run, evaluation, files, viewedRows, visit] = await Promise.all([
-        resolveGitHubBaseUrl(),
-        ledger
-          ? fastify.prisma.workflowRun.findFirst({
-              select: { id: true, status: true },
-              where: {
-                AND: [
-                  buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
-                  { workflowId: ledger.temporalWorkflowId },
-                ],
-              },
-            })
-          : null,
-        row.repoId !== null && row.prNumber !== null
-          ? fastify.prisma.prEvaluation.findFirst({
-              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-              select: {
-                brief: true,
-                createdAt: true,
-                headSha: true,
-                id: true,
-                mode: true,
-                reasons: true,
-                requiredApprovers: true,
-                riskClass: true,
-                statusState: true,
-              },
-              where: { connectionId: row.repoId, prNumber: row.prNumber, ...reach },
-            })
-          : null,
-        row.repository && row.prNumber !== null
-          ? readPullFiles(row.repository, row.prNumber)
-          : ({ reason: 'not-found', type: 'unavailable' } as const),
-        // The caller's own marks only; the route has already decided they may see this pull request.
-        fastify.prisma.prFileView.findMany({
-          select: { patchDigest: true, path: true },
-          take: MAX_VIEWED_PER_PULL_REQUEST,
-          where: { pullRequestId: row.id, userId: user.sub },
-        }),
-        fastify.prisma.prReviewVisit.findUnique({
-          select: { lastHeadSha: true, lastVisitedAt: true },
-          where: { userId_pullRequestId: { pullRequestId: row.id, userId: user.sub } },
-        }),
-      ]);
+      const [instanceBaseUrl, run, evaluation, files, viewedRows, visit, draftRows] =
+        await Promise.all([
+          resolveGitHubBaseUrl(),
+          ledger
+            ? fastify.prisma.workflowRun.findFirst({
+                select: { id: true, status: true },
+                where: {
+                  AND: [
+                    buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+                    { workflowId: ledger.temporalWorkflowId },
+                  ],
+                },
+              })
+            : null,
+          row.repoId !== null && row.prNumber !== null
+            ? fastify.prisma.prEvaluation.findFirst({
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                select: {
+                  brief: true,
+                  createdAt: true,
+                  headSha: true,
+                  id: true,
+                  mode: true,
+                  reasons: true,
+                  requiredApprovers: true,
+                  riskClass: true,
+                  statusState: true,
+                },
+                where: { connectionId: row.repoId, prNumber: row.prNumber, ...reach },
+              })
+            : null,
+          row.repository && row.prNumber !== null
+            ? readPullFiles(row.repository, row.prNumber)
+            : ({ reason: 'not-found', type: 'unavailable' } as const),
+          // The caller's own marks only; the route has already decided they may see this pull request.
+          fastify.prisma.prFileView.findMany({
+            select: { patchDigest: true, path: true },
+            take: MAX_VIEWED_PER_PULL_REQUEST,
+            where: { pullRequestId: row.id, userId: user.sub },
+          }),
+          fastify.prisma.prReviewVisit.findUnique({
+            select: { lastHeadSha: true, lastVisitedAt: true },
+            where: { userId_pullRequestId: { pullRequestId: row.id, userId: user.sub } },
+          }),
+          // The caller's own unsent comments, bounded by what the draft route lets them keep.
+          fastify.prisma.prReviewDraft.findMany({
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            select: {
+              body: true,
+              createdAt: true,
+              headSha: true,
+              id: true,
+              line: true,
+              patchDigest: true,
+              path: true,
+            },
+            take: MAX_DRAFTS_PER_PULL_REQUEST,
+            where: { pullRequestId: row.id, userId: user.sub },
+          }),
+        ]);
       const parts = assembleCockpit({ evaluation, files, storedHeadSha: row.headSha });
       const repository = row.repository;
       const since = await sinceLastVisit({
@@ -713,6 +731,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         },
         ...parts,
         changedSinceViewed: changedSinceViewed(parts.files, viewedRows),
+        drafts: draftsFor(files, draftRows),
         sinceLastVisit: since,
         viewed: viewedPaths(parts.files, viewedRows),
       };

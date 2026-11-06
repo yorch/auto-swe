@@ -121,6 +121,7 @@ async function buildApp(role: Role = 'ENGINEER') {
       findMany: vi.fn().mockResolvedValue([]),
       upsert: vi.fn(async (args: { update: { patchDigest: string } }) => args),
     },
+    prReviewDraft: { findMany: vi.fn().mockResolvedValue([]) },
     prReviewVisit: {
       findUnique: vi.fn().mockResolvedValue(null),
       upsert: vi.fn().mockResolvedValue({}),
@@ -160,6 +161,7 @@ describe('GET /api/v1/pull-requests/:id/cockpit', () => {
       'evaluation',
       'files',
       'changedSinceViewed',
+      'drafts',
       'sinceLastVisit',
       'viewed',
     ]);
@@ -418,6 +420,72 @@ describe('what changed since the caller last looked', () => {
     b.prisma.prReviewVisit.findUnique.mockResolvedValue(visited);
     expect((await get(b)).json().data.sinceLastVisit).toBeNull();
     expect(m.readCompare).not.toHaveBeenCalled();
+  });
+});
+
+describe("the caller's draft comments in the cockpit", () => {
+  const draft = (over: Record<string, unknown> = {}) => ({
+    body: 'use <=',
+    createdAt: new Date('2026-11-04T10:00:00.000Z'),
+    headSha: HEAD,
+    id: 'd-1',
+    line: 2,
+    patchDigest: 'digest',
+    path: 'src/a.ts',
+    ...over,
+  });
+
+  it('lists them, oldest first, as the caller wrote them', async () => {
+    const b = await buildApp();
+    b.prisma.prReviewDraft.findMany.mockResolvedValue([draft()]);
+    const { data } = (await get(b)).json();
+    expect(data.drafts).toEqual([
+      {
+        body: 'use <=',
+        createdAt: '2026-11-04T10:00:00.000Z',
+        headSha: HEAD,
+        id: 'd-1',
+        line: 2,
+        outdated: false,
+        path: 'src/a.ts',
+      },
+    ]);
+    expect(b.prisma.prReviewDraft.findMany.mock.calls[0]?.[0]).toMatchObject({
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: 100,
+      where: { pullRequestId: PR_ID, userId: 'user-1' },
+    });
+  });
+
+  it('never selects the patch digest into the answer', async () => {
+    const b = await buildApp();
+    b.prisma.prReviewDraft.findMany.mockResolvedValue([draft()]);
+    expect((await get(b)).json().data.drafts[0]).not.toHaveProperty('patchDigest');
+  });
+
+  it('flags a draft whose file has changed since it was written', async () => {
+    const b = await buildApp();
+    b.prisma.prReviewDraft.findMany.mockResolvedValue([draft({ patchDigest: 'older' })]);
+    expect((await get(b)).json().data.drafts[0].outdated).toBe(true);
+  });
+
+  it('flags a draft whose line is no longer in the patch', async () => {
+    const b = await buildApp();
+    b.prisma.prReviewDraft.findMany.mockResolvedValue([draft({ line: 40 })]);
+    expect((await get(b)).json().data.drafts[0].outdated).toBe(true);
+  });
+
+  it('flags a draft on a file the pull request no longer changes', async () => {
+    const b = await buildApp();
+    b.prisma.prReviewDraft.findMany.mockResolvedValue([draft({ path: 'src/gone.ts' })]);
+    expect((await get(b)).json().data.drafts[0].outdated).toBe(true);
+  });
+
+  it('flags nothing while the files cannot be read, since nothing can be said', async () => {
+    const b = await buildApp();
+    m.readPullFiles.mockResolvedValue({ reason: 'failed', type: 'unavailable' });
+    b.prisma.prReviewDraft.findMany.mockResolvedValue([draft({ patchDigest: 'older' })]);
+    expect((await get(b)).json().data.drafts[0].outdated).toBe(false);
   });
 });
 
