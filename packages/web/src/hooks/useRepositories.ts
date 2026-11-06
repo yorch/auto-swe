@@ -1,6 +1,7 @@
 'use client';
 
 import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
+import type { RepoSetup } from '@auto-swe/shared/lib/repoSetup';
 import type { RepoGateCommands, RepositorySummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
@@ -27,6 +28,7 @@ export interface CreateRepoBody {
   /** Onboard with these; any at all takes team ADMIN. */
   gateCommands?: RepoGateCommands;
   previewConfig?: PreviewConfig;
+  setup?: RepoSetup;
   language?: string;
   description?: string;
   githubUrl?: string;
@@ -55,6 +57,7 @@ export interface UpdateRepoBody {
   /** Replaces the stored set; leave out to keep it. Changing it needs team ADMIN. */
   gateCommands?: RepoGateCommands | null;
   previewConfig?: PreviewConfig | null;
+  setup?: RepoSetup | null;
   prTitleFormat?: 'template' | 'conventional' | null;
   prTitleTemplate?: string | null;
   isActive?: boolean;

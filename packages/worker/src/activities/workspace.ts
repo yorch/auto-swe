@@ -7,12 +7,13 @@ import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { assertShellImageAllowed, DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
-import { logWarn } from '../lib/activityLog.js';
+import { auditLog, logWarn } from '../lib/activityLog.js';
 import {
   beginWorkspaceEgress,
   blockedEgressAllow,
   egressPolicyFailure,
   gitHostOf,
+  lfsStorageHosts,
   resolveRunEgressPolicy,
 } from '../lib/egressWiring.js';
 import type { CapturedResult, OnTimeout } from '../lib/execUtils.js';
@@ -21,7 +22,7 @@ import {
   gitIdentityConfigScript,
   resolveGitIdentity,
 } from '../lib/gitIdentity.js';
-import { redactExecError } from '../lib/redactToken.js';
+import { redactExecError, redactSecrets } from '../lib/redactToken.js';
 import {
   beginWorkspaceRegistries,
   buildRegistryAllowlist,
@@ -31,6 +32,15 @@ import {
   splitRegistryWorkspaceEnv,
   type WorkspaceRegistryAccess,
 } from '../lib/registryProxy/workspaceWiring.js';
+import {
+  type RepoSetupHost,
+  type RepoSetupReport,
+  resolveWorkspaceSetup,
+  runSetupGitPhase,
+  runSetupStepsPhase,
+} from '../lib/repoSetupRun.js';
+import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
+import type { RepoRef } from '../lib/scm/types.js';
 import { shellQuote } from '../lib/shellQuote.js';
 import {
   BUILTIN_TOOL_CATALOG,
@@ -94,6 +104,13 @@ export interface Workspace {
    * the scrubbed URL explicitly.
    */
   gitAuthed: (subcommand: string) => Promise<string>;
+  /**
+   * Run the repository's setup (`createWorkspace`'s `repoSetup` with `defer`) on the tree as it
+   * is now: call it once the workspace is on the branch it will work on. A second call, or one
+   * on a workspace whose setup already ran, returns the first report; `again` runs it anew, for a
+   * caller that has cleaned the tree since.
+   */
+  runSetup?: (opts?: { again?: boolean }) => Promise<RepoSetupReport | null>;
   destroy: () => Promise<void>;
 }
 
@@ -658,6 +675,13 @@ export async function createWorkspace(
      * `open` (see `runAgentTask`).
      */
     egressPolicy?: EgressPolicy;
+    /**
+     * Run the repository's setup (`.auto-swe/setup.yml`, or `field` — the repository's
+     * `Connection.setup` — which overrides it). Absent, the workspace gets none: only the trusted
+     * delivery workspace leaves it out. With `defer`, setup waits for `workspace.runSetup()`, for
+     * a caller that moves the checkout to another branch first.
+     */
+    repoSetup?: { field: unknown; defer?: boolean };
   }
 ): Promise<Workspace> {
   // Container caps, default base image and metadata-blocking policy all come
@@ -768,6 +792,145 @@ export async function createWorkspace(
     throw failure;
   }
   let handle: WorkspaceHandle = backend.attach(containerName);
+  async function readWorkspaceFile(filePath: string, maxBytes: number): Promise<Buffer> {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+      throw new RangeError('maxBytes must be a non-negative safe integer');
+    }
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'workspace-file-'));
+    const archivePath = path.join(dir, 'file.tar');
+    try {
+      const archiveLimit = Math.min(Number.MAX_SAFE_INTEGER, maxBytes + 128 * 1024);
+      const copied = await backend.copyOut(handle, filePath, archivePath, {
+        heartbeatLabel: 'workspace: reading a file',
+        maxBytes: archiveLimit,
+        timeoutMs: 60_000,
+      });
+      if (copied.exceeded) {
+        throw new RangeError(`workspace file exceeds the ${maxBytes} byte limit`);
+      }
+      if (copied.exitCode !== 0) {
+        throw new Error(
+          `Could not read workspace file "${filePath}": ${copied.stderr.trim() || 'copy failed'}`
+        );
+      }
+      return await readSingleFileFromArchive(archivePath, maxBytes);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  }
+  let baseRef: () => Promise<string> = async () => 'HEAD';
+  let baseRefFetch: Promise<string> | undefined;
+  // Secrets minted during setup (submodule credentials), scrubbed like the clone's own.
+  const setupSecrets: string[] = [];
+  const setupHost: RepoSetupHost = {
+    capture: (command, opts) => {
+      const tag = newExecTag();
+      return backend.exec(handle, ['sh', '-c', command], {
+        env: [tag.env, ...toolsEnv, ...(opts.env ?? [])],
+        heartbeatLabel: 'workspace: setup',
+        onTimeout: tag.onTimeout,
+        ...(opts.maxOutputBytes !== undefined ? { maxOutputBytes: opts.maxOutputBytes } : {}),
+        timeoutMs: opts.timeoutMs,
+        workdir: '/workspace/target-repo',
+      });
+    },
+    git: (dir, subcommand, authHeader, timeoutMs) => {
+      const tag = newExecTag();
+      const secretEnv = gitAuthSecretEnv(authHeader);
+      return backend.execShell(
+        handle,
+        [
+          'sh',
+          '-c',
+          `cd ${shellQuote(dir)} && ${gitWithAuthHeader(subcommand, Boolean(authHeader))}`,
+        ],
+        {
+          env: [tag.env],
+          heartbeatLabel: 'workspace: setup (git)',
+          onTimeout: tag.onTimeout,
+          ...(secretEnv ? { secretEnv } : {}),
+          timeoutMs,
+        }
+      );
+    },
+    mintCredential: async (organizationName, repoName) => {
+      const row = await prisma.connection.findFirst({
+        include: { installation: { select: { host: true, installationId: true } } },
+        where: {
+          isActive: true,
+          organizationName: { equals: organizationName, mode: 'insensitive' },
+          repoName: { equals: repoName, mode: 'insensitive' },
+          type: 'git_repo',
+        },
+      });
+      const ref: RepoRef = row
+        ? toRepoRef(row)
+        : { installationHost: null, installationId: null, organizationName, repoName };
+      const { authedCloneUrl } = await getScmProvider(ref).cloneCredentials(ref);
+      const split = splitCloneCredential(authedCloneUrl);
+      setupSecrets.push(
+        ...[
+          split.token,
+          split.gitAuthHeader,
+          split.gitAuthHeader?.slice(split.gitAuthHeader.lastIndexOf(' ') + 1),
+        ].filter((x): x is string => !!x)
+      );
+      return { authHeader: split.gitAuthHeader, cleanUrl: split.cleanUrl };
+    },
+    readFile: (filePath, maxBytes) => readWorkspaceFile(filePath, maxBytes),
+    redact: (text) => redactSecrets(text, [...cloneSecrets, ...setupSecrets]),
+    root: (command, timeoutMs) => {
+      const tag = newExecTag();
+      return backend.execShell(handle, ['sh', '-c', command], {
+        env: [tag.env],
+        heartbeatLabel: 'workspace: setup',
+        onTimeout: tag.onTimeout,
+        timeoutMs,
+      });
+    },
+    stdin: async (command, body) => {
+      const result = await backend.exec(handle, ['sh', '-c', command], {
+        heartbeatLabel: 'workspace: restoring the dependency cache',
+        stdin: body,
+        timeoutMs: 900_000,
+      });
+      if (result.exitCode !== 0) {
+        throw new Error(`${command} failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
+      }
+    },
+  };
+  const setupInputs = () => ({
+    cleanUrl,
+    detectedStack: options?.detectedStack,
+    field: options?.repoSetup?.field,
+    gitHost: gitHostOf(cleanUrl),
+    image: effectiveImage,
+    teamId: options?.teamId ?? null,
+  });
+  let setupReport: Promise<RepoSetupReport | null> | undefined;
+  // Resolved before the network lock (it is read from the base commit, not the tree a caller
+  // may move to), so the lock can make room for what the definition needs (LFS storage).
+  let resolvedSetup: Awaited<ReturnType<typeof resolveWorkspaceSetup>> = null;
+  // Submodules, LFS, cache and steps: all after the lock, on the tree the workspace works on.
+  const runResolvedSetup = async (): Promise<RepoSetupReport | null> => {
+    if (!resolvedSetup) {
+      return null;
+    }
+    const started = Date.now();
+    const { setup, source } = resolvedSetup;
+    const git = await runSetupGitPhase(setupHost, setup, setupInputs(), gitAuthHeader);
+    const { cache, steps } = await runSetupStepsPhase(setupHost, setup, setupInputs());
+    const report: RepoSetupReport = {
+      cache,
+      durationMs: Date.now() - started,
+      lfs: git.lfs,
+      source,
+      steps,
+      submodules: git.submodules,
+    };
+    auditLog(`workspace.setup ${containerName} ${JSON.stringify(report)}`);
+    return report;
+  };
   // `PATH=…` pair put on every agent-facing exec once tools are installed; empty otherwise.
   let toolsEnv: string[] = [];
   const TOOL_INSTALL_TIMEOUT_MS = 300_000;
@@ -870,6 +1033,32 @@ export async function createWorkspace(
     await rootExec(
       `cd /workspace/target-repo && git remote set-url origin ${shellQuote(cleanUrl)}`
     );
+    // The commit the workspace was cut from: where the registry allowlist and the setup
+    // definition are read from. HEAD is that commit until after provisioning.
+    const cutFrom = checkoutSha ? checkoutSha : existingBranch ? null : 'HEAD';
+    baseRef = async () => {
+      if (cutFrom) {
+        return cutFrom;
+      }
+      baseRefFetch ??= (async () => {
+        const fetchScript = [
+          killStrayProcessesScript(handle.keeperPid),
+          authedGitScript('/workspace/target-repo', fetchBranchesSubcommand([defaultBranch]), {
+            authed: Boolean(gitAuthHeader),
+            cleanUrl,
+          }),
+        ].join('\n');
+        const tag = newExecTag();
+        await backend.execShell(handle, ['sh', '-c', fetchScript], {
+          env: [tag.env],
+          ...(cloneSecretEnv ? { secretEnv: cloneSecretEnv } : {}),
+          heartbeatLabel: 'workspace: fetching the base branch',
+          onTimeout: tag.onTimeout,
+        });
+        return `origin/${defaultBranch}`;
+      })();
+      return baseRefFetch;
+    };
 
     // On-demand tools: installed as the exec user into `/workspace/.tools/bin`, then put first on
     // the PATH of every later exec. A failed install fails creation — the run never starts on a
@@ -944,26 +1133,7 @@ export async function createWorkspace(
       // The allowlist comes from the ref the workspace was cut from, never the
       // working tree: HEAD after clone, the pinned SHA, or — for an existing
       // branch clone that has no local default — the fetched origin/defaultBranch.
-      let ref = 'HEAD';
-      if (checkoutSha) {
-        ref = checkoutSha;
-      } else if (existingBranch) {
-        const fetchScript = [
-          killStrayProcessesScript(handle.keeperPid),
-          authedGitScript('/workspace/target-repo', fetchBranchesSubcommand([defaultBranch]), {
-            authed: Boolean(gitAuthHeader),
-            cleanUrl,
-          }),
-        ].join('\n');
-        const tag = newExecTag();
-        await backend.execShell(handle, ['sh', '-c', fetchScript], {
-          env: [tag.env],
-          ...(cloneSecretEnv ? { secretEnv: cloneSecretEnv } : {}),
-          heartbeatLabel: 'workspace: fetching base for registry allowlist',
-          onTimeout: tag.onTimeout,
-        });
-        ref = `origin/${defaultBranch}`;
-      }
+      const ref = await baseRef();
       const execCapture = (command: string, maxOutputBytes?: number) =>
         backend.exec(handle, ['sh', '-c', command], {
           heartbeatLabel: 'workspace: building registry allowlist',
@@ -971,6 +1141,13 @@ export async function createWorkspace(
           timeoutMs: 60_000,
         });
       registry.registration.setAllowlist(await buildRegistryAllowlist(registry, ref, execCapture));
+    }
+
+    if (options?.repoSetup) {
+      resolvedSetup = await resolveWorkspaceSetup(setupHost, {
+        ...setupInputs(),
+        baseRef: await baseRef(),
+      });
     }
 
     // Provisioning is done (clone, registry wiring) and no agent code has run: cut the network
@@ -988,6 +1165,7 @@ export async function createWorkspace(
             ...(egressPolicy === 'restricted' && egress
               ? { egressProxyUrl: egress.registration.url }
               : {}),
+            ...(resolvedSetup?.setup.lfs ? { lfsHosts: lfsStorageHosts(gitHost) } : {}),
             registryUrl: registry?.baseUrl,
           }),
           { mode: egressPolicy === 'restricted' ? 'restricted' : 'blocked' }
@@ -998,10 +1176,16 @@ export async function createWorkspace(
         );
       }
     }
+    // Setup runs after the lock, as the workspace user: package installs reach the registry
+    // proxy, submodules the git host, and nothing else a restricting policy forbids.
+    if (options?.repoSetup && !options.repoSetup.defer) {
+      setupReport = Promise.resolve(await runResolvedSetup());
+    }
   } catch (err) {
     await registry?.registration.release().catch(() => {});
     await egress?.registration.release().catch(() => {});
     await backend.remove(containerName);
+    redactExecError(err, setupSecrets);
     // A failed git command rejects with the full command line in
     // `error.message` (and stdout/stderr/cmd) — scrub the credential before
     // it reaches Temporal history or a log line.
@@ -1093,31 +1277,24 @@ export async function createWorkspace(
       }
     },
     gitIdentity,
-    readFile: async (filePath: string, maxBytes: number) => {
-      if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
-        throw new RangeError('maxBytes must be a non-negative safe integer');
-      }
-      const dir = await mkdtemp(path.join(os.tmpdir(), 'workspace-file-'));
-      const archivePath = path.join(dir, 'file.tar');
-      try {
-        const archiveLimit = Math.min(Number.MAX_SAFE_INTEGER, maxBytes + 128 * 1024);
-        const copied = await backend.copyOut(handle, filePath, archivePath, {
-          heartbeatLabel: 'workspace: reading a file',
-          maxBytes: archiveLimit,
-          timeoutMs: 60_000,
-        });
-        if (copied.exceeded) {
-          throw new RangeError(`workspace file exceeds the ${maxBytes} byte limit`);
+    readFile: readWorkspaceFile,
+    ...(options?.repoSetup
+      ? {
+          runSetup: (opts?: { again?: boolean }) => {
+            if (opts?.again) {
+              setupReport = undefined;
+            }
+            setupReport ??= (async () => {
+              try {
+                return await runResolvedSetup();
+              } catch (err) {
+                redactExecError(err, [...cloneSecrets, ...setupSecrets]);
+                throw err;
+              }
+            })();
+            return setupReport;
+          },
         }
-        if (copied.exitCode !== 0) {
-          throw new Error(
-            `Could not read workspace file "${filePath}": ${copied.stderr.trim() || 'copy failed'}`
-          );
-        }
-        return await readSingleFileFromArchive(archivePath, maxBytes);
-      } finally {
-        await rm(dir, { force: true, recursive: true });
-      }
-    },
+      : {}),
   };
 }

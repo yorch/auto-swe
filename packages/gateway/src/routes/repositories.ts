@@ -15,6 +15,7 @@ import {
   type PermissionRepo,
   verifiedGithubLoginFor,
 } from '@auto-swe/shared/lib/repoPermission';
+import { type RepoSetup, RepoSetupSchema } from '@auto-swe/shared/lib/repoSetup';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { REPO_GATE_COMMAND_KEYS, type RepoGateCommands } from '@auto-swe/shared/types/api';
@@ -105,6 +106,7 @@ const CreateRepoSchema = z.object({
   organizationName: z.string().min(1).optional(),
   previewConfig: PreviewConfigSchema.nullable().optional(),
   repoName: z.string().min(1).optional(),
+  setup: RepoSetupSchema.nullable().optional(),
   teamId: z.string().uuid(),
   // MCP servers are a tool source for agents, not a workspace target, and
   // carry their own ADMIN-only, SSRF-checked routes (/admin/mcp-connections).
@@ -175,6 +177,7 @@ const UpdateRepoSchema = z.object({
     .transform((v) => v || null)
     .nullable()
     .optional(),
+  setup: RepoSetupSchema.nullable().optional(),
   teamId: z.string().uuid().optional(),
 });
 
@@ -274,6 +277,33 @@ function canonicalJson(value: unknown): unknown {
 
 function samePreviewConfig(a: unknown, b: unknown): boolean {
   return JSON.stringify(canonicalJson(a ?? null)) === JSON.stringify(canonicalJson(b ?? null));
+}
+
+async function setupProblem(
+  fastify: FastifyInstance,
+  user: JwtPayload,
+  repo: { setup: unknown; teamId: string; type: string },
+  next: RepoSetup | null,
+  ownerTeamId: string
+): Promise<{ code: string; message: string; status: 400 | 403 } | null> {
+  if (samePreviewConfig(next, repo.setup)) {
+    return null;
+  }
+  if (repo.type !== 'git_repo') {
+    return {
+      code: 'VALIDATION_ERROR',
+      message: 'Only a git repository can have a workspace setup',
+      status: 400,
+    };
+  }
+  if (await isShellAuthor(fastify, user, ownerTeamId)) {
+    return null;
+  }
+  return {
+    code: 'REPO_SETUP_FORBIDDEN',
+    message: "Changing a repository's workspace setup requires team-admin role",
+    status: 403,
+  };
 }
 
 async function previewConfigProblem(
@@ -765,6 +795,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         config,
         gateCommands: rawGateCommands,
         previewConfig,
+        setup,
         ...rest
       } = request.body;
 
@@ -826,6 +857,21 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       );
       if (previewProblem) {
         return sendError(reply, previewProblem.status, previewProblem.code, previewProblem.message);
+      }
+      const setupCreateProblem = await setupProblem(
+        fastify,
+        user,
+        { setup: null, teamId, type: type ?? 'git_repo' },
+        setup ?? null,
+        teamId
+      );
+      if (setupCreateProblem) {
+        return sendError(
+          reply,
+          setupCreateProblem.status,
+          setupCreateProblem.code,
+          setupCreateProblem.message
+        );
       }
 
       const urls = await normaliseRepositoryUrls({
@@ -905,6 +951,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             previewConfig:
               previewConfig != null ? (previewConfig as Prisma.InputJsonValue) : Prisma.DbNull,
             repoName: repoName ?? null,
+            setup: setup != null ? (setup as Prisma.InputJsonValue) : Prisma.DbNull,
             teamId,
             type: type ?? 'git_repo',
             ...rest,
@@ -934,6 +981,15 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           action: 'CREATE',
           actor: user,
           after: { previewConfig },
+          entityId: repo.id,
+          entityType: 'Connection',
+        });
+      }
+      if (setup != null) {
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor: user,
+          after: { setup },
           entityId: repo.id,
           entityType: 'Connection',
         });
@@ -990,6 +1046,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           organizationName: true,
           previewConfig: true,
           repoName: true,
+          setup: true,
           teamId: true,
           type: true,
         },
@@ -1081,6 +1138,20 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           );
         }
       }
+      const nextSetup = request.body.setup;
+      const setupChange = nextSetup !== undefined && !samePreviewConfig(nextSetup, repo.setup);
+      if (nextSetup !== undefined) {
+        const problem = await setupProblem(
+          fastify,
+          user,
+          repo,
+          nextSetup,
+          request.body.teamId ?? repo.teamId
+        );
+        if (problem) {
+          return sendError(reply, problem.status, problem.code, problem.message);
+        }
+      }
       // Moving a repository hands its gate commands to the destination team: they run in every
       // run the new owners launch. Unchanged commands were not vouched for by anyone there, so
       // the move takes the role on the destination, as a change would.
@@ -1116,6 +1187,21 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           403,
           'PREVIEW_CONFIG_FORBIDDEN',
           'Moving a repository with an app preview requires team-admin role in the target team'
+        );
+      }
+      const keptSetup = nextSetup === undefined ? repo.setup : nextSetup;
+      if (
+        newTeamId &&
+        newTeamId !== repo.teamId &&
+        keptSetup != null &&
+        !setupChange &&
+        !(await isShellAuthor(fastify, user, newTeamId))
+      ) {
+        return sendError(
+          reply,
+          403,
+          'REPO_SETUP_FORBIDDEN',
+          'Moving a repository with a workspace setup requires team-admin role in the target team'
         );
       }
 
@@ -1292,6 +1378,11 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
               : {}),
             prTitleFormat,
             prTitleTemplate,
+            ...(setupChange
+              ? {
+                  setup: nextSetup === null ? Prisma.DbNull : (nextSetup as Prisma.InputJsonValue),
+                }
+              : {}),
             teamId,
           },
           include: { team: { select: { id: true, name: true, slug: true } } },
@@ -1397,6 +1488,16 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           actor: user,
           after: { previewConfig: nextPreviewConfig },
           before: { previewConfig: repo.previewConfig },
+          entityId: repo.id,
+          entityType: 'Connection',
+        });
+      }
+      if (setupChange) {
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: user,
+          after: { setup: nextSetup },
+          before: { setup: repo.setup },
           entityId: repo.id,
           entityType: 'Connection',
         });

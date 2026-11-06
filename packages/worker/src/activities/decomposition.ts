@@ -424,7 +424,11 @@ async function provisionMergeWorkspace(
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      repoSetup: { defer: true, field: repo.setup },
+      teamId: repo.teamId,
+    }
   );
   heartbeat(`${label}: workspace provisioned`);
 
@@ -453,6 +457,12 @@ async function provisionMergeWorkspace(
     log.push(`reset to origin/${targetBranch}`);
   } catch {
     log.push(`origin/${targetBranch} not found; starting from ${baseBranch}`);
+  }
+  try {
+    await workspace.runSetup?.();
+  } catch (err) {
+    await workspace.destroy();
+    throw err;
   }
 
   return { baseBranch, log, workspace };

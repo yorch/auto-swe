@@ -1758,6 +1758,31 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.min(1_000).max(200_000),
     unit: 'characters',
   }),
+  'workspace.repoSetupStackDefaults': defineSetting({
+    defaultValue: false,
+    description:
+      'Whether a repository with no setup of its own (no repository setup and no `.auto-swe/setup.yml`) gets one from its detected stack: the lockfile-faithful install for a Node root or single component (`npm ci`, `pnpm install --frozen-lockfile`, `yarn install --immutable` or `--frozen-lockfile`), with `node_modules` cached by the lockfile. Other stacks get none. A failing install fails the workspace, as configured setup does.',
+    group: 'workspace',
+    label: 'Stack-default repository setup',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'workspace.setupCacheMaxMb': defineSetting({
+    defaultValue: 1024,
+    description:
+      'Largest compressed dependency cache a workspace saves after its setup steps. A larger archive is not saved, and the next workspace runs its setup without one. `0` turns the cache off. The cache needs the S3 or filesystem artifact backend; on the Postgres backend nothing is cached.',
+    group: 'workspace',
+    label: 'Setup cache size limit',
+    overridableAt: ['ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(8192),
+    unit: 'MB',
+  }),
 } as const satisfies Record<string, SettingDefinition<unknown>>;
 
 /// Every registry key. Used to type `resolveSetting` and to validate an

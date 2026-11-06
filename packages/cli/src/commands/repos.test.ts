@@ -108,4 +108,33 @@ describe('runReposCommand gate-commands', () => {
     expect(await runReposCommand(['gate-commands', 'acme/nope'], ENV)).toBe(1);
     expect(err.join('')).toMatch(/not found/);
   });
+  it('sets the workspace setup from a YAML file, validated before anything is sent', async () => {
+    const { mkdtemp, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = await mkdtemp(join(tmpdir(), 'repos-setup-'));
+    const good = join(dir, 'setup.yml');
+    await writeFile(good, 'submodules: recursive\nsteps:\n  - run: yarn install --immutable\n');
+    const bad = join(dir, 'bad.yml');
+    await writeFile(bad, 'steps:\n  - script: nope\n');
+
+    respond();
+    expect(await runReposCommand(['setup', 'acme/api', `--file=${bad}`], ENV)).toBe(1);
+    expect(calls).toEqual([]);
+
+    respond(200, { data: { ...REPO, setup: { steps: [{ run: 'yarn install --immutable' }] } } });
+    expect(await runReposCommand(['setup', 'acme/api', `--file=${good}`], ENV)).toBe(0);
+    expect(calls.at(-1)).toMatchObject({
+      body: { setup: { steps: [{ run: 'yarn install --immutable' }], submodules: 'recursive' } },
+      method: 'PATCH',
+    });
+  });
+
+  it('prints that the repository file applies when no setup is stored, and clears one', async () => {
+    respond();
+    expect(await runReposCommand(['setup', 'acme/api'], ENV)).toBe(0);
+    expect(out.join('')).toMatch(/\.auto-swe\/setup\.yml/);
+    expect(await runReposCommand(['setup', 'acme/api', '--clear'], ENV)).toBe(0);
+    expect(calls.at(-1)).toMatchObject({ body: { setup: null }, method: 'PATCH' });
+  });
 });

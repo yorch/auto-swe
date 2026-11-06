@@ -193,7 +193,12 @@ export async function executeImplementation(
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, services, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      repoSetup: { defer: true, field: repo.setup },
+      services,
+      teamId: repo.teamId,
+    }
   );
 
   const tracer = new AgentTracer();
@@ -232,6 +237,7 @@ export async function executeImplementation(
         heartbeat('retry: remote branch not found, starting from clone HEAD');
       }
     }
+    await workspace.runSetup?.();
 
     // After any sync to a previous attempt's pushed branch, and before any agent turn:
     // this session answers for its own changes from here. `baseSha` (the base branch's

@@ -256,7 +256,7 @@ export async function runCaseDefault(
       evalWorkspaceImageFor(caseRow.stack),
       caseRow.baselineSha,
       undefined,
-      { teamId: scope.teamId ?? caseRow.teamId ?? null }
+      { repoSetup: { field: null }, teamId: scope.teamId ?? caseRow.teamId ?? null }
     );
 
     // Built exactly as production builds it (`buildImplementerTurnRunner`), so the

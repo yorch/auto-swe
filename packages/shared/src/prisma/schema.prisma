@@ -519,6 +519,9 @@ model Connection {
   /// Resolution order: step config → this field → built-in defaults.
   gateCommands         Json?               @map("gate_commands")
   previewConfig        Json?               @map("preview_config")
+  /// How a workspace is prepared after the checkout (`RepoSetup`: submodules, LFS, steps,
+  /// cache). Set, it overrides the repository's `.auto-swe/setup.yml`; NULL reads the file.
+  setup                Json?               @map("setup_config")
 
   /// The stack the scheduled dependency scan detected from the repository's
   /// root files, as `DetectedStack` (stacks, primary, suggestedGateCommands,
@@ -1905,6 +1908,24 @@ model AutomationSeenIssue {
 ///
 /// `backend` is "s3" when ARTIFACT_S3_BUCKET is configured, "pg" otherwise.
 /// For "pg" the bytes live in `inlineBlob`; for "s3" only `s3Key` is set.
+/// A dependency cache a workspace saved after its setup steps and before any agent ran:
+/// a tarball in the object store (`WorkflowArtifact` kind `workspace-setup-cache`), found by a
+/// key over the repository, the setup definition, its key files, the image and the CPU
+/// architecture. Rows unused past the retention window are swept with their artifact.
+model WorkspaceSetupCache {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cacheKey     String   @unique @map("cache_key")
+  /// `host/org/repo` of the repository the cache was built for.
+  repository   String
+  artifactId   String   @map("artifact_id") @db.Uuid
+  sizeBytes    Int      @map("size_bytes")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  lastUsedAt   DateTime @default(now()) @map("last_used_at") @db.Timestamptz
+
+  @@index([lastUsedAt])
+  @@map("workspace_setup_caches")
+}
+
 model WorkflowArtifact {
   id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   runId       String?      @map("run_id") @db.Uuid

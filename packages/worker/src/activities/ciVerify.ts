@@ -170,7 +170,11 @@ async function verify(input: {
     executorImageFor(repo),
     undefined,
     undefined,
-    { detectedStack: repo.detectedStack, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      repoSetup: { defer: true, field: repo.setup },
+      teamId: repo.teamId,
+    }
   );
   try {
     const file = await workspace.execCapture(`cat -- ${shellQuote(path)}`);
@@ -190,12 +194,19 @@ async function verify(input: {
         command
       );
     }
+    try {
+      await workspace.runSetup?.();
+    } catch (err) {
+      return unverified(`workspace setup failed (${getErrorMessage(err).slice(0, 200)})`, command);
+    }
 
     heartbeat('verifyCiFix: running the command on the failing branch');
     const before = await workspace.execCapture(command, { timeoutMs: RUN_TIMEOUT_MS });
     try {
       // What the first run left behind (build output, caches) must not make the second pass.
       await workspace.exec(`git reset --hard origin/${shellQuote(fixBranch)} && git clean -ffdx`);
+      // The clean removed what setup installed; the fix is run on a tree set up the same way.
+      await workspace.runSetup?.({ again: true });
     } catch (err) {
       return unverified(
         `the fix branch could not be checked out (${getErrorMessage(err).slice(0, 200)})`,

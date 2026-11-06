@@ -122,6 +122,8 @@ export interface AgentTaskCoreInput {
   repo: Parameters<typeof toRepoRef>[0] & {
     detectedStack?: unknown;
     executorImage?: string | null;
+    /** `Connection.setup`; absent or null reads `.auto-swe/setup.yml`. */
+    setup?: unknown;
     teamId: string | null;
   };
   /** The library agent key (already checked `isLaunchableAgentKey`). */
@@ -260,7 +262,13 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       executorImageFor(repo),
       undefined,
       undefined,
-      { detectedStack: repo.detectedStack, egressPolicy, services, teamId: repo.teamId }
+      {
+        detectedStack: repo.detectedStack,
+        egressPolicy,
+        repoSetup: { field: repo.setup },
+        services,
+        teamId: repo.teamId,
+      }
     );
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
 

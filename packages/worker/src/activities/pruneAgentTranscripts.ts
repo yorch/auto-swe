@@ -25,6 +25,7 @@ import {
 import { UI_EVIDENCE_ARTIFACT_KINDS } from '@auto-swe/shared/lib/runEvidence';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { logWarn } from '../lib/activityLog.js';
+import { sweepSetupCaches } from '../lib/repoSetupRun.js';
 import { PRUNE_BATCH, PRUNE_MAX_BATCHES } from './pruneAutomationDecisions.js';
 import { pruneWorkflowHttpCalls } from './pruneWorkflowHttpCalls.js';
 
@@ -59,6 +60,8 @@ export interface PruneAgentTranscriptsResult {
   retentionDays: number;
   /** True when the sweep stopped at its batch limit with older rows left. */
   more: boolean;
+  /** Dependency caches unused past their retention window, removed with their tarball. */
+  setupCachesDeleted: number;
 }
 
 export async function pruneAgentTranscripts(
@@ -326,6 +329,7 @@ export async function pruneAgentTranscripts(
       retentionDays,
     });
   }
+  const setupCachesDeleted = await sweepSetupCaches(now);
   return {
     abandoned,
     accessLogDeleted,
@@ -340,6 +344,7 @@ export async function pruneAgentTranscripts(
     pendingArtifactFailures,
     pendingArtifacts,
     retentionDays,
+    setupCachesDeleted,
     tempFilesSwept,
   };
 }

@@ -2,6 +2,7 @@ import type { InputSchema } from '../lib/inputSchema.js';
 import { isAnthropicSpec } from '../lib/modelSpec.js';
 import type { PreviewConfig } from '../lib/previewConfig.js';
 import type { PullRequestState } from '../lib/pullRequest.js';
+import type { RepoSetup } from '../lib/repoSetup.js';
 import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
 import type { BudgetTier, WorkflowStatus } from './workflow.js';
 
@@ -336,6 +337,8 @@ export interface RepositorySummary {
   gateCommands?: RepoGateCommands | null;
   /** Validated per-repository application preview recipe. */
   previewConfig?: PreviewConfig | null;
+  /** Workspace setup; overrides the repository's `.auto-swe/setup.yml` when set. */
+  setup?: RepoSetup | null;
   /** The repository's own PR title format; null inherits the registry's. */
   prTitleFormat?: 'template' | 'conventional' | null;
   /** The repository's own PR title template; null inherits. */
