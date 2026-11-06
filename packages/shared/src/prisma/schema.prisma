@@ -46,12 +46,12 @@ model KnowledgeBase {
   visibility     KnowledgeBaseVisibility  @default(TEAM)
   status         KnowledgeBaseStatus      @default(OK)
   lastIndexedSha String?                  @map("last_indexed_sha")
-  lastIndexedAt  DateTime?                @map("last_indexed_at")
+  lastIndexedAt  DateTime?                @map("last_indexed_at") @db.Timestamptz
   lastError      String?                  @map("last_error")
-  createdById    String                   @map("created_by_id") @db.Uuid
-  createdBy      User                     @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt      DateTime                 @default(now()) @map("created_at")
-  updatedAt      DateTime                 @updatedAt @map("updated_at")
+  createdById    String?                  @map("created_by_id") @db.Uuid
+  createdBy      User?                    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt      DateTime                 @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime                 @updatedAt @map("updated_at") @db.Timestamptz
   shares         KnowledgeBaseTeamShare[]
   links          KnowledgeBaseLink[]
   snapshots      KnowledgeBaseSnapshot[]
@@ -85,10 +85,10 @@ model KnowledgeBaseLink {
   mountName       String?                @map("mount_name")
   mandatory       Boolean                @default(false)
   exclude         Boolean                @default(false)
-  createdById     String                 @map("created_by_id") @db.Uuid
-  createdBy       User                   @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  createdAt       DateTime               @default(now()) @map("created_at")
-  updatedAt       DateTime               @updatedAt @map("updated_at")
+  createdById     String?                @map("created_by_id") @db.Uuid
+  createdBy       User?                  @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime               @updatedAt @map("updated_at") @db.Timestamptz
 
   @@index([teamId])
   @@unique([knowledgeBaseId, repoId], map: "knowledge_base_links_repo_key")
@@ -110,7 +110,7 @@ model KnowledgeBaseSnapshot {
   skippedFiles    Json                        @default("[]") @map("skipped_files")
   embeddingModel  String?                     @map("embedding_model")
   error           String?
-  indexedAt       DateTime?                   @map("indexed_at")
+  indexedAt       DateTime?                   @map("indexed_at") @db.Timestamptz
   chunks          KnowledgeBaseChunk[]
 
   @@unique([knowledgeBaseId, sha, path])

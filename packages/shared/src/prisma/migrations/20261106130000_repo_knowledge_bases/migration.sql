@@ -28,11 +28,11 @@ CREATE TABLE "knowledge_bases" (
     "visibility" "KnowledgeBaseVisibility" NOT NULL DEFAULT 'TEAM',
     "status" "KnowledgeBaseStatus" NOT NULL DEFAULT 'OK',
     "last_indexed_sha" TEXT,
-    "last_indexed_at" TIMESTAMP(3),
+    "last_indexed_at" TIMESTAMPTZ,
     "last_error" TEXT,
-    "created_by_id" UUID NOT NULL,
-    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMP(3) NOT NULL,
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL,
 
     CONSTRAINT "knowledge_bases_pkey" PRIMARY KEY ("id")
 );
@@ -57,9 +57,9 @@ CREATE TABLE "knowledge_base_links" (
     "mount_name" TEXT,
     "mandatory" BOOLEAN NOT NULL DEFAULT false,
     "exclude" BOOLEAN NOT NULL DEFAULT false,
-    "created_by_id" UUID NOT NULL,
-    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMP(3) NOT NULL,
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL,
 
     CONSTRAINT "knowledge_base_links_pkey" PRIMARY KEY ("id")
 );
@@ -78,7 +78,7 @@ CREATE TABLE "knowledge_base_snapshots" (
     "skipped_files" JSONB NOT NULL DEFAULT '[]',
     "embedding_model" TEXT,
     "error" TEXT,
-    "indexed_at" TIMESTAMP(3),
+    "indexed_at" TIMESTAMPTZ,
 
     CONSTRAINT "knowledge_base_snapshots_pkey" PRIMARY KEY ("id")
 );
@@ -127,7 +127,7 @@ ALTER TABLE "knowledge_bases" ADD CONSTRAINT "knowledge_bases_connection_id_fkey
 ALTER TABLE "knowledge_bases" ADD CONSTRAINT "knowledge_bases_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "knowledge_bases" ADD CONSTRAINT "knowledge_bases_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "knowledge_bases" ADD CONSTRAINT "knowledge_bases_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "knowledge_base_team_shares" ADD CONSTRAINT "knowledge_base_team_shares_knowledge_base_id_fkey" FOREIGN KEY ("knowledge_base_id") REFERENCES "knowledge_bases"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -148,7 +148,7 @@ ALTER TABLE "knowledge_base_links" ADD CONSTRAINT "knowledge_base_links_repo_id_
 ALTER TABLE "knowledge_base_links" ADD CONSTRAINT "knowledge_base_links_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "workflow_templates"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "knowledge_base_links" ADD CONSTRAINT "knowledge_base_links_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "knowledge_base_links" ADD CONSTRAINT "knowledge_base_links_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "knowledge_base_snapshots" ADD CONSTRAINT "knowledge_base_snapshots_knowledge_base_id_fkey" FOREIGN KEY ("knowledge_base_id") REFERENCES "knowledge_bases"("id") ON DELETE CASCADE ON UPDATE CASCADE;
