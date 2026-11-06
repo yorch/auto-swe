@@ -87,6 +87,7 @@ describe('visibleNavGroups', () => {
     const hrefs = hrefsFor('ENGINEER');
     expect(hrefs).toContain('/admin/automations');
     expect(hrefs).not.toContain('/admin/baselines');
+    expect(hrefs).not.toContain('/admin/review-presets');
     expect(hrefs).toContain('/connections');
     expect(hrefs).toContain('/library');
     expect(hrefs).toContain('/knowledge');

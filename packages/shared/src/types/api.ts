@@ -548,6 +548,7 @@ export type WorkflowStepRecordStatus = (typeof WORKFLOW_STEP_RECORD_STATUSES)[nu
 
 /** Shape returned by GET /api/v1/workflow-templates (list) */
 export interface WorkflowTemplateSummary {
+  kind?: 'review' | null;
   id: string;
   name: string;
   description: string;
@@ -827,6 +828,7 @@ export interface WorkspaceRequestSummary extends WorkflowRunSummary {
 }
 
 export interface WorkflowStepRecord {
+  stepName?: string;
   id: string;
   nodeId: string;
   attempt: number;
@@ -883,6 +885,7 @@ export interface AgentTraceRecord {
 /** Shape returned by GET /api/v1/workflow-runs/:id (detail) */
 export interface WorkflowRunDetail extends WorkflowRunSummary {
   review?: {
+    canControl?: boolean;
     reviewable: boolean;
     reason?: string;
     reviewOf?: { runId: string; templateName: string };

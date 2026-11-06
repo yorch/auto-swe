@@ -27,6 +27,7 @@ import { RunEvidence } from '@/components/runs/RunEvidence';
 import { RunLessons } from '@/components/runs/RunLessons';
 import { RunLiveIndicator } from '@/components/runs/RunLiveIndicator';
 import { RunReadingGuide } from '@/components/runs/RunReadingGuide';
+import { RunReviews } from '@/components/runs/RunReviews';
 import { RunSummaryBand } from '@/components/runs/RunSummaryBand';
 import { RunTranscripts } from '@/components/runs/RunTranscripts';
 import { RunVerdictBanner } from '@/components/runs/RunVerdictBanner';
@@ -525,6 +526,7 @@ export default function RunDetailPage({ params }: PageProps) {
       </header>
 
       <RunVerdictBanner onJumpToFailure={handleJumpToFailure} verdict={verdict} />
+      <RunReviews key={run.id} run={run} />
 
       {/* ── Pending approvals + result or failure, whichever layout is chosen ── */}
       <RunSummaryBand

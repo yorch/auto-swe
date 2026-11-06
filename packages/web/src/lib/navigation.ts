@@ -172,6 +172,13 @@ const ADMIN_PAGES: NavItem[] = [
     section: 'Configuration',
   },
   {
+    href: '/admin/review-presets',
+    icon: 'checkCircle',
+    label: 'Review presets',
+    minRole: 'ADMIN',
+    section: 'Configuration',
+  },
+  {
     href: '/admin/config-grants',
     icon: 'lock',
     label: 'Config grants',

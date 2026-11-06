@@ -389,6 +389,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
       <EditMetadataModal
         initialDescription={template.description ?? ''}
         initialEstimatedHumanTimeSavedMinutes={template.estimatedHumanTimeSavedMinutes ?? null}
+        initialKind={template.kind}
         initialName={template.name}
         isDefault={template.isDefault}
         onClose={() => setEditMetaOpen(false)}

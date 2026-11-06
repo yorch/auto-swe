@@ -570,6 +570,7 @@ function projectTemplate(tpl: TemplateWithIncludes, lastRun: LastRunRow | undefi
     id: tpl.id,
     inputSchema: tpl.inputSchema ?? null,
     isDefault: tpl.isDefault,
+    kind: tpl.kind,
     lastRun: lastRun
       ? {
           endedAt: lastRun.endedAt,

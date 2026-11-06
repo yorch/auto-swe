@@ -1017,7 +1017,22 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           isAgentRun:
             run.template.teamId === null && run.template.origin === AGENT_RUN_TEMPLATE_ORIGIN,
           result: (run.contextSnapshot as { result?: unknown })?.result ?? null,
-          review: await reviewRunMetadata(fastify.prisma, run.id),
+          review: {
+            ...(await reviewRunMetadata(fastify.prisma, run.id)),
+            canControl:
+              caller.kind !== 'service' &&
+              Boolean(
+                await fastify.prisma.workflowRun.findFirst({
+                  select: { id: true },
+                  where: {
+                    AND: [
+                      { id: run.id },
+                      buildWorkflowRunControlFilter(caller.user, request.repoAccessGate),
+                    ],
+                  },
+                })
+              ),
+          },
           // Absent, not null, when the caller declined it: null is a spec a run can have.
           specSnapshot: includeSpec ? (run as { specSnapshot?: unknown }).specSnapshot : undefined,
           startedAt: run.startedAt,
@@ -1032,6 +1047,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
             outputs: s.outputs,
             startedAt: s.startedAt,
             status: s.status,
+            stepName: s.stepName,
           })),
           templateId: run.templateId,
           templateName: run.template.name,
