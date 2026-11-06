@@ -38,6 +38,18 @@ export function usePullRequestCockpit(id: string) {
   });
 }
 
+/**
+ * Note that the caller has now seen this head, so the next visit can say what moved since. Best
+ * effort: a failure costs the next visit its summary and nothing else. It never re-reads the
+ * cockpit, which would answer without the summary the page is showing.
+ */
+export function useRecordVisit(id: string) {
+  return useMutation({
+    mutationFn: (headSha: string) =>
+      api.post<{ data: { recorded: boolean } }>(`/api/v1/pull-requests/${id}/visit`, { headSha }),
+  });
+}
+
 const viewedKey = (id: string) => ['pull-request-viewed', id] as const;
 
 /**
