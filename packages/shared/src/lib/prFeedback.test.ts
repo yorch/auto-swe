@@ -18,6 +18,25 @@ const payload = {
 };
 
 describe('PrFeedbackPayloadSchema', () => {
+  it('uses an actual review run UUID only for the trusted review_findings kind', () => {
+    const review = {
+      ...payload,
+      feedbackEventId: '11111111-1111-4111-8111-111111111111',
+      feedbackEventKind: 'review_findings',
+      feedbackTrigger: 'review_findings',
+    };
+    expect(PrFeedbackPayloadSchema.safeParse(review).success).toBe(true);
+    expect(
+      PrFeedbackPayloadSchema.safeParse({ ...review, feedbackEventKind: 'review' }).success
+    ).toBe(false);
+    expect(PrFeedbackPayloadSchema.safeParse({ ...review, feedbackEventId: '777' }).success).toBe(
+      false
+    );
+    expect(
+      PrFeedbackPayloadSchema.safeParse({ ...payload, feedbackEventId: review.feedbackEventId })
+        .success
+    ).toBe(false);
+  });
   it('parses a run payload, applying the option defaults', () => {
     const parsed = PrFeedbackPayloadSchema.parse(payload);
     expect(parsed.maxRounds).toBe(PR_FEEDBACK_DEFAULTS.maxRounds);

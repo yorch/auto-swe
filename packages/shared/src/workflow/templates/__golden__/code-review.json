@@ -1,0 +1,46 @@
+{
+  "description": "Review a finished run change with security, domain and performance reviewers, and publish findings without modifying the change.",
+  "entry": "load",
+  "name": "code-review",
+  "nodes": {
+    "done": {
+      "result": {
+        "review": {
+          "from": "nodes.publish.output"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "load": {
+      "next": "review",
+      "step": "loadChangeForReview",
+      "type": "step"
+    },
+    "publish": {
+      "inputs": {
+        "review": {
+          "from": "nodes.review.output"
+        }
+      },
+      "next": "done",
+      "step": "publishReviewResult",
+      "type": "step"
+    },
+    "review": {
+      "inputs": {
+        "codeResult": {
+          "from": "nodes.load.output"
+        },
+        "systemPrompt": {
+          "default": "",
+          "from": "request.payload.systemPrompt"
+        }
+      },
+      "next": "publish",
+      "step": "runReviewNetwork",
+      "type": "step"
+    }
+  },
+  "schemaVersion": 1
+}

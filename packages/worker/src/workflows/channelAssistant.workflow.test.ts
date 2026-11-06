@@ -154,6 +154,7 @@ const fakeActivities = {
   // collision-free workflowId (the abandoned child's activities are faked).
   createChannelWorkflowDraft: async () => draftResult,
   createWorkflowRun: async () => ({ error: 'test child not run' }),
+  dispatchReviewLaunches: async () => {},
   finalizeChannelRun: async (args: FinalizeRunCall) => {
     calls.finalizeRuns.push(args);
   },

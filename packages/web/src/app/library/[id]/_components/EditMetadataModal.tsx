@@ -13,6 +13,7 @@ export function EditMetadataModal({
   templateId,
   initialName,
   initialDescription,
+  initialKind,
   isDefault,
   initialEstimatedHumanTimeSavedMinutes,
 }: {
@@ -21,12 +22,14 @@ export function EditMetadataModal({
   templateId: string;
   initialName: string;
   initialDescription: string;
+  initialKind?: 'review' | null;
   isDefault: boolean;
   initialEstimatedHumanTimeSavedMinutes: number | null;
 }) {
   const updateTemplate = useUpdateWorkflowTemplate(templateId);
   const [name, setName] = useState(initialName);
   const [description, setDescription] = useState(initialDescription);
+  const [reviewKind, setReviewKind] = useState(initialKind === 'review');
   const [defaultChecked, setDefaultChecked] = useState(isDefault);
   const [estimatedMinutes, setEstimatedMinutes] = useState<number | null>(
     initialEstimatedHumanTimeSavedMinutes
@@ -37,11 +40,19 @@ export function EditMetadataModal({
     if (open) {
       setName(initialName);
       setDescription(initialDescription);
+      setReviewKind(initialKind === 'review');
       setDefaultChecked(isDefault);
       setEstimatedMinutes(initialEstimatedHumanTimeSavedMinutes);
       setError(null);
     }
-  }, [open, initialName, initialDescription, isDefault, initialEstimatedHumanTimeSavedMinutes]);
+  }, [
+    open,
+    initialName,
+    initialDescription,
+    initialKind,
+    isDefault,
+    initialEstimatedHumanTimeSavedMinutes,
+  ]);
 
   const handleSave = async () => {
     const trimmed = name.trim();
@@ -59,6 +70,7 @@ export function EditMetadataModal({
         description: description.trim() || undefined,
         estimatedHumanTimeSavedMinutes: estimatedMinutes,
         isDefault: defaultChecked,
+        kind: reviewKind ? 'review' : null,
         name: trimmed,
       });
       onClose();
@@ -90,6 +102,11 @@ export function EditMetadataModal({
           step={0.1}
           type="number"
           value={estimatedMinutes ?? ''}
+        />
+        <ToggleSwitch
+          checked={reviewKind}
+          label="Review template (requires a source run)"
+          onChange={() => setReviewKind((v) => !v)}
         />
         <ToggleSwitch
           checked={defaultChecked}

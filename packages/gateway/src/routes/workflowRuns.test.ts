@@ -18,6 +18,13 @@ const { recordRunFinalized, getArtifact, getArtifactStream } = vi.hoisted(() => 
   recordRunFinalized: vi.fn(),
 }));
 vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
+vi.mock('@auto-swe/shared/lib/reviewLaunch', () => ({
+  reviewRunMetadata: vi.fn(async () => ({
+    reason: 'REVIEW_NOTHING_TO_REVIEW',
+    reviewable: false,
+    reviews: [],
+  })),
+}));
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({ getArtifact, getArtifactStream }));
 vi.mock('@auto-swe/shared/lib/repoAccessGate', () => ({
   resolveRepoAccessGateOrLastKnown: vi.fn().mockResolvedValue(null),
@@ -229,6 +236,28 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
     expect(res.json().data.traces).toEqual([]);
     expect(prisma.agentTrace.findMany).not.toHaveBeenCalled();
   });
+
+  it.each([true, false])(
+    'reports authoritative review control eligibility (allowed=%s)',
+    async (allowed) => {
+      const { app, prisma } = await buildApp('ENGINEER');
+      mockRun(prisma);
+      const row = await prisma.workflowRun.findFirst();
+      prisma.workflowRun.findFirst
+        .mockResolvedValueOnce(row)
+        .mockResolvedValueOnce(allowed ? { id: runId } : null);
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `/api/v1/workflow-runs/${runId}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.review.canControl).toBe(allowed);
+      expect(prisma.workflowRun.findFirst.mock.calls.at(-1)?.[0]?.where).toMatchObject({
+        AND: [{ id: runId }, { OR: expect.any(Array) }],
+      });
+    }
+  );
 
   it.each([
     [

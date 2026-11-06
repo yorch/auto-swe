@@ -1174,6 +1174,17 @@ export const SETTING_DEFINITIONS = {
     schema: ratio,
     unit: '0–1',
   }),
+  'review.enabled': defineSetting({
+    defaultValue: true,
+    description: 'Allow on-demand and automatically attached code reviews of finished runs.',
+    group: 'review',
+    label: 'Enable code reviews',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
 
   // ── Skills ─────────────────────────────────────────────────────────────────
   'skills.import.blockOnScanWarnings': defineSetting({

@@ -21,6 +21,7 @@ vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
 type Mutable = Record<string, unknown>;
 
 interface FakeTemplate {
+  kind?: string | null;
   id: string;
   name: string;
   description: string;
@@ -3162,6 +3163,31 @@ describe('system templates are hidden and locked', () => {
   let app: FastifyInstance;
   let state: Parameters<typeof buildApp>[0];
   const SYSTEM_ID = '11111111-1111-4111-8111-111111111111';
+  it('refuses review templates on the ordinary run endpoint', async () => {
+    const reviewApp = buildApp({
+      runs: [],
+      templates: [
+        {
+          ...state.templates[0],
+          id: SYSTEM_ID,
+          kind: 'review',
+          name: 'code-review',
+          ...({ origin: null } as object),
+        },
+      ],
+      userRole: 'ADMIN',
+      versions: new Map(),
+    });
+    const response = await reviewApp.inject({
+      headers: { authorization: 'Bearer fake' },
+      method: 'POST',
+      payload: { payload: {}, repoId: SYSTEM_ID },
+      url: `/api/v1/workflow-templates/${SYSTEM_ID}/runs`,
+    });
+    expect(response.statusCode, response.body).toBe(409);
+    expect(response.json().error.code).toBe('REVIEW_TEMPLATE_NEEDS_SOURCE');
+    await reviewApp.close();
+  });
   const INTERNAL_STEP_SPEC = {
     ...VALID_SPEC,
     entry: 'run',

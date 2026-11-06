@@ -41,7 +41,7 @@ export type PrFeedbackFilters = z.infer<typeof PrFeedbackFiltersSchema>;
  * enrichment could not resolve reads as one the platform did not open.
  */
 export const PrFeedbackFactsSchema = z.object({
-  eventId: z.string().regex(/^\d{1,20}$/),
+  eventId: z.union([z.string().regex(/^\d{1,20}$/), z.string().uuid()]),
   eventKind: z.enum(PR_FEEDBACK_EVENT_KINDS),
   /** The pull request's head branch. Absent when the enrichment could not name it. */
   headRef: z.string().min(1).max(200).optional(),
@@ -93,6 +93,9 @@ export function parseFeedbackCommand(body: string): { notes: string } | null {
 
 /** How a trigger reads in lists and messages. */
 function triggerLabel(trigger: string): string {
+  if (trigger === 'review_findings') {
+    return 'a blocking review run';
+  }
   if (trigger === PR_FEEDBACK_QODO_TRIGGER) {
     return 'Qodo’s review of the pull request';
   }
@@ -112,7 +115,9 @@ export const prFeedbackSource: EventSource<PrFeedbackFilters, PrFeedbackFacts> =
   // and the run has no requester. The safety of that path rests on the gateway's allowlist of
   // bot ids, the platform-opened pull request, and the worker's checks (docs/pr-feedback.md).
   actor: (x) =>
-    x.trigger === PR_FEEDBACK_QODO_TRIGGER ? null : { id: x.senderId, login: x.senderLogin },
+    x.trigger === PR_FEEDBACK_QODO_TRIGGER || x.trigger === 'review_findings'
+      ? null
+      : { id: x.senderId, login: x.senderLogin },
   contract: PrFeedbackPayloadSchema,
   dedupeKey: (ownerKey, x) =>
     `${ownerKey}#pr-${x.prNumber}/${x.eventKind}-${x.eventId}`.toLowerCase(),
@@ -150,6 +155,7 @@ export const prFeedbackSource: EventSource<PrFeedbackFilters, PrFeedbackFacts> =
         { label: 'A review requests changes', value: 'changes_requested' },
         { label: 'The `/auto-swe fix` command', value: 'command' },
         { label: 'Qodo reviews the pull request', value: 'qodo_findings' },
+        { label: 'A review run requests a fix', value: 'review_findings' },
       ],
     },
     {
@@ -193,7 +199,10 @@ export const prFeedbackSource: EventSource<PrFeedbackFilters, PrFeedbackFacts> =
     if (!(f.triggers as readonly string[]).includes(x.trigger)) {
       return `it does not react to ${triggerLabel(x.trigger)}`;
     }
-    if (x.trigger === PR_FEEDBACK_QODO_TRIGGER && x.origin === 'other') {
+    if (
+      (x.trigger === PR_FEEDBACK_QODO_TRIGGER || x.trigger === 'review_findings') &&
+      x.origin === 'other'
+    ) {
       return 'Qodo’s findings are only acted on for a pull request the platform opened';
     }
     if (x.origin === 'other') {
@@ -249,8 +258,15 @@ export const prFeedbackSource: EventSource<PrFeedbackFilters, PrFeedbackFacts> =
     const out: PrFeedbackFacts[] = [];
     for (const trigger of f.triggers) {
       if (f.pullRequests.includes('platform')) {
-        out.push({ ...base, origin: 'workflow', trigger });
-        out.push({ ...base, origin: 'agent_run', trigger });
+        const identity =
+          trigger === 'review_findings'
+            ? {
+                eventId: '00000000-0000-4000-8000-000000000001',
+                eventKind: 'review_findings' as const,
+              }
+            : {};
+        out.push({ ...base, ...identity, origin: 'workflow', trigger });
+        out.push({ ...base, ...identity, origin: 'agent_run', trigger });
       }
       if (trigger === PR_FEEDBACK_QODO_TRIGGER) {
         continue;
@@ -297,6 +313,9 @@ export const prFeedbackSource: EventSource<PrFeedbackFilters, PrFeedbackFacts> =
       senderLogin: 'octocat',
       submittedAt: '2026-01-01T00:00:00Z',
       trigger: (v.trigger ?? 'changes_requested') as PrFeedbackFacts['trigger'],
+      ...(v.trigger === 'review_findings'
+        ? { eventId: '00000000-0000-4000-8000-000000000001', eventKind: 'review_findings' as const }
+        : {}),
     }),
     fields: [
       {
@@ -307,6 +326,7 @@ export const prFeedbackSource: EventSource<PrFeedbackFilters, PrFeedbackFacts> =
           { label: 'Review requesting changes', value: 'changes_requested' },
           { label: 'The `/auto-swe fix` command', value: 'command' },
           { label: 'Qodo reviews the pull request', value: 'qodo_findings' },
+          { label: 'A review run requests a fix', value: 'review_findings' },
         ],
       },
       {

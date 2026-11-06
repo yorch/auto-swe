@@ -17,6 +17,7 @@ const m = vi.hoisted(() => ({
   findRunInput: vi.fn(async () => null as unknown),
   pullRequestInfo: vi.fn(async () => null as unknown),
   settings: {} as Record<string, unknown>,
+  storedReview: vi.fn(async () => null as unknown),
   updateFire: vi.fn(async () => ({})),
   workflowId: 'prfb-wf-1' as string | undefined,
 }));
@@ -29,6 +30,10 @@ vi.mock('@auto-swe/shared/db', () => ({
     runInput: { findUnique: m.findRunInput },
     workflowTemplate: { findFirst: m.findBuiltIn },
   },
+}));
+vi.mock('../lib/reviewFeedback.js', async (orig) => ({
+  ...(await orig<typeof import('../lib/reviewFeedback.js')>()),
+  readReviewFeedback: m.storedReview,
 }));
 vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async (key: string) => m.settings[key]),
@@ -149,6 +154,22 @@ const push = (g = gather(), over: Record<string, unknown> = {}) =>
   pushPrFeedbackToPullRequest({ codeResult, gather: g, request: request(over) });
 
 describe('pushPrFeedbackToPullRequest — authority', () => {
+  it.each([true, false])(
+    'pins a trusted review round to the reviewed head (moved=%s)',
+    async (moved) => {
+      const reviewRunId = '22222222-2222-4222-8222-222222222222';
+      base({ fire: { facts: { reviewRunId }, subjectKey: `pr-9@review-${reviewRunId}` } });
+      m.storedReview.mockResolvedValue({ approved: false, headSha: HEAD, status: 'SUCCESS' });
+      m.pullRequestInfo.mockResolvedValue({ headSha: moved ? 'b'.repeat(40) : HEAD });
+      const result = await push(gather(), {
+        feedbackEventId: reviewRunId,
+        feedbackEventKind: 'review_findings',
+        feedbackTrigger: 'review_findings',
+      });
+      expect(result.pushed).toBe(!moved);
+      expect(m.ffw).toHaveBeenCalledTimes(moved ? 0 : 1);
+    }
+  );
   it('refuses when the run is not the feedback automation’s', async () => {
     m.findFire.mockResolvedValue(null);
     const r = await push();

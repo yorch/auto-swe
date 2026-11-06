@@ -14,6 +14,7 @@ export const GROUP_TITLES: Record<string, string> = {
   qodo: 'Qodo review',
   repoAccess: 'Repository access',
   repoDependency: 'Repo dependency graph',
+  review: 'Code reviews',
   skills: 'Skill imports',
   uiValidation: 'UI validation',
   workflow: 'Workflow interpreter',
@@ -42,6 +43,8 @@ export const GROUP_BLURBS: Record<string, string> = {
   repoAccess: 'Who can reach a repository, and how stale a shared view may get.',
   repoDependency:
     'How confidently an LLM-inferred repo-to-repo dependency edge must be evidenced before it is promoted straight to active instead of waiting for a human confirm.',
+  review:
+    'Whether finished workflow and agent runs may receive manual or automatically attached code reviews.',
   skills: 'How skills imported from external repositories are screened and fetched.',
   uiValidation:
     'How much browser evidence a run may keep (screenshots, video, traces), for how long, and whether screenshots are copied into pull request bodies.',

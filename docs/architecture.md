@@ -123,6 +123,7 @@ packages/
 | `src/lib/auditLog.ts` | `writeAuditLog()` — `ConfigAuditLog` rows for every config mutation |
 | `src/lib/telemetry.ts` | OpenTelemetry SDK init |
 | `src/routes/` | Work requests, workflows, runs, templates, projections, webhooks, epics, connections, teams, users, memory, skills, agent library, tokens, model config, admin, scanner patterns, security events, inbox (HITL), system config, schedules, Slack, organizations, bundles, evals |
+| `src/routes/codeReview.ts` | [Code-review API](./code-review.md#api): source-run review launch, review picker, and audited ADMIN preset/attachment CRUD |
 
 ### `packages/worker`
 

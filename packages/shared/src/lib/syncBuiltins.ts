@@ -1313,16 +1313,25 @@ async function syncBuiltinTemplate(
     isDefault?: boolean;
     inputSchema?: unknown;
     workspaceProvider?: string;
+    kind?: 'review';
   }
 ): Promise<void> {
   const spec = tmpl.spec as object;
   const templateFields = {
+    ...(tmpl.kind ? { kind: tmpl.kind } : {}),
     ...(tmpl.inputSchema ? { inputSchema: tmpl.inputSchema as object } : {}),
     ...(tmpl.workspaceProvider ? { workspaceProvider: tmpl.workspaceProvider } : {}),
   };
   const existing = await prisma.workflowTemplate.findFirst({
     where: { name: tmpl.name, teamId: null },
   });
+
+  if (existing && tmpl.kind && existing.kind == null) {
+    await prisma.workflowTemplate.updateMany({
+      data: { kind: tmpl.kind },
+      where: { id: existing.id, kind: null, teamId: null },
+    });
+  }
 
   if (!existing) {
     const defaultTaken = tmpl.isDefault

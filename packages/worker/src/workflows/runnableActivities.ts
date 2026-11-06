@@ -44,6 +44,14 @@ export const stateActivities = proxyActivities<
   startToCloseTimeout: T_30S,
 });
 
+export const reviewLaunchActivities = proxyActivities<
+  Pick<typeof activitiesType, 'dispatchReviewLaunches'>
+>({
+  heartbeatTimeout: T_2M,
+  retry: { initialInterval: '5s', maximumAttempts: 3, maximumInterval: '30s' },
+  startToCloseTimeout: T_5M,
+});
+
 export const genericActivities = proxyActivities<
   Pick<
     typeof activitiesType,
@@ -335,6 +343,14 @@ export const ciPollActivities = proxyActivities<Pick<typeof activitiesType, 'wai
   heartbeatTimeout: T_2M,
   retry: RETRY_SINGLE_ATTEMPT,
   startToCloseTimeout: '6h',
+});
+
+export const codeReviewActivities = proxyActivities<
+  Pick<typeof activitiesType, 'loadChangeForReview' | 'publishReviewResult'>
+>({
+  heartbeatTimeout: T_2M,
+  retry: RETRY_SANDBOX,
+  startToCloseTimeout: T_15M,
 });
 
 // `awaitQodoReview` polls Qodo, inside the activity, for at most 600 s (the node's wait is

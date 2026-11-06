@@ -83,6 +83,7 @@ const fakeActivities = {
   cancelPendingHumanSteps: async () => {},
   createHumanStep: async () => {},
   createWorkflowRun: async () => ({ runId: 'run-test-1', spec: currentSpec }),
+  dispatchReviewLaunches: async () => {},
   executeImplementation: async (_request: unknown, subtask: { id: string; ms?: number }) =>
     traced('executeImplementation', async () => {
       // Reverse-ordered delays make later branches finish first, so a tag taken

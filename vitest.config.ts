@@ -8,6 +8,14 @@ export default defineConfig({
     // Maps subpaths to source .ts so vitest doesn't need a prior build.
     alias: [
       {
+        find: '@auto-swe/shared/lib/reviewLaunch',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/reviewLaunch.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/codeReview',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/codeReview.ts'),
+      },
+      {
         find: '@auto-swe/shared/agentKeys',
         replacement: path.resolve(__dirname, 'packages/shared/src/agentKeys.ts'),
       },

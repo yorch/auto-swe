@@ -1,0 +1,89 @@
+{
+  "description": "Show a finished run diff to a human reviewer, collect their note and decision, and publish the review without changing the code.",
+  "entry": "load",
+  "name": "human-review-of-run",
+  "nodes": {
+    "approve": {
+      "next": "publish",
+      "type": "set",
+      "values": {
+        "context.humanReview.decision": {
+          "literal": "approve"
+        },
+        "context.humanReview.feedback": {
+          "default": "",
+          "from": "nodes.note.output.feedback"
+        }
+      }
+    },
+    "decision": {
+      "onTimeout": "timedOut",
+      "options": [
+        {
+          "label": "Approve",
+          "next": "approve",
+          "value": "approve"
+        },
+        {
+          "label": "Request changes",
+          "next": "reject",
+          "value": "request-changes"
+        }
+      ],
+      "timeout": "24h",
+      "title": "Approve this change?",
+      "type": "humanDecision"
+    },
+    "done": {
+      "result": {
+        "review": {
+          "from": "nodes.publish.output"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "load": {
+      "next": "note",
+      "step": "loadChangeForReview",
+      "type": "step"
+    },
+    "note": {
+      "contentFrom": "nodes.load.output.diff",
+      "description": "Inspect the source diff and leave a review note.",
+      "onSubmit": "decision",
+      "onTimeout": "timedOut",
+      "timeout": "24h",
+      "title": "Review the source change",
+      "type": "humanReview"
+    },
+    "publish": {
+      "inputs": {
+        "human": {
+          "from": "context.humanReview"
+        }
+      },
+      "next": "done",
+      "step": "publishReviewResult",
+      "type": "step"
+    },
+    "reject": {
+      "next": "publish",
+      "type": "set",
+      "values": {
+        "context.humanReview.decision": {
+          "literal": "request-changes"
+        },
+        "context.humanReview.feedback": {
+          "default": "",
+          "from": "nodes.note.output.feedback"
+        }
+      }
+    },
+    "timedOut": {
+      "status": "TIMED_OUT",
+      "type": "terminate"
+    }
+  },
+  "schemaVersion": 1
+}

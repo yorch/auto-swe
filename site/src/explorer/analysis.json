@@ -8985,7 +8985,7 @@
       "before": 0,
       "id": "automationDecide",
       "lines": 105,
-      "path": "packages/gateway/src/lib/automations/engine.ts",
+      "path": "packages/shared/src/automation/decide.ts",
       "title": "Limits are judged under a per-repository advisory lock across the repository’s whole ledger"
     },
     {
@@ -12037,12 +12037,12 @@
       "title": "A busy proxy answers 503 with Retry-After; a slot is held under a deadline"
     },
     {
-      "anchor": "x.trigger === PR_FEEDBACK_QODO_TRIGGER ? null",
-      "before": 4,
+      "anchor": "actor: (x) =>",
+      "before": 0,
       "id": "prFeedbackActor",
-      "lines": 5,
+      "lines": 4,
       "path": "packages/shared/src/automation/sources/prFeedback.ts",
-      "title": "PR feedback acts for the person behind it, except a Qodo round"
+      "title": "PR feedback acts for the person behind it, except trusted Qodo and review-findings rounds"
     },
     {
       "anchor": "function wrapMcpTool(",

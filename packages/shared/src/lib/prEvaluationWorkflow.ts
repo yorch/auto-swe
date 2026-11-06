@@ -11,6 +11,7 @@ export type PrEvaluationInput = {
   prNumber: number;
   /** What caused the evaluation, e.g. `pull_request.synchronize`, `pull_request_review.submitted`, `manual`. */
   trigger: string;
+  reviewRunId?: string;
 };
 
 /**

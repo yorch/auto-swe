@@ -33,6 +33,8 @@ interface FinalizeCall {
   runId: string;
   status: string;
 }
+let reviewDispatchFails = false;
+const reviewDispatches: string[] = [];
 
 const calls: {
   createWorkflowRun: unknown[];
@@ -155,6 +157,12 @@ const fakeActivities = {
       return { error: createRunError };
     }
     return { pinnedSettings: currentPinnedSettings, runId: 'run-test-1', spec: currentSpec };
+  },
+  dispatchReviewLaunches: async (runId: string) => {
+    reviewDispatches.push(runId);
+    if (reviewDispatchFails) {
+      throw ApplicationFailure.nonRetryable('dispatch failed');
+    }
   },
   executeCIFixImplementation: async (...args: unknown[]) => {
     calls.ciFixArgs.push(args);
@@ -326,6 +334,8 @@ beforeEach((ctx: TestContext) => {
   validateCriteria = ['builds'];
   createRunError = undefined;
   createRunThrows = false;
+  reviewDispatchFails = false;
+  reviewDispatches.length = 0;
   calls.retiredLaunches.length = 0;
 });
 
@@ -383,6 +393,18 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     expect((result as { status: string }).status).toBe('SUCCESS');
     expect(calls.domainStates).toContain('IMPLEMENTING');
     expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
+    expect(reviewDispatches).toEqual(['run-test-1']);
+  }, 120_000);
+  it('keeps source success when the post-finalization review activity fails', async () => {
+    currentSpec = makeSpec({ done: { result: {}, status: 'SUCCESS', type: 'terminate' } }, 'done');
+    reviewDispatchFails = true;
+    const result = await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-review-dispatch-fails')
+    );
+    expect((result as { status: string }).status).toBe('SUCCESS');
+    expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
+    expect(reviewDispatches).toEqual(['run-test-1']);
   }, 120_000);
 
   it('runs the seeded ticket-to-merge template to SUCCESS with no COMPLETED stamp of its own', async () => {

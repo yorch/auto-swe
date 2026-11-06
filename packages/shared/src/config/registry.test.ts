@@ -2,6 +2,22 @@ import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import { SETTING_DEFINITIONS } from './registry.js';
 
+describe('review settings', () => {
+  it('enables live ADMIN-managed reviews with team and organization overrides', () => {
+    const setting = SETTING_DEFINITIONS['review.enabled'];
+    expect(setting.defaultValue).toBe(true);
+    expect(setting.group).toBe('review');
+    expect(setting.requiredRole).toBe('ADMIN');
+    expect(setting.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
+    expect(setting.runPinned).toBe(false);
+    expect(setting.restartRequired).toBe(false);
+    expect(setting.schema.safeParse(false).success).toBe(true);
+    for (const invalid of ['true', null, 1]) {
+      expect(setting.schema.safeParse(invalid).success).toBe(false);
+    }
+  });
+});
+
 describe('retention settings', () => {
   const accepts = (key: keyof typeof SETTING_DEFINITIONS, value: unknown) =>
     SETTING_DEFINITIONS[key].schema.safeParse(value).success;

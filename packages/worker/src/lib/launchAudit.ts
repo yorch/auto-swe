@@ -5,7 +5,7 @@ import { logWarn } from './activityLog.js';
  * The doors a worker-started run can come through. The gateway names its own in
  * `workflowLaunch.ts`; these are the ones with no request behind them.
  */
-export type WorkerLaunchSource = 'channel-task' | 'epic-child' | 'prd-child';
+export type WorkerLaunchSource = 'channel-task' | 'epic-child' | 'prd-child' | 'code-review';
 
 export interface WorkerLaunchAudit {
   /** The launching user (`RunRequest.launchedById`), null when none is known. */

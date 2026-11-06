@@ -36,6 +36,7 @@ export const SETTING_GROUPS = [
   'qodo',
   'repoAccess',
   'repoDependency',
+  'review',
   'skills',
   'uiValidation',
   'workflow',

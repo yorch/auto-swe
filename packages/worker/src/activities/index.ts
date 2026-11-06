@@ -1,3 +1,6 @@
+export type { PublishReviewInput } from './codeReview.js';
+export { loadChangeForReview, publishReviewResult } from './codeReview.js';
+export { dispatchReviewLaunches } from './reviewLaunches.js';
 // In-app assistant — one conversation turn, and the reply it leaves when a turn cannot run
 
 export { nameAssistantConversationNow } from './assistantTitle.js';
@@ -121,7 +124,7 @@ export { countUnscreenedCasesActivity, screenDatasetCasesActivity } from './eval
 export { runEvalHarnessActivity } from './evalHarness.js';
 export { revalidateDatasetActivity } from './evalRevalidate.js';
 export type { EvaluatePullRequestResult } from './evaluatePullRequest.js';
-export { evaluatePullRequest } from './evaluatePullRequest.js';
+export { evaluatePullRequest, reviewRunStatusForEvaluation } from './evaluatePullRequest.js';
 export { executeImplementation } from './executeImplementation.js';
 // Natural-language workflow authoring — explain an existing WorkflowSpec
 export type {

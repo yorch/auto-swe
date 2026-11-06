@@ -1,7 +1,20 @@
 import { Prisma } from '@auto-swe/shared';
+import { reviewRunId } from '@auto-swe/shared/lib/reviewLaunch';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import { Context } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@auto-swe/shared/lib/reviewLaunch', async (original) => ({
+  ...(await original<object>()),
+  loadReviewSource: vi.fn(async () => ({
+    connectionId: '22222222-2222-4222-8222-222222222222',
+    facts: { codeResult: { branch: 'auto/change', headSha: 'a'.repeat(40) }, status: 'SUCCESS' },
+  })),
+}));
+vi.mock('@auto-swe/shared/config', async (original) => ({
+  ...(await original<object>()),
+  resolveSetting: vi.fn(async () => true),
+}));
 
 vi.mock('@temporalio/activity', () => ({
   ApplicationFailure: {
@@ -134,6 +147,12 @@ vi.mock('@auto-swe/shared/db', () => {
     pullRequest: {
       findFirst: vi.fn(),
     },
+    reviewLaunchIntent: {
+      createMany: vi.fn(),
+      findUnique: vi.fn(async () => ({ id: 'deadbeef-1111-4111-8111-111111111111' })),
+      updateMany: vi.fn(),
+    },
+    reviewPresetAttachment: { findMany: vi.fn(async () => [{ presetId: 'preset' }]) },
     runCallback: { findUnique: vi.fn(async () => null) },
     runInput: {
       findUnique: vi.fn(async () => null),
@@ -267,6 +286,31 @@ describe('createWorkflowRun', () => {
       { key: 'implementer', version: 1 },
       { key: 'reviewer', version: 2 },
     ] as never);
+  });
+  it('stamps review linkage and reserved run identity at setup', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec, template: { kind: 'review' } } as never);
+    const payload = {
+      connectionId: '22222222-2222-4222-8222-222222222222',
+      presetId: '33333333-3333-4333-8333-333333333333',
+      reviewOf: { branch: 'auto/change', headSha: 'a'.repeat(40), mode: 'branch' },
+      sourceRunId: '11111111-1111-4111-8111-111111111111',
+    };
+    await createWorkflowRun({
+      payload,
+      runConnectionId: payload.connectionId,
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'review-22222222-deadbeef',
+    });
+    expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({
+      connectionId: payload.connectionId,
+      id: reviewRunId('review-22222222-deadbeef'),
+      reviewOfRunId: payload.sourceRunId,
+      reviewPresetId: payload.presetId,
+    });
+    expect(prisma.reviewLaunchIntent.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { reviewRunId: 'run-1' } })
+    );
   });
 
   it('re-takes a scheduled fire’s launch decision first, and a refusal stops the run', async () => {
@@ -1437,6 +1481,24 @@ describe('recordWorkflowStep', () => {
 });
 
 describe('finalizeWorkflowRun', () => {
+  it('inserts automatic review intents within successful terminal bookkeeping', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    findRun.mockResolvedValue({
+      connection: { team: { id: 'team', orgId: 'org' } },
+      connectionId: 'repo',
+      template: { kind: null },
+      templateId: 'template',
+      workRequest: null,
+    } as never);
+    updateManyRuns.mockResolvedValue({ count: 1 });
+    await finalizeWorkflowRun('source', 'SUCCESS');
+    expect(prisma.reviewLaunchIntent.createMany).toHaveBeenCalledWith({
+      data: [{ presetId: 'preset', sourceRunId: 'source' }],
+      skipDuplicates: true,
+    });
+    findRun.mockReset();
+    vi.mocked(prisma.reviewLaunchIntent.createMany).mockClear();
+  });
   it('writes status + endedAt + denormalized cost to the run row', async () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     findRun.mockResolvedValue({

@@ -29,6 +29,8 @@ const RESULT: EvaluatePullRequestResult = {
 
 const received: PrEvaluationInput[] = [];
 let failuresLeft = 0;
+let reviewStatuses: string[] = [];
+const statusReads: string[] = [];
 const fakeActivities = {
   async evaluatePullRequest(input: PrEvaluationInput): Promise<EvaluatePullRequestResult> {
     received.push(input);
@@ -37,6 +39,10 @@ const fakeActivities = {
       throw new Error('transient failure');
     }
     return RESULT;
+  },
+  async reviewRunStatusForEvaluation(runId: string): Promise<string> {
+    statusReads.push(runId);
+    return reviewStatuses.shift() ?? 'SUCCESS';
   },
 };
 
@@ -83,6 +89,8 @@ describe('PrEvaluationWorkflow in the test server', () => {
     }
     received.length = 0;
     failuresLeft = 0;
+    reviewStatuses = [];
+    statusReads.length = 0;
   });
 
   const input: PrEvaluationInput = {
@@ -111,5 +119,27 @@ describe('PrEvaluationWorkflow in the test server', () => {
     expect(result).toEqual(RESULT);
     expect(received).toHaveLength(2);
     expect(received[1]).toEqual(input);
+  });
+  it('waits for a published review to commit SUCCESS before evaluating', async () => {
+    reviewStatuses = ['RUNNING', 'SUCCESS'];
+    const reviewInput = { ...input, reviewRunId: 'review-run', trigger: 'review_run' };
+    const result = await env.client.workflow.execute(PR_EVALUATION_WORKFLOW_TYPE, {
+      args: [reviewInput],
+      taskQueue: TASK_QUEUE,
+      workflowId: 'preval-review-ready',
+    });
+    expect(result).toEqual(RESULT);
+    expect(statusReads).toEqual(['review-run', 'review-run']);
+    expect(received).toEqual([reviewInput]);
+  });
+  it('does not evaluate a review that finishes unsuccessfully', async () => {
+    reviewStatuses = ['FAILED'];
+    const result = await env.client.workflow.execute(PR_EVALUATION_WORKFLOW_TYPE, {
+      args: [{ ...input, reviewRunId: 'failed-review', trigger: 'review_run' }],
+      taskQueue: TASK_QUEUE,
+      workflowId: 'preval-review-failed',
+    });
+    expect(result).toMatchObject({ outcome: 'skipped' });
+    expect(received).toEqual([]);
   });
 });

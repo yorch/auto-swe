@@ -1,4 +1,5 @@
 import '../workflow/runAttribution.pg.js';
+import './codeReview.pg.js';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { prisma } from '../db.js';
 import type { ProviderDiscovery } from './modelDiscovery.js';

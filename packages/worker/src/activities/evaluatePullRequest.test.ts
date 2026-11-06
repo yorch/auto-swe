@@ -15,6 +15,7 @@ const m = vi.hoisted(() => ({
   evidenceWheres: [] as Record<string, unknown>[],
   groupByArgs: [] as { by: string[]; where: Record<string, unknown> }[],
   invalidated: { count: 0 },
+  linkedRuns: vi.fn(),
   logs: [] as { message: string; meta: unknown }[],
   markers: vi.fn(),
   onInvalidate: undefined as (() => void) | undefined,
@@ -66,7 +67,10 @@ vi.mock('@auto-swe/shared/db', () => ({
     runEvidence: { groupBy: m.uiEvidence },
     runInput: { findUnique: m.request },
     user: { findMany: m.user },
-    workflowRun: { findMany: m.runs },
+    workflowRun: {
+      findMany: (args: { where: { reviewOfRunId?: string; reviewOfRun?: unknown } }) =>
+        args.where.reviewOfRunId || args.where.reviewOfRun ? m.linkedRuns(args) : m.runs(args),
+    },
     workflowStep: { findMany: m.steps },
   },
 }));
@@ -265,6 +269,8 @@ beforeEach(() => {
   // The launcher reads assert the ids they are asked about, and answer only for a user that
   // exists in the table: a lookup that resolved the wrong person gets nothing back.
   m.runs.mockReset();
+  m.linkedRuns.mockReset();
+  m.linkedRuns.mockResolvedValue([]);
   m.runs.mockImplementation(async (args: { where: { OR: unknown[] } }) => {
     expect(args.where.OR).toEqual([
       { id: 'run-1' },
@@ -512,6 +518,120 @@ describe('loadMaxReviewSeverity', () => {
     expect(m.steps.mock.calls[0]?.[0]).toMatchObject({
       where: { run: { workflowId: 'eng-acme-widgets-JIRA-1' }, stepName: 'runReviewNetwork' },
     });
+  });
+});
+
+describe('linked review evaluation', () => {
+  const linked = (
+    options: {
+      head?: string;
+      mode?: string;
+      severity?: string;
+      approved?: boolean;
+      human?: boolean;
+      findings?: unknown[];
+    } = {}
+  ) => {
+    const {
+      head = HEAD,
+      mode = 'pr',
+      severity = 'WARNING',
+      approved = false,
+      human = false,
+      findings = [],
+    } = options;
+    return {
+      id: 'review-run-1',
+      steps: [
+        {
+          outputs: { approved, findings, worstSeverity: severity },
+          stepName: 'publishReviewResult',
+        },
+        ...(!human
+          ? [
+              {
+                outputs: {
+                  codeResult: { headSha: head },
+                  verdicts: [{ approved, findings, reviewer: 'SECURITY', severity }],
+                },
+                stepName: 'runReviewNetwork',
+              },
+            ]
+          : []),
+        { outputs: { headSha: head }, stepName: 'loadChangeForReview' },
+      ],
+      workRequest: { payload: { reviewOf: { mode } } },
+    };
+  };
+
+  it('raises original LOW risk to HIGH for a linked WARNING at the same head', async () => {
+    m.linkedRuns.mockResolvedValue([linked()]);
+    const result = await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+    expect(result.riskClass).toBe('HIGH');
+    expect(JSON.stringify(m.created[0]?.reasons)).toContain('review-severity');
+    expect(m.linkedRuns).toHaveBeenCalledWith(
+      expect.objectContaining({ take: 50, where: { reviewOfRunId: 'run-1', status: 'SUCCESS' } })
+    );
+  });
+
+  it('does not lower an original WARNING when a linked review is clean', async () => {
+    m.steps.mockResolvedValue([
+      { outputs: { codeResult: { headSha: HEAD }, verdicts: [{ severity: 'WARNING' }] } },
+    ]);
+    m.linkedRuns.mockResolvedValue([linked({ approved: true, severity: 'PASS' })]);
+    expect(await loadMaxReviewSeverity(WORKFLOW_ID, HEAD)).toBe('WARNING');
+    expect((await evaluatePullRequestWith(INPUT, depsWith(fakeScm()))).riskClass).toBe('HIGH');
+  });
+
+  it.each([{ head: OLD_HEAD }, { mode: 'stored' }])(
+    'ignores ineligible linked review %j',
+    async (options) => {
+      m.linkedRuns.mockResolvedValue([linked(options)]);
+      expect((await evaluatePullRequestWith(INPUT, depsWith(fakeScm()))).riskClass).toBe('LOW');
+    }
+  );
+
+  it('preserves missing-original classification even with a clean linked review', async () => {
+    m.steps.mockResolvedValue([]);
+    m.linkedRuns.mockResolvedValue([linked({ approved: true, severity: 'PASS' })]);
+    expect(await loadMaxReviewSeverity(WORKFLOW_ID, HEAD)).toBeNull();
+    expect((await evaluatePullRequestWith(INPUT, depsWith(fakeScm()))).riskClass).toBe('HIGH');
+    expect(JSON.stringify(m.created[0]?.reasons)).toContain('review-signal-missing');
+  });
+
+  it.each([
+    { severity: 'CRITICAL' },
+    { approved: false, severity: 'PASS' },
+    { human: true, severity: 'WARNING' },
+  ])('counts Qodo/human summary rejection %j', async (options) => {
+    m.linkedRuns.mockResolvedValue([linked(options)]);
+    expect((await evaluatePullRequestWith(INPUT, depsWith(fakeScm()))).riskClass).toBe('HIGH');
+  });
+
+  it('merges linked findings into the brief once, labels their run, and never substitutes linked test evidence', async () => {
+    const finding = {
+      category: 'Security',
+      description: 'Linked security issue',
+      file: 'src/util.ts',
+      line: 1,
+      suggestedFix: 'Validate input',
+    };
+    m.linkedRuns.mockResolvedValue([linked({ findings: [finding, finding] })]);
+    await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+    const markdown = (argsOf('upsertMarkedComment')[0] as unknown[])[3] as string;
+    expect(markdown).toContain('Linked security issue');
+    expect(markdown).toContain('Review run review-run-1');
+    expect(markdown.match(/Linked security issue/g)).toHaveLength(1);
+    expect(markdown).toContain('- Tests: no result recorded for this head.');
+  });
+
+  it('accepts review_run triggers and publishes to the current host head', async () => {
+    m.linkedRuns.mockResolvedValue([linked()]);
+    const input = { ...INPUT, reviewRunId: 'review-run-1', trigger: 'review_run' };
+    expect((await evaluatePullRequestWith(input, depsWith(fakeScm()))).outcome).toBe('evaluated');
+    expect(m.created[0]).toMatchObject({ headSha: HEAD, prNumber: 7, triggeredBy: 'review_run' });
+    expect(argsOf('getPullRequest')[0]).toEqual([expect.anything(), 7]);
+    expect(argsOf('setCommitStatus').at(-1)).toEqual([expect.anything(), HEAD, expect.anything()]);
   });
 });
 

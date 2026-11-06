@@ -25,6 +25,23 @@ import { BUILTIN_STEPS, type StepMetadata } from './registry-types.js';
 
 const REGISTRY = new Map<string, StepMetadata>();
 
+register({
+  category: 'shell',
+  configFields: [],
+  description:
+    'Load a finished run change from a verified PR or branch head, or an unverified stored agent diff. Never runs tests or modifies the change.',
+  label: 'Load change for review',
+  name: 'loadChangeForReview',
+});
+register({
+  category: 'vcs',
+  configFields: [],
+  description:
+    'Summarize review findings, publish a marked PR comment, and request best-effort PR re-evaluation.',
+  label: 'Publish review result',
+  name: 'publishReviewResult',
+});
+
 const SYSTEM_PROMPT_FIELD = {
   description:
     'Override the agent system prompt for this step. Leave empty to use the team/global default configured at /models.',

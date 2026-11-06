@@ -123,6 +123,7 @@ export const SIDEBAR = [
       'docs/ci-failure-triggers',
       'docs/maintenance-workflows',
       'docs/pr-feedback',
+      'docs/code-review',
       'docs/pr-evaluation',
       'docs/channel-assistant',
       'docs/memory',

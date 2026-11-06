@@ -147,6 +147,8 @@
     "./lib/prTitle": "./dist/lib/prTitle.js",
     "./lib/pullRequestOutcomes": "./dist/lib/pullRequestOutcomes.js",
     "./lib/prFeedback": "./dist/lib/prFeedback.js",
+    "./lib/codeReview": "./dist/lib/codeReview.js",
+    "./lib/reviewLaunch": "./dist/lib/reviewLaunch.js",
     "./lib/githubAccountId": "./dist/lib/githubAccountId.js",
     "./lib/keyRotation": "./dist/lib/keyRotation.js",
     "./lib/knowledge": "./dist/lib/knowledge.js",

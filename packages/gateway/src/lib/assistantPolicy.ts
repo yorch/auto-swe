@@ -58,6 +58,8 @@ export type AssistantAccess = 'read' | 'confirm' | 'never';
 
 export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> = {
   'DELETE /api/v1/integrations/github-approver-app': { never: 'secret' },
+  'DELETE /api/v1/platform/review-presets/:id': 'confirm',
+  'DELETE /api/v1/platform/review-presets/:id/attachments': 'confirm',
   'DELETE /api/v1/report-digests/:id': 'confirm',
   'GET /api/v1/agent-runs/agents': 'read',
   'GET /api/v1/agent-runs/limits': 'read',
@@ -146,6 +148,8 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/platform/organizations/:orgId/members': 'read',
   'GET /api/v1/platform/organizations/budget-alerts': 'read',
   'GET /api/v1/platform/readiness': 'read',
+  'GET /api/v1/platform/review-presets': 'read',
+  'GET /api/v1/platform/review-presets/:id': 'read',
   'GET /api/v1/platform/scanner-patterns': 'read',
   'GET /api/v1/platform/security-events': 'read',
   'GET /api/v1/platform/security-events/summary': 'read',
@@ -189,6 +193,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/repositories/credentials/mine': { never: 'secret' },
   'GET /api/v1/repositories/dependencies/unresolved': 'read',
   'GET /api/v1/repositories/github/available': 'read',
+  'GET /api/v1/review-presets': 'read',
   'GET /api/v1/scheduled-work-requests': 'read',
   'GET /api/v1/teams': 'read',
   'GET /api/v1/teams/:id': 'read',
@@ -251,6 +256,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PATCH /api/v1/platform/organizations/:orgId': 'confirm',
   'PATCH /api/v1/platform/organizations/:orgId/budget': 'confirm',
   'PATCH /api/v1/platform/organizations/:orgId/members/:userId': { never: 'identity' },
+  'PATCH /api/v1/platform/review-presets/:id': 'confirm',
   'PATCH /api/v1/platform/skill-sources/:id': 'confirm',
   'PATCH /api/v1/platform/slack-channels/:id': 'confirm',
   'PATCH /api/v1/platform/slack-channels/:id/memory/:memoryId': 'confirm',
@@ -339,6 +345,8 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/platform/model-catalog/suggestions/:id/undismiss': 'confirm',
   'POST /api/v1/platform/organizations/:orgId/members': { never: 'identity' },
   'POST /api/v1/platform/organizations/:orgId/members/invite': { never: 'identity' },
+  'POST /api/v1/platform/review-presets': 'confirm',
+  'POST /api/v1/platform/review-presets/:id/attachments': 'confirm',
   'POST /api/v1/platform/scanner-patterns': 'confirm',
   'POST /api/v1/platform/scanner-patterns/test': {
     read: 'runs a candidate pattern against samples and stores nothing',
@@ -389,6 +397,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/work-requests/:id/retry': 'confirm',
   'POST /api/v1/workflow-runs/:id/cancel': 'confirm',
   'POST /api/v1/workflow-runs/:id/evidence/:evidenceId/link': { never: 'secret' },
+  'POST /api/v1/workflow-runs/:id/reviews': 'confirm',
   'POST /api/v1/workflow-templates': 'confirm',
   'POST /api/v1/workflow-templates/:id/explain': {
     read: 'describes a template and stores nothing',
