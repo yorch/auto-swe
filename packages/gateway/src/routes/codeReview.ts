@@ -371,7 +371,7 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
         data: await fastify.prisma.reviewPreset.findMany({
           include: { attachments: true, template: { select: { id: true, name: true } } },
           orderBy: { name: 'asc' },
-          where: scope,
+          where: { teamId: scope.teamId },
         }),
       };
     }
