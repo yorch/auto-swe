@@ -19,6 +19,15 @@ function downloadUrl(url: string) {
   link.remove();
 }
 
+function evidenceCountSummary(data: RunEvidenceDto[]): string {
+  return (['screenshot', 'video', 'trace', 'log'] as const)
+    .flatMap((kind) => {
+      const count = data.filter((item) => item.kind === kind).length;
+      return count > 0 ? [`${count} ${kind}${count === 1 ? '' : 's'}`] : [];
+    })
+    .join(', ');
+}
+
 function EvidenceCard({ evidence, runId }: { evidence: RunEvidenceDto; runId: string }) {
   const [visible, setVisible] = useState(false);
   const [lightboxOpen, setLightboxOpen] = useState(false);
@@ -152,16 +161,41 @@ function EvidenceCard({ evidence, runId }: { evidence: RunEvidenceDto; runId: st
 
 export function RunEvidence({ runId, live }: { runId: string; live: boolean }) {
   const { data } = useRunEvidence(runId, live);
+  const [open, setOpen] = useState(false);
+  const [scrollOnOpen, setScrollOnOpen] = useState(false);
+
+  useEffect(() => {
+    const openForHash = () => {
+      if (window.location.hash === '#evidence') {
+        setOpen(true);
+        setScrollOnOpen(true);
+      }
+    };
+    openForHash();
+    window.addEventListener('hashchange', openForHash);
+    return () => window.removeEventListener('hashchange', openForHash);
+  }, []);
+
+  useEffect(() => {
+    if (open && scrollOnOpen && data?.length) {
+      document.getElementById('evidence')?.scrollIntoView?.();
+      setScrollOnOpen(false);
+    }
+  }, [data, open, scrollOnOpen]);
+
   if (!data || data.length === 0) {
     return null;
   }
+  const summary = evidenceCountSummary(data);
   return (
-    <RunPanel defaultOpen id="evidence" meta={String(data.length)} title="Evidence">
-      <div className="mt-3 grid max-h-[50vh] gap-3 overflow-y-auto md:grid-cols-2">
-        {data.map((item) => (
-          <EvidenceCard evidence={item} key={item.id} runId={runId} />
-        ))}
-      </div>
+    <RunPanel defaultOpen={open} id="evidence" meta={summary} onToggle={setOpen} title="Evidence">
+      {open && (
+        <div className="mt-3 grid max-h-[50vh] gap-3 overflow-y-auto md:grid-cols-2">
+          {data.map((item) => (
+            <EvidenceCard evidence={item} key={item.id} runId={runId} />
+          ))}
+        </div>
+      )}
     </RunPanel>
   );
 }

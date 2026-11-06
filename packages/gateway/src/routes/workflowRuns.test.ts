@@ -1341,4 +1341,38 @@ describe('workflowRunRoutes UI evidence', () => {
     expect(res.headers['content-type']).toBe('application/octet-stream');
     expect(res.headers['content-disposition']).toContain('attachment; filename="trace-');
   });
+
+  it('serves a screenshot with an unsafe MIME type as an octet-stream attachment', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.workflowRun.findFirst.mockResolvedValue({ id: runId });
+    prisma.runEvidence.findFirst.mockResolvedValue({
+      artifact: { contentType: 'text/html', sizeBytes: 5, status: 'ready' },
+      artifactId: 'artifact-1',
+      id: evidenceId,
+      kind: 'screenshot',
+    });
+    getArtifactStream.mockResolvedValue({
+      ref: {
+        backend: 'fs',
+        contentType: 'text/html',
+        id: 'artifact-1',
+        kind: 'ui.screenshot',
+        sizeBytes: 5,
+      },
+      sizeBytes: 5,
+      stream: Readable.from([Buffer.from('<html>')]),
+    });
+    const { token } = signEvidenceLink({ eid: evidenceId, rid: runId, sub: 'u-1' });
+
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/evidence/${evidenceId}/content?token=${encodeURIComponent(token)}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['content-type']).toBe('application/octet-stream');
+    expect(res.headers['content-disposition']).toBe(
+      `attachment; filename="screenshot-${evidenceId}.png"`
+    );
+  });
 });
