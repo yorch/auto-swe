@@ -9,6 +9,130 @@ datasource db {
   extensions = [vector]
 }
 
+enum KnowledgeBaseVisibility {
+  TEAM
+  SHARED
+  ORG
+}
+
+enum KnowledgeBaseStatus {
+  OK
+  DISABLED
+}
+
+enum KnowledgeBaseLinkScope {
+  TEAM
+  REPO
+  TEMPLATE
+}
+
+enum KnowledgeBaseSnapshotStatus {
+  INDEXING
+  READY
+  FAILED
+}
+
+model KnowledgeBase {
+  id             String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  connectionId   String                   @unique @map("connection_id") @db.Uuid
+  connection     Connection               @relation("KnowledgeBaseConnection", fields: [connectionId], references: [id], onDelete: Restrict)
+  orgId          String                   @map("org_id") @db.Uuid
+  organization   Organization             @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  name           String
+  mountName      String                   @map("mount_name")
+  description    String                   @default("")
+  path           String                   @default("")
+  defaultRef     String?                  @map("default_ref")
+  visibility     KnowledgeBaseVisibility  @default(TEAM)
+  status         KnowledgeBaseStatus      @default(OK)
+  lastIndexedSha String?                  @map("last_indexed_sha")
+  lastIndexedAt  DateTime?                @map("last_indexed_at")
+  lastError      String?                  @map("last_error")
+  createdById    String                   @map("created_by_id") @db.Uuid
+  createdBy      User                     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt      DateTime                 @default(now()) @map("created_at")
+  updatedAt      DateTime                 @updatedAt @map("updated_at")
+  shares         KnowledgeBaseTeamShare[]
+  links          KnowledgeBaseLink[]
+  snapshots      KnowledgeBaseSnapshot[]
+
+  @@index([orgId])
+  @@map("knowledge_bases")
+}
+
+model KnowledgeBaseTeamShare {
+  knowledgeBaseId String        @map("knowledge_base_id") @db.Uuid
+  knowledgeBase   KnowledgeBase @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  teamId          String        @map("team_id") @db.Uuid
+  team            Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@id([knowledgeBaseId, teamId])
+  @@map("knowledge_base_team_shares")
+}
+
+model KnowledgeBaseLink {
+  id              String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  knowledgeBaseId String                 @map("knowledge_base_id") @db.Uuid
+  knowledgeBase   KnowledgeBase          @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  scope           KnowledgeBaseLinkScope
+  teamId          String?                @map("team_id") @db.Uuid
+  team            Team?                  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  repoId          String?                @map("repo_id") @db.Uuid
+  repo            Connection?            @relation("KnowledgeBaseRepoLinks", fields: [repoId], references: [id], onDelete: Cascade)
+  templateId      String?                @map("template_id") @db.Uuid
+  template        WorkflowTemplate?      @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  ref             String?
+  mountName       String?                @map("mount_name")
+  mandatory       Boolean                @default(false)
+  exclude         Boolean                @default(false)
+  createdById     String                 @map("created_by_id") @db.Uuid
+  createdBy       User                   @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+
+  @@index([teamId])
+  @@unique([knowledgeBaseId, repoId], map: "knowledge_base_links_repo_key")
+  @@unique([knowledgeBaseId, templateId], map: "knowledge_base_links_template_key")
+  @@map("knowledge_base_links")
+}
+
+model KnowledgeBaseSnapshot {
+  id              String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  knowledgeBaseId String                      @map("knowledge_base_id") @db.Uuid
+  knowledgeBase   KnowledgeBase               @relation(fields: [knowledgeBaseId], references: [id], onDelete: Cascade)
+  sha             String
+  path            String
+  status          KnowledgeBaseSnapshotStatus @default(INDEXING)
+  fileCount       Int                         @default(0) @map("file_count")
+  chunkCount      Int                         @default(0) @map("chunk_count")
+  bytes           Int                         @default(0)
+  flaggedFiles    Json                        @default("[]") @map("flagged_files")
+  skippedFiles    Json                        @default("[]") @map("skipped_files")
+  embeddingModel  String?                     @map("embedding_model")
+  error           String?
+  indexedAt       DateTime?                   @map("indexed_at")
+  chunks          KnowledgeBaseChunk[]
+
+  @@unique([knowledgeBaseId, sha, path])
+  @@map("knowledge_base_snapshots")
+}
+
+model KnowledgeBaseChunk {
+  id             String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  snapshotId     String                       @map("snapshot_id") @db.Uuid
+  snapshot       KnowledgeBaseSnapshot        @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+  path           String
+  chunkIndex     Int                          @map("chunk_index")
+  heading        String?
+  content        String
+  contentDigest  String                       @map("content_digest")
+  embedding      Unsupported("vector(1536)")?
+  embeddingModel String?                      @map("embedding_model")
+
+  @@unique([snapshotId, path, chunkIndex])
+  @@map("knowledge_base_chunks")
+}
+
 enum Role {
   ADMIN
   LEAD
@@ -453,6 +577,8 @@ model ServicePrincipal {
 /// `git_repo` specifics (GitHub coords, default branch, gate commands) stay as
 /// typed columns for parity and migrate further in later slices.
 model Connection {
+  knowledgeBase           KnowledgeBase?      @relation("KnowledgeBaseConnection")
+  knowledgeBaseLinks      KnowledgeBaseLink[] @relation("KnowledgeBaseRepoLinks")
   id                   String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// Connection-type discriminator. Defaults to SWE's `'git_repo'`.
   type                 String              @default("git_repo")
@@ -951,6 +1077,7 @@ model RepoDependency {
 /// `monthlyBudgetUsdCents` is optional; when set, work-request creation is rejected
 /// once the org's spend for the current calendar month meets or exceeds the cap.
 model Organization {
+  knowledgeBases              KnowledgeBase[]
   id                          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name                        String   @unique
   slug                        String   @unique
@@ -990,6 +1117,8 @@ model Organization {
 }
 
 model Team {
+  knowledgeBaseShares  KnowledgeBaseTeamShare[]
+  knowledgeBaseLinks   KnowledgeBaseLink[]
   id                   String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name                 String       @unique
   slug                 String       @unique
@@ -1425,6 +1554,8 @@ model ChannelBudgetHold {
 model User {
   createdReviewPresets           ReviewPreset[]           @relation("ReviewPresetCreator")
   createdReviewPresetAttachments ReviewPresetAttachment[] @relation("ReviewPresetAttachmentCreator")
+  createdKnowledgeBases     KnowledgeBase[]
+  createdKnowledgeBaseLinks KnowledgeBaseLink[]
   id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   email                String    @unique
   /// Legacy bcrypt hash. Optional because OAuth-only / magic-link-only
@@ -2013,6 +2144,9 @@ model WorkflowRun {
   reviewPreset          ReviewPreset?        @relation(fields: [reviewPresetId], references: [id], onDelete: SetNull)
   reviewLaunchIntents   ReviewLaunchIntent[]  @relation("ReviewIntentSource")
   launchedReviewIntents ReviewLaunchIntent[]  @relation("ReviewIntentResult")
+  knowledgeBaseOverrides  Json?                           @map("knowledge_base_overrides")
+  knowledgeBases          Json?                           @map("knowledge_bases")
+  knowledgeBasesFor       String?                         @map("knowledge_bases_for")
   id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workflowId        String            @unique @map("workflow_id")
   templateId        String            @map("template_id") @db.Uuid
@@ -3027,6 +3161,7 @@ model HumanApproval {
 /// template (enforced in application code).
 model WorkflowTemplate {
   kind                                   String?
+  knowledgeBaseLinks                     KnowledgeBaseLink[]
   id                                     String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   teamId                                 String?                @map("team_id") @db.Uuid
   /// Restrict, not SetNull: a null `teamId` means GLOBAL, so nulling it on team

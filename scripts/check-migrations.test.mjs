@@ -16,8 +16,12 @@ const MEMORY = 'DROP INDEX "idx_memory_items_embedding";';
 const KNOWLEDGE = 'DROP INDEX "knowledge_items_embedding_hnsw_idx";';
 
 describe('unexpectedDiff', () => {
-  it('lists the same two statements as the CI step', () => {
-    expect(EXPECTED).toEqual([MEMORY, KNOWLEDGE]);
+  it('lists the same statements as the CI step', () => {
+    expect(EXPECTED).toEqual([
+      MEMORY,
+      KNOWLEDGE,
+      'DROP INDEX "knowledge_base_chunks_embedding_hnsw_idx";',
+    ]);
   });
 
   it('accepts a diff holding only the two known statements, with comments and blanks', () => {

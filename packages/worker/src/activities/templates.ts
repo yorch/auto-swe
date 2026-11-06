@@ -21,6 +21,7 @@ import {
 } from '@auto-swe/shared/lib/egressPolicy';
 import { isInputSchema, runAuthorizedConnectionIds } from '@auto-swe/shared/lib/inputSchema';
 import type { TrackerWriteback } from '@auto-swe/shared/lib/integrations/ticketFailure';
+import type { KnowledgeBaseOverrides } from '@auto-swe/shared/lib/knowledgeBaseResolution';
 import { loadReviewSource, reviewRunId } from '@auto-swe/shared/lib/reviewLaunch';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -297,6 +298,7 @@ async function knowledgeSourceSnapshot(
 }
 
 export interface CreateWorkflowRunInput {
+  knowledgeBaseOverrides?: KnowledgeBaseOverrides;
   workflowId: string;
   templateId: string;
   templateVersion: number;
@@ -686,6 +688,9 @@ export async function createWorkflowRun(
             reviewOfRunId: reviewPayload.data.sourceRunId,
             reviewPresetId: reviewPayload.data.presetId ?? null,
           }
+        : {}),
+      ...(input.knowledgeBaseOverrides
+        ? { knowledgeBaseOverrides: input.knowledgeBaseOverrides as Prisma.InputJsonObject }
         : {}),
       agentVersions,
       attributedOrgId: attribution.attributedOrgId,

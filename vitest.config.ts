@@ -382,6 +382,10 @@ export default defineConfig({
       // Order matters: 'repoDependency' is a prefix of both 'repoDependencyMatch'
       // and 'repoDependencyResolver', so the longer finds MUST come first.
       {
+        find: '@auto-swe/shared/lib/knowledgeBaseResolution',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/knowledgeBaseResolution.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/repoDependencyResolver',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoDependencyResolver.ts'),
       },

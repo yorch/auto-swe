@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { prisma } from '@auto-swe/shared/db';
 import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
+import { MAX_DEPENDENCY_CHECKOUTS } from '@auto-swe/shared/lib/knowledgeBaseResolution';
 import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { assertShellImageAllowed, DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
@@ -511,7 +512,7 @@ export function gitBootstrapScript(image: string): string {
 }
 
 /** Hard cap on `full_checkout` dependency clones per workspace. */
-export const MAX_DEPENDENCY_CHECKOUTS = 4;
+export { MAX_DEPENDENCY_CHECKOUTS };
 
 export interface DependencyCheckout {
   /** Clone URL carrying the credential, from `ScmProvider.cloneCredentials()`. */

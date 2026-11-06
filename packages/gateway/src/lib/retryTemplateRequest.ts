@@ -10,6 +10,7 @@ import type { BudgetTier, RepoWorkRequest } from '@auto-swe/shared/types/workflo
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { requireUser } from '../plugins/auth.js';
 import { egressPolicyForRerun, storedEgressPolicy } from './egressPolicyLaunch.js';
+import { storedKnowledgeBases, validateKnowledgeBaseOverrides } from './knowledgeBases.js';
 import { authorizeLaunch, sendLaunchRefusal } from './launchAuthorization.js';
 import { launchBaseBranch } from './launchBaseBranch.js';
 import { validateRunConnection } from './runConnection.js';
@@ -178,7 +179,22 @@ export async function retryTemplateRequest(
     teamId: connection.source?.teamId,
     workflowTemplateId: template.id,
   });
+  const kbSource =
+    connection.source ??
+    (template.teamId && template.team?.organization?.id
+      ? { orgId: template.team.organization.id, teamId: template.teamId }
+      : undefined);
+  const knowledgeBaseOverrides = await validateKnowledgeBaseOverrides(
+    app.prisma,
+    reply,
+    kbSource ? { ...kbSource, templateId: template.id } : undefined,
+    storedKnowledgeBases(input.requestPayload)
+  );
+  if (knowledgeBaseOverrides === false) {
+    return;
+  }
   const runRequest: RepoWorkRequest = {
+    ...(knowledgeBaseOverrides ? { knowledgeBaseOverrides } : {}),
     budgetTier,
     connectionId: input.connectionId,
     description,

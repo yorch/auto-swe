@@ -7,7 +7,7 @@ vi.mock('@temporalio/client', () => ({
   Client: class {
     workflow = { start };
   },
-  Connection: { connect: vi.fn(async () => ({})) },
+  Connection: { connect: vi.fn(async () => ({ close: async () => {} })) },
   ScheduleClient: class {},
   ScheduleNotFoundError: class extends Error {},
   ScheduleOverlapPolicy: {},
@@ -31,6 +31,17 @@ beforeEach(() => start.mockReset());
 // The gateway starts this workflow by NAME, so the name, the queue, the argument shape and the id
 // are a contract with the worker (`RepoDependencyScanOneWorkflow`), and nothing else checks them.
 describe('startRepoDependencyScan', () => {
+  it('starts the knowledge base index contract by name', async () => {
+    const app = await build();
+    await app.temporal.startKnowledgeBaseIndex('kb-1');
+    expect(start).toHaveBeenCalledWith('IndexKnowledgeBaseWorkflow', {
+      args: [{ knowledgeBaseId: 'kb-1' }],
+      taskQueue: 'engineering-workflow',
+      workflowId: 'knowledge-base-index-kb-1',
+      workflowIdConflictPolicy: 'USE_EXISTING',
+    });
+    await app.close();
+  });
   it('starts the one-repository scan by name, under a per-repository id that joins a running one', async () => {
     start.mockResolvedValue({});
     const app = await build();

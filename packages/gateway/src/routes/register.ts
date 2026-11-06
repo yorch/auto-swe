@@ -26,6 +26,7 @@ import { humanErrorBaselineRoutes } from './humanErrorBaselines.js';
 import { humanStepRoutes } from './humanSteps.js';
 import { inboundEventRoutes } from './inboundEvents.js';
 import { knowledgeRoutes } from './knowledge.js';
+import { knowledgeBaseRoutes } from './knowledgeBases.js';
 import { lessonRoutes, runLessonRoutes } from './lessons.js';
 import { mcpConnectionRoutes } from './mcpConnections.js';
 import { meRoutes } from './me.js';
@@ -114,6 +115,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(connectionCredentialRoutes, { prefix: '/api/v1/repositories' });
   await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
   await app.register(knowledgeRoutes, { prefix: '/api/v1/knowledge' });
+  await app.register(knowledgeBaseRoutes, { prefix: '/api/v1' });
   await app.register(slackRoutes, { prefix: '/api/v1/auth/slack' });
   await app.register(slackChannelRoutes, { prefix: '/api/v1/platform/slack-channels' });
   // Deprecated alias — kept for one release.

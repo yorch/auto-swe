@@ -331,6 +331,7 @@ declare module 'fastify' {
       whenConnected: () => Promise<void>;
     };
     temporal: {
+      startKnowledgeBaseIndex: (knowledgeBaseId: string) => Promise<void>;
       startRunnableWorkflow: (
         workflowId: string,
         input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
@@ -1228,6 +1229,15 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
           throw err;
         }
       }
+    },
+
+    async startKnowledgeBaseIndex(knowledgeBaseId: string): Promise<void> {
+      await client.workflow.start('IndexKnowledgeBaseWorkflow', {
+        args: [{ knowledgeBaseId }],
+        taskQueue: 'engineering-workflow',
+        workflowId: `knowledge-base-index-${knowledgeBaseId}`,
+        workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+      });
     },
 
     async startPrEvaluationWorkflow(workflowId: string, input: PrEvaluationInput): Promise<void> {

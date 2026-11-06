@@ -1,4 +1,5 @@
 import type { EgressPolicy } from '../lib/egressPolicy.js';
+import type { KnowledgeBaseOverrides } from '../lib/knowledgeBaseResolution.js';
 import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
 
 // ── Workflow Types ──
@@ -89,6 +90,7 @@ export interface RunRequest {
    * pins the run's settings. Absent means the cascade value.
    */
   egressPolicy?: EgressPolicy;
+  knowledgeBaseOverrides?: KnowledgeBaseOverrides;
 }
 
 export interface RepoWorkRequest extends RunRequest {

@@ -41,6 +41,11 @@ import { experimentBucket } from '../lib/experimentBucket.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema } from '../lib/idempotency.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
+import {
+  KnowledgeBaseOverridesSchema,
+  storedKnowledgeBases,
+  validateKnowledgeBaseOverrides,
+} from '../lib/knowledgeBases.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import {
   assertMcpWriteAllowed,
@@ -354,6 +359,7 @@ const CreateWorkRequestSchema = z.object({
   /** Network egress for this run's containers; can only be stricter than the configured policy. */
   egressPolicy: egressPolicySchema.optional(),
   externalTicketId: ExternalTicketIdSchema,
+  knowledgeBases: KnowledgeBaseOverridesSchema.optional(),
   repoIds: z.array(z.string().uuid()).min(1).max(1), // MVP: single repo only
 });
 
@@ -765,7 +771,22 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // is the safe one. The unique index on `temporalWorkflowId` is the
       // atomic dedup gate.
       const requestPayload = JSON.stringify({ ...request.body, acknowledgeUnchanged: undefined });
+      const knowledgeBaseOverrides = await validateKnowledgeBaseOverrides(
+        fastify.prisma,
+        reply,
+        {
+          orgId: repo.team.orgId,
+          repoId: repo.id,
+          teamId: repo.teamId,
+          templateId: resolvedTemplate.templateId,
+        },
+        request.body.knowledgeBases
+      );
+      if (knowledgeBaseOverrides === false) {
+        return;
+      }
       const repoWorkRequest: RepoWorkRequest = {
+        ...(knowledgeBaseOverrides ? { knowledgeBaseOverrides } : {}),
         budgetTier,
         description,
         ...(egressPolicy ? { egressPolicy } : {}),
@@ -1184,7 +1205,22 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           workflowTemplateId: retryTemplateId ?? undefined,
         }
       );
+      const knowledgeBaseOverrides = await validateKnowledgeBaseOverrides(
+        fastify.prisma,
+        reply,
+        {
+          orgId: repo.team.orgId,
+          repoId: repo.id,
+          teamId: repo.teamId,
+          templateId: retryTemplateId,
+        },
+        storedKnowledgeBases(workRequest.requestPayload)
+      );
+      if (knowledgeBaseOverrides === false) {
+        return;
+      }
       const repoWorkRequest: RepoWorkRequest = {
+        ...(knowledgeBaseOverrides ? { knowledgeBaseOverrides } : {}),
         // The branch the request was launched with, when it has one of its own: a re-run keeps it.
         ...(workRequest.workBranch ? { branchName: workRequest.workBranch } : {}),
         budgetTier: latest.budgetTier as RepoWorkRequest['budgetTier'],

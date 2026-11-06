@@ -58,6 +58,7 @@ const DB = { name: 'ci', password: 'ci', user: 'ci' };
 export const EXPECTED = [
   'DROP INDEX "idx_memory_items_embedding";',
   'DROP INDEX "knowledge_items_embedding_hnsw_idx";',
+  'DROP INDEX "knowledge_base_chunks_embedding_hnsw_idx";',
 ];
 
 /**

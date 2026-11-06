@@ -192,6 +192,8 @@ describe('POST /api/v1/agent-runs', () => {
           type: s.type,
         }),
       },
+      knowledgeBase: { findMany: async () => [{ id: '11111111-1111-4111-8111-111111111111' }] },
+      knowledgeBaseLink: { findMany: async () => [] },
       oauthClient: { findUnique: async () => null },
       organizationMembership: { findUnique: async () => ({ role: 'ORG_MEMBER' }) },
       orgMonthlyUsage: {
@@ -258,6 +260,21 @@ describe('POST /api/v1/agent-runs', () => {
       payload: { agent: 'contentWriter', prompt: 'fix the typo', repoId: REPO, ...payload },
       url: '/api/v1/agent-runs',
     });
+
+  it('passes normalized knowledge base overrides through an agent launch', async () => {
+    const response = await post({
+      knowledgeBases: { add: [{ id: '11111111-1111-4111-8111-111111111111' }] },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(started.at(-1)?.input).toMatchObject({
+      request: {
+        knowledgeBaseOverrides: {
+          add: [{ knowledgeBaseId: '11111111-1111-4111-8111-111111111111' }],
+          exclude: [],
+        },
+      },
+    });
+  });
 
   it('launches: ledger and run input are written BEFORE the workflow starts', async () => {
     const res = await post({});

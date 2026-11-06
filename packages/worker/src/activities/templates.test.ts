@@ -280,6 +280,22 @@ afterEach(() => {
 const UPDATE_REWRITES_ONLY_THE_PIN = { authorizedConnectionIds: [] };
 
 describe('createWorkflowRun', () => {
+  it('persists launch knowledge base overrides without replacing them on retry', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    const knowledgeBaseOverrides = {
+      add: [{ knowledgeBaseId: 'kb-1', ref: 'release' }],
+      exclude: [],
+    };
+    await createWorkflowRun({
+      knowledgeBaseOverrides,
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'wf-kb',
+    });
+    const args = upsertRun.mock.calls.at(-1)?.[0];
+    expect(args?.create.knowledgeBaseOverrides).toEqual(knowledgeBaseOverrides);
+    expect(args?.update).not.toHaveProperty('knowledgeBaseOverrides');
+  });
   beforeEach(() => {
     upsertRun.mockResolvedValue({ id: 'run-1' } as never);
     findAgents.mockResolvedValue([

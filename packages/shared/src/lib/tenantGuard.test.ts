@@ -74,6 +74,24 @@ describe('hasTenantPredicate', () => {
 });
 
 describe('tenantGuardExtension', () => {
+  it.each([
+    'KnowledgeBase',
+    'KnowledgeBaseTeamShare',
+    'KnowledgeBaseLink',
+    'KnowledgeBaseSnapshot',
+    'KnowledgeBaseChunk',
+  ])('guards %s through its organization relation', async (model) => {
+    const ext = tenantGuardExtension({ mode: 'throw' });
+    const unscoped = intercept(ext, { model, operation: 'findMany' });
+    await expect(unscoped.run).rejects.toBeInstanceOf(UnscopedTenantQueryError);
+    expect(unscoped.query).not.toHaveBeenCalled();
+    const scoped = intercept(ext, {
+      args: { where: { knowledgeBase: { orgId: 'org-1' } } },
+      model,
+      operation: 'findMany',
+    });
+    await expect(scoped.run).resolves.toBe('result');
+  });
   it('blocks an unfiltered findMany on a tenant-scoped model', async () => {
     const ext = tenantGuardExtension({ mode: 'throw' });
     const { query, run } = intercept(ext, { model: 'Connection', operation: 'findMany' });
@@ -241,6 +259,12 @@ describe('TENANT_SCOPED_MODELS', () => {
     // omission is invisible — same failure mode as the docs allowlist.
     // `modelsWithAnyColumn` throws if the schema parse comes back empty, so
     // this cannot pass vacuously.
-    expect([...TENANT_SCOPED_MODELS].sort()).toEqual(modelsWithAnyColumn(['teamId', 'orgId']));
+    expect([...TENANT_SCOPED_MODELS].sort()).toEqual(
+      [
+        ...modelsWithAnyColumn(['teamId', 'orgId']),
+        'KnowledgeBaseSnapshot',
+        'KnowledgeBaseChunk',
+      ].sort()
+    );
   });
 });
