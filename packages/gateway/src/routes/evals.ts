@@ -374,6 +374,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
             }
           : null,
         slug: ds.slug,
+        teamId: ds.teamId,
       };
       return { data };
     }

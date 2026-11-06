@@ -87,7 +87,11 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
   const repoOptions = [
     { label: 'None', value: '' },
     ...(repositories.data ?? [])
-      .filter((r) => r.type === 'git_repo')
+      .filter(
+        (r) =>
+          r.type === 'git_repo' &&
+          (dataset.data?.scope !== 'TEAM' || r.team?.id === dataset.data.teamId)
+      )
       .map((r) => ({ label: `${r.organizationName}/${r.repoName}`, value: r.id })),
   ];
   // The stack change awaiting confirmation; it re-screens the case.
