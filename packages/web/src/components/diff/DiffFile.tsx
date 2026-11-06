@@ -96,16 +96,60 @@ function LineText({
   );
 }
 
+const GUTTER = 'tabular w-10 shrink-0 select-none border-r border-ink-600/60 pr-2 text-right';
+
+/**
+ * The line number of the new side. With a handler, it is a button that starts a comment on that
+ * line; a `+` appears on hover or focus, and the number stays where it is.
+ */
+function NewNumber({
+  no,
+  onComment,
+}: {
+  no: number | null;
+  onComment: ((line: number) => void) | undefined;
+}) {
+  if (no === null || onComment === undefined) {
+    return (
+      <span aria-hidden="true" className={cn(GUTTER, 'text-paper-600')}>
+        {no ?? ''}
+      </span>
+    );
+  }
+  return (
+    <button
+      aria-label={`Comment on line ${no}`}
+      className={cn(
+        GUTTER,
+        FOCUS_RING,
+        'group cursor-pointer text-paper-600 hover:text-accent-400'
+      )}
+      onClick={() => onComment(no)}
+      type="button"
+    >
+      <span
+        aria-hidden="true"
+        className="mr-1 hidden text-accent-400 group-hover:inline group-focus-visible:inline"
+      >
+        +
+      </span>
+      {no}
+    </button>
+  );
+}
+
 function DiffLine({
   id,
   line,
   moved = false,
+  onComment,
   segments,
   tokens,
 }: {
   id: string | undefined;
   line: ParsedDiffLine;
   moved?: boolean;
+  onComment?: ((line: number) => void) | undefined;
   segments?: readonly Segment[] | undefined;
   tokens?: readonly SyntaxToken[] | undefined;
 }) {
@@ -119,12 +163,7 @@ function DiffLine({
       >
         {line.oldNo ?? ''}
       </span>
-      <span
-        aria-hidden="true"
-        className="tabular w-10 shrink-0 select-none border-r border-ink-600/60 pr-2 text-right text-paper-600"
-      >
-        {line.newNo ?? ''}
-      </span>
+      <NewNumber no={line.newNo} onComment={line.kind === 'del' ? undefined : onComment} />
       <span className="whitespace-pre px-2">
         {hasMarker ? (
           <>
@@ -151,6 +190,7 @@ function SplitCell({
   cell,
   id,
   moved,
+  onComment,
   segments,
   tokens,
 }: {
@@ -158,6 +198,7 @@ function SplitCell({
   cell: DiffCell | null;
   id: string | undefined;
   moved: boolean;
+  onComment?: ((line: number) => void) | undefined;
   segments: readonly Segment[] | undefined;
   tokens: readonly SyntaxToken[] | undefined;
 }) {
@@ -180,12 +221,7 @@ function SplitCell({
       id={id}
     >
       {moved ? <span className="sr-only">Moved: </span> : null}
-      <span
-        aria-hidden="true"
-        className="tabular w-10 shrink-0 select-none border-r border-ink-600/60 pr-2 text-right text-paper-600"
-      >
-        {cell.no ?? ''}
-      </span>
+      <NewNumber no={cell.no} onComment={onComment} />
       {/* Wrapped, not scrolled: two panes that scrolled sideways on their own would drift apart. */}
       <span className="min-w-0 whitespace-pre-wrap break-words px-2">
         <LineText
@@ -204,6 +240,7 @@ function SplitRow({
   annotations,
   edits,
   moved,
+  onComment,
   row,
   syntax,
 }: {
@@ -211,6 +248,7 @@ function SplitRow({
   annotations: ReadonlyMap<number, ReactNode> | undefined;
   edits: ReadonlyMap<number, readonly Segment[]> | null;
   moved: ReadonlySet<number> | undefined;
+  onComment: ((line: number) => void) | undefined;
   row: DiffRow;
   syntax: LineSyntax | undefined;
 }) {
@@ -237,6 +275,7 @@ function SplitRow({
           cell={row.right}
           id={lineId}
           moved={row.right?.kind === 'add' && moved?.has(row.right.index) === true}
+          onComment={onComment}
           segments={row.right ? edits?.get(row.right.index) : undefined}
           tokens={row.right ? syntax?.get(row.right.index) : undefined}
         />
@@ -282,6 +321,11 @@ export type DiffFileProps = {
    * absent until then, and for a file whose language is not known. The lines draw plain meanwhile.
    */
   syntax?: LineSyntax | null | undefined;
+  /**
+   * Makes the number of every added and unchanged line a button that starts a comment on it; the
+   * argument is the line's number on the new side. Absent, the numbers are plain. Keep it stable.
+   */
+  onLineComment?: ((line: number) => void) | undefined;
 };
 
 /**
@@ -321,6 +365,7 @@ function DiffFileImpl({
   mode = 'unified',
   moved,
   name,
+  onLineComment,
   onToggle,
   open,
   previousName,
@@ -385,6 +430,7 @@ function DiffFileImpl({
                     // biome-ignore lint/suspicious/noArrayIndexKey: diff rows are positional
                     key={n}
                     moved={moved}
+                    onComment={onLineComment}
                     row={row}
                     syntax={syntax ?? undefined}
                   />
@@ -402,6 +448,7 @@ function DiffFileImpl({
                         id={lineId}
                         line={line}
                         moved={moved?.has(n) === true && line.kind !== 'ctx'}
+                        onComment={onLineComment}
                         segments={edits?.get(n)}
                         tokens={syntax?.get(n)}
                       />

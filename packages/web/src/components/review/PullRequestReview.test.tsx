@@ -720,3 +720,215 @@ describe('since the reviewer last looked', () => {
     expect(screen.queryByText('Changed since you viewed it')).toBeNull();
   });
 });
+
+describe('commenting on a line from the page', () => {
+  const canWrite = {
+    approvalMayNotCount: false,
+    available: true,
+    feedbackLoopEnabled: true,
+    reason: null,
+  };
+  const draft = (over: Record<string, unknown> = {}) => ({
+    body: 'use <=',
+    createdAt: '2026-11-04T10:00:00.000Z',
+    headSha: 'abc1234def',
+    id: 'd-1',
+    line: 2,
+    outdated: false,
+    path: 'src/a.ts',
+    ...over,
+  });
+  const commentButtons = () => screen.queryAllByRole('button', { name: /^Comment on line/ });
+  const draftsUrl = '/api/v1/pull-requests/pr-1/drafts';
+
+  function gateway(extra: Record<string, (body?: unknown) => unknown> = {}) {
+    return setupFetchMock({
+      'POST /api/v1/pull-requests/pr-1/visit': () => ({ data: { recorded: true } }),
+      [`POST ${draftsUrl}`]: () => ({ data: draft({ outdated: undefined }) }),
+      ...extra,
+    });
+  }
+
+  it('offers no comment on a line without a token of the reviewer’s own', () => {
+    gateway();
+    show(cockpit());
+    expect(commentButtons()).toHaveLength(0);
+  });
+
+  it('offers a comment on each added and unchanged line when the reviewer can write', () => {
+    gateway();
+    show(cockpit({ write: canWrite }));
+    expect(commentButtons().map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Comment on line 1',
+      'Comment on line 2',
+      'Comment on line 3',
+    ]);
+  });
+
+  it('offers none once the pull request is no longer open', () => {
+    gateway();
+    show(
+      cockpit({
+        files: {
+          headSha: 'abc1234def',
+          items: [file()],
+          state: 'closed',
+          truncated: false,
+          type: 'ok',
+        },
+        write: canWrite,
+      })
+    );
+    expect(commentButtons()).toHaveLength(0);
+  });
+
+  it('opens a box under the line, and closes it again on cancel without sending anything', () => {
+    const spy = gateway();
+    show(cockpit({ write: canWrite }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on line 2' }));
+    expect(screen.getByRole('textbox', { name: 'Comment on line 2' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('textbox', { name: 'Comment on line 2' })).toBeNull();
+    expect(
+      spy.mock.calls.some(
+        ([url, init]) =>
+          String(url).endsWith('/drafts') && (init as RequestInit | undefined)?.method === 'POST'
+      )
+    ).toBe(false);
+  });
+
+  it('keeps what was written as a draft on this file and line, at the head the page showed', async () => {
+    const spy = gateway();
+    show(cockpit({ write: canWrite }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on line 2' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Comment on line 2' }), {
+      target: { value: 'use <=' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() =>
+      expect(bodyOf(spy, draftsUrl)).toEqual({
+        body: 'use <=',
+        headSha: 'abc1234def',
+        line: 2,
+        patchDigest: DIGEST,
+        path: 'src/a.ts',
+      })
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole('textbox', { name: 'Comment on line 2' })).toBeNull()
+    );
+  });
+
+  it('cannot save an empty comment', () => {
+    gateway();
+    show(cockpit({ write: canWrite }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on line 2' }));
+    expect((screen.getByRole('button', { name: 'Save draft' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'Comment on line 2' }), {
+      target: { value: '   ' },
+    });
+    expect((screen.getByRole('button', { name: 'Save draft' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+  });
+
+  it('shows the gateway’s reason and keeps the box open when the comment is refused', async () => {
+    const spy = setupFetchMock({
+      'POST /api/v1/pull-requests/pr-1/visit': () => ({ data: { recorded: true } }),
+    });
+    spy.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes('/drafts')
+        ? new Response(
+            JSON.stringify({
+              error: { code: 'REVIEW_TEXT_REFUSED', message: 'Write something first.' },
+            }),
+            { headers: { 'content-type': 'application/json' }, status: 400 }
+          )
+        : new Response(JSON.stringify({ data: { recorded: true } }), {
+            headers: { 'content-type': 'application/json' },
+          })
+    );
+    show(cockpit({ write: canWrite }));
+    fireEvent.click(screen.getByRole('button', { name: 'Comment on line 2' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Comment on line 2' }), {
+      target: { value: 'x' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    expect(await screen.findByText('Write something first.')).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Comment on line 2' })).toBeTruthy();
+  });
+
+  it('draws a saved draft under its line, as text', () => {
+    gateway();
+    show(cockpit({ drafts: [draft({ body: '<img src=x onerror=alert(1)>' })], write: canWrite }));
+    expect(screen.getByText('Draft comment')).toBeTruthy();
+    expect(document.querySelector('img')).toBeNull();
+    expect(screen.getByText(/<img src=x onerror=alert\(1\)>/)).toBeTruthy();
+  });
+
+  it('draws the draft beside a finding on the same line', () => {
+    gateway();
+    const withNote = withFindings([finding({ line: 2 })]);
+    show({ ...withNote, drafts: [draft()], write: canWrite });
+    expect(screen.getByText(/off by one in the loop/)).toBeTruthy();
+    expect(screen.getByText('Draft comment')).toBeTruthy();
+  });
+
+  it('does not draw a draft on a file that is not in the change', () => {
+    gateway();
+    show(cockpit({ drafts: [draft({ path: 'src/gone.ts' })], write: canWrite }));
+    expect(screen.queryByText('Draft comment')).toBeNull();
+  });
+
+  it('draws an outdated draft in the review panel and not under a line', () => {
+    gateway();
+    show(cockpit({ drafts: [draft({ outdated: true })], write: canWrite }));
+    expect(screen.getAllByText('Draft comment')).toHaveLength(1);
+    expect(screen.getByText('Some drafts no longer fit the diff')).toBeTruthy();
+    expect(screen.getByText('src/a.ts:2')).toBeTruthy();
+  });
+
+  it('changes a draft in place', async () => {
+    const spy = gateway({
+      [`PATCH ${draftsUrl}/d-1`]: () => ({ data: draft({ body: 'better', outdated: undefined }) }),
+    });
+    show(cockpit({ drafts: [draft()], write: canWrite }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+    const box = screen.getByRole('textbox', { name: 'Draft comment on line 2' });
+    expect((box as HTMLTextAreaElement).value).toBe('use <=');
+    fireEvent.change(box, { target: { value: 'better' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() =>
+      expect(bodyOf(spy, `${draftsUrl}/d-1`, 'PATCH')).toEqual({ body: 'better' })
+    );
+  });
+
+  it('discards a draft', async () => {
+    const spy = gateway({ [`DELETE ${draftsUrl}/d-1`]: () => ({ data: { deleted: true } }) });
+    show(cockpit({ drafts: [draft()], write: canWrite }));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() =>
+      expect(
+        spy.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith('/drafts/d-1') &&
+            (init as RequestInit | undefined)?.method === 'DELETE'
+        )
+      ).toBe(true)
+    );
+  });
+
+  it('keeps the other drafts and files as they were while one is being written', () => {
+    gateway();
+    show({
+      ...withFiles([file(), file({ path: 'src/b.ts' })]),
+      drafts: [draft()],
+      write: canWrite,
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Comment on line 2' })[1] as HTMLElement);
+    expect(screen.getAllByText('Draft comment')).toHaveLength(1);
+    expect(screen.getAllByRole('textbox', { name: 'Comment on line 2' })).toHaveLength(1);
+  });
+});
