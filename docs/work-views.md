@@ -336,6 +336,11 @@ reload.
   commit, when the host could not be read, when files were cut off, and when the pull request is no
   longer open. The page reads and decides nothing on the host: review comments, approvals and merges
   stay there.
+- **From a run** — the outcome card of a run that opened a pull request, for a workflow or an agent
+  run, offers "Open review" beside the host link. The run detail (`GET /api/v1/workflow-runs/:id`)
+  carries it as `pullRequestId`: the newest pull request recorded against the run that has a number,
+  and only one in a repository the caller can reach, so the link never leads to a 404. It is null
+  otherwise, and always null for a service principal.
 - **Pull request outcomes** — a card on **Platform analytics** (`/admin/analytics`) for the page's
   date range: merge rate, median and 95th-percentile time to merge, PRs opened (with merged, closed
   unmerged, open and draft counts), each against the previous window, and the ten repositories with
@@ -368,8 +373,9 @@ text with invisible and direction-changing characters made visible, never markup
   are those at the head the evaluation covered. A stale evaluation says so.
 - Viewed marks are per person and per pull request, and reset when a file's patch changes. A mark is
   matched by path, so a rename starts unviewed.
-- The run's outcome card still links only to the host: it knows the host's address and number, not
-  the platform's id for the pull request.
+- The run page's outcome card links to the review page only for a pull request the platform
+  recorded against that run: a pull request whose attribution to the run is missing has the host link
+  alone.
 
 - Pull-request attribution is stored when a worker creates or updates a PR and is backfilled from
   repository-matched active workflows. `WorkflowRun.workflowId` is unique, so the run is resolved

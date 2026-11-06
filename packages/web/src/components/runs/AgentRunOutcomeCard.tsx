@@ -13,6 +13,7 @@ import {
 } from '@/lib/agentRun';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { ArtifactAwareText } from './ArtifactAwareText';
+import { ReviewPageLink } from './ReviewPageLink';
 
 function isHttpsUrl(value: string): boolean {
   try {
@@ -55,7 +56,16 @@ function OutcomeRow({ label, children }: { label: string; children: ReactNode })
  * was published. Everything here is text the agent influenced, rendered as text
  * (never HTML); the only link is a pull request URL, and only when it is https.
  */
-export function AgentRunOutcomeCard({ result, runId }: { result: unknown; runId: string }) {
+export function AgentRunOutcomeCard({
+  pullRequestId,
+  result,
+  runId,
+}: {
+  /** The review page of the pull request the run opened, when the caller may open it. */
+  pullRequestId?: string | null | undefined;
+  result: unknown;
+  runId: string;
+}) {
   const o = parseAgentRunOutcome(result);
   if (!o) {
     return null;
@@ -96,6 +106,11 @@ export function AgentRunOutcomeCard({ result, runId }: { result: unknown; runId:
           )}
           {o.prUrl && isHttpsUrl(o.prUrl) && (
             <OutcomeRow label="Draft PR">
+              {pullRequestId ? (
+                <span className="mr-3">
+                  <ReviewPageLink pullRequestId={pullRequestId} />
+                </span>
+              ) : null}
               <a
                 className={cn(
                   'inline-flex items-center gap-1 rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',

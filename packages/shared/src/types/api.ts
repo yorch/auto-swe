@@ -903,6 +903,11 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
   /** A run of the hidden Agent Run system template (keyed on its origin, not its name). */
   isAgentRun?: boolean;
   /**
+   * The review page of the pull request this run opened, when there is one the caller may open.
+   * Null otherwise, and always null for a machine caller.
+   */
+  pullRequestId?: string | null;
+  /**
    * The `workspace.implementerRuntime` value pinned at run start (`mastra` or
    * `claude-code`); null when the run's pinned settings do not carry it.
    */

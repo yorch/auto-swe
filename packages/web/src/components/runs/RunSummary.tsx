@@ -148,6 +148,7 @@ export function RunSummary({
         <div className={foldClass}>
           <RunOutcomeCard
             isAgentRun={isAgentRun}
+            pullRequestId={run.pullRequestId}
             result={run.result}
             runId={run.id}
             templateName={run.templateName ?? ''}
