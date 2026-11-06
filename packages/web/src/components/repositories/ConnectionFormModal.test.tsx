@@ -21,7 +21,11 @@ vi.mock('@/hooks/useTeams', () => ({
 }));
 vi.mock('@/hooks/useRepositories', () => ({
   useCreateRepository: () => ({ isPending: false, mutateAsync: create.mutateAsync }),
+  useDeleteSetupSecret: () => ({ isPending: false, mutate: vi.fn() }),
   useProposeSetupFile: () => ({ data: undefined, isPending: false, mutate: vi.fn() }),
+  useSaveSetupSecret: () => ({ isPending: false, mutate: vi.fn() }),
+  useSetupFileProposalStatus: () => ({ data: undefined, isError: false }),
+  useSetupSecrets: () => ({ data: [], isError: false, isLoading: false }),
   useUpdateRepository: () => ({ isPending: false, mutateAsync: update.mutateAsync }),
 }));
 

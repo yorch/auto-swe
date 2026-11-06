@@ -14,6 +14,7 @@ import {
   blockedEgressAllow,
   egressPolicyFailure,
   gitHostOf,
+  lfsStorageHostEntries,
   lfsStorageHosts,
   resolveRunEgressPolicy,
 } from '../lib/egressWiring.js';
@@ -34,6 +35,7 @@ import {
   type WorkspaceRegistryAccess,
 } from '../lib/registryProxy/workspaceWiring.js';
 import {
+  loadSetupSecrets,
   type RepoSetupHost,
   type RepoSetupReport,
   resolveWorkspaceSetup,
@@ -774,7 +776,7 @@ export async function createWorkspace(
      * delivery workspace leaves it out. With `defer`, setup waits for `workspace.runSetup()`, for
      * a caller that moves the checkout to another branch first.
      */
-    repoSetup?: { field: unknown; defer?: boolean };
+    repoSetup?: { field: unknown; defer?: boolean; connectionId?: string | null };
   }
 ): Promise<Workspace> {
   // Container caps, default base image and metadata-blocking policy all come
@@ -923,6 +925,7 @@ export async function createWorkspace(
         heartbeatLabel: 'workspace: setup',
         onTimeout: tag.onTimeout,
         ...(opts.maxOutputBytes !== undefined ? { maxOutputBytes: opts.maxOutputBytes } : {}),
+        ...(opts.secretEnv ? { secretEnv: opts.secretEnv } : {}),
         timeoutMs: opts.timeoutMs,
         workdir: '/workspace/target-repo',
       });
@@ -1012,7 +1015,12 @@ export async function createWorkspace(
     const started = Date.now();
     const { setup, source } = resolvedSetup;
     const git = await runSetupGitPhase(setupHost, setup, setupInputs(), gitAuthHeader);
-    const { cache, steps } = await runSetupStepsPhase(setupHost, setup, setupInputs());
+    const secretEnv = await loadSetupSecrets(
+      options?.repoSetup?.connectionId ?? null,
+      setup.secrets ?? []
+    );
+    setupSecrets.push(...Object.values(secretEnv));
+    const { cache, steps } = await runSetupStepsPhase(setupHost, setup, setupInputs(), secretEnv);
     const report: RepoSetupReport = {
       cache,
       durationMs: Date.now() - started,
@@ -1264,7 +1272,9 @@ export async function createWorkspace(
             ...(egressPolicy === 'restricted' && egress
               ? { egressProxyUrl: egress.registration.url }
               : {}),
-            ...(resolvedSetup?.setup.lfs ? { lfsHosts: lfsStorageHosts(gitHost) } : {}),
+            ...(resolvedSetup?.setup.lfs
+              ? { lfsHosts: lfsStorageHosts(gitHost, await lfsStorageHostEntries()) }
+              : {}),
             registryUrl: registry?.baseUrl,
           }),
           { mode: egressPolicy === 'restricted' ? 'restricted' : 'blocked' }

@@ -1756,6 +1756,39 @@ export const SETTING_DEFINITIONS = {
   // but there is no `implementer` group (only channel/memory/workflow/workspace
   // exist), and every key must share its group's prefix (see the
   // `SETTING_DEFINITIONS` integrity test), so it's named and grouped here.
+  'workspace.lfsStorageHosts': defineSetting({
+    defaultValue: [
+      'github.com=github-cloud.githubusercontent.com',
+      'github.com=media.githubusercontent.com',
+    ],
+    description:
+      "Hosts a git host serves Git LFS files from, as `git-host=storage-host` entries (comma-separated; one entry per storage host, host or host:port). Under the `blocked` and `restricted` egress policies, a workspace whose setup sets `lfs: true` may also reach the storage hosts listed for its repository's git host. An LFS server that serves files from its own host needs no entry.",
+    group: 'workspace',
+    label: 'Git LFS storage hosts',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z
+      .array(
+        z
+          .string()
+          .regex(/^[^=]+=[^=]+$/, 'must be git-host=storage-host')
+          .superRefine((entry, ctx) => {
+            for (const host of entry.split('=')) {
+              const parsed = hostEntry.safeParse(host);
+              if (!parsed.success) {
+                ctx.addIssue({
+                  code: 'custom',
+                  message: `${host}: ${parsed.error.issues[0]?.message ?? 'invalid host'}`,
+                });
+              }
+            }
+          })
+      )
+      .max(50),
+    sensitive: true,
+  }),
   'workspace.maxToolOutputChars': defineSetting({
     defaultValue: 20_000,
     description:

@@ -13,8 +13,19 @@ export const DEFAULT_SETUP_STEP_TIMEOUT_SECONDS = 600;
 
 const MAX_STEP_TIMEOUT_SECONDS = 3600;
 
+const ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
+/** The name of a setup secret: an environment variable name, as the steps see it. */
+export const RepoSetupSecretNameSchema = z
+  .string()
+  .max(100)
+  .regex(ENV_NAME, 'must be an environment variable name (A-Z, 0-9, _)');
+
+/** Most secrets one setup definition may name. */
+export const MAX_REPO_SETUP_SECRETS = 20;
+
 const EnvironmentSchema = z
-  .record(z.string().regex(/^[A-Z_][A-Z0-9_]*$/), z.string().max(4000))
+  .record(z.string().regex(ENV_NAME), z.string().max(4000))
   .refine((env) => Object.keys(env).length <= 50, 'must contain at most 50 keys');
 
 const hasTraversal = (p: string): boolean => p.split('/').some((s) => s === '..' || s === '.');
@@ -27,6 +38,29 @@ const RepoRelativePathSchema = z
   .regex(/^[A-Za-z0-9_@+.][A-Za-z0-9_@+\-./]*$/, 'must be a relative path of plain characters')
   .refine((p) => !hasTraversal(p.replace(/\/+$/, '')), 'must not contain "." or ".." segments')
   .refine((p) => !p.includes('//'), 'must not contain empty segments');
+
+/**
+ * A cache key file: a path inside the checkout, or a glob over the tracked files (`*` within a
+ * segment, `**` across segments, `?` one character), such as every subproject's build file.
+ */
+const KeyFilePatternSchema = z
+  .string()
+  .min(1)
+  .max(300)
+  .regex(
+    /^[A-Za-z0-9_@+.*?][A-Za-z0-9_@+\-./*?]*$/,
+    'must be a relative path or glob of plain characters'
+  )
+  .refine((p) => !hasTraversal(p.replace(/\/+$/, '')), 'must not contain "." or ".." segments')
+  .refine((p) => !p.includes('//'), 'must not contain empty segments');
+
+/** True when a cache key file entry is a glob rather than a literal path. */
+export function isKeyFileGlob(entry: string): boolean {
+  return /[*?]/.test(entry);
+}
+
+/** Most tracked files the key file globs of one definition may match together. */
+export const MAX_KEY_FILE_GLOB_MATCHES = 500;
 
 /** A cached path: inside the checkout, or under the workspace user's home as `~/…`. */
 const CachePathSchema = z
@@ -52,7 +86,7 @@ export const RepoSetupStepSchema = z
 
 export const RepoSetupCacheSchema = z
   .object({
-    keyFiles: z.array(RepoRelativePathSchema).max(20).optional(),
+    keyFiles: z.array(KeyFilePatternSchema).max(20).optional(),
     paths: z.array(CachePathSchema).min(1).max(10),
   })
   .strict();
@@ -67,10 +101,30 @@ export const RepoSetupSchema = z
     cache: RepoSetupCacheSchema.optional(),
     env: EnvironmentSchema.optional(),
     lfs: z.boolean().optional(),
+    /**
+     * Names of the repository's setup secrets the steps receive as environment variables. The
+     * values are stored encrypted on the repository, never in the definition.
+     */
+    secrets: z
+      .array(RepoSetupSecretNameSchema)
+      .max(MAX_REPO_SETUP_SECRETS)
+      .refine((names) => new Set(names).size === names.length, 'must not repeat a name')
+      .optional(),
     steps: z.array(RepoSetupStepSchema).max(20).optional(),
     submodules: z.union([z.boolean(), z.literal('recursive')]).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((setup, ctx) => {
+    for (const name of setup.secrets ?? []) {
+      if (setup.env && name in setup.env) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${name} is both an env variable and a secret`,
+          path: ['secrets'],
+        });
+      }
+    }
+  });
 
 export type RepoSetup = z.infer<typeof RepoSetupSchema>;
 export type RepoSetupStep = z.infer<typeof RepoSetupStepSchema>;
@@ -125,12 +179,10 @@ const NODE_INSTALL: Record<string, { run: string; keyFile: string }> = {
   'yarn-classic': { keyFile: 'yarn.lock', run: 'yarn install --frozen-lockfile' },
 };
 
-const GRADLE_BUILD_FILES = [
-  'build.gradle',
-  'build.gradle.kts',
-  'settings.gradle',
-  'settings.gradle.kts',
-] as const;
+const GRADLE_SETTINGS_FILES = ['settings.gradle', 'settings.gradle.kts'] as const;
+
+/** Every project's build file, the root's and each subproject's. */
+const GRADLE_BUILD_GLOBS = ['**/build.gradle', '**/build.gradle.kts'] as const;
 
 interface StackInstall {
   run: string;
@@ -180,7 +232,8 @@ function stackInstall(target: DetectedTarget): StackInstall | null {
       return has('gradlew')
         ? {
             keyFiles: [
-              ...GRADLE_BUILD_FILES.filter(has),
+              ...GRADLE_SETTINGS_FILES.filter(has),
+              ...GRADLE_BUILD_GLOBS,
               'gradle/libs.versions.toml',
               'gradle/wrapper/gradle-wrapper.properties',
             ],
@@ -239,7 +292,7 @@ export function starterRepoSetup(detectedStack: unknown): RepoSetup {
   );
 }
 
-const SETUP_KEY_ORDER = ['submodules', 'lfs', 'env', 'steps', 'cache'] as const;
+const SETUP_KEY_ORDER = ['submodules', 'lfs', 'env', 'secrets', 'steps', 'cache'] as const;
 const STEP_KEY_ORDER = ['name', 'run', 'workdir', 'timeoutSeconds'] as const;
 
 /**
@@ -264,7 +317,7 @@ export function repoSetupToYaml(setup: RepoSetup): string {
   }
   return [
     `# ${REPO_SETUP_FILE}: run in every auto-swe workspace after the checkout.`,
-    '# Fields: submodules, lfs, env, steps[name, run, workdir, timeoutSeconds],',
+    '# Fields: submodules, lfs, env, secrets, steps[name, run, workdir, timeoutSeconds],',
     '# cache[paths, keyFiles]. See docs/repositories.md, "Workspace setup".',
     stringifyYaml(ordered, { lineWidth: 0 }).trimEnd(),
     '',

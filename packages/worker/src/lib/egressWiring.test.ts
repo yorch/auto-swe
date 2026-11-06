@@ -228,15 +228,27 @@ it('adds the egress proxy to the lock only when asked', () => {
 });
 
 describe('lfsStorageHosts', () => {
-  it("admits github.com's LFS content hosts and nothing for a self-hosted server", () => {
-    expect(lfsStorageHosts('github.com')).toEqual([
+  const entries = [
+    'github.com=github-cloud.githubusercontent.com',
+    'github.com=media.githubusercontent.com',
+    'git.corp.example=lfs-objects.corp.example:9000',
+  ];
+
+  it('admits the storage hosts listed for the git host, and nothing for an unlisted one', () => {
+    expect(lfsStorageHosts('GitHub.com', entries)).toEqual([
       'github-cloud.githubusercontent.com',
       'media.githubusercontent.com',
     ]);
-    expect(lfsStorageHosts('ghe.example.com')).toEqual([]);
-    expect(blockedEgressAllow(null, { lfsHosts: ['media.githubusercontent.com'] })).toContainEqual({
-      host: 'media.githubusercontent.com',
-      port: 443,
+    expect(lfsStorageHosts('git.corp.example', entries)).toEqual(['lfs-objects.corp.example:9000']);
+    expect(lfsStorageHosts('ghe.example.com', entries)).toEqual([]);
+    expect(lfsStorageHosts(null, entries)).toEqual([]);
+  });
+
+  it('opens each storage host on its own port, 443 by default', () => {
+    const allow = blockedEgressAllow(null, {
+      lfsHosts: ['media.githubusercontent.com', 'lfs-objects.corp.example:9000'],
     });
+    expect(allow).toContainEqual({ host: 'media.githubusercontent.com', port: 443 });
+    expect(allow).toContainEqual({ host: 'lfs-objects.corp.example', port: 9000 });
   });
 });

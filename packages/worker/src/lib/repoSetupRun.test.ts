@@ -22,8 +22,23 @@ const artifacts = vi.hoisted(() => ({
   putArtifact: vi.fn(async () => ({ id: 'art-new', sizeBytes: 3 })),
 }));
 
+const setupSecrets = vi.hoisted(() => ({
+  findMany: vi.fn(async (): Promise<Array<Record<string, unknown>>> => []),
+}));
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { team: { findUnique: vi.fn(async () => null) }, workspaceSetupCache: cache },
+  prisma: {
+    repoSetupSecret: setupSecrets,
+    team: { findUnique: vi.fn(async () => null) },
+    workspaceSetupCache: cache,
+  },
+}));
+vi.mock('@auto-swe/shared/lib/crypto', () => ({
+  decryptSecret: ({ ciphertext }: { ciphertext: Buffer }) => {
+    if (ciphertext.toString() === 'corrupt') {
+      throw new Error('auth tag mismatch');
+    }
+    return `plain-${ciphertext.toString()}`;
+  },
 }));
 vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async (key: string) => h.settings[key]),
@@ -39,10 +54,12 @@ import type { RepoSetup } from '@auto-swe/shared/lib/repoSetup';
 import type { CapturedResult } from './execUtils.js';
 import {
   fetchSubmodules,
+  loadSetupSecrets,
   parseGitmodules,
   type RepoSetupHost,
   readSetupFile,
   resolveWorkspaceSetup,
+  runSetupGitPhase,
   runSetupStepsPhase,
   submoduleRepo,
   sweepSetupCaches,
@@ -133,7 +150,13 @@ describe('fetchSubmodules', () => {
           : ''
       ),
     });
-    await expect(fetchSubmodules(host, 'recursive', PARENT, 'github.com')).resolves.toBe(1);
+    await expect(fetchSubmodules(host, 'recursive', PARENT, 'github.com')).resolves.toEqual([
+      {
+        authHeader: 'AUTHORIZATION: basic acme-lib',
+        cleanUrl: 'https://github.com/acme/lib.git',
+        dir: '/workspace/target-repo/vendor/lib',
+      },
+    ]);
     expect(host.mintCredential).toHaveBeenCalledWith('acme', 'lib');
     const pin = vi
       .mocked(host.root)
@@ -236,6 +259,64 @@ describe('resolveWorkspaceSetup', () => {
   });
 });
 
+describe('runSetupGitPhase', () => {
+  it('pulls LFS in the checkout and in each submodule, each with its own endpoint and credential', async () => {
+    const host = fakeHost({
+      root: vi.fn(async (cmd: string) =>
+        cmd.includes('--get-regexp') && cmd.startsWith("cd '/workspace/target-repo' ")
+          ? 'submodule.lib.path\nvendor/lib\0submodule.lib.url\n../lib.git\0'
+          : ''
+      ),
+    });
+    await expect(
+      runSetupGitPhase(
+        host,
+        { lfs: true, submodules: true },
+        { cleanUrl: PARENT, gitHost: 'github.com' },
+        'AUTHORIZATION: basic parent'
+      )
+    ).resolves.toEqual({ lfs: true, submodules: 1 });
+    const pulls = vi.mocked(host.git).mock.calls.filter((c) => String(c[1]).includes('lfs pull'));
+    expect(pulls).toEqual([
+      [
+        '/workspace/target-repo',
+        "-c lfs.url='https://github.com/acme/app.git/info/lfs' lfs pull",
+        'AUTHORIZATION: basic parent',
+        900_000,
+      ],
+      [
+        '/workspace/target-repo/vendor/lib',
+        "-c lfs.url='https://github.com/acme/lib.git/info/lfs' lfs pull",
+        'AUTHORIZATION: basic acme-lib',
+        900_000,
+      ],
+    ]);
+  });
+
+  it('names the submodule whose LFS pull failed', async () => {
+    const host = fakeHost({
+      git: vi.fn(async (dir: string, sub: string) => {
+        if (sub.includes('lfs pull') && dir.endsWith('vendor/lib')) {
+          throw new Error('batch response: sekret denied');
+        }
+        return '';
+      }),
+      root: vi.fn(async (cmd: string) =>
+        cmd.includes('--get-regexp') && cmd.startsWith("cd '/workspace/target-repo' ")
+          ? 'submodule.lib.path\nvendor/lib\0submodule.lib.url\n../lib.git\0'
+          : ''
+      ),
+    });
+    await expect(
+      runSetupGitPhase(
+        host,
+        { lfs: true, submodules: true },
+        { cleanUrl: PARENT, gitHost: 'github.com' }
+      )
+    ).rejects.toThrow(/git lfs pull in vendor\/lib failed: batch response: \[REDACTED\] denied/);
+  });
+});
+
 describe('runSetupStepsPhase', () => {
   const inputs = { cleanUrl: PARENT, image: 'node:26', teamId: 'team-a' };
   const setup: RepoSetup = {
@@ -285,6 +366,44 @@ describe('runSetupStepsPhase', () => {
     expect(keys[2]).toBe(keys[3]);
   });
 
+  it('keys on every tracked file a key file glob matches, by path and content', async () => {
+    const globbed: RepoSetup = { ...setup, cache: { keyFiles: ['**/build.gradle'], paths: ['x'] } };
+    const listing = (files: string[]) =>
+      fakeHost({
+        capture: vi.fn(async (cmd: string) => ({
+          exitCode: 0,
+          stderr: '',
+          // The hashing script's output stands in for what a shell prints: its own text.
+          stdout: cmd.startsWith('git ls-files') ? files.map((f) => `${f}\0`).join('') : cmd,
+        })),
+      });
+    const one = listing(['build.gradle', 'app/build.gradle']);
+    await runSetupStepsPhase(one, globbed, inputs);
+    const calls = vi.mocked(one.capture).mock.calls.map((c) => String(c[0]));
+    expect(calls[0]).toBe("git ls-files -z -- ':(glob)**/build.gradle'");
+    expect(calls[1]).toContain("printf '%s\\n' 'app/build.gradle'; if [ -f 'app/build.gradle' ]");
+    const keyOf = () =>
+      JSON.stringify((cache.findUnique.mock.calls.at(-1) as unknown[] | undefined)?.[0]);
+    const first = keyOf();
+    await runSetupStepsPhase(listing(['build.gradle']), globbed, inputs);
+    expect(keyOf()).not.toBe(first);
+  });
+
+  it('runs without a cache when the globs match too many files', async () => {
+    const host = fakeHost({
+      capture: vi.fn(async (cmd: string) => ({
+        exitCode: 0,
+        stderr: '',
+        stdout: cmd.startsWith('git ls-files')
+          ? Array.from({ length: 501 }, (_, i) => `m${i}/build.gradle\0`).join('')
+          : '',
+      })),
+    });
+    const globbed: RepoSetup = { ...setup, cache: { keyFiles: ['**/build.gradle'], paths: ['x'] } };
+    expect((await runSetupStepsPhase(host, globbed, inputs)).cache).toBe('error');
+    expect(cache.findUnique).not.toHaveBeenCalled();
+  });
+
   it('skips the cache on the Postgres artifact backend', async () => {
     h.backend = 'pg';
     const host = fakeHost();
@@ -323,5 +442,70 @@ describe('sweepSetupCaches', () => {
     await expect(sweepSetupCaches(new Date('2026-11-06T00:00:00Z'))).resolves.toBe(1);
     expect(artifacts.deleteArtifact).toHaveBeenCalledWith('a1');
     expect(cache.delete).toHaveBeenCalledWith({ where: { id: 'r1' } });
+  });
+});
+
+describe('setup secrets', () => {
+  const row = (name: string, sealed = name) => ({
+    name,
+    valueAuthTag: Buffer.from('t'),
+    valueCiphertext: Buffer.from(sealed),
+    valueKeyVersion: 1,
+    valueNonce: Buffer.from('n'),
+  });
+
+  it('reads nothing when the definition names no secrets', async () => {
+    setupSecrets.findMany.mockClear();
+    await expect(loadSetupSecrets('repo-1', [])).resolves.toEqual({});
+    expect(setupSecrets.findMany).not.toHaveBeenCalled();
+  });
+
+  it("decrypts the named secrets from the repository's own store", async () => {
+    setupSecrets.findMany.mockResolvedValueOnce([row('NPM_TOKEN')]);
+    await expect(loadSetupSecrets('repo-1', ['NPM_TOKEN'])).resolves.toEqual({
+      NPM_TOKEN: 'plain-NPM_TOKEN',
+    });
+    expect(setupSecrets.findMany).toHaveBeenLastCalledWith({
+      where: { connectionId: 'repo-1', name: { in: ['NPM_TOKEN'] } },
+    });
+  });
+
+  it('fails setup on a secret the repository does not hold', async () => {
+    setupSecrets.findMany.mockResolvedValueOnce([row('NPM_TOKEN')]);
+    await expect(loadSetupSecrets('repo-1', ['NPM_TOKEN', 'PIP_TOKEN'])).rejects.toMatchObject({
+      message: expect.stringContaining('not set on the repository: PIP_TOKEN'),
+      type: WORKSPACE_SETUP_FAILED,
+    });
+  });
+
+  it('fails setup without a repository to read from', async () => {
+    await expect(loadSetupSecrets(null, ['NPM_TOKEN'])).rejects.toMatchObject({
+      type: WORKSPACE_SETUP_FAILED,
+    });
+  });
+
+  it('fails setup on a value that cannot be decrypted, without echoing it', async () => {
+    setupSecrets.findMany.mockResolvedValueOnce([row('NPM_TOKEN', 'corrupt')]);
+    const err = await loadSetupSecrets('repo-1', ['NPM_TOKEN']).catch((e: Error) => e);
+    expect(String((err as Error).message)).toContain('could not be decrypted');
+    expect(String((err as Error).message)).not.toContain('corrupt');
+  });
+
+  it('hands values to the steps as secret environment, never as plain env', async () => {
+    const host = fakeHost();
+    const setup: RepoSetup = { env: { CI: '1' }, secrets: ['NPM_TOKEN'], steps: [{ run: 'yarn' }] };
+    await runSetupStepsPhase(
+      host,
+      setup,
+      { cleanUrl: PARENT, image: 'img', teamId: null },
+      { NPM_TOKEN: 'npm_abc123' }
+    );
+    const [command, opts] = vi.mocked(host.capture).mock.calls[0] as unknown as [
+      string,
+      { env?: string[]; secretEnv?: Record<string, string> },
+    ];
+    expect(opts.secretEnv).toEqual({ NPM_TOKEN: 'npm_abc123' });
+    expect(opts.env).toEqual(['CI=1']);
+    expect(command).not.toContain('npm_abc123');
   });
 });

@@ -109,6 +109,7 @@ export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
   packageRegistry: [fieldsFor('token')],
   // The one irregular row: its version and last-four columns are unprefixed.
   providerCredential: [{ ...fieldsFor('apiKey'), keyVersion: 'keyVersion', lastFour: 'lastFour' }],
+  repoSetupSecret: [fieldsFor('value')],
   // A callback URL has no last-four column: the tail of a URL may be part of a receiver's token.
   runCallback: [
     {

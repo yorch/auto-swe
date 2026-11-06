@@ -2,8 +2,11 @@ import crypto from 'node:crypto';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { deleteArtifact, getArtifact, putArtifact } from '@auto-swe/shared/lib/artifactStore';
+import { decryptSecret } from '@auto-swe/shared/lib/crypto';
 import {
   DEFAULT_SETUP_STEP_TIMEOUT_SECONDS,
+  isKeyFileGlob,
+  MAX_KEY_FILE_GLOB_MATCHES,
   REPO_SETUP_FILE,
   REPO_SETUP_FILE_MAX_BYTES,
   type RepoSetup,
@@ -50,7 +53,13 @@ export interface RepoSetupHost {
   /** Exec in the checkout as the workspace user, without throwing on a non-zero exit. */
   capture(
     command: string,
-    opts: { env?: string[]; maxOutputBytes?: number; timeoutMs: number }
+    opts: {
+      env?: string[];
+      maxOutputBytes?: number;
+      /** Values that must never reach a command line: delivered as secret environment. */
+      secretEnv?: Record<string, string>;
+      timeoutMs: number;
+    }
   ): Promise<CapturedResult>;
   /** A hardened git call in `dir`, with `authHeader` (when given) injected for this call only. */
   git(dir: string, subcommand: string, authHeader?: string, timeoutMs?: number): Promise<string>;
@@ -219,20 +228,27 @@ export function parseGitmodules(
   return [...byName.values()];
 }
 
+/** A fetched submodule: its checkout and the credential minted for its repository. */
+export interface FetchedSubmodule {
+  dir: string;
+  cleanUrl: string;
+  authHeader?: string;
+}
+
 /**
  * Fetch the submodules the definition asks for, shallow, each with a credential minted for its
  * own repository. The URL each one is fetched from is pinned in `.git/config` before the fetch,
  * so nothing in `.gitmodules` but the validated URL is followed, and its `update` mode is pinned
- * to `checkout`. Returns how many were fetched.
+ * to `checkout`. Returns each fetched submodule's checkout and credential, for LFS.
  */
 export async function fetchSubmodules(
   host: RepoSetupHost,
   mode: true | 'recursive',
   cleanUrl: string,
   gitHost: string | null
-): Promise<number> {
+): Promise<FetchedSubmodule[]> {
   const queue = [{ depth: 0, dir: REPO_DIR, parentUrl: cleanUrl }];
-  let fetched = 0;
+  const fetched: FetchedSubmodule[] = [];
   while (queue.length > 0) {
     const level = queue.shift() as (typeof queue)[number];
     const listing = await host.root(
@@ -253,8 +269,7 @@ export async function fetchSubmodules(
       if ('error' in repo) {
         throw setupConfigFailure(`${label} URL ${repo.error}`);
       }
-      fetched += 1;
-      if (fetched > MAX_SUBMODULES) {
+      if (fetched.length >= MAX_SUBMODULES) {
         throw setupConfigFailure(`more than ${MAX_SUBMODULES} submodules`);
       }
       let credential: { cleanUrl: string; authHeader?: string };
@@ -284,12 +299,10 @@ export async function fetchSubmodules(
           `${label} could not be fetched: ${host.redact(err instanceof Error ? err.message : String(err))}`
         );
       }
+      const dir = `${level.dir}/${sub.path}`;
+      fetched.push({ dir, ...credential });
       if (mode === 'recursive' && level.depth + 1 < MAX_SUBMODULE_DEPTH) {
-        queue.push({
-          depth: level.depth + 1,
-          dir: `${level.dir}/${sub.path}`,
-          parentUrl: credential.cleanUrl,
-        });
+        queue.push({ depth: level.depth + 1, dir, parentUrl: credential.cleanUrl });
       }
     }
   }
@@ -300,18 +313,26 @@ export async function fetchSubmodules(
  * Download the checkout's LFS objects. The endpoint is pinned to the repository's own URL, so an
  * `lfs.url` in a checked-in `.lfsconfig` cannot send the credential elsewhere.
  */
-export async function pullLfs(host: RepoSetupHost, cleanUrl: string, authHeader?: string) {
+export async function pullLfs(
+  host: RepoSetupHost,
+  checkouts: ReadonlyArray<{ dir: string; cleanUrl: string; authHeader?: string }>
+) {
   const version = await host.capture('git lfs version', { timeoutMs: 30_000 });
   if (version.exitCode !== 0) {
     throw setupConfigFailure('lfs: true needs git-lfs in the workspace image');
   }
-  const endpoint = `${cleanUrl.replace(/\.git$/, '')}.git/info/lfs`;
-  try {
-    await host.git(REPO_DIR, `-c lfs.url=${shellQuote(endpoint)} lfs pull`, authHeader, 900_000);
-  } catch (err) {
-    throw setupRunFailure(
-      `git lfs pull failed: ${host.redact(err instanceof Error ? err.message : String(err))}`
-    );
+  for (const { authHeader, cleanUrl, dir } of checkouts) {
+    // Each checkout's endpoint is pinned to its own repository, so a `.lfsconfig` in it cannot
+    // send its credential, or the LFS traffic, anywhere else.
+    const endpoint = `${cleanUrl.replace(/\.git$/, '')}.git/info/lfs`;
+    try {
+      await host.git(dir, `-c lfs.url=${shellQuote(endpoint)} lfs pull`, authHeader, 900_000);
+    } catch (err) {
+      const where = dir === REPO_DIR ? '' : ` in ${dir.slice(REPO_DIR.length + 1)}`;
+      throw setupRunFailure(
+        `git lfs pull${where} failed: ${host.redact(err instanceof Error ? err.message : String(err))}`
+      );
+    }
   }
 }
 
@@ -350,12 +371,16 @@ async function setupCacheKey(
   setup: RepoSetup,
   inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId'>
 ): Promise<string> {
-  const files = setup.cache?.keyFiles ?? [];
+  const entries = setup.cache?.keyFiles ?? [];
+  const globs = entries.filter(isKeyFileGlob);
+  const matched = globs.length ? await trackedFilesMatching(host, globs) : [];
+  const hash = (f: string) =>
+    `if [ -f ${shellQuote(f)} ]; then sha256sum < ${shellQuote(f)}; else echo absent; fi`;
   const script = [
     'uname -m',
-    ...files.map(
-      (f) => `if [ -f ${shellQuote(f)} ]; then sha256sum < ${shellQuote(f)}; else echo absent; fi`
-    ),
+    ...entries.filter((e) => !isKeyFileGlob(e)).map(hash),
+    // A matched file's path is part of the key, so adding or removing a subproject changes it.
+    ...matched.map((f) => `printf '%s\\n' ${shellQuote(f)}; ${hash(f)}`),
   ].join('; ');
   const result = await host.capture(script, { timeoutMs: 60_000 });
   if (result.exitCode !== 0) {
@@ -374,6 +399,29 @@ async function setupCacheKey(
       })
     )
     .digest('hex');
+}
+
+/**
+ * The tracked files the key file globs match, sorted. Only git's index is searched, so a glob
+ * never walks an untracked tree such as `node_modules`; more than
+ * {@link MAX_KEY_FILE_GLOB_MATCHES} matches is an error, and the workspace runs without a cache.
+ */
+async function trackedFilesMatching(host: RepoSetupHost, globs: readonly string[]) {
+  const pathspecs = globs.map((g) => shellQuote(`:(glob)${g}`)).join(' ');
+  const result = await host.capture(`git ls-files -z -- ${pathspecs}`, {
+    maxOutputBytes: 2 * 1024 * 1024,
+    timeoutMs: 60_000,
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(`listing the cache key files failed: ${tail(host, result)}`);
+  }
+  const files = [...new Set(result.stdout.split('\0').filter(Boolean))].sort();
+  if (files.length > MAX_KEY_FILE_GLOB_MATCHES) {
+    throw new Error(
+      `the cache key file globs match ${files.length} files (at most ${MAX_KEY_FILE_GLOB_MATCHES})`
+    );
+  }
+  return files;
 }
 
 function repositoryId(cleanUrl: string): string {
@@ -455,10 +503,53 @@ async function saveCache(
   return 'saved';
 }
 
+/**
+ * The values of the setup secrets a definition names, from the repository's encrypted store.
+ * A name with no stored value, or no repository to read from, fails setup: a step run without
+ * the credential it was promised fails later and less clearly.
+ */
+export async function loadSetupSecrets(
+  connectionId: string | null,
+  names: readonly string[]
+): Promise<Record<string, string>> {
+  if (names.length === 0) {
+    return {};
+  }
+  if (!connectionId) {
+    throw setupRunFailure(
+      `setup names secrets (${names.join(', ')}), but this workspace has no repository to read them from`
+    );
+  }
+  const rows = await prisma.repoSetupSecret.findMany({
+    where: { connectionId, name: { in: [...names] } },
+  });
+  const missing = names.filter((n) => !rows.some((r) => r.name === n));
+  if (missing.length) {
+    throw setupRunFailure(
+      `setup secret${missing.length > 1 ? 's' : ''} not set on the repository: ${missing.join(', ')}`
+    );
+  }
+  const values: Record<string, string> = {};
+  for (const row of rows) {
+    try {
+      values[row.name] = decryptSecret({
+        authTag: row.valueAuthTag,
+        ciphertext: row.valueCiphertext,
+        keyVersion: row.valueKeyVersion,
+        nonce: row.valueNonce,
+      });
+    } catch {
+      throw setupRunFailure(`setup secret ${row.name} could not be decrypted; save it again`);
+    }
+  }
+  return values;
+}
+
 /** Run the definition's steps in order, as the workspace user; the first failure fails setup. */
 async function runSteps(
   host: RepoSetupHost,
-  setup: RepoSetup
+  setup: RepoSetup,
+  secretEnv: Record<string, string>
 ): Promise<Array<{ name: string; durationMs: number }>> {
   const env = Object.entries(setup.env ?? {}).map(([k, v]) => `${k}=${v}`);
   const done: Array<{ name: string; durationMs: number }> = [];
@@ -470,6 +561,7 @@ async function runSteps(
     try {
       result = await host.capture(command, {
         env,
+        ...(Object.keys(secretEnv).length ? { secretEnv } : {}),
         timeoutMs: (step.timeoutSeconds ?? DEFAULT_SETUP_STEP_TIMEOUT_SECONDS) * 1000,
       });
     } catch (err) {
@@ -488,7 +580,7 @@ async function runSteps(
 }
 
 /**
- * The git half of setup: submodules, then LFS. It runs while the git host is reachable and
+ * The git half of setup: submodules, then LFS in the checkout and in every fetched submodule. It runs while the git host is reachable and
  * before any repository code has run, so it is provisioning like the clone itself.
  */
 export async function runSetupGitPhase(
@@ -499,11 +591,14 @@ export async function runSetupGitPhase(
 ): Promise<{ submodules: number; lfs: boolean }> {
   const submodules = setup.submodules
     ? await fetchSubmodules(host, setup.submodules, inputs.cleanUrl, inputs.gitHost)
-    : 0;
+    : [];
   if (setup.lfs) {
-    await pullLfs(host, inputs.cleanUrl, authHeader);
+    await pullLfs(host, [
+      { cleanUrl: inputs.cleanUrl, dir: REPO_DIR, ...(authHeader ? { authHeader } : {}) },
+      ...submodules,
+    ]);
   }
-  return { lfs: Boolean(setup.lfs), submodules };
+  return { lfs: Boolean(setup.lfs), submodules: submodules.length };
 }
 
 /**
@@ -514,7 +609,9 @@ export async function runSetupGitPhase(
 export async function runSetupStepsPhase(
   host: RepoSetupHost,
   setup: RepoSetup,
-  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId'>
+  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId'>,
+  /** The values of the secrets `setup.secrets` names, already resolved. */
+  secretEnv: Record<string, string> = {}
 ): Promise<Pick<RepoSetupReport, 'cache' | 'steps'>> {
   const maxBytes = setup.cache && setup.steps?.length ? await cacheLimitBytes() : 0;
   let cacheKey: string | null = null;
@@ -530,7 +627,7 @@ export async function runSetupStepsPhase(
       cache = 'error';
     }
   }
-  const steps = await runSteps(host, setup);
+  const steps = await runSteps(host, setup, secretEnv);
   if (cacheKey && cache === 'miss') {
     try {
       cache = await saveCache(host, setup, cacheKey, inputs.cleanUrl, maxBytes);

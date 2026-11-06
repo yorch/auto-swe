@@ -283,7 +283,7 @@ describe('loadChangeForReview', () => {
       undefined,
       HEAD,
       false,
-      { detectedStack: null, repoSetup: { field: undefined }, teamId: null }
+      { detectedStack: null, repoSetup: { connectionId: REPO, field: undefined }, teamId: null }
     );
     expect(
       f.exec.mock.calls.some(

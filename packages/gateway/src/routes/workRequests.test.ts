@@ -256,6 +256,7 @@ describe('POST /api/v1/work-requests', () => {
         nextRunAt: null,
         paused: false,
       }),
+      getRepoSetupFileProposalStatus: async () => ({ status: 'queued' }),
       getRevalidationScheduleStatus: async () => ({
         exists: false,
         lastRunAt: null,
@@ -274,7 +275,6 @@ describe('POST /api/v1/work-requests', () => {
       isWorkflowRunning: async () => false,
       nameAssistantConversation: async () => {},
       probeExecutorImage: async () => ({ checks: [], image: 'x', ok: true }),
-      proposeRepoSetupFile: async () => ({ detail: '', ok: false, reason: 'invalid' }),
       sendAssistantTurn: async () => {},
       signalWorkflow: async () => {},
       startChannelAssistant: async () => {},
@@ -288,6 +288,7 @@ describe('POST /api/v1/work-requests', () => {
       startReembedStaleMemory: async () => true,
       startRepoDependencyInference: async () => {},
       startRepoDependencyScan: async () => {},
+      startRepoSetupFileProposal: async () => {},
       startReviewFixRetry: async () => {},
       startRunnableWorkflow: async (id: string, input: { request: unknown }) => {
         startedRequests.push(input.request);

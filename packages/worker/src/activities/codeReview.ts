@@ -157,7 +157,11 @@ export async function loadChangeForReviewWith(
         executorImageFor(repo),
         stored.baseSha,
         false,
-        { detectedStack: repo.detectedStack, repoSetup: { field: repo.setup }, teamId: repo.teamId }
+        {
+          detectedStack: repo.detectedStack,
+          repoSetup: { connectionId: repo.id, field: repo.setup },
+          teamId: repo.teamId,
+        }
       );
       try {
         const headSha = await applyStoredPatch(
@@ -225,7 +229,11 @@ export async function loadChangeForReviewWith(
     executorImageFor(repo),
     payload.reviewOf.mode === 'pr' ? headSha : undefined,
     payload.reviewOf.mode === 'branch',
-    { detectedStack: repo.detectedStack, repoSetup: { field: repo.setup }, teamId: repo.teamId }
+    {
+      detectedStack: repo.detectedStack,
+      repoSetup: { connectionId: repo.id, field: repo.setup },
+      teamId: repo.teamId,
+    }
   );
   try {
     const actual = (await workspace.exec(`${GIT} rev-parse HEAD`)).trim().toLowerCase();

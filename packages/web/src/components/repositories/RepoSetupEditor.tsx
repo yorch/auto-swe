@@ -10,7 +10,7 @@ import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
-import { useProposeSetupFile } from '@/hooks/useRepositories';
+import { useProposeSetupFile, useSetupFileProposalStatus } from '@/hooks/useRepositories';
 import { errMsg } from '@/lib/errors';
 import {
   draftToSetup,
@@ -20,6 +20,7 @@ import {
   type SubmodulesChoice,
   setupDraft,
 } from '@/lib/repoSetupDraft';
+import { RepoSetupSecrets } from './RepoSetupSecrets';
 
 const SUBMODULE_OPTIONS: Array<{ label: string; value: SubmodulesChoice }> = [
   { label: 'Not fetched', value: 'off' },
@@ -187,7 +188,7 @@ export function RepoSetupEditor({
             <Textarea
               compact
               disabled={disabled}
-              hint="One per line; a change to any of them starts a fresh cache."
+              hint="One per line; globs such as **/build.gradle match tracked files. A change to any of them starts a fresh cache."
               label="Cache key files"
               onChange={(e) => set({ cacheKeyFiles: e.target.value })}
               placeholder="yarn.lock"
@@ -254,11 +255,25 @@ export function RepoSetupEditor({
             ))}
           </div>
 
+          <Textarea
+            compact
+            disabled={disabled}
+            hint="One per line. Each must be saved under Setup secrets; steps get it as an environment variable."
+            label="Secret names"
+            onChange={(e) => set({ secrets: e.target.value })}
+            placeholder="NPM_TOKEN"
+            rows={2}
+            spellCheck={false}
+            value={draft.secrets}
+          />
+
           {!checked.ok && (
             <Alert variant="error">Workspace setup is invalid: {checked.error}</Alert>
           )}
         </div>
       )}
+
+      {repositoryId && <RepoSetupSecrets disabled={disabled} repositoryId={repositoryId} />}
 
       <SetupFilePanel
         canPropose={!disabled && fileValid}
@@ -289,7 +304,10 @@ function SetupFilePanel({
   title: string;
 }) {
   const propose = useProposeSetupFile(repositoryId ?? '');
+  const proposal = useSetupFileProposalStatus(repositoryId ?? '', propose.data?.requestId ?? null);
   const [error, setError] = useState<string | null>(null);
+  const state = proposal.data?.status;
+  const busy = propose.isPending || state === 'queued' || (propose.isSuccess && !proposal.data);
 
   const download = () => {
     const url = URL.createObjectURL(new Blob([text], { type: 'text/yaml' }));
@@ -320,7 +338,7 @@ function SetupFilePanel({
           </Button>
           {repositoryId && (
             <Button
-              disabled={!canPropose || propose.isPending}
+              disabled={!canPropose || busy}
               onClick={() => {
                 setError(null);
                 propose.mutate(setupForPr, {
@@ -329,16 +347,29 @@ function SetupFilePanel({
               }}
               size="sm"
             >
-              {propose.isPending ? 'Opening…' : `Open a PR adding ${REPO_SETUP_FILE}`}
+              {busy ? 'Queued…' : `Open a PR adding ${REPO_SETUP_FILE}`}
             </Button>
           )}
         </div>
-        {propose.data && (
+        {state === 'queued' && (
+          <Alert variant="info">
+            Queued: a worker opens the pull request. This page updates when it has.
+          </Alert>
+        )}
+        {proposal.data?.status === 'opened' && (
           <Alert variant="success">
             Pull request opened:{' '}
-            <a className="underline" href={propose.data.prUrl} rel="noreferrer" target="_blank">
-              {propose.data.prUrl}
+            <a className="underline" href={proposal.data.prUrl} rel="noreferrer" target="_blank">
+              {proposal.data.prUrl}
             </a>
+          </Alert>
+        )}
+        {proposal.data?.status === 'failed' && (
+          <Alert variant="error">The pull request was not opened: {proposal.data.detail}</Alert>
+        )}
+        {proposal.isError && (
+          <Alert variant="error">
+            {errMsg(proposal.error, 'The pull request status could not be read')}
           </Alert>
         )}
         {error && <Alert variant="error">{error}</Alert>}

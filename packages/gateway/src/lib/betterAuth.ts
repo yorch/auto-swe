@@ -35,6 +35,7 @@ import { authEmailAvailable, deliverAuthEmail } from './authEmail.js';
 import { autoApproveGithubUser } from './githubAutoApprove.js';
 import { type GithubSignIn, resolveGithubSignIn } from './githubEnterpriseAuth.js';
 import { syncGithubLoginForAccount } from './githubIdentity.js';
+import { magicLinkConfirmUrl } from './magicLinkConfirm.js';
 import {
   MCP_ACCESS_TOKEN_TTL_SECONDS,
   MCP_DEVICE_GRANT,
@@ -509,7 +510,9 @@ function buildAuth() {
       magicLink({
         disableSignUp: false,
         expiresIn: 60 * 10, // 10 minutes
-        sendMagicLink: async ({ email, url }) => deliverMagicLink({ email, url }),
+        // The email links to a confirmation page, so a scanner opening it does not spend it.
+        sendMagicLink: async ({ email, url }) =>
+          deliverMagicLink({ email, url: magicLinkConfirmUrl(url, CLIENT_ORIGIN, email) }),
       }),
       // Okta / enterprise SSO, and GitHub Enterprise (see `genericConfigs`).
       // `genericOAuth` registers its providers into the same `socialProviders`

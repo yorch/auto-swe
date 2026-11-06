@@ -245,18 +245,31 @@ export function blockedEgressAllow(
       entries.push({ host: gitHost.replace(/^\[|\]$/g, ''), port });
     }
   }
-  for (const host of options.lfsHosts ?? []) {
-    entries.push({ host, port: 443 });
+  for (const entry of options.lfsHosts ?? []) {
+    const [host = entry, port] = entry.split(':');
+    entries.push({ host, port: port ? Number(port) : 443 });
   }
   return entries;
 }
 
 /**
- * Where the git host serves LFS objects from, when that is not the git host itself: github.com
- * hands out object URLs on its content hosts. A self-hosted server serves them itself.
+ * Where the git host serves LFS objects from, when that is not the git host itself, from the
+ * `workspace.lfsStorageHosts` entries (`git-host=storage-host`): github.com hands out object
+ * URLs on its content hosts, and a self-hosted server may use an object store.
  */
-export function lfsStorageHosts(gitHost: string | null): string[] {
-  return gitHost?.toLowerCase() === 'github.com'
-    ? ['github-cloud.githubusercontent.com', 'media.githubusercontent.com']
-    : [];
+export function lfsStorageHosts(gitHost: string | null, entries: readonly string[]): string[] {
+  const host = gitHost?.toLowerCase();
+  if (!host) {
+    return [];
+  }
+  const hosts = entries.flatMap((entry) => {
+    const [from, to] = entry.split('=');
+    return from?.toLowerCase() === host && to ? [to.toLowerCase()] : [];
+  });
+  return [...new Set(hosts)];
+}
+
+/** The `workspace.lfsStorageHosts` entries; platform-wide, so no team or organisation scope. */
+export function lfsStorageHostEntries(): Promise<string[]> {
+  return resolveSetting('workspace.lfsStorageHosts', {});
 }

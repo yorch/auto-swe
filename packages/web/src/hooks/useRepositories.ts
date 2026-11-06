@@ -4,7 +4,8 @@ import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
 import type { RepoSetup } from '@auto-swe/shared/lib/repoSetup';
 import type {
   RepoGateCommands,
-  RepoSetupFileProposal,
+  RepoSetupFileProposalStatus,
+  RepoSetupSecretSummary,
   RepositorySummary,
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -171,16 +172,34 @@ export function useMyCredentials() {
   });
 }
 
-/** Open a pull request adding `.auto-swe/setup.yml`, written from `setup`, to the repository. */
+/**
+ * Ask for a pull request adding `.auto-swe/setup.yml`, written from `setup`, to the repository.
+ * Resolves to the request id at once; {@link useSetupFileProposalStatus} follows it.
+ */
 export function useProposeSetupFile(connectionId: string) {
   return useMutation({
     mutationFn: (setup: RepoSetup) =>
       api
-        .post<{ data: Extract<RepoSetupFileProposal, { ok: true }> }>(
+        .post<{ data: { requestId: string } }>(
           `/api/v1/repositories/${connectionId}/setup/pull-request`,
           { setup }
         )
         .then((r) => r.data),
+  });
+}
+
+/** Where a setup-file pull request stands; polled every two seconds while it is queued. */
+export function useSetupFileProposalStatus(connectionId: string, requestId: string | null) {
+  return useQuery({
+    enabled: Boolean(connectionId && requestId),
+    queryFn: () =>
+      api
+        .get<{ data: RepoSetupFileProposalStatus }>(
+          `/api/v1/repositories/${connectionId}/setup/pull-request/${requestId}`
+        )
+        .then((r) => r.data),
+    queryKey: ['repositories', connectionId, 'setup-file-request', requestId],
+    refetchInterval: (query) => (query.state.data?.status === 'queued' ? 2_000 : false),
   });
 }
 
@@ -213,5 +232,42 @@ export function useGitHubAvailableRepos(enabled = false) {
         .then((r) => r.data),
     queryKey: ['github-available-repos'],
     staleTime: 30_000,
+  });
+}
+
+/** The repository's setup secrets: names and last four characters, never values. */
+export function useSetupSecrets(connectionId: string | undefined) {
+  return useQuery({
+    enabled: Boolean(connectionId),
+    queryFn: () =>
+      api
+        .get<{ data: RepoSetupSecretSummary[] }>(
+          `/api/v1/repositories/${connectionId}/setup/secrets`
+        )
+        .then((r) => r.data),
+    queryKey: ['repositories', connectionId, 'setup-secrets'],
+  });
+}
+
+export function useSaveSetupSecret(connectionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ name, value }: { name: string; value: string }) =>
+      api.put<{ data: RepoSetupSecretSummary }>(
+        `/api/v1/repositories/${connectionId}/setup/secrets/${encodeURIComponent(name)}`,
+        { value }
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['repositories', connectionId, 'setup-secrets'] }),
+  });
+}
+
+export function useDeleteSetupSecret(connectionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      api.delete(`/api/v1/repositories/${connectionId}/setup/secrets/${encodeURIComponent(name)}`),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['repositories', connectionId, 'setup-secrets'] }),
   });
 }

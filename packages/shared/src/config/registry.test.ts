@@ -499,3 +499,30 @@ describe('prEvaluation settings', () => {
     expect(accepts('prEvaluation.requiredStatusContext', ' x')).toBe(false);
   });
 });
+
+describe('workspace.lfsStorageHosts', () => {
+  const setting = SETTING_DEFINITIONS['workspace.lfsStorageHosts'];
+
+  it("is platform-wide, admin-only, and starts with github.com's content hosts", () => {
+    expect(setting.overridableAt).toEqual([]);
+    expect(setting.requiredRole).toBe('ADMIN');
+    expect(setting.defaultValue).toEqual([
+      'github.com=github-cloud.githubusercontent.com',
+      'github.com=media.githubusercontent.com',
+    ]);
+  });
+
+  it('takes git-host=storage-host entries of lowercase hosts', () => {
+    expect(setting.schema.safeParse(['git.corp.example=lfs.corp.example:9000']).success).toBe(true);
+    for (const bad of [
+      'lfs.corp.example',
+      'git.corp.example=',
+      'Git.Corp=lfs.corp',
+      'git.corp=lfs.corp:443',
+      'a=b=c',
+      'git.corp=https://lfs.corp',
+    ]) {
+      expect(setting.schema.safeParse([bad]).success, bad).toBe(false);
+    }
+  });
+});
