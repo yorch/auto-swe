@@ -271,9 +271,9 @@ These tools translate agent calls to `docker exec` commands inside the workspace
 `browser_press`, `browser_select`, `browser_wait`, `browser_snapshot`, `browser_screenshot` and
 `browser_console`. It is granted only when `browser` is named — `null`, `[]` and a list naming only
 workspace tools never grant it — to the implementer path on all three runtimes (Mastra, Pi, Claude
-Code) and to an agent run; an `agent` node in a checkout does not bind it. Screenshots it takes become
-run evidence under `source: 'agent'`, and every page text, title and snapshot it returns is screened
-by the same MCP result screen before the model sees it. See
+Code), agent runs, and `agent` nodes with `workspace: true`; a node without a workspace does not bind
+it. Screenshots it takes become run evidence under `source: 'agent'`, and every page text, title and
+snapshot it returns is screened by the same MCP result screen before the model sees it. See
 [ui-validation.md §Browser tool for agents](./ui-validation.md#browser-tool-for-agents).
 
 Governed knowledge adds two separate tool IDs, `searchKnowledge` and `submitLearning`. Governed KnowledgeItem results and learning submission require explicit grants on the resolved Agent; null or legacy `toolKeys` do not grant them. Governed search is available on Mastra, Claude Code and Pi; learning submission is Mastra-only. Search returns bounded, cited, trust-labeled knowledge as untrusted context; submission captures only local LEARNING items and requires persisted evidence. See [knowledge.md](./knowledge.md) for scope, lifecycle, and limitations.

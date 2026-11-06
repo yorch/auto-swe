@@ -1,9 +1,15 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
+import { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
-import { grantedWorkspaceToolIds, selectAgentRunTools } from '../agents/agentRunTools.js';
+import {
+  grantedWorkspaceToolIds,
+  grantsBrowserTool,
+  selectAgentRunTools,
+} from '../agents/agentRunTools.js';
+import { BrowserToolset, createMastraBrowserTools } from '../agents/browserTools.js';
 import { HARNESSES } from '../agents/harnessRegistry.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import { buildKnowledgeTools } from '../agents/knowledgeTools.js';
@@ -297,6 +303,10 @@ async function runInCheckout(args: {
     repoId: repo.id,
     teamId: repo.teamId,
   });
+  const services =
+    grantsBrowserTool(resolved.toolKeys) && repo.previewConfig
+      ? PreviewConfigSchema.parse(repo.previewConfig).services
+      : undefined;
   const workspace = await createWorkspace(
     authedCloneUrl,
     branch,
@@ -309,6 +319,7 @@ async function runInCheckout(args: {
       knowledgeBaseSnapshotIds: references.snapshotIds,
       knowledgeBases: references.checkouts,
       repoSetup: { defer: true, field: repo.setup },
+      ...(services ? { services } : {}),
       teamId: repo.teamId,
     }
   );
@@ -333,10 +344,22 @@ async function runInCheckout(args: {
 
   const spanName = input.spanName ?? 'llm.agent_node';
   if (harness) {
+    const browserToolset = grantsBrowserTool(resolved.toolKeys)
+      ? new BrowserToolset({
+          containerId: workspace.containerId,
+          repoId: repo.id,
+          tracer,
+          workspace,
+        })
+      : undefined;
+    if (browserToolset) {
+      onOpen(browserToolset.close.bind(browserToolset));
+    }
     // Prompt and skills come from `resolved`, the resolution the harness is bound to, so the
     // identity stamped on the turn and the prompt it runs are one version.
     const systemPrompt = composeAgentPrompt(resolved, { promptOverride: input.systemPrompt });
     const runtime = harness.build({
+      ...(browserToolset ? { browserToolset } : {}),
       exactToolKeys: grantedWorkspaceToolIds(resolved.toolKeys),
       loadProjectSettings: true,
       maxTurns: await resolveSetting('workspace.agentMaxSteps', resolveCtx),
@@ -372,6 +395,18 @@ async function runInCheckout(args: {
     includeGoverned: resolved.toolKeys?.includes('searchKnowledge') ?? false,
     snapshotIds: workspace.knowledgeBaseSnapshotIds ?? [],
   });
+  const browserToolset = grantsBrowserTool(resolved.toolKeys)
+    ? new BrowserToolset({
+        containerId: workspace.containerId,
+        repoId: repo.id,
+        tracer,
+        workspace,
+      })
+    : undefined;
+  if (browserToolset) {
+    onOpen(browserToolset.close.bind(browserToolset));
+  }
+  const browserTools = browserToolset ? createMastraBrowserTools(browserToolset) : undefined;
   const spec = await resolveAgentSpec(
     {
       agentKey: key as ModelBackedAgentKey,
@@ -379,6 +414,7 @@ async function runInCheckout(args: {
       // intersects offered tools with `toolKeys`, so nothing else binds them.
       availableTools: {
         ...selectAgentRunTools(built, resolved.toolKeys),
+        ...(browserTools ?? {}),
         ...(resolved.toolKeys?.includes('searchKnowledge')
           ? { searchKnowledge: knowledgeTools.searchKnowledge }
           : {}),
@@ -394,6 +430,9 @@ async function runInCheckout(args: {
   if (workspace.knowledgeBaseSnapshotIds?.length) {
     spec.tools = { ...spec.tools, searchKnowledge: knowledgeTools.searchKnowledge } as AgentTools;
   }
+  if (browserTools) {
+    spec.tools = { ...browserTools, ...spec.tools } as AgentTools;
+  }
   spec.systemPrompt =
     `${spec.systemPrompt}\n\n${CHECKOUT_PREAMBLE}${await knowledgeBasePromptBlock(workspace)}`.trim();
   const mcpTools = await bindMcpTools(key, resolveCtx, tracer, onOpen);
@@ -405,7 +444,7 @@ async function runInCheckout(args: {
     ctx: resolveCtx,
     // The workspace and MCP tools record their own calls on this tracer; any
     // other tool's calls are recorded from the loop's steps.
-    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools),
+    selfRecordingTools: boundToolKeys(spec.tools, built, mcpTools, browserTools),
     spanName,
     tracer,
   });

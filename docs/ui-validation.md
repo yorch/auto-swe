@@ -59,12 +59,12 @@ Browser sessions are closed and their video and trace evidence is saved even whe
 
 Mastra, Pi and Claude Code agents can use the browser tool only when `browser` appears explicitly in
 their `toolKeys`. A null tool list never grants it. It reaches the implementer path on every runtime,
-and an agent run; an `agent` node in a throwaway checkout does not bind it. The toolset starts the
-configured preview on its first call, defaults its navigation host allowlist to empty, and records
-screenshots before returning their evidence identifiers. Snapshot, title and console text is screened
-before it is returned to the agent. Session cleanup waits for a start already in flight, then saves
-video and trace evidence and stops the app preview. One session serves the whole toolset, so
-concurrent tool calls in a single model step share it.
+agent runs, and `agent` nodes with `workspace: true`; a node without a workspace has no browser tools.
+The toolset starts the configured preview on its first call, defaults its navigation host allowlist to
+empty, and records screenshots before returning their evidence identifiers. Snapshot, title and
+console text is screened before it is returned to the agent. Session cleanup waits for a start already
+in flight, then saves video and trace evidence and stops the app preview. One session serves the
+whole toolset, so concurrent tool calls in a single model step share it.
 
 ## PR evidence
 
@@ -110,9 +110,8 @@ recipe's base URL, or the readiness URL's origin when none is supplied.
   admin setting are enabled. The public bucket's access policy is operator-managed. Renaming the
   bucket after copies exist leaves the old copies behind: retention can only delete from the bucket
   the environment currently names.
-- `stop()` signals the preview's process group, which `startAppPreview` creates with a detached
-  Node launcher (`spawn(..., { detached: true })` calls `setsid`). A process that double-forks and
-  leaves the session — a daemonized child of the app — is not in that group and still outlives
+- `stop()` signals the preview's process group and processes that retain its random environment
+  mark. A daemon that scrubs the mark, or runs as a UID the worker cannot signal, can outlive
   `stop()` until the workspace is destroyed.
 - A worker that dies between writing an artifact and creating its `RunEvidence` row leaves a ready
   `ui.*` artifact that no evidence row points at. The daily transcript sweep deletes those, and a
@@ -121,9 +120,8 @@ recipe's base URL, or the readiness URL's origin when none is supplied.
   and written to the artifact store in memory, so the `uiValidation.maxVideoBytes` cap bounds a
   single worker's memory use, and the step's wall-clock budget has to cover the transfer as well as
   the recording. Serving is streamed from the store, not buffered.
-- The `browser` tool is bound to the implementer path and to agent runs, not to a generic `agent`
-  node in a checkout. A node that needs to look at a page must be an implementer-family step or an
-  agent run whose Agent grants `browser`.
+- A generic `agent` node can use the browser only with `workspace: true` and an explicit `browser`
+  grant; a node without a workspace has no browser tools.
 - The browser tool's `browser_screenshot` persists the image as evidence but returns the accessible
   page snapshot and the evidence id to the model, not the pixels: an agent reads the page as text,
   and a person sees the picture on the run page.

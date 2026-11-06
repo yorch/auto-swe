@@ -361,6 +361,8 @@ only when the run produced structured output; the node supplies no output schema
 - Steering sent to a channel task reaches the next `agent` node to start, never one already running.
 - Without `workspace: true` the agent has no repository access, and an Agent set to run on a harness
   runs on the Mastra loop instead (see [agents.md](./agents.md)).
+- The browser tool is available only with `workspace: true` and an explicit `browser` grant; `null`
+  never grants it. The repository's preview services join the node's workspace only with that grant.
 
 **See also.** [agents.md](./agents.md) for Agents, versions, runtimes and tools.
 
