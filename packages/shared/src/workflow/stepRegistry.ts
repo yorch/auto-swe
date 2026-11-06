@@ -29,7 +29,7 @@ register({
   category: 'shell',
   configFields: [],
   description:
-    'Load a finished run change from a verified PR or branch head, or an unverified stored agent diff. Never runs tests or modifies the change.',
+    'Load a finished run change from a verified PR or branch head, or safely reapply a stored diff at its recorded base into a local-only commit. Stored changes that cannot be verified remain explicitly unverified. Run the repository test gate on a verified checkout when the review preset enables runTests; never push the review checkout.',
   label: 'Load change for review',
   name: 'loadChangeForReview',
 });

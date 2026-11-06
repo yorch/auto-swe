@@ -124,7 +124,7 @@ owns it, and is left out of the editor’s palette. A step’s built-in template
 
 | Step | Label | Description | Config fields | Agent role | Built-in templates |
 |---|---|---|---|---|---|
-| `loadChangeForReview` | Load change for review | Load a finished run change from a verified PR or branch head, or an unverified stored agent diff. Never runs tests or modifies the change. | — | — | 3 nodes in 3 templates: `code-review`, `code-review-qodo`, `human-review-of-run` |
+| `loadChangeForReview` | Load change for review | Load a finished run change from a verified PR or branch head, or safely reapply a stored diff at its recorded base into a local-only commit. Stored changes that cannot be verified remain explicitly unverified. Run the repository test gate on a verified checkout when the review preset enables runTests; never push the review checkout. | — | — | 3 nodes in 3 templates: `code-review`, `code-review-qodo`, `human-review-of-run` |
 | `runContainerStep` (backs [`containerStep`](./workflow-nodes.md#containerstep)) | Run container step | Run a container-contract coded step: an ephemeral image with the inputs as JSON env, output parsed from stdout. Prefer the typed node: its fields are checked and it has an inspector form. | `command`, `cpus`, `image` (required), `memory`, `network`, `timeoutMs`, `transport` | — | — |
 
 ## Built-in templates
