@@ -36,6 +36,24 @@ import {
 } from './policy.js';
 import { buildPiTools, type TurnHolder } from './tools.js';
 
+export function piBrowserToolContent(result?: {
+  image?: { data: Buffer; mimeType: string };
+  text?: string;
+}) {
+  return [
+    { text: result?.text ?? '', type: 'text' as const },
+    ...(result?.image
+      ? [
+          {
+            data: result.image.data.toString('base64'),
+            mimeType: result.image.mimeType,
+            type: 'image' as const,
+          },
+        ]
+      : []),
+  ];
+}
+
 /** The most of the repository's context file the system prompt carries. */
 export const MAX_CONTEXT_FILE_BYTES = 64 * 1024;
 
@@ -221,18 +239,7 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
             async execute(_id: string, params: unknown) {
               const result = await options.browserToolset?.call(entry.name, params);
               return {
-                content: [
-                  { text: result?.text ?? '', type: 'text' as const },
-                  ...(result?.image
-                    ? [
-                        {
-                          data: result.image.toString('base64'),
-                          mimeType: 'image/png',
-                          type: 'image' as const,
-                        },
-                      ]
-                    : []),
-                ],
+                content: piBrowserToolContent(result),
                 details: undefined,
               };
             },

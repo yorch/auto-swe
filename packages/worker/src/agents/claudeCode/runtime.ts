@@ -812,7 +812,20 @@ export function claudeCodeAdapter(
             tools: BROWSER_TOOLS.map((entry) =>
               tool(entry.name, entry.description, entry.schema.shape, async (args) => {
                 const result = await options.browserToolset?.call(entry.name, args);
-                return { content: [{ text: result?.text ?? '', type: 'text' }] };
+                return {
+                  content: [
+                    { text: result?.text ?? '', type: 'text' },
+                    ...(result?.image
+                      ? [
+                          {
+                            data: result.image.data.toString('base64'),
+                            mimeType: result.image.mimeType,
+                            type: 'image' as const,
+                          },
+                        ]
+                      : []),
+                  ],
+                };
               })
             ),
           })

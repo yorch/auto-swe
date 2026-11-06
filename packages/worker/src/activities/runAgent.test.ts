@@ -239,6 +239,52 @@ describe('runAgent', () => {
     expect(mockedPersist).toHaveBeenCalledWith(expect.anything(), 'validateContext');
   });
 
+  it('strips model screenshot pixels from persisted Mastra tool results', async () => {
+    const tool = {
+      execute: vi.fn(async () => ({
+        image: { data: 'private-base64-image', mimeType: 'image/jpeg' },
+        text: 'screenshot evidence',
+      })),
+    };
+    generateMock.mockImplementationOnce(async () => {
+      const config = MockedAgent.mock.calls[0]?.[0] as {
+        tools: Record<string, { execute(input: unknown, context?: unknown): Promise<unknown> }>;
+      };
+      const result = await config.tools.browser_screenshot?.execute(
+        { caption: 'Page' },
+        { agent: { toolCallId: 'image-1' } }
+      );
+      return {
+        steps: [
+          {
+            toolCalls: [
+              {
+                payload: {
+                  args: { caption: 'Page' },
+                  toolCallId: 'image-1',
+                  toolName: 'browser_screenshot',
+                },
+              },
+            ],
+            toolResults: [{ payload: { result, toolCallId: 'image-1' } }],
+          },
+        ],
+        text: 'done',
+      };
+    });
+    const addToolCall = vi.spyOn(AgentTracer.prototype, 'addToolCall');
+
+    await runAgent(makeSpec({ tools: { browser_screenshot: tool } as never }), 'M');
+
+    expect(addToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outputJson: { text: 'screenshot evidence' },
+        toolName: 'browser_screenshot',
+      })
+    );
+    expect(JSON.stringify(addToolCall.mock.calls)).not.toContain('private-base64-image');
+  });
+
   it('attaches its own LLM span to the trace, since it persists after that span ends', async () => {
     generateMock.mockResolvedValue({ text: 'ok', usage: { inputTokens: 1, outputTokens: 1 } });
     const setSpanContext = vi.spyOn(AgentTracer.prototype, 'setSpanContext');
@@ -301,7 +347,17 @@ describe('runAgent', () => {
             { payload: { args: { q: 'c' }, toolCallId: 'c3', toolName: 'search' } },
             { payload: { args: { q: 'd' }, toolCallId: 'c4', toolName: 'search' } },
           ],
-          toolResults: [{ payload: { result: { found: 1 }, toolCallId: 'c1' } }],
+          toolResults: [
+            {
+              payload: {
+                result: {
+                  found: 1,
+                  image: { data: 'private-base64-image', mimeType: 'image/jpeg' },
+                },
+                toolCallId: 'c1',
+              },
+            },
+          ],
         },
         {
           content: [{ text: 'done', type: 'text' }],

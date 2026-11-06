@@ -23,7 +23,7 @@ import {
   usageReportOf,
 } from '../harness/adapter.js';
 import { PI_TOOLS } from './policy.js';
-import { piAdapter, piSystemPrompt } from './runtime.js';
+import { piAdapter, piBrowserToolContent, piSystemPrompt } from './runtime.js';
 
 const REPO = '/workspace/target-repo';
 const SPEC = 'anthropic/claude-sonnet-5-5';
@@ -171,6 +171,22 @@ beforeEach(() => {
 });
 
 describe('a Pi turn', () => {
+  it('returns screenshot pixels in a Pi image content item', () => {
+    expect(
+      piBrowserToolContent({
+        image: { data: Buffer.from('jpeg-bytes'), mimeType: 'image/jpeg' },
+        text: 'page snapshot',
+      })
+    ).toEqual([
+      { text: 'page snapshot', type: 'text' },
+      {
+        data: Buffer.from('jpeg-bytes').toString('base64'),
+        mimeType: 'image/jpeg',
+        type: 'image',
+      },
+    ]);
+  });
+
   it.each([false, true])('offers a pinned AgentTool with governed grant=%s', async (granted) => {
     const ids = ['pin-a'];
     const { model, prompts } = scriptedModel([

@@ -161,10 +161,13 @@ describe.skipIf(!enabled)('browser executor Docker smoke', () => {
     expect(navigation).toMatchObject({ ok: true, status: 200, title: 'Browser smoke' });
     const snapshot = await session.call({ cmd: 'snapshot' });
     expect(snapshot.aria).toContain('Phase A page');
-    const screenshot = await session.call({ cmd: 'screenshot' });
+    const screenshot = await session.call({ cmd: 'screenshot', modelImage: true });
     expect(screenshot.ok).toBe(true);
     const png = await session.readOutFile(String(screenshot.file), 2 * 1024 * 1024);
     expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const jpeg = await session.readOutFile(String(screenshot.modelFile), 2 * 1024 * 1024);
+    expect(jpeg.subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
+    expect(jpegDimensions(jpeg)).toEqual({ height: 480, width: 640 });
     const blockedNavigation = await session.call({ cmd: 'goto', url: 'https://example.com' });
     expect(blockedNavigation.ok).toBe(false);
     const events = await session.call({ cmd: 'events' });
@@ -185,6 +188,7 @@ describe.skipIf(!enabled)('browser executor Docker smoke', () => {
         await fs.mkdir(evidenceDir, { recursive: true });
         await Promise.all([
           fs.writeFile(path.join(evidenceDir, 'screenshot.png'), png),
+          fs.writeFile(path.join(evidenceDir, 'screenshot.model.jpg'), jpeg),
           fs.writeFile(path.join(evidenceDir, 'recording.webm'), video),
           fs.writeFile(path.join(evidenceDir, 'trace.zip'), trace),
           fs.writeFile(
@@ -198,3 +202,29 @@ describe.skipIf(!enabled)('browser executor Docker smoke', () => {
     }
   }, 180_000);
 });
+
+function jpegDimensions(buffer: Buffer): { height: number; width: number } {
+  const startOfFrame = new Set([
+    0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
+  ]);
+  let offset = 2;
+  while (offset + 3 < buffer.length) {
+    if (buffer[offset] !== 0xff) {
+      throw new Error('Invalid JPEG marker');
+    }
+    const marker = buffer[offset + 1];
+    offset += 2;
+    if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+      continue;
+    }
+    const segmentLength = buffer.readUInt16BE(offset);
+    if (startOfFrame.has(marker)) {
+      return {
+        height: buffer.readUInt16BE(offset + 3),
+        width: buffer.readUInt16BE(offset + 5),
+      };
+    }
+    offset += segmentLength;
+  }
+  throw new Error('JPEG has no frame dimensions');
+}

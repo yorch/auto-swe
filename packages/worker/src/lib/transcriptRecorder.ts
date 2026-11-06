@@ -187,6 +187,33 @@ function tryParseJson(text: string): unknown {
   }
 }
 
+function withoutImagePayload(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      const sanitized = withoutImagePayload(item);
+      return sanitized === undefined ? [] : [sanitized];
+    });
+  }
+  if (typeof value !== 'object' || value === null) {
+    return value;
+  }
+  const record = value as Record<string, unknown>;
+  const mediaType = record.mediaType ?? record.media_type;
+  if (
+    record.type === 'image' ||
+    record.type === 'image_url' ||
+    record.type === 'input_image' ||
+    (record.type === 'file' && typeof mediaType === 'string' && mediaType.startsWith('image/'))
+  ) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    Object.entries(record)
+      .map(([key, item]) => [key, withoutImagePayload(item)] as const)
+      .filter(([, item]) => item !== undefined)
+  );
+}
+
 /** `{ truncated, originalBytes, head }` stand-in for an over-limit field value. */
 function truncatedValue(value: unknown): unknown {
   let serialized: string;
@@ -285,7 +312,10 @@ export class TranscriptRecorder {
 
   /** A Claude Code SDK stream message — only ever called for a non-proxied turn. */
   addHarnessMessage(message: unknown): void {
-    this.append('harness_message', { message, runtime: 'claude-code' });
+    this.append('harness_message', {
+      message: withoutImagePayload(message),
+      runtime: 'claude-code',
+    });
   }
 
   /** A Claude Code turn's configuration, recorded as the turn starts. */

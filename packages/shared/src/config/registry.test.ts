@@ -62,6 +62,7 @@ describe('UI validation settings', () => {
   it('uses deployment-wide ADMIN defaults for evidence limits and retention', () => {
     const values = {
       'uiValidation.agentRecordVideo': true,
+      'uiValidation.agentScreenshotImages': true,
       'uiValidation.evidenceRetentionDays': 90,
       'uiValidation.maxEvidencePerRun': 200,
       'uiValidation.maxScreenshotBytes': 5_000_000,
@@ -76,6 +77,17 @@ describe('UI validation settings', () => {
       expect(def.overridableAt, key).toEqual([]);
       expect(def.runPinned, key).toBe(false);
     }
+  });
+
+  it('lets administrators turn screenshot images off for models without image input', () => {
+    const setting = SETTING_DEFINITIONS['uiValidation.agentScreenshotImages'];
+    expect(setting.label).toBe("Send screenshots to the agent's model");
+    expect(setting.description).toBe(
+      'Whether the agent browser tool returns screenshot images to the model; turn off for models without image input.'
+    );
+    expect(setting.schema.safeParse(true).success).toBe(true);
+    expect(setting.schema.safeParse(false).success).toBe(true);
+    expect(setting.schema.safeParse('off').success).toBe(false);
   });
 });
 

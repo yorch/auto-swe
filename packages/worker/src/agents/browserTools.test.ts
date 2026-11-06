@@ -51,6 +51,7 @@ describe('BrowserToolset', () => {
         return {
           file: '/workspace/browser/screenshot-1.png',
           height: 2,
+          modelFile: '/workspace/browser/screenshot-1.model.jpg',
           ok: true,
           url: 'http://localhost:3000/',
           width: 2,
@@ -61,7 +62,9 @@ describe('BrowserToolset', () => {
       }
       return { ok: true };
     });
-    session.readOutFile.mockResolvedValue(Buffer.from('png'));
+    session.readOutFile.mockImplementation(async (filePath: string) =>
+      Buffer.from(filePath.endsWith('.model.jpg') ? 'jpeg' : 'png')
+    );
     session.close.mockResolvedValue({});
     evidence.mockImplementation(async (input: { kind: string }) => {
       events.push(`evidence:${input.kind}`);
@@ -96,7 +99,7 @@ describe('BrowserToolset', () => {
     );
   });
 
-  it('persists screenshots before returning them to the caller', async () => {
+  it('persists screenshots without returning pixels when model images are disabled', async () => {
     const toolset = createToolset();
     const result = await toolset.call('browser_screenshot', {
       caption: 'After login',
@@ -105,8 +108,9 @@ describe('BrowserToolset', () => {
     events.push('returned');
 
     expect(events).toEqual(['evidence:screenshot', 'returned']);
-    expect(result.image).toEqual(Buffer.from('png'));
+    expect(result.image).toBeUndefined();
     expect(result.text).toContain('evidence-1');
+    expect(session.call).toHaveBeenCalledWith({ cmd: 'screenshot', fullPage: false });
     expect(evidence).toHaveBeenCalledWith(
       expect.objectContaining({
         caption: 'After login',
@@ -117,6 +121,67 @@ describe('BrowserToolset', () => {
       }),
       tracer
     );
+  });
+
+  it('returns the optional JPEG screenshot to the model', async () => {
+    resolveSetting.mockImplementation(async (key: string) =>
+      key === 'uiValidation.agentScreenshotImages'
+        ? true
+        : key === 'uiValidation.maxScreenshotBytes'
+          ? 1000
+          : key === 'uiValidation.maxVideoBytes'
+            ? 5_000_000
+            : false
+    );
+    screenMcpResult.mockImplementation(async (text: string) => ({ blocked: false, result: text }));
+    const toolset = createToolset();
+
+    const result = await toolset.call('browser_screenshot', { caption: 'After login' });
+
+    expect(session.call).toHaveBeenCalledWith({
+      cmd: 'screenshot',
+      fullPage: false,
+      modelImage: true,
+    });
+    expect(session.readOutFile).toHaveBeenCalledWith(
+      '/workspace/browser/screenshot-1.model.jpg',
+      1000
+    );
+    expect(result.image).toEqual({ data: Buffer.from('jpeg'), mimeType: 'image/jpeg' });
+    expect(tracer.addToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({ outputJson: result.text, toolName: 'browser:browser_screenshot' })
+    );
+    expect(JSON.stringify(vi.mocked(tracer.addToolCall).mock.calls)).not.toContain(
+      Buffer.from('jpeg').toString('base64')
+    );
+    expect(
+      resolveSetting.mock.calls.filter(([key]) => key === 'uiValidation.agentScreenshotImages')
+    ).toHaveLength(1);
+  });
+
+  it('omits an oversized model JPEG without failing the screenshot tool', async () => {
+    resolveSetting.mockImplementation(async (key: string) =>
+      key === 'uiValidation.agentScreenshotImages'
+        ? true
+        : key === 'uiValidation.maxScreenshotBytes'
+          ? 100
+          : key === 'uiValidation.maxVideoBytes'
+            ? 5_000_000
+            : false
+    );
+    session.readOutFile.mockImplementation(async (filePath: string) => {
+      if (filePath.endsWith('.model.jpg')) {
+        throw new Error('file exceeds the 100 byte limit');
+      }
+      return Buffer.from('png');
+    });
+    screenMcpResult.mockImplementation(async (text: string) => ({ blocked: false, result: text }));
+    const toolset = createToolset();
+
+    const result = await toolset.call('browser_screenshot', { caption: 'After login' });
+
+    expect(result.image).toBeUndefined();
+    expect(result.text).toContain('"imageOmitted":"file exceeds the 100 byte limit"');
   });
 
   it('traces and rethrows browser allowlist errors', async () => {

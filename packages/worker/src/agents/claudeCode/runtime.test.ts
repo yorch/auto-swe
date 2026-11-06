@@ -83,7 +83,7 @@ vi.mock('../../lib/transcriptRecorder.js', async (importOriginal) => ({
 }));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   createSdkMcpServer: vi.fn((options) => ({
-    instance: { tools: options.tools },
+    instance: { close: vi.fn(async () => {}), tools: options.tools },
     name: options.name,
     type: 'sdk',
   })),
@@ -105,6 +105,7 @@ vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
 
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import { spentUsageOf } from '../implementerRuntime.js';
+import { BROWSER_MCP_SERVER } from './policy.js';
 import {
   claudeCodeRuntime,
   normalizeAnthropicBaseUrl,
@@ -337,6 +338,42 @@ describe('preparing the container', () => {
     await expect(runtime.runTurn({ system: 'S', user: 'U1' })).rejects.toThrow(/restarting/);
     await expect(runtime.runTurn({ system: 'S', user: 'U2' })).resolves.toMatchObject({
       text: 'ok',
+    });
+  });
+});
+
+describe('browser screenshot MCP output', () => {
+  it('returns JPEG pixels as an MCP image content item', async () => {
+    const browserToolset = {
+      call: vi.fn(async () => ({
+        image: { data: Buffer.from('jpeg-bytes'), mimeType: 'image/jpeg' as const },
+        text: '{"evidenceId":"e-1"}',
+      })),
+    };
+    const { runtime } = setup({ browserToolset });
+    h.script.push([[init('browser-image'), success('done')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U' });
+
+    const options = h.queryCalls[0]?.options as QueryOptions & {
+      mcpServers: Record<
+        string,
+        { instance: { tools: { name: string; handler(input: unknown): Promise<unknown> }[] } }
+      >;
+    };
+    const browser = options.mcpServers[BROWSER_MCP_SERVER];
+    const screenshot = browser.instance.tools.find((tool) => tool.name === 'browser_screenshot');
+    const result = await screenshot?.handler({ caption: 'After login' });
+
+    expect(result).toEqual({
+      content: [
+        { text: '{"evidenceId":"e-1"}', type: 'text' },
+        {
+          data: Buffer.from('jpeg-bytes').toString('base64'),
+          mimeType: 'image/jpeg',
+          type: 'image',
+        },
+      ],
     });
   });
 });

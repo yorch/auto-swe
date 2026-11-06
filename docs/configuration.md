@@ -77,6 +77,7 @@ starts the disarm sweep described in
 The `uiValidation` group holds the bounds and switches of run UI evidence: all ADMIN-only and GLOBAL
 only, read where they are used rather than pinned to a run.
 `uiValidation.agentRecordVideo` (default on) decides whether an agent's browser session records video;
+`uiValidation.agentScreenshotImages` (default on) sends screenshot pixels to the agent's model;
 `uiValidation.evidenceRetentionDays` (default 90) is how long the daily sweep keeps evidence; and
 `uiValidation.maxScreenshotBytes` (5,000,000), `uiValidation.maxVideoBytes` (50,000,000) and
 `uiValidation.maxEvidencePerRun` (200) bound what is kept. `uiValidation.prInlineImages` (default off)
@@ -575,7 +576,8 @@ containers get. A launch can only narrow it. See
 The `uiValidation` group contains ADMIN-only, GLOBAL-only settings for run evidence:
 `uiValidation.maxScreenshotBytes` (5,000,000 bytes), `uiValidation.maxVideoBytes` (50,000,000
 bytes), `uiValidation.maxEvidencePerRun` (200 items), `uiValidation.evidenceRetentionDays` (90
-days), `uiValidation.prInlineImages` (off), and `uiValidation.agentRecordVideo` (on). They are not
+days), `uiValidation.prInlineImages` (off), `uiValidation.agentRecordVideo` (on), and
+`uiValidation.agentScreenshotImages` (on). They are not
 run-pinned and apply through the settings cache. Public PR screenshot copies require both
 `UI_EVIDENCE_PUBLIC_BUCKET` and `UI_EVIDENCE_PUBLIC_BASE_URL` in the worker environment in addition
 to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-managed.

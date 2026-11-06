@@ -66,6 +66,11 @@ empty, and records screenshots before returning their evidence identifiers. Snap
 console text is screened before it is returned to the agent. Session cleanup waits for a start already
 in flight, then saves video and trace evidence and stops the app preview. One session serves the
 whole toolset, so concurrent tool calls in a single model step share it.
+`browser_screenshot` always saves the evidence PNG, including its requested `fullPage` setting, and
+by default also sends a viewport-only JPEG to the model. The ADMIN-only, GLOBAL setting
+`uiValidation.agentScreenshotImages` disables model images for models without image input; an
+unreadable or oversized JPEG is omitted while the screenshot evidence and text result are still
+returned.
 
 ## PR evidence
 
@@ -163,6 +168,6 @@ dropped.
   grant; a node without a workspace has no browser tools.
 - Trace snapshots replay on the dashboard origin. Playwright strips scripts from snapshot HTML, but
   the content comes from the app under test.
-- The browser tool's `browser_screenshot` persists the image as evidence but returns the accessible
-  page snapshot and the evidence id to the model, not the pixels: an agent reads the page as text,
-  and a person sees the picture on the run page.
+- Injection screening covers the screenshot tool's text output, not the pixels in the JPEG image
+  sent to the model. The model may therefore receive visual content that is not covered by text
+  screening.
