@@ -1660,6 +1660,33 @@ export interface PullRequestOutcomeSummary {
   draftCount: number;
 }
 
+/**
+ * Response data of GET /api/v1/pr-evaluations/engagement: whether reviewers act on the brief, for
+ * the evaluations written in the window. The counts are approximate (see `docs/pr-evaluation.md`).
+ */
+export interface PrEngagementResponse {
+  /** The window the figures cover, in days. */
+  windowDays: number;
+  /** The window held more evaluations than one read takes, so the figures cover the newest. */
+  capped: boolean;
+  /** Evaluations in the window. */
+  evaluations: number;
+  /** Of those, how many a person reviewed. */
+  reviewed: number;
+  /** Median minutes from the evaluation to the first review; null when none was reviewed. */
+  medianMinutesToFirstReview: number | null;
+  /** Share of reviewed evaluations with at least one review asking for changes. */
+  changeRequestRate: number | null;
+  comments: {
+    elsewhere: number;
+    flagged: number;
+    /** Share of all inline comments that landed on a flagged file; null with no comments. */
+    flaggedShare: number | null;
+    skimmed: number;
+    skimmedShare: number | null;
+  };
+}
+
 /** Response data of GET /api/v1/pull-requests/outcomes. */
 export interface PullRequestOutcomesResponse {
   window: { start: string; end: string; days: number };

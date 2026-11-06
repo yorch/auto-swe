@@ -242,7 +242,9 @@ review-comment deliveries it already receives, with no extra subscription, and n
 evaluation for them. A review or comment by a bot, by the pull request's author, or carrying a
 platform marker (`<!-- auto-swe:`) is not counted, and a dismissed review or an edited comment is
 not a new one. The row keeps numbers only: never a login, a path or text.
-`GET /api/v1/pr-evaluations/engagement` (§13) summarises them.
+`GET /api/v1/pr-evaluations/engagement` (§13) summarises them, and **Reviewer engagement** on
+**Admin → Analytics** shows that summary for the page's date range (the route reads at most 365 days,
+and the card says when the range was longer).
 
 ### The reading path
 
