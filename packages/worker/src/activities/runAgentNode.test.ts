@@ -113,9 +113,37 @@ const mockedLoadMcpTools = vi.mocked(loadMcpTools);
 beforeEach(() => vi.clearAllMocks());
 
 describe('runAgentNode', () => {
+  it.each([false, true])(
+    'automatically adds KB-only search to a workspace-free agent with flag=%s',
+    async (enabled) => {
+      vi.mocked(resolveAgent).mockResolvedValueOnce({ toolKeys: [] } as never);
+      mockedResolveSpec.mockResolvedValueOnce({ agentKey: 'reviewer', tools: {} } as never);
+      vi.mocked(loadRunKnowledgeBases).mockResolvedValueOnce({
+        checkouts: [],
+        snapshotIds: enabled ? ['pin-a'] : [],
+      });
+      await runAgentNode({ agentRef: 'reviewer', knowledgeBases: enabled });
+      const spec = mockedRunAgent.mock.calls[0][0];
+      if (enabled) {
+        const tools = spec.tools as ReturnType<typeof buildKnowledgeTools>;
+        await tools.searchKnowledge.execute?.(
+          { query: 'parser', snapshotIds: ['other'] } as never,
+          {} as never
+        );
+        expect(searchRunKnowledge).toHaveBeenCalledWith('parser', {
+          includeGoverned: false,
+          limit: undefined,
+          snapshotIds: ['pin-a'],
+        });
+      } else {
+        expect(spec.tools).not.toHaveProperty('searchKnowledge');
+      }
+    }
+  );
   it.each([true, false])(
     'binds pinned search ids with knowledgeBases=%s for an explicitly granted non-workspace agent',
     async (enabled) => {
+      mockedResolveSpec.mockResolvedValueOnce({ agentKey: 'reviewer' } as never);
       vi.mocked(resolveAgent).mockResolvedValueOnce({ toolKeys: ['searchKnowledge'] } as never);
       vi.mocked(loadRunKnowledgeBases).mockResolvedValueOnce({
         checkouts: [],
@@ -131,6 +159,7 @@ describe('runAgentNode', () => {
       };
       await input.availableTools.searchKnowledge.execute?.({ query: 'parser' }, {} as never);
       expect(searchRunKnowledge).toHaveBeenCalledWith('parser', {
+        includeGoverned: true,
         limit: undefined,
         snapshotIds: enabled ? ['pin-a'] : [],
       });
@@ -141,7 +170,10 @@ describe('runAgentNode', () => {
     const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
 
     await runAgentNode({ agentRef: 'reviewer', userMessage: 'check the diff' });
-    expect(loadRunKnowledgeBases).not.toHaveBeenCalled();
+    expect(loadRunKnowledgeBases).toHaveBeenCalledWith({
+      checkoutCredentials: false,
+      knowledgeBases: undefined,
+    });
 
     // The run's pin decides, under the node's scope, with Mastra as the default.
     expect(vi.mocked(resolveAgentRuntime)).toHaveBeenCalledWith(
@@ -629,6 +661,7 @@ describe('runAgentNode', () => {
         loadProjectSettings: true,
         maxTurns: 40,
         mcp: null,
+        toolKeys: ['readFile', 'bash', 'mcp'],
         tracer: expect.any(AgentTracer),
         workspace,
       });

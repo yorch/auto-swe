@@ -276,14 +276,18 @@ run evidence under `source: 'agent'`, and every page text, title and snapshot it
 by the same MCP result screen before the model sees it. See
 [ui-validation.md §Browser tool for agents](./ui-validation.md#browser-tool-for-agents).
 
-Governed knowledge adds two separate tool IDs, `searchKnowledge` and `submitLearning`. They are not workspace tools and are excluded when `toolKeys` is null or legacy. Grant each explicitly on the resolved Agent to enable it. Search returns bounded, cited, trust-labeled knowledge as untrusted context; submission captures only local LEARNING items and requires persisted evidence. See [knowledge.md](./knowledge.md) for scope, lifecycle, and limitations.
+Governed knowledge adds two separate tool IDs, `searchKnowledge` and `submitLearning`. Governed KnowledgeItem results and learning submission require explicit grants on the resolved Agent; null or legacy `toolKeys` do not grant them. Governed search is available on Mastra, Claude Code and Pi; learning submission is Mastra-only. Search returns bounded, cited, trust-labeled knowledge as untrusted context; submission captures only local LEARNING items and requires persisted evidence. See [knowledge.md](./knowledge.md) for scope, lifecycle, and limitations.
 
-`searchKnowledge` also merges [repository-backed KB chunks](./knowledge-bases.md) from snapshots
+`searchKnowledge` also searches [repository-backed KB chunks](./knowledge-bases.md) from snapshots
 pinned for the current run, with `kb:owner/repo@sha7 path` citations and an untrusted third-party
-source label. The explicit grant remains required. Workspace agents receive read-only KB files
-and a bounded reference prompt by default; `knowledgeBases: false` opts a step out. Harnesses
-receive those files/prompts, not server-side knowledge tools. Text-only decomposition planning
-receives neither; its merge-conflict-resolver workspace can receive KBs.
+source label. With pinned snapshots and the step flag enabled, all three runtimes receive KB-only
+search automatically; an explicit grant adds governed results. With neither snapshots nor a grant
+there is no search tool. Claude Code exposes it through the worker's in-process `knowledge` SDK MCP
+server; Pi uses an AgentTool. Snapshot IDs are captured at tool-build time, not from model input.
+Workspace agents also receive read-only KB files and a bounded reference prompt by default;
+`knowledgeBases: false` opts a step out of KBs, not explicitly granted governed search. Text-only
+decomposition planning receives bounded, untrusted summaries and one top-five retrieval in its
+system prompt, without tools or a workspace. Failure omits that context; its step flag opts out.
 
 ### 3.2 `loadSkill` Tool (always present when skills exist)
 
@@ -2211,8 +2215,9 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   after the persona was saved (the parent's save lists the personas it strands, but does not refuse).
   A new override inherits the platform-wide runtime only when it is created; a later change to the
   platform-wide row's runtime does not reach existing overrides.
-- **The harness gets no sub-agent, web or plugin tool,** and no MCP server but the Agent's own
-  connection, relayed from the worker: a repository's `.mcp.json` and the harness's own MCP settings
+- **The harness gets no sub-agent, web or plugin tool.** Its worker-owned tools include optional
+  browser tools and knowledge search, plus the Agent's own MCP connection relayed from the worker;
+  a repository's `.mcp.json` and the harness's own MCP settings
   are ignored (`strictMcpConfig`). A relayed MCP tool is allowed by name and runs in the worker; like
   the Mastra loop's MCP tools, its arguments are not scanned, only audit-logged and traced, and its
   results are screened only for connections that opt in (§3.5).

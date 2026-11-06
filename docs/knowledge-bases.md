@@ -100,10 +100,20 @@ and KB search scope for that step. The prompt block lists mounted paths and owne
 with a sanitized, flattened README/INDEX summary capped at 1,000 characters. Mastra and
 claude-code/Pi harness prompts label these references untrusted and never to be edited.
 
-Mastra's explicitly granted `searchKnowledge` tool and the `retrieveKnowledge` workflow step merge
-KB chunks with governed items. No implicit tool grant is added. Snapshot IDs are bound when tools
-are built inside the activity; the model cannot select arbitrary snapshots. Server-side search
-scope survives an individual file-checkout failure.
+Mastra, Claude Code and Pi automatically receive KB-only `searchKnowledge` when the step has
+pinned snapshots and `knowledgeBases` is enabled. An explicit `searchKnowledge` grant additionally
+permits governed KnowledgeItem results to merge, as does the `retrieveKnowledge` workflow step.
+Without snapshots or a grant there is no search tool. Claude Code exposes search through a
+worker-side SDK MCP server named `knowledge`, recorded in the transcript's server list; Pi uses a
+worker-side AgentTool. Snapshot IDs are copied into the binding inside the activity; model input
+cannot select arbitrary snapshots. Search scope survives an individual file-checkout failure.
+
+The text-only `planDecomposition` step receives a best-effort system-prompt block without a
+workspace, tools or clone credentials. It lists each pinned KB's name and owner/repo@sha7 with a
+bounded indexed README/INDEX summary, then retrieves up to five chunks for one ticket/request
+query. Summaries and excerpts pass recall-time injection filtering and are labelled untrusted
+reference data; citations accompany the excerpts. The block is capped at 12,000 characters.
+`knowledgeBases: false` omits it, and any loading, summary or retrieval failure omits the whole block.
 
 KB vector search is an exact cosine scan over the run's pinned snapshots, not an approximate HNSW
 scan. The unique `(snapshotId, path, chunkIndex)` btree index supports the snapshot filter. Search
@@ -136,9 +146,8 @@ classifies reads as read-only access and management calls as confirmation-requir
 
 ## Limitations
 
-- Harness runtimes receive files and the prompt block, not the server-side knowledge search tools.
-  The text-only decomposition planner has no workspace and receives no KBs; only its existing
-  merge-conflict-resolver agent workspace receives them.
+- The text-only decomposition planner cannot browse reference files or issue follow-up searches.
+  Its bounded summary uses indexed README/INDEX chunks, so unindexed or skipped summaries are absent.
 - Caps can omit references and files; text matching is bounded, not exhaustive search. Unsupported
   extensions, oversized files and truncated trees are not silently treated as indexed content.
 - A read-only mount and injection screening are defense in depth, not proof of trustworthy content

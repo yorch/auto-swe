@@ -9,7 +9,7 @@ import {
 } from './stepRegistry.js';
 
 describe('stepRegistry', () => {
-  it('offers knowledge bases on workspace agent steps only, enabled by default', () => {
+  it('offers knowledge bases on workspace agent steps and text-only decomposition, enabled by default', () => {
     for (const step of [
       'executeImplementation',
       'executeCIFixImplementation',
@@ -20,12 +20,13 @@ describe('stepRegistry', () => {
       'resolveMergeConflict',
       'runAgentNode',
       'runAgentTask',
+      'planDecomposition',
     ]) {
       expect(
         getStepMetadata(step).configFields.find((field) => field.key === 'knowledgeBases')
       ).toMatchObject({ default: true, type: 'boolean' });
     }
-    for (const step of ['planDecomposition', 'mergeBranches', 'runTests', 'runContainerStep']) {
+    for (const step of ['mergeBranches', 'runTests', 'runContainerStep']) {
       expect(
         getStepMetadata(step).configFields.find((field) => field.key === 'knowledgeBases')
       ).toBeUndefined();

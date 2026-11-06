@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const search = vi.hoisted(() => vi.fn());
 vi.mock('../lib/knowledgeBaseSearch.js', () => ({ searchRunKnowledge: search }));
 
-import { buildKnowledgeTools, SEARCH_KNOWLEDGE_OUTPUT_SCHEMA } from './knowledgeTools.js';
+import {
+  bindKnowledgeSearch,
+  buildKnowledgeTools,
+  SEARCH_KNOWLEDGE_OUTPUT_SCHEMA,
+} from './knowledgeTools.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -18,12 +22,42 @@ describe('searchKnowledge snapshot binding', () => {
       { limit: 2, query: 'parser', snapshotIds: ['pin-another-run'] } as never,
       {} as never
     );
-    expect(search).toHaveBeenCalledWith('parser', { limit: 2, snapshotIds: ['pin-a'] });
+    expect(search).toHaveBeenCalledWith('parser', {
+      includeGoverned: true,
+      limit: 2,
+      snapshotIds: ['pin-a'],
+    });
   });
   it('searches no KBs without a bound scope', async () => {
     const tools = buildKnowledgeTools();
     await tools.searchKnowledge.execute?.({ query: 'parser' }, {} as never);
-    expect(search).toHaveBeenCalledWith('parser', { limit: undefined, snapshotIds: [] });
+    expect(search).toHaveBeenCalledWith('parser', {
+      includeGoverned: true,
+      limit: undefined,
+      snapshotIds: [],
+    });
+  });
+  it('does not bind without pins or a governed grant', () => {
+    expect(bindKnowledgeSearch([])).toBeUndefined();
+  });
+  it.each([false, true])(
+    'binds governed access only when explicitly granted: %s',
+    async (includeGoverned) => {
+      const ids = ['pin-a'];
+      const binding = bindKnowledgeSearch(ids, includeGoverned);
+      ids[0] = 'other-run';
+      await binding?.execute({ query: 'parser', snapshotIds: ['other-run'] });
+      expect(search).toHaveBeenCalledWith('parser', {
+        includeGoverned,
+        limit: undefined,
+        snapshotIds: ['pin-a'],
+      });
+    }
+  );
+  it('rejects invalid model input before searching', () => {
+    const binding = bindKnowledgeSearch(['pin-a']);
+    expect(() => binding?.execute({ limit: 11, query: '' })).toThrow();
+    expect(search).not.toHaveBeenCalled();
   });
   it('accepts both legacy governed results and additive KB metadata', () => {
     const legacy = {

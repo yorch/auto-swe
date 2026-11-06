@@ -35,6 +35,18 @@ beforeEach(() => {
 });
 
 describe('tool grants', () => {
+  it('allows worker-owned knowledge search only when bound, never learning submission', async () => {
+    await expect(
+      decidePiToolCall('searchKnowledge', { query: 'parser' }, ctx)
+    ).resolves.toMatchObject({ allow: false });
+    const bound = { ...ctx, mcpTools: ['searchKnowledge'] };
+    await expect(decidePiToolCall('searchKnowledge', { query: 'parser' }, bound)).resolves.toEqual({
+      allow: true,
+    });
+    await expect(decidePiToolCall('submitLearning', {}, bound)).resolves.toMatchObject({
+      allow: false,
+    });
+  });
   it('reads toolKeys as the Mastra implementer does', () => {
     expect(piToolsFor(null)).toEqual([...PI_TOOLS]);
     expect(piToolsFor(['mcp'])).toEqual([...PI_TOOLS]);

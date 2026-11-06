@@ -99,7 +99,7 @@ const CROSS_REPO_CHECKOUT_FIELD = {
 const KNOWLEDGE_BASES_FIELD = {
   default: true,
   description:
-    'Mount the run’s knowledge bases as read-only, untrusted reference material. On by default; uncheck to omit them for this step.',
+    'Use the run’s pinned knowledge bases as untrusted reference material. On by default; uncheck to omit KB files, search scope and decomposition prompt context for this step.',
   key: 'knowledgeBases',
   label: 'Knowledge bases',
   type: 'boolean' as const,
@@ -123,7 +123,7 @@ const IMPLEMENTER_TOOLS_FIELD = {
 } as const;
 
 function register(meta: StepMetadata): void {
-  const workspaceAgent = [
+  const knowledgeBaseAgent = [
     'executeImplementation',
     'executeCIFixImplementation',
     'executeReviewFixImplementation',
@@ -133,10 +133,11 @@ function register(meta: StepMetadata): void {
     'resolveMergeConflict',
     'runAgentNode',
     'runAgentTask',
+    'planDecomposition',
   ].includes(meta.name);
   REGISTRY.set(
     meta.name,
-    workspaceAgent
+    knowledgeBaseAgent
       ? { ...meta, configFields: [...(meta.configFields ?? []), KNOWLEDGE_BASES_FIELD] }
       : meta
   );

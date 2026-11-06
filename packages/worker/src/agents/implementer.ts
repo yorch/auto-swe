@@ -191,9 +191,11 @@ export async function createImplementerAgent(
     ...resolvedWorkspaceTools,
     ...(hasSkills ? { loadSkill } : {}),
     ...(options?.lessonRepoId ? createLessonTools(options.lessonRepoId, tracer) : {}),
-    ...(options?.knowledgeToolKeys?.includes('searchKnowledge')
+    ...(options?.knowledgeToolKeys?.includes('searchKnowledge') ||
+    workspace.knowledgeBaseSnapshotIds?.length
       ? {
           searchKnowledge: buildKnowledgeTools(tracer, {
+            includeGoverned: options?.knowledgeToolKeys?.includes('searchKnowledge') ?? false,
             snapshotIds: workspace.knowledgeBaseSnapshotIds ?? [],
           }).searchKnowledge,
         }

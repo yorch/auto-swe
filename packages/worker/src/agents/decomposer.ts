@@ -54,7 +54,8 @@ export async function planDecomposition(
   request: RepoWorkRequest,
   tracer?: AgentTracer,
   systemPromptOverride?: string,
-  skillSuffix?: string
+  skillSuffix?: string,
+  knowledgeBaseContext = ''
 ): Promise<DecompositionResult> {
   return otelTracer.startActiveSpan(
     'llm.plan_decomposition',
@@ -82,6 +83,7 @@ export async function planDecomposition(
         span.setAttribute('llm.model', modelSpec);
         const basePrompt = systemPromptOverride || (rowPrompt ?? DECOMPOSER_AGENT_PROMPT);
         systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
+        systemPrompt += knowledgeBaseContext;
         const agent = new Agent({
           id: 'feature-decomposer',
           instructions: systemPrompt,

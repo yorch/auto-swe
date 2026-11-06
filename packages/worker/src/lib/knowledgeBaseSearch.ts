@@ -142,21 +142,25 @@ export async function searchKnowledgeBaseChunks(
 
 export async function searchRunKnowledge(
   query: string,
-  options: { limit?: number; snapshotIds?: readonly string[] } = {}
+  options: { includeGoverned?: boolean; limit?: number; snapshotIds?: readonly string[] } = {}
 ) {
-  const governed = await searchWorkflowKnowledge(query, { limit: options.limit });
+  const governed =
+    options.includeGoverned === false
+      ? { mode: 'semantic' as const, results: [] }
+      : await searchWorkflowKnowledge(query, { limit: options.limit });
   if (!options.snapshotIds?.length) {
     return { ...governed, injectionDropped: 0 };
   }
-  const scope = await resolveKnowledgeExecutionScope();
-  if (scope.principal.repoId && !scope.sourceAuthorized) {
+  const scope =
+    options.includeGoverned === false ? undefined : await resolveKnowledgeExecutionScope();
+  if (scope?.principal.repoId && !scope.sourceAuthorized) {
     return { ...governed, injectionDropped: 0 };
   }
   const limit =
     options.limit ??
     (await resolveSetting('memory.knowledgeMaxResults', {
-      orgId: scope.principal.orgId ?? undefined,
-      teamId: scope.principal.teamId ?? undefined,
+      orgId: scope?.principal.orgId ?? undefined,
+      teamId: scope?.principal.teamId ?? undefined,
     }));
   let kb: Awaited<ReturnType<typeof searchKnowledgeBaseChunks>>;
   try {

@@ -33,6 +33,12 @@ import { type McpRelay, openMcpRelay } from '../harness/mcpRelay.js';
 import { POLICY_DECISION_MS } from '../harness/policy.js';
 import { type HarnessRuntime, harnessRuntime } from '../harness/runtime.js';
 import { runningTotalsUsage, summedCallsUsage, type UsageTotals } from '../harness/usage.js';
+import {
+  CLAUDE_KNOWLEDGE_TOOL,
+  claudeKnowledgeServer,
+  KNOWLEDGE_MCP_SERVER,
+} from '../knowledgeSearchBindings.js';
+import { bindKnowledgeSearch } from '../knowledgeTools.js';
 import type { McpTracer } from '../mcpTools.js';
 import { binarySha256, resolveClaudeBinary } from './binary.js';
 import { type ModelProxy, workerModelProxy } from './modelProxy.js';
@@ -414,6 +420,10 @@ export function claudeCodeAdapter(
   };
   const baseUrl = normalizeAnthropicBaseUrl(access.apiBase);
   const tools = options.tools ? [...options.tools] : harnessToolsFor(options.toolKeys);
+  const knowledgeSearch = bindKnowledgeSearch(
+    workspace.knowledgeBaseSnapshotIds ?? [],
+    options.toolKeys?.includes('searchKnowledge') ?? false
+  );
   const policy: PolicyContext = {
     browserTools: options.browserToolset ? BROWSER_RELAYED_TOOL_NAMES : [],
     containerId: workspace.containerId,
@@ -470,7 +480,8 @@ export function claudeCodeAdapter(
     { system, user }: { system: string; user: string },
     endpoint: { baseUrl: string; apiKey: string; proxied: boolean },
     mcpServer: { instance: McpServer; timeout: number } | undefined,
-    browserServer: ReturnType<typeof createSdkMcpServer> | undefined
+    browserServer: ReturnType<typeof createSdkMcpServer> | undefined,
+    knowledgeServer: ReturnType<typeof createSdkMcpServer> | undefined
   ): Promise<HarnessTurnResult<ClaudeUsageReport>> {
     let result: SDKResultMessage | undefined;
     let toolCalls = 0;
@@ -570,6 +581,7 @@ export function claudeCodeAdapter(
         mcpServers: [
           ...(mcpServer ? [MCP_RELAY_SERVER] : []),
           ...(browserServer ? [BROWSER_MCP_SERVER] : []),
+          ...(knowledgeServer ? [KNOWLEDGE_MCP_SERVER] : []),
         ],
         model: access.modelId,
         proxied: endpoint.proxied,
@@ -619,9 +631,9 @@ export function claudeCodeAdapter(
         // rules. The policy tier makes it ignore every allow rule outside that
         // tier (a repository's `.claude/settings.json` among them), so the
         // fallback reaches `canUseTool` above, which refuses.
-        // The Agent's own MCP connection, relayed from the worker, and no other:
-        // a repository's `.mcp.json` or the harness's settings add no server.
-        ...(mcpServer || browserServer
+        // Worker-owned servers only: a repository's `.mcp.json` or the harness's
+        // settings add no server.
+        ...(mcpServer || browserServer || knowledgeServer
           ? {
               mcpServers: {
                 ...(mcpServer
@@ -635,6 +647,7 @@ export function claudeCodeAdapter(
                     }
                   : {}),
                 ...(browserServer ? { [BROWSER_MCP_SERVER]: browserServer } : {}),
+                ...(knowledgeServer ? { [KNOWLEDGE_MCP_SERVER]: knowledgeServer } : {}),
               },
             }
           : {}),
@@ -784,7 +797,11 @@ export function claudeCodeAdapter(
     },
     async runTurn(turn, input) {
       const mcpRelay = await openRelay();
-      policy.mcpTools = mcpRelay?.tools.map((tool) => relayedToolName(tool.name)) ?? [];
+      policy.mcpTools = [
+        ...(mcpRelay?.tools.map((tool) => relayedToolName(tool.name)) ?? []),
+        ...(knowledgeSearch ? [CLAUDE_KNOWLEDGE_TOOL] : []),
+      ];
+      const knowledgeServer = knowledgeSearch ? claudeKnowledgeServer(knowledgeSearch) : undefined;
       const mcpServer = mcpRelay
         ? { instance: mcpRelay.createServer(), timeout: mcpRelay.callTimeoutMs }
         : undefined;
@@ -846,7 +863,8 @@ export function claudeCodeAdapter(
             ? { apiKey: registration.token, baseUrl: registration.baseUrl, proxied: true }
             : { apiKey: access.apiKey, baseUrl, proxied: false },
           mcpServer,
-          browserServer
+          browserServer,
+          knowledgeServer
         );
       } finally {
         // Every call the turn made is reported before the turn's usage is settled.
