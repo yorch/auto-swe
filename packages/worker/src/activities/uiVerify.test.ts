@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   resolveSetting: vi.fn(),
   startBrowser: vi.fn(),
   workspace: {
+    copyFileOut: vi.fn(),
     destroy: vi.fn(),
     exec: vi.fn(),
     execCapture: vi.fn(),
@@ -60,7 +61,11 @@ function sessionWith(call: (command: { cmd: string }) => unknown) {
   return {
     call: vi.fn(async (command: { cmd: string }) => call(command)),
     close: vi.fn(
-      async (): Promise<{ errors: string[]; trace?: Buffer; video?: Buffer }> => ({ errors: [] })
+      async (): Promise<{
+        errors: string[];
+        trace?: { cleanup(): Promise<void>; path: string; sizeBytes: number };
+        video?: { cleanup(): Promise<void>; path: string; sizeBytes: number };
+      }> => ({ errors: [] })
     ),
     readOutFile: vi.fn(async () => Buffer.from('png')),
   };
@@ -74,6 +79,11 @@ describe('runUiVerify', () => {
     mocks.createWorkspace.mockResolvedValue(mocks.workspace);
     mocks.workspace.exec.mockResolvedValue('');
     mocks.workspace.readFile.mockResolvedValue(Buffer.from('png'));
+    mocks.workspace.copyFileOut.mockImplementation(async (filePath: string) => ({
+      cleanup: vi.fn(async () => {}),
+      path: filePath,
+      sizeBytes: 3,
+    }));
     mocks.preview.mockResolvedValue({
       baseUrl: 'http://localhost:3000',
       logTail: async () => 'app log',
@@ -161,10 +171,12 @@ describe('runUiVerify', () => {
           ? { file: '/tmp/.asw/browser/x/out/smoke-0.png', height: 800, ok: true, width: 1280 }
           : { console: [], ok: true, pageErrors: [] }
     );
+    const video = { cleanup: vi.fn(async () => {}), path: '/tmp/recording.webm', sizeBytes: 4 };
+    const trace = { cleanup: vi.fn(async () => {}), path: '/tmp/trace.zip', sizeBytes: 3 };
     session.close.mockResolvedValue({
       errors: [],
-      trace: Buffer.from('zip'),
-      video: Buffer.from('webm'),
+      trace,
+      video,
     });
     mocks.startBrowser.mockResolvedValue(session);
 
@@ -172,11 +184,22 @@ describe('runUiVerify', () => {
 
     expect(result.passed).toBe(true);
     expect(mocks.evidence).toHaveBeenCalledWith(
-      expect.objectContaining({ contentType: 'video/webm', kind: 'video', source: 'uiVerify' })
+      expect.objectContaining({
+        body: { filePath: video.path, sizeBytes: video.sizeBytes },
+        contentType: 'video/webm',
+        kind: 'video',
+        source: 'uiVerify',
+      })
     );
     expect(mocks.evidence).toHaveBeenCalledWith(
-      expect.objectContaining({ contentType: 'application/zip', kind: 'trace' })
+      expect.objectContaining({
+        body: { filePath: trace.path, sizeBytes: trace.sizeBytes },
+        contentType: 'application/zip',
+        kind: 'trace',
+      })
     );
+    expect(video.cleanup).toHaveBeenCalledOnce();
+    expect(trace.cleanup).toHaveBeenCalledOnce();
     expect(result.evidenceIds).toEqual(['e-1', 'e-1', 'e-1', 'e-1']);
   });
 
@@ -191,10 +214,12 @@ describe('runUiVerify', () => {
           ? { file: '/tmp/.asw/browser/x/out/smoke-0.png', ok: true }
           : { console: [], ok: true, pageErrors: [] }
     );
+    const video = { cleanup: vi.fn(async () => {}), path: '/tmp/recording.webm', sizeBytes: 4 };
+    const trace = { cleanup: vi.fn(async () => {}), path: '/tmp/trace.zip', sizeBytes: 3 };
     session.close.mockResolvedValue({
       errors: [],
-      trace: Buffer.from('zip'),
-      video: Buffer.from('webm'),
+      trace,
+      video,
     });
     mocks.startBrowser.mockResolvedValue(session);
     mocks.evidence.mockImplementation(async (input: { kind: string }) => {
@@ -207,8 +232,14 @@ describe('runUiVerify', () => {
     const result = await runUiVerify({ request });
 
     expect(mocks.evidence).toHaveBeenCalledWith(
-      expect.objectContaining({ contentType: 'application/zip', kind: 'trace' })
+      expect.objectContaining({
+        body: { filePath: trace.path, sizeBytes: trace.sizeBytes },
+        contentType: 'application/zip',
+        kind: 'trace',
+      })
     );
+    expect(video.cleanup).toHaveBeenCalledOnce();
+    expect(trace.cleanup).toHaveBeenCalledOnce();
     expect(result.passed).toBe(false);
     expect(result.summary).toContain('Could not save video evidence: artifact store unavailable');
   });

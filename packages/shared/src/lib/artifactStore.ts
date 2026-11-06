@@ -24,6 +24,8 @@
  * getArtifact(id) to materialize the payload on demand.
  */
 
+import { createReadStream } from 'node:fs';
+import fs from 'node:fs/promises';
 import { Readable } from 'node:stream';
 import { prisma } from '../db.js';
 import {
@@ -54,7 +56,7 @@ export interface PutArtifactInput {
   runId?: string;
   kind: string;
   contentType?: string;
-  body: Buffer | string;
+  body: Buffer | string | { filePath: string; sizeBytes: number };
 }
 
 function copyToUint8Array(buf: Buffer): Uint8Array<ArrayBuffer> {
@@ -68,7 +70,13 @@ function copyToUint8Array(buf: Buffer): Uint8Array<ArrayBuffer> {
 // and we don't want @aws-sdk/client-s3 in the dependency graph by default.
 // When ARTIFACT_S3_BUCKET is set the operator is expected to install the SDK.
 interface S3Helper {
-  putObject(key: string, body: Buffer, contentType: string, bucket: string): Promise<void>;
+  putObject(
+    key: string,
+    body: Buffer | Readable,
+    contentType: string,
+    bucket: string,
+    sizeBytes: number
+  ): Promise<void>;
   /** The SDK's response body, streamed; the caller owns it. */
   getObjectStream(key: string, bucket: string): Promise<{ sizeBytes?: number; stream: Readable }>;
   deleteObject(key: string, bucket: string): Promise<void>;
@@ -122,9 +130,15 @@ async function s3Client(): Promise<S3Helper> {
           stream: resp.Body as unknown as Readable,
         };
       },
-      async putObject(key, body, contentType, bucket) {
+      async putObject(key, body, contentType, bucket, sizeBytes) {
         await client.send(
-          new PutObjectCommand({ Body: body, Bucket: bucket, ContentType: contentType, Key: key })
+          new PutObjectCommand({
+            Body: body,
+            Bucket: bucket,
+            ContentLength: sizeBytes,
+            ContentType: contentType,
+            Key: key,
+          })
         );
       },
     };
@@ -145,7 +159,8 @@ async function fsStoreRoot(operation: string): Promise<string> {
 
 async function putFsArtifact(
   input: PutArtifactInput,
-  body: Buffer,
+  body: Buffer | { filePath: string; sizeBytes: number },
+  sizeBytes: number,
   contentType: string
 ): Promise<ArtifactRef> {
   const root = await fsStoreRoot('putArtifact');
@@ -164,7 +179,7 @@ async function putFsArtifact(
       id,
       kind: input.kind,
       runId: input.runId,
-      sizeBytes: body.byteLength,
+      sizeBytes,
       status: 'pending',
     },
   });
@@ -194,17 +209,31 @@ async function putFsArtifact(
     contentType,
     id: row.id,
     kind: input.kind,
-    sizeBytes: body.byteLength,
+    sizeBytes,
   };
 }
 
 export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef> {
   const cfg = await resolveStorageConfig();
   const contentType = input.contentType ?? 'application/octet-stream';
-  const body = typeof input.body === 'string' ? Buffer.from(input.body, 'utf8') : input.body;
+  const fileBody =
+    typeof input.body === 'object' && !Buffer.isBuffer(input.body) ? input.body : undefined;
+  const dataBody: Buffer | undefined = fileBody
+    ? undefined
+    : typeof input.body === 'string'
+      ? Buffer.from(input.body, 'utf8')
+      : (input.body as Buffer);
+  const sizeBytes = fileBody?.sizeBytes ?? dataBody?.byteLength ?? 0;
+  if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) {
+    throw new RangeError('artifact sizeBytes must be a non-negative safe integer');
+  }
+  const body = fileBody ?? dataBody;
+  if (!body) {
+    throw new Error('artifact body is required');
+  }
 
   if (cfg.writeBackend === 'fs') {
-    return putFsArtifact(input, body, contentType);
+    return putFsArtifact(input, body, sizeBytes, contentType);
   }
 
   if (cfg.writeBackend === 's3') {
@@ -230,11 +259,17 @@ export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef>
         runId: input.runId,
         s3Bucket: bucket,
         s3Key: key,
-        sizeBytes: body.byteLength,
+        sizeBytes,
         status: 'pending',
       },
     });
-    await client.putObject(key, body, contentType, bucket);
+    await client.putObject(
+      key,
+      fileBody ? createReadStream(fileBody.filePath) : (body as Buffer),
+      contentType,
+      bucket,
+      sizeBytes
+    );
     // Same claim rule as the filesystem store: a row retention has claimed can
     // no longer be published.
     const marked = await prisma.workflowArtifact.updateMany({
@@ -245,7 +280,7 @@ export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef>
       await client.deleteObject(key, bucket).catch(() => undefined);
       throw new Error(`artifact ${row.id} was claimed by retention before it was published`);
     }
-    return { backend: 's3', contentType, id: row.id, kind: input.kind, sizeBytes: body.byteLength };
+    return { backend: 's3', contentType, id: row.id, kind: input.kind, sizeBytes };
   }
 
   const row = await prisma.workflowArtifact.create({
@@ -254,13 +289,15 @@ export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef>
       contentType,
       // Prisma's Bytes maps to Uint8Array<ArrayBuffer>; copy through a fresh
       // ArrayBuffer to ensure the underlying buffer is not a SharedArrayBuffer.
-      inlineBlob: copyToUint8Array(body),
+      inlineBlob: copyToUint8Array(
+        fileBody ? await fs.readFile(fileBody.filePath) : (body as Buffer)
+      ),
       kind: input.kind,
       runId: input.runId,
-      sizeBytes: body.byteLength,
+      sizeBytes,
     },
   });
-  return { backend: 'pg', contentType, id: row.id, kind: input.kind, sizeBytes: body.byteLength };
+  return { backend: 'pg', contentType, id: row.id, kind: input.kind, sizeBytes };
 }
 
 /**
@@ -357,7 +394,7 @@ export async function putObjectToBucket(
   if (!bucket.trim() || !key.trim()) {
     throw new Error('S3 bucket and object key are required');
   }
-  await (await s3Client()).putObject(key, body, contentType, bucket);
+  await (await s3Client()).putObject(key, body, contentType, bucket, body.byteLength);
 }
 
 /**

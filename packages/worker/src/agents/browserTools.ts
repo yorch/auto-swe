@@ -347,35 +347,39 @@ export class BrowserToolset implements BrowserToolContext {
           outputJson: { error: message },
         });
       }
-      if (outputs?.video) {
-        const saved = await recordActivityEvidence(
-          {
-            body: outputs.video,
-            caption: 'Agent browser session recording',
-            contentType: 'video/webm',
-            kind: 'video',
-            source: 'agent',
-          },
-          this.options.tracer
-        );
-        if (saved.ok) {
-          this.evidenceIds.push(saved.evidenceId);
+      try {
+        if (outputs?.video) {
+          const saved = await recordActivityEvidence(
+            {
+              body: { filePath: outputs.video.path, sizeBytes: outputs.video.sizeBytes },
+              caption: 'Agent browser session recording',
+              contentType: 'video/webm',
+              kind: 'video',
+              source: 'agent',
+            },
+            this.options.tracer
+          );
+          if (saved.ok) {
+            this.evidenceIds.push(saved.evidenceId);
+          }
         }
-      }
-      if (outputs?.trace) {
-        const saved = await recordActivityEvidence(
-          {
-            body: outputs.trace,
-            caption: 'Agent browser trace',
-            contentType: 'application/zip',
-            kind: 'trace',
-            source: 'agent',
-          },
-          this.options.tracer
-        );
-        if (saved.ok) {
-          this.evidenceIds.push(saved.evidenceId);
+        if (outputs?.trace) {
+          const saved = await recordActivityEvidence(
+            {
+              body: { filePath: outputs.trace.path, sizeBytes: outputs.trace.sizeBytes },
+              caption: 'Agent browser trace',
+              contentType: 'application/zip',
+              kind: 'trace',
+              source: 'agent',
+            },
+            this.options.tracer
+          );
+          if (saved.ok) {
+            this.evidenceIds.push(saved.evidenceId);
+          }
         }
+      } finally {
+        await Promise.all([outputs?.video?.cleanup(), outputs?.trace?.cleanup()]);
       }
     } finally {
       await this.preview?.stop();

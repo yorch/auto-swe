@@ -27,8 +27,8 @@ full before it can seek.
 An item is kept only when the recording succeeds and the configured limits allow it: a screenshot
 over `uiValidation.maxScreenshotBytes`, a video over `uiValidation.maxVideoBytes`, or an item past
 `uiValidation.maxEvidencePerRun` is dropped, and the step reports it in its `notes` output rather
-than failing the gate. The worker reads a finalized recording and trace back independently, so a
-recording that cannot be read does not cost the trace.
+than failing the gate. The worker copies a finalized recording and trace to temporary files
+independently, so a recording that cannot be read does not cost the trace.
 
 The scheduled transcript-pruning workflow also removes evidence older than
 `uiValidation.evidenceRetentionDays`, including the public copy a pull request published, when
@@ -154,10 +154,11 @@ dropped.
 - A worker that dies between writing an artifact and creating its `RunEvidence` row leaves a ready
   `ui.*` artifact that no evidence row points at. The daily transcript sweep deletes those, and a
   pending write, after a day; until then the object is stored but unreachable from any run.
-- Evidence bytes move through the worker on the way in: the recording is read out of the container
-  and written to the artifact store in memory, so the `uiValidation.maxVideoBytes` cap bounds a
-  single worker's memory use, and the step's wall-clock budget has to cover the transfer as well as
-  the recording. Serving is streamed from the store, not buffered.
+- Video and trace evidence are copied to temporary files and streamed through the worker into the
+  filesystem or S3 artifact store. The PostgreSQL `bytea` backend still buffers each file in worker
+  memory. The `uiValidation.maxVideoBytes` cap bounds a single evidence item, and the step's
+  wall-clock budget has to cover the transfer as well as the recording. Serving is streamed from
+  the store, not buffered.
 - A generic `agent` node can use the browser only with `workspace: true` and an explicit `browser`
   grant; a node without a workspace has no browser tools.
 - Trace snapshots replay on the dashboard origin. Playwright strips scripts from snapshot HTML, but

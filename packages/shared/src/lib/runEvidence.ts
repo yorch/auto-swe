@@ -9,7 +9,7 @@ export interface RecordRunEvidenceInput {
   runId: string;
   kind: RunEvidenceKind;
   source: RunEvidenceSource;
-  body: Buffer | string;
+  body: Buffer | string | { filePath: string; sizeBytes: number };
   contentType: string;
   caption?: string;
   pageUrl?: string;
@@ -50,14 +50,16 @@ export async function recordRunEvidence(
     resolveSetting('uiValidation.maxVideoBytes'),
     resolveSetting('uiValidation.maxEvidencePerRun'),
   ]);
-  const body = Buffer.isBuffer(input.body) ? input.body : Buffer.from(input.body, 'utf8');
+  const fileBody =
+    typeof input.body === 'object' && !Buffer.isBuffer(input.body) ? input.body : undefined;
+  const bodyBytes = fileBody?.sizeBytes ?? Buffer.byteLength(input.body as string | Buffer);
   const maxBytes =
     input.kind === 'screenshot'
       ? maxScreenshotBytes
       : input.kind === 'video'
         ? maxVideoBytes
         : Number.POSITIVE_INFINITY;
-  if (body.byteLength > maxBytes) {
+  if (bodyBytes > maxBytes) {
     return { ok: false, reason: 'too_large' };
   }
   if (input.contentType !== CONTENT_TYPES[input.kind]) {
@@ -65,7 +67,7 @@ export async function recordRunEvidence(
   }
 
   const artifact = await putArtifact({
-    body,
+    body: input.body,
     contentType: input.contentType,
     kind: uiEvidenceArtifactKind(input.kind),
     runId: input.runId,

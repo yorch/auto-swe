@@ -20,8 +20,8 @@ export interface BrowserSessionOptions {
 }
 
 export interface BrowserSessionOutputs {
-  video?: Buffer;
-  trace?: Buffer;
+  video?: { path: string; sizeBytes: number; cleanup(): Promise<void> };
+  trace?: { path: string; sizeBytes: number; cleanup(): Promise<void> };
   /** Artifacts the driver finalized but the worker could not read back. */
   errors: string[];
 }
@@ -152,12 +152,12 @@ export class BrowserSession {
       file: unknown,
       maxBytes: number,
       label: string
-    ): Promise<Buffer | undefined> => {
+    ): Promise<{ path: string; sizeBytes: number; cleanup(): Promise<void> } | undefined> => {
       if (typeof file !== 'string') {
         return undefined;
       }
       try {
-        return await this.readOutFile(file, maxBytes);
+        return await this.workspace.copyFileOut(file, maxBytes);
       } catch (error) {
         // One unreadable artifact must not cost the other: the video is finalized
         // before the trace is read, and both are gone once the workspace dies.

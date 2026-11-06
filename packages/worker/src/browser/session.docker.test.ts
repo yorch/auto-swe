@@ -4,7 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Workspace } from '../activities/workspace.js';
-import { readSingleFileFromArchive } from '../lib/workspaceBackend/kubernetes/safeTar.js';
+import {
+  extractSingleFileFromArchive,
+  readSingleFileFromArchive,
+} from '../lib/workspaceBackend/kubernetes/safeTar.js';
 import { BrowserSession } from './session.js';
 
 const enabled = process.env.BROWSER_DOCKER_TEST === '1';
@@ -98,6 +101,29 @@ describe.skipIf(!enabled)('browser executor Docker smoke', () => {
   it('drives Chromium with workspace hardening and collects browser artifacts', async () => {
     startContainer();
     const workspace = {
+      copyFileOut: async (filePath: string, maxBytes: number) => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'browser-docker-copy-'));
+        const archive = path.join(dir, 'file.tar');
+        const copiedPath = path.join(dir, path.basename(filePath));
+        try {
+          await fs.writeFile(
+            archive,
+            execFileSync('docker', ['cp', `${containerName}:${filePath}`, '-'], {
+              maxBuffer: maxBytes + 256 * 1024,
+            })
+          );
+          await extractSingleFileFromArchive(archive, copiedPath, maxBytes);
+          const { size } = await fs.stat(copiedPath);
+          return {
+            cleanup: () => fs.rm(dir, { force: true, recursive: true }),
+            path: copiedPath,
+            sizeBytes: size,
+          };
+        } catch (error) {
+          await fs.rm(dir, { force: true, recursive: true });
+          throw error;
+        }
+      },
       exec: async (command: string) => runInContainer(['sh', '-c', command]),
       execStdin: async (command: string, stdin: string | Buffer) =>
         runInContainer(['sh', '-c', command], stdin),
@@ -148,18 +174,27 @@ describe.skipIf(!enabled)('browser executor Docker smoke', () => {
       ])
     );
     const files = await session.close();
-    expect(files.errors).toEqual([]);
-    expect(files.video?.subarray(0, 4)).toEqual(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
-    expect(files.trace?.subarray(0, 2).toString()).toBe('PK');
-    const evidenceDir = process.env.ASW_BROWSER_EVIDENCE_DIR;
-    if (evidenceDir) {
-      await fs.mkdir(evidenceDir, { recursive: true });
-      await Promise.all([
-        fs.writeFile(path.join(evidenceDir, 'screenshot.png'), png),
-        fs.writeFile(path.join(evidenceDir, 'recording.webm'), files.video ?? Buffer.alloc(0)),
-        fs.writeFile(path.join(evidenceDir, 'trace.zip'), files.trace ?? Buffer.alloc(0)),
-        fs.writeFile(path.join(evidenceDir, 'events.json'), `${JSON.stringify(events, null, 2)}\n`),
-      ]);
+    try {
+      expect(files.errors).toEqual([]);
+      const video = files.video ? await fs.readFile(files.video.path) : Buffer.alloc(0);
+      const trace = files.trace ? await fs.readFile(files.trace.path) : Buffer.alloc(0);
+      expect(video.subarray(0, 4)).toEqual(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+      expect(trace.subarray(0, 2).toString()).toBe('PK');
+      const evidenceDir = process.env.ASW_BROWSER_EVIDENCE_DIR;
+      if (evidenceDir) {
+        await fs.mkdir(evidenceDir, { recursive: true });
+        await Promise.all([
+          fs.writeFile(path.join(evidenceDir, 'screenshot.png'), png),
+          fs.writeFile(path.join(evidenceDir, 'recording.webm'), video),
+          fs.writeFile(path.join(evidenceDir, 'trace.zip'), trace),
+          fs.writeFile(
+            path.join(evidenceDir, 'events.json'),
+            `${JSON.stringify(events, null, 2)}\n`
+          ),
+        ]);
+      }
+    } finally {
+      await Promise.all([files.video?.cleanup(), files.trace?.cleanup()]);
     }
   }, 180_000);
 });

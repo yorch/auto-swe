@@ -36,7 +36,11 @@ describe('BrowserToolset', () => {
     vi.clearAllMocks();
     events.length = 0;
     findRepo.mockResolvedValue({ previewConfig: null });
-    resolveSetting.mockResolvedValue(false);
+    resolveSetting.mockImplementation(async (key: string) =>
+      key === 'uiValidation.maxScreenshotBytes' || key === 'uiValidation.maxVideoBytes'
+        ? 5_000_000
+        : false
+    );
     screenMcpResult.mockImplementation(async (text: string) => ({
       blocked: false,
       result: `[screened] ${text}`,
@@ -131,10 +135,12 @@ describe('BrowserToolset', () => {
   });
 
   it('saves session video and trace evidence during close', async () => {
+    const video = { cleanup: vi.fn(async () => {}), path: '/tmp/recording.webm', sizeBytes: 5 };
+    const trace = { cleanup: vi.fn(async () => {}), path: '/tmp/trace.zip', sizeBytes: 5 };
     session.close.mockResolvedValue({
       errors: [],
-      trace: Buffer.from('trace'),
-      video: Buffer.from('video'),
+      trace,
+      video,
     });
     const toolset = createToolset();
     await toolset.call('browser_snapshot', {});
@@ -143,13 +149,37 @@ describe('BrowserToolset', () => {
 
     expect(session.close).toHaveBeenCalledOnce();
     expect(evidence).toHaveBeenCalledWith(
-      expect.objectContaining({ body: Buffer.from('video'), kind: 'video', source: 'agent' }),
+      expect.objectContaining({
+        body: { filePath: video.path, sizeBytes: video.sizeBytes },
+        kind: 'video',
+        source: 'agent',
+      }),
       tracer
     );
     expect(evidence).toHaveBeenCalledWith(
-      expect.objectContaining({ body: Buffer.from('trace'), kind: 'trace', source: 'agent' }),
+      expect.objectContaining({
+        body: { filePath: trace.path, sizeBytes: trace.sizeBytes },
+        kind: 'trace',
+        source: 'agent',
+      }),
       tracer
     );
+    expect(video.cleanup).toHaveBeenCalledOnce();
+    expect(trace.cleanup).toHaveBeenCalledOnce();
+  });
+
+  it('cleans both evidence files when saving one fails', async () => {
+    const video = { cleanup: vi.fn(async () => {}), path: '/tmp/recording.webm', sizeBytes: 5 };
+    const trace = { cleanup: vi.fn(async () => {}), path: '/tmp/trace.zip', sizeBytes: 5 };
+    session.close.mockResolvedValue({ errors: [], trace, video });
+    evidence.mockRejectedValueOnce(new Error('artifact store unavailable'));
+    const toolset = createToolset();
+    await toolset.call('browser_snapshot', {});
+
+    await expect(toolset.close()).rejects.toThrow('artifact store unavailable');
+
+    expect(video.cleanup).toHaveBeenCalledOnce();
+    expect(trace.cleanup).toHaveBeenCalledOnce();
   });
 
   it('starts one browser for concurrent first calls, so cleanup can reach it', async () => {

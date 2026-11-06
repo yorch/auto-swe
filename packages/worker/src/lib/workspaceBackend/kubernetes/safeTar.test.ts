@@ -3,7 +3,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { assertSafeArchive, readSingleFileFromArchive, UnsafeArchiveError } from './safeTar.js';
+import {
+  assertSafeArchive,
+  extractSingleFileFromArchive,
+  readSingleFileFromArchive,
+  UnsafeArchiveError,
+} from './safeTar.js';
 import { buildTar, type TarEntry } from './testTar.js';
 
 let dir: string;
@@ -171,5 +176,37 @@ describe('readSingleFileFromArchive', () => {
     await expect(readSingleFileFromArchive(multiple, 10)).rejects.toThrow(
       'archive contains more than one regular file'
     );
+  });
+});
+
+describe('extractSingleFileFromArchive', () => {
+  it('streams the sole regular file to disk and enforces the size limit', async () => {
+    const archive = path.join(dir, 'stream.tar');
+    const dest = path.join(dir, 'extracted.txt');
+    await fs.writeFile(archive, buildTar([{ data: 'hello', name: 'file.txt' }]));
+    await expect(extractSingleFileFromArchive(archive, dest, 5)).resolves.toEqual({ sizeBytes: 5 });
+    await expect(fs.readFile(dest, 'utf8')).resolves.toBe('hello');
+    await expect(
+      extractSingleFileFromArchive(archive, path.join(dir, 'too-large'), 4)
+    ).rejects.toThrow('exceeds the 4 byte limit');
+  });
+
+  it('rejects non-regular and multi-entry archives', async () => {
+    const nonRegular = path.join(dir, 'non-regular.tar');
+    await fs.writeFile(nonRegular, buildTar([{ name: 'folder/', type: '5' }]));
+    await expect(
+      extractSingleFileFromArchive(nonRegular, path.join(dir, 'non-regular'), 10)
+    ).rejects.toThrow('archive does not contain a regular file');
+    const multiple = path.join(dir, 'multiple-stream.tar');
+    await fs.writeFile(
+      multiple,
+      buildTar([
+        { data: 'one', name: 'one' },
+        { data: 'two', name: 'two' },
+      ])
+    );
+    await expect(
+      extractSingleFileFromArchive(multiple, path.join(dir, 'multiple-stream'), 10)
+    ).rejects.toThrow('archive contains more than one regular file');
   });
 });

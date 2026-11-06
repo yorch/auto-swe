@@ -84,6 +84,11 @@ type WriteTool = ToolDef<{ path: string; content: string }, { result: string }>;
 
 const workspace = {
   containerId: 'workspace-test',
+  copyFileOut: vi.fn(async () => ({
+    cleanup: async () => {},
+    path: '/tmp/workspace-file',
+    sizeBytes: 0,
+  })),
   destroy: vi.fn(async () => {}),
   exec: vi.fn(async () => ''),
   execCapture: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
