@@ -48,6 +48,14 @@ does not apply (the unexpected SQL is printed), `2` an environment problem such 
 running. It does not run the CI job's `db:generate`, seed or idempotent re-apply. When you add a
 hand-written statement to the allowance, add it to `EXPECTED` in that script as well as to `ci.yml`.
 
+## Snapshot-scoped KB vectors
+
+`knowledge_base_chunks.embedding` has no HNSW index. KB search performs an exact cosine scan over
+the run's pinned snapshots (at most four), with bounded indexed content. The unique
+`(snapshotId, path, chunkIndex)` btree index supports the snapshot-id filter. Do not add an
+approximate vector index to this path: combining HNSW with a snapshot filter can lose recall.
+The KB search SQL needs no vector index, and the drift allowance remains the two statements above.
+
 ## Rules
 
 1. **Never run `prisma migrate dev` against production.** Use `prisma migrate deploy`, which applies

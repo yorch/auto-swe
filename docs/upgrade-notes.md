@@ -789,7 +789,8 @@ ServiceAccount answer `yes`.
 `20261106130000_repo_knowledge_bases`, or whose gateway/worker predates KB workflow registration.
 
 **What changes.** The migration adds KBs, shares, links, snapshots and vector chunks, plus run
-override/pinning fields and a hand-written HNSW index. Gateway startup synchronizes a default-on
+override/pinning fields. KB vector search uses snapshot-scoped exact cosine scans, not an HNSW
+index. Gateway startup synchronizes a default-on
 Temporal indexing sweep. With no configured KBs the sweep has nothing to index; configured KBs
 can consume SCM requests and embedding-provider usage.
 

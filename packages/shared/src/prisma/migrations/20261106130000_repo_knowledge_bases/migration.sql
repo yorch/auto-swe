@@ -164,6 +164,3 @@ ALTER TABLE "knowledge_base_links"
     (scope = 'REPO' AND team_id IS NOT NULL AND repo_id IS NOT NULL AND template_id IS NULL) OR
     (scope = 'TEMPLATE' AND repo_id IS NULL AND template_id IS NOT NULL)
   );
-
-CREATE INDEX "knowledge_base_chunks_embedding_hnsw_idx" ON "knowledge_base_chunks"
-  USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64);

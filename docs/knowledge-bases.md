@@ -105,8 +105,10 @@ KB chunks with governed items. No implicit tool grant is added. Snapshot IDs are
 are built inside the activity; the model cannot select arbitrary snapshots. Server-side search
 scope survives an individual file-checkout failure.
 
-Search uses cosine vectors only for the configured embedding model and falls back to bounded
-text matching when query embedding/vector search fails or no compatible vectors exist. Text mode
+KB vector search is an exact cosine scan over the run's pinned snapshots, not an approximate HNSW
+scan. The unique `(snapshotId, path, chunkIndex)` btree index supports the snapshot filter. Search
+compares vectors only for the configured embedding model and falls back to bounded text matching
+when query embedding/vector search fails or no compatible vectors exist. Text mode
 is reported explicitly. Recall applies the same fail-closed INJECTION gate as governed knowledge,
 drops unsafe chunks and counts drops. Results carry `sourceKind: knowledge_base`,
 `trustLabel: UNTRUSTED_THIRD_PARTY_REFERENCE` and citations such as
