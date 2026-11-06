@@ -2822,9 +2822,20 @@
     {
       "body": "Attach Git-backed reference material at team, repository, template and run scope, pin snapshots and expose bounded read-only files and cited search results.",
       "category": "Knowledge",
-      "detail": "Knowledge bases are separate from governed KnowledgeItems: Git is the source of truth, with no approval lifecycle. Same-organization TEAM, SHARED and ORG visibility gates attachment. Additive resolution selects at most four references, preserving mandatory team status and the most specific overrides. A Temporal execution pins SHAs and snapshot IDs; later resolutions recheck attachability. Indexing scans text files for injection, excludes flagged or incompletely scanned files and fails closed on truncated trees. Workspace agents receive read-only files and an untrusted prompt block; the text-only decomposition planner and trusted delivery workspace do not. Explicitly granted Mastra searchKnowledge and retrieveKnowledge merge only pinned chunks, matching the configured embedding model or reporting text fallback, with recall-time injection filtering. Harnesses receive files, not server-side search tools. The dashboard manages KBs, links, shares and launch overrides.",
+      "detail": "Knowledge bases are separate from governed KnowledgeItems: Git is the source of truth, with no approval lifecycle. Same-organization TEAM, SHARED and ORG visibility gates attachment. Additive resolution selects at most four references, preserving mandatory team status and the most specific overrides. A Temporal execution pins SHAs and snapshot IDs; later resolutions recheck attachability. Indexing scans text files for injection, excludes flagged or incompletely scanned files and fails closed on truncated trees. Workspace agents receive read-only files and an untrusted prompt block. The text-only decomposition planner receives a separate bounded block of summaries and cited excerpts from pinned READY snapshots unless knowledgeBases is false; it requests no checkout credentials and mounts no reference files. The trusted delivery workspace does not mount KB files. Explicitly granted Mastra searchKnowledge and retrieveKnowledge merge only pinned chunks, matching the configured embedding model or reporting text fallback, with recall-time injection filtering. Harnesses receive files, not server-side search tools. The dashboard manages KBs, links, shares and launch overrides.",
       "id": "repoKnowledgeBases",
-      "refs": ["kbModel", "kbIndex", "kbRunResolution", "kbCheckout", "kbSearch", "kbPage"],
+      "refs": [
+        "kbModel",
+        "kbIndex",
+        "kbRunResolution",
+        "kbCheckout",
+        "kbSearch",
+        "kbPage",
+        "kbPlannerContext",
+        "kbPlannerActivity",
+        "kbPlannerAgent",
+        "kbPlannerDispatch"
+      ],
       "status": "Implemented",
       "title": "Repository-backed knowledge bases"
     },
@@ -4545,9 +4556,16 @@
     {
       "body": "References are capped, indexing and checkout are best-effort, and revocation cannot recall content already handed to an agent.",
       "category": "Knowledge",
-      "detail": "Indexing limits file count, individual and total bytes; checkout has a separate byte cap. Mandatory references still face the run cap and operational failures. New runs and later resolutions recheck attachability, but existing workspaces and bound search tools are not actively scrubbed or cancelled. Snapshots have no dedicated retention sweep. Live authenticated GitHub, embedding-provider and vector-search integration and the KB dashboard browser UI are not end-to-end verified by the mock/component tests.",
+      "detail": "Indexing limits file count, individual and total bytes; checkout has a separate byte cap. Mandatory references still face the run cap and operational failures. New runs and later resolutions recheck attachability, but existing workspaces and bound search tools are not actively scrubbed or cancelled. The text-only planner requests no checkout credentials, but reference resolution and indexing may still authenticate to the host. Its context is best-effort: no ready pins means no block, and an error while assembling or retrieving context omits the block rather than failing the plan. Sanitized, quoted summaries and untrusted-data instructions do not prove immunity to prompt injection. Snapshots have no dedicated retention sweep. Live authenticated GitHub, embedding-provider and vector-search integration and the KB dashboard browser UI are not end-to-end verified by the mock/component tests.",
       "id": "repoKnowledgeBaseBounds",
-      "refs": ["kbIndex", "kbRunResolution", "kbCheckout", "kbSearch", "kbPage"],
+      "refs": [
+        "kbIndex",
+        "kbRunResolution",
+        "kbCheckout",
+        "kbSearch",
+        "kbPage",
+        "kbPlannerContext"
+      ],
       "status": "Confirmed boundary",
       "title": "KB snapshots are bounded reference context, not revocable instructions"
     },
@@ -6133,6 +6151,34 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "export async function knowledgeBasePlannerContext(",
+      "id": "kbPlannerContext",
+      "lines": 105,
+      "path": "packages/worker/src/lib/knowledgeBasePlanner.ts",
+      "title": "Text-only planning receives bounded untrusted context from READY pinned snapshots"
+    },
+    {
+      "anchor": "export async function planDecomposition(",
+      "id": "kbPlannerActivity",
+      "lines": 34,
+      "path": "packages/worker/src/activities/decomposition.ts",
+      "title": "The decomposition activity passes best-effort KB context to the text-only agent"
+    },
+    {
+      "anchor": "export async function planDecomposition(",
+      "id": "kbPlannerAgent",
+      "lines": 52,
+      "path": "packages/worker/src/agents/decomposer.ts",
+      "title": "The decomposer adds reference context to its model instructions"
+    },
+    {
+      "anchor": "agentActivities.planDecomposition(",
+      "id": "kbPlannerDispatch",
+      "lines": 12,
+      "path": "packages/worker/src/workflows/runnableSteps.ts",
+      "title": "The planDecomposition handler enables references unless knowledgeBases is false"
+    },
     {
       "anchor": "run: (x) => ({",
       "id": "prLabelTaskContext",
