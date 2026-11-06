@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { Client } from 'pg';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-// Opt in with CODE_REVIEW_DATABASE_URL pointing at a disposable, migrated database.
-describe.skipIf(!process.env.CODE_REVIEW_DATABASE_URL)('review persistence constraints', () => {
-  const client = new Client({ connectionString: process.env.CODE_REVIEW_DATABASE_URL });
+const enabled = process.env.MODEL_SUGGESTIONS_PG_TEST === '1';
+
+describe.skipIf(!enabled)('review persistence constraints', () => {
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
   const templateId = randomUUID();
   const sourceTemplateId = randomUUID();
   const presetId = randomUUID();
