@@ -102,11 +102,46 @@ its pid is its process-group id and `stop()` can kill the whole tree), polls the
 inside the workspace and returns a stop function and bounded, redacted log tail. It uses the
 recipe's base URL, or the readiness URL's origin when none is supplied.
 
+## Kubernetes kind integration test
+
+`packages/worker/src/lib/workspaceBackend/kubernetes/driver.kind.test.ts` exercises the workspace
+backend against the current Kubernetes context. It requires Docker, `kubectl` on `PATH`, the
+`auto-swe-workspaces` namespace manifest applied, a CNI that enforces NetworkPolicy, and the
+`auto-swe/node-browser:phase-a` and `mirror.gcr.io/library/postgres:18` images loaded on the
+cluster's nodes. The test uses the caller's kubeconfig identity; it does not require a worker
+ServiceAccount.
+
+Run it with `K8S_KIND_TEST=1`. `K8S_KUBECTL` selects the kubectl binary, while
+`K8S_WORKSPACE_NAMESPACE` and `K8S_WORKSPACE_RUN_AS_UID` select the namespace and workspace UID.
+`K8S_KIND_EVIDENCE_DIR` is test-only and receives `workspace-preview.png`.
+
+```bash
+mkdir -p /path/to/k8s-evidence
+set -o pipefail
+K8S_KIND_TEST=1 \
+K8S_KUBECTL=kubectl \
+K8S_WORKSPACE_NAMESPACE=auto-swe-workspaces \
+K8S_WORKSPACE_RUN_AS_UID=1000 \
+K8S_KIND_EVIDENCE_DIR=/path/to/k8s-evidence \
+yarn vitest run packages/worker/src/lib/workspaceBackend/kubernetes/driver.kind.test.ts \
+  2>&1 | tee /path/to/k8s-evidence/kind-test.log
+kubectl get events -n auto-swe-workspaces --sort-by=.lastTimestamp \
+  > /path/to/k8s-evidence/events.log
+```
+
+The end-to-end case temporarily changes only the namespace's Pod Security `enforce` label from
+`restricted` to `baseline` so the root-starting Postgres service can run, then restores `restricted`.
+The separate admission case confirms that the root service is rejected under `restricted`; the
+workspace container remains non-root with all capabilities dropped.
+
 ## Limitations
 
-- Kubernetes sidecars that run as root or add the service capabilities require a namespace policy
-  that permits those per-container settings (typically Pod Security `privileged` or an equivalent
-  exception). The workspace container keeps its non-root, dropped-capability security context.
+- Kubernetes preview services that run as root or add service capabilities need a namespace policy
+  less restrictive than Pod Security `restricted` (`baseline` permits the current service settings).
+  The workspace container keeps its non-root, dropped-capability security context.
+- The stray-process sweep scopes signals to the workspace mount namespace. It relies on the workspace
+  having no `CAP_SYS_ADMIN` and using the runtime-default seccomp profile to prevent `unshare` or
+  `setns` from moving a process into another mount namespace to evade the sweep.
 - Public PR images are intentionally unavailable unless both environment values and the explicit
   admin setting are enabled. The public bucket's access policy is operator-managed. Renaming the
   bucket after copies exist leaves the old copies behind: retention can only delete from the bucket
