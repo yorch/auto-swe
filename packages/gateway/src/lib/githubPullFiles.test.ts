@@ -21,7 +21,12 @@ vi.mock('@auto-swe/shared/lib/githubHostScope', () => ({
 }));
 vi.mock('@auto-swe/shared/lib/githubInstallation', () => ({ resolveGitHubToken: m.token }));
 
-import { type PullFilesRepo, readPullFiles, resetPullFilesCache } from './githubPullFiles.js';
+import {
+  type PullFilesRepo,
+  readCompare,
+  readPullFiles,
+  resetPullFilesCache,
+} from './githubPullFiles.js';
 
 const REPO: PullFilesRepo = {
   githubApiUrl: null,
@@ -465,5 +470,147 @@ describe('reading economically', () => {
     const third = scripted([json(PULL)]);
     await readPullFiles(REPO, 7, { fetchImpl: third.fetchImpl, now: () => now, target });
     expect(fileHits(third.hits)).toHaveLength(0);
+  });
+});
+
+describe('readCompare', () => {
+  const BASE = 'a'.repeat(40);
+  const HEAD = 'b'.repeat(40);
+  const compareBody = (over: Record<string, unknown> = {}) => ({
+    commits: [
+      { commit: { message: 'fix: first\n\nbody text' }, sha: 'c1' },
+      { commit: { message: 'second' }, sha: 'c2' },
+    ],
+    status: 'ahead',
+    total_commits: 2,
+    ...over,
+  });
+  const answering = (reply: Response | (() => Response)) => {
+    const hits: Hit[] = [];
+    const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+      hits.push({ init, url: String(input) });
+      return typeof reply === 'function' ? reply() : reply.clone();
+    }) as typeof fetch;
+    return { fetchImpl, hits };
+  };
+
+  it('lists the commits with the first line of each message as its subject', async () => {
+    const { fetchImpl, hits } = answering(json(compareBody()));
+    const result = await readCompare(REPO, BASE, HEAD, { fetchImpl, target });
+    expect(result).toEqual({
+      commits: [
+        { sha: 'c1', subject: 'fix: first' },
+        { sha: 'c2', subject: 'second' },
+      ],
+      rewritten: false,
+      totalCommits: 2,
+      type: 'ok',
+    });
+    expect(hits[0]?.url).toBe(
+      `https://api.github.com/repos/acme/api/compare/${BASE}...${HEAD}?per_page=100`
+    );
+    expect(authOf(hits[0])).toBe('Bearer tok-secret');
+    expect(hits[0]?.init?.redirect).toBe('error');
+  });
+
+  it('reads a diverged or backwards head as a rewritten branch', async () => {
+    for (const status of ['diverged', 'behind']) {
+      resetPullFilesCache();
+      const { fetchImpl } = answering(json(compareBody({ status })));
+      const result = await readCompare(REPO, BASE, HEAD, { fetchImpl, target });
+      expect(result).toMatchObject({ rewritten: true, type: 'ok' });
+    }
+  });
+
+  it('reads a base the host no longer knows as a rewritten branch with no commits', async () => {
+    const { fetchImpl } = answering(json({}, 404));
+    expect(await readCompare(REPO, BASE, HEAD, { fetchImpl, target })).toEqual({
+      commits: [],
+      rewritten: true,
+      totalCommits: 0,
+      type: 'ok',
+    });
+  });
+
+  it('says how many commits there are beyond the ones listed', async () => {
+    const { fetchImpl } = answering(json(compareBody({ total_commits: 400 })));
+    const result = await readCompare(REPO, BASE, HEAD, { fetchImpl, target });
+    expect(result).toMatchObject({ totalCommits: 400, type: 'ok' });
+  });
+
+  it('cuts a long subject', async () => {
+    const { fetchImpl } = answering(
+      json(compareBody({ commits: [{ commit: { message: 'x'.repeat(500) }, sha: 'c1' }] }))
+    );
+    const result = await readCompare(REPO, BASE, HEAD, { fetchImpl, target });
+    expect(result.type === 'ok' && result.commits[0]?.subject).toHaveLength(200);
+  });
+
+  it('asks the host once for a pair of commits', async () => {
+    const { fetchImpl, hits } = answering(json(compareBody()));
+    await readCompare(REPO, BASE, HEAD, { fetchImpl, target });
+    await readCompare(REPO, BASE.toUpperCase(), HEAD, { fetchImpl, target });
+    expect(hits).toHaveLength(1);
+  });
+
+  it('keeps a pair per repository', async () => {
+    const { fetchImpl, hits } = answering(json(compareBody()));
+    await readCompare(REPO, BASE, HEAD, { fetchImpl, target });
+    await readCompare({ ...REPO, id: 'conn-2' }, BASE, HEAD, { fetchImpl, target });
+    expect(hits).toHaveLength(2);
+  });
+
+  it('asks again after a failure, and does not keep it', async () => {
+    const failing = answering(json({}, 500));
+    expect(await readCompare(REPO, BASE, HEAD, { fetchImpl: failing.fetchImpl, target })).toEqual({
+      reason: 'failed',
+      type: 'unavailable',
+    });
+    await Promise.resolve();
+    const working = answering(json(compareBody()));
+    const result = await readCompare(REPO, BASE, HEAD, { fetchImpl: working.fetchImpl, target });
+    expect(result.type).toBe('ok');
+    expect(working.hits).toHaveLength(1);
+  });
+
+  it('reports rate limiting and an unreadable answer as unavailable', async () => {
+    const limited = answering(json({}, 429));
+    expect(await readCompare(REPO, BASE, HEAD, { fetchImpl: limited.fetchImpl, target })).toEqual({
+      reason: 'rate-limited',
+      type: 'unavailable',
+    });
+    resetPullFilesCache();
+    const odd = answering(json({ commits: 'no' }));
+    expect(await readCompare(REPO, BASE, HEAD, { fetchImpl: odd.fetchImpl, target })).toEqual({
+      reason: 'failed',
+      type: 'unavailable',
+    });
+  });
+
+  it('puts only a commit id into the path', async () => {
+    const { fetchImpl, hits } = answering(json(compareBody()));
+    for (const bad of ['../../x', 'main', `${BASE}/../x`, 'a'.repeat(39), '']) {
+      expect(await readCompare(REPO, bad, HEAD, { fetchImpl, target })).toEqual({
+        reason: 'not-found',
+        type: 'unavailable',
+      });
+      expect(await readCompare(REPO, BASE, bad, { fetchImpl, target })).toEqual({
+        reason: 'not-found',
+        type: 'unavailable',
+      });
+    }
+    expect(hits).toHaveLength(0);
+  });
+
+  it('is unavailable without a credential or on a host that is not approved', async () => {
+    const { fetchImpl, hits } = answering(json(compareBody()));
+    expect(await readCompare(REPO, BASE, HEAD, { fetchImpl, target: async () => null })).toEqual({
+      reason: 'no-credential',
+      type: 'unavailable',
+    });
+    expect(
+      await readCompare(REPO, BASE, HEAD, { fetchImpl, target: async () => 'host-not-approved' })
+    ).toEqual({ reason: 'host-not-approved', type: 'unavailable' });
+    expect(hits).toHaveLength(0);
   });
 });

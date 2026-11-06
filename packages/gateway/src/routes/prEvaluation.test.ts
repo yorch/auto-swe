@@ -87,6 +87,7 @@ async function buildApp() {
     configAuditLog: { create: vi.fn() },
     connection: { findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
     prEvaluation: { count: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), groupBy: vi.fn() },
+    prReviewVisit: { findMany: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
   };
   const temporal = { startPrEvaluationWorkflow: vi.fn() };
@@ -155,6 +156,7 @@ describe('pr evaluation routes', () => {
     }
     ctx.temporal.startPrEvaluationWorkflow.mockReset();
     ctx.prisma.prEvaluation.findMany.mockResolvedValue([]);
+    ctx.prisma.prReviewVisit.findMany.mockResolvedValue([]);
     ctx.prisma.connection.update.mockResolvedValue({ id: REPO });
     evidence(0, 0);
   });
@@ -1116,6 +1118,8 @@ describe('pr evaluation routes', () => {
         comments: { elsewhere: 0, flagged: 2, flaggedShare: 0.5, skimmed: 2, skimmedShare: 0.5 },
         evaluations: 3,
         medianMinutesToFirstReview: 20,
+        medianMinutesToFirstView: null,
+        pullRequestsViewed: 0,
         reviewed: 2,
         windowDays: 7,
       });
@@ -1123,6 +1127,46 @@ describe('pr evaluation routes', () => {
       expect(args.where.connection).toBeDefined();
       expect(args.where.createdAt.gte).toBeInstanceOf(Date);
       expect(args.take).toBe(5001);
+    });
+
+    it('measures how soon a pull request is first opened on the review page', async () => {
+      ctx.prisma.prReviewVisit.findMany.mockResolvedValue([
+        { firstVisitedAt: at(40), pullRequest: { openedAt: at(0) }, pullRequestId: 'a' },
+        { firstVisitedAt: at(15), pullRequest: { openedAt: at(0) }, pullRequestId: 'a' },
+        { firstVisitedAt: at(50), pullRequest: { openedAt: at(30) }, pullRequestId: 'b' },
+      ]);
+      const body = (await get()).json().data;
+      expect(body.pullRequestsViewed).toBe(2);
+      expect(body.medianMinutesToFirstView).toBe(17.5);
+    });
+
+    it('reads first visits only to pull requests opened in the window and in reach', async () => {
+      await get(`?days=7&repoId=${REPO}`);
+      const { where, take } = ctx.prisma.prReviewVisit.findMany.mock.calls[0][0];
+      expect(where.pullRequest.openedAt.gte).toBeInstanceOf(Date);
+      expect(where.pullRequest.repository).toBeDefined();
+      expect(where.pullRequest.repoId).toBe(REPO);
+      expect(take).toBe(5001);
+    });
+
+    it('adds no reach predicate to the visits for an admin', async () => {
+      ctx.authState.role = 'ADMIN';
+      await get();
+      const { where } = ctx.prisma.prReviewVisit.findMany.mock.calls[0][0];
+      expect(where.pullRequest.repository).toBeUndefined();
+    });
+
+    it('says when the window held more first visits than it read', async () => {
+      ctx.prisma.prReviewVisit.findMany.mockResolvedValue(
+        Array.from({ length: 5001 }, (_, i) => ({
+          firstVisitedAt: at(5),
+          pullRequest: { openedAt: at(0) },
+          pullRequestId: `pr-${i}`,
+        }))
+      );
+      const body = (await get()).json().data;
+      expect(body.capped).toBe(true);
+      expect(body.pullRequestsViewed).toBe(5000);
     });
 
     it('adds no reach predicate for an admin and honours the repository filter', async () => {

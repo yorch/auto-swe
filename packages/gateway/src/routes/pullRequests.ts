@@ -19,10 +19,20 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { csvRow } from '../lib/csv.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
-import { readPullFiles } from '../lib/githubPullFiles.js';
+import {
+  COMMIT_SHA,
+  type CompareResult,
+  readCompare,
+  readPullFiles,
+} from '../lib/githubPullFiles.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
-import { assembleCockpit, viewedPaths } from '../lib/pullRequestCockpit.js';
+import {
+  assembleCockpit,
+  changedSinceViewed,
+  sinceLastVisit,
+  viewedPaths,
+} from '../lib/pullRequestCockpit.js';
 import { repositoryTeamScope, runMetricsTeamScope } from '../lib/runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { assertTeamParam } from '../lib/teamParam.js';
@@ -70,6 +80,9 @@ const ViewedBody = z.object({
     .max(MAX_VIEWED_PER_REQUEST),
   viewed: z.boolean(),
 });
+
+/** What a compare reads as for a pull request with no repository to ask. */
+const NO_COMPARE: CompareResult = { reason: 'not-found', type: 'unavailable' };
 
 /** Most rows one outcomes read takes; one more is fetched to detect a cut. */
 const OUTCOMES_ROW_CAP = 10_000;
@@ -617,7 +630,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'PULL_REQUEST_NOT_FOUND', 'Pull request not found');
       }
       const ledger = row.workflow && row.workflow.repoId === row.repoId ? row.workflow : null;
-      const [instanceBaseUrl, run, evaluation, files, viewedRows] = await Promise.all([
+      const [instanceBaseUrl, run, evaluation, files, viewedRows, visit] = await Promise.all([
         resolveGitHubBaseUrl(),
         ledger
           ? fastify.prisma.workflowRun.findFirst({
@@ -656,8 +669,19 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           take: MAX_VIEWED_PER_PULL_REQUEST,
           where: { pullRequestId: row.id, userId: user.sub },
         }),
+        fastify.prisma.prReviewVisit.findUnique({
+          select: { lastHeadSha: true, lastVisitedAt: true },
+          where: { userId_pullRequestId: { pullRequestId: row.id, userId: user.sub } },
+        }),
       ]);
       const parts = assembleCockpit({ evaluation, files, storedHeadSha: row.headSha });
+      const repository = row.repository;
+      const since = await sinceLastVisit({
+        compare: (base, head) =>
+          repository ? readCompare(repository, base, head) : Promise.resolve(NO_COMPARE),
+        files,
+        visit,
+      });
       // `pull` first: the in-app assistant keeps only the start of a long answer, and the title,
       // state and CI are what it must not lose to the patches that follow.
       const data: PullRequestCockpit = {
@@ -688,9 +712,53 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           workRequestId: ledger?.workRequest?.id ?? null,
         },
         ...parts,
+        changedSinceViewed: changedSinceViewed(parts.files, viewedRows),
+        sinceLastVisit: since,
         viewed: viewedPaths(parts.files, viewedRows),
       };
       return { data };
+    }
+  );
+  // POST /api/v1/pull-requests/:id/visit — note that the caller has now seen this head. The page
+  // sends it once per head after it has rendered, never from a refresh, so the next visit can say
+  // what moved since. It names no host data, so nothing is read from the host here.
+  app.post(
+    '/:id/visit',
+    {
+      onRequest: engineerOnly,
+      schema: {
+        body: z.object({ headSha: z.string().regex(COMMIT_SHA) }),
+        params: z.object({ id: z.string().uuid() }),
+      },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const pull = await fastify.prisma.pullRequest.findFirst({
+        select: { id: true },
+        where: {
+          id: request.params.id,
+          ...(user.role === 'ADMIN'
+            ? {}
+            : { repository: reachableConnections(user, request.repoAccessGate) }),
+        },
+      });
+      if (!pull) {
+        return sendError(reply, 404, 'PULL_REQUEST_NOT_FOUND', 'Pull request not found');
+      }
+      const { headSha } = request.body;
+      const now = new Date();
+      await fastify.prisma.prReviewVisit.upsert({
+        create: {
+          firstVisitedAt: now,
+          lastHeadSha: headSha,
+          lastVisitedAt: now,
+          pullRequestId: pull.id,
+          userId: user.sub,
+        },
+        update: { lastHeadSha: headSha, lastVisitedAt: now },
+        where: { userId_pullRequestId: { pullRequestId: pull.id, userId: user.sub } },
+      });
+      return { data: { recorded: true } };
     }
   );
   // PUT /api/v1/pull-requests/:id/viewed — mark files viewed, or clear the marks, for the caller

@@ -86,10 +86,15 @@ const cache = new Map<string, CachedRead>();
 type PullFacts = { etag: string; changedFiles: number | undefined; headSha: string; state: string };
 const pullFacts = new Map<string, PullFacts>();
 
+/** Commit pairs already compared; a pair's answer does not change, so only the size is bounded. */
+const COMPARE_MAX_ENTRIES = 200;
+const compares = new Map<string, Promise<CompareResult>>();
+
 /** Forgets every cached read and ETag. For tests. */
 export function resetPullFilesCache(): void {
   cache.clear();
   pullFacts.clear();
+  compares.clear();
 }
 
 function rememberPullFacts(key: string, facts: PullFacts): void {
@@ -263,6 +268,31 @@ async function readFiles(
   return { files, headSha, state, truncated, type: 'ok' };
 }
 
+/** What every read of one repository needs: where to ask, as whom, and a fetch that is guarded. */
+async function connect(
+  repo: PullFilesRepo,
+  deps: PullFilesDeps
+): Promise<
+  | { doFetch: typeof fetch; repoPath: string; target: { apiUrl: string; token: string } }
+  | { reason: PullFilesUnavailable }
+> {
+  if (repo.organizationName === null || repo.repoName === null) {
+    return { reason: 'not-found' };
+  }
+  const target = await (deps.target ?? platformTarget)(repo);
+  if (target === 'host-not-approved') {
+    return { reason: 'host-not-approved' };
+  }
+  if (target === null) {
+    return { reason: 'no-credential' };
+  }
+  const doFetch =
+    deps.fetchImpl ??
+    createGuardedFetch({ allowPrivate: hostFamily(target.apiUrl) !== 'github.com' });
+  const repoPath = `/repos/${encodeURIComponent(repo.organizationName)}/${encodeURIComponent(repo.repoName)}`;
+  return { doFetch, repoPath, target };
+}
+
 function patchChars(result: PullFilesResult): number {
   return result.type === 'ok'
     ? result.files.reduce((sum, f) => sum + (f.patch?.length ?? 0), 0)
@@ -278,20 +308,11 @@ export async function readPullFiles(
   prNumber: number,
   deps: PullFilesDeps = {}
 ): Promise<PullFilesResult> {
-  if (repo.organizationName === null || repo.repoName === null) {
-    return { reason: 'not-found', type: 'unavailable' };
+  const link = await connect(repo, deps);
+  if ('reason' in link) {
+    return { reason: link.reason, type: 'unavailable' };
   }
-  const target = await (deps.target ?? platformTarget)(repo);
-  if (target === 'host-not-approved') {
-    return { reason: 'host-not-approved', type: 'unavailable' };
-  }
-  if (target === null) {
-    return { reason: 'no-credential', type: 'unavailable' };
-  }
-  const doFetch =
-    deps.fetchImpl ??
-    createGuardedFetch({ allowPrivate: hostFamily(target.apiUrl) !== 'github.com' });
-  const repoPath = `/repos/${encodeURIComponent(repo.organizationName)}/${encodeURIComponent(repo.repoName)}`;
+  const { doFetch, repoPath, target } = link;
 
   const deadline = AbortSignal.timeout(deps.deadlineMs ?? OVERALL_TIMEOUT_MS);
 
@@ -377,4 +398,105 @@ export async function readPullFiles(
     }
   }, forgetIfUnusable);
   return read.then(withLiveState);
+}
+
+/** The commits of a compare read that are shown; the host returns at most this many per page. */
+const COMPARE_PER_PAGE = 100;
+const SUBJECT_MAX_CHARS = 200;
+/** A commit id as the host spells one, SHA-1 or SHA-256; the only thing put into a compare path. */
+export const COMMIT_SHA = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
+
+export type CompareCommit = { sha: string; subject: string };
+
+export type CompareResult =
+  | {
+      type: 'ok';
+      /** The earlier head is no longer an ancestor of the later one: the branch was rewritten. */
+      rewritten: boolean;
+      /** The commits the later head has beyond the common ancestor, oldest first, capped. */
+      commits: CompareCommit[];
+      totalCommits: number;
+    }
+  | { type: 'unavailable'; reason: PullFilesUnavailable };
+
+const CompareSchema = z.object({
+  commits: z.array(z.object({ commit: z.object({ message: z.string() }), sha: z.string().min(1) })),
+  status: z.string(),
+  total_commits: z.number().int().nonnegative().optional(),
+});
+
+/**
+ * What changed between two heads of a pull request, for "since you last looked". A base the host no
+ * longer knows, a head that went backwards and a diverged one all read as a rewritten branch, which
+ * is the usual result of a force-push. Only a successful answer is kept, per pair of commits.
+ */
+export async function readCompare(
+  repo: PullFilesRepo,
+  base: string,
+  head: string,
+  deps: PullFilesDeps = {}
+): Promise<CompareResult> {
+  // Both ends go into a URL path; anything but a commit id is refused before the host is asked.
+  if (!COMMIT_SHA.test(base) || !COMMIT_SHA.test(head)) {
+    return { reason: 'not-found', type: 'unavailable' };
+  }
+  const link = await connect(repo, deps);
+  if ('reason' in link) {
+    return { reason: link.reason, type: 'unavailable' };
+  }
+  const key = `${repo.id}:${base.toLowerCase()}...${head.toLowerCase()}`;
+  const hit = compares.get(key);
+  if (hit) {
+    return hit;
+  }
+  const read = (async (): Promise<CompareResult> => {
+    const reply = await get(
+      link.doFetch,
+      link.target,
+      `${link.repoPath}/compare/${base}...${head}?per_page=${COMPARE_PER_PAGE}`,
+      { deadline: AbortSignal.timeout(deps.deadlineMs ?? OVERALL_TIMEOUT_MS) }
+    );
+    if (!reply.ok) {
+      return reply.reason === 'not-found'
+        ? { commits: [], rewritten: true, totalCommits: 0, type: 'ok' }
+        : { reason: reply.reason, type: 'unavailable' };
+    }
+    if ('notModified' in reply) {
+      return { reason: 'failed', type: 'unavailable' };
+    }
+    const parsed = CompareSchema.safeParse(reply.body);
+    if (!parsed.success) {
+      return { reason: 'failed', type: 'unavailable' };
+    }
+    const { commits, status, total_commits } = parsed.data;
+    return {
+      commits: commits.map((c) => ({
+        sha: c.sha,
+        subject: (c.commit.message.split('\n')[0] ?? '').slice(0, SUBJECT_MAX_CHARS),
+      })),
+      rewritten: status === 'diverged' || status === 'behind',
+      totalCommits: total_commits ?? commits.length,
+      type: 'ok',
+    };
+  })();
+  compares.set(key, read);
+  while (compares.size > COMPARE_MAX_ENTRIES) {
+    const oldest = compares.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    compares.delete(oldest);
+  }
+  // A failed answer is asked again next time; this removes its own entry only.
+  const forgetIfFailed = () => {
+    if (compares.get(key) === read) {
+      compares.delete(key);
+    }
+  };
+  void read.then((result) => {
+    if (result.type !== 'ok') {
+      forgetIfFailed();
+    }
+  }, forgetIfFailed);
+  return read;
 }

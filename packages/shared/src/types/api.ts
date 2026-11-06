@@ -1636,6 +1636,19 @@ export type PullRequestCockpitFiles =
       reason: 'host-not-approved' | 'no-credential' | 'not-found' | 'rate-limited' | 'failed';
     };
 
+/** What the head moved through since the caller last opened the page. */
+export interface PullRequestCockpitSinceVisit {
+  /** The head the caller saw last. */
+  fromHeadSha: string;
+  lastVisitedAt: string;
+  /** The earlier head is no longer an ancestor of this one: the branch was rewritten. */
+  rewritten: boolean;
+  /** Oldest first, capped; null when the host could not be asked, so only the move is known. */
+  commits: { sha: string; subject: string }[] | null;
+  /** How many commits there are in all, which can exceed `commits`. */
+  totalCommits: number;
+}
+
 /** Response data of GET /api/v1/pull-requests/:id/cockpit. */
 export interface PullRequestCockpit {
   pull: PullRequestListItem & { headSha: string };
@@ -1644,6 +1657,10 @@ export interface PullRequestCockpit {
   files: PullRequestCockpitFiles;
   /** Paths of the files the caller marked viewed and whose patch has not changed since. */
   viewed: string[];
+  /** Paths the caller marked viewed whose patch has changed since the mark. */
+  changedSinceViewed: string[];
+  /** Set only when the caller has opened this page before and the head has moved since. */
+  sinceLastVisit: PullRequestCockpitSinceVisit | null;
 }
 
 /** Outcome figures for a cohort of pull requests opened in one window. */
@@ -1685,6 +1702,10 @@ export interface PrEngagementResponse {
     skimmed: number;
     skimmedShare: number | null;
   };
+  /** Pull requests opened in the window that someone opened on the review page. */
+  pullRequestsViewed: number;
+  /** Median minutes from a pull request opening to its first view there; null with none. */
+  medianMinutesToFirstView: number | null;
 }
 
 /** Response data of GET /api/v1/pull-requests/outcomes. */
