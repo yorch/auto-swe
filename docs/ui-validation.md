@@ -90,11 +90,12 @@ recipes can be saved by other repository editors.
 Configured services start as workspace sidecars before preview setup runs. Docker joins each service
 to the workspace network namespace, so the app reaches it through `localhost`; Kubernetes places
 services in the workspace pod. Service images must be on the team's shell image allowlist. Service
-containers have bounded resources, no-new-privileges and all capabilities dropped except
-`CHOWN`, `SETUID`, `SETGID`, `FOWNER` and `DAC_OVERRIDE`. A configured `readyCommand` is retried
-before the app preview starts. Kubernetes keeps service environment values in the workspace's
-per-pod Secret rather than the Pod manifest. Agent workspaces receive the recipe's services only
-when the agent has an explicit `browser` grant.
+containers have bounded resources and no-new-privileges. By default they run as root with
+`CHOWN`, `SETUID`, `SETGID`, `FOWNER` and `DAC_OVERRIDE`; `runAsUser` selects a non-root uid and
+drops all capabilities, while optional `runAsGroup` selects its group (defaulting to `runAsUser`).
+A configured `readyCommand` is retried before the app preview starts. Kubernetes keeps service
+environment values in the workspace's per-pod Secret rather than the Pod manifest. Agent
+workspaces receive the recipe's services only when the agent has an explicit `browser` grant.
 
 The worker's `startAppPreview` helper runs the recipe's optional setup (after the repository's
 [workspace setup](./repositories.md#workspace-setup), with the recipe's env), starts the app in its own session (so
@@ -129,16 +130,17 @@ kubectl get events -n auto-swe-workspaces --sort-by=.lastTimestamp \
   > /path/to/k8s-evidence/events.log
 ```
 
-The end-to-end case temporarily changes only the namespace's Pod Security `enforce` label from
-`restricted` to `baseline` so the root-starting Postgres service can run, then restores `restricted`.
-The separate admission case confirms that the root service is rejected under `restricted`; the
-workspace container remains non-root with all capabilities dropped.
+The end-to-end case verifies that a non-root Postgres service runs under the unchanged `restricted`
+namespace. A separate root-service case temporarily changes only the namespace's Pod Security
+`enforce` label to `baseline`, then restores `restricted`; another case confirms that root services
+are rejected under `restricted`. The workspace container remains non-root with all capabilities
+dropped.
 
 ## Limitations
 
-- Kubernetes preview services that run as root or add service capabilities need a namespace policy
-  less restrictive than Pod Security `restricted` (`baseline` permits the current service settings).
-  The workspace container keeps its non-root, dropped-capability security context.
+- Kubernetes preview services with `runAsUser` run under Pod Security `restricted`; services that
+  run as root still require `baseline`. The workspace container keeps its non-root,
+  dropped-capability security context.
 - The stray-process sweep scopes signals to the workspace mount namespace. It relies on the workspace
   having no `CAP_SYS_ADMIN` and using the runtime-default seccomp profile to prevent `unshare` or
   `setns` from moving a process into another mount namespace to evade the sweep.

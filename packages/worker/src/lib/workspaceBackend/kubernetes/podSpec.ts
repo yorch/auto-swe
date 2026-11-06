@@ -246,16 +246,26 @@ export function buildWorkspacePod(
               limits: resources,
               requests: resources,
             },
-            securityContext: {
-              allowPrivilegeEscalation: false,
-              capabilities: {
-                add: ['CHOWN', 'SETUID', 'SETGID', 'FOWNER', 'DAC_OVERRIDE'],
-                drop: ['ALL'],
-              },
-              runAsGroup: 0,
-              runAsNonRoot: false,
-              runAsUser: 0,
-            },
+            securityContext:
+              service.runAsUser === undefined
+                ? {
+                    allowPrivilegeEscalation: false,
+                    capabilities: {
+                      add: ['CHOWN', 'SETUID', 'SETGID', 'FOWNER', 'DAC_OVERRIDE'],
+                      drop: ['ALL'],
+                    },
+                    runAsGroup: 0,
+                    runAsNonRoot: false,
+                    runAsUser: 0,
+                  }
+                : {
+                    allowPrivilegeEscalation: false,
+                    capabilities: { drop: ['ALL'] },
+                    runAsGroup: service.runAsGroup ?? service.runAsUser,
+                    runAsNonRoot: true,
+                    runAsUser: service.runAsUser,
+                    seccompProfile: { type: 'RuntimeDefault' },
+                  },
           };
         }),
       ],

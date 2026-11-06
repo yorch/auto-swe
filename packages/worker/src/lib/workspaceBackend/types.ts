@@ -52,6 +52,8 @@ export interface WorkspaceServiceSpec {
   env?: Record<string, string>;
   port?: number;
   readyCommand?: string;
+  runAsUser?: number;
+  runAsGroup?: number;
 }
 
 /**

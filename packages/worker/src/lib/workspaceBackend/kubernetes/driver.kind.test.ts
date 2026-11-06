@@ -383,6 +383,66 @@ describe.skipIf(!enabled)('Kubernetes workspace kind integration', () => {
     }
   }, 300_000);
 
+  it('admits and readies a non-root Postgres service under restricted', async () => {
+    const name = `workspace-kind-nonroot-${randomBytes(4).toString('hex')}`;
+    workspaceName = name;
+    expect(namespaceEnforce()).toBe('restricted');
+
+    const handle = await backend.create(
+      integrationSpec(name, [
+        {
+          env: {
+            POSTGRES_DB: 'kind_test',
+            POSTGRES_PASSWORD: randomBytes(16).toString('hex'),
+            POSTGRES_USER: 'postgres',
+          },
+          image: 'mirror.gcr.io/library/postgres:18',
+          name: 'postgres',
+          port: 5432,
+          readyCommand: 'pg_isready -h 127.0.0.1 -p 5432 -U postgres',
+          runAsGroup: 999,
+          runAsUser: 999,
+        },
+      ])
+    );
+
+    const repositoryDirectory = await backend.exec(
+      handle,
+      ['mkdir', '-p', '/workspace/target-repo'],
+      {
+        heartbeatLabel: 'kind workspace integration',
+        timeoutMs: 30_000,
+        workdir: '/workspace',
+      }
+    );
+    expect(repositoryDirectory.exitCode).toBe(0);
+    expect(namespaceEnforce()).toBe('restricted');
+    expect(await tcpConnect(handle, '127.0.0.1', 5432)).toBe('connected');
+    const pod = JSON.parse(
+      kubectl(['get', 'pod', name, '--namespace', config.namespace, '-o', 'json'])
+    ) as {
+      spec: {
+        containers: {
+          name: string;
+          securityContext?: {
+            runAsGroup?: number;
+            runAsNonRoot?: boolean;
+            runAsUser?: number;
+            capabilities?: { add?: string[]; drop?: string[] };
+          };
+        }[];
+      };
+    };
+    const postgres = pod.spec.containers.find((container) => container.name === 'postgres');
+    expect(postgres?.securityContext).toMatchObject({
+      capabilities: { drop: ['ALL'] },
+      runAsGroup: 999,
+      runAsNonRoot: true,
+      runAsUser: 999,
+    });
+    expect(postgres?.securityContext?.capabilities?.add ?? []).toEqual([]);
+  });
+
   it('rejects a root-needing service under the restricted namespace with a Pod Security error', async () => {
     const name = `workspace-kind-root-${randomBytes(4).toString('hex')}`;
     workspaceName = name;
