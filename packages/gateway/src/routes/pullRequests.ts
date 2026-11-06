@@ -1,5 +1,6 @@
 import { Readable } from 'node:stream';
 import type { Prisma } from '@auto-swe/shared';
+import { resolveSetting } from '@auto-swe/shared/config';
 import {
   PULL_REQUEST_STATES,
   type PullRequestState,
@@ -34,6 +35,11 @@ import {
   sinceLastVisit,
   viewedPaths,
 } from '../lib/pullRequestCockpit.js';
+import {
+  type ReviewerWrite,
+  resolveReviewerWrite,
+  type WriteUnavailable,
+} from '../lib/reviewerCredential.js';
 import { repositoryTeamScope, runMetricsTeamScope } from '../lib/runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { assertTeamParam } from '../lib/teamParam.js';
@@ -82,6 +88,9 @@ const ViewedBody = z.object({
     .max(MAX_VIEWED_PER_REQUEST),
   viewed: z.boolean(),
 });
+
+const writeReasonOf = (write: ReviewerWrite): WriteUnavailable | null =>
+  write.available ? null : write.reason;
 
 /** What a compare reads as for a pull request with no repository to ask. */
 const NO_COMPARE: CompareResult = { reason: 'not-found', type: 'unavailable' };
@@ -610,6 +619,8 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
               installation: { select: { host: true, installationId: true } },
               organizationName: true,
               repoName: true,
+              team: { select: { orgId: true } },
+              teamId: true,
             },
           },
           workflow: {
@@ -617,7 +628,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
               costUsdAccrued: true,
               repoId: true,
               temporalWorkflowId: true,
-              workRequest: { select: { externalTicketId: true, id: true } },
+              workRequest: { select: { externalTicketId: true, id: true, requestedById: true } },
             },
           },
         },
@@ -632,66 +643,88 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'PULL_REQUEST_NOT_FOUND', 'Pull request not found');
       }
       const ledger = row.workflow && row.workflow.repoId === row.repoId ? row.workflow : null;
-      const [instanceBaseUrl, run, evaluation, files, viewedRows, visit, draftRows] =
-        await Promise.all([
-          resolveGitHubBaseUrl(),
-          ledger
-            ? fastify.prisma.workflowRun.findFirst({
-                select: { id: true, status: true },
-                where: {
-                  AND: [
-                    buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
-                    { workflowId: ledger.temporalWorkflowId },
-                  ],
-                },
-              })
-            : null,
-          row.repoId !== null && row.prNumber !== null
-            ? fastify.prisma.prEvaluation.findFirst({
-                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-                select: {
-                  brief: true,
-                  createdAt: true,
-                  headSha: true,
-                  id: true,
-                  mode: true,
-                  reasons: true,
-                  requiredApprovers: true,
-                  riskClass: true,
-                  statusState: true,
-                },
-                where: { connectionId: row.repoId, prNumber: row.prNumber, ...reach },
-              })
-            : null,
-          row.repository && row.prNumber !== null
-            ? readPullFiles(row.repository, row.prNumber)
-            : ({ reason: 'not-found', type: 'unavailable' } as const),
-          // The caller's own marks only; the route has already decided they may see this pull request.
-          fastify.prisma.prFileView.findMany({
-            select: { patchDigest: true, path: true },
-            take: MAX_VIEWED_PER_PULL_REQUEST,
-            where: { pullRequestId: row.id, userId: user.sub },
-          }),
-          fastify.prisma.prReviewVisit.findUnique({
-            select: { lastHeadSha: true, lastVisitedAt: true },
-            where: { userId_pullRequestId: { pullRequestId: row.id, userId: user.sub } },
-          }),
-          // The caller's own unsent comments, bounded by what the draft route lets them keep.
-          fastify.prisma.prReviewDraft.findMany({
-            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-            select: {
-              body: true,
-              createdAt: true,
-              headSha: true,
-              id: true,
-              line: true,
-              patchDigest: true,
-              path: true,
-            },
-            take: MAX_DRAFTS_PER_PULL_REQUEST,
-            where: { pullRequestId: row.id, userId: user.sub },
-          }),
-        ]);
+      const [
+        instanceBaseUrl,
+        run,
+        evaluation,
+        files,
+        viewedRows,
+        visit,
+        draftRows,
+        reviewerWrite,
+        feedbackLoopEnabled,
+      ] = await Promise.all([
+        resolveGitHubBaseUrl(),
+        ledger
+          ? fastify.prisma.workflowRun.findFirst({
+              select: { id: true, launchedById: true, status: true },
+              where: {
+                AND: [
+                  buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+                  { workflowId: ledger.temporalWorkflowId },
+                ],
+              },
+            })
+          : null,
+        row.repoId !== null && row.prNumber !== null
+          ? fastify.prisma.prEvaluation.findFirst({
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              select: {
+                brief: true,
+                createdAt: true,
+                headSha: true,
+                id: true,
+                mode: true,
+                reasons: true,
+                requiredApprovers: true,
+                riskClass: true,
+                statusState: true,
+              },
+              where: { connectionId: row.repoId, prNumber: row.prNumber, ...reach },
+            })
+          : null,
+        row.repository && row.prNumber !== null
+          ? readPullFiles(row.repository, row.prNumber)
+          : ({ reason: 'not-found', type: 'unavailable' } as const),
+        // The caller's own marks only; the route has already decided they may see this pull request.
+        fastify.prisma.prFileView.findMany({
+          select: { patchDigest: true, path: true },
+          take: MAX_VIEWED_PER_PULL_REQUEST,
+          where: { pullRequestId: row.id, userId: user.sub },
+        }),
+        fastify.prisma.prReviewVisit.findUnique({
+          select: { lastHeadSha: true, lastVisitedAt: true },
+          where: { userId_pullRequestId: { pullRequestId: row.id, userId: user.sub } },
+        }),
+        // The caller's own unsent comments, bounded by what the draft route lets them keep.
+        fastify.prisma.prReviewDraft.findMany({
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          select: {
+            body: true,
+            createdAt: true,
+            headSha: true,
+            id: true,
+            line: true,
+            patchDigest: true,
+            path: true,
+          },
+          take: MAX_DRAFTS_PER_PULL_REQUEST,
+          where: { pullRequestId: row.id, userId: user.sub },
+        }),
+        // Whether the caller can write as themselves; the token is dropped at once, never sent.
+        row.repository
+          ? resolveReviewerWrite(fastify.prisma, {
+              connectionId: row.repository.id,
+              userId: user.sub,
+            })
+          : null,
+        row.repository
+          ? resolveSetting('github.prFeedbackAutomationsEnabled', {
+              ...(row.repository.team?.orgId ? { orgId: row.repository.team.orgId } : {}),
+              teamId: row.repository.teamId,
+            })
+          : false,
+      ]);
       const parts = assembleCockpit({ evaluation, files, storedHeadSha: row.headSha });
       const repository = row.repository;
       const since = await sinceLastVisit({
@@ -734,6 +767,15 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         drafts: draftsFor(files, draftRows),
         sinceLastVisit: since,
         viewed: viewedPaths(parts.files, viewedRows),
+        write: {
+          // The platform sets aside the approval of whoever launched or requested the work, for the
+          // whole work and not only the run shown here; this warns for the part it can see.
+          approvalMayNotCount:
+            user.sub === run?.launchedById || user.sub === ledger?.workRequest?.requestedById,
+          available: reviewerWrite?.available ?? false,
+          feedbackLoopEnabled,
+          reason: reviewerWrite === null ? 'unusable' : writeReasonOf(reviewerWrite),
+        },
       };
       return { data };
     }

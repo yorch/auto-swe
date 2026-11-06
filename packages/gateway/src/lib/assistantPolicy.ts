@@ -385,6 +385,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/platform/slack-channels/memory/erase-user': { never: 'destructive' },
   'POST /api/v1/prd-runs': 'confirm',
   'POST /api/v1/pull-requests/:id/drafts': { never: 'humanDecision' },
+  'POST /api/v1/pull-requests/:id/review': { never: 'humanDecision' },
   'POST /api/v1/pull-requests/:id/visit': { never: 'humanDecision' },
   'POST /api/v1/report-digests': 'confirm',
   'POST /api/v1/report-digests/:id/send-test': 'confirm',

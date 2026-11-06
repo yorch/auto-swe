@@ -41,6 +41,12 @@ const data = (viewed: string[] = []): PullRequestCockpit => ({
   },
   sinceLastVisit: null,
   viewed,
+  write: {
+    approvalMayNotCount: false,
+    available: false,
+    feedbackLoopEnabled: false,
+    reason: 'no-token',
+  },
 });
 
 function setup() {

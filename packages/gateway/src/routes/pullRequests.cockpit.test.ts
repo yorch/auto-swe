@@ -12,7 +12,17 @@ vi.mock('@auto-swe/shared/lib/systemConfig', async (orig) => ({
   resolveGitHubBaseUrl: async () => 'https://github.com',
 }));
 
-const m = vi.hoisted(() => ({ readCompare: vi.fn(), readPullFiles: vi.fn() }));
+const m = vi.hoisted(() => ({
+  feedbackEnabled: vi.fn(),
+  readCompare: vi.fn(),
+  readPullFiles: vi.fn(),
+  reviewerWrite: vi.fn(),
+}));
+vi.mock('@auto-swe/shared/config', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/config')>()),
+  resolveSetting: m.feedbackEnabled,
+}));
+vi.mock('../lib/reviewerCredential.js', () => ({ resolveReviewerWrite: m.reviewerWrite }));
 vi.mock('../lib/githubPullFiles.js', async (orig) => ({
   ...(await orig<typeof import('../lib/githubPullFiles.js')>()),
   readCompare: m.readCompare,
@@ -144,9 +154,13 @@ const get = (b: Built, id = PR_ID) =>
   b.app.inject({ headers: AUTH, method: 'GET', url: `/api/v1/pull-requests/${id}/cockpit` });
 
 beforeEach(() => {
+  m.feedbackEnabled.mockReset();
+  m.feedbackEnabled.mockResolvedValue(false);
   m.readCompare.mockReset();
   m.readPullFiles.mockReset();
   m.readPullFiles.mockResolvedValue(okFiles);
+  m.reviewerWrite.mockReset();
+  m.reviewerWrite.mockResolvedValue({ available: false, reason: 'no-token' });
 });
 
 describe('GET /api/v1/pull-requests/:id/cockpit', () => {
@@ -164,6 +178,7 @@ describe('GET /api/v1/pull-requests/:id/cockpit', () => {
       'drafts',
       'sinceLastVisit',
       'viewed',
+      'write',
     ]);
     expect(data.pull).toMatchObject({
       headSha: HEAD,
@@ -486,6 +501,115 @@ describe("the caller's draft comments in the cockpit", () => {
     m.readPullFiles.mockResolvedValue({ reason: 'failed', type: 'unavailable' });
     b.prisma.prReviewDraft.findMany.mockResolvedValue([draft({ patchDigest: 'older' })]);
     expect((await get(b)).json().data.drafts[0].outdated).toBe(false);
+  });
+});
+
+describe('what the caller can do from the page', () => {
+  const credential = {
+    apiUrl: 'https://api.github.com',
+    baseUrl: 'https://github.com',
+    token: 'tok-secret',
+  };
+
+  it('says writing is available, without sending the token', async () => {
+    const b = await buildApp();
+    m.reviewerWrite.mockResolvedValue({ available: true, credential });
+    const res = await get(b);
+    expect(res.json().data.write).toEqual({
+      approvalMayNotCount: false,
+      available: true,
+      feedbackLoopEnabled: false,
+      reason: null,
+    });
+    expect(res.body).not.toContain('tok-secret');
+  });
+
+  it.each(['disabled', 'no-token', 'unusable', 'unreadable'] as const)(
+    'says why not when it is %s',
+    async (reason) => {
+      const b = await buildApp();
+      m.reviewerWrite.mockResolvedValue({ available: false, reason });
+      expect((await get(b)).json().data.write).toMatchObject({ available: false, reason });
+    }
+  );
+
+  it("asks for the caller's own credential on this repository", async () => {
+    const b = await buildApp();
+    await get(b);
+    expect(m.reviewerWrite).toHaveBeenCalledWith(b.prisma, {
+      connectionId: REPO_ID,
+      userId: 'user-1',
+    });
+  });
+
+  it('says whether pull-request feedback automations are on, at the repository’s scope', async () => {
+    const b = await buildApp();
+    b.prisma.pullRequest.findFirst.mockResolvedValue(
+      pullRow({ repository: { ...repository, team: { orgId: 'org-1' }, teamId: 'team-1' } })
+    );
+    m.feedbackEnabled.mockResolvedValue(true);
+    expect((await get(b)).json().data.write.feedbackLoopEnabled).toBe(true);
+    expect(m.feedbackEnabled).toHaveBeenCalledWith('github.prFeedbackAutomationsEnabled', {
+      orgId: 'org-1',
+      teamId: 'team-1',
+    });
+  });
+
+  it('leaves the organization out of the scope when the team has none', async () => {
+    const b = await buildApp();
+    b.prisma.pullRequest.findFirst.mockResolvedValue(
+      pullRow({ repository: { ...repository, team: { orgId: null }, teamId: 'team-1' } })
+    );
+    await get(b);
+    expect(m.feedbackEnabled).toHaveBeenCalledWith('github.prFeedbackAutomationsEnabled', {
+      teamId: 'team-1',
+    });
+  });
+
+  it('warns that an approval may not count for whoever launched the latest run', async () => {
+    const b = await buildApp();
+    b.prisma.workflowRun.findFirst.mockResolvedValue({
+      id: 'run-1',
+      launchedById: 'user-1',
+      status: 'COMPLETED',
+    });
+    expect((await get(b)).json().data.write.approvalMayNotCount).toBe(true);
+  });
+
+  it('warns the same for whoever requested the work', async () => {
+    const b = await buildApp();
+    b.prisma.pullRequest.findFirst.mockResolvedValue(
+      pullRow({
+        workflow: {
+          costUsdAccrued: 1.5,
+          repoId: REPO_ID,
+          temporalWorkflowId: 'wf-1',
+          workRequest: { externalTicketId: 'JIRA-1', id: 'wr-1', requestedById: 'user-1' },
+        },
+      })
+    );
+    expect((await get(b)).json().data.write.approvalMayNotCount).toBe(true);
+  });
+
+  it('does not warn someone who had no part in the work', async () => {
+    const b = await buildApp();
+    b.prisma.workflowRun.findFirst.mockResolvedValue({
+      id: 'run-1',
+      launchedById: 'someone-else',
+      status: 'COMPLETED',
+    });
+    expect((await get(b)).json().data.write.approvalMayNotCount).toBe(false);
+  });
+
+  it('says writing is unavailable for a pull request with no repository', async () => {
+    const b = await buildApp();
+    b.prisma.pullRequest.findFirst.mockResolvedValue(pullRow({ repository: null }));
+    expect((await get(b)).json().data.write).toMatchObject({
+      available: false,
+      feedbackLoopEnabled: false,
+      reason: 'unusable',
+    });
+    expect(m.reviewerWrite).not.toHaveBeenCalled();
   });
 });
 

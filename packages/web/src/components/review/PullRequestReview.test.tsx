@@ -78,6 +78,12 @@ function cockpit(over: Partial<PullRequestCockpit> = {}): PullRequestCockpit {
     },
     sinceLastVisit: null,
     viewed: [],
+    write: {
+      approvalMayNotCount: false,
+      available: false,
+      feedbackLoopEnabled: false,
+      reason: 'no-token',
+    },
     ...over,
   };
 }
