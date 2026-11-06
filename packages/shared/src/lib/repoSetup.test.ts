@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isKeyFileGlob,
   parseRepoSetup,
   parseRepoSetupYaml,
   REPO_SETUP_FILE,
@@ -129,6 +130,8 @@ describe('stackDefaultSetup', () => {
       {
         keyFiles: [
           'settings.gradle.kts',
+          '**/build.gradle',
+          '**/build.gradle.kts',
           'gradle/libs.versions.toml',
           'gradle/wrapper/gradle-wrapper.properties',
         ],
@@ -140,6 +143,17 @@ describe('stackDefaultSetup', () => {
       cache,
       steps: [{ name: 'install dependencies', run }],
     });
+  });
+
+  it('accepts key file globs and refuses ones that leave the checkout', () => {
+    const cache = (keyFiles: string[]) =>
+      parseRepoSetup({ cache: { keyFiles, paths: ['node_modules'] } }).ok;
+    expect(cache(['**/build.gradle.kts', 'packages/*/package-lock.json', 'a?.lock'])).toBe(true);
+    expect(cache(['../**/build.gradle'])).toBe(false);
+    expect(cache(['/**/build.gradle'])).toBe(false);
+    expect(cache(['**/./x'])).toBe(false);
+    expect(isKeyFileGlob('**/build.gradle')).toBe(true);
+    expect(isKeyFileGlob('yarn.lock')).toBe(false);
   });
 
   it('reads the install files from a fresh detection', () => {

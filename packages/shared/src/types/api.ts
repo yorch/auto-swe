@@ -273,6 +273,19 @@ export type RepoSetupFileProposal =
   | { ok: true; branch: string; prNumber: number; prUrl: string }
   | { ok: false; reason: 'exists' | 'invalid' | 'not_found' | 'no_base'; detail: string };
 
+/**
+ * Where a request to open that pull request stands. `queued` until a worker has finished it;
+ * `failed` carries the refusal (`exists`, ...) or `error` when the request itself did not finish.
+ */
+export type RepoSetupFileProposalStatus =
+  | { status: 'queued' }
+  | { status: 'opened'; branch: string; prNumber: number; prUrl: string }
+  | {
+      status: 'failed';
+      reason: 'exists' | 'invalid' | 'not_found' | 'no_base' | 'error';
+      detail: string;
+    };
+
 export interface ExecutorImageProbeResult {
   image: string;
   /** True when every required check passed. */

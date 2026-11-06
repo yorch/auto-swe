@@ -28,6 +28,26 @@ const RepoRelativePathSchema = z
   .refine((p) => !hasTraversal(p.replace(/\/+$/, '')), 'must not contain "." or ".." segments')
   .refine((p) => !p.includes('//'), 'must not contain empty segments');
 
+/**
+ * A cache key file: a path inside the checkout, or a glob over the tracked files (`*` within a
+ * segment, `**` across segments, `?` one character), such as every subproject's build file.
+ */
+const KeyFilePatternSchema = z
+  .string()
+  .min(1)
+  .max(300)
+  .regex(/^[A-Za-z0-9_@+.*?][A-Za-z0-9_@+\-./*?]*$/, 'must be a relative path or glob of plain characters')
+  .refine((p) => !hasTraversal(p.replace(/\/+$/, '')), 'must not contain "." or ".." segments')
+  .refine((p) => !p.includes('//'), 'must not contain empty segments');
+
+/** True when a cache key file entry is a glob rather than a literal path. */
+export function isKeyFileGlob(entry: string): boolean {
+  return /[*?]/.test(entry);
+}
+
+/** Most tracked files the key file globs of one definition may match together. */
+export const MAX_KEY_FILE_GLOB_MATCHES = 500;
+
 /** A cached path: inside the checkout, or under the workspace user's home as `~/…`. */
 const CachePathSchema = z
   .string()
@@ -52,7 +72,7 @@ export const RepoSetupStepSchema = z
 
 export const RepoSetupCacheSchema = z
   .object({
-    keyFiles: z.array(RepoRelativePathSchema).max(20).optional(),
+    keyFiles: z.array(KeyFilePatternSchema).max(20).optional(),
     paths: z.array(CachePathSchema).min(1).max(10),
   })
   .strict();
@@ -125,12 +145,10 @@ const NODE_INSTALL: Record<string, { run: string; keyFile: string }> = {
   'yarn-classic': { keyFile: 'yarn.lock', run: 'yarn install --frozen-lockfile' },
 };
 
-const GRADLE_BUILD_FILES = [
-  'build.gradle',
-  'build.gradle.kts',
-  'settings.gradle',
-  'settings.gradle.kts',
-] as const;
+const GRADLE_SETTINGS_FILES = ['settings.gradle', 'settings.gradle.kts'] as const;
+
+/** Every project's build file, the root's and each subproject's. */
+const GRADLE_BUILD_GLOBS = ['**/build.gradle', '**/build.gradle.kts'] as const;
 
 interface StackInstall {
   run: string;
@@ -180,7 +198,8 @@ function stackInstall(target: DetectedTarget): StackInstall | null {
       return has('gradlew')
         ? {
             keyFiles: [
-              ...GRADLE_BUILD_FILES.filter(has),
+              ...GRADLE_SETTINGS_FILES.filter(has),
+              ...GRADLE_BUILD_GLOBS,
               'gradle/libs.versions.toml',
               'gradle/wrapper/gradle-wrapper.properties',
             ],

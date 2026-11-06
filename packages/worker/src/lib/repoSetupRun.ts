@@ -4,6 +4,8 @@ import { prisma } from '@auto-swe/shared/db';
 import { deleteArtifact, getArtifact, putArtifact } from '@auto-swe/shared/lib/artifactStore';
 import {
   DEFAULT_SETUP_STEP_TIMEOUT_SECONDS,
+  isKeyFileGlob,
+  MAX_KEY_FILE_GLOB_MATCHES,
   REPO_SETUP_FILE,
   REPO_SETUP_FILE_MAX_BYTES,
   type RepoSetup,
@@ -219,20 +221,27 @@ export function parseGitmodules(
   return [...byName.values()];
 }
 
+/** A fetched submodule: its checkout and the credential minted for its repository. */
+export interface FetchedSubmodule {
+  dir: string;
+  cleanUrl: string;
+  authHeader?: string;
+}
+
 /**
  * Fetch the submodules the definition asks for, shallow, each with a credential minted for its
  * own repository. The URL each one is fetched from is pinned in `.git/config` before the fetch,
  * so nothing in `.gitmodules` but the validated URL is followed, and its `update` mode is pinned
- * to `checkout`. Returns how many were fetched.
+ * to `checkout`. Returns each fetched submodule's checkout and credential, for LFS.
  */
 export async function fetchSubmodules(
   host: RepoSetupHost,
   mode: true | 'recursive',
   cleanUrl: string,
   gitHost: string | null
-): Promise<number> {
+): Promise<FetchedSubmodule[]> {
   const queue = [{ depth: 0, dir: REPO_DIR, parentUrl: cleanUrl }];
-  let fetched = 0;
+  const fetched: FetchedSubmodule[] = [];
   while (queue.length > 0) {
     const level = queue.shift() as (typeof queue)[number];
     const listing = await host.root(
@@ -253,8 +262,7 @@ export async function fetchSubmodules(
       if ('error' in repo) {
         throw setupConfigFailure(`${label} URL ${repo.error}`);
       }
-      fetched += 1;
-      if (fetched > MAX_SUBMODULES) {
+      if (fetched.length >= MAX_SUBMODULES) {
         throw setupConfigFailure(`more than ${MAX_SUBMODULES} submodules`);
       }
       let credential: { cleanUrl: string; authHeader?: string };
@@ -284,12 +292,10 @@ export async function fetchSubmodules(
           `${label} could not be fetched: ${host.redact(err instanceof Error ? err.message : String(err))}`
         );
       }
+      const dir = `${level.dir}/${sub.path}`;
+      fetched.push({ dir, ...credential });
       if (mode === 'recursive' && level.depth + 1 < MAX_SUBMODULE_DEPTH) {
-        queue.push({
-          depth: level.depth + 1,
-          dir: `${level.dir}/${sub.path}`,
-          parentUrl: credential.cleanUrl,
-        });
+        queue.push({ depth: level.depth + 1, dir, parentUrl: credential.cleanUrl });
       }
     }
   }
@@ -300,18 +306,26 @@ export async function fetchSubmodules(
  * Download the checkout's LFS objects. The endpoint is pinned to the repository's own URL, so an
  * `lfs.url` in a checked-in `.lfsconfig` cannot send the credential elsewhere.
  */
-export async function pullLfs(host: RepoSetupHost, cleanUrl: string, authHeader?: string) {
+export async function pullLfs(
+  host: RepoSetupHost,
+  checkouts: ReadonlyArray<{ dir: string; cleanUrl: string; authHeader?: string }>
+) {
   const version = await host.capture('git lfs version', { timeoutMs: 30_000 });
   if (version.exitCode !== 0) {
     throw setupConfigFailure('lfs: true needs git-lfs in the workspace image');
   }
-  const endpoint = `${cleanUrl.replace(/\.git$/, '')}.git/info/lfs`;
-  try {
-    await host.git(REPO_DIR, `-c lfs.url=${shellQuote(endpoint)} lfs pull`, authHeader, 900_000);
-  } catch (err) {
-    throw setupRunFailure(
-      `git lfs pull failed: ${host.redact(err instanceof Error ? err.message : String(err))}`
-    );
+  for (const { authHeader, cleanUrl, dir } of checkouts) {
+    // Each checkout's endpoint is pinned to its own repository, so a `.lfsconfig` in it cannot
+    // send its credential, or the LFS traffic, anywhere else.
+    const endpoint = `${cleanUrl.replace(/\.git$/, '')}.git/info/lfs`;
+    try {
+      await host.git(dir, `-c lfs.url=${shellQuote(endpoint)} lfs pull`, authHeader, 900_000);
+    } catch (err) {
+      const where = dir === REPO_DIR ? '' : ` in ${dir.slice(REPO_DIR.length + 1)}`;
+      throw setupRunFailure(
+        `git lfs pull${where} failed: ${host.redact(err instanceof Error ? err.message : String(err))}`
+      );
+    }
   }
 }
 
@@ -350,12 +364,16 @@ async function setupCacheKey(
   setup: RepoSetup,
   inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId'>
 ): Promise<string> {
-  const files = setup.cache?.keyFiles ?? [];
+  const entries = setup.cache?.keyFiles ?? [];
+  const globs = entries.filter(isKeyFileGlob);
+  const matched = globs.length ? await trackedFilesMatching(host, globs) : [];
+  const hash = (f: string) =>
+    `if [ -f ${shellQuote(f)} ]; then sha256sum < ${shellQuote(f)}; else echo absent; fi`;
   const script = [
     'uname -m',
-    ...files.map(
-      (f) => `if [ -f ${shellQuote(f)} ]; then sha256sum < ${shellQuote(f)}; else echo absent; fi`
-    ),
+    ...entries.filter((e) => !isKeyFileGlob(e)).map(hash),
+    // A matched file's path is part of the key, so adding or removing a subproject changes it.
+    ...matched.map((f) => `printf '%s\\n' ${shellQuote(f)}; ${hash(f)}`),
   ].join('; ');
   const result = await host.capture(script, { timeoutMs: 60_000 });
   if (result.exitCode !== 0) {
@@ -374,6 +392,29 @@ async function setupCacheKey(
       })
     )
     .digest('hex');
+}
+
+/**
+ * The tracked files the key file globs match, sorted. Only git's index is searched, so a glob
+ * never walks an untracked tree such as `node_modules`; more than
+ * {@link MAX_KEY_FILE_GLOB_MATCHES} matches is an error, and the workspace runs without a cache.
+ */
+async function trackedFilesMatching(host: RepoSetupHost, globs: readonly string[]) {
+  const pathspecs = globs.map((g) => shellQuote(`:(glob)${g}`)).join(' ');
+  const result = await host.capture(`git ls-files -z -- ${pathspecs}`, {
+    maxOutputBytes: 2 * 1024 * 1024,
+    timeoutMs: 60_000,
+  });
+  if (result.exitCode !== 0) {
+    throw new Error(`listing the cache key files failed: ${tail(host, result)}`);
+  }
+  const files = [...new Set(result.stdout.split('\0').filter(Boolean))].sort();
+  if (files.length > MAX_KEY_FILE_GLOB_MATCHES) {
+    throw new Error(
+      `the cache key file globs match ${files.length} files (at most ${MAX_KEY_FILE_GLOB_MATCHES})`
+    );
+  }
+  return files;
 }
 
 function repositoryId(cleanUrl: string): string {
@@ -488,7 +529,7 @@ async function runSteps(
 }
 
 /**
- * The git half of setup: submodules, then LFS. It runs while the git host is reachable and
+ * The git half of setup: submodules, then LFS in the checkout and in every fetched submodule. It runs while the git host is reachable and
  * before any repository code has run, so it is provisioning like the clone itself.
  */
 export async function runSetupGitPhase(
@@ -499,11 +540,14 @@ export async function runSetupGitPhase(
 ): Promise<{ submodules: number; lfs: boolean }> {
   const submodules = setup.submodules
     ? await fetchSubmodules(host, setup.submodules, inputs.cleanUrl, inputs.gitHost)
-    : 0;
+    : [];
   if (setup.lfs) {
-    await pullLfs(host, inputs.cleanUrl, authHeader);
+    await pullLfs(host, [
+      { dir: REPO_DIR, cleanUrl: inputs.cleanUrl, ...(authHeader ? { authHeader } : {}) },
+      ...submodules,
+    ]);
   }
-  return { lfs: Boolean(setup.lfs), submodules };
+  return { lfs: Boolean(setup.lfs), submodules: submodules.length };
 }
 
 /**

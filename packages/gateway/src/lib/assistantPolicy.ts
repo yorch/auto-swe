@@ -195,6 +195,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/repositories/:id/dependencies': 'read',
   'GET /api/v1/repositories/:id/knowledge-bases/effective': 'read',
   'GET /api/v1/repositories/:id/pr-evaluation': 'read',
+  'GET /api/v1/repositories/:id/setup/pull-request/:requestId': 'read',
   'GET /api/v1/repositories/:id/share-candidates': 'read',
   'GET /api/v1/repositories/credentials/mine': { never: 'secret' },
   'GET /api/v1/repositories/dependencies/unresolved': 'read',

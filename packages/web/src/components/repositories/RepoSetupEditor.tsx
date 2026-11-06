@@ -10,7 +10,7 @@ import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
-import { useProposeSetupFile } from '@/hooks/useRepositories';
+import { useProposeSetupFile, useSetupFileProposalStatus } from '@/hooks/useRepositories';
 import { errMsg } from '@/lib/errors';
 import {
   draftToSetup,
@@ -289,7 +289,10 @@ function SetupFilePanel({
   title: string;
 }) {
   const propose = useProposeSetupFile(repositoryId ?? '');
+  const proposal = useSetupFileProposalStatus(repositoryId ?? '', propose.data?.requestId ?? null);
   const [error, setError] = useState<string | null>(null);
+  const state = proposal.data?.status;
+  const busy = propose.isPending || state === 'queued' || (propose.isSuccess && !proposal.data);
 
   const download = () => {
     const url = URL.createObjectURL(new Blob([text], { type: 'text/yaml' }));
@@ -320,7 +323,7 @@ function SetupFilePanel({
           </Button>
           {repositoryId && (
             <Button
-              disabled={!canPropose || propose.isPending}
+              disabled={!canPropose || busy}
               onClick={() => {
                 setError(null);
                 propose.mutate(setupForPr, {
@@ -329,16 +332,31 @@ function SetupFilePanel({
               }}
               size="sm"
             >
-              {propose.isPending ? 'Opening…' : `Open a PR adding ${REPO_SETUP_FILE}`}
+              {busy ? 'Queued…' : `Open a PR adding ${REPO_SETUP_FILE}`}
             </Button>
           )}
         </div>
-        {propose.data && (
+        {state === 'queued' && (
+          <Alert variant="info">
+            Queued: a worker opens the pull request. This page updates when it has.
+          </Alert>
+        )}
+        {proposal.data?.status === 'opened' && (
           <Alert variant="success">
             Pull request opened:{' '}
-            <a className="underline" href={propose.data.prUrl} rel="noreferrer" target="_blank">
-              {propose.data.prUrl}
+            <a className="underline" href={proposal.data.prUrl} rel="noreferrer" target="_blank">
+              {proposal.data.prUrl}
             </a>
+          </Alert>
+        )}
+        {proposal.data?.status === 'failed' && (
+          <Alert variant="error">
+            The pull request was not opened: {proposal.data.detail}
+          </Alert>
+        )}
+        {proposal.isError && (
+          <Alert variant="error">
+            {errMsg(proposal.error, 'The pull request status could not be read')}
           </Alert>
         )}
         {error && <Alert variant="error">{error}</Alert>}

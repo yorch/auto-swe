@@ -106,7 +106,8 @@ async function buildApp() {
 
   const mockTemporal = {
     probeExecutorImage: vi.fn(),
-    proposeRepoSetupFile: vi.fn(),
+    getRepoSetupFileProposalStatus: vi.fn(),
+    startRepoSetupFileProposal: vi.fn(),
     startPrEvaluationWorkflow: vi.fn(),
     startRepoDependencyScan: vi.fn().mockResolvedValue(undefined),
   };
@@ -1712,11 +1713,12 @@ describe('repositoryRoutes', () => {
       });
 
     beforeEach(() => {
-      ctx.mockTemporal.proposeRepoSetupFile.mockReset().mockResolvedValue({
+      ctx.mockTemporal.startRepoSetupFileProposal.mockReset().mockResolvedValue(undefined);
+      ctx.mockTemporal.getRepoSetupFileProposalStatus.mockReset().mockResolvedValue({
         branch: 'auto/setup-yml-1a2b3c4d',
-        ok: true,
         prNumber: 7,
         prUrl: 'https://github.com/acme/widgets/pull/7',
+        status: 'opened',
       });
       ctx.mockPrisma.connection.findUnique.mockResolvedValue({
         id: REPO_ID,
@@ -1724,51 +1726,66 @@ describe('repositoryRoutes', () => {
         type: 'git_repo',
       });
     });
+    const status = (requestId: string) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: `/api/v1/repositories/${REPO_ID}/setup/pull-request/${requestId}`,
+      });
 
-    it('opens the pull request for a team admin and audits it', async () => {
+    it('queues the pull request for a team admin, answers 202 at once, and audits it', async () => {
       asTeamMember('ADMIN');
       const res = await post({ setup });
-      expect(res.statusCode, res.payload).toBe(200);
-      expect(JSON.parse(res.payload).data.prUrl).toBe('https://github.com/acme/widgets/pull/7');
-      const [workflowId, input] = ctx.mockTemporal.proposeRepoSetupFile.mock.calls[0] as [
-        string,
-        unknown,
-      ];
-      expect(workflowId).toContain(`repo-setup-file-${REPO_ID}`);
-      expect(input).toEqual({ connectionId: REPO_ID, setup });
+      expect(res.statusCode, res.payload).toBe(202);
+      const { requestId } = JSON.parse(res.payload).data;
+      expect(requestId).toMatch(new RegExp(`^repo-setup-file-${REPO_ID}-[0-9a-f]{16}$`));
+      expect(ctx.mockTemporal.startRepoSetupFileProposal).toHaveBeenCalledWith(requestId, {
+        connectionId: REPO_ID,
+        setup,
+      });
       expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
         data: expect.objectContaining({
           action: 'CREATE',
-          afterJson: { setupFilePullRequest: 'https://github.com/acme/widgets/pull/7' },
+          afterJson: { setupFilePullRequestRequested: requestId },
         }),
       });
     });
 
-    it('refuses a team lead', async () => {
+    it('reports the request status to a team admin', async () => {
+      asTeamMember('ADMIN');
+      const requestId = `repo-setup-file-${REPO_ID}-0123456789abcdef`;
+      const res = await status(requestId);
+      expect(res.statusCode, res.payload).toBe(200);
+      expect(JSON.parse(res.payload).data).toMatchObject({ prNumber: 7, status: 'opened' });
+      expect(ctx.mockTemporal.getRepoSetupFileProposalStatus).toHaveBeenCalledWith(requestId);
+    });
+
+    it("does not read another repository's request", async () => {
+      asTeamMember('ADMIN');
+      for (const other of [
+        'repo-setup-file-00000000-0000-4000-8000-000000000000-0123456789abcdef',
+        `repo-setup-file-${REPO_ID}-nothex`,
+        'eng-acme-widgets-1',
+      ]) {
+        expect((await status(other)).statusCode, other).toBe(404);
+      }
+      expect(ctx.mockTemporal.getRepoSetupFileProposalStatus).not.toHaveBeenCalled();
+    });
+
+    it('refuses a team lead, for the request and its status', async () => {
       asTeamMember('LEAD');
       const res = await post({ setup });
       expect(res.statusCode).toBe(403);
       expect(JSON.parse(res.payload).error.code).toBe('REPO_SETUP_FORBIDDEN');
-      expect(ctx.mockTemporal.proposeRepoSetupFile).not.toHaveBeenCalled();
+      expect(ctx.mockTemporal.startRepoSetupFileProposal).not.toHaveBeenCalled();
+      expect((await status(`repo-setup-file-${REPO_ID}-0123456789abcdef`)).statusCode).toBe(403);
     });
 
     it('rejects an invalid definition before starting anything', async () => {
       asTeamMember('ADMIN');
       const res = await post({ setup: { steps: [{ run: 'x', workdir: '../etc' }] } });
       expect(res.statusCode).toBe(400);
-      expect(ctx.mockTemporal.proposeRepoSetupFile).not.toHaveBeenCalled();
-    });
-
-    it('answers 409 when the default branch already has the file', async () => {
-      asTeamMember('ADMIN');
-      ctx.mockTemporal.proposeRepoSetupFile.mockResolvedValue({
-        detail: 'main already has .auto-swe/setup.yml',
-        ok: false,
-        reason: 'exists',
-      });
-      const res = await post({ setup });
-      expect(res.statusCode).toBe(409);
-      expect(JSON.parse(res.payload).error.code).toBe('REPO_SETUP_FILE_EXISTS');
+      expect(ctx.mockTemporal.startRepoSetupFileProposal).not.toHaveBeenCalled();
     });
   });
 

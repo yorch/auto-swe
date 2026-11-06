@@ -4,7 +4,7 @@ import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
 import type { RepoSetup } from '@auto-swe/shared/lib/repoSetup';
 import type {
   RepoGateCommands,
-  RepoSetupFileProposal,
+  RepoSetupFileProposalStatus,
   RepositorySummary,
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -171,16 +171,34 @@ export function useMyCredentials() {
   });
 }
 
-/** Open a pull request adding `.auto-swe/setup.yml`, written from `setup`, to the repository. */
+/**
+ * Ask for a pull request adding `.auto-swe/setup.yml`, written from `setup`, to the repository.
+ * Resolves to the request id at once; {@link useSetupFileProposalStatus} follows it.
+ */
 export function useProposeSetupFile(connectionId: string) {
   return useMutation({
     mutationFn: (setup: RepoSetup) =>
       api
-        .post<{ data: Extract<RepoSetupFileProposal, { ok: true }> }>(
+        .post<{ data: { requestId: string } }>(
           `/api/v1/repositories/${connectionId}/setup/pull-request`,
           { setup }
         )
         .then((r) => r.data),
+  });
+}
+
+/** Where a setup-file pull request stands; polled every two seconds while it is queued. */
+export function useSetupFileProposalStatus(connectionId: string, requestId: string | null) {
+  return useQuery({
+    enabled: Boolean(connectionId && requestId),
+    queryFn: () =>
+      api
+        .get<{ data: RepoSetupFileProposalStatus }>(
+          `/api/v1/repositories/${connectionId}/setup/pull-request/${requestId}`
+        )
+        .then((r) => r.data),
+    queryKey: ['repositories', connectionId, 'setup-file-request', requestId],
+    refetchInterval: (query) => (query.state.data?.status === 'queued' ? 2_000 : false),
   });
 }
 

@@ -20,7 +20,7 @@ import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { REPO_GATE_COMMAND_KEYS, type RepoGateCommands } from '@auto-swe/shared/types/api';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
-import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -128,6 +128,8 @@ const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 }).ext
 });
 
 const RepoParamsSchema = z.object({ id: z.string().uuid() });
+
+const setupFileRequestPrefix = (repoId: string) => `repo-setup-file-${repoId}-`;
 
 /** The full set of further teams to share a repository with; replaces the current set. */
 const SharesSchema = z.object({ teamIds: z.array(z.string().uuid()).max(50) });
@@ -1670,8 +1672,34 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
 
   // POST /api/v1/repositories/:id/setup/pull-request — open a pull request that adds
   // `.auto-swe/setup.yml`, written from the given definition, to the repository's default branch.
-  // The same role as changing the setup field: the file is code every workspace runs. Refused
-  // (409) when the default branch already has the file; this never edits one.
+  // The same role as changing the setup field: the file is code every workspace runs. A worker
+  // opens the pull request; this answers 202 with a request id at once, and the status route
+  // below reports it opened, or failed (`exists` when the default branch already has the file;
+  // this never edits one).
+  const setupFileRepo = async (request: FastifyRequest, id: string) => {
+    const user = requireUser(request);
+    const repo = await fastify.prisma.connection.findUnique({
+      select: { id: true, teamId: true, type: true },
+      where: { id },
+    });
+    if (repo?.type !== 'git_repo') {
+      return { error: 404 as const, ok: false as const };
+    }
+    if (!(await isShellAuthor(fastify, user, repo.teamId))) {
+      return { error: 403 as const, ok: false as const };
+    }
+    return { ok: true as const, repo, user };
+  };
+  const sendSetupFileRepoError = (reply: FastifyReply, error: 403 | 404) =>
+    error === 404
+      ? sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found')
+      : sendError(
+          reply,
+          403,
+          'REPO_SETUP_FORBIDDEN',
+          'Proposing a workspace setup file requires team-admin role'
+        );
+
   app.post(
     '/:id/setup/pull-request',
     {
@@ -1679,39 +1707,46 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { body: z.object({ setup: RepoSetupSchema }), params: RepoParamsSchema },
     },
     async (request, reply) => {
-      const user = requireUser(request);
-      const repo = await fastify.prisma.connection.findUnique({
-        select: { id: true, teamId: true, type: true },
-        where: { id: request.params.id },
+      const found = await setupFileRepo(request, request.params.id);
+      if (!found.ok) {
+        return sendSetupFileRepoError(reply, found.error);
+      }
+      const requestId = `${setupFileRequestPrefix(found.repo.id)}${crypto.randomBytes(8).toString('hex')}`;
+      await fastify.temporal.startRepoSetupFileProposal(requestId, {
+        connectionId: found.repo.id,
+        setup: request.body.setup,
       });
-      if (repo?.type !== 'git_repo') {
-        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
-      }
-      if (!(await isShellAuthor(fastify, user, repo.teamId))) {
-        return sendError(
-          reply,
-          403,
-          'REPO_SETUP_FORBIDDEN',
-          'Proposing a workspace setup file requires team-admin role'
-        );
-      }
-      const result = await fastify.temporal.proposeRepoSetupFile(
-        `repo-setup-file-${repo.id}-${crypto.randomBytes(8).toString('hex')}`,
-        { connectionId: repo.id, setup: request.body.setup }
-      );
-      if (!result.ok) {
-        return result.reason === 'exists'
-          ? sendError(reply, 409, 'REPO_SETUP_FILE_EXISTS', result.detail)
-          : sendError(reply, 400, 'VALIDATION_ERROR', result.detail);
-      }
       await writeAuditLog(fastify, {
         action: 'CREATE',
-        actor: user,
-        after: { setupFilePullRequest: result.prUrl },
-        entityId: repo.id,
+        actor: found.user,
+        after: { setupFilePullRequestRequested: requestId },
+        entityId: found.repo.id,
         entityType: 'Connection',
       });
-      return { data: result };
+      return reply.status(202).send({ data: { requestId } });
+    }
+  );
+
+  app.get(
+    '/:id/setup/pull-request/:requestId',
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: {
+        params: RepoParamsSchema.extend({ requestId: z.string().max(100) }),
+      },
+    },
+    async (request, reply) => {
+      const found = await setupFileRepo(request, request.params.id);
+      if (!found.ok) {
+        return sendSetupFileRepoError(reply, found.error);
+      }
+      // The id names its repository, so one repository's admin cannot read another's request.
+      const prefix = setupFileRequestPrefix(found.repo.id);
+      const { requestId } = request.params;
+      if (!requestId.startsWith(prefix) || !/^[0-9a-f]{16}$/.test(requestId.slice(prefix.length))) {
+        return sendError(reply, 404, 'NOT_FOUND', 'Setup file request not found');
+      }
+      return { data: await fastify.temporal.getRepoSetupFileProposalStatus(requestId) };
     }
   );
 

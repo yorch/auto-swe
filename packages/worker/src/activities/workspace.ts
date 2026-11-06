@@ -14,6 +14,7 @@ import {
   blockedEgressAllow,
   egressPolicyFailure,
   gitHostOf,
+  lfsStorageHostEntries,
   lfsStorageHosts,
   resolveRunEgressPolicy,
 } from '../lib/egressWiring.js';
@@ -1264,7 +1265,9 @@ export async function createWorkspace(
             ...(egressPolicy === 'restricted' && egress
               ? { egressProxyUrl: egress.registration.url }
               : {}),
-            ...(resolvedSetup?.setup.lfs ? { lfsHosts: lfsStorageHosts(gitHost) } : {}),
+            ...(resolvedSetup?.setup.lfs
+              ? { lfsHosts: lfsStorageHosts(gitHost, await lfsStorageHostEntries()) }
+              : {}),
             registryUrl: registry?.baseUrl,
           }),
           { mode: egressPolicy === 'restricted' ? 'restricted' : 'blocked' }

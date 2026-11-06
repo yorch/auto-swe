@@ -28,6 +28,8 @@ vi.mock('../lib/egressWiring.js', () => ({
   egressPolicyFailure: (message: string) =>
     ApplicationFailure.nonRetryable(message, 'EGRESS_POLICY_UNENFORCEABLE'),
   gitHostOf: (url: string) => new URL(url).hostname,
+  lfsStorageHostEntries: vi.fn(async () => []),
+  lfsStorageHosts: vi.fn(() => []),
   resolveRunEgressPolicy: vi.fn(async () => policy.value),
 }));
 
