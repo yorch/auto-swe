@@ -383,6 +383,7 @@ export async function reviewFixRetryState(db: PrismaClient, runId: string) {
     return {
       allowed: false as const,
       reason: typeof reason === 'string' ? reason : 'No retryable fix decision',
+      summary,
     };
   }
   const decisionKey = `${fire?.id ?? step.id}:${typeof fix.attemptId === 'string' ? fix.attemptId : 'initial'}`;
@@ -398,5 +399,15 @@ export async function reviewFixRetryState(db: PrismaClient, runId: string) {
 
 export async function reviewFixRetryMetadata(db: PrismaClient, runId: string) {
   const state = await reviewFixRetryState(db, runId);
+  if (state.summary) {
+    const retry = object(state.summary.fixRetry);
+    if (
+      typeof retry.attemptId === 'string' &&
+      retry.attemptId !== object(state.summary.fix).attemptId &&
+      retry.status === 'queued'
+    ) {
+      return { allowed: false, status: 'queued' as const };
+    }
+  }
   return { allowed: state.allowed, ...(!state.allowed ? { reason: state.reason } : {}) };
 }

@@ -1,3 +1,4 @@
+import type { Prisma } from '@auto-swe/shared';
 import { ReviewLaunchError, reviewFixRetryState } from '@auto-swe/shared/lib/reviewLaunch';
 import type { FastifyInstance } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
@@ -27,6 +28,18 @@ export async function queueReviewFixRetry(
     attemptId: state.attemptId,
     runId,
     ...(expected ? { automationId: expected.automationId } : {}),
+  });
+  await app.prisma.workflowStep.updateMany({
+    data: {
+      outputs: {
+        ...state.summary,
+        fixRetry: { attemptId: state.attemptId, status: 'queued' },
+      } as Prisma.InputJsonObject,
+    },
+    where: {
+      id: state.step.id,
+      outputs: { equals: state.summary as Prisma.InputJsonObject },
+    },
   });
   if (state.fire) {
     await app.prisma.automationFire.updateMany({

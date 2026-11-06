@@ -84,6 +84,17 @@ describe('run reviews', () => {
       true
     );
   });
+  it.each([true, false])(
+    'shows a durable queued retry after reload (canControl=%s)',
+    (canControl) => {
+      const detail = retryable(false, canControl);
+      Object.assign(detail.review?.fixRetry ?? {}, { status: 'queued' });
+      render(withQuery(<RunReviews run={detail} />));
+      const button = screen.getByRole('button', { name: 'Fix retry queued' }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(screen.queryByRole('button', { name: 'Retry fix' })).toBeNull();
+    }
+  );
   it.each([
     [false, true],
     [true, false],

@@ -380,6 +380,7 @@ export async function retryReviewFix(input: {
           attemptId: input.attemptId,
           decidedAt: new Date().toISOString(),
         },
+        fixRetry: { attemptId: input.attemptId, status: 'completed' },
       } as Prisma.InputJsonObject,
     },
     where: { id: state.step.id },

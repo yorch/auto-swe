@@ -5,6 +5,7 @@ import {
   loadReviewSource,
   prepareReviewLaunch,
   recordReviewLaunch,
+  reviewFixRetryMetadata,
   reviewFixRetryState,
   reviewRunId,
   reviewRunMetadata,
@@ -110,6 +111,65 @@ describe('review fix retry eligibility', () => {
     Object.assign(step.outputs.fix, { attemptId: 'previous-retry' });
     expect(await reviewFixRetryState(db, PRESET)).not.toEqual(first);
   });
+  it.each(['pr', 'stored'])(
+    'reports a durable queued %s retry until its decision resolves',
+    async (mode) => {
+      const { db, run, step } = fixture();
+      if (mode === 'stored') {
+        Object.assign(run.workRequest.payload, { reviewOf: { mode: 'stored' } });
+        Object.assign(db, {
+          workflowStep: {
+            findFirst: vi.fn().mockResolvedValue({ outputs: { diffVerified: true } }),
+          },
+        });
+      }
+      expect(await reviewFixRetryMetadata(db, PRESET)).toEqual({ allowed: true });
+      const state = await reviewFixRetryState(db, PRESET);
+      if (!state.allowed) {
+        throw new Error('Expected a retryable decision');
+      }
+      Object.assign(step.outputs, { fixRetry: { attemptId: state.attemptId, status: 'queued' } });
+      expect(await reviewFixRetryMetadata(db, PRESET)).toEqual({
+        allowed: false,
+        status: 'queued',
+      });
+      expect(await reviewFixRetryState(db, PRESET)).toMatchObject({
+        allowed: true,
+        attemptId: state.attemptId,
+      });
+      Object.assign(step.outputs.fix, { attemptId: state.attemptId, status: 'skipped' });
+      expect(await reviewFixRetryMetadata(db, PRESET)).toEqual({ allowed: true });
+      step.outputs.fix.status = 'started';
+      expect(await reviewFixRetryMetadata(db, PRESET)).toMatchObject({ allowed: false });
+      expect(await reviewFixRetryMetadata(db, PRESET)).not.toHaveProperty('status');
+    }
+  );
+  it('ignores a queued marker whose attempt has already resolved', async () => {
+    const { db, step } = fixture();
+    Object.assign(step.outputs, { fixRetry: { attemptId: 'older', status: 'queued' } });
+    Object.assign(step.outputs.fix, { attemptId: 'older' });
+    expect(await reviewFixRetryMetadata(db, PRESET)).toEqual({ allowed: true });
+  });
+  it.each(['STARTED', 'FAILED_TO_START', 'SUPPRESSED_COOLDOWN'])(
+    'keeps the retry pending while its worker records a new %s fire',
+    async (outcome) => {
+      const { db, step, fire } = fixture();
+      const state = await reviewFixRetryState(db, PRESET);
+      if (!state.allowed) {
+        throw new Error('Expected a retryable decision');
+      }
+      Object.assign(step.outputs, { fixRetry: { attemptId: state.attemptId, status: 'queued' } });
+      fire.mockResolvedValue({
+        id: 'retry-fire',
+        outcome,
+        reason: 'the fix workflow could not start',
+      });
+      expect(await reviewFixRetryMetadata(db, PRESET)).toEqual({
+        allowed: false,
+        status: 'queued',
+      });
+    }
+  );
   it('does not let an older fire override a newer permanent skip', async () => {
     const { db, step, fire } = fixture();
     fire.mockResolvedValue({

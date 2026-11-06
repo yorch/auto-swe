@@ -1,4 +1,5 @@
 import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
+import { reviewFixRetryMetadata } from '@auto-swe/shared/lib/reviewLaunch';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -214,6 +215,18 @@ async function fixture(role = 'ENGINEER') {
       findFirst: vi.fn().mockResolvedValue(source),
       findUnique: vi.fn().mockResolvedValue(source),
     },
+    workflowStep: {
+      updateMany: vi.fn(async ({ where, data }) => {
+        const step = (source.steps as { id: string; outputs: unknown }[]).find(
+          (s) => s.id === where.id
+        );
+        if (!step || JSON.stringify(step.outputs) !== JSON.stringify(where.outputs.equals)) {
+          return { count: 0 };
+        }
+        step.outputs = data.outputs;
+        return { count: 1 };
+      }),
+    },
     workflowTemplate: {
       findFirst: vi.fn().mockResolvedValue(template),
       findMany: vi.fn().mockResolvedValue([template]),
@@ -284,6 +297,37 @@ describe('review fix retry route', () => {
         where: { id: SOURCE, OR: expect.any(Array) },
       })
     );
+    await app.close();
+  });
+  it('keeps a retry queued in run detail after the request returns', async () => {
+    const { app, retryStart } = await ready();
+    expect(await reviewFixRetryMetadata(app.prisma, SOURCE)).toEqual({ allowed: true });
+    expect((await app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(202);
+    expect(await reviewFixRetryMetadata(app.prisma, SOURCE)).toEqual({
+      allowed: false,
+      status: 'queued',
+    });
+    expect(retryStart).toHaveBeenCalledOnce();
+    await app.close();
+  });
+  it('does not mark a failed enqueue as queued', async () => {
+    const { app, retryStart, db } = await ready();
+    retryStart.mockRejectedValueOnce(new Error('Temporal unavailable'));
+    expect((await app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(500);
+    expect(db.workflowStep.updateMany).not.toHaveBeenCalled();
+    expect(await reviewFixRetryMetadata(app.prisma, SOURCE)).toEqual({ allowed: true });
+    await app.close();
+  });
+  it('does not overwrite a decision completed before the queued marker is saved', async () => {
+    const { app, retryStart, source } = await ready();
+    const outputs = { approved: false, fix: { status: 'started' } };
+    retryStart.mockImplementationOnce(async () => {
+      Object.assign(source.steps[0] ?? {}, { outputs });
+    });
+    expect((await app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(202);
+    expect((source.steps[0] as unknown as { outputs: unknown }).outputs).toEqual(outputs);
+    expect(await reviewFixRetryMetadata(app.prisma, SOURCE)).toMatchObject({ allowed: false });
+    expect(await reviewFixRetryMetadata(app.prisma, SOURCE)).not.toHaveProperty('status');
     await app.close();
   });
   it.each(['VIEWER', undefined])('denies unauthenticated or viewer callers (%s)', async (role) => {

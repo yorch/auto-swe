@@ -207,9 +207,13 @@ export function RunReviews({ run }: { run: WorkflowRunDetail }) {
                   {typeof fix.workflowId === 'string' ? ` · ${fix.workflowId}` : ''}
                 </p>
               )}
-              {review.canControl && review.fixRetry?.allowed && (
+              {review.fixRetry?.status === 'queued' ? (
+                <Button disabled variant="secondary">
+                  Fix retry queued
+                </Button>
+              ) : review.canControl && review.fixRetry?.allowed ? (
                 <RetryFixButton key={String(fix.attemptId ?? 'initial')} runId={run.id} />
-              )}
+              ) : null}
             </>
           ) : (
             <p>No published verdict yet.</p>

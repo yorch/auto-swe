@@ -894,7 +894,7 @@ export interface AgentTraceRecord {
 export interface WorkflowRunDetail extends WorkflowRunSummary {
   review?: {
     canControl?: boolean;
-    fixRetry?: { allowed: boolean; reason?: string };
+    fixRetry?: { allowed: boolean; reason?: string; status?: 'queued' };
     reviewable: boolean;
     reason?: string;
     reviewOf?: { runId: string; templateName: string };

@@ -181,7 +181,11 @@ describe('review fix launches', () => {
       attemptId: 'attempt-2',
       payload,
       step: { id: 'publish' },
-      summary: { approved: false, findings: [] },
+      summary: {
+        approved: false,
+        findings: [],
+        fixRetry: { attemptId: 'attempt-2', status: 'queued' },
+      },
     });
     expect(await retryReviewFix({ attemptId: 'attempt-2', runId: RUN })).toMatchObject({
       status: 'started',
@@ -192,6 +196,7 @@ describe('review fix launches', () => {
           outputs: expect.objectContaining({
             approved: false,
             fix: expect.objectContaining({ attemptId: 'attempt-2', status: 'started' }),
+            fixRetry: { attemptId: 'attempt-2', status: 'completed' },
           }),
         },
       })
@@ -200,6 +205,30 @@ describe('review fix launches', () => {
       status: 'skipped',
     });
     expect(m.start).toHaveBeenCalledTimes(1);
+  });
+  it('resolves a queued retry after a launch error so it can be retried again', async () => {
+    m.retryState.mockResolvedValue({
+      allowed: true,
+      attemptId: 'attempt-2',
+      payload,
+      step: { id: 'publish' },
+      summary: { approved: false, fixRetry: { attemptId: 'attempt-2', status: 'queued' } },
+    });
+    m.repo.mockRejectedValueOnce(new Error('offline'));
+    expect(await retryReviewFix({ attemptId: 'attempt-2', runId: RUN })).toEqual({
+      reason: 'the fix launch failed',
+      status: 'skipped',
+    });
+    expect(m.updateStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          outputs: expect.objectContaining({
+            fix: expect.objectContaining({ attemptId: 'attempt-2', status: 'skipped' }),
+            fixRetry: { attemptId: 'attempt-2', status: 'completed' },
+          }),
+        },
+      })
+    );
   });
   it('still skips retry attempts when the reviewed head moved or round limit is exhausted', async () => {
     m.hostPr.mockResolvedValueOnce({
