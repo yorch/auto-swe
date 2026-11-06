@@ -8,6 +8,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveScheduledSweeps: () => ({
     agentTraceRollup: cfg,
     automationDecisionPrune: cfg,
+    knowledgeBaseSync: cfg,
     modelDiscovery: cfg,
     repoAccess: cfg,
     repoDependency: cfg,
@@ -25,6 +26,7 @@ import { syncSchedulesOnceConnected } from './startupScheduleSync.js';
 const SYNCS = [
   'syncConsolidationSchedule',
   'syncRepoDependencyScanSchedule',
+  'syncKnowledgeBaseSyncSchedule',
   'syncRepoAccessSyncSchedule',
   'syncModelDiscoverySchedule',
   'syncRunReaperSchedule',

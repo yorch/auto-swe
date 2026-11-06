@@ -208,6 +208,7 @@ vi.mock('@auto-swe/shared/db', () => ({
           : null;
       },
     },
+    knowledgeBase: { findMany: vi.fn(async (): Promise<unknown[]> => []) },
     runInput: {
       create: vi.fn(async (args: { data: Record<string, unknown> }) => {
         jiraPrismaState.runInputCreateCalls.push(args.data);
@@ -477,6 +478,7 @@ describe('webhook routes', () => {
           throw new Error(`temporal unreachable for ${workflowId}`);
         }
       },
+      startKnowledgeBaseIndex: vi.fn(async () => {}),
       startRunnableWorkflow: async (id: string, args: unknown) => {
         if (jiraStartFailure) {
           throw jiraStartFailure;
@@ -1145,6 +1147,19 @@ describe('webhook routes', () => {
 
     afterEach(() => {
       jiraPrismaState.activeRepo = null;
+      vi.mocked(prisma.knowledgeBase.findMany).mockResolvedValue([]);
+      vi.mocked(app.temporal.startKnowledgeBaseIndex).mockClear();
+    });
+
+    it('indexes a knowledge-base branch even when no push automation is configured', async () => {
+      jiraPrismaState.activeRepo = null;
+      vi.mocked(prisma.knowledgeBase.findMany).mockResolvedValueOnce([
+        { connection: { defaultBranch: 'main' }, defaultRef: null, id: 'kb-1' },
+      ] as never);
+      const response = await inject('/api/v1/webhooks/git', pushed, sign(pushed), PUSH);
+      expect(response.statusCode).toBe(200);
+      expect(app.temporal.startKnowledgeBaseIndex).toHaveBeenCalledWith('kb-1');
+      expect(handleOccurrence).not.toHaveBeenCalled();
     });
 
     it('acknowledges a push to a repository with no push automation, before the engine', async () => {

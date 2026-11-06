@@ -1469,6 +1469,7 @@ export interface ScheduledSweepsConfig {
   callbackDeliveryPrune: SweepSchedule;
   /// Refreshes the repo dependency graph from manifests and git signals.
   repoDependency: SweepSchedule;
+  knowledgeBaseSync: SweepSchedule;
   /// Asks each tracked skill source which commit its ref names now; only flags, never updates.
   skillSourceSync: SweepSchedule;
   /// Re-checks each Slack channel's privacy and records who is in each private one.
@@ -1578,6 +1579,10 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
       cronExpression: envCron('CALLBACK_DELIVERY_PRUNE_CRON', '47 4 * * *'),
       enabled: envFlag('CALLBACK_DELIVERY_PRUNE_ENABLED', true),
     },
+    knowledgeBaseSync: {
+      cronExpression: envCron('KNOWLEDGE_BASE_SYNC_CRON', '*/30 * * * *'),
+      enabled: envFlag('KNOWLEDGE_BASE_SYNC_ENABLED', true),
+    },
     modelDiscovery: {
       cronExpression: envCron('MODEL_DISCOVERY_CRON', '17 3 * * *'),
       enabled: envFlag('MODEL_DISCOVERY_ENABLED', true),
@@ -1637,6 +1642,8 @@ export function validateScheduledSweepsEnv(): string[] {
   check('REPO_ACCESS_SYNC_ENABLED', flag, "'true' or 'false'");
   check('REPO_ACCESS_SYNC_CRON', cron, 'a five-field cron expression such as "23 * * * *"');
   check('REPO_DEPENDENCY_SCAN_ENABLED', flag, "'true' or 'false'");
+  check('KNOWLEDGE_BASE_SYNC_ENABLED', flag, "'true' or 'false'");
+  check('KNOWLEDGE_BASE_SYNC_CRON', cron, 'a five-field cron expression such as "*/30 * * * *"');
   check('REPO_DEPENDENCY_SCAN_CRON', cron, 'a five-field cron expression such as "0 4 * * *"');
   check('MODEL_DISCOVERY_ENABLED', flag, "'true' or 'false'");
   check('MODEL_DISCOVERY_CRON', cron, 'a five-field cron expression such as "17 3 * * *"');

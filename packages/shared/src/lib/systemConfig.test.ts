@@ -1123,6 +1123,8 @@ describe('systemConfig resolvers', () => {
       'REPO_ACCESS_SYNC_CRON',
       'REPO_DEPENDENCY_SCAN_ENABLED',
       'REPO_DEPENDENCY_SCAN_CRON',
+      'KNOWLEDGE_BASE_SYNC_ENABLED',
+      'KNOWLEDGE_BASE_SYNC_CRON',
       'MODEL_DISCOVERY_ENABLED',
       'MODEL_DISCOVERY_CRON',
       'RUN_REAPER_ENABLED',
@@ -1156,6 +1158,24 @@ describe('systemConfig resolvers', () => {
       }
     });
 
+    it('configures and validates knowledge base sync overrides', () => {
+      vi.stubEnv('KNOWLEDGE_BASE_SYNC_ENABLED', 'false');
+      vi.stubEnv('KNOWLEDGE_BASE_SYNC_CRON', '0 * * * *');
+      expect(resolveScheduledSweeps().knowledgeBaseSync).toEqual({
+        cronExpression: '0 * * * *',
+        enabled: false,
+      });
+      expect(validateScheduledSweepsEnv()).toEqual([]);
+      vi.stubEnv('KNOWLEDGE_BASE_SYNC_ENABLED', 'yes');
+      vi.stubEnv('KNOWLEDGE_BASE_SYNC_CRON', 'daily');
+      expect(validateScheduledSweepsEnv()).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('KNOWLEDGE_BASE_SYNC_ENABLED'),
+          expect.stringContaining('KNOWLEDGE_BASE_SYNC_CRON'),
+        ])
+      );
+    });
+
     it('defaults: the access sync is off, the dependency scan and model discovery are on', () => {
       expect(resolveScheduledSweeps()).toEqual({
         agentTraceRollup: { backfillDays: 0, cronExpression: '13 1 * * *', enabled: true },
@@ -1164,6 +1184,7 @@ describe('systemConfig resolvers', () => {
         automationDecisionPrune: { cronExpression: '37 4 * * *', enabled: true },
         callbackDelivery: { cronExpression: '* * * * *', enabled: true },
         callbackDeliveryPrune: { cronExpression: '47 4 * * *', enabled: true },
+        knowledgeBaseSync: { cronExpression: '*/30 * * * *', enabled: true },
         modelDiscovery: { cronExpression: '17 3 * * *', enabled: true },
         repoAccess: { cronExpression: '23 * * * *', enabled: false },
         repoDependency: { cronExpression: '0 4 * * *', enabled: true },
@@ -1223,6 +1244,7 @@ describe('systemConfig resolvers', () => {
         automationDecisionPrune: { cronExpression: '1 2 * * *', enabled: false },
         callbackDelivery: { cronExpression: '*/2 * * * *', enabled: false },
         callbackDeliveryPrune: { cronExpression: '3 3 * * *', enabled: false },
+        knowledgeBaseSync: { cronExpression: '*/30 * * * *', enabled: true },
         modelDiscovery: { cronExpression: '0 5 * * 1', enabled: false },
         repoAccess: { cronExpression: '5 * * * *', enabled: true },
         repoDependency: { cronExpression: '30 2 * * 1', enabled: false },
@@ -1241,6 +1263,12 @@ describe('systemConfig resolvers', () => {
     });
 
     it('falls back to the default for a value it cannot use', () => {
+      vi.stubEnv('KNOWLEDGE_BASE_SYNC_CRON', 'daily');
+      vi.stubEnv('KNOWLEDGE_BASE_SYNC_ENABLED', 'yes');
+      expect(resolveScheduledSweeps().knowledgeBaseSync).toEqual({
+        cronExpression: '*/30 * * * *',
+        enabled: true,
+      });
       vi.stubEnv('REPO_ACCESS_SYNC_ENABLED', 'yes');
       vi.stubEnv('REPO_DEPENDENCY_SCAN_CRON', 'daily');
       vi.stubEnv('MODEL_DISCOVERY_ENABLED', 'off');

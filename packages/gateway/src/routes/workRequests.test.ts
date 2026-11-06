@@ -302,6 +302,7 @@ describe('POST /api/v1/work-requests', () => {
       syncChannelReactiveSchedule: async () => {},
       syncConsolidationSchedule: async () => {},
       syncEvalSchedule: async () => {},
+      syncKnowledgeBaseSyncSchedule: async () => {},
       syncModelDiscoverySchedule: async () => {},
       syncRepoAccessSyncSchedule: async () => {},
       syncRepoDependencyScanSchedule: async () => {},

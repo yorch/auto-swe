@@ -130,6 +130,30 @@ describe('GitHubScmProvider.listDirectory', () => {
   });
 });
 
+describe('GitHubScmProvider.resolveRef', () => {
+  const repo = { installationHost: 'github.com', organizationName: 'acme', repoName: 'docs' };
+  const provider = new GitHubScmProvider();
+  it.each(['main', 'v1.2.0', 'a'.repeat(40)])('resolves the commit behind %s', async (ref) => {
+    const sha = 'b'.repeat(40);
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ sha }), {
+        headers: { 'content-type': 'application/json' },
+        status: 200,
+      }) as never
+    );
+    expect(await provider.resolveRef(repo, ref)).toBe(sha);
+    expect(lastFetch().url).toContain(`/repos/acme/docs/commits/${ref}`);
+  });
+  it('returns null for a missing ref', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 404 }) as never);
+    expect(await provider.resolveRef(repo, 'missing')).toBeNull();
+  });
+  it('propagates an authentication failure', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 401 }) as never);
+    await expect(provider.resolveRef(repo, 'main')).rejects.toThrow();
+  });
+});
+
 describe('GitHubScmProvider.listTree', () => {
   const repo = {
     installationHost: 'github.com',

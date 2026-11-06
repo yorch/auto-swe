@@ -165,6 +165,7 @@ export type {
 } from './inferRepoDependencies.js';
 export { inferRepoDependencies } from './inferRepoDependencies.js';
 export { captureLearning, retrieveKnowledge } from './knowledge.js';
+export { getKnowledgeBasesForSync, indexKnowledgeBaseSnapshot } from './knowledgeBases.js';
 export type { ListProviderModelsInput, ListProviderModelsResult } from './listProviderModels.js';
 export { listProviderModels } from './listProviderModels.js';
 export type { McpCallToolInput, McpCallToolResult } from './mcpCallTool.js';

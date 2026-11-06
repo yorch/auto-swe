@@ -34,6 +34,9 @@ export async function syncSchedulesOnceConnected(
   // "re-scan" trigger has no handle to fire.
   const sweeps = resolveScheduledSweeps();
   app.temporal
+    .syncKnowledgeBaseSyncSchedule(sweeps.knowledgeBaseSync)
+    .catch(warn('knowledge base sync'));
+  app.temporal
     .syncRepoDependencyScanSchedule(sweeps.repoDependency)
     .catch(warn('repo dependency scan'));
   // Paused unless an admin has enabled it: it spends GitHub quota proportional to
