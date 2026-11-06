@@ -3,10 +3,15 @@
 import type { PullRequestCockpit, PullRequestCockpitFile } from '@auto-swe/shared/types/api';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { syntaxForDiff } from '@/lib/diffSyntax';
 import { clearViewport, mockViewport } from '@/test/matchMedia';
 import { installMemoryStorage } from '@/test/memoryStorage';
 import { bodyOf, setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import { PullRequestReview } from './PullRequestReview';
+
+// The real highlighter is exercised in its own tests; here the page only needs to know what it asks.
+vi.mock('@/lib/diffSyntax', () => ({ syntaxForDiff: vi.fn(async () => null) }));
+const syntaxFor = vi.mocked(syntaxForDiff);
 
 const DIGEST = 'a'.repeat(64);
 const PATCH = ['@@ -1,2 +1,3 @@', ' keep', '+added', ' tail'].join('\n');
@@ -397,6 +402,69 @@ describe('viewing files', () => {
     expect(
       spy.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')
     ).toBe(false);
+  });
+});
+
+describe('syntax colouring', () => {
+  beforeEach(() => {
+    syntaxFor.mockReset();
+    syntaxFor.mockResolvedValue(null);
+  });
+
+  const four = ['a.ts', 'b.ts', 'c.ts', 'd.ts'].map((path) => file({ path }));
+  const askedFor = () => syntaxFor.mock.calls.map(([path]) => path).sort();
+
+  it('is worked out for the files that are open, and not for the ones that are closed', async () => {
+    show(withFiles(four));
+    await waitFor(() => expect(askedFor()).toEqual(['a.ts', 'b.ts', 'c.ts']));
+    expect(askedFor()).not.toContain('d.ts');
+  });
+
+  it('is worked out for a file when it is opened', async () => {
+    show(withFiles(four));
+    await waitFor(() => expect(syntaxFor).toHaveBeenCalledTimes(3));
+    fireEvent.click(
+      screen
+        .getAllByRole('button', { name: /d\.ts/ })
+        .find((b) => b.hasAttribute('aria-expanded')) as HTMLElement
+    );
+    await waitFor(() => expect(askedFor()).toContain('d.ts'));
+  });
+
+  it('is not worked out again for a file that was closed and opened', async () => {
+    show(withFiles([file({ path: 'a.ts' })]));
+    await waitFor(() => expect(syntaxFor).toHaveBeenCalledTimes(1));
+    const header = () =>
+      screen
+        .getAllByRole('button', { name: /a\.ts/ })
+        .find((b) => b.hasAttribute('aria-expanded')) as HTMLElement;
+    fireEvent.click(header());
+    fireEvent.click(header());
+    await waitFor(() => expect(header().getAttribute('aria-expanded')).toBe('true'));
+    expect(syntaxFor).toHaveBeenCalledTimes(1);
+  });
+
+  it('is drawn when it arrives, with the text unchanged', async () => {
+    // 0 is the hunk header, 1 ' keep', 2 '+added', 3 ' tail'.
+    syntaxFor.mockResolvedValue(
+      new Map([
+        [2, [{ bold: false, dark: '#112233', italic: false, light: '#445566', text: 'added' }]],
+      ])
+    );
+    show(withFiles([file({ path: 'a.ts' })]));
+    await waitFor(() => expect(document.querySelectorAll('.syn')).toHaveLength(1));
+    const el = document.querySelector('.syn') as HTMLElement;
+    expect(el.textContent).toBe('added');
+    expect(el.style.getPropertyValue('--syn-light')).toBe('#445566');
+    expect(el.style.getPropertyValue('--syn-dark')).toBe('#112233');
+    expect(document.body.textContent).toContain('+added');
+  });
+
+  it('leaves a file that cannot be coloured as plain text', async () => {
+    show(withFiles([file({ path: 'photo.bin' })]));
+    await waitFor(() => expect(syntaxFor).toHaveBeenCalled());
+    expect(document.querySelectorAll('.syn')).toHaveLength(0);
+    expect(document.body.textContent).toContain('+added');
   });
 });
 

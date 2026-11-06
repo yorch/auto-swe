@@ -4,7 +4,7 @@ import type { PullRequestCockpit, PullRequestCockpitFile } from '@auto-swe/share
 import Link from 'next/link';
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { parseFilePatch } from '@/components/approvals/diffParse';
-import { DiffFile, type DiffMode } from '@/components/diff/DiffFile';
+import type { DiffMode } from '@/components/diff/DiffFile';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { ButtonLink } from '@/components/ui/Button';
@@ -31,6 +31,7 @@ import { cn, FOCUS_RING, plural } from '@/lib/utils';
 import { visibleText } from '@/lib/visibleText';
 import { FindingNote } from './FindingNote';
 import { ReviewBrief } from './ReviewBrief';
+import { ReviewDiffFile } from './ReviewDiffFile';
 
 /** Files open when the page loads; the rest wait to be opened, so a big change draws a few. */
 const OPEN_BY_DEFAULT = 3;
@@ -387,7 +388,7 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
                     </p>
                   ) : null}
                   {lines ? (
-                    <DiffFile
+                    <ReviewDiffFile
                       added={lines.added}
                       anchorId={fileAnchor(index)}
                       annotations={annotations.get(file.path)}
@@ -420,6 +421,7 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
                       name={file.path}
                       onToggle={() => setOpen((c) => ({ ...c, [file.path]: !isOpen(file.path) }))}
                       open={isOpen(file.path)}
+                      path={file.path}
                       previousName={file.previousPath}
                       removed={lines.removed}
                     />

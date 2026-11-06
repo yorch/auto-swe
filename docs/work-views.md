@@ -355,7 +355,8 @@ reload.
   and the diff, with the files to verify marked, the ones proven skimmable marked, each file
   collapsible and the first three open, in one column or, on a wide screen, split with the old
   version beside the new (a per-viewer choice kept in the browser; a narrow screen always uses one
-  column). Within an edited line the words that changed are marked, and a block of code removed in
+  column), with the code coloured by language in the colours of the viewer's theme once a file is
+  opened. Within an edited line the words that changed are marked, and a block of code removed in
   one place and added in another (in this file or another) is marked as moved on both sides. A rail
   lists the files with a filter (all, to verify,
   unviewed, skim) and a count of those viewed; `j` and `k` move between files and `v` marks one
@@ -387,12 +388,19 @@ text with invisible and direction-changing characters made visible, never markup
 
 - The outcomes `teamId` filter matches through the pull request's attribution run, so a pull request with no run, or a run with no attributed team, appears under no team's metrics (it still appears when no `teamId` is given).
 - The review page cannot comment, approve or request changes: review decisions are made on the
-  host. It has no syntax colouring.
+  host.
 - Each visit and each refresh of the review page asks the host for the pull request, and for its
   files when the head has moved or the copy is older than five minutes. The pull request read is
   conditional, so an unchanged one is cheap, but a changed one and every page of files are not. The
   page refreshes every minute while the pull request is open and stops once the host reports it closed
   or merged.
+- Code is coloured for the file types the page knows by name or extension (TypeScript, JavaScript,
+  JSON, YAML, Markdown, CSS, HTML, Python, Go, Rust, Java, shell, SQL, TOML, Prisma and a few more);
+  any other file draws plain. Colouring is worked out in the browser only for a file that is open, a
+  grammar is fetched the first time a file of its language is opened, and a file over 150,000
+  characters of patch draws plain. The old and new versions of each hunk are read separately, so a
+  hunk that starts inside a multi-line comment or string is coloured as if it began at its first
+  line. Until the colours arrive a file draws plain.
 - Changed words are marked only for a removed line and the added line that replaces it, when both
   are at most 500 characters and share a good part of their words; a rewrite is left plain. Moved
   code is found only by exact match, ignoring indentation and blank lines, in runs of at least three

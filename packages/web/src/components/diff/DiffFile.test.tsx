@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { SyntaxToken } from '@/lib/linePieces';
 import { parseFilePatch } from '../approvals/diffParse';
 import { DiffFile, type DiffFileProps, diffLineId } from './DiffFile';
 
@@ -352,5 +353,145 @@ describe('moved lines', () => {
     const { container } = render(<DiffFile {...props({ ...parsed })} />);
     expect(flagged(container)).toHaveLength(0);
     expect(container.textContent).not.toContain('Moved: ');
+  });
+});
+
+describe('syntax colouring', () => {
+  const tok = (
+    text: string,
+    light: string | null,
+    over: Partial<SyntaxToken> = {}
+  ): SyntaxToken => ({
+    bold: false,
+    dark: light === null ? null : '#eeeeee',
+    italic: false,
+    light,
+    text,
+    ...over,
+  });
+  // 0 is the hunk header, 1 the unchanged line, 2 the removed one, 3 the added one.
+  const PATCH_SYNTAX = ['@@ -1,2 +1,2 @@', ' const a = 1;', '-const b = 2;', '+const b = 3;'].join(
+    '\n'
+  );
+  const parsed = parseFilePatch(PATCH_SYNTAX);
+  const syntax = new Map<number, readonly SyntaxToken[]>([
+    [1, [tok('const', '#aa0000'), tok(' a = 1;', null)]],
+    [2, [tok('const', '#bb0000'), tok(' b = 2;', null)]],
+    [3, [tok('const', '#cc0000'), tok(' b = 3;', null)]],
+  ]);
+  const coloured = (container: HTMLElement) =>
+    [...container.querySelectorAll('.syn')].map((el) => [
+      el.textContent,
+      (el as HTMLElement).style.getPropertyValue('--syn-light'),
+      (el as HTMLElement).style.getPropertyValue('--syn-dark'),
+    ]);
+
+  it.each(['unified', 'split'] as const)(
+    'draws each token with both theme colours in %s mode',
+    (mode) => {
+      const { container } = render(<DiffFile {...props({ ...parsed, mode, syntax })} />);
+      const keywords = coloured(container).filter(([text]) => text === 'const');
+      expect(keywords).toEqual(
+        mode === 'unified'
+          ? [
+              ['const', '#aa0000', '#eeeeee'],
+              ['const', '#bb0000', '#eeeeee'],
+              ['const', '#cc0000', '#eeeeee'],
+            ]
+          : // An unchanged line is drawn once on each side, with the same colours.
+            [
+              ['const', '#aa0000', '#eeeeee'],
+              ['const', '#aa0000', '#eeeeee'],
+              ['const', '#bb0000', '#eeeeee'],
+              ['const', '#cc0000', '#eeeeee'],
+            ]
+      );
+    }
+  );
+
+  it('gives a token with no colour no colour variable, so it keeps the line’s own', () => {
+    const { container } = render(<DiffFile {...props({ ...parsed, syntax })} />);
+    const bare = [...container.querySelectorAll<HTMLElement>('.syn')].filter(
+      (el) => el.textContent === ' a = 1;'
+    );
+    expect(bare.length).toBeGreaterThan(0);
+    for (const el of bare) {
+      expect(el.style.getPropertyValue('--syn-light')).toBe('');
+      expect(el.style.getPropertyValue('--syn-dark')).toBe('');
+    }
+  });
+
+  it('keeps the text of every line exactly as the patch has it', () => {
+    const { container } = render(<DiffFile {...props({ ...parsed, syntax })} />);
+    const text = container.textContent ?? '';
+    expect(text).toContain(' const a = 1;');
+    expect(text).toContain('-const b = 2;');
+    expect(text).toContain('+const b = 3;');
+  });
+
+  it('draws plain text until the colours arrive, and when there are none', () => {
+    for (const none of [undefined, null]) {
+      const { container, unmount } = render(<DiffFile {...props({ ...parsed, syntax: none })} />);
+      expect(container.querySelectorAll('.syn')).toHaveLength(0);
+      expect(container.textContent).toContain('const a = 1;');
+      unmount();
+    }
+  });
+
+  it('ignores the colours of a line whose tokens do not add up to its text', () => {
+    const wrong = new Map<number, readonly SyntaxToken[]>([
+      [1, [tok('something else', '#aa0000')]],
+    ]);
+    const { container } = render(<DiffFile {...props({ ...parsed, syntax: wrong })} />);
+    expect(container.querySelectorAll('.syn')).toHaveLength(0);
+    expect(container.textContent).toContain('const a = 1;');
+    expect(container.textContent).not.toContain('something else');
+  });
+
+  it('applies italic and bold', () => {
+    const styled = new Map<number, readonly SyntaxToken[]>([
+      [1, [tok('const a = 1;', '#aa0000', { bold: true, italic: true })]],
+    ]);
+    const { container } = render(<DiffFile {...props({ ...parsed, syntax: styled })} />);
+    const el = container.querySelector('.syn') as HTMLElement;
+    expect(el.style.fontStyle).toBe('italic');
+    expect(el.style.fontWeight).toBe('600');
+  });
+
+  it('shows hidden characters inside a coloured token', () => {
+    const text = 'const s = "a‮b";';
+    const withHidden = parseFilePatch(['@@ -1 +1 @@', ` ${text}`].join('\n'));
+    const tokens = new Map<number, readonly SyntaxToken[]>([[1, [tok(text, '#aa0000')]]]);
+    const { container } = render(<DiffFile {...props({ ...withHidden, syntax: tokens })} />);
+    expect(container.textContent).toContain('a⟨U+202E⟩b');
+    expect(container.textContent).not.toContain('‮');
+  });
+
+  it('makes no markup from a token’s text', () => {
+    const text = '<img src=x onerror=alert(1)>';
+    const hostile = parseFilePatch(['@@ -1 +1 @@', ` ${text}`].join('\n'));
+    const tokens = new Map<number, readonly SyntaxToken[]>([[1, [tok(text, '#aa0000')]]]);
+    const { container } = render(<DiffFile {...props({ ...hostile, syntax: tokens })} />);
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.textContent).toContain(text);
+  });
+
+  it('shows the colours and the changed words together', () => {
+    const edit = parseFilePatch(
+      ['@@ -1 +1 @@', '-const total = price * count;', '+const total = price * quantity;'].join(
+        '\n'
+      )
+    );
+    const lineTokens = (line: string) => [tok('const', '#aa0000'), tok(line.slice(5), null)];
+    const both = new Map<number, readonly SyntaxToken[]>([
+      [1, lineTokens('const total = price * count;')],
+      [2, lineTokens('const total = price * quantity;')],
+    ]);
+    const { container } = render(<DiffFile {...props({ ...edit, syntax: both })} />);
+    expect([...container.querySelectorAll('mark')].map((m) => m.textContent)).toEqual([
+      'count',
+      'quantity',
+    ]);
+    expect(container.querySelectorAll('.syn').length).toBeGreaterThan(0);
   });
 });

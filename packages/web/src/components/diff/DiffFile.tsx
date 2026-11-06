@@ -1,9 +1,11 @@
 'use client';
 
-import { memo, type ReactNode, useMemo, useState } from 'react';
+import { type CSSProperties, memo, type ReactNode, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
+import type { LineSyntax } from '@/lib/diffSyntax';
 import { intraLineDiff, type Segment } from '@/lib/intraLineDiff';
+import { composePieces, type SyntaxToken } from '@/lib/linePieces';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { visibleText } from '@/lib/visibleText';
 import type { ParsedDiffLine } from '../approvals/diffParse';
@@ -35,35 +37,61 @@ const CHANGED_CLASS = {
 const MOVED_CLASS = 'border-l-2 border-info-400';
 
 /**
- * A line's text. With `segments`, the words the edit changed are marked and the rest is plain. It is
- * repository text either way: invisible and direction-changing characters are made visible, and it is
- * never markup. A tab is layout, so `multiline` keeps it.
+ * The colours of a token as inline custom properties, which `globals.css` turns into the colour
+ * for the viewer's theme. Only hex colours reach here (see `colorOrNull`), and a token with none
+ * draws in the line's own colour.
+ */
+function tokenStyle(token: SyntaxToken): CSSProperties {
+  return {
+    ...(token.dark !== null && { '--syn-dark': token.dark }),
+    ...(token.light !== null && { '--syn-light': token.light }),
+    ...(token.italic && { fontStyle: 'italic' }),
+    ...(token.bold && { fontWeight: 600 }),
+  } as CSSProperties;
+}
+
+/**
+ * A line's text: the words an edit changed are marked and the grammar's colours drawn, whichever of
+ * the two it has. It is repository text throughout: invisible and direction-changing characters are
+ * made visible, and it is never markup. A tab is layout, so `multiline` keeps it.
  */
 function LineText({
   kind,
   segments,
   text,
+  tokens,
 }: {
   kind: 'add' | 'del' | 'plain';
   segments: readonly Segment[] | undefined;
   text: string;
+  tokens: readonly SyntaxToken[] | undefined;
 }) {
-  if (segments === undefined || kind === 'plain') {
+  const pieces = composePieces(text, tokens, kind === 'plain' ? undefined : segments);
+  const only = pieces[0];
+  if (pieces.length === 1 && only && !only.changed && only.token === null) {
     return <>{visibleText(text, { multiline: true }) || ' '}</>;
   }
   return (
     <>
-      {segments.map((segment, i) =>
-        segment.changed ? (
-          // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional
-          <mark className={CHANGED_CLASS[kind]} key={i}>
-            {visibleText(segment.text, { multiline: true })}
+      {pieces.map((piece, i) => {
+        const className = cn(
+          piece.token && 'syn',
+          piece.changed && kind !== 'plain' && CHANGED_CLASS[kind]
+        );
+        const style = piece.token ? tokenStyle(piece.token) : undefined;
+        const content = visibleText(piece.text, { multiline: true });
+        return piece.changed ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: pieces are positional
+          <mark className={className} key={i} style={style}>
+            {content}
           </mark>
         ) : (
-          // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional
-          <span key={i}>{visibleText(segment.text, { multiline: true })}</span>
-        )
-      )}
+          // biome-ignore lint/suspicious/noArrayIndexKey: pieces are positional
+          <span className={className || undefined} key={i} style={style}>
+            {content}
+          </span>
+        );
+      })}
     </>
   );
 }
@@ -73,13 +101,15 @@ function DiffLine({
   line,
   moved = false,
   segments,
+  tokens,
 }: {
   id: string | undefined;
   line: ParsedDiffLine;
   moved?: boolean;
   segments?: readonly Segment[] | undefined;
+  tokens?: readonly SyntaxToken[] | undefined;
 }) {
-  const marked = segments !== undefined && (line.kind === 'add' || line.kind === 'del');
+  const hasMarker = line.kind === 'add' || line.kind === 'del' || line.kind === 'ctx';
   return (
     <div className={cn('flex', LINE_CLASS[line.kind], moved && MOVED_CLASS)} id={id}>
       {moved ? <span className="sr-only">Moved: </span> : null}
@@ -96,18 +126,19 @@ function DiffLine({
         {line.newNo ?? ''}
       </span>
       <span className="whitespace-pre px-2">
-        {marked ? (
+        {hasMarker ? (
           <>
-            {/* The patch's `+` or `-`, kept out of the words so it is never marked as changed. */}
-            {line.text.slice(0, 1)}
+            {/* The patch's `+`, `-` or space, kept out of the words so it is never marked or coloured. */}
+            {visibleText(line.text.slice(0, 1))}
             <LineText
-              kind={line.kind as 'add' | 'del'}
+              kind={line.kind === 'ctx' ? 'plain' : (line.kind as 'add' | 'del')}
               segments={segments}
               text={line.text.slice(1)}
+              tokens={tokens}
             />
           </>
         ) : (
-          <LineText kind="plain" segments={undefined} text={line.text} />
+          <LineText kind="plain" segments={undefined} text={line.text} tokens={undefined} />
         )}
       </span>
     </div>
@@ -121,12 +152,14 @@ function SplitCell({
   id,
   moved,
   segments,
+  tokens,
 }: {
   borderRight: boolean;
   cell: DiffCell | null;
   id: string | undefined;
   moved: boolean;
   segments: readonly Segment[] | undefined;
+  tokens: readonly SyntaxToken[] | undefined;
 }) {
   if (cell === null) {
     return (
@@ -159,6 +192,7 @@ function SplitCell({
           kind={cell.kind === 'ctx' ? 'plain' : cell.kind}
           segments={segments}
           text={cell.text}
+          tokens={tokens}
         />
       </span>
     </div>
@@ -171,12 +205,14 @@ function SplitRow({
   edits,
   moved,
   row,
+  syntax,
 }: {
   anchorId: string | undefined;
   annotations: ReadonlyMap<number, ReactNode> | undefined;
   edits: ReadonlyMap<number, readonly Segment[]> | null;
   moved: ReadonlySet<number> | undefined;
   row: DiffRow;
+  syntax: LineSyntax | undefined;
 }) {
   if (row.type === 'full') {
     return <DiffLine id={undefined} line={row.line} />;
@@ -194,6 +230,7 @@ function SplitRow({
           id={undefined}
           moved={row.left?.kind === 'del' && moved?.has(row.left.index) === true}
           segments={row.left ? edits?.get(row.left.index) : undefined}
+          tokens={row.left ? syntax?.get(row.left.index) : undefined}
         />
         <SplitCell
           borderRight={false}
@@ -201,6 +238,7 @@ function SplitRow({
           id={lineId}
           moved={row.right?.kind === 'add' && moved?.has(row.right.index) === true}
           segments={row.right ? edits?.get(row.right.index) : undefined}
+          tokens={row.right ? syntax?.get(row.right.index) : undefined}
         />
       </div>
       {note !== undefined ? (
@@ -239,6 +277,11 @@ export type DiffFileProps = {
    * to somewhere else in the change. They are marked, not otherwise changed. Keep it stable.
    */
   moved?: ReadonlySet<number> | undefined;
+  /**
+   * The grammar's colours for the lines, by the index of the line, once they have been worked out;
+   * absent until then, and for a file whose language is not known. The lines draw plain meanwhile.
+   */
+  syntax?: LineSyntax | null | undefined;
 };
 
 /**
@@ -283,6 +326,7 @@ function DiffFileImpl({
   previousName,
   removed,
   rowLimit = DEFAULT_ROW_LIMIT,
+  syntax,
 }: DiffFileProps) {
   const [limit, setLimit] = useState(rowLimit);
   // Paired only while the file is open: a closed file draws, and so computes, nothing. Both layouts
@@ -342,6 +386,7 @@ function DiffFileImpl({
                     key={n}
                     moved={moved}
                     row={row}
+                    syntax={syntax ?? undefined}
                   />
                 ))
               : shown.map((line, n) => {
@@ -358,6 +403,7 @@ function DiffFileImpl({
                         line={line}
                         moved={moved?.has(n) === true && line.kind !== 'ctx'}
                         segments={edits?.get(n)}
+                        tokens={syntax?.get(n)}
                       />
                       {note !== undefined && line.kind !== 'del' ? (
                         <div className="border-y border-ink-600/60 bg-ink-900 px-3 py-2 font-sans">

@@ -619,3 +619,12 @@
   outline-offset: 2px;
   border-radius: 2px;
 }
+/* Syntax colouring in the review page's diff. A token carries its colour for each theme as custom
+   properties (see `tokenStyle` in DiffFile), and the viewer's theme picks one. Dark is the default
+   theme, so it is the base rule; a token with no colour for a theme draws in the line's own. */
+.syn {
+  color: var(--syn-dark, inherit);
+}
+:root[data-theme='light'] .syn {
+  color: var(--syn-light, inherit);
+}
