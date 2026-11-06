@@ -1762,7 +1762,7 @@ export const SETTING_DEFINITIONS = {
       'github.com=media.githubusercontent.com',
     ],
     description:
-      'Hosts a git host serves Git LFS files from, as `git-host=storage-host` entries (comma-separated; one entry per storage host, host or host:port). Under the `blocked` and `restricted` egress policies, a workspace whose setup sets `lfs: true` may also reach the storage hosts listed for its repository\'s git host. An LFS server that serves files from its own host needs no entry.',
+      "Hosts a git host serves Git LFS files from, as `git-host=storage-host` entries (comma-separated; one entry per storage host, host or host:port). Under the `blocked` and `restricted` egress policies, a workspace whose setup sets `lfs: true` may also reach the storage hosts listed for its repository's git host. An LFS server that serves files from its own host needs no entry.",
     group: 'workspace',
     label: 'Git LFS storage hosts',
     overridableAt: [],

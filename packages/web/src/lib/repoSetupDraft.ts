@@ -19,6 +19,8 @@ export interface RepoSetupDraft {
   submodules: SubmodulesChoice;
   lfs: boolean;
   env: Array<{ key: string; value: string }>;
+  /** Setup secret names, one per line or comma-separated. */
+  secrets: string;
   steps: SetupStepDraft[];
   /** One path per line. */
   cachePaths: string;
@@ -35,6 +37,7 @@ export function setupDraft(setup: RepoSetup | null | undefined): RepoSetupDraft 
     enabled: setup != null,
     env: Object.entries(setup?.env ?? {}).map(([key, value]) => ({ key, value })),
     lfs: setup?.lfs ?? false,
+    secrets: (setup?.secrets ?? []).join('\n'),
     steps: (setup?.steps ?? []).map((s) => ({
       name: s.name ?? '',
       run: s.run,
@@ -71,6 +74,13 @@ export function draftToSetup(
   const env = draft.env.filter((e) => e.key.trim() || e.value);
   if (env.length) {
     value.env = Object.fromEntries(env.map((e) => [e.key.trim(), e.value]));
+  }
+  const secrets = draft.secrets
+    .split(/[\n,]/)
+    .map((n) => n.trim())
+    .filter(Boolean);
+  if (secrets.length) {
+    value.secrets = secrets;
   }
   const steps = [];
   for (const [i, s] of draft.steps.entries()) {

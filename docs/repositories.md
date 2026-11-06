@@ -487,7 +487,8 @@ The definition is one schema (`RepoSetupSchema`, in `@auto-swe/shared/lib/repoSe
 the first of:
 
 1. the repository's `setup` field (`Connection.setup`), set in the connection form's **Workspace
-   setup** section (fields for submodules, LFS, steps, cache and env; no JSON to write), with
+   setup** section (fields for submodules, LFS, steps, cache, env and secret names; no JSON to
+   write), with
    `auto-swe repos setup <org/name> --file=setup.yml`, or as `setup` on
    `POST`/`PATCH /api/v1/repositories`;
 2. `.auto-swe/setup.yml` in the commit the workspace was cut from — the run's base branch, never
@@ -512,6 +513,7 @@ the first of:
 submodules: recursive   # false | true | recursive
 lfs: true
 env: { CI: "1" }        # upper-case names; not for secrets
+secrets: [NPM_TOKEN]    # setup secrets saved on the repository, by name
 steps:
   - name: install
     run: yarn install --immutable
@@ -520,7 +522,7 @@ steps:
     workdir: packages/api # relative to the checkout
 cache:
   paths: [node_modules, ~/.cache/yarn]
-  keyFiles: [yarn.lock]
+  keyFiles: [yarn.lock, "packages/*/package.json"]   # paths or globs over tracked files
 ```
 
 **Writing the file.** Three ways start one from the same stack defaults:
@@ -533,9 +535,26 @@ cache:
 - the panel's **Open a PR adding .auto-swe/setup.yml** button (`POST
   /api/v1/repositories/:id/setup/pull-request` with `{ setup }`) commits the file through the
   host's API to a fresh `<BRANCH_PREFIX>/setup-yml-<hex8>` branch cut from the default branch and
-  opens a pull request, under the same permission as the field and written to the audit log. It is
-  refused (409 `REPO_SETUP_FILE_EXISTS`) when the default branch already has the file: it never
-  edits one.
+  opens a pull request, under the same permission as the field and written to the audit log. The
+  request is validated and answered at once (`202` with a `requestId`); the worker does the rest,
+  and the form polls `GET /api/v1/repositories/:id/setup/pull-request/:requestId`, which reports
+  `queued`, `opened` (with the branch and pull request) or `failed` (with a reason). A request no
+  worker finishes within 10 minutes fails. It fails with `exists` when the default branch already
+  has the file: it never edits one.
+
+**Setup secrets.** A step that needs a credential, say for a private registry the
+[registry proxy](./package-registries.md) does not cover, names it under `secrets`. The value is
+saved on the repository, in the form's **Setup secrets** panel or with `PUT
+/api/v1/repositories/:id/setup/secrets/:name` (`{ value }`), by the people who may edit the
+definition. It is stored encrypted with `CONFIG_ENCRYPTION_KEY` (and re-encrypted by key rotation),
+and is write-only: `GET …/setup/secrets` and the form show only each name, its last four characters
+and when it changed; `DELETE …/setup/secrets/:name` removes one. A repository holds at most 20. The
+worker decrypts the named secrets right before the steps, hands them to each step as environment
+variables through the workspace's secret channel (never the exec command line or the audit line),
+and masks them in the output tail. The agent's own commands never get them. A name the repository
+holds no value for, or one that cannot be decrypted, fails setup with `WORKSPACE_SETUP_FAILED`. A
+name may not be both an `env` key and a secret. Saving and deleting are written to the audit log,
+by name only.
 
 A file is at most 64 KiB and 20 steps; unknown keys, absolute paths and `..` are refused. Setting
 or changing the field takes the same permission as [gate commands](#gate-commands) and is written
@@ -549,10 +568,15 @@ asks for runs after the network lock, as the workspace's normal user:
    fetch carries a credential minted for that repository, never the parent's; on a GitHub App that
    needs the App installed on the submodule's repository. Another host, scheme or shape fails setup.
    `recursive` follows nested submodules three levels deep, 25 in all.
-2. **LFS**: `git lfs pull` against the repository's own LFS endpoint. The image needs `git-lfs`.
-   Under a `blocked` or `restricted` egress policy, the lock also admits github.com's LFS content
-   hosts when the definition asks for LFS.
-3. **Cache restore**, then the **steps** in order, each with `env` and its own timeout. The network
+2. **LFS**: `git lfs pull` in the repository and in every submodule fetched in step 1, each against
+   its own repository's LFS endpoint with its own credential. The image needs `git-lfs`. Under a
+   `blocked` or `restricted` egress policy, the lock also admits the storage hosts that
+   `workspace.lfsStorageHosts` lists for the repository's git host when the definition asks for
+   LFS. That platform-admin setting holds `git-host=storage-host` entries (host or `host:port`) and
+   lists github.com's two content hosts by default; an LFS server that serves files from its own
+   host needs none. A repository cannot widen it.
+3. **Cache restore**, then the **steps** in order, each with `env`, the named secrets and its own
+   timeout. The network
    is what the egress policy leaves, so installs go through the
    [registry proxy](./package-registries.md).
 4. **Cache save** on a miss, before any agent has run.
@@ -566,7 +590,11 @@ agent's tree runs none.
 **Dependency cache.** With `cache`, the listed paths (relative to the checkout, or `~/` for the
 home directory) are saved as one gzipped tarball in the artifact store after a successful setup,
 and restored before the steps of the next workspace with the same key: the repository's team, the
-repository, the definition, the contents of `keyFiles`, the image and the CPU architecture. Teams
+repository, the definition, the contents of `keyFiles`, the image and the CPU architecture. A
+`keyFiles` entry with `*`, `**` or `?` is a glob over the files git tracks (no absolute paths or
+`..`); the paths it matches and their contents both go into the key, so adding a matching file
+starts a fresh cache, and a key over more than 500 files fails setup. The Gradle default keys on
+`**/build.gradle` and `**/build.gradle.kts`, so a subproject's build file counts. Teams
 never share a cache; repositories with no team share one scope. The steps still run,
 so an install on a restored tree is quick rather than skipped. The tarball is capped by
 `workspace.setupCacheMaxMb` (1024 by default, `0` turns caching off); a larger one is not stored. A
@@ -682,18 +710,20 @@ longer fit.
 - **Workspace setup files that git tracks become part of the change.** Setup runs on the tree the
   agent then edits, so a step that rewrites a tracked file puts that rewrite in the diff. Keep setup
   output in ignored paths.
-- **LFS objects are fetched for the top-level repository only**, not inside submodules. Off
-  github.com, an LFS server that hands out object URLs on another host is not admitted by the
-  network lock.
+- **LFS storage off the git host needs a platform admin.** Under `blocked` or `restricted`, an LFS
+  server that hands out object URLs on a host `workspace.lfsStorageHosts` does not list for the
+  repository's git host fails setup.
 - **A dependency cache is shared within a team by every workspace with the same key.** The key
   covers the team, the repository, the definition, the key files, the image and the architecture,
   not the run, and a hit is restored before the steps run. It is saved before any agent code runs,
   but the setup steps themselves run the repository's code. Repositories with no team share one
   scope.
-- **Stack-default cache keys miss nested build files.** A Gradle default keys on the root build
-  and settings files, the version catalog and the wrapper properties; a dependency declared only in
-  a subproject's build file does not start a fresh cache (the install still fetches it).
-- **Setup `env` values are passed on the command line of the exec**, so they are not for secrets.
+- **Setup `env` values are passed on the command line of the exec**, so they are not for secrets;
+  setup secrets are the way to give a step a credential.
+- **Setup secrets reach the setup steps' processes.** A step can write a secret into the tree or a
+  file the agent later reads; the platform masks it only in the output tail it records.
+- **An eval case has no repository to read setup secrets from**, so an eval whose pinned setup names
+  secrets fails setup.
 - **The access test does not look at webhooks.** Listing a repository's hooks needs an
   administrative permission the platform's credential does not otherwise hold, so a missing or
   mis-signed webhook is not found by it. An installation token reports no permission level for a

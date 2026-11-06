@@ -22,8 +22,23 @@ const artifacts = vi.hoisted(() => ({
   putArtifact: vi.fn(async () => ({ id: 'art-new', sizeBytes: 3 })),
 }));
 
+const setupSecrets = vi.hoisted(() => ({
+  findMany: vi.fn(async (): Promise<Array<Record<string, unknown>>> => []),
+}));
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { team: { findUnique: vi.fn(async () => null) }, workspaceSetupCache: cache },
+  prisma: {
+    repoSetupSecret: setupSecrets,
+    team: { findUnique: vi.fn(async () => null) },
+    workspaceSetupCache: cache,
+  },
+}));
+vi.mock('@auto-swe/shared/lib/crypto', () => ({
+  decryptSecret: ({ ciphertext }: { ciphertext: Buffer }) => {
+    if (ciphertext.toString() === 'corrupt') {
+      throw new Error('auth tag mismatch');
+    }
+    return `plain-${ciphertext.toString()}`;
+  },
 }));
 vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async (key: string) => h.settings[key]),
@@ -39,6 +54,7 @@ import type { RepoSetup } from '@auto-swe/shared/lib/repoSetup';
 import type { CapturedResult } from './execUtils.js';
 import {
   fetchSubmodules,
+  loadSetupSecrets,
   parseGitmodules,
   type RepoSetupHost,
   readSetupFile,
@@ -426,5 +442,70 @@ describe('sweepSetupCaches', () => {
     await expect(sweepSetupCaches(new Date('2026-11-06T00:00:00Z'))).resolves.toBe(1);
     expect(artifacts.deleteArtifact).toHaveBeenCalledWith('a1');
     expect(cache.delete).toHaveBeenCalledWith({ where: { id: 'r1' } });
+  });
+});
+
+describe('setup secrets', () => {
+  const row = (name: string, sealed = name) => ({
+    name,
+    valueAuthTag: Buffer.from('t'),
+    valueCiphertext: Buffer.from(sealed),
+    valueKeyVersion: 1,
+    valueNonce: Buffer.from('n'),
+  });
+
+  it('reads nothing when the definition names no secrets', async () => {
+    setupSecrets.findMany.mockClear();
+    await expect(loadSetupSecrets('repo-1', [])).resolves.toEqual({});
+    expect(setupSecrets.findMany).not.toHaveBeenCalled();
+  });
+
+  it("decrypts the named secrets from the repository's own store", async () => {
+    setupSecrets.findMany.mockResolvedValueOnce([row('NPM_TOKEN')]);
+    await expect(loadSetupSecrets('repo-1', ['NPM_TOKEN'])).resolves.toEqual({
+      NPM_TOKEN: 'plain-NPM_TOKEN',
+    });
+    expect(setupSecrets.findMany).toHaveBeenLastCalledWith({
+      where: { connectionId: 'repo-1', name: { in: ['NPM_TOKEN'] } },
+    });
+  });
+
+  it('fails setup on a secret the repository does not hold', async () => {
+    setupSecrets.findMany.mockResolvedValueOnce([row('NPM_TOKEN')]);
+    await expect(loadSetupSecrets('repo-1', ['NPM_TOKEN', 'PIP_TOKEN'])).rejects.toMatchObject({
+      message: expect.stringContaining('not set on the repository: PIP_TOKEN'),
+      type: WORKSPACE_SETUP_FAILED,
+    });
+  });
+
+  it('fails setup without a repository to read from', async () => {
+    await expect(loadSetupSecrets(null, ['NPM_TOKEN'])).rejects.toMatchObject({
+      type: WORKSPACE_SETUP_FAILED,
+    });
+  });
+
+  it('fails setup on a value that cannot be decrypted, without echoing it', async () => {
+    setupSecrets.findMany.mockResolvedValueOnce([row('NPM_TOKEN', 'corrupt')]);
+    const err = await loadSetupSecrets('repo-1', ['NPM_TOKEN']).catch((e: Error) => e);
+    expect(String((err as Error).message)).toContain('could not be decrypted');
+    expect(String((err as Error).message)).not.toContain('corrupt');
+  });
+
+  it('hands values to the steps as secret environment, never as plain env', async () => {
+    const host = fakeHost();
+    const setup: RepoSetup = { env: { CI: '1' }, secrets: ['NPM_TOKEN'], steps: [{ run: 'yarn' }] };
+    await runSetupStepsPhase(
+      host,
+      setup,
+      { cleanUrl: PARENT, image: 'img', teamId: null },
+      { NPM_TOKEN: 'npm_abc123' }
+    );
+    const [command, opts] = vi.mocked(host.capture).mock.calls[0] as unknown as [
+      string,
+      { env?: string[]; secretEnv?: Record<string, string> },
+    ];
+    expect(opts.secretEnv).toEqual({ NPM_TOKEN: 'npm_abc123' });
+    expect(opts.env).toEqual(['CI=1']);
+    expect(command).not.toContain('npm_abc123');
   });
 });

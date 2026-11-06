@@ -239,9 +239,7 @@ describe('lfsStorageHosts', () => {
       'github-cloud.githubusercontent.com',
       'media.githubusercontent.com',
     ]);
-    expect(lfsStorageHosts('git.corp.example', entries)).toEqual([
-      'lfs-objects.corp.example:9000',
-    ]);
+    expect(lfsStorageHosts('git.corp.example', entries)).toEqual(['lfs-objects.corp.example:9000']);
     expect(lfsStorageHosts('ghe.example.com', entries)).toEqual([]);
     expect(lfsStorageHosts(null, entries)).toEqual([]);
   });

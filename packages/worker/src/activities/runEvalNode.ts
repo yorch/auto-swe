@@ -237,6 +237,7 @@ async function evaluateScorer(
           authedRepoUrl: authedCloneUrl,
           branch,
           command,
+          connectionId: repo.id,
           defaultBranch: repo.defaultBranch,
           // Score the candidate's already-pushed branch (not a fresh branch cut
           // from defaultBranch), on the repo's configured toolchain image.

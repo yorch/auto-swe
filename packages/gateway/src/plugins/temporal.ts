@@ -958,6 +958,49 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       }
     },
 
+    async getRepoSetupFileProposalStatus(workflowId: string): Promise<RepoSetupFileProposalStatus> {
+      const handle = client.workflow.getHandle(workflowId);
+      let desc: Awaited<ReturnType<typeof handle.describe>>;
+      try {
+        desc = await handle.describe();
+      } catch (err) {
+        // Only "no such execution" says anything about the request; Temporal being unreachable
+        // must not read as a failure the user would then retry.
+        if (getErrorName(err) !== 'WorkflowNotFoundError') {
+          throw err;
+        }
+        return { detail: 'request not found', reason: 'error', status: 'failed' };
+      }
+      const name = desc.status.name;
+      if (name === 'RUNNING') {
+        return { status: 'queued' };
+      }
+      if (name === 'TIMED_OUT') {
+        return {
+          detail: `no worker finished the request within ${REPO_SETUP_FILE_PROPOSAL_TIMEOUT}`,
+          reason: 'error',
+          status: 'failed',
+        };
+      }
+      try {
+        const result = (await handle.result()) as RepoSetupFileProposal;
+        return result.ok
+          ? {
+              branch: result.branch,
+              prNumber: result.prNumber,
+              prUrl: result.prUrl,
+              status: 'opened',
+            }
+          : { detail: result.detail, reason: result.reason, status: 'failed' };
+      } catch (err) {
+        return {
+          detail: err instanceof Error ? err.message : 'the request failed',
+          reason: 'error',
+          status: 'failed',
+        };
+      }
+    },
+
     async getRevalidationScheduleStatus(): Promise<RevalidationScheduleStatus> {
       try {
         const handle = schedules.getHandle(REVALIDATION_SCHEDULE_ID);
@@ -1155,63 +1198,6 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       })) as ExecutorImageProbeResult;
     },
 
-    async startRepoSetupFileProposal(
-      workflowId: string,
-      input: { connectionId: string; setup: unknown }
-    ): Promise<void> {
-      await client.workflow.start('RepoSetupFileProposalWorkflow', {
-        args: [input],
-        taskQueue: 'engineering-workflow',
-        workflowExecutionTimeout: REPO_SETUP_FILE_PROPOSAL_TIMEOUT,
-        workflowId,
-      });
-    },
-
-    async getRepoSetupFileProposalStatus(
-      workflowId: string
-    ): Promise<RepoSetupFileProposalStatus> {
-      const handle = client.workflow.getHandle(workflowId);
-      let desc: Awaited<ReturnType<typeof handle.describe>>;
-      try {
-        desc = await handle.describe();
-      } catch (err) {
-        // Only "no such execution" says anything about the request; Temporal being unreachable
-        // must not read as a failure the user would then retry.
-        if (getErrorName(err) !== 'WorkflowNotFoundError') {
-          throw err;
-        }
-        return { detail: 'request not found', reason: 'error', status: 'failed' };
-      }
-      const name = desc.status.name;
-      if (name === 'RUNNING') {
-        return { status: 'queued' };
-      }
-      if (name === 'TIMED_OUT') {
-        return {
-          detail: `no worker finished the request within ${REPO_SETUP_FILE_PROPOSAL_TIMEOUT}`,
-          reason: 'error',
-          status: 'failed',
-        };
-      }
-      try {
-        const result = (await handle.result()) as RepoSetupFileProposal;
-        return result.ok
-          ? {
-              branch: result.branch,
-              prNumber: result.prNumber,
-              prUrl: result.prUrl,
-              status: 'opened',
-            }
-          : { detail: result.detail, reason: result.reason, status: 'failed' };
-      } catch (err) {
-        return {
-          detail: err instanceof Error ? err.message : 'the request failed',
-          reason: 'error',
-          status: 'failed',
-        };
-      }
-    },
-
     async sendAssistantTurn(input, turn) {
       await client.workflow.signalWithStart(ASSISTANT_CONVERSATION_WORKFLOW, {
         args: [input],
@@ -1406,6 +1392,18 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
           throw err;
         }
       }
+    },
+
+    async startRepoSetupFileProposal(
+      workflowId: string,
+      input: { connectionId: string; setup: unknown }
+    ): Promise<void> {
+      await client.workflow.start('RepoSetupFileProposalWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: REPO_SETUP_FILE_PROPOSAL_TIMEOUT,
+        workflowId,
+      });
     },
 
     async startRunnableWorkflow(

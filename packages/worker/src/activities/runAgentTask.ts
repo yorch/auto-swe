@@ -279,7 +279,7 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
         egressPolicy,
         knowledgeBaseSnapshotIds: references.snapshotIds,
         knowledgeBases: references.checkouts,
-        repoSetup: { field: repo.setup },
+        repoSetup: { connectionId: repo.id, field: repo.setup },
         services,
         teamId: repo.teamId,
       }

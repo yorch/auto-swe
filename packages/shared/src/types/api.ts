@@ -277,6 +277,13 @@ export type RepoSetupFileProposal =
  * Where a request to open that pull request stands. `queued` until a worker has finished it;
  * `failed` carries the refusal (`exists`, ...) or `error` when the request itself did not finish.
  */
+/** A repository setup secret as the API shows it: never the value. */
+export interface RepoSetupSecretSummary {
+  name: string;
+  lastFour: string;
+  updatedAt: string;
+}
+
 export type RepoSetupFileProposalStatus =
   | { status: 'queued' }
   | { status: 'opened'; branch: string; prNumber: number; prUrl: string }

@@ -50,3 +50,19 @@ describe('repoSetupDraft', () => {
     expect(draftToSetup({ ...base, cacheKeyFiles: 'yarn.lock' }).ok).toBe(false);
   });
 });
+
+describe('setup secret names', () => {
+  it('round-trips the names, one per line or comma-separated', () => {
+    const draft = {
+      ...setupDraft(null),
+      enabled: true,
+      secrets: 'NPM_TOKEN, PIP_TOKEN\nGH_PACKAGES',
+    };
+    const result = draftToSetup(draft);
+    expect(result).toMatchObject({
+      ok: true,
+      setup: { secrets: ['NPM_TOKEN', 'PIP_TOKEN', 'GH_PACKAGES'] },
+    });
+    expect(setupDraft({ secrets: ['NPM_TOKEN'] }).secrets).toBe('NPM_TOKEN');
+  });
+});

@@ -674,7 +674,7 @@ describe('runAgentNode', () => {
           detectedStack: undefined,
           knowledgeBaseSnapshotIds: [],
           knowledgeBases: [],
-          repoSetup: { defer: true, field: undefined },
+          repoSetup: { connectionId: expect.any(String), defer: true, field: undefined },
           teamId: undefined,
         }
       );

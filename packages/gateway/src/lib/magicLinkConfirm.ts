@@ -6,7 +6,11 @@
  * The token and callback ride in the fragment, which a browser never sends to a server, so they
  * stay out of the dashboard's request logs too.
  */
-export function magicLinkConfirmUrl(verifyUrl: string, clientOrigin: string, email: string): string {
+export function magicLinkConfirmUrl(
+  verifyUrl: string,
+  clientOrigin: string,
+  email: string
+): string {
   const verify = new URL(verifyUrl);
   const token = verify.searchParams.get('token');
   if (!token) {

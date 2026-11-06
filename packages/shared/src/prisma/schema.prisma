@@ -699,6 +699,7 @@ model Connection {
   repoAccess            RepoAccess[]
   /// Per-user GitHub tokens for this repository (see `ConnectionCredential`).
   credentials           ConnectionCredential[]
+  setupSecrets          RepoSetupSecret[]
   /// Further teams whose members may see and launch on this repository. The
   /// owning team (`teamId`) keeps management, budgets and settings.
   shares                ConnectionTeamShare[]
@@ -890,6 +891,27 @@ model ConnectionCredential {
   @@unique([connectionId, userId])
   @@index([userId])
   @@map("connection_credentials")
+}
+
+/// A secret a repository's workspace setup names under `secrets:`. Set by team admins, write-only:
+/// the value reaches only setup steps, as secret environment, never the agent.
+model RepoSetupSecret {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  connectionId String     @map("connection_id") @db.Uuid
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  name         String
+
+  valueCiphertext Bytes  @map("value_ciphertext")
+  valueNonce      Bytes  @map("value_nonce")
+  valueAuthTag    Bytes  @map("value_auth_tag")
+  valueKeyVersion Int    @map("value_key_version")
+  valueLastFour   String @map("value_last_four")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([connectionId, name])
+  @@map("repo_setup_secrets")
 }
 
 /// The webhook secret of one GitHub Enterprise Server host.

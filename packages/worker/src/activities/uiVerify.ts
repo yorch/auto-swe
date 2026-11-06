@@ -90,7 +90,7 @@ async function checkoutWorkspace(
     undefined,
     {
       detectedStack: repo.detectedStack,
-      repoSetup: { defer: true, field: repo.setup },
+      repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
       services,
       teamId: repo.teamId,
     }

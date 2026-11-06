@@ -60,6 +60,7 @@ export const UI_ROUTE_TEMPLATES: readonly string[] = [
   '/library/[id]/diff',
   '/library/[id]/runs',
   '/login',
+  '/login/confirm-link',
   '/mcp',
   '/models',
   '/oauth/consent',

@@ -18,6 +18,13 @@ vi.mock('@auto-swe/shared', () => ({
     apiKeyNonce: Buffer.from('nonce'),
     apiKeyVersion: 1,
   }),
+  encryptSecret: (value: string) => ({
+    authTag: Buffer.from('auth-tag'),
+    ciphertext: Buffer.from(`sealed-${value.length}`),
+    keyVersion: 1,
+    lastFour: value.slice(-4),
+    nonce: Buffer.from('nonce'),
+  }),
   Prisma: {
     DbNull: DB_NULL,
     sql: (strings: TemplateStringsArray, ...values: unknown[]) => ({
@@ -87,6 +94,13 @@ async function buildApp() {
     connectionTeamShare: { deleteMany: vi.fn() },
     knowledgeItem: { count: vi.fn().mockResolvedValue(0) },
     prEvaluation: { findMany: vi.fn() },
+    repoSetupSecret: {
+      count: vi.fn(),
+      deleteMany: vi.fn(),
+      findMany: vi.fn(),
+      findUnique: vi.fn(),
+      upsert: vi.fn(),
+    },
     team: {
       findUnique: vi.fn(),
     },
@@ -105,11 +119,11 @@ async function buildApp() {
   };
 
   const mockTemporal = {
-    probeExecutorImage: vi.fn(),
     getRepoSetupFileProposalStatus: vi.fn(),
-    startRepoSetupFileProposal: vi.fn(),
+    probeExecutorImage: vi.fn(),
     startPrEvaluationWorkflow: vi.fn(),
     startRepoDependencyScan: vi.fn().mockResolvedValue(undefined),
+    startRepoSetupFileProposal: vi.fn(),
   };
 
   app.decorate('prisma', mockPrisma as unknown as never);
@@ -1786,6 +1800,136 @@ describe('repositoryRoutes', () => {
       const res = await post({ setup: { steps: [{ run: 'x', workdir: '../etc' }] } });
       expect(res.statusCode).toBe(400);
       expect(ctx.mockTemporal.startRepoSetupFileProposal).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('setup secrets', () => {
+    const url = (name = '') =>
+      `/api/v1/repositories/${REPO_ID}/setup/secrets${name ? `/${name}` : ''}`;
+    const updatedAt = new Date('2026-11-06T12:00:00Z');
+
+    beforeEach(() => {
+      for (const fn of Object.values(ctx.mockPrisma.repoSetupSecret)) {
+        fn.mockReset();
+      }
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        id: REPO_ID,
+        teamId: TEAM_ID,
+        type: 'git_repo',
+      });
+      ctx.mockPrisma.repoSetupSecret.count.mockResolvedValue(0);
+      ctx.mockPrisma.repoSetupSecret.findUnique.mockResolvedValue(null);
+      ctx.mockPrisma.repoSetupSecret.upsert.mockResolvedValue({
+        name: 'NPM_TOKEN',
+        updatedAt,
+        valueLastFour: 'cdef',
+      });
+    });
+
+    it('lists names and last four characters, never values', async () => {
+      ctx.mockPrisma.repoSetupSecret.findMany.mockResolvedValue([
+        { name: 'NPM_TOKEN', updatedAt, valueLastFour: 'cdef' },
+      ]);
+      const res = await ctx.app.inject({ headers: AUTH_HEADER, method: 'GET', url: url() });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({
+        data: [{ lastFour: 'cdef', name: 'NPM_TOKEN', updatedAt: updatedAt.toISOString() }],
+      });
+      const query = ctx.mockPrisma.repoSetupSecret.findMany.mock.calls[0]?.[0] as {
+        select?: Record<string, boolean>;
+      };
+      expect(Object.keys(query.select ?? {})).not.toContain('valueCiphertext');
+    });
+
+    it('stores the value encrypted and audits only the name', async () => {
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PUT',
+        payload: { value: 'npm_secret_abcdef' },
+        url: url('NPM_TOKEN'),
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toEqual({
+        lastFour: 'cdef',
+        name: 'NPM_TOKEN',
+        updatedAt: updatedAt.toISOString(),
+      });
+      const upsert = ctx.mockPrisma.repoSetupSecret.upsert.mock.calls[0]?.[0] as {
+        create: Record<string, unknown>;
+      };
+      expect(upsert.create).toMatchObject({ connectionId: REPO_ID, name: 'NPM_TOKEN' });
+      expect(JSON.stringify(upsert)).not.toContain('npm_secret_abcdef');
+      const audit = JSON.stringify(ctx.mockPrisma.configAuditLog.create.mock.calls);
+      expect(audit).toContain('NPM_TOKEN');
+      expect(audit).not.toContain('npm_secret_abcdef');
+      expect(res.body).not.toContain('npm_secret_abcdef');
+    });
+
+    it('refuses a name that is not an environment variable name', async () => {
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PUT',
+        payload: { value: 'x' },
+        url: url('npm-token'),
+      });
+      expect(res.statusCode).toBe(400);
+      expect(ctx.mockPrisma.repoSetupSecret.upsert).not.toHaveBeenCalled();
+    });
+
+    it('refuses a new secret past the per-repository limit, but replaces an existing one', async () => {
+      ctx.mockPrisma.repoSetupSecret.count.mockResolvedValue(20);
+      const refused = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PUT',
+        payload: { value: 'value' },
+        url: url('ANOTHER'),
+      });
+      expect(refused.statusCode).toBe(409);
+      ctx.mockPrisma.repoSetupSecret.findUnique.mockResolvedValue({ id: 'secret-1' });
+      const replaced = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PUT',
+        payload: { value: 'value' },
+        url: url('NPM_TOKEN'),
+      });
+      expect(replaced.statusCode).toBe(200);
+    });
+
+    it('refuses a team lead who is not a team admin', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.authState.sub = 'lead-1';
+      ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+        role: 'MEMBER',
+        team: { isActive: true },
+      });
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PUT',
+        payload: { value: 'value' },
+        url: url('NPM_TOKEN'),
+      });
+      expect(res.statusCode).toBe(403);
+      expect(ctx.mockPrisma.repoSetupSecret.upsert).not.toHaveBeenCalled();
+    });
+
+    it('deletes a secret, and answers 404 for one that is not there', async () => {
+      ctx.mockPrisma.repoSetupSecret.deleteMany.mockResolvedValueOnce({ count: 1 });
+      const gone = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'DELETE',
+        url: url('NPM_TOKEN'),
+      });
+      expect(gone.statusCode).toBe(204);
+      expect(ctx.mockPrisma.repoSetupSecret.deleteMany).toHaveBeenCalledWith({
+        where: { connectionId: REPO_ID, name: 'NPM_TOKEN' },
+      });
+      ctx.mockPrisma.repoSetupSecret.deleteMany.mockResolvedValueOnce({ count: 0 });
+      const missing = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'DELETE',
+        url: url('NPM_TOKEN'),
+      });
+      expect(missing.statusCode).toBe(404);
     });
   });
 

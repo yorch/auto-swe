@@ -113,6 +113,15 @@ then asks GitHub whether that user is a member of a listed organization
 - **GitHub Enterprise.** The membership is asked of the same host the user signed in against. A
   credential that belongs to another host is refused, as everywhere else.
 
+### Magic links
+
+A magic link (sign-in by email, and the link an invitation sends) opens the dashboard's
+`/login/confirm-link` page, which shows the address and a **Sign in** button. The token travels in
+the URL fragment, which browsers never send to a server, and the page calls nothing until the button
+is clicked; only that click verifies it. A mail scanner that opens the link therefore neither signs
+anyone in nor uses the token up. A link is valid for 10 minutes and for one sign-in; an expired or
+used one says so and asks for a new link.
+
 ### Invited users
 
 An invitation creates the account and emails a magic link. Who invited decides whether the account

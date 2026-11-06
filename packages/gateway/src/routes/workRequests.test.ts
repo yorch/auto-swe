@@ -256,6 +256,7 @@ describe('POST /api/v1/work-requests', () => {
         nextRunAt: null,
         paused: false,
       }),
+      getRepoSetupFileProposalStatus: async () => ({ status: 'queued' }),
       getRevalidationScheduleStatus: async () => ({
         exists: false,
         lastRunAt: null,
@@ -274,11 +275,9 @@ describe('POST /api/v1/work-requests', () => {
       isWorkflowRunning: async () => false,
       nameAssistantConversation: async () => {},
       probeExecutorImage: async () => ({ checks: [], image: 'x', ok: true }),
-      getRepoSetupFileProposalStatus: async () => ({ status: 'queued' }),
       sendAssistantTurn: async () => {},
       signalWorkflow: async () => {},
       startChannelAssistant: async () => {},
-      startRepoSetupFileProposal: async () => {},
       startConsolidationWorkflow: async () => {},
       startEpicWorkflow: async () => {},
       startEvalRunWorkflow: async () => {},
@@ -290,6 +289,7 @@ describe('POST /api/v1/work-requests', () => {
       startRepoDependencyInference: async () => {},
       startRepoDependencyScan: async () => {},
       startReviewFixRetry: async () => {},
+      startRepoSetupFileProposal: async () => {},
       startRunnableWorkflow: async (id: string, input: { request: unknown }) => {
         startedRequests.push(input.request);
         startedWorkflowIds.push(id);

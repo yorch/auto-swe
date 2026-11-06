@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { deleteArtifact, getArtifact, putArtifact } from '@auto-swe/shared/lib/artifactStore';
+import { decryptSecret } from '@auto-swe/shared/lib/crypto';
 import {
   DEFAULT_SETUP_STEP_TIMEOUT_SECONDS,
   isKeyFileGlob,
@@ -52,7 +53,13 @@ export interface RepoSetupHost {
   /** Exec in the checkout as the workspace user, without throwing on a non-zero exit. */
   capture(
     command: string,
-    opts: { env?: string[]; maxOutputBytes?: number; timeoutMs: number }
+    opts: {
+      env?: string[];
+      maxOutputBytes?: number;
+      /** Values that must never reach a command line: delivered as secret environment. */
+      secretEnv?: Record<string, string>;
+      timeoutMs: number;
+    }
   ): Promise<CapturedResult>;
   /** A hardened git call in `dir`, with `authHeader` (when given) injected for this call only. */
   git(dir: string, subcommand: string, authHeader?: string, timeoutMs?: number): Promise<string>;
@@ -496,10 +503,53 @@ async function saveCache(
   return 'saved';
 }
 
+/**
+ * The values of the setup secrets a definition names, from the repository's encrypted store.
+ * A name with no stored value, or no repository to read from, fails setup: a step run without
+ * the credential it was promised fails later and less clearly.
+ */
+export async function loadSetupSecrets(
+  connectionId: string | null,
+  names: readonly string[]
+): Promise<Record<string, string>> {
+  if (names.length === 0) {
+    return {};
+  }
+  if (!connectionId) {
+    throw setupRunFailure(
+      `setup names secrets (${names.join(', ')}), but this workspace has no repository to read them from`
+    );
+  }
+  const rows = await prisma.repoSetupSecret.findMany({
+    where: { connectionId, name: { in: [...names] } },
+  });
+  const missing = names.filter((n) => !rows.some((r) => r.name === n));
+  if (missing.length) {
+    throw setupRunFailure(
+      `setup secret${missing.length > 1 ? 's' : ''} not set on the repository: ${missing.join(', ')}`
+    );
+  }
+  const values: Record<string, string> = {};
+  for (const row of rows) {
+    try {
+      values[row.name] = decryptSecret({
+        authTag: row.valueAuthTag,
+        ciphertext: row.valueCiphertext,
+        keyVersion: row.valueKeyVersion,
+        nonce: row.valueNonce,
+      });
+    } catch {
+      throw setupRunFailure(`setup secret ${row.name} could not be decrypted; save it again`);
+    }
+  }
+  return values;
+}
+
 /** Run the definition's steps in order, as the workspace user; the first failure fails setup. */
 async function runSteps(
   host: RepoSetupHost,
-  setup: RepoSetup
+  setup: RepoSetup,
+  secretEnv: Record<string, string>
 ): Promise<Array<{ name: string; durationMs: number }>> {
   const env = Object.entries(setup.env ?? {}).map(([k, v]) => `${k}=${v}`);
   const done: Array<{ name: string; durationMs: number }> = [];
@@ -511,6 +561,7 @@ async function runSteps(
     try {
       result = await host.capture(command, {
         env,
+        ...(Object.keys(secretEnv).length ? { secretEnv } : {}),
         timeoutMs: (step.timeoutSeconds ?? DEFAULT_SETUP_STEP_TIMEOUT_SECONDS) * 1000,
       });
     } catch (err) {
@@ -543,7 +594,7 @@ export async function runSetupGitPhase(
     : [];
   if (setup.lfs) {
     await pullLfs(host, [
-      { dir: REPO_DIR, cleanUrl: inputs.cleanUrl, ...(authHeader ? { authHeader } : {}) },
+      { cleanUrl: inputs.cleanUrl, dir: REPO_DIR, ...(authHeader ? { authHeader } : {}) },
       ...submodules,
     ]);
   }
@@ -558,7 +609,9 @@ export async function runSetupGitPhase(
 export async function runSetupStepsPhase(
   host: RepoSetupHost,
   setup: RepoSetup,
-  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId'>
+  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId'>,
+  /** The values of the secrets `setup.secrets` names, already resolved. */
+  secretEnv: Record<string, string> = {}
 ): Promise<Pick<RepoSetupReport, 'cache' | 'steps'>> {
   const maxBytes = setup.cache && setup.steps?.length ? await cacheLimitBytes() : 0;
   let cacheKey: string | null = null;
@@ -574,7 +627,7 @@ export async function runSetupStepsPhase(
       cache = 'error';
     }
   }
-  const steps = await runSteps(host, setup);
+  const steps = await runSteps(host, setup, secretEnv);
   if (cacheKey && cache === 'miss') {
     try {
       cache = await saveCache(host, setup, cacheKey, inputs.cleanUrl, maxBytes);

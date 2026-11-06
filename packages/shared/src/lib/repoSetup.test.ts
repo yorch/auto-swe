@@ -4,6 +4,7 @@ import {
   parseRepoSetup,
   parseRepoSetupYaml,
   REPO_SETUP_FILE,
+  RepoSetupSchema,
   repoSetupToYaml,
   resolveRepoSetup,
   stackDefaultSetup,
@@ -237,5 +238,23 @@ describe('resolveRepoSetup', () => {
     });
     const on = resolveRepoSetup({ ...input, stackDefaults: true });
     expect(on.ok && on.resolved.source).toBe('stack');
+  });
+});
+
+describe('setup secrets', () => {
+  it('accepts environment variable names, and writes them to setup.yml', () => {
+    const setup = RepoSetupSchema.parse({ secrets: ['NPM_TOKEN', 'PIP_INDEX_TOKEN'] });
+    expect(setup.secrets).toEqual(['NPM_TOKEN', 'PIP_INDEX_TOKEN']);
+    expect(parseRepoSetupYaml(repoSetupToYaml(setup))).toEqual({ ok: true, setup });
+  });
+
+  it('refuses bad names, repeats, too many, and a name also set in env', () => {
+    expect(RepoSetupSchema.safeParse({ secrets: ['npm-token'] }).success).toBe(false);
+    expect(RepoSetupSchema.safeParse({ secrets: ['A', 'A'] }).success).toBe(false);
+    const many = Array.from({ length: 21 }, (_, i) => `S${i}`);
+    expect(RepoSetupSchema.safeParse({ secrets: many }).success).toBe(false);
+    expect(
+      RepoSetupSchema.safeParse({ env: { NPM_TOKEN: 'x' }, secrets: ['NPM_TOKEN'] }).success
+    ).toBe(false);
   });
 });
