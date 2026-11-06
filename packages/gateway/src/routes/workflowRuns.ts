@@ -539,10 +539,13 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       // file or object is already stored — there is no reason to hold it in the
       // gateway's memory before sending it.
       const { sizeBytes, stream } = await getArtifactStream(evidence.artifactId);
-      const contentType = ALLOWED_EVIDENCE_CONTENT_TYPES.has(evidence.artifact.contentType)
-        ? evidence.artifact.contentType
-        : 'application/octet-stream';
-      const inline = evidence.kind === 'screenshot' || evidence.kind === 'video';
+      const artifactContentType = evidence.artifact.contentType;
+      const allowedContentType = ALLOWED_EVIDENCE_CONTENT_TYPES.has(artifactContentType);
+      const contentType = allowedContentType ? artifactContentType : 'application/octet-stream';
+      const inline =
+        allowedContentType &&
+        ((evidence.kind === 'screenshot' && artifactContentType.startsWith('image/')) ||
+          (evidence.kind === 'video' && artifactContentType.startsWith('video/')));
       const filename = `${evidence.kind}-${evidence.id}.${EVIDENCE_EXTENSIONS[evidence.kind] ?? 'bin'}`;
       return reply
         .header('Content-Type', contentType)
