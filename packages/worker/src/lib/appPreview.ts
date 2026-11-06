@@ -5,6 +5,7 @@ import { redactString } from './agentTracer.js';
 
 const PREVIEW_LOG = '/tmp/.asw/preview.log';
 const PREVIEW_PGID = '/tmp/.asw/preview.pgid';
+const PREVIEW_MARK = `${PREVIEW_PGID}.mark`;
 const SETUP_BUDGET_MS = 15 * 60 * 1000;
 
 export class PreviewNotReadyError extends Error {
@@ -50,43 +51,76 @@ function tailScript(maxBytes: number): string {
 }
 
 /**
- * Launch the preview in its own session, so its pid is also its process-group
- * id. A shell cannot do this portably: `set -m` needs a TTY (dash prints "job
- * control turned off" and the child keeps the shell's group), so `stop()` used
- * to signal a group that did not exist and the app outlived it until the
- * container was destroyed. `spawn(..., { detached: true })` calls setsid(2).
+ * Launch the preview in its own session for process-group cleanup.
+ * `detached` spawning calls setsid(2); the environment mark lets `stop()` find
+ * descendants that daemonize out of the group.
  */
 export const APP_PREVIEW_LAUNCHER = [
+  'const crypto = require("node:crypto");',
   'const { spawn } = require("node:child_process");',
   'const fs = require("node:fs");',
-  'const [command, pgidFile, logFile] = process.argv.slice(1);',
+  'const [command, pgidFile, logFile, markFile] = process.argv.slice(1);',
+  'const mark = crypto.randomBytes(16).toString("hex");',
   'const out = fs.openSync(logFile, "a");',
-  'const child = spawn("sh", ["-c", command], { detached: true, stdio: ["ignore", out, out] });',
+  'const child = spawn("sh", ["-c", command], {',
+  '  detached: true,',
+  '  env: { ...process.env, AUTO_SWE_PREVIEW_MARK: mark },',
+  '  stdio: ["ignore", out, out],',
+  '});',
   'child.on("error", (error) => {',
   '  fs.appendFileSync(logFile, "preview failed to start: " + error.message + "\\n");',
   '  process.exitCode = 1;',
   '});',
   'child.on("spawn", () => {',
   '  fs.writeFileSync(pgidFile, String(child.pid));',
+  '  fs.writeFileSync(markFile, mark);',
   '  child.unref();',
   '});',
 ].join('\n');
 
 /** The stop side of {@link APP_PREVIEW_LAUNCHER}; exported for its contract test. */
-export function previewStopScript(pgidPath: string = PREVIEW_PGID): string {
+export function previewStopScript(
+  pgidPath: string = PREVIEW_PGID,
+  markPath: string = `${pgidPath}.mark`
+): string {
   return [
     '(async () => {',
     'const fs = require("node:fs");',
-    `const path = ${JSON.stringify(pgidPath)};`,
-    'try {',
-    '  const pgid = Number(fs.readFileSync(path, "utf8").trim());',
-    '  if (Number.isSafeInteger(pgid) && pgid > 1) {',
-    '    try { process.kill(-pgid, "SIGTERM"); } catch {}',
-    '    await new Promise((resolve) => setTimeout(resolve, 1500));',
-    '    try { process.kill(-pgid, "SIGKILL"); } catch {}',
+    `const pgidPath = ${JSON.stringify(pgidPath)};`,
+    `const markPath = ${JSON.stringify(markPath)};`,
+    'let pgid = 0;',
+    'try { pgid = Number(fs.readFileSync(pgidPath, "utf8").trim()); } catch {}',
+    'const hasGroup = Number.isSafeInteger(pgid) && pgid > 1;',
+    'let mark = "";',
+    'try { mark = fs.readFileSync(markPath, "utf8").trim(); } catch {}',
+    'const hasMark = /^[a-f0-9]{32}$/.test(mark);',
+    'const signalMarked = (signal) => {',
+    '  if (!hasMark) return;',
+    '  let entries;',
+    '  try { entries = fs.readdirSync("/proc"); } catch { return; }',
+    '  const expected = "AUTO_SWE_PREVIEW_MARK=" + mark;',
+    '  for (const entry of entries) {',
+    '    if (!/^\\d+$/.test(entry)) continue;',
+    '    const pid = Number(entry);',
+    '    if (pid <= 1 || pid === process.pid) continue;',
+    '    try {',
+    '      const environment = fs.readFileSync("/proc/" + entry + "/environ", "utf8");',
+    '      if (environment.split("\\0").includes(expected)) process.kill(pid, signal);',
+    '    } catch {}',
     '  }',
-    '  fs.unlinkSync(path);',
-    '} catch {}',
+    '};',
+    'if (hasGroup) {',
+    '  try { process.kill(-pgid, "SIGTERM"); } catch {}',
+    '}',
+    'signalMarked("SIGTERM");',
+    'await new Promise((resolve) => setTimeout(resolve, 1500));',
+    'if (hasGroup) {',
+    '  try { process.kill(-pgid, "SIGKILL"); } catch {}',
+    '}',
+    'signalMarked("SIGKILL");',
+    'for (const file of [pgidPath, markPath]) {',
+    '  try { fs.unlinkSync(file); } catch {}',
+    '}',
     '})().catch(() => {});',
   ].join('\n');
 }
@@ -116,9 +150,9 @@ export async function startAppPreview(
   }
 
   const startCommand =
-    `mkdir -p /tmp/.asw && rm -f ${shellQuote(PREVIEW_PGID)} ${shellQuote(PREVIEW_LOG)} && ` +
+    `mkdir -p /tmp/.asw && rm -f ${shellQuote(PREVIEW_PGID)} ${shellQuote(PREVIEW_MARK)} ${shellQuote(PREVIEW_LOG)} && ` +
     `node -e ${shellQuote(APP_PREVIEW_LAUNCHER)} -- ${shellQuote(config.start)} ` +
-    `${shellQuote(PREVIEW_PGID)} ${shellQuote(PREVIEW_LOG)}`;
+    `${shellQuote(PREVIEW_PGID)} ${shellQuote(PREVIEW_LOG)} ${shellQuote(PREVIEW_MARK)}`;
   try {
     await workspace.exec(startCommand, execOptions(10_000));
   } catch (error) {
