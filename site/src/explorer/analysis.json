@@ -2698,6 +2698,29 @@
   ],
   "features": [
     {
+      "body": "Generate repository setup locally, manage its saved definition through the API, run connection probes and pass an explicit launch egress policy.",
+      "category": "Operations",
+      "detail": "repos setup init runs before token loading and writes a starter .auto-swe/setup.yml from tracked file names, with a bounded directory-walk fallback when Git listing fails. An unrecognized stack produces an editable placeholder, not a verified install recipe. An existing readable setup file requires --force to replace. The command neither runs its install steps nor uploads them; a saved repository definition still wins over the checked-in file. repos setup prints, replaces from a parsed file, or clears that saved definition through the gateway's repository route. connections test calls the stored-config batch probe; repos test-access resolves an accessible repository and asks its scoped probe. Both have JSON output and exit 1 for returned failed checks; gateway HTTP errors exit 2. An empty or all-skipped batch exits 0, so zero alone does not establish readiness. run, agent run and workflows run validate open/restricted/blocked for --egress-policy and pass it to the gateway; omitting the flag leaves default policy resolution to the platform. These clients do not enforce server authorization or network isolation locally.",
+      "id": "cliMaintenance",
+      "refs": [
+        "cli",
+        "cliSetupFiles",
+        "setupCli",
+        "cliSetupManage",
+        "cliConnectionProbe",
+        "cliRepositoryProbe",
+        "cliExitCodes",
+        "cliWorkEgress",
+        "cliAgentEgress",
+        "cliTemplateEgress",
+        "setupResolve",
+        "connectionHealthRoute",
+        "connectionRepositoryProbe"
+      ],
+      "status": "Implemented",
+      "title": "CLI setup authoring, diagnostics and launch policy"
+    },
+    {
       "body": "Choose free-form template or conventional pull-request titles, with repository overrides and a bounded optional classifier.",
       "category": "Engineering",
       "detail": "Repository title format and nonblank template override scoped workflow.prTitleFormat and workflow.prTitleTemplate settings; the workflow-default template is the last template fallback. Conventional format uses a fixed workflow.prTitleType without a model, or asks prTitler for a type and summary from bounded request text and changed-file names when the type is auto. Classification failure or malformed output falls back to a conventional type and the request's first nonempty line, with the ticket ID as a final summary source. The formatter tidies and bounds that title; this classification is not a review verdict. The workflow PR path renders its chosen template; an Agent Run retains its descriptive legacy title in template mode unless a repository or registry template is explicit. Agent Run title policy uses its team/organization, while its classifier agent resolves at organization scope rather than the owning team's agent override. Policy/settings reads themselves are outside the classification fallback.",
@@ -6272,6 +6295,62 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "async function listCheckoutFiles(dir:",
+      "id": "cliSetupFiles",
+      "lines": 27,
+      "path": "packages/cli/src/commands/repos.ts",
+      "title": "Local stack detection uses tracked files or a bounded walk"
+    },
+    {
+      "anchor": "async function cmdSetup(args:",
+      "id": "cliSetupManage",
+      "lines": 53,
+      "path": "packages/cli/src/commands/repos.ts",
+      "title": "Saved setup is printed, parsed and patched, or cleared through the repository API"
+    },
+    {
+      "anchor": "async function cmdTest(args:",
+      "id": "cliConnectionProbe",
+      "lines": 46,
+      "path": "packages/cli/src/commands/connections.ts",
+      "title": "Connection probe output, skips and failure exit codes"
+    },
+    {
+      "anchor": "async function cmdTestAccess(args:",
+      "id": "cliRepositoryProbe",
+      "lines": 37,
+      "path": "packages/cli/src/commands/repos.ts",
+      "title": "Repository access probes resolve a visible repository before calling its API"
+    },
+    {
+      "anchor": "export async function runWithExitCodes(",
+      "id": "cliExitCodes",
+      "lines": 14,
+      "path": "packages/cli/src/lib/api.ts",
+      "title": "Gateway HTTP errors differ from local and network errors"
+    },
+    {
+      "anchor": "const egressPolicy = flags['egress-policy'];",
+      "id": "cliWorkEgress",
+      "lines": 39,
+      "path": "packages/cli/src/commands/workRequests.ts",
+      "title": "Work-request launches validate and forward an optional egress policy"
+    },
+    {
+      "anchor": "const egressPolicy = flags['egress-policy'];",
+      "id": "cliAgentEgress",
+      "lines": 35,
+      "path": "packages/cli/src/commands/agent.ts",
+      "title": "Agent launches validate and forward an optional egress policy"
+    },
+    {
+      "anchor": "const egressPolicy = flags['egress-policy'];",
+      "id": "cliTemplateEgress",
+      "lines": 42,
+      "path": "packages/cli/src/commands/workflows.ts",
+      "title": "Template launches validate and forward an optional egress policy"
+    },
     {
       "anchor": "async function rereadForThinRequest(",
       "id": "thinTicketRetry",
@@ -11726,7 +11805,7 @@
       "id": "knowledgeToolGrant",
       "lines": 10,
       "path": "packages/worker/src/agents/implementer.ts",
-      "title": "The knowledge tools bind only when the agent’s toolKeys name them"
+      "title": "Governed knowledge access requires explicit tool grants"
     },
     {
       "anchor": "model ServicePrincipal {",
