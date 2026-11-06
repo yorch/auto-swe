@@ -55,7 +55,9 @@ describe('review mutations', () => {
       .spyOn(api, 'fetch')
       .mockRejectedValueOnce(new Error('unavailable'))
       .mockRejectedValueOnce(new Error('unavailable'))
-      .mockResolvedValue({ data: { runId: 'review-1', workflowId: 'workflow-1' } });
+      .mockResolvedValue({
+        data: { runId: 'review-1', workflowId: 'workflow-1', workRequestId: 'request-1' },
+      });
     const { result } = renderHook(() => useRunReview('source-1'), { wrapper: wrapper() });
     await act(async () => {
       await expect(result.current.mutateAsync({ presetId: 'preset-1' })).rejects.toThrow();
@@ -74,7 +76,7 @@ describe('review mutations', () => {
     expect(JSON.parse(String(fetch.mock.calls[2]?.[1]?.body))).toEqual({
       templateId: 'template-1',
     });
-    await waitFor(() => expect(result.current.data?.runId).toBe('review-1'));
+    await waitFor(() => expect(result.current.data?.workRequestId).toBe('request-1'));
   });
   it.each([{ templateId: 'template-1' }, { connectionId: 'repo-1' }])(
     'sends the attachment target on both POST and DELETE',

@@ -389,6 +389,8 @@ describe('review launch route', () => {
       expect(res.json().data.workflowId).toMatch(/^review-22222222-[a-f0-9]{8}$/);
       expect(res.json().data.runId).toMatch(/^[a-f0-9-]{36}$/);
       expect(db.runInput.create).toHaveBeenCalledOnce();
+      expect(res.json().data.workRequestId).toBe(db.runInput.create.mock.calls[0]?.[0].data.id);
+      expect(res.json().data.workRequestId).not.toBe(res.json().data.runId);
       expect(start).toHaveBeenCalledWith(
         res.json().data.workflowId,
         expect.objectContaining({ request: expect.objectContaining({ launchedById: SOURCE }) })
@@ -425,7 +427,7 @@ describe('review launch route', () => {
     }
   );
   it('replays a caller-scoped idempotency key and rejects changed choices', async () => {
-    const { app, start } = await fixture();
+    const { app, db, start } = await fixture();
     const send = (payload: unknown) =>
       app.inject({
         headers: { ...AUTH, 'idempotency-key': 'same-key' },
@@ -435,6 +437,7 @@ describe('review launch route', () => {
       });
     const first = await send({ templateId: TEMPLATE });
     expect(first.statusCode, first.body).toBe(201);
+    expect(first.json().data.workRequestId).toBe(db.runInput.create.mock.calls[0]?.[0].data.id);
     const second = await send({ templateId: TEMPLATE });
     expect(second.json()).toEqual(first.json());
     expect(start).toHaveBeenCalledOnce();

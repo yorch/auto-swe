@@ -39,7 +39,9 @@ run reaper also sweeps stale pending intents. Review runs do not recursively lau
 
 On `/runs/<id>`, **Run review** selects a preset by default. **Advanced** selects an active review
 template directly. The button explains why a run is not reviewable or the caller cannot control it.
-The same run viewer serves agent runs. Successful submission opens the new review run.
+The same run viewer serves agent runs. Successful submission opens the review's request panel,
+which refreshes automatically while waiting for execution to start. Diagnostics become available
+when the worker creates the review run.
 
 Manual launches require ENGINEER access, control of the source run, repository launch authorization,
 and launch budget. Send an `Idempotency-Key` to retry a submission without creating another run.
@@ -137,7 +139,7 @@ routes require ENGINEER, with source control and repository checks on launch.
 
 | Method and path | Request / result |
 |---|---|
-| `POST /workflow-runs/:id/reviews` | Exactly `{ "presetId": "<uuid>" }` or `{ "templateId": "<uuid>" }`; optional `Idempotency-Key`; returns 201 with `data: { runId, workflowId }`. |
+| `POST /workflow-runs/:id/reviews` | Exactly `{ "presetId": "<uuid>" }` or `{ "templateId": "<uuid>" }`; optional `Idempotency-Key`; returns 201 with `data: { runId, workflowId, workRequestId }`. |
 | `POST /workflow-runs/:id/reviews/fix-retry` | ENGINEER with review-run control and repository authorization; queues a guarded fix retry and returns 202 with `data: { workflowId }`. |
 | `GET /review-presets` | Enabled presets and active review templates for the picker. |
 | `GET /workflow-runs/:id` | The `review` field describes eligibility, control, source linkage, and linked review summaries. Step outputs carry the publication summary. |

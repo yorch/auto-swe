@@ -224,7 +224,9 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
           );
           return true;
         }
-        reply.status(201).send({ data: { runId: reviewRunId(workflowId), workflowId } });
+        reply.status(201).send({
+          data: { runId: reviewRunId(workflowId), workflowId, workRequestId: saved.id },
+        });
         return true;
       };
       if (nonceHex) {
@@ -282,9 +284,13 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
           }
           return sendError(reply, 403, 'REVIEW_LAUNCH_REFUSED', 'Review launch was refused');
         }
-        return reply
-          .status(201)
-          .send({ data: { runId: prepared.runId, workflowId: prepared.workflowId } });
+        return reply.status(201).send({
+          data: {
+            runId: prepared.runId,
+            workflowId: prepared.workflowId,
+            workRequestId: prepared.request.workRequestId,
+          },
+        });
       } catch (err) {
         if (err instanceof ReviewLaunchError) {
           return sendError(reply, err.status, err.code, err.message);

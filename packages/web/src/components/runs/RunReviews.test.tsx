@@ -111,7 +111,7 @@ describe('run reviews', () => {
           templates: [{ id: 'template-1', name: 'Code review' }],
         }),
         'POST /api/v1/workflow-runs/source-1/reviews': () => ({
-          data: { runId: 'review-1', workflowId: 'wf-review' },
+          data: { runId: 'review-1', workflowId: 'wf-review', workRequestId: 'request-1' },
         }),
       });
       render(withQuery(<RunReviews run={run({ isAgentRun })} />));
@@ -119,7 +119,8 @@ describe('run reviews', () => {
       const dialog = screen.getByRole('dialog');
       await within(dialog).findAllByText('Default review');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Run review' }));
-      await waitFor(() => expect(push).toHaveBeenCalledWith('/runs/review-1'));
+      await waitFor(() => expect(push).toHaveBeenCalledWith('/requests?request=request-1'));
+      expect(push).not.toHaveBeenCalledWith('/runs/review-1');
       const call = fetch.mock.calls.find((c) => c[1]?.method === 'POST');
       expect(JSON.parse(String(call?.[1]?.body))).toEqual({ presetId: 'preset-1' });
       const headers = call?.[1]?.headers as Record<string, string> | undefined;
@@ -132,14 +133,16 @@ describe('run reviews', () => {
         data: [],
         templates: [{ id: 'template-1', name: 'Code review' }],
       }),
-      '/api/v1/workflow-runs/source-1/reviews': () => ({ data: { runId: 'review-1' } }),
+      '/api/v1/workflow-runs/source-1/reviews': () => ({
+        data: { runId: 'review-1', workflowId: 'wf-review', workRequestId: 'request-1' },
+      }),
     });
     render(withQuery(<RunReviews run={run()} />));
     fireEvent.click(screen.getByRole('button', { name: 'Run review' }));
     await screen.findByText(/No enabled presets/);
     fireEvent.click(screen.getByRole('switch', { name: /Advanced/ }));
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Run review' }));
-    await waitFor(() => expect(push).toHaveBeenCalled());
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/requests?request=request-1'));
     expect(
       JSON.parse(String(fetch.mock.calls.find((c) => c[1]?.method === 'POST')?.[1]?.body))
     ).toEqual({ templateId: 'template-1' });

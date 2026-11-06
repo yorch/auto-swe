@@ -15,6 +15,7 @@ import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useRetryReviewFix, useReviewChoices, useRunReview } from '@/hooks/useCodeReview';
 import { ApiError } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
+import { requestHref } from '@/lib/requestDisplay';
 
 const reasons: Record<string, string> = {
   REVIEW_DISABLED: 'Code reviews are disabled for this repository.',
@@ -66,7 +67,7 @@ function LaunchReview({ runId, onClose }: { runId: string; onClose: () => void }
           }
           launch.mutate(advanced ? { templateId: selected } : { presetId: selected }, {
             onSuccess: (result) => {
-              router.push(`/runs/${result.runId}`);
+              router.push(requestHref(result.workRequestId));
               onClose();
             },
           });

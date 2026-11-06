@@ -56,7 +56,7 @@ export function useRunReview(runId: string) {
         submission.current = { body: `${runId}:${body}`, key: randomId() };
       }
       return api
-        .fetch<{ data: { runId: string; workflowId: string } }>(
+        .fetch<{ data: { runId: string; workflowId: string; workRequestId: string } }>(
           `/api/v1/workflow-runs/${runId}/reviews`,
           { body, headers: { 'Idempotency-Key': submission.current.key }, method: 'POST' }
         )
