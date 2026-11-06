@@ -2,6 +2,7 @@ import { type PreviewConfigInput, PreviewConfigSchema } from '@auto-swe/shared/l
 import type { Workspace } from '../activities/workspace.js';
 import { shellQuote } from '../activities/workspace.js';
 import { redactString } from './agentTracer.js';
+import { redactSecrets } from './redactToken.js';
 
 const PREVIEW_LOG = '/tmp/.asw/preview.log';
 const PREVIEW_PGID = '/tmp/.asw/preview.pgid';
@@ -184,16 +185,40 @@ export function previewStopScript(
   ].join('\n');
 }
 
+/** The values of the setup secrets a preview recipe names, from the repository's store. */
+async function previewSecrets(
+  connectionId: string | null,
+  names: readonly string[]
+): Promise<Record<string, string>> {
+  if (names.length === 0) {
+    return {};
+  }
+  const { loadSetupSecrets } = await import('./repoSetupRun.js');
+  try {
+    return await loadSetupSecrets(connectionId, names);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`App preview: ${detail.replace(/^workspace setup: /, '')}`);
+  }
+}
+
 export async function startAppPreview(
   workspace: Workspace,
   cfg: PreviewConfigInput,
-  options: { timeoutMs?: number } = {}
+  options: {
+    timeoutMs?: number;
+    /** The repository whose setup secrets `secrets` names. */
+    connectionId?: string | null;
+  } = {}
 ): Promise<{ baseUrl: string; stop(): Promise<void>; logTail(maxBytes: number): Promise<string> }> {
   const config = PreviewConfigSchema.parse(cfg);
   const timeoutMs = options.timeoutMs ?? config.readyTimeoutMs;
+  const secrets = await previewSecrets(options.connectionId ?? null, config.secrets ?? []);
+  const secretEnv = { ...config.env, ...secrets };
+  const scrub = (text: string) => redactSecrets(redactString(text), Object.values(secretEnv));
   const execOptions = (commandTimeoutMs: number) => ({
     timeoutMs: commandTimeoutMs,
-    ...(config.env ? { secretEnv: config.env } : {}),
+    ...(Object.keys(secretEnv).length ? { secretEnv } : {}),
   });
 
   if (config.setup) {
@@ -203,7 +228,7 @@ export async function startAppPreview(
         execOptions(config.readyTimeoutMs + SETUP_BUDGET_MS)
       );
     } catch (error) {
-      const detail = redactString(error instanceof Error ? error.message : String(error));
+      const detail = scrub(error instanceof Error ? error.message : String(error));
       throw new PreviewNotReadyError(`App preview setup failed: ${detail}`, detail);
     }
   }
@@ -215,7 +240,7 @@ export async function startAppPreview(
   try {
     await workspace.exec(startCommand, execOptions(10_000));
   } catch (error) {
-    const detail = redactString(error instanceof Error ? error.message : String(error));
+    const detail = scrub(error instanceof Error ? error.message : String(error));
     throw new PreviewNotReadyError(`App preview failed to start: ${detail}`, detail);
   }
 
@@ -230,7 +255,7 @@ export async function startAppPreview(
       const output = await workspace.exec(`node -e ${shellQuote(tailScript(boundedBytes))}`, {
         timeoutMs: 10_000,
       });
-      return redactString(output);
+      return scrub(output);
     } catch {
       return '';
     }
@@ -252,7 +277,7 @@ export async function startAppPreview(
   } catch (error) {
     const tail = await logTail(4000);
     await stop().catch(() => undefined);
-    const cause = redactString(error instanceof Error ? error.message : String(error));
+    const cause = scrub(error instanceof Error ? error.message : String(error));
     const detail = tail || cause;
     throw new PreviewNotReadyError(
       `App preview did not become ready within ${timeoutMs}ms${detail ? `:\n${detail}` : ''}`,

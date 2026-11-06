@@ -13,7 +13,11 @@ import { isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import { credentialDestinationChanged } from '@auto-swe/shared/lib/credentialDestination';
 import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { type PermissionLookup, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
-import { type PreviewConfig, PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
+import {
+  type PreviewConfig,
+  PreviewConfigInputSchema,
+  PreviewConfigSchema,
+} from '@auto-swe/shared/lib/previewConfig';
 import { PR_TITLE_FORMATS } from '@auto-swe/shared/lib/prTitle';
 import {
   lookupRepoPermission,
@@ -1842,6 +1846,85 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'Connection',
       });
       return { data: secretSummary(row) };
+    }
+  );
+
+  // POST /api/v1/repositories/:id/preview/env-to-secrets — move the app preview recipe's `env`
+  // values into setup secrets of the same names, so they are stored encrypted, and name them
+  // under the recipe's `secrets`. Refused whole when a name is already a setup secret.
+  app.post(
+    '/:id/preview/env-to-secrets',
+    { onRequest: requireAuth({ requiredRole: Role.LEAD }), schema: { params: RepoParamsSchema } },
+    async (request, reply) => {
+      const found = await setupFileRepo(request, request.params.id);
+      if (!found.ok) {
+        return sendSetupFileRepoError(reply, found.error);
+      }
+      const row = await fastify.prisma.connection.findUniqueOrThrow({
+        select: { previewConfig: true },
+        where: { id: found.repo.id },
+      });
+      const parsed = PreviewConfigInputSchema.safeParse(row.previewConfig);
+      const env = parsed.success ? (parsed.data.env ?? {}) : {};
+      const names = Object.keys(env);
+      if (!parsed.success || names.length === 0) {
+        return sendError(reply, 400, 'NO_PREVIEW_ENV', 'The app preview recipe has no env values');
+      }
+      const held = await fastify.prisma.repoSetupSecret.findMany({
+        select: { name: true },
+        where: { connectionId: found.repo.id },
+      });
+      const clash = names.filter((n) => held.some((h) => h.name === n));
+      if (clash.length) {
+        return sendError(
+          reply,
+          409,
+          'SETUP_SECRET_EXISTS',
+          `Already setup secrets: ${clash.join(', ')}. Rename or remove them first.`
+        );
+      }
+      if (held.length + names.length > MAX_REPO_SETUP_SECRETS) {
+        return sendError(
+          reply,
+          409,
+          'SETUP_SECRET_LIMIT',
+          `A repository holds at most ${MAX_REPO_SETUP_SECRETS} setup secrets`
+        );
+      }
+      const { env: _moved, ...rest } = parsed.data;
+      const next = { ...rest, secrets: [...(rest.secrets ?? []), ...names] };
+      const checked = PreviewConfigInputSchema.safeParse(next);
+      if (!checked.success) {
+        return sendError(reply, 400, 'INVALID_PREVIEW_CONFIG', checked.error.issues[0]?.message ?? 'invalid');
+      }
+      await fastify.prisma.$transaction([
+        ...names.map((name) => {
+          const sealed = encryptSecret(env[name] as string);
+          return fastify.prisma.repoSetupSecret.create({
+            data: {
+              connectionId: found.repo.id,
+              name,
+              valueAuthTag: sealed.authTag,
+              valueCiphertext: sealed.ciphertext,
+              valueKeyVersion: sealed.keyVersion,
+              valueLastFour: sealed.lastFour,
+              valueNonce: sealed.nonce,
+            },
+          });
+        }),
+        fastify.prisma.connection.update({
+          data: { previewConfig: checked.data as Prisma.InputJsonValue },
+          where: { id: found.repo.id },
+        }),
+      ]);
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: found.user,
+        after: { previewEnvMovedToSetupSecrets: names },
+        entityId: found.repo.id,
+        entityType: 'Connection',
+      });
+      return { data: { moved: names, previewConfig: checked.data } };
     }
   );
 

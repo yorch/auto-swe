@@ -26,6 +26,8 @@ export interface RepoSetupDraft {
   cachePaths: string;
   /** One file per line. */
   cacheKeyFiles: string;
+  /** Files deleted after the steps, one per line. */
+  cleanup: string;
 }
 
 export const EMPTY_STEP: SetupStepDraft = { name: '', run: '', timeout: '', workdir: '' };
@@ -34,6 +36,7 @@ export function setupDraft(setup: RepoSetup | null | undefined): RepoSetupDraft 
   return {
     cacheKeyFiles: (setup?.cache?.keyFiles ?? []).join('\n'),
     cachePaths: (setup?.cache?.paths ?? []).join('\n'),
+    cleanup: (setup?.cleanup ?? []).join('\n'),
     enabled: setup != null,
     env: Object.entries(setup?.env ?? {}).map(([key, value]) => ({ key, value })),
     lfs: setup?.lfs ?? false,
@@ -100,6 +103,10 @@ export function draftToSetup(
   }
   if (steps.length) {
     value.steps = steps;
+  }
+  const cleanup = lines(draft.cleanup);
+  if (cleanup.length) {
+    value.cleanup = cleanup;
   }
   const paths = lines(draft.cachePaths);
   const keyFiles = lines(draft.cacheKeyFiles);

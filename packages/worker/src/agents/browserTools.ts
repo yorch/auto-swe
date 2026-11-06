@@ -273,7 +273,9 @@ export class BrowserToolset implements BrowserToolContext {
     if (!this.previewPromise) {
       const starting = (async () => {
         const { startAppPreview } = await import('../lib/appPreview.js');
-        return startAppPreview(this.options.workspace, this.previewConfig as PreviewConfig);
+        return startAppPreview(this.options.workspace, this.previewConfig as PreviewConfig, {
+          connectionId: this.options.repoId,
+        });
       })();
       this.previewPromise = starting;
       starting.catch(() => {

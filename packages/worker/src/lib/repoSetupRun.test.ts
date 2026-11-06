@@ -436,6 +436,73 @@ describe('runSetupStepsPhase', () => {
   });
 });
 
+describe('cleanup and the secret scan', () => {
+  const inputs = { cleanUrl: PARENT, image: 'img', teamId: null };
+  const calls = (host: ReturnType<typeof fakeHost>) =>
+    vi.mocked(host.capture).mock.calls as unknown as Array<
+      [string, { secretEnv?: Record<string, string> }]
+    >;
+
+  it('deletes the cleanup paths after the steps, in the checkout and the home directory', async () => {
+    const host = fakeHost();
+    await runSetupStepsPhase(
+      host,
+      { cleanup: ['.npmrc', '~/.config/tok'], steps: [{ run: 'yarn' }] },
+      inputs
+    );
+    const [first, second] = calls(host).map(([cmd]) => cmd);
+    expect(first).toBe('yarn');
+    expect(second).toBe(`rm -rf -- '/workspace/target-repo/.npmrc' "$HOME"/'.config/tok'`);
+  });
+
+  it('scans for each value through secret env only, its longest line for a multi-line one', async () => {
+    const host = fakeHost();
+    await runSetupStepsPhase(
+      host,
+      { secrets: ['NPM_TOKEN', 'KEY', 'PIN'], steps: [{ run: 'yarn' }] },
+      inputs,
+      { KEY: '---\nlongest-line-of-key\n---', NPM_TOKEN: 'npm_abcdef123', PIN: '1234' }
+    );
+    const [script, opts] = calls(host).at(-1) ?? ['', {}];
+    expect(script).toContain('grep -lF -e "$AUTO_SWE_SCAN_0" -e "$AUTO_SWE_SCAN_1" --');
+    expect(script).not.toContain('npm_abcdef123');
+    expect(opts.secretEnv).toEqual({
+      AUTO_SWE_SCAN_0: 'longest-line-of-key',
+      AUTO_SWE_SCAN_1: 'npm_abcdef123',
+    });
+  });
+
+  it('fails setup naming the files a value was left in, and saves no cache', async () => {
+    const host = fakeHost({
+      capture: vi.fn(async (cmd: string) => ({
+        exitCode: 0,
+        stderr: '',
+        stdout: cmd.includes('grep -lF') ? '.npmrc\n~/.yarnrc.yml\n' : '',
+      })),
+    });
+    const err = await runSetupStepsPhase(
+      host,
+      {
+        cache: { paths: ['node_modules'] },
+        secrets: ['NPM_TOKEN'],
+        steps: [{ run: 'yarn' }],
+      },
+      inputs,
+      { NPM_TOKEN: 'npm_abcdef123' }
+    ).catch((e) => e);
+    expect(err).toMatchObject({ nonRetryable: true, type: WORKSPACE_SETUP_FAILED });
+    expect(String(err.message)).toContain('left a secret value in .npmrc, ~/.yarnrc.yml');
+    expect(String(err.message)).not.toContain('npm_abcdef123');
+    expect(artifacts.putArtifact).not.toHaveBeenCalled();
+  });
+
+  it('does not scan when the definition names no secrets', async () => {
+    const host = fakeHost();
+    await runSetupStepsPhase(host, { steps: [{ run: 'yarn' }] }, inputs);
+    expect(calls(host).map(([cmd]) => cmd)).toEqual(['yarn']);
+  });
+});
+
 describe('sweepSetupCaches', () => {
   it('deletes the tarball before its row', async () => {
     cache.findMany.mockResolvedValueOnce([{ artifactId: 'a1', id: 'r1' }]);

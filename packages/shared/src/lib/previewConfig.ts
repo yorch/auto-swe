@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { MAX_REPO_SETUP_SECRETS, RepoSetupSecretNameSchema } from './repoSetup.js';
 
 const LOCAL_URL_PATTERN = /^https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)(?:[/?#]|$)/i;
 const HOSTNAME_PATTERN =
@@ -37,7 +38,8 @@ export const ServiceSchema = z
     path: ['runAsGroup'],
   });
 
-const PreviewConfigInputSchema = z
+/** The recipe as stored, before defaults are filled in. */
+export const PreviewConfigInputSchema = z
   .object({
     allowedHosts: z.array(z.string().regex(HOSTNAME_PATTERN)).max(50).optional(),
     baseUrl: LocalPreviewUrlSchema.optional(),
@@ -63,6 +65,15 @@ const PreviewConfigInputSchema = z
     env: EnvironmentSchema.optional(),
     readyTimeoutMs: z.number().int().min(1000).max(900_000).optional(),
     readyUrl: LocalPreviewUrlSchema,
+    /**
+     * Names of the repository's setup secrets the preview's setup and start commands receive as
+     * environment variables; the values are stored encrypted on the repository.
+     */
+    secrets: z
+      .array(RepoSetupSecretNameSchema)
+      .max(MAX_REPO_SETUP_SECRETS)
+      .refine((names) => new Set(names).size === names.length, 'must not repeat a name')
+      .optional(),
     services: z.array(ServiceSchema).max(4).optional(),
     setup: z.string().max(4000).optional(),
     smoke: z
@@ -79,7 +90,18 @@ const PreviewConfigInputSchema = z
       .optional(),
     start: z.string().min(1).max(4000),
   })
-  .strict();
+  .strict()
+  .superRefine((config, ctx) => {
+    for (const name of config.secrets ?? []) {
+      if (config.env && name in config.env) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${name} is both an env variable and a secret`,
+          path: ['secrets'],
+        });
+      }
+    }
+  });
 
 export const PreviewConfigSchema = PreviewConfigInputSchema.transform((config) => ({
   ...config,

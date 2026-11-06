@@ -262,6 +262,21 @@ export function useSaveSetupSecret(connectionId: string) {
   });
 }
 
+/** Move the app preview recipe's env values into encrypted setup secrets. */
+export function useMovePreviewEnvToSecrets(connectionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .post<{ data: { moved: string[]; previewConfig: unknown } }>(
+          `/api/v1/repositories/${connectionId}/preview/env-to-secrets`,
+          {}
+        )
+        .then((r) => r.data),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['repositories'] }),
+  });
+}
+
 export function useDeleteSetupSecret(connectionId: string) {
   const queryClient = useQueryClient();
   return useMutation({

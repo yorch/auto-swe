@@ -579,6 +579,74 @@ async function runSteps(
   return done;
 }
 
+/** Shortest secret value the leak scan looks for; shorter values match too much by chance. */
+export const MIN_SCANNED_SECRET_CHARS = 8;
+const SCAN_TIMEOUT_MS = 300_000;
+const SCAN_MAX_FILE_KB = 20 * 1024;
+const SCAN_MAX_REPORTED = 20;
+
+/** A setup path as a shell word: `~/…` under the workspace user's home, else in the checkout. */
+function setupPathWord(p: string): string {
+  return p.startsWith('~/') ? `"$HOME"/${shellQuote(p.slice(2))}` : shellQuote(`${REPO_DIR}/${p}`);
+}
+
+/** Delete the files the definition lists under `cleanup`, as the workspace user. */
+async function runCleanup(host: RepoSetupHost, setup: RepoSetup): Promise<void> {
+  const paths = setup.cleanup ?? [];
+  if (paths.length === 0) {
+    return;
+  }
+  const result = await host.capture(`rm -rf -- ${paths.map(setupPathWord).join(' ')}`, {
+    timeoutMs: 120_000,
+  });
+  if (result.exitCode !== 0) {
+    throw setupRunFailure(`cleanup failed: ${tail(host, result)}`);
+  }
+}
+
+/**
+ * Fail setup when a secret value is still in a file the agent or the cache could read: the
+ * checkout or the workspace user's home, which holds every `~/` cache path. Each value is
+ * searched as a literal through secret environment, never the command line; a multi-line value
+ * by its longest line. Only the file names are reported.
+ */
+async function scanForSecrets(
+  host: RepoSetupHost,
+  secretEnv: Record<string, string>
+): Promise<void> {
+  const needles = Object.values(secretEnv)
+    .map((v) => v.split(/\r?\n/).reduce((a, b) => (b.trim().length > a.length ? b.trim() : a), ''))
+    .filter((v) => v.length >= MIN_SCANNED_SECRET_CHARS);
+  if (needles.length === 0) {
+    return;
+  }
+  const scanEnv = Object.fromEntries(needles.map((v, i) => [`AUTO_SWE_SCAN_${i}`, v]));
+  const patterns = needles.map((_, i) => `-e "$AUTO_SWE_SCAN_${i}"`).join(' ');
+  const script = [
+    `find ${shellQuote(REPO_DIR)} "$HOME" -xdev -type f -size -${SCAN_MAX_FILE_KB}k -print0 2>/dev/null`,
+    `| xargs -0 -r grep -lF ${patterns} -- 2>/dev/null`,
+    `| head -n ${SCAN_MAX_REPORTED}`,
+    `| sed -e ${shellQuote(`s|^${REPO_DIR}/||`)} -e "s|^$HOME/|~/|"; true`,
+  ].join(' ');
+  let result: CapturedResult;
+  try {
+    result = await host.capture(script, { secretEnv: scanEnv, timeoutMs: SCAN_TIMEOUT_MS });
+  } catch (err) {
+    throw setupRunFailure(
+      `the secret scan did not finish: ${host.redact(err instanceof Error ? err.message : String(err))}`
+    );
+  }
+  const files = result.stdout
+    .split('\n')
+    .map((f) => f.trim())
+    .filter(Boolean);
+  if (files.length) {
+    throw setupConfigFailure(
+      `setup left a secret value in ${host.redact(files.join(', '))}; list those files under cleanup, or have the step not write the value to disk`
+    );
+  }
+}
+
 /**
  * The git half of setup: submodules, then LFS in the checkout and in every fetched submodule. It runs while the git host is reachable and
  * before any repository code has run, so it is provisioning like the clone itself.
@@ -628,6 +696,8 @@ export async function runSetupStepsPhase(
     }
   }
   const steps = await runSteps(host, setup, secretEnv);
+  await runCleanup(host, setup);
+  await scanForSecrets(host, secretEnv);
   if (cacheKey && cache === 'miss') {
     try {
       cache = await saveCache(host, setup, cacheKey, inputs.cleanUrl, maxBytes);
