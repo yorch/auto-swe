@@ -27,8 +27,8 @@ full before it can seek.
 An item is kept only when the recording succeeds and the configured limits allow it: a screenshot
 over `uiValidation.maxScreenshotBytes`, a video over `uiValidation.maxVideoBytes`, or an item past
 `uiValidation.maxEvidencePerRun` is dropped, and the step reports it in its `notes` output rather
-than failing the gate. The worker reads a finalized recording and trace back independently, so a
-recording that cannot be read does not cost the trace.
+than failing the gate. The worker copies a finalized recording and trace to temporary files
+independently, so a recording that cannot be read does not cost the trace.
 
 The scheduled transcript-pruning workflow also removes evidence older than
 `uiValidation.evidenceRetentionDays`, including the public copy a pull request published, when
@@ -66,6 +66,11 @@ empty, and records screenshots before returning their evidence identifiers. Snap
 console text is screened before it is returned to the agent. Session cleanup waits for a start already
 in flight, then saves video and trace evidence and stops the app preview. One session serves the
 whole toolset, so concurrent tool calls in a single model step share it.
+`browser_screenshot` always saves the evidence PNG, including its requested `fullPage` setting, and
+by default also sends a viewport-only JPEG to the model. The ADMIN-only, GLOBAL setting
+`uiValidation.agentScreenshotImages` disables model images for models without image input; an
+unreadable or oversized JPEG is omitted while the screenshot evidence and text result are still
+returned.
 
 ## PR evidence
 
@@ -90,11 +95,12 @@ recipes can be saved by other repository editors.
 Configured services start as workspace sidecars before preview setup runs. Docker joins each service
 to the workspace network namespace, so the app reaches it through `localhost`; Kubernetes places
 services in the workspace pod. Service images must be on the team's shell image allowlist. Service
-containers have bounded resources, no-new-privileges and all capabilities dropped except
-`CHOWN`, `SETUID`, `SETGID`, `FOWNER` and `DAC_OVERRIDE`. A configured `readyCommand` is retried
-before the app preview starts. Kubernetes keeps service environment values in the workspace's
-per-pod Secret rather than the Pod manifest. Agent workspaces receive the recipe's services only
-when the agent has an explicit `browser` grant.
+containers have bounded resources and no-new-privileges. By default they run as root with
+`CHOWN`, `SETUID`, `SETGID`, `FOWNER` and `DAC_OVERRIDE`; `runAsUser` selects a non-root uid and
+drops all capabilities, while optional `runAsGroup` selects its group (defaulting to `runAsUser`).
+A configured `readyCommand` is retried before the app preview starts. Kubernetes keeps service
+environment values in the workspace's per-pod Secret rather than the Pod manifest. Agent
+workspaces receive the recipe's services only when the agent has an explicit `browser` grant.
 
 The worker's `startAppPreview` helper runs the recipe's optional setup (after the repository's
 [workspace setup](./repositories.md#workspace-setup), with the recipe's env), starts the app in its own session (so
@@ -129,16 +135,17 @@ kubectl get events -n auto-swe-workspaces --sort-by=.lastTimestamp \
   > /path/to/k8s-evidence/events.log
 ```
 
-The end-to-end case temporarily changes only the namespace's Pod Security `enforce` label from
-`restricted` to `baseline` so the root-starting Postgres service can run, then restores `restricted`.
-The separate admission case confirms that the root service is rejected under `restricted`; the
-workspace container remains non-root with all capabilities dropped.
+The end-to-end case verifies that a non-root Postgres service runs under the unchanged `restricted`
+namespace. A separate root-service case temporarily changes only the namespace's Pod Security
+`enforce` label to `baseline`, then restores `restricted`; another case confirms that root services
+are rejected under `restricted`. The workspace container remains non-root with all capabilities
+dropped.
 
 ## Limitations
 
-- Kubernetes preview services that run as root or add service capabilities need a namespace policy
-  less restrictive than Pod Security `restricted` (`baseline` permits the current service settings).
-  The workspace container keeps its non-root, dropped-capability security context.
+- Kubernetes preview services with `runAsUser` run under Pod Security `restricted`; services that
+  run as root still require `baseline`. The workspace container keeps its non-root,
+  dropped-capability security context.
 - The stray-process sweep scopes signals to the workspace mount namespace. It relies on the workspace
   having no `CAP_SYS_ADMIN` and using the runtime-default seccomp profile to prevent `unshare` or
   `setns` from moving a process into another mount namespace to evade the sweep.
@@ -146,20 +153,22 @@ workspace container remains non-root with all capabilities dropped.
   admin setting are enabled. The public bucket's access policy is operator-managed. Renaming the
   bucket after copies exist leaves the old copies behind: retention can only delete from the bucket
   the environment currently names.
-- `stop()` signals the preview's process group and processes that retain its random environment
-  mark. A daemon that scrubs the mark, or runs as a UID the worker cannot signal, can outlive
-  `stop()` until the workspace is destroyed.
+- `stop()` also stops orphaned processes in the workspace mount namespace whose start time is at
+  or after the preview starts and whose parent chain reaches PID 1. This includes an orphaned
+  process from any command started after the preview, not only one started by the preview command.
+  The sweep runs only when `stop()` executes inside a workspace exec session.
 - A worker that dies between writing an artifact and creating its `RunEvidence` row leaves a ready
   `ui.*` artifact that no evidence row points at. The daily transcript sweep deletes those, and a
   pending write, after a day; until then the object is stored but unreachable from any run.
-- Evidence bytes move through the worker on the way in: the recording is read out of the container
-  and written to the artifact store in memory, so the `uiValidation.maxVideoBytes` cap bounds a
-  single worker's memory use, and the step's wall-clock budget has to cover the transfer as well as
-  the recording. Serving is streamed from the store, not buffered.
+- Video and trace evidence are copied to temporary files and streamed through the worker into the
+  filesystem or S3 artifact store. The PostgreSQL `bytea` backend still buffers each file in worker
+  memory. The `uiValidation.maxVideoBytes` cap bounds a single evidence item, and the step's
+  wall-clock budget has to cover the transfer as well as the recording. Serving is streamed from
+  the store, not buffered.
 - A generic `agent` node can use the browser only with `workspace: true` and an explicit `browser`
   grant; a node without a workspace has no browser tools.
 - Trace snapshots replay on the dashboard origin. Playwright strips scripts from snapshot HTML, but
   the content comes from the app under test.
-- The browser tool's `browser_screenshot` persists the image as evidence but returns the accessible
-  page snapshot and the evidence id to the model, not the pixels: an agent reads the page as text,
-  and a person sees the picture on the run page.
+- Injection screening covers the screenshot tool's text output, not the pixels in the JPEG image
+  sent to the model. The model may therefore receive visual content that is not covered by text
+  screening.

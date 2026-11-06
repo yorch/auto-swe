@@ -213,6 +213,44 @@ describe('buildWorkspacePod', () => {
     });
   });
 
+  it('runs configured non-root services with the restricted security context', () => {
+    const servicePod = buildWorkspacePod(
+      {
+        ...spec,
+        services: [
+          {
+            image: 'postgres:18',
+            name: 'postgres',
+            runAsGroup: 999,
+            runAsUser: 999,
+          },
+        ],
+      },
+      config
+    ) as unknown as PodShape;
+
+    expect(servicePod.spec.containers[1]?.securityContext).toEqual({
+      allowPrivilegeEscalation: false,
+      capabilities: { drop: ['ALL'] },
+      runAsGroup: 999,
+      runAsNonRoot: true,
+      runAsUser: 999,
+      seccompProfile: { type: 'RuntimeDefault' },
+    });
+  });
+
+  it('defaults a non-root service group to its user id', () => {
+    const servicePod = buildWorkspacePod(
+      {
+        ...spec,
+        services: [{ image: 'postgres:18', name: 'postgres', runAsUser: 999 }],
+      },
+      config
+    ) as unknown as PodShape;
+
+    expect(servicePod.spec.containers[1]?.securityContext.runAsGroup).toBe(999);
+  });
+
   it('bounds the pod’s lifetime in the kubelet, not only in the worker', () => {
     expect(pod({ maxLifetimeSec: 120 }).spec.activeDeadlineSeconds).toBe(120);
   });

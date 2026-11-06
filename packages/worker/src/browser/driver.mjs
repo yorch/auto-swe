@@ -299,13 +299,30 @@ async function startDriver(options) {
         const file = inOutputDir(outDir, requestedPath);
         await fs.mkdir(path.dirname(file), { recursive: true });
         await page.screenshot({ fullPage: Boolean(command.fullPage), path: file, type: 'png' });
+        let modelFile;
+        if (command.modelImage === true) {
+          modelFile = `${file.replace(/\.png$/i, '')}.model.jpg`;
+          await page.screenshot({
+            fullPage: false,
+            path: modelFile,
+            quality: 70,
+            scale: 'css',
+            type: 'jpeg',
+          });
+        }
         const size = command.fullPage
           ? await page.evaluate(() => ({
               height: document.documentElement.scrollHeight,
               width: document.documentElement.scrollWidth,
             }))
           : page.viewportSize();
-        return { file, height: size?.height ?? 0, url: page.url(), width: size?.width ?? 0 };
+        return {
+          file,
+          ...(modelFile ? { modelFile } : {}),
+          height: size?.height ?? 0,
+          url: page.url(),
+          width: size?.width ?? 0,
+        };
       }
       case 'events': {
         const drained = events;

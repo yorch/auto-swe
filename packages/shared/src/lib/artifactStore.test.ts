@@ -150,6 +150,29 @@ describe('putArtifact (postgres backend)', () => {
     const data = createMock.mock.calls[0]?.[0]?.data as Record<string, unknown>;
     expect(data.runId).toBe('run-9');
   });
+
+  it('buffers a file body for bytea and retains the supplied size', async () => {
+    const filePath = path.join(os.tmpdir(), `asw-artifact-${process.pid}.pg`);
+    const payload = Buffer.from('recording bytes');
+    await fs.writeFile(filePath, payload);
+    createMock.mockImplementation((async ({ data }: { data: Record<string, unknown> }) => ({
+      ...data,
+      id: 'art-file-pg',
+    })) as never);
+
+    try {
+      const ref = await putArtifact({
+        body: { filePath, sizeBytes: payload.byteLength },
+        kind: 'ui.video',
+      });
+
+      expect(ref.sizeBytes).toBe(payload.byteLength);
+      const data = createMock.mock.calls[0]?.[0]?.data as Record<string, unknown>;
+      expect(Buffer.from(data.inlineBlob as Uint8Array)).toEqual(payload);
+    } finally {
+      await fs.rm(filePath, { force: true });
+    }
+  });
 });
 
 describe('getArtifact / getArtifactText (postgres backend)', () => {
@@ -336,6 +359,37 @@ describe('putArtifact (S3 backend, write-ahead)', () => {
       where: { id: 'art-s3', status: 'pending' },
     });
     expect(ref).toMatchObject({ backend: 's3', id: 'art-s3' });
+  });
+
+  it('streams file bodies with an explicit ContentLength', async () => {
+    process.env.ARTIFACT_S3_BUCKET = 'bucket-1';
+    const filePath = path.join(os.tmpdir(), `asw-artifact-${process.pid}.s3`);
+    const payload = Buffer.from('streamed video');
+    await fs.writeFile(filePath, payload);
+    createMock.mockImplementation((async ({ data }: { data: Record<string, unknown> }) => ({
+      ...data,
+      id: 'art-s3-file',
+    })) as never);
+
+    try {
+      const ref = await putArtifact({
+        body: { filePath, sizeBytes: payload.byteLength },
+        kind: 'ui.video',
+      });
+      const put = s3.sent.find((command) => command.name === 'PutObjectCommand');
+      const body = put?.input.Body;
+      const chunks: Buffer[] = [];
+      for await (const chunk of body as AsyncIterable<Uint8Array>) {
+        chunks.push(Buffer.from(chunk));
+      }
+
+      expect(ref.sizeBytes).toBe(payload.byteLength);
+      expect(body).toBeInstanceOf(Readable);
+      expect(put?.input.ContentLength).toBe(payload.byteLength);
+      expect(Buffer.concat(chunks)).toEqual(payload);
+    } finally {
+      await fs.rm(filePath, { force: true });
+    }
   });
 
   it('leaves its row pending and rethrows when PutObject fails', async () => {
@@ -534,6 +588,23 @@ describe('filesystem backend', () => {
       data: { status: 'ready' },
       where: { id: data.id, status: 'pending' },
     });
+  });
+
+  it('streams file bodies into the filesystem store', async () => {
+    const sourcePath = path.join(root, 'source.webm');
+    const payload = Buffer.from('streamed recording');
+    await fs.writeFile(sourcePath, payload);
+
+    const ref = await putArtifact({
+      body: { filePath: sourcePath, sizeBytes: payload.byteLength },
+      kind: 'ui.video',
+      runId,
+    });
+
+    const data = createMock.mock.calls.at(-1)?.[0]?.data as Record<string, string | number>;
+    expect(ref.sizeBytes).toBe(payload.byteLength);
+    expect(data.sizeBytes).toBe(payload.byteLength);
+    expect(await fs.readFile(path.join(root, String(data.fsPath)))).toEqual(payload);
   });
 
   it('round-trips through getArtifact', async () => {

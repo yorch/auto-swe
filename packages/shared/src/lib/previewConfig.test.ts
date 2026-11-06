@@ -28,7 +28,15 @@ describe('PreviewConfigSchema', () => {
         baseUrl: 'http://127.0.0.1:4173',
         e2e: { command: 'npx playwright test' },
         env: { NODE_ENV: 'test' },
-        services: [{ image: 'postgres:18', name: 'db', port: 5432 }],
+        services: [
+          {
+            image: 'postgres:18',
+            name: 'db',
+            port: 5432,
+            runAsGroup: 999,
+            runAsUser: 999,
+          },
+        ],
         smoke: [{ name: 'Home', path: '/', waitFor: 'main' }],
       })
     ).toMatchObject({
@@ -74,5 +82,43 @@ describe('PreviewConfigSchema', () => {
         smoke: Array.from({ length: 31 }, () => ({ path: '/' })),
       }).success
     ).toBe(false);
+  });
+
+  it('validates preview service user and group identities', () => {
+    expect(
+      PreviewConfigSchema.parse({
+        ...validConfig,
+        services: [{ image: 'postgres:18', name: 'db', runAsUser: 999 }],
+      }).services?.[0]
+    ).toMatchObject({ runAsUser: 999 });
+
+    for (const value of [0, 1.5, 2_147_483_648]) {
+      expect(
+        PreviewConfigSchema.safeParse({
+          ...validConfig,
+          services: [{ image: 'postgres:18', name: 'db', runAsUser: value }],
+        }).success
+      ).toBe(false);
+      expect(
+        PreviewConfigSchema.safeParse({
+          ...validConfig,
+          services: [{ image: 'postgres:18', name: 'db', runAsGroup: value, runAsUser: 999 }],
+        }).success
+      ).toBe(false);
+    }
+
+    const result = PreviewConfigSchema.safeParse({
+      ...validConfig,
+      services: [{ image: 'postgres:18', name: 'db', runAsGroup: 999 }],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({
+          message: 'runAsGroup requires runAsUser',
+          path: ['services', 0, 'runAsGroup'],
+        })
+      );
+    }
   });
 });

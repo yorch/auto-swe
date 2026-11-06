@@ -55,7 +55,10 @@ import {
   toolInstallScript,
 } from '../lib/toolInstall.js';
 import { workspaceBackend } from '../lib/workspaceBackend/index.js';
-import { readSingleFileFromArchive } from '../lib/workspaceBackend/kubernetes/safeTar.js';
+import {
+  extractSingleFileFromArchive,
+  readSingleFileFromArchive,
+} from '../lib/workspaceBackend/kubernetes/safeTar.js';
 import { agentWorkspaceSpec } from '../lib/workspaceBackend/spec.js';
 import type { WorkspaceHandle, WorkspaceServiceSpec } from '../lib/workspaceBackend/types.js';
 
@@ -100,6 +103,10 @@ export interface Workspace {
   execStdin: (command: string, stdin: string | Buffer) => Promise<string>;
   /** Read one regular file from the workspace without sending its contents through stdout. */
   readFile: (path: string, maxBytes: number) => Promise<Buffer>;
+  copyFileOut: (
+    path: string,
+    maxBytes: number
+  ) => Promise<{ path: string; sizeBytes: number; cleanup(): Promise<void> }>;
   /**
    * Run a git subcommand (e.g. `push origin main`) against `origin` with the
    * clone credential injected for this call only via `-c http.extraheader`,
@@ -913,6 +920,41 @@ export async function createWorkspace(
       await rm(dir, { force: true, recursive: true });
     }
   }
+  async function copyWorkspaceFileOut(
+    filePath: string,
+    maxBytes: number
+  ): Promise<{ path: string; sizeBytes: number; cleanup(): Promise<void> }> {
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+      throw new RangeError('maxBytes must be a non-negative safe integer');
+    }
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'workspace-file-'));
+    const archivePath = path.join(dir, 'file.tar');
+    const destPath = path.join(dir, 'file');
+    try {
+      const copied = await backend.copyOut(handle, filePath, archivePath, {
+        heartbeatLabel: 'workspace: copying a file out',
+        maxBytes: Math.min(Number.MAX_SAFE_INTEGER, maxBytes + 128 * 1024),
+        timeoutMs: 60_000,
+      });
+      if (copied.exceeded) {
+        throw new RangeError(`workspace file exceeds the ${maxBytes} byte limit`);
+      }
+      if (copied.exitCode !== 0) {
+        throw new Error(
+          `Could not read workspace file "${filePath}": ${copied.stderr.trim() || 'copy failed'}`
+        );
+      }
+      const extracted = await extractSingleFileFromArchive(archivePath, destPath, maxBytes);
+      return {
+        cleanup: () => rm(dir, { force: true, recursive: true }),
+        path: destPath,
+        sizeBytes: extracted.sizeBytes,
+      };
+    } catch (error) {
+      await rm(dir, { force: true, recursive: true });
+      throw error;
+    }
+  }
   let baseRef: () => Promise<string> = async () => 'HEAD';
   let baseRefFetch: Promise<string> | undefined;
   // Secrets minted during setup (submodule credentials), scrubbed like the clone's own.
@@ -1309,6 +1351,7 @@ export async function createWorkspace(
 
   return {
     containerId: containerName,
+    copyFileOut: copyWorkspaceFileOut,
     destroy: async () => {
       await egress?.registration.release().catch(() => {});
       await registry?.registration.release().catch(() => {});

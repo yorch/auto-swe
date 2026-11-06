@@ -44,6 +44,31 @@ describe('buildServiceContainerArgs', () => {
     expect(args).not.toContain('kept-off-argv');
   });
 
+  it('runs a configured non-root service without adding capabilities', () => {
+    const args = buildServiceContainerArgs('workspace-abc123', {
+      image: 'postgres:18',
+      name: 'postgres',
+      runAsGroup: 999,
+      runAsUser: 999,
+    });
+
+    expect(args).toEqual(expect.arrayContaining(['--user', '999:999', '--cap-drop=ALL']));
+    expect(args.some((arg) => arg.startsWith('--cap-add='))).toBe(false);
+  });
+
+  it('defaults a non-root service group to its user id', () => {
+    const args = buildServiceContainerArgs('workspace-abc123', {
+      image: 'postgres:18',
+      name: 'postgres',
+      runAsUser: 999,
+    });
+
+    expect(args.slice(args.indexOf('--user'), args.indexOf('--user') + 2)).toEqual([
+      '--user',
+      '999:999',
+    ]);
+  });
+
   it('carries the orphan-sweep labels so a leaked service container is reaped', () => {
     const image = 'mirror.gcr.io/library/postgres:18';
     const args = buildServiceContainerArgs('workspace-abc123', {

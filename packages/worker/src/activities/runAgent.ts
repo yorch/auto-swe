@@ -383,7 +383,7 @@ function recordToolCalls(
           tracer.addToolCall({
             durationMs: Date.now() - start,
             inputJson: input ?? {},
-            outputJson: output,
+            outputJson: stripModelImage(output),
             toolName: name,
           });
           return output;
@@ -450,11 +450,29 @@ function recordStepToolCalls(
           ? undefined
           : (errors.get(call.toolCallId) ?? (result ? errorText(result.result) : NO_RESULT_ERROR)),
         inputJson: call.args ?? {},
-        outputJson: succeeded ? result.result : undefined,
+        outputJson: succeeded ? stripModelImage(result.result) : undefined,
         toolName: call.toolName,
       });
     }
   }
+}
+
+function stripModelImage(output: unknown): unknown {
+  if (typeof output !== 'object' || output === null || Array.isArray(output)) {
+    return output;
+  }
+  const record = output as Record<string, unknown>;
+  const image = record.image;
+  if (
+    typeof image !== 'object' ||
+    image === null ||
+    Array.isArray(image) ||
+    typeof (image as Record<string, unknown>).data !== 'string'
+  ) {
+    return output;
+  }
+  const { image: _image, ...textOnly } = record;
+  return textOnly;
 }
 
 /**

@@ -13,6 +13,8 @@ import { screenMcpResult } from './mcpScreen.js';
 export interface BrowserToolContext {
   ensureSession(): Promise<BrowserSession>;
   startApp(): Promise<string>;
+  agentScreenshotImages?: boolean;
+  maxScreenshotBytes?: number;
   saveScreenshot(input: {
     caption: string;
     filePath: string;
@@ -26,7 +28,6 @@ export interface BrowserToolContext {
     width?: number;
     height?: number;
     ariaSnapshot: string;
-    image: Buffer;
   }>;
 }
 
@@ -34,8 +35,13 @@ type BrowserTool<A extends z.ZodObject = z.ZodObject> = {
   name: string;
   description: string;
   schema: A;
-  run(session: BrowserToolContext, args: z.infer<A>): Promise<{ text: string; image?: Buffer }>;
+  run(
+    session: BrowserToolContext,
+    args: z.infer<A>
+  ): Promise<{ text: string; image?: { data: Buffer; mimeType: 'image/jpeg' } }>;
 };
+
+const DEFAULT_MAX_SCREENSHOT_BYTES = 5_000_000;
 
 function textResult(result: unknown): string {
   return typeof result === 'string' ? result : JSON.stringify(result);
@@ -137,7 +143,12 @@ export const BROWSER_TOOLS = [
     name: 'browser_screenshot',
     async run(context, args: { caption: string; fullPage?: boolean }) {
       const session = await context.ensureSession();
-      const shot = await session.call({ cmd: 'screenshot', fullPage: args.fullPage ?? false });
+      const modelImage = context.agentScreenshotImages === true;
+      const shot = await session.call({
+        cmd: 'screenshot',
+        fullPage: args.fullPage ?? false,
+        ...(modelImage ? { modelImage: true } : {}),
+      });
       if (!shot.ok || typeof shot.file !== 'string') {
         throw new Error(shot.error ?? 'Browser screenshot failed');
       }
@@ -150,16 +161,31 @@ export const BROWSER_TOOLS = [
         session,
         width: typeof shot.width === 'number' ? shot.width : undefined,
       });
-      return {
-        image: saved.image,
-        text: JSON.stringify({
-          ariaSnapshot: saved.ariaSnapshot,
-          evidenceId: saved.evidenceId,
-          height: saved.height,
-          pageUrl: shot.url,
-          width: saved.width,
-        }),
+      const output: Record<string, unknown> = {
+        ariaSnapshot: saved.ariaSnapshot,
+        evidenceId: saved.evidenceId,
+        height: saved.height,
+        pageUrl: shot.url,
+        width: saved.width,
       };
+      if (modelImage) {
+        try {
+          if (typeof shot.modelFile !== 'string') {
+            throw new Error('Browser driver did not return a model screenshot');
+          }
+          const image = await session.readOutFile(
+            shot.modelFile,
+            context.maxScreenshotBytes ?? DEFAULT_MAX_SCREENSHOT_BYTES
+          );
+          return {
+            image: { data: image, mimeType: 'image/jpeg' },
+            text: JSON.stringify(output),
+          };
+        } catch (error) {
+          output.imageOmitted = error instanceof Error ? error.message : String(error);
+        }
+      }
+      return { text: JSON.stringify(output) };
     },
     schema: z.object({ caption: z.string().min(1), fullPage: z.boolean().optional() }),
   },
@@ -194,6 +220,8 @@ export class BrowserToolset implements BrowserToolContext {
   >;
   private closing = false;
   private readonly evidenceIds: string[] = [];
+  agentScreenshotImages?: boolean;
+  maxScreenshotBytes?: number;
 
   constructor(private readonly options: BrowserToolsetOptions) {}
 
@@ -207,10 +235,19 @@ export class BrowserToolset implements BrowserToolContext {
     if (!this.sessionPromise) {
       const starting = (async () => {
         await this.loadPreviewConfig();
+        const [maxVideoBytes, recordVideo, agentScreenshotImages, maxScreenshotBytes] =
+          await Promise.all([
+            resolveSetting('uiValidation.maxVideoBytes'),
+            resolveSetting('uiValidation.agentRecordVideo'),
+            resolveSetting('uiValidation.agentScreenshotImages'),
+            resolveSetting('uiValidation.maxScreenshotBytes'),
+          ]);
+        this.agentScreenshotImages = agentScreenshotImages;
+        this.maxScreenshotBytes = maxScreenshotBytes;
         return BrowserSession.start(this.options.workspace, {
           allowedHosts: this.previewConfig?.allowedHosts ?? [],
-          maxVideoBytes: await resolveSetting('uiValidation.maxVideoBytes'),
-          recordVideo: await resolveSetting('uiValidation.agentRecordVideo'),
+          maxVideoBytes,
+          recordVideo,
           trace: true,
         });
       })();
@@ -289,12 +326,14 @@ export class BrowserToolset implements BrowserToolContext {
       ariaSnapshot,
       evidenceId: saved.evidenceId,
       height: input.height,
-      image,
       width: input.width,
     };
   }
 
-  async call(name: BrowserToolName, args: unknown): Promise<{ text: string; image?: Buffer }> {
+  async call(
+    name: BrowserToolName,
+    args: unknown
+  ): Promise<{ text: string; image?: { data: Buffer; mimeType: 'image/jpeg' } }> {
     const entry = BROWSER_TOOLS.find((tool) => tool.name === name);
     if (!entry) {
       throw new Error(`Browser tool is not available: ${name}`);
@@ -306,7 +345,10 @@ export class BrowserToolset implements BrowserToolContext {
     );
     try {
       parsed = entry.schema.parse(args);
-      const result: { text: string; image?: Buffer } = await entry.run(this, parsed as never);
+      const result: {
+        text: string;
+        image?: { data: Buffer; mimeType: 'image/jpeg' };
+      } = await entry.run(this, parsed as never);
       const screened = await screenText(result.text, name, this.options.tracer);
       this.options.tracer.addToolCall({
         durationMs: Date.now() - started,
@@ -347,35 +389,39 @@ export class BrowserToolset implements BrowserToolContext {
           outputJson: { error: message },
         });
       }
-      if (outputs?.video) {
-        const saved = await recordActivityEvidence(
-          {
-            body: outputs.video,
-            caption: 'Agent browser session recording',
-            contentType: 'video/webm',
-            kind: 'video',
-            source: 'agent',
-          },
-          this.options.tracer
-        );
-        if (saved.ok) {
-          this.evidenceIds.push(saved.evidenceId);
+      try {
+        if (outputs?.video) {
+          const saved = await recordActivityEvidence(
+            {
+              body: { filePath: outputs.video.path, sizeBytes: outputs.video.sizeBytes },
+              caption: 'Agent browser session recording',
+              contentType: 'video/webm',
+              kind: 'video',
+              source: 'agent',
+            },
+            this.options.tracer
+          );
+          if (saved.ok) {
+            this.evidenceIds.push(saved.evidenceId);
+          }
         }
-      }
-      if (outputs?.trace) {
-        const saved = await recordActivityEvidence(
-          {
-            body: outputs.trace,
-            caption: 'Agent browser trace',
-            contentType: 'application/zip',
-            kind: 'trace',
-            source: 'agent',
-          },
-          this.options.tracer
-        );
-        if (saved.ok) {
-          this.evidenceIds.push(saved.evidenceId);
+        if (outputs?.trace) {
+          const saved = await recordActivityEvidence(
+            {
+              body: { filePath: outputs.trace.path, sizeBytes: outputs.trace.sizeBytes },
+              caption: 'Agent browser trace',
+              contentType: 'application/zip',
+              kind: 'trace',
+              source: 'agent',
+            },
+            this.options.tracer
+          );
+          if (saved.ok) {
+            this.evidenceIds.push(saved.evidenceId);
+          }
         }
+      } finally {
+        await Promise.all([outputs?.video?.cleanup(), outputs?.trace?.cleanup()]);
       }
     } finally {
       await this.preview?.stop();
@@ -406,9 +452,40 @@ export function createMastraBrowserTools(toolset: BrowserToolset) {
       entry.name,
       createTool({
         description: entry.description,
-        execute: async (args) => ({ text: (await toolset.call(entry.name, args)).text }),
+        execute: async (args) => {
+          const result = await toolset.call(entry.name, args);
+          return {
+            text: result.text,
+            ...(result.image
+              ? {
+                  image: {
+                    data: result.image.data.toString('base64'),
+                    mimeType: result.image.mimeType,
+                  },
+                }
+              : {}),
+          };
+        },
         id: entry.name,
         inputSchema: entry.schema,
+        toModelOutput: (raw) => {
+          const output = raw as { text: string; image?: { data: string; mimeType: string } };
+          return {
+            type: 'content',
+            value: [
+              { text: output.text, type: 'text' },
+              ...(output.image
+                ? [
+                    {
+                      data: { data: output.image.data, type: 'data' },
+                      mediaType: output.image.mimeType,
+                      type: 'file',
+                    },
+                  ]
+                : []),
+            ],
+          };
+        },
       }),
     ])
   );

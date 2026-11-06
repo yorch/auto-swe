@@ -28,8 +28,14 @@ export const ServiceSchema = z
     name: z.string().regex(/^[a-z][a-z0-9-]{0,30}$/),
     port: z.number().int().min(1).max(65_535).optional(),
     readyCommand: z.string().optional(),
+    runAsGroup: z.number().int().min(1).max(2_147_483_647).optional(),
+    runAsUser: z.number().int().min(1).max(2_147_483_647).optional(),
   })
-  .strict();
+  .strict()
+  .refine((service) => service.runAsGroup === undefined || service.runAsUser !== undefined, {
+    message: 'runAsGroup requires runAsUser',
+    path: ['runAsGroup'],
+  });
 
 const PreviewConfigInputSchema = z
   .object({

@@ -14,12 +14,18 @@ function makeWorkspace(callResult?: (outputDir: string) => string) {
     return '';
   });
   const readFile = vi.fn(async (filePath: string) => Buffer.from(filePath));
+  const copyFileOut = vi.fn(async (filePath: string) => ({
+    cleanup: vi.fn(async () => {}),
+    path: filePath,
+    sizeBytes: Buffer.byteLength(filePath),
+  }));
   const workspace = {
+    copyFileOut,
     exec,
     execStdin: vi.fn(async () => ''),
     readFile,
   } as unknown as Workspace;
-  return { exec, readFile, workspace };
+  return { copyFileOut, exec, readFile, workspace };
 }
 
 describe('BrowserSession', () => {
@@ -86,7 +92,7 @@ describe('BrowserSession', () => {
     );
   });
 
-  it('returns recorded video and trace buffers on close', async () => {
+  it('returns file handles for recorded video and trace on close', async () => {
     const { workspace } = makeWorkspace((outputDir) =>
       JSON.stringify({
         ok: true,
@@ -101,24 +107,24 @@ describe('BrowserSession', () => {
     });
     const files = await session.close();
 
-    expect(files.video?.toString()).toMatch(/recording\.webm$/);
-    expect(files.trace?.toString()).toMatch(/trace\.zip$/);
+    expect(files.video?.path).toMatch(/recording\.webm$/);
+    expect(files.trace?.path).toMatch(/trace\.zip$/);
     expect(files.errors).toEqual([]);
   });
 
   it('keeps the trace when the recording cannot be read back', async () => {
-    const { readFile, workspace } = makeWorkspace((outputDir) =>
+    const { copyFileOut, workspace } = makeWorkspace((outputDir) =>
       JSON.stringify({
         ok: true,
         trace: `${outputDir}/trace.zip`,
         video: `${outputDir}/recording.webm`,
       })
     );
-    readFile.mockImplementation(async (filePath: string) => {
+    copyFileOut.mockImplementation(async (filePath: string) => {
       if (filePath.endsWith('recording.webm')) {
         throw new Error('file exceeds the read limit');
       }
-      return Buffer.from(filePath);
+      return { cleanup: vi.fn(async () => {}), path: filePath, sizeBytes: 10 };
     });
     const session = await BrowserSession.start(workspace, {
       allowedHosts: [],
@@ -128,14 +134,14 @@ describe('BrowserSession', () => {
     const files = await session.close();
 
     expect(files.video).toBeUndefined();
-    expect(files.trace?.toString()).toMatch(/trace\.zip$/);
+    expect(files.trace?.path).toMatch(/trace\.zip$/);
     expect(files.errors).toEqual([
       expect.stringContaining('recording: file exceeds the read limit'),
     ]);
   });
 
   it('reads the recording up to the configured limit', async () => {
-    const { readFile, workspace } = makeWorkspace((outputDir) =>
+    const { copyFileOut, workspace } = makeWorkspace((outputDir) =>
       JSON.stringify({ ok: true, video: `${outputDir}/recording.webm` })
     );
     const session = await BrowserSession.start(workspace, {
@@ -146,7 +152,7 @@ describe('BrowserSession', () => {
     });
     await session.close();
 
-    expect(readFile).toHaveBeenCalledWith(expect.stringMatching(/recording\.webm$/), 2_000_000);
+    expect(copyFileOut).toHaveBeenCalledWith(expect.stringMatching(/recording\.webm$/), 2_000_000);
   });
 
   it('reports a clear error when the workspace has no browser', async () => {

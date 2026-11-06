@@ -1,5 +1,7 @@
+import { createReadStream, createWriteStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 
 /**
  * Why this exists. Under Docker the daemon extracts a copied archive, in a way
@@ -280,4 +282,63 @@ export async function readSingleFileFromArchive(file: string, maxBytes: number):
     throw new UnsafeArchiveError('archive does not contain a regular file');
   }
   return result;
+}
+
+/** Validate and stream the sole regular file in a safe tar archive to disk. */
+export async function extractSingleFileFromArchive(
+  archivePath: string,
+  destPath: string,
+  maxBytes: number
+): Promise<{ sizeBytes: number }> {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError('maxBytes must be a non-negative safe integer');
+  }
+  await assertSafeArchive(archivePath);
+  const handle = await fs.open(archivePath, 'r');
+  let dataStart = -1;
+  let sizeBytes = 0;
+  try {
+    const { size: fileSize } = await handle.stat();
+    const header = Buffer.alloc(BLOCK);
+    let pos = 0;
+    while (pos + BLOCK <= fileSize) {
+      const { bytesRead } = await handle.read(header, 0, BLOCK, pos);
+      if (bytesRead !== BLOCK || header.every((byte) => byte === 0)) {
+        break;
+      }
+      const size = parseSize(header);
+      const type = String.fromCharCode(header[156] ?? 0);
+      const entryStart = pos + BLOCK;
+      if (type === 'L' || type === 'K' || type === 'x' || type === 'g') {
+        pos = entryStart + Math.ceil(size / BLOCK) * BLOCK;
+        continue;
+      }
+      if (type === '0' || type === '\0' || type === '7') {
+        if (dataStart !== -1) {
+          throw new UnsafeArchiveError('archive contains more than one regular file');
+        }
+        if (size > maxBytes) {
+          throw new RangeError(`workspace file exceeds the ${maxBytes} byte limit`);
+        }
+        dataStart = entryStart;
+        sizeBytes = size;
+      }
+      pos = entryStart + Math.ceil(size / BLOCK) * BLOCK;
+    }
+  } finally {
+    await handle.close();
+  }
+  if (dataStart < 0) {
+    throw new UnsafeArchiveError('archive does not contain a regular file');
+  }
+  await fs.mkdir(path.dirname(destPath), { recursive: true });
+  if (sizeBytes === 0) {
+    await fs.writeFile(destPath, Buffer.alloc(0), { flag: 'wx' });
+  } else {
+    await pipeline(
+      createReadStream(archivePath, { end: dataStart + sizeBytes - 1, start: dataStart }),
+      createWriteStream(destPath, { flags: 'wx', mode: 0o600 })
+    );
+  }
+  return { sizeBytes };
 }

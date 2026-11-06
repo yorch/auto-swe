@@ -243,6 +243,31 @@ describe('TranscriptRecorder', () => {
     });
   });
 
+  it('omits screenshot image blocks from persisted Claude Code messages', async () => {
+    const r = new TranscriptRecorder();
+    r.addHarnessMessage({
+      message: {
+        content: [
+          { text: 'Screenshot result', type: 'text' },
+          {
+            source: { data: 'private-base64-image', media_type: 'image/jpeg', type: 'base64' },
+            type: 'image',
+          },
+        ],
+      },
+      type: 'user',
+    });
+    await r.close('succeeded');
+
+    const record = partLines()
+      .flat()
+      .find((line) => line.kind === 'harness_message');
+    expect(JSON.stringify(record)).not.toContain('private-base64-image');
+    expect(record).toMatchObject({
+      message: { message: { content: [{ text: 'Screenshot result', type: 'text' }] } },
+    });
+  });
+
   it('flushes a part once the buffer reaches 8 MiB, before close', async () => {
     const r = new TranscriptRecorder();
     r.addHttpCall(record({ request: { blob: 'x'.repeat(8 * 1024 * 1024) } }));

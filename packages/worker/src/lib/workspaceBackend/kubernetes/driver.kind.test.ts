@@ -12,7 +12,7 @@ import { startAppPreview } from '../../appPreview.js';
 import type { WorkspaceContainerSpec, WorkspaceHandle } from '../types.js';
 import { KubernetesWorkspaceBackend } from './driver.js';
 import { probeScript } from './egressLock.js';
-import { readSingleFileFromArchive } from './safeTar.js';
+import { extractSingleFileFromArchive, readSingleFileFromArchive } from './safeTar.js';
 import { buildTar } from './testTar.js';
 
 const enabled = process.env.K8S_KIND_TEST === '1';
@@ -112,6 +112,24 @@ describe.skipIf(!enabled)('Kubernetes workspace kind integration', () => {
     });
     return {
       containerId: handle.id,
+      copyFileOut: async (filePath: string, maxBytes: number) => {
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'k8s-kind-copy-'));
+        const archive = path.join(dir, 'file.tar');
+        const copiedPath = path.join(dir, path.basename(filePath));
+        try {
+          await backend.copyOut(handle, filePath, archive, { maxBytes });
+          await extractSingleFileFromArchive(archive, copiedPath, maxBytes);
+          const { size } = await fs.stat(copiedPath);
+          return {
+            cleanup: () => fs.rm(dir, { force: true, recursive: true }),
+            path: copiedPath,
+            sizeBytes: size,
+          };
+        } catch (error) {
+          await fs.rm(dir, { force: true, recursive: true });
+          throw error;
+        }
+      },
       exec: (
         command: string,
         options?: { timeoutMs?: number; secretEnv?: Record<string, string> }
@@ -340,11 +358,17 @@ describe.skipIf(!enabled)('Kubernetes workspace kind integration', () => {
       }
       const outputs = await browser.close();
       browser = undefined;
-      expect(outputs.errors).toEqual([]);
-      expect(outputs.video?.length ?? 0).toBeGreaterThan(0);
-      expect(outputs.video?.subarray(0, 4)).toEqual(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
-      expect(outputs.trace?.length ?? 0).toBeGreaterThan(0);
-      expect(outputs.trace?.subarray(0, 2).toString()).toBe('PK');
+      try {
+        expect(outputs.errors).toEqual([]);
+        const video = outputs.video ? await fs.readFile(outputs.video.path) : Buffer.alloc(0);
+        const trace = outputs.trace ? await fs.readFile(outputs.trace.path) : Buffer.alloc(0);
+        expect(video.length).toBeGreaterThan(0);
+        expect(video.subarray(0, 4)).toEqual(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]));
+        expect(trace.length).toBeGreaterThan(0);
+        expect(trace.subarray(0, 2).toString()).toBe('PK');
+      } finally {
+        await Promise.all([outputs.video?.cleanup(), outputs.trace?.cleanup()]);
+      }
 
       let reachableTarget: (typeof PUBLIC_TARGETS)[number] | undefined;
       for (const target of PUBLIC_TARGETS) {
@@ -382,6 +406,66 @@ describe.skipIf(!enabled)('Kubernetes workspace kind integration', () => {
       }
     }
   }, 300_000);
+
+  it('admits and readies a non-root Postgres service under restricted', async () => {
+    const name = `workspace-kind-nonroot-${randomBytes(4).toString('hex')}`;
+    workspaceName = name;
+    expect(namespaceEnforce()).toBe('restricted');
+
+    const handle = await backend.create(
+      integrationSpec(name, [
+        {
+          env: {
+            POSTGRES_DB: 'kind_test',
+            POSTGRES_PASSWORD: randomBytes(16).toString('hex'),
+            POSTGRES_USER: 'postgres',
+          },
+          image: 'mirror.gcr.io/library/postgres:18',
+          name: 'postgres',
+          port: 5432,
+          readyCommand: 'pg_isready -h 127.0.0.1 -p 5432 -U postgres',
+          runAsGroup: 999,
+          runAsUser: 999,
+        },
+      ])
+    );
+
+    const repositoryDirectory = await backend.exec(
+      handle,
+      ['mkdir', '-p', '/workspace/target-repo'],
+      {
+        heartbeatLabel: 'kind workspace integration',
+        timeoutMs: 30_000,
+        workdir: '/workspace',
+      }
+    );
+    expect(repositoryDirectory.exitCode).toBe(0);
+    expect(namespaceEnforce()).toBe('restricted');
+    expect(await tcpConnect(handle, '127.0.0.1', 5432)).toBe('connected');
+    const pod = JSON.parse(
+      kubectl(['get', 'pod', name, '--namespace', config.namespace, '-o', 'json'])
+    ) as {
+      spec: {
+        containers: {
+          name: string;
+          securityContext?: {
+            runAsGroup?: number;
+            runAsNonRoot?: boolean;
+            runAsUser?: number;
+            capabilities?: { add?: string[]; drop?: string[] };
+          };
+        }[];
+      };
+    };
+    const postgres = pod.spec.containers.find((container) => container.name === 'postgres');
+    expect(postgres?.securityContext).toMatchObject({
+      capabilities: { drop: ['ALL'] },
+      runAsGroup: 999,
+      runAsNonRoot: true,
+      runAsUser: 999,
+    });
+    expect(postgres?.securityContext?.capabilities?.add ?? []).toEqual([]);
+  });
 
   it('rejects a root-needing service under the restricted namespace with a Pod Security error', async () => {
     const name = `workspace-kind-root-${randomBytes(4).toString('hex')}`;

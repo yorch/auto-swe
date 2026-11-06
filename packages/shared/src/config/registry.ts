@@ -1226,6 +1226,18 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
+  'uiValidation.agentScreenshotImages': defineSetting({
+    defaultValue: true,
+    description:
+      'Whether the agent browser tool returns screenshot images to the model; turn off for models without image input.',
+    group: 'uiValidation',
+    label: "Send screenshots to the agent's model",
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'uiValidation.evidenceRetentionDays': defineSetting({
     defaultValue: 90,
     description: 'How long run UI evidence is kept before the daily retention sweep deletes it.',

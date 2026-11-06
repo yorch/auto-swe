@@ -21,10 +21,12 @@
  */
 
 import crypto from 'node:crypto';
+import { createReadStream, createWriteStream } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 export const FS_STORE_MARKER = '.auto-swe-artifacts.json';
 export const FS_TEMP_DIR = '.tmp';
@@ -237,7 +239,7 @@ export async function assertFsStore(
  * could still drop.
  */
 export async function writeFsArtifact(input: {
-  body: Buffer;
+  body: Buffer | { filePath: string };
   root: string;
   relativePath: string;
 }): Promise<void> {
@@ -256,13 +258,25 @@ export async function writeFsArtifact(input: {
   const temporary = path.join(tempDir, `${path.basename(target)}.part`);
   let handle: FileHandle | undefined;
   try {
-    handle = await fs.open(
-      temporary,
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
-      0o600
-    );
-    await handle.writeFile(input.body);
-    await handle.sync();
+    if (Buffer.isBuffer(input.body)) {
+      handle = await fs.open(
+        temporary,
+        fs.constants.O_WRONLY |
+          fs.constants.O_CREAT |
+          fs.constants.O_EXCL |
+          fs.constants.O_NOFOLLOW,
+        0o600
+      );
+      await handle.writeFile(input.body);
+      await handle.sync();
+    } else {
+      await pipeline(
+        createReadStream(input.body.filePath),
+        createWriteStream(temporary, { flags: 'wx', mode: 0o600 })
+      );
+      handle = await fs.open(temporary, 'r');
+      await handle.sync();
+    }
   } catch (error) {
     await fs.rm(temporary, { force: true }).catch(() => undefined);
     throw error;

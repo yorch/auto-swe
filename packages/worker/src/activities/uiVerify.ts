@@ -137,7 +137,7 @@ export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult>
 
   const saveEvidence = async (
     kind: 'screenshot' | 'video' | 'trace' | 'log',
-    body: Buffer | string,
+    body: Buffer | string | { filePath: string; sizeBytes: number },
     details: {
       caption?: string;
       pageUrl?: string;
@@ -314,9 +314,24 @@ export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult>
             // One unreadable or over-limit file must not cost the rest: a throw
             // here would escape the activity and re-run the whole preview.
             try {
-              await saveEvidence(kind, await workspace.readFile(`${root}/${file}`, 100_000_000), {
-                caption: file,
-              });
+              if (kind === 'screenshot') {
+                await saveEvidence(kind, await workspace.readFile(`${root}/${file}`, 100_000_000), {
+                  caption: file,
+                });
+              } else {
+                const copied = await workspace.copyFileOut(`${root}/${file}`, 100_000_000);
+                try {
+                  await saveEvidence(
+                    kind,
+                    { filePath: copied.path, sizeBytes: copied.sizeBytes },
+                    {
+                      caption: file,
+                    }
+                  );
+                } finally {
+                  await copied.cleanup();
+                }
+              }
             } catch (error) {
               failure ??= `Could not save ${kind} evidence from ${file}: ${error instanceof Error ? error.message : String(error)}`;
             }
@@ -348,9 +363,15 @@ export async function runUiVerify(input: UiVerifyInput): Promise<UiVerifyResult>
             continue;
           }
           try {
-            await saveEvidence(kind, body, { caption });
+            await saveEvidence(
+              kind,
+              { filePath: body.path, sizeBytes: body.sizeBytes },
+              { caption }
+            );
           } catch (error) {
             failure ??= `Could not save ${kind} evidence: ${error instanceof Error ? error.message : String(error)}`;
+          } finally {
+            await body.cleanup();
           }
         }
       }

@@ -433,11 +433,15 @@ export function buildServiceContainerArgs(
     '--pids-limit=128',
     '--security-opt=no-new-privileges',
     '--cap-drop=ALL',
-    '--cap-add=CHOWN',
-    '--cap-add=SETUID',
-    '--cap-add=SETGID',
-    '--cap-add=FOWNER',
-    '--cap-add=DAC_OVERRIDE',
+    ...(service.runAsUser === undefined
+      ? [
+          '--cap-add=CHOWN',
+          '--cap-add=SETUID',
+          '--cap-add=SETGID',
+          '--cap-add=FOWNER',
+          '--cap-add=DAC_OVERRIDE',
+        ]
+      : ['--user', `${service.runAsUser}:${service.runAsGroup ?? service.runAsUser}`]),
     ...envNames.flatMap((name) => ['-e', name]),
     '--',
     service.image,

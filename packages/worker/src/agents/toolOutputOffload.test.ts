@@ -13,6 +13,11 @@ function makeWorkspace(
 ): Workspace {
   return {
     containerId: 'workspace-test',
+    copyFileOut: vi.fn(async () => ({
+      cleanup: async () => {},
+      path: '/tmp/workspace-file',
+      sizeBytes: 0,
+    })),
     destroy: vi.fn(async () => {}),
     exec: vi.fn(execImpl),
     execCapture: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),

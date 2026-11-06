@@ -84,6 +84,7 @@ describe('startAppPreview', () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'asw-preview-'));
     const pgidFile = path.join(dir, 'preview.pgid');
     const markFile = `${pgidFile}.mark`;
+    const sinceFile = `${pgidFile}.since`;
     const logFile = path.join(dir, 'preview.log');
     let group = 0;
     try {
@@ -94,19 +95,23 @@ describe('startAppPreview', () => {
         pgidFile,
         logFile,
         markFile,
+        sinceFile,
       ]);
       group = Number(await fs.readFile(pgidFile, 'utf8'));
 
       expect(Number.isInteger(group) && group > 1).toBe(true);
+      expect(Number(await fs.readFile(sinceFile, 'utf8'))).toBeGreaterThan(0);
       expect(groupAlive(group)).toBe(true);
       // Older launchers have no mark file and still get process-group cleanup.
       await fs.unlink(markFile);
+      await fs.unlink(sinceFile);
       // The whole tree: `sh -c` and the command it started share the group.
       execFileSync(process.execPath, ['-e', previewStopScript(pgidFile)]);
 
       expect(await waitForGone(group)).toBe(true);
       await expect(fs.access(pgidFile)).rejects.toThrow();
       await expect(fs.access(markFile)).rejects.toThrow();
+      await expect(fs.access(sinceFile)).rejects.toThrow();
     } finally {
       if (group > 1 && groupAlive(group)) {
         try {
@@ -125,11 +130,13 @@ describe('startAppPreview', () => {
       const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'asw-preview-mark-'));
       const pgidFile = path.join(dir, 'preview.pgid');
       const markFile = `${pgidFile}.mark`;
+      const sinceFile = `${pgidFile}.since`;
+      const daemonPidFile = path.join(dir, 'daemon.pid');
       const logFile = path.join(dir, 'preview.log');
       let group = 0;
       let mark = '';
       try {
-        const command = 'setsid sh -c "sleep 300" >/dev/null 2>&1 & sleep 300';
+        const command = `setsid sh -c 'echo $$ >${daemonPidFile}; exec sleep 300' >/dev/null 2>&1 & sleep 300`;
         execFileSync(process.execPath, [
           '-e',
           APP_PREVIEW_LAUNCHER,
@@ -137,17 +144,21 @@ describe('startAppPreview', () => {
           pgidFile,
           logFile,
           markFile,
+          sinceFile,
         ]);
         group = Number(await fs.readFile(pgidFile, 'utf8'));
         mark = await fs.readFile(markFile, 'utf8');
+        const daemonPid = Number(await waitForFile(daemonPidFile));
 
         expect(mark).toMatch(/^[a-f0-9]{32}$/);
         expect(await waitForMarkedProcess(mark)).toBe(true);
         execFileSync(process.execPath, ['-e', previewStopScript(pgidFile)]);
 
+        expect(await waitForProcessGone(daemonPid)).toBe(true);
         expect(await waitForMarkedProcessesGone(mark)).toBe(true);
         await expect(fs.access(pgidFile)).rejects.toThrow();
         await expect(fs.access(markFile)).rejects.toThrow();
+        await expect(fs.access(sinceFile)).rejects.toThrow();
       } finally {
         if (group > 1 && groupAlive(group)) {
           try {
@@ -159,6 +170,66 @@ describe('startAppPreview', () => {
         for (const pid of markedProcesses(mark)) {
           try {
             process.kill(pid, 'SIGKILL');
+          } catch {
+            // Already gone.
+          }
+        }
+        await fs.rm(dir, { force: true, recursive: true });
+      }
+    }
+  );
+
+  it.skipIf(process.platform !== 'linux')(
+    'leaves an unrelated host orphan started after the preview alive',
+    async () => {
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'asw-preview-host-sweep-'));
+      const pgidFile = path.join(dir, 'preview.pgid');
+      const markFile = `${pgidFile}.mark`;
+      const sinceFile = `${pgidFile}.since`;
+      const daemonPidFile = path.join(dir, 'unrelated.pid');
+      const logFile = path.join(dir, 'preview.log');
+      let group = 0;
+      let daemonPid = 0;
+      let mark = '';
+      try {
+        execFileSync(process.execPath, [
+          '-e',
+          APP_PREVIEW_LAUNCHER,
+          'sleep 300',
+          pgidFile,
+          logFile,
+          markFile,
+          sinceFile,
+        ]);
+        group = Number(await fs.readFile(pgidFile, 'utf8'));
+        mark = await fs.readFile(markFile, 'utf8');
+        const command = `setsid sh -c 'echo $$ >${daemonPidFile}; exec sleep 300' >/dev/null 2>&1 &`;
+        execFileSync('sh', ['-c', command]);
+        daemonPid = Number(await waitForFile(daemonPidFile));
+
+        const since = Number(await fs.readFile(sinceFile, 'utf8'));
+        const daemon = processStat(daemonPid);
+        expect(daemon).toMatchObject({ ppid: 1 });
+        expect(daemon?.pgrp).not.toBe(group);
+        expect(daemon?.startTime).toBeGreaterThanOrEqual(since);
+        expect(markedProcesses(mark)).not.toContain(daemonPid);
+
+        execFileSync(process.execPath, ['-e', previewStopScript(pgidFile, markFile, sinceFile)]);
+
+        expect(processStat(daemonPid)?.state).not.toBeUndefined();
+        expect(processStat(daemonPid)?.state).not.toBe('Z');
+      } finally {
+        if (daemonPid > 1) {
+          try {
+            process.kill(daemonPid, 'SIGKILL');
+          } catch {
+            // Already gone.
+          }
+          await waitForProcessGone(daemonPid);
+        }
+        if (group > 1 && groupAlive(group)) {
+          try {
+            process.kill(-group, 'SIGKILL');
           } catch {
             // Already gone.
           }
@@ -182,6 +253,29 @@ function groupAlive(pgid: number): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+function processStat(pid: number): {
+  pgrp: number;
+  ppid: number;
+  startTime: number;
+  state: string;
+} | null {
+  try {
+    const stat = fsSync.readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat
+      .slice(stat.lastIndexOf(')') + 2)
+      .trim()
+      .split(/\s+/);
+    return {
+      pgrp: Number(fields[2]),
+      ppid: Number(fields[1]),
+      startTime: Number(fields[19]),
+      state: fields[0] ?? '',
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -212,6 +306,36 @@ async function waitForMarkedProcess(mark: string): Promise<boolean> {
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   return markedProcesses(mark).length > 0;
+}
+
+async function waitForFile(file: string): Promise<string> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    try {
+      return await fs.readFile(file, 'utf8');
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  }
+  throw new Error(`timed out waiting for ${file}`);
+}
+
+async function waitForProcessGone(pid: number): Promise<boolean> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } catch {
+      return true;
+    }
+  }
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 async function waitForMarkedProcessesGone(mark: string): Promise<boolean> {
