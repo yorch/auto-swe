@@ -201,7 +201,12 @@ export async function createImplementerAgent(
         }
       : {}),
     ...(options?.knowledgeToolKeys?.includes('submitLearning')
-      ? { submitLearning: buildKnowledgeTools(tracer).submitLearning }
+      ? {
+          submitLearning: buildKnowledgeTools(tracer, {
+            includeGoverned: options?.knowledgeToolKeys?.includes('searchKnowledge') ?? false,
+            snapshotIds: workspace.knowledgeBaseSnapshotIds ?? [],
+          }).submitLearning,
+        }
       : {}),
   };
 

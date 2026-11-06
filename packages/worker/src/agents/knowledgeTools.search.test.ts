@@ -23,19 +23,62 @@ describe('searchKnowledge snapshot binding', () => {
       {} as never
     );
     expect(search).toHaveBeenCalledWith('parser', {
-      includeGoverned: true,
+      includeGoverned: false,
       limit: 2,
       snapshotIds: ['pin-a'],
     });
   });
-  it('searches no KBs without a bound scope', async () => {
-    const tools = buildKnowledgeTools();
+  it('searches governed knowledge without KBs only with an explicit grant', async () => {
+    const tools = buildKnowledgeTools(undefined, { includeGoverned: true });
     await tools.searchKnowledge.execute?.({ query: 'parser' }, {} as never);
     expect(search).toHaveBeenCalledWith('parser', {
       includeGoverned: true,
       limit: undefined,
       snapshotIds: [],
     });
+  });
+  it('refuses search without pinned snapshots or an explicit governed grant', async () => {
+    const tools = buildKnowledgeTools();
+    await expect(tools.searchKnowledge.execute?.({ query: 'parser' }, {} as never)).rejects.toThrow(
+      'Knowledge search is unavailable'
+    );
+    expect(search).not.toHaveBeenCalled();
+  });
+  it('defaults to KB-only results and describes only that binding', async () => {
+    search.mockImplementation(async (_query, options) => ({
+      mode: 'text',
+      results: [
+        {
+          citation: 'kb:acme/reference@abcdef0 guide.md',
+          content: 'Parser reference',
+          id: 'chunk-a',
+          sourceKind: options.includeGoverned ? 'governed' : 'knowledge_base',
+          title: 'Parser',
+          trustLabel: 'UNTRUSTED_THIRD_PARTY_REFERENCE',
+          type: 'REFERENCE',
+          version: 0,
+        },
+      ],
+    }));
+    const tools = buildKnowledgeTools(undefined, { snapshotIds: ['pin-a'] });
+    const result = await tools.searchKnowledge.execute?.(
+      { includeGoverned: true, query: 'parser' } as never,
+      {} as never
+    );
+    expect(result).toMatchObject({ results: [{ sourceKind: 'knowledge_base' }] });
+    expect(search).toHaveBeenCalledWith('parser', {
+      includeGoverned: false,
+      limit: undefined,
+      snapshotIds: ['pin-a'],
+    });
+    expect(tools.searchKnowledge.description).toContain('references only');
+    expect(tools.searchKnowledge.description).not.toContain('governed');
+  });
+  it('describes merged search only when explicitly granted', () => {
+    const tools = buildKnowledgeTools(undefined, { includeGoverned: true, snapshotIds: ['pin-a'] });
+    expect(tools.searchKnowledge.description).toContain(
+      'pinned knowledge base references and explicitly granted governed knowledge'
+    );
   });
   it('does not bind without pins or a governed grant', () => {
     expect(bindKnowledgeSearch([])).toBeUndefined();
