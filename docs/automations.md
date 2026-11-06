@@ -842,10 +842,23 @@ recorded as `FAILED_TO_START` with its code.
   push of 2048 or more commits, or more than 300 changed files), a push none of whose kept files
   match is refused with a 'too large' reason, because the matching file may be one that was left
   out. Otherwise it is refused with the plain 'no changed file matches' reason.
-- **A push delivery larger than the gateway's request body limit starts nothing.** The push
-  webhook route sets no limit of its own, so Fastify's default of 1 MiB applies. A delivery over it
-  is refused with 413 before its signature is verified, and a push of well under 2048 commits can
-  exceed it.
+- **`POST /api/v1/webhooks/git` accepts bodies up to GitHub's documented 25 MB maximum payload.**
+  Its request body limit is 25 MiB, so a push is not refused for size; GitHub itself does not
+  deliver a larger payload. The other GitHub-signed routes keep Fastify's 1 MiB default. The
+  signature header is required before any of the body is read, and the secret is chosen from the
+  headers (`X-GitHub-Enterprise-Host`) before the body is read, so a delivery with no signature,
+  with a malformed one, naming a host that is not approved, or with no secret to verify against is
+  refused with 401 without buffering or parsing its body. These header checks run after the
+  route's rate limit, so a refused delivery counts against it and an over-limit one costs no secret
+  lookup. Only `application/json` and `application/x-www-form-urlencoded` are accepted; a delivery
+  that passes the header checks with any other content type is refused with 415. A body is parsed
+  only after its signature has verified over the raw bytes received, so an unauthenticated caller
+  who passes the header checks can make the gateway buffer a body but not parse it: the chunks are
+  kept and then concatenated into one buffer for verification, so a request in flight holds about
+  twice its body, up to twice the limit. A slow upload on this route holds its buffer until the
+  connection ends: the gateway sets no request timeout of its own, so an operator sets a body or
+  read timeout on the reverse proxy in front of `/api/v1/webhooks/git`, and allows bodies of that
+  size there.
 - **A push-created run is based on the repository's default branch,** not the pushed branch.
 - **A platform push to a person's pull-request branch is guarded only by own-output recognition.**
   A CI-fix or pull-request-feedback run pushes to a branch that is not under the prefix. The only
