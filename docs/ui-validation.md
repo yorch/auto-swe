@@ -155,11 +155,11 @@ dropped.
 - Public PR images are intentionally unavailable unless both environment values and the explicit
   admin setting are enabled. The public bucket's access policy is operator-managed. Copies made
   before each evidence row recorded its bucket may remain behind after a bucket rename.
-- With `tini` in the browser image, `stop()` kills the preview process group and its adopted
-  descendants, including daemons that leave the group. Without `tini`, it falls back to the
-  workspace-mount-namespace sweep for processes started after the preview whose parent chain
-  reaches PID 1. That can include an orphan from any later command, not just the preview; the sweep
-  runs only when `stop()` executes inside a workspace exec session.
+- With a running `tini` in the browser image, `stop()` kills the preview process group and its
+  descendants precisely, including daemons that leave the group. If `tini` is absent or no longer
+  running, it falls back to the workspace-mount-namespace sweep for processes started after the
+  preview whose parent chain reaches PID 1. That can include an orphan from any later command, not
+  just the preview; the sweep runs only when `stop()` executes inside a workspace exec session.
 - A worker that dies between writing an artifact and creating its `RunEvidence` row leaves a ready
   `ui.*` artifact that no evidence row points at. The daily transcript sweep deletes those, and a
   pending write, after a day; until then the object is stored but unreachable from any run.

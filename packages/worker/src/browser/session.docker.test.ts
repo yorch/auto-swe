@@ -324,7 +324,7 @@ describe.skipIf(!enabled)('app preview stop (Docker)', () => {
 
   it('kills a scrubbed setsid double-fork adopted by tini', async () => {
     startContainer();
-    const command = `env -i PATH="$PATH" setsid sh -c 'sh -c "echo \\$\\$ >/tmp/preview.pid; exec sleep 300" & exit' >/dev/null 2>&1 & sleep 300`;
+    const command = `env -i PATH="$PATH" setsid sh -c 'echo $$ >/tmp/preview.pid; exec sleep 300' >/dev/null 2>&1 &`;
     launchPreview(command);
     const previewPid = await waitForFile('/tmp/preview.pid');
     const reaperPid = await waitForFile('/tmp/preview.pgid');
@@ -336,6 +336,18 @@ describe.skipIf(!enabled)('app preview stop (Docker)', () => {
 
     stopPreview();
     await waitForDead(previewPid);
+  }, 30_000);
+
+  it('kills a preview descendant that ignores TERM on the KILL pass', async () => {
+    startContainer();
+    const command = `env -i PATH="$PATH" setsid sh -c 'trap "" TERM; echo $$ >/tmp/term-ignored.pid; exec sleep 300' >/dev/null 2>&1 &`;
+    launchPreview(command);
+    const daemonPid = await waitForFile('/tmp/term-ignored.pid');
+    const reaperPid = await waitForFile('/tmp/preview.pgid');
+
+    expect(processInfo(daemonPid).ppid).toBe(Number(reaperPid));
+    stopPreview();
+    await waitForDead(daemonPid);
   }, 30_000);
 
   it('leaves an orphan from a separate post-preview Docker exec alive', async () => {
@@ -375,6 +387,22 @@ describe.skipIf(!enabled)('app preview stop (Docker)', () => {
     expect(alive(keeperPid)).toBe(true);
     expect(alive(oldPid)).toBe(true);
     expect(alive(livePid)).toBe(true);
+  }, 30_000);
+
+  it('uses the guarded since sweep when tini has exited before stop', async () => {
+    startContainer();
+    const command = `env -i PATH="$PATH" setsid sh -c 'echo $$ >/tmp/after-tini.pid; exec sleep 300' >/dev/null 2>&1 &`;
+    launchPreview(command);
+    const daemonPid = await waitForFile('/tmp/after-tini.pid');
+    const reaperPid = await waitForFile('/tmp/preview.pgid');
+
+    containerExec(['sh', '-c', 'kill -KILL "$1"', 'sh', reaperPid]);
+    await waitForDead(reaperPid);
+    expect(alive(daemonPid)).toBe(true);
+    expect(processInfo(daemonPid).ppid).not.toBe(Number(reaperPid));
+
+    stopPreview();
+    await waitForDead(daemonPid);
   }, 30_000);
 
   it('uses the since-sweep fallback when PATH contains no tini', async () => {
