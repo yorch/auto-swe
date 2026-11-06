@@ -30,6 +30,7 @@ import { getScmProvider, type RepoRef, type ScmProvider, toRepoRef } from '../li
 import { getTemporalClient } from '../lib/temporalClient.js';
 import type { QodoReviewResult } from './awaitQodoReview.js';
 import { neutralizeCommentText } from './ciTriage.js';
+import { type ReviewFixResult, startReviewFix } from './reviewFixes.js';
 import { parseDiffToFileChanges } from './utils.js';
 import { createWorkspace, fetchBranchesSubcommand, shellQuote } from './workspace.js';
 
@@ -254,6 +255,7 @@ export interface PublishReviewInput {
 }
 
 export interface ReviewSummary {
+  fix?: ReviewFixResult;
   approved: boolean;
   worstSeverity: Severity;
   findingCount: number;
@@ -267,7 +269,11 @@ export interface PublishReviewDeps {
   scm: (repo: RepoRef) => ScmProvider;
   webUrl: () => string;
   reevaluate: (payload: ReviewRunPayload, runId: string) => Promise<void>;
-  requestReviewFix: (payload: ReviewRunPayload, summary: ReviewSummary) => Promise<void>;
+  requestReviewFix: (
+    payload: ReviewRunPayload,
+    summary: ReviewSummary,
+    runId: string
+  ) => Promise<ReviewFixResult | undefined>;
 }
 
 export async function requestReviewReevaluation(
@@ -296,10 +302,14 @@ export async function requestReviewReevaluation(
 }
 
 export async function requestReviewFix(
-  _payload: ReviewRunPayload,
-  _summary: ReviewSummary
-): Promise<void> {
-  // TODO: Start an authorized review_findings feedback round from the persisted review run.
+  payload: ReviewRunPayload,
+  summary: ReviewSummary,
+  runId: string
+): Promise<ReviewFixResult> {
+  if (payload.onBlocking !== 'fix' || payload.reviewOf.mode !== 'pr' || summary.approved) {
+    return { reason: 'the review does not request a pull request fix', status: 'skipped' };
+  }
+  return startReviewFix(payload, runId);
 }
 
 export async function publishReviewResultWith(
@@ -379,6 +389,22 @@ export async function publishReviewResultWith(
   if (!runId) {
     return refuse('REVIEW_RUN_MISSING', 'Review run identity is unavailable');
   }
+  if (payload.onBlocking === 'fix' && payload.reviewOf.mode === 'pr' && !approved) {
+    try {
+      const fix = await deps.requestReviewFix(payload, summary, runId);
+      if (fix) {
+        summary.fix = fix;
+      }
+    } catch {
+      summary.fix = { reason: 'the fix launch failed', status: 'skipped' };
+    }
+    if (summary.fix) {
+      tracer.addActivityEvent({
+        name: `code_review.fix_${summary.fix.status}`,
+        outputJson: { runId, ...summary.fix },
+      });
+    }
+  }
   if (payload.reviewOf.mode === 'pr') {
     const repo = await deps.loadRepo(payload.connectionId);
     const ref = toRepoRef(repo);
@@ -398,6 +424,12 @@ export async function publishReviewResultWith(
     if (summary.humanNote) {
       lines.push(`Reviewer note: ${neutralizeCommentText(summary.humanNote, 4000)}`);
     }
+    if (summary.fix?.status === 'skipped') {
+      lines.push(`fix not started: ${neutralizeCommentText(summary.fix.reason, 1000)}`);
+    }
+    if (summary.fix?.status === 'started') {
+      lines.push(`Fix round started: ${neutralizeCommentText(summary.fix.workflowId, 200)}`);
+    }
     const markdown = lines.join('\n\n');
     const bounded =
       markdown.length > 60_000
@@ -409,9 +441,6 @@ export async function publishReviewResultWith(
     } catch {
       tracer.addActivityEvent({ name: 'code_review.reevaluation_failed', outputJson: { runId } });
     }
-  }
-  if (payload.onBlocking === 'fix' && !approved) {
-    await deps.requestReviewFix(payload, summary);
   }
   return summary;
 }

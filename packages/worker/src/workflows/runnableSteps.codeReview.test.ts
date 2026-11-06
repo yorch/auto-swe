@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 const loadChangeForReview = vi.fn(async (_request: unknown) => ({}));
 const publishReviewResult = vi.fn(async (_input: unknown) => ({}));
 const runReviewNetwork = vi.fn(async (..._args: unknown[]) => ({}));
+const gatherReview = vi.fn(async (_input: unknown) => ({}));
 
 vi.mock('./runnableActivities.js', async (original) => {
   const actual = await original<typeof import('./runnableActivities.js')>();
@@ -10,6 +11,7 @@ vi.mock('./runnableActivities.js', async (original) => {
     ...actual,
     agentActivities: { ...actual.agentActivities, runReviewNetwork },
     codeReviewActivities: { loadChangeForReview, publishReviewResult },
+    prFeedbackQodoGatherActivities: { gatherPrFeedback: gatherReview },
   };
 });
 
@@ -17,6 +19,11 @@ const { dispatchStepImpl } = await import('./runnableSteps.js');
 const request = { payload: { systemPrompt: 'Preset prompt' }, repoId: 'repo' } as never;
 
 describe('review step dispatch', () => {
+  it('uses the heartbeating gather timeout for a review waiting to finalize', async () => {
+    const feedbackRequest = { payload: { feedbackTrigger: 'review_findings' } } as never;
+    await dispatchStepImpl('gatherPrFeedback', {}, feedbackRequest, {}, {}, 'gather');
+    expect(gatherReview).toHaveBeenCalledWith({ request: feedbackRequest });
+  });
   it('uses the run request, not untrusted input connection fields', async () => {
     await dispatchStepImpl('loadChangeForReview', {}, request, {}, { repoId: 'other' }, 'load');
     expect(loadChangeForReview).toHaveBeenCalledWith(request);

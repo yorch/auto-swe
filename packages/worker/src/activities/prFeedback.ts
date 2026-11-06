@@ -53,6 +53,7 @@ import {
   type QodoPrReviewState,
 } from '../lib/qodo/client.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
+import { readReviewFeedback, reviewFeedbackSubject } from '../lib/reviewFeedback.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import type { ReviewThread } from '../lib/scm/types.js';
 import { neutralizeCommentText } from './ciTriage.js';
@@ -244,6 +245,7 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
     // steps 3 and 4 (re-read the trigger, match the requester) do not apply to it. Its
     // findings are pulled from Qodo in step 7, under the gates there.
     const isQodo = payload.feedbackTrigger === PR_FEEDBACK_QODO_TRIGGER;
+    const isReview = payload.feedbackTrigger === 'review_findings';
 
     let triggerAuthorId: string | null = null;
     let triggerAuthorLogin = '';
@@ -251,7 +253,7 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
     let triggerThreadCommentId: number | null = null;
 
     // ── 3. The triggering review or comment, re-read by id ──
-    if (!isQodo) {
+    if (!isQodo && !isReview) {
       if (payload.feedbackEventKind === 'review') {
         const review = await scm.getPullRequestReview(
           repoRef,
@@ -432,6 +434,44 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
         { headRef, silent: true }
       );
     }
+    let reviewFeedback: Awaited<ReturnType<typeof readReviewFeedback>> = null;
+    if (isReview) {
+      if (
+        fire.subjectKey !==
+          reviewFeedbackSubject(payload.pullRequestNumber, payload.feedbackEventId) ||
+        (fire.facts as Record<string, unknown>)?.reviewRunId !== payload.feedbackEventId
+      ) {
+        return skip('the review trigger does not belong to this automation fire', { silent: true });
+      }
+      reviewFeedback = await readReviewFeedback(
+        payload.feedbackEventId,
+        repoId,
+        payload.pullRequestNumber
+      );
+      const deadline = Date.now() + 5 * 60_000;
+      while (reviewFeedback?.status === 'RUNNING' && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        reviewFeedback = await readReviewFeedback(
+          payload.feedbackEventId,
+          repoId,
+          payload.pullRequestNumber
+        );
+      }
+      if (
+        reviewFeedback?.status !== 'SUCCESS' ||
+        reviewFeedback.approved !== false ||
+        reviewFeedback.headSha !== headSha ||
+        !prRow?.workflow ||
+        (prRow.runId
+          ? prRow.runId !== reviewFeedback.sourceRunId
+          : reviewFeedback.sourceWorkflowId !== prRow.workflow.temporalWorkflowId)
+      ) {
+        return skip('the review is not a blocking review of this pull request head', {
+          headRef,
+          silent: true,
+        });
+      }
+    }
     if (origin === 'other') {
       if (payload.feedbackTrigger !== 'command') {
         return skip('only the command acts on a pull request the platform did not open', {
@@ -546,6 +586,23 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
       };
     };
 
+    if (isReview && reviewFeedback) {
+      const bodies = reviewFeedback.texts;
+      const screened = await feedbackInjectionScreen(bodies);
+      const briefParts = bodies.filter((_body, i) => !screened.has(i));
+      if (!briefParts.length) {
+        return skip('no usable stored review findings', { headRef, origin, round, silent: true });
+      }
+      if ((await scm.pullRequestInfo(repoRef, payload.pullRequestNumber))?.headSha !== headSha) {
+        return skip('the reviewed head moved', { silent: true });
+      }
+      return finishRound({
+        briefParts: [briefParts.join('\n\n').slice(0, MAX_BRIEF_CHARS)],
+        briefThreads: [],
+        dropped: { overLimit: 0, screened: screened.size, untrusted: 0 },
+        triggerLine: `Review findings from run ${payload.feedbackEventId} at ${headSha}`,
+      });
+    }
     if (isQodo) {
       if (!repo.teamId) {
         return skip('the repository has no team to read Qodo for', {
@@ -1075,6 +1132,29 @@ async function pushPrFeedbackToPullRequestImpl(input: {
     });
     const { branchPrefix } = await resolveWorkflowDefaults();
     const expectedWorkBranch = workBranchOf(request, branchPrefix);
+    if (payload.feedbackTrigger === 'review_findings') {
+      const review = await readReviewFeedback(
+        payload.feedbackEventId,
+        repoId,
+        payload.pullRequestNumber
+      );
+      const current = await getScmProvider(toRepoRef(repo)).pullRequestInfo(
+        toRepoRef(repo),
+        payload.pullRequestNumber
+      );
+      if (
+        fire.subjectKey !==
+          reviewFeedbackSubject(payload.pullRequestNumber, payload.feedbackEventId) ||
+        (fire.facts as Record<string, unknown>)?.reviewRunId !== payload.feedbackEventId ||
+        !review ||
+        review.status !== 'SUCCESS' ||
+        review.approved !== false ||
+        review.headSha !== gather.headSha ||
+        (current?.headSha !== review.headSha && current?.headSha !== fire.producedKey)
+      ) {
+        return refuse('the reviewed head moved or the review trigger is invalid');
+      }
+    }
     if (gather.workBranch !== expectedWorkBranch || codeResult.branch !== expectedWorkBranch) {
       return refuse("the fix is not on this run's work branch");
     }

@@ -10,6 +10,7 @@ const m = vi.hoisted(() => ({
   findFire: vi.fn(async () => null as unknown),
   findPr: vi.fn(async () => null as unknown),
   findRepo: vi.fn(async () => null as unknown),
+  findReview: vi.fn(async () => null as unknown),
   findRun: vi.fn(async () => null as unknown),
   findRunInput: vi.fn(async () => null as unknown),
   getIssueComment: vi.fn(async () => null as unknown),
@@ -29,7 +30,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     pullRequest: { findFirst: m.findPr },
     runInput: { findUnique: m.findRunInput },
     user: { findFirst: vi.fn(async () => null) },
-    workflowRun: { findFirst: m.findRun },
+    workflowRun: { findFirst: m.findRun, findUnique: m.findReview },
   },
 }));
 vi.mock('@auto-swe/shared/config', () => ({
@@ -77,6 +78,7 @@ vi.mock('../lib/scm/index.js', () => ({
   toRepoRef: () => ({ organizationName: 'acme', repoName: 'api' }),
 }));
 
+import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { gatherPrFeedback } from './prFeedback.js';
 
@@ -85,6 +87,141 @@ const HEAD = 'a'.repeat(40);
 const HEAD_REF = 'feature/work';
 const WID = 'prfb-wf-1';
 const PR_URL = 'https://ghe.example/acme/api/pull/9';
+const REVIEW_RUN = '22222222-2222-4222-8222-222222222222';
+const SOURCE_RUN = '33333333-3333-4333-8333-333333333333';
+
+describe('gatherPrFeedback — stored review findings', () => {
+  const reviewRequest = () =>
+    request({
+      feedbackEventId: REVIEW_RUN,
+      feedbackEventKind: 'review_findings',
+      feedbackTrigger: 'review_findings',
+      findings: ['PAYLOAD LIE'],
+    });
+  function storedRound() {
+    m.findFire.mockResolvedValue({
+      ...fire(),
+      facts: { reviewRunId: REVIEW_RUN },
+      subjectKey: `pr-9@review-${REVIEW_RUN}`,
+    });
+    m.findPr.mockResolvedValue({
+      runId: SOURCE_RUN,
+      workflow: { currentStatus: 'COMPLETED', temporalWorkflowId: 'wf-original' },
+    });
+    m.findReview.mockResolvedValue({
+      reviewOfRun: {
+        template: { origin: 'WORKFLOW', teamId: 'team-1' },
+        workflowId: 'wf-original',
+      },
+      reviewOfRunId: SOURCE_RUN,
+      status: 'SUCCESS',
+      steps: [
+        { outputs: { headSha: HEAD }, status: 'PASSED', stepName: 'loadChangeForReview' },
+        {
+          outputs: {
+            codeResult: { headSha: HEAD },
+            verdicts: [
+              { findings: [{ description: 'DB finding only', file: 'a.ts' }], severity: 'WARNING' },
+            ],
+          },
+          status: 'PASSED',
+          stepName: 'runReviewNetwork',
+        },
+        {
+          outputs: { approved: false, findings: [] },
+          status: 'PASSED',
+          stepName: 'publishReviewResult',
+        },
+      ],
+      template: { kind: 'review' },
+      workRequest: {
+        payload: {
+          connectionId: CONN,
+          onBlocking: 'fix',
+          reviewOf: { mode: 'pr', prNumber: 9 },
+          sourceRunId: SOURCE_RUN,
+        },
+      },
+    });
+  }
+  it('reads only DB findings, not host comments or supplied findings', async () => {
+    storedRound();
+    const result = await gatherPrFeedback({ request: reviewRequest() });
+    expect(result.decision).toBe('fix');
+    expect(result.brief).toContain('DB finding only');
+    expect(result.brief).not.toContain('PAYLOAD LIE');
+    expect(m.findReview).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: REVIEW_RUN } })
+    );
+    expect(m.getPullRequestReview).not.toHaveBeenCalled();
+    expect(m.getIssueComment).not.toHaveBeenCalled();
+    expect(m.getReviewComment).not.toHaveBeenCalled();
+    expect(m.listReviewThreads).not.toHaveBeenCalled();
+  });
+  it('routes agent-run PRs to the same original agent', async () => {
+    storedRound();
+    m.findRun.mockResolvedValue({
+      template: { origin: AGENT_RUN_TEMPLATE_ORIGIN, teamId: null },
+      workRequest: { description: 'original task', payload: { agentRef: 'same-agent' } },
+    });
+    const result = await gatherPrFeedback({
+      request: {
+        ...reviewRequest(),
+        payload: { ...(reviewRequest().payload as object), feedbackOrigin: 'agent_run' },
+      },
+    });
+    expect(result).toMatchObject({
+      agentRef: 'same-agent',
+      decision: 'fix',
+      fixer: 'agent',
+      originalTask: 'original task',
+    });
+  });
+  it('skips a head that moved after the review', async () => {
+    storedRound();
+    m.pullRequestInfo.mockResolvedValue({ ...openPr, headSha: 'b'.repeat(40) });
+    expect((await gatherPrFeedback({ request: reviewRequest() })).decision).toBe('skip');
+    expect(m.createBranch).not.toHaveBeenCalled();
+  });
+  it('keeps the shared per-PR round limit', async () => {
+    storedRound();
+    m.countFire.mockResolvedValue(5);
+    expect((await gatherPrFeedback({ request: reviewRequest() })).reason).toBe(
+      'round limit reached'
+    );
+  });
+  it('rejects a fire not bound to the review run', async () => {
+    storedRound();
+    m.findFire.mockResolvedValue(fire());
+    expect((await gatherPrFeedback({ request: reviewRequest() })).decision).toBe('skip');
+    expect(m.findReview).not.toHaveBeenCalled();
+  });
+  it('skips missing stored review evidence', async () => {
+    storedRound();
+    m.findReview.mockResolvedValue(null);
+    expect((await gatherPrFeedback({ request: reviewRequest() })).decision).toBe('skip');
+    expect(m.createBranch).not.toHaveBeenCalled();
+  });
+  it('does not fall back to payload findings when the database fails', async () => {
+    storedRound();
+    m.findReview.mockRejectedValue(new Error('database unavailable'));
+    await expect(gatherPrFeedback({ request: reviewRequest() })).rejects.toThrow(
+      'database unavailable'
+    );
+    expect(m.createBranch).not.toHaveBeenCalled();
+  });
+  it('waits for publication to finish before reading the committed summary', async () => {
+    storedRound();
+    const stored = (await m.findReview()) as Record<string, unknown>;
+    m.findReview
+      .mockResolvedValueOnce({ ...stored, status: 'RUNNING' })
+      .mockResolvedValueOnce(stored);
+    vi.useFakeTimers();
+    const result = gatherPrFeedback({ request: reviewRequest() });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect((await result).decision).toBe('fix');
+  });
+});
 
 function request(over: Record<string, unknown> = {}): RepoWorkRequest {
   return {

@@ -22,6 +22,7 @@ import { GITHUB_PUSH, pushSource } from './sources/push.js';
 import { WORKFLOW_RUN_FAILED, workflowRunFailedSource } from './sources/workflowRunFailed.js';
 import type { EventSource } from './types.js';
 
+export * from './decide.js';
 export * from './inboundEvent.js';
 export * from './inputs.js';
 export * from './jsonPointer.js';

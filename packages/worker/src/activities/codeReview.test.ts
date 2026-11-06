@@ -427,23 +427,65 @@ describe('publishReviewResult', () => {
   });
 
   it.each([
-    ['fix', false, true],
-    ['report', false, false],
-    ['fix', true, false],
+    ['fix', false, 'pr', true],
+    ['report', false, 'pr', false],
+    ['fix', true, 'pr', false],
+    ['fix', false, 'stored', false],
   ] as const)(
     'calls the fix hook only for blocking fix policy (%s, %s)',
-    async (policy, approved, called) => {
+    async (policy, approved, mode, called) => {
       const f = fixture();
       await publishReviewResultWith(
-        { request: request({ mode: 'stored' }, policy), review: verdict(approved) },
+        {
+          request: request(
+            mode === 'pr' ? { mode: 'pr', prNumber: 7 } : { mode: 'stored' },
+            policy
+          ),
+          review: verdict(approved),
+        },
         f.publish,
         f.tracer
       );
       expect(f.publish.requestReviewFix).toHaveBeenCalledTimes(called ? 1 : 0);
-      expect(f.comment).not.toHaveBeenCalled();
-      expect(f.publish.reevaluate).not.toHaveBeenCalled();
+      expect(f.comment).toHaveBeenCalledTimes(mode === 'pr' ? 1 : 0);
+      expect(f.publish.reevaluate).toHaveBeenCalledTimes(mode === 'pr' ? 1 : 0);
     }
   );
+
+  it('records fix skip reasons in the summary, activity event and PR comment', async () => {
+    const f = fixture();
+    f.publish.requestReviewFix = vi.fn(async () => ({
+      reason: 'no opted-in automation',
+      status: 'skipped' as const,
+    }));
+    const summary = await publishReviewResultWith(
+      { request: request({ mode: 'pr', prNumber: 7 }, 'fix'), review: verdict(false) },
+      f.publish,
+      f.tracer
+    );
+    expect(summary.fix).toEqual({ reason: 'no opted-in automation', status: 'skipped' });
+    expect(f.comment.mock.calls[0]?.[3]).toContain('fix not started: no opted-in automation');
+    expect(f.event).toHaveBeenCalledWith({
+      name: 'code_review.fix_skipped',
+      outputJson: { reason: 'no opted-in automation', runId: SOURCE, status: 'skipped' },
+    });
+  });
+
+  it('does not fail publication when a fix launch fails', async () => {
+    const f = fixture();
+    f.publish.requestReviewFix = vi.fn(async () => {
+      throw new Error('internal failure');
+    });
+    expect(
+      (
+        await publishReviewResultWith(
+          { request: request({ mode: 'pr', prNumber: 7 }, 'fix'), review: verdict(false) },
+          f.publish,
+          f.tracer
+        )
+      ).fix
+    ).toEqual({ reason: 'the fix launch failed', status: 'skipped' });
+  });
 
   it('refuses missing results or run identity and does not hide comment errors', async () => {
     const f = fixture();

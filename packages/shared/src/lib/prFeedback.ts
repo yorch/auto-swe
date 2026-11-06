@@ -6,7 +6,12 @@ import type { InputSchema } from './inputSchema.js';
 export const PR_FEEDBACK_TEMPLATE_NAME = 'address-pr-feedback';
 
 /** What a feedback delivery is: which GitHub event carried it. */
-export const PR_FEEDBACK_EVENT_KINDS = ['review', 'review_comment', 'issue_comment'] as const;
+export const PR_FEEDBACK_EVENT_KINDS = [
+  'review',
+  'review_comment',
+  'issue_comment',
+  'review_findings',
+] as const;
 export type PrFeedbackEventKind = (typeof PR_FEEDBACK_EVENT_KINDS)[number];
 
 /**
@@ -14,7 +19,12 @@ export type PrFeedbackEventKind = (typeof PR_FEEDBACK_EVENT_KINDS)[number];
  * request the platform opened — Qodo's review bot having reviewed it. The last carries no text:
  * it is only a nudge, and the findings are pulled from Qodo itself.
  */
-export const PR_FEEDBACK_TRIGGERS = ['changes_requested', 'command', 'qodo_findings'] as const;
+export const PR_FEEDBACK_TRIGGERS = [
+  'changes_requested',
+  'command',
+  'qodo_findings',
+  'review_findings',
+] as const;
 export type PrFeedbackTrigger = (typeof PR_FEEDBACK_TRIGGERS)[number];
 
 /** The trigger whose findings are read from Qodo, never from a GitHub comment. */
@@ -62,29 +72,45 @@ export const PR_FEEDBACK_EVENT_INPUT_KEYS = [
  * here, so this parse is the authority on their bounds whatever validated them
  * before.
  */
-export const PrFeedbackPayloadSchema = z.object({
-  baseBranch: BaseBranchSchema,
-  connectionId: z.string().uuid(),
-  description: z.string().max(4000).optional(),
-  feedbackEventId: z.string().regex(/^\d{1,20}$/),
-  feedbackEventKind: z.enum(PR_FEEDBACK_EVENT_KINDS),
-  feedbackOrigin: z.enum(PR_FEEDBACK_ORIGINS),
-  feedbackTrigger: z.enum(PR_FEEDBACK_TRIGGERS),
-  maxCiFixAttempts: z
-    .number()
-    .int()
-    .min(PR_FEEDBACK_CI_FIX_ATTEMPTS_RANGE.min)
-    .max(PR_FEEDBACK_CI_FIX_ATTEMPTS_RANGE.max)
-    .default(PR_FEEDBACK_DEFAULTS.maxCiFixAttempts),
-  maxRounds: z
-    .number()
-    .int()
-    .min(PR_FEEDBACK_ROUNDS_RANGE.min)
-    .max(PR_FEEDBACK_ROUNDS_RANGE.max)
-    .default(PR_FEEDBACK_DEFAULTS.maxRounds),
-  pullRequestNumber: z.number().int().positive(),
-  ticketId: z.string().max(200).optional(),
-});
+export const PrFeedbackPayloadSchema = z
+  .object({
+    baseBranch: BaseBranchSchema,
+    connectionId: z.string().uuid(),
+    description: z.string().max(4000).optional(),
+    feedbackEventId: z.string(),
+    feedbackEventKind: z.enum(PR_FEEDBACK_EVENT_KINDS),
+    feedbackOrigin: z.enum(PR_FEEDBACK_ORIGINS),
+    feedbackTrigger: z.enum(PR_FEEDBACK_TRIGGERS),
+    maxCiFixAttempts: z
+      .number()
+      .int()
+      .min(PR_FEEDBACK_CI_FIX_ATTEMPTS_RANGE.min)
+      .max(PR_FEEDBACK_CI_FIX_ATTEMPTS_RANGE.max)
+      .default(PR_FEEDBACK_DEFAULTS.maxCiFixAttempts),
+    maxRounds: z
+      .number()
+      .int()
+      .min(PR_FEEDBACK_ROUNDS_RANGE.min)
+      .max(PR_FEEDBACK_ROUNDS_RANGE.max)
+      .default(PR_FEEDBACK_DEFAULTS.maxRounds),
+    pullRequestNumber: z.number().int().positive(),
+    ticketId: z.string().max(200).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const trusted = value.feedbackTrigger === 'review_findings';
+    if (
+      trusted !== (value.feedbackEventKind === 'review_findings') ||
+      !(trusted
+        ? z.string().uuid().safeParse(value.feedbackEventId).success
+        : /^\d{1,20}$/.test(value.feedbackEventId))
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Feedback identity does not match its trigger',
+        path: ['feedbackEventId'],
+      });
+    }
+  });
 export type PrFeedbackPayload = z.infer<typeof PrFeedbackPayloadSchema>;
 
 /**
