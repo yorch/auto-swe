@@ -2698,6 +2698,36 @@
   ],
   "features": [
     {
+      "body": "Choose free-form template or conventional pull-request titles, with repository overrides and a bounded optional classifier.",
+      "category": "Engineering",
+      "detail": "Repository title format and nonblank template override scoped workflow.prTitleFormat and workflow.prTitleTemplate settings; the workflow-default template is the last template fallback. Conventional format uses a fixed workflow.prTitleType without a model, or asks prTitler for a type and summary from bounded request text and changed-file names when the type is auto. Classification failure or malformed output falls back to a conventional type and the request's first nonempty line, with the ticket ID as a final summary source. The formatter tidies and bounds that title; this classification is not a review verdict. The workflow PR path renders its chosen template; an Agent Run retains its descriptive legacy title in template mode unless a repository or registry template is explicit. Agent Run title policy uses its team/organization, while its classifier agent resolves at organization scope rather than the owning team's agent override. Policy/settings reads themselves are outside the classification fallback.",
+      "id": "pullRequestTitles",
+      "refs": [
+        "prTitlePolicy",
+        "prTitleResolve",
+        "prTitleClassifier",
+        "prTitleWorkflow",
+        "prTitleAgentRun"
+      ],
+      "status": "Implemented",
+      "title": "Repository-aware pull-request title policy"
+    },
+    {
+      "body": "A scheduled, bounded sweep removes labelled workspace containers or pods that satisfy backend-specific expiry rules.",
+      "category": "Operations",
+      "detail": "The gateway synchronizes an environment-controlled workspace-reaper schedule at startup. Its activity uses the selected worker's backend: Docker lists marked containers and removes those past the maximum activity lifetime plus slack, oldest first; containers with missing, invalid or future creation labels are retained. Kubernetes lists workspace-marked pods in its configured namespace, rechecks both labels and ignores pods already deleting, then selects terminal pods or pods beyond their deadline plus grace. Each sweep caps removals and records listing/removal failures for later sweeps. This cleans execution resources, independently of the run reaper that finalizes and bills stranded run rows.",
+      "id": "workspaceOrphanSweep",
+      "refs": [
+        "workspaceReaperSchedule",
+        "workspaceReaperActivity",
+        "workspaceReaperDocker",
+        "workspaceReaperPods",
+        "workspaceReaperTask"
+      ],
+      "status": "Implemented",
+      "title": "Orphaned workspace cleanup"
+    },
+    {
       "body": "Run stored connection checks together, or inspect a repository's platform credential and the caller's saved token separately.",
       "category": "Operations",
       "detail": "The ADMIN-only platform connections/test route checks configured GitHub, Slack, tracker, external knowledge and Figma integrations, per-host GitHub credentials, the configured approver App, active package registries and model-provider keys across scopes. Unconfigured integrations are skipped; the tracker also needs a real ticket ID. Per-probe exceptions become failed entries. The dashboard starts these checks only when requested and groups failures, working connections and skips. Batch checks use stored configuration; individual integration forms can also test supported draft values. GitHub App testing validates identity, mints the configured installation token and asks which repositories it reaches. A repository's separate test-access route requires platform LEAD plus owning-team management (or ADMIN); it checks platform credentials and, when present, the caller's own token against that repository and its saved default branch. The batch does not include MCP servers or per-repository access.",
@@ -3069,7 +3099,7 @@
     {
       "body": "Enrich agent prompts with past lessons, tracker/knowledge content, Figma summaries and repository dependency context.",
       "category": "Engineering",
-      "detail": "The dependency graph supports manifest detection plus inference; upstream checkout is optional. Context helpers generally degrade on enrichment failures rather than blocking core implementation. The tracker and knowledge-base fetches check their base URL and handle redirects as described in the connector guard card. In the default ticket-to-merge graph a gatherTicketContext step reads the run’s tracker ticket (for Jira also its parent issue and up to its 20 newest comments, within a shared length budget) and a tool-less ticketContextGatherer agent, on the planner’s model, digests it into a typed summary, requirements, acceptance criteria, constraints, open questions and references; a failed digest falls back to the plain ticket, and a run with no ticket (none named, a platform-generated id, no tracker configured, not found) returns without a model call; on the GitHub Issues tracker so does a ticket whose repository the run does not target (see the GitHub tracker scope card). The text is bounded, never carries the raw provider payload, sits inside a delimiter its own text cannot close and is framed as requirements, not instructions; it is not run through the injection scanners. Templates without the step get the ticket in validate and implement only when the workflow.ticketContextFallback setting is on (off by default, overridable at team and organization); a ticket fetched this way is stored on first use, so a later edit in the tracker is not seen by the run.",
+      "detail": "The dependency graph supports manifest detection plus inference; upstream checkout is optional. Context helpers generally degrade on enrichment failures rather than blocking core implementation. The tracker and knowledge-base fetches check their base URL and handle redirects as described in the connector guard card. In the default ticket-to-merge graph a gatherTicketContext step reads the run’s tracker ticket (for Jira also its parent issue and up to its 20 newest comments, within a shared length budget) and a tool-less ticketContextGatherer agent, on the planner’s model, digests it into a typed summary, requirements, acceptance criteria, constraints, open questions and references; a failed digest falls back to the plain ticket, and a run with no ticket (none named, a platform-generated id, no tracker configured, not found) returns without a model call; on the GitHub Issues tracker so does a ticket whose repository the run does not target (see the GitHub tracker scope card). The text is bounded, never carries the raw provider payload, sits inside a delimiter its own text cannot close and is framed as requirements, not instructions; it is not run through the injection scanners. Templates without the step get the ticket in validate and implement only when the workflow.ticketContextFallback setting is on (off by default, overridable at team and organization); a ticket fetched this way is stored on first use, so a later edit in the tracker is not seen by the run. When a gatherer supplies an explicitly empty ticket block and an unstructured request is narrowly classified as thin, validation attempts another ticket read even with fallback disabled. A readable ticket feeds validation; unauthorized or forbidden credentials make that thin request not actionable without a validator model call. Structured, substantive or uncertain cases continue through normal validation.",
       "id": "context",
       "refs": [
         "dependency",
@@ -3081,7 +3111,9 @@
         "ticketFallbackSetting",
         "ticketBlock",
         "ticketGathererAgent",
-        "trackerWorkerRead"
+        "trackerWorkerRead",
+        "thinTicketRetry",
+        "thinValidationStop"
       ],
       "status": "Implemented",
       "title": "Repository & design context"
@@ -3251,7 +3283,7 @@
     {
       "body": "Store lessons and channel memory with run/agent lineage and evidence; recall them for every agent that works on a repository; supersede, consolidate and forget them through their provenance.",
       "category": "Knowledge",
-      "detail": "MemoryItem supports generic scopes and entities plus repo/channel/team/org links. Storage uses vector(1536); a row is compared only with rows embedded by the same model, and after a model change an admin starts a re-embed of the stale rows. Scoped searches set pgvector's iterative index scan (strict order), so a small repository beside a crowded one still gets its nearest rows; on pgvector before 0.8 the worker logs once and searches without it. Every built-in engineering template with a review or CI loop writes a lesson when that loop runs out of attempts, and ticket-to-merge also after a merge and after a merge-wait timeout that followed a rejection; the release templates and the four-eyes sign-off loop write none, and a step that throws writes none. commitToMemory is given bounded evidence chosen by outcome (a CI failure lesson gets the CI log, a review failure lesson the rejection), records the outcome by code, cites the pull requests, head commit and a short quote of that evidence, and grades its confidence; a low-confidence lesson is labelled on recall, not filtered. It also rebuilds the run's earlier review rejections and CI failures from its traces — grouped by Temporal activity id so a retry counts once, capped at five entries and 4,000 characters per kind — and fences them with the evidence. A new item at or above memory.supersedeThreshold similarity to older active items in the same repository or channel marks them superseded; they are kept but not recalled. Consolidation soft-deletes merged items and keeps the sources' ids. An optional memory.lessonMaxAgeDays setting (off by default) keeps older lessons out of recall, searchLessons and consolidation through a SQL filter before the limit; nothing is deleted. The implementer, the three fixers and the review personas recall their repository's lessons by the text of what they are working on, and the Mastra loop also gets read-only searchLessons and explainLesson tools bound to that repository. Deleting a lesson or channel item forgets every merged copy of it and a merged item's own sources, restores the rows only the deleted merge or supersession hid, and audits both id lists in the same transaction; an API-only admin route erases one Slack user's attributed channel memory the same way. Recalled memory is text a later run reads, so the worker gates it on injection patterns: a write through insertMemoryItem is refused before it is embedded when its lesson or rationale matches an INJECTION scanner pattern, and the two consolidation passes apply the same check to their merged notes before inserting, leaving the cluster as it was. Lesson and channel-memory retrieval drop any recalled item that matches, which also covers rows written before the gate and an admin’s edit: PATCH /slack-channels/:id/memory/:memoryId saves edited text without the check. A write is refused when its INJECTION scan is incomplete (a pattern overran its budget or is quarantined), and the two consolidation passes treat an incomplete, failed or unloadable scan the same way and leave the cluster as it was. A pattern set that cannot be read is different, because no rule ran: the lesson step fails and is retried (bounded; a lesson is lost if the outage outlasts the retries), while a direct lesson write is logged and dropped and a channel turn’s summary or passively ingested fact is not stored. Recall gates only on the patterns that ran, so an incomplete scan alone drops nothing; a scan that throws, or a pattern set that cannot be loaded, recalls nothing, and a lesson’s explanation is then withheld as could-not-be-scanned rather than as an injection match. Every prompt that carries memory — recalled lessons, and channel memory in a mention turn, a reactive interjection, an ambient digest and both lists of an org-flagging check — wraps it in a block that labels the notes reference data, not instructions. The gate does not use the EXFILTRATION patterns, and passing the gate is not proof that recalled text is benign. A shell step’s command text is masked for credential-shaped values before it becomes an auto-commit message or a stored lesson. The lessons routes list and delete only repository lessons (scope swe-lessons), not channel memory, and a lesson delete writes an audit row carrying the deleted content. Every role reads the lessons of the repositories it can reach; deleting one and consolidating a repository take a platform ADMIN or a lead of the repository’s active owning team, and a shared team’s members only read. Anyone who reads a lesson can flag it as wrong with a reason; its managers see the reasons and delete the lesson or clear the flags, which are audited with the reasons, and a flag never changes recall. A run’s page lists the lessons its agents recalled, read from its own lessons.retrieved trace events and shown to whoever can see the run, and the lessons it wrote.",
+      "detail": "MemoryItem supports generic scopes and entities plus repo/channel/team/org links. Storage uses vector(1536); a row is compared only with rows embedded by the same model, and after a model change an admin starts a re-embed of the stale rows. Scoped searches set pgvector's iterative index scan (strict order), so a small repository beside a crowded one still gets its nearest rows; on pgvector before 0.8 the worker logs once and searches without it. Every built-in engineering template with a review or CI loop writes a lesson when that loop runs out of attempts, and ticket-to-merge also after a merge and after a merge-wait timeout that followed a rejection; the release templates and the four-eyes sign-off loop write none, and a step that throws writes none. commitToMemory is given bounded evidence chosen by outcome (a CI failure lesson gets the CI log, a review failure lesson the rejection), records the outcome by code, cites the pull requests, head commit and a short quote of that evidence, and grades its confidence; a low-confidence lesson is labelled on recall, not filtered. It also rebuilds the run's earlier review rejections and CI failures from its traces — grouped by Temporal activity id so a retry counts once, capped at five entries and 4,000 characters per kind — and fences them with the evidence. A new item at or above memory.supersedeThreshold similarity to older active items in the same repository or channel marks them superseded; they are kept but not recalled. Supersession only targets earlier (created_at, id) tuples; concurrent similar writes cannot retire each other, but can leave duplicate active rows until a later write. Consolidation soft-deletes merged items and keeps the sources' ids. An optional memory.lessonMaxAgeDays setting (off by default) keeps older lessons out of recall, searchLessons and consolidation through a SQL filter before the limit; nothing is deleted. The implementer, the three fixers and the review personas recall their repository's lessons by the text of what they are working on, and the Mastra loop also gets read-only searchLessons and explainLesson tools bound to that repository. Deleting a lesson or channel item forgets every merged copy of it and a merged item's own sources, restores the rows only the deleted merge or supersession hid, and audits both id lists in the same transaction; an API-only admin route erases one Slack user's attributed channel memory the same way. Recalled memory is text a later run reads, so the worker gates it on injection patterns: a write through insertMemoryItem is refused before it is embedded when its lesson or rationale matches an INJECTION scanner pattern, and the two consolidation passes apply the same check to their merged notes before inserting, leaving the cluster as it was. Lesson and channel-memory retrieval drop any recalled item that matches, which also covers rows written before the gate and an admin’s edit: PATCH /slack-channels/:id/memory/:memoryId saves edited text without the check. A write is refused when its INJECTION scan is incomplete (a pattern overran its budget or is quarantined), and the two consolidation passes treat an incomplete, failed or unloadable scan the same way and leave the cluster as it was. A pattern set that cannot be read is different, because no rule ran: the lesson step fails and is retried (bounded; a lesson is lost if the outage outlasts the retries), while a direct lesson write is logged and dropped and a channel turn’s summary or passively ingested fact is not stored. Recall gates only on the patterns that ran, so an incomplete scan alone drops nothing; a scan that throws, or a pattern set that cannot be loaded, recalls nothing, and a lesson’s explanation is then withheld as could-not-be-scanned rather than as an injection match. Every prompt that carries memory — recalled lessons, and channel memory in a mention turn, a reactive interjection, an ambient digest and both lists of an org-flagging check — wraps it in a block that labels the notes reference data, not instructions. The gate does not use the EXFILTRATION patterns, and passing the gate is not proof that recalled text is benign. A shell step’s command text is masked for credential-shaped values before it becomes an auto-commit message or a stored lesson. The lessons routes list and delete only repository lessons (scope swe-lessons), not channel memory, and a lesson delete writes an audit row carrying the deleted content. Every role reads the lessons of the repositories it can reach; deleting one and consolidating a repository take a platform ADMIN or a lead of the repository’s active owning team, and a shared team’s members only read. Anyone who reads a lesson can flag it as wrong with a reason; its managers see the reasons and delete the lesson or clear the flags, which are audited with the reasons, and a flag never changes recall. A run’s page lists the lessons its agents recalled, read from its own lessons.retrieved trace events and shown to whoever can see the run, and the lessons it wrote.",
       "id": "memory",
       "refs": [
         "memory",
@@ -4256,7 +4288,7 @@
     {
       "body": "Store reviewed, versioned summaries owned by a team and an organization, publish them deliberately, and let explicitly granted agents and steps search them or submit evidence-backed learnings.",
       "category": "Knowledge",
-      "detail": "A KnowledgeItem is a learning, reference, decision or policy with an owner and origin team, an organization, an optional repository, a status (unreviewed, approved, rejected, superseded), a visibility (repository, team, selected teams, organization) and a version; every lifecycle action is version-checked and evented. A team lead or admin approves for its repository, team or selected teams (recipients must be active teams of the same organization), an organization admin for the organization, and a platform ADMIN for any. A reader sees, locally, approved items and unreviewed learnings, and shared items only once approved. A workflow’s authority is the stored Temporal execution and its WorkflowRun, never the payload, and its source repository is re-checked against the launcher’s recorded access when the repository-access gate enforces. The implementer’s searchKnowledge and submitLearning tools bind only when its toolKeys name them; search is bounded, semantic over current embeddings with a text fallback, labelled untrusted, and drops items an INJECTION pattern matches. A learning must name the current node, passes the memory injection gate before it is stored, and may cite as evidence only passed quality-gate records of the same execution with their artifacts. It sits beside MemoryItem and does not change lesson recall.",
+      "detail": "A KnowledgeItem is a learning, reference, decision or policy with an owner and origin team, an organization, an optional repository, a status (unreviewed, approved, rejected, superseded), a visibility (repository, team, selected teams, organization) and a version; every lifecycle action is version-checked and evented. A team lead or admin approves for its repository, team or selected teams (recipients must be active teams of the same organization), an organization admin for the organization, and a platform ADMIN for any. A reader sees, locally, approved items and unreviewed learnings, and shared items only once approved. A workflow’s authority is the stored Temporal execution and its WorkflowRun, never the payload, and its source repository is re-checked against the launcher’s recorded access when the repository-access gate enforces. Governed search and submitLearning require explicit toolKeys grants; pinned repository KBs can independently enable the same searchKnowledge tool without granting governed search. commitToMemory writes legacy MemoryItems, not an automatic governed-learning mirror. Governed search is bounded, semantic over current embeddings with a text fallback, labelled untrusted, and drops items an INJECTION pattern matches. A learning must name the current node, passes the memory injection gate before it is stored, and may cite as evidence only passed quality-gate records of the same execution with their artifacts. It sits beside MemoryItem and does not change lesson recall.",
       "id": "knowledge",
       "refs": [
         "knowledgeModel",
@@ -4267,7 +4299,9 @@
         "knowledgeRecallGate",
         "knowledgeLearning",
         "knowledgeEvidence",
-        "knowledgeToolGrant"
+        "knowledgeToolGrant",
+        "memoryLegacyInsert",
+        "kbSearchBinding"
       ],
       "status": "Implemented",
       "title": "Governed knowledge items"
@@ -4478,7 +4512,7 @@
     {
       "body": "A repository's preview recipe starts its app inside the run's executor container; a headless Chromium visits each smoke path and the optional e2e command, and a navigation failure, console error, 5xx or e2e exit fails the gate. Every visit keeps a screenshot; each check keeps a recording (unless turned off), a Playwright trace and the app log as run evidence, served through short-lived user-bound links and summarised in the pull request.",
       "category": "Quality",
-      "detail": "previewConfig on a git_repo connection: setup and start commands, readyUrl/baseUrl, readyTimeoutMs, environment values, allowed browser hosts, smoke paths with an optional waitFor, an e2e command with its results directory, and up to four service sidecars. uiVerify starts the preview in the run's executor image, drives the in-container Chromium through a unix-socket driver, blocks every host but localhost and the recipe's allowedHosts, and treats a driver error as a page failure rather than an empty result. Evidence is an artifact (ui.screenshot, ui.video, ui.trace, ui.log) plus a RunEvidence row carrying kind, source (uiVerify or agent), spec node, attempt, caption, page URL and dimensions; the gateway lists ready items and mints a signed link whose content route re-checks the viewer's live account and run visibility. The agent browser toolset (browser_start_app, browser_navigate, browser_click, browser_fill, browser_press, browser_select, browser_wait, browser_snapshot, browser_screenshot, browser_console) is bound only when an Agent names 'browser', and its screenshots are evidence under source 'agent'. The preview starts detached, so its pid is its process-group id and stop() kills the tree; the daily sweep applies the evidence retention, removes the public copies a pull request published, and reaps ready ui.* artifacts whose RunEvidence row was never written.",
+      "detail": "previewConfig on a git_repo connection: setup and start commands, readyUrl/baseUrl, readyTimeoutMs, environment values, allowed browser hosts, smoke paths with an optional waitFor, an e2e command with its results directory, and up to four service sidecars. uiVerify starts the preview in the run's executor image, drives the in-container Chromium through a unix-socket driver, blocks every host but localhost and the recipe's allowedHosts, and treats a driver error as a page failure rather than an empty result. Evidence is an artifact (ui.screenshot, ui.video, ui.trace, ui.log) plus a RunEvidence row carrying kind, source (uiVerify or agent), spec node, attempt, caption, page URL and dimensions; the gateway lists ready items and mints a signed link whose content route re-checks the viewer's live account and run visibility. The agent browser toolset (browser_start_app, browser_navigate, browser_click, browser_fill, browser_press, browser_select, browser_wait, browser_snapshot, browser_screenshot, browser_console) is bound only when an Agent names 'browser', and its screenshots are evidence under source 'agent'. Workspace agent nodes can bind the browser tools on Mastra, Claude Code or Pi when their Agent grants browser; non-workspace nodes have no such checkout toolset. The preview starts detached; stop() signals its process group and scans /proc for descendants retaining the preview's random environment marker. Signals and process inspection are best-effort, not proof that every descendant exited; the daily sweep applies the evidence retention, removes the public copies a pull request published, and reaps ready ui.* artifacts whose RunEvidence row was never written.",
       "id": "uiValidation",
       "refs": [
         "uiRecipe",
@@ -4490,13 +4524,28 @@
         "uiEvidenceServe",
         "uiEvidencePanel",
         "uiEvidenceRetention",
-        "uiEvidenceCaps"
+        "uiEvidenceCaps",
+        "previewCleanup"
       ],
       "status": "Implemented",
       "title": "Verify the app in a real browser"
     }
   ],
   "limits": [
+    {
+      "body": "Workspace expiry is not a live-ownership query or a global fan-out to every worker host.",
+      "category": "Operations",
+      "detail": "The scheduled workflow runs one activity on the engineering task queue, and that activity inspects only the chosen worker's Docker daemon or Kubernetes namespace. Workers using separate daemons or namespaces are not all visited by one sweep. Selection trusts platform marker labels, creation times, configured deadlines and grace periods, not a lookup of each owning Temporal activity. Missing labels, disabled schedules, failed listing/removal, or a backlog larger than the cap leave resources behind. Docker counts sidecars and services separately against its removal cap. This is best-effort cleanup, not immediate resource reclamation, authorization against malicious labels, or a guarantee that all substrate hosts are covered.",
+      "id": "workspaceSweepBounds",
+      "refs": [
+        "workspaceReaperTask",
+        "workspaceReaperActivity",
+        "workspaceReaperDocker",
+        "workspaceReaperPods"
+      ],
+      "status": "Confirmed boundary",
+      "title": "Workspace sweeps inspect one substrate at a time"
+    },
     {
       "body": "A working probe is not proof of an executable workflow, and no tracker marker is not proof that every tracker write landed.",
       "category": "Operations",
@@ -5489,14 +5538,16 @@
     {
       "body": "The ticket reaches agents as a bounded, framed block, not a scanned one, and only Jira adds comments and a parent.",
       "category": "Trust boundary",
-      "detail": "Ticket text is written by people other than the operator. The block is cut to fixed lengths, carries no raw provider payload, sits inside a delimiter its own text cannot close and is framed as requirements, but the injection scanners do not cover it. Only the ticket’s own fields, its parent issue and its newest comments reach the agents: linked knowledge-base pages and attachments do not, and other trackers ignore the comment and parent options. The ticket is stored at submission or on first fetch, and the gather step re-reads it once to add comments and the parent; an edit after that is not seen by the run. With the fallback setting off, a template without the gather step gets no ticket in its prompts; a failed gather in the default graph is no ticket, not a stopped run, and the later steps do not fetch it themselves. On the GitHub Issues tracker a ticket in another repository than the ones the run targets is never fetched, so it gives the agents nothing.",
+      "detail": "Ticket text is written by people other than the operator. The block is cut to fixed lengths, carries no raw provider payload, sits inside a delimiter its own text cannot close and is framed as requirements, but the injection scanners do not cover it. Only the ticket’s own fields, its parent issue and its newest comments reach the agents: linked knowledge-base pages and attachments do not, and other trackers ignore the comment and parent options. The ticket is stored at submission or on first fetch, and the gather step re-reads it once to add comments and the parent; an edit after that is not seen by the run. With the fallback setting off, a template without the gather step gets no ticket in its prompts; an empty gather normally leaves no ticket. A narrow exception lets validation re-read after an explicitly empty gather block for a thin unstructured request: unauthorized or forbidden credentials then stop validation without a model call, while a readable ticket feeds that validation. This does not rewrite the gatherer's original output; a later not-actionable result can still display its earlier unavailable reason. On the GitHub Issues tracker a ticket in another repository than the ones the run targets is never fetched, so it gives the agents nothing.",
       "id": "ticketContextBounds",
       "refs": [
         "ticketBlock",
         "ticketGather",
         "ticketFallback",
         "ticketFallbackSetting",
-        "trackerReadGate"
+        "trackerReadGate",
+        "thinTicketRetry",
+        "thinValidationStop"
       ],
       "status": "Confirmed boundary",
       "title": "The tracker ticket is framed and bounded, not scanned"
@@ -6221,6 +6272,105 @@
     "packages/worker/src/workflows/workflowSpan.ts": "7f84ca86d2fdf85a842fc8df7cd1fabec14069e617dc7aac9bf995c4ea416d3f"
   },
   "sources": [
+    {
+      "anchor": "async function rereadForThinRequest(",
+      "id": "thinTicketRetry",
+      "lines": 29,
+      "path": "packages/worker/src/activities/validateContext.ts",
+      "title": "Only an explicitly empty gather result and a thin request trigger another ticket read"
+    },
+    {
+      "anchor": "if (reread.kind === 'refused') {",
+      "before": 4,
+      "id": "thinValidationStop",
+      "lines": 27,
+      "path": "packages/worker/src/activities/validateContext.ts",
+      "title": "Refused credentials stop thin-request validation without a model call"
+    },
+    {
+      "anchor": "return insertMemoryItem({",
+      "id": "memoryLegacyInsert",
+      "lines": 19,
+      "path": "packages/worker/src/activities/commitToMemory.ts",
+      "title": "The lesson writer stores legacy repository memory"
+    },
+    {
+      "anchor": "export function previewStopScript(",
+      "id": "previewCleanup",
+      "lines": 52,
+      "path": "packages/worker/src/lib/appPreview.ts",
+      "title": "Preview cleanup signals its process group and tagged descendants best-effort"
+    },
+    {
+      "anchor": "export async function resolvePrTitlePolicy(",
+      "id": "prTitlePolicy",
+      "lines": 30,
+      "path": "packages/worker/src/activities/prTitle.ts",
+      "title": "Repository title policy overrides scoped settings and workflow defaults"
+    },
+    {
+      "anchor": "export async function resolvePrTitle(input:",
+      "id": "prTitleResolve",
+      "lines": 36,
+      "path": "packages/worker/src/activities/prTitle.ts",
+      "title": "Template versus conventional title selection and classification fallback"
+    },
+    {
+      "anchor": "async function chooseType(",
+      "id": "prTitleClassifier",
+      "lines": 37,
+      "path": "packages/worker/src/activities/prTitle.ts",
+      "title": "Bounded prTitler input and best-effort classification"
+    },
+    {
+      "anchor": "const title = await resolvePrTitle({",
+      "id": "prTitleWorkflow",
+      "lines": 16,
+      "path": "packages/worker/src/activities/createOrUpdatePullRequest.ts",
+      "title": "Workflow PR titles resolve with template, team and organization scope"
+    },
+    {
+      "anchor": "const title = await resolvePrTitle({",
+      "id": "prTitleAgentRun",
+      "lines": 20,
+      "path": "packages/worker/src/activities/runAgentTask.ts",
+      "title": "Agent Run title policy and classifier use distinct scopes"
+    },
+    {
+      "anchor": "export async function reapOrphanedWorkspaces(",
+      "id": "workspaceReaperActivity",
+      "lines": 41,
+      "path": "packages/worker/src/activities/reapOrphanedWorkspaces.ts",
+      "title": "The reaper inspects its executing worker's selected backend"
+    },
+    {
+      "anchor": "export function selectExpiredContainers(",
+      "id": "workspaceReaperDocker",
+      "lines": 17,
+      "path": "packages/worker/src/lib/workspaceBackend/orphans.ts",
+      "title": "Docker expiry requires a valid creation label and maximum age"
+    },
+    {
+      "anchor": "export function selectReapablePods(",
+      "id": "workspaceReaperPods",
+      "lines": 48,
+      "path": "packages/worker/src/lib/workspaceBackend/orphans.ts",
+      "title": "Kubernetes cleanup rechecks labels, deletion state, phase and deadline"
+    },
+    {
+      "anchor": "async syncWorkspaceReaperSchedule(config:",
+      "id": "workspaceReaperSchedule",
+      "lines": 9,
+      "path": "packages/gateway/src/plugins/temporal.ts",
+      "title": "The workspace schedule is paused when disabled"
+    },
+    {
+      "anchor": "function makeWorkspaceReaperScheduleAction()",
+      "id": "workspaceReaperTask",
+      "lines": 9,
+      "path": "packages/gateway/src/plugins/temporal.ts",
+      "title": "One workspace sweep is dispatched on the shared engineering task queue"
+    },
     {
       "anchor": "export const systemConfigRoutes:",
       "id": "connectionHealthRoute",
