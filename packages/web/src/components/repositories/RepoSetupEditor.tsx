@@ -301,7 +301,7 @@ function SetupFilePanel({
   };
 
   return (
-    <details className="rounded-lg border border-ink-600 p-3">
+    <details className="min-w-0 max-w-full rounded-lg border border-ink-600 p-3">
       <summary className="cursor-pointer text-sm text-paper-200">
         Keep it in the repository: {title}
       </summary>
@@ -310,7 +310,7 @@ function SetupFilePanel({
           Commit this file to version the setup with the code. A definition saved on the repository
           here takes precedence over it.
         </p>
-        <pre className="max-h-64 overflow-auto rounded-md bg-ink-800 p-2 font-mono text-xs text-paper-300">
+        <pre className="max-h-64 max-w-full overflow-auto whitespace-pre rounded-md bg-ink-800 p-2 font-mono text-xs text-paper-300">
           {text}
         </pre>
         <div className="flex flex-wrap items-center gap-2">

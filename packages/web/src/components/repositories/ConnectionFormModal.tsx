@@ -612,7 +612,7 @@ export function ConnectionFormModal({
                     value={previewConfigJson}
                   />
                 </fieldset>
-                <fieldset className="space-y-3">
+                <fieldset className="min-w-0 space-y-3">
                   <legend className="text-sm font-medium text-paper-200">Workspace setup</legend>
                   <p className="text-xs leading-relaxed text-paper-400">
                     Run in every workspace after the checkout, evals included: submodules, LFS,
