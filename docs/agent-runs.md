@@ -9,6 +9,9 @@ merged; a human merges.
 It is the way to use a library agent (`contentWriter`, `supportResponder`, a team's own) without
 authoring a workflow around it.
 
+A finished agent run is also a source for [code review](./code-review.md): its PR, recorded branch
+head, or unverified stored diff for `deliver: none`. The shared run viewer launches and lists reviews.
+
 ---
 
 ## 1. Launching one

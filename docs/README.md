@@ -25,6 +25,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 
 | Doc | Covers |
 |-----|--------|
+| [code-review.md](./code-review.md) | Reviewing a finished workflow or agent run — presets, automatic attachments, PR/branch/stored sources, verdicts, PR evaluation, and guarded fix rounds |
 | [hitl-workflows.md](./hitl-workflows.md) | Human-in-the-loop nodes (approval / decision / input / review), signal flow, the inbox, API |
 | [autonomy-policies.md](./autonomy-policies.md) | When a run may act alone and when it must ask — risk classes, the scope cascade, failing closed, the decision log |
 | [evals.md](./evals.md) | Output-quality measurement — the `eval` node, scorers, datasets, the regression harness, canary routing |

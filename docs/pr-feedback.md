@@ -19,6 +19,14 @@ The `github.pull_request.feedback` event source starts a run of the built-in
 - **Qodo's review bot reviewing** a pull request the platform opened, when an automation opts in
   to the `qodo_findings` trigger ([§8](#8-qodo-findings)).
 
+[Code-review presets](./code-review.md#fix-mode) also request a feedback round through the trusted,
+opt-in `review_findings` trigger. Its findings come from the review run's stored database verdicts,
+not host reviews or comments; it does not require a fabricated review ID or a fix-command comment.
+The review run must succeed before gather uses its findings. Agent-origin rounds keep the original
+agent, and the existing PR/head, push, budget, and round-limit guards remain in force. Fix fires
+cannot use the generic fire retry endpoint, and a failed or suppressed decision does not relaunch
+for the same review run. See [the administrator setup](./code-review.md#fix-mode).
+
 A feedback round **gathers** the open member review threads on the pull request, **fixes**
 them on a work branch, **pushes** the fix onto the pull request's own branch as a fast-forward,
 **reports** the round on the pull request (one marked summary comment plus a reply on each
@@ -27,8 +35,8 @@ one CI follow-up** on the same fixer path.
 
 Two filters shape what a trigger selects:
 
-- `triggers` — `changes_requested`, `command` and/or `qodo_findings` (default the first two;
-  Qodo is opt-in, so an automation that never listed it keeps reacting to people only).
+- `triggers` — `changes_requested`, `command`, `qodo_findings`, and/or `review_findings` (default
+  the first two; Qodo and trusted run-review findings are opt-in).
 - `pullRequests` — `platform` and/or `others` (default `platform`). `others` is gated on an
   admin setting, and on those pull requests only the explicit command acts — a drive-by
   `changes_requested` review on a stranger's pull request does not spend model budget.

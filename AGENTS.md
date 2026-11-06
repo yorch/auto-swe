@@ -141,6 +141,7 @@ Top-level files that matter:
 | Git branch                    | `<BRANCH_PREFIX>/<ticketId>`      | `auto/JIRA-1234` (default prefix: `auto`) |
 | Agent-run workflow ID / branch | `agent-<repo8>-<hex8>` (with an `Idempotency-Key`: `agent-<repo8>-<user8>-<digest>`) / `<BRANCH_PREFIX>/agent-<id8>` | `agent-1a2b3c4d-9f8e7d6c` / `auto/agent-0a1b2c3d` |
 | In-app assistant conversation workflow ID | `assistant-<conversationId>` | `assistant-0b1c2d3e-…` |
+| Code-review workflow ID / branch | `review-<repo8>-<hex8>` / no branch | `review-1a2b3c4d-9f8e7d6c` / — |
 | CI-failure automation workflow ID / branch | `ci-<automation8>-<runId12>-<attempt>` / `<BRANCH_PREFIX>/ci-<runId>-<attempt>` | `ci-1a2b3c4d-123456789012-1` / `auto/ci-123456789012-1` |
 | PR-feedback automation workflow ID / branch | `prfb-<automation8>-<pr>-<eventId>` / `<BRANCH_PREFIX>/prfb-<pr>-<eventId>` | `prfb-1a2b3c4d-9-777` / `auto/prfb-9-777` |
 | Jira status-change automation workflow ID / branch | `jirapoll-<automation8>-<ticket>-<status8>` / `<BRANCH_PREFIX>/<ticketId>-<status8>` (`<status8>`: 8 hex digits of the lower-cased status) | `jirapoll-1a2b3c4d-pay-12-3fa2c1d9` / `auto/PAY-12-3fa2c1d9` |

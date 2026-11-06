@@ -18,6 +18,10 @@ rather than the boundary of what the platform does. Other automations (dependenc
 release-note generation, scheduled audits, PRD decomposition) are the same engine with a different
 DAG.
 
+[Code review after a run](./code-review.md) evaluates a finished workflow or agent run through a
+review template and preset, publishes PR findings, feeds worst-of PR evaluation, and optionally
+requests a guarded feedback fix round.
+
 **The Slack channel teammate is both a headline capability and the platform's conversational
 surface.** It is a channel-resident assistant an engineering team talks to directly — and the same
 assistant starts, watches, and reports on the workflows above, so teams manage their automation
