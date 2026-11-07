@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PreviewConfigSchema } from './previewConfig.js';
+import { PreviewConfigSchema, secretLookingEnvKeys } from './previewConfig.js';
 
 const validConfig = {
   readyUrl: 'http://localhost:4173/health',
@@ -120,5 +120,27 @@ describe('PreviewConfigSchema', () => {
         })
       );
     }
+  });
+});
+
+describe('secretLookingEnvKeys', () => {
+  it('flags secret-looking names and values, and leaves ordinary ones', () => {
+    expect(
+      secretLookingEnvKeys({
+        API_KEY: 'x',
+        AWS_ID: 'AKIAABCDEFGHIJKLMNOP',
+        DATABASE_URL: 'postgres://app:pw-123456@db:5432/app',
+        EMPTY_TOKEN: '',
+        HEADER: 'Bearer abcdefgh12345678',
+        NODE_ENV: 'production',
+        PORT: '3000',
+        PUBLIC_URL: 'https://example.com/app',
+        SESSION_SECRET: 'whatever',
+      })
+    ).toEqual(['API_KEY', 'AWS_ID', 'DATABASE_URL', 'HEADER', 'SESSION_SECRET']);
+  });
+
+  it('accepts a missing env', () => {
+    expect(secretLookingEnvKeys(undefined)).toEqual([]);
   });
 });

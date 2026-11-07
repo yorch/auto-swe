@@ -20,21 +20,29 @@ afterEach(() => {
 });
 
 describe('PreviewEnvToSecrets', () => {
-  it('says nothing when the recipe has no env', () => {
+  it('says nothing when the recipe has no secret-looking env', () => {
     const { container } = render(
-      <PreviewEnvToSecrets envNames={[]} onMoved={vi.fn()} repositoryId="r1" />
+      <PreviewEnvToSecrets env={{ PORT: '3000' }} onMoved={vi.fn()} repositoryId="r1" />
     );
     expect(container.textContent).toBe('');
   });
 
-  it('names the plain-text env and hands the moved recipe back', () => {
+  it('names the secret-looking env, moves only those, and hands the moved recipe back', () => {
     const onMoved = vi.fn();
     mutate.mockImplementation((_v, opts: { onSuccess: (r: unknown) => void }) =>
       opts.onSuccess({ moved: ['API_KEY'], previewConfig: { secrets: ['API_KEY'] } })
     );
-    render(<PreviewEnvToSecrets envNames={['API_KEY']} onMoved={onMoved} repositoryId="r1" />);
+    render(
+      <PreviewEnvToSecrets
+        env={{ API_KEY: 'value-1234567', PORT: '3000' }}
+        onMoved={onMoved}
+        repositoryId="r1"
+      />
+    );
     expect(screen.getByText(/API_KEY/)).toBeTruthy();
+    expect(screen.queryByText(/PORT/)).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Move env values to setup secrets' }));
+    expect(mutate).toHaveBeenCalledWith(['API_KEY'], expect.anything());
     expect(onMoved).toHaveBeenCalledWith({ secrets: ['API_KEY'] });
   });
 });

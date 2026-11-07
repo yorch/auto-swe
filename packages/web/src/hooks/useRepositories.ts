@@ -262,15 +262,15 @@ export function useSaveSetupSecret(connectionId: string) {
   });
 }
 
-/** Move the app preview recipe's env values into encrypted setup secrets. */
+/** Move app preview recipe env values (by default the secret-looking ones) into setup secrets. */
 export function useMovePreviewEnvToSecrets(connectionId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () =>
+    mutationFn: (names?: string[]) =>
       api
         .post<{ data: { moved: string[]; previewConfig: unknown } }>(
           `/api/v1/repositories/${connectionId}/preview/env-to-secrets`,
-          {}
+          names ? { names } : {}
         )
         .then((r) => r.data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['repositories'] }),
@@ -284,5 +284,41 @@ export function useDeleteSetupSecret(connectionId: string) {
       api.delete(`/api/v1/repositories/${connectionId}/setup/secrets/${encodeURIComponent(name)}`),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ['repositories', connectionId, 'setup-secrets'] }),
+  });
+}
+
+/** One of the repository team's eval datasets, and whether it reads this repository's secrets. */
+export interface RepoEvalDatasetLink {
+  id: string;
+  name: string;
+  slug: string;
+  linked: boolean;
+  /** The other repository the dataset reads setup secrets from, if any. */
+  usesRepository: { id: string; name: string } | null;
+}
+
+export function useRepoEvalDatasets(connectionId: string | undefined) {
+  return useQuery({
+    enabled: Boolean(connectionId),
+    queryFn: () =>
+      api
+        .get<{ data: RepoEvalDatasetLink[] }>(
+          `/api/v1/repositories/${connectionId}/setup/eval-datasets`
+        )
+        .then((r) => r.data),
+    queryKey: ['repositories', connectionId, 'eval-datasets'],
+  });
+}
+
+export function useLinkRepoEvalDataset(connectionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ datasetId, linked }: { datasetId: string; linked: boolean }) =>
+      api.put<{ data: { linked: boolean } }>(
+        `/api/v1/repositories/${connectionId}/setup/eval-datasets/${datasetId}`,
+        { linked }
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['repositories', connectionId, 'eval-datasets'] }),
   });
 }

@@ -61,6 +61,7 @@ import {
   resolveWorkspaceSetup,
   runSetupGitPhase,
   runSetupStepsPhase,
+  secretScanNeedles,
   submoduleRepo,
   sweepSetupCaches,
   WORKSPACE_SETUP_FAILED,
@@ -81,6 +82,7 @@ function fakeHost(over: Partial<RepoSetupHost> = {}) {
     redact: (t: string) => t.replaceAll('sekret', '[REDACTED]'),
     root: vi.fn(async () => ''),
     stdin: vi.fn(async () => {}),
+    sweepProcesses: vi.fn(async () => {}),
     ...over,
   };
   return host;
@@ -462,17 +464,88 @@ describe('cleanup and the secret scan', () => {
     const host = fakeHost();
     await runSetupStepsPhase(
       host,
-      { secrets: ['NPM_TOKEN', 'KEY', 'PIN'], steps: [{ run: 'yarn' }] },
+      { secrets: ['NPM_TOKEN', 'KEY'], steps: [{ run: 'yarn' }] },
       inputs,
-      { KEY: '---\nlongest-line-of-key\n---', NPM_TOKEN: 'npm_abcdef123', PIN: '1234' }
+      { KEY: '---\nlongest-line-of-key\n---', NPM_TOKEN: 'npm_abcdef123' }
     );
     const [script, opts] = calls(host).at(-1) ?? ['', {}];
-    expect(script).toContain('grep -lF -e "$AUTO_SWE_SCAN_0" -e "$AUTO_SWE_SCAN_1" --');
+    expect(script).toContain('grep -lF -e "$AUTO_SWE_SCAN_0" -e "$AUTO_SWE_SCAN_1"');
+    expect(script).toContain(`find '/workspace/target-repo' "$HOME" /tmp /var/tmp /dev/shm -xdev`);
     expect(script).not.toContain('npm_abcdef123');
-    expect(opts.secretEnv).toEqual({
-      AUTO_SWE_SCAN_0: 'longest-line-of-key',
-      AUTO_SWE_SCAN_1: 'npm_abcdef123',
+    const searched = Object.values(opts.secretEnv ?? {});
+    expect(searched).toEqual(
+      expect.arrayContaining([
+        ...secretScanNeedles('longest-line-of-key'),
+        ...secretScanNeedles('npm_abcdef123'),
+      ])
+    );
+    expect(searched).not.toContain('---');
+  });
+
+  it('searches for a value written, URL encoded and base64 encoded at every offset', () => {
+    const token = 'tok/en+value:1234';
+    const needles = secretScanNeedles(token);
+    expect(needles).toContain(token);
+    expect(needles).toContain(encodeURIComponent(token));
+    for (const prefix of ['', 'u', 'us', 'user:']) {
+      const encoded = Buffer.from(`${prefix}${token}`).toString('base64');
+      const urlSafe = Buffer.from(`${prefix}${token}`).toString('base64url');
+      expect(needles.some((n) => encoded.includes(n) && n.length >= 8)).toBe(true);
+      expect(needles.some((n) => urlSafe.includes(n) && n.length >= 8)).toBe(true);
+    }
+    // Encoded after other text, the value still ends up as one of the needles' superstrings.
+    expect(needles.every((n) => n.length >= 8)).toBe(true);
+    expect(secretScanNeedles('short')).toEqual([]);
+  });
+
+  it('refuses a secret shorter than 8 characters before any step runs', async () => {
+    const host = fakeHost();
+    const err = await runSetupStepsPhase(
+      host,
+      { secrets: ['NPM_TOKEN', 'PIN'], steps: [{ run: 'yarn' }] },
+      inputs,
+      { NPM_TOKEN: 'npm_abcdef123', PIN: '1234' }
+    ).catch((e) => e);
+    expect(err).toMatchObject({ nonRetryable: true, type: WORKSPACE_SETUP_FAILED });
+    expect(String(err.message)).toContain('setup secret PIN is shorter than 8 characters');
+    expect(String(err.message)).not.toContain('1234');
+    expect(host.capture).not.toHaveBeenCalled();
+  });
+
+  it('stops processes the steps left running before cleanup, when setup has secrets', async () => {
+    const order: string[] = [];
+    const host = fakeHost({
+      capture: vi.fn(async (cmd: string) => {
+        order.push(cmd.startsWith('rm -rf') ? 'cleanup' : cmd.includes('grep -lF') ? 'scan' : cmd);
+        return { exitCode: 0, stderr: '', stdout: '' };
+      }),
+      sweepProcesses: vi.fn(async () => {
+        order.push('sweep');
+      }),
     });
+    await runSetupStepsPhase(
+      host,
+      { cleanup: ['.npmrc'], secrets: ['NPM_TOKEN'], steps: [{ run: 'yarn' }] },
+      inputs,
+      { NPM_TOKEN: 'npm_abcdef123' }
+    );
+    expect(order).toEqual(['yarn', 'sweep', 'cleanup', 'scan']);
+  });
+
+  it('fails setup when the process sweep fails', async () => {
+    const host = fakeHost({
+      sweepProcesses: vi.fn(async () => {
+        throw new Error('no /proc');
+      }),
+    });
+    const err = await runSetupStepsPhase(
+      host,
+      { secrets: ['NPM_TOKEN'], steps: [{ run: 'yarn' }] },
+      inputs,
+      { NPM_TOKEN: 'npm_abcdef123' }
+    ).catch((e) => e);
+    expect(err).toMatchObject({ type: WORKSPACE_SETUP_FAILED });
+    expect(String(err.message)).toContain('no /proc');
   });
 
   it('fails setup naming the files a value was left in, and saves no cache', async () => {
@@ -503,6 +576,7 @@ describe('cleanup and the secret scan', () => {
     const host = fakeHost();
     await runSetupStepsPhase(host, { steps: [{ run: 'yarn' }] }, inputs);
     expect(calls(host).map(([cmd]) => cmd)).toEqual(['yarn']);
+    expect(host.sweepProcesses).not.toHaveBeenCalled();
   });
 });
 
@@ -568,14 +642,14 @@ describe('setup secrets', () => {
       host,
       setup,
       { cleanUrl: PARENT, image: 'img', teamId: null },
-      { NPM_TOKEN: 'npm_abc123' }
+      { NPM_TOKEN: 'npm_abc12345' }
     );
     const [command, opts] = vi.mocked(host.capture).mock.calls[0] as unknown as [
       string,
       { env?: string[]; secretEnv?: Record<string, string> },
     ];
-    expect(opts.secretEnv).toEqual({ NPM_TOKEN: 'npm_abc123' });
+    expect(opts.secretEnv).toEqual({ NPM_TOKEN: 'npm_abc12345' });
     expect(opts.env).toEqual(['CI=1']);
-    expect(command).not.toContain('npm_abc123');
+    expect(command).not.toContain('npm_abc12345');
   });
 });

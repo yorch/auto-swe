@@ -7,6 +7,7 @@ import {
   DEFAULT_SETUP_STEP_TIMEOUT_SECONDS,
   isKeyFileGlob,
   MAX_KEY_FILE_GLOB_MATCHES,
+  MIN_REPO_SETUP_SECRET_CHARS,
   REPO_SETUP_FILE,
   REPO_SETUP_FILE_MAX_BYTES,
   type RepoSetup,
@@ -75,6 +76,11 @@ export interface RepoSetupHost {
   ): Promise<{ cleanUrl: string; authHeader?: string }>;
   /** Scrubs known secrets out of text that may be shown or logged. */
   redact(text: string): string;
+  /**
+   * Stop every process in the workspace except its keeper, so nothing a setup step left running
+   * still holds a secret when the agent starts.
+   */
+  sweepProcesses(): Promise<void>;
 }
 
 export interface RepoSetupReport {
@@ -598,8 +604,7 @@ async function runSteps(
   return done;
 }
 
-/** Shortest secret value the leak scan looks for; shorter values match too much by chance. */
-export const MIN_SCANNED_SECRET_CHARS = 8;
+const MIN_SCANNED_SECRET_CHARS = MIN_REPO_SETUP_SECRET_CHARS;
 const SCAN_TIMEOUT_MS = 300_000;
 const SCAN_MAX_FILE_KB = 20 * 1024;
 const SCAN_MAX_REPORTED = 20;
@@ -623,26 +628,61 @@ async function runCleanup(host: RepoSetupHost, setup: RepoSetup): Promise<void> 
   }
 }
 
+/** The longest non-empty line of a value: what the scan searches for a multi-line secret. */
+function longestLine(value: string): string {
+  return value.split(/\r?\n/).reduce((a, b) => (b.trim().length > a.length ? b.trim() : a), '');
+}
+
+/**
+ * The strings the leak scan searches for one secret value: its longest line as written, URL
+ * encoded, and base64 encoded at each of the three byte offsets it can start at inside a longer
+ * encoded string (`_auth=base64(user:token)`), in both the standard and URL-safe alphabets. Only
+ * the base64 characters that depend on the value alone are kept. Empty for a value too short to
+ * search without matching by chance.
+ */
+export function secretScanNeedles(value: string): string[] {
+  const line = longestLine(value);
+  if (line.length < MIN_SCANNED_SECRET_CHARS) {
+    return [];
+  }
+  const out = new Set([line, encodeURIComponent(line)]);
+  const bytes = Buffer.from(line, 'utf8');
+  for (let offset = 0; offset < 3; offset++) {
+    const encoded = Buffer.concat([Buffer.alloc(offset), bytes]).toString('base64');
+    const own = encoded.slice(
+      Math.ceil((offset * 8) / 6),
+      Math.floor(((offset + bytes.length) * 8) / 6)
+    );
+    if (own.length >= MIN_SCANNED_SECRET_CHARS) {
+      out.add(own);
+      out.add(own.replaceAll('+', '-').replaceAll('/', '_'));
+    }
+  }
+  return [...out];
+}
+
+/** Directories outside the checkout and home where a step can leave a file the agent can read. */
+const SCAN_TEMP_ROOTS = ['/tmp', '/var/tmp', '/dev/shm'];
+
 /**
  * Fail setup when a secret value is still in a file the agent or the cache could read: the
- * checkout or the workspace user's home, which holds every `~/` cache path. Each value is
- * searched as a literal through secret environment, never the command line; a multi-line value
- * by its longest line. Only the file names are reported.
+ * checkout, the workspace user's home (which holds every `~/` cache path), and the temporary
+ * directories. Each value is searched for as written and encoded ({@link secretScanNeedles}),
+ * through secret environment, never the command line. Only the file names are reported.
  */
 async function scanForSecrets(
   host: RepoSetupHost,
   secretEnv: Record<string, string>
 ): Promise<void> {
-  const needles = Object.values(secretEnv)
-    .map((v) => v.split(/\r?\n/).reduce((a, b) => (b.trim().length > a.length ? b.trim() : a), ''))
-    .filter((v) => v.length >= MIN_SCANNED_SECRET_CHARS);
+  const needles = [...new Set(Object.values(secretEnv).flatMap(secretScanNeedles))];
   if (needles.length === 0) {
     return;
   }
   const scanEnv = Object.fromEntries(needles.map((v, i) => [`AUTO_SWE_SCAN_${i}`, v]));
   const patterns = needles.map((_, i) => `-e "$AUTO_SWE_SCAN_${i}"`).join(' ');
+  const roots = [shellQuote(REPO_DIR), '"$HOME"', ...SCAN_TEMP_ROOTS].join(' ');
   const script = [
-    `find ${shellQuote(REPO_DIR)} "$HOME" -xdev -type f -size -${SCAN_MAX_FILE_KB}k -print0 2>/dev/null`,
+    `find ${roots} -xdev -type f -size -${SCAN_MAX_FILE_KB}k -print0 2>/dev/null`,
     `| xargs -0 -r grep -lF ${patterns} -- 2>/dev/null`,
     `| head -n ${SCAN_MAX_REPORTED}`,
     `| sed -e ${shellQuote(`s|^${REPO_DIR}/||`)} -e "s|^$HOME/|~/|"; true`,
@@ -714,7 +754,24 @@ export async function runSetupStepsPhase(
       cache = 'error';
     }
   }
+  const short = Object.entries(secretEnv)
+    .filter(([, value]) => longestLine(value).length < MIN_SCANNED_SECRET_CHARS)
+    .map(([name]) => name);
+  if (short.length) {
+    throw setupConfigFailure(
+      `setup secret${short.length > 1 ? 's' : ''} ${short.join(', ')} ${short.length > 1 ? 'are' : 'is'} shorter than ${MIN_SCANNED_SECRET_CHARS} characters, too short to scan for; save a longer value`
+    );
+  }
   const steps = await runSteps(host, setup, secretEnv);
+  if (Object.keys(secretEnv).length) {
+    try {
+      await host.sweepProcesses();
+    } catch (err) {
+      throw setupRunFailure(
+        `stopping the processes setup left running failed: ${host.redact(err instanceof Error ? err.message : String(err))}`
+      );
+    }
+  }
   await runCleanup(host, setup);
   await scanForSecrets(host, secretEnv);
   if (cacheKey && cache === 'miss') {

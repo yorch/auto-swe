@@ -99,10 +99,18 @@ the repository form. A secret goes under `secrets` instead, a list of names of t
 [setup secrets](./repositories.md#workspace-setup), which are stored encrypted. The preview's setup
 and start commands get both as environment variables through the workspace's secret channel, and
 the values are masked in the log tail. A named secret the repository holds no value for fails the
-preview; a name may not be both an `env` key and a secret. When a recipe still has `env` values,
-the form offers to move them: `POST /api/v1/repositories/:id/preview/env-to-secrets` stores each
-one as a setup secret of the same name, drops `env` and names them under `secrets`, refusing the
-whole move when a name is already a setup secret. The audit log records the names only.
+preview; a name may not be both an `env` key and a secret.
+
+An `env` value that looks secret is refused with `PREVIEW_ENV_LOOKS_SECRET`, naming the keys:
+saving a recipe with one fails, and a saved recipe that still has one does not start a preview
+until it is moved. It looks secret by its name (`TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `API_KEY`,
+`ACCESS_KEY`, `PRIVATE_KEY`, `CREDENTIAL`, `AUTH`) or its value (URL userinfo, a `Bearer` or `Basic`
+header, a well-known token prefix such as `ghp_`, `glpat-`, `sk-` or `AKIA`, a PEM private key).
+The form offers to move them: `POST /api/v1/repositories/:id/preview/env-to-secrets` stores each
+one as a setup secret of the same name, removes it from `env` and names it under `secrets`. It
+moves the secret-looking values unless the request names others under `names`, and refuses the
+whole move when a name is already a setup secret or a value is shorter than a setup secret's
+8-character minimum. The audit log records the names only.
 
 Configured services start as workspace sidecars before preview setup runs. Docker joins each service
 to the workspace network namespace, so the app reaches it through `localhost`; Kubernetes places
@@ -156,8 +164,9 @@ dropped.
 
 ## Limitations
 
-- Moving `env` into setup secrets is offered, not forced: a recipe that keeps secret values in
-  `env` stores them as plain JSON, readable by anyone who can open the repository form.
+- Secret-looking `env` values are found by shape, not proven: a secret with an ordinary name and no
+  known token prefix (`DB_PASS_PHRASE=correct-horse`, say) is still accepted into `env`, where it is
+  stored as plain JSON, readable by anyone who can open the repository form.
 - Kubernetes preview services with `runAsUser` run under Pod Security `restricted`; services that
   run as root still require `baseline`. The workspace container keeps its non-root,
   dropped-capability security context.

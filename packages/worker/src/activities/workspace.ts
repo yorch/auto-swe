@@ -1036,6 +1036,15 @@ export async function createWorkspace(
         throw new Error(`${command} failed (exit ${result.exitCode}): ${result.stderr.trim()}`);
       }
     },
+    sweepProcesses: async () => {
+      const tag = newExecTag();
+      await backend.execShell(handle, ['sh', '-c', killStrayProcessesScript(handle.keeperPid)], {
+        env: [tag.env],
+        heartbeatLabel: 'workspace: setup',
+        onTimeout: tag.onTimeout,
+        timeoutMs: 60_000,
+      });
+    },
   };
   const setupInputs = () => ({
     cleanUrl,

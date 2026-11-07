@@ -1,4 +1,9 @@
-import { type PreviewConfigInput, PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
+import {
+  PREVIEW_ENV_LOOKS_SECRET,
+  type PreviewConfigInput,
+  PreviewConfigSchema,
+  secretLookingEnvKeys,
+} from '@auto-swe/shared/lib/previewConfig';
 import type { Workspace } from '../activities/workspace.js';
 import { shellQuote } from '../activities/workspace.js';
 import { redactString } from './agentTracer.js';
@@ -287,6 +292,12 @@ export async function startAppPreview(
   } = {}
 ): Promise<{ baseUrl: string; stop(): Promise<void>; logTail(maxBytes: number): Promise<string> }> {
   const config = PreviewConfigSchema.parse(cfg);
+  const secretLooking = secretLookingEnvKeys(config.env);
+  if (secretLooking.length) {
+    throw new Error(
+      `App preview: ${PREVIEW_ENV_LOOKS_SECRET}: the recipe's env holds secret-looking values (${secretLooking.join(', ')}); move them to setup secrets from the repository's App preview form`
+    );
+  }
   const timeoutMs = options.timeoutMs ?? config.readyTimeoutMs;
   const secrets = await previewSecrets(options.connectionId ?? null, config.secrets ?? []);
   const secretEnv = { ...config.env, ...secrets };

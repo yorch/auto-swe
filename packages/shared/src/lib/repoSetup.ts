@@ -23,6 +23,11 @@ export const RepoSetupSecretNameSchema = z
 
 /** Most secrets one setup definition may name. */
 export const MAX_REPO_SETUP_SECRETS = 20;
+/**
+ * Shortest setup secret value: the post-setup leak scan cannot search for a shorter one without
+ * matching unrelated files by chance.
+ */
+export const MIN_REPO_SETUP_SECRET_CHARS = 8;
 
 const EnvironmentSchema = z
   .record(z.string().regex(ENV_NAME), z.string().max(4000))

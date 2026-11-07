@@ -14,9 +14,11 @@ import { credentialDestinationChanged } from '@auto-swe/shared/lib/credentialDes
 import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { type PermissionLookup, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import {
+  PREVIEW_ENV_LOOKS_SECRET,
   type PreviewConfig,
   PreviewConfigInputSchema,
   PreviewConfigSchema,
+  secretLookingEnvKeys,
 } from '@auto-swe/shared/lib/previewConfig';
 import { PR_TITLE_FORMATS } from '@auto-swe/shared/lib/prTitle';
 import {
@@ -27,6 +29,7 @@ import {
 } from '@auto-swe/shared/lib/repoPermission';
 import {
   MAX_REPO_SETUP_SECRETS,
+  MIN_REPO_SETUP_SECRET_CHARS,
   type RepoSetup,
   RepoSetupSchema,
   RepoSetupSecretNameSchema,
@@ -340,14 +343,22 @@ async function previewConfigProblem(
       status: 400,
     };
   }
-  if (await isShellAuthor(fastify, user, ownerTeamId)) {
-    return null;
+  if (!(await isShellAuthor(fastify, user, ownerTeamId))) {
+    return {
+      code: 'PREVIEW_CONFIG_FORBIDDEN',
+      message: "Changing a repository's app preview requires team-admin role",
+      status: 403,
+    };
   }
-  return {
-    code: 'PREVIEW_CONFIG_FORBIDDEN',
-    message: "Changing a repository's app preview requires team-admin role",
-    status: 403,
-  };
+  const secretLooking = secretLookingEnvKeys(next?.env);
+  if (secretLooking.length) {
+    return {
+      code: PREVIEW_ENV_LOOKS_SECRET,
+      message: `The app preview env holds secret-looking values (${secretLooking.join(', ')}). Save them as setup secrets and name them under secrets instead.`,
+      status: 400,
+    };
+  }
+  return null;
 }
 
 /**
@@ -1799,7 +1810,15 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     {
       onRequest: requireAuth({ requiredRole: Role.LEAD }),
       schema: {
-        body: z.object({ value: z.string().min(1).max(16_384) }),
+        body: z.object({
+          value: z
+            .string()
+            .min(
+              MIN_REPO_SETUP_SECRET_CHARS,
+              `must be at least ${MIN_REPO_SETUP_SECRET_CHARS} characters`
+            )
+            .max(16_384),
+        }),
         params: SetupSecretParamsSchema,
       },
     },
@@ -1849,12 +1868,23 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // POST /api/v1/repositories/:id/preview/env-to-secrets — move the app preview recipe's `env`
-  // values into setup secrets of the same names, so they are stored encrypted, and name them
-  // under the recipe's `secrets`. Refused whole when a name is already a setup secret.
+  // POST /api/v1/repositories/:id/preview/env-to-secrets — move app preview `env` values into
+  // setup secrets of the same names, so they are stored encrypted, and name them under the
+  // recipe's `secrets`. `names` picks the values; by default, the secret-looking ones. Refused
+  // whole when a name is already a setup secret or a value is too short to be one.
   app.post(
     '/:id/preview/env-to-secrets',
-    { onRequest: requireAuth({ requiredRole: Role.LEAD }), schema: { params: RepoParamsSchema } },
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: {
+        body: z
+          .object({
+            names: z.array(RepoSetupSecretNameSchema).min(1).max(MAX_REPO_SETUP_SECRETS).optional(),
+          })
+          .nullish(),
+        params: RepoParamsSchema,
+      },
+    },
     async (request, reply) => {
       const found = await setupFileRepo(request, request.params.id);
       if (!found.ok) {
@@ -1866,9 +1896,32 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const parsed = PreviewConfigInputSchema.safeParse(row.previewConfig);
       const env = parsed.success ? (parsed.data.env ?? {}) : {};
-      const names = Object.keys(env);
+      const names = [...new Set(request.body?.names ?? secretLookingEnvKeys(env))];
       if (!parsed.success || names.length === 0) {
-        return sendError(reply, 400, 'NO_PREVIEW_ENV', 'The app preview recipe has no env values');
+        return sendError(
+          reply,
+          400,
+          'NO_PREVIEW_ENV',
+          'The app preview recipe has no secret-looking env values to move'
+        );
+      }
+      const absent = names.filter((n) => !(n in env));
+      if (absent.length) {
+        return sendError(
+          reply,
+          400,
+          'NOT_IN_PREVIEW_ENV',
+          `Not in the app preview env: ${absent.join(', ')}`
+        );
+      }
+      const short = names.filter((n) => (env[n] ?? '').length < MIN_REPO_SETUP_SECRET_CHARS);
+      if (short.length) {
+        return sendError(
+          reply,
+          400,
+          'SETUP_SECRET_TOO_SHORT',
+          `A setup secret must be at least ${MIN_REPO_SETUP_SECRET_CHARS} characters: ${short.join(', ')}. Leave ${short.length > 1 ? 'them' : 'it'} in env, or replace the value.`
+        );
       }
       const held = await fastify.prisma.repoSetupSecret.findMany({
         select: { name: true },
@@ -1891,8 +1944,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           `A repository holds at most ${MAX_REPO_SETUP_SECRETS} setup secrets`
         );
       }
-      const { env: _moved, ...rest } = parsed.data;
-      const next = { ...rest, secrets: [...(rest.secrets ?? []), ...names] };
+      const { env: _env, ...rest } = parsed.data;
+      const kept = Object.fromEntries(Object.entries(env).filter(([n]) => !names.includes(n)));
+      const next = {
+        ...rest,
+        ...(Object.keys(kept).length ? { env: kept } : {}),
+        secrets: [...(rest.secrets ?? []), ...names],
+      };
       const checked = PreviewConfigInputSchema.safeParse(next);
       if (!checked.success) {
         return sendError(
@@ -1930,6 +1988,104 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'Connection',
       });
       return { data: { moved: names, previewConfig: checked.data } };
+    }
+  );
+
+  // GET /api/v1/repositories/:id/setup/eval-datasets — the repository team's TEAM eval datasets,
+  // and which of them read this repository's setup secrets. GLOBAL and ORG datasets are linked
+  // from the platform eval admin page.
+  app.get(
+    '/:id/setup/eval-datasets',
+    { onRequest: requireAuth({ requiredRole: Role.LEAD }), schema: { params: RepoParamsSchema } },
+    async (request, reply) => {
+      const found = await setupFileRepo(request, request.params.id);
+      if (!found.ok) {
+        return sendSetupFileRepoError(reply, found.error);
+      }
+      if (!found.repo.teamId) {
+        return { data: [] };
+      }
+      const rows = await fastify.prisma.evalDataset.findMany({
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          setupSecretsConnection: { select: { id: true, name: true } },
+          slug: true,
+        },
+        where: { scope: 'TEAM', teamId: found.repo.teamId },
+      });
+      return {
+        data: rows.map((r) => ({
+          id: r.id,
+          linked: r.setupSecretsConnection?.id === found.repo.id,
+          name: r.name,
+          slug: r.slug,
+          // Set when the dataset reads another repository's setup secrets.
+          usesRepository:
+            r.setupSecretsConnection && r.setupSecretsConnection.id !== found.repo.id
+              ? r.setupSecretsConnection
+              : null,
+        })),
+      };
+    }
+  );
+
+  // PUT /api/v1/repositories/:id/setup/eval-datasets/:datasetId — link (or unlink) one of the
+  // repository team's TEAM eval datasets to this repository's setup secrets. Linking replaces
+  // any other repository; unlinking only clears a link to this one.
+  app.put(
+    '/:id/setup/eval-datasets/:datasetId',
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: {
+        body: z.object({ linked: z.boolean() }),
+        params: z.object({ datasetId: z.string().uuid(), id: z.string().uuid() }),
+      },
+    },
+    async (request, reply) => {
+      const found = await setupFileRepo(request, request.params.id);
+      if (!found.ok) {
+        return sendSetupFileRepoError(reply, found.error);
+      }
+      const { linked } = request.body;
+      const result = await fastify.prisma.$transaction(async (tx) => {
+        const ds = await tx.evalDataset.findUnique({
+          select: { id: true, scope: true, setupSecretsConnectionId: true, teamId: true },
+          where: { id: request.params.datasetId },
+        });
+        if (!ds || ds.scope !== 'TEAM' || !found.repo.teamId || ds.teamId !== found.repo.teamId) {
+          return null;
+        }
+        const before = ds.setupSecretsConnectionId;
+        const after = linked ? found.repo.id : before === found.repo.id ? null : before;
+        if (after !== before) {
+          await tx.evalDataset.update({
+            data: { setupSecretsConnectionId: after },
+            where: { id: ds.id },
+          });
+        }
+        return { after, before, id: ds.id };
+      });
+      if (!result) {
+        return sendError(
+          reply,
+          404,
+          'DATASET_NOT_FOUND',
+          "Eval dataset not found in this repository's team"
+        );
+      }
+      if (result.after !== result.before) {
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: found.user,
+          after: { setupSecretsConnectionId: result.after },
+          before: { setupSecretsConnectionId: result.before },
+          entityId: result.id,
+          entityType: 'EvalDataset',
+        });
+      }
+      return { data: { linked: result.after === found.repo.id } };
     }
   );
 

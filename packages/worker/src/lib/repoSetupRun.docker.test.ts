@@ -23,6 +23,7 @@ import { type RepoSetup, RepoSetupSchema } from '@auto-swe/shared/lib/repoSetup'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { CapturedResult } from './execUtils.js';
 import type { RepoSetupHost } from './repoSetupRun.js';
+import { keeperPidProbeScript } from './workspaceBackend/docker.js';
 
 const enabled = process.env.REPO_SETUP_DOCKER_TEST === '1';
 const IMAGE = process.env.REPO_SETUP_TEST_IMAGE ?? 'asw-executor-node:ci';
@@ -277,6 +278,7 @@ function handle(req: import('node:http').IncomingMessage, res: import('node:http
 }
 
 const containers: string[] = [];
+const keepers = new Map<string, number>();
 
 /** A fresh workspace container, trusting the test CA, with `/workspace` owned by its user. */
 function startContainer(): string {
@@ -318,6 +320,11 @@ function startContainer(): string {
     {
       input: caPem,
     }
+  );
+  // Probed while the keeper is still the only child of docker-init, as the workspace backend does.
+  keepers.set(
+    name,
+    Number(sh('docker', ['exec', name, 'sh', '-c', keeperPidProbeScript()]).toString().trim())
   );
   return name;
 }
@@ -395,6 +402,10 @@ function hostFor(container: string): RepoSetupHost {
     stdin: async (command, body) => {
       await must(dockerExec(container, command, { input: body }));
     },
+    sweepProcesses: async () => {
+      const { killStrayProcessesScript } = await import('../activities/workspace.js');
+      await must(dockerExec(container, killStrayProcessesScript(keepers.get(container) ?? 0)));
+    },
   };
 }
 
@@ -445,7 +456,8 @@ describe.skipIf(!enabled)('workspace setup in a real container', () => {
       }
     }
     await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
-    rmSync(work, { force: true, recursive: true });
+    // A git or LFS child of the server can still be finishing a request into `work`.
+    rmSync(work, { force: true, maxRetries: 5, recursive: true });
   });
 
   const inputs = () => ({
@@ -508,5 +520,40 @@ describe.skipIf(!enabled)('workspace setup in a real container', () => {
     expect(failure?.message).toMatch(/left a secret value in ~\/\.npmrc/);
     expect(failure?.message).not.toContain(TOKEN);
     expect(tables.workspaceSetupCache.rows.size).toBe(before);
+  }, 300_000);
+
+  it('catches a base64-encoded value left in /tmp', async () => {
+    const definition = RepoSetupSchema.parse({
+      ...baseSetup,
+      cache: undefined,
+      cleanup: ['~/.npmrc'],
+      steps: [{ name: 'leak', run: 'printf "u:%s" "$NPM_TOKEN" | base64 -w0 > /tmp/auth' }],
+    });
+    const host = await cloneWorkspace(startContainer());
+    await setup.runSetupGitPhase(host, definition, inputs(), headerFor('main'));
+    const failure = await setup
+      .runSetupStepsPhase(host, definition, inputs(), { NPM_TOKEN: TOKEN })
+      .then(
+        () => null,
+        (err: Error) => err
+      );
+    expect(failure?.message).toMatch(/left a secret value in \/tmp\/auth/);
+    expect(failure?.message).not.toContain(TOKEN);
+  }, 300_000);
+
+  it('stops a process a step left running with a secret, and keeps the workspace alive', async () => {
+    const definition = RepoSetupSchema.parse({
+      ...baseSetup,
+      cache: undefined,
+      steps: [{ name: 'daemon', run: 'nohup sleep 4242 >/dev/null 2>&1 &' }],
+    });
+    const host = await cloneWorkspace(startContainer());
+    await setup.runSetupGitPhase(host, definition, inputs(), headerFor('main'));
+    await setup.runSetupStepsPhase(host, definition, inputs(), { NPM_TOKEN: TOKEN });
+    const left = await host.root(
+      'for d in /proc/[0-9]*; do tr "\\0" " " < "$d/cmdline" 2>/dev/null; echo; done'
+    );
+    expect(left).not.toContain('sleep 4242');
+    expect(left).toContain('sleep infinity');
   }, 300_000);
 });
