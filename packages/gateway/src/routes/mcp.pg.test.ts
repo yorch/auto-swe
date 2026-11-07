@@ -10,6 +10,7 @@ import { getAuth, initAuth, MCP_RESOURCE } from '../lib/betterAuth.js';
 import { createBetterAuthHandler, registerBetterAuthRoutes } from '../lib/betterAuthHandler.js';
 import { registerFormBodyParser } from '../lib/formBody.js';
 import { mcpBridgePlugin } from '../lib/mcp/bridge.js';
+import { DOMAIN_TOOL_NAMES } from '../lib/mcp/domains/index.js';
 import { MCP_CONSENT_SKEW_SECONDS } from '../lib/mcpOAuth.js';
 import { mcpOAuthGate } from '../lib/mcpOAuthGate.js';
 import { mcpOAuthGateOptions } from '../lib/mcpOAuthGateOptions.js';
@@ -283,16 +284,19 @@ describe.skipIf(!enabled)('MCP endpoint against Postgres', () => {
         .json()
         .result.tools.map((t: { name: string }) => t.name)
         .sort()
-    ).toEqual([
-      'get_run',
-      'list_agents',
-      'list_pending_human_steps',
-      'list_repositories',
-      'list_runs',
-      'list_templates',
-      'list_work_requests',
-      'wait_for_run',
-    ]);
+    ).toEqual(
+      [
+        'get_run',
+        'list_agents',
+        'list_pending_human_steps',
+        'list_repositories',
+        'list_runs',
+        'list_templates',
+        'list_work_requests',
+        'wait_for_run',
+        ...DOMAIN_TOOL_NAMES,
+      ].sort()
+    );
   });
 
   describe('credentials that are not an MCP access token', () => {

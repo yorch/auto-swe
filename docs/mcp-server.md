@@ -7,7 +7,7 @@ and talks to the endpoint over Streamable HTTP. The server is a resource server 
 accepts only access tokens that the authorization server issued for it, and it re-checks on every
 request that the grant behind the token still stands.
 
-The server exposes eight read-only tools and, only when an admin has turned writes on and the user has
+The server exposes read-only tools (eight that follow runs and launches, and the [domain tools](#domain-read-tools)) and, only when an admin has turned writes on and the user has
 consented to them, four write tools (below), and no resources or prompts. A tool calls the same REST
 route a dashboard or CLI user would call, made in-process as the signed-in user, so what a tool returns is
 what that user is allowed to see, reduced to a short allowlist of fields. The write tools can start a run
@@ -97,7 +97,7 @@ a user stops that token on its next request instead of when it expires. The user
 
 ## Tools
 
-Eight read tools, all read-only (`readOnlyHint`), needing the `mcp:read` scope, and four write tools needing
+Eight core read tools and the [domain read tools](#domain-read-tools), all read-only (`readOnlyHint`), needing the `mcp:read` scope, and four write tools needing
 `mcp:write` ([below](#write-tools)). Every input is a strict object: an argument the tool does not declare
 is refused, not ignored.
 
@@ -132,6 +132,27 @@ the answer is given in the dashboard.
 A route's refusal reaches the agent as a fixed message per status (not found, not permitted, rate
 limited, unavailable), never the route's own text. A run the caller cannot see is answered exactly as one
 that does not exist.
+
+### Domain read tools
+
+Tools beyond the core eight are grouped into domains (`lib/mcp/domains/*.ts`). A domain declares each
+tool with the one route behind it and the tier of person it is meant for (`user`, `lead`, `admin`), and
+the route's own role gate enforces that tier: the same token reads a team a user belongs to, or every
+team for an administrator, exactly as the dashboard does. Their inputs are strict, they carry
+`readOnlyHint`, and their results follow the same allowlist rule as the core tools.
+
+| Tool | Calls | Returns |
+|---|---|---|
+| `list_teams` | `GET /api/v1/teams` | `id`, `name`, `slug`, `memberCount`, `repositoryCount` for the teams the caller belongs to (every active team for an administrator). No descriptions or persona prompts. |
+| `get_team` | `GET /api/v1/teams/:id` | A team's members as `userId` and team `role` (no names or emails), the repositories it owns, and the repositories shared with it. Input: `teamId`. |
+| `list_pull_requests` | `GET /api/v1/pull-requests` | `id`, `number`, `status`, `isDraft`, `ciStatus`, timestamps, `repository`, `ticketId`, `workRequestId`, `latestRun`, `costUsd` and `url` (rebuilt and checked against the configured GitHub hosts, as for `get_run`). No title. Inputs: `limit`, `offset`, `state`, `draft`, `scope` (`MINE` by default), `repoId`, `teamId`, `ticket`. |
+| `get_agent_run_limits` | `GET /api/v1/agent-runs/limits` | The step, wall-clock and concurrency ceilings an agent run launches under, and whether agent runs are enabled. Input: optional `repoId`. |
+
+A tool's output schema holds plain types only, because a JSON Schema cannot represent a transform: the
+sanitising schemas that read the REST body (`shortName`, `status`, `ticketId` in `projections.ts`) are
+separate from the schema a client is told about. A domain that registers a tool without declaring it, or
+that declares a route that has not opted in with `config: { mcpScope: 'read' }`, fails `tools.test.ts`,
+which compares `tools/list` and the real route table with the declarations.
 
 ### Write tools
 
@@ -353,6 +374,11 @@ and needs no restart. None is read only at startup.
   with it even at the cap, and a retry that raced its own first submit is answered with the replay or
   "still starting", not the cap; a new key for a ticket already in flight is answered "already running".
 - Resources and prompts are not exposed.
+- The domain tools cover teams, pull requests and agent-run limits. Most other things the dashboard
+  reads (library, knowledge, reports, usage, platform configuration) and every dashboard write other
+  than the four write tools are available through the REST API but not over MCP.
+- A team's members are returned as user ids and roles. A client that needs a person's name or email
+  must ask for it in the dashboard; no MCP tool resolves an id to a person.
 - Consent is read or write, not per repository or per tool: a token reads everything its user can read.
 - `list_repositories` filters out the connections that are not git repositories after the route has
   counted them, so its `total` can exceed the rows a client can ever page through.
