@@ -286,7 +286,7 @@ export function RepoSetupEditor({
       )}
 
       {repositoryId && <RepoSetupSecrets disabled={disabled} repositoryId={repositoryId} />}
-      {repositoryId && <RepoEvalDatasets disabled={disabled} repositoryId={repositoryId} />}
+      {repositoryId && !disabled && <RepoEvalDatasets repositoryId={repositoryId} />}
 
       <SetupFilePanel
         canPropose={!disabled && fileValid}
