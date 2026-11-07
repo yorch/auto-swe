@@ -2175,7 +2175,8 @@ describe('repositoryRoutes', () => {
       const query = ctx.mockPrisma.evalDataset.findMany.mock.calls[0]?.[0] as {
         where: Record<string, unknown>;
       };
-      expect(query.where).toEqual({ OR: [{ scope: 'TEAM', teamId: TEAM_ID }] });
+      expect(query.where).toEqual({ scope: 'TEAM', teamId: TEAM_ID });
+      expect(ctx.mockPrisma.evalDataset.findMany).toHaveBeenCalledOnce();
     });
 
     it("lists the organization's ORG datasets to an organization admin who is not a team admin", async () => {
@@ -2185,7 +2186,8 @@ describe('repositoryRoutes', () => {
       const query = ctx.mockPrisma.evalDataset.findMany.mock.calls[0]?.[0] as {
         where: Record<string, unknown>;
       };
-      expect(query.where).toEqual({ OR: [{ orgId: ORG_ID, scope: 'ORGANIZATION' }] });
+      expect(query.where).toEqual({ orgId: ORG_ID, scope: 'ORGANIZATION' });
+      expect(ctx.mockPrisma.evalDataset.findMany).toHaveBeenCalledOnce();
       expect(ctx.mockPrisma.organizationMembership.findUnique).toHaveBeenCalledWith({
         select: { role: true },
         where: { userId_orgId: { orgId: ORG_ID, userId: 'lead-1' } },
@@ -2195,15 +2197,13 @@ describe('repositoryRoutes', () => {
     it('lists both scopes to a platform admin', async () => {
       ctx.mockPrisma.evalDataset.findMany.mockResolvedValue([]);
       await list();
-      const query = ctx.mockPrisma.evalDataset.findMany.mock.calls[0]?.[0] as {
-        where: Record<string, unknown>;
-      };
-      expect(query.where).toEqual({
-        OR: [
-          { scope: 'TEAM', teamId: TEAM_ID },
-          { orgId: ORG_ID, scope: 'ORGANIZATION' },
-        ],
-      });
+      const wheres = ctx.mockPrisma.evalDataset.findMany.mock.calls.map(
+        (c) => (c[0] as { where: Record<string, unknown> }).where
+      );
+      expect(wheres).toEqual([
+        { scope: 'TEAM', teamId: TEAM_ID },
+        { orgId: ORG_ID, scope: 'ORGANIZATION' },
+      ]);
     });
 
     it("lets an organization admin link the organization's dataset, and audits it", async () => {

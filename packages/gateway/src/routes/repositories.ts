@@ -2035,26 +2035,32 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       if (!access) {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      const scopes = [
-        ...(access.teamId ? [{ scope: 'TEAM' as const, teamId: access.teamId }] : []),
-        ...(access.orgId ? [{ orgId: access.orgId, scope: 'ORGANIZATION' as const }] : []),
-      ];
-      if (scopes.length === 0) {
-        return { data: [] };
-      }
-      const rows = await fastify.prisma.evalDataset.findMany({
-        orderBy: [{ scope: 'desc' }, { name: 'asc' }],
-        select: {
-          id: true,
-          name: true,
-          scope: true,
-          setupSecretsConnection: {
-            select: { id: true, name: true, organizationName: true, repoName: true },
-          },
-          slug: true,
+      const select = {
+        id: true,
+        name: true,
+        scope: true,
+        setupSecretsConnection: {
+          select: { id: true, name: true, organizationName: true, repoName: true },
         },
-        where: { OR: scopes },
-      });
+        slug: true,
+      } as const;
+      const [teamRows, orgRows] = await Promise.all([
+        access.teamId
+          ? fastify.prisma.evalDataset.findMany({
+              orderBy: { name: 'asc' },
+              select,
+              where: { scope: 'TEAM', teamId: access.teamId },
+            })
+          : [],
+        access.orgId
+          ? fastify.prisma.evalDataset.findMany({
+              orderBy: { name: 'asc' },
+              select,
+              where: { orgId: access.orgId, scope: 'ORGANIZATION' },
+            })
+          : [],
+      ]);
+      const rows = [...teamRows, ...orgRows];
       return {
         data: rows.map((r) => ({
           id: r.id,
