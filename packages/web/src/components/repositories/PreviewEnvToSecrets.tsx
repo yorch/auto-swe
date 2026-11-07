@@ -23,7 +23,9 @@ export function PreviewEnvToSecrets({
   onMoved: (previewConfig: unknown) => void;
 }) {
   const move = useMovePreviewEnvToSecrets(repositoryId);
-  const names = secretLookingEnvKeys(env);
+  // `env` is the saved recipe's, which stays stale until the form is reopened.
+  const moved = new Set(move.data?.moved ?? []);
+  const names = secretLookingEnvKeys(env).filter((n) => !moved.has(n));
   if (names.length === 0 && !move.isSuccess) {
     return null;
   }
