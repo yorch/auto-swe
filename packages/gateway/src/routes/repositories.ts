@@ -2010,7 +2010,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         select: {
           id: true,
           name: true,
-          setupSecretsConnection: { select: { id: true, name: true } },
+          setupSecretsConnection: {
+            select: { id: true, name: true, organizationName: true, repoName: true },
+          },
           slug: true,
         },
         where: { scope: 'TEAM', teamId: found.repo.teamId },
@@ -2024,7 +2026,12 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           // Set when the dataset reads another repository's setup secrets.
           usesRepository:
             r.setupSecretsConnection && r.setupSecretsConnection.id !== found.repo.id
-              ? r.setupSecretsConnection
+              ? {
+                  id: r.setupSecretsConnection.id,
+                  name:
+                    r.setupSecretsConnection.name ??
+                    `${r.setupSecretsConnection.organizationName}/${r.setupSecretsConnection.repoName}`,
+                }
               : null,
         })),
       };

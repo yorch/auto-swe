@@ -2125,7 +2125,12 @@ describe('repositoryRoutes', () => {
         {
           id: 'd2',
           name: 'B',
-          setupSecretsConnection: { id: OTHER_REPO, name: 'other' },
+          setupSecretsConnection: {
+            id: OTHER_REPO,
+            name: null,
+            organizationName: 'acme',
+            repoName: 'other',
+          },
           slug: 'b',
         },
         { id: 'd3', name: 'C', setupSecretsConnection: null, slug: 'c' },
@@ -2143,7 +2148,7 @@ describe('repositoryRoutes', () => {
           linked: false,
           name: 'B',
           slug: 'b',
-          usesRepository: { id: OTHER_REPO, name: 'other' },
+          usesRepository: { id: OTHER_REPO, name: 'acme/other' },
         },
         { id: 'd3', linked: false, name: 'C', slug: 'c', usesRepository: null },
       ]);
