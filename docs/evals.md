@@ -168,7 +168,8 @@ dataset page or with `PUT /api/v1/platform/evals/:id/setup-secrets-repository`, 
 audited); every case's setup — the candidate's workspace, the flake screen and re-validation —
 then reads the setup secrets that repository holds. A TEAM dataset may only name a repository of
 its own team. A team admin of that team links or unlinks the team's datasets from the repository's
-**Eval datasets using these secrets** panel, next to its setup secrets
+**Eval datasets using these secrets** panel, next to its setup secrets and shown only to team
+admins and platform ADMINs
 (`GET /api/v1/repositories/:id/setup/eval-datasets`,
 `PUT /api/v1/repositories/:id/setup/eval-datasets/:datasetId` with `{ linked }`, audited); GLOBAL
 and ORG datasets are linked by a platform ADMIN only. With no repository named, setup runs with no secrets, and a setup that names one

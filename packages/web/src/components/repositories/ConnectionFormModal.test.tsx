@@ -2,13 +2,14 @@
 
 import { detectStack } from '@auto-swe/shared/lib/stackDetection';
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubDialogPrototype } from '@/test/rtl-helpers';
 
 const auth = vi.hoisted(() => ({ role: 'LEAD', teamRole: 'LEAD' as 'LEAD' | 'ADMIN' }));
 const update = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
 const create = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
+const evalDatasets = vi.hoisted(() => ({ data: [] as unknown[] }));
 
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: (select: (s: { user: { role: string } }) => unknown) =>
@@ -25,7 +26,7 @@ vi.mock('@/hooks/useRepositories', () => ({
   useLinkRepoEvalDataset: () => ({ isPending: false, mutate: vi.fn() }),
   useMovePreviewEnvToSecrets: () => ({ isPending: false, mutate: vi.fn() }),
   useProposeSetupFile: () => ({ data: undefined, isPending: false, mutate: vi.fn() }),
-  useRepoEvalDatasets: () => ({ data: [], isError: false, isLoading: false }),
+  useRepoEvalDatasets: () => ({ data: evalDatasets.data, isError: false, isLoading: false }),
   useSaveSetupSecret: () => ({ isPending: false, mutate: vi.fn() }),
   useSetupFileProposalStatus: () => ({ data: undefined, isError: false }),
   useSetupSecrets: () => ({ data: [], isError: false, isLoading: false }),
@@ -350,12 +351,25 @@ describe('ConnectionFormModal workspace setup', () => {
     update.mutateAsync.mockReset().mockResolvedValue({});
     auth.role = 'LEAD';
     auth.teamRole = 'ADMIN';
+    evalDatasets.data = [];
   });
 
   const withSetup = {
     ...repo,
     setup: { cache: { paths: ['node_modules'] }, steps: [{ name: 'install', run: 'npm ci' }] },
   } as unknown as RepositorySummary;
+
+  it("shows the team's eval datasets panel to a team admin only", () => {
+    evalDatasets.data = [
+      { id: 'd1', linked: false, name: 'Smoke', slug: 'smoke', usesRepository: null },
+    ];
+    renderEdit(withSetup);
+    expect(screen.getByText('Eval datasets using these secrets')).toBeTruthy();
+    cleanup();
+    auth.teamRole = 'LEAD';
+    renderEdit(withSetup);
+    expect(screen.queryByText('Eval datasets using these secrets')).toBeNull();
+  });
 
   it('edits the stored definition as fields and saves the result', async () => {
     renderEdit(withSetup);

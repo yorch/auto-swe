@@ -9,15 +9,9 @@ import { errMsg } from '@/lib/errors';
 /**
  * The repository team's eval datasets, and which of them run their cases' workspace setup with
  * this repository's setup secrets. A team admin links or unlinks them here; GLOBAL and ORG
- * datasets are linked from the platform eval admin page.
+ * datasets are linked from the platform eval admin page. Only team admins see it.
  */
-export function RepoEvalDatasets({
-  disabled,
-  repositoryId,
-}: {
-  disabled: boolean;
-  repositoryId: string;
-}) {
+export function RepoEvalDatasets({ repositoryId }: { repositoryId: string }) {
   const datasets = useRepoEvalDatasets(repositoryId);
   const link = useLinkRepoEvalDataset(repositoryId);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +40,7 @@ export function RepoEvalDatasets({
               </span>
               <Button
                 aria-label={`${d.linked ? 'Unlink' : 'Link'} eval dataset ${d.name}`}
-                disabled={disabled || link.isPending}
+                disabled={link.isPending}
                 onClick={() => {
                   setError(null);
                   link.mutate(

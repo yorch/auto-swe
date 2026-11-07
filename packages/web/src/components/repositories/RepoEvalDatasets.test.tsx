@@ -22,7 +22,7 @@ afterEach(() => {
 describe('RepoEvalDatasets', () => {
   it('shows nothing when the team has no eval datasets', () => {
     hooks.datasets = [];
-    const { container } = render(<RepoEvalDatasets disabled={false} repositoryId="repo-1" />);
+    const { container } = render(<RepoEvalDatasets repositoryId="repo-1" />);
     expect(container.textContent).toBe('');
   });
 
@@ -37,22 +37,11 @@ describe('RepoEvalDatasets', () => {
         usesRepository: { id: 'r2', name: 'other-repo' },
       },
     ];
-    render(<RepoEvalDatasets disabled={false} repositoryId="repo-1" />);
+    render(<RepoEvalDatasets repositoryId="repo-1" />);
     expect(screen.getByText("Uses other-repo's secrets")).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Unlink eval dataset Smoke' }));
     expect(hooks.link).toHaveBeenCalledWith({ datasetId: 'd1', linked: false }, expect.anything());
     fireEvent.click(screen.getByRole('button', { name: 'Link eval dataset Regression' }));
     expect(hooks.link).toHaveBeenCalledWith({ datasetId: 'd2', linked: true }, expect.anything());
-  });
-
-  it('disables the buttons without edit rights', () => {
-    hooks.datasets = [
-      { id: 'd1', linked: false, name: 'Smoke', slug: 'smoke', usesRepository: null },
-    ];
-    render(<RepoEvalDatasets disabled repositoryId="repo-1" />);
-    expect(
-      (screen.getByRole('button', { name: 'Link eval dataset Smoke' }) as HTMLButtonElement)
-        .disabled
-    ).toBe(true);
   });
 });
