@@ -558,14 +558,18 @@ by name only.
 
 **Keeping secrets out of the tree.** A step that writes a secret to disk — an `.npmrc` with an auth
 token, say — lists that file under `cleanup` (`cleanup: [~/.npmrc]`; paths relative to the
-checkout, or `~/` under the home directory, at most 20). The files are deleted after the steps.
-Then, when the definition names secrets, every process the steps left running is stopped (all but
-the workspace's keeper; sidecars in other mount namespaces are untouched), the files are deleted,
-and every file of up to 20 MiB in the checkout (`.git` included), the workspace user's home
-directory (which holds every `~/` cache path), `/tmp`, `/var/tmp` and `/dev/shm` is searched for
-each secret value: as written, URL-encoded, and base64-encoded at any byte offset in either
-alphabet, so a token inside `_auth=base64(user:token)` is found; a multi-line value by its longest
-line. A match fails setup with `WORKSPACE_SETUP_FAILED`, naming up to 20 files and never the value,
+checkout, or `~/` under the home directory, at most 20). After the steps, every process they left
+running is stopped, whether or not the definition names secrets (all but the workspace's keeper;
+sidecars in other mount namespaces are untouched): a database or other long-running dependency
+belongs in the preview recipe's or the workflow's `services`, not in a setup step. Then the
+`cleanup` files are deleted, and, when the definition names secrets, the checkout (`.git`
+included), the workspace user's home directory (which holds every `~/` cache path), `/tmp`,
+`/var/tmp` and `/dev/shm` are searched for each secret value. The search reads every file of up to
+20 MiB, and a larger one when it was modified after the steps started (by the workspace clock,
+recorded right before the first step), since only a step can have written this run's secrets into
+it. Each value is searched for as written, URL-encoded, hex-encoded in either case, base64-encoded
+at any byte offset in either alphabet (so a token inside `_auth=base64(user:token)` is found), and
+base64-encoded twice; a multi-line value by its longest line. A match fails setup with `WORKSPACE_SETUP_FAILED`, naming up to 20 files and never the value,
 before the cache is saved or any agent runs. The search gets the values through the workspace's
 secret channel, like the steps, and a search that does not finish within 5 minutes fails setup too.
 
@@ -741,10 +745,13 @@ longer fit.
 - **Setup `env` values are passed on the command line of the exec**, so they are not for secrets;
   setup secrets are the way to give a step a credential.
 - **The secret scan finds a value only as written or in a standard encoding.** A step that splits
-  a secret, encrypts or hashes it, or encodes it some other way (hex, a second base64 pass) is not
-  caught, nor is a file over 20 MiB or outside the checkout, the home directory and the temporary
-  directories. Stopping leftover processes happens only when setup names secrets, so a daemon a
-  step without secrets starts keeps running.
+  a secret, encrypts or hashes it, encodes it some other way, or wraps an encoded value across
+  lines is not caught, nor is a file outside the checkout, the home directory and the temporary
+  directories. A file over 20 MiB whose modification time a step set back to before the steps
+  started (`touch -d`, `cp -p`, unpacking an archive) is not read.
+- **Setup steps cannot leave a process running.** Everything the steps started is stopped before
+  the agent runs, so a step that starts a server for the agent to use has it stopped; run it as a
+  service instead.
 - **An eval reads setup secrets only through its dataset's linked repository.** A dataset with no
   linked repository runs setup with no secrets, so a case whose pinned setup names one fails setup
   ([evals.md](./evals.md#3-offline-harness)).

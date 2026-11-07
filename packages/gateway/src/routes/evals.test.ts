@@ -1330,6 +1330,31 @@ describe('PUT /evals/:id/setup-secrets-repository', () => {
     expect(prisma.evalDataset.update).not.toHaveBeenCalled();
   });
 
+  it("refuses a repository outside an organization dataset's organization", async () => {
+    const { app, prisma } = await buildApp();
+    prisma.evalDataset.findUnique.mockResolvedValue({
+      ...teamDataset,
+      orgId: 'org-a',
+      scope: 'ORGANIZATION',
+      teamId: null,
+    });
+    prisma.connection.findUnique.mockResolvedValue({
+      team: { orgId: 'org-b' },
+      teamId: 'team-b',
+      type: 'git_repo',
+    });
+    const res = await put(app, REPO);
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('REPO_NOT_IN_DATASET_ORG');
+    prisma.connection.findUnique.mockResolvedValue({
+      team: { orgId: 'org-a' },
+      teamId: 'team-a',
+      type: 'git_repo',
+    });
+    expect((await put(app, REPO)).statusCode).toBe(200);
+    expect(prisma.evalDataset.update).toHaveBeenCalledOnce();
+  });
+
   it('refuses a connection that is not a repository', async () => {
     const { app, prisma } = await buildApp();
     prisma.evalDataset.findUnique.mockResolvedValue(teamDataset);

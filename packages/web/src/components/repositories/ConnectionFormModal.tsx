@@ -617,8 +617,10 @@ export function ConnectionFormModal({
                     <PreviewEnvToSecrets
                       disabled={!canEditGateCommands}
                       env={(initial.previewConfig as { env?: Record<string, string> } | null)?.env}
-                      publicEnv={(initial.previewConfig as { publicEnv?: string[] } | null)?.publicEnv}
                       onMoved={(next) => setPreviewConfigJson(JSON.stringify(next, null, 2))}
+                      publicEnv={
+                        (initial.previewConfig as { publicEnv?: string[] } | null)?.publicEnv
+                      }
                       repositoryId={initial.id}
                     />
                   )}

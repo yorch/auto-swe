@@ -145,7 +145,8 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                   Setup secrets from
                   <HelpTip label="Setup secrets from">
                     The repository whose setup secrets the cases' workspace setup receives. A team
-                    dataset can only use a repository of its team.
+                    dataset can only use a repository of its team, and an organization dataset one
+                    of its organization.
                   </HelpTip>
                 </dt>
                 <dd className="mt-0.5">

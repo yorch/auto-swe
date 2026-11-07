@@ -359,16 +359,25 @@ describe('ConnectionFormModal workspace setup', () => {
     setup: { cache: { paths: ['node_modules'] }, steps: [{ name: 'install', run: 'npm ci' }] },
   } as unknown as RepositorySummary;
 
-  it("shows the team's eval datasets panel to a team admin only", () => {
+  it('shows the eval datasets panel when the user may link a dataset, and hides it otherwise', () => {
+    renderEdit(withSetup);
+    expect(screen.queryByText('Eval datasets using these secrets')).toBeNull();
+    cleanup();
+    // A team lead who is an organization admin: the gateway lists the organization's datasets.
+    auth.teamRole = 'LEAD';
     evalDatasets.data = [
-      { id: 'd1', linked: false, name: 'Smoke', slug: 'smoke', usesRepository: null },
+      {
+        id: 'd1',
+        linked: false,
+        name: 'Smoke',
+        scope: 'ORGANIZATION',
+        slug: 'smoke',
+        usesRepository: null,
+      },
     ];
     renderEdit(withSetup);
     expect(screen.getByText('Eval datasets using these secrets')).toBeTruthy();
-    cleanup();
-    auth.teamRole = 'LEAD';
-    renderEdit(withSetup);
-    expect(screen.queryByText('Eval datasets using these secrets')).toBeNull();
+    expect(screen.getByText('(organization)')).toBeTruthy();
   });
 
   it('edits the stored definition as fields and saves the result', async () => {

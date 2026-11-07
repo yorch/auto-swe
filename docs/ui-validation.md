@@ -105,7 +105,14 @@ An `env` value that looks secret is refused with `PREVIEW_ENV_LOOKS_SECRET`, nam
 saving a recipe with one fails, and a saved recipe that still has one does not start a preview
 until it is moved. It looks secret by its name (`TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `API_KEY`,
 `ACCESS_KEY`, `PRIVATE_KEY`, `CREDENTIAL`, `AUTH`) or its value (URL userinfo, a `Bearer` or `Basic`
-header, a well-known token prefix such as `ghp_`, `glpat-`, `sk-` or `AKIA`, a PEM private key).
+header, a well-known token prefix such as `ghp_`, `glpat-`, `sk-` or `AKIA`, a PEM private key, a
+JWT), or because the value looks randomly generated: a run of at least 16 base64, base64url or hex
+characters (not counting `-` and `_`) that is varied and switches between lower case, upper case,
+digits and symbols on at least a third of its characters. Words joined by separators
+(`eu-west-1`, `my_feature_flag_2024`), paths and URLs pass; a random key, a commit SHA or a UUID
+does not. A key whose value only looks random lists its name under `publicEnv`
+(`"publicEnv": ["GIT_SHA"]`, at most 50), which skips that check for it; a secret-looking name or
+token shape is refused whatever `publicEnv` says.
 The form offers to move them: `POST /api/v1/repositories/:id/preview/env-to-secrets` stores each
 one as a setup secret of the same name, removes it from `env` and names it under `secrets`. It
 moves the secret-looking values unless the request names others under `names`, and refuses the
@@ -164,9 +171,11 @@ dropped.
 
 ## Limitations
 
-- Secret-looking `env` values are found by shape, not proven: a secret with an ordinary name and no
-  known token prefix (`DB_PASS_PHRASE=correct-horse`, say) is still accepted into `env`, where it is
-  stored as plain JSON, readable by anyone who can open the repository form.
+- Secret-looking `env` values are found by shape, not proven: a secret with an ordinary name, no
+  known token prefix and a value that does not look random (a passphrase such as
+  `DB_PASS_PHRASE=correct-horse-battery`, a short PIN) is still accepted into `env`, where it is
+  stored as plain JSON, readable by anyone who can open the repository form. So is a random value
+  whose key someone listed under `publicEnv`.
 - Kubernetes preview services with `runAsUser` run under Pod Security `restricted`; services that
   run as root still require `baseline`. The workspace container keeps its non-root,
   dropped-capability security context.

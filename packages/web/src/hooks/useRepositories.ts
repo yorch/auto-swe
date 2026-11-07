@@ -292,6 +292,8 @@ export interface RepoEvalDatasetLink {
   id: string;
   name: string;
   slug: string;
+  /** TEAM for the repository team's datasets, ORGANIZATION for its organization's. */
+  scope: 'TEAM' | 'ORGANIZATION';
   linked: boolean;
   /** The other repository the dataset reads setup secrets from, if any. */
   usesRepository: { id: string; name: string } | null;

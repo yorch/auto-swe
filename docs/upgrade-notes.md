@@ -848,6 +848,28 @@ values with **Move env values to setup secrets** under App preview, or
 **Verify.** Every repository's setup-secrets panel accepts its saved values, and the App preview
 form shows no move prompt.
 
+### UN-15. Random-looking preview `env` values, processes left by setup steps, and ORG eval dataset links
+
+**Affected.** Deployments with an app preview recipe whose `env` holds a value that looks randomly
+generated (a key, a commit SHA, a UUID; see [ui-validation.md](./ui-validation.md)); with a
+workspace setup whose steps start a process meant to keep running; or with an ORGANIZATION eval
+dataset linked to a repository outside its organization.
+
+**What changes.** Such a preview fails to start with `PREVIEW_ENV_LOOKS_SECRET`, and saving its
+recipe is refused, until the value is moved to setup secrets or its key is listed under
+`publicEnv`. Every process the setup steps leave running is now stopped before the agent runs, also
+when setup names no secrets. Linking an ORGANIZATION dataset to a repository outside its
+organization is refused; an existing such link keeps working until it is changed. No migration is
+needed.
+
+**Actions.** Before rolling out, open each repository's App preview form: move a value that is a
+secret with **Move env values to setup secrets**, and add the key of one that is not to
+`publicEnv`. Move a long-running process a setup step starts into `services`. Review the
+"Setup secrets from" repository of each ORGANIZATION eval dataset.
+
+**Verify.** The App preview form shows no move prompt, and the repository's workspace setup
+succeeds.
+
 ---
 
 ## 4. If you cannot tell
