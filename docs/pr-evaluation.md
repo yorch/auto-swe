@@ -147,7 +147,11 @@ marker `<!-- auto-swe:pr-evaluation -->`. It carries:
 - **Safe to skim**: files with a deterministic proof, at most 50 shown.
 
 The brief is also stored on the evaluation row and returned by the routes in §13. The row keeps the
-first 50 entries of the reading path.
+first 50 entries of the reading path. Beside the comment text it keeps the criteria and open
+questions (with how the run settled each), the evidence numbers and verdicts, and the findings as
+structured fields, each bounded to what the comment would show. They are model and ticket text, so a
+reader renders them as plain text. An evaluation written before they were stored has none of the
+three, and a reader falls back to the reading path and the skim list.
 
 ### What was asked
 
@@ -1098,5 +1102,7 @@ documentation change as a platform pull request and read the evaluation's reason
   the class is only as good as that review.
 - **`auto` merges use the squash method only.**
 - **GitHub only.** Other source-control hosts are not evaluated.
-- **There is no dashboard page.** The brief lives on the pull request, and the routes in §13 expose
-  the state; the CLI reads it.
+- **The dashboard has no page for the evaluations themselves.** The brief lives on the pull request
+  and the routes in §13 expose the state; the CLI reads it. A single pull request has a review page
+  (`/pull-requests/<id>`, described in [`work-views.md`](./work-views.md)) that draws the stored
+  brief and the live diff together.

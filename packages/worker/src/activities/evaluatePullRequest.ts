@@ -32,6 +32,7 @@ import {
   BRIEF_MARKER,
   type BriefIntent,
   botApprovalRefusalConditions,
+  briefDetail,
   buildBrief,
   type ChangedFile,
   type Classification,
@@ -1593,6 +1594,7 @@ export async function evaluatePullRequestWith(
         // An approval that had to be withdrawn is gone by now (a failed withdrawal threw instead).
         botApproved,
         brief: asJson({
+          ...briefDetail(intent, evidence, findings),
           claimsToVerify: brief.claimsToVerify.slice(0, MAX_PERSISTED_CLAIMS),
           markdown: briefMarkdown,
           path: brief.path.slice(0, MAX_PERSISTED_PATH),

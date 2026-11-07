@@ -1,44 +1,11 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { DiffFile } from '@/components/diff/DiffFile';
 import { Button } from '@/components/ui/Button';
-import { Icon } from '@/components/ui/Icon';
 import { Modal } from '@/components/ui/Modal';
-import { cn, FOCUS_RING, plural } from '@/lib/utils';
-import {
-  isUnifiedDiff,
-  type ParsedDiffFile,
-  type ParsedDiffLine,
-  parseUnifiedDiff,
-} from './diffParse';
-
-const LINE_CLASS: Record<ParsedDiffLine['kind'], string> = {
-  add: 'bg-success-400/10 text-success-400',
-  ctx: 'text-paper-300',
-  del: 'bg-danger-400/10 text-danger-400',
-  hunk: 'bg-info-400/[0.07] text-info-400',
-  meta: 'text-paper-500',
-};
-
-function DiffLine({ line }: { line: ParsedDiffLine }) {
-  return (
-    <div className={cn('flex', LINE_CLASS[line.kind])}>
-      <span
-        aria-hidden="true"
-        className="tabular w-10 shrink-0 select-none border-r border-ink-600/60 pr-2 text-right text-paper-600"
-      >
-        {line.oldNo ?? ''}
-      </span>
-      <span
-        aria-hidden="true"
-        className="tabular w-10 shrink-0 select-none border-r border-ink-600/60 pr-2 text-right text-paper-600"
-      >
-        {line.newNo ?? ''}
-      </span>
-      <span className="whitespace-pre px-2">{line.text || ' '}</span>
-    </div>
-  );
-}
+import { cn, plural } from '@/lib/utils';
+import { isUnifiedDiff, type ParsedDiffFile, parseUnifiedDiff } from './diffParse';
 
 function DiffBody({ files, maxHeight }: { files: ParsedDiffFile[]; maxHeight: string }) {
   const [closed, setClosed] = useState<Record<string, boolean>>({});
@@ -46,41 +13,16 @@ function DiffBody({ files, maxHeight }: { files: ParsedDiffFile[]; maxHeight: st
     <div className={cn(maxHeight, 'space-y-2 overflow-auto')}>
       {files.map((file, i) => {
         const key = `${i}:${file.name}`;
-        const isClosed = closed[key] === true;
         return (
-          <section
-            className="overflow-hidden rounded-lg border border-ink-500/60 bg-ink-950/50"
+          <DiffFile
+            added={file.added}
             key={key}
-          >
-            <button
-              aria-expanded={!isClosed}
-              className={cn(
-                FOCUS_RING,
-                'flex w-full items-center gap-2 bg-ink-800 px-3 py-2 text-left text-xs transition-colors hover:bg-ink-700'
-              )}
-              onClick={() => setClosed((c) => ({ ...c, [key]: !isClosed }))}
-              type="button"
-            >
-              <Icon
-                className={cn('text-paper-500 transition-transform', !isClosed && 'rotate-90')}
-                name="chevronRight"
-                size={13}
-              />
-              <span className="min-w-0 flex-1 break-all font-mono text-paper-100">{file.name}</span>
-              <span className="tabular shrink-0 font-mono text-success-400">+{file.added}</span>
-              <span className="tabular shrink-0 font-mono text-danger-400">−{file.removed}</span>
-            </button>
-            {!isClosed && (
-              <div className="overflow-x-auto border-t border-ink-600/60 font-mono text-xs leading-5">
-                <div className="w-max min-w-full py-1">
-                  {file.lines.map((line, n) => (
-                    // biome-ignore lint/suspicious/noArrayIndexKey: diff lines are positional
-                    <DiffLine key={n} line={line} />
-                  ))}
-                </div>
-              </div>
-            )}
-          </section>
+            lines={file.lines}
+            name={file.name}
+            onToggle={() => setClosed((c) => ({ ...c, [key]: c[key] !== true }))}
+            open={closed[key] !== true}
+            removed={file.removed}
+          />
         );
       })}
     </div>

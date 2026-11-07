@@ -43,6 +43,25 @@ describe('PullRequestTable', () => {
     expect(screen.getByText('CI passed')).toBeTruthy();
   });
 
+  it('opens the review page from the title', () => {
+    render(<PullRequestTable pullRequests={[pr()]} />);
+    expect(screen.getByRole('link', { name: 'Fix login' }).getAttribute('href')).toBe(
+      '/pull-requests/pr-1'
+    );
+  });
+
+  it.each([
+    ['a repository', { repository: null }],
+    ['a pull request number', { prNumber: null }],
+  ])(
+    'leaves the title as text for a row with no %s, which has nothing to review here',
+    (_name, over) => {
+      render(<PullRequestTable pullRequests={[pr(over)]} />);
+      expect(screen.getByText('Fix login')).toBeTruthy();
+      expect(screen.queryByRole('link', { name: 'Fix login' })).toBeNull();
+    }
+  );
+
   it('renders a hostile title as text, and does not link a non-http(s) address', () => {
     const { container } = render(
       <PullRequestTable

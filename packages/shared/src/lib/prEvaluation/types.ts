@@ -131,6 +131,17 @@ export type Brief = {
   markdown: string;
 };
 
+/**
+ * What `PrEvaluation.brief` holds: the builder's output, bounded, plus the structured intent,
+ * evidence and findings that the comment only carries as text. A row written before they were
+ * stored has none of the three.
+ */
+export type StoredBrief = Brief & {
+  evidence?: BriefEvidence;
+  findings?: BriefFinding[];
+  intent?: BriefIntent;
+};
+
 export type PrReview = {
   login: string;
   state: string;

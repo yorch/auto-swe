@@ -107,6 +107,46 @@ counts the same filtered set.
 
 ---
 
+## 2.1 `GET /api/v1/pull-requests/:id/cockpit`
+
+What the review page (§5) shows for one pull request, by its `PullRequest` id. ENGINEER and above,
+with the list's visibility: a repository the caller cannot reach is `404 PULL_REQUEST_NOT_FOUND`, and
+nothing is read from the host until that is decided. The answer has four parts:
+
+- `pull` — the list row (§2) plus `headSha`, the head the row stores.
+- `evaluation` — the latest evaluation of the pull request, or null when there is none: risk class,
+  mode, status, reasons and claims to verify, and, where the evaluation stored them, the ticket's
+  `intent`, the run's `evidence` and the review network's `findings`
+  ([`pr-evaluation.md`](./pr-evaluation.md)). `stale` is true when it covers a head other than the one
+  the host reports now. A finding carries `anchored`, true only when its line is inside its file's
+  patch at that head, so a stale evaluation's findings are never anchored.
+- `files` — read live from the host, in the platform's reading order, each with its patch, a
+  `patchDigest`, and the evaluation's marks (`flagged`, `why`, `verify`, `skim`). The read uses the
+  repository's own approved API host and a platform credential that never leaves its host, the rule
+  the check-run and PR-feedback reads apply. When the host cannot be read, `files` is
+  `{ "type": "unavailable", "reason": … }` with `host-not-approved`, `no-credential`, `not-found`,
+  `rate-limited` or `failed`, and the rest of the answer is unaffected.
+- `viewed` — the paths the caller has marked viewed whose patch has not changed since.
+
+A patch is never stored. The gateway keeps one read in memory for five minutes, per repository,
+pull request and head, for at most twenty reads, and does not keep a read holding more than five
+million characters of patch. The pull request itself is read on every request, because that is how
+the current head is known. The host lists at most 3000 files, so `truncated` says when more exist,
+and a patch over 200,000 characters is treated as absent, as the evaluator does. Titles, paths,
+patches and findings are untrusted text.
+
+## 2.2 `PUT /api/v1/pull-requests/:id/viewed`
+
+Marks files viewed, or clears the marks, for the caller alone. Body
+`{ "files": [{ "path", "patchDigest" }], "viewed": true | false }`: 1 to 200 files, a path of at most
+500 characters, and the 64-character hexadecimal digest the page received with the file. A mark
+counts only while the file's patch digest equals the one stored, so a push that changes a file puts
+it back among the unread, as the host does. A person can hold at most 3000 marks on one pull request
+(`400 TOO_MANY_VIEWED_FILES`). The visibility and 404 are the cockpit's. The in-app assistant may
+propose it only for the user's confirmation.
+
+---
+
 ## 3. `GET /api/v1/pull-requests/outcomes`
 
 The delivery metric: of the pull requests opened in a window, how many were merged and how fast.
@@ -279,7 +319,18 @@ reload.
 
 - **Pull requests** — a table with the state (Open, Draft, Merged, Closed) and CI badges, the ticket
   (linked to its request), the latest run, cost and age. Filters: scope, state (Open unless the
-  address says otherwise), draft, repository, ticket. The PR links to the host in a new tab.
+  address says otherwise), draft, repository, ticket. The title opens the review page, and the PR
+  links to the host in a new tab.
+- **Review page** (`/pull-requests/<id>`) — reads one pull request in the order the platform
+  suggests: a header with the state, CI, risk class and head; what was asked and how the run settled
+  each open question; what the run verified; the review findings, drawn under the line they name;
+  and the diff, with the files to verify marked, the ones proven skimmable marked, each file
+  collapsible and the first three open. A rail lists the files with a filter (all, to verify,
+  unviewed, skim) and a count of those viewed; `j` and `k` move between files and `v` marks one
+  viewed. Marking a file viewed collapses it. A banner says when the evaluation covers an earlier
+  commit, when the host could not be read, when files were cut off, and when the pull request is no
+  longer open. The page reads and decides nothing on the host: review comments, approvals and merges
+  stay there.
 - **Pull request outcomes** — a card on **Platform analytics** (`/admin/analytics`) for the page's
   date range: merge rate, median and 95th-percentile time to merge, PRs opened (with merged, closed
   unmerged, open and draft counts), each against the previous window, and the ten repositories with
@@ -290,11 +341,28 @@ reload.
   latest request; its pull requests and their states are listed in the row.
 
 Titles, ticket ids and tracker text render as plain text; a ticket link is followed only for an
-http(s) address.
+http(s) address. On the review page every file name, patch line, finding and criterion is plain
+text with invisible and direction-changing characters made visible, never markup.
 
 ---
 
 ## Limitations
+
+- The review page cannot comment, approve or request changes: review decisions are made on the
+  host. It has no side-by-side view and no syntax colouring.
+- Each visit and each refresh of the review page asks the host for the pull request, and for its
+  files when the head has moved or the copy is older than five minutes, so a page left open adds
+  requests to the host's rate limit. It refreshes every 30 seconds.
+- Up to 3000 files are listed. A binary file, or a patch over 200,000 characters, is named but not
+  shown. A file without a patch cannot be marked viewed.
+- An evaluation written before the intent, evidence and findings were stored shows only the reading
+  path and the skim list until the pull request is evaluated again, which a push does.
+- The evidence is the run's: browser-check counts are per run, not per head, and the tests and CI
+  are those at the head the evaluation covered. A stale evaluation says so.
+- Viewed marks are per person and per pull request, and reset when a file's patch changes. A mark is
+  matched by path, so a rename starts unviewed.
+- The run's outcome card still links only to the host: it knows the host's address and number, not
+  the platform's id for the pull request.
 
 - Pull-request attribution is stored when a worker creates or updates a PR and is backfilled from
   repository-matched active workflows. `WorkflowRun.workflowId` is unique, so the run is resolved
