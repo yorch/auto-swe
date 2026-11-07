@@ -20,6 +20,7 @@ import {
   type SubmodulesChoice,
   setupDraft,
 } from '@/lib/repoSetupDraft';
+import { RepoEvalDatasets } from './RepoEvalDatasets';
 import { RepoSetupSecrets } from './RepoSetupSecrets';
 
 const SUBMODULE_OPTIONS: Array<{ label: string; value: SubmodulesChoice }> = [
@@ -285,6 +286,7 @@ export function RepoSetupEditor({
       )}
 
       {repositoryId && <RepoSetupSecrets disabled={disabled} repositoryId={repositoryId} />}
+      {repositoryId && <RepoEvalDatasets disabled={disabled} repositoryId={repositoryId} />}
 
       <SetupFilePanel
         canPropose={!disabled && fileValid}

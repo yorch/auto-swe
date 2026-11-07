@@ -1,6 +1,9 @@
 'use client';
 
-import { RepoSetupSecretNameSchema } from '@auto-swe/shared/lib/repoSetup';
+import {
+  MIN_REPO_SETUP_SECRET_CHARS,
+  RepoSetupSecretNameSchema,
+} from '@auto-swe/shared/lib/repoSetup';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -85,7 +88,12 @@ export function RepoSetupSecrets({
           value={value}
         />
         <Button
-          disabled={disabled || !nameCheck.success || !value || save.isPending}
+          disabled={
+            disabled ||
+            !nameCheck.success ||
+            value.length < MIN_REPO_SETUP_SECRET_CHARS ||
+            save.isPending
+          }
           onClick={() => {
             setError(null);
             save.mutate(
@@ -104,6 +112,12 @@ export function RepoSetupSecrets({
           {save.isPending ? 'Saving…' : 'Save secret'}
         </Button>
       </div>
+      {value && value.length < MIN_REPO_SETUP_SECRET_CHARS && (
+        <p className="text-xs text-danger-400">
+          A secret must be at least {MIN_REPO_SETUP_SECRET_CHARS} characters, so the setup scan can
+          find it if a step leaves it on disk.
+        </p>
+      )}
       {name.trim() && !nameCheck.success && (
         <p className="text-xs text-danger-400">Use an environment variable name (A-Z, 0-9, _).</p>
       )}

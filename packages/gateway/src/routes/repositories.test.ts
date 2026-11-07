@@ -80,6 +80,10 @@ async function buildApp() {
             $queryRaw: vi.fn(),
             connection: { update: (...args: unknown[]) => mockPrisma.connection.update(...args) },
             connectionTeamShare: { deleteMany: vi.fn() },
+            evalDataset: {
+              findUnique: (...args: unknown[]) => mockPrisma.evalDataset.findUnique(...args),
+              update: (...args: unknown[]) => mockPrisma.evalDataset.update(...args),
+            },
             knowledgeItem: {
               count: (...args: unknown[]) => mockPrisma.knowledgeItem.count(...args),
             },
@@ -97,6 +101,7 @@ async function buildApp() {
       update: vi.fn(),
     },
     connectionTeamShare: { deleteMany: vi.fn() },
+    evalDataset: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
     knowledgeItem: { count: vi.fn().mockResolvedValue(0) },
     prEvaluation: { findMany: vi.fn() },
     repoSetupSecret: {
@@ -1278,6 +1283,24 @@ describe('repositoryRoutes', () => {
       expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
     });
 
+    it('refuses a recipe whose env looks secret, naming the keys and never the values', async () => {
+      asTeamMember('ADMIN');
+      stored(null);
+      const res = await patch({
+        previewConfig: {
+          ...recipe,
+          env: { DATABASE_URL: 'postgres://app:hunter2-secret@db:5432/app', PORT: '3000' },
+        },
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe('PREVIEW_ENV_LOOKS_SECRET');
+      expect(res.payload).toContain('DATABASE_URL');
+      expect(res.payload).not.toContain('PORT');
+      expect(res.payload).not.toContain('hunter2');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
     it('stores and audits a team admin change with schema defaults', async () => {
       asTeamMember('ADMIN');
       stored(null);
@@ -1947,7 +1970,7 @@ describe('repositoryRoutes', () => {
       const refused = await ctx.app.inject({
         headers: AUTH_HEADER,
         method: 'PUT',
-        payload: { value: 'value' },
+        payload: { value: 'value_123456' },
         url: url('ANOTHER'),
       });
       expect(refused.statusCode).toBe(409);
@@ -1955,7 +1978,7 @@ describe('repositoryRoutes', () => {
       const replaced = await ctx.app.inject({
         headers: AUTH_HEADER,
         method: 'PUT',
-        payload: { value: 'value' },
+        payload: { value: 'value_123456' },
         url: url('NPM_TOKEN'),
       });
       expect(replaced.statusCode).toBe(200);
@@ -1971,7 +1994,7 @@ describe('repositoryRoutes', () => {
       const res = await ctx.app.inject({
         headers: AUTH_HEADER,
         method: 'PUT',
-        payload: { value: 'value' },
+        payload: { value: 'value_123456' },
         url: url('NPM_TOKEN'),
       });
       expect(res.statusCode).toBe(403);
@@ -1996,6 +2019,193 @@ describe('repositoryRoutes', () => {
         url: url('NPM_TOKEN'),
       });
       expect(missing.statusCode).toBe(404);
+    });
+
+    it('refuses a value shorter than 8 characters', async () => {
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PUT',
+        payload: { value: '1234567' },
+        url: url('PIN'),
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toContain('at least 8 characters');
+      expect(ctx.mockPrisma.repoSetupSecret.upsert).not.toHaveBeenCalled();
+    });
+
+    describe('moving only some env values', () => {
+      const move = (payload?: Record<string, unknown>) =>
+        ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'POST',
+          ...(payload ? { payload } : {}),
+          url: `/api/v1/repositories/${REPO_ID}/preview/env-to-secrets`,
+        });
+      const recipe = {
+        env: { API_TOKEN: 'tok_value_1234567', PORT: '3000' },
+        readyUrl: 'http://localhost:3000/',
+        start: 'npm start',
+      };
+
+      beforeEach(() => {
+        ctx.mockPrisma.connection.findUniqueOrThrow.mockResolvedValue({ previewConfig: recipe });
+        ctx.mockPrisma.repoSetupSecret.findMany.mockResolvedValue([]);
+        ctx.mockPrisma.repoSetupSecret.create.mockResolvedValue({});
+        ctx.mockPrisma.connection.update.mockResolvedValue({});
+      });
+
+      it('moves the secret-looking values by default and keeps the rest in env', async () => {
+        const res = await move();
+        expect(res.statusCode).toBe(200);
+        expect(res.json().data).toMatchObject({
+          moved: ['API_TOKEN'],
+          previewConfig: { env: { PORT: '3000' }, secrets: ['API_TOKEN'] },
+        });
+      });
+
+      it('refuses a value too short to be a setup secret', async () => {
+        const res = await move({ names: ['PORT'] });
+        expect(res.statusCode).toBe(400);
+        expect(res.json().error.code).toBe('SETUP_SECRET_TOO_SHORT');
+        expect(res.body).not.toContain('3000');
+        expect(ctx.mockPrisma.repoSetupSecret.create).not.toHaveBeenCalled();
+      });
+
+      it('refuses a name the env does not have', async () => {
+        const res = await move({ names: ['NOPE'] });
+        expect(res.statusCode).toBe(400);
+        expect(res.json().error.code).toBe('NOT_IN_PREVIEW_ENV');
+      });
+    });
+  });
+
+  describe('eval datasets using the setup secrets', () => {
+    const OTHER_REPO = '44444444-4444-4444-8444-444444444444';
+    const DATASET = '55555555-5555-4555-8555-555555555555';
+    const link = (linked: boolean) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PUT',
+        payload: { linked },
+        url: `/api/v1/repositories/${REPO_ID}/setup/eval-datasets/${DATASET}`,
+      });
+    const asTeamMember = (role: 'LEAD' | 'ADMIN') => {
+      ctx.authState.role = 'LEAD';
+      ctx.authState.sub = 'lead-1';
+      ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+        role,
+        team: { isActive: true },
+      });
+    };
+    const dataset = (over: Record<string, unknown> = {}) =>
+      ctx.mockPrisma.evalDataset.findUnique.mockResolvedValue({
+        id: DATASET,
+        scope: 'TEAM',
+        setupSecretsConnectionId: null,
+        teamId: TEAM_ID,
+        ...over,
+      });
+
+    beforeEach(() => {
+      for (const fn of Object.values(ctx.mockPrisma.evalDataset)) {
+        fn.mockReset();
+      }
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        id: REPO_ID,
+        teamId: TEAM_ID,
+        type: 'git_repo',
+      });
+      ctx.mockPrisma.evalDataset.update.mockResolvedValue({});
+    });
+
+    it("lists only the repository team's TEAM datasets, marking which use this repository", async () => {
+      asTeamMember('ADMIN');
+      ctx.mockPrisma.evalDataset.findMany.mockResolvedValue([
+        { id: 'd1', name: 'A', setupSecretsConnection: { id: REPO_ID, name: 'me' }, slug: 'a' },
+        {
+          id: 'd2',
+          name: 'B',
+          setupSecretsConnection: {
+            id: OTHER_REPO,
+            name: null,
+            organizationName: 'acme',
+            repoName: 'other',
+          },
+          slug: 'b',
+        },
+        { id: 'd3', name: 'C', setupSecretsConnection: null, slug: 'c' },
+      ]);
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: `/api/v1/repositories/${REPO_ID}/setup/eval-datasets`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toEqual([
+        { id: 'd1', linked: true, name: 'A', slug: 'a', usesRepository: null },
+        {
+          id: 'd2',
+          linked: false,
+          name: 'B',
+          slug: 'b',
+          usesRepository: { id: OTHER_REPO, name: 'acme/other' },
+        },
+        { id: 'd3', linked: false, name: 'C', slug: 'c', usesRepository: null },
+      ]);
+      const query = ctx.mockPrisma.evalDataset.findMany.mock.calls[0]?.[0] as {
+        where: Record<string, unknown>;
+      };
+      expect(query.where).toEqual({ scope: 'TEAM', teamId: TEAM_ID });
+    });
+
+    it('lets a team admin link a team dataset, replacing another repository, and audits it', async () => {
+      asTeamMember('ADMIN');
+      dataset({ setupSecretsConnectionId: OTHER_REPO });
+      const res = await link(true);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toEqual({ linked: true });
+      expect(ctx.mockPrisma.evalDataset.update).toHaveBeenCalledWith({
+        data: { setupSecretsConnectionId: REPO_ID },
+        where: { id: DATASET },
+      });
+      expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalled();
+    });
+
+    it('unlinks only a link to this repository', async () => {
+      asTeamMember('ADMIN');
+      dataset({ setupSecretsConnectionId: REPO_ID });
+      expect((await link(false)).json().data).toEqual({ linked: false });
+      expect(ctx.mockPrisma.evalDataset.update).toHaveBeenCalledWith({
+        data: { setupSecretsConnectionId: null },
+        where: { id: DATASET },
+      });
+      ctx.mockPrisma.evalDataset.update.mockClear();
+      dataset({ setupSecretsConnectionId: OTHER_REPO });
+      expect((await link(false)).statusCode).toBe(200);
+      expect(ctx.mockPrisma.evalDataset.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses another team's dataset and GLOBAL or ORG datasets", async () => {
+      dataset({ teamId: '66666666-6666-4666-8666-666666666666' });
+      expect((await link(true)).statusCode).toBe(404);
+      dataset({ scope: 'GLOBAL', teamId: null });
+      expect((await link(true)).statusCode).toBe(404);
+      dataset({ orgId: 'org-1', scope: 'ORG', teamId: null });
+      expect((await link(true)).statusCode).toBe(404);
+      expect(ctx.mockPrisma.evalDataset.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a team member who is not a team admin', async () => {
+      asTeamMember('LEAD');
+      dataset();
+      expect((await link(true)).statusCode).toBe(403);
+      const list = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: `/api/v1/repositories/${REPO_ID}/setup/eval-datasets`,
+      });
+      expect(list.statusCode).toBe(403);
+      expect(ctx.mockPrisma.evalDataset.update).not.toHaveBeenCalled();
     });
   });
 

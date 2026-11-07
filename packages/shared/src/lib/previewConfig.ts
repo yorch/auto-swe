@@ -111,3 +111,32 @@ export const PreviewConfigSchema = PreviewConfigInputSchema.transform((config) =
 
 export type PreviewConfig = z.infer<typeof PreviewConfigSchema>;
 export type PreviewConfigInput = z.input<typeof PreviewConfigSchema>;
+
+const SECRET_LOOKING_NAME =
+  /(?:TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH)/i;
+const SECRET_LOOKING_VALUE = [
+  // URL userinfo: https://user:pass@host
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/i,
+  /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/,
+  /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35})\b/,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+];
+
+/**
+ * The keys of a preview recipe's `env` that look like they hold a secret, by name (`*_TOKEN`,
+ * `*PASSWORD`, …) or by value (URL userinfo, an auth header, a well-known token prefix, a
+ * private key). A heuristic: it catches the common shapes, it does not prove the rest are safe.
+ */
+export function secretLookingEnvKeys(env: Record<string, string> | undefined | null): string[] {
+  return Object.entries(env ?? {})
+    .filter(
+      ([name, value]) =>
+        value !== '' &&
+        (SECRET_LOOKING_NAME.test(name) || SECRET_LOOKING_VALUE.some((re) => re.test(value)))
+    )
+    .map(([name]) => name)
+    .sort();
+}
+
+/** The error code for a preview recipe whose `env` holds secret-looking values. */
+export const PREVIEW_ENV_LOOKS_SECRET = 'PREVIEW_ENV_LOOKS_SECRET';

@@ -829,6 +829,25 @@ starts without those variables.
 **Verify.** The repository's recipe shows no `env` values that are secret, and its setup-secrets
 panel lists the moved names.
 
+### UN-14. Short setup secrets and secret-looking preview `env` values stop working
+
+**Affected.** Deployments with a repository setup secret shorter than 8 characters, or with an app
+preview recipe whose `env` has a secret-looking name or value (see
+[ui-validation.md](./ui-validation.md)).
+
+**What changes.** A workspace setup that names a setup secret shorter than 8 characters fails with
+`WORKSPACE_SETUP_FAILED` before any step runs, and saving a shorter value is refused. A preview
+whose recipe still has a secret-looking `env` value fails to start with `PREVIEW_ENV_LOOKS_SECRET`,
+and saving such a recipe is refused. No migration is needed.
+
+**Actions.** Before rolling out, replace each short setup secret with a value of at least 8
+characters (rotate the credential if it allows a longer one), and move secret-looking preview `env`
+values with **Move env values to setup secrets** under App preview, or
+`POST /api/v1/repositories/:id/preview/env-to-secrets`. Rotate anything that was stored in `env`.
+
+**Verify.** Every repository's setup-secrets panel accepts its saved values, and the App preview
+form shows no move prompt.
+
 ---
 
 ## 4. If you cannot tell

@@ -559,13 +559,20 @@ by name only.
 **Keeping secrets out of the tree.** A step that writes a secret to disk — an `.npmrc` with an auth
 token, say — lists that file under `cleanup` (`cleanup: [~/.npmrc]`; paths relative to the
 checkout, or `~/` under the home directory, at most 20). The files are deleted after the steps.
-Then, when the definition names secrets, every file of up to 20 MiB in the checkout (`.git`
-included) and in the workspace user's home directory, which holds every `~/` cache path, is
-searched for each secret value as a literal string: a multi-line value by its longest line, and a
-value shorter than 8 characters not at all. A match fails setup with `WORKSPACE_SETUP_FAILED`,
-naming up to 20 files and never the value, before the cache is saved or any agent runs. The search
-gets the values through the workspace's secret channel, like the steps, and a search that does not
-finish within 5 minutes fails setup too.
+Then, when the definition names secrets, every process the steps left running is stopped (all but
+the workspace's keeper; sidecars in other mount namespaces are untouched), the files are deleted,
+and every file of up to 20 MiB in the checkout (`.git` included), the workspace user's home
+directory (which holds every `~/` cache path), `/tmp`, `/var/tmp` and `/dev/shm` is searched for
+each secret value: as written, URL-encoded, and base64-encoded at any byte offset in either
+alphabet, so a token inside `_auth=base64(user:token)` is found; a multi-line value by its longest
+line. A match fails setup with `WORKSPACE_SETUP_FAILED`, naming up to 20 files and never the value,
+before the cache is saved or any agent runs. The search gets the values through the workspace's
+secret channel, like the steps, and a search that does not finish within 5 minutes fails setup too.
+
+A setup secret is at least 8 characters, since a shorter one matches unrelated files by chance:
+saving a shorter value is refused, and a value stored before that rule fails workspace setup that
+names it (before any step runs) until it is replaced. An app preview that names it still runs,
+since preview setup is not scanned.
 
 A file is at most 64 KiB and 20 steps; unknown keys, absolute paths and `..` are refused. Setting
 or changing the field takes the same permission as [gate commands](#gate-commands) and is written
@@ -733,10 +740,11 @@ longer fit.
   scope.
 - **Setup `env` values are passed on the command line of the exec**, so they are not for secrets;
   setup secrets are the way to give a step a credential.
-- **The secret scan looks only for the literal value.** A step that writes a secret encoded
-  (base64 in an `.npmrc` `_auth`, say), split, or to a path outside the checkout and the home
-  directory (`/tmp`) is not caught, nor is a value under 8 characters. A process a step leaves
-  running keeps whatever it read.
+- **The secret scan finds a value only as written or in a standard encoding.** A step that splits
+  a secret, encrypts or hashes it, or encodes it some other way (hex, a second base64 pass) is not
+  caught, nor is a file over 20 MiB or outside the checkout, the home directory and the temporary
+  directories. Stopping leftover processes happens only when setup names secrets, so a daemon a
+  step without secrets starts keeps running.
 - **An eval reads setup secrets only through its dataset's linked repository.** A dataset with no
   linked repository runs setup with no secrets, so a case whose pinned setup names one fails setup
   ([evals.md](./evals.md#3-offline-harness)).

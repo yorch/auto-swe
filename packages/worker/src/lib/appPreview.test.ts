@@ -87,6 +87,16 @@ describe('startAppPreview', () => {
     await expect(preview.logTail(32)).resolves.toBe('password=***\n');
   });
 
+  it('refuses to start a recipe whose env still holds a secret-looking value', async () => {
+    const started = startAppPreview(workspace, {
+      ...config,
+      env: { GITHUB_TOKEN: 'ghp_abcdefghijklmnopqrstuvwxyz0123456789', PORT: '3000' },
+    });
+    await expect(started).rejects.toThrow(/PREVIEW_ENV_LOOKS_SECRET.*GITHUB_TOKEN/);
+    await expect(started).rejects.not.toThrow(/ghp_|PORT/);
+    expect(exec).not.toHaveBeenCalled();
+  });
+
   it('fails before running anything when a named secret has no value', async () => {
     loadSetupSecrets.mockRejectedValueOnce(
       new Error('workspace setup: setup secret API_KEY has no value')
