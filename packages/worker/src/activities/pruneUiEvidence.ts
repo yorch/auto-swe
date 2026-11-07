@@ -36,7 +36,7 @@ export async function pruneUiEvidence(now: Date = new Date()): Promise<PruneUiEv
   for (let batch = 0; batch < PRUNE_MAX_BATCHES; batch++) {
     const evidence = await prisma.runEvidence.findMany({
       orderBy: { createdAt: 'asc' },
-      select: { artifactId: true, id: true, kind: true, runId: true },
+      select: { artifactId: true, id: true, kind: true, publicBucket: true, runId: true },
       take: PRUNE_BATCH,
       where: { createdAt: { lt: cutoff } },
     });
@@ -46,9 +46,10 @@ export async function pruneUiEvidence(now: Date = new Date()): Promise<PruneUiEv
     for (const row of evidence) {
       await deleteArtifact(row.artifactId);
       deleted += 1;
-      if (publicBucket && row.kind === 'screenshot') {
+      const bucket = row.publicBucket?.trim() || publicBucket;
+      if (bucket && row.kind === 'screenshot') {
         try {
-          await deleteObjectFromBucket(publicBucket, publicEvidenceKey(row.runId, row.id));
+          await deleteObjectFromBucket(bucket, publicEvidenceKey(row.runId, row.id));
           publicCopiesDeleted += 1;
         } catch {
           publicDeleteFailures += 1;

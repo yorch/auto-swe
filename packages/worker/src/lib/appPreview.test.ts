@@ -57,6 +57,9 @@ describe('startAppPreview', () => {
     // `--` keeps a start command that begins with a dash out of Node's own flag
     // parsing.
     expect(exec.mock.calls[1]?.[0]).toContain(' -- ');
+    expect(exec.mock.calls[1]?.[0]).toContain('["-s", "--", "sh", "-c", wrapper, "sh", command]');
+    expect(exec.mock.calls[1]?.[0]).not.toContain('"tini" : "sh", hasTini ? ["-s", "-g"');
+    expect(exec.mock.calls[1]?.[0]).toContain('while :; do sleep 3600; done');
     expect(exec.mock.calls[1]?.[0]).toContain('/tmp/.asw/preview.log');
     expect(exec.mock.calls[1]?.[0]).toContain('/tmp/.asw/preview.pgid.mark');
     expect(exec.mock.calls[1]?.[0]).not.toContain(config.env.GREETING);
@@ -154,6 +157,114 @@ describe('startAppPreview', () => {
       }
       await fs.rm(dir, { force: true, recursive: true });
     }
+  });
+
+  it('uses tini as the process-group leader when it is executable on PATH', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'asw-preview-tini-launcher-'));
+    const bin = path.join(dir, 'bin');
+    const pgidFile = path.join(dir, 'preview.pgid');
+    const logFile = path.join(dir, 'preview.log');
+    const argsFile = path.join(dir, 'tini.args');
+    const markFile = `${pgidFile}.mark`;
+    const sinceFile = `${pgidFile}.since`;
+    let group = 0;
+    try {
+      await fs.mkdir(bin);
+      await fs.symlink('/bin/sh', path.join(bin, 'sh'));
+      await fs.symlink('/bin/sleep', path.join(bin, 'sleep'));
+      await fs.writeFile(
+        path.join(bin, 'tini'),
+        '#!/bin/sh\nprintf "%s\\n" "$@" >"$TINI_ARGS_FILE"\nwhile [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n',
+        { mode: 0o755 }
+      );
+      execFileSync(
+        process.execPath,
+        ['-e', APP_PREVIEW_LAUNCHER, 'sleep 30', pgidFile, logFile, markFile, sinceFile],
+        { env: { ...process.env, PATH: bin, TINI_ARGS_FILE: argsFile } }
+      );
+      group = Number(await fs.readFile(pgidFile, 'utf8'));
+
+      expect(group).toBeGreaterThan(1);
+      expect(await fs.readFile(`${pgidFile}.reaper`, 'utf8')).toBe('1');
+      const tiniArgs = (await waitForFile(argsFile)).trim().split('\n');
+      expect(tiniArgs.slice(0, 4)).toEqual(['-s', '--', 'sh', '-c']);
+      expect(tiniArgs[4]).toContain('sh -c "$1"');
+      expect(tiniArgs[4]).toContain('while :; do sleep 3600; done');
+      expect(tiniArgs[5]).toBe('sh');
+      expect(tiniArgs[6]).toBe('sleep 30');
+      expect(groupAlive(group)).toBe(true);
+      execFileSync(process.execPath, ['-e', previewStopScript(pgidFile)]);
+      expect(await waitForGone(group)).toBe(true);
+      await expect(fs.access(`${pgidFile}.reaper`)).rejects.toThrow();
+    } finally {
+      if (group > 1 && groupAlive(group)) {
+        try {
+          process.kill(-group, 'SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+      await fs.rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it('keeps the original shell launcher when tini is absent from PATH', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'asw-preview-no-tini-launcher-'));
+    const bin = path.join(dir, 'bin');
+    const pgidFile = path.join(dir, 'preview.pgid');
+    const logFile = path.join(dir, 'preview.log');
+    const markFile = `${pgidFile}.mark`;
+    const sinceFile = `${pgidFile}.since`;
+    let group = 0;
+    try {
+      await fs.mkdir(bin);
+      await fs.symlink('/bin/sh', path.join(bin, 'sh'));
+      await fs.symlink('/bin/sleep', path.join(bin, 'sleep'));
+      execFileSync(
+        process.execPath,
+        ['-e', APP_PREVIEW_LAUNCHER, 'sleep 30', pgidFile, logFile, markFile, sinceFile],
+        { env: { ...process.env, PATH: bin } }
+      );
+      group = Number(await fs.readFile(pgidFile, 'utf8'));
+
+      expect(group).toBeGreaterThan(1);
+      await expect(fs.access(`${pgidFile}.reaper`)).rejects.toThrow();
+      expect(groupAlive(group)).toBe(true);
+      execFileSync(process.execPath, ['-e', previewStopScript(pgidFile)]);
+      expect(await waitForGone(group)).toBe(true);
+    } finally {
+      if (group > 1 && groupAlive(group)) {
+        try {
+          process.kill(-group, 'SIGKILL');
+        } catch {
+          // Already gone.
+        }
+      }
+      await fs.rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it('orders reaper TERM and KILL passes without signalling tini or its child on TERM', () => {
+    const script = previewStopScript();
+    const operations = [
+      'signalGroup("SIGTERM")',
+      'signalReaperDescendants("SIGTERM", 2)',
+      'signalMarked("SIGTERM")',
+      'setTimeout(resolve, 1500)',
+      'signalReaperDescendants("SIGKILL", 2)',
+      'signalReaperChildren("SIGKILL")',
+      'process.kill(pgid, "SIGKILL")',
+    ];
+    let previous = -1;
+    for (const operation of operations) {
+      const index = script.indexOf(operation);
+      expect(index).toBeGreaterThan(previous);
+      previous = index;
+    }
+    expect(script).toContain('reaperInfo?.comm === "tini"');
+    expect(script).toContain('info.ppid !== pgid');
+    expect(script).toContain('parseStat(pid)?.ppid === pgid');
+    expect(script).not.toContain('process.kill(pgid, "SIGTERM")');
   });
 
   it.skipIf(process.platform !== 'linux')(

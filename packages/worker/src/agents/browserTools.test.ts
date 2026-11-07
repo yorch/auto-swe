@@ -159,6 +159,60 @@ describe('BrowserToolset', () => {
     ).toHaveLength(1);
   });
 
+  it('withholds the image when page-text screening blocks the result but saves evidence', async () => {
+    resolveSetting.mockImplementation(async (key: string) =>
+      key === 'uiValidation.agentScreenshotImages'
+        ? true
+        : key === 'uiValidation.maxScreenshotBytes'
+          ? 1000
+          : key === 'uiValidation.maxVideoBytes'
+            ? 5_000_000
+            : false
+    );
+    let screens = 0;
+    screenMcpResult.mockImplementation(async (text: string) => {
+      screens += 1;
+      return screens === 2
+        ? { blocked: true, message: 'page text blocked' }
+        : { blocked: false, result: text };
+    });
+    const toolset = createToolset();
+
+    const result = await toolset.call('browser_screenshot', { caption: 'After login' });
+
+    expect(result).toEqual({ text: 'page text blocked' });
+    expect(evidence).toHaveBeenCalledWith(
+      expect.objectContaining({ contentType: 'image/png', kind: 'screenshot' }),
+      tracer
+    );
+  });
+
+  it('withholds the image when the accessibility snapshot is blocked', async () => {
+    resolveSetting.mockImplementation(async (key: string) =>
+      key === 'uiValidation.agentScreenshotImages'
+        ? true
+        : key === 'uiValidation.maxScreenshotBytes'
+          ? 1000
+          : key === 'uiValidation.maxVideoBytes'
+            ? 5_000_000
+            : false
+    );
+    screenMcpResult.mockImplementationOnce(async () => ({
+      blocked: true,
+      message: 'accessibility snapshot blocked',
+    }));
+    const toolset = createToolset();
+
+    const result = await toolset.call('browser_screenshot', { caption: 'After login' });
+
+    expect(result.image).toBeUndefined();
+    expect(result.text).toContain('accessibility snapshot blocked');
+    expect(evidence).toHaveBeenCalledWith(
+      expect.objectContaining({ contentType: 'image/png', kind: 'screenshot' }),
+      tracer
+    );
+  });
+
   it('omits an oversized model JPEG without failing the screenshot tool', async () => {
     resolveSetting.mockImplementation(async (key: string) =>
       key === 'uiValidation.agentScreenshotImages'

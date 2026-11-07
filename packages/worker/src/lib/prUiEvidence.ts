@@ -59,6 +59,10 @@ export async function buildPrUiEvidence(runId?: string | null): Promise<string> 
         const { body } = await getArtifact(screenshot.artifactId);
         const key = `ui-evidence/${runId}/${screenshot.id}.png`;
         await putObjectToBucket(bucket, key, body, 'image/png');
+        await prisma.runEvidence.update({
+          data: { publicBucket: bucket },
+          where: { id: screenshot.id },
+        });
         const url = `${baseUrl}/${key.split('/').map(encodeURIComponent).join('/')}`;
         lines.push('', `![${markdownText(screenshot.caption ?? 'UI screenshot')}](${url})`);
       } catch (error) {

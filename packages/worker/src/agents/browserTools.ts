@@ -24,6 +24,7 @@ export interface BrowserToolContext {
     pageUrl: string;
     session: BrowserSession;
   }): Promise<{
+    blocked: boolean;
     evidenceId: string;
     width?: number;
     height?: number;
@@ -168,7 +169,7 @@ export const BROWSER_TOOLS = [
         pageUrl: shot.url,
         width: saved.width,
       };
-      if (modelImage) {
+      if (modelImage && !saved.blocked) {
         try {
           if (typeof shot.modelFile !== 'string') {
             throw new Error('Browser driver did not return a model screenshot');
@@ -302,7 +303,7 @@ export class BrowserToolset implements BrowserToolContext {
       input.session.readOutFile(input.filePath, 10_000_000),
       input.session.call({ cmd: 'snapshot' }),
     ]);
-    const ariaSnapshot = await screenText(
+    const screenedSnapshot = await screenText(
       textResult(snapshot),
       'browser_screenshot',
       this.options.tracer
@@ -325,7 +326,8 @@ export class BrowserToolset implements BrowserToolContext {
     }
     this.evidenceIds.push(saved.evidenceId);
     return {
-      ariaSnapshot,
+      ariaSnapshot: screenedSnapshot.text,
+      blocked: screenedSnapshot.blocked,
       evidenceId: saved.evidenceId,
       height: input.height,
       width: input.width,
@@ -355,10 +357,13 @@ export class BrowserToolset implements BrowserToolContext {
       this.options.tracer.addToolCall({
         durationMs: Date.now() - started,
         inputJson: parsed as Record<string, unknown>,
-        outputJson: screened,
+        outputJson: screened.text,
         toolName: `browser:${name}`,
       });
-      return { text: screened, ...(result.image ? { image: result.image } : {}) };
+      return {
+        text: screened.text,
+        ...(!screened.blocked && result.image ? { image: result.image } : {}),
+      };
     } catch (error) {
       this.options.tracer.addToolCall({
         durationMs: Date.now() - started,
@@ -443,9 +448,16 @@ export class BrowserToolset implements BrowserToolContext {
   }
 }
 
-async function screenText(text: string, name: string, tracer: AgentTracer): Promise<string> {
+async function screenText(
+  text: string,
+  name: string,
+  tracer: AgentTracer
+): Promise<{ blocked: boolean; text: string }> {
   const result = await screenMcpResult(text, name, tracer);
-  return result.blocked ? result.message : textResult(result.result);
+  return {
+    blocked: result.blocked,
+    text: result.blocked ? result.message : textResult(result.result),
+  };
 }
 
 export function createMastraBrowserTools(toolset: BrowserToolset) {

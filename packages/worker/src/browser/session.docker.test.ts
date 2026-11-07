@@ -228,17 +228,8 @@ describe.skipIf(!enabled)('app preview stop (Docker)', () => {
     execFileSync('docker', ['exec', '-d', containerName ?? '', ...args], { stdio: 'ignore' });
   }
 
-  function alive(pid: string): boolean {
-    try {
-      containerExec(['sh', '-c', 'kill -0 "$1"', 'sh', pid]);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  it('stops scrubbed orphan daemons but preserves live exec processes, old daemons and init', async () => {
-    containerName = `asw-preview-stop-${process.pid}`;
+  function startContainer(): void {
+    containerName = `asw-preview-stop-${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
     execFileSync(
       'docker',
       [
@@ -260,40 +251,174 @@ describe.skipIf(!enabled)('app preview stop (Docker)', () => {
       ],
       { stdio: 'ignore' }
     );
+  }
 
-    containerExec(['sh', '-c', 'setsid sh -c "sleep 300" >/dev/null 2>&1 & echo $! >/tmp/old.pid']);
-    containerExec([
-      'node',
-      '-e',
-      APP_PREVIEW_LAUNCHER,
-      '--',
-      `env -i PATH="$PATH" setsid sh -c 'echo $$ >/tmp/preview.pid; exec sleep 300' >/dev/null 2>&1 & sleep 300`,
+  function launchPreview(command: string, pathValue?: string): void {
+    const paths = [
       '/tmp/preview.pgid',
       '/tmp/preview.log',
       '/tmp/preview.pgid.mark',
       '/tmp/preview.pgid.since',
+    ];
+    if (!pathValue) {
+      containerExec(['node', '-e', APP_PREVIEW_LAUNCHER, command, ...paths]);
+      return;
+    }
+    containerExec([
+      'sh',
+      '-c',
+      'PATH="$1" node -e "$2" "$3" "$4" "$5" "$6" "$7"',
+      'sh',
+      pathValue,
+      APP_PREVIEW_LAUNCHER,
+      command,
+      ...paths,
     ]);
-    containerExecDetached(['sh', '-c', 'sleep 300 & echo $! >/tmp/live.pid; wait']);
-    const pid = (file: string) => containerExec(['cat', file]).trim();
-    const previewPid = pid('/tmp/preview.pid');
-    const livePid = pid('/tmp/live.pid');
-    const keeperPid = pid('/tmp/keeper.pid');
-    const oldPid = pid('/tmp/old.pid');
+  }
 
+  function alive(pid: string): boolean {
+    try {
+      containerExec(['sh', '-c', 'kill -0 "$1"', 'sh', pid]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function processInfo(pid: string): { pgrp: number; ppid: number } {
+    const stat = containerExec(['cat', `/proc/${pid}/stat`]);
+    const fields = stat
+      .slice(stat.lastIndexOf(')') + 2)
+      .trim()
+      .split(/\s+/);
+    return { pgrp: Number(fields[2]), ppid: Number(fields[1]) };
+  }
+
+  async function waitForFile(file: string): Promise<string> {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      try {
+        return containerExec(['cat', file]).trim();
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    throw new Error(`timed out waiting for ${file}`);
+  }
+
+  async function waitForDead(pid: string): Promise<void> {
+    const deadline = Date.now() + 5000;
+    while (alive(pid) && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(alive(pid)).toBe(false);
+  }
+
+  function stopPreview(): void {
     containerExec([
       'node',
       '-e',
       previewStopScript('/tmp/preview.pgid', '/tmp/preview.pgid.mark', '/tmp/preview.pgid.since'),
     ]);
-    const deadline = Date.now() + 5000;
-    while (alive(previewPid) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+  }
 
-    expect(alive(previewPid)).toBe(false);
-    expect(alive(livePid)).toBe(true);
+  it('kills a scrubbed setsid double-fork adopted by tini', async () => {
+    startContainer();
+    const command = `env -i PATH="$PATH" setsid sh -c 'echo $$ >/tmp/preview.pid; exec sleep 300' >/dev/null 2>&1 &`;
+    launchPreview(command);
+    const previewPid = await waitForFile('/tmp/preview.pid');
+    const reaperPid = await waitForFile('/tmp/preview.pgid');
+
+    expect(await waitForFile('/tmp/preview.pgid.reaper')).toBe('1');
+    const previewInfo = processInfo(previewPid);
+    expect(previewInfo.ppid).toBe(Number(reaperPid));
+    expect(previewInfo.pgrp).not.toBe(Number(reaperPid));
+
+    stopPreview();
+    await waitForDead(previewPid);
+  }, 30_000);
+
+  it('kills a preview descendant that ignores TERM on the KILL pass', async () => {
+    startContainer();
+    const command = `env -i PATH="$PATH" setsid sh -c 'trap "" TERM; echo $$ >/tmp/term-ignored.pid; exec sleep 300' >/dev/null 2>&1 &`;
+    launchPreview(command);
+    const daemonPid = await waitForFile('/tmp/term-ignored.pid');
+    const reaperPid = await waitForFile('/tmp/preview.pgid');
+
+    expect(processInfo(daemonPid).ppid).toBe(Number(reaperPid));
+    stopPreview();
+    await waitForDead(daemonPid);
+  }, 30_000);
+
+  it('leaves an orphan from a separate post-preview Docker exec alive', async () => {
+    startContainer();
+    launchPreview('sleep 300');
+    const reaperPid = await waitForFile('/tmp/preview.pgid');
+    containerExec([
+      'sh',
+      '-c',
+      `env -i PATH="$PATH" setsid sh -c 'echo $$ >/tmp/after.pid; exec sleep 300' >/dev/null 2>&1 &`,
+    ]);
+    const afterPid = await waitForFile('/tmp/after.pid');
+
+    expect(processInfo(afterPid).ppid).not.toBe(Number(reaperPid));
+    stopPreview();
+    await waitForDead(reaperPid);
+    expect(alive(afterPid)).toBe(true);
+  }, 30_000);
+
+  it('preserves the keeper, a live exec and a pre-preview orphan', async () => {
+    startContainer();
+    containerExec([
+      'sh',
+      '-c',
+      `setsid sh -c 'echo $$ >/tmp/old.pid; exec sleep 300' >/dev/null 2>&1 &`,
+    ]);
+    launchPreview('sleep 300');
+    const reaperPid = await waitForFile('/tmp/preview.pgid');
+    containerExecDetached(['sh', '-c', 'sleep 300 & echo $! >/tmp/live.pid; wait']);
+    const keeperPid = await waitForFile('/tmp/keeper.pid');
+    const oldPid = await waitForFile('/tmp/old.pid');
+    const livePid = await waitForFile('/tmp/live.pid');
+
+    stopPreview();
+    await waitForDead(reaperPid);
+
     expect(alive(keeperPid)).toBe(true);
     expect(alive(oldPid)).toBe(true);
+    expect(alive(livePid)).toBe(true);
+  }, 30_000);
+
+  it('uses the guarded since sweep when tini has exited before stop', async () => {
+    startContainer();
+    const command = `env -i PATH="$PATH" setsid sh -c 'echo $$ >/tmp/after-tini.pid; exec sleep 300' >/dev/null 2>&1 &`;
+    launchPreview(command);
+    const daemonPid = await waitForFile('/tmp/after-tini.pid');
+    const reaperPid = await waitForFile('/tmp/preview.pgid');
+
+    containerExec(['sh', '-c', 'kill -KILL "$1"', 'sh', reaperPid]);
+    await waitForDead(reaperPid);
+    expect(alive(daemonPid)).toBe(true);
+    expect(processInfo(daemonPid).ppid).not.toBe(Number(reaperPid));
+
+    stopPreview();
+    await waitForDead(daemonPid);
+  }, 30_000);
+
+  it('uses the since-sweep fallback when PATH contains no tini', async () => {
+    startContainer();
+    containerExec([
+      'sh',
+      '-c',
+      'mkdir -p /tmp/no-tini-bin && ln -sf /bin/sh /tmp/no-tini-bin/sh && ln -sf /bin/sleep /tmp/no-tini-bin/sleep',
+    ]);
+    const nodePath = containerExec(['node', '-p', 'process.execPath']).trim();
+    launchPreview('sleep 300', `/tmp/no-tini-bin:${path.dirname(nodePath)}`);
+    const previewPid = await waitForFile('/tmp/preview.pgid');
+
+    expect(() => containerExec(['sh', '-c', 'test ! -e /tmp/preview.pgid.reaper'])).not.toThrow();
+    stopPreview();
+    await waitForDead(previewPid);
   }, 30_000);
 });
 

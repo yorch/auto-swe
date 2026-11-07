@@ -31,6 +31,10 @@ vi.mock('@auto-swe/shared/db', () => ({
       update: vi.fn(),
       updateMany: vi.fn(),
     },
+    workflowArtifactChunk: {
+      create: vi.fn(),
+      findMany: vi.fn(),
+    },
   },
 }));
 
@@ -85,6 +89,8 @@ const updateMock = vi.mocked(prisma.workflowArtifact.update);
 const updateManyMock = vi.mocked(prisma.workflowArtifact.updateMany);
 const findUniqueMock = vi.mocked(prisma.workflowArtifact.findUnique);
 const findMock = vi.mocked(prisma.workflowArtifact.findUniqueOrThrow);
+const chunkCreateMock = vi.mocked(prisma.workflowArtifactChunk.create);
+const chunkFindManyMock = vi.mocked(prisma.workflowArtifactChunk.findMany);
 
 const originalEnv = { ...process.env };
 
@@ -105,6 +111,8 @@ afterEach(() => {
   updateManyMock.mockResolvedValue({ count: 1 } as never);
   findUniqueMock.mockReset();
   findMock.mockReset();
+  chunkCreateMock.mockReset();
+  chunkFindManyMock.mockReset();
   s3.sent.length = 0;
   s3.fail = null;
   s3.payload = Buffer.alloc(0);
@@ -151,14 +159,26 @@ describe('putArtifact (postgres backend)', () => {
     expect(data.runId).toBe('run-9');
   });
 
-  it('buffers a file body for bytea and retains the supplied size', async () => {
+  it('writes file bodies as 1 MiB chunks and reads them back byte-identically', async () => {
     const filePath = path.join(os.tmpdir(), `asw-artifact-${process.pid}.pg`);
-    const payload = Buffer.from('recording bytes');
+    const payload = Buffer.alloc(1024 * 1024 + 37, 0xa7);
     await fs.writeFile(filePath, payload);
     createMock.mockImplementation((async ({ data }: { data: Record<string, unknown> }) => ({
       ...data,
       id: 'art-file-pg',
     })) as never);
+    updateManyMock.mockResolvedValue({ count: 1 } as never);
+    const chunks: { data: Buffer; seq: number }[] = [];
+    chunkCreateMock.mockImplementation((async ({
+      data,
+    }: {
+      data: { data: Uint8Array; seq: number };
+    }) => {
+      chunks.push({ data: Buffer.from(data.data), seq: data.seq });
+      return data;
+    }) as never);
+    chunkFindManyMock.mockImplementation((async ({ where }: { where: { seq: { gte: number } } }) =>
+      chunks.filter((chunk) => chunk.seq >= where.seq.gte).slice(0, 4)) as never);
 
     try {
       const ref = await putArtifact({
@@ -168,7 +188,62 @@ describe('putArtifact (postgres backend)', () => {
 
       expect(ref.sizeBytes).toBe(payload.byteLength);
       const data = createMock.mock.calls[0]?.[0]?.data as Record<string, unknown>;
-      expect(Buffer.from(data.inlineBlob as Uint8Array)).toEqual(payload);
+      expect(data).toMatchObject({ inlineBlob: null, status: 'pending' });
+      expect(chunks.map(({ data: chunk, seq }) => [seq, chunk.byteLength])).toEqual([
+        [0, 1024 * 1024],
+        [1, 37],
+      ]);
+      expect(updateManyMock).toHaveBeenCalledWith({
+        data: { status: 'ready' },
+        where: { id: 'art-file-pg', status: 'pending' },
+      });
+
+      findMock.mockResolvedValue({
+        backend: 'pg',
+        contentType: 'application/octet-stream',
+        id: 'art-file-pg',
+        inlineBlob: null,
+        kind: 'ui.video',
+        sizeBytes: payload.byteLength,
+        status: 'ready',
+      } as never);
+      const { body, ref: readRef } = await getArtifact('art-file-pg');
+      expect(body).toEqual(payload);
+      expect(readRef.sizeBytes).toBe(payload.byteLength);
+      expect(chunkFindManyMock).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 4, where: { artifactId: 'art-file-pg', seq: { gte: 0 } } })
+      );
+    } finally {
+      await fs.rm(filePath, { force: true });
+    }
+  }, 15_000);
+
+  it('rejects and deletes a pending chunked row when the file size does not match', async () => {
+    const filePath = path.join(os.tmpdir(), `asw-artifact-${process.pid}.bad-size.pg`);
+    const payload = Buffer.from('recording bytes');
+    await fs.writeFile(filePath, payload);
+    createMock.mockImplementation((async ({ data }: { data: Record<string, unknown> }) => ({
+      ...data,
+      id: 'art-file-bad-size',
+    })) as never);
+    findUniqueMock.mockResolvedValue({ backend: 'pg', status: 'pending' } as never);
+    deleteManyMock.mockResolvedValue({ count: 1 } as never);
+
+    try {
+      await expect(
+        putArtifact({
+          body: { filePath, sizeBytes: payload.byteLength + 1 },
+          kind: 'ui.video',
+        })
+      ).rejects.toThrow(/size mismatch/);
+      expect(chunkCreateMock).toHaveBeenCalledOnce();
+      expect(updateManyMock).toHaveBeenCalledWith({
+        data: { status: 'pruning' },
+        where: { id: 'art-file-bad-size', status: 'pending' },
+      });
+      expect(deleteManyMock).toHaveBeenCalledWith({
+        where: { id: 'art-file-bad-size', status: 'pruning' },
+      });
     } finally {
       await fs.rm(filePath, { force: true });
     }
@@ -209,20 +284,19 @@ describe('getArtifact / getArtifactText (postgres backend)', () => {
     expect(await getArtifactText('art-1')).toBe('hello world');
   });
 
-  it('throws if a pg-backed artifact has no inlineBlob (data corruption)', async () => {
+  it('throws if a chunked pg artifact has missing chunks', async () => {
     findMock.mockResolvedValue({
       backend: 'pg',
       contentType: 'text/plain',
       id: 'art-broken',
       inlineBlob: null,
       kind: 'logs',
-      s3Bucket: null,
-      s3Key: null,
-      sizeBytes: 0,
+      sizeBytes: 1,
       status: 'ready',
     } as never);
+    chunkFindManyMock.mockResolvedValue([] as never);
 
-    await expect(getArtifact('art-broken')).rejects.toThrow(/no inlineBlob/);
+    await expect(getArtifact('art-broken')).rejects.toThrow(/size mismatch/);
   });
 });
 
@@ -445,6 +519,21 @@ describe('getArtifact refuses an artifact that is not ready', () => {
 });
 
 describe('deletePendingArtifact', () => {
+  it('deletes pending pg rows so their chunks cascade', async () => {
+    findUniqueMock.mockResolvedValue({ backend: 'pg', status: 'pending' } as never);
+    deleteManyMock.mockResolvedValue({ count: 1 } as never);
+
+    await expect(deletePendingArtifact('art-pg-pending')).resolves.toBe(true);
+
+    expect(updateManyMock).toHaveBeenCalledWith({
+      data: { status: 'pruning' },
+      where: { id: 'art-pg-pending', status: 'pending' },
+    });
+    expect(deleteManyMock).toHaveBeenCalledWith({
+      where: { id: 'art-pg-pending', status: 'pruning' },
+    });
+  });
+
   it('deletes the object, then the row while it is still pending', async () => {
     process.env.ARTIFACT_S3_BUCKET = 'bucket-1';
     findUniqueMock.mockResolvedValue({

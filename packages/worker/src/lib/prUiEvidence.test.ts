@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/config/resolveSetting', () => ({ resolveSetting: vi.fn() }));
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { runEvidence: { findMany: vi.fn() } },
+  prisma: { runEvidence: { findMany: vi.fn(), update: vi.fn() } },
 }));
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
   getArtifact: vi.fn(),
@@ -19,6 +19,7 @@ import { getArtifact, putObjectToBucket } from '@auto-swe/shared/lib/artifactSto
 import { buildPrUiEvidence } from './prUiEvidence.js';
 
 const findEvidence = prisma.runEvidence.findMany as unknown as ReturnType<typeof vi.fn>;
+const updateEvidence = prisma.runEvidence.update as unknown as ReturnType<typeof vi.fn>;
 
 function screenshots(count: number) {
   return Array.from({ length: count }, (_, index) => ({
@@ -77,6 +78,11 @@ describe('buildPrUiEvidence', () => {
       Buffer.from('png'),
       'image/png'
     );
+    expect(updateEvidence).toHaveBeenCalledTimes(6);
+    expect(updateEvidence).toHaveBeenCalledWith({
+      data: { publicBucket: 'public-evidence' },
+      where: { id: 'evidence-0' },
+    });
     expect(body.match(/!\[/g)).toHaveLength(6);
   });
 });

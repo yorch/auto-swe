@@ -2067,7 +2067,8 @@ model AutomationSeenIssue {
 /// passes the artifact ID around; activities fetch the blob on demand.
 ///
 /// `backend` is "s3" when ARTIFACT_S3_BUCKET is configured, "pg" otherwise.
-/// For "pg" the bytes live in `inlineBlob`; for "s3" only `s3Key` is set.
+/// For "pg", small bodies live in `inlineBlob` and file bodies use chunks; for
+/// "s3" only `s3Key` is set.
 /// A dependency cache a workspace saved after its setup steps and before any agent ran:
 /// a tarball in the object store (`WorkflowArtifact` kind `workspace-setup-cache`), found by a
 /// key over the repository, the setup definition, its key files, the image and the CPU
@@ -2115,9 +2116,20 @@ model WorkflowArtifact {
 
   transcriptParts AgentTranscriptPart[]
   runEvidence     RunEvidence?
+  chunks          WorkflowArtifactChunk[]
 
   @@index([runId])
   @@map("workflow_artifacts")
+}
+
+model WorkflowArtifactChunk {
+  artifactId String           @map("artifact_id") @db.Uuid
+  artifact   WorkflowArtifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  seq        Int
+  data       Bytes
+
+  @@id([artifactId, seq])
+  @@map("workflow_artifact_chunks")
 }
 
 enum KnowledgeEvidenceProducer {
@@ -2367,6 +2379,7 @@ model RunEvidence {
   pageUrl     String?          @map("page_url")
   width       Int?
   height      Int?
+  publicBucket String?          @map("public_bucket")
   createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz
   @@index([runId, createdAt])
   @@map("run_evidence")

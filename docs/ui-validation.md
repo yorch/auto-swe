@@ -31,9 +31,9 @@ than failing the gate. The worker copies a finalized recording and trace to temp
 independently, so a recording that cannot be read does not cost the trace.
 
 The scheduled transcript-pruning workflow also removes evidence older than
-`uiValidation.evidenceRetentionDays`, including the public copy a pull request published, when
-`UI_EVIDENCE_PUBLIC_BUCKET` still names the bucket it was written to. Evidence cleanup failures are
-logged without failing transcript pruning. Size and per-run limits use the
+`uiValidation.evidenceRetentionDays`, including the public copy a pull request published, using the
+bucket recorded on the evidence row or the current `UI_EVIDENCE_PUBLIC_BUCKET` for older rows.
+Evidence cleanup failures are logged without failing transcript pruning. Size and per-run limits use the
 `uiValidation.maxScreenshotBytes`, `uiValidation.maxVideoBytes` and `uiValidation.maxEvidencePerRun`
 settings. The `uiValidation.agentRecordVideo` setting controls agent browser recording.
 
@@ -70,7 +70,8 @@ whole toolset, so concurrent tool calls in a single model step share it.
 by default also sends a viewport-only JPEG to the model. The ADMIN-only, GLOBAL setting
 `uiValidation.agentScreenshotImages` disables model images for models without image input; an
 unreadable or oversized JPEG is omitted while the screenshot evidence and text result are still
-returned.
+returned. The JPEG is withheld when page text or the accessibility snapshot is flagged by injection
+screening.
 
 ## PR evidence
 
@@ -80,9 +81,10 @@ copies are created only when that setting is enabled and both optional environme
 `UI_EVIDENCE_PUBLIC_BUCKET` and `UI_EVIDENCE_PUBLIC_BASE_URL`. The worker copies at most six
 screenshots to `ui-evidence/<runId>/<evidenceId>.png` without setting an ACL. Configure the public
 bucket's read policy deliberately; the dashboard evidence remains access-controlled. The retention
-sweep deletes those copies with their evidence, and only while `UI_EVIDENCE_PUBLIC_BUCKET` still
-names the bucket they were written to. The public bucket is S3-compatible even when artifacts live
-in the filesystem store: inline PR images are the one feature that always needs an object store.
+sweep deletes those copies with their evidence using the bucket recorded on each evidence row.
+Copies made before that field existed fall back to `UI_EVIDENCE_PUBLIC_BUCKET` and may remain in an
+old bucket after a rename. The public bucket is S3-compatible even when artifacts live in the
+filesystem store: inline PR images are the one feature that always needs an object store.
 
 ## Repository preview recipes
 
@@ -114,9 +116,10 @@ workspaces receive the recipe's services only when the agent has an explicit `br
 
 The worker's `startAppPreview` helper runs the recipe's optional setup (after the repository's
 [workspace setup](./repositories.md#workspace-setup), with the recipe's env), starts the app in its own session (so
-its pid is its process-group id and `stop()` can kill the whole tree), polls the readiness URL from
-inside the workspace and returns a stop function and bounded, redacted log tail. It uses the
-recipe's base URL, or the readiness URL's origin when none is supplied.
+its process-group leader is its process-group id and `stop()` can kill the group), polls the readiness
+URL from inside the workspace and returns a stop function and bounded, redacted log tail. The browser
+image uses `tini` as a subreaper for preview descendants that leave that group. It uses the recipe's
+base URL, or the readiness URL's origin when none is supplied.
 
 ## Kubernetes kind integration test
 
@@ -162,25 +165,24 @@ dropped.
   having no `CAP_SYS_ADMIN` and using the runtime-default seccomp profile to prevent `unshare` or
   `setns` from moving a process into another mount namespace to evade the sweep.
 - Public PR images are intentionally unavailable unless both environment values and the explicit
-  admin setting are enabled. The public bucket's access policy is operator-managed. Renaming the
-  bucket after copies exist leaves the old copies behind: retention can only delete from the bucket
-  the environment currently names.
-- `stop()` also stops orphaned processes in the workspace mount namespace whose start time is at
-  or after the preview starts and whose parent chain reaches PID 1. This includes an orphaned
-  process from any command started after the preview, not only one started by the preview command.
-  The sweep runs only when `stop()` executes inside a workspace exec session.
+  admin setting are enabled. The public bucket's access policy is operator-managed. Copies made
+  before each evidence row recorded its bucket may remain behind after a bucket rename.
+- With a running `tini` in the browser image, `stop()` kills the preview process group and its
+  descendants precisely, including daemons that leave the group. If `tini` is absent or no longer
+  running, it falls back to the workspace-mount-namespace sweep for processes started after the
+  preview whose parent chain reaches PID 1. That can include an orphan from any later command, not
+  just the preview; the sweep runs only when `stop()` executes inside a workspace exec session.
 - A worker that dies between writing an artifact and creating its `RunEvidence` row leaves a ready
   `ui.*` artifact that no evidence row points at. The daily transcript sweep deletes those, and a
   pending write, after a day; until then the object is stored but unreachable from any run.
 - Video and trace evidence are copied to temporary files and streamed through the worker into the
-  filesystem or S3 artifact store. The PostgreSQL `bytea` backend still buffers each file in worker
-  memory. The `uiValidation.maxVideoBytes` cap bounds a single evidence item, and the step's
+  artifact store. The `uiValidation.maxVideoBytes` cap bounds a single evidence item, and the step's
   wall-clock budget has to cover the transfer as well as the recording. Serving is streamed from
   the store, not buffered.
 - A generic `agent` node can use the browser only with `workspace: true` and an explicit `browser`
   grant; a node without a workspace has no browser tools.
 - Trace snapshots replay on the dashboard origin. Playwright strips scripts from snapshot HTML, but
   the content comes from the app under test.
-- Injection screening covers the screenshot tool's text output, not the pixels in the JPEG image
-  sent to the model. The model may therefore receive visual content that is not covered by text
-  screening.
+- Injection screening covers the screenshot tool's text output and accessibility snapshot, not the
+  pixels in the JPEG image sent to the model. Text drawn only into an image or canvas is not
+  screened.
