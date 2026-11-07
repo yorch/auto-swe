@@ -63,6 +63,15 @@ export const PreviewConfigInputSchema = z
       .strict()
       .optional(),
     env: EnvironmentSchema.optional(),
+    /**
+     * Names of `env` keys whose values look random but are not secrets (a commit SHA, a UUID):
+     * the random-value check skips them. Name and token-shape checks still apply.
+     */
+    publicEnv: z
+      .array(z.string().regex(/^[A-Z_][A-Z0-9_]*$/))
+      .max(50)
+      .refine((names) => new Set(names).size === names.length, 'must not repeat a name')
+      .optional(),
     readyTimeoutMs: z.number().int().min(1000).max(900_000).optional(),
     readyUrl: LocalPreviewUrlSchema,
     /**
@@ -120,19 +129,72 @@ const SECRET_LOOKING_VALUE = [
   /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/,
   /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[abposr]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{35})\b/,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  // A JSON Web Token: base64url header and payload, the header starting `{"`.
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\./,
 ];
+
+/** Shortest run of key-like characters (`-` and `_` left out) the random-value check considers. */
+const RANDOM_RUN_MIN_CHARS = 16;
+
+function charClass(c: string): number {
+  return c >= 'a' && c <= 'z' ? 0 : c >= 'A' && c <= 'Z' ? 1 : c >= '0' && c <= '9' ? 2 : 3;
+}
+
+function shannonBitsPerChar(s: string): number {
+  const counts = new Map<string, number>();
+  for (const c of s) {
+    counts.set(c, (counts.get(c) ?? 0) + 1);
+  }
+  let bits = 0;
+  for (const n of counts.values()) {
+    bits -= (n / s.length) * Math.log2(n / s.length);
+  }
+  return bits;
+}
+
+/**
+ * Whether a value holds a run that looks like a generated key: at least 16 base64, base64url or
+ * hex characters (ignoring `-` and `_`), varied enough (3 bits a character or more), and switching
+ * between lower case, upper case, digits and symbols on at least a third of its characters. Words
+ * joined with separators (`my_feature_flag_2024`, `eu-west-1`) and paths switch far less often.
+ */
+export function looksRandom(value: string): boolean {
+  for (const run of value.match(/[A-Za-z0-9+/=_-]{16,}/g) ?? []) {
+    const s = run.replace(/[-_]/g, '');
+    if (s.length < RANDOM_RUN_MIN_CHARS) {
+      continue;
+    }
+    let switches = 0;
+    for (let i = 1; i < s.length; i++) {
+      if (charClass(s[i] as string) !== charClass(s[i - 1] as string)) {
+        switches++;
+      }
+    }
+    if (shannonBitsPerChar(s) >= 3 && switches >= s.length / 3) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * The keys of a preview recipe's `env` that look like they hold a secret, by name (`*_TOKEN`,
- * `*PASSWORD`, …) or by value (URL userinfo, an auth header, a well-known token prefix, a
- * private key). A heuristic: it catches the common shapes, it does not prove the rest are safe.
+ * `*PASSWORD`, …), by value (URL userinfo, an auth header, a well-known token prefix, a private
+ * key, a JWT), or because the value looks random ({@link looksRandom}) and the key is not listed in
+ * `publicEnv`. A heuristic: it catches the common shapes, it does not prove the rest are safe.
  */
-export function secretLookingEnvKeys(env: Record<string, string> | undefined | null): string[] {
+export function secretLookingEnvKeys(
+  env: Record<string, string> | undefined | null,
+  publicEnv: readonly string[] = []
+): string[] {
+  const isPublic = new Set(publicEnv);
   return Object.entries(env ?? {})
     .filter(
       ([name, value]) =>
         value !== '' &&
-        (SECRET_LOOKING_NAME.test(name) || SECRET_LOOKING_VALUE.some((re) => re.test(value)))
+        (SECRET_LOOKING_NAME.test(name) ||
+          SECRET_LOOKING_VALUE.some((re) => re.test(value)) ||
+          (!isPublic.has(name) && looksRandom(value)))
     )
     .map(([name]) => name)
     .sort();

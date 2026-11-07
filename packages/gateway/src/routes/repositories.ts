@@ -350,11 +350,11 @@ async function previewConfigProblem(
       status: 403,
     };
   }
-  const secretLooking = secretLookingEnvKeys(next?.env);
+  const secretLooking = secretLookingEnvKeys(next?.env, next?.publicEnv);
   if (secretLooking.length) {
     return {
       code: PREVIEW_ENV_LOOKS_SECRET,
-      message: `The app preview env holds secret-looking values (${secretLooking.join(', ')}). Save them as setup secrets and name them under secrets instead.`,
+      message: `The app preview env holds secret-looking values (${secretLooking.join(', ')}). Save them as setup secrets and name them under secrets instead, or list a key whose value only looks random (a commit SHA, a UUID) under publicEnv.`,
       status: 400,
     };
   }
@@ -1896,7 +1896,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const parsed = PreviewConfigInputSchema.safeParse(row.previewConfig);
       const env = parsed.success ? (parsed.data.env ?? {}) : {};
-      const names = [...new Set(request.body?.names ?? secretLookingEnvKeys(env))];
+      const names = [
+        ...new Set(request.body?.names ?? secretLookingEnvKeys(env, parsed.data?.publicEnv)),
+      ];
       if (!parsed.success || names.length === 0) {
         return sendError(
           reply,
@@ -1991,41 +1993,84 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // GET /api/v1/repositories/:id/setup/eval-datasets — the repository team's TEAM eval datasets,
-  // and which of them read this repository's setup secrets. GLOBAL and ORG datasets are linked
-  // from the platform eval admin page.
+  // Which eval datasets the caller may link to a repository's setup secrets: its team's TEAM
+  // datasets as a team admin, and its organization's ORG datasets as an ORG_ADMIN of that
+  // organization. A platform ADMIN may link both.
+  const evalLinkAccess = async (request: FastifyRequest, id: string) => {
+    const user = requireUser(request);
+    const repo = await fastify.prisma.connection.findUnique({
+      select: { id: true, team: { select: { orgId: true } }, teamId: true, type: true },
+      where: { id },
+    });
+    if (repo?.type !== 'git_repo') {
+      return null;
+    }
+    const orgId = repo.team?.orgId ?? null;
+    const teamAdmin = repo.teamId !== null && (await isShellAuthor(fastify, user, repo.teamId));
+    const orgAdmin =
+      orgId !== null &&
+      (user.role === 'ADMIN' ||
+        (
+          await fastify.prisma.organizationMembership.findUnique({
+            select: { role: true },
+            where: { userId_orgId: { orgId, userId: user.sub } },
+          })
+        )?.role === 'ORG_ADMIN');
+    return {
+      orgId: orgAdmin ? orgId : null,
+      repo,
+      teamId: teamAdmin ? repo.teamId : null,
+      user,
+    };
+  };
+
+  // GET /api/v1/repositories/:id/setup/eval-datasets — the eval datasets the caller may link to
+  // this repository's setup secrets (see evalLinkAccess), and which of them read them. Empty for
+  // a caller who may link none. GLOBAL datasets are linked from the platform eval admin page.
   app.get(
     '/:id/setup/eval-datasets',
-    { onRequest: requireAuth({ requiredRole: Role.LEAD }), schema: { params: RepoParamsSchema } },
+    { onRequest: requireAuth(), schema: { params: RepoParamsSchema } },
     async (request, reply) => {
-      const found = await setupFileRepo(request, request.params.id);
-      if (!found.ok) {
-        return sendSetupFileRepoError(reply, found.error);
+      const access = await evalLinkAccess(request, request.params.id);
+      if (!access) {
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
-      if (!found.repo.teamId) {
-        return { data: [] };
-      }
-      const rows = await fastify.prisma.evalDataset.findMany({
-        orderBy: { name: 'asc' },
-        select: {
-          id: true,
-          name: true,
-          setupSecretsConnection: {
-            select: { id: true, name: true, organizationName: true, repoName: true },
-          },
-          slug: true,
+      const select = {
+        id: true,
+        name: true,
+        scope: true,
+        setupSecretsConnection: {
+          select: { id: true, name: true, organizationName: true, repoName: true },
         },
-        where: { scope: 'TEAM', teamId: found.repo.teamId },
-      });
+        slug: true,
+      } as const;
+      const [teamRows, orgRows] = await Promise.all([
+        access.teamId
+          ? fastify.prisma.evalDataset.findMany({
+              orderBy: { name: 'asc' },
+              select,
+              where: { scope: 'TEAM', teamId: access.teamId },
+            })
+          : [],
+        access.orgId
+          ? fastify.prisma.evalDataset.findMany({
+              orderBy: { name: 'asc' },
+              select,
+              where: { orgId: access.orgId, scope: 'ORGANIZATION' },
+            })
+          : [],
+      ]);
+      const rows = [...teamRows, ...orgRows];
       return {
         data: rows.map((r) => ({
           id: r.id,
-          linked: r.setupSecretsConnection?.id === found.repo.id,
+          linked: r.setupSecretsConnection?.id === access.repo.id,
           name: r.name,
+          scope: r.scope,
           slug: r.slug,
           // Set when the dataset reads another repository's setup secrets.
           usesRepository:
-            r.setupSecretsConnection && r.setupSecretsConnection.id !== found.repo.id
+            r.setupSecretsConnection && r.setupSecretsConnection.id !== access.repo.id
               ? {
                   id: r.setupSecretsConnection.id,
                   name:
@@ -2038,34 +2083,53 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // PUT /api/v1/repositories/:id/setup/eval-datasets/:datasetId — link (or unlink) one of the
-  // repository team's TEAM eval datasets to this repository's setup secrets. Linking replaces
-  // any other repository; unlinking only clears a link to this one.
+  // PUT /api/v1/repositories/:id/setup/eval-datasets/:datasetId — link (or unlink) a dataset the
+  // caller may link (see evalLinkAccess) to this repository's setup secrets. Linking replaces any
+  // other repository; unlinking only clears a link to this one.
   app.put(
     '/:id/setup/eval-datasets/:datasetId',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth(),
       schema: {
         body: z.object({ linked: z.boolean() }),
         params: z.object({ datasetId: z.string().uuid(), id: z.string().uuid() }),
       },
     },
     async (request, reply) => {
-      const found = await setupFileRepo(request, request.params.id);
-      if (!found.ok) {
-        return sendSetupFileRepoError(reply, found.error);
+      const access = await evalLinkAccess(request, request.params.id);
+      if (!access) {
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      if (!access.teamId && !access.orgId) {
+        return sendError(
+          reply,
+          403,
+          'EVAL_DATASET_LINK_FORBIDDEN',
+          "Linking eval datasets to a repository's setup secrets requires team-admin role, or organization-admin role for organization datasets"
+        );
       }
       const { linked } = request.body;
+      const repoId = access.repo.id;
       const result = await fastify.prisma.$transaction(async (tx) => {
         const ds = await tx.evalDataset.findUnique({
-          select: { id: true, scope: true, setupSecretsConnectionId: true, teamId: true },
+          select: {
+            id: true,
+            orgId: true,
+            scope: true,
+            setupSecretsConnectionId: true,
+            teamId: true,
+          },
           where: { id: request.params.datasetId },
         });
-        if (!ds || ds.scope !== 'TEAM' || !found.repo.teamId || ds.teamId !== found.repo.teamId) {
+        const allowed =
+          ds &&
+          ((ds.scope === 'TEAM' && access.teamId !== null && ds.teamId === access.teamId) ||
+            (ds.scope === 'ORGANIZATION' && access.orgId !== null && ds.orgId === access.orgId));
+        if (!allowed) {
           return null;
         }
         const before = ds.setupSecretsConnectionId;
-        const after = linked ? found.repo.id : before === found.repo.id ? null : before;
+        const after = linked ? repoId : before === repoId ? null : before;
         if (after !== before) {
           await tx.evalDataset.update({
             data: { setupSecretsConnectionId: after },
@@ -2079,20 +2143,20 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           reply,
           404,
           'DATASET_NOT_FOUND',
-          "Eval dataset not found in this repository's team"
+          'Eval dataset not found among those you may link to this repository'
         );
       }
       if (result.after !== result.before) {
         await writeAuditLog(fastify, {
           action: 'UPDATE',
-          actor: found.user,
+          actor: access.user,
           after: { setupSecretsConnectionId: result.after },
           before: { setupSecretsConnectionId: result.before },
           entityId: result.id,
           entityType: 'EvalDataset',
         });
       }
-      return { data: { linked: result.after === found.repo.id } };
+      return { data: { linked: result.after === repoId } };
     }
   );
 

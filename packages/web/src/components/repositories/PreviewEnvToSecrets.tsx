@@ -14,18 +14,20 @@ import { errMsg } from '@/lib/errors';
 export function PreviewEnvToSecrets({
   repositoryId,
   env,
+  publicEnv,
   disabled,
   onMoved,
 }: {
   repositoryId: string;
   env: Record<string, string> | undefined;
+  publicEnv?: readonly string[];
   disabled?: boolean;
   onMoved: (previewConfig: unknown) => void;
 }) {
   const move = useMovePreviewEnvToSecrets(repositoryId);
   // `env` is the saved recipe's, which stays stale until the form is reopened.
   const moved = new Set(move.data?.moved ?? []);
-  const names = secretLookingEnvKeys(env).filter((n) => !moved.has(n));
+  const names = secretLookingEnvKeys(env, publicEnv).filter((n) => !moved.has(n));
   if (names.length === 0 && !move.isSuccess) {
     return null;
   }
@@ -37,7 +39,8 @@ export function PreviewEnvToSecrets({
             The saved recipe's env has secret-looking values ({names.join(', ')}), stored as plain
             text and shown to anyone who opens this form. The preview does not start, and the recipe
             cannot be saved, until they are moved into setup secrets, where they are encrypted and
-            write-only; the recipe then names them under <code>secrets</code>.
+            write-only; the recipe then names them under <code>secrets</code>. A value that only
+            looks random, such as a commit SHA, can stay: list its key under <code>publicEnv</code>.
           </p>
           <Button
             disabled={disabled || move.isPending}

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { PreviewConfigSchema, secretLookingEnvKeys } from './previewConfig.js';
+import {
+  looksRandom,
+  PreviewConfigInputSchema,
+  PreviewConfigSchema,
+  secretLookingEnvKeys,
+} from './previewConfig.js';
 
 const validConfig = {
   readyUrl: 'http://localhost:4173/health',
@@ -142,5 +147,67 @@ describe('secretLookingEnvKeys', () => {
 
   it('accepts a missing env', () => {
     expect(secretLookingEnvKeys(undefined)).toEqual([]);
+  });
+
+  it('flags a random-looking value under an ordinary name, unless publicEnv lists it', () => {
+    const env = {
+      BUILD_SHA: '2f5bf2379ed09785f417904a634a432c59dfa9fd',
+      DB_URL: 'k9Xq2LmZ7pR4tW8vB3nY',
+      JWT: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl',
+      REGION: 'eu-west-1',
+    };
+    expect(secretLookingEnvKeys(env)).toEqual(['BUILD_SHA', 'DB_URL', 'JWT']);
+    expect(secretLookingEnvKeys(env, ['BUILD_SHA', 'JWT'])).toEqual(['DB_URL', 'JWT']);
+  });
+
+  it('does not let publicEnv excuse a secret-looking name or token shape', () => {
+    expect(
+      secretLookingEnvKeys({ API_TOKEN: 'abc', GH: 'ghp_abcdefghijklmnopqrstuvwxyz0123' }, [
+        'API_TOKEN',
+        'GH',
+      ])
+    ).toEqual(['API_TOKEN', 'GH']);
+  });
+});
+
+describe('looksRandom', () => {
+  it.each([
+    'my_feature_flag_enabled_2024',
+    'NODE_OPTIONS_max_old_space_4096',
+    'production-eu-west-1-cluster',
+    'node_modules/.bin/next-dev',
+    'MyApplicationName2024Prod',
+    'http://localhost:3000/api/v1/healthcheck',
+    '--max-old-space-size=4096',
+    '1700000000000',
+    'ImageTag20241106build17',
+    'v1.2.3-beta.4+build.5678',
+  ])('leaves %s', (value) => {
+    expect(looksRandom(value)).toBe(false);
+  });
+
+  it.each([
+    'CVVGo9EjlpADP2zm25ygIw94',
+    'oyDeq2Htnp7a4n1RYHosa+H3WtwTBORB',
+    'd2269ca31e0165a8f1ec2431b8ef334b',
+    'MRP9ku22bSNd3x2D2j5i',
+    'r60UvA2r92Mw_BtUkIloaTEFbON0apLT',
+  ])('flags %s', (value) => {
+    expect(looksRandom(value)).toBe(true);
+  });
+});
+
+describe('publicEnv', () => {
+  it('accepts env names without repeats', () => {
+    const base = { readyUrl: 'http://localhost:3000', start: 'npm start' };
+    expect(PreviewConfigInputSchema.safeParse({ ...base, publicEnv: ['GIT_SHA'] }).success).toBe(
+      true
+    );
+    expect(
+      PreviewConfigInputSchema.safeParse({ ...base, publicEnv: ['GIT_SHA', 'GIT_SHA'] }).success
+    ).toBe(false);
+    expect(PreviewConfigInputSchema.safeParse({ ...base, publicEnv: ['git-sha'] }).success).toBe(
+      false
+    );
   });
 });

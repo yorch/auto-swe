@@ -7,9 +7,10 @@ import { useLinkRepoEvalDataset, useRepoEvalDatasets } from '@/hooks/useReposito
 import { errMsg } from '@/lib/errors';
 
 /**
- * The repository team's eval datasets, and which of them run their cases' workspace setup with
- * this repository's setup secrets. A team admin links or unlinks them here; GLOBAL and ORG
- * datasets are linked from the platform eval admin page. Only team admins see it.
+ * The eval datasets the user may link to this repository's setup secrets, and which of them run
+ * their cases' workspace setup with them: the team's datasets for a team admin, the
+ * organization's for an organization admin. GLOBAL datasets are linked from the platform eval
+ * admin page. Hidden when the user may link none.
  */
 export function RepoEvalDatasets({ repositoryId }: { repositoryId: string }) {
   const datasets = useRepoEvalDatasets(repositoryId);
@@ -32,6 +33,9 @@ export function RepoEvalDatasets({ repositoryId }: { repositoryId: string }) {
               <span className="min-w-0">
                 <span className="text-paper-200">{d.name}</span>{' '}
                 <span className="font-mono text-xs text-paper-500">{d.slug}</span>
+                {d.scope === 'ORGANIZATION' && (
+                  <span className="ml-1 text-xs text-paper-500">(organization)</span>
+                )}
                 {d.usesRepository && (
                   <span className="block text-xs text-paper-500">
                     Uses {d.usesRepository.name}'s secrets

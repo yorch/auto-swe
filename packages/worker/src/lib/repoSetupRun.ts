@@ -634,19 +634,11 @@ function longestLine(value: string): string {
 }
 
 /**
- * The strings the leak scan searches for one secret value: its longest line as written, URL
- * encoded, and base64 encoded at each of the three byte offsets it can start at inside a longer
- * encoded string (`_auth=base64(user:token)`), in both the standard and URL-safe alphabets. Only
- * the base64 characters that depend on the value alone are kept. Empty for a value too short to
- * search without matching by chance.
+ * The base64 characters that depend on `bytes` alone, at each of the three byte offsets they can
+ * start at inside a longer encoded string, so a value found inside `base64(user:token)` matches.
  */
-export function secretScanNeedles(value: string): string[] {
-  const line = longestLine(value);
-  if (line.length < MIN_SCANNED_SECRET_CHARS) {
-    return [];
-  }
-  const out = new Set([line, encodeURIComponent(line)]);
-  const bytes = Buffer.from(line, 'utf8');
+function base64Fragments(bytes: Buffer): string[] {
+  const out: string[] = [];
   for (let offset = 0; offset < 3; offset++) {
     const encoded = Buffer.concat([Buffer.alloc(offset), bytes]).toString('base64');
     const own = encoded.slice(
@@ -654,9 +646,32 @@ export function secretScanNeedles(value: string): string[] {
       Math.floor(((offset + bytes.length) * 8) / 6)
     );
     if (own.length >= MIN_SCANNED_SECRET_CHARS) {
-      out.add(own);
-      out.add(own.replaceAll('+', '-').replaceAll('/', '_'));
+      out.push(own);
     }
+  }
+  return out;
+}
+
+/**
+ * The strings the leak scan searches for one secret value: its longest line as written, URL
+ * encoded, hex encoded in either case, base64 encoded at any offset in both the standard and
+ * URL-safe alphabets ({@link base64Fragments}), and base64 encoded twice. Empty for a value too
+ * short to search without matching by chance.
+ */
+export function secretScanNeedles(value: string): string[] {
+  const line = longestLine(value);
+  if (line.length < MIN_SCANNED_SECRET_CHARS) {
+    return [];
+  }
+  const bytes = Buffer.from(line, 'utf8');
+  const hex = bytes.toString('hex');
+  const out = new Set([line, encodeURIComponent(line), hex, hex.toUpperCase()]);
+  for (const own of base64Fragments(bytes)) {
+    out.add(own);
+    out.add(own.replaceAll('+', '-').replaceAll('/', '_'));
+  }
+  for (const own of base64Fragments(Buffer.from(bytes.toString('base64')))) {
+    out.add(own);
   }
   return [...out];
 }
@@ -665,10 +680,27 @@ export function secretScanNeedles(value: string): string[] {
 const SCAN_TEMP_ROOTS = ['/tmp', '/var/tmp', '/dev/shm'];
 
 /**
+ * Holds the workspace clock's time (epoch seconds) right before the steps: a file modified since
+ * then, give or take two minutes, was written by setup, so the scan reads it whatever its size.
+ * By minutes rather than `-newer`, since BusyBox `find` (the Alpine images) compares whole seconds
+ * and a file written in the marker's second would not count as newer.
+ */
+const SCAN_MARKER = '/tmp/.auto-swe-setup-started';
+
+async function markStepsStart(host: RepoSetupHost): Promise<void> {
+  const result = await host.capture(`date +%s > ${SCAN_MARKER}`, { timeoutMs: 30_000 });
+  if (result.exitCode !== 0) {
+    throw setupRunFailure(`marking the start of the steps failed: ${tail(host, result)}`);
+  }
+}
+
+/**
  * Fail setup when a secret value is still in a file the agent or the cache could read: the
  * checkout, the workspace user's home (which holds every `~/` cache path), and the temporary
- * directories. Each value is searched for as written and encoded ({@link secretScanNeedles}),
- * through secret environment, never the command line. Only the file names are reported.
+ * directories. Files up to {@link SCAN_MAX_FILE_KB} KiB are read, and larger ones only when setup
+ * wrote them ({@link SCAN_MARKER}); every file when the marker is gone. Each value is searched for
+ * as written and encoded ({@link secretScanNeedles}), through secret environment, never the
+ * command line. Only the file names are reported.
  */
 async function scanForSecrets(
   host: RepoSetupHost,
@@ -682,10 +714,12 @@ async function scanForSecrets(
   const patterns = needles.map((_, i) => `-e "$AUTO_SWE_SCAN_${i}"`).join(' ');
   const roots = [shellQuote(REPO_DIR), '"$HOME"', ...SCAN_TEMP_ROOTS].join(' ');
   const script = [
-    `find ${roots} -xdev -type f -size -${SCAN_MAX_FILE_KB}k -print0 2>/dev/null`,
+    `if s=$(cat ${SCAN_MARKER} 2>/dev/null) && [ "$s" -gt 0 ] 2>/dev/null;`,
+    `then since="-mmin -$(( ($(date +%s) - s) / 60 + 2 ))"; else since="-type f"; fi;`,
+    `find ${roots} -xdev -type f \\( -size -${SCAN_MAX_FILE_KB}k -o $since \\) -print0 2>/dev/null`,
     `| xargs -0 -r grep -lF ${patterns} -- 2>/dev/null`,
     `| head -n ${SCAN_MAX_REPORTED}`,
-    `| sed -e ${shellQuote(`s|^${REPO_DIR}/||`)} -e "s|^$HOME/|~/|"; true`,
+    `| sed -e ${shellQuote(`s|^${REPO_DIR}/||`)} -e "s|^$HOME/|~/|"; rm -f ${SCAN_MARKER}; true`,
   ].join(' ');
   let result: CapturedResult;
   try {
@@ -762,8 +796,11 @@ export async function runSetupStepsPhase(
       `setup secret${short.length > 1 ? 's' : ''} ${short.join(', ')} ${short.length > 1 ? 'are' : 'is'} shorter than ${MIN_SCANNED_SECRET_CHARS} characters, too short to scan for; save a longer value`
     );
   }
-  const steps = await runSteps(host, setup, secretEnv);
   if (Object.keys(secretEnv).length) {
+    await markStepsStart(host);
+  }
+  const steps = await runSteps(host, setup, secretEnv);
+  if (steps.length) {
     try {
       await host.sweepProcesses();
     } catch (err) {

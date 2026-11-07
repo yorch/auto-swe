@@ -37,7 +37,8 @@
       "!**/next-env.d.ts",
       "!**/yarn.lock",
       "!**/*.tsbuildinfo"
-    ]
+    ],
+    "maxSize": 4194304
   },
   "formatter": {
     "enabled": true,

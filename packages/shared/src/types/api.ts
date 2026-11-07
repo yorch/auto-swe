@@ -1413,6 +1413,8 @@ export interface EvalDatasetDetail extends EvalDatasetSummary {
   setupSecretsRepository: { id: string; name: string } | null;
   /** The owning team of a TEAM dataset; null otherwise. */
   teamId: string | null;
+  /** The owning organization of an ORG dataset; null otherwise. */
+  orgId: string | null;
 }
 
 export interface EvalRunDto {

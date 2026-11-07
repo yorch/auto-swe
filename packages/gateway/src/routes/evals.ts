@@ -366,6 +366,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         description: ds.description,
         id: ds.id,
         name: ds.name,
+        orgId: ds.orgId,
         scope: ds.scope,
         setupSecretsRepository: ds.setupSecretsConnection
           ? {
@@ -381,8 +382,9 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // ── Link the repository whose setup secrets the cases' setup reads ──
-  // A TEAM dataset may only link a repository of its own team, so a platform admin cannot hand one
-  // team's secrets to another team's fixtures; other scopes may link any repository.
+  // A TEAM dataset may only link a repository of its own team, and an ORG dataset one of its own
+  // organization, so a platform admin cannot hand one tenant's secrets to another's fixtures; a
+  // GLOBAL dataset may link any repository.
   app.put(
     '/evals/:id/setup-secrets-repository',
     { onRequest: adminOnly, schema: { body: SetupSecretsRepoBody, params: IdParam } },
@@ -390,7 +392,13 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       const actor = requireUser(request);
       const { connectionId } = request.body;
       const ds = await fastify.prisma.evalDataset.findUnique({
-        select: { id: true, scope: true, setupSecretsConnectionId: true, teamId: true },
+        select: {
+          id: true,
+          orgId: true,
+          scope: true,
+          setupSecretsConnectionId: true,
+          teamId: true,
+        },
         where: { id: request.params.id },
       });
       if (!ds) {
@@ -398,7 +406,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (connectionId) {
         const repo = await fastify.prisma.connection.findUnique({
-          select: { teamId: true, type: true },
+          select: { team: { select: { orgId: true } }, teamId: true, type: true },
           where: { id: connectionId },
         });
         if (repo?.type !== 'git_repo') {
@@ -410,6 +418,14 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
             400,
             'REPO_NOT_IN_DATASET_TEAM',
             "A team dataset can only use a repository of the dataset's team"
+          );
+        }
+        if (ds.scope === 'ORGANIZATION' && (repo.team?.orgId ?? null) !== ds.orgId) {
+          return sendError(
+            reply,
+            400,
+            'REPO_NOT_IN_DATASET_ORG',
+            "An organization dataset can only use a repository of the dataset's organization"
           );
         }
       }

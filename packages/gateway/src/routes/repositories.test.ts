@@ -103,6 +103,9 @@ async function buildApp() {
     connectionTeamShare: { deleteMany: vi.fn() },
     evalDataset: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
     knowledgeItem: { count: vi.fn().mockResolvedValue(0) },
+    organizationMembership: {
+      findUnique: vi.fn(),
+    },
     prEvaluation: { findMany: vi.fn() },
     repoSetupSecret: {
       count: vi.fn(),
@@ -2082,6 +2085,7 @@ describe('repositoryRoutes', () => {
   describe('eval datasets using the setup secrets', () => {
     const OTHER_REPO = '44444444-4444-4444-8444-444444444444';
     const DATASET = '55555555-5555-4555-8555-555555555555';
+    const ORG_ID = '77777777-7777-4777-8777-777777777777';
     const link = (linked: boolean) =>
       ctx.app.inject({
         headers: AUTH_HEADER,
@@ -2112,19 +2116,38 @@ describe('repositoryRoutes', () => {
       }
       ctx.mockPrisma.connection.findUnique.mockResolvedValue({
         id: REPO_ID,
+        team: { orgId: ORG_ID },
         teamId: TEAM_ID,
         type: 'git_repo',
       });
       ctx.mockPrisma.evalDataset.update.mockResolvedValue({});
+      ctx.mockPrisma.organizationMembership.findUnique.mockReset().mockResolvedValue(null);
     });
+    const asOrgAdmin = () => {
+      asTeamMember('LEAD');
+      ctx.mockPrisma.organizationMembership.findUnique.mockResolvedValue({ role: 'ORG_ADMIN' });
+    };
+    const list = () =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: `/api/v1/repositories/${REPO_ID}/setup/eval-datasets`,
+      });
 
     it("lists only the repository team's TEAM datasets, marking which use this repository", async () => {
       asTeamMember('ADMIN');
       ctx.mockPrisma.evalDataset.findMany.mockResolvedValue([
-        { id: 'd1', name: 'A', setupSecretsConnection: { id: REPO_ID, name: 'me' }, slug: 'a' },
+        {
+          id: 'd1',
+          name: 'A',
+          scope: 'TEAM',
+          setupSecretsConnection: { id: REPO_ID, name: 'me' },
+          slug: 'a',
+        },
         {
           id: 'd2',
           name: 'B',
+          scope: 'TEAM',
           setupSecretsConnection: {
             id: OTHER_REPO,
             name: null,
@@ -2133,29 +2156,86 @@ describe('repositoryRoutes', () => {
           },
           slug: 'b',
         },
-        { id: 'd3', name: 'C', setupSecretsConnection: null, slug: 'c' },
+        { id: 'd3', name: 'C', scope: 'TEAM', setupSecretsConnection: null, slug: 'c' },
       ]);
-      const res = await ctx.app.inject({
-        headers: AUTH_HEADER,
-        method: 'GET',
-        url: `/api/v1/repositories/${REPO_ID}/setup/eval-datasets`,
-      });
+      const res = await list();
       expect(res.statusCode).toBe(200);
       expect(res.json().data).toEqual([
-        { id: 'd1', linked: true, name: 'A', slug: 'a', usesRepository: null },
+        { id: 'd1', linked: true, name: 'A', scope: 'TEAM', slug: 'a', usesRepository: null },
         {
           id: 'd2',
           linked: false,
           name: 'B',
+          scope: 'TEAM',
           slug: 'b',
           usesRepository: { id: OTHER_REPO, name: 'acme/other' },
         },
-        { id: 'd3', linked: false, name: 'C', slug: 'c', usesRepository: null },
+        { id: 'd3', linked: false, name: 'C', scope: 'TEAM', slug: 'c', usesRepository: null },
       ]);
       const query = ctx.mockPrisma.evalDataset.findMany.mock.calls[0]?.[0] as {
         where: Record<string, unknown>;
       };
       expect(query.where).toEqual({ scope: 'TEAM', teamId: TEAM_ID });
+      expect(ctx.mockPrisma.evalDataset.findMany).toHaveBeenCalledOnce();
+    });
+
+    it("lists the organization's ORG datasets to an organization admin who is not a team admin", async () => {
+      asOrgAdmin();
+      ctx.mockPrisma.evalDataset.findMany.mockResolvedValue([]);
+      expect((await list()).statusCode).toBe(200);
+      const query = ctx.mockPrisma.evalDataset.findMany.mock.calls[0]?.[0] as {
+        where: Record<string, unknown>;
+      };
+      expect(query.where).toEqual({ orgId: ORG_ID, scope: 'ORGANIZATION' });
+      expect(ctx.mockPrisma.evalDataset.findMany).toHaveBeenCalledOnce();
+      expect(ctx.mockPrisma.organizationMembership.findUnique).toHaveBeenCalledWith({
+        select: { role: true },
+        where: { userId_orgId: { orgId: ORG_ID, userId: 'lead-1' } },
+      });
+    });
+
+    it('lists both scopes to a platform admin', async () => {
+      ctx.mockPrisma.evalDataset.findMany.mockResolvedValue([]);
+      await list();
+      const wheres = ctx.mockPrisma.evalDataset.findMany.mock.calls.map(
+        (c) => (c[0] as { where: Record<string, unknown> }).where
+      );
+      expect(wheres).toEqual([
+        { scope: 'TEAM', teamId: TEAM_ID },
+        { orgId: ORG_ID, scope: 'ORGANIZATION' },
+      ]);
+    });
+
+    it("lets an organization admin link the organization's dataset, and audits it", async () => {
+      asOrgAdmin();
+      dataset({ orgId: ORG_ID, scope: 'ORGANIZATION', teamId: null });
+      const res = await link(true);
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.evalDataset.update).toHaveBeenCalledWith({
+        data: { setupSecretsConnectionId: REPO_ID },
+        where: { id: DATASET },
+      });
+      expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalled();
+    });
+
+    it("refuses an organization admin another organization's dataset and the team's datasets", async () => {
+      asOrgAdmin();
+      dataset({
+        orgId: '88888888-8888-4888-8888-888888888888',
+        scope: 'ORGANIZATION',
+        teamId: null,
+      });
+      expect((await link(true)).statusCode).toBe(404);
+      dataset();
+      expect((await link(true)).statusCode).toBe(404);
+      expect(ctx.mockPrisma.evalDataset.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses an ORG_MEMBER', async () => {
+      asTeamMember('LEAD');
+      ctx.mockPrisma.organizationMembership.findUnique.mockResolvedValue({ role: 'ORG_MEMBER' });
+      dataset({ orgId: ORG_ID, scope: 'ORGANIZATION', teamId: null });
+      expect((await link(true)).statusCode).toBe(403);
     });
 
     it('lets a team admin link a team dataset, replacing another repository, and audits it', async () => {
@@ -2185,26 +2265,24 @@ describe('repositoryRoutes', () => {
       expect(ctx.mockPrisma.evalDataset.update).not.toHaveBeenCalled();
     });
 
-    it("refuses another team's dataset and GLOBAL or ORG datasets", async () => {
+    it("refuses another team's or organization's dataset and GLOBAL datasets", async () => {
       dataset({ teamId: '66666666-6666-4666-8666-666666666666' });
       expect((await link(true)).statusCode).toBe(404);
       dataset({ scope: 'GLOBAL', teamId: null });
       expect((await link(true)).statusCode).toBe(404);
-      dataset({ orgId: 'org-1', scope: 'ORG', teamId: null });
+      dataset({ orgId: 'org-1', scope: 'ORGANIZATION', teamId: null });
       expect((await link(true)).statusCode).toBe(404);
       expect(ctx.mockPrisma.evalDataset.update).not.toHaveBeenCalled();
     });
 
-    it('refuses a team member who is not a team admin', async () => {
+    it('refuses a team member who is neither a team nor an organization admin, and lists nothing', async () => {
       asTeamMember('LEAD');
       dataset();
       expect((await link(true)).statusCode).toBe(403);
-      const list = await ctx.app.inject({
-        headers: AUTH_HEADER,
-        method: 'GET',
-        url: `/api/v1/repositories/${REPO_ID}/setup/eval-datasets`,
-      });
-      expect(list.statusCode).toBe(403);
+      const res = await list();
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toEqual([]);
+      expect(ctx.mockPrisma.evalDataset.findMany).not.toHaveBeenCalled();
       expect(ctx.mockPrisma.evalDataset.update).not.toHaveBeenCalled();
     });
   });
