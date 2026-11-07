@@ -541,6 +541,42 @@ describe.skipIf(!enabled)('workspace setup in a real container', () => {
     expect(failure?.message).not.toContain(TOKEN);
   }, 300_000);
 
+  it('catches a hex-encoded value in a file over 20 MiB that a step wrote', async () => {
+    const definition = RepoSetupSchema.parse({
+      ...baseSetup,
+      cache: undefined,
+      steps: [
+        {
+          name: 'big',
+          run: 'head -c 22000000 /dev/zero > ~/big.bin && printf %s "$NPM_TOKEN" | od -An -tx1 | tr -d " \\n" >> ~/big.bin',
+        },
+      ],
+    });
+    const host = await cloneWorkspace(startContainer());
+    await setup.runSetupGitPhase(host, definition, inputs(), headerFor('main'));
+    const failure = await setup
+      .runSetupStepsPhase(host, definition, inputs(), { NPM_TOKEN: TOKEN })
+      .then(
+        () => null,
+        (err: Error) => err
+      );
+    expect(failure?.message).toMatch(/left a secret value in ~\/big\.bin/);
+    expect(failure?.message).not.toContain(TOKEN);
+  }, 300_000);
+
+  it('stops a process a step without secrets left running', async () => {
+    const definition = RepoSetupSchema.parse({
+      steps: [{ name: 'daemon', run: 'nohup sleep 4343 >/dev/null 2>&1 &' }],
+    });
+    const host = await cloneWorkspace(startContainer());
+    await setup.runSetupStepsPhase(host, definition, inputs());
+    const left = await host.root(
+      'for d in /proc/[0-9]*; do tr "\\0" " " < "$d/cmdline" 2>/dev/null; echo; done'
+    );
+    expect(left).not.toContain('sleep 4343');
+    expect(left).toContain('sleep infinity');
+  }, 300_000);
+
   it('stops a process a step left running with a secret, and keeps the workspace alive', async () => {
     const definition = RepoSetupSchema.parse({
       ...baseSetup,

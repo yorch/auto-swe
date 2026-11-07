@@ -350,11 +350,11 @@ async function previewConfigProblem(
       status: 403,
     };
   }
-  const secretLooking = secretLookingEnvKeys(next?.env);
+  const secretLooking = secretLookingEnvKeys(next?.env, next?.publicEnv);
   if (secretLooking.length) {
     return {
       code: PREVIEW_ENV_LOOKS_SECRET,
-      message: `The app preview env holds secret-looking values (${secretLooking.join(', ')}). Save them as setup secrets and name them under secrets instead.`,
+      message: `The app preview env holds secret-looking values (${secretLooking.join(', ')}). Save them as setup secrets and name them under secrets instead, or list a key whose value only looks random (a commit SHA, a UUID) under publicEnv.`,
       status: 400,
     };
   }
@@ -1896,7 +1896,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const parsed = PreviewConfigInputSchema.safeParse(row.previewConfig);
       const env = parsed.success ? (parsed.data.env ?? {}) : {};
-      const names = [...new Set(request.body?.names ?? secretLookingEnvKeys(env))];
+      const names = [
+        ...new Set(request.body?.names ?? secretLookingEnvKeys(env, parsed.data?.publicEnv)),
+      ];
       if (!parsed.success || names.length === 0) {
         return sendError(
           reply,

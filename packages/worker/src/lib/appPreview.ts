@@ -292,10 +292,10 @@ export async function startAppPreview(
   } = {}
 ): Promise<{ baseUrl: string; stop(): Promise<void>; logTail(maxBytes: number): Promise<string> }> {
   const config = PreviewConfigSchema.parse(cfg);
-  const secretLooking = secretLookingEnvKeys(config.env);
+  const secretLooking = secretLookingEnvKeys(config.env, config.publicEnv);
   if (secretLooking.length) {
     throw new Error(
-      `App preview: ${PREVIEW_ENV_LOOKS_SECRET}: the recipe's env holds secret-looking values (${secretLooking.join(', ')}); move them to setup secrets from the repository's App preview form`
+      `App preview: ${PREVIEW_ENV_LOOKS_SECRET}: the recipe's env holds secret-looking values (${secretLooking.join(', ')}); move them to setup secrets from the repository's App preview form, or list a key that is not a secret under publicEnv`
     );
   }
   const timeoutMs = options.timeoutMs ?? config.readyTimeoutMs;
