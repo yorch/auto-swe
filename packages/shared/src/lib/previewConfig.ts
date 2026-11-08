@@ -133,6 +133,9 @@ const SECRET_LOOKING_VALUE = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\./,
 ];
 
+const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i;
+const LONG_HEX = /\b[0-9a-f]{32,}\b/gi;
+
 /** Shortest run of key-like characters (`-` and `_` left out) the random-value check considers. */
 const RANDOM_RUN_MIN_CHARS = 16;
 
@@ -153,13 +156,18 @@ function shannonBitsPerChar(s: string): number {
 }
 
 /**
- * Whether a value holds a run that looks like a generated key: at least 16 base64, base64url or
- * hex characters (ignoring `-` and `_`), varied enough (3 bits a character or more), and switching
- * between lower case, upper case, digits and symbols on at least a third of its characters. Words
- * joined with separators (`my_feature_flag_2024`, `eu-west-1`) and paths switch far less often.
+ * Whether a value holds a run that looks like a generated key: a UUID, 32 or more hex digits, or
+ * at least 16 base64, base64url or hex characters between slashes (ignoring `-` and `_`), varied
+ * enough (3 bits a character or more), and switching between lower case, upper case, digits and
+ * symbols on at least a third of its characters. Words joined with separators
+ * (`my_feature_flag_2024`, `eu-west-1`), paths and URLs switch far less often.
  */
 export function looksRandom(value: string): boolean {
-  for (const run of value.match(/[A-Za-z0-9+/=_-]{16,}/g) ?? []) {
+  // Digit-heavy hex (a UUID, a SHA) switches classes too rarely for the run check below.
+  if (UUID.test(value) || [...value.matchAll(LONG_HEX)].some((m) => /[a-f]/i.test(m[0]))) {
+    return true;
+  }
+  for (const run of value.match(/[A-Za-z0-9+=_-]{16,}/g) ?? []) {
     const s = run.replace(/[-_]/g, '');
     if (s.length < RANDOM_RUN_MIN_CHARS) {
       continue;

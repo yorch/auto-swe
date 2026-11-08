@@ -178,6 +178,9 @@ describe('looksRandom', () => {
     'node_modules/.bin/next-dev',
     'MyApplicationName2024Prod',
     'http://localhost:3000/api/v1/healthcheck',
+    'http://localhost:3000/api/v1/health',
+    'http://api:8080/v1/users/42/orders',
+    's3://bucket-2024/path/to/obj1',
     '--max-old-space-size=4096',
     '1700000000000',
     'ImageTag20241106build17',
@@ -192,6 +195,8 @@ describe('looksRandom', () => {
     'd2269ca31e0165a8f1ec2431b8ef334b',
     'MRP9ku22bSNd3x2D2j5i',
     'r60UvA2r92Mw_BtUkIloaTEFbON0apLT',
+    '550e8400-e29b-41d4-a716-446655440000',
+    '3716fe76373433fade1a66e46364e3d4129446ab',
   ])('flags %s', (value) => {
     expect(looksRandom(value)).toBe(true);
   });
