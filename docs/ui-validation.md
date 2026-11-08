@@ -106,8 +106,8 @@ saving a recipe with one fails, and a saved recipe that still has one does not s
 until it is moved. It looks secret by its name (`TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `API_KEY`,
 `ACCESS_KEY`, `PRIVATE_KEY`, `CREDENTIAL`, `AUTH`) or its value (URL userinfo, a `Bearer` or `Basic`
 header, a well-known token prefix such as `ghp_`, `glpat-`, `sk-` or `AKIA`, a PEM private key, a
-JWT), or because the value looks randomly generated: a run of at least 16 base64, base64url or hex
-characters (not counting `-` and `_`) that is varied and switches between lower case, upper case,
+JWT), or because the value looks randomly generated: a UUID, a run of 32 or more hex digits, or a
+run of at least 16 base64, base64url or hex characters (not counting `-` and `_`) that is varied and switches between lower case, upper case,
 digits and symbols on at least a third of its characters. Words joined by separators
 (`eu-west-1`, `my_feature_flag_2024`), paths and URLs pass; a random key, a commit SHA or a UUID
 does not. A key whose value only looks random lists its name under `publicEnv`

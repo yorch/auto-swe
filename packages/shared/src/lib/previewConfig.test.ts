@@ -192,6 +192,8 @@ describe('looksRandom', () => {
     'd2269ca31e0165a8f1ec2431b8ef334b',
     'MRP9ku22bSNd3x2D2j5i',
     'r60UvA2r92Mw_BtUkIloaTEFbON0apLT',
+    '550e8400-e29b-41d4-a716-446655440000',
+    '3716fe76373433fade1a66e46364e3d4129446ab',
   ])('flags %s', (value) => {
     expect(looksRandom(value)).toBe(true);
   });
