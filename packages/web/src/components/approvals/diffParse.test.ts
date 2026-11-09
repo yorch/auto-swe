@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isUnifiedDiff, parseUnifiedDiff } from './diffParse';
+import { isUnifiedDiff, parseFilePatch, parseUnifiedDiff } from './diffParse';
 
 const TWO_FILES = `diff --git a/src/a.ts b/src/a.ts
 index 111..222 100644
@@ -79,5 +79,27 @@ describe('parseUnifiedDiff without per-file diff headers', () => {
   it('does not count a following file header as a removed line', () => {
     const [first] = parseUnifiedDiff(PLAIN);
     expect(first.lines.some((l) => l.text.startsWith('--- a/two'))).toBe(false);
+  });
+});
+
+describe('parseFilePatch', () => {
+  it("reads one file's patch, which has hunks and no file header", () => {
+    const parsed = parseFilePatch(['@@ -1,2 +1,2 @@', ' keep', '-old', '+new'].join('\n'));
+    expect(parsed).toMatchObject({ added: 1, removed: 1 });
+    expect(parsed.lines.filter((l) => l.kind === 'add' || l.kind === 'del')).toHaveLength(2);
+  });
+
+  it('reads an empty patch as no lines', () => {
+    expect(parseFilePatch('')).toEqual({ added: 0, lines: [], removed: 0 });
+  });
+
+  it('keeps every line even when the patch looks like several files, so nothing is hidden', () => {
+    const odd = ['@@ -1 +1 @@', '-a', '+b', 'diff --git a/x b/x', '@@ -1 +1 @@', '-c', '+d'].join(
+      '\n'
+    );
+    const parsed = parseFilePatch(odd);
+    expect(parsed.added).toBe(2);
+    expect(parsed.removed).toBe(2);
+    expect(parsed.lines.some((l) => l.text === 'diff --git a/x b/x')).toBe(true);
   });
 });

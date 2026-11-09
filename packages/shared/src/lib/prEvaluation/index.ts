@@ -7,4 +7,5 @@ export * from './findings.js';
 export * from './paths.js';
 export * from './policy.js';
 export * from './status.js';
+export * from './stored.js';
 export type * from './types.js';
