@@ -408,10 +408,15 @@ the per-channel Temporal Schedule is created, retimed, or torn down to match the
 interpolates from outside the platform is escaped first (`&`, `<`, `>` become entities; `*bold*`,
 `_italic_` and backticks keep working): the ticket id, template and node names, step titles and
 descriptions, error text, a task's title, a drafted workflow's name and summary, and an open item's
-description in a nudge. The platform's own links, such as "Open approvals", and the owner mention on
+description in a nudge, and, in the gateway, the ticket id on the PR-merged line and the step title
+on an approval confirmation. The platform's own links, such as "Open approvals", and the owner mention on
 a nudge are written by the code and are not escaped. Text a model writes as its reply is not
-escaped, because the reply is meant to carry Slack formatting; only a card's text is (see
-*Structured replies*).
+escaped wholesale, because a reply is meant to carry Slack formatting; a card's text is (see
+*Structured replies*). Instead every message the worker posts or edits passes one check just before
+it is sent (`neutralizeSlackBroadcasts`, in `lib/slackNotify.ts`'s three writers): a broadcast
+mention (`<!channel>`, `<!here>`, `<!everyone>`, a `<!subteam^…>` user group, with or without a
+`|label`) becomes literal text, and links, `<@U…>` mentions of one person, channel references and
+formatting are left as written.
 
 All Slack I/O resolves its token by channel or workspace ID via
 `resolveSlackBotTokenForSlackChannel` / `resolveSlackBotTokenForWorkspace`, falling back to the
@@ -456,10 +461,12 @@ unproven on real traffic, and turn them on one channel at a time.
   and a task's final in-thread report still post text, and a long-running task never edits a card.
 - **A card is not summarised into channel memory.** The memory summariser sees the turn's prose,
   which is at most a sentence when the answer was a card.
-- **Model-written replies are not escaped.** The assistant's reply, a reactive interjection, an
-  ambient digest in prose and a task's result text go to Slack as the model wrote them, so a
-  prompt-injected message could make one carry a `<!channel>` broadcast. Escaping them would also
-  change how any Slack formatting in them renders; a card is the escaped alternative.
+- **A model-written reply can still mention one person or add a link.** Only broadcast mentions are
+  defused in a reply, a reactive interjection, a prose digest and a task's result text, so a
+  prompt-injected message can still make one ping a single named user or carry a link to anywhere.
+  A card is the stricter alternative: its text is escaped and its buttons may only point at the
+  dashboard and approved repository hosts. The check covers the worker's own writers; the gateway's
+  thread posts are built by fixed code, with outside text escaped.
 - **Reactive interjection posts at channel root**, not into the most relevant thread.
 - **No per-stage progress posts** back into a task thread beyond the live `chat.update` on turns;
   the run itself is observable in `/runs`.

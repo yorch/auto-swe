@@ -27,6 +27,8 @@ import {
   notifySlackPrReady,
   notifySlackRunComplete,
   notifySlackStepFailure,
+  postSlackChannelMessage,
+  postSlackThreadMessage,
   postSlackThreadMessageReturningTs,
   updateSlackMessage,
 } from './slackNotify.js';
@@ -821,5 +823,62 @@ describe('text from outside the platform is escaped before it goes into a notice
     expect(body.blocks).toBeUndefined();
     expect(body.text).not.toMatch(/<[!@h]/);
     expect(body.text.split(ESC)).toHaveLength(3);
+  });
+});
+
+describe('broadcast mentions in model-written text are defused at the Slack writers', () => {
+  const MODEL =
+    'Done. <!channel> please look, cc <!subteam^S1|@oncall> and <@U123>: <https://x.example|doc>';
+  const SAFE =
+    'Done. &lt;!channel&gt; please look, cc &lt;!subteam^S1|@oncall&gt; and <@U123>: <https://x.example|doc>';
+
+  function lastBody(): { text: string } {
+    const call = fetchCalls.at(-1);
+    if (!call) {
+      throw new Error('expected a Slack call');
+    }
+    return call.body as { text: string };
+  }
+
+  it('thread reply', async () => {
+    await postSlackThreadMessage('C1', '100.1', MODEL);
+    expect(fetchCalls[0]?.url).toBe('https://slack.com/api/chat.postMessage');
+    expect(lastBody().text).toBe(SAFE);
+  });
+
+  it('thread reply that returns its ts (the placeholder path)', async () => {
+    await postSlackThreadMessageReturningTs('C1', '100.1', MODEL);
+    expect(lastBody().text).toBe(SAFE);
+  });
+
+  it('top-level channel post (digest, interjection, nudge)', async () => {
+    await postSlackChannelMessage('C1', MODEL);
+    expect(lastBody().text).toBe(SAFE);
+  });
+
+  it('in-place edit of the placeholder', async () => {
+    await updateSlackMessage('C1', '171.42', MODEL);
+    expect(fetchCalls[0]?.url).toBe('https://slack.com/api/chat.update');
+    expect(lastBody().text).toBe(SAFE);
+  });
+
+  it('the fallback text that rides with blocks', async () => {
+    await postSlackThreadMessage('C1', '100.1', MODEL, [{ type: 'divider' }]);
+    expect(lastBody().text).toBe(SAFE);
+  });
+
+  it('a notice built by fixed code (no broadcast in it) is unchanged', async () => {
+    findRun.mockResolvedValue({
+      template: { name: 'tmpl' },
+      workflowId: 'wf-ok',
+      workRequest: {
+        activeWorkflows: [],
+        externalTicketId: 'JIRA-9',
+        slackChannelId: 'C1',
+        slackMessageTs: null,
+      },
+    } as never);
+    await notifySlackStepFailure({ attempt: 1, error: 'boom', nodeId: 'lint', runId: 'r1' });
+    expect(lastBody().text).toBe('*[JIRA-9]* `tmpl` → step `lint` failed (attempt 1): boom');
   });
 });

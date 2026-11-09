@@ -96,7 +96,7 @@ import {
   webhookRepositoryWhere,
 } from '../lib/repositoryHost.js';
 import { validateRunConnection } from '../lib/runConnection.js';
-import { postSlackMessage } from '../lib/slack.js';
+import { postSlackMessage, prMergedNoticeText } from '../lib/slack.js';
 // The webhook handlers below undo their DB write and answer non-2xx when a
 // signal fails, so the delivery can be sent again — only ever useful for a
 // TRANSIENT failure. See `lib/temporalErrors.ts` for why a terminal one keeps
@@ -928,7 +928,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         await postSlackMessage(
           {
             channel: slackChannel,
-            text: `:merged: *[${wr?.externalTicketId ?? 'unknown'}]* PR #${prNumber} was merged`,
+            text: prMergedNoticeText(wr?.externalTicketId, prNumber),
             ...(originChannel && wr?.slackMessageTs ? { threadTs: wr.slackMessageTs } : {}),
           },
           botToken ?? undefined

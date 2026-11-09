@@ -7,7 +7,7 @@ import {
   type HitlResolveErrorCode,
   resolveHitlStep,
 } from '../hitlResolve.js';
-import { syncSlackHumanStepOutcome } from '../hitlSlackSync.js';
+import { escapeSlackMrkdwn, syncSlackHumanStepOutcome } from '../hitlSlackSync.js';
 import { buildWorkflowHumanStepControlFilter } from '../runVisibility.js';
 import { openSlackView } from '../slack.js';
 import {
@@ -150,13 +150,16 @@ async function resolveHitlStepFromSlack(
 
   const who = where.slackUserId ? `<@${where.slackUserId}>` : 'someone';
   const actionWord = target.action.replaceAll('_', ' ');
+  // The step title comes from the workflow spec, so it is escaped; `who` is Slack's own user id
+  // for the clicker, written by this code as a mention on purpose.
+  const title = escapeSlackMrkdwn(result.title);
   let text: string;
   if (result.status === 'PENDING') {
-    text = `:hourglass: *${result.title}* — ${who} recorded \`${actionWord}\` (${result.currentApprovers}/${result.requiredApprovers}). ${result.approvalsRemaining} more approval${result.approvalsRemaining === 1 ? '' : 's'} needed.`;
+    text = `:hourglass: *${title}* — ${who} recorded \`${actionWord}\` (${result.currentApprovers}/${result.requiredApprovers}). ${result.approvalsRemaining} more approval${result.approvalsRemaining === 1 ? '' : 's'} needed.`;
   } else if (result.signalSent) {
-    text = `:white_check_mark: *${result.title}* — resolved with \`${actionWord}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}).`;
+    text = `:white_check_mark: *${title}* — resolved with \`${actionWord}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}).`;
   } else {
-    text = `:white_check_mark: *${result.title}* — recorded as \`${actionWord}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}), but the workflow run had already finished, so nothing was signalled.`;
+    text = `:white_check_mark: *${title}* — recorded as \`${actionWord}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}), but the workflow run had already finished, so nothing was signalled.`;
   }
   if (result.status === 'RESOLVED') {
     // Replaces the buttons with the decision, so a decided step reads as decided in place.
