@@ -30,24 +30,24 @@ export const shortName = (max: number) =>
   z.string().transform((s) => [...cleaned(s)].slice(0, max).join(''));
 
 /** An enum-like status from the REST body; anything that is not one is reported as UNKNOWN. */
-const status = z.string().transform((s) => (/^[A-Z][A-Z_]{0,31}$/.test(s) ? s : 'UNKNOWN'));
+export const status = z.string().transform((s) => (/^[A-Z][A-Z_]{0,31}$/.test(s) ? s : 'UNKNOWN'));
 
 /** A ticket id that satisfies the charset the submit route enforces; anything else is dropped. */
-const ticketId = z.string().transform((s) => (isValidTicketId(s) ? s : null));
+export const ticketId = z.string().transform((s) => (isValidTicketId(s) ? s : null));
 
-const timestamp = z.string().max(40);
-const nullableTimestamp = timestamp
+export const timestamp = z.string().max(40);
+export const nullableTimestamp = timestamp
   .nullable()
   .optional()
   .transform((v) => v ?? null);
 
 /** A Prisma `Decimal` arrives as a string or a number; the tool reports a number. */
-const money = z
+export const money = z
   .union([z.string(), z.number()])
   .transform((v) => Number(v))
   .pipe(z.number().finite());
 
-const count = z.coerce.number().int().min(0);
+export const count = z.coerce.number().int().min(0);
 
 const inputType = z.enum(['string', 'number', 'boolean', 'array', 'connection']);
 const schemaIdentifier = z
@@ -122,7 +122,7 @@ export const startTemplateRunOutput = z.object({
 
 // ── What the REST routes return, reduced to the fields a tool uses ──
 
-const meta = z.object({ limit: z.number(), offset: z.number(), total: z.number() });
+export const meta = z.object({ limit: z.number(), offset: z.number(), total: z.number() });
 
 const workRequestRef = z
   .object({ externalTicketId: ticketId, id: z.string().uuid() })

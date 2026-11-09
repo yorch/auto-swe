@@ -235,7 +235,8 @@ function ConsentDecision({ search }: { search: string }) {
                 <Icon className="mt-0.5 text-success-400" name="check" size={15} />
                 <span>
                   <span className="font-semibold text-paper-100">Read</span>: see repositories, work
-                  requests, agents, workflow templates, runs and pending approvals.
+                  requests, agents, workflow templates, runs, pending approvals, teams with their
+                  members and repositories, and pull requests.
                 </span>
               </li>
             )}
