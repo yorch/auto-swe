@@ -315,4 +315,92 @@ describe('evaluateReactiveInterjection', () => {
     expect(lastUpdate.data).toHaveProperty('lastReactiveCheckAt');
     expect(lastUpdate.data).not.toHaveProperty('lastReactiveAt');
   });
+
+  describe('postCard', () => {
+    const goodCard = {
+      blocks: [
+        { text: 'Related runs', type: 'header' },
+        { items: [{ label: 'Last deploy', value: 'yarn release' }], type: 'fields' },
+      ],
+    };
+
+    type CardSpec = {
+      systemPrompt?: string;
+      tools?: Record<string, { execute: (i: unknown) => Promise<unknown> }>;
+    };
+
+    /** Make the mocked turn call `postCard` with each spec in order, then answer `text`. */
+    function turnPostsCards(
+      specs: unknown[],
+      text: string
+    ): { results: unknown[]; seen: CardSpec[] } {
+      const results: unknown[] = [];
+      const seen: CardSpec[] = [];
+      runAgentMock.mockImplementation(async (spec: CardSpec) => {
+        seen.push(spec);
+        for (const cardSpec of specs) {
+          results.push(await spec.tools?.postCard?.execute({ spec: cardSpec }));
+        }
+        return { costUsd: 0.005, text, usage: { inputTokens: 100, outputTokens: 20 } };
+      });
+      return { results, seen };
+    }
+
+    it('gives the turn the postCard tool and its catalog', async () => {
+      const { seen } = turnPostsCards([], 'SKIP');
+
+      await evaluateReactiveInterjection({ channelId: 'chan-1' });
+
+      expect(seen[0]?.tools?.postCard).toBeDefined();
+      expect(seen[0]?.systemPrompt).toContain('postCard');
+      expect(seen[0]?.systemPrompt).toContain('"type": "table"');
+    });
+
+    it('posts an accepted card with its blocks, instead of the prose reply', async () => {
+      turnPostsCards([goodCard], 'See the card.');
+
+      const res = await evaluateReactiveInterjection({ channelId: 'chan-1' });
+
+      expect(res).toEqual({ posted: true, reason: 'posted' });
+      const [channel, text, blocks] = postSlackChannelMessageMock.mock.calls[0] ?? [];
+      expect(channel).toBe('C123');
+      expect(text).toBe('Related runs');
+      expect((blocks as Array<{ type: string }>).map((b) => b.type)).toEqual(['header', 'section']);
+      const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
+      expect(lastUpdate.data).toHaveProperty('lastReactiveAt');
+    });
+
+    it('lets an explicit SKIP win over a card, and stamps no cooldown', async () => {
+      turnPostsCards([goodCard], 'SKIP');
+
+      const res = await evaluateReactiveInterjection({ channelId: 'chan-1' });
+
+      expect(res).toEqual({ posted: false, reason: 'skip' });
+      expect(postSlackChannelMessageMock).not.toHaveBeenCalled();
+      const lastUpdate = updateChannel.mock.calls.at(-1)?.[0] as { data: Record<string, unknown> };
+      expect(lastUpdate.data).not.toHaveProperty('lastReactiveAt');
+    });
+
+    it('posts the prose when the card was refused and never corrected', async () => {
+      const { results } = turnPostsCards([{ blocks: [] }], 'You deploy with `yarn release`.');
+
+      const res = await evaluateReactiveInterjection({ channelId: 'chan-1' });
+
+      expect(results).toEqual([expect.objectContaining({ posted: false })]);
+      expect(res).toEqual({ posted: true, reason: 'posted' });
+      expect(postSlackChannelMessageMock).toHaveBeenCalledWith(
+        'C123',
+        'You deploy with `yarn release`.'
+      );
+    });
+
+    it('posts a card even when the prose reply is too short to count as an interjection', async () => {
+      turnPostsCards([goodCard], 'ok');
+
+      const res = await evaluateReactiveInterjection({ channelId: 'chan-1' });
+
+      expect(res.posted).toBe(true);
+      expect(postSlackChannelMessageMock.mock.calls[0]?.[2]).toBeDefined();
+    });
+  });
 });
