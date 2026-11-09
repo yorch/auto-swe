@@ -96,7 +96,7 @@ describe('ConsentScreen', () => {
 
     expect(
       await screen.findByText(
-        /see repositories, work requests, agents, workflow templates, runs and pending approvals/i
+        /see repositories, work requests, agents, workflow templates, runs, pending approvals, teams with their members and repositories, and pull requests/i
       )
     ).toBeTruthy();
     expect(screen.queryByRole('checkbox')).toBeNull();
