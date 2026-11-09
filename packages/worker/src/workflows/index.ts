@@ -16,6 +16,7 @@ export {
   IndexKnowledgeBaseWorkflow,
   ScheduledKnowledgeBaseSyncWorkflow,
 } from './knowledgeBases.js';
+export { onboardingPrWorkflow } from './onboardingPr.js';
 export { prEvaluationWorkflow } from './prEvaluation.js';
 export { ReembedMemoryWorkflow, ReembedStaleMemoryWorkflow } from './reembedMemory.js';
 export { RepoDependencyScanOneWorkflow } from './repoDependencyScanOne.js';

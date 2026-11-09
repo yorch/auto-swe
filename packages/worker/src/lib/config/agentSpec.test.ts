@@ -190,6 +190,20 @@ describe('resolveAgentSpec — tool selection', () => {
     expect(spec.tools).toEqual({ searchKnowledge: 't-search' });
   });
 
+  it('never yields provisionTool for a null grant, only when it is named', async () => {
+    const pool = { ...tools, provisionTool: 't-provision' } as unknown as AgentTools;
+    const specFor = (toolKeys: string[] | null) => {
+      mockedResolveAgent.mockResolvedValue(resolvedAgent({ toolKeys }));
+      return resolveAgentSpec({ agentKey: 'implementer', availableTools: pool, basePrompt: 'B' });
+    };
+    expect(Object.keys((await specFor(null)).tools)).not.toContain('provisionTool');
+    expect(Object.keys((await specFor(['bash'])).tools)).not.toContain('provisionTool');
+    expect((await specFor(['bash', 'provisionTool'])).tools).toEqual({
+      bash: 't-bash',
+      provisionTool: 't-provision',
+    });
+  });
+
   it('intersects candidates with the enabled-tool keys', async () => {
     mockedResolveAgent.mockResolvedValue(
       resolvedAgent({ toolKeys: ['readFile', 'bash', 'missingTool'] })

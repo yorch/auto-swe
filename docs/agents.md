@@ -276,6 +276,29 @@ it. Screenshots it takes become run evidence under `source: 'agent'`, and every 
 snapshot it returns is screened by the same MCP result screen before the model sees it. See
 [ui-validation.md §Browser tool for agents](./ui-validation.md#browser-tool-for-agents).
 
+**`provisionTool` is a separate, explicit grant.** It lets an agent install one pinned tool from the
+tool catalog into its workspace mid-run (input `{ key, version? }`; output `{ ok, installed?, error? }`).
+Like `browser`, it is granted only when `provisionTool` is named in the resolved Agent's `toolKeys` —
+`null` and a list naming only workspace tools never grant it — and it binds on the Mastra implementer
+path and on the generic agent node and agent run paths; the Pi and Claude Code runtimes do not relay
+it. The platform runs the install, not the agent's shell: the same install script the workspace uses
+at creation, as the container user, with no credentials, and no URL, script or checksum from the agent.
+Every call checks, at call time, that the settings `workspace.toolInstall.enabled` and
+`workspace.toolInstall.agentCallable` are both on, that the workspace was created for a repository
+connection, and then applies that connection's authority: a key in its deny list is refused, the tools
+already installed plus the new one may not exceed `workspace.toolInstall.maxTools`, and the request
+must resolve against the catalog (an unreadable catalog or a revoked entry is refused). Asking for a
+key that is already installed succeeds without doing anything; asking for a different version of it is
+refused. An agent may not pin a `DEPRECATED` catalog entry (a repository's own declaration may, with a
+warning), and a workspace stops accepting installs after `max(3, maxTools)` failed attempts. A
+workspace whose egress policy is `blocked` or `restricted` refuses the tool outright, because its
+network is locked by then. The tool never throws: a refusal or failure comes back as
+`{ ok: false, error }` with a fixed message that names the tool and the reason and carries no installer
+output or URL, and a failure a retry may fix says so. After a successful install the tools directory
+is appended after the image's own directories on `PATH`, so the commands the agent runs find the new
+tool but a tool never replaces a binary the image provides. See [repositories.md](./repositories.md)
+for how tools are declared and the catalog is managed.
+
 Governed knowledge adds two separate tool IDs, `searchKnowledge` and `submitLearning`. Governed KnowledgeItem results and learning submission require explicit grants on the resolved Agent; null or legacy `toolKeys` do not grant them. Governed search is available on Mastra, Claude Code and Pi; learning submission is Mastra-only. Search returns bounded, cited, trust-labeled knowledge as untrusted context; submission captures only local LEARNING items and requires persisted evidence. See [knowledge.md](./knowledge.md) for scope, lifecycle, and limitations.
 
 `searchKnowledge` also searches [repository-backed KB chunks](./knowledge-bases.md) from snapshots

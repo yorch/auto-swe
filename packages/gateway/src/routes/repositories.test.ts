@@ -810,6 +810,184 @@ describe('repositoryRoutes', () => {
     });
   });
 
+  describe('tool settings', () => {
+    const patch = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload,
+        url: `/api/v1/repositories/${REPO_ID}`,
+      });
+    const asTeamLead = () => {
+      ctx.authState.role = 'LEAD';
+      ctx.authState.sub = 'lead-1';
+      ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+        role: 'LEAD',
+        team: { isActive: true },
+      });
+    };
+    const stored = (over: Record<string, unknown> = {}) => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        executorImage: null,
+        id: REPO_ID,
+        teamId: TEAM_ID,
+        tools: null,
+        toolsDeny: [],
+        toolsFileEnabled: false,
+        ...over,
+      });
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+    };
+    const written = (): Record<string, unknown> => {
+      const call = ctx.mockPrisma.connection.update.mock.calls.at(-1);
+      const arg = call?.[0] as { data: Record<string, unknown> } | undefined;
+      return arg?.data ?? {};
+    };
+
+    it('lets an admin set each field and audits before and after', async () => {
+      stored({ tools: [{ key: 'jq' }], toolsDeny: ['yq'] });
+      const res = await patch({
+        tools: [{ key: 'ripgrep', version: '14.1.0' }],
+        toolsDeny: ['shellcheck', 'shellcheck', 'yq'],
+        toolsFileEnabled: true,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(written()).toMatchObject({
+        tools: [{ key: 'ripgrep', version: '14.1.0' }],
+        toolsDeny: ['shellcheck', 'yq'],
+        toolsFileEnabled: true,
+      });
+      expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          afterJson: {
+            tools: [{ key: 'ripgrep', version: '14.1.0' }],
+            toolsDeny: ['shellcheck', 'yq'],
+            toolsFileEnabled: true,
+          },
+          beforeJson: { tools: [{ key: 'jq' }], toolsDeny: ['yq'], toolsFileEnabled: false },
+          entityId: REPO_ID,
+          entityType: 'Connection',
+        }),
+      });
+    });
+
+    it.each([
+      ['tools', { tools: [{ key: 'jq' }] }],
+      ['toolsDeny', { toolsDeny: ['jq'] }],
+      ['toolsFileEnabled', { toolsFileEnabled: true }],
+    ])('refuses a team lead changing %s and writes nothing', async (_name, payload) => {
+      asTeamLead();
+      stored();
+      const res = await patch(payload);
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error.code).toBe('TOOLS_CONFIG_NOT_ALLOWED');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+      expect(ctx.mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
+    });
+
+    describe('repository identity and the tools file switch', () => {
+      // Moving the repository to another team is an identity change that needs no settings read.
+      const OTHER_TEAM = '44444444-4444-4444-8444-444444444444';
+      const REPOINT = { teamId: OTHER_TEAM };
+      beforeEach(() => {
+        ctx.mockPrisma.team.findUnique.mockResolvedValue({ isActive: true, orgId: 'org-1' });
+        ctx.mockPrisma.knowledgeItem.count.mockResolvedValue(0);
+      });
+
+      it('clears toolsFileEnabled, with an audit entry, when a lead moves the repository to another team', async () => {
+        asTeamLead();
+        stored({ toolsFileEnabled: true });
+        const res = await patch(REPOINT);
+        expect(res.statusCode, res.payload).toBe(200);
+        expect(written()).toMatchObject({ toolsFileEnabled: false });
+        expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            afterJson: expect.objectContaining({ toolsFileEnabled: false }),
+            beforeJson: { toolsFileEnabled: true },
+            entityId: REPO_ID,
+          }),
+        });
+      });
+
+      it('keeps toolsFileEnabled when an admin moves the repository to another team', async () => {
+        stored({ toolsFileEnabled: true });
+        const res = await patch(REPOINT);
+        expect(res.statusCode, res.payload).toBe(200);
+        expect(written()).not.toHaveProperty('toolsFileEnabled');
+        expect(ctx.mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
+      });
+
+      it('keeps toolsFileEnabled when a lead re-sends the same identity', async () => {
+        asTeamLead();
+        stored({ toolsFileEnabled: true });
+        const res = await patch({ description: 'edited', teamId: TEAM_ID });
+        expect(res.statusCode, res.payload).toBe(200);
+        expect(written()).not.toHaveProperty('toolsFileEnabled');
+        expect(ctx.mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
+      });
+
+      it('clears toolsFileEnabled when a lead changes the default branch the file is read from', async () => {
+        asTeamLead();
+        stored({ defaultBranch: 'main', toolsFileEnabled: true });
+        const res = await patch({ defaultBranch: 'unvetted' });
+        expect(res.statusCode, res.payload).toBe(200);
+        expect(written()).toMatchObject({ toolsFileEnabled: false });
+      });
+
+      it('keeps toolsFileEnabled when a lead re-sends the same default branch', async () => {
+        asTeamLead();
+        stored({ defaultBranch: 'main', toolsFileEnabled: true });
+        const res = await patch({ defaultBranch: 'main' });
+        expect(res.statusCode, res.payload).toBe(200);
+        expect(written()).not.toHaveProperty('toolsFileEnabled');
+      });
+
+      it('writes nothing extra when the flag is already off', async () => {
+        asTeamLead();
+        stored({ toolsFileEnabled: false });
+        const res = await patch(REPOINT);
+        expect(res.statusCode, res.payload).toBe(200);
+        expect(written()).not.toHaveProperty('toolsFileEnabled');
+      });
+    });
+
+    it('lets a team lead re-send unchanged values as a no-op', async () => {
+      asTeamLead();
+      stored({ tools: [{ key: 'jq' }], toolsDeny: ['yq', 'ripgrep'], toolsFileEnabled: true });
+      const res = await patch({
+        description: 'edited',
+        tools: [{ key: 'jq' }],
+        toolsDeny: ['ripgrep', 'yq'],
+        toolsFileEnabled: true,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['an uppercase key', { tools: [{ key: 'JQ' }] }],
+      ['a key with a semicolon', { tools: [{ key: 'jq;rm' }] }],
+      ['a denied key with a semicolon', { toolsDeny: ['jq;rm'] }],
+      ['a repeated key', { tools: [{ key: 'jq' }, { key: 'jq', version: '1.7.1' }] }],
+      [
+        'more than 32 tools',
+        { tools: Array.from({ length: 33 }, (_, i) => ({ key: `tool-${i}` })) },
+      ],
+    ])('rejects %s with 400', async (_name, payload) => {
+      stored();
+      const res = await patch(payload);
+      expect(res.statusCode).toBe(400);
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('clears the declared tools with null', async () => {
+      stored({ tools: [{ key: 'jq' }] });
+      const res = await patch({ tools: null });
+      expect(res.statusCode).toBe(200);
+      expect(written().tools).toBe(DB_NULL);
+    });
+  });
+
   describe('executor image', () => {
     const patch = (payload: Record<string, unknown>) =>
       ctx.app.inject({

@@ -1839,6 +1839,43 @@ export const SETTING_DEFINITIONS = {
     schema: z.number().int().min(0).max(8192),
     unit: 'MB',
   }),
+  'workspace.toolInstall.agentCallable': defineSetting({
+    defaultValue: false,
+    description:
+      'Whether an agent whose tool list names `provisionTool` may install a catalog tool mid-run. The agent still chooses only among catalog entries the connection allows; this switch decides whether the tool does anything.',
+    group: 'workspace',
+    label: 'Let agents install catalog tools',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'workspace.toolInstall.enabled': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether a workspace installs tools from the tool catalog before the run starts: the connection's admin tool list always, and its `.auto-swe/tools.yml` when that connection also enables the file. Off, no tool is installed whatever a repository declares.",
+    group: 'workspace',
+    label: 'Install catalog tools on demand',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'workspace.toolInstall.maxTools': defineSetting({
+    defaultValue: 8,
+    description:
+      "The most tools one run may install, from the file, the connection's list and the agent together. A run that asks for more fails at setup instead of being truncated.",
+    group: 'workspace',
+    label: 'Max tools per run',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(32),
+    unit: 'tools',
+  }),
 } as const satisfies Record<string, SettingDefinition<unknown>>;
 
 /// Every registry key. Used to type `resolveSetting` and to validate an

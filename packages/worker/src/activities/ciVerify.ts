@@ -174,6 +174,7 @@ async function verify(input: {
       detectedStack: repo.detectedStack,
       repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
       teamId: repo.teamId,
+      toolsFor: { connectionId: repo.id },
     }
   );
   try {

@@ -175,6 +175,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       knowledgeBases: references.checkouts,
       repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
       teamId: repo.teamId,
+      toolsFor: { connectionId: repo.id },
     }
   );
 

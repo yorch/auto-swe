@@ -374,6 +374,21 @@ describe('buildImplementerForActivity', () => {
     }
   );
 
+  it.each([
+    [null, false],
+    [[], false],
+    [['bash', 'readFile'], false],
+    [['searchKnowledge', 'submitLearning'], false],
+    [['provisionTool'], true],
+    [['bash', 'provisionTool'], true],
+  ] as const)('binds provisionTool only when the grant names it: %j', async (grants, bound) => {
+    vi.mocked(loadAgentSkills).mockResolvedValue([]);
+    vi.mocked(loadAgentToolConfig).mockResolvedValue(grants as string[] | null);
+    const built = await buildImplementerForActivity(workspace, new AgentTracer(), ctx);
+    const tools = (built.agent as unknown as { tools: Record<string, unknown> }).tools;
+    expect(Object.keys(tools).includes('provisionTool')).toBe(bound);
+  });
+
   it('defaults to the implementer and returns the resolved step budget', async () => {
     vi.mocked(loadAgentSkills).mockResolvedValue([]);
     const built = await buildImplementerForActivity(workspace, new AgentTracer(), ctx);
