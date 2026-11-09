@@ -4,6 +4,7 @@ import {
   envCredentialViolations,
   immediateMergeViolations,
   optInSuiteViolations,
+  slackWriterViolations,
 } from './check-invariants.mjs';
 
 const PG = 'packages/gateway/src/routes/x.pg.test.ts';
@@ -292,5 +293,69 @@ describe('autoMergeNamingViolations', () => {
   it('ignores comments and longer identifiers', () => {
     const src = '// enableAutoMerge is not called here\nconst enableAutoMergeLater = 1;\n';
     expect(autoMergeNamingViolations('packages/worker/src/other.ts', src)).toEqual([]);
+  });
+});
+
+describe('slackWriterViolations', () => {
+  const NOTIFY = 'packages/worker/src/lib/slackNotify.ts';
+  const OTHER = 'packages/worker/src/activities/somethingNew.ts';
+  const post = "await fetch('https://slack.com/api/chat.postMessage', { method: 'POST' });";
+
+  it('lets the known writers name the endpoints', () => {
+    for (const file of [
+      'packages/gateway/src/lib/slack.ts',
+      'packages/gateway/src/lib/hitlSlackSync.ts',
+      'packages/worker/src/connectors/slack.ts',
+    ]) {
+      expect(slackWriterViolations(file, post), file).toEqual([]);
+    }
+  });
+
+  it('reports any other file that names chat.postMessage or chat.update', () => {
+    for (const src of [
+      post,
+      "const url = 'https://slack.com/api/chat.update';",
+      "await slackApi(connection, '/chat.postMessage', body);",
+    ]) {
+      expect(slackWriterViolations(OTHER, src), src).toHaveLength(1);
+    }
+  });
+
+  it('ignores a mention in a comment and unrelated Slack endpoints', () => {
+    const src = [
+      '// we used to call chat.postMessage here',
+      '/** posts through chat.update */',
+      "await fetch('https://slack.com/api/conversations.replies');",
+      "await fetch('https://slack.com/api/views.open');",
+    ].join('\n');
+    expect(slackWriterViolations(OTHER, src)).toEqual([]);
+  });
+
+  it('passes slackNotify.ts when every send is matched by a neutralize call', () => {
+    const src = [
+      "const A = 'https://slack.com/api/chat.postMessage';",
+      'await fetch(SLACK_POST_URL, { body: neutralizeSlackBroadcasts(a) });',
+      'await fetch(SLACK_UPDATE_URL, { body: neutralizeSlackBroadcasts(b) });',
+      'await fetch(SLACK_POST_URL, { body: neutralizeSlackBroadcasts(c) });',
+    ].join('\n');
+    expect(slackWriterViolations(NOTIFY, src)).toEqual([]);
+  });
+
+  it('reports slackNotify.ts when a send is not matched', () => {
+    const src = [
+      'await fetch(SLACK_POST_URL, { body: neutralizeSlackBroadcasts(a) });',
+      'await fetch(SLACK_UPDATE_URL, { body: JSON.stringify({ text }) });',
+    ].join('\n');
+    const found = slackWriterViolations(NOTIFY, src);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.kind).toBe('unneutralized-send');
+  });
+
+  it('does not count a neutralize call that sits in a comment', () => {
+    const src = [
+      '// neutralizeSlackBroadcasts(text) is applied below',
+      'await fetch(SLACK_POST_URL, { body: JSON.stringify({ text }) });',
+    ].join('\n');
+    expect(slackWriterViolations(NOTIFY, src)).toHaveLength(1);
   });
 });
