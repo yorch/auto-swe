@@ -15,7 +15,7 @@ import type {
   PullRequestOutcomesResponse,
   WorkflowRunStatus,
 } from '@auto-swe/shared/types/api';
-import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { csvRow } from '../lib/csv.js';
@@ -35,12 +35,13 @@ import {
   sinceLastVisit,
   viewedPaths,
 } from '../lib/pullRequestCockpit.js';
+import { OUTCOMES_ROW_CAP, outcomesFilters } from '../lib/pullRequestOutcomesQuery.js';
 import {
   type ReviewerWrite,
   resolveReviewerWrite,
   type WriteUnavailable,
 } from '../lib/reviewerCredential.js';
-import { repositoryTeamScope, runMetricsTeamScope } from '../lib/runTeamScope.js';
+import { repositoryTeamScope } from '../lib/runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { assertTeamParam } from '../lib/teamParam.js';
 import { teamMembershipFilter } from '../lib/templateLaunch.js';
@@ -95,8 +96,6 @@ const writeReasonOf = (write: ReviewerWrite): WriteUnavailable | null =>
 /** What a compare reads as for a pull request with no repository to ask. */
 const NO_COMPARE: CompareResult = { reason: 'not-found', type: 'unavailable' };
 
-/** Most rows one outcomes read takes; one more is fetched to detect a cut. */
-const OUTCOMES_ROW_CAP = 10_000;
 const OUTCOMES_TOP_REPOSITORIES = 10;
 
 const OutcomesExportQuery = refineCustomRange(
@@ -128,44 +127,6 @@ const OUTCOMES_EXPORT_COLUMNS = [
   'template_id',
   'template_name',
 ] as const;
-
-/**
- * The pull requests an outcomes read or export covers: the ones the caller may reach, opened in
- * `[openedFrom, end)`, narrowed by the query. One definition, so the export can never reach a row
- * the summary would not.
- */
-function outcomesFilters(
-  user: ReturnType<typeof requireUser>,
-  gate: FastifyRequest['repoAccessGate'],
-  query: {
-    repoId?: string | undefined;
-    scope: 'MINE' | 'TEAM';
-    teamId?: string | undefined;
-    templateId?: string | undefined;
-  },
-  openedFrom: Date,
-  end: Date
-): Prisma.PullRequestWhereInput[] {
-  const filters: Prisma.PullRequestWhereInput[] = [
-    user.role === 'ADMIN' ? {} : { repository: reachableConnections(user, gate) },
-    { openedAt: { gte: openedFrom, lt: end } },
-  ];
-  if (query.repoId) {
-    filters.push({ repoId: query.repoId });
-  }
-  if (query.teamId) {
-    const { teamId } = query;
-    // A metric: owner-only attribution, so a shared repository is not counted by two teams.
-    filters.push({ run: runMetricsTeamScope(teamId) });
-  }
-  if (query.scope === 'MINE') {
-    filters.push({ workflow: { workRequest: { requestedById: user.sub } } });
-  }
-  if (query.templateId) {
-    filters.push({ templateId: query.templateId });
-  }
-  return filters;
-}
 
 /**
  * Pull requests the platform opened, newest first.
