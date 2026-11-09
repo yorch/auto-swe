@@ -112,6 +112,14 @@ export async function registerInteractiveRoutes(fastify: FastifyInstance): Promi
         return reply;
       }
 
+      // Link buttons on assistant cards (`card_link_*`) only open a URL in the clicker's client;
+      // Slack still posts the click here. Anyone in the channel can click one, linked or not, and
+      // there is nothing to act on, so acknowledge it before the account-link gate (which would
+      // answer an unlinked clicker with a 403).
+      if (actionId.startsWith('card_link_')) {
+        return { data: { ignored: true, reason: 'link_button' } };
+      }
+
       // Resolve user by Slack ID. A deactivated account resolves to nobody: a
       // Slack link must not outlive the platform access it stands in for, and
       // every action below (HITL resolve, merge signal, run launch) acts as
