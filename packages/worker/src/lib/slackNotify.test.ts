@@ -297,6 +297,66 @@ describe('notifySlackRunComplete (phase 8)', () => {
     expect(body.text).toContain('JIRA-200');
   });
 
+  it('posts a card with the run stats and an Open run link, keeping the text fallback', async () => {
+    findRun.mockResolvedValue({
+      costUsdAccrued: 0.42,
+      endedAt: new Date('2026-06-01T00:03:12Z'),
+      startedAt: new Date('2026-06-01T00:00:00Z'),
+      template: { name: 'default' },
+      workflowId: 'wf-card',
+      workRequest: {
+        activeWorkflows: [{ repository: { teamId: 'team-1' }, temporalWorkflowId: 'wf-card' }],
+        externalTicketId: 'JIRA-210',
+        slackChannelId: 'C-origin',
+        slackMessageTs: '1700.5',
+      },
+    } as never);
+    findTeam.mockResolvedValue({ slackNotifyChannel: null, slackNotifySuccess: true } as never);
+
+    await notifySlackRunComplete({ runId: 'run 1', status: 'FAILED' });
+
+    expect(fetchCalls).toHaveLength(1);
+    const body = fetchCalls[0]?.body as {
+      text: string;
+      thread_ts?: string;
+      blocks: Array<{
+        type: string;
+        fields?: Array<{ text: string }>;
+        elements?: Array<{ url: string }>;
+      }>;
+    };
+    expect(body.thread_ts).toBe('1700.5');
+    expect(body.text).toContain('JIRA-210');
+    expect(body.text).toContain('FAILED');
+    expect(body.blocks.map((b) => b.type)).toEqual(['section', 'section', 'actions']);
+    expect(body.blocks[1]?.fields?.map((f) => f.text)).toEqual([
+      '*Status*\nFAILED',
+      '*Duration*\n3m 12s',
+      '*Cost*\n$0.42',
+    ]);
+    // The run id is path-encoded, and the link stays on the dashboard host.
+    expect(body.blocks[2]?.elements?.[0]?.url).toBe('http://localhost:3000/runs/run%201');
+  });
+
+  it('still posts a card when the run row has no timing or cost', async () => {
+    findRun.mockResolvedValue({
+      template: { name: 'default' },
+      workflowId: 'wf-bare',
+      workRequest: {
+        activeWorkflows: [{ repository: { teamId: 'team-1' }, temporalWorkflowId: 'wf-bare' }],
+        externalTicketId: 'JIRA-211',
+        slackChannelId: 'C-origin',
+        slackMessageTs: null,
+      },
+    } as never);
+    findTeam.mockResolvedValue({ slackNotifyChannel: null, slackNotifySuccess: true } as never);
+
+    await notifySlackRunComplete({ runId: 'r2', status: 'SUCCESS' });
+
+    const body = fetchCalls[0]?.body as { blocks: Array<{ fields?: Array<{ text: string }> }> };
+    expect(body.blocks[1]?.fields?.map((f) => f.text)).toEqual(['*Status*\nSUCCESS']);
+  });
+
   it('falls back to team channel when no originating channel + opt-in is true', async () => {
     findRun.mockResolvedValue({
       template: { name: 'default' },

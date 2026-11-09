@@ -106,6 +106,10 @@ the workflow delivers it as the reply's blocks with the card's text as the notif
   (`card_link_*`) for linked and unlinked users alike.
 - **An action intent wins.** A card posted in the same turn as `delegateTask`, `generateWorkflow` or
   `refineWorkflow` is dropped, because the workflow answers those with its own text.
+- **The ambient digest can post one too.** The digest turn gets the same tool (`lib/channelCard.ts`)
+  and the same validation. An accepted card is posted at channel root with its text as the
+  fallback. An explicit `SKIP` wins over a card, and a card that was refused and never corrected
+  leaves the prose digest to post as before.
 
 **Injection scanning.** Channel input is scanned advisorily and surfaces as a `CHANNEL_SUSPICIOUS`
 security event in `/admin/security`.
@@ -396,6 +400,7 @@ the per-channel Temporal Schedule is created, retimed, or torn down to match the
 | Install | `GET /api/v1/auth/slack/install[/callback]` → `oauth.v2.access` → an encrypted per-workspace bot token. The bot token is the only per-workspace secret; the signing secret and OAuth credentials stay singleton. "Add to Slack" lives on `/admin/integrations` |
 | App Home | `app_home_opened` → `publishAppHome` → `views.publish` renders a Block Kit front door (`buildAppHomeView` is pure and unit-tested) |
 | Slash | `/auto-swe` — workflow list/show and a run modal |
+| Run-complete notice | When a team has `slackNotifySuccess` on, a finished run posts a card: the ticket and template, status, duration, cost and an "Open run" link button to the dashboard. Fixed code builds it from the run row (`lib/runCompleteCard.ts`, through the same validator as the assistant's cards, so the link may only point at the dashboard host). If the card cannot be built, the notice is the one-line text it was before |
 | Shortcuts | A global "Run a workflow" picker, and a message shortcut "Ask auto-swe about this" that starts a turn on the message with no account link required |
 
 All Slack I/O resolves its token by channel or workspace ID via
@@ -436,9 +441,9 @@ unproven on real traffic, and turn them on one channel at a time.
   task, or generates a workflow; it has no route to an agent run. Adding one is a new feature with
   its own identity, RBAC, budget and security design (see
   [agent-runs.md §9](./agent-runs.md#9-relation-to-the-channel-assistant)).
-- **Cards are not on every Slack path.** Only a mention or follow-up turn can post one. Ambient
-  digests, reactive interjections and task results still post text, and a long-running task never
-  edits a card.
+- **Cards are not on every Slack path.** A mention or follow-up turn, the ambient digest and the
+  run-complete notice can post one. Reactive interjections, the step-failure and PR-ready notices
+  and a task's final in-thread report still post text, and a long-running task never edits a card.
 - **A card is not summarised into channel memory.** The memory summariser sees the turn's prose,
   which is at most a sentence when the answer was a card.
 - **Reactive interjection posts at channel root**, not into the most relevant thread.
@@ -482,7 +487,7 @@ unproven on real traffic, and turn them on one channel at a time.
 |---|---|
 | Workflows | `workflows/channelAssistant.ts`, `channelScheduledTask.ts`, `channelReactive.ts`, `taskChild.ts` |
 | Activities | `activities/channelAssistant.ts`, `channelReactive.ts`, `channelTask.ts`, `channelTaskPlan.ts`, `channelOpenItems.ts`, `consolidateChannelMemory.ts`, `passiveIngestChannelMemory.ts` |
-| Worker libs | `lib/channelMemory.ts`, `channelPersona.ts`, `channelTurnPrompts.ts`, `slackCard.ts`, `embeddingClustering.ts`, `slackNotify.ts` |
+| Worker libs | `lib/channelMemory.ts`, `channelPersona.ts`, `channelTurnPrompts.ts`, `channelCard.ts`, `slackCard.ts`, `runCompleteCard.ts`, `embeddingClustering.ts`, `slackNotify.ts` |
 | Steering | `workflows/runnable.ts` (`steer` handler), `activities/runAgentNode.ts` (`prependSteering`), `shared/workflow/interpreter.ts` (`drainSteering`) |
 | Gateway | `routes/slack.ts` + `routes/slack/events.ts` (events), `lib/slack/` (thread-reply steering, channel provisioning), `routes/slackChannels.ts`, `plugins/temporal.ts` (`startChannelAssistant`) |
 | Web | `app/admin/slack-channels/`, `app/teams/[id]/page.tsx` (persona card), `hooks/useSlackChannels.ts` |
