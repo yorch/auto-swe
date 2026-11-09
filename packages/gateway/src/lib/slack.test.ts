@@ -3,6 +3,7 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchSlackChannelIsPrivate,
   postSlackMessage,
+  prMergedNoticeText,
   SLACK_TIMESTAMP_MAX_AGE,
   verifySlackSignature,
 } from './slack.js';
@@ -80,6 +81,24 @@ describe('postSlackMessage', () => {
     }) as never;
     expect(await postSlackMessage({ channel: 'C1', text: 'hi' }, 'xoxb-secret')).toBeNull();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('network down'));
+  });
+});
+
+describe('prMergedNoticeText', () => {
+  it('keeps the usual line', () => {
+    expect(prMergedNoticeText('JIRA-1', 42)).toBe(':merged: *[JIRA-1]* PR #42 was merged');
+  });
+
+  it('says unknown when there is no ticket', () => {
+    expect(prMergedNoticeText(null, 7)).toBe(':merged: *[unknown]* PR #7 was merged');
+    expect(prMergedNoticeText(undefined, 7)).toBe(':merged: *[unknown]* PR #7 was merged');
+  });
+
+  it('escapes a ticket that tries to broadcast, mention or link', () => {
+    const text = prMergedNoticeText('<!channel> <@U1> <https://evil.example|x> & co', 9);
+    expect(text).toBe(
+      ':merged: *[&lt;!channel&gt; &lt;@U1&gt; &lt;https://evil.example|x&gt; &amp; co]* PR #9 was merged'
+    );
   });
 });
 

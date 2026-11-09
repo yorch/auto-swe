@@ -945,6 +945,20 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     expect(confirmBody.text).toContain('<@U1>');
   });
 
+  it('escapes the step title in the thread confirmation but keeps the clicker mention', async () => {
+    state.humanStep = pendingHumanStep({ title: '<!channel> <https://evil.example|go> & co' });
+    const res = await submitHitlModal('approve');
+    expect(res.statusCode).toBe(200);
+
+    const confirm = fetchCalls.find((c) => c.url.includes('chat.postMessage'));
+    const text = (confirm?.body as { text: string } | undefined)?.text ?? '';
+    expect(text).toContain('*&lt;!channel&gt; &lt;https://evil.example|go&gt; &amp; co*');
+    expect(text).not.toContain('<!channel>');
+    expect(text).not.toContain('<https://evil.example');
+    // The clicker's own mention is written by the code on purpose.
+    expect(text).toContain('<@U1>');
+  });
+
   it('forwards the decision option value through to the Temporal signal', async () => {
     state.humanStep = pendingHumanStep({
       kind: 'DECISION',

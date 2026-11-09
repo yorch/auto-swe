@@ -58,6 +58,19 @@ interface SlackChatPostMessageResponse {
 }
 
 /**
+ * The "PR merged" line posted back to the channel a ticket came from. The ticket id is whatever the
+ * requester or tracker supplied, so it is escaped: a `<!channel>` in it would otherwise notify the
+ * whole channel.
+ */
+export function prMergedNoticeText(ticket: string | null | undefined, prNumber: number): string {
+  const safeTicket = (ticket ?? 'unknown')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+  return `:merged: *[${safeTicket}]* PR #${prNumber} was merged`;
+}
+
+/**
  * Best-effort `chat.postMessage`. The caller decides whether failures should
  * surface (they typically shouldn't — Slack downtime must not break workflow
  * step recording). Returns the message timestamp on success, null on failure.
