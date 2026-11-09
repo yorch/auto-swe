@@ -16,6 +16,7 @@
  * no interactive action, so a card cannot trigger anything when clicked.
  */
 import { z } from 'zod';
+import { escapeSlackText } from './slackEscape.js';
 
 /** Slack's hard caps for one message (`chat.postMessage` / `chat.update`). */
 export const SLACK_LIMITS = {
@@ -213,11 +214,6 @@ export function parseSlackCard(input: unknown, limits: SlackCardLimits = {}): Sl
     }
   }
   return { card: parsed.data, ok: true };
-}
-
-/** Escape the three characters Slack treats as markup, which also defuses mentions and links. */
-export function escapeSlackText(text: string): string {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function clip(text: string, max: number): string {
