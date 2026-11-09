@@ -1,7 +1,11 @@
 import { prisma } from '@auto-swe/shared/db';
+import { buildPostCardTool, type ChannelCard, resolveCardLinkHosts } from '../lib/channelCard.js';
 import { type RecentChannelMemoryItem, recentChannelMemory } from '../lib/channelMemory.js';
 import { resolvePersonaPrompt } from '../lib/channelPersona.js';
+import { cardToolPromptNote } from '../lib/channelTurnPrompts.js';
+import type { AgentTools } from '../lib/config/agentSpec.js';
 import { fenceRecalledMemory } from '../lib/memoryGuard.js';
+import { slackCardPrompt } from '../lib/slackCard.js';
 import { postSlackChannelMessage } from '../lib/slackNotify.js';
 import {
   DEFAULT_CHANNEL_AGENT_KEY,
@@ -122,6 +126,14 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
       channel.personaPrompt,
       channel.team?.defaultPersonaPrompt
     );
+    // The digest may be a structured card (a short list of loose ends with links) instead of
+    // prose. `postCard` validates the spec inside the turn, so a refusal reaches the model to
+    // correct; an accepted card is recorded here and posted below.
+    let card: ChannelCard | undefined;
+    const cardLinkHosts = await resolveCardLinkHosts();
+    const postCardTool = buildPostCardTool(cardLinkHosts, (rendered) => {
+      card = rendered;
+    });
     // Holds budget across the model call, so concurrent digests and turns can't
     // all pass the read above and blow past the cap together.
     const turn = await runHeldChannelTurn(
@@ -134,7 +146,11 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
         teamId: channel.teamId,
       },
       buildAmbientPrompt(memory),
-      'llm.channel_ambient'
+      'llm.channel_ambient',
+      {
+        promptNote: cardToolPromptNote(slackCardPrompt({ linkHosts: cardLinkHosts })),
+        tools: { postCard: postCardTool } as AgentTools,
+      }
     );
     if (!turn) {
       return;
@@ -145,11 +161,18 @@ export async function runChannelAmbientDigest(input: ChannelAmbientInput): Promi
     // Best-effort — the ledger write swallows its own failures.
     await turn.hold.settle(costUsd);
 
-    if (!shouldPostDigest(reply)) {
+    // An explicit SKIP wins over a card: the prompt tells the agent to reply with exactly that
+    // when nothing is worth posting, and a stray card must not override it.
+    if (SKIP_SENTINEL.test(reply.trim())) {
       return;
     }
-
-    await postSlackChannelMessage(channel.slackChannelId, reply);
+    if (card) {
+      await postSlackChannelMessage(channel.slackChannelId, card.text, card.blocks);
+    } else if (shouldPostDigest(reply)) {
+      await postSlackChannelMessage(channel.slackChannelId, reply);
+    } else {
+      return;
+    }
 
     // NOTE: deliberately do NOT persist the digest to channel memory. The digest
     // prompt is built from `recentChannelMemory`, so remembering our own

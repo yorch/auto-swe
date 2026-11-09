@@ -327,3 +327,96 @@ describe('runChannelAmbientDigest', () => {
     await expect(runChannelAmbientDigest({ channelId: 'chan-1' })).resolves.toBeUndefined();
   });
 });
+
+describe('runChannelAmbientDigest — postCard', () => {
+  const goodCard = {
+    blocks: [
+      { text: 'Open loose ends', type: 'header' },
+      { items: [{ label: 'Staging migration', value: 'still pending' }], type: 'fields' },
+    ],
+  };
+
+  type CardSpec = {
+    systemPrompt?: string;
+    tools?: Record<string, { execute: (i: unknown) => Promise<unknown> }>;
+  };
+
+  /** Make the mocked digest turn call `postCard` with each spec in order, then answer `text`. */
+  function digestPostsCards(
+    specs: unknown[],
+    text: string
+  ): { results: unknown[]; seen: CardSpec[] } {
+    const results: unknown[] = [];
+    const seen: CardSpec[] = [];
+    runAgentMock.mockImplementation(async (spec: CardSpec) => {
+      seen.push(spec);
+      for (const cardSpec of specs) {
+        results.push(await spec.tools?.postCard?.execute({ spec: cardSpec }));
+      }
+      return { costUsd: 0.02, text, usage: { inputTokens: 1, outputTokens: 1 } };
+    });
+    return { results, seen };
+  }
+
+  it('gives the digest the postCard tool and its catalog', async () => {
+    findChannel.mockResolvedValue(makeChannel() as never);
+    const { seen } = digestPostsCards([], 'SKIP');
+
+    await runChannelAmbientDigest({ channelId: 'chan-1' });
+
+    expect(seen[0]?.tools?.postCard).toBeDefined();
+    expect(seen[0]?.systemPrompt).toContain('postCard');
+    expect(seen[0]?.systemPrompt).toContain('"type": "table"');
+  });
+
+  it('posts an accepted card top-level with its blocks, instead of the prose reply', async () => {
+    findChannel.mockResolvedValue(makeChannel() as never);
+    digestPostsCards([goodCard], 'See the card.');
+
+    await runChannelAmbientDigest({ channelId: 'chan-1' });
+
+    expect(postSlackChannelMessageMock).toHaveBeenCalledTimes(1);
+    const [channel, text, blocks] = postSlackChannelMessageMock.mock.calls[0] ?? [];
+    expect(channel).toBe('C123');
+    expect(text).toBe('Open loose ends');
+    expect((blocks as Array<{ type: string }>).map((b) => b.type)).toEqual(['header', 'section']);
+    expect(writeChannelMemoryMock).not.toHaveBeenCalled();
+  });
+
+  it('lets an explicit SKIP win over a card', async () => {
+    findChannel.mockResolvedValue(makeChannel() as never);
+    digestPostsCards([goodCard], 'SKIP');
+
+    await runChannelAmbientDigest({ channelId: 'chan-1' });
+
+    expect(postSlackChannelMessageMock).not.toHaveBeenCalled();
+    // The LLM call happened, so its cost is still settled.
+    expect(upsertUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it('posts the prose digest when the card was refused and never corrected', async () => {
+    findChannel.mockResolvedValue(makeChannel() as never);
+    const { results } = digestPostsCards(
+      [{ blocks: [] }],
+      'Heads up: the staging migration question is still open.'
+    );
+
+    await runChannelAmbientDigest({ channelId: 'chan-1' });
+
+    expect(results).toEqual([expect.objectContaining({ posted: false })]);
+    expect(postSlackChannelMessageMock).toHaveBeenCalledWith(
+      'C123',
+      'Heads up: the staging migration question is still open.'
+    );
+  });
+
+  it('posts a card even when the prose reply is too short to count as a digest', async () => {
+    findChannel.mockResolvedValue(makeChannel() as never);
+    digestPostsCards([goodCard], 'ok');
+
+    await runChannelAmbientDigest({ channelId: 'chan-1' });
+
+    expect(postSlackChannelMessageMock).toHaveBeenCalledTimes(1);
+    expect(postSlackChannelMessageMock.mock.calls[0]?.[2]).toBeDefined();
+  });
+});
