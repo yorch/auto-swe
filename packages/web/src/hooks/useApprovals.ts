@@ -74,10 +74,25 @@ export function useApprovalsStream() {
   }, [qc]);
 }
 
-/** Count of steps waiting on the current user, for the chrome. */
+/**
+ * Count of steps waiting on the current user, for the chrome. Asks the gateway for the
+ * total (`count=true`, returned as `meta.total`) rather than measuring the list, which is
+ * capped at one page and would under-count the badge.
+ */
 export function useApprovalsCount(): number {
-  const { data } = useApprovals('PENDING', 'requestedAt:desc', false, undefined, true);
-  return (data ?? []).length;
+  const { data } = useQuery({
+    queryFn: () =>
+      api
+        .get<{ data?: unknown; meta?: { total?: unknown } }>(
+          '/api/v1/human-steps?actionable=true&limit=1&count=true'
+        )
+        .then((r) => (typeof r.meta?.total === 'number' ? r.meta.total : 0)),
+    // Under the 'approvals' prefix so the SSE stream's invalidation refreshes it.
+    queryKey: ['approvals', 'count'],
+    // Same 30 s fallback poll as the list queries.
+    refetchInterval: 30_000,
+  });
+  return data ?? 0;
 }
 
 export function useRespondToApproval() {

@@ -121,7 +121,7 @@ function GovernApprovals() {
     tab.id === 'PENDING' && pendingTotal > 0
       ? {
           ...tab,
-          label: `Pending (${pendingTotal}${pendingTotal >= SERVER_CAP.PENDING ? '+' : ''})`,
+          label: `Pending (${pendingTotal})`,
         }
       : tab
   );
