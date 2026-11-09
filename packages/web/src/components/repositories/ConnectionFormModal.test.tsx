@@ -18,7 +18,9 @@ vi.mock('@/stores/authStore', () => ({
 vi.mock('@/hooks/useTeams', () => ({
   useAdminTeamIds: () => new Set(auth.teamRole === 'ADMIN' ? ['t1'] : []),
   useLedTeamIds: () => new Set(['t1']),
-  useTeams: () => ({ data: [{ id: 't1', name: 'Payments' }] }),
+  useTeams: () => ({
+    data: [{ id: 't1', myRole: 'LEAD', name: 'Payments', orgId: 'o1', orgName: 'Org' }],
+  }),
 }));
 vi.mock('@/hooks/useRepositories', () => ({
   useCreateRepository: () => ({ isPending: false, mutateAsync: create.mutateAsync }),

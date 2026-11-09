@@ -1,12 +1,12 @@
 'use client';
 
-import { RUN_DETAIL_LAYOUTS, type RunDetailLayout } from '@auto-swe/shared/types/api';
+import {
+  RUN_DETAIL_LAYOUTS,
+  type RunDetailLayout,
+  type UserPreferences,
+} from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-
-interface UserPreferences {
-  runDetailLayout?: RunDetailLayout;
-}
 
 function isRunDetailLayout(value: unknown): value is RunDetailLayout {
   return (RUN_DETAIL_LAYOUTS as readonly unknown[]).includes(value);

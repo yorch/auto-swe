@@ -1,5 +1,5 @@
 import { resolveSettings } from '@auto-swe/shared/config';
-import { RUN_DETAIL_LAYOUTS } from '@auto-swe/shared/types/api';
+import { MAX_PINNED_TEAM_SLUGS, RUN_DETAIL_LAYOUTS } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -7,7 +7,23 @@ import { sendError } from '../lib/httpErrors.js';
 import { listMcpGrants, revokeMcpGrants } from '../lib/mcpGrants.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
+// The team slug rule from team creation (routes/teams.ts).
+const TeamSlugSchema = z
+  .string()
+  .min(1)
+  .max(50)
+  .regex(/^[a-z0-9-]+$/, 'slug must be lowercase-kebab-case');
+
+// The team slugs are UI hints only: they are deliberately not checked against existing teams or
+// the caller's membership. The web resolves them through the member-filtered team list, so a
+// stale or foreign slug resolves to nothing and grants nothing.
 const PreferencesBodySchema = z.object({
+  lastTeamSlug: TeamSlugSchema.nullable().optional(),
+  pinnedTeamSlugs: z
+    .array(TeamSlugSchema)
+    .max(MAX_PINNED_TEAM_SLUGS)
+    .transform((slugs) => [...new Set(slugs)])
+    .optional(),
   runDetailLayout: z.enum(RUN_DETAIL_LAYOUTS).optional(),
 });
 

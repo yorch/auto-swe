@@ -8,8 +8,8 @@ vi.mock('@/hooks/useTeams', () => ({
   useLedTeamIds: () => state.led,
   useTeams: () => ({
     data: [
-      { id: 'mine', name: 'My team' },
-      { id: 'other', name: 'Other team' },
+      { id: 'mine', myRole: 'LEAD', name: 'My team', orgId: 'o1', orgName: 'Org' },
+      { id: 'other', myRole: null, name: 'Other team', orgId: 'o1', orgName: 'Org' },
     ],
     isSuccess: true,
     refetch: vi.fn(),

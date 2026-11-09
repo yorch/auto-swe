@@ -9,6 +9,7 @@ import { sendConflict } from '../lib/conflict.js';
 import { sendError } from '../lib/httpErrors.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
+import { booleanQueryParam } from '../lib/queryParams.js';
 import { memberTeams, permissionRequirement } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { teamScopedConfigRoutes } from './modelConfig.js';
@@ -202,32 +203,45 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // GET /api/v1/teams — List teams
+  // GET /api/v1/teams — List teams. Each row carries the caller's own role in it (`myRole`,
+  // null for a team they do not belong to, e.g. a platform ADMIN's view of every team) so the
+  // dashboard needs no per-team detail request. `member=true` narrows to the caller's own
+  // teams, even for a platform ADMIN.
   app.get(
     '/',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { querystring: z.object({ member: booleanQueryParam() }) },
     },
     async (request) => {
       const user = requireUser(request);
+      const memberOnly = user.role !== 'ADMIN' || request.query.member;
+      // `memberTeams(user)` is a literal AND element so the tenant guard's static check sees the
+      // membership predicate; `{}` (no restriction) is only reachable for a platform ADMIN.
       const where: Prisma.TeamWhereInput = {
-        isActive: true,
-        ...(user.role !== 'ADMIN' && {
-          ...memberTeams(user),
-        }),
+        AND: [{ isActive: true }, memberOnly ? memberTeams(user) : {}],
       };
 
-      // The spread above is `{}` for a platform admin, which is the deliberate
-      // cross-tenant branch.
-      const teams = await asPlatformAdmin(user, 'admin lists every team', ['Team'], () =>
+      // Unscoped only for a platform admin who did not ask for `member=true`, which is the
+      // deliberate cross-tenant branch.
+      const rows = await asPlatformAdmin(user, 'admin lists every team', ['Team'], () =>
         fastify.prisma.team.findMany({
           include: {
             _count: { select: { memberships: true, repositories: true } },
+            // Only the caller's own membership row: never another member's role.
+            memberships: { select: { role: true }, where: { userId: user.sub } },
+            organization: { select: { name: true } },
           },
           orderBy: { name: 'asc' },
           where,
         })
       );
+
+      const teams = rows.map(({ memberships, organization, ...team }) => ({
+        ...team,
+        myRole: memberships[0]?.role ?? null,
+        orgName: organization.name,
+      }));
 
       return { data: teams };
     }

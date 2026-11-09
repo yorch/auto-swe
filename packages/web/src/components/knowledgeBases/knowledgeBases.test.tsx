@@ -87,20 +87,16 @@ function mock(rows = [base()], extra: Record<string, (body?: unknown) => unknown
     'GET /api/v1/repositories/repo1/share-candidates': () => ({
       data: [{ id: 'team2', name: 'Payments' }],
     }),
+    // The team list carries the caller's own role in each team (`myRole`); the led-team set is
+    // derived from it, so there is no per-team detail request to mock.
     'GET /api/v1/teams': () => ({
       data: [
-        { id: 'team1', name: 'Platform' },
-        { id: 'team2', name: 'Payments' },
+        { id: 'team1', myRole: 'LEAD', name: 'Platform', orgId: 'org1', orgName: 'Acme' },
+        { id: 'team2', myRole: 'ENGINEER', name: 'Payments', orgId: 'org1', orgName: 'Acme' },
       ],
-    }),
-    'GET /api/v1/teams/team1': () => ({
-      data: { id: 'team1', memberships: [{ role: 'LEAD', user: { id: 'me' } }] },
     }),
     'GET /api/v1/teams/team1/knowledge-bases/effective': () => ({
       data: { dropped: [], refusedExclusions: [], selected: [inherited] },
-    }),
-    'GET /api/v1/teams/team2': () => ({
-      data: { id: 'team2', memberships: [{ role: 'ENGINEER', user: { id: 'me' } }] },
     }),
     'PATCH /api/v1/knowledge-base-links/link1': () => ({ data: {} }),
     'PATCH /api/v1/knowledge-bases/kb1': (body) => {

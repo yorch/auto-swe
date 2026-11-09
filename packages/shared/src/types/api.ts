@@ -125,6 +125,18 @@ export interface WorkflowHttpCallDetail
 export const RUN_DETAIL_LAYOUTS = ['A', 'B', 'C'] as const;
 export type RunDetailLayout = (typeof RUN_DETAIL_LAYOUTS)[number];
 
+/** The most team slugs a user can pin. */
+export const MAX_PINNED_TEAM_SLUGS = 20;
+
+/** Per-user UI preferences (`GET`/`PATCH /api/v1/me/preferences`). */
+export interface UserPreferences {
+  runDetailLayout?: RunDetailLayout;
+  /** Last team the user worked in; a UI hint, resolved through the member-filtered team list. */
+  lastTeamSlug?: string | null;
+  /** Team slugs the user pinned; a UI hint, not checked against membership. */
+  pinnedTeamSlugs?: string[];
+}
+
 // ── Shared reference shapes (minimal projections returned by includes) ──
 
 export interface TeamRef {
@@ -202,6 +214,10 @@ export interface TeamSummary {
   description: string;
   defaultPersonaPrompt: string | null;
   _count: { memberships: number; repositories: number };
+  /** The caller's own role in this team; null when they are not a member (a platform ADMIN's view). */
+  myRole: 'ADMIN' | 'LEAD' | 'ENGINEER' | null;
+  orgId: string;
+  orgName: string;
 }
 
 /** Shape returned by GET /api/v1/teams/:id (detail) */
