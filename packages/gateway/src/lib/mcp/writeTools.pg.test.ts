@@ -29,6 +29,7 @@ import { mcpOAuthGateOptions } from '../mcpOAuthGateOptions.js';
 import { mcpRouteOptions } from '../mcpRouteOptions.js';
 import { resetMcpWriteRateLimit } from '../mcpWriteGuard.js';
 import { MCP_BRIDGE_HEADER, mcpBridgePlugin } from './bridge.js';
+import { DOMAIN_TOOL_NAMES } from './domains/index.js';
 
 // The enrichment and the canary read integration config this test does not need.
 vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
@@ -554,7 +555,9 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       expect(await toolNames(people.alice.token)).toEqual(
         expect.arrayContaining(['cancel_run', 'submit_work_request'])
       );
-      expect(await toolNames(people.alice.readToken as string)).toHaveLength(8);
+      expect(await toolNames(people.alice.readToken as string)).toHaveLength(
+        8 + DOMAIN_TOOL_NAMES.length
+      );
     });
 
     it('answers a read token that calls a write tool with 403 insufficient_scope for mcp:write', async () => {
@@ -579,7 +582,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
     it('a fresh deployment with no write setting exposes no write tool and refuses mcp:write consent', async () => {
       // Only `mcp.enabled`: every other mcp.* key is absent, so the registry defaults apply.
       await setSettings({ 'mcp.enabled': true });
-      expect(await toolNames(people.alice.token)).toHaveLength(8);
+      expect(await toolNames(people.alice.token)).toHaveLength(8 + DOMAIN_TOOL_NAMES.length);
       const clientId = await registerClient();
       const challenge = b64url(crypto.createHash('sha256').update('v'.repeat(43)).digest());
       const refused = await call(
