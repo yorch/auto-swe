@@ -134,6 +134,66 @@ describe('parseSlackCard', () => {
   });
 });
 
+describe('parseSlackCard link host policy', () => {
+  const button = (url: string) => ({
+    blocks: [{ items: [{ label: 'Go', url }], type: 'buttons' }],
+  });
+  const hosts = ['dash.example.com', 'ghe.corp:8443'];
+
+  it('accepts only exact allowed hosts, ports included, case-insensitively', () => {
+    expect(
+      parseSlackCard(button('https://dash.example.com/runs/1?x=1'), { allowedLinkHosts: hosts }).ok
+    ).toBe(true);
+    expect(
+      parseSlackCard(button('https://DASH.example.com/'), { allowedLinkHosts: hosts }).ok
+    ).toBe(true);
+    expect(
+      parseSlackCard(button('https://ghe.corp:8443/o/r'), { allowedLinkHosts: hosts }).ok
+    ).toBe(true);
+  });
+
+  it.each([
+    'https://evil.example/',
+    'https://dash.example.com.evil.example/',
+    'https://evil-dash.example.com/',
+    'https://sub.dash.example.com/',
+    'https://ghe.corp/o/r',
+    'https://dash.example.com@evil.example/',
+    'https://user:pw@dash.example.com/',
+  ])('refuses %s', (url) => {
+    const result = parseSlackCard(button(url), { allowedLinkHosts: hosts });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues[0]).toContain('blocks.0.items.0.url');
+    }
+  });
+
+  it('reports every offending button, and refuses all links when no host is allowed', () => {
+    const spec = {
+      blocks: [
+        { type: 'divider' },
+        {
+          items: [
+            { label: 'A', url: 'https://a.example' },
+            { label: 'B', url: 'https://b.example' },
+          ],
+          type: 'buttons',
+        },
+      ],
+    };
+    const result = parseSlackCard(spec, { allowedLinkHosts: [] });
+    expect(result.ok ? [] : result.issues).toHaveLength(2);
+  });
+
+  it('allows any http(s) URL when no policy is given', () => {
+    expect(parseSlackCard(button('https://anything.example/')).ok).toBe(true);
+  });
+
+  it('tells the model which hosts are allowed', () => {
+    expect(slackCardPrompt({ linkHosts: ['dash.example.com'] })).toContain('dash.example.com');
+  });
+});
+
 describe('renderSlackCard', () => {
   it('renders each component to one Slack block', () => {
     const card = parseOk({

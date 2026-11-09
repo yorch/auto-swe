@@ -40,6 +40,12 @@ const MAX_TABLE_TEXT = SLACK_LIMITS.sectionText - 20;
 export interface SlackCardLimits {
   /** Maximum number of components (one Slack block each). Defaults to Slack's 50. */
   maxBlocks?: number;
+  /**
+   * `host[:port]` values a button may link to (exact match, no wildcards or suffixes). Omitted:
+   * any http(s) URL passes. A URL carrying userinfo is refused whenever this is set, since
+   * `https://trusted.example@evil.example` reads as the trusted host to a person.
+   */
+  allowedLinkHosts?: readonly string[];
 }
 
 const httpUrl = z
@@ -185,6 +191,27 @@ export function parseSlackCard(input: unknown, limits: SlackCardLimits = {}): Sl
       ok: false,
     };
   }
+
+  const linkHosts = limits.allowedLinkHosts?.map((h) => h.toLowerCase());
+  if (linkHosts) {
+    const issues: string[] = [];
+    for (const [i, block] of parsed.data.blocks.entries()) {
+      if (block.type !== 'buttons') {
+        continue;
+      }
+      for (const [j, item] of block.items.entries()) {
+        const url = new URL(item.url);
+        if (url.username || url.password || !linkHosts.includes(url.host.toLowerCase())) {
+          issues.push(
+            `blocks.${i}.items.${j}.url: links may only point at ${linkHosts.join(', ') || 'no host'}`
+          );
+        }
+      }
+    }
+    if (issues.length > 0) {
+      return { issues, ok: false };
+    }
+  }
   return { card: parsed.data, ok: true };
 }
 
@@ -283,7 +310,7 @@ export function renderSlackCard(card: SlackCardSpec): { blocks: unknown[]; text:
  * The catalog, written for a system prompt. It describes exactly what `slackCardSchema` accepts;
  * `slackCard.test.ts` checks that every component type named here parses.
  */
-export function slackCardPrompt(): string {
+export function slackCardPrompt(options: { linkHosts?: readonly string[] } = {}): string {
   return [
     'To reply with a structured Slack card, answer with one JSON object and nothing else:',
     '{ "summary"?: string, "blocks": Component[] }',
@@ -296,5 +323,8 @@ export function slackCardPrompt(): string {
     '- { "type": "divider" }',
     `- { "type": "buttons", "items": [{ "label": string, "url": string }] }  (1-${SLACK_LIMITS.buttonsPerBlock} link buttons; http(s) URLs only)`,
     'Text is shown literally: <, > and & are escaped, so mentions and links written inline do not work. Put links in "buttons".',
+    ...(options.linkHosts
+      ? [`Button URLs may only use these hosts: ${options.linkHosts.join(', ') || '(none)'}.`]
+      : []),
   ].join('\n');
 }
