@@ -106,10 +106,11 @@ the workflow delivers it as the reply's blocks with the card's text as the notif
   (`card_link_*`) for linked and unlinked users alike.
 - **An action intent wins.** A card posted in the same turn as `delegateTask`, `generateWorkflow` or
   `refineWorkflow` is dropped, because the workflow answers those with its own text.
-- **The ambient digest can post one too.** The digest turn gets the same tool (`lib/channelCard.ts`)
-  and the same validation. An accepted card is posted at channel root with its text as the
-  fallback. An explicit `SKIP` wins over a card, and a card that was refused and never corrected
-  leaves the prose digest to post as before.
+- **The ambient digest and a reactive interjection can post one too.** Each turn gets the same tool
+  (`lib/channelCard.ts`) and the same validation. An accepted card is posted at channel root with
+  its text as the fallback. An explicit `SKIP` wins over a card (and an interjection that skips
+  stamps no cooldown), and a card that was refused and never corrected leaves the prose to post as
+  before.
 
 **Injection scanning.** Channel input is scanned advisorily and surfaces as a `CHANNEL_SUSPICIOUS`
 security event in `/admin/security`.
@@ -401,6 +402,8 @@ the per-channel Temporal Schedule is created, retimed, or torn down to match the
 | App Home | `app_home_opened` → `publishAppHome` → `views.publish` renders a Block Kit front door (`buildAppHomeView` is pure and unit-tested) |
 | Slash | `/auto-swe` — workflow list/show and a run modal |
 | Run-complete notice | When a team has `slackNotifySuccess` on, a finished run posts a card: the ticket and template, status, duration, cost and an "Open run" link button to the dashboard. Fixed code builds it from the run row (`lib/runCompleteCard.ts`, through the same validator as the assistant's cards, so the link may only point at the dashboard host). If the card cannot be built, the notice is the one-line text it was before |
+| Step-failure and PR-ready notices | A failed step posts a card with the step, the attempt, the error in a code block and an "Open run" button; a ready pull request posts a card with an "Open PR" button. Fixed code builds both (`lib/noticeCards.ts`, same validator). The PR button may point only at the dashboard or an approved repository host, so a pull request on an unlisted host keeps the plain line with its link. A card that cannot be built leaves the one-line text it was before |
+| Task report | A channel task's final in-thread report is a card: a headline, the result text, status, duration and cost, and an "Open run" button (`lib/taskResultCard.ts`). The result is model prose and a card escapes its text, so link syntax in it shows literally (a bare URL still links). If the card cannot be built, the report is the plain text it was before |
 | Shortcuts | A global "Run a workflow" picker, and a message shortcut "Ask auto-swe about this" that starts a turn on the message with no account link required |
 
 **Escaping.** Slack reads `<…>` as markup, so `<!channel>` broadcasts, `<@U…>` mentions a person and
@@ -456,9 +459,12 @@ unproven on real traffic, and turn them on one channel at a time.
   task, or generates a workflow; it has no route to an agent run. Adding one is a new feature with
   its own identity, RBAC, budget and security design (see
   [agent-runs.md §9](./agent-runs.md#9-relation-to-the-channel-assistant)).
-- **Cards are not on every Slack path.** A mention or follow-up turn, the ambient digest and the
-  run-complete notice can post one. Reactive interjections, the step-failure and PR-ready notices
-  and a task's final in-thread report still post text, and a long-running task never edits a card.
+- **Cards are not on every Slack path.** A mention or follow-up turn, the ambient digest, a reactive
+  interjection, the run-complete, step-failure and PR-ready notices and a task's final report can
+  post one. The open-item nudge, the org-signal flag, error replies and the gateway's thread
+  acknowledgements still post text, and a long-running task never edits a card.
+- **A task report card flattens the result's markup.** The result text is escaped as a whole, so
+  `<url|label>` links and other angle-bracket markup in it show as typed. A bare URL still links.
 - **A card is not summarised into channel memory.** The memory summariser sees the turn's prose,
   which is at most a sentence when the answer was a card.
 - **A model-written reply can still mention one person or add a link.** Only broadcast mentions are
@@ -508,7 +514,7 @@ unproven on real traffic, and turn them on one channel at a time.
 |---|---|
 | Workflows | `workflows/channelAssistant.ts`, `channelScheduledTask.ts`, `channelReactive.ts`, `taskChild.ts` |
 | Activities | `activities/channelAssistant.ts`, `channelReactive.ts`, `channelTask.ts`, `channelTaskPlan.ts`, `channelOpenItems.ts`, `consolidateChannelMemory.ts`, `passiveIngestChannelMemory.ts` |
-| Worker libs | `lib/channelMemory.ts`, `channelPersona.ts`, `channelTurnPrompts.ts`, `channelCard.ts`, `slackCard.ts`, `runCompleteCard.ts`, `embeddingClustering.ts`, `slackNotify.ts` |
+| Worker libs | `lib/channelMemory.ts`, `channelPersona.ts`, `channelTurnPrompts.ts`, `channelCard.ts`, `cardLinkHosts.ts`, `slackCard.ts`, `runCompleteCard.ts`, `noticeCards.ts`, `taskResultCard.ts`, `embeddingClustering.ts`, `slackNotify.ts` |
 | Steering | `workflows/runnable.ts` (`steer` handler), `activities/runAgentNode.ts` (`prependSteering`), `shared/workflow/interpreter.ts` (`drainSteering`) |
 | Gateway | `routes/slack.ts` + `routes/slack/events.ts` (events), `lib/slack/` (thread-reply steering, channel provisioning), `routes/slackChannels.ts`, `plugins/temporal.ts` (`startChannelAssistant`) |
 | Web | `app/admin/slack-channels/`, `app/teams/[id]/page.tsx` (persona card), `hooks/useSlackChannels.ts` |

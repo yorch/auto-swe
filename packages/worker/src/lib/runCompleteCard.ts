@@ -35,12 +35,12 @@ const STATUS_EMOJI: Record<RunCompleteStatus, string> = {
 /** Ticket ids and template names are user-chosen; keep either from flooding the card. */
 const MAX_LABEL_CHARS = 120;
 
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
 /** A name safe to put between backticks: no backtick can end the code span early. */
-function codeSafe(text: string): string {
+export function codeSafe(text: string): string {
   return clip(text.replace(/`/g, "'").replace(/\s+/g, ' ').trim(), MAX_LABEL_CHARS);
 }
 

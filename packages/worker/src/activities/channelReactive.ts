@@ -1,8 +1,12 @@
 import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
+import { buildPostCardTool, type ChannelCard, resolveCardLinkHosts } from '../lib/channelCard.js';
 import { type ChannelMemoryItem, retrieveChannelMemory } from '../lib/channelMemory.js';
 import { resolvePersonaPrompt } from '../lib/channelPersona.js';
+import { cardToolPromptNote } from '../lib/channelTurnPrompts.js';
+import type { AgentTools } from '../lib/config/agentSpec.js';
 import { fenceRecalledMemory } from '../lib/memoryGuard.js';
+import { slackCardPrompt } from '../lib/slackCard.js';
 import {
   fetchChannelHistory,
   postSlackChannelMessage,
@@ -248,6 +252,14 @@ export async function evaluateReactiveInterjection(
       channel.personaPrompt,
       channel.team?.defaultPersonaPrompt
     );
+    // An interjection may be a structured card (a short list with links) instead of prose.
+    // `postCard` validates the spec inside the turn, so a refusal reaches the model to correct;
+    // an accepted card is recorded here and posted below.
+    let card: ChannelCard | undefined;
+    const cardLinkHosts = await resolveCardLinkHosts();
+    const postCardTool = buildPostCardTool(cardLinkHosts, (rendered) => {
+      card = rendered;
+    });
     // Holds budget across the model call, so concurrent ticks and turns can't
     // all pass the read above and blow past the cap together.
     const turn = await runHeldChannelTurn(
@@ -260,7 +272,11 @@ export async function evaluateReactiveInterjection(
         teamId: channel.teamId,
       },
       buildReactivePrompt(messages, memory, tuning['channel.memoryContextItems']),
-      'llm.channel_reactive'
+      'llm.channel_reactive',
+      {
+        promptNote: cardToolPromptNote(slackCardPrompt({ linkHosts: cardLinkHosts })),
+        tools: { postCard: postCardTool } as AgentTools,
+      }
     );
     if (!turn) {
       await advanceCursor();
@@ -268,7 +284,10 @@ export async function evaluateReactiveInterjection(
     }
     const { reply, costUsd } = turn;
 
-    const posted = shouldPostInterjection(reply);
+    // An explicit SKIP wins over a card: the prompt sets a high bar and tells the agent to reply
+    // with exactly that when it has nothing to add, and a stray card must not override it.
+    const skipped = SKIP_SENTINEL.test(reply.trim());
+    const posted = !skipped && (card !== undefined || shouldPostInterjection(reply));
 
     // Settle the LLM cost (it happened). Count a run only when we actually post —
     // a SKIP is a no-op evaluation, not a user-facing turn.
@@ -287,7 +306,11 @@ export async function evaluateReactiveInterjection(
     });
 
     if (posted) {
-      await postSlackChannelMessage(channel.slackChannelId, reply);
+      if (card) {
+        await postSlackChannelMessage(channel.slackChannelId, card.text, card.blocks);
+      } else {
+        await postSlackChannelMessage(channel.slackChannelId, reply);
+      }
     }
 
     return { posted, reason: posted ? 'posted' : 'skip' };

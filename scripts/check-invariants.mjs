@@ -863,6 +863,94 @@ function checkNoImmediateMerge() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// INVARIANT 11 — a message reaches Slack only through a known writer, and the worker's writer
+// defuses broadcast mentions.
+//
+// Text a model writes is posted to Slack as written, and a prompt-injected channel message can make
+// it carry `<!channel>`. The worker's `lib/slackNotify.ts` defuses broadcast mentions
+// (`neutralizeSlackBroadcasts`) at each place it sends to `chat.postMessage` / `chat.update`, so
+// every caller is covered without remembering to ask. A new file that calls those endpoints itself
+// would bypass that, and it type-checks, authenticates and posts fine, so nothing else fails.
+//
+// Rule 1: only the known writer files name `chat.postMessage` or `chat.update`. The worker's
+// writer, the gateway's (`lib/slack.ts`, whose text is built by fixed code with outside text
+// escaped, and `lib/hitlSlackSync.ts`, the same for an edit in place) and the workflow Slack-write
+// connector node (`connectors/slack.ts`, whose content the workflow author chooses).
+// Rule 2: in `slackNotify.ts`, every `fetch(SLACK_POST_URL` / `fetch(SLACK_UPDATE_URL` is matched by
+// a `neutralizeSlackBroadcasts(` call, counted, so a new send in that file cannot skip it.
+//
+// A tripwire over source text with comments removed: an endpoint path assembled from pieces, an
+// aliased URL constant in another file and a count satisfied by an unrelated call are not seen.
+// A standing constraint on a new surface, not a past incident.
+// ---------------------------------------------------------------------------
+
+export const SLACK_MESSAGE_WRITERS = new Set([
+  'packages/gateway/src/lib/hitlSlackSync.ts',
+  'packages/gateway/src/lib/slack.ts',
+  'packages/worker/src/connectors/slack.ts',
+  'packages/worker/src/lib/slackNotify.ts',
+]);
+const SLACK_MESSAGE_ENDPOINT = /chat\.(?:postMessage|update)\b/;
+const WORKER_SLACK_WRITER = 'packages/worker/src/lib/slackNotify.ts';
+
+/** Violations in one file's source (comments removed): `{ line, text, kind }` each. */
+export function slackWriterViolations(file, src) {
+  const path = file.split(sep).join('/');
+  const code = stripComments(src);
+  const found = [];
+  if (!SLACK_MESSAGE_WRITERS.has(path)) {
+    code.split('\n').forEach((text, i) => {
+      if (SLACK_MESSAGE_ENDPOINT.test(text)) {
+        found.push({ kind: 'unknown-writer', line: i + 1, text: text.trim() });
+      }
+    });
+  }
+  if (path === WORKER_SLACK_WRITER) {
+    const sends = (code.match(/\bfetch\(\s*SLACK_(?:POST|UPDATE)_URL\b/g) ?? []).length;
+    const defused = (code.match(/\bneutralizeSlackBroadcasts\(/g) ?? []).length;
+    if (defused < sends) {
+      found.push({
+        kind: 'unneutralized-send',
+        line: 1,
+        text: `${sends} send(s) to chat.postMessage / chat.update but only ${defused} neutralizeSlackBroadcasts( call(s)`,
+      });
+    }
+  }
+  return found;
+}
+
+function checkSlackMessageWriters() {
+  const files = [];
+  for (const pkg of readdirSync(join(ROOT, 'packages'))) {
+    if (existsSync(join(ROOT, 'packages', pkg, 'src'))) {
+      files.push(
+        ...walk(
+          join('packages', pkg, 'src'),
+          (f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f) && !f.includes('generated')
+        )
+      );
+    }
+  }
+  for (const file of files) {
+    for (const v of slackWriterViolations(file, read(file))) {
+      fail(
+        file,
+        v.line,
+        'slack-message-writers',
+        v.kind === 'unknown-writer'
+          ? `posts or edits a Slack message outside the known writers: ${v.text.slice(0, 120)}`
+          : v.text,
+        v.kind === 'unknown-writer'
+          ? "Send through the worker's lib/slackNotify.ts, which defuses <!channel>, <!here>, " +
+              '<!everyone> and user-group mentions in text a model wrote. If another writer is ' +
+              'genuinely needed, add it to SLACK_MESSAGE_WRITERS here and give it the same check.'
+          : 'Every send in slackNotify.ts must pass its text through neutralizeSlackBroadcasts.'
+      );
+    }
+  }
+}
+
 function main() {
   checkWorkspaceImageLiterals();
   checkDockerfileYarnProvisioning();
@@ -874,6 +962,7 @@ function main() {
   checkComposeProfilesAreAdded();
   checkCredentialsAreNotInEnv();
   checkNoImmediateMerge();
+  checkSlackMessageWriters();
   report();
 }
 
@@ -891,7 +980,7 @@ function report() {
     process.exit(1);
   }
 
-  console.log('Invariant check passed — 10 invariants, no violations.');
+  console.log('Invariant check passed — 11 invariants, no violations.');
   console.log('  workspace image is inherited, never written inline at a call site');
   console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
   console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
@@ -903,6 +992,9 @@ function report() {
   console.log('  credentials reach a workspace command through secretEnv, never an env list');
   console.log(
     '  no known immediate-merge spelling in source: auto-merge is the only merge path used'
+  );
+  console.log(
+    '  Slack messages are sent only through known writers, and the worker defuses broadcasts'
   );
 }
 

@@ -4,6 +4,8 @@ import {
   resolveWebUrl,
 } from '@auto-swe/shared/lib/systemConfig';
 import { approvalAllowsRequestChanges } from '@auto-swe/shared/workflow';
+import { resolveCardLinkHosts } from './cardLinkHosts.js';
+import { buildPrReadyCard, buildStepFailureCard } from './noticeCards.js';
 import { buildRunCompleteCard } from './runCompleteCard.js';
 import { escapeSlackText, neutralizeSlackBroadcasts } from './slackEscape.js';
 
@@ -541,6 +543,22 @@ async function postChannelMessage(
   }
 }
 
+/**
+ * The dashboard link for a run and the host a card button may use for it, or `null` when `WEB_URL`
+ * does not parse (the caller then posts plain text).
+ */
+function dashboardRunLink(runId: string): { runUrl: string; dashboardHost: string } | null {
+  const webUrl = resolveWebUrl();
+  try {
+    return {
+      dashboardHost: new URL(webUrl).host,
+      runUrl: `${webUrl.replace(/\/+$/, '')}/runs/${encodeURIComponent(runId)}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Per-step failure notification (phase 7). Fires on the FIRST failed attempt only. */
 export async function notifySlackStepFailure(input: {
   runId: string;
@@ -566,7 +584,28 @@ export async function notifySlackStepFailure(input: {
     // Truncate before escaping so the cut cannot land inside an `&amp;`-style entity.
     const errLine = input.error ? `: ${escapeSlackText(truncate(input.error, 400))}` : '';
     const text = `*[${escapeSlackText(resolved.ticket)}]* \`${escapeSlackText(resolved.templateName)}\` → step \`${escapeSlackText(input.nodeId)}\` failed (attempt ${input.attempt})${errLine}`;
-    await postToSlack(token, resolved.channel, resolved.threadTs, text, 'slackNotify');
+    // A card (step, attempt, the error and an Open run link) when it validates; the one-line text
+    // otherwise, so a refused card can never cost the team the notification.
+    const link = dashboardRunLink(input.runId);
+    const card = link
+      ? buildStepFailureCard({
+          attempt: input.attempt,
+          dashboardHost: link.dashboardHost,
+          error: input.error ? truncate(input.error, 400) : undefined,
+          nodeId: input.nodeId,
+          runUrl: link.runUrl,
+          templateName: resolved.templateName,
+          ticket: resolved.ticket,
+        })
+      : null;
+    await postToSlack(
+      token,
+      resolved.channel,
+      resolved.threadTs,
+      card?.text ?? text,
+      'slackNotify',
+      card?.blocks
+    );
   } catch {
     /* best-effort */
   }
@@ -592,7 +631,22 @@ export async function notifySlackPrReady(input: {
       return;
     }
     const text = `:eyes: *[${escapeSlackText(ctx.ticket)}]* PR #${input.prNumber} is ready for review: ${input.prUrl}`;
-    await postToSlack(token, ctx.channel, ctx.threadTs, text, 'slackNotify (pr-ready)');
+    // The PR button may point at the dashboard or an approved repository host; a PR on any other
+    // host (an unlisted GitHub Enterprise server) keeps the plain line with its link.
+    const card = buildPrReadyCard({
+      allowedLinkHosts: await resolveCardLinkHosts(),
+      prNumber: input.prNumber,
+      prUrl: input.prUrl,
+      ticket: ctx.ticket,
+    });
+    await postToSlack(
+      token,
+      ctx.channel,
+      ctx.threadTs,
+      card?.text ?? text,
+      'slackNotify (pr-ready)',
+      card?.blocks
+    );
   } catch {
     /* best-effort */
   }
@@ -813,19 +867,13 @@ export async function notifySlackRunComplete(input: {
     const text = `${emoji} *[${escapeSlackText(resolved.ticket)}]* \`${escapeSlackText(resolved.templateName)}\` run finished: *${input.status}*`;
     // A card (status, duration, cost, an Open run link) when it validates; the one-line text it
     // always was otherwise, so a refused card can never cost the team the notification.
-    const webUrl = resolveWebUrl();
-    let dashboardHost: string | null = null;
-    try {
-      dashboardHost = new URL(webUrl).host;
-    } catch {
-      // An unparseable WEB_URL: no card, plain text.
-    }
-    const card = dashboardHost
+    const link = dashboardRunLink(input.runId);
+    const card = link
       ? buildRunCompleteCard({
           costUsd: resolved.costUsd,
-          dashboardHost,
+          dashboardHost: link.dashboardHost,
           endedAt: resolved.endedAt,
-          runUrl: `${webUrl.replace(/\/+$/, '')}/runs/${encodeURIComponent(input.runId)}`,
+          runUrl: link.runUrl,
           startedAt: resolved.startedAt,
           status: input.status,
           templateName: resolved.templateName,

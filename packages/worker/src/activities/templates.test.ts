@@ -2168,6 +2168,101 @@ describe('finalizeWorkflowRun', () => {
     findRun.mockReset();
   });
 
+  describe('a channel task reports back into its thread as a card', () => {
+    function channelRun(title = 'Summarise') {
+      return {
+        endedAt: null,
+        startedAt: new Date('2026-03-14T10:00:00Z'),
+        workflowId: 'ct-card',
+        workRequest: {
+          activeWorkflows: [],
+          connection: null,
+          externalTicketId: null,
+          payload: { channelId: 'chan-1', kind: 'channel-task', title },
+          slackChannelId: 'C1',
+          slackMessageTs: '1.2',
+        },
+      };
+    }
+
+    type PostedCard = {
+      args: unknown[];
+      blocks: Array<{
+        type: string;
+        text?: { text: string };
+        elements?: Array<{ url: string }>;
+      }>;
+    };
+    function lastPost(
+      post: ReturnType<typeof vi.mocked<typeof postSlackThreadMessage>>
+    ): PostedCard {
+      const args = post.mock.calls.at(-1) ?? [];
+      return { args, blocks: (args[3] ?? []) as PostedCard['blocks'] };
+    }
+
+    it('posts the result with an Open run link, and the plain text as the fallback', async () => {
+      const findRun = vi.mocked(prisma.workflowRun.findUnique);
+      const post = vi.mocked(postSlackThreadMessage);
+      post.mockClear();
+      updateManyRuns.mockReset();
+      updateManyRuns.mockResolvedValue({ count: 1 } as never);
+      findRun.mockResolvedValue(channelRun() as never);
+
+      await finalizeWorkflowRun('run card', 'SUCCESS', {
+        nodes: { task: { output: { text: 'The answer is 42.' } } },
+      });
+
+      expect(post).toHaveBeenCalledTimes(1);
+      const { args, blocks } = lastPost(post);
+      expect(args[0]).toBe('C1');
+      expect(args[1]).toBe('1.2');
+      expect(args[2]).toContain('Summarise');
+      expect(blocks.map((b) => b.type)).toEqual(['section', 'section', 'section', 'actions']);
+      expect(blocks[0]?.text?.text).toBe(':white_check_mark: Task *Summarise* is done');
+      expect(blocks[1]?.text?.text).toBe('The answer is 42.');
+      expect(blocks[3]?.elements?.[0]?.url).toBe('https://app.example.com/runs/run%20card');
+      findRun.mockReset();
+    });
+
+    it('escapes the model result and the title in the card', async () => {
+      const findRun = vi.mocked(prisma.workflowRun.findUnique);
+      const post = vi.mocked(postSlackThreadMessage);
+      post.mockClear();
+      updateManyRuns.mockReset();
+      updateManyRuns.mockResolvedValue({ count: 1 } as never);
+      findRun.mockResolvedValue(channelRun('<!here> job') as never);
+
+      await finalizeWorkflowRun('run-esc', 'SUCCESS', {
+        nodes: { task: { output: { text: 'Done <!channel> and <@U1>' } } },
+      });
+
+      const { blocks } = lastPost(post);
+      const json = JSON.stringify(blocks);
+      expect(json).not.toMatch(/<[!@]/);
+      expect(json).toContain('&lt;!channel&gt; and &lt;@U1&gt;');
+      findRun.mockReset();
+    });
+
+    it('reports a failed task as a card with its status', async () => {
+      const findRun = vi.mocked(prisma.workflowRun.findUnique);
+      const post = vi.mocked(postSlackThreadMessage);
+      post.mockClear();
+      updateManyRuns.mockReset();
+      updateManyRuns.mockResolvedValue({ count: 1 } as never);
+      findRun.mockResolvedValue(channelRun() as never);
+
+      await finalizeWorkflowRun('run-fail', 'FAILED');
+
+      const { args, blocks } = lastPost(post);
+      expect(args[2]).toContain('FAILED');
+      expect(blocks[0]?.text?.text).toBe(
+        ':rotating_light: Task *Summarise* finished with status *FAILED*'
+      );
+      expect(blocks.at(-1)?.type).toBe('actions');
+      findRun.mockReset();
+    });
+  });
+
   it('is a no-op on retry when the run was already finalized (idempotency)', async () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     const tx = vi.mocked(prisma.$transaction);
