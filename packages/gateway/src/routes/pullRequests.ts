@@ -20,7 +20,9 @@ import { csvRow } from '../lib/csv.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
+import { repositoryTeamScope, runMetricsTeamScope } from '../lib/runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
+import { assertTeamParam } from '../lib/teamParam.js';
 import { teamMembershipFilter } from '../lib/templateLaunch.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -106,7 +108,8 @@ function outcomesFilters(
   }
   if (query.teamId) {
     const { teamId } = query;
-    filters.push({ repository: { OR: [{ teamId }, { shares: { some: { teamId } } }] } });
+    // A metric: owner-only attribution, so a shared repository is not counted by two teams.
+    filters.push({ run: runMetricsTeamScope(teamId) });
   }
   if (query.scope === 'MINE') {
     filters.push({ workflow: { workRequest: { requestedById: user.sub } } });
@@ -135,6 +138,9 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
+      if (request.query.teamId) {
+        await assertTeamParam(fastify.prisma, user, request.query.teamId);
+      }
       const { draft, limit, offset, repoId, scope, state, teamId, ticket } = request.query;
       const filters: Prisma.PullRequestWhereInput[] = [
         user.role === 'ADMIN'
@@ -151,7 +157,8 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         filters.push({ repoId });
       }
       if (teamId) {
-        filters.push({ repository: { OR: [{ teamId }, { shares: { some: { teamId } } }] } });
+        // Owned or shared: a list shows the work the team can open. Its own AND term, so it only narrows.
+        filters.push({ repository: repositoryTeamScope(teamId) });
       }
       if (scope === 'MINE') {
         filters.push({ workflow: { workRequest: { requestedById: user.sub } } });
@@ -262,6 +269,9 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         if (!visibleTemplate) {
           return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
         }
+      }
+      if (request.query.teamId) {
+        await assertTeamParam(fastify.prisma, user, request.query.teamId);
       }
       const { days, end, previousStart, start } = resolveWindow(
         request.query,
@@ -423,6 +433,9 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         if (!visibleTemplate) {
           return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
         }
+      }
+      if (request.query.teamId) {
+        await assertTeamParam(fastify.prisma, user, request.query.teamId);
       }
       const { end, start } = resolveWindow(request.query, request.query.window);
       const where: Prisma.PullRequestWhereInput = {

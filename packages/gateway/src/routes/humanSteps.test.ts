@@ -451,6 +451,17 @@ describe('human step routes', () => {
       expect(body.meta).toBeUndefined();
     });
 
+    it('counts for count=true alone, with and without actionable, so meta.total is the badge number', async () => {
+      listTotal = 42;
+      const plain = await list('count=true');
+      expect(plain.body.meta).toEqual({ limit: 100, offset: 0, total: 42 });
+      const badge = await list('actionable=true&count=true&limit=1');
+      expect(badge.body.meta).toEqual({ limit: 1, offset: 0, total: 42 });
+      // The count reads the same `where` as the list, so it can never count a step the list hides.
+      expect(countCalls.at(-1)).toEqual({ where: findManyCalls.at(-1)?.where });
+      expect((await list('count=false')).body.meta).toBeUndefined();
+    });
+
     it('counts when only limit or only offset is given', async () => {
       const { body } = await list('limit=5');
       expect(body.meta).toMatchObject({ limit: 5, offset: 0 });

@@ -1,5 +1,6 @@
 import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
 import { ipRateLimitKey, rateLimitKey } from '../plugins/auth.js';
+import { TeamNotFoundError } from './teamParam.js';
 import { isTemporalUnavailable } from './temporalErrors.js';
 
 /**
@@ -23,6 +24,14 @@ export function logRequestError(
     }
     request.log.warn(
       `rate limit exceeded: route=${request.routeOptions.url ?? request.url.split('?')[0]} key=${key.split(':')[0]} limit=${reply.getHeader('x-ratelimit-limit')}`
+    );
+    return;
+  }
+  // A non-member's `teamId` filter is the caller's mistake, not a fault: one WARN line, no
+  // stack, so a probing client cannot flood the error log. Other 4xx errors are unchanged.
+  if (error instanceof TeamNotFoundError) {
+    request.log.warn(
+      `team filter refused: route=${request.routeOptions.url ?? request.url.split('?')[0]} code=${error.code}`
     );
     return;
   }

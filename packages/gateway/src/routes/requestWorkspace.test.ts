@@ -12,11 +12,16 @@ import '../test/warmAuthImports.js';
 import { requestWorkspaceRoutes } from './requestWorkspace.js';
 
 const USER = '11111111-1111-4111-8111-111111111111';
+const TEAM = '22222222-2222-4222-8222-222222222222';
 async function build(role = 'ENGINEER') {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
-  const prisma = { workflowRun: { findMany: vi.fn() } };
+  const prisma = {
+    team: { findFirst: vi.fn().mockResolvedValue({ id: TEAM }) },
+    workflowHumanStep: { findMany: vi.fn().mockResolvedValue([]) },
+    workflowRun: { findMany: vi.fn() },
+  };
   app.decorate('prisma', prisma as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: USER }),
@@ -35,6 +40,7 @@ describe('request workspace', () => {
   it('filters latest attempts before pagination, preserving distinct request totals', async () => {
     const { app, prisma } = await build();
     prisma.workflowRun.findMany.mockResolvedValueOnce(latest).mockResolvedValueOnce([]);
+    prisma.workflowHumanStep.findMany.mockResolvedValueOnce([{ id: 's1', runId: 'pending' }]);
     const response = await app.inject({
       headers: auth,
       url: '/runs/requests?state=attention&limit=1&offset=1',
@@ -68,7 +74,6 @@ describe('request workspace', () => {
       {
         ...latest[0],
         endedAt: null,
-        humanSteps: [{ timeoutAt: new Date('2026-06-01T03:00:00Z') }, { timeoutAt: null }],
         startedAt: new Date(),
         template: { name: 'Update deps', workspaceProvider: 'git_repo' },
         workflowId: 'wf-success',
@@ -87,7 +92,7 @@ describe('request workspace', () => {
     const response = await app.inject({ headers: auth, url: '/runs/requests?search=dependencies' });
     const row = response.json().data[0];
     expect(row).toMatchObject({ attemptCount: 3, pendingStepCount: 0, target: 'acme/api' });
-    expect(row.pendingStepDeadline).toBe('2026-06-01T03:00:00.000Z');
+    expect(row.pendingStepDeadline).toBeNull();
     expect(row.workRequest).toEqual({
       description: 'Update dependencies',
       externalTicketId: 'DEP-1',
@@ -185,6 +190,132 @@ describe('request workspace', () => {
       url: `/runs/requests?search=${'a'.repeat(201)}`,
     });
     expect(long.statusCode).toBe(400);
+    await app.close();
+  });
+});
+
+describe('request workspace team scope and control', () => {
+  const OR_TERMS = 4;
+
+  it('puts the team scope in its own AND term beside visibility, so it only narrows', async () => {
+    const { app, prisma } = await build();
+    prisma.workflowRun.findMany.mockResolvedValueOnce([]);
+    const response = await app.inject({ headers: auth, url: `/runs/requests?teamId=${TEAM}` });
+    expect(response.statusCode).toBe(200);
+    const where = prisma.workflowRun.findMany.mock.calls[0][0].where;
+    expect(where.AND).toHaveLength(2);
+    // The visibility OR and the team OR are separate entries; neither can overwrite the other.
+    expect(where.AND[0].OR.length).toBeGreaterThan(OR_TERMS);
+    expect(where.AND[1].OR).toHaveLength(OR_TERMS);
+    expect(where.AND[1].OR[0]).toEqual({
+      connection: { OR: [{ teamId: TEAM }, { shares: { some: { teamId: TEAM } } }] },
+    });
+    expect(where.OR).toBeUndefined();
+    await app.close();
+  });
+
+  it('answers 404 TEAM_NOT_FOUND for a non-member and reads no runs', async () => {
+    const { app, prisma } = await build();
+    prisma.team.findFirst.mockResolvedValue(null);
+    const response = await app.inject({ headers: auth, url: `/runs/requests?teamId=${TEAM}` });
+    expect(response.statusCode).toBe(404);
+    expect(response.json().code).toBe('TEAM_NOT_FOUND');
+    expect(prisma.workflowRun.findMany).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('lets a platform ADMIN scope to any team without a membership lookup', async () => {
+    const { app, prisma } = await build('ADMIN');
+    prisma.team.findFirst.mockResolvedValue(null);
+    prisma.workflowRun.findMany.mockResolvedValueOnce([]);
+    const response = await app.inject({ headers: auth, url: `/runs/requests?teamId=${TEAM}` });
+    expect(response.statusCode).toBe(200);
+    expect(prisma.team.findFirst).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('counts only steps the caller controls toward attention and pendingStepCount', async () => {
+    const { app, prisma } = await build();
+    // Two runs each show one visible pending step; the caller controls only the second.
+    prisma.workflowRun.findMany.mockResolvedValueOnce([
+      { _count: { humanSteps: 1 }, id: 'seen', status: 'SUCCESS', workflowId: 'a' },
+      { _count: { humanSteps: 1 }, id: 'mine', status: 'SUCCESS', workflowId: 'b' },
+    ]);
+    prisma.workflowHumanStep.findMany.mockResolvedValueOnce([{ id: 's2', runId: 'mine' }]);
+    prisma.workflowRun.findMany.mockResolvedValueOnce([]);
+    const response = await app.inject({ headers: auth, url: '/runs/requests?state=attention' });
+    expect(response.json().meta.total).toBe(1);
+    const stepQuery = prisma.workflowHumanStep.findMany.mock.calls[0][0];
+    expect(stepQuery.where.AND[1]).toEqual({ runId: { in: ['seen', 'mine'] } });
+    // The same predicate as the approvals list and badge: control (never weakened to bare
+    // visibility), no step the caller already approved, no expired step.
+    const predicate = stepQuery.where.AND[0];
+    expect(predicate).toHaveProperty('run');
+    expect(predicate.status).toBe('PENDING');
+    expect(predicate.humanApprovals).toEqual({ none: { resolvedBy: USER } });
+    expect(predicate.OR).toEqual([{ timeoutAt: null }, { timeoutAt: { gt: expect.any(Date) } }]);
+    const ids = prisma.workflowRun.findMany.mock.calls[1][0].where.AND[1];
+    expect(ids).toEqual({ id: { in: ['mine'] } });
+    await app.close();
+  });
+
+  it('takes the soonest deadline across every execution of a cross-repo request', async () => {
+    const { app, prisma } = await build();
+    const late = new Date('2026-06-02T00:00:00Z');
+    const soon = new Date('2026-06-01T03:00:00Z');
+    // The representative run (first) has no counted step; the second execution holds both.
+    prisma.workflowRun.findMany.mockResolvedValueOnce([
+      {
+        _count: { humanSteps: 0 },
+        id: 'rep',
+        status: 'RUNNING',
+        workflowId: 'a',
+        workRequest: { activeWorkflows: [], isCrossRepo: true },
+        workRequestId: 'wr',
+      },
+      {
+        _count: { humanSteps: 2 },
+        id: 'other',
+        status: 'SUCCESS',
+        workflowId: 'b',
+        workRequest: { activeWorkflows: [], isCrossRepo: true },
+        workRequestId: 'wr',
+      },
+    ]);
+    prisma.workflowHumanStep.findMany.mockResolvedValueOnce([
+      { id: 's1', runId: 'other', timeoutAt: late },
+      { id: 's2', runId: 'other', timeoutAt: soon },
+    ]);
+    prisma.workflowRun.findMany.mockResolvedValueOnce([
+      {
+        endedAt: null,
+        id: 'rep',
+        startedAt: new Date(),
+        status: 'RUNNING',
+        template: { name: 'T', workspaceProvider: 'git_repo' },
+        workflowId: 'a',
+        workRequest: {
+          _count: { workflowRuns: 2 },
+          activeWorkflows: [],
+          connection: null,
+          description: 'd',
+          externalTicketId: 'X-1',
+          id: 'wr',
+        },
+      },
+    ]);
+    const response = await app.inject({ headers: auth, url: '/runs/requests' });
+    const row = response.json().data[0];
+    expect(row.pendingStepCount).toBe(2);
+    expect(row.pendingStepDeadline).toBe(soon.toISOString());
+    await app.close();
+  });
+
+  it('skips the control query when no run has a pending step', async () => {
+    const { app, prisma } = await build();
+    prisma.workflowRun.findMany.mockResolvedValueOnce([latest[0], latest[2]]);
+    await app.inject({ headers: auth, url: '/runs/requests?state=attention' });
+    expect(prisma.workflowHumanStep.findMany).not.toHaveBeenCalled();
     await app.close();
   });
 });
