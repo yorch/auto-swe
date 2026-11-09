@@ -4,6 +4,7 @@ import {
   resolveWebUrl,
 } from '@auto-swe/shared/lib/systemConfig';
 import { approvalAllowsRequestChanges } from '@auto-swe/shared/workflow';
+import { buildRunCompleteCard } from './runCompleteCard.js';
 
 /**
  * Slack notifications. Four surfaces:
@@ -57,6 +58,10 @@ interface ResolvedChannel {
   templateName: string;
   /** Loaded only when we need to consult the team opt-in (`requireOptIn=true`). */
   teamSlackNotifySuccess: boolean;
+  /** The run row's own timing and spend, for the run-complete card. */
+  startedAt: Date | null;
+  endedAt: Date | null;
+  costUsd: number | null;
 }
 
 /**
@@ -121,6 +126,9 @@ async function resolveSlackChannel(
 
   return {
     channel,
+    costUsd: run.costUsdAccrued ?? null,
+    endedAt: run.endedAt ?? null,
+    startedAt: run.startedAt ?? null,
     teamSlackNotifySuccess: team?.slackNotifySuccess ?? false,
     templateName,
     threadTs,
@@ -792,7 +800,35 @@ export async function notifySlackRunComplete(input: {
           ? ':octagonal_sign:'
           : ':rotating_light:';
     const text = `${emoji} *[${resolved.ticket}]* \`${resolved.templateName}\` run finished: *${input.status}*`;
-    await postToSlack(token, resolved.channel, resolved.threadTs, text, 'slackNotify (complete)');
+    // A card (status, duration, cost, an Open run link) when it validates; the one-line text it
+    // always was otherwise, so a refused card can never cost the team the notification.
+    const webUrl = resolveWebUrl();
+    let dashboardHost: string | null = null;
+    try {
+      dashboardHost = new URL(webUrl).host;
+    } catch {
+      // An unparseable WEB_URL: no card, plain text.
+    }
+    const card = dashboardHost
+      ? buildRunCompleteCard({
+          costUsd: resolved.costUsd,
+          dashboardHost,
+          endedAt: resolved.endedAt,
+          runUrl: `${webUrl.replace(/\/+$/, '')}/runs/${encodeURIComponent(input.runId)}`,
+          startedAt: resolved.startedAt,
+          status: input.status,
+          templateName: resolved.templateName,
+          ticket: resolved.ticket,
+        })
+      : null;
+    await postToSlack(
+      token,
+      resolved.channel,
+      resolved.threadTs,
+      card?.text ?? text,
+      'slackNotify (complete)',
+      card?.blocks
+    );
   } catch {
     /* best-effort */
   }
