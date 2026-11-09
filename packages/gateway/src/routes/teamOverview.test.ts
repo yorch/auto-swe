@@ -8,6 +8,12 @@ vi.mock('@auto-swe/shared/config', () => ({
   SETTING_DEFINITIONS: { 'workflow.approvalDueSoonHours': { defaultValue: 24 } },
 }));
 
+// Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
+vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../test/billingMock.js')),
+}));
+
 import '../test/warmAuthImports.js';
 import { teamOverviewRoutes } from './teamOverview.js';
 
@@ -53,6 +59,11 @@ const runRow = (overrides: Record<string, unknown> = {}) => ({
 
 interface Fixture {
   activity?: unknown[];
+  /** The team's org cap in cents (null: none) and its month-to-date spend in USD. */
+  orgCapCents?: number | null;
+  /** The viewer's role in the team's org (null: not a member). */
+  orgRole?: 'ORG_ADMIN' | 'ORG_MEMBER' | null;
+  orgSpendUsd?: number;
   costUsd?: number | null | Error;
   members?: string[];
   openPrs?: number;
@@ -84,6 +95,28 @@ async function build(fx: Fixture) {
           team: { id: OTHER_TEAM, name: 'Beta' },
         },
       ]),
+    },
+    organization: {
+      findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
+        // Only the team's own org exists in this fixture; any other id is simply absent.
+        args.where.id.in.includes('org-1')
+          ? [
+              {
+                budgetAlertThresholdPercent: 80,
+                id: 'org-1',
+                monthlyBudgetUsdCents: fx.orgCapCents ?? null,
+              },
+            ]
+          : []
+      ),
+    },
+    organizationMembership: {
+      findUnique: vi.fn(async () => (fx.orgRole ? { role: fx.orgRole } : null)),
+    },
+    orgMonthlyUsage: {
+      findUnique: vi.fn(async () =>
+        fx.orgSpendUsd === undefined ? null : { costUsdAccrued: fx.orgSpendUsd }
+      ),
     },
     pullRequest: {
       count: vi.fn().mockResolvedValue(fx.openPrs ?? 0),
@@ -206,6 +239,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
     expect(Object.keys(data).sort()).toEqual(
       [
         'activity',
+        'budget',
         'last7d',
         'needsYou',
         'pullRequests',
@@ -251,6 +285,40 @@ describe('GET /api/v1/teams/:id/overview', () => {
     expect(data.admin).toEqual({ monthCostUsdCents: 1235 });
     const where = prisma.workflowRun.aggregate.mock.calls[0][0].where;
     expect(where.AND[1]).toEqual({ attributedTeamId: TEAM });
+  });
+
+  it('omits the spend from a team ADMIN who is not an ORG_ADMIN when the org has a cap', async () => {
+    const { prisma, res } = await get({
+      costUsd: 12.345,
+      orgCapCents: 100_000,
+      orgRole: 'ORG_MEMBER',
+      orgSpendUsd: 450,
+      teamRole: 'ADMIN',
+    });
+    const { data } = res.json();
+    expect(data.budget.percentUsed).toBe(45);
+    expect(data.admin).toEqual({});
+    expect('monthCostUsdCents' in data.admin).toBe(false);
+    expect(prisma.workflowRun.aggregate).not.toHaveBeenCalled();
+  });
+
+  it('keeps the spend for an ORG_ADMIN who is also the team ADMIN, and for a platform ADMIN', async () => {
+    const orgAdmin = await get({
+      costUsd: 12.345,
+      orgCapCents: 100_000,
+      orgRole: 'ORG_ADMIN',
+      orgSpendUsd: 450,
+      teamRole: 'ADMIN',
+    });
+    expect(orgAdmin.res.json().data.admin).toEqual({ monthCostUsdCents: 1235 });
+    const platform = await get({
+      costUsd: 12.345,
+      orgCapCents: 100_000,
+      orgSpendUsd: 450,
+      platformRole: 'ADMIN',
+      teamRole: null,
+    });
+    expect(platform.res.json().data.admin).toEqual({ monthCostUsdCents: 1235 });
   });
 
   it('reports the spend as null when it cannot be computed', async () => {
@@ -425,5 +493,37 @@ describe('GET /api/v1/teams/:id/overview', () => {
     // The control filter's marks: an unanswered, unexpired, pending step, ANDed with the run ids.
     expect(JSON.stringify(query?.where)).toContain('"humanApprovals":{"none"');
     expect(query?.where.AND.at(-1)).toEqual({ runId: { in: ['visible-only'] } });
+  });
+
+  describe('budget', () => {
+    it('is null when the org has no cap', async () => {
+      const { prisma, res } = await get({ orgCapCents: null, teamRole: 'ENGINEER' });
+      expect(res.json().data.budget).toBeNull();
+      expect(prisma.organization.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('gives an ENGINEER a state and a percentage and no dollar figure anywhere', async () => {
+      const { res } = await get({ orgCapCents: 100_000, orgSpendUsd: 450, teamRole: 'ENGINEER' });
+      const { data } = res.json();
+      expect(data.budget).toEqual({
+        alertThresholdPercent: 80,
+        percentUsed: 45,
+        scope: 'org',
+        state: expect.stringMatching(/^(ok|alert|projected_over)$/),
+      });
+      expect(res.body).not.toMatch(/usd|cents|100000|450/i);
+    });
+
+    it('reports over once the cap is spent', async () => {
+      const { res } = await get({ orgCapCents: 1000, orgSpendUsd: 11, teamRole: 'LEAD' });
+      expect(res.json().data.budget).toMatchObject({ percentUsed: 110, state: 'over' });
+    });
+
+    it("reads only the team's own org", async () => {
+      const { prisma } = await get({ orgCapCents: 1000, orgSpendUsd: 1, teamRole: 'ENGINEER' });
+      expect(prisma.organization.findMany.mock.calls[0][0].where).toEqual({
+        id: { in: ['org-1'] },
+      });
+    });
   });
 });

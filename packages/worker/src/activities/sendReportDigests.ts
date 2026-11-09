@@ -343,18 +343,31 @@ export async function sendReportDigests(input: {
         const budget =
           subscription.scope === 'ORGANIZATION' && organization && subscription.orgId
             ? await (async () => {
-                const spend = await orgMonthSpend(prisma, subscription.orgId as string);
+                const orgId = subscription.orgId as string;
+                const spend = await orgMonthSpend(prisma, orgId);
                 const forecast = forecastMonthlyBudget({
                   alertThresholdPercent: organization.budgetAlertThresholdPercent,
                   monthlyBudgetUsdCents: organization.monthlyBudgetUsdCents,
                   now,
                   spendUsd: spend.totalUsd,
                 });
-                return {
-                  mtdUsd: spend.totalUsd,
-                  projectedUsd: forecast.projectedUsd,
-                  status: forecast.status,
-                };
+                const cap = organization.monthlyBudgetUsdCents;
+                const percentUsed =
+                  cap == null
+                    ? null
+                    : cap <= 0
+                      ? 100
+                      : Math.round((Math.round(spend.totalUsd * 100) / cap) * 1000) / 10;
+                // Dollars go only where every reader may read the cap's neighbours: a digest is
+                // one body sent to every target, so one reader who may not decides for all.
+                return (await budgetDollarsAllowed(subscription, orgId))
+                  ? {
+                      mtdUsd: spend.totalUsd,
+                      percentUsed,
+                      projectedUsd: forecast.projectedUsd,
+                      status: forecast.status,
+                    }
+                  : { percentUsed, status: forecast.status };
               })()
             : undefined;
         digest = buildReportDigest({
@@ -394,14 +407,7 @@ export async function sendReportDigests(input: {
       }
 
       stage = 'delivery';
-      const optedOut = new Set(subscription.optedOutEmails.map((email) => email.toLowerCase()));
-      const candidateEmails = [
-        ...new Set(
-          subscription.emailRecipients
-            .map((email) => email.trim().toLowerCase())
-            .filter((email) => !optedOut.has(email))
-        ),
-      ];
+      const candidateEmails = digestCandidateEmails(subscription);
       // The subscription was validated when it was saved; people leave teams and accounts are
       // deactivated afterwards, so each recipient is checked again at send time.
       const memberEmails = await activeScopeMemberEmails(subscription, candidateEmails);
@@ -609,6 +615,71 @@ export async function sendReportDigests(input: {
     }
   }
   return { failed, rollupIncomplete, sent, skipped };
+}
+
+function digestCandidateEmails(subscription: {
+  emailRecipients: string[];
+  optedOutEmails: string[];
+}): string[] {
+  const optedOut = new Set(subscription.optedOutEmails.map((email) => email.toLowerCase()));
+  return [
+    ...new Set(
+      subscription.emailRecipients
+        .map((email) => email.trim().toLowerCase())
+        .filter((email) => !optedOut.has(email))
+    ),
+  ];
+}
+
+/**
+ * May this organization digest carry the budget in dollars? The cap is an ORG_ADMIN's to read, and
+ * a digest is a single body sent to every target, so it may only when its creator is still an
+ * ORG_ADMIN (or a platform ADMIN) and every target is an email to an ORG_ADMIN (or platform ADMIN)
+ * of the organization. A Slack channel, a plain member or no recipient at all gets percent-only.
+ */
+async function budgetDollarsAllowed(
+  subscription: {
+    createdById: string;
+    emailRecipients: string[];
+    optedOutEmails: string[];
+    slackChannel: { slackChannelId: string } | null;
+  },
+  orgId: string
+): Promise<boolean> {
+  const emails = digestCandidateEmails(subscription);
+  if (subscription.slackChannel || emails.length === 0) {
+    return false;
+  }
+  const mayReadDollars = {
+    isActive: true,
+    OR: [
+      { role: 'ADMIN' as const },
+      { orgMemberships: { some: { orgId, role: 'ORG_ADMIN' as const } } },
+    ],
+  };
+  const creator = await runUnscoped(
+    'the report digest checks that its creator may still read the budget in dollars',
+    ['User'],
+    () =>
+      prisma.user.findFirst({
+        select: { id: true },
+        where: { id: subscription.createdById, ...mayReadDollars },
+      })
+  );
+  if (!creator) {
+    return false;
+  }
+  const readers = await runUnscoped(
+    'the report digest checks that every email recipient may read the budget in dollars',
+    ['User'],
+    () =>
+      prisma.user.findMany({
+        select: { email: true },
+        where: { email: { in: emails }, ...mayReadDollars },
+      })
+  );
+  const readerEmails = new Set(readers.map(({ email }) => email.toLowerCase()));
+  return emails.every((email) => readerEmails.has(email));
 }
 
 async function activeScopeMemberEmails(

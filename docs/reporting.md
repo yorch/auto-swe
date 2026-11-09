@@ -66,7 +66,7 @@ Each authorized organization shows its monthly budget, alert threshold, month-to
 elapsed UTC days, month length, and projected spend. Projection uses fractional elapsed days. A
 projection from less than one elapsed day is still shown and marked low confidence. The status
 prioritizes actual overspend, projected overspend, an alert threshold, and then an in-budget state.
-Organizations without a cap show `no_cap`. The report lists the five highest-cost runs started in
+Organizations without a cap show `no_cap`. The report carries the cap and the spend in dollars, so it lists only organizations the caller is ORG_ADMIN of (every organization for a platform ADMIN); an engineer's percentage-only view of the same state is the budget meter in [teams.md](./teams.md#the-budget-meter). The report lists the five highest-cost runs started in
 the current month for each organization, selected by the run's persisted organization attribution
 (`WorkflowRun.attributedOrgId`), the same field the other reports scope by. An ORG_ADMIN sees
 those runs across the whole organization only when a platform ADMIN has enabled
@@ -104,8 +104,11 @@ ranked runs exist.
 Digest subscriptions target exactly one organization or team and deliver weekly summaries by email,
 Slack, or both. They compare the last seven completed UTC days with the seven days before them,
 including delivery metrics, top templates, the worst gate when at least ten run/gate pairs exist,
-pending approval age, and organization budget status. Organization subscriptions include budget
-data; team subscriptions do not. Send-test delivers immediately without changing the scheduled
+pending approval age, and organization budget status. Organization subscriptions include a budget
+section; team subscriptions do not. The section carries month-to-date and projected spend in
+dollars only when the subscription's creator is currently an ORG_ADMIN (or platform ADMIN) and every
+target is an email to an ORG_ADMIN of the organization (or platform ADMIN); a Slack channel or any
+other recipient makes it a state and a percentage. Send-test delivers immediately without changing the scheduled
 last-sent timestamp.
 
 The weekly sweep runs Mondays at 13:00 UTC when `REPORT_DIGEST_ENABLED` is true. Configure

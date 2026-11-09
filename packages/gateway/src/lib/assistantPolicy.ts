@@ -154,6 +154,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/platform/organizations': 'read',
   'GET /api/v1/platform/organizations/:orgId': 'read',
   'GET /api/v1/platform/organizations/:orgId/budget': 'read',
+  'GET /api/v1/platform/organizations/:orgId/budget/status': 'read',
   'GET /api/v1/platform/organizations/:orgId/members': 'read',
   'GET /api/v1/platform/organizations/budget-alerts': 'read',
   'GET /api/v1/platform/readiness': 'read',

@@ -285,10 +285,7 @@ export async function scheduledFireRefusal(
     // The same spend the gateway's `isOrgOverBudget` reads, in-flight runs included.
     const { totalUsd } = await orgMonthSpend(db, repo.team.orgId);
     if (usdToCents(totalUsd) >= cap) {
-      return refuse(
-        'org-budget-exceeded',
-        `the organization has exceeded its monthly budget cap of ${cap} USD cents`
-      );
+      return refuse('org-budget-exceeded', 'the organization has exceeded its monthly budget cap');
     }
   }
 

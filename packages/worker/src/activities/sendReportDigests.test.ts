@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  budgetReaderEmails: [] as string[],
   coverageIncomplete: false,
+  creatorMayReadBudget: true,
   deliveries: new Map<
     string,
     {
@@ -16,7 +18,7 @@ const mocks = vi.hoisted(() => ({
     }
   >(),
   deliveryPersistenceFails: false,
-  emails: [] as Array<{ listUnsubscribeUrl: string; to: string }>,
+  emails: [] as Array<{ listUnsubscribeUrl: string; text: string; to: string }>,
   failedEmailRecipients: [] as string[],
   gatesAtLimit: false,
   heartbeats: [] as string[],
@@ -130,9 +132,12 @@ vi.mock('@auto-swe/shared/db', () => ({
         })),
     },
     user: {
-      findMany: async ({ where }: { where: { email: { in: string[] } } }) =>
+      // The budget-dollars check (`where.OR`) asks who may read the cap; the scope check does not.
+      findFirst: async () => (mocks.creatorMayReadBudget ? { id: 'creator' } : null),
+      findMany: async ({ where }: { where: { OR?: unknown; email: { in: string[] } } }) =>
         where.email.in
           .filter((email) => !mocks.inactiveEmails.includes(email))
+          .filter((email) => !where.OR || mocks.budgetReaderEmails.includes(email))
           .map((email) => ({ email })),
     },
     workflowHumanStep: { count: async () => 0, findFirst: async () => null },
@@ -165,10 +170,10 @@ vi.mock('@auto-swe/shared/lib/reportDigestUnsubscribe', () => ({
   createReportDigestUnsubscribeToken: (id: string, email: string) => `${id}.${email}.signed`,
 }));
 vi.mock('@auto-swe/shared/lib/billing', () => ({
-  orgMonthSpend: async () => ({ totalUsd: 0 }),
+  orgMonthSpend: async () => ({ totalUsd: 123.45 }),
 }));
 vi.mock('@auto-swe/shared/lib/budgetForecast', () => ({
-  forecastMonthlyBudget: () => ({ projectedUsd: 0, status: 'within_budget' }),
+  forecastMonthlyBudget: () => ({ projectedUsd: 400, status: 'within_budget' }),
 }));
 vi.mock('../lib/slackNotify.js', () => ({
   postSlackChannelMessage: async (channelId: string, text: string, blocks: unknown[] = []) => {
@@ -178,12 +183,14 @@ vi.mock('../lib/slackNotify.js', () => ({
 vi.mock('../lib/reportDigestEmail.js', () => ({
   sendReportDigestEmail: async ({
     listUnsubscribeUrl,
+    text,
     to,
   }: {
     listUnsubscribeUrl: string;
+    text: string;
     to: string;
   }) => {
-    mocks.emails.push({ listUnsubscribeUrl, to });
+    mocks.emails.push({ listUnsubscribeUrl, text, to });
     if (mocks.failedEmailRecipients.includes(to)) {
       throw new Error('SMTP failed');
     }
@@ -235,6 +242,8 @@ beforeEach(() => {
   mocks.emails = [];
   mocks.failedEmailRecipients = [];
   mocks.orgWideReportsEnabled = false;
+  mocks.budgetReaderEmails = [];
+  mocks.creatorMayReadBudget = true;
 });
 
 describe('sendReportDigests', () => {
@@ -273,6 +282,69 @@ describe('sendReportDigests', () => {
       expect.any(String),
       expect.objectContaining({ reason: 'org_wide_reports_disabled' })
     );
+  });
+
+  describe('organization budget dollars', () => {
+    const orgDigest = (overrides: Record<string, unknown> = {}) =>
+      subscription('org-budget', {
+        createdById: 'creator',
+        emailRecipients: ['admin@example.test'],
+        organization: {
+          budgetAlertThresholdPercent: 80,
+          id: 'org-1',
+          monthlyBudgetUsdCents: 100_000,
+          name: 'Acme',
+        },
+        orgId: 'org-1',
+        scope: 'ORGANIZATION',
+        team: null,
+        teamId: null,
+        ...overrides,
+      });
+
+    beforeEach(() => {
+      mocks.orgWideReportsEnabled = true;
+    });
+
+    it('shows dollars when the creator and every email recipient are ORG_ADMINs', async () => {
+      mocks.budgetReaderEmails = ['admin@example.test'];
+      mocks.subscriptions = [orgDigest()];
+      await expect(sendReportDigests(baseInput)).resolves.toMatchObject({ sent: 1 });
+      expect(mocks.emails[0]?.text).toContain('Month-to-date spend: $123.45');
+      expect(mocks.emails[0]?.text).toContain('Projected monthly spend: $400.00');
+    });
+
+    it('is percent-only when a recipient is not an ORG_ADMIN', async () => {
+      mocks.budgetReaderEmails = ['admin@example.test'];
+      mocks.subscriptions = [
+        orgDigest({ emailRecipients: ['admin@example.test', 'member@example.test'] }),
+      ];
+      await sendReportDigests(baseInput);
+      expect(mocks.emails).toHaveLength(2);
+      for (const email of mocks.emails) {
+        expect(email.text).toContain('Budget used: 12.3%');
+        expect(email.text).not.toContain('123.45');
+        expect(email.text).not.toContain('400.00');
+      }
+    });
+
+    it('is percent-only when a Slack channel is a target', async () => {
+      mocks.budgetReaderEmails = ['admin@example.test'];
+      mocks.subscriptions = [orgDigest({ slackChannel: { slackChannelId: 'C1' } })];
+      await sendReportDigests(baseInput);
+      expect(mocks.slackPosts[0]?.text).toContain('Budget used: 12.3%');
+      expect(JSON.stringify(mocks.slackPosts)).not.toContain('123.45');
+      expect(mocks.emails[0]?.text).not.toContain('123.45');
+    });
+
+    it('is percent-only when the creator is no longer an ORG_ADMIN', async () => {
+      mocks.budgetReaderEmails = ['admin@example.test'];
+      mocks.creatorMayReadBudget = false;
+      mocks.subscriptions = [orgDigest()];
+      await sendReportDigests(baseInput);
+      expect(mocks.emails[0]?.text).toContain('Budget used: 12.3%');
+      expect(mocks.emails[0]?.text).not.toContain('123.45');
+    });
   });
 
   it('sends when the built days include days with no rollup rows', async () => {

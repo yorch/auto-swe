@@ -2,7 +2,17 @@ import { combineWorkflowRunRollupRows, type WorkflowRunRollupRow } from './workf
 import { deliveryReportFromRollups } from './workflowRunRollupReports.js';
 
 export interface ReportDigestInput {
-  budget?: { mtdUsd: number; projectedUsd: number; status: string };
+  /**
+   * The organization's month-to-date budget. The dollar figures are an ORG_ADMIN's to read and
+   * are given only when every reader of this digest may see them; otherwise the section is the
+   * state and a percentage.
+   */
+  budget?: {
+    mtdUsd?: number;
+    percentUsed?: number | null;
+    projectedUsd?: number;
+    status: string;
+  };
   currentPeriod: { end: Date; start: Date };
   currentRows: readonly WorkflowRunRollupRow[];
   oldestPendingApprovalRequestedAt: Date | null;
@@ -23,6 +33,21 @@ export interface ReportDigest {
   slackMrkdwn: string;
   subject: string;
   text: string;
+}
+
+function budgetLines(budget: NonNullable<ReportDigestInput['budget']>): string[] {
+  const lines = [`Budget: ${budget.status}`];
+  if (budget.mtdUsd === undefined || budget.projectedUsd === undefined) {
+    if (budget.percentUsed !== undefined && budget.percentUsed !== null) {
+      lines.push(`Budget used: ${budget.percentUsed.toFixed(1)}%`);
+    }
+    return lines;
+  }
+  lines.push(
+    `Month-to-date spend: $${budget.mtdUsd.toFixed(2)}`,
+    `Projected monthly spend: $${budget.projectedUsd.toFixed(2)}`
+  );
+  return lines;
 }
 
 function escapeHtml(value: string): string {
@@ -212,13 +237,7 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
       : []),
     ...(input.worstGateNotComputed ? ['Worst gate: not computed'] : []),
     `Pending approvals: ${input.pendingApprovalCount}${oldestAgeHours === null ? '' : `; oldest ${oldestAgeHours.toFixed(1)} hours`}`,
-    ...(input.budget
-      ? [
-          `Budget: ${input.budget.status}`,
-          `Month-to-date spend: $${input.budget.mtdUsd.toFixed(2)}`,
-          `Projected monthly spend: $${input.budget.projectedUsd.toFixed(2)}`,
-        ]
-      : []),
+    ...(input.budget ? budgetLines(input.budget) : []),
     ...(slackReportsUrl ? [`Open reports: ${slackReportsUrl}`] : []),
   ];
   const text = lines.join('\n');
@@ -274,13 +293,7 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
         ? 'Worst gate: not computed'
         : null,
     `Pending approvals: ${input.pendingApprovalCount}${oldestAgeHours === null ? '' : `; oldest ${oldestAgeHours.toFixed(1)} hours`}`,
-    ...(input.budget
-      ? [
-          `Budget: ${input.budget.status}`,
-          `Month-to-date spend: $${input.budget.mtdUsd.toFixed(2)}`,
-          `Projected monthly spend: $${input.budget.projectedUsd.toFixed(2)}`,
-        ]
-      : []),
+    ...(input.budget ? budgetLines(input.budget) : []),
   ].filter((line): line is string => line !== null);
   const additionalHtml = additionalLines
     .map((line) => `<tr><td style="padding:3px 0">${escapeHtml(line)}</td></tr>`)

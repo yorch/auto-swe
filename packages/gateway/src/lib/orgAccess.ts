@@ -26,11 +26,30 @@ export const ORG_ACCESS_REFUSAL = {
   message: 'You are not a member of this organization',
 } as const;
 
-export function orgBudgetRefusal(budgetCap: number): { code: string; message: string } {
+/**
+ * The 402 body. It names the state and not the cap: the amount is an ORG_ADMIN's to read, and a
+ * refused engineer needs to know the budget is spent, not by how much.
+ */
+export function orgBudgetRefusal(): { code: string; message: string } {
   return {
     code: 'ORG_BUDGET_EXCEEDED',
-    message: `Organization has exceeded its monthly budget cap of ${budgetCap} USD cents`,
+    message: 'Organization has exceeded its monthly budget cap',
   };
+}
+
+/** Is the user an ORG_ADMIN of `orgId`? Platform ADMINs always are. */
+export async function isOrgAdmin(
+  prisma: PrismaClient,
+  user: { role: string; sub: string },
+  orgId: string
+): Promise<boolean> {
+  if (user.role === 'ADMIN') {
+    return true;
+  }
+  const membership = await prisma.organizationMembership.findUnique({
+    where: { userId_orgId: { orgId, userId: user.sub } },
+  });
+  return membership?.role === 'ORG_ADMIN';
 }
 
 /** Is the user a member of `orgId`? Platform ADMINs always are. */
@@ -107,6 +126,6 @@ export async function assertOrgBudget(
   if (budgetCap == null || !(await isOrgOverBudget(prisma, orgId, budgetCap))) {
     return true;
   }
-  await reply.status(402).send({ error: orgBudgetRefusal(budgetCap) });
+  await reply.status(402).send({ error: orgBudgetRefusal() });
   return false;
 }

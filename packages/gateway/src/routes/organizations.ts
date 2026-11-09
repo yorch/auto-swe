@@ -5,7 +5,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
-import { currentYearMonth } from '../lib/orgAccess.js';
+import { currentYearMonth, isOrgAdmin } from '../lib/orgAccess.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const OrgParamsSchema = z.object({ orgId: z.string().uuid() });
@@ -60,6 +60,23 @@ function projectOrgBudgetSummary(org: OrgWithCurrentUsage) {
   };
 }
 
+/**
+ * What a plain ORG_MEMBER may read of an organization's budget: the alert (a percentage and
+ * whether it fired) and the threshold, never the cap or the spend in dollars.
+ */
+function withoutBudgetDollars<T extends ReturnType<typeof projectOrgBudgetSummary>>(summary: T) {
+  const { alert, currentMonthUsage: _usage, monthlyBudgetUsdCents: _cap, ...rest } = summary;
+  // The raw ratio of spend to cap would let a reader reconstruct the cap, so the percentage is
+  // rounded to one decimal, as `budgetStatusFor` does. `triggered` is computed before rounding.
+  return {
+    ...rest,
+    alert: {
+      percent: alert.percent == null ? null : Math.round(alert.percent * 10) / 10,
+      triggered: alert.triggered,
+    },
+  };
+}
+
 export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -87,8 +104,17 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
           where: { userId: user.sub },
         })
     );
+    // The cap and the spend in dollars are an ORG_ADMIN's (and a platform ADMIN's) to read.
     return {
-      data: rows.map((m) => ({ ...projectOrgBudgetSummary(m.organization), role: m.role })),
+      data: rows.map((m) => {
+        const summary = projectOrgBudgetSummary(m.organization);
+        return {
+          ...(m.role === 'ORG_ADMIN' || user.role === 'ADMIN'
+            ? summary
+            : withoutBudgetDollars(summary)),
+          role: m.role,
+        };
+      }),
     };
   });
 
@@ -104,7 +130,8 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
     return { data: orgs.map(projectOrgBudgetSummary) };
   });
 
-  // GET /api/v1/platform/organizations/:orgId — any org member may read.
+  // GET /api/v1/platform/organizations/:orgId — any org member may read; the monthly cap is an
+  // ORG_ADMIN's, so a member's response omits it.
   app.get(
     '/:orgId',
     {
@@ -126,6 +153,10 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!org) {
         return sendError(reply, 404, 'NOT_FOUND', 'Organization not found');
+      }
+      if (!(await isOrgAdmin(fastify.prisma, requireUser(request), orgId))) {
+        const { monthlyBudgetUsdCents: _cap, ...visible } = org;
+        return { data: visible };
       }
       return { data: org };
     }

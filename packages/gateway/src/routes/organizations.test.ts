@@ -77,3 +77,76 @@ describe('PATCH /:orgId trustedInvites', () => {
     expect(orgUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { name: 'Renamed' } }));
   });
 });
+
+describe('organization budget dollars', () => {
+  afterEach(() => vi.clearAllMocks());
+
+  const BUDGETED = {
+    ...ORG_ROW,
+    budgetAlertThresholdPercent: 80,
+    monthlyBudgetUsdCents: 12345,
+  };
+
+  function budgetedApp(role: string, membershipRole: string, platformRole = role) {
+    const app = makeAuthedApp({
+      prisma: {
+        organization: { findUnique: vi.fn().mockResolvedValue(BUDGETED) },
+        organizationMembership: {
+          findMany: vi.fn().mockResolvedValue([
+            {
+              organization: {
+                ...BUDGETED,
+                monthlyUsages: [{ costUsdAccrued: '50', runsCompleted: 3, yearMonth: '2026-06' }],
+              },
+              role: membershipRole,
+            },
+          ]),
+          findUnique: vi.fn().mockResolvedValue({ role: membershipRole }),
+        },
+      },
+      role: platformRole,
+      sub: USER_ID,
+    });
+    app.register(organizationRoutes, { prefix: PREFIX });
+    return app;
+  }
+
+  it('GET /:orgId omits the cap for a plain ORG_MEMBER', async () => {
+    const app = budgetedApp('ENGINEER', 'ORG_MEMBER');
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}` });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body).data).not.toHaveProperty('monthlyBudgetUsdCents');
+    expect(res.body).not.toContain('12345');
+  });
+
+  it('GET /:orgId keeps the cap for an ORG_ADMIN', async () => {
+    const app = budgetedApp('ENGINEER', 'ORG_ADMIN');
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}` });
+    expect(JSON.parse(res.body).data.monthlyBudgetUsdCents).toBe(12345);
+  });
+
+  it('GET / drops the cap and the spend from a row the caller is only a member of', async () => {
+    const app = budgetedApp('LEAD', 'ORG_MEMBER');
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: PREFIX });
+    const [row] = JSON.parse(res.body).data;
+    expect(row).not.toHaveProperty('monthlyBudgetUsdCents');
+    expect(row).not.toHaveProperty('currentMonthUsage');
+    expect(row).toMatchObject({ role: 'ORG_MEMBER', slug: 'test-org' });
+    // 50 / 123.45 = 40.5021...% is rounded to one decimal; nothing else carries the cap.
+    expect(row.alert.percent).toBe(40.5);
+    expect(JSON.stringify(row)).not.toContain('12345');
+    expect(JSON.stringify(row)).not.toContain('40.50');
+  });
+
+  it('GET / keeps both for an ORG_ADMIN row', async () => {
+    const app = budgetedApp('LEAD', 'ORG_ADMIN');
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: PREFIX });
+    const [row] = JSON.parse(res.body).data;
+    expect(row.monthlyBudgetUsdCents).toBe(12345);
+    expect(row.currentMonthUsage.costUsdAccrued).toBe(50);
+  });
+});

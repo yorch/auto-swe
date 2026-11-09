@@ -717,7 +717,8 @@ the same organization (`ConnectionTeamShare`).
 | | Owning team | Shared team |
 |---|---|---|
 | See the repository, its runs, lessons and dependencies | yes | yes |
-| Start runs (work requests, template runs, epics, PRDs, Slack) | yes | yes |
+| Start runs (work requests, template runs, PRDs, Slack) | yes | yes |
+| Start an epic that names the repository | lead | no |
 | Cancel a run, or answer a human step on it | yes | only runs they launched |
 | Save a personal GitHub token for it | yes | yes |
 | Be a channel-assistant code task's repository, by name | yes | yes, unless the team owns one by that name |

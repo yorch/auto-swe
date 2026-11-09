@@ -30,6 +30,8 @@ interface Harness {
   startError?: Error;
   /** Platform role the token carries. */
   role: 'ADMIN' | 'LEAD';
+  /** The caller's role on the repository's owning team. */
+  teamRole: 'ADMIN' | 'ENGINEER' | 'LEAD';
   /** Whether the caller belongs to the repository's org. */
   orgMember: boolean;
   /** The org's accrued spend this month, in USD, against a 1000-cent cap. */
@@ -46,6 +48,7 @@ async function buildHarness(): Promise<Harness> {
     role: 'ADMIN',
     runInputs: [],
     started: [],
+    teamRole: 'LEAD',
   };
 
   h.app.setValidatorCompiler(validatorCompiler);
@@ -73,7 +76,7 @@ async function buildHarness(): Promise<Harness> {
           shares: [],
           team: {
             isActive: true,
-            memberships: [{ userId: 'user-1' }],
+            memberships: [{ role: h.teamRole, userId: 'user-1' }],
             organization: { id: 'org-1', isActive: true, monthlyBudgetUsdCents: 1000 },
             orgId: 'org-1',
           },
@@ -266,6 +269,30 @@ describe('POST /prd-runs', () => {
     expect(res.statusCode).toBe(404);
     expect(h.runInputs).toHaveLength(0);
     expect(h.started).toHaveLength(0);
+  });
+
+  it('refuses a platform LEAD who is only a team ENGINEER on the owning team', async () => {
+    h.role = 'LEAD';
+    h.teamRole = 'ENGINEER';
+    const res = await submit(h);
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.reasons).toEqual([
+      { reason: 'team-lead-required', repo: 'acme/payments' },
+    ]);
+    expect(h.runInputs).toHaveLength(0);
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('lets a team LEAD start a PRD run', async () => {
+    h.role = 'LEAD';
+    h.teamRole = 'LEAD';
+    expect((await submit(h)).statusCode).toBe(201);
+  });
+
+  it('lets a platform ADMIN start one whatever the team role', async () => {
+    h.role = 'ADMIN';
+    h.teamRole = 'ENGINEER';
+    expect((await submit(h)).statusCode).toBe(201);
   });
 
   it('refuses a caller outside the repository org before writing anything', async () => {

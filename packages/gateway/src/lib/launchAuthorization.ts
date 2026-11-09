@@ -40,7 +40,12 @@ export interface LaunchOrg {
  * org checks.
  */
 export interface LaunchRepo extends RepoAccessSubject {
-  team: RepoAccessSubject['team'] & {
+  team: {
+    /**
+     * The acting user's memberships of the owning team, with the role when
+     * {@link AuthorizeLaunchInput.requireOwningTeamLead} is set.
+     */
+    memberships: Array<{ userId: string; role?: string }>;
     orgId: string;
     organization: { monthlyBudgetUsdCents: number | null } | null;
   };
@@ -83,7 +88,17 @@ export interface AuthorizeLaunchInput {
    * does not think about this keeps the login-based check it always had.
    */
   runIdentity?: RunIdentity;
+  /**
+   * Also require LEAD or ADMIN membership of each repository's OWNING team (platform ADMIN
+   * passes). Team membership via a share does not count. For a launch that fans out across
+   * repositories (an epic, a PRD run), where the platform role alone is not enough. The repository
+   * `select` must then include `role` on `team.memberships`; a missing role refuses.
+   */
+  requireOwningTeamLead?: boolean;
 }
+
+/** Roles that may lead work on a team. */
+const TEAM_LEAD_ROLES = new Set(['LEAD', 'ADMIN']);
 
 /**
  * May `actor` start this launch? Repository access (team membership, GitHub
@@ -133,6 +148,34 @@ export async function authorizeLaunch(
     };
   }
 
+  if (input.requireOwningTeamLead && actor.role !== 'ADMIN') {
+    // Every repository here already passed the membership check, so naming it reveals nothing the
+    // caller cannot see; the owning team is never named.
+    const notLed = input.repos.filter(
+      (repo) =>
+        !repo.team.memberships.some(
+          (m) => m.userId === actor.sub && m.role !== undefined && TEAM_LEAD_ROLES.has(m.role)
+        )
+    );
+    if (notLed.length > 0) {
+      const labels = notLed.map((r) => `${r.organizationName ?? '?'}/${r.repoName ?? r.id}`);
+      return {
+        ok: false,
+        refusal: {
+          body: {
+            error: {
+              code: 'FORBIDDEN',
+              message: `This launch requires team LEAD or ADMIN on the team that owns each repository: ${labels.join(', ')}`,
+              reasons: labels.map((repo) => ({ reason: 'team-lead-required', repo })),
+            },
+          },
+          kind: 'repo-access',
+          status: 403,
+        },
+      };
+    }
+  }
+
   const orgs = launchOrgs(input.repos, input.orgs);
 
   for (const orgId of orgs.keys()) {
@@ -174,7 +217,7 @@ async function decideOrgBudgets(
     if (cap != null && (await isOrgOverBudget(prisma, orgId, cap))) {
       return {
         ok: false,
-        refusal: { body: { error: orgBudgetRefusal(cap) }, kind: 'org-budget', status: 402 },
+        refusal: { body: { error: orgBudgetRefusal() }, kind: 'org-budget', status: 402 },
       };
     }
   }

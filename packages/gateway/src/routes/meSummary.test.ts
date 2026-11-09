@@ -9,6 +9,12 @@ vi.mock('@auto-swe/shared/config', () => ({
   SETTING_DEFINITIONS: { 'workflow.approvalDueSoonHours': { defaultValue: 24 } },
 }));
 
+// Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
+vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  ...(await import('../test/billingMock.js')),
+}));
+
 import { humanStepMineScope } from '../lib/humanStepFilters.js';
 import { memberRunScope } from '../lib/runTeamScope.js';
 import { meRoutes } from './me.js';
@@ -36,11 +42,21 @@ function runRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** Month-to-date spend in USD by org id, read through the billing mock. */
+const orgSpend: Record<string, number> = {};
+
 async function buildApp(role: 'ENGINEER' | 'ADMIN' = 'ENGINEER') {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const prisma = {
+    organization: { findMany: vi.fn() },
+    orgMonthlyUsage: {
+      findUnique: vi.fn(async (args: { where: { orgId_yearMonth: { orgId: string } } }) => {
+        const cost = orgSpend[args.where.orgId_yearMonth.orgId];
+        return cost === undefined ? null : { costUsdAccrued: cost };
+      }),
+    },
     teamMembership: { findMany: vi.fn() },
     workflowHumanStep: { findMany: vi.fn() },
     workflowRun: { findMany: vi.fn() },
@@ -69,6 +85,10 @@ describe('GET /api/v1/me/summary', () => {
   afterAll(() => ctx.app.close());
   beforeEach(() => {
     mocks.resolveSetting.mockReset().mockResolvedValue(24);
+    ctx.prisma.organization.findMany.mockReset().mockResolvedValue([]);
+    for (const key of Object.keys(orgSpend)) {
+      delete orgSpend[key];
+    }
     ctx.prisma.teamMembership.findMany.mockReset().mockResolvedValue([membership(teamA)]);
     ctx.prisma.workflowHumanStep.findMany.mockReset().mockResolvedValue([]);
     ctx.prisma.workflowRun.findMany.mockReset().mockResolvedValue([]);
@@ -112,6 +132,76 @@ describe('GET /api/v1/me/summary', () => {
     expect(ctx.prisma.teamMembership.findMany.mock.calls[0][0].where).toEqual({
       team: { isActive: true },
       userId: ME,
+    });
+  });
+
+  describe('budget', () => {
+    const capped = (id: string, cap: number | null) => ({
+      budgetAlertThresholdPercent: 80,
+      id,
+      monthlyBudgetUsdCents: cap,
+    });
+    const inOrg = (team: typeof teamA, orgId: string) => {
+      const m = membership(team);
+      return { ...m, team: { ...m.team, orgId } };
+    };
+
+    it('is null on a team whose org has no cap', async () => {
+      ctx.prisma.organization.findMany.mockResolvedValue([capped('org-1', null)]);
+      const { teams } = (await get()) as unknown as { teams: { budget: unknown }[] };
+      expect(teams[0].budget).toBeNull();
+    });
+
+    it('is the org status as a percentage and a state, with no dollar field, for an ENGINEER', async () => {
+      ctx.prisma.organization.findMany.mockResolvedValue([capped('org-1', 100_000)]);
+      orgSpend['org-1'] = 100;
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/me/summary',
+      });
+      const body = res.json() as { teams: { budget: Record<string, unknown> }[] };
+      expect(body.teams[0].budget).toMatchObject({ percentUsed: 10, scope: 'org', state: 'ok' });
+      expect(res.body).not.toMatch(/usd|cents/i);
+    });
+
+    it('reads every org in one query and gives each team only its own org', async () => {
+      ctx.prisma.teamMembership.findMany.mockResolvedValue([
+        inOrg(teamA, 'org-1'),
+        inOrg(teamB, 'org-2'),
+      ]);
+      ctx.prisma.organization.findMany.mockResolvedValue([
+        capped('org-1', 100_000),
+        capped('org-2', 1000),
+      ]);
+      orgSpend['org-1'] = 100;
+      orgSpend['org-2'] = 20;
+      const { teams } = (await get()) as unknown as {
+        teams: { slug: string; budget: { percentUsed: number; state: string } }[];
+      };
+      expect(ctx.prisma.organization.findMany).toHaveBeenCalledTimes(1);
+      expect(ctx.prisma.organization.findMany.mock.calls[0][0].where).toEqual({
+        id: { in: ['org-1', 'org-2'] },
+      });
+      expect(teams.map((t) => [t.slug, t.budget.percentUsed, t.budget.state])).toEqual([
+        ['alpha', 10, 'ok'],
+        ['beta', 200, 'over'],
+      ]);
+    });
+
+    it('never asks for an org the caller has no team in', async () => {
+      // The caller belongs to org-A only; the read names org-A and nothing else.
+      ctx.prisma.teamMembership.findMany.mockResolvedValue([inOrg(teamA, 'org-A')]);
+      ctx.prisma.organization.findMany.mockResolvedValue([capped('org-A', 1000)]);
+      orgSpend['org-A'] = 1;
+      orgSpend['org-B'] = 999;
+      const { teams } = (await get()) as unknown as {
+        teams: { budget: { percentUsed: number } }[];
+      };
+      expect(ctx.prisma.organization.findMany.mock.calls[0][0].where).toEqual({
+        id: { in: ['org-A'] },
+      });
+      expect(teams[0].budget.percentUsed).toBe(10);
     });
   });
 
@@ -364,6 +454,7 @@ describe('GET /api/v1/me/summary', () => {
   it('member-scopes every work query, for a platform ADMIN too', async () => {
     const admin = await buildApp('ADMIN');
     admin.prisma.teamMembership.findMany.mockResolvedValue([membership(teamA)]);
+    admin.prisma.organization.findMany.mockResolvedValue([]);
     admin.prisma.workflowHumanStep.findMany.mockResolvedValue([]);
     admin.prisma.workflowRun.findMany.mockResolvedValue([]);
     const res = await admin.app.inject({

@@ -220,6 +220,21 @@ export interface TeamSummary {
   orgName: string;
 }
 
+/** Where a budget stands against its cap. `no_cap` means no limit is set. */
+export type BudgetState = 'no_cap' | 'ok' | 'alert' | 'projected_over' | 'over';
+
+/**
+ * A budget as an engineer may see it: a percentage and a state, never dollar amounts. `scope` says
+ * whose cap binds: the organization's, or the team's own when it sets one.
+ */
+export interface BudgetStatus {
+  scope: 'org' | 'team';
+  state: BudgetState;
+  /** Month-to-date as a share of the cap, 0 to 100 or more; null when there is no cap. */
+  percentUsed: number | null;
+  alertThresholdPercent: number | null;
+}
+
 /** What kind of obligation a "Needs you" row is. */
 export type MeNeedsYouKind = 'approval' | 'approval_due_soon' | 'failed_run' | 'pr_merge';
 
@@ -255,6 +270,8 @@ export interface MeSummaryTeam {
   myRole: 'ADMIN' | 'LEAD' | 'ENGINEER';
   /** Items in `needsYou` that belong to this team. */
   needsYou: number;
+  /** The budget that binds work on this team's repositories; null when none is set. */
+  budget: BudgetStatus | null;
   /** Runs started by or visible to the caller that are running now, on this team's repositories. */
   running: number;
   queued: number;
@@ -297,6 +314,8 @@ export interface TeamOverview {
   };
   /** Which view the server built: the team role decides it, never the platform role. */
   viewerLevel: 'engineer' | 'lead' | 'admin';
+  /** The budget that binds work on this team's repositories; percentage only. Null when none is set. */
+  budget: BudgetStatus | null;
   /** The caller's own actionable items on this team's repositories. */
   needsYou: { total: number };
   running: number;
@@ -323,8 +342,12 @@ export interface TeamOverview {
   };
   /** Present for team ADMIN (and a platform ADMIN). */
   admin?: {
-    /** This calendar month's attributed spend in cents; null when it cannot be computed. */
-    monthCostUsdCents: number | null;
+    /**
+     * This calendar month's attributed spend in cents; null when it cannot be computed. Absent when
+     * the organization has a cap and the viewer is not an ORG_ADMIN of it (or a platform ADMIN):
+     * beside `budget.percentUsed` it would reveal the cap.
+     */
+    monthCostUsdCents?: number | null;
   };
 }
 

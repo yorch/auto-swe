@@ -152,7 +152,8 @@ or `INVALID_INPUT` (400), as a launch does.
 
 **Start work** (`/start`) offers three modes: **Run a workflow**, **Run an agent**, and **Run a
 multi-repo epic** (a planner splits one brief into a child run per repository; team leads and
-administrators only). Every mode collects inputs, shows a review screen, and opens the launched
+administrators only, enforced by the server as team LEAD or ADMIN on the team that owns each
+repository). Every mode collects inputs, shows a review screen, and opens the launched
 request. Workflow input drafts remain available when
 switching templates or paths within the page. **Approvals**, the **Workflow library**, and
 **Connections** remain directly available in the main navigation. **All runs** (`/runs`) is the

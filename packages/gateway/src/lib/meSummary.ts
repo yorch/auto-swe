@@ -10,6 +10,7 @@ import type {
   WorkflowRunStatus,
 } from '@auto-swe/shared/types/api';
 import { humanStepListWhere, humanStepMineScope, humanStepTeamScope } from './humanStepFilters.js';
+import { orgBudgetStatuses } from './orgBudgetStatus.js';
 import { groupRequestExecutions } from './requestExecutions.js';
 import {
   memberRunScope,
@@ -458,7 +459,14 @@ export async function buildMeSummary({
     queuedCount.set(teamId, counts.queued);
   }
 
+  // One read for every org the caller's teams belong to, never one per team.
+  const budgets = await orgBudgetStatuses(
+    prisma,
+    memberships.map((m) => m.team.orgId)
+  );
+
   const teams: MeSummaryTeam[] = memberships.map(({ role, team }) => ({
+    budget: budgets.get(team.orgId) ?? null,
     myRole: role,
     name: team.name,
     needsYou: needsYou.get(team.id) ?? 0,

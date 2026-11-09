@@ -14,6 +14,8 @@ import {
   requestTitle,
   teamDeskScope,
 } from './meSummary.js';
+import { isOrgAdmin } from './orgAccess.js';
+import { orgBudgetStatuses } from './orgBudgetStatus.js';
 import { asPlatformAdmin } from './platformAdminScope.js';
 import { teamPullRequestOutcomes } from './pullRequestOutcomesQuery.js';
 import { groupRequestExecutions } from './requestExecutions.js';
@@ -298,7 +300,7 @@ export async function buildTeamOverview(
   const scope = teamDeskScope(team.id);
   const terms = deskRunTerms(user, gate, scope);
 
-  const [desk, recent, activity, pullRequests, repos] = await Promise.all([
+  const [desk, recent, activity, pullRequests, repos, budgets] = await Promise.all([
     loadDeskEntries({ dueSoonHours, gate, prisma, scope, user }),
     latestAttempts(prisma, {
       AND: [...terms, { startedAt: { gte: new Date(now - LAST_WINDOW_DAYS * DAY_MS) } }],
@@ -313,12 +315,14 @@ export async function buildTeamOverview(
       new Date(now)
     ),
     loadRepos(deps, team),
+    orgBudgetStatuses(prisma, [team.orgId]),
   ]);
 
   const counts = countRunningRequests(desk.running);
   const groups = groupRequestExecutions(recent);
   const overview: TeamOverview = {
     activity,
+    budget: budgets.get(team.orgId) ?? null,
     last7d: {
       failed: groups.filter((g) => g.status === 'FAILED' || g.status === 'TIMED_OUT').length,
       started: groups.length,
@@ -385,6 +389,12 @@ export async function buildTeamOverview(
   };
   if (viewerLevel === 'lead') {
     return withLead;
+  }
+  // The team's spend in dollars sits beside the organization's percentage, and the two together
+  // give away the cap, which is an ORG_ADMIN's. So the figure is attached only to a viewer who may
+  // read the cap anyway, or when the organization has none; otherwise the key is absent.
+  if (overview.budget !== null && !(await isOrgAdmin(prisma, user, team.orgId))) {
+    return { ...withLead, admin: {} };
   }
   return { ...withLead, admin: { monthCostUsdCents: await monthCostCents(deps, team.id, now) } };
 }
