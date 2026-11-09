@@ -9,15 +9,20 @@ import { api } from '@/lib/api';
  * ticket and the workflow's name) and ownership scope. The query key starts with `workflow-runs`,
  * so every invalidation of that key refreshes this list too.
  */
-export function useRunsSearch(filters: {
-  includeChannel: boolean;
-  limit: number;
-  offset: number;
-  q: string;
-  scope?: 'MINE';
-  status?: string;
-  templateId?: string;
-}) {
+export function useRunsSearch(
+  filters: {
+    includeChannel: boolean;
+    limit: number;
+    offset: number;
+    q: string;
+    scope?: 'MINE';
+    status?: string;
+    templateId?: string;
+    /** Narrow to one team's work (`?team=`); omit for every team. */
+    teamId?: string;
+  },
+  options: { enabled?: boolean } = {}
+) {
   const params = new URLSearchParams();
   if (filters.status) {
     params.set('status', filters.status);
@@ -31,12 +36,16 @@ export function useRunsSearch(filters: {
   if (filters.scope) {
     params.set('scope', filters.scope);
   }
+  if (filters.teamId) {
+    params.set('teamId', filters.teamId);
+  }
   if (filters.includeChannel) {
     params.set('includeChannel', 'true');
   }
   params.set('limit', String(filters.limit));
   params.set('offset', String(filters.offset));
   return useQuery({
+    enabled: options.enabled ?? true,
     // Typing in the search box must not blank the table between keystrokes.
     placeholderData: (previous) => previous,
     queryFn: () =>

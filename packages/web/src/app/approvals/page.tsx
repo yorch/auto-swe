@@ -3,6 +3,7 @@
 import { Suspense, useMemo, useRef, useState } from 'react';
 import { HumanStepCard } from '@/components/approvals/HumanStepCard';
 import { PageHelp } from '@/components/help/PageHelp';
+import { TeamChip } from '@/components/teams/TeamChip';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
@@ -22,11 +23,14 @@ import {
   type ApprovalSort,
   useApprovals,
   useApprovalsCount,
+  useTeamApprovalsCount,
 } from '@/hooks/useApprovals';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
+import { useTeamParam } from '@/hooks/useTeamParam';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { navLabel } from '@/lib/navigation';
+import { teamGatedBoundary } from '@/lib/teamGate';
 
 const TABS: { id: ApprovalFilter; label: string }[] = [
   { id: 'PENDING', label: 'Pending' },
@@ -71,7 +75,15 @@ function GovernApprovals() {
   );
   const [announcement, setAnnouncement] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const pendingTotal = useApprovalsCount();
+  const allTeamsPending = useApprovalsCount();
+  const teamFilter = useTeamParam();
+  // `?actionable=1` narrows to the steps the caller can answer, the set the team overview's
+  // "Needs you" number counts.
+  const actionableOnly = params.get('actionable') === '1';
+  const teamPending = useTeamApprovalsCount(teamFilter.teamId, !teamFilter.blocked);
+  // A team filter narrows the list, so the tab's number narrows with it; the sidebar badge
+  // keeps counting every team.
+  const pendingTotal = teamFilter.teamId ? (teamPending ?? 0) : allTeamsPending;
 
   const {
     data: allSteps,
@@ -80,7 +92,10 @@ function GovernApprovals() {
     error,
     refetch,
     isFetching,
-  } = useApprovals(filter, sort, overdueOnly);
+  } = useApprovals(filter, sort, overdueOnly, undefined, actionableOnly, {
+    enabled: !teamFilter.blocked,
+    teamId: teamFilter.teamId,
+  });
 
   const loaded = allSteps?.length ?? 0;
   const atCap = loaded >= SERVER_CAP[filter];
@@ -149,6 +164,19 @@ function GovernApprovals() {
         }
         title={navLabel('/approvals')}
       />
+      <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
+      {actionableOnly && (
+        <p className="flex flex-wrap items-center gap-2 text-sm text-paper-400">
+          Showing only the steps you can answer.
+          <Button
+            onClick={() => update({ actionable: null, page: null })}
+            size="sm"
+            variant="ghost"
+          >
+            Show all pending
+          </Button>
+        </p>
+      )}
 
       <PageHelp>
         <section className="space-y-3">
@@ -237,13 +265,9 @@ function GovernApprovals() {
           </div>
 
           <QueryBoundary
-            error={error}
-            isError={isError}
-            isFetching={isFetching}
-            isLoading={isLoading}
+            {...teamGatedBoundary(teamFilter, { error, isError, isFetching, isLoading, refetch })}
             label="inbox"
             loading={<ApprovalSkeleton />}
-            onRetry={() => void refetch()}
           >
             {count > 0 && (
               <div className="space-y-3 outline-none" ref={listRef} tabIndex={-1}>

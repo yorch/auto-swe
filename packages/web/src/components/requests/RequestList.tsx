@@ -1,6 +1,7 @@
 'use client';
 
 import type { WorkspaceRequestSummary } from '@auto-swe/shared/types/api';
+import { TeamLabel } from '@/components/teams/TeamLabel';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { DataTable, type DataTableDensity } from '@/components/ui/DataTable';
@@ -84,7 +85,8 @@ export function RequestList({
             );
           }),
           workflowColumn<WorkspaceRequestSummary>((request) => (
-            <div className="mt-0.5 text-xs text-paper-500">
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-paper-500">
+              <TeamLabel teams={request.teams} />
               <span className="text-paper-400">{request.target ?? 'No target connection'}</span>
               <span aria-hidden="true"> · </span>
               <span className="tabular">

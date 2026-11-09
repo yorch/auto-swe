@@ -1,7 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -24,6 +24,7 @@ import {
   useKnowledgeDetail,
   useKnowledgePermissions,
 } from '@/hooks/useKnowledge';
+import { useTeamParam } from '@/hooks/useTeamParam';
 import { useTeams } from '@/hooks/useTeams';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { ApiError, api } from '@/lib/api';
@@ -80,10 +81,11 @@ const VIEW_OPTIONS = [
   { label: 'Review: items I can manage', value: 'review' },
 ];
 
-export default function GovernKnowledgePage() {
+function Knowledge() {
   const user = useAuthStore((s) => s.user);
   const teamsQuery = useTeams();
   const teams = teamsQuery.data ?? [];
+  const teamFromSlug = useTeamParam();
   const [teamId, setTeamId] = useState('');
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
@@ -109,6 +111,14 @@ export default function GovernKnowledgePage() {
   const [pendingSwitch, setPendingSwitch] = useState<KnowledgeItem | 'close' | null>(null);
   const [pending, setPending] = useState<Pending | null>(null);
   const detailHeading = useRef<HTMLHeadingElement>(null);
+
+  // `?team=<slug>` (from a team space) preselects the team once its slug has resolved.
+  const slugTeamId = teamFromSlug.teamId;
+  useEffect(() => {
+    if (slugTeamId) {
+      setTeamId(slugTeamId);
+    }
+  }, [slugTeamId]);
 
   // Typing filters the server's list: wait for a pause.
   useEffect(() => {
@@ -801,5 +811,13 @@ export default function GovernKnowledgePage() {
         title="Discard your draft?"
       />
     </div>
+  );
+}
+
+export default function GovernKnowledgePage() {
+  return (
+    <Suspense>
+      <Knowledge />
+    </Suspense>
   );
 }

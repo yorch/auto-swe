@@ -6,8 +6,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/lib/api';
 import ReportsPage from './page';
 
-const { filters, update, useTeamsMock } = vi.hoisted(() => ({
+const { filters, teamParam, update, useTeamsMock } = vi.hoisted(() => ({
   filters: { search: 'tab=budget' },
+  teamParam: { teamId: undefined as string | undefined },
   update: vi.fn(),
   useTeamsMock: vi.fn(),
 }));
@@ -16,10 +17,12 @@ vi.mock('@/hooks/useUrlFilters', () => ({
   useUrlFilters: () => ({ params: new URLSearchParams(filters.search), update }),
 }));
 vi.mock('@/hooks/useTeams', () => ({ useTeams: useTeamsMock }));
+vi.mock('@/hooks/useTeamParam', () => ({ useTeamParam: () => teamParam }));
 
 describe('ReportsPage', () => {
   beforeEach(() => {
     filters.search = 'tab=budget';
+    teamParam.teamId = undefined;
     update.mockReset();
     useTeamsMock.mockReturnValue({ data: [] });
     vi.mocked(useQuery).mockClear();
@@ -73,6 +76,22 @@ describe('ReportsPage', () => {
     expect(screen.getByRole('option', { name: 'Platform' })).toBeTruthy();
     fireEvent.click(screen.getByRole('option', { name: 'All visible teams' }));
     expect(update).toHaveBeenCalledWith({ teamId: null });
+  });
+
+  it('narrows to the team a team space linked with ?team=, unless a teamId is explicit', () => {
+    filters.search = 'tab=delivery&team=platform';
+    teamParam.teamId = 'team-9';
+    useTeamsMock.mockReturnValue({ data: [{ id: 'team-9', name: 'Platform' }] });
+    vi.mocked(useQuery).mockReturnValue({
+      data: undefined,
+      error: null,
+      isError: false,
+      isFetching: false,
+      isLoading: true,
+      refetch: vi.fn(),
+    } as never);
+    render(<ReportsPage />);
+    expect(vi.mocked(useQuery).mock.calls.at(-1)?.[0].queryKey).toContain('team-9');
   });
 
   it('marks the tab the URL names as selected, and exposes it as a tabpanel', () => {

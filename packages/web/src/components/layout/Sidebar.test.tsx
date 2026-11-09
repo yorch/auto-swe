@@ -8,6 +8,19 @@ import { resetNavigation } from '@/test/mockNavigation';
 
 vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
 vi.mock('@/hooks/useApprovals', () => ({ useApprovalsCount: () => 0 }));
+const teamNav = vi.hoisted(() => ({
+  entries: [] as {
+    needsYou: number;
+    team: { id: string; myRole: string; name: string; slug: string };
+  }[],
+  pinned: [] as string[],
+}));
+vi.mock('@/hooks/useTeamNav', () => ({
+  useTeamNav: () => ({ entries: teamNav.entries, isLoading: false }),
+}));
+vi.mock('@/hooks/useUserPreferences', () => ({
+  useUserPreferences: () => ({ pinnedTeamSlugs: teamNav.pinned }),
+}));
 vi.mock('@/hooks/useAdmin', () => ({
   useUsageScopes: () => ({ data: { orgs: [], platform: true, teams: [] } }),
 }));
@@ -130,5 +143,62 @@ describe('Sidebar data-tour anchors', () => {
     cleanup();
     const admin = render(<Sidebar onClose={() => undefined} open />);
     expect(admin.container.querySelector('[data-tour="nav:/agents"]')).not.toBeNull();
+  });
+});
+
+describe('Sidebar Teams group', () => {
+  const entry = (slug: string, name: string, needsYou = 0) => ({
+    needsYou,
+    team: { id: `id-${slug}`, myRole: 'ENGINEER', name, slug },
+  });
+
+  beforeEach(() => {
+    teamNav.entries = [];
+    teamNav.pinned = [];
+  });
+
+  it('lists every member team with its needs-you badge when none is pinned', () => {
+    teamNav.entries = [entry('payments', 'Payments', 4), entry('platform', 'Platform')];
+    resetNavigation('', '/');
+    render(<Sidebar onClose={() => undefined} open />);
+    const group = screen.getByRole('list', { name: 'Teams' });
+    const links = Array.from(group.querySelectorAll('a'));
+    expect(links.map((a) => a.getAttribute('href'))).toEqual([
+      '/teams/payments',
+      '/teams/platform',
+    ]);
+    expect(links[0]?.textContent).toContain('4');
+    expect(links[1]?.querySelector('[data-testid="needs-you-badge"]')).toBeNull();
+  });
+
+  it('lists only the pinned teams, in pin order', () => {
+    teamNav.entries = [entry('a', 'Alpha'), entry('b', 'Beta'), entry('c', 'Gamma')];
+    teamNav.pinned = ['c', 'a', 'gone'];
+    resetNavigation('', '/');
+    render(<Sidebar onClose={() => undefined} open />);
+    const links = Array.from(screen.getByRole('list', { name: 'Teams' }).querySelectorAll('a'));
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(['/teams/c', '/teams/a']);
+  });
+
+  it('shows at most eight teams when nothing is pinned', () => {
+    teamNav.entries = Array.from({ length: 11 }, (_, i) => entry(`t${i}`, `Team ${i}`));
+    resetNavigation('', '/');
+    render(<Sidebar onClose={() => undefined} open />);
+    expect(screen.getByRole('list', { name: 'Teams' }).querySelectorAll('a')).toHaveLength(8);
+  });
+
+  it('marks the team whose space is open', () => {
+    teamNav.entries = [entry('payments', 'Payments')];
+    resetNavigation('', '/teams/payments/work');
+    render(<Sidebar onClose={() => undefined} open />);
+    expect(screen.getByRole('link', { name: 'Payments' }).getAttribute('aria-current')).toBe(
+      'page'
+    );
+  });
+
+  it('has no Teams group for someone in no team', () => {
+    resetNavigation('', '/');
+    render(<Sidebar onClose={() => undefined} open />);
+    expect(screen.queryByRole('list', { name: 'Teams' })).toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 import type { PullRequestListItem } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { TeamLabel } from '@/components/teams/TeamLabel';
 import { BUTTON_STYLE, buttonClassName } from '@/components/ui/Button';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { Icon } from '@/components/ui/Icon';
@@ -37,14 +38,20 @@ const COLUMNS: DataTableColumn<PullRequestListItem>[] = [
     secondary: (pr) => {
       const url = safeHttpUrl(pr.url);
       const label = prLabel(pr);
-      return url ? (
-        <a className={LINK} href={url} rel="noopener noreferrer" target="_blank">
-          {label}
-          <span className="sr-only"> (opens on the host, new tab)</span>
-          <Icon className="ml-1 inline align-[-1px]" name="external" size={11} />
-        </a>
-      ) : (
-        label
+      const owner = pr.ownerTeam ? [pr.ownerTeam] : [];
+      return (
+        <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+          <TeamLabel teams={owner} />
+          {url ? (
+            <a className={LINK} href={url} rel="noopener noreferrer" target="_blank">
+              {label}
+              <span className="sr-only"> (opens on the host, new tab)</span>
+              <Icon className="ml-1 inline align-[-1px]" name="external" size={11} />
+            </a>
+          ) : (
+            label
+          )}
+        </span>
       );
     },
   },

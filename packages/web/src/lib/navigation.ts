@@ -404,6 +404,7 @@ const EXTRA_PAGE_TITLES: [string, string][] = [
   ['/runs/', 'Run'],
   ['/start', 'Start work'],
   ['/epics', 'Epics'],
+  ['/teams', 'Team'],
   ['/docs', 'Docs'],
   ['/oauth/consent', 'Authorize app'],
 ];

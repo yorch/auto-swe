@@ -4,7 +4,9 @@ import Link from 'next/link';
 import { useRef, useState } from 'react';
 import { KnowledgeBasePicker } from '@/components/knowledgeBases/KnowledgeBasePicker';
 import { LaunchCardHeader, ReviewList } from '@/components/requests/LaunchSteps';
+import { RunsUnderNote } from '@/components/requests/RunsUnderNote';
 import { SampleTaskButton } from '@/components/requests/SampleTaskButton';
+import { useStartScope } from '@/components/requests/StartScope';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -38,6 +40,7 @@ import {
   validateAgentRunForm,
 } from '@/lib/agentRun';
 import { connectionLabel } from '@/lib/connectionDisplay';
+import { groupedRepoOptions } from '@/lib/repoGroups';
 import { requestHref } from '@/lib/requestDisplay';
 import { AGENT_SAMPLE_PROMPT } from '@/lib/sampleTasks';
 
@@ -95,6 +98,7 @@ export function AgentRunForm({
   const submitting = useRef(false);
 
   const repos = useRepositories({ limit: 500 });
+  const scope = useStartScope();
   const repoId = values.repoId || null;
   const agents = useAgentRunAgents(repoId);
   const limits = useAgentRunLimits(repoId);
@@ -312,10 +316,14 @@ export function AgentRunForm({
         hint={repos.isError ? 'Could not load repositories' : 'Repositories your teams can reach'}
         label="Repository"
         onChange={(v) => set('repoId', v)}
-        options={gitRepos.map((r) => ({ label: connectionLabel(r), value: r.id }))}
+        options={groupedRepoOptions(gitRepos, scope?.team ?? null, connectionLabel)}
         placeholder={repos.isLoading ? 'Loading…' : 'Choose a repository…'}
         required
         value={values.repoId}
+      />
+      <RunsUnderNote
+        owner={gitRepos.find((r) => r.id === values.repoId)?.team}
+        scope={scope?.team ?? null}
       />
 
       <Combobox

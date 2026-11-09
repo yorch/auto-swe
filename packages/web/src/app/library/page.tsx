@@ -6,6 +6,7 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
+import { TeamChip } from '@/components/teams/TeamChip';
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -24,6 +25,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
+import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Textarea } from '@/components/ui/Textarea';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
@@ -32,7 +34,8 @@ import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/s
 import { VersionTags } from '@/components/workflow/VersionTags';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useHasRole } from '@/hooks/useHasRole';
-import { useLedTeamIds } from '@/hooks/useTeams';
+import { useTeamParam } from '@/hooks/useTeamParam';
+import { useAuthoringTeams, useLedTeamIds } from '@/hooks/useTeams';
 import {
   useCreateWorkflowTemplate,
   useStartWorkflowGenerationJob,
@@ -46,10 +49,10 @@ import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { requestHref } from '@/lib/requestDisplay';
 import { requiresRoleTitle } from '@/lib/roles';
+import { teamGatedBoundary } from '@/lib/teamGate';
 import { canWriteTeamResource } from '@/lib/teamPermissions';
 import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
-import { useTeamStore } from '@/stores/teamStore';
 import { restoreTemplate } from './restoreTemplate';
 
 const SPEC_SCHEMA_VERSION = 1;
@@ -86,9 +89,50 @@ const JOB_PHASE_LABEL: Record<string, string> = {
   persisting: 'Saving the draft…',
 };
 
-function NewTemplateModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+/** Where a new workflow is created: the teams the caller may author for. */
+interface CreateTarget {
+  /** A platform ADMIN may also create a workflow that belongs to no team. */
+  global: boolean;
+  teams: { id: string; name: string }[];
+  /** '' is no team (global); only meaningful when `global`. */
+  teamId: string;
+  onChange: (teamId: string) => void;
+}
+
+/** The team a new workflow is created for; the caller picks it, there is no ambient team. */
+function CreateTeamSelect({ target, disabled }: { target: CreateTarget; disabled?: boolean }) {
+  return (
+    <Select
+      disabled={disabled}
+      hint={
+        target.global || target.teams.length > 0
+          ? 'The team owns the workflow; its leads can edit it.'
+          : 'You need to lead a team to create a workflow.'
+      }
+      label="Team"
+      onChange={target.onChange}
+      options={[
+        ...(target.global ? [{ label: 'No team (platform-wide)', value: '' }] : []),
+        ...(!target.global && !target.teamId ? [{ label: 'Choose a team…', value: '' }] : []),
+        ...target.teams.map((t) => ({ label: t.name, value: t.id })),
+      ]}
+      value={target.teamId}
+    />
+  );
+}
+
+function NewTemplateModal({
+  open,
+  onClose,
+  target,
+}: {
+  open: boolean;
+  onClose: () => void;
+  target: CreateTarget;
+}) {
   const router = useRouter();
-  const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
+  const selectedTeamId = target.teamId;
+  const needsTeam = !target.global && !selectedTeamId;
   const startJob = useStartWorkflowGenerationJob();
   const createTemplate = useCreateWorkflowTemplate();
   const [prompt, setPrompt] = useState('');
@@ -156,6 +200,10 @@ function NewTemplateModal({ open, onClose }: { open: boolean; onClose: () => voi
 
   const handleCreateBlank = async () => {
     const trimmed = name.trim();
+    if (needsTeam) {
+      setError('Choose the team that will own the workflow');
+      return;
+    }
     if (!trimmed) {
       setError('Name is required');
       return;
@@ -167,7 +215,7 @@ function NewTemplateModal({ open, onClose }: { open: boolean; onClose: () => voi
         description: blankDescription.trim() || undefined,
         name: trimmed,
         spec,
-        teamId: selectedTeamId ?? undefined,
+        teamId: selectedTeamId || undefined,
       });
       const data = (result as { data: { id: string } }).data;
       onClose();
@@ -182,6 +230,10 @@ function NewTemplateModal({ open, onClose }: { open: boolean; onClose: () => voi
     const effectivePrompt = (
       forcedPrompt ?? (mode === 'wizard' ? buildWizardPrompt() : prompt)
     ).trim();
+    if (needsTeam) {
+      setError('Choose the team that will own the workflow');
+      return;
+    }
     if (!effectivePrompt) {
       setError(
         mode === 'wizard'
@@ -195,7 +247,7 @@ function NewTemplateModal({ open, onClose }: { open: boolean; onClose: () => voi
       const result = await startJob.mutateAsync({
         name: name.trim() || undefined,
         prompt: effectivePrompt,
-        teamId: selectedTeamId ?? undefined,
+        teamId: selectedTeamId || undefined,
       });
       setJobId(result.jobId);
     } catch (err) {
@@ -315,6 +367,7 @@ function NewTemplateModal({ open, onClose }: { open: boolean; onClose: () => voi
             />
           </div>
         )}
+        <CreateTeamSelect disabled={busy} target={target} />
         <Input
           disabled={busy}
           hint={mode === 'blank' ? undefined : 'Optional — defaults to a name the AI picks'}
@@ -567,7 +620,21 @@ export default function TemplatesPage() {
 function TemplatesPageContent() {
   const router = useRouter();
   const { params, update } = useUrlFilters();
-  const selectedTeamId = useTeamStore((s) => s.selectedTeamId);
+  const teamFilter = useTeamParam();
+  const authoring = useAuthoringTeams();
+  const [pickedTeamId, setPickedTeamId] = useState<string | null>(null);
+  // The team a new workflow is created for: the caller's pick, else the `?team=` team when they
+  // may author for it, else their only team, else (platform ADMIN) none.
+  const defaultCreateTeamId =
+    authoring.teams.find((t) => t.id === teamFilter.teamId)?.id ??
+    (!authoring.global && authoring.teams.length === 1 ? authoring.teams[0]?.id : undefined) ??
+    '';
+  const createTarget: CreateTarget = {
+    global: authoring.global,
+    onChange: setPickedTeamId,
+    teamId: pickedTeamId ?? defaultCreateTeamId,
+    teams: authoring.teams,
+  };
   const {
     data: templates,
     isLoading,
@@ -575,23 +642,23 @@ function TemplatesPageContent() {
     isFetching,
     refetch,
     error: loadError,
-  } = useWorkflowTemplates(selectedTeamId);
+  } = useWorkflowTemplates(teamFilter.teamId, { enabled: !teamFilter.blocked });
   const createTemplate = useCreateWorkflowTemplate();
   // Creating, forking and archiving templates are LEAD routes on the gateway,
   // and on top of the platform role the gateway requires LEAD membership on the
-  // owning team (templateWriteFilter); a GLOBAL template is ADMIN-only. New
-  // templates are created for the selected team, so creation needs a team the
-  // caller leads selected (or platform ADMIN).
+  // owning team (templateWriteFilter); a GLOBAL template is ADMIN-only. A new
+  // template is created for a team the caller picks, from the teams they lead
+  // (a platform ADMIN may pick any team, or none).
   const platformRole = useAuthStore((s) => s.user?.role);
   const isLead = useHasRole('LEAD');
   const ledTeamIds = useLedTeamIds();
   const canWrite = (teamId: string | null | undefined) =>
     canWriteTeamResource(platformRole, teamId, ledTeamIds);
-  const canManage = canWrite(selectedTeamId);
+  const canManage = authoring.global || authoring.teams.length > 0;
   const manageTitle = canManage
     ? undefined
     : isLead
-      ? 'Select a team you lead to author workflows for it'
+      ? 'Lead a team to author workflows for it'
       : requiresRoleTitle('LEAD');
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [forkError, setForkError] = useState<string | null>(null);
@@ -615,6 +682,11 @@ function TemplatesPageContent() {
   const handleFork = async (starter: StarterTemplate) => {
     setForkingId(starter.id);
     setForkError(null);
+    if (!createTarget.global && !createTarget.teamId) {
+      setForkError('Choose the team that will own the workflow, under “Start from a starter”.');
+      setForkingId(null);
+      return;
+    }
     try {
       const suffix = Math.random().toString(36).slice(2, 6);
       const name = `${starter.spec.name}-${suffix}`;
@@ -623,7 +695,7 @@ function TemplatesPageContent() {
         description: starter.spec.description,
         name,
         spec,
-        teamId: selectedTeamId ?? undefined,
+        teamId: createTarget.teamId || undefined,
       });
       const data = (result as { data: { id: string } }).data;
       router.push(`/library/${data.id}`);
@@ -650,7 +722,11 @@ function TemplatesPageContent() {
 
   return (
     <div className="space-y-6">
-      <NewTemplateModal onClose={() => setGenerateOpen(false)} open={generateOpen} />
+      <NewTemplateModal
+        onClose={() => setGenerateOpen(false)}
+        open={generateOpen}
+        target={createTarget}
+      />
 
       <ArchiveConfirmModal onClose={() => setArchiveTarget(null)} target={archiveTarget} />
 
@@ -675,6 +751,8 @@ function TemplatesPageContent() {
         }
         title="Workflow library"
       />
+
+      <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
 
       {restoreError && <Alert>{restoreError}</Alert>}
 
@@ -720,13 +798,15 @@ function TemplatesPageContent() {
           the default list and cannot be launched.
         </p>
         <QueryBoundary
-          error={loadError}
-          isError={isError}
-          isFetching={isFetching}
-          isLoading={isLoading}
+          {...teamGatedBoundary(teamFilter, {
+            error: loadError,
+            isError,
+            isFetching,
+            isLoading,
+            refetch,
+          })}
           label="workflows"
           loading={<SkeletonRows className="px-5 py-4" label="workflows" rows={8} />}
-          onRetry={() => void refetch()}
         >
           {visibleTemplates.length === 0 ? (
             all.length === 0 ? (
@@ -806,6 +886,11 @@ function TemplatesPageContent() {
         </summary>
         <div className="border-t border-ink-600 px-5 py-5">
           {forkError && <Alert className="mb-4">{forkError}</Alert>}
+          {canManage && (
+            <div className="mb-4 max-w-xs">
+              <CreateTeamSelect target={createTarget} />
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
             {STARTER_TEMPLATES.map((s) => {
               const isForking = forkingId === s.id;

@@ -40,6 +40,7 @@ function cockpit(
       latestRun: null,
       mergedAt: null,
       openedAt: '2026-11-01T09:00:00.000Z',
+      ownerTeam: null,
       prNumber: 7,
       repository: null,
       status: 'OPEN',

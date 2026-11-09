@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { LaunchCardHeader, ReviewList } from '@/components/requests/LaunchSteps';
 import { SampleTaskButton } from '@/components/requests/SampleTaskButton';
+import { epicAllowsTeam, useStartScope } from '@/components/requests/StartScope';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -15,6 +16,7 @@ import { useCreateEpic } from '@/hooks/useEpics';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useRepositories } from '@/hooks/useRepositories';
 import { errMsg } from '@/lib/errors';
+import { groupReposByTeam } from '@/lib/repoGroups';
 import { EPIC_SAMPLE, sampleEpicTicketId } from '@/lib/sampleTasks';
 
 /**
@@ -30,7 +32,11 @@ export function EpicLaunchForm({
 }) {
   // POST /epics requires LEAD.
   const canCreate = useHasRole('LEAD');
-  const { data: repos = [] } = useRepositories();
+  const { data: allRepos = [] } = useRepositories();
+  // An epic may span only repositories whose owning team the caller leads.
+  const scope = useStartScope();
+  const repos = allRepos.filter((r) => !r.team || epicAllowsTeam(scope, r.team.id));
+  const hiddenRepoCount = allRepos.length - repos.length;
   const create = useCreateEpic();
   const [externalTicketId, setExternalTicketId] = useState('');
   const [description, setDescription] = useState('');
@@ -184,29 +190,38 @@ export function EpicLaunchForm({
               />
             )}
             <div className="max-h-72 overflow-y-auto rounded-lg border border-ink-500/70 bg-ink-900/40">
-              {shownRepos.map((r) => {
-                const checked = repoIds.includes(r.id);
-                return (
-                  <Checkbox
-                    checked={checked}
-                    className={`border-b border-ink-600 px-3 py-2.5 last:border-b-0 ${
-                      checked ? 'bg-accent-400/[0.06]' : 'hover:bg-ink-700/40'
-                    }`}
-                    key={r.id}
-                    label={
-                      <>
-                        <span className="text-paper-100">
-                          {r.organizationName}/{r.repoName}
-                        </span>
-                        <span className="ml-2 font-mono text-xs text-paper-500">
-                          {r.defaultBranch}
-                        </span>
-                      </>
-                    }
-                    onChange={() => toggleRepo(r.id)}
-                  />
-                );
-              })}
+              {groupReposByTeam(shownRepos, scope?.team ?? null).map((group) => (
+                <div key={group.key}>
+                  {group.label && (
+                    <div className="border-b border-ink-600 bg-ink-800/60 px-3 py-1.5 text-xs font-medium text-paper-400">
+                      {group.label}
+                    </div>
+                  )}
+                  {group.repos.map((r) => {
+                    const checked = repoIds.includes(r.id);
+                    return (
+                      <Checkbox
+                        checked={checked}
+                        className={`border-b border-ink-600 px-3 py-2.5 last:border-b-0 ${
+                          checked ? 'bg-accent-400/[0.06]' : 'hover:bg-ink-700/40'
+                        }`}
+                        key={r.id}
+                        label={
+                          <>
+                            <span className="text-paper-100">
+                              {r.organizationName}/{r.repoName}
+                            </span>
+                            <span className="ml-2 font-mono text-xs text-paper-500">
+                              {r.defaultBranch}
+                            </span>
+                          </>
+                        }
+                        onChange={() => toggleRepo(r.id)}
+                      />
+                    );
+                  })}
+                </div>
+              ))}
               {shownRepos.length === 0 && (
                 <p className="px-3 py-4 text-center text-sm text-paper-500">
                   {repos.length ? 'No repositories match this filter' : 'No repositories available'}
@@ -216,6 +231,15 @@ export function EpicLaunchForm({
           </div>
         </fieldset>
         {error && <Alert>{error}</Alert>}
+        <p className="text-xs text-paper-500">
+          Each repository's work runs under the team that owns it.
+        </p>
+        {hiddenRepoCount > 0 && (
+          <p className="text-xs text-paper-500" data-testid="epic-hidden-repos">
+            {hiddenRepoCount} {hiddenRepoCount === 1 ? 'repository is' : 'repositories are'} not
+            listed: an epic may span only repositories owned by a team you lead.
+          </p>
+        )}
         {repos.length < 2 && (
           <Alert variant="info">
             An epic spans at least two repositories, and fewer than two are available to your team.

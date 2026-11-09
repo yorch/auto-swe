@@ -1,6 +1,7 @@
 'use client';
 
 import { Suspense } from 'react';
+import { TeamChip } from '@/components/teams/TeamChip';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
@@ -14,8 +15,10 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { TicketTable } from '@/components/work/TicketTable';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
+import { useTeamParam } from '@/hooks/useTeamParam';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { useTickets } from '@/hooks/useWorkViews';
+import { teamGatedBoundary } from '@/lib/teamGate';
 import { WORK_SCOPE_OPTIONS } from '@/lib/workScope';
 
 const PAGE_SIZE = 30;
@@ -31,13 +34,17 @@ function Tickets() {
     update({ offset: null, search: value })
   );
 
-  const { data, error, isError, isFetching, isLoading, meta, refetch } = useTickets({
-    includeAutomated,
-    limit: PAGE_SIZE,
-    offset,
-    scope,
-    search: search || undefined,
-  });
+  const teamFilter = useTeamParam();
+  const { data, error, isError, isFetching, isLoading, meta, refetch } = useTickets(
+    {
+      includeAutomated,
+      limit: PAGE_SIZE,
+      offset,
+      scope,
+      search: search || undefined,
+    },
+    { enabled: !teamFilter.blocked, teamId: teamFilter.teamId }
+  );
   const groups = data ?? [];
   const total = meta?.total ?? 0;
 
@@ -53,6 +60,7 @@ function Tickets() {
         subtitle="Everything filed under one ticket: its requests, runs, pull requests and cost."
         title="Tickets"
       />
+      <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
       <div className="space-y-4">
         <Card className="overflow-hidden p-0">
           <Toolbar
@@ -87,13 +95,9 @@ function Tickets() {
             </span>
           </Toolbar>
           <QueryBoundary
-            error={error}
-            isError={isError}
-            isFetching={isFetching}
-            isLoading={isLoading}
+            {...teamGatedBoundary(teamFilter, { error, isError, isFetching, isLoading, refetch })}
             label="tickets"
             loading={<SkeletonRows className="px-4 py-4" label="tickets" rows={6} />}
-            onRetry={() => void refetch()}
           >
             {groups.length === 0 ? (
               <EmptyState

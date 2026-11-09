@@ -3,7 +3,25 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const steps = vi.hoisted(() => ({ count: null as number | null, rows: [] as unknown[] }));
+const teamParam = vi.hoisted(() => ({
+  value: {
+    blocked: false,
+    clear: vi.fn(),
+    isError: false,
+    pending: false,
+    retry: vi.fn(),
+    slug: '',
+    team: null as { name: string } | null,
+    teamId: undefined as string | undefined,
+  },
+}));
+vi.mock('@/hooks/useTeamParam', () => ({ useTeamParam: () => teamParam.value }));
+
+const steps = vi.hoisted(() => ({
+  count: null as number | null,
+  rows: [] as unknown[],
+  teamCount: null as number | null,
+}));
 const nav = vi.hoisted(() => ({ replace: vi.fn(), search: '' }));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/approvals',
@@ -11,16 +29,21 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(nav.search),
 }));
 vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
+const useApprovalsSpy = vi.hoisted(() => vi.fn());
 vi.mock('@/hooks/useApprovals', () => ({
-  useApprovals: () => ({
-    data: steps.rows,
-    error: null,
-    isError: false,
-    isFetching: false,
-    isLoading: false,
-    refetch: vi.fn(),
-  }),
+  useApprovals: (...args: unknown[]) => {
+    useApprovalsSpy(...args);
+    return {
+      data: steps.rows,
+      error: null,
+      isError: false,
+      isFetching: false,
+      isLoading: false,
+      refetch: vi.fn(),
+    };
+  },
   useApprovalsCount: () => steps.count ?? steps.rows.length,
+  useTeamApprovalsCount: (teamId: string | undefined) => (teamId ? steps.teamCount : null),
 }));
 vi.mock('@/components/approvals/HumanStepCard', () => ({
   HumanStepCard: ({
@@ -45,6 +68,16 @@ vi.mock('@/components/approvals/HumanStepCard', () => ({
 import GovernApprovalsPage from './page';
 
 afterEach(() => {
+  teamParam.value = {
+    blocked: false,
+    clear: vi.fn(),
+    isError: false,
+    pending: false,
+    retry: vi.fn(),
+    slug: '',
+    team: null,
+    teamId: undefined,
+  };
   cleanup();
   nav.search = '';
   nav.replace.mockClear();
@@ -147,5 +180,67 @@ describe('approvals page filters and state', () => {
     render(<GovernApprovalsPage />);
     fireEvent.click(screen.getByRole('button', { name: 'One' }));
     expect(screen.getByRole('status').textContent).toContain('Approved “x”.');
+  });
+});
+
+describe('approvals page team filter', () => {
+  it('narrows the steps to the ?team= team and shows a removable chip', () => {
+    const clear = vi.fn();
+    teamParam.value = {
+      blocked: false,
+      clear,
+      isError: false,
+      pending: false,
+      retry: vi.fn(),
+      slug: 'payments',
+      team: { name: 'Payments' },
+      teamId: 'team-1',
+    };
+    nav.search = 'team=payments';
+    steps.rows = [];
+    render(<GovernApprovalsPage />);
+    expect(useApprovalsSpy).toHaveBeenCalledWith(
+      'PENDING',
+      'requestedAt:desc',
+      false,
+      undefined,
+      false,
+      expect.objectContaining({ teamId: 'team-1' })
+    );
+    expect(screen.getByTestId('team-chip').textContent).toContain('Payments');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove the Payments team filter' }));
+    expect(teamParam.value.clear).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts the Pending tab within the team, while the badge hook stays all-teams', () => {
+    teamParam.value = {
+      ...teamParam.value,
+      slug: 'payments',
+      team: { name: 'Payments' },
+      teamId: 'team-1',
+    };
+    nav.search = 'team=payments';
+    steps.rows = [step('a', 'APPROVAL', 'One')];
+    steps.count = 40;
+    steps.teamCount = 3;
+    render(<GovernApprovalsPage />);
+    expect(screen.getByRole('tab', { name: /Pending \(3\)/ })).toBeTruthy();
+    steps.teamCount = null;
+  });
+
+  it('lists only the steps the caller can answer for ?actionable=1, and says so', () => {
+    nav.search = 'team=payments&actionable=1';
+    steps.rows = [];
+    render(<GovernApprovalsPage />);
+    expect(useApprovalsSpy).toHaveBeenCalledWith(
+      'PENDING',
+      'requestedAt:desc',
+      false,
+      undefined,
+      true,
+      expect.anything()
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Show all pending' }));
+    expect(nav.replace.mock.calls.at(-1)?.[0]).not.toContain('actionable');
   });
 });

@@ -29,12 +29,20 @@ describe('MyTeams', () => {
   it('collapses a single team to one line', () => {
     render(<MyTeams teams={[team()]} />);
     expect(screen.getByTestId('single-team').textContent).toBe('You are in Payments (Acme).');
+    expect(screen.getByRole('link', { name: 'Payments' }).getAttribute('href')).toBe(
+      '/teams/payments'
+    );
     expect(screen.queryByTestId('team-card')).toBeNull();
   });
 
-  it('shows a card per team with org, role and counts, and no links', () => {
+  it('shows a card per team with org, role and counts, each linking to the team’s space', () => {
     render(
-      <MyTeams teams={[team(), team({ myRole: 'ENGINEER', name: 'Platform', teamId: 't2' })]} />
+      <MyTeams
+        teams={[
+          team(),
+          team({ myRole: 'ENGINEER', name: 'Platform', slug: 'platform', teamId: 't2' }),
+        ]}
+      />
     );
     const cards = screen.getAllByTestId('team-card');
     expect(cards).toHaveLength(2);
@@ -46,6 +54,9 @@ describe('MyTeams', () => {
     expect(first.getByText('Running').nextSibling?.textContent).toBe('1');
     expect(first.getByText('Queued').nextSibling?.textContent).toBe('2');
     expect(within(cards[1] as HTMLElement).getByText('Engineer')).toBeTruthy();
-    expect(screen.queryAllByRole('link')).toHaveLength(0);
+    expect(screen.getAllByRole('link').map((a) => a.getAttribute('href'))).toEqual([
+      '/teams/payments',
+      '/teams/platform',
+    ]);
   });
 });

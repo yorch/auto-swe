@@ -21,8 +21,9 @@ import { type DateRange, rangeKey, rangeQuery } from '@/lib/dateRange';
 import { randomId } from '@/lib/randomId';
 import type { KnowledgeBaseRunOverrides } from './useKnowledgeBases';
 
-export function useWorkflowTemplates(teamId?: string | null) {
+export function useWorkflowTemplates(teamId?: string | null, options: { enabled?: boolean } = {}) {
   return useQuery({
+    enabled: options.enabled ?? true,
     queryFn: () =>
       api
         .get<{

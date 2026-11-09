@@ -3,6 +3,20 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const teamParam = vi.hoisted(() => ({
+  value: {
+    blocked: false,
+    clear: vi.fn(),
+    isError: false,
+    pending: false,
+    retry: vi.fn(),
+    slug: '',
+    team: null as { name: string } | null,
+    teamId: undefined as string | undefined,
+  },
+}));
+vi.mock('@/hooks/useTeamParam', () => ({ useTeamParam: () => teamParam.value }));
+
 const nav = vi.hoisted(() => ({ replace: vi.fn(), search: '' }));
 vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('next/navigation', () => ({
@@ -19,6 +33,16 @@ import TicketsPage from './page';
 
 const settled = { error: null, isError: false, isFetching: false, isLoading: false };
 afterEach(() => {
+  teamParam.value = {
+    blocked: false,
+    clear: vi.fn(),
+    isError: false,
+    pending: false,
+    retry: vi.fn(),
+    slug: '',
+    team: null,
+    teamId: undefined,
+  };
   cleanup();
   vi.clearAllMocks();
 });
@@ -29,7 +53,8 @@ describe('Tickets page', () => {
     useTickets.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
     render(<TicketsPage />);
     expect(useTickets).toHaveBeenCalledWith(
-      expect.objectContaining({ includeAutomated: false, scope: 'MINE' })
+      expect.objectContaining({ includeAutomated: false, scope: 'MINE' }),
+      expect.anything()
     );
     expect(
       (screen.getByRole('checkbox', { name: 'Include automated runs' }) as HTMLInputElement).checked
@@ -41,7 +66,8 @@ describe('Tickets page', () => {
     useTickets.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
     render(<TicketsPage />);
     expect(useTickets).toHaveBeenCalledWith(
-      expect.objectContaining({ includeAutomated: true, scope: 'TEAM', search: 'ABC' })
+      expect.objectContaining({ includeAutomated: true, scope: 'TEAM', search: 'ABC' }),
+      expect.anything()
     );
     const box = screen.getByRole('checkbox', { name: 'Include automated runs' });
     expect((box as HTMLInputElement).checked).toBe(true);
@@ -74,5 +100,31 @@ describe('Tickets page', () => {
     render(<TicketsPage />);
     expect(screen.queryByText('Try another search.')).toBeNull();
     expect(screen.getByText('No tickets yet')).toBeTruthy();
+  });
+});
+
+describe('Tickets page team filter', () => {
+  it('narrows the list to the ?team= team and shows a removable chip', () => {
+    const clear = vi.fn();
+    teamParam.value = {
+      blocked: false,
+      clear,
+      isError: false,
+      pending: false,
+      retry: vi.fn(),
+      slug: 'payments',
+      team: { name: 'Payments' },
+      teamId: 'team-1',
+    };
+    nav.search = 'team=payments';
+    useTickets.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
+    render(<TicketsPage />);
+    expect(useTickets).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ teamId: 'team-1' })
+    );
+    expect(screen.getByTestId('team-chip').textContent).toContain('Payments');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove the Payments team filter' }));
+    expect(teamParam.value.clear).toHaveBeenCalledTimes(1);
   });
 });

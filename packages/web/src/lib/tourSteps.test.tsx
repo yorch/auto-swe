@@ -9,6 +9,10 @@ import { resetNavigation } from '@/test/mockNavigation';
 
 vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
 vi.mock('@/hooks/useApprovals', () => ({ useApprovalsCount: () => 0 }));
+vi.mock('@/hooks/useTeamNav', () => ({ useTeamNav: () => ({ entries: [], isLoading: false }) }));
+vi.mock('@/hooks/useUserPreferences', () => ({
+  useUserPreferences: () => ({ pinnedTeamSlugs: [] }),
+}));
 vi.mock('@/hooks/useAdmin', () => ({
   useUsageScopes: () => ({ data: { orgs: [], platform: true, teams: [] } }),
 }));

@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ templates: [] as unknown[] }));
+const state = vi.hoisted(() => ({
+  authoring: { global: false, isLoading: false, teams: [] as { id: string; name: string }[] },
+  member: [] as { id: string; name: string; slug: string }[],
+  templates: [] as unknown[],
+}));
 const idle = { isError: false, isLoading: false, isPending: false, mutateAsync: vi.fn() };
 
 const nav = vi.hoisted(() => ({ query: '' }));
@@ -12,7 +16,11 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(nav.query),
 }));
-vi.mock('@/hooks/useTeams', () => ({ useLedTeamIds: () => new Set<string>() }));
+vi.mock('@/hooks/useTeams', () => ({
+  useAuthoringTeams: () => state.authoring,
+  useLedTeamIds: () => new Set<string>(),
+  useTeams: () => ({ data: state.member, isLoading: false }),
+}));
 vi.mock('@/hooks/useTemplates', () => ({
   useCreateWorkflowTemplate: () => idle,
   useStartWorkflowGenerationJob: () => idle,
@@ -37,6 +45,9 @@ stubDialogPrototype();
 afterEach(() => {
   cleanup();
   nav.query = '';
+  state.authoring = { global: false, isLoading: false, teams: [] };
+  state.member = [];
+  idle.mutateAsync.mockReset();
 });
 
 const base = {
@@ -107,11 +118,91 @@ describe('Workflow library', () => {
 
   it('offers blank creation inside the one New workflow dialog', async () => {
     state.templates = [base];
+    state.authoring = { global: true, isLoading: false, teams: [] };
     useAuthStore.setState({ user: { role: 'ADMIN' } } as never);
     render(<TemplatesPage />);
     fireEvent.click(screen.getByRole('button', { name: 'New workflow' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Blank' }));
     expect(screen.getByRole('button', { name: 'Create blank workflow' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Or start from a blank workflow' })).toBeNull();
+  });
+
+  it('lets a platform ADMIN create a workflow for no team', async () => {
+    state.templates = [base];
+    state.authoring = {
+      global: true,
+      isLoading: false,
+      teams: [{ id: 'team-1', name: 'Payments' }],
+    };
+    useAuthStore.setState({ user: { role: 'ADMIN' } } as never);
+    render(<TemplatesPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'New workflow' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: /Team/ }).textContent).toContain(
+      'No team (platform-wide)'
+    );
+  });
+
+  it('asks a lead who leads several teams to choose one, and sends the choice', async () => {
+    state.templates = [base];
+    state.authoring = {
+      global: false,
+      isLoading: false,
+      teams: [
+        { id: 'team-1', name: 'Payments' },
+        { id: 'team-2', name: 'Data' },
+      ],
+    };
+    useAuthStore.setState({ user: { role: 'LEAD' } } as never);
+    idle.mutateAsync.mockResolvedValue({ data: { id: 'new-1' } });
+    render(<TemplatesPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'New workflow' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Blank' }));
+    fireEvent.change(screen.getByLabelText(/Name/), { target: { value: 'my-flow' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create blank workflow' }));
+    expect(await screen.findByText('Choose the team that will own the workflow')).toBeTruthy();
+    expect(idle.mutateAsync).not.toHaveBeenCalled();
+    // Only the teams the caller leads are on offer.
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /Team/ }));
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(
+      expect.arrayContaining(['Payments', 'Data'])
+    );
+    fireEvent.click(screen.getByRole('option', { name: 'Data' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create blank workflow' }));
+    await waitFor(() => expect(idle.mutateAsync).toHaveBeenCalled());
+    expect(idle.mutateAsync.mock.calls[0]?.[0]).toMatchObject({
+      name: 'my-flow',
+      teamId: 'team-2',
+    });
+  });
+
+  it('defaults the team from ?team= when the caller leads it', async () => {
+    state.templates = [base];
+    state.member = [{ id: 'team-1', name: 'Payments', slug: 'payments' }];
+    state.authoring = {
+      global: false,
+      isLoading: false,
+      teams: [
+        { id: 'team-1', name: 'Payments' },
+        { id: 'team-2', name: 'Data' },
+      ],
+    };
+    nav.query = 'team=payments';
+    useAuthStore.setState({ user: { role: 'LEAD' } } as never);
+    render(<TemplatesPage />);
+    expect(screen.getByTestId('team-chip').textContent).toContain('Payments');
+    fireEvent.click(screen.getByRole('button', { name: 'New workflow' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: /Team/ }).textContent).toContain('Payments');
+  });
+
+  it('keeps New workflow off for someone who leads no team', () => {
+    state.templates = [base];
+    useAuthStore.setState({ user: { role: 'LEAD' } } as never);
+    render(<TemplatesPage />);
+    expect(
+      (screen.getByRole('button', { name: 'New workflow' }) as HTMLButtonElement).disabled
+    ).toBe(true);
+    expect(screen.getByText(/Lead a team to author workflows for it/)).toBeTruthy();
   });
 });

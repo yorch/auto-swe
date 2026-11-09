@@ -78,6 +78,31 @@ function useTeamIdsWithRole(minRole: 'LEAD' | 'ADMIN'): ReadonlySet<string> | nu
 }
 
 /**
+ * The teams the caller may author team-owned resources for (a workflow template): the teams
+ * they LEAD or ADMIN, read from `myRole`. A platform ADMIN may author for any team and for no
+ * team at all (`global`), so they get every team the directory lists.
+ */
+export function useAuthoringTeams(): {
+  teams: TeamSummary[];
+  global: boolean;
+  isLoading: boolean;
+} {
+  const user = useAuthStore((s) => s.user);
+  const platformAdmin = hasRole(user?.role, 'ADMIN');
+  const platformLead = hasRole(user?.role, 'LEAD');
+  const all = useTeams({ enabled: platformAdmin });
+  const member = useTeams({ enabled: platformLead && !platformAdmin, memberOnly: true });
+  if (platformAdmin) {
+    return { global: true, isLoading: all.isLoading, teams: all.data ?? [] };
+  }
+  return {
+    global: false,
+    isLoading: platformLead && member.isLoading,
+    teams: platformLead ? (member.data ?? []).filter((t) => hasRole(t.myRole, 'LEAD')) : [],
+  };
+}
+
+/**
  * What POST/PATCH /teams return: the team row itself, without the list-only extras (`myRole`,
  * `orgName`, `_count`).
  */

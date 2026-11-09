@@ -2,6 +2,7 @@
 
 import { PULL_REQUEST_STATES, type PullRequestState } from '@auto-swe/shared/lib/pullRequest';
 import { Suspense } from 'react';
+import { TeamChip } from '@/components/teams/TeamChip';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
@@ -16,9 +17,11 @@ import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { PullRequestTable } from '@/components/work/PullRequestTable';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useRepositories } from '@/hooks/useRepositories';
+import { useTeamParam } from '@/hooks/useTeamParam';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { usePullRequests } from '@/hooks/useWorkViews';
 import { HELP_LINKS } from '@/lib/helpLinks';
+import { teamGatedBoundary } from '@/lib/teamGate';
 import { WORK_SCOPE_OPTIONS } from '@/lib/workScope';
 
 const PAGE_SIZE = 30;
@@ -56,15 +59,19 @@ function PullRequests() {
   );
 
   const { data: repositories = [] } = useRepositories({ limit: REPOSITORY_PAGE });
-  const { data, error, isError, isFetching, isLoading, meta, refetch } = usePullRequests({
-    draft,
-    limit: PAGE_SIZE,
-    offset,
-    repoId: repoId || undefined,
-    scope,
-    state,
-    ticket: ticket || undefined,
-  });
+  const teamFilter = useTeamParam();
+  const { data, error, isError, isFetching, isLoading, meta, refetch } = usePullRequests(
+    {
+      draft,
+      limit: PAGE_SIZE,
+      offset,
+      repoId: repoId || undefined,
+      scope,
+      state,
+      ticket: ticket || undefined,
+    },
+    { enabled: !teamFilter.blocked, teamId: teamFilter.teamId }
+  );
   const pullRequests = data ?? [];
   const total = meta?.total ?? 0;
   const filtered = scope !== 'MINE' || state !== 'OPEN' || draft !== 'any' || repoId || ticket;
@@ -94,6 +101,7 @@ function PullRequests() {
         subtitle="Pull requests the platform opened, with their state on the host, CI and the run behind them."
         title="Pull requests"
       />
+      <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
       <div className="space-y-4">
         <Card className="overflow-hidden p-0">
           <Toolbar
@@ -158,13 +166,9 @@ function PullRequests() {
             </p>
           )}
           <QueryBoundary
-            error={error}
-            isError={isError}
-            isFetching={isFetching}
-            isLoading={isLoading}
+            {...teamGatedBoundary(teamFilter, { error, isError, isFetching, isLoading, refetch })}
             label="pull requests"
             loading={<SkeletonRows className="px-4 py-4" label="pull requests" rows={6} />}
-            onRetry={() => void refetch()}
           >
             {pullRequests.length === 0 ? (
               <EmptyState

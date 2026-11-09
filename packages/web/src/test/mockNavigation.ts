@@ -10,6 +10,7 @@ import { useSyncExternalStore } from 'react';
 export const nav = {
   listeners: new Set<() => void>(),
   pathname: '/',
+  push: [] as string[],
   replace: [] as string[],
   search: '',
 };
@@ -18,12 +19,16 @@ export function resetNavigation(search = '', pathname = '/') {
   nav.search = search;
   nav.pathname = pathname;
   nav.replace = [];
+  nav.push = [];
 }
 
 export function navigationMock() {
   return {
     usePathname: () => nav.pathname,
     useRouter: () => ({
+      push: (url: string) => {
+        nav.push.push(url);
+      },
       replace: (url: string) => {
         nav.replace.push(url);
         nav.search = url.includes('?') ? url.slice(url.indexOf('?') + 1) : '';

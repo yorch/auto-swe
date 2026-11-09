@@ -28,18 +28,25 @@ vi.mock('@/hooks/useVisibleNav', () => ({
 type Handler = (url: URL) => unknown | Promise<unknown>;
 
 /** Answer the palette's three list endpoints; every call is recorded in `calls`. */
-function stubApi(handlers: { requests?: Handler; runs?: Handler; templates?: Handler }) {
+function stubApi(handlers: {
+  requests?: Handler;
+  runs?: Handler;
+  teams?: Handler;
+  templates?: Handler;
+}) {
   const calls: URL[] = [];
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(input.toString(), 'http://gateway.test');
       calls.push(url);
-      const handler = url.pathname.endsWith('/requests')
-        ? handlers.requests
-        : url.pathname.endsWith('/workflow-templates')
-          ? handlers.templates
-          : handlers.runs;
+      const handler = url.pathname.endsWith('/teams')
+        ? handlers.teams
+        : url.pathname.endsWith('/requests')
+          ? handlers.requests
+          : url.pathname.endsWith('/workflow-templates')
+            ? handlers.templates
+            : handlers.runs;
       const data = handler ? await handler(url) : [];
       return new Response(JSON.stringify({ data, meta: { limit: 5, offset: 0, total: 0 } }), {
         headers: { 'content-type': 'application/json' },
@@ -80,6 +87,23 @@ const type = (value: string) =>
   fireEvent.change(screen.getByRole('combobox'), { target: { value } });
 
 describe('CommandPalette', () => {
+  it('offers “Go to team” for a member team that matches, and opens its space', async () => {
+    stubApi({
+      teams: () => [
+        { id: 't1', myRole: 'LEAD', name: 'Payments', orgName: 'Acme', slug: 'payments' },
+        // A platform ADMIN's list can carry a team they are not in; it is not offered.
+        { id: 't2', myRole: null, name: 'Payroll', orgName: 'Acme', slug: 'payroll' },
+      ],
+    });
+    await openPalette();
+    type('pay');
+    const option = await screen.findByRole('option', { name: /Payments/ });
+    expect(screen.queryByRole('option', { name: /Payroll/ })).toBeNull();
+    expect(screen.getByText('Go to team')).toBeTruthy();
+    fireEvent.click(option);
+    expect(push).toHaveBeenCalledWith('/teams/payments');
+  });
+
   it('runs a theme command in place instead of navigating', async () => {
     const onOpenChange = await openPalette();
     type('theme');

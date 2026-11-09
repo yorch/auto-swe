@@ -11,6 +11,7 @@ import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
 import { runHref, templateHref } from '@/lib/entityLinks';
 import { flattenNavItems } from '@/lib/navigation';
 import { requestHref } from '@/lib/requestDisplay';
+import { teamHref } from '@/lib/teamSpace';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { useThemeStore } from '@/stores/themeStore';
 
@@ -158,6 +159,14 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   const remote = usePaletteSearch(query);
   const remoteEntries = useMemo<Entry[]>(
     () => [
+      ...remote.teams.map((t) => ({
+        group: 'Go to team',
+        hint: t.orgName,
+        href: teamHref(t.slug),
+        icon: 'teams',
+        id: `team:${t.id}`,
+        label: t.name,
+      })),
       ...remote.requests.map((r) => ({
         group: 'Requests',
         hint: r.workRequest?.externalTicketId || undefined,
@@ -188,7 +197,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
         label: t.name,
       })),
     ],
-    [remote.requests, remote.runs, remote.templates]
+    [remote.requests, remote.runs, remote.teams, remote.templates]
   );
   const options = useMemo(() => [...results, ...remoteEntries], [results, remoteEntries]);
 

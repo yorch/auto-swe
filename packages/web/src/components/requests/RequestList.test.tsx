@@ -21,6 +21,7 @@ const REQUEST: WorkspaceRequestSummary = {
   startedAt: '2026-01-01T00:00:00Z',
   status: 'RUNNING',
   target: 'acme/payments',
+  teams: [{ id: 'team-1', name: 'Payments' }],
   templateId: 't1',
   templateName: 'Ship a fix',
   templateVersion: 1,
@@ -52,6 +53,8 @@ describe('RequestList', () => {
     expect(screen.getByText('Waiting for a response')).toBeTruthy();
     expect(screen.getByText('Awaiting approval')).toBeTruthy();
     expect(screen.getByText('acme/payments')).toBeTruthy();
+    // The owning team, as a neutral label beside the target.
+    expect(screen.getByTestId('team-label').textContent).toBe('Payments');
     expect(screen.getByText('2 attempts')).toBeTruthy();
     const review = screen.getByRole('link', { name: /Review pull request/ });
     expect(review.getAttribute('href')).toBe('https://example.test/pr/1');

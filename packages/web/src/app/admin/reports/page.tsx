@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
+import { useTeamParam } from '@/hooks/useTeamParam';
 import { useTeams } from '@/hooks/useTeams';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { ApiError, api } from '@/lib/api';
@@ -22,6 +23,7 @@ import {
   utcDay,
 } from '@/lib/dateRange';
 import { HELP_LINKS } from '@/lib/helpLinks';
+import { teamGatedBoundary } from '@/lib/teamGate';
 import { DigestsTab } from './DigestsTab';
 import { type ReportTab, type ReportTabData, ReportTabPanel } from './ReportTabPanel';
 import { reportCsv } from './reportCsv';
@@ -44,6 +46,7 @@ function selectedTab(value: string | null): TabId {
 function ReportsWorkspace() {
   const { params, update } = useUrlFilters();
   const teamsQuery = useTeams();
+  const teamFromSlug = useTeamParam();
   const range = parseDateRange(params);
   // The URL is the only source of the active tab, so Back and Forward show the tab they name.
   const activeTab = selectedTab(params.get('tab'));
@@ -51,12 +54,13 @@ function ReportsWorkspace() {
   const query = new URLSearchParams(rangeQuery(range));
   // The Team filter is not offered on the Budget tab, so a `teamId` left in the URL from another
   // tab must not narrow it invisibly.
-  const teamId = activeTab === 'budget' ? '' : (params.get('teamId') ?? '');
+  // `?team=<slug>` (from a team space) names the same filter by slug; an explicit `teamId` wins.
+  const teamId = activeTab === 'budget' ? '' : (params.get('teamId') ?? teamFromSlug.teamId ?? '');
   if (teamId) {
     query.set('teamId', teamId);
   }
   const reportQuery = useQuery({
-    enabled: activeTab !== 'digests',
+    enabled: activeTab !== 'digests' && !(activeTab !== 'budget' && teamFromSlug.blocked),
     queryFn: () =>
       api
         .get<{ data: ReportTabData }>(`/api/v1/reports/${activeTab}?${query}`)
@@ -163,12 +167,13 @@ function ReportsWorkspace() {
           />
         ) : (
           <QueryBoundary
-            error={reportQuery.error}
-            isError={reportQuery.isError}
-            isFetching={reportQuery.isFetching}
-            isLoading={reportQuery.isLoading}
+            {...teamGatedBoundary(
+              activeTab === 'budget'
+                ? { ...teamFromSlug, isError: false, pending: false }
+                : teamFromSlug,
+              reportQuery
+            )}
             label={`${activeDefinition.label.toLowerCase()} report`}
-            onRetry={() => void reportQuery.refetch()}
             rows={3}
             shape="cards"
           >

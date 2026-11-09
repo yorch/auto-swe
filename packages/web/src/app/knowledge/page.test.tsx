@@ -3,7 +3,11 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
+import { resetNavigation } from '@/test/mockNavigation';
 import { setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
+
+vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
+
 import KnowledgePage from './page';
 
 const item = (over: Record<string, unknown> = {}) => ({
@@ -30,8 +34,8 @@ function mock(rows = [item()], extra: Record<string, () => unknown> = {}) {
     }),
     'GET /api/v1/teams': () => ({
       data: [
-        { id: 't1', name: 'Payments' },
-        { id: 't2', name: 'Platform' },
+        { id: 't1', name: 'Payments', slug: 'payments' },
+        { id: 't2', name: 'Platform', slug: 'platform' },
       ],
     }),
     'GET /api/v1/teams/t1': () => ({ data: { orgId: 'o1' } }),
@@ -48,6 +52,7 @@ function pick(label: RegExp, option: string) {
 }
 
 beforeEach(() => {
+  resetNavigation('', '/knowledge');
   stubDialogPrototype();
   useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
 });
@@ -121,5 +126,15 @@ describe('Knowledge page', () => {
     await screen.findByText('Deploy policy');
     expect(screen.getByText(/Pick a team to create or review its items/)).toBeTruthy();
     expect(screen.getByText(/choose a team to see what you can do/i)).toBeTruthy();
+  });
+
+  it('preselects the team a team space linked with ?team=', async () => {
+    resetNavigation('team=payments', '/knowledge');
+    const spy = mock();
+    render(withQuery(<KnowledgePage />));
+    // The team scope (and the permissions it decides) is read for the linked team.
+    await waitFor(() =>
+      expect(spy.mock.calls.some(([u]) => String(u).endsWith('/api/v1/teams/t1'))).toBe(true)
+    );
   });
 });

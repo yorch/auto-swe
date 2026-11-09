@@ -6,12 +6,16 @@ import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { BrandMark } from '@/components/layout/AuthLayout';
 import { PALETTE_CHOICES } from '@/components/layout/ThemeToggle';
 import { SupportContact } from '@/components/SupportContact';
+import { NeedsYouBadge } from '@/components/teams/NeedsYouBadge';
 import { Icon, isIconName } from '@/components/ui/Icon';
 import { IconButton } from '@/components/ui/IconButton';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { useApprovalsCount } from '@/hooks/useApprovals';
+import { useTeamNav } from '@/hooks/useTeamNav';
+import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
 import { APPROVALS_HREF, activeNavHref, isStartWorkPath, type NavItem } from '@/lib/navigation';
+import { teamHref, teamSlugFromPath } from '@/lib/teamSpace';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 import { type PalettePreference, type ThemePreference, useThemeStore } from '@/stores/themeStore';
@@ -195,6 +199,60 @@ const PALETTE_OPTIONS: SegmentedOption<PalettePreference>[] = PALETTE_CHOICES.ma
   value: c.value,
 }));
 
+/** The most teams the sidebar lists when none are pinned. */
+const SIDEBAR_TEAM_LIMIT = 8;
+
+/**
+ * The caller's teams as links to their spaces, each with what is waiting on them. The teams the
+ * user pinned come first (in pin order); with none pinned, the member teams, up to a limit.
+ */
+function TeamsGroup({ pathname }: { pathname: string }) {
+  const { entries } = useTeamNav();
+  const { pinnedTeamSlugs } = useUserPreferences();
+  const pinned = pinnedTeamSlugs
+    .map((slug) => entries.find((e) => e.team.slug === slug))
+    .filter((e): e is (typeof entries)[number] => !!e);
+  const shown = (pinned.length > 0 ? pinned : entries).slice(0, SIDEBAR_TEAM_LIMIT);
+  if (shown.length === 0) {
+    return null;
+  }
+  const currentSlug = teamSlugFromPath(pathname);
+  return (
+    <div>
+      <div
+        className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600"
+        id="nav-group-teams"
+      >
+        Teams
+      </div>
+      <ul aria-labelledby="nav-group-teams">
+        {shown.map(({ needsYou, team }) => {
+          const active = team.slug === currentSlug;
+          return (
+            <li key={team.id}>
+              <Link
+                aria-current={active ? 'page' : undefined}
+                className={cn(
+                  'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors pointer-coarse:min-h-[44px]',
+                  FOCUS_RING,
+                  active
+                    ? 'bg-ink-600 text-paper-50'
+                    : 'text-paper-500 hover:bg-ink-700/70 hover:text-paper-200'
+                )}
+                href={teamHref(team.slug)}
+              >
+                <Icon name="teams" size={15} />
+                <span className="min-w-0 flex-1 truncate">{team.name}</span>
+                <NeedsYouBadge count={needsYou} />
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 /** The user menu is a plain disclosure (links and a button), not an ARIA menu. */
 const MENU_ID = 'user-menu';
 
@@ -284,6 +342,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           const headingId = `nav-group-${index}`;
           return (
             <div key={group.label}>
+              {index === 1 && <TeamsGroup pathname={pathname} />}
               {headless ? (
                 <div className="pt-4" />
               ) : (

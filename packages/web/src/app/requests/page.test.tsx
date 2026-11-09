@@ -1,7 +1,21 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const teamParam = vi.hoisted(() => ({
+  value: {
+    blocked: false,
+    clear: vi.fn(),
+    isError: false,
+    pending: false,
+    retry: vi.fn(),
+    slug: '',
+    team: null as { name: string } | null,
+    teamId: undefined as string | undefined,
+  },
+}));
+vi.mock('@/hooks/useTeamParam', () => ({ useTeamParam: () => teamParam.value }));
 
 const nav = vi.hoisted(() => ({ search: '' }));
 vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
@@ -20,6 +34,16 @@ import RequestsPage from './page';
 
 const settled = { error: null, isError: false, isFetching: false, isLoading: false };
 afterEach(() => {
+  teamParam.value = {
+    blocked: false,
+    clear: vi.fn(),
+    isError: false,
+    pending: false,
+    retry: vi.fn(),
+    slug: '',
+    team: null,
+    teamId: undefined,
+  };
   cleanup();
   vi.clearAllMocks();
 });
@@ -87,5 +111,76 @@ describe('Requests page epics', () => {
       screen.getByText(/a person is needed \(a gate or a merge\), or a run failed or timed out/)
     ).toBeTruthy();
     expect(screen.getByRole('button', { name: /What is a request/ })).toBeTruthy();
+  });
+});
+
+describe('Requests page team filter', () => {
+  it('narrows requests and epics to the ?team= team and shows a removable chip', () => {
+    const clear = vi.fn();
+    teamParam.value = {
+      blocked: false,
+      clear,
+      isError: false,
+      pending: false,
+      retry: vi.fn(),
+      slug: 'payments',
+      team: { name: 'Payments' },
+      teamId: 'team-1',
+    };
+    nav.search = 'team=payments';
+    useRequests.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
+    useEpics.mockReturnValue({ ...settled, data: undefined });
+    render(<RequestsPage />);
+    expect(useRequests).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ teamId: 'team-1' })
+    );
+    expect(useEpics).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ teamId: 'team-1' })
+    );
+    expect(screen.getByTestId('team-chip').textContent).toContain('Payments');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove the Payments team filter' }));
+    expect(teamParam.value.clear).toHaveBeenCalledTimes(1);
+  });
+
+  it('lists every team, with no chip, without ?team=', () => {
+    nav.search = '';
+    useRequests.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
+    useEpics.mockReturnValue({ ...settled, data: undefined });
+    render(<RequestsPage />);
+    expect(useRequests.mock.calls[0]?.[1]).toMatchObject({ teamId: undefined });
+    expect(screen.queryByTestId('team-chip')).toBeNull();
+  });
+
+  it('waits for the team to resolve rather than flash every team’s requests', () => {
+    nav.search = 'team=payments';
+    teamParam.value = { ...teamParam.value, blocked: true, pending: true, slug: 'payments' };
+    useRequests.mockReturnValue({ ...settled, data: undefined });
+    useEpics.mockReturnValue({ ...settled, data: undefined });
+    render(<RequestsPage />);
+    expect(useRequests.mock.calls[0]?.[1]).toMatchObject({ enabled: false });
+    // The disabled query is not `isLoading`, so the page must not read it as an empty list.
+    expect(screen.queryByText('No requests yet')).toBeNull();
+    expect(document.querySelector('[aria-busy="true"]')).not.toBeNull();
+  });
+
+  it('shows an error with a retry, not every team’s requests, when the team list failed', () => {
+    nav.search = 'team=payments';
+    const retry = vi.fn();
+    teamParam.value = {
+      ...teamParam.value,
+      blocked: true,
+      isError: true,
+      retry,
+      slug: 'payments',
+    };
+    useRequests.mockReturnValue({ ...settled, data: undefined });
+    useEpics.mockReturnValue({ ...settled, data: undefined });
+    render(<RequestsPage />);
+    expect(useRequests.mock.calls[0]?.[1]).toMatchObject({ enabled: false });
+    expect(screen.queryByText('No requests yet')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(retry).toHaveBeenCalledTimes(1);
   });
 });

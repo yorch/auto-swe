@@ -74,6 +74,13 @@ export const UI_ROUTE_TEMPLATES: readonly string[] = [
   '/settings',
   '/skills',
   '/start',
+  '/teams/[slug]',
+  '/teams/[slug]/automations',
+  '/teams/[slug]/knowledge',
+  '/teams/[slug]/members',
+  '/teams/[slug]/reports',
+  '/teams/[slug]/settings',
+  '/teams/[slug]/work',
   '/tickets',
 ];
 

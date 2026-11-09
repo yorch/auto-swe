@@ -3,9 +3,10 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
+import { nav, resetNavigation } from '@/test/mockNavigation';
 import { setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
 // The repository dialog has its own tests; here it only has to open.
 vi.mock('@/components/repositories/RepoAutomationsModal', () => ({
   RepoAutomationsModal: ({ repo }: { repo: { repoName: string } }) => (
@@ -64,6 +65,7 @@ const schedule = {
 };
 
 beforeEach(() => {
+  resetNavigation('', '/admin/automations');
   stubDialogPrototype();
   useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
   setupFetchMock({
@@ -185,5 +187,79 @@ describe('GovernAutomationsPage', () => {
     fireEvent.click(screen.getByRole('option', { name: 'Schedule' }));
     expect(screen.queryByText('mainline CI')).toBeNull();
     expect(screen.getByText('Weekly deps')).toBeTruthy();
+  });
+
+  it('keeps only the ?team= team’s automations, with a removable chip', async () => {
+    resetNavigation('team=payments', '/admin/automations');
+    const other = {
+      ...eventRow,
+      id: 'a2',
+      name: 'other team CI',
+      repository: { id: 'r9', organizationName: 'acme', repoName: 'elsewhere' },
+      team: { id: 't9', name: 'Data' },
+    };
+    setupFetchMock({
+      'GET /api/v1/automations': () => ({ data: [eventRow, other] }),
+      'GET /api/v1/repositories': () => ({ data: [REPO] }),
+      'GET /api/v1/scheduled-work-requests': () => ({ data: [] }),
+      'GET /api/v1/teams': () => ({
+        data: [{ id: 't1', myRole: 'LEAD', name: 'Payments', orgName: 'Acme', slug: 'payments' }],
+      }),
+      'GET /api/v1/teams/t1': () => ({
+        data: { id: 't1', memberships: [], repositories: [{ id: 'r1' }], sharedRepositories: [] },
+      }),
+    });
+    render(withQuery(<GovernAutomationsPage />));
+    expect(await screen.findByText('mainline CI')).toBeTruthy();
+    expect(screen.queryByText('other team CI')).toBeNull();
+    expect(screen.getByTestId('team-chip').textContent).toContain('Payments');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove the Payments team filter' }));
+    expect(nav.replace.at(-1)).toBe('/admin/automations');
+  });
+
+  it('includes a repository shared into the ?team= team, read-only', async () => {
+    resetNavigation('team=payments', '/admin/automations');
+    const shared = {
+      ...eventRow,
+      id: 'a2',
+      name: 'shared repo CI',
+      repository: { id: 'r9', organizationName: 'acme', repoName: 'shared-api' },
+      team: { id: 't9', name: 'Data' },
+    };
+    setupFetchMock({
+      'GET /api/v1/automations': () => ({ data: [eventRow, shared] }),
+      'GET /api/v1/repositories': () => ({ data: [REPO] }),
+      'GET /api/v1/scheduled-work-requests': () => ({ data: [] }),
+      'GET /api/v1/teams': () => ({
+        data: [{ id: 't1', myRole: 'LEAD', name: 'Payments', orgName: 'Acme', slug: 'payments' }],
+      }),
+      'GET /api/v1/teams/t1': () => ({
+        data: {
+          id: 't1',
+          memberships: [],
+          repositories: [{ id: 'r1' }],
+          sharedRepositories: [{ id: 'r9', team: { id: 't9', name: 'Data', slug: 'data' } }],
+        },
+      }),
+    });
+    render(withQuery(<GovernAutomationsPage />));
+    const row = (await screen.findByText('shared repo CI')).closest('tr') as HTMLElement;
+    expect(within(row).getByRole('button', { name: 'View' })).toBeTruthy();
+    expect(within(row).queryByRole('button', { name: 'Manage' })).toBeNull();
+  });
+
+  it('shows an error, not every team’s rows, when the team detail cannot be read', async () => {
+    resetNavigation('team=payments', '/admin/automations');
+    setupFetchMock({
+      'GET /api/v1/automations': () => ({ data: [eventRow] }),
+      'GET /api/v1/repositories': () => ({ data: [REPO] }),
+      'GET /api/v1/scheduled-work-requests': () => ({ data: [] }),
+      'GET /api/v1/teams': () => ({
+        data: [{ id: 't1', myRole: 'LEAD', name: 'Payments', orgName: 'Acme', slug: 'payments' }],
+      }),
+    });
+    render(withQuery(<GovernAutomationsPage />));
+    expect(await screen.findByText(/Could not load automations/)).toBeTruthy();
+    expect(screen.queryByText('mainline CI')).toBeNull();
   });
 });
