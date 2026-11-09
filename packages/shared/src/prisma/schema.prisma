@@ -440,6 +440,8 @@ model PullRequest {
   closedAt   DateTime?       @map("closed_at") @db.Timestamptz
   updatedAt  DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   fileViews  PrFileView[]
+  reviewVisits PrReviewVisit[]
+  reviewDrafts PrReviewDraft[]
 
   @@index([workflowId])
   @@index([repoId])
@@ -450,6 +452,8 @@ model PullRequest {
   @@index([mergedAt, runId])
   @@index([closedAt, runId])
   @@index([updatedAt, runId])
+  // A run's detail looks up the pull request it opened.
+  @@index([runId])
   @@map("pull_requests")
 }
 
@@ -470,6 +474,49 @@ model PrFileView {
   @@unique([userId, pullRequestId, path])
   @@index([pullRequestId])
   @@map("pr_file_views")
+}
+
+/// When a person last opened a pull request's review page, and at which head, so the page can say
+/// what changed since. Per person: nobody else sees it. `firstVisitedAt` is the first time anyone
+/// looks, kept for how long a pull request waited for a reader (`lastVisitedAt` moves on every
+/// visit, `firstVisitedAt` never does).
+model PrReviewVisit {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String      @map("user_id") @db.Uuid
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pullRequestId  String      @map("pull_request_id") @db.Uuid
+  pullRequest    PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  lastHeadSha    String      @map("last_head_sha")
+  firstVisitedAt DateTime    @default(now()) @map("first_visited_at") @db.Timestamptz
+  lastVisitedAt  DateTime    @default(now()) @map("last_visited_at") @db.Timestamptz
+
+  @@unique([userId, pullRequestId])
+  @@index([pullRequestId])
+  @@map("pr_review_visits")
+}
+
+/// A line comment a person has written on a pull request's review page and not yet sent. Per
+/// person: nobody else sees it, and it never leaves the platform until the person submits a review.
+/// It is anchored to a line of the file's new side at `headSha`, and counts as current only while
+/// `patchDigest` still equals the digest of that file's patch. `path` and `body` are untrusted text,
+/// capped on write.
+model PrReviewDraft {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String      @map("user_id") @db.Uuid
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pullRequestId String      @map("pull_request_id") @db.Uuid
+  pullRequest   PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  path          String
+  line          Int
+  body          String
+  headSha       String      @map("head_sha")
+  patchDigest   String      @map("patch_digest")
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([userId, pullRequestId])
+  @@index([pullRequestId])
+  @@map("pr_review_drafts")
 }
 
 /// One risk evaluation of a platform-opened pull request at a head commit. The class
@@ -1669,6 +1716,8 @@ model User {
   repoAccess            RepoAccess[]
   connectionCredentials ConnectionCredential[]
   prFileViews           PrFileView[]
+  prReviewVisits        PrReviewVisit[]
+  prReviewDrafts        PrReviewDraft[]
   knowledgeApprovals    KnowledgeItem[]         @relation("KnowledgeItemApprover")
   knowledgeEvents       KnowledgeItemEvent[]    @relation("KnowledgeEventActor")
   launchedRuns          WorkflowRun[]            @relation("WorkflowRunLauncher")

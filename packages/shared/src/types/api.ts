@@ -966,6 +966,11 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
   /** A run of the hidden Agent Run system template (keyed on its origin, not its name). */
   isAgentRun?: boolean;
   /**
+   * The review page of the pull request this run opened, when there is one the caller may open.
+   * Null otherwise, and always null for a machine caller.
+   */
+  pullRequestId?: string | null;
+  /**
    * The `workspace.implementerRuntime` value pinned at run start (`mastra` or
    * `claude-code`); null when the run's pinned settings do not carry it.
    */
@@ -1647,6 +1652,55 @@ export type PullRequestCockpitFiles =
       reason: 'host-not-approved' | 'no-credential' | 'not-found' | 'rate-limited' | 'failed';
     };
 
+/** What the head moved through since the caller last opened the page. */
+export interface PullRequestCockpitSinceVisit {
+  /** The head the caller saw last. */
+  fromHeadSha: string;
+  lastVisitedAt: string;
+  /** The earlier head is no longer an ancestor of this one: the branch was rewritten. */
+  rewritten: boolean;
+  /** Oldest first, capped; null when the host could not be asked, so only the move is known. */
+  commits: { sha: string; subject: string }[] | null;
+  /** How many commits there are in all, which can exceed `commits`. */
+  totalCommits: number;
+}
+
+/** A line comment the caller has written and not yet sent. */
+export interface PullRequestCockpitDraft {
+  id: string;
+  path: string;
+  /** A line of the file's new side. */
+  line: number;
+  body: string;
+  /** The head the line number was taken at. */
+  headSha: string;
+  createdAt: string;
+  /**
+   * The file changed since the comment was written, or the line is no longer in its patch, so the
+   * comment cannot be sent as it is. False while the files cannot be read: nothing can be said.
+   */
+  outdated: boolean;
+}
+
+/** Whether the caller can send reviews and comments from the page, as themselves. */
+export interface PullRequestCockpitWrite {
+  /** They have a saved token for this repository that may be used now. */
+  available: boolean;
+  /**
+   * Why not, when not. `disabled`: saved tokens are off on this platform. `no-token`: none saved for
+   * this repository. `unusable`: one is saved but may not be used now. `unreadable`: it cannot be
+   * decrypted.
+   */
+  reason: 'disabled' | 'no-token' | 'unreadable' | 'unusable' | null;
+  /**
+   * They launched a run of this work or requested it, so the platform sets their approval aside; the
+   * host may still show it. Known only for the latest run and the requester.
+   */
+  approvalMayNotCount: boolean;
+  /** Sending back starts a run only while feedback automations are on for the repository. */
+  feedbackLoopEnabled: boolean;
+}
+
 /** Response data of GET /api/v1/pull-requests/:id/cockpit. */
 export interface PullRequestCockpit {
   pull: PullRequestListItem & { headSha: string };
@@ -1655,6 +1709,14 @@ export interface PullRequestCockpit {
   files: PullRequestCockpitFiles;
   /** Paths of the files the caller marked viewed and whose patch has not changed since. */
   viewed: string[];
+  /** What the caller can do from the page beyond reading it. */
+  write: PullRequestCockpitWrite;
+  /** Paths the caller marked viewed whose patch has changed since the mark. */
+  changedSinceViewed: string[];
+  /** The caller's own unsent line comments, oldest first. */
+  drafts: PullRequestCockpitDraft[];
+  /** Set only when the caller has opened this page before and the head has moved since. */
+  sinceLastVisit: PullRequestCockpitSinceVisit | null;
 }
 
 /** Outcome figures for a cohort of pull requests opened in one window. */
@@ -1669,6 +1731,37 @@ export interface PullRequestOutcomeSummary {
   timeToMergeMs: { p50: number | null; p95: number | null; count: number };
   ciStatusCounts: Record<string, number>;
   draftCount: number;
+}
+
+/**
+ * Response data of GET /api/v1/pr-evaluations/engagement: whether reviewers act on the brief, for
+ * the evaluations written in the window. The counts are approximate (see `docs/pr-evaluation.md`).
+ */
+export interface PrEngagementResponse {
+  /** The window the figures cover, in days. */
+  windowDays: number;
+  /** The window held more evaluations than one read takes, so the figures cover the newest. */
+  capped: boolean;
+  /** Evaluations in the window. */
+  evaluations: number;
+  /** Of those, how many a person reviewed. */
+  reviewed: number;
+  /** Median minutes from the evaluation to the first review; null when none was reviewed. */
+  medianMinutesToFirstReview: number | null;
+  /** Share of reviewed evaluations with at least one review asking for changes. */
+  changeRequestRate: number | null;
+  comments: {
+    elsewhere: number;
+    flagged: number;
+    /** Share of all inline comments that landed on a flagged file; null with no comments. */
+    flaggedShare: number | null;
+    skimmed: number;
+    skimmedShare: number | null;
+  };
+  /** Pull requests opened in the window that someone opened on the review page. */
+  pullRequestsViewed: number;
+  /** Median minutes from a pull request opening to its first view there; null with none. */
+  medianMinutesToFirstView: number | null;
 }
 
 /** Response data of GET /api/v1/pull-requests/outcomes. */

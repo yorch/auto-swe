@@ -6,6 +6,7 @@ import {
   filterFiles,
   findingCounts,
   findingsByLine,
+  restoreViewed,
   shortSha,
   unanchoredFindings,
   viewedProgress,
@@ -150,6 +151,31 @@ describe('applyViewed', () => {
     applyViewed(before, { files: mark('b.ts'), viewed: true });
     applyViewed(before, { files: mark('a.ts'), viewed: false });
     expect(before).toEqual(['a.ts']);
+  });
+});
+
+describe('restoreViewed', () => {
+  it('puts a path that was not viewed back to not viewed', () => {
+    expect(restoreViewed(['a.ts', 'b.ts'], ['b.ts'], new Set(['a.ts']))).toEqual(['a.ts']);
+  });
+
+  it('puts a path that was viewed back to viewed', () => {
+    expect(restoreViewed(['a.ts'], ['b.ts'], new Set(['a.ts', 'b.ts']))).toEqual(['a.ts', 'b.ts']);
+  });
+
+  it('leaves every path it was not asked about as it is now, so a later change survives', () => {
+    // x was marked and that change failed; y was marked afterwards and succeeded.
+    expect(restoreViewed(['x.ts', 'y.ts'], ['x.ts'], new Set())).toEqual(['y.ts']);
+  });
+
+  it('does not list a path twice', () => {
+    expect(restoreViewed(['a.ts'], ['a.ts'], new Set(['a.ts']))).toEqual(['a.ts']);
+  });
+
+  it('does not change the list it was given', () => {
+    const current = ['a.ts', 'b.ts'];
+    restoreViewed(current, ['a.ts'], new Set());
+    expect(current).toEqual(['a.ts', 'b.ts']);
   });
 });
 

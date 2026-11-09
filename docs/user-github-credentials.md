@@ -239,8 +239,40 @@ the instance secret, so the per-host webhook secret table refuses them.
 
 ---
 
+## 7. Writes the owner asks for from the review page
+
+A saved token has one use besides a run its owner launched: the two writes the pull-request review
+page offers its owner, **send a review** (with line comments) and **send back to the agent** (a
+`/auto-swe fix` comment). Neither is a run, nothing is launched, and the property of §1 holds in
+the form that fits: the token is used only when its owner asks, for that request, as them. Anyone
+else's request resolves anyone else's token or none.
+
+- The token is resolved only through `resolveUserCredential`, so the switch, the membership test, the
+  host allowlist and the verified-origin binding of §3 all apply, and it is sent only to the API
+  base of the repository it was verified against.
+- **It never falls back.** A person with no usable token of their own cannot send from the page: the
+  request is refused (`409 NO_USER_CREDENTIAL`, with the reason: `disabled`, `no-token`, `unusable`
+  or `unreadable`) and nothing is posted under the platform's identity. A review posted as the
+  platform would not be the person's act, and the host, the audit log and the launcher exclusion
+  ([`pr-evaluation.md`](./pr-evaluation.md)) must all see it as theirs.
+- The review page's read of the pull request still uses the platform credential (§6); only the write
+  uses the saved token. The page resolves the token to learn whether writing is available and drops
+  it at once: it is never part of an answer, a log line or an audit row.
+- Each send is audited as `PullRequestReview` with counts and ids and no text
+  ([`audit-log.md`](./audit-log.md)).
+
+The routes and their refusals are in [`work-views.md`](./work-views.md) §2.5 and §2.6.
+
+---
+
 ## Limitations
 
+- **A token's scope is not checked when it is saved**, so one that cannot write (a read-only
+  fine-grained token) fails at its first send from the review page with `HOST_FORBIDDEN`, not at save.
+- **Sending from the review page is not a run, so the launcher rules do not apply to it.** A person
+  who launched or requested the work can approve from the page if the host lets them; the platform
+  then sets that approval aside when it counts approvals, and the page warns them for the latest run
+  and for the work's requester.
 - **Webhook and issue-tracker runs never use a saved token.** They carry no platform user to act
   for. Against a repository on a host with no platform credential (§6), those runs fail with a
   configuration error.

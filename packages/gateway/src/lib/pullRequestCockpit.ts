@@ -8,13 +8,15 @@
  */
 import { lineInDiff, readingOrder } from '@auto-swe/shared/lib/prEvaluation';
 import type {
+  PullRequestCockpitDraft,
   PullRequestCockpitEvaluation,
   PullRequestCockpitFile,
   PullRequestCockpitFiles,
   PullRequestCockpitFinding,
+  PullRequestCockpitSinceVisit,
 } from '@auto-swe/shared/types/api';
 import { z } from 'zod';
-import type { PullFilesResult } from './githubPullFiles.js';
+import type { CompareResult, PullFilesResult } from './githubPullFiles.js';
 
 const PathEntry = z.object({
   flagged: z.boolean(),
@@ -94,6 +96,9 @@ export type EvaluationRow = {
 
 const RISK_CLASSES = ['LOW', 'STANDARD', 'HIGH'] as const;
 
+/** The most patch text one answer carries; the host allows 3000 files of up to 200 000 each. */
+export const MAX_TOTAL_PATCH_CHARS = 3_000_000;
+
 /** A class this code does not know reads as HIGH, as the evaluator fails closed. */
 function riskClassOf(value: string): 'LOW' | 'STANDARD' | 'HIGH' {
   return RISK_CLASSES.find((c) => c === value) ?? 'HIGH';
@@ -122,17 +127,24 @@ export function assembleCockpit(input: {
   const patchOf = new Map<string, string>();
   if (read.type === 'ok') {
     const digestOf = new Map(read.files.map((f) => [f.path, f.patchDigest]));
+    // Patches go out in reading order until the answer would pass the cap; a file past it is
+    // named but has no patch, exactly like a binary or oversized one, and so cannot be marked
+    // viewed. The files a reviewer reads first are the ones that keep theirs.
+    let patchChars = 0;
     const items: PullRequestCockpitFile[] = readingOrder(read.files).map((file) => {
       const stored = pathByFile.get(file.path);
-      if (file.patch !== undefined) {
+      const room =
+        file.patch !== undefined && patchChars + file.patch.length <= MAX_TOTAL_PATCH_CHARS;
+      if (room && file.patch !== undefined) {
+        patchChars += file.patch.length;
         patchOf.set(file.path, file.patch);
       }
       return {
         additions: file.additions,
         deletions: file.deletions,
         flagged: stored?.flagged ?? false,
-        patch: file.patch ?? null,
-        patchDigest: digestOf.get(file.path) ?? null,
+        patch: room ? (file.patch ?? null) : null,
+        patchDigest: room ? (digestOf.get(file.path) ?? null) : null,
         path: file.path,
         previousPath: file.previousPath ?? null,
         skim: skimByFile.get(file.path) ?? null,
@@ -184,6 +196,104 @@ export function assembleCockpit(input: {
     statusState: input.evaluation.statusState,
   };
   return { evaluation, files };
+}
+
+/**
+ * What a reviewer last saw, set against the head the page shows now. Nothing when they have not
+ * been here, are up to date, or the host could not say what the head is now: with no live head
+ * there is nothing to compare against, and the stored one may lag.
+ */
+export function sinceLastVisit(input: {
+  visit: { lastHeadSha: string; lastVisitedAt: Date } | null;
+  files: PullFilesResult;
+  compare: (base: string, head: string) => Promise<CompareResult>;
+}): Promise<PullRequestCockpitSinceVisit | null> {
+  const { files, visit } = input;
+  if (visit === null || files.type !== 'ok') {
+    return Promise.resolve(null);
+  }
+  if (visit.lastHeadSha.toLowerCase() === files.headSha.toLowerCase()) {
+    return Promise.resolve(null);
+  }
+  const moved = {
+    fromHeadSha: visit.lastHeadSha,
+    lastVisitedAt: visit.lastVisitedAt.toISOString(),
+  };
+  return input.compare(visit.lastHeadSha, files.headSha).then((compared) =>
+    compared.type === 'ok'
+      ? {
+          ...moved,
+          commits: compared.commits,
+          rewritten: compared.rewritten,
+          totalCommits: compared.totalCommits,
+        }
+      : { ...moved, commits: null, rewritten: false, totalCommits: 0 }
+  );
+}
+
+/**
+ * The files a person marked viewed whose patch is no longer the one they marked. The mark is kept
+ * in the table, but `viewedPaths` leaves it out, so the page can say why the file is unread again.
+ */
+export function changedSinceViewed(
+  files: PullRequestCockpitFiles,
+  rows: readonly ViewedRow[]
+): string[] {
+  if (files.type !== 'ok') {
+    return [];
+  }
+  const digestOf = new Map(rows.map((row) => [row.path, row.patchDigest]));
+  return files.items
+    .filter((item) => {
+      const marked = digestOf.get(item.path);
+      return marked !== undefined && item.patchDigest !== null && marked !== item.patchDigest;
+    })
+    .map((item) => item.path);
+}
+
+/** A stored draft as the route selects it. */
+export type DraftRow = {
+  body: string;
+  createdAt: Date;
+  headSha: string;
+  id: string;
+  line: number;
+  patchDigest: string;
+  path: string;
+};
+
+/**
+ * Whether a draft can still be sent as written: the file's patch is the one it was written
+ * against, and the line is still in it. Used by the page to flag a draft, and by the submit to
+ * refuse one, so the two cannot disagree.
+ */
+export function draftIsCurrent(
+  draft: Pick<DraftRow, 'line' | 'patchDigest' | 'path'>,
+  files: ReadonlyMap<string, { patch?: string; patchDigest?: string }>
+): boolean {
+  const file = files.get(draft.path);
+  return (
+    file !== undefined &&
+    file.patchDigest === draft.patchDigest &&
+    lineInDiff(file.patch, draft.line)
+  );
+}
+
+/** The caller's drafts for the page, each marked with whether it can still be sent. */
+export function draftsFor(
+  files: PullFilesResult,
+  rows: readonly DraftRow[]
+): PullRequestCockpitDraft[] {
+  const byPath = files.type === 'ok' ? new Map(files.files.map((f) => [f.path, f])) : null;
+  return rows.map((row) => ({
+    body: row.body,
+    createdAt: row.createdAt.toISOString(),
+    headSha: row.headSha,
+    id: row.id,
+    line: row.line,
+    outdated: byPath !== null && !draftIsCurrent(row, byPath),
+    path: row.path,
+  }));
 }
 
 /** What a stored mark needs to be checked against the file it was made on. */

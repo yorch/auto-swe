@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyCommentPath,
   type EngagementRow,
+  type FirstViewRow,
   isPlatformText,
   summarizeBriefEngagement,
+  summarizeFirstViews,
 } from './engagement.js';
 
 const at = (minutes: number) => new Date(Date.UTC(2026, 10, 1, 12, minutes));
@@ -88,5 +90,55 @@ describe('summarizeBriefEngagement', () => {
       row({ firstHumanReviewAt: at(40) }),
     ]);
     expect(summary.medianMinutesToFirstReview).toBe(15);
+  });
+});
+
+describe('summarizeFirstViews', () => {
+  const visit = (over: Partial<FirstViewRow> = {}): FirstViewRow => ({
+    firstVisitedAt: at(10),
+    openedAt: at(0),
+    pullRequestId: 'pr-1',
+    ...over,
+  });
+
+  it('has nothing to say with no visits', () => {
+    expect(summarizeFirstViews([])).toEqual({
+      medianMinutesToFirstView: null,
+      pullRequestsViewed: 0,
+    });
+  });
+
+  it('measures from the pull request opening to the earliest visit by anyone', () => {
+    const summary = summarizeFirstViews([
+      visit({ firstVisitedAt: at(30) }),
+      visit({ firstVisitedAt: at(12) }),
+      visit({ firstVisitedAt: at(45) }),
+    ]);
+    expect(summary).toEqual({ medianMinutesToFirstView: 12, pullRequestsViewed: 1 });
+  });
+
+  it('counts a pull request once however many people opened it', () => {
+    const summary = summarizeFirstViews([
+      visit({ pullRequestId: 'a' }),
+      visit({ pullRequestId: 'a' }),
+      visit({ openedAt: at(5), pullRequestId: 'b' }),
+    ]);
+    expect(summary.pullRequestsViewed).toBe(2);
+  });
+
+  it('takes the median across pull requests, averaging the middle two', () => {
+    const summary = summarizeFirstViews([
+      visit({ firstVisitedAt: at(10), pullRequestId: 'a' }),
+      visit({ firstVisitedAt: at(20), pullRequestId: 'b' }),
+      visit({ firstVisitedAt: at(60), pullRequestId: 'c' }),
+      visit({ firstVisitedAt: at(90), pullRequestId: 'd' }),
+    ]);
+    expect(summary.medianMinutesToFirstView).toBe(40);
+  });
+
+  it('never reports a negative wait', () => {
+    expect(summarizeFirstViews([visit({ firstVisitedAt: at(-3) })]).medianMinutesToFirstView).toBe(
+      0
+    );
   });
 });

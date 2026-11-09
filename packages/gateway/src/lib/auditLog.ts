@@ -39,6 +39,7 @@ export type AuditEntityType =
   | 'PackageRegistry'
   | 'PersonalAccessToken'
   | 'ProviderCredential'
+  | 'PullRequestReview'
   | 'ReportDigestSubscription'
   | 'ReviewPreset'
   | 'ReviewPresetAttachment'

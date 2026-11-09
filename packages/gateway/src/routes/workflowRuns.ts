@@ -34,6 +34,7 @@ import {
   isTerminalSignalError,
   sendTemporalUnavailable,
 } from '../lib/temporalErrors.js';
+import { reachableConnections } from '../lib/tenantScope.js';
 import {
   hasRole,
   loadTokenUser,
@@ -1003,6 +1004,23 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
               })
           )
         : [];
+      // The page that reviews this run's pull request, if there is one the caller may open. It is
+      // looked up through the same repository reach the page applies, not just the run's own
+      // visibility, or the card would link to a page that answers 404. A machine has no page.
+      const pullRequest =
+        caller.kind === 'user'
+          ? await fastify.prisma.pullRequest.findFirst({
+              orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+              select: { id: true },
+              where: {
+                prNumber: { not: null },
+                runId: run.id,
+                ...(caller.user.role === 'ADMIN'
+                  ? {}
+                  : { repository: reachableConnections(caller.user, request.repoAccessGate) }),
+              },
+            })
+          : null;
       return {
         data: {
           agentRuntimes: pinnedAgentRuntimes(run.agentRuntimes),
@@ -1016,6 +1034,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           // template can carry any name, but not this origin.
           isAgentRun:
             run.template.teamId === null && run.template.origin === AGENT_RUN_TEMPLATE_ORIGIN,
+          pullRequestId: pullRequest?.id ?? null,
           result: (run.contextSnapshot as { result?: unknown })?.result ?? null,
           review: {
             ...(await reviewRunMetadata(fastify.prisma, run.id)),

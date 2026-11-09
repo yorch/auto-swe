@@ -134,7 +134,7 @@ steps in the human-step list, but the request is not marked as needing their att
 
 What the review page (§5) shows for one pull request, by its `PullRequest` id. ENGINEER and above,
 with the list's visibility: a repository the caller cannot reach is `404 PULL_REQUEST_NOT_FOUND`, and
-nothing is read from the host until that is decided. The answer has four parts:
+nothing is read from the host until that is decided. The answer has these parts, `pull` first:
 
 - `pull` — the list row (§2) plus `headSha`, the head the row stores.
 - `evaluation` — the latest evaluation of the pull request, or null when there is none: risk class,
@@ -149,13 +149,35 @@ nothing is read from the host until that is decided. The answer has four parts:
   the check-run and PR-feedback reads apply. When the host cannot be read, `files` is
   `{ "type": "unavailable", "reason": … }` with `host-not-approved`, `no-credential`, `not-found`,
   `rate-limited` or `failed`, and the rest of the answer is unaffected.
-- `viewed` — the paths the caller has marked viewed whose patch has not changed since.
+- `viewed` — the paths the caller has marked viewed whose patch has not changed since, and
+  `changedSinceViewed`, the paths they marked whose patch has changed since the mark.
+- `sinceLastVisit` — set only when the caller has opened the page before (§2.3) at a head other than
+  the one the host reports now, and the host could be read: the head they saw, when, and the commits
+  between the two (`sha` and the first line of the message, oldest first, at most 100, with
+  `totalCommits` for the rest). `rewritten` is true when the earlier head is no longer an ancestor
+  of the current one, which a force-push causes; the commits are then those the branch has beyond
+  the last one they share. `commits` is null when the host could not be asked for them, so only the
+  move is known.
+- `drafts` — the caller's own unsent line comments (§2.4), oldest first. Each is `outdated` when its
+  file's patch is no longer the one it was written against or its line is no longer in the patch;
+  while the files cannot be read nothing is flagged, since nothing can be said.
+- `write` — whether the caller can send from the page (§2.5): `available`, and when not, a `reason`
+  (`disabled`, `no-token`, `unusable` or `unreadable`). `approvalMayNotCount` is true for the person
+  who launched the latest run or requested the work, whose approval the platform sets aside
+  ([`pr-evaluation.md`](./pr-evaluation.md)); `feedbackLoopEnabled` says whether
+  `github.prFeedbackAutomationsEnabled` is on at the repository's scope. The saved token is
+  resolved to learn this and is never part of the answer.
 
 A patch is never stored. The gateway keeps one read in memory for five minutes, per repository,
 pull request and head, for at most twenty reads, and does not keep a read holding more than five
 million characters of patch. The pull request itself is read on every request, because that is how
-the current head is known. The host lists at most 3000 files, so `truncated` says when more exist,
-and a patch over 200,000 characters is treated as absent, as the evaluator does. Titles, paths,
+the current head and state are known; the read is conditional on the ETag of the last one, so an
+unchanged pull request is answered with a 304 that does not count against the host's rate limit, and
+`state` always comes from that read, never from the held files. The whole read, the pull request and
+up to 30 pages of files, is bounded to a minute. The host lists at most 3000 files, so `truncated` says
+when more exist, and a patch over 200,000 characters is treated as absent, as the evaluator does. The
+answer as a whole carries at most three million characters of patch: in reading order, a file past
+that is named without its patch, like a binary one, and cannot be marked viewed. Titles, paths,
 patches and findings are untrusted text.
 
 ## 2.2 `PUT /api/v1/pull-requests/:id/viewed`
@@ -167,6 +189,67 @@ counts only while the file's patch digest equals the one stored, so a push that 
 it back among the unread, as the host does. A person can hold at most 3000 marks on one pull request
 (`400 TOO_MANY_VIEWED_FILES`). The visibility and 404 are the cockpit's. The in-app assistant may
 propose it only for the user's confirmation.
+
+## 2.3 `POST /api/v1/pull-requests/:id/visit`
+
+Notes that the caller has seen a head: body `{ "headSha" }`, a 40- or 64-digit commit id. One row
+per person and pull request holds the head last seen and when, and the time of the first visit, which
+is never moved. The page sends it once per head, after the page has drawn and never from a refresh,
+so the next visit can say what moved since (`sinceLastVisit`, §2.1). It reads nothing from the host.
+The visibility and 404 are the cockpit's. The in-app assistant may not call it.
+
+## 2.4 Draft line comments
+
+`POST /api/v1/pull-requests/:id/drafts` keeps a comment for the caller on one line of a file's new
+side: `{ path, line, body, headSha, patchDigest }`. `PATCH …/drafts/:draftId` changes the text and
+`DELETE …/drafts/:draftId` discards it. A draft is the caller's alone and never leaves the platform
+until a review is sent (§2.5); a person holds at most 100 per pull request
+(`400 TOO_MANY_DRAFTS`). Text is refused (`400 REVIEW_TEXT_REFUSED`, with `details.problem`) when it
+is empty, longer than 4000 characters, holds the platform's automation marker (the platform would
+read it as its own text and ignore it), or has a line starting `/auto-swe fix`, which starts a run
+when it reaches the host and has its own button (§2.6). Whether the line is still in the diff is
+decided when a review is sent. The visibility and 404 are the cockpit's, and a draft that is not the
+caller's is a `404 DRAFT_NOT_FOUND`. The in-app assistant may not call these.
+
+## 2.5 `POST /api/v1/pull-requests/:id/review`
+
+Sends a review as the caller: `{ event, body?, draftIds, headSha }`, where `event` is `COMMENT`,
+`APPROVE` or `REQUEST_CHANGES` and `draftIds` names the caller's drafts to send as line comments (at
+most 100). It is posted to the host in one request, pinned to the head the page showed, with the
+token the caller saved for the repository
+([`user-github-credentials.md`](./user-github-credentials.md) §7). It never uses the platform's
+credential: with no usable token of their own nothing is sent (`409 NO_USER_CREDENTIAL`, with
+`details.reason`). Requesting changes needs a body (`400 REVIEW_BODY_REQUIRED`), and a comment needs a
+body or a draft (`400 NOTHING_TO_SEND`). The text rules are §2.4's.
+
+The host is read first, and nothing is sent when the pull request cannot be read
+(`409 FILES_UNAVAILABLE`), is no longer open (`409 PULL_REQUEST_NOT_OPEN`), has moved from `headSha`
+(`409 STALE_HEAD`, with `details.currentHeadSha`), or when any named draft is on a file whose patch has
+changed or on a line no longer in it (`409 DRAFTS_OUTDATED`, with `details.draftIds`); a draft that
+no longer exists is `409 DRAFTS_CHANGED`. A refusal by the host is a `502` whose code says which:
+`HOST_FORBIDDEN`, `HOST_NOT_FOUND`, `HOST_RATE_LIMITED`, `HOST_REJECTED` (an author cannot approve
+their own pull request, and a comment must be on a changed line) or `OUTCOME_UNKNOWN`. The message
+is fixed text, never the host's words.
+
+A review is sent once and never retried. It carries no idempotency key, because a key would have to
+be a marker in the text, and text with the marker is read as the platform's own. When the connection
+fails or the host answers 5xx, the review may or may not exist, and the answer says exactly that;
+the drafts are kept so nothing is lost, and the reviewer checks the pull request before trying
+again. On success the sent drafts are deleted and an audit entry of entity type `PullRequestReview` is
+written in one transaction ([`audit-log.md`](./audit-log.md)); if that step fails the answer is still
+a success, with `draftsKept: true`. The answer carries the review's id and an http(s) address.
+
+## 2.6 `POST /api/v1/pull-requests/:id/send-back`
+
+Leaves `/auto-swe fix` on the pull request as the caller, with an optional note after it:
+`{ headSha, note? }`. It is the comment a person would type, so the existing webhook path decides
+the rest with its own checks: the caller's linked account and write permission, the round limit and
+the kill switch ([`pr-feedback.md`](./pr-feedback.md)). Nothing is started from here, and the route
+answers `409 FEEDBACK_LOOP_OFF` while `github.prFeedbackAutomationsEnabled` is off at the
+repository's scope, since the comment would do nothing. The rules of §2.5 otherwise hold: the
+caller's own token, an open pull request, the head the page showed, one send and no retry, and the
+note's text rules (§2.4). It is audited as entity type `PullRequestReview`. The in-app assistant may
+not call §2.4, §2.5 or this route: a person decides what is sent in their name.
 
 ---
 
@@ -348,12 +431,30 @@ reload.
   suggests: a header with the state, CI, risk class and head; what was asked and how the run settled
   each open question; what the run verified; the review findings, drawn under the line they name;
   and the diff, with the files to verify marked, the ones proven skimmable marked, each file
-  collapsible and the first three open. A rail lists the files with a filter (all, to verify,
+  collapsible and the first three open, in one column or, on a wide screen, split with the old
+  version beside the new (a per-viewer choice kept in the browser; a narrow screen always uses one
+  column), with the code coloured by language in the colours of the viewer's theme once a file is
+  opened. Within an edited line the words that changed are marked, and a block of code removed in
+  one place and added in another (in this file or another) is marked as moved on both sides. A rail
+  lists the files with a filter (all, to verify,
   unviewed, skim) and a count of those viewed; `j` and `k` move between files and `v` marks one
   viewed. Marking a file viewed collapses it. A banner says when the evaluation covers an earlier
   commit, when the host could not be read, when files were cut off, and when the pull request is no
-  longer open. The page reads and decides nothing on the host: review comments, approvals and merges
-  stay there.
+  longer open. A visit after the head has moved opens with what came in since the last one (the
+  commit subjects, or that the branch was rewritten), kept on screen for the visit, and a file whose
+  patch changed under a viewed mark says so in the rail and on the file.
+  A reviewer with a saved GitHub token for the repository can also write from the page, as
+  themselves: the number of each added or unchanged line is a button that opens a box under the line,
+  saved as a draft; a panel sends the verdict (comment, approve, request changes), a summary and the
+  drafts as one review; and "Send back to the agent" leaves `/auto-swe fix`, with a note if wanted.
+  Every send asks first and says it is posted as them. Without such a token the panel says why and
+  offers nothing; drafts that no longer fit the diff are listed in the panel, where they can be
+  deleted, and hold the review back. The page never merges.
+- **From a run** — the outcome card of a run that opened a pull request, for a workflow or an agent
+  run, offers "Open review" beside the host link. The run detail (`GET /api/v1/workflow-runs/:id`)
+  carries it as `pullRequestId`: the newest pull request recorded against the run that has a number,
+  and only one in a repository the caller can reach, so the link never leads to a 404. It is null
+  otherwise, and always null for a service principal.
 - **Pull request outcomes** — a card on **Platform analytics** (`/admin/analytics`) for the page's
   date range: merge rate, median and 95th-percentile time to merge, PRs opened (with merged, closed
   unmerged, open and draft counts), each against the previous window, and the ten repositories with
@@ -372,11 +473,37 @@ text with invisible and direction-changing characters made visible, never markup
 ## Limitations
 
 - The outcomes `teamId` filter matches through the pull request's attribution run, so a pull request with no run, or a run with no attributed team, appears under no team's metrics (it still appears when no `teamId` is given).
-- The review page cannot comment, approve or request changes: review decisions are made on the
-  host. It has no side-by-side view and no syntax colouring.
+- Writing from the page needs a token the reviewer saved for the repository, with the switch for
+  saved tokens on. The token's scope is not checked when it is saved, so a token that cannot write
+  fails at the first send (`HOST_FORBIDDEN`). A comment is on one line of the new side: a comment on a
+  removed line, on a range of lines or on a whole file is written on the host.
+- A review is sent once and never retried, and carries no key the host could de-duplicate by, so a
+  send whose outcome is unknown (`OUTCOME_UNKNOWN`) is for the reviewer to check on the host. The
+  host's own rules still apply: an author cannot approve their own pull request, and a review
+  requesting changes or approving counts toward branch protection only as the host decides. The
+  platform sets aside the approval of whoever launched or requested the work, and the page warns
+  only for the latest run and the requester it can see, not for every run of the same work.
+- "Send back" starts a run only if the webhook path's checks pass for the reviewer. The page cannot
+  see them, so it says the comment was left, not that a run started.
+- The summary of what came in since the last visit is kept for the visit it was shown on and is gone
+  on the next, because opening the page records the head. Commits are listed from the host's compare
+  read, which lists at most 100 of a long push (`totalCommits` gives the full count).
 - Each visit and each refresh of the review page asks the host for the pull request, and for its
-  files when the head has moved or the copy is older than five minutes, so a page left open adds
-  requests to the host's rate limit. It refreshes every 30 seconds.
+  files when the head has moved or the copy is older than five minutes. The pull request read is
+  conditional, so an unchanged one is cheap, but a changed one and every page of files are not. The
+  page refreshes every minute while the pull request is open and stops once the host reports it closed
+  or merged.
+- Code is coloured for the file types the page knows by name or extension (TypeScript, JavaScript,
+  JSON, YAML, Markdown, CSS, HTML, Python, Go, Rust, Java, shell, SQL, TOML, Prisma and a few more);
+  any other file draws plain. Colouring is worked out in the browser only for a file that is open, a
+  grammar is fetched the first time a file of its language is opened, and a file over 150,000
+  characters of patch draws plain. The old and new versions of each hunk are read separately, so a
+  hunk that starts inside a multi-line comment or string is coloured as if it began at its first
+  line. Until the colours arrive a file draws plain.
+- Changed words are marked only for a removed line and the added line that replaces it, when both
+  are at most 500 characters and share a good part of their words; a rewrite is left plain. Moved
+  code is found only by exact match, ignoring indentation and blank lines, in runs of at least three
+  lines with some content: a block that was moved and also edited is shown as removed and added.
 - Up to 3000 files are listed. A binary file, or a patch over 200,000 characters, is named but not
   shown. A file without a patch cannot be marked viewed.
 - An evaluation written before the intent, evidence and findings were stored shows only the reading
@@ -385,8 +512,9 @@ text with invisible and direction-changing characters made visible, never markup
   are those at the head the evaluation covered. A stale evaluation says so.
 - Viewed marks are per person and per pull request, and reset when a file's patch changes. A mark is
   matched by path, so a rename starts unviewed.
-- The run's outcome card still links only to the host: it knows the host's address and number, not
-  the platform's id for the pull request.
+- The run page's outcome card links to the review page only for a pull request the platform
+  recorded against that run: a pull request whose attribution to the run is missing has the host link
+  alone.
 - Pull-request attribution is stored when a worker creates or updates a PR and is backfilled from
   repository-matched active workflows. `WorkflowRun.workflowId` is unique, so the run is resolved
   by that exact workflow id rather than by recency. Rows with no matching run keep null attribution

@@ -1,7 +1,12 @@
 'use client';
 
 import type { PullRequestState } from '@auto-swe/shared/lib/pullRequest';
-import type { PullRequestListItem, TicketGroup } from '@auto-swe/shared/types/api';
+import type {
+  PrEngagementResponse,
+  PullRequestListItem,
+  TicketGroup,
+} from '@auto-swe/shared/types/api';
+import { useQuery } from '@tanstack/react-query';
 import { useListQuery } from '@/hooks/useListQuery';
 import { api } from '@/lib/api';
 import { useTeamStore } from '@/stores/teamStore';
@@ -40,6 +45,26 @@ export function usePullRequests(
     queryFn: () => api.get(`/api/v1/pull-requests?${qs}`),
     queryKey: ['pull-requests', qs],
     refetchInterval: 10_000,
+  });
+}
+
+/** The longest window the route reads, in days. */
+export const MAX_ENGAGEMENT_DAYS = 365;
+
+/**
+ * Whether reviewers act on the brief, over the last `days` days (`/admin/analytics`). The window is
+ * clamped to what the route accepts, so a long custom range asks for the longest it can answer.
+ */
+export function usePrEngagement(days: number, repoId?: string) {
+  const window = Math.min(Math.max(Math.trunc(days), 1), MAX_ENGAGEMENT_DAYS);
+  const query = new URLSearchParams({ days: String(window), ...(repoId ? { repoId } : {}) });
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: PrEngagementResponse }>(`/api/v1/pr-evaluations/engagement?${query}`)
+        .then((r) => r.data),
+    queryKey: ['pr-engagement', window, repoId ?? null],
+    refetchInterval: 60_000,
   });
 }
 
