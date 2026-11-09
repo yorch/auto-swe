@@ -2387,6 +2387,15 @@ describe('buildChannelTaskResultText', () => {
     expect(text).toContain('has no price in the model catalog');
   });
 
+  it('escapes the task title so it cannot ping or link', () => {
+    const title = '<!channel> <https://evil.example|click> & co';
+    for (const status of ['SUCCESS', 'FAILED'] as const) {
+      const text = buildChannelTaskResultText(null, status, title);
+      expect(text).not.toMatch(/<[!@h]/);
+      expect(text).toContain('&lt;!channel&gt; &lt;https://evil.example|click&gt; &amp; co');
+    }
+  });
+
   it('keeps the plain line when there is no reason', () => {
     expect(buildChannelTaskResultText(null, 'FAILED', undefined)).toBe(
       ':rotating_light: Task finished with status *FAILED*.'

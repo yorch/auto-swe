@@ -8,7 +8,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     clientSecret: null,
     signingSecret: null,
   }),
-  resolveWebUrl: () => 'http://localhost:3000',
+  resolveWebUrl: () => process.env.TEST_WEB_URL ?? 'http://localhost:3000',
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
@@ -50,6 +50,7 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   delete process.env.SLACK_BOT_TOKEN;
+  delete process.env.TEST_WEB_URL;
   findRun.mockReset();
   findTeam.mockReset();
   findWorkRequest.mockReset();
@@ -705,5 +706,120 @@ describe('notifySlackHumanStep (Block Kit resolve buttons)', () => {
     expect(buttons.find((b) => b.action_id === 'open_inbox')).toBeDefined();
     // Plain-text fallback keeps the inbox link for clients that drop blocks.
     expect(text).toContain('/approvals');
+  });
+});
+
+describe('text from outside the platform is escaped before it goes into a notice', () => {
+  const EVIL = '<!channel> <@U999> <https://evil.example|click> & co';
+  const ESC = '&lt;!channel&gt; &lt;@U999&gt; &lt;https://evil.example|click&gt; &amp; co';
+
+  function firstBody<T>(): T {
+    const call = fetchCalls[0];
+    if (!call) {
+      throw new Error('expected a Slack call');
+    }
+    return call.body as T;
+  }
+
+  function runWith(overrides: {
+    ticket?: string;
+    template?: string;
+    slackMessageTs?: string | null;
+  }) {
+    findRun.mockResolvedValue({
+      template: { name: overrides.template ?? 'default' },
+      workflowId: 'wf-esc',
+      workRequest: {
+        activeWorkflows: [{ repository: { teamId: 'team-1' }, temporalWorkflowId: 'wf-esc' }],
+        externalTicketId: overrides.ticket ?? 'JIRA-1',
+        slackChannelId: 'C-origin',
+        slackMessageTs: overrides.slackMessageTs ?? null,
+      },
+    } as never);
+    findTeam.mockResolvedValue({ slackNotifyChannel: null, slackNotifySuccess: true } as never);
+  }
+
+  it('step failure: ticket, template, node id and error text', async () => {
+    runWith({ template: EVIL, ticket: EVIL });
+    await notifySlackStepFailure({ attempt: 1, error: EVIL, nodeId: EVIL, runId: 'r1' });
+
+    const text = firstBody<{ text: string }>().text;
+    expect(text).not.toMatch(/<[!@h]/);
+    expect(text.split(ESC)).toHaveLength(5);
+  });
+
+  it('step failure: cuts a long error before escaping, never inside an entity', async () => {
+    runWith({});
+    await notifySlackStepFailure({
+      attempt: 1,
+      error: '&'.repeat(1000),
+      nodeId: 'lint',
+      runId: 'r1',
+    });
+
+    const text = firstBody<{ text: string }>().text;
+    expect(text).not.toMatch(/&(?!amp;)/);
+  });
+
+  it('PR ready: the ticket is escaped and the PR link is left as it is', async () => {
+    findWorkRequest.mockResolvedValue({
+      activeWorkflows: [],
+      externalTicketId: EVIL,
+      slackChannelId: 'C-origin',
+      slackMessageTs: '1700.5',
+    } as never);
+    await notifySlackPrReady({
+      prNumber: 7,
+      prUrl: 'https://github.com/o/r/pull/7',
+      workRequestId: 'wr-1',
+    });
+
+    const text = firstBody<{ text: string }>().text;
+    expect(text).toContain(ESC);
+    expect(text).not.toMatch(/<[!@h]/);
+    expect(text).toContain('https://github.com/o/r/pull/7');
+  });
+
+  it('human step: ticket, title and description, in the text and in the stored header', async () => {
+    runWith({ ticket: EVIL });
+    const update = vi.mocked(prisma.workflowHumanStep.update);
+    update.mockReset();
+    globalThis.fetch = (async (url: string, init?: { body?: string }) => {
+      fetchCalls.push({ body: init?.body ? JSON.parse(init.body) : null, url });
+      return {
+        json: async () => ({ channel: 'C-origin', ok: true, ts: '5.5' }),
+      } as unknown as Response;
+    }) as typeof fetch;
+
+    await notifySlackHumanStep({
+      description: EVIL,
+      kind: 'APPROVAL',
+      runId: 'r1',
+      stepId: 'step-esc',
+      title: EVIL,
+    });
+
+    const body = fetchCalls[0]?.body as {
+      text: string;
+      blocks: Array<{ text?: { text: string } }>;
+    };
+    // Only the platform's own "Open approvals" link remains as markup.
+    const markup = body.text.match(/<[^>]*>/g) ?? [];
+    expect(markup).toEqual(['<http://localhost:3000/approvals|Open approvals →>']);
+    expect(body.blocks[0]?.text?.text).toContain(ESC);
+    const stored = update.mock.calls[0]?.[0] as { data: { slackMessage: { text: string } } };
+    expect(stored.data.slackMessage.text).not.toMatch(/<[!@h]/);
+    expect(stored.data.slackMessage.text.split(ESC)).toHaveLength(4);
+  });
+
+  it('run complete (plain-text fallback when no card can be built): ticket and template', async () => {
+    process.env.TEST_WEB_URL = 'not a url';
+    runWith({ template: EVIL, ticket: EVIL });
+    await notifySlackRunComplete({ runId: 'r1', status: 'SUCCESS' });
+
+    const body = fetchCalls[0]?.body as { text: string; blocks?: unknown[] };
+    expect(body.blocks).toBeUndefined();
+    expect(body.text).not.toMatch(/<[!@h]/);
+    expect(body.text.split(ESC)).toHaveLength(3);
   });
 });

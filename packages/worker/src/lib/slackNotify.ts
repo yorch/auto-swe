@@ -5,6 +5,7 @@ import {
 } from '@auto-swe/shared/lib/systemConfig';
 import { approvalAllowsRequestChanges } from '@auto-swe/shared/workflow';
 import { buildRunCompleteCard } from './runCompleteCard.js';
+import { escapeSlackText } from './slackEscape.js';
 
 /**
  * Slack notifications. Four surfaces:
@@ -557,8 +558,9 @@ export async function notifySlackStepFailure(input: {
     if (!token) {
       return;
     }
-    const errLine = input.error ? `: ${truncate(input.error, 400)}` : '';
-    const text = `*[${resolved.ticket}]* \`${resolved.templateName}\` → step \`${input.nodeId}\` failed (attempt ${input.attempt})${errLine}`;
+    // Truncate before escaping so the cut cannot land inside an `&amp;`-style entity.
+    const errLine = input.error ? `: ${escapeSlackText(truncate(input.error, 400))}` : '';
+    const text = `*[${escapeSlackText(resolved.ticket)}]* \`${escapeSlackText(resolved.templateName)}\` → step \`${escapeSlackText(input.nodeId)}\` failed (attempt ${input.attempt})${errLine}`;
     await postToSlack(token, resolved.channel, resolved.threadTs, text, 'slackNotify');
   } catch {
     /* best-effort */
@@ -584,7 +586,7 @@ export async function notifySlackPrReady(input: {
     if (!token) {
       return;
     }
-    const text = `:eyes: *[${ctx.ticket}]* PR #${input.prNumber} is ready for review: ${input.prUrl}`;
+    const text = `:eyes: *[${escapeSlackText(ctx.ticket)}]* PR #${input.prNumber} is ready for review: ${input.prUrl}`;
     await postToSlack(token, ctx.channel, ctx.threadTs, text, 'slackNotify (pr-ready)');
   } catch {
     /* best-effort */
@@ -744,9 +746,13 @@ export async function notifySlackHumanStep(input: {
       INPUT: 'Input required',
       REVIEW: 'Review required',
     };
-    const descriptionLine = input.description ? `\n${truncate(input.description, 400)}` : '';
+    const descriptionLine = input.description
+      ? `\n${escapeSlackText(truncate(input.description, 400))}`
+      : '';
     const inboxUrl = `${resolveWebUrl()}/approvals`;
-    const header = `*[${resolved.ticket}]* *${kindLabel[input.kind] ?? input.kind}:* ${input.title}${descriptionLine}`;
+    // The header is also stored on the step and shown again, with the decision appended, when the
+    // step is resolved, so it is escaped here once and reused as-is.
+    const header = `*[${escapeSlackText(resolved.ticket)}]* *${kindLabel[input.kind] ?? input.kind}:* ${escapeSlackText(input.title)}${descriptionLine}`;
     const text = `:hourglass_flowing_sand: ${header}\n<${inboxUrl}|Open approvals →>`;
     const blocks = buildHumanStepBlocks({
       inboxUrl,
@@ -799,7 +805,7 @@ export async function notifySlackRunComplete(input: {
         : input.status === 'CANCELLED'
           ? ':octagonal_sign:'
           : ':rotating_light:';
-    const text = `${emoji} *[${resolved.ticket}]* \`${resolved.templateName}\` run finished: *${input.status}*`;
+    const text = `${emoji} *[${escapeSlackText(resolved.ticket)}]* \`${escapeSlackText(resolved.templateName)}\` run finished: *${input.status}*`;
     // A card (status, duration, cost, an Open run link) when it validates; the one-line text it
     // always was otherwise, so a refused card can never cost the team the notification.
     const webUrl = resolveWebUrl();

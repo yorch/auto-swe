@@ -2,6 +2,7 @@ import type { ChannelAssistantTurnInput, RepoWorkRequest } from '@auto-swe/share
 import { log, proxyActivities, workflowInfo } from '@temporalio/workflow';
 import type { DelegateIntent } from '../activities/channelAssistant.js';
 import type * as activitiesType from '../activities/index.js';
+import { escapeSlackText } from '../lib/slackEscape.js';
 import {
   RETRY_RUN_RECORD,
   RETRY_SINGLE_ATTEMPT,
@@ -295,8 +296,8 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
         text = CHANNEL_WORKFLOW_SHELL_REFUSED_TEXT;
       } else {
         text =
-          `:sparkles: I drafted a workflow *"${draft.name}"* for you.` +
-          `${draft.summary ? ` ${draft.summary}` : ''}` +
+          `:sparkles: I drafted a workflow *"${escapeSlackText(draft.name)}"* for you.` +
+          `${draft.summary ? ` ${escapeSlackText(draft.summary)}` : ''}` +
           '\nReview and activate it in the *Workflow library* on the dashboard before running it.';
       }
       await deliver(input, placeholderTs, text);
@@ -321,8 +322,8 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
       let text: string;
       if (result.status === 'refined') {
         text =
-          `:sparkles: I updated *"${result.name}"* (now version ${result.version}).` +
-          `${result.summary ? ` ${result.summary}` : ''}` +
+          `:sparkles: I updated *"${escapeSlackText(result.name ?? '')}"* (now version ${result.version}).` +
+          `${result.summary ? ` ${escapeSlackText(result.summary)}` : ''}` +
           '\nReview the new version in the *Workflow library* before activating.';
       } else if (result.status === 'no_target') {
         text = CHANNEL_WORKFLOW_REFINE_NO_TARGET_TEXT;
