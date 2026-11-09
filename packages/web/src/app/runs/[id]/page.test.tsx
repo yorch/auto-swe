@@ -215,6 +215,27 @@ describe('run page summary band', () => {
     }
   });
 
+  it('keeps Cancel focusable but aria-disabled with the reason when the caller cannot control the run', async () => {
+    state.layout = 'A';
+    run.status = 'RUNNING';
+    (run as Record<string, unknown>).review = { canControl: false, reviewable: false, reviews: [] };
+    try {
+      await renderPage();
+      const cancel = screen.getByRole('button', { name: 'Cancel run' });
+      expect(cancel.getAttribute('aria-disabled')).toBe('true');
+      // The reason is merged with the caller's own hint, not substituted for it.
+      const ids = (cancel.getAttribute('aria-describedby') ?? '').split(' ');
+      expect(ids).toContain('cancel-run-hint');
+      const reasons = ids.map((id) => document.getElementById(id)?.textContent ?? '');
+      expect(
+        reasons.some((t) => /Only members of .* or the launcher can cancel this run\./.test(t))
+      ).toBe(true);
+    } finally {
+      run.status = 'FAILED';
+      delete (run as Record<string, unknown>).review;
+    }
+  });
+
   it('explains gates once on the page and keeps the lifecycle explainer in the Help panel', async () => {
     state.layout = 'A';
     await renderPage();

@@ -76,3 +76,20 @@ describe('canWriteTeamResource', () => {
     expect(canWriteTeamResource('LEAD', 'team-a', null)).toBe(false);
   });
 });
+
+describe('repository management reasons', () => {
+  it('canManageTeamRepos follows the owning team, platform ADMIN bypassing', async () => {
+    const { canManageTeamRepos, repoManageReason, runControlReason } = await import(
+      './teamPermissions'
+    );
+    expect(canManageTeamRepos('LEAD', 't1', new Set(['t1']))).toBe(true);
+    expect(canManageTeamRepos('LEAD', 't2', new Set(['t1']))).toBe(false);
+    expect(canManageTeamRepos('ADMIN', 't2', new Set())).toBe(true);
+    expect(repoManageReason('Design', 'edit')).toBe(
+      'Only leads of Design or an administrator can edit this repository.'
+    );
+    expect(runControlReason('Design', 'cancel')).toBe(
+      'Only members of Design or the launcher can cancel this run.'
+    );
+  });
+});

@@ -43,6 +43,9 @@ function mock(members: ReturnType<typeof member>[]) {
       currentMonthUsage: null,
       monthlyBudgetUsdCents: null,
     }),
+    [`GET /api/v1/platform/organizations/${ORG_ID}/budget/status`]: () => ({
+      data: { alertThresholdPercent: 80, percentUsed: 41.5, scope: 'org', state: 'ok' },
+    }),
     [`GET /api/v1/platform/organizations/${ORG_ID}/members`]: () => ({ data: members }),
     [`PATCH /api/v1/platform/organizations/${ORG_ID}`]: () => ({ data: {} }),
     'GET /api/v1/users': () => ({ data: [] }),
@@ -78,6 +81,23 @@ describe('organization admin page', () => {
       (screen.getByRole('button', { name: /Org role for plain@x.com/ }) as HTMLButtonElement)
         .disabled
     ).toBe(false);
+  });
+
+  it('shows an ORG_MEMBER the percentage meter and never asks for the dollar budget', async () => {
+    useAuthStore.setState({
+      isAuthenticated: true,
+      user: { role: 'ENGINEER', sub: 'me' },
+    } as never);
+    const spy = mock([
+      member('me', 'me@x.com', 'ORG_MEMBER'),
+      member('u2', 'a@x.com', 'ORG_ADMIN'),
+    ]);
+    render(withQuery(<OrgAdminPage params={params} />));
+    expect(await screen.findByTestId('budget-meter')).toBeTruthy();
+    expect(screen.getByText('41% of the org budget this month')).toBeTruthy();
+    const urls = spy.mock.calls.map(([url]) => String(url));
+    expect(urls.some((u) => u.endsWith('/budget'))).toBe(false);
+    expect(screen.queryByText('Save budget')).toBeNull();
   });
 
   it('keeps Save budget disabled until a value changes', async () => {

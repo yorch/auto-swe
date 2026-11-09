@@ -18,6 +18,7 @@ const base: TeamOverview = {
       title: 'Fix the login bug',
     },
   ],
+  budget: null,
   last7d: { failed: 1, started: 4, succeeded: 3 },
   needsYou: { total: 2 },
   pullRequests: {
@@ -68,7 +69,24 @@ describe('TeamOverviewView', () => {
       '/requests?request=req-1'
     );
     expect(screen.getByText('owned')).toBeTruthy();
-    expect(screen.getByText('shared from Design')).toBeTruthy();
+    expect(screen.getByText('owned by Design')).toBeTruthy();
+  });
+
+  it('shows the budget meter in its full variant, and hides the panel without a budget', () => {
+    const { rerender } = render(
+      <TeamOverviewView
+        overview={{
+          ...base,
+          budget: { alertThresholdPercent: 80, percentUsed: 85, scope: 'org', state: 'alert' },
+        }}
+        slug="payments"
+      />
+    );
+    const panel = within(screen.getByTestId('budget-panel'));
+    expect(panel.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('85');
+    expect(panel.getByText('Alerts at 80%.')).toBeTruthy();
+    rerender(<TeamOverviewView overview={base} slug="payments" />);
+    expect(screen.queryByTestId('budget-panel')).toBeNull();
   });
 
   it('renders no lead or admin panel when the server sent none', () => {
@@ -117,6 +135,14 @@ describe('TeamOverviewView', () => {
       />
     );
     expect(within(screen.getByTestId('admin-panel')).getByText('Not available')).toBeTruthy();
+  });
+
+  it('says the dollars are for organization admins when the server left the spend out', () => {
+    render(
+      <TeamOverviewView overview={{ ...base, admin: {}, viewerLevel: 'admin' }} slug="payments" />
+    );
+    expect(screen.getByTestId('admin-spend-hidden')).toBeTruthy();
+    expect(screen.queryByText('Not available')).toBeNull();
   });
 
   it('decides by the sent fields, never by the viewer level or a platform role', () => {

@@ -2,6 +2,7 @@
 
 import type { MeSummaryTeam } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { BudgetMeter } from '@/components/teams/BudgetMeter';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { teamHref } from '@/lib/teamSpace';
@@ -44,6 +45,7 @@ function TeamCard({ team }: { team: MeSummaryTeam }) {
             <dd className="tabular text-base font-semibold text-paper-100">{team.queued}</dd>
           </div>
         </dl>
+        <BudgetMeter budget={team.budget} className="mt-3" variant="compact" />
       </Card>
     </Link>
   );

@@ -10,9 +10,11 @@ import { cn, formatCents, formatPercent } from '@/lib/utils';
 export interface OrgBudgetTableRow {
   alert: { percent: number | null; triggered: boolean };
   budgetAlertThresholdPercent: number | null;
-  currentMonthUsage: { costUsdAccrued: number } | null;
+  /** Absent (not null) where the caller may not read dollars; null is "nothing spent yet". */
+  currentMonthUsage?: { costUsdAccrued: number } | null;
   id: string;
-  monthlyBudgetUsdCents: number | null;
+  /** Absent where the caller may not read dollars; null is "no cap". */
+  monthlyBudgetUsdCents?: number | null;
   name: string;
   role?: string;
   slug: string;
@@ -69,7 +71,9 @@ const COLUMNS: Record<
   cap: {
     alignRight: true,
     cell: (org) =>
-      org.monthlyBudgetUsdCents == null ? (
+      org.monthlyBudgetUsdCents === undefined ? (
+        <span className="text-paper-500">—</span>
+      ) : org.monthlyBudgetUsdCents === null ? (
         <span className="text-paper-500">No cap</span>
       ) : (
         formatCents(org.monthlyBudgetUsdCents)
@@ -106,7 +110,12 @@ const COLUMNS: Record<
   // Accrued spend is in dollars; formatCents keeps $0.00 as a real value.
   spent: {
     alignRight: true,
-    cell: (org) => formatCents((org.currentMonthUsage?.costUsdAccrued ?? 0) * 100),
+    cell: (org) =>
+      org.currentMonthUsage === undefined ? (
+        <span className="text-paper-500">—</span>
+      ) : (
+        formatCents((org.currentMonthUsage?.costUsdAccrued ?? 0) * 100)
+      ),
     label: 'Spent this month',
   },
   status: {
@@ -136,7 +145,7 @@ const COLUMNS: Record<
 };
 
 const SORT_KEYS = {
-  cap: (org: OrgBudgetTableRow) => org.monthlyBudgetUsdCents,
+  cap: (org: OrgBudgetTableRow) => org.monthlyBudgetUsdCents ?? null,
   name: (org: OrgBudgetTableRow) => org.name.toLowerCase(),
   percentUsed: (org: OrgBudgetTableRow) => org.alert.percent,
   spent: (org: OrgBudgetTableRow) => org.currentMonthUsage?.costUsdAccrued ?? 0,

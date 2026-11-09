@@ -114,10 +114,10 @@ export function TeamWorkView({ teamId }: { teamId: string }) {
             title={`No ${label} yet`}
           />
         ) : view === 'requests' ? (
-          <RequestList requests={requests.data?.data ?? []} />
+          <RequestList requests={requests.data?.data ?? []} viewerTeamId={teamId} />
         ) : view === 'pull-requests' ? (
           <Card className="overflow-hidden p-0">
-            <PullRequestTable pullRequests={pulls.data ?? []} />
+            <PullRequestTable pullRequests={pulls.data ?? []} viewerTeamId={teamId} />
           </Card>
         ) : view === 'tickets' ? (
           <Card className="overflow-hidden p-0">

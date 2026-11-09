@@ -8,6 +8,7 @@ import { MyTeams } from './MyTeams';
 afterEach(cleanup);
 
 const team = (overrides: Partial<MeSummaryTeam> = {}): MeSummaryTeam => ({
+  budget: null,
   myRole: 'LEAD',
   name: 'Payments',
   needsYou: 3,
@@ -58,5 +59,39 @@ describe('MyTeams', () => {
       '/teams/payments',
       '/teams/platform',
     ]);
+  });
+
+  it('shows the budget meter on a card, and none when the team has no budget', () => {
+    render(
+      <MyTeams
+        teams={[
+          team({
+            budget: { alertThresholdPercent: 80, percentUsed: 72, scope: 'org', state: 'ok' },
+          }),
+          team({ name: 'Platform', slug: 'platform', teamId: 't2' }),
+        ]}
+      />
+    );
+    const cards = screen.getAllByTestId('team-card');
+    expect(
+      within(cards[0] as HTMLElement).getByRole('progressbar', {
+        name: 'Organization budget',
+      })
+    ).toBeTruthy();
+    expect(within(cards[1] as HTMLElement).queryByTestId('budget-meter')).toBeNull();
+  });
+
+  it('says in words when the org budget is exceeded', () => {
+    render(
+      <MyTeams
+        teams={[
+          team({
+            budget: { alertThresholdPercent: null, percentUsed: 130, scope: 'org', state: 'over' },
+          }),
+          team({ name: 'Platform', slug: 'platform', teamId: 't2' }),
+        ]}
+      />
+    );
+    expect(screen.getByText('Over the org budget')).toBeTruthy();
   });
 });

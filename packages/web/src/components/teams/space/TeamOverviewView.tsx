@@ -2,6 +2,8 @@
 
 import type { TeamOverview, TeamOverviewActivityItem } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { BudgetMeter } from '@/components/teams/BudgetMeter';
+import { OwnerChip } from '@/components/teams/OwnerChip';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -109,6 +111,15 @@ export function TeamOverviewView({ overview, slug }: { overview: TeamOverview; s
         />
       </section>
 
+      {overview.budget && (
+        <Card data-testid="budget-panel">
+          <CardHeader className="mb-2">
+            <CardTitle>Budget</CardTitle>
+          </CardHeader>
+          <BudgetMeter budget={overview.budget} />
+        </Card>
+      )}
+
       {overview.lead && (
         <Card data-testid="lead-panel">
           <CardHeader className="mb-3">
@@ -152,11 +163,18 @@ export function TeamOverviewView({ overview, slug }: { overview: TeamOverview; s
           <CardHeader className="mb-2">
             <CardTitle>Spend this month</CardTitle>
           </CardHeader>
-          <p className="tabular text-2xl font-semibold text-paper-50">
-            {overview.admin.monthCostUsdCents === null
-              ? 'Not available'
-              : dollars(overview.admin.monthCostUsdCents)}
-          </p>
+          {overview.admin.monthCostUsdCents === undefined ? (
+            <p className="text-sm text-paper-400" data-testid="admin-spend-hidden">
+              The organization’s budget is shown above as a percentage. Its spend in dollars is for
+              organization admins.
+            </p>
+          ) : (
+            <p className="tabular text-2xl font-semibold text-paper-50">
+              {overview.admin.monthCostUsdCents === null
+                ? 'Not available'
+                : dollars(overview.admin.monthCostUsdCents)}
+            </p>
+          )}
         </Card>
       )}
 
@@ -206,11 +224,13 @@ export function TeamOverviewView({ overview, slug }: { overview: TeamOverview; s
                       {repo.name}
                     </span>
                   </span>
-                  <Badge tone={repo.relation === 'owned' ? 'neutral' : 'info'} variant="outline">
-                    {repo.relation === 'owned'
-                      ? 'owned'
-                      : `shared from ${repo.ownerTeamName ?? 'another team'}`}
-                  </Badge>
+                  {repo.relation === 'owned' ? (
+                    <Badge tone="neutral" variant="outline">
+                      owned
+                    </Badge>
+                  ) : (
+                    <OwnerChip ownerName={repo.ownerTeamName ?? 'another team'} />
+                  )}
                 </li>
               ))}
             </ul>

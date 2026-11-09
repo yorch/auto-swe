@@ -15,6 +15,8 @@ import { RepoDependencySuggestions } from '@/components/repositories/RepoDepende
 import { ShareRepoModal } from '@/components/repositories/ShareRepoModal';
 import { ToggleConnectionActiveModal } from '@/components/repositories/ToggleConnectionActiveModal';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
+import { GuardedButton } from '@/components/teams/GuardedButton';
+import { OwnerChip } from '@/components/teams/OwnerChip';
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -39,11 +41,11 @@ import {
 } from '@/hooks/useRepoDependencies';
 import type { GitHubRepoInfo } from '@/hooks/useRepositories';
 import { useMyCredentials, useRepositories } from '@/hooks/useRepositories';
-import { useLedTeamIds } from '@/hooks/useTeams';
+import { useLedTeamIds, useTeams } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
-import { canWriteTeamResource } from '@/lib/teamPermissions';
+import { canWriteTeamResource, repoManageReason } from '@/lib/teamPermissions';
 import { useAuthStore } from '@/stores/authStore';
 
 type ModalMode =
@@ -83,6 +85,9 @@ export default function ConnectionsPage() {
     (teamId: string | null | undefined) => canWriteTeamResource(platformRole, teamId, ledTeamIds),
     [platformRole, ledTeamIds]
   );
+  // The owner chip names a team the viewer is looking at from outside; their own team's repository
+  // is not "owned by" someone else.
+  const myTeamIds = new Set((useTeams({ memberOnly: true }).data ?? []).map((t) => t.id));
   const canManage = isAdmin || (isLead && (ledTeamIds?.size ?? 0) > 0);
   // Deactivating a connection must not make it vanish for the people who can
   // reactivate it — they can opt into seeing inactive rows.
@@ -338,29 +343,35 @@ export default function ConnectionsPage() {
                   ];
                   return (
                     <>
-                      {canManageTeam(r.team?.id) && isGitRepo && (
+                      {isGitRepo && (
                         // The server decides, as it does for sharing: only the owning team's
                         // leads (and platform admins) may check what the platform's credential
                         // can do with the repository.
-                        <Button
+                        <GuardedButton
                           aria-label={`Test access for ${label}`}
+                          blockedReason={
+                            canManageTeam(r.team?.id)
+                              ? null
+                              : repoManageReason(r.team?.name, 'test access for')
+                          }
                           onClick={() => setMode({ kind: 'test', repo: r })}
                           size="sm"
                           variant="ghost"
                         >
                           Test access
-                        </Button>
+                        </GuardedButton>
                       )}
-                      {canManageTeam(r.team?.id) && (
-                        <Button
-                          aria-label={`Edit ${label}`}
-                          onClick={() => setMode({ kind: 'edit', repo: r })}
-                          size="sm"
-                          variant="ghost"
-                        >
-                          Edit
-                        </Button>
-                      )}
+                      <GuardedButton
+                        aria-label={`Edit ${label}`}
+                        blockedReason={
+                          canManageTeam(r.team?.id) ? null : repoManageReason(r.team?.name, 'edit')
+                        }
+                        onClick={() => setMode({ kind: 'edit', repo: r })}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        Edit
+                      </GuardedButton>
                       <ActionMenu items={menu} label={`More actions for ${label}`} />
                     </>
                   );
@@ -400,8 +411,15 @@ export default function ConnectionsPage() {
                     cell: (r) => (
                       <div className="text-paper-300">
                         <div>{r.team?.name ?? <span className="text-paper-500">None</span>}</div>
-                        {!canManageTeam(r.team?.id) && (
-                          <div className="text-xs text-paper-500">Read-only for you</div>
+                        {!canManageTeam(r.team?.id) && r.team?.name && (
+                          <div className="mt-1 text-xs text-paper-500">
+                            {!myTeamIds.has(r.team.id) && (
+                              <>
+                                <OwnerChip ownerName={r.team.name} />{' '}
+                              </>
+                            )}
+                            Read-only for you
+                          </div>
                         )}
                         {(r.shares?.length ?? 0) > 0 && (
                           <div

@@ -139,6 +139,23 @@ describe('describeLaunchError', () => {
     expect(v.message).toBe('m');
   });
 
+  it.each([
+    ['ORG_BUDGET_EXCEEDED', /organization budget/, /organization administrator/],
+    ['TEAM_BUDGET_EXCEEDED', /team budget/, /team lead/],
+  ])('explains %s without an amount and names who can change the limit', (code, title, who) => {
+    const v = describeLaunchError(e(402, code, 'Budget exceeded: $1234.50 of $1000'));
+    expect(v.title).toMatch(title);
+    expect(v.message).not.toMatch(/\$|1234/);
+    expect(v.hint).toMatch(who);
+    expect(v.retryable).toBe(false);
+  });
+
+  it('never prints the server message of an uncoded 402, which could carry an amount', () => {
+    const v = describeLaunchError(e(402, null, 'Budget exceeded: $1234.50 of $1000'));
+    expect(v.message).not.toMatch(/\$|1234/);
+    expect(v.hint).toMatch(/organization administrator/);
+  });
+
   it('marks RUN_CONFLICT as a possible duplicate, not a failure to retry', () => {
     const v = describeLaunchError(e(409, 'RUN_CONFLICT'));
     expect(v.duplicate).toBe(true);

@@ -55,6 +55,7 @@ function summary(items: MeNeedsYouItem[] = [], total = items.length): MeSummary 
     needsYou: { items, total },
     teams: [
       {
+        budget: null,
         myRole: 'LEAD',
         name: 'Payments',
         needsYou: items.length,
