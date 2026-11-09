@@ -1,9 +1,12 @@
 'use client';
 
+import type { MeSummary } from '@auto-swe/shared/types/api';
+import type { UseQueryResult } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
-import { HumanStepCard } from '@/components/approvals/HumanStepCard';
+import { MyTeams } from '@/components/desk/MyTeams';
+import { NeedsYouList } from '@/components/desk/NeedsYouList';
 import { HowItWorks } from '@/components/help/HowItWorks';
 import { RequestList } from '@/components/requests/RequestList';
 import { FirstRunChecklist } from '@/components/setup/FirstRunChecklist';
@@ -15,119 +18,67 @@ import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon, type IconName } from '@/components/ui/Icon';
-import { Skeleton, SkeletonRows } from '@/components/ui/LoadingState';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
-import { Stat } from '@/components/ui/Stat';
-import { useApprovals } from '@/hooks/useApprovals';
-import { type RequestScope, type RequestState, useRequests } from '@/hooks/useRequests';
+import { useMeSummary } from '@/hooks/useMeSummary';
+import { type RequestState, useRequests } from '@/hooks/useRequests';
 import { deniedMessage } from '@/lib/accessDenied';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
-/** One request bucket on Home: its list section and its overview tile share this. */
-interface Bucket {
+interface WorkSectionSpec {
   id: string;
   title: string;
   state: RequestState;
   icon: IconName;
-  /** Tile figure colour when the bucket is non-empty. */
-  tone: 'warning' | 'info' | 'success';
   empty: { title: string; hint: string };
 }
 
-const BUCKETS: Bucket[] = [
-  {
-    empty: {
-      hint: 'Failed runs, blocked steps and pull requests ready for review show up here.',
-      title: 'Nothing needs your attention',
-    },
-    icon: 'warning',
-    id: 'attention',
-    state: 'attention',
-    title: 'Needs your attention',
-    tone: 'warning',
+const IN_FLIGHT: WorkSectionSpec = {
+  empty: {
+    hint: 'Choose Start work to run a workflow, an agent or an epic.',
+    title: 'No work in flight',
   },
-  {
-    empty: {
-      hint: 'Choose Start work to run a workflow, an agent or an epic.',
-      title: 'No work in progress',
-    },
-    icon: 'runs',
-    id: 'in-progress',
-    state: 'active',
-    title: 'In progress',
-    tone: 'info',
-  },
-  {
-    empty: {
-      hint: 'Finished work appears here. A successful run still needs your review.',
-      title: 'No results yet',
-    },
-    icon: 'checkCircle',
-    id: 'recent-results',
-    state: 'success',
-    title: 'Recent results',
-    tone: 'success',
-  },
-];
+  icon: 'runs',
+  id: 'in-flight',
+  state: 'active',
+  title: 'In flight (mine)',
+};
 
-function listHref(scope: RequestScope, state: RequestState) {
-  return `/requests?scope=${scope}&state=${state === 'success' ? 'finished' : state}`;
+const RECENT: WorkSectionSpec = {
+  empty: {
+    hint: 'Finished work appears here. A successful run still needs your review.',
+    title: 'No results yet',
+  },
+  icon: 'checkCircle',
+  id: 'recent-results',
+  state: 'success',
+  title: 'Recent results (mine)',
+};
+
+function listHref(state: RequestState) {
+  return `/requests?scope=MINE&state=${state === 'success' ? 'finished' : state}`;
 }
 
-/** Same filters as the bucket's section, so the two share one cached query. */
-function useBucket(scope: RequestScope, state: RequestState) {
-  return useRequests({ limit: 5, scope, state });
+/** The viewer's own work, whatever team the top bar is filtered to. */
+function useMine(state: RequestState) {
+  return useRequests({ limit: 5, scope: 'MINE', state }, { ignoreTeam: true });
 }
 
-/**
- * An overview figure that opens the list it counts. A failed query shows a dash and says so,
- * rather than reading as an empty bucket.
- */
-function BucketTile({ bucket, scope }: { bucket: Bucket; scope: RequestScope }) {
-  const query = useBucket(scope, bucket.state);
-  const count = query.data?.meta.total;
-  const failed = query.isError && count === undefined;
-  return (
-    <Link
-      className={cn('block rounded-xl transition-colors hover:[&>div]:border-ink-300', FOCUS_RING)}
-      href={listHref(scope, bucket.state)}
-    >
-      {query.isLoading ? (
-        <div className="rounded-xl border border-ink-400 bg-ink-700 p-4">
-          <div className="text-sm font-medium text-paper-400">{bucket.title}</div>
-          <Skeleton className="mt-3 h-8 w-12" />
-        </div>
-      ) : (
-        <Stat
-          hint={failed ? 'Could not load' : undefined}
-          icon={bucket.icon}
-          label={bucket.title}
-          tone={count ? bucket.tone : 'muted'}
-          value={failed ? '–' : (count ?? 0)}
-          variant="tile"
-        />
-      )}
-    </Link>
-  );
-}
-
-function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope }) {
-  const query = useBucket(scope, bucket.state);
+function WorkSection({ spec }: { spec: WorkSectionSpec }) {
+  const query = useMine(spec.state);
   const requests = query.data?.data ?? [];
   const total = query.data?.meta.total ?? 0;
   return (
-    <section aria-labelledby={`${bucket.id}-title`} className="scroll-mt-20" id={bucket.id}>
+    <section aria-labelledby={`${spec.id}-title`} className="scroll-mt-20" id={spec.id}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2
           className="flex items-center gap-2 text-lg font-semibold tracking-tight text-paper-100"
-          id={`${bucket.id}-title`}
+          id={`${spec.id}-title`}
         >
-          {bucket.title}
+          {spec.title}
           {total > 0 && (
             <span className="tabular rounded-full bg-ink-600 px-2 text-xs font-medium text-paper-300">
               {total}
@@ -139,10 +90,10 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
             'inline-flex items-center gap-1 rounded-sm text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
             FOCUS_RING
           )}
-          href={listHref(scope, bucket.state)}
+          href={listHref(spec.state)}
         >
           View all
-          <span className="sr-only"> {bucket.title.toLowerCase()}</span>
+          <span className="sr-only"> {spec.title.toLowerCase()}</span>
           <Icon name="arrowRight" size={13} />
         </Link>
       </div>
@@ -151,7 +102,7 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
         isError={query.isError}
         isFetching={query.isFetching}
         isLoading={query.isLoading}
-        label={bucket.title.toLowerCase()}
+        label={spec.title.toLowerCase()}
         loading={
           <Card className="px-5 py-3">
             <SkeletonRows rows={3} />
@@ -162,16 +113,18 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
         {requests.length ? (
           <RequestList
             density="compact"
-            hrefFor={(id) => `/requests?${new URLSearchParams({ request: id, scope }).toString()}`}
+            hrefFor={(id) =>
+              `/requests?${new URLSearchParams({ request: id, scope: 'MINE' }).toString()}`
+            }
             requests={requests}
           />
         ) : (
           <EmptyState
             bordered
             className="py-7"
-            hint={bucket.empty.hint}
-            icon={bucket.icon}
-            title={bucket.empty.title}
+            hint={spec.empty.hint}
+            icon={spec.icon}
+            title={spec.empty.title}
           />
         )}
       </QueryBoundary>
@@ -179,59 +132,29 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
   );
 }
 
-/** Approvals the current user can answer on any run, not only their own requests. */
-function WaitingOnYou() {
-  const query = useApprovals('PENDING', 'timeoutAt:asc', false, undefined, true);
-  const steps = query.data ?? [];
-  // A failed check must not read as "nothing is waiting": say so, with a way to try again.
-  if (query.isError && steps.length === 0) {
-    return (
-      <Alert
-        action={
-          <Button onClick={() => void query.refetch()} size="sm">
-            Retry
-          </Button>
-        }
-        variant="warning"
-      >
-        Could not check for approvals waiting on you.
-      </Alert>
-    );
-  }
-  // Nothing while loading, too: most people have none, and a placeholder would flash and collapse.
-  if (steps.length === 0) {
-    return null;
-  }
+/** Cross-team "Needs you" and "My teams" from one summary query. */
+function DeskSummary({ summary }: { summary: UseQueryResult<MeSummary> }) {
   return (
-    <section>
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-x-4 gap-y-2 border-b border-ink-600 pb-3">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-3">
-          <h2 className="text-lg font-semibold tracking-tight text-paper-100">Waiting on you</h2>
-          <HelpTip label="Waiting on you">
-            Runs that have stopped at a gate and need a person to approve, answer, or review before
-            they continue. Answer them in the approvals inbox.
-          </HelpTip>
-          {steps.length > 5 && (
-            <span className="text-sm text-paper-500">Showing 5 of {steps.length}</span>
-          )}
+    <QueryBoundary
+      error={summary.error}
+      isError={summary.isError && !summary.data}
+      isFetching={summary.isFetching}
+      isLoading={summary.isLoading}
+      label="what needs you"
+      loading={
+        <Card className="px-5 py-3">
+          <SkeletonRows rows={3} />
+        </Card>
+      }
+      onRetry={() => void summary.refetch()}
+    >
+      {summary.data && (
+        <div className="space-y-8">
+          <NeedsYouList items={summary.data.needsYou.items} total={summary.data.needsYou.total} />
+          <MyTeams teams={summary.data.teams} />
         </div>
-        <Link
-          className={cn(
-            'inline-flex items-center gap-1 rounded-sm text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
-            FOCUS_RING
-          )}
-          href="/approvals"
-        >
-          Open approvals
-          <Icon name="arrowRight" size={13} />
-        </Link>
-      </div>
-      <div className="space-y-3">
-        {steps.slice(0, 5).map((step) => (
-          <HumanStepCard key={step.id} step={step} />
-        ))}
-      </div>
-    </section>
+      )}
+    </QueryBoundary>
   );
 }
 
@@ -323,7 +246,14 @@ function AccessDeniedNotice() {
 }
 
 export default function HomePage() {
-  const [scope, setScope] = useState<RequestScope>('MINE');
+  const summary = useMeSummary();
+  const inFlight = useMine('active');
+  // QuickStart only once both are known to be empty: never flash it while loading or on error.
+  const nothingToDo =
+    summary.isSuccess &&
+    summary.data.needsYou.total === 0 &&
+    inFlight.isSuccess &&
+    inFlight.data.meta.total === 0;
   return (
     <div className="space-y-8">
       <Suspense fallback={null}>
@@ -343,41 +273,23 @@ export default function HomePage() {
           </>
         }
         learnMore={{ ...HELP_LINKS.concepts, label: 'Requests, runs and gates explained' }}
-        subtitle="See what needs your attention, follow your work, and review the results."
-        title="Home"
+        subtitle="See what needs you, follow your work, and review the results."
+        title="My desk"
       />
       <HowItWorks />
       <SetupReadiness />
       <FirstRunChecklist />
-      <section aria-label="Overview" className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold tracking-tight text-paper-100">Overview</h2>
-          <SegmentedControl
-            ariaLabel="Home scope"
-            onChange={setScope}
-            options={[
-              { label: 'My work', value: 'MINE' },
-              { label: 'Team work', value: 'TEAM' },
-            ]}
-            value={scope}
-          />
-        </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {BUCKETS.map((bucket) => (
-            <BucketTile bucket={bucket} key={bucket.id} scope={scope} />
-          ))}
-        </div>
-      </section>
-      <WaitingOnYou />
+      <DeskSummary summary={summary} />
       <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 space-y-8">
-          {BUCKETS.map((bucket) => (
-            <WorkSection bucket={bucket} key={bucket.id} scope={scope} />
-          ))}
+          <WorkSection spec={IN_FLIGHT} />
+          <WorkSection spec={RECENT} />
         </div>
-        <aside aria-label="Get started" className="space-y-6">
-          <QuickStart />
-        </aside>
+        {nothingToDo && (
+          <aside aria-label="Get started" className="space-y-6">
+            <QuickStart />
+          </aside>
+        )}
       </div>
       <GovernanceGuide />
       <RestoreGuides />

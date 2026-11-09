@@ -14,6 +14,7 @@ import { isTerminalWorkflowRunStatus } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
+import { ME_SUMMARY_KEY } from '@/hooks/useMeSummary';
 import { api } from '@/lib/api';
 
 export function useWorkflows(opts: ListOptions = {}) {
@@ -310,6 +311,7 @@ export function useCancelWorkflowRun(runId: string) {
       qc.invalidateQueries({ queryKey: ['workflow-run', runId] });
       qc.invalidateQueries({ queryKey: ['workflow-runs'] });
       qc.invalidateQueries({ queryKey: ['workflows'] });
+      qc.invalidateQueries({ queryKey: ME_SUMMARY_KEY });
     },
   });
 }
@@ -336,6 +338,7 @@ export function useRetryWorkRequest() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['workflows'] });
       qc.invalidateQueries({ queryKey: ['workflow-runs'] });
+      qc.invalidateQueries({ queryKey: ME_SUMMARY_KEY });
     },
   });
 }
