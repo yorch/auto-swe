@@ -29,21 +29,27 @@ export function groupRequestExecutions(runs: Execution[]) {
         (candidate) => executions.some((run) => run.status === candidate)
       ) ?? 'SKIPPED';
     const representative = executions.find((run) => run.status === status) ?? executions[0];
+    const failedRuns = executions.filter(
+      (run) => run.status === 'FAILED' || run.status === 'TIMED_OUT'
+    );
+    const mergeRuns = executions.filter(
+      (run) =>
+        run.status === 'RUNNING' &&
+        run.workRequest?.activeWorkflows.some(
+          (ledger) =>
+            ledger.temporalWorkflowId === run.workflowId &&
+            ledger.currentStatus === 'AWAITING_HUMAN_MERGE'
+        )
+    );
     return {
-      failedExecutionCount: executions.filter(
-        (run) => run.status === 'FAILED' || run.status === 'TIMED_OUT'
-      ).length,
+      failedExecutionCount: failedRuns.length,
+      /** Every failed or timed-out execution, for a caller that must name each one. */
+      failedRunIds: failedRuns.map((run) => run.id),
       id: representative.id,
       isCrossRepo,
-      needsMerge: executions.some(
-        (run) =>
-          run.status === 'RUNNING' &&
-          run.workRequest?.activeWorkflows.some(
-            (ledger) =>
-              ledger.temporalWorkflowId === run.workflowId &&
-              ledger.currentStatus === 'AWAITING_HUMAN_MERGE'
-          )
-      ),
+      /** Every execution whose pull request awaits a human merge. */
+      mergeRunIds: mergeRuns.map((run) => run.id),
+      needsMerge: mergeRuns.length > 0,
       pendingStepCount: executions.reduce((total, run) => total + run._count.humanSteps, 0),
       runIds: executions.map((run) => run.id),
       status,

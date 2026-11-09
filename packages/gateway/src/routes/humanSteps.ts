@@ -9,7 +9,7 @@ import {
 } from '../lib/hitlResolve.js';
 import { syncSlackHumanStepOutcome } from '../lib/hitlSlackSync.js';
 import { sendError } from '../lib/httpErrors.js';
-import { humanStepListWhere } from '../lib/humanStepFilters.js';
+import { humanStepListWhere, humanStepMineScope } from '../lib/humanStepFilters.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { buildWorkflowHumanStepVisibilityFilter } from '../lib/runVisibility.js';
 import { sendTemporalUnavailable } from '../lib/temporalErrors.js';
@@ -30,6 +30,12 @@ const ListQuery = z.object({
   count: booleanQueryParam(false),
   /** Page size; defaults to 100 for `PENDING` and 200 for `ALL`. */
   limit: z.coerce.number().int().min(1).max(200).optional(),
+  /**
+   * Only steps on runs of the caller's own teams' work: a repository one of their teams owns or
+   * is shared, or a template one of their teams owns. A platform ADMIN's visibility is every run,
+   * so this is what makes their list match the desk summary's count. Only narrows the list.
+   */
+  mine: booleanQueryParam(false),
   offset: z.coerce.number().int().min(0).optional(),
   overdue: booleanQueryParam(false),
   runId: z.string().uuid().optional(),
@@ -291,7 +297,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { actionable, answeredByMe, count, limit, offset, overdue, sort, status, runId } =
+      const { actionable, answeredByMe, count, limit, mine, offset, overdue, sort, status, runId } =
         request.query;
       const pageSize = limit ?? (status === 'ALL' ? 200 : 100);
       const orderBy =
@@ -302,13 +308,14 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
             : sort === 'timeoutAt:desc'
               ? { timeoutAt: 'desc' as const }
               : { requestedAt: 'desc' as const };
-      const where = humanStepListWhere(user, request.repoAccessGate, {
+      const listWhere = humanStepListWhere(user, request.repoAccessGate, {
         actionable,
         answeredByMe,
         overdue,
         runId,
         status,
       });
+      const where = mine ? { AND: [listWhere, humanStepMineScope(user)] } : listWhere;
       // The count is a second query on the hottest HITL read (the sidebar badge polls it), so it
       // runs only for a caller that asked for a total.
       const wantsTotal = answeredByMe || count || limit !== undefined || offset !== undefined;
