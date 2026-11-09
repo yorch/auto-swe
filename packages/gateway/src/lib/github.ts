@@ -81,6 +81,11 @@ export const GITHUB_PER_PAGE = 100;
  *  Exported for the same reason as {@link GITHUB_PER_PAGE}. */
 export const GITHUB_MAX_PAGES = 5;
 
+/** GitHub's documented maximum webhook payload is 25 MB; GitHub does not deliver a larger one.
+ *  Read as 25 MiB so a payload at GitHub's cap is never refused. The GitHub webhook route
+ *  raises its `bodyLimit` to this because a push of many commits exceeds Fastify's 1 MiB default. */
+export const GITHUB_WEBHOOK_MAX_BODY_BYTES = 25 * 1024 * 1024;
+
 /**
  * Fetch up to `GITHUB_MAX_PAGES` pages (`per_page=GITHUB_PER_PAGE`) from a
  * paginated GitHub REST list endpoint, stopping as soon as a page returns fewer

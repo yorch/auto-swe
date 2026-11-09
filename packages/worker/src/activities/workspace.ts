@@ -1604,13 +1604,13 @@ export async function createWorkspace(
       }
     },
     gitIdentity,
+    installedTools,
     knowledgeBaseSnapshotIds: [
       ...(options?.knowledgeBaseSnapshotIds ??
         options?.knowledgeBases?.map((kb) => kb.snapshotId) ??
         []),
     ],
     knowledgeBases: mountedKnowledgeBases,
-    installedTools,
     ...(installLate ? { installTools: installLate } : {}),
     readFile: readWorkspaceFile,
     ...(options?.repoSetup

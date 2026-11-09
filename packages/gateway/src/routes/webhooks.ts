@@ -49,6 +49,7 @@ import { normalizeWorkflowRunEvent } from '../lib/automations/workflowRunFailed.
 import {
   GITHUB_MAX_PAGES,
   GITHUB_PER_PAGE,
+  GITHUB_WEBHOOK_MAX_BODY_BYTES,
   isWellFormedSignature,
   verifyGitHubSignature,
 } from '../lib/github.js';
@@ -355,12 +356,9 @@ async function verifyWebhookOrReject(
   // without a signature of the right shape cannot verify against any secret, so it must not
   // cost a lookup of one.
   const signature = request.headers['x-hub-signature-256'];
-  if (signature === undefined || signature === '') {
-    sendError(reply, 401, 'WEBHOOK_AUTH_FAILED', 'Missing signature');
-    return { ok: false };
-  }
-  if (!isWellFormedSignature(signature)) {
-    sendError(reply, 401, 'WEBHOOK_AUTH_FAILED', 'Invalid signature');
+  const signatureProblem = signatureHeaderProblem(signature);
+  if (signatureProblem !== null || !isWellFormedSignature(signature)) {
+    sendError(reply, 401, 'WEBHOOK_AUTH_FAILED', signatureProblem ?? 'Invalid signature');
     return { ok: false };
   }
   const resolved = await resolveWebhookSecret(
@@ -392,6 +390,152 @@ async function verifyWebhookOrReject(
   }
 
   return { host, ok: true };
+}
+
+/**
+ * What is wrong with an `X-Hub-Signature-256` header before any secret is looked up, or null when
+ * it has the shape of a signature. A value of another shape cannot verify against any secret.
+ */
+function signatureHeaderProblem(
+  signature: unknown
+): 'Invalid signature' | 'Missing signature' | null {
+  if (signature === undefined || signature === '') {
+    return 'Missing signature';
+  }
+  return isWellFormedSignature(signature) ? null : 'Invalid signature';
+}
+
+/** What the `POST /git` body parser decided about a delivery, for the handler to act on. */
+type GitDeliveryVerification =
+  | { host: string | null; ok: true }
+  | { message: string; ok: false; status: 400 | 401 };
+
+/** What the `POST /git` `preParsing` hook worked out from the headers alone. */
+interface GitDeliveryCredential {
+  host: string | null;
+  secret: string;
+}
+
+interface GitDeliveryRequest {
+  gitDeliveryCredential?: GitDeliveryCredential;
+  gitDeliveryVerification?: GitDeliveryVerification;
+}
+
+type FastifyJsonParser = ReturnType<FastifyInstance['getDefaultJsonParser']>;
+
+/**
+ * `preParsing` for `POST /git`: everything that depends on the headers alone is settled before
+ * any of the body is read. It is not `onRequest` because the rate limiter's own hook is appended
+ * to `onRequest`, so one of ours would run first: its refusals would never be counted, and an
+ * over-limit caller would still cost a secret lookup. `preParsing` runs after every `onRequest`
+ * hook and returns no payload, so the request stream reaches the body parser untouched. A delivery with no signature, or one of the wrong shape, is refused;
+ * so is one naming a host that is not approved, or with no secret to verify against. Which secret
+ * applies depends on the `X-GitHub-Enterprise-Host` header, never on the payload, so the body
+ * parser verifies synchronously with no await while the body is held. The answers match
+ * {@link verifyWebhookOrReject}. A lookup that throws stores nothing and answers as it always did.
+ */
+async function resolveGitDeliveryCredential(request: FastifyRequest, reply: FastifyReply) {
+  const problem = signatureHeaderProblem(request.headers['x-hub-signature-256']);
+  if (problem !== null) {
+    return sendError(reply, 401, 'WEBHOOK_AUTH_FAILED', problem);
+  }
+  const resolved = await resolveWebhookSecret(
+    request.server.prisma,
+    request.headers['x-github-enterprise-host']
+  );
+  if (resolved.status === 'host_not_approved') {
+    return sendError(reply, 401, 'WEBHOOK_AUTH_FAILED', 'Webhook host is not an approved host');
+  }
+  if (!resolved.secret) {
+    return sendError(reply, 401, 'WEBHOOK_AUTH_FAILED', 'Missing signature');
+  }
+  (request as FastifyRequest & GitDeliveryRequest).gitDeliveryCredential = {
+    host: resolved.host,
+    secret: resolved.secret,
+  };
+}
+
+/** The media type of a request, lower-cased and without parameters such as `; charset=utf-8`. */
+function mediaTypeOf(request: FastifyRequest): string {
+  return (request.headers['content-type'] ?? '').split(';')[0]?.trim().toLowerCase() ?? '';
+}
+
+/** Run Fastify's own JSON parser over text, so a bad body is refused exactly as it is elsewhere. */
+function parseJsonLikeFastify(
+  parseJson: FastifyJsonParser,
+  request: FastifyRequest,
+  text: string
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    parseJson(request, text, (err, parsed) => (err ? reject(err) : resolve(parsed)));
+  });
+}
+
+/**
+ * The `POST /git` body parser (JSON and form). It receives the body as bytes, verifies the
+ * signature over them against the secret the hook already chose, and parses only a verified
+ * body: a delivery that fails verification is left unparsed with its refusal on the request, for
+ * the handler to answer. JSON is parsed by Fastify's default parser, so malformed, empty and
+ * prototype-poisoning bodies are refused as before.
+ */
+function gitDeliveryBodyParser(parseJson: FastifyJsonParser) {
+  return async (request: FastifyRequest, body: Buffer): Promise<unknown> => {
+    const isForm = mediaTypeOf(request) === 'application/x-www-form-urlencoded';
+    if (!isForm && body.length === 0) {
+      // What Fastify's own JSON parser answers an empty body.
+      return parseJsonLikeFastify(parseJson, request, '');
+    }
+    const credential = (request as FastifyRequest & GitDeliveryRequest).gitDeliveryCredential;
+    const signature = request.headers['x-hub-signature-256'];
+    let verification: GitDeliveryVerification;
+    if (!credential) {
+      // The hook always runs first; a request that reaches here without its result fails closed.
+      verification = { message: 'Missing signature', ok: false, status: 401 };
+    } else if (body.length === 0) {
+      verification = { message: 'Missing raw body', ok: false, status: 400 };
+    } else if (
+      typeof signature !== 'string' ||
+      !isWellFormedSignature(signature) ||
+      !verifyGitHubSignature(body, signature, credential.secret)
+    ) {
+      verification = { message: 'Invalid signature', ok: false, status: 401 };
+    } else {
+      verification = { host: credential.host, ok: true };
+    }
+    (request as FastifyRequest & GitDeliveryRequest).gitDeliveryVerification = verification;
+    if (!verification.ok) {
+      return undefined;
+    }
+    // Decoded only now that the raw bytes are verified.
+    const text = body.toString('utf8');
+    if (!isForm) {
+      return parseJsonLikeFastify(parseJson, request, text);
+    }
+    request.rawFormBody = text;
+    const out: Record<string, string> = {};
+    for (const [k, v] of new URLSearchParams(text)) {
+      out[k] = v;
+    }
+    return out;
+  };
+}
+
+/** The verified host of a `POST /git` delivery, or the refusal answered in the usual envelope. */
+function verifiedGitDeliveryOrReject(
+  request: FastifyRequest,
+  reply: FastifyReply
+): VerifiedWebhook {
+  // A request with no content type has no body, so the parser did not run: it is missing its body.
+  const verification = (request as FastifyRequest & GitDeliveryRequest).gitDeliveryVerification ?? {
+    message: 'Missing raw body',
+    ok: false,
+    status: 400,
+  };
+  if (!verification.ok) {
+    sendError(reply, verification.status, 'WEBHOOK_AUTH_FAILED', verification.message);
+    return { ok: false };
+  }
+  return { host: verification.host, ok: true };
 }
 
 /**
@@ -619,357 +763,380 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   const signedRateLimit = { max: webhookMax, timeWindow: timeWindowMs };
 
   // POST /api/v1/webhooks/git
-  fastify.post(
-    '/git',
-    {
-      config: { rateLimit: signedRateLimit, rawBody: true },
-    },
-    async (request, reply) => {
-      const verified = await verifyWebhookOrReject(request, reply);
-      if (!verified.ok) {
-        return;
-      }
+  //
+  // Registered in its own scope because a content-type parser belongs to the scope it is added
+  // in, and this route's parser verifies before it parses. The body is also read once: the
+  // raw-body plugin is not applied here.
+  await fastify.register(async (gitScope) => {
+    // This scope starts with a copy of the app's parsers, including Fastify's text/plain one,
+    // which would buffer and decode an unverified body. Only the two kinds GitHub sends remain;
+    // any other content type is refused with 415.
+    gitScope.removeAllContentTypeParsers();
+    gitScope.addContentTypeParser(
+      ['application/json', 'application/x-www-form-urlencoded'],
+      { parseAs: 'buffer' },
+      // The app's own poisoning options (Fastify's default is 'error' when unset), so a body is refused here as it is elsewhere.
+      gitDeliveryBodyParser(
+        gitScope.getDefaultJsonParser(
+          gitScope.initialConfig.onProtoPoisoning ?? 'error',
+          gitScope.initialConfig.onConstructorPoisoning ?? 'error'
+        )
+      )
+    );
+    gitScope.post(
+      '/git',
+      {
+        bodyLimit: GITHUB_WEBHOOK_MAX_BODY_BYTES,
+        config: { rateLimit: signedRateLimit },
+        preParsing: resolveGitDeliveryCredential,
+      },
+      async (request, reply) => {
+        const verified = verifiedGitDeliveryOrReject(request, reply);
+        if (!verified.ok) {
+          return;
+        }
 
-      // The App's own lifecycle events arrive on the same webhook URL.
-      const eventType = request.headers['x-github-event'];
-      // Pull-request evaluation is a side effect of the same delivery: it never throws and
-      // never changes what the handlers below answer.
-      if (eventType === 'pull_request' || eventType === 'pull_request_review') {
-        const delivery = request.headers['x-github-delivery'];
-        await handlePrEvaluationDelivery(fastify, {
-          body: request.body,
-          deliveryId: typeof delivery === 'string' ? delivery : '',
-          eventType,
-          log: request.log,
-          verifiedHost: verified.host,
-        });
-      }
-      // And the counts of how people meet the brief: a review, or an inline comment on a file.
-      if (eventType === 'pull_request_review' || eventType === 'pull_request_review_comment') {
-        await handleBriefEngagementDelivery(fastify, {
-          body: request.body,
-          eventType,
-          log: request.log,
-          verifiedHost: verified.host,
-        });
-      }
-      // So do workflow runs: an App has one webhook URL.
-      if (eventType === 'workflow_run') {
-        return handleWorkflowRunDelivery(fastify, request.body, reply, verified.host);
-      }
-      // Pull-request review feedback: a review requesting changes or the `/auto-swe fix`
-      // command in a review body, an inline review comment, or a discussion comment.
-      if (
-        eventType === 'pull_request_review' ||
-        eventType === 'pull_request_review_comment' ||
-        eventType === 'issue_comment'
-      ) {
-        return handleSourceDelivery(
-          fastify,
-          prFeedbackSource,
-          normalizePrFeedbackEvent(eventType, request.body),
-          reply,
-          verified.host,
-          (event) =>
-            enrichPrFeedbackFacts(
-              fastify.prisma,
-              event as Occurrence<PrFeedbackFacts> & { repositoryId?: number },
-              verified.host,
-              request.log
-            )
-        );
-      }
-      // A label added to a pull request, for pull-request label automations. Every other
-      // `pull_request` action falls through to the lifecycle handler below, which ignores
-      // `labeled` itself, so only this action changes route.
-      if (
-        eventType === 'pull_request' &&
-        typeof request.body === 'object' &&
-        request.body !== null &&
-        (request.body as { action?: unknown }).action === 'labeled'
-      ) {
-        return handleSourceDelivery(
-          fastify,
-          prLabeledSource,
-          normalizePrLabeledEvent(request.body),
-          reply,
-          verified.host
-        );
-      }
-      // Knowledge-base indexing is independent of push automations. Without a configured
-      // automation, skip the engine's settings and repository reads.
-      if (eventType === 'push') {
-        await triggerKnowledgeBasePush(fastify, request.body, verified.host).catch(() => {
-          fastify.log.warn('knowledge base push sync failed');
-        });
-        return handleSourceDelivery(
-          fastify,
-          pushSource,
-          normalizePushEvent(request.body),
-          reply,
-          verified.host,
-          async (event) => {
-            const where = await webhookRepositoryWhere(
-              fastify.prisma,
-              event.org,
-              event.repoName,
-              event.repoHtmlUrl,
-              verified.host
-            );
-            const watched = await runUnscoped(
-              'a webhook names a host repository, not a team',
-              ['Connection'],
-              () =>
-                fastify.prisma.connection.findFirst({
-                  select: { id: true },
-                  where: {
-                    ...where,
-                    automations: { some: { source: pushSource.key } },
-                    isActive: true,
-                    type: 'git_repo',
-                  },
-                })
-            );
-            return watched
-              ? { facts: event.facts, type: 'ok' }
-              : { reason: 'no push automation on this repository', type: 'ignored' };
-          }
-        );
-      }
-      // And issues, for issue-label automations.
-      if (eventType === 'issues') {
-        return handleSourceDelivery(
-          fastify,
-          issueLabeledSource,
-          normalizeIssueLabeledEvent(request.body),
-          reply,
-          verified.host
-        );
-      }
-      if (typeof eventType === 'string' && INSTALLATION_EVENT_TYPES.has(eventType)) {
-        return {
-          data: await applyInstallationEvent(
-            fastify,
+        // The App's own lifecycle events arrive on the same webhook URL.
+        const eventType = request.headers['x-github-event'];
+        // Pull-request evaluation is a side effect of the same delivery: it never throws and
+        // never changes what the handlers below answer.
+        if (eventType === 'pull_request' || eventType === 'pull_request_review') {
+          const delivery = request.headers['x-github-delivery'];
+          await handlePrEvaluationDelivery(fastify, {
+            body: request.body,
+            deliveryId: typeof delivery === 'string' ? delivery : '',
             eventType,
-            request.body,
+            log: request.log,
+            verifiedHost: verified.host,
+          });
+        }
+        // And the counts of how people meet the brief: a review, or an inline comment on a file.
+        if (eventType === 'pull_request_review' || eventType === 'pull_request_review_comment') {
+          await handleBriefEngagementDelivery(fastify, {
+            body: request.body,
+            eventType,
+            log: request.log,
+            verifiedHost: verified.host,
+          });
+        }
+        // So do workflow runs: an App has one webhook URL.
+        if (eventType === 'workflow_run') {
+          return handleWorkflowRunDelivery(fastify, request.body, reply, verified.host);
+        }
+        // Pull-request review feedback: a review requesting changes or the `/auto-swe fix`
+        // command in a review body, an inline review comment, or a discussion comment.
+        if (
+          eventType === 'pull_request_review' ||
+          eventType === 'pull_request_review_comment' ||
+          eventType === 'issue_comment'
+        ) {
+          return handleSourceDelivery(
+            fastify,
+            prFeedbackSource,
+            normalizePrFeedbackEvent(eventType, request.body),
+            reply,
             verified.host,
-            request.headers['x-github-enterprise-host']
-          ),
-        };
-      }
+            (event) =>
+              enrichPrFeedbackFacts(
+                fastify.prisma,
+                event as Occurrence<PrFeedbackFacts> & { repositoryId?: number },
+                verified.host,
+                request.log
+              )
+          );
+        }
+        // A label added to a pull request, for pull-request label automations. Every other
+        // `pull_request` action falls through to the lifecycle handler below, which ignores
+        // `labeled` itself, so only this action changes route.
+        if (
+          eventType === 'pull_request' &&
+          typeof request.body === 'object' &&
+          request.body !== null &&
+          (request.body as { action?: unknown }).action === 'labeled'
+        ) {
+          return handleSourceDelivery(
+            fastify,
+            prLabeledSource,
+            normalizePrLabeledEvent(request.body),
+            reply,
+            verified.host
+          );
+        }
+        // Knowledge-base indexing is independent of push automations. Without a configured
+        // automation, skip the engine's settings and repository reads.
+        if (eventType === 'push') {
+          await triggerKnowledgeBasePush(fastify, request.body, verified.host).catch(() => {
+            fastify.log.warn('knowledge base push sync failed');
+          });
+          return handleSourceDelivery(
+            fastify,
+            pushSource,
+            normalizePushEvent(request.body),
+            reply,
+            verified.host,
+            async (event) => {
+              const where = await webhookRepositoryWhere(
+                fastify.prisma,
+                event.org,
+                event.repoName,
+                event.repoHtmlUrl,
+                verified.host
+              );
+              const watched = await runUnscoped(
+                'a webhook names a host repository, not a team',
+                ['Connection'],
+                () =>
+                  fastify.prisma.connection.findFirst({
+                    select: { id: true },
+                    where: {
+                      ...where,
+                      automations: { some: { source: pushSource.key } },
+                      isActive: true,
+                      type: 'git_repo',
+                    },
+                  })
+              );
+              return watched
+                ? { facts: event.facts, type: 'ok' }
+                : { reason: 'no push automation on this repository', type: 'ignored' };
+            }
+          );
+        }
+        // And issues, for issue-label automations.
+        if (eventType === 'issues') {
+          return handleSourceDelivery(
+            fastify,
+            issueLabeledSource,
+            normalizeIssueLabeledEvent(request.body),
+            reply,
+            verified.host
+          );
+        }
+        if (typeof eventType === 'string' && INSTALLATION_EVENT_TYPES.has(eventType)) {
+          return {
+            data: await applyInstallationEvent(
+              fastify,
+              eventType,
+              request.body,
+              verified.host,
+              request.headers['x-github-enterprise-host']
+            ),
+          };
+        }
 
-      const event = normalizeGitHubPullRequestEvent(request.body);
-      if (event.type === 'unrecognized') {
-        return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
-      }
-      if (event.type === 'ignored') {
-        return { data: { ignored: true } };
-      }
-      if (
-        !deliveryHostMatches(verified.host, event.repoHtmlUrl) ||
-        (await claimsHostWithOwnSecret(fastify.prisma, verified.host, event.repoHtmlUrl))
-      ) {
-        return HOST_MISMATCH;
-      }
+        const event = normalizeGitHubPullRequestEvent(request.body);
+        if (event.type === 'unrecognized') {
+          return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
+        }
+        if (event.type === 'ignored') {
+          return { data: { ignored: true } };
+        }
+        if (
+          !deliveryHostMatches(verified.host, event.repoHtmlUrl) ||
+          (await claimsHostWithOwnSecret(fastify.prisma, verified.host, event.repoHtmlUrl))
+        ) {
+          return HOST_MISMATCH;
+        }
 
-      const { org, prNumber, repoName } = event;
-      const repositoryWhere = await webhookRepositoryWhere(
-        fastify.prisma,
-        org,
-        repoName,
-        event.repoHtmlUrl,
-        verified.host
-      );
+        const { org, prNumber, repoName } = event;
+        const repositoryWhere = await webhookRepositoryWhere(
+          fastify.prisma,
+          org,
+          repoName,
+          event.repoHtmlUrl,
+          verified.host
+        );
 
-      if (event.type !== 'merged') {
-        return { data: await recordPullRequestChange(fastify, event, repositoryWhere) };
-      }
+        if (event.type !== 'merged') {
+          return { data: await recordPullRequestChange(fastify, event, repositoryWhere) };
+        }
 
-      // Find the tracked PR (include Slack context for the merge notification)
-      const pullRequest = await fastify.prisma.pullRequest.findFirst({
-        include: {
-          workflow: {
-            include: {
-              repository: { include: { team: { select: { slackNotifyChannel: true } } } },
-              workRequest: {
-                select: {
-                  externalTicketId: true,
-                  id: true,
-                  slackChannelId: true,
-                  slackMessageTs: true,
-                  ticketIsSynthetic: true,
+        // Find the tracked PR (include Slack context for the merge notification)
+        const pullRequest = await fastify.prisma.pullRequest.findFirst({
+          include: {
+            workflow: {
+              include: {
+                repository: { include: { team: { select: { slackNotifyChannel: true } } } },
+                workRequest: {
+                  select: {
+                    externalTicketId: true,
+                    id: true,
+                    slackChannelId: true,
+                    slackMessageTs: true,
+                    ticketIsSynthetic: true,
+                  },
                 },
               },
             },
           },
-        },
-        // The repository filter can match more than one connection row; the newest PR wins.
-        orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
-        where: {
-          prNumber,
-          repository: repositoryWhere,
-          // CLOSED too: a reopen that was lost or arrived late must not strand a merge.
-          status: { in: ['OPEN', 'CLOSED'] },
-        },
-      });
+          // The repository filter can match more than one connection row; the newest PR wins.
+          orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+          where: {
+            prNumber,
+            repository: repositoryWhere,
+            // CLOSED too: a reopen that was lost or arrived late must not strand a merge.
+            status: { in: ['OPEN', 'CLOSED'] },
+          },
+        });
 
-      if (!pullRequest?.workflow) {
-        return { data: { ignored: true, reason: 'No tracked workflow for this PR' } };
-      }
+        if (!pullRequest?.workflow) {
+          return { data: { ignored: true, reason: 'No tracked workflow for this PR' } };
+        }
 
-      // Atomic OPEN|CLOSED→MERGED guard, then signal, rolling back on failure — the
-      // same shape as `resolveHitlStep` in `lib/hitlResolve.ts`, for the same
-      // reason. The status predicate is the real concurrency guard
-      // (the lookup above is an optimistic fast-path): two concurrent
-      // deliveries of the same merge race here and only one updates a row.
-      const merged = await fastify.prisma.pullRequest.updateMany({
-        data: { closedAt: event.mergedAt, mergedAt: event.mergedAt, status: 'MERGED' },
-        where: { id: pullRequest.id, status: { in: ['OPEN', 'CLOSED'] } },
-      });
-      if (merged.count === 0) {
-        // Someone else won the race and is delivering the signal; a genuine
-        // duplicate delivery no-ops here instead of signaling twice.
-        return { data: { ignored: true, reason: 'PR already merged (duplicate delivery)' } };
-      }
+        // Atomic OPEN|CLOSED→MERGED guard, then signal, rolling back on failure — the
+        // same shape as `resolveHitlStep` in `lib/hitlResolve.ts`, for the same
+        // reason. The status predicate is the real concurrency guard
+        // (the lookup above is an optimistic fast-path): two concurrent
+        // deliveries of the same merge race here and only one updates a row.
+        const merged = await fastify.prisma.pullRequest.updateMany({
+          data: { closedAt: event.mergedAt, mergedAt: event.mergedAt, status: 'MERGED' },
+          where: { id: pullRequest.id, status: { in: ['OPEN', 'CLOSED'] } },
+        });
+        if (merged.count === 0) {
+          // Someone else won the race and is delivering the signal; a genuine
+          // duplicate delivery no-ops here instead of signaling twice.
+          return { data: { ignored: true, reason: 'PR already merged (duplicate delivery)' } };
+        }
 
-      // Signal the Temporal workflow. The workflow's merge wait only unblocks
-      // via this signal, so a TRANSIENT failure after the row moved to MERGED
-      // would strand it: a later delivery would no longer match the
-      // OPEN/CLOSED lookup and would be ignored. Roll the row back to its
-      // previous status (OPEN or CLOSED) and answer non-2xx, which marks the delivery failed in GitHub's webhook
-      // UI. GitHub does NOT retry a failed delivery on its own — recovery is a
-      // human pressing "Redeliver" (or the CI/merge state being re-observed);
-      // the rollback is what makes that redelivery able to work.
-      //
-      // A TERMINAL failure is the opposite case: the execution is gone (never
-      // started, already completed, or terminated), so no redelivery can ever
-      // land the signal and there is no run left to strand. Rolling back would
-      // then record a pre-merge status for a PR that IS merged on GitHub and invite an
-      // endless redeliver-fail-redeliver loop that can never succeed. Keep
-      // MERGED — recording the merge is the correct outcome — and answer 200.
-      let signalSent = true;
-      try {
-        await fastify.temporal.signalWorkflow(
-          pullRequest.workflow.temporalWorkflowId,
-          'humanMergeSignal',
-          [true]
-        );
-      } catch (err: unknown) {
-        if (!isTerminalSignalError(err)) {
-          request.log.error(
-            { err, prNumber, prRowId: pullRequest.id },
-            'Merge Temporal signal failed; rolling PR back to its previous status'
+        // Signal the Temporal workflow. The workflow's merge wait only unblocks
+        // via this signal, so a TRANSIENT failure after the row moved to MERGED
+        // would strand it: a later delivery would no longer match the
+        // OPEN/CLOSED lookup and would be ignored. Roll the row back to its
+        // previous status (OPEN or CLOSED) and answer non-2xx, which marks the delivery failed in GitHub's webhook
+        // UI. GitHub does NOT retry a failed delivery on its own — recovery is a
+        // human pressing "Redeliver" (or the CI/merge state being re-observed);
+        // the rollback is what makes that redelivery able to work.
+        //
+        // A TERMINAL failure is the opposite case: the execution is gone (never
+        // started, already completed, or terminated), so no redelivery can ever
+        // land the signal and there is no run left to strand. Rolling back would
+        // then record a pre-merge status for a PR that IS merged on GitHub and invite an
+        // endless redeliver-fail-redeliver loop that can never succeed. Keep
+        // MERGED — recording the merge is the correct outcome — and answer 200.
+        let signalSent = true;
+        try {
+          await fastify.temporal.signalWorkflow(
+            pullRequest.workflow.temporalWorkflowId,
+            'humanMergeSignal',
+            [true]
           );
-          await fastify.prisma.pullRequest
-            .updateMany({
-              data: {
-                closedAt: pullRequest.closedAt,
-                mergedAt: null,
-                status: pullRequest.status,
-              },
-              where: { id: pullRequest.id, status: 'MERGED' },
-            })
-            .catch((rollbackErr: unknown) => {
-              request.log.error(
-                { err: rollbackErr, prRowId: pullRequest.id },
-                'Merge rollback failed — PR stuck MERGED without a delivered signal'
-              );
-            });
-          return sendError(
-            reply,
-            503,
-            'SIGNAL_FAILED',
-            'Could not deliver the merge signal to the workflow — retry the delivery'
+        } catch (err: unknown) {
+          if (!isTerminalSignalError(err)) {
+            request.log.error(
+              { err, prNumber, prRowId: pullRequest.id },
+              'Merge Temporal signal failed; rolling PR back to its previous status'
+            );
+            await fastify.prisma.pullRequest
+              .updateMany({
+                data: {
+                  closedAt: pullRequest.closedAt,
+                  mergedAt: null,
+                  status: pullRequest.status,
+                },
+                where: { id: pullRequest.id, status: 'MERGED' },
+              })
+              .catch((rollbackErr: unknown) => {
+                request.log.error(
+                  { err: rollbackErr, prRowId: pullRequest.id },
+                  'Merge rollback failed — PR stuck MERGED without a delivered signal'
+                );
+              });
+            return sendError(
+              reply,
+              503,
+              'SIGNAL_FAILED',
+              'Could not deliver the merge signal to the workflow — retry the delivery'
+            );
+          }
+          signalSent = false;
+          request.log.warn(
+            { err, prNumber, prRowId: pullRequest.id },
+            'Merge signal target workflow no longer exists; keeping PR MERGED'
           );
         }
-        signalSent = false;
-        request.log.warn(
-          { err, prNumber, prRowId: pullRequest.id },
-          'Merge signal target workflow no longer exists; keeping PR MERGED'
-        );
-      }
 
-      // P0 evals: capture the human merge label as a normalized signal,
-      // resolving the WorkflowRun by workflowId (there is no direct PR→Run FK).
-      // Best-effort — wrapped so it can never block the merge signal path. Note:
-      // close-without-merge (the reject label) is not yet captured; the PR event
-      // normalizer maps those to `ignored`. Capturing rejects (to avoid
-      // survivorship bias in calibration) is a follow-up — see docs/evals-p0.md.
-      try {
-        const evalRun = await fastify.prisma.workflowRun.findFirst({
-          select: { id: true },
-          where: { workflowId: pullRequest.workflow.temporalWorkflowId },
-        });
-        if (evalRun) {
-          await fastify.prisma.evalResult.create({
-            data: {
-              metadata: { prNumber },
-              passed: true,
-              runId: evalRun.id,
-              scorer: 'merge',
-              scoreType: 'BOOLEAN',
-              source: 'MERGE',
-              value: 1,
+        // P0 evals: capture the human merge label as a normalized signal,
+        // resolving the WorkflowRun by workflowId (there is no direct PR→Run FK).
+        // Best-effort — wrapped so it can never block the merge signal path. Note:
+        // close-without-merge (the reject label) is not yet captured; the PR event
+        // normalizer maps those to `ignored`. Capturing rejects (to avoid
+        // survivorship bias in calibration) is a follow-up — see docs/evals-p0.md.
+        try {
+          const evalRun = await fastify.prisma.workflowRun.findFirst({
+            select: { id: true },
+            where: { workflowId: pullRequest.workflow.temporalWorkflowId },
+          });
+          if (evalRun) {
+            await fastify.prisma.evalResult.create({
+              data: {
+                metadata: { prNumber },
+                passed: true,
+                runId: evalRun.id,
+                scorer: 'merge',
+                scoreType: 'BOOLEAN',
+                source: 'MERGE',
+                value: 1,
+              },
+            });
+          }
+        } catch (err) {
+          // capture must never break the merge signal path
+          request.log.warn({ err }, 'eval-signal capture failed on PR merge (non-fatal)');
+        }
+
+        // Best-effort Slack "merged" notification back to the originating channel.
+        const wr = pullRequest.workflow.workRequest;
+        const originChannel = wr?.slackChannelId ?? null;
+        const teamChannel = pullRequest.workflow.repository?.team?.slackNotifyChannel ?? null;
+        const slackChannel = originChannel ?? teamChannel;
+        if (slackChannel) {
+          const botToken = await resolveSlackBotTokenForSlackChannel(slackChannel);
+          await postSlackMessage(
+            {
+              channel: slackChannel,
+              text: prMergedNoticeText(wr?.externalTicketId, prNumber),
+              ...(originChannel && wr?.slackMessageTs ? { threadTs: wr.slackMessageTs } : {}),
             },
+            botToken ?? undefined
+          ).catch((err: unknown) => {
+            request.log.warn({ err }, 'Slack merge notification failed (non-fatal)');
+            return null;
           });
         }
-      } catch (err) {
-        // capture must never break the merge signal path
-        request.log.warn({ err }, 'eval-signal capture failed on PR merge (non-fatal)');
-      }
 
-      // Best-effort Slack "merged" notification back to the originating channel.
-      const wr = pullRequest.workflow.workRequest;
-      const originChannel = wr?.slackChannelId ?? null;
-      const teamChannel = pullRequest.workflow.repository?.team?.slackNotifyChannel ?? null;
-      const slackChannel = originChannel ?? teamChannel;
-      if (slackChannel) {
-        const botToken = await resolveSlackBotTokenForSlackChannel(slackChannel);
-        await postSlackMessage(
-          {
-            channel: slackChannel,
-            text: prMergedNoticeText(wr?.externalTicketId, prNumber),
-            ...(originChannel && wr?.slackMessageTs ? { threadTs: wr.slackMessageTs } : {}),
+        // Best-effort tracker sync on PR merge — only for a ticket the tracker can know.
+        if (wr?.externalTicketId && isTrackerTicket(wr)) {
+          const trackerConfig = await resolveIssueTrackerConfig();
+          // The repository's own web base, not the instance's: it may be on
+          // another host.
+          const webBase =
+            pullRequest.workflow.repository?.githubUrl ?? (await resolveGitHubConfig()).baseUrl;
+          const prUrl = `${webBase}/${org}/${repoName}/pull/${prNumber}`;
+          await syncTrackerOnEvent(
+            {
+              issueId: wr.externalTicketId,
+              prTitle: `PR #${prNumber}`,
+              prUrl,
+              type: 'workflow_completed',
+            },
+            trackerConfig,
+            { runInputId: wr.id, warn: (message, meta) => request.log.warn(meta, message) }
+          ).catch((err: unknown) => {
+            request.log.warn({ err }, 'tracker sync failed (non-fatal)');
+            return null;
+          });
+        }
+
+        return {
+          data: {
+            signalSent,
+            workflowId: pullRequest.workflow.temporalWorkflowId,
+            ...(signalSent ? {} : { reason: 'Workflow no longer running; merge recorded only' }),
           },
-          botToken ?? undefined
-        ).catch((err: unknown) => {
-          request.log.warn({ err }, 'Slack merge notification failed (non-fatal)');
-          return null;
-        });
+        };
       }
-
-      // Best-effort tracker sync on PR merge — only for a ticket the tracker can know.
-      if (wr?.externalTicketId && isTrackerTicket(wr)) {
-        const trackerConfig = await resolveIssueTrackerConfig();
-        // The repository's own web base, not the instance's: it may be on
-        // another host.
-        const webBase =
-          pullRequest.workflow.repository?.githubUrl ?? (await resolveGitHubConfig()).baseUrl;
-        const prUrl = `${webBase}/${org}/${repoName}/pull/${prNumber}`;
-        await syncTrackerOnEvent(
-          {
-            issueId: wr.externalTicketId,
-            prTitle: `PR #${prNumber}`,
-            prUrl,
-            type: 'workflow_completed',
-          },
-          trackerConfig,
-          { runInputId: wr.id, warn: (message, meta) => request.log.warn(meta, message) }
-        ).catch((err: unknown) => {
-          request.log.warn({ err }, 'tracker sync failed (non-fatal)');
-          return null;
-        });
-      }
-
-      return {
-        data: {
-          signalSent,
-          workflowId: pullRequest.workflow.temporalWorkflowId,
-          ...(signalSent ? {} : { reason: 'Workflow no longer running; merge recorded only' }),
-        },
-      };
-    }
-  );
+    );
+  });
 
   // POST /api/v1/webhooks/access
   //
