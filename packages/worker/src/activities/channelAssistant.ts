@@ -3,8 +3,10 @@ import { prisma } from '@auto-swe/shared/db';
 import { CHANNEL_MEMORY_SUMMARIZER_PROMPT } from '@auto-swe/shared/lib/agentPrompts';
 import { currentYearMonth } from '@auto-swe/shared/lib/billing';
 import { releaseChannelBudgetHolds } from '@auto-swe/shared/lib/channelBudget';
+import { approvedRepositoryHosts } from '@auto-swe/shared/lib/connectionCredential';
 import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
 import type { ChannelAssistantTurnInput } from '@auto-swe/shared/types/workflow';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
@@ -17,6 +19,7 @@ import {
 } from '../lib/channelMemory.js';
 import { applyPersona, resolvePersonaPrompt } from '../lib/channelPersona.js';
 import {
+  cardToolPromptNote,
   DELEGATE_TOOL_PROMPT_NOTE,
   FOLLOWUP_INTENT_PROMPT_NOTE,
   GENERATE_WORKFLOW_TOOL_PROMPT_NOTE,
@@ -35,6 +38,7 @@ import {
   memoryWriteRefusalEvent,
 } from '../lib/memoryGuard.js';
 import { recordMemorySecurityEvent } from '../lib/memorySecurityEvent.js';
+import { parseSlackCard, renderSlackCard, slackCardPrompt } from '../lib/slackCard.js';
 import {
   fetchThreadReplies,
   postSlackThreadMessage,
@@ -235,6 +239,84 @@ function buildRefineWorkflowTool(onRefine: (intent: RefineWorkflowIntent) => voi
     inputSchema: RefineWorkflowInputSchema,
     outputSchema: GenerateWorkflowOutputSchema,
   });
+}
+
+/**
+ * A rendered Slack card the agent asked to post as its reply. Plain JSON on purpose: the workflow
+ * runs in a V8 isolate and cannot import the validator, so it receives `blocks` ready to send.
+ */
+export interface ChannelCard {
+  blocks: unknown[];
+  /** Plain-text fallback for notifications and clients that do not render blocks. */
+  text: string;
+}
+
+/** Output the agent sees back from `postCard`: either accepted, or the problems to fix. */
+const PostCardOutputSchema = z.object({
+  issues: z.array(z.string()).optional(),
+  note: z.string(),
+  posted: z.boolean(),
+});
+
+/**
+ * Build the `postCard` Mastra tool. Calling it VALIDATES the spec on the spot: a refusal comes back
+ * to the model as the tool result (every problem listed), so it can correct and call again within
+ * the same turn. An accepted card is RECORDED into `onCard` and rendered to Block Kit after the
+ * turn; nothing is posted from here. A later accepted call replaces an earlier one.
+ *
+ * `allowedLinkHosts` limits where a button may point: a channel is a lower-trust input, and a
+ * prompt-injected message must not be able to put an arbitrary link on a button.
+ */
+function buildPostCardTool(
+  allowedLinkHosts: readonly string[],
+  onCard: (card: ChannelCard) => void
+) {
+  return createTool({
+    description:
+      'Reply with a structured Slack card (header, text, fields, table, buttons) instead of ' +
+      'plain text. The spec is validated; if it is refused the problems are returned so you can fix it.',
+    execute: async ({ spec }) => {
+      const parsed = parseSlackCard(spec, { allowedLinkHosts });
+      if (!parsed.ok) {
+        return {
+          issues: parsed.issues.slice(0, MAX_CARD_ISSUES_REPORTED),
+          note: 'Card refused. Fix the listed problems and call postCard again.',
+          posted: false,
+        };
+      }
+      onCard(renderSlackCard(parsed.card));
+      return { note: 'Card accepted — it will be posted as your reply.', posted: true };
+    },
+    id: 'postCard',
+    inputSchema: z.object({
+      spec: z
+        .unknown()
+        .describe('The card: { summary?, blocks: Component[] } as described in your instructions.'),
+    }),
+    outputSchema: PostCardOutputSchema,
+  });
+}
+
+/** Cap on how many validation problems go back to the model in one tool result. */
+const MAX_CARD_ISSUES_REPORTED = 10;
+
+/**
+ * Hosts a card button may link to: the dashboard and the approved repository hosts. A failure
+ * resolving the repository hosts degrades to the dashboard alone, never to "any host".
+ */
+async function resolveCardLinkHosts(): Promise<string[]> {
+  const hosts: string[] = [];
+  try {
+    hosts.push(new URL(resolveWebUrl()).host.toLowerCase());
+  } catch {
+    // An unparseable WEB_URL contributes nothing; links then have no allowed host.
+  }
+  try {
+    hosts.push(...(await approvedRepositoryHosts()).map((h) => h.toLowerCase()));
+  } catch {
+    // Settings unreadable: keep the dashboard host only.
+  }
+  return [...new Set(hosts)];
 }
 
 /** Cap on how many retrieved memory items are injected into the prompt. */
@@ -846,6 +928,8 @@ export async function runHeldChannelTurn(
  */
 export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput): Promise<{
   reply: string;
+  /** A validated, rendered card to post in place of the reply text. */
+  card?: ChannelCard;
   delegate?: DelegateIntent;
   generate?: GenerateWorkflowIntent;
   refine?: RefineWorkflowIntent;
@@ -860,6 +944,8 @@ export async function runChannelAssistantTurn(input: ChannelAssistantTurnInput):
 
 async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Promise<{
   reply: string;
+  /** A validated, rendered card to post in place of the reply text. */
+  card?: ChannelCard;
   delegate?: DelegateIntent;
   generate?: GenerateWorkflowIntent;
   refine?: RefineWorkflowIntent;
@@ -973,6 +1059,15 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
     refine = intent;
   });
 
+  // Give the agent a `postCard` tool so it can answer with a structured Slack card. The tool
+  // validates the spec itself (a refusal goes back to the model to fix) and records an accepted
+  // card here; the workflow delivers it as the reply's blocks after the turn.
+  let card: ChannelCard | undefined;
+  const cardLinkHosts = await resolveCardLinkHosts();
+  const postCardTool = buildPostCardTool(cardLinkHosts, (rendered) => {
+    card = rendered;
+  });
+
   // Resolve the effective persona (channel overrides team default) and pass it
   // into runChannelAgentTurn so it's prepended to the system prompt.
   const personaPrompt = await resolvePersonaPrompt(
@@ -984,7 +1079,7 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
   // base note advertises delegate + generate + refine tools; a follow-up
   // continuation turn (Gap H) also appends the SKIP-aware intent note so the
   // agent stays out of conversations that aren't addressed to it.
-  const baseToolNote = `${DELEGATE_TOOL_PROMPT_NOTE}${GENERATE_WORKFLOW_TOOL_PROMPT_NOTE}${REFINE_WORKFLOW_TOOL_PROMPT_NOTE}`;
+  const baseToolNote = `${DELEGATE_TOOL_PROMPT_NOTE}${GENERATE_WORKFLOW_TOOL_PROMPT_NOTE}${REFINE_WORKFLOW_TOOL_PROMPT_NOTE}${cardToolPromptNote(slackCardPrompt({ linkHosts: cardLinkHosts }))}`;
   const promptNote = input.followup
     ? `${baseToolNote}${FOLLOWUP_INTENT_PROMPT_NOTE}`
     : baseToolNote;
@@ -1010,6 +1105,7 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
         tools: {
           delegateTask: delegateTool,
           generateWorkflow: generateWorkflowTool,
+          postCard: postCardTool,
           refineWorkflow: refineWorkflowTool,
         } as AgentTools,
       }
@@ -1033,7 +1129,7 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
   // (and didn't fire a tool) is suppressed — the cost already happened (budget
   // bounds it) but nothing is posted, so the assistant doesn't inject itself into
   // human-to-human chatter. Settle before returning so the budget still sees it.
-  if (input.followup && !delegate && !generate && !refine && SKIP_SENTINEL.test(reply)) {
+  if (input.followup && !delegate && !generate && !refine && !card && SKIP_SENTINEL.test(reply)) {
     await turn.hold.settle(costUsd);
     return { reply: '', suppressed: true };
   }
@@ -1075,11 +1171,22 @@ async function runChannelAssistantTurnImpl(input: ChannelAssistantTurnInput): Pr
     delegate = undefined;
   }
 
+  // The workflow answers an action intent with its own text, so a card posted alongside one would
+  // be dropped silently; say so here instead and send no card.
+  if (card && (generate || refine || delegate)) {
+    console.warn(
+      `[channelAssistant] postCard co-fired with an action intent for ${input.channelId}; dropping the card`
+    );
+    card = undefined;
+  }
+
   const ackFallback =
     delegate || generate || refine
       ? "On it — I'll follow up in this thread when it's done."
-      : "I wasn't able to come up with a response. Could you rephrase?";
-  return { delegate, generate, refine, reply: reply || ackFallback };
+      : card
+        ? card.text
+        : "I wasn't able to come up with a response. Could you rephrase?";
+  return { card, delegate, generate, refine, reply: reply || ackFallback };
 }
 
 /**
@@ -1299,8 +1406,10 @@ export async function postChannelReply(args: {
   slackChannelId: string;
   threadTs: string;
   text: string;
+  /** Block Kit blocks of a validated card; `text` is then the notification fallback. */
+  blocks?: unknown[];
 }): Promise<void> {
-  await postSlackThreadMessage(args.slackChannelId, args.threadTs, args.text);
+  await postSlackThreadMessage(args.slackChannelId, args.threadTs, args.text, args.blocks);
 }
 
 /**
@@ -1367,6 +1476,8 @@ export async function updateChannelReply(args: {
   slackChannelId: string;
   ts: string;
   text: string;
+  /** Block Kit blocks of a validated card; `text` is then the notification fallback. */
+  blocks?: unknown[];
 }): Promise<void> {
-  await updateSlackMessage(args.slackChannelId, args.ts, args.text);
+  await updateSlackMessage(args.slackChannelId, args.ts, args.text, args.blocks);
 }

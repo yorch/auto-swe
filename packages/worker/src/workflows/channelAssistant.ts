@@ -259,7 +259,8 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
   //    when we have its ts, otherwise post a fresh message. On error, do the same
   //    with friendly error text (preserving the graceful-fallback behavior).
   try {
-    const { reply, delegate, generate, refine, suppressed } = await runChannelAssistantTurn(input);
+    const { reply, card, delegate, generate, refine, suppressed } =
+      await runChannelAssistantTurn(input);
 
     // Gap H intent gate: a follow-up turn decided the latest message wasn't
     // addressed to it (SKIP) and fired no tool — post nothing (no placeholder was
@@ -365,7 +366,13 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
 
     // Always post the agent's reply (the "on it" ack when it delegated), prefixed
     // with any routing note (e.g. the code→general no-repo fallback note).
-    await deliver(input, placeholderTs, `${replyPrefix}${reply}`);
+    // A validated card replaces the text (the activity drops a card that co-fired with an intent,
+    // so `replyPrefix` is empty here); its `text` is the notification fallback.
+    if (card) {
+      await deliver(input, placeholderTs, card.text, card.blocks);
+    } else {
+      await deliver(input, placeholderTs, `${replyPrefix}${reply}`);
+    }
     return 'SUCCESS';
   } catch (err) {
     log.error('ChannelAssistantWorkflow failed; posting fallback to thread', {
@@ -388,15 +395,22 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
 async function deliver(
   input: ChannelAssistantTurnInput,
   placeholderTs: string | null,
-  text: string
+  text: string,
+  blocks?: unknown[]
 ): Promise<void> {
   if (placeholderTs) {
-    await updateChannelReply({ slackChannelId: input.slackChannelId, text, ts: placeholderTs });
+    await updateChannelReply({
+      slackChannelId: input.slackChannelId,
+      text,
+      ts: placeholderTs,
+      ...(blocks ? { blocks } : {}),
+    });
   } else {
     await postChannelReply({
       slackChannelId: input.slackChannelId,
       text,
       threadTs: input.threadTs,
+      ...(blocks ? { blocks } : {}),
     });
   }
 }

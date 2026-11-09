@@ -86,6 +86,27 @@ that part is authored. A channel-authored workflow never contains them. The draf
 like a delegated task. See
 [nl-workflow-authoring.md](./nl-workflow-authoring.md) for the authoring paths and their limits.
 
+**Structured replies.** The `postCard` tool lets the assistant answer with a Slack card (a table of
+runs, a cost breakdown, a status summary with links) instead of text. The model writes a small JSON
+spec against a closed catalog (`header`, `text`, `fields`, `table`, `context`, `divider`,
+`buttons`), never Block Kit. `lib/slackCard.ts` validates the spec when the tool is called, and a
+refusal comes back to the model as the tool result with every problem listed, so it corrects the
+spec and calls again within the same turn. Fixed code renders an accepted card to Block Kit, and
+the workflow delivers it as the reply's blocks with the card's text as the notification fallback.
+
+- **Caps are refused, not degraded.** A spec over Slack's per-message limits (50 blocks, section,
+  header and field text, 10 fields, 5 buttons per block), or a table that cannot fit one section,
+  is refused rather than trimmed.
+- **Text cannot ping or link.** Every model-supplied string has `&`, `<` and `>` escaped, so a card
+  cannot carry `<!channel>`, a `<@U…>` mention or a disguised link.
+- **Buttons are link buttons to known hosts.** A button may point only at the dashboard host
+  (`WEB_URL`) or an approved repository host (the GitHub integration's hosts and
+  `github.repositoryHosts`), by exact `host[:port]` match and never with embedded credentials. A
+  button carries no action: clicking it only opens the URL, and the gateway acknowledges the click
+  (`card_link_*`) for linked and unlinked users alike.
+- **An action intent wins.** A card posted in the same turn as `delegateTask`, `generateWorkflow` or
+  `refineWorkflow` is dropped, because the workflow answers those with its own text.
+
 **Injection scanning.** Channel input is scanned advisorily and surfaces as a `CHANNEL_SUSPICIOUS`
 security event in `/admin/security`.
 
@@ -415,6 +436,11 @@ unproven on real traffic, and turn them on one channel at a time.
   task, or generates a workflow; it has no route to an agent run. Adding one is a new feature with
   its own identity, RBAC, budget and security design (see
   [agent-runs.md §9](./agent-runs.md#9-relation-to-the-channel-assistant)).
+- **Cards are not on every Slack path.** Only a mention or follow-up turn can post one. Ambient
+  digests, reactive interjections and task results still post text, and a long-running task never
+  edits a card.
+- **A card is not summarised into channel memory.** The memory summariser sees the turn's prose,
+  which is at most a sentence when the answer was a card.
 - **Reactive interjection posts at channel root**, not into the most relevant thread.
 - **No per-stage progress posts** back into a task thread beyond the live `chat.update` on turns;
   the run itself is observable in `/runs`.
@@ -456,7 +482,7 @@ unproven on real traffic, and turn them on one channel at a time.
 |---|---|
 | Workflows | `workflows/channelAssistant.ts`, `channelScheduledTask.ts`, `channelReactive.ts`, `taskChild.ts` |
 | Activities | `activities/channelAssistant.ts`, `channelReactive.ts`, `channelTask.ts`, `channelTaskPlan.ts`, `channelOpenItems.ts`, `consolidateChannelMemory.ts`, `passiveIngestChannelMemory.ts` |
-| Worker libs | `lib/channelMemory.ts`, `channelPersona.ts`, `channelTurnPrompts.ts`, `embeddingClustering.ts`, `slackNotify.ts` |
+| Worker libs | `lib/channelMemory.ts`, `channelPersona.ts`, `channelTurnPrompts.ts`, `slackCard.ts`, `embeddingClustering.ts`, `slackNotify.ts` |
 | Steering | `workflows/runnable.ts` (`steer` handler), `activities/runAgentNode.ts` (`prependSteering`), `shared/workflow/interpreter.ts` (`drainSteering`) |
 | Gateway | `routes/slack.ts` + `routes/slack/events.ts` (events), `lib/slack/` (thread-reply steering, channel provisioning), `routes/slackChannels.ts`, `plugins/temporal.ts` (`startChannelAssistant`) |
 | Web | `app/admin/slack-channels/`, `app/teams/[id]/page.tsx` (persona card), `hooks/useSlackChannels.ts` |
