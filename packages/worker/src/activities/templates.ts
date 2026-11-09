@@ -23,7 +23,7 @@ import { isInputSchema, runAuthorizedConnectionIds } from '@auto-swe/shared/lib/
 import type { TrackerWriteback } from '@auto-swe/shared/lib/integrations/ticketFailure';
 import type { KnowledgeBaseOverrides } from '@auto-swe/shared/lib/knowledgeBaseResolution';
 import { loadReviewSource, reviewRunId } from '@auto-swe/shared/lib/reviewLaunch';
-import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import { resolveIssueTrackerConfig, resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { isTrackerTicket, syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
@@ -58,6 +58,7 @@ import {
   notifySlackStepFailure,
   postSlackThreadMessage,
 } from '../lib/slackNotify.js';
+import { buildTaskResultCard } from '../lib/taskResultCard.js';
 import { sumRunTraceUsage } from '../lib/traceTotals.js';
 import { accrueChannelUsage } from './channelAssistant.js';
 
@@ -1408,7 +1409,9 @@ export async function finalizeRun(
   // re-reads neither.
   await finalizeChannelTaskRun(runId, finalStatus, run?.workRequest, channelTaskPayload, {
     contextSnapshot,
+    endedAt: terminalUpdate.endedAt,
     report: notify,
+    startedAt: run?.startedAt,
     traceCostUsd: channelTraceCostUsd,
   });
 
@@ -1534,7 +1537,13 @@ async function finalizeChannelTaskRun(
     | null
     | undefined,
   payload: ChannelTaskPayload | null,
-  ctx: { contextSnapshot: unknown; report: boolean; traceCostUsd: number | undefined }
+  ctx: {
+    contextSnapshot: unknown;
+    report: boolean;
+    traceCostUsd: number | undefined;
+    startedAt?: Date | null | undefined;
+    endedAt?: Date | null | undefined;
+  }
 ): Promise<void> {
   // `payload` is the already-narrowed channel-task discriminant from
   // `finalizeWorkflowRun` (`readChannelTaskPayload`). Null → not a channel task.
@@ -1579,7 +1588,28 @@ async function finalizeChannelTaskRun(
   try {
     const reason = status === 'FAILED' ? await priceRefusalReason(runId) : undefined;
     const text = buildChannelTaskResultText(ctx.contextSnapshot, status, payload.title, reason);
-    await postSlackThreadMessage(slackChannelId, threadTs, text);
+    // A card (headline, the result, status/duration/cost, an Open run link) when it validates; the
+    // plain text report it always was otherwise, so a refused card never costs the thread its
+    // result.
+    const webUrl = resolveWebUrl();
+    let card: ReturnType<typeof buildTaskResultCard> = null;
+    try {
+      card = buildTaskResultCard({
+        costUsd: ctx.traceCostUsd,
+        dashboardHost: new URL(webUrl).host,
+        endedAt: ctx.endedAt,
+        fallbackText: text,
+        reason,
+        resultText: channelTaskResultText(ctx.contextSnapshot),
+        runUrl: `${webUrl.replace(/\/+$/, '')}/runs/${encodeURIComponent(runId)}`,
+        startedAt: ctx.startedAt,
+        status,
+        title: payload.title,
+      });
+    } catch {
+      // An unparseable WEB_URL: no card, plain text.
+    }
+    await postSlackThreadMessage(slackChannelId, threadTs, card?.text ?? text, card?.blocks);
   } catch (err) {
     // Best-effort: a Slack failure must not fail the finalize.
     logError(`[finalizeChannelTaskRun] failed to post result for channel ${channelId}:`, {
@@ -1616,6 +1646,18 @@ async function priceRefusalReason(runId: string): Promise<string | undefined> {
   }
 }
 
+/** The agent's answer text from a task run's context snapshot, or `''` when it produced none. */
+function channelTaskResultText(contextSnapshot: unknown): string {
+  const snapshot = (contextSnapshot ?? null) as {
+    nodes?: {
+      composite?: { output?: { text?: unknown } };
+      task?: { output?: { text?: unknown } };
+    };
+  } | null;
+  const out = snapshot?.nodes?.composite?.output?.text ?? snapshot?.nodes?.task?.output?.text;
+  return typeof out === 'string' ? out.trim() : '';
+}
+
 /**
  * Build the in-thread result message for a finished channel task. On SUCCESS we
  * surface the general-route agent's text result from the in-hand `contextSnapshot`.
@@ -1639,14 +1681,7 @@ export function buildChannelTaskResultText(
     return `:rotating_light: Task${titleLine} finished with status *${status}*.${why}`;
   }
 
-  const snapshot = (contextSnapshot ?? null) as {
-    nodes?: {
-      composite?: { output?: { text?: unknown } };
-      task?: { output?: { text?: unknown } };
-    };
-  } | null;
-  const out = snapshot?.nodes?.composite?.output?.text ?? snapshot?.nodes?.task?.output?.text;
-  const resultText = typeof out === 'string' ? out.trim() : '';
+  const resultText = channelTaskResultText(contextSnapshot);
 
   if (!resultText) {
     return `:white_check_mark: Task${titleLine} is done.`;
