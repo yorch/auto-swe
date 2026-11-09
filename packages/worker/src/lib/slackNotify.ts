@@ -228,9 +228,10 @@ function truncate(s: string, max: number): string {
 export async function postSlackThreadMessage(
   slackChannelId: string,
   threadTs: string,
-  text: string
+  text: string,
+  blocks?: unknown[]
 ): Promise<void> {
-  await postChannelMessage('postSlackThreadMessage', slackChannelId, text, threadTs);
+  await postChannelMessage('postSlackThreadMessage', slackChannelId, text, threadTs, blocks);
 }
 
 /**
@@ -268,7 +269,8 @@ export async function postSlackThreadMessageReturningTs(
 export async function updateSlackMessage(
   slackChannelId: string,
   ts: string,
-  text: string
+  text: string,
+  blocks?: unknown[]
 ): Promise<void> {
   const token = await resolveSlackBotTokenForSlackChannel(slackChannelId);
   if (!token) {
@@ -280,7 +282,13 @@ export async function updateSlackMessage(
   const timer = setTimeout(() => controller.abort(), SLACK_POST_TIMEOUT_MS);
   try {
     const res = await fetch(SLACK_UPDATE_URL, {
-      body: JSON.stringify({ channel: slackChannelId, text, ts }),
+      body: JSON.stringify({
+        // Sent only when given, so a text-only edit is byte-for-byte what it always was.
+        ...(blocks?.length ? { blocks } : {}),
+        channel: slackChannelId,
+        text,
+        ts,
+      }),
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json; charset=utf-8',

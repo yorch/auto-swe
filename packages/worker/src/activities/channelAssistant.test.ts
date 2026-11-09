@@ -112,6 +112,7 @@ import {
   isChannelOverBudget,
   isChannelOverBudgetNow,
   postChannelPlaceholder,
+  postChannelReply,
   reserveChannelTurn,
   runChannelAssistantTurn,
   updateChannelReply,
@@ -1359,7 +1360,21 @@ describe('postChannelPlaceholder / updateChannelReply (Phase 4)', () => {
   it('edits the placeholder in place via updateSlackMessage', async () => {
     await updateChannelReply({ slackChannelId: 'C123', text: 'the answer', ts: '123.456' });
 
-    expect(updateSlackMessageMock).toHaveBeenCalledWith('C123', '123.456', 'the answer');
+    expect(updateSlackMessageMock).toHaveBeenCalledWith('C123', '123.456', 'the answer', undefined);
+  });
+
+  it('forwards card blocks when editing the placeholder', async () => {
+    const blocks = [{ type: 'divider' }];
+    await updateChannelReply({ blocks, slackChannelId: 'C123', text: 'fallback', ts: '123.456' });
+
+    expect(updateSlackMessageMock).toHaveBeenCalledWith('C123', '123.456', 'fallback', blocks);
+  });
+
+  it('forwards card blocks when posting a fresh reply', async () => {
+    const blocks = [{ type: 'divider' }];
+    await postChannelReply({ blocks, slackChannelId: 'C123', text: 'fallback', threadTs: '1.2' });
+
+    expect(postSlackThreadMessageMock).toHaveBeenCalledWith('C123', '1.2', 'fallback', blocks);
   });
 });
 
@@ -1446,5 +1461,140 @@ describe('runChannelAssistantTurn — delegateTask (Phase A)', () => {
 
     expect(result.delegate).toBeUndefined();
     expect(result.reply).toBe('The deploy command is `yarn release`.');
+  });
+});
+
+/** Make the mocked turn call `postCard` once per spec (in order), then answer with `reply`. */
+function setTurnPostsCards(
+  specs: unknown[],
+  reply = '',
+  alsoDelegate = false
+): { results: unknown[] } {
+  const results: unknown[] = [];
+  runAgentMock.mockImplementation(
+    async (
+      spec: { tools?: Record<string, { execute: (i: unknown) => Promise<unknown> }> },
+      _msg,
+      opts: { spanName?: string } = {}
+    ) => {
+      if (opts.spanName === 'llm.channel_memory_summary') {
+        return {
+          costUsd: 0.001,
+          object: { lessonSummary: 'fact', rationale: 'why' },
+          usage: { inputTokens: 10, outputTokens: 5 },
+        };
+      }
+      for (const cardSpec of specs) {
+        results.push(await spec.tools?.postCard?.execute({ spec: cardSpec }));
+      }
+      if (alsoDelegate) {
+        await spec.tools?.delegateTask?.execute({
+          description: 'do it',
+          route: 'general',
+          title: 'Do it',
+        });
+      }
+      return { costUsd: 0.01, text: reply, usage: { inputTokens: 100, outputTokens: 50 } };
+    }
+  );
+  return { results };
+}
+
+describe('runChannelAssistantTurn — postCard', () => {
+  const goodCard = {
+    blocks: [
+      { text: 'Runs', type: 'header' },
+      { columns: ['Run', 'Status'], rows: [['a', 'ok']], type: 'table' },
+    ],
+  };
+
+  beforeEach(() => {
+    findChannel.mockResolvedValue({
+      agentKey: 'channelAssistant',
+      monthlyBudgetUsdCents: null,
+    } as never);
+  });
+
+  it('returns an accepted card rendered to blocks, with its fallback text as the reply', async () => {
+    const { results } = setTurnPostsCards([goodCard]);
+
+    const result = await runChannelAssistantTurn(makeInput({ userText: 'show my runs' }));
+
+    expect(results).toEqual([expect.objectContaining({ posted: true })]);
+    expect(result.card?.text).toBe('Runs');
+    expect(((result.card?.blocks ?? []) as Array<{ type: string }>).map((b) => b.type)).toEqual([
+      'header',
+      'section',
+    ]);
+    expect(result.reply).toBe('Runs');
+  });
+
+  it('hands the problems back to the model and returns no card when the spec is refused', async () => {
+    const { results } = setTurnPostsCards([{ blocks: [{ text: '', type: 'header' }] }], 'sorry');
+
+    const result = await runChannelAssistantTurn(makeInput());
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        issues: [expect.stringContaining('blocks.0.text')],
+        posted: false,
+      }),
+    ]);
+    expect(result.card).toBeUndefined();
+    expect(result.reply).toBe('sorry');
+  });
+
+  it('lets a corrected second call replace the refusal within one turn', async () => {
+    const { results } = setTurnPostsCards([{ blocks: [] }, goodCard]);
+
+    const result = await runChannelAssistantTurn(makeInput());
+
+    expect(results).toEqual([
+      expect.objectContaining({ posted: false }),
+      expect.objectContaining({ posted: true }),
+    ]);
+    expect(result.card?.text).toBe('Runs');
+  });
+
+  it('refuses a button that points outside the dashboard and approved repository hosts', async () => {
+    const link = (url: string) => ({
+      blocks: [{ items: [{ label: 'Open', url }], type: 'buttons' }],
+    });
+    const { results } = setTurnPostsCards([
+      link('https://evil.example/phish'),
+      link('http://localhost:3000/runs/1'),
+    ]);
+
+    const result = await runChannelAssistantTurn(makeInput());
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        issues: [expect.stringContaining('blocks.0.items.0.url')],
+        posted: false,
+      }),
+      expect.objectContaining({ posted: true }),
+    ]);
+    // The accepted (dashboard) link is the card that ships.
+    expect(JSON.stringify(result.card?.blocks)).toContain('http://localhost:3000/runs/1');
+    expect(JSON.stringify(result.card?.blocks)).not.toContain('evil.example');
+  });
+
+  it('drops the card when an action intent co-fired, keeping the ack path', async () => {
+    setTurnPostsCards([goodCard], 'On it.', true);
+
+    const result = await runChannelAssistantTurn(makeInput());
+
+    expect(result.delegate).toBeDefined();
+    expect(result.card).toBeUndefined();
+    expect(result.reply).toBe('On it.');
+  });
+
+  it('leaves card undefined for a plain-text answer', async () => {
+    setTurnReply({ text: 'Just text.' });
+
+    const result = await runChannelAssistantTurn(makeInput());
+
+    expect(result.card).toBeUndefined();
+    expect(result.reply).toBe('Just text.');
   });
 });

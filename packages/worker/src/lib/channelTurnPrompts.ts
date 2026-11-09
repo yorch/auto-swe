@@ -76,3 +76,18 @@ export const FOLLOWUP_INTENT_PROMPT_NOTE = [
   'teammates are talking among themselves and the latest message is NOT for you, do ',
   'NOT butt in — reply with exactly: SKIP',
 ].join('');
+
+/**
+ * Appended when the `postCard` tool is bound. The card IS the reply, so the model is told not to
+ * repeat it in prose; `catalog` is the component list from `slackCardPrompt()`.
+ */
+export function cardToolPromptNote(catalog: string): string {
+  const intro = [
+    'You also have a `postCard` tool for answers that are clearer as structured Slack content ',
+    '(a table of runs, a cost breakdown, a status summary with links). Pass it the card spec; ',
+    'if it reports problems, fix the spec and call it again. The card you post IS your reply, ',
+    'so do not repeat its content in prose; answer with at most one short sentence. ',
+    'Use plain text for anything conversational.',
+  ].join('');
+  return `\n${intro}\n${catalog}`;
+}

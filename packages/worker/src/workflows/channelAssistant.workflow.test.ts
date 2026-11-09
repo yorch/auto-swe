@@ -24,11 +24,13 @@ interface UpdateCall {
   slackChannelId: string;
   ts: string;
   text: string;
+  blocks?: unknown[];
 }
 interface PostCall {
   slackChannelId: string;
   threadTs: string;
   text: string;
+  blocks?: unknown[];
 }
 
 interface StartRunCall {
@@ -67,6 +69,7 @@ const calls: {
 let placeholderTs: string | null = '999.000';
 let placeholderThrows = false;
 let turnThrows = false;
+let turnCard: { blocks: unknown[]; text: string } | undefined;
 let turnReply = 'here is the answer';
 // Phase A: optional delegate intent returned by the turn, + the budget verdict.
 let turnDelegate:
@@ -182,6 +185,7 @@ const fakeActivities = {
       throw new Error('turn failed');
     }
     return {
+      card: turnCard,
       delegate: turnDelegate,
       generate: turnGenerate,
       refine: turnRefine,
@@ -241,6 +245,7 @@ beforeEach((ctx: TestContext) => {
   turnThrows = false;
   turnReply = 'here is the answer';
   turnDelegate = undefined;
+  turnCard = undefined;
   turnRefine = undefined;
   turnGenerate = undefined;
   draftResult = { name: 'Drafted Flow', summary: 'does a thing', templateId: 'tpl-1' };
@@ -291,6 +296,36 @@ describe('ChannelAssistantWorkflow (TestWorkflowEnvironment)', () => {
     });
     // No fresh post when the placeholder is editable.
     expect(calls.posts).toHaveLength(0);
+  }, 60_000);
+
+  it('edits the placeholder with the card blocks, and the card text as the fallback', async () => {
+    turnCard = { blocks: [{ type: 'divider' }], text: 'Run summary' };
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-card-live'));
+
+    expect(calls.updates).toEqual([
+      {
+        blocks: [{ type: 'divider' }],
+        slackChannelId: 'C123',
+        text: 'Run summary',
+        ts: '999.000',
+      },
+    ]);
+    expect(calls.posts).toHaveLength(0);
+  }, 60_000);
+
+  it('posts the card as a fresh message when there is no placeholder', async () => {
+    placeholderTs = null;
+    turnCard = { blocks: [{ type: 'divider' }], text: 'Run summary' };
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-card-fresh'));
+
+    expect(calls.posts).toEqual([
+      {
+        blocks: [{ type: 'divider' }],
+        slackChannelId: 'C123',
+        text: 'Run summary',
+        threadTs: '111.222',
+      },
+    ]);
   }, 60_000);
 
   it('creates the run record FIRST (keyed to the workflowId) then finalizes it SUCCESS', async () => {

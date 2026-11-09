@@ -830,6 +830,23 @@ describe('POST /api/v1/auth/slack/interactive — hitl_resolve buttons', () => {
     expect(state.humanStepUpdateCalls).toHaveLength(0);
   });
 
+  it.each([
+    ['an unlinked user', 'U-UNLINKED'],
+    ['a deactivated user', 'U-DEACTIVATED'],
+    ['a linked user', 'U1'],
+  ])('acknowledges a card link-button click from %s without acting', async (_label, slackId) => {
+    const res = await injectInteractive(
+      interactivePayload({
+        actions: [{ action_id: 'card_link_2_0' }],
+        user: { id: slackId },
+      })
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ data: { ignored: true, reason: 'link_button' } });
+    expect(state.signalCalls).toHaveLength(0);
+    expect(state.humanStepUpdateCalls).toHaveLength(0);
+  });
+
   it('politely rejects a Slack user with no linked account (no 403, ephemeral hint)', async () => {
     state.humanStep = pendingHumanStep();
     const res = await injectInteractive(interactivePayload({ user: { id: 'U-UNLINKED' } }));
