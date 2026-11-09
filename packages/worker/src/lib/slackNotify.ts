@@ -5,7 +5,7 @@ import {
 } from '@auto-swe/shared/lib/systemConfig';
 import { approvalAllowsRequestChanges } from '@auto-swe/shared/workflow';
 import { buildRunCompleteCard } from './runCompleteCard.js';
-import { escapeSlackText } from './slackEscape.js';
+import { escapeSlackText, neutralizeSlackBroadcasts } from './slackEscape.js';
 
 /**
  * Slack notifications. Four surfaces:
@@ -145,7 +145,9 @@ async function postToSlack(
   logLabel: string,
   blocks?: unknown[]
 ): Promise<{ channel: string; ts: string } | null> {
-  const body: Record<string, unknown> = { channel, text };
+  // Every post to Slack passes one of these three writers, so a broadcast mention is defused here
+  // whichever caller (or new caller) produced the text.
+  const body: Record<string, unknown> = { channel, text: neutralizeSlackBroadcasts(text) };
   if (threadTs) {
     body.thread_ts = threadTs;
   }
@@ -295,7 +297,7 @@ export async function updateSlackMessage(
         // Sent only when given, so a text-only edit is byte-for-byte what it always was.
         ...(blocks?.length ? { blocks } : {}),
         channel: slackChannelId,
-        text,
+        text: neutralizeSlackBroadcasts(text),
         ts,
       }),
       headers: {
@@ -505,7 +507,10 @@ async function postChannelMessage(
     throw new Error(`${label}: no Slack bot token configured`);
   }
 
-  const body: Record<string, unknown> = { channel: slackChannelId, text };
+  const body: Record<string, unknown> = {
+    channel: slackChannelId,
+    text: neutralizeSlackBroadcasts(text),
+  };
   if (threadTs) {
     body.thread_ts = threadTs;
   }
