@@ -284,6 +284,30 @@ describe('sweepChannelOpenItems', () => {
     );
   });
 
+  it('escapes the item description in a nudge but keeps the owner mention', async () => {
+    const staleItem = {
+      createdAt: new Date(Date.now() - 26 * 3_600_000),
+      description: 'ship it <!channel> <https://evil.example|click> & go',
+      id: 'item-evil',
+      lastNudgedAt: null,
+      ownerUserId: 'U003',
+    };
+    findChannel.mockResolvedValue(makeChannel() as never);
+    fetchChannelHistoryMock.mockResolvedValue(makeMessages(1));
+    findOpenItems.mockResolvedValueOnce([staleItem] as never).mockResolvedValueOnce([] as never);
+    agentGenerateMock.mockResolvedValue({
+      object: { newItems: [], resolvedIds: [] },
+      usage: { completionTokens: 20, promptTokens: 60 },
+    });
+
+    await sweepChannelOpenItems({ channelId: 'chan-1' });
+
+    expect(postSlackChannelMessageMock).toHaveBeenCalledWith(
+      'C0TEST',
+      '<@U003> Just checking in — any update on: _ship it &lt;!channel&gt; &lt;https://evil.example|click&gt; &amp; go_?'
+    );
+  });
+
   it('does not nudge an item still within the cooldown window', async () => {
     const recentlyNudged = {
       createdAt: new Date(Date.now() - 48 * 3_600_000),

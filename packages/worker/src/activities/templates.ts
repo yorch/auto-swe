@@ -52,6 +52,7 @@ import {
   snapshotAgentVersions,
   snapshotSkillRevisions,
 } from '../lib/runPins.js';
+import { escapeSlackText } from '../lib/slackEscape.js';
 import {
   notifySlackRunComplete,
   notifySlackStepFailure,
@@ -59,6 +60,7 @@ import {
 } from '../lib/slackNotify.js';
 import { sumRunTraceUsage } from '../lib/traceTotals.js';
 import { accrueChannelUsage } from './channelAssistant.js';
+
 import { enqueueReviewLaunchIntents } from './reviewLaunches.js';
 import {
   assertScheduledFireAuthorized,
@@ -1631,7 +1633,7 @@ export function buildChannelTaskResultText(
   title: string | undefined,
   reason?: string
 ): string {
-  const titleLine = title ? ` *${title}*` : '';
+  const titleLine = title ? ` *${escapeSlackText(title)}*` : '';
   if (status !== 'SUCCESS') {
     const why = reason ? ` ${reason}` : '';
     return `:rotating_light: Task${titleLine} finished with status *${status}*.${why}`;

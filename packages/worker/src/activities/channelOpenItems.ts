@@ -6,6 +6,7 @@ import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getBoundModel } from '../lib/models.js';
+import { escapeSlackText } from '../lib/slackEscape.js';
 import { fetchChannelHistory, postSlackChannelMessage } from '../lib/slackNotify.js';
 import { isChannelOverBudgetNow, reserveChannelTurn } from './channelAssistant.js';
 
@@ -305,7 +306,7 @@ export async function sweepChannelOpenItems(
       let nudgesSent = 0;
       for (const item of staleItems) {
         const mention = item.ownerUserId ? `<@${item.ownerUserId}> ` : '';
-        const nudge = `${mention}Just checking in — any update on: _${item.description}_?`;
+        const nudge = `${mention}Just checking in — any update on: _${escapeSlackText(item.description)}_?`;
         try {
           // Write the cooldown timestamp BEFORE posting (at-most-once): a
           // transient Slack failure after this write can't cause a duplicate nudge.

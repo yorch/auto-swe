@@ -456,6 +456,35 @@ describe('ChannelAssistantWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.updates[0]?.text).toContain('version 2');
   }, 60_000);
 
+  it('escapes a refined workflow name and summary in the reply', async () => {
+    turnRefine = { instruction: 'rename it' };
+    refineResult = {
+      name: '<!channel> Flow',
+      status: 'refined',
+      summary: '<@U1> & more',
+      version: 3,
+    };
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-refine-esc'));
+
+    const text = calls.updates[0]?.text ?? '';
+    expect(text).toContain('&lt;!channel&gt; Flow');
+    expect(text).toContain('&lt;@U1&gt; &amp; more');
+    expect(text).not.toMatch(/<[!@]/);
+  }, 60_000);
+
+  it('escapes a drafted workflow name and summary in the reply', async () => {
+    turnGenerate = { description: 'make one' };
+    draftResult = { name: '<!channel> Flow', summary: '<@U1> & more', templateId: 'tpl-1' };
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-draft-esc'));
+
+    const text = calls.updates[0]?.text ?? '';
+    expect(text).toContain('&lt;!channel&gt; Flow');
+    expect(text).toContain('&lt;@U1&gt; &amp; more');
+    expect(text).not.toMatch(/<[!@]/);
+  }, 60_000);
+
   it('posts a friendly note when there is nothing to refine yet', async () => {
     turnRefine = { instruction: 'change it' };
     refineResult = { status: 'no_target' };
