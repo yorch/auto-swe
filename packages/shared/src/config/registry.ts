@@ -1299,6 +1299,22 @@ export const SETTING_DEFINITIONS = {
     schema: z.boolean(),
   }),
 
+  // ── Personal desk ──────────────────────────────────────────────────────────
+  // Read per request by `GET /api/v1/me/summary`, which has no team: GLOBAL only.
+  'workflow.approvalDueSoonHours': defineSetting({
+    defaultValue: 24,
+    description:
+      "How close to its deadline a pending approval must be to count as due soon on a person's desk, where it is listed ahead of the rest. An approval with no deadline is never due soon.",
+    group: 'workflow',
+    label: 'Approval due-soon window',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(720),
+    unit: 'hours',
+  }),
+
   // ── Automation ledger ──────────────────────────────────────────────────────
   // Read by the daily ledger sweep, which has no team: GLOBAL only.
   'workflow.automationDecisionRetentionDays': defineSetting({

@@ -220,6 +220,56 @@ export interface TeamSummary {
   orgName: string;
 }
 
+/** What kind of obligation a "Needs you" row is. */
+export type MeNeedsYouKind = 'approval' | 'approval_due_soon' | 'failed_run' | 'pr_merge';
+
+/** One thing that needs the caller, across every team they belong to. */
+export interface MeNeedsYouItem {
+  /** Stable de-duplication key: a human-step id, or a run id for failures and PRs. */
+  key: string;
+  kind: MeNeedsYouKind;
+  title: string;
+  /** The team that owns the repository (or the template's team); null when it has none. */
+  teamId: string | null;
+  teamSlug: string | null;
+  teamName: string | null;
+  /** `owner/name` of the repository, when there is one. */
+  repoName: string | null;
+  runId: string | null;
+  /** The request this row belongs to, for linking to `/requests/:id`. */
+  requestId: string | null;
+  /** ISO deadline for an approval; null otherwise. */
+  dueAt: string | null;
+  /** ISO time the item became relevant (step created, run ended, PR opened). */
+  occurredAt: string;
+}
+
+/** The caller's standing in one of their own teams. */
+export interface MeSummaryTeam {
+  teamId: string;
+  slug: string;
+  name: string;
+  orgId: string;
+  orgName: string;
+  /** Never null: this list holds only teams the caller belongs to. */
+  myRole: 'ADMIN' | 'LEAD' | 'ENGINEER';
+  /** Items in `needsYou` that belong to this team. */
+  needsYou: number;
+  /** Runs started by or visible to the caller that are running now, on this team's repositories. */
+  running: number;
+  queued: number;
+}
+
+/** `GET /api/v1/me/summary`: the caller's cross-team desk in one response. */
+export interface MeSummary {
+  teams: MeSummaryTeam[];
+  needsYou: {
+    /** Total before the item cap; `items` holds the most urgent first. */
+    total: number;
+    items: MeNeedsYouItem[];
+  };
+}
+
 /** Shape returned by GET /api/v1/teams/:id (detail) */
 export interface TeamDetail extends TeamSummary {
   memberships: TeamMember[];

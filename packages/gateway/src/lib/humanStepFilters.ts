@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { memberRunScope } from './runTeamScope.js';
 import {
   buildWorkflowHumanStepControlFilter,
   buildWorkflowHumanStepVisibilityFilter,
@@ -60,4 +61,14 @@ export function humanStepListWhere(
         }
       : {}),
   };
+}
+
+/**
+ * The member-scope term of a personal desk: steps on runs of the caller's own teams' work. The
+ * visibility and control filters are `{}` for a platform ADMIN, so `mine=true` and the desk
+ * summary AND this beside {@link humanStepListWhere}; the list and the summary then count the
+ * same steps.
+ */
+export function humanStepMineScope(user: VisibilityActor): Prisma.WorkflowHumanStepWhereInput {
+  return { run: memberRunScope(user) };
 }

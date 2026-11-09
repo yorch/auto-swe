@@ -6,6 +6,7 @@ import type {
   AgentRunLimits,
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ME_SUMMARY_KEY } from '@/hooks/useMeSummary';
 import { api } from '@/lib/api';
 import { randomId } from '@/lib/randomId';
 
@@ -44,6 +45,7 @@ export function useAgentRunLimits(repoId: string | null) {
 function invalidateRuns(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ['workflows'] });
   qc.invalidateQueries({ queryKey: ['workflow-runs'] });
+  qc.invalidateQueries({ queryKey: ME_SUMMARY_KEY });
 }
 
 export function useLaunchAgentRun() {

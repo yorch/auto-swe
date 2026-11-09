@@ -15,6 +15,7 @@ import type {
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
+import { ME_SUMMARY_KEY } from '@/hooks/useMeSummary';
 import { api } from '@/lib/api';
 import { type DateRange, rangeKey, rangeQuery } from '@/lib/dateRange';
 import { randomId } from '@/lib/randomId';
@@ -368,6 +369,7 @@ export function useRunTemplate(templateId: string) {
       submission.current = null;
       qc.invalidateQueries({ queryKey: ['workflow-template-runs', templateId] });
       qc.invalidateQueries({ queryKey: ['workflow-runs'] });
+      qc.invalidateQueries({ queryKey: ME_SUMMARY_KEY });
     },
   });
 }

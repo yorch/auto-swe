@@ -475,6 +475,14 @@ jobs:
           TEAM_SCOPE_PG_TEST: '1'
         run: yarn test packages/gateway/src/routes/teamParam.pg.test.ts
 
+      # The personal desk: its approval, failure and pull-request counts against the lists they
+      # summarise, the platform ADMIN's member scope, and the per-team buckets, all relational
+      # predicates a mocked Prisma would not evaluate.
+      - name: Personal desk summary (database-backed tests)
+        env:
+          ME_SUMMARY_PG_TEST: '1'
+        run: yarn test packages/gateway/src/routes/meSummary.pg.test.ts
+
       # The read tools against the real route plugins and the same tables: what a
       # tool returns for a team member, an outsider, an ADMIN and a deactivated
       # user is what REST returns for them. Its own step, for the same reason: it

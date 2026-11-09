@@ -3,6 +3,7 @@
 import type { HumanStepSummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
+import { ME_SUMMARY_KEY } from '@/hooks/useMeSummary';
 import { api } from '@/lib/api';
 import { API_BASE } from '@/lib/config';
 
@@ -113,6 +114,7 @@ export function useRespondToApproval() {
       qc.invalidateQueries({ queryKey: ['approvals'] });
       qc.invalidateQueries({ queryKey: ['workflow-run'] });
       qc.invalidateQueries({ queryKey: ['workflow-runs'] });
+      qc.invalidateQueries({ queryKey: ME_SUMMARY_KEY });
     },
   });
 }

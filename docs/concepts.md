@@ -121,9 +121,10 @@ engineer's Admin holds Teams, Analytics, Automations and Knowledge. Settings and
 foot of the sidebar. Pages that moved keep their old addresses as permanent redirects, so a
 bookmark to `/workflows`, `/govern/…` or `/studio/…` still opens the page.
 
-**Home** presents the signed-in engineer's requests that need attention, work in progress, and
-recent successful results. The engineer can switch to team work; the team selector narrows the
-view. A successful execution is an output to review, not an acceptance of that output.
+**Home** is the personal desk described in [teams.md](./teams.md): the signed-in engineer's teams and what is waiting on them across all of them.
+Beneath it, Home lists the signed-in engineer's own requests in flight and their recent successful
+results. These lists are always the viewer's own work across every team: the top bar's team selector
+does not narrow them. A successful execution is an output to review, not an acceptance of that output.
 
 **Requests** (`/requests`) groups execution attempts by their work request. It defaults to the
 requester's own work, with team scope, task/ticket search, and status filters. Status filters apply

@@ -6,10 +6,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 // (lib/mcpGrants.pg.test.ts); here the routes' own behaviour is what matters.
 const mcpMocks = vi.hoisted(() => ({
   listMcpGrants: vi.fn(),
+  resolveSetting: vi.fn(),
   resolveSettings: vi.fn(),
   revokeMcpGrants: vi.fn(),
 }));
-vi.mock('@auto-swe/shared/config', () => ({ resolveSettings: mcpMocks.resolveSettings }));
+vi.mock('@auto-swe/shared/config', () => ({
+  resolveSetting: mcpMocks.resolveSetting,
+  resolveSettings: mcpMocks.resolveSettings,
+}));
 vi.mock('../lib/mcpGrants.js', () => ({
   listMcpGrants: mcpMocks.listMcpGrants,
   revokeMcpGrants: mcpMocks.revokeMcpGrants,

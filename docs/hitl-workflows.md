@@ -262,8 +262,11 @@ All endpoints require at least the `ENGINEER` role. Visibility follows the same 
 
 Returns up to 100 `PENDING` steps visible to the authenticated user, ordered by `requestedAt` descending.
 `status=ALL` also returns answered steps (up to 200). `actionable=true` narrows the list to pending,
-unexpired steps the caller may answer and has not already answered; it is what the sidebar count and
-the Home "Waiting on you" section read.
+unexpired steps the caller may answer and has not already answered; it is what the sidebar count
+reads. The Home desk reads the same predicate through `mine=true` ([teams.md](./teams.md)).
+
+`mine=true` keeps only steps on runs of the caller's own teams' work, which is what bounds a platform
+ADMIN's otherwise unrestricted list to the desk's ([teams.md](./teams.md)); it only narrows.
 
 `answeredByMe=true` narrows the list to steps the caller answered, of any kind and outcome: the step's
 `resolvedBy` is the caller (an approval, reject, decision, input or review, including the response that

@@ -68,4 +68,29 @@ describe('request execution grouping', () => {
     }
     expect(groupRequestExecutions([run])[0].needsMerge).toBe(true);
   });
+
+  it('names every failed and every merge-waiting execution of a multi-repository request', () => {
+    const merging = (id: string) => {
+      const run = execution(id, 'RUNNING', true);
+      if (run.workRequest) {
+        run.workRequest.activeWorkflows = [
+          { currentStatus: 'AWAITING_HUMAN_MERGE', temporalWorkflowId: id },
+        ];
+      }
+      return run;
+    };
+    const [group] = groupRequestExecutions([
+      execution('fail-a', 'FAILED', true),
+      execution('fail-b', 'TIMED_OUT', true),
+      merging('merge-a'),
+      merging('merge-b'),
+      execution('ok', 'SUCCESS', true),
+    ]);
+    expect(group).toMatchObject({
+      failedExecutionCount: 2,
+      failedRunIds: ['fail-a', 'fail-b'],
+      mergeRunIds: ['merge-a', 'merge-b'],
+      needsMerge: true,
+    });
+  });
 });

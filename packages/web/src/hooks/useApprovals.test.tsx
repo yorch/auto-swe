@@ -5,7 +5,8 @@ import { renderHook, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock } from '@/test/rtl-helpers';
-import { useApprovals, useApprovalsCount } from './useApprovals';
+import { useApprovals, useApprovalsCount, useRespondToApproval } from './useApprovals';
+import { ME_SUMMARY_KEY } from './useMeSummary';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -69,5 +70,19 @@ describe('useApprovalsCount', () => {
     await waitFor(() => expect(result.current).toBe(0));
     const observer = qc.getQueryCache().getAll()[0]?.observers[0];
     expect(observer?.options.refetchInterval).toBe(30_000);
+  });
+});
+
+describe('useRespondToApproval', () => {
+  it('refreshes the desk, which the approvals stream no longer does', async () => {
+    setupFetchMock({ '/api/v1/human-steps/s1/respond': () => ({}) });
+    const qc = new QueryClient();
+    const invalidate = vi.spyOn(qc, 'invalidateQueries');
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useRespondToApproval(), { wrapper });
+    result.current.mutate({ action: 'approve', id: 's1' });
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ME_SUMMARY_KEY }));
   });
 });

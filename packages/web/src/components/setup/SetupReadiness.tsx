@@ -1,9 +1,9 @@
 'use client';
 
 import Link from 'next/link';
+import { OnboardingCard } from '@/components/setup/OnboardingCard';
 import { Alert } from '@/components/ui/Alert';
 import { ButtonLink } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 import { Icon } from '@/components/ui/Icon';
 import { useHasRole } from '@/hooks/useHasRole';
 import { type ReadinessItemId, useReadiness } from '@/hooks/useReadiness';
@@ -31,18 +31,17 @@ export function SetupReadiness() {
   // The first unfinished step is the one to do next; it gets the primary button.
   const nextId = data.items.find((i) => !i.ok)?.id;
   return (
-    <Card className="border-warning-400/30" data-testid="setup-readiness">
-      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold tracking-tight text-paper-50">Finish setting up</h2>
-          <p className="mt-1 text-sm text-paper-400">
-            {missing === 1 ? 'One step is' : `${missing} steps are`} left before runs can succeed.
-          </p>
-        </div>
+    <OnboardingCard
+      className="border-warning-400/30"
+      status={
         <span className="tabular text-sm text-paper-300">
           {done} of {total} done
         </span>
-      </div>
+      }
+      subtitle={`${missing === 1 ? 'One step is' : `${missing} steps are`} left before runs can succeed.`}
+      testId="setup-readiness"
+      title="Finish setting up"
+    >
       <div
         aria-label="Setup progress"
         aria-valuemax={total}
@@ -103,7 +102,7 @@ export function SetupReadiness() {
           </li>
         ))}
       </ol>
-    </Card>
+    </OnboardingCard>
   );
 }
 

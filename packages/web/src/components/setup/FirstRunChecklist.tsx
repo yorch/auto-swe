@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import type { ReactNode } from 'react';
+import { OnboardingCard } from '@/components/setup/OnboardingCard';
 import { Button } from '@/components/ui/Button';
-import { Card } from '@/components/ui/Card';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { useAnsweredGate } from '@/hooks/useAnsweredGate';
@@ -113,31 +113,29 @@ function FirstRunChecklistBody() {
   const doneCount = steps.filter((step) => step.done).length;
 
   return (
-    <Card data-testid="first-run-checklist">
-      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold tracking-tight text-paper-50">Your first run</h2>
-          <p className="mt-1 text-sm text-paper-400">
-            Steps tick themselves off from what the platform records for you.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="tabular text-sm text-paper-300">
-            {doneCount} of {steps.length} done
-          </span>
-          <Button
-            aria-label="Dismiss the first-run checklist"
-            onClick={() => {
-              dismiss();
-              focusMainContent();
-            }}
-            size="sm"
-            variant="ghost"
-          >
-            Dismiss
-          </Button>
-        </div>
-      </div>
+    <OnboardingCard
+      actions={
+        <Button
+          aria-label="Dismiss the first-run checklist"
+          onClick={() => {
+            dismiss();
+            focusMainContent();
+          }}
+          size="sm"
+          variant="ghost"
+        >
+          Dismiss
+        </Button>
+      }
+      status={
+        <span className="tabular text-sm text-paper-300">
+          {doneCount} of {steps.length} done
+        </span>
+      }
+      subtitle="Steps tick themselves off from what the platform records for you."
+      testId="first-run-checklist"
+      title="Your first run"
+    >
       <ol className="mt-5 divide-y divide-ink-600 overflow-hidden rounded-lg border border-ink-500/60">
         {steps.map((step, index) => (
           <li
@@ -186,6 +184,6 @@ function FirstRunChecklistBody() {
           </li>
         ))}
       </ol>
-    </Card>
+    </OnboardingCard>
   );
 }
