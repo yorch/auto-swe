@@ -1,5 +1,3 @@
-import { approvedRepositoryHosts } from '@auto-swe/shared/lib/connectionCredential';
-import { resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { parseSlackCard, renderSlackCard } from './slackCard.js';
@@ -63,21 +61,4 @@ export function buildPostCardTool(
 /** Cap on how many validation problems go back to the model in one tool result. */
 const MAX_CARD_ISSUES_REPORTED = 10;
 
-/**
- * Hosts a card button may link to: the dashboard and the approved repository hosts. A failure
- * resolving the repository hosts degrades to the dashboard alone, never to "any host".
- */
-export async function resolveCardLinkHosts(): Promise<string[]> {
-  const hosts: string[] = [];
-  try {
-    hosts.push(new URL(resolveWebUrl()).host.toLowerCase());
-  } catch {
-    // An unparseable WEB_URL contributes nothing; links then have no allowed host.
-  }
-  try {
-    hosts.push(...(await approvedRepositoryHosts()).map((h) => h.toLowerCase()));
-  } catch {
-    // Settings unreadable: keep the dashboard host only.
-  }
-  return [...new Set(hosts)];
-}
+export { resolveCardLinkHosts } from './cardLinkHosts.js';

@@ -11,6 +11,11 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWebUrl: () => process.env.TEST_WEB_URL ?? 'http://localhost:3000',
 }));
 
+vi.mock('@auto-swe/shared/lib/connectionCredential', () => ({
+  approvedRepositoryHosts: async () =>
+    (process.env.TEST_REPO_HOSTS ?? '').split(',').filter(Boolean),
+}));
+
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     runInput: { findUnique: vi.fn() },
@@ -53,6 +58,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   delete process.env.SLACK_BOT_TOKEN;
   delete process.env.TEST_WEB_URL;
+  delete process.env.TEST_REPO_HOSTS;
   findRun.mockReset();
   findTeam.mockReset();
   findWorkRequest.mockReset();
@@ -868,6 +874,7 @@ describe('broadcast mentions in model-written text are defused at the Slack writ
   });
 
   it('a notice built by fixed code (no broadcast in it) is unchanged', async () => {
+    process.env.TEST_WEB_URL = 'not a url'; // no dashboard link: the plain one-line notice
     findRun.mockResolvedValue({
       template: { name: 'tmpl' },
       workflowId: 'wf-ok',
@@ -880,5 +887,108 @@ describe('broadcast mentions in model-written text are defused at the Slack writ
     } as never);
     await notifySlackStepFailure({ attempt: 1, error: 'boom', nodeId: 'lint', runId: 'r1' });
     expect(lastBody().text).toBe('*[JIRA-9]* `tmpl` → step `lint` failed (attempt 1): boom');
+  });
+});
+
+describe('step-failure and PR-ready notices as cards', () => {
+  interface Posted {
+    text: string;
+    blocks?: Array<{
+      type: string;
+      text?: { text: string };
+      fields?: Array<{ text: string }>;
+      elements?: Array<{ url: string; text: { text: string } }>;
+    }>;
+  }
+  const posted = (): Posted => {
+    const call = fetchCalls[0];
+    if (!call) {
+      throw new Error('expected a Slack call');
+    }
+    return call.body as Posted;
+  };
+
+  function failingRun() {
+    findRun.mockResolvedValue({
+      template: { name: 'ticket-to-merge' },
+      workflowId: 'wf-card',
+      workRequest: {
+        activeWorkflows: [],
+        externalTicketId: 'JIRA-7',
+        slackChannelId: 'C123',
+        slackMessageTs: '1700.5',
+      },
+    } as never);
+  }
+
+  it('step failure: step, attempt, the error and an Open run link', async () => {
+    failingRun();
+    await notifySlackStepFailure({
+      attempt: 1,
+      error: 'lint failed',
+      nodeId: 'runLint',
+      runId: 'r 1',
+    });
+
+    const body = posted();
+    expect(body.text).toContain('JIRA-7');
+    expect(body.text).toContain('runLint');
+    expect(body.blocks?.map((b) => b.type)).toEqual(['section', 'section', 'section', 'actions']);
+    expect(body.blocks?.[1]?.fields?.map((f) => f.text)).toEqual([
+      '*Step*\nrunLint',
+      '*Attempt*\n1',
+    ]);
+    expect(body.blocks?.[2]?.text?.text).toBe('```\nlint failed\n```');
+    expect(body.blocks?.[3]?.elements?.[0]?.url).toBe('http://localhost:3000/runs/r%201');
+  });
+
+  it('step failure without an error text has no code block', async () => {
+    failingRun();
+    await notifySlackStepFailure({ attempt: 1, nodeId: 'runLint', runId: 'r1' });
+    expect(posted().blocks?.map((b) => b.type)).toEqual(['section', 'section', 'actions']);
+  });
+
+  it('PR ready: an Open PR button when the PR is on an approved host', async () => {
+    process.env.TEST_REPO_HOSTS = 'github.com';
+    findWorkRequest.mockResolvedValue({
+      activeWorkflows: [],
+      externalTicketId: 'JIRA-5',
+      slackChannelId: 'C-origin',
+      slackMessageTs: '1700.5',
+    } as never);
+    await notifySlackPrReady({
+      prNumber: 7,
+      prUrl: 'https://github.com/o/r/pull/7',
+      workRequestId: 'wr-1',
+    });
+
+    const body = posted();
+    expect(body.text).toContain('JIRA-5');
+    expect(body.blocks?.map((b) => b.type)).toEqual(['section', 'actions']);
+    expect(body.blocks?.[1]?.elements?.[0]).toMatchObject({
+      text: { text: 'Open PR' },
+      url: 'https://github.com/o/r/pull/7',
+    });
+  });
+
+  it('PR ready: a PR on an unapproved host keeps the plain line with its link', async () => {
+    process.env.TEST_REPO_HOSTS = 'github.com';
+    findWorkRequest.mockResolvedValue({
+      activeWorkflows: [],
+      externalTicketId: 'JIRA-5',
+      slackChannelId: 'C-origin',
+      slackMessageTs: '1700.5',
+    } as never);
+    await notifySlackPrReady({
+      prNumber: 7,
+      prUrl: 'https://ghe.unlisted.example/o/r/pull/7',
+      workRequestId: 'wr-1',
+    });
+
+    const body = posted();
+    expect(body.blocks).toBeUndefined();
+    expect(body.text).toBe(
+      ':eyes: *[JIRA-5]* PR #7 is ready for review: https://ghe.unlisted.example/o/r/pull/7'
+    );
   });
 });
