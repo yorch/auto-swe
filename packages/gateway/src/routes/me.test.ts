@@ -117,6 +117,80 @@ describe('meRoutes', () => {
       );
     });
 
+    it('persists lastTeamSlug and a de-duplicated pinnedTeamSlugs', async () => {
+      ctx.mockPrisma.user.findUniqueOrThrow.mockResolvedValueOnce({ preferences: {} });
+      ctx.mockPrisma.user.update.mockResolvedValueOnce({ preferences: {} });
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload: {
+          lastTeamSlug: 'payments',
+          pinnedTeamSlugs: ['payments', 'platform', 'payments'],
+        },
+        url: '/api/v1/me/preferences',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            preferences: { lastTeamSlug: 'payments', pinnedTeamSlugs: ['payments', 'platform'] },
+          },
+        })
+      );
+    });
+
+    it('keeps an existing runDetailLayout when only team slugs are patched', async () => {
+      ctx.mockPrisma.user.findUniqueOrThrow.mockResolvedValueOnce({
+        preferences: { runDetailLayout: 'C' },
+      });
+      ctx.mockPrisma.user.update.mockResolvedValueOnce({ preferences: {} });
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload: { lastTeamSlug: 'payments', pinnedTeamSlugs: ['payments'] },
+        url: '/api/v1/me/preferences',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            preferences: {
+              lastTeamSlug: 'payments',
+              pinnedTeamSlugs: ['payments'],
+              runDetailLayout: 'C',
+            },
+          },
+        })
+      );
+    });
+
+    it('accepts a null lastTeamSlug to clear it', async () => {
+      ctx.mockPrisma.user.findUniqueOrThrow.mockResolvedValueOnce({ preferences: {} });
+      ctx.mockPrisma.user.update.mockResolvedValueOnce({ preferences: {} });
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload: { lastTeamSlug: null },
+        url: '/api/v1/me/preferences',
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it.each([
+      { lastTeamSlug: 'Not A Slug' },
+      { pinnedTeamSlugs: ['UPPER'] },
+      { pinnedTeamSlugs: Array.from({ length: 21 }, (_, i) => `team-${i}`) },
+    ])('rejects an invalid team preference %#', async (payload) => {
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload,
+        url: '/api/v1/me/preferences',
+      });
+      expect(res.statusCode).toBe(400);
+      expect(ctx.mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
     it('strips unknown keys from the request body', async () => {
       ctx.mockPrisma.user.findUniqueOrThrow.mockResolvedValueOnce({
         preferences: {},

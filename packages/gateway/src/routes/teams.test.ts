@@ -30,6 +30,9 @@ interface TeamRow {
   slug: string;
   shellImageAllowlist: string[];
   egressAllowlist: string[];
+  isActive?: boolean;
+  orgId?: string;
+  orgName?: string;
 }
 
 interface State {
@@ -45,6 +48,8 @@ interface State {
   /** Rows `connectionTeamShare.findMany` returns, and the queries it was asked. */
   shares?: Array<{ connection: Record<string, unknown> }>;
   shareQueries?: Array<{ where: Record<string, unknown> }>;
+  /** The `findMany` arguments `GET /teams` passed to prisma. */
+  teamQueries?: Array<{ include: Record<string, unknown>; where: Record<string, unknown> }>;
   /** Rows written to the configuration audit log. */
   audits?: Array<{ action: string; entityType: string; [key: string]: unknown }>;
 }
@@ -134,6 +139,36 @@ function buildApp(state: State): FastifyInstance {
             ors.some((o) => (o.name && t.name === o.name) || (o.slug && t.slug === o.slug))
           ) ?? null
         );
+      },
+      findMany: async (args: {
+        where: { AND?: Array<{ isActive?: boolean; memberships?: { some: { userId: string } } }> };
+        include: { memberships: { where: { userId: string } } };
+      }) => {
+        const { where, include } = args;
+        state.teamQueries = [...(state.teamQueries ?? []), args];
+        const clauses = where.AND ?? [];
+        // Apply isActive from each row's own flag, not by trusting the shape of the clause.
+        const wantsActive = clauses.some((c) => c.isActive === true);
+        return state.teams
+          .filter((t) => !wantsActive || (t.isActive ?? true))
+          .filter((t) =>
+            clauses.every(
+              (c) =>
+                !c.memberships ||
+                state.memberships.some(
+                  (m) => m.teamId === t.id && m.userId === c.memberships?.some.userId
+                )
+            )
+          )
+          .map(({ orgName, ...t }) => ({
+            ...t,
+            _count: { memberships: 0, repositories: 0 },
+            memberships: state.memberships
+              .filter((m) => m.teamId === t.id && m.userId === include.memberships.where.userId)
+              .map((m) => ({ role: m.role })),
+            organization: { name: orgName ?? 'Acme' },
+            orgId: t.orgId ?? 'org-1',
+          }));
       },
       findUnique: async ({ where }: { where: { id?: string; slug?: string } }) =>
         state.teams.find((t) => (where.id ? t.id === where.id : t.slug === where.slug)) ?? null,
@@ -244,6 +279,121 @@ describe('GET /api/v1/teams/:id shared repositories', () => {
       connection: { isActive: true, type: 'git_repo' },
       teamId: TEAM_ID,
     });
+  });
+});
+
+describe('GET /api/v1/teams', () => {
+  const OTHER_TEAM_ID = '00000000-0000-4000-8000-000000000002';
+  const twoTeams = (overrides?: Partial<State>) =>
+    freshState({
+      teams: [
+        {
+          egressAllowlist: [],
+          id: TEAM_ID,
+          name: 'platform',
+          orgId: 'org-1',
+          orgName: 'Acme',
+          shellImageAllowlist: [],
+          slug: 'platform',
+        },
+        {
+          egressAllowlist: [],
+          id: OTHER_TEAM_ID,
+          name: 'zeta',
+          orgId: 'org-2',
+          orgName: 'Globex',
+          shellImageAllowlist: [],
+          slug: 'zeta',
+        },
+      ],
+      ...overrides,
+    });
+  const list = async (state: State, query = '') => {
+    const res = await buildApp(state).inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: `/api/v1/teams${query}`,
+    });
+    expect(res.statusCode).toBe(200);
+    return JSON.parse(res.payload).data as Array<Record<string, unknown>>;
+  };
+
+  it.each(['ADMIN', 'LEAD', 'ENGINEER'] as const)(
+    'reports a %s membership as myRole',
+    async (role) => {
+      const state = twoTeams({ userRole: 'ENGINEER' });
+      state.memberships[0].role = role;
+      const data = await list(state);
+      expect(data).toHaveLength(1);
+      const expected = state.teams[0];
+      expect(data[0]).toMatchObject({
+        id: TEAM_ID,
+        myRole: role,
+        orgId: expected.orgId,
+        orgName: expected.orgName,
+      });
+    }
+  );
+
+  it('gives a platform ADMIN every team, with a null myRole where they are not a member', async () => {
+    const data = await list(twoTeams({ userRole: 'ADMIN' }));
+    expect(data.map((t) => [t.id, t.myRole])).toEqual([
+      [TEAM_ID, 'LEAD'],
+      [OTHER_TEAM_ID, null],
+    ]);
+  });
+
+  it('narrows a platform ADMIN to their own teams with member=true', async () => {
+    const data = await list(twoTeams({ userRole: 'ADMIN' }), '?member=true');
+    expect(data.map((t) => t.id)).toEqual([TEAM_ID]);
+    const all = await list(twoTeams({ userRole: 'ADMIN' }), '?member=false');
+    expect(all).toHaveLength(2);
+  });
+
+  it('reports each team its own org', async () => {
+    const data = await list(twoTeams({ userRole: 'ADMIN' }));
+    expect(data.map((t) => [t.id, t.orgId, t.orgName])).toEqual([
+      [TEAM_ID, 'org-1', 'Acme'],
+      [OTHER_TEAM_ID, 'org-2', 'Globex'],
+    ]);
+  });
+
+  it('excludes an inactive team, judged by the row, for an ADMIN and a member alike', async () => {
+    for (const userRole of ['ADMIN', 'ENGINEER'] as const) {
+      const state = twoTeams({ userRole });
+      state.teams[0].isActive = false;
+      state.memberships.push({
+        id: 'm-zeta',
+        role: 'LEAD',
+        teamId: OTHER_TEAM_ID,
+        userId: ADMIN_USER_ID,
+      });
+      const data = await list(state);
+      expect(data.map((t) => t.id)).toEqual([OTHER_TEAM_ID]);
+      expect(state.teams.filter((t) => t.isActive !== false).map((t) => t.id)).toEqual([
+        OTHER_TEAM_ID,
+      ]);
+    }
+  });
+
+  it("asks prisma for only the caller's own membership role, and no member identity", async () => {
+    const state = twoTeams({ userRole: 'ADMIN' });
+    await list(state);
+    expect(state.teamQueries).toHaveLength(1);
+    const include = (state.teamQueries?.[0]?.include ?? {}) as { memberships: { select: unknown } };
+    expect(include).toMatchObject({
+      memberships: { select: { role: true }, where: { userId: ADMIN_USER_ID } },
+      organization: { select: { name: true } },
+    });
+    expect(include.memberships.select).toEqual({ role: true });
+  });
+
+  it('never exposes another member', async () => {
+    const data = await list(twoTeams({ userRole: 'ADMIN' }));
+    const body = JSON.stringify(data);
+    expect(body).not.toContain(TARGET_USER_ID);
+    expect(body).not.toContain('ENGINEER');
+    expect(data.every((t) => !('memberships' in t))).toBe(true);
   });
 });
 

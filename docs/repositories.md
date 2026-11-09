@@ -663,6 +663,12 @@ the same organization (`ConnectionTeamShare`).
 
 Runs keep the owning team's budget, default template and settings, whoever launches them.
 
+The team list (`GET /api/v1/teams`) tells the caller their own role in each team as `myRole`
+(`ADMIN`, `LEAD`, `ENGINEER`, or `null` for a team they do not belong to, which a platform admin
+sees), plus the owning organization's `orgId` and `orgName`; it never carries another member's
+role. `?member=true` restricts the list to the caller's own teams, even for a platform admin. The
+dashboard derives which teams the caller leads from this list, with no per-team request.
+
 A team's own page (`GET /api/v1/teams/:id`) lists the repositories it owns and, separately, the ones
 shared with it, each marked "shared by" its owning team and read-only. The shared list shows only
 active repositories, and under an enforcing repo-access gate only those the viewer's GitHub
