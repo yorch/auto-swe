@@ -403,6 +403,16 @@ the per-channel Temporal Schedule is created, retimed, or torn down to match the
 | Run-complete notice | When a team has `slackNotifySuccess` on, a finished run posts a card: the ticket and template, status, duration, cost and an "Open run" link button to the dashboard. Fixed code builds it from the run row (`lib/runCompleteCard.ts`, through the same validator as the assistant's cards, so the link may only point at the dashboard host). If the card cannot be built, the notice is the one-line text it was before |
 | Shortcuts | A global "Run a workflow" picker, and a message shortcut "Ask auto-swe about this" that starts a turn on the message with no account link required |
 
+**Escaping.** Slack reads `<…>` as markup, so `<!channel>` broadcasts, `<@U…>` mentions a person and
+`<url|label>` links with any label. Where fixed code builds a notice, every piece of text it
+interpolates from outside the platform is escaped first (`&`, `<`, `>` become entities; `*bold*`,
+`_italic_` and backticks keep working): the ticket id, template and node names, step titles and
+descriptions, error text, a task's title, a drafted workflow's name and summary, and an open item's
+description in a nudge. The platform's own links, such as "Open approvals", and the owner mention on
+a nudge are written by the code and are not escaped. Text a model writes as its reply is not
+escaped, because the reply is meant to carry Slack formatting; only a card's text is (see
+*Structured replies*).
+
 All Slack I/O resolves its token by channel or workspace ID via
 `resolveSlackBotTokenForSlackChannel` / `resolveSlackBotTokenForWorkspace`, falling back to the
 singleton config.
@@ -446,6 +456,10 @@ unproven on real traffic, and turn them on one channel at a time.
   and a task's final in-thread report still post text, and a long-running task never edits a card.
 - **A card is not summarised into channel memory.** The memory summariser sees the turn's prose,
   which is at most a sentence when the answer was a card.
+- **Model-written replies are not escaped.** The assistant's reply, a reactive interjection, an
+  ambient digest in prose and a task's result text go to Slack as the model wrote them, so a
+  prompt-injected message could make one carry a `<!channel>` broadcast. Escaping them would also
+  change how any Slack formatting in them renders; a card is the escaped alternative.
 - **Reactive interjection posts at channel root**, not into the most relevant thread.
 - **No per-stage progress posts** back into a task thread beyond the live `chat.update` on turns;
   the run itself is observable in `/runs`.
