@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const steps = vi.hoisted(() => ({ rows: [] as unknown[] }));
+const steps = vi.hoisted(() => ({ count: null as number | null, rows: [] as unknown[] }));
 const nav = vi.hoisted(() => ({ replace: vi.fn(), search: '' }));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/approvals',
@@ -20,7 +20,7 @@ vi.mock('@/hooks/useApprovals', () => ({
     isLoading: false,
     refetch: vi.fn(),
   }),
-  useApprovalsCount: () => steps.rows.length,
+  useApprovalsCount: () => steps.count ?? steps.rows.length,
 }));
 vi.mock('@/components/approvals/HumanStepCard', () => ({
   HumanStepCard: ({
@@ -48,6 +48,7 @@ afterEach(() => {
   cleanup();
   nav.search = '';
   nav.replace.mockClear();
+  steps.count = null;
 });
 
 describe('approvals page cap label', () => {
@@ -91,7 +92,14 @@ describe('approvals page filters and state', () => {
     steps.rows = Array.from({ length: 100 }, (_, i) => step(String(i), 'APPROVAL', `S${i}`));
     render(<GovernApprovalsPage />);
     expect(screen.getByText(/Showing 100 pending steps, the most this list loads/)).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Pending (100+)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Pending (100)' })).toBeTruthy();
+  });
+
+  it('shows the exact gateway total on the tab, past the list cap, with no plus', () => {
+    steps.rows = Array.from({ length: 100 }, (_, i) => step(String(i), 'APPROVAL', `S${i}`));
+    steps.count = 150;
+    render(<GovernApprovalsPage />);
+    expect(screen.getByRole('tab', { name: 'Pending (150)' })).toBeTruthy();
   });
 
   it('keeps the tab, kind and overdue choices in the address', () => {

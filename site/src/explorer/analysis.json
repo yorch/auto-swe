@@ -3447,7 +3447,7 @@
     {
       "body": "Approval, decision, input form and review nodes pause a run until response or timeout.",
       "category": "Governance",
-      "detail": "WorkflowHumanStep stores context, deadlines and response data. A review node’s response is a note; it does not edit the content it shows. Creating a step also queues a run.waiting_for_human callback when the launch asked for one. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the Approvals page and other API clients) or Slack edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently. In Slack, a button for a decision option resolves the step in one click, while Approve and Reject open a modal for a note first. Opening it looks the step up among the steps the clicker may act on, tells a user whose Slack id is not linked to an account to link it, and tells the clicker to use the inbox if Slack cannot open the form. The submission is what resolves the step, through the same resolve core as the REST route, which checks access again. The modal’s private metadata round-trips through the client, so it carries the step, action and Slack user under an HMAC made with the Slack signing secret, and a submission whose signature fails or whose Slack user differs is refused, with the error shown in the form. For an approval step a rejection needs a reason of at least five characters after trimming, enforced in that shared core for the Approvals page, the API and Slack alike: the REST route answers 400 REASON_REQUIRED and the Slack modal shows the error in the form. An approver’s comment is optional, recorded with the response and shown, but never sent to the workflow in the signal. The REST list of steps shows pending steps by default, so resolved answers need status=ALL; actionable narrows it to pending, unexpired steps the caller may answer and has not yet answered, and answeredByMe (with status=ALL, or it finds only pending steps the caller has approved) to steps the caller resolved or approved. limit and offset page the list, and a total is counted and returned in meta only when one of those three is asked for. myResponse is the caller’s own answer: their approval row, else the stored action when they resolved the step, and null for a step resolved by a timeout or by someone else.",
+      "detail": "WorkflowHumanStep stores context, deadlines and response data. A review node’s response is a note; it does not edit the content it shows. Creating a step also queues a run.waiting_for_human callback when the launch asked for one. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the Approvals page and other API clients) or Slack edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently. In Slack, a button for a decision option resolves the step in one click, while Approve and Reject open a modal for a note first. Opening it looks the step up among the steps the clicker may act on, tells a user whose Slack id is not linked to an account to link it, and tells the clicker to use the inbox if Slack cannot open the form. The submission is what resolves the step, through the same resolve core as the REST route, which checks access again. The modal’s private metadata round-trips through the client, so it carries the step, action and Slack user under an HMAC made with the Slack signing secret, and a submission whose signature fails or whose Slack user differs is refused, with the error shown in the form. For an approval step a rejection needs a reason of at least five characters after trimming, enforced in that shared core for the Approvals page, the API and Slack alike: the REST route answers 400 REASON_REQUIRED and the Slack modal shows the error in the form. An approver’s comment is optional, recorded with the response and shown, but never sent to the workflow in the signal. The REST list of steps shows pending steps by default, so resolved answers need status=ALL; actionable narrows it to pending, unexpired steps the caller may answer and has not yet answered, and answeredByMe (with status=ALL, or it finds only pending steps the caller has approved) to steps the caller resolved or approved. limit and offset page the list, and a total is counted and returned in meta only when one of those three is asked for, or when count=true asks for the total alone (the sidebar badge sends it with limit=1). myResponse is the caller’s own answer: their approval row, else the stored action when they resolved the step, and null for a step resolved by a timeout or by someone else.",
       "id": "hitl",
       "refs": [
         "spec",
@@ -3460,6 +3460,7 @@
         "hitlSlackModalSubmit",
         "hitlReasonRequired",
         "humanStepList",
+        "humanStepTotal",
         "humanStepMyResponse"
       ],
       "status": "Implemented",
@@ -11975,12 +11976,20 @@
       "title": "Node help is a hand-written constant keyed by node type"
     },
     {
-      "anchor": "const where: Prisma.WorkflowHumanStepWhereInput = {",
+      "anchor": "export function humanStepListWhere(",
       "before": 0,
       "id": "humanStepList",
-      "lines": 45,
-      "path": "packages/gateway/src/routes/humanSteps.ts",
+      "lines": 42,
+      "path": "packages/gateway/src/lib/humanStepFilters.ts",
       "title": "The step list counts a total only when asked, and answeredByMe only narrows"
+    },
+    {
+      "anchor": "const wantsTotal = answeredByMe || count || limit !== undefined || offset !== undefined;",
+      "before": 2,
+      "id": "humanStepTotal",
+      "lines": 6,
+      "path": "packages/gateway/src/routes/humanSteps.ts",
+      "title": "The total is counted only for a caller that asked for one, count=true included"
     },
     {
       "anchor": "function myResponseOf(",

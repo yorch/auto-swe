@@ -176,7 +176,7 @@ Each card shows the step title, kind badge, description, a one- or two-line exce
 
 When a run is open at `/runs/<id>` and it has pending steps, those steps also appear in a **Pending actions** card in the right column — no need to navigate to the inbox.
 
-The sidebar shows a count badge next to **Approvals** when there are pending steps.
+The sidebar shows a count badge next to **Approvals**: the total number of steps waiting on the caller (`GET /api/v1/human-steps?actionable=true&count=true`, read from `meta.total`), not the number of rows on the first page, so it stays correct above 100 steps.
 
 ---
 
@@ -273,8 +273,10 @@ timeout or by someone else does not match. It only narrows, so visibility and `s
 step and a `PENDING` step has no `resolvedBy`, so combining them returns nothing. `limit` (1-200, default 100
 for `PENDING` and 200 for `ALL`) and `offset` page the list, and `meta` carries `{ limit, offset, total }`
 where `total` counts every matching step, so `limit=1` is enough to ask whether any exist. `meta` is
-present only when the request sets `answeredByMe`, `limit` or `offset`; a default request runs no count
-query and omits it.
+present only when the request sets `answeredByMe`, `count=true`, `limit` or `offset`; a default request
+runs no count query and omits it. `count=true` asks for the total alone and, like the total with a page
+parameter, counts with the same filter as the list, so the count can never include a step the list would
+not show. The filter is built by `humanStepListWhere()` in `gateway/src/lib/humanStepFilters.ts`.
 
 Each step also carries `myResponse` (the action the caller answered with: their approval row's action,
 else the stored action of a step they resolved; `null` otherwise), `responses` (every recorded

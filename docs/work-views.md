@@ -84,7 +84,7 @@ Newest first, paginated like `GET /work-requests` (`limit`, `offset`; `meta.tota
 | `repoId` | a repository id | any |
 | `ticket` | substring of the external ticket id, case-insensitive | any |
 | `scope` | `MINE` (requests the caller made) or `TEAM` (everything visible) | `MINE` |
-| `teamId` | narrow to a team's repositories, including ones shared with it | any |
+| `teamId` | narrow to a team's repositories, including ones shared with it (see [`teamId` semantics](#teamid-semantics)) | any |
 
 A row carries the repository (`id`, `org`, `name`), `prNumber`, `url`, `title`, `status`,
 `isDraft`, `ciStatus`, `openedAt`/`mergedAt`/`closedAt`, and — from the ledger row the PR belongs
@@ -105,6 +105,29 @@ and `latestRun` only when the caller may see the run (`buildWorkflowRunVisibilit
 visible PR never discloses a run, request or cost the caller could not list themselves. `total`
 counts the same filtered set.
 
+### `teamId` semantics
+
+A `teamId` filter has two scopes, and which one applies depends on whether the answer is a list or a
+metric:
+
+- **List scope: owned or shared.** `GET /pull-requests` and `GET /workflow-runs/requests` match the
+  work on repositories the team owns **or** that are shared with it, so a team's board shows what it
+  can open. The request list also matches runs of a template the team owns
+  (`runListTeamScope()` in `gateway/src/lib/runTeamScope.ts`).
+- **Metrics scope: owner only.** `GET /pull-requests/outcomes` and its export match pull requests
+  whose attribution run (`PullRequest.runId`) is attributed to the team (`WorkflowRun.attributedTeamId`,
+  `runMetricsTeamScope()`), so a repository shared with another team is counted once, by its owner.
+  A pull request with no attribution run belongs to no team's metrics.
+- **A non-member gets `404 TEAM_NOT_FOUND`.** Naming a team the caller does not belong to is refused
+  whether or not the team exists (`assertTeamParam()` in `gateway/src/lib/teamParam.ts`); a platform
+  ADMIN may name any team.
+- **The filter only narrows.** It is its own `AND` term beside the visibility filter, so it can never
+  widen what the caller may see.
+
+The request list's attention state and `pendingStepCount` count only the pending steps the caller may
+answer (the run-control rule). A member of a team a repository is shared with sees the request and its
+steps in the human-step list, but the request is not marked as needing their attention.
+
 ---
 
 ## 3. `GET /api/v1/pull-requests/outcomes`
@@ -117,7 +140,7 @@ The cohort is the PRs **opened** in the window, with each one's outcome read as 
 | `window` | 1 to 365 days, whole UTC days ending today | `30` |
 | `since`, `until` | an inclusive UTC day range (`YYYY-MM-DD`), together; replaces `window` | none |
 | `scope` | `MINE` (requests the caller made) or `TEAM` (everything visible) | `TEAM` |
-| `teamId` | narrow to a team's repositories, including ones shared with it | any |
+| `teamId` | narrow to runs attributed to the team (owner only; see [`teamId` semantics](#teamid-semantics)) | any |
 | `repoId` | a repository id | any |
 
 The response `data` holds `window` (`start`, `end`, `days`), `current` for the window and
@@ -296,6 +319,7 @@ http(s) address.
 
 ## Limitations
 
+- The outcomes `teamId` filter matches through the pull request's attribution run, so a pull request with no run, or a run with no attributed team, appears under no team's metrics (it still appears when no `teamId` is given).
 - Pull-request attribution is stored when a worker creates or updates a PR and is backfilled from
   repository-matched active workflows. `WorkflowRun.workflowId` is unique, so the run is resolved
   by that exact workflow id rather than by recency. Rows with no matching run keep null attribution

@@ -45,6 +45,7 @@ export function groupRequestExecutions(runs: Execution[]) {
           )
       ),
       pendingStepCount: executions.reduce((total, run) => total + run._count.humanSteps, 0),
+      runIds: executions.map((run) => run.id),
       status,
       visibleExecutionCount: executions.length,
     };

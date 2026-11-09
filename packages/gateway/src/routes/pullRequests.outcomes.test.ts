@@ -57,6 +57,7 @@ async function buildApp(role: Role = 'ADMIN') {
   const prisma = {
     activeWorkflow: { findMany: vi.fn().mockResolvedValue([]) },
     pullRequest: { findMany: vi.fn().mockResolvedValue([]) },
+    team: { findFirst: vi.fn().mockResolvedValue({ id: 'member-team' }) },
     teamMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
     workflowTemplate: {
@@ -214,12 +215,12 @@ describe('GET /api/v1/pull-requests/outcomes', () => {
     ]);
   });
 
-  it('adds the repoId, team (with shares) and MINE filters', async () => {
+  it('adds the repoId, owner-only team attribution and MINE filters', async () => {
     const b = await buildApp('ENGINEER');
     await get(b, `?repoId=${UUID_A}&teamId=${UUID_B}&scope=MINE`);
     expect(whereOf(b).slice(2)).toEqual([
       { repoId: UUID_A },
-      { repository: { OR: [{ teamId: UUID_B }, { shares: { some: { teamId: UUID_B } } }] } },
+      { run: { attributedTeamId: UUID_B } },
       { workflow: { workRequest: { requestedById: 'user-1' } } },
     ]);
   });
@@ -335,5 +336,36 @@ describe('GET /api/v1/pull-requests/outcomes', () => {
     const { data } = (await get(b)).json();
     expect(data.isTruncated).toBe(false);
     expect(data.previous).toBeNull();
+  });
+});
+
+describe('GET /api/v1/pull-requests/outcomes teamId', () => {
+  it('answers 404 TEAM_NOT_FOUND for a team the caller is not in', async () => {
+    const b = await buildApp('ENGINEER');
+    b.prisma.team.findFirst.mockResolvedValue(null);
+    const res = await get(b, `?teamId=${UUID_B}`);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe('TEAM_NOT_FOUND');
+    expect(b.prisma.pullRequest.findMany).not.toHaveBeenCalled();
+    const where = b.prisma.team.findFirst.mock.calls[0]?.[0].where;
+    expect(where).toEqual({
+      AND: [{ id: UUID_B }, { memberships: { some: { userId: 'user-1' } } }],
+    });
+  });
+
+  it('lets a platform ADMIN name any team without a membership lookup', async () => {
+    const b = await buildApp('ADMIN');
+    b.prisma.team.findFirst.mockResolvedValue(null);
+    const res = await get(b, `?teamId=${UUID_B}`);
+    expect(res.statusCode).toBe(200);
+    expect(b.prisma.team.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('keeps the team term as its own AND entry beside the reachability filter', async () => {
+    const b = await buildApp('ENGINEER');
+    await get(b, `?teamId=${UUID_B}`);
+    const filters = whereOf(b);
+    expect(filters[0]).toEqual({ repository: reachableConnections({ sub: 'user-1' }, GATE) });
+    expect(filters).toContainEqual({ run: { attributedTeamId: UUID_B } });
   });
 });

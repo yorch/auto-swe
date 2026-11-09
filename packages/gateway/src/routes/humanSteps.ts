@@ -1,4 +1,3 @@
-import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -10,11 +9,9 @@ import {
 } from '../lib/hitlResolve.js';
 import { syncSlackHumanStepOutcome } from '../lib/hitlSlackSync.js';
 import { sendError } from '../lib/httpErrors.js';
+import { humanStepListWhere } from '../lib/humanStepFilters.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
-import {
-  buildWorkflowHumanStepControlFilter,
-  buildWorkflowHumanStepVisibilityFilter,
-} from '../lib/runVisibility.js';
+import { buildWorkflowHumanStepVisibilityFilter } from '../lib/runVisibility.js';
 import { sendTemporalUnavailable } from '../lib/temporalErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -29,6 +26,8 @@ const ListQuery = z.object({
    * multi-approver step) or the caller has a recorded approval row on it. Only narrows the list.
    */
   answeredByMe: booleanQueryParam(false),
+  /** Include `meta.total` even when no page parameter is given (the sidebar badge reads it). */
+  count: booleanQueryParam(false),
   /** Page size; defaults to 100 for `PENDING` and 200 for `ALL`. */
   limit: z.coerce.number().int().min(1).max(200).optional(),
   offset: z.coerce.number().int().min(0).optional(),
@@ -292,7 +291,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { actionable, answeredByMe, limit, offset, overdue, sort, status, runId } =
+      const { actionable, answeredByMe, count, limit, offset, overdue, sort, status, runId } =
         request.query;
       const pageSize = limit ?? (status === 'ALL' ? 200 : 100);
       const orderBy =
@@ -303,39 +302,16 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
             : sort === 'timeoutAt:desc'
               ? { timeoutAt: 'desc' as const }
               : { requestedAt: 'desc' as const };
-      const where: Prisma.WorkflowHumanStepWhereInput = {
-        ...(status === 'ALL' ? {} : { status: 'PENDING' as const }),
-        ...(runId ? { runId } : {}),
-        ...(overdue ? { timeoutAt: { lt: new Date() } } : {}),
-        // "Actionable" is control, not visibility: a step on a run the caller can
-        // see but not answer is not waiting on them. A step they already approved
-        // is waiting on someone else, and an expired one cannot be answered.
-        ...(actionable
-          ? {
-              humanApprovals: { none: { resolvedBy: user.sub } },
-              OR: [{ timeoutAt: null }, { timeoutAt: { gt: new Date() } }],
-              status: 'PENDING' as const,
-              ...buildWorkflowHumanStepControlFilter(user, request.repoAccessGate),
-            }
-          : buildWorkflowHumanStepVisibilityFilter(user, request.repoAccessGate)),
-        // Under AND so it can only narrow, whatever the filters above spread. A timeout or
-        // someone else's answer leaves neither `resolvedBy` nor an approval row for the caller.
-        ...(answeredByMe
-          ? {
-              AND: [
-                {
-                  OR: [
-                    { resolvedBy: user.sub },
-                    { humanApprovals: { some: { resolvedBy: user.sub } } },
-                  ],
-                },
-              ],
-            }
-          : {}),
-      };
+      const where = humanStepListWhere(user, request.repoAccessGate, {
+        actionable,
+        answeredByMe,
+        overdue,
+        runId,
+        status,
+      });
       // The count is a second query on the hottest HITL read (the sidebar badge polls it), so it
       // runs only for a caller that asked for a total.
-      const wantsTotal = answeredByMe || limit !== undefined || offset !== undefined;
+      const wantsTotal = answeredByMe || count || limit !== undefined || offset !== undefined;
       const skip = offset ?? 0;
       const [total, steps] = await Promise.all([
         wantsTotal ? fastify.prisma.workflowHumanStep.count({ where }) : Promise.resolve(null),

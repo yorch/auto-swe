@@ -1,6 +1,7 @@
 import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import { logRequestError } from './requestErrorLog.js';
+import { TeamNotFoundError } from './teamParam.js';
 
 function fakes(headers: Record<string, string> = {}, requestHeaders: Record<string, string> = {}) {
   const log = { error: vi.fn(), warn: vi.fn() };
@@ -69,6 +70,17 @@ describe('logRequestError', () => {
 
     expect(log.warn).not.toHaveBeenCalled();
     expect(log.error).toHaveBeenCalledWith(error);
+  });
+
+  it('logs a TeamNotFoundError as one WARN line without the error or its stack', () => {
+    const { log, reply, request } = fakes();
+
+    logRequestError(request, reply, new TeamNotFoundError() as unknown as FastifyError);
+
+    expect(log.error).not.toHaveBeenCalled();
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    const args = log.warn.mock.calls[0] as unknown[];
+    expect(args).toEqual(['team filter refused: route=/api/v1/things code=TEAM_NOT_FOUND']);
   });
 
   it('keeps logging other 4xx errors at ERROR', () => {

@@ -48,6 +48,7 @@ async function buildApp(role: Role = 'ADMIN') {
       count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn().mockResolvedValue([]),
     },
+    team: { findFirst: vi.fn().mockResolvedValue({ id: 'member-team' }) },
     teamMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
     workflowTemplate: {
@@ -303,5 +304,16 @@ describe('GET /api/v1/pull-requests/outcomes/export', () => {
     // The headers (200) are already sent, so the failure cannot become a status code: the
     // transfer is aborted instead, which a client sees as a failed download, not a short file.
     await expect(get(b, '?format=ndjson')).rejects.toBeDefined();
+  });
+});
+
+describe('GET /api/v1/pull-requests/outcomes/export teamId', () => {
+  it('answers 404 TEAM_NOT_FOUND for a team the caller is not in', async () => {
+    const b = await buildApp('ENGINEER');
+    b.prisma.team.findFirst.mockResolvedValue(null);
+    const res = await get(b, `?teamId=${TEAM}`);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe('TEAM_NOT_FOUND');
+    expect(b.prisma.pullRequest.findMany).not.toHaveBeenCalled();
   });
 });

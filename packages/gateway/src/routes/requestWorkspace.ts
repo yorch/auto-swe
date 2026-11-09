@@ -8,8 +8,11 @@ import { resolveGitHubBaseUrl } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { humanStepListWhere } from '../lib/humanStepFilters.js';
 import { groupRequestExecutions } from '../lib/requestExecutions.js';
+import { runListTeamScope } from '../lib/runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
+import { assertTeamParam } from '../lib/teamParam.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
@@ -22,6 +25,11 @@ const Query = RunListPaginationQuery.extend({
   teamId: z.string().uuid().optional(),
 });
 
+function earliest(dates: Date[]): string | null {
+  const first = dates.map((d) => d.getTime()).sort((a, b) => a - b)[0];
+  return first === undefined ? null : new Date(first).toISOString();
+}
+
 /** Group BEFORE filtering or paging: an old failed attempt must not hide a successful retry. */
 export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -33,36 +41,16 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
+      if (request.query.teamId) {
+        await assertTeamParam(fastify.prisma, user, request.query.teamId);
+      }
       const { scope, search, state, limit, offset, requestId, teamId } = request.query;
       const visibility = buildWorkflowRunVisibilityFilter(user, request.repoAccessGate);
       const where: Prisma.WorkflowRunWhereInput = {
         AND: [
           visibility,
-          ...(teamId
-            ? [
-                {
-                  OR: [
-                    { connection: { OR: [{ teamId }, { shares: { some: { teamId } } }] } },
-                    {
-                      workRequest: {
-                        connection: { OR: [{ teamId }, { shares: { some: { teamId } } }] },
-                      },
-                    },
-                    {
-                      workRequest: {
-                        activeWorkflows: {
-                          some: {
-                            repository: { OR: [{ teamId }, { shares: { some: { teamId } } }] },
-                          },
-                        },
-                        isCrossRepo: false,
-                      },
-                    },
-                    { template: { teamId } },
-                  ],
-                },
-              ]
-            : []),
+          // Its own AND term: the team filter can only narrow what visibility allows.
+          ...(teamId ? [runListTeamScope(teamId)] : []),
         ],
         template: {
           name: { notIn: [CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME] },
@@ -100,7 +88,37 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
         },
         where,
       });
-      const latest = groupRequestExecutions(executions);
+      // A run can show steps the caller may see but not answer (a repository shared to their
+      // team). Attention and `pendingStepCount` mean "waiting on you", so only the steps the caller
+      // controls count; visibility is never widened, the control filter is ANDed onto the candidates.
+      // The same predicate as the approvals list and the sidebar badge, so the counts agree: it
+      // also leaves out steps the caller already approved and steps that have expired.
+      const waitingOnMe = humanStepListWhere(user, request.repoAccessGate, {
+        actionable: true,
+        answeredByMe: false,
+        overdue: false,
+        status: 'PENDING',
+      });
+      const candidateRunIds = executions
+        .filter((run) => run._count.humanSteps > 0)
+        .map((r) => r.id);
+      const controlled = new Map<string, number>();
+      const deadlines = new Map<string, Date[]>();
+      if (candidateRunIds.length > 0) {
+        const steps = await fastify.prisma.workflowHumanStep.findMany({
+          select: { id: true, runId: true, timeoutAt: true },
+          where: { AND: [waitingOnMe, { runId: { in: candidateRunIds } }] },
+        });
+        for (const step of steps) {
+          controlled.set(step.runId, (controlled.get(step.runId) ?? 0) + 1);
+          if (step.timeoutAt) {
+            deadlines.set(step.runId, [...(deadlines.get(step.runId) ?? []), step.timeoutAt]);
+          }
+        }
+      }
+      const latest = groupRequestExecutions(
+        executions.map((run) => ({ ...run, _count: { humanSteps: controlled.get(run.id) ?? 0 } }))
+      );
       const matching = latest.filter((run) => {
         switch (state) {
           case 'active':
@@ -137,9 +155,7 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
       const instanceBaseUrl = await resolveGitHubBaseUrl();
       const rows = await fastify.prisma.workflowRun.findMany({
         include: {
-          _count: { select: { humanSteps: { where: { status: 'PENDING' } } } },
           connection: { select: connectionSelect },
-          humanSteps: { select: { timeoutAt: true }, where: { status: 'PENDING' } },
           template: { select: { name: true, workspaceProvider: true } },
           workRequest: {
             select: {
@@ -213,14 +229,9 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
             isCrossRepo: group.isCrossRepo,
             needsMerge: group.needsMerge,
             pendingStepCount: group.pendingStepCount,
-            // The soonest deadline among the steps waiting on a person, so a list can say how
-            // long is left without opening each request.
-            pendingStepDeadline:
-              run.humanSteps
-                .map((step) => step.timeoutAt)
-                .filter((at): at is Date => at != null)
-                .sort((a, b) => a.getTime() - b.getTime())[0]
-                ?.toISOString() ?? null,
+            // The soonest deadline among the counted steps, across every execution of the
+            // request, so a list can say how long is left and a count above zero has a deadline.
+            pendingStepDeadline: earliest(group.runIds.flatMap((id) => deadlines.get(id) ?? [])),
             reviewUrl,
             stage: run.status === 'RUNNING' ? (ledger?.currentStatus ?? null) : null,
             status: group.status,
