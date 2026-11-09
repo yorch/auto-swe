@@ -260,6 +260,74 @@ export interface MeSummaryTeam {
   queued: number;
 }
 
+/** A repository on a team's overview, with how the team relates to it. */
+export interface TeamOverviewRepo {
+  id: string;
+  /** `owner/name`. */
+  name: string;
+  relation: 'owned' | 'shared';
+  /** The owning team's name when `relation` is `shared`; null when owned. */
+  ownerTeamName: string | null;
+}
+
+/** One recent request in a team's activity feed. */
+export interface TeamOverviewActivityItem {
+  requestId: string | null;
+  runId: string | null;
+  title: string;
+  state: 'active' | 'attention' | 'success' | 'failed';
+  repoName: string | null;
+  launchedByName: string | null;
+  occurredAt: string;
+}
+
+/**
+ * `GET /api/v1/teams/:id/overview`. Fields a lower role may not see are absent from the
+ * response (`lead`, `admin`), never nulled.
+ */
+export interface TeamOverview {
+  team: {
+    id: string;
+    slug: string;
+    name: string;
+    orgId: string;
+    orgName: string;
+    /** The caller's own role in this team; null for a platform ADMIN who is not a member. */
+    myRole: 'ADMIN' | 'LEAD' | 'ENGINEER' | null;
+  };
+  /** Which view the server built: the team role decides it, never the platform role. */
+  viewerLevel: 'engineer' | 'lead' | 'admin';
+  /** The caller's own actionable items on this team's repositories. */
+  needsYou: { total: number };
+  running: number;
+  queued: number;
+  /** Requests started in the last 7 days on this team's repositories (owned or shared). */
+  last7d: { started: number; succeeded: number; failed: number };
+  /** Last 30 days, counting only runs this team owns (owner-attributed). */
+  pullRequests: {
+    opened: number;
+    merged: number;
+    closedUnmerged: number;
+    mergeRate: number | null;
+    timeToMergeP50Hours: number | null;
+  };
+  activity: TeamOverviewActivityItem[];
+  repos: TeamOverviewRepo[];
+  /** Present for team LEAD and ADMIN. */
+  lead?: {
+    /** Failed latest attempts on the team's repositories whose launcher is no longer a member. */
+    unownedFailures: number;
+    /** Pending approvals whose deadline has passed. */
+    staleApprovals: number;
+    openPullRequests: number;
+  };
+  /** Present for team ADMIN (and a platform ADMIN). */
+  admin?: {
+    /** This calendar month's attributed spend in cents; null when it cannot be computed. */
+    monthCostUsdCents: number | null;
+  };
+}
+
 /** `GET /api/v1/me/summary`: the caller's cross-team desk in one response. */
 export interface MeSummary {
   teams: MeSummaryTeam[];
@@ -925,6 +993,11 @@ export interface WorkspaceRequestSummary extends WorkflowRunSummary {
   stage: string | null;
   reviewUrl: string | null;
   target: string | null;
+  /**
+   * The teams that own the repositories and template the request ran on, for a row's team chip.
+   * Repositories shared into a team do not add one: the owner is named.
+   */
+  teams: { id: string; name: string }[];
 }
 
 export interface WorkflowStepRecord {
@@ -1614,6 +1687,8 @@ export interface PullRequestListItem {
   id: string;
   /** Null for a row whose repository was removed; only an ADMIN can see one. */
   repository: { id: string; org: string; name: string } | null;
+  /** The team that owns the repository; null when the repository is gone. */
+  ownerTeam: { id: string; name: string; slug: string } | null;
   prNumber: number | null;
   /** The PR on its host; null when it cannot be derived. */
   url: string | null;

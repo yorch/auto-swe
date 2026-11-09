@@ -222,6 +222,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/teams/:id/egress-allowlist': 'read',
   'GET /api/v1/teams/:id/knowledge-bases/effective': 'read',
   'GET /api/v1/teams/:id/members': 'read',
+  'GET /api/v1/teams/:id/overview': 'read',
   'GET /api/v1/teams/:id/shell-image-allowlist': 'read',
   'GET /api/v1/teams/:teamId/callback-endpoints': 'read',
   'GET /api/v1/teams/:teamId/callback-endpoints/:endpointId/deliveries': 'read',

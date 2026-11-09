@@ -1,5 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
-import { memberRunScope } from './runTeamScope.js';
+import { memberRunScope, runListTeamScope } from './runTeamScope.js';
 import {
   buildWorkflowHumanStepControlFilter,
   buildWorkflowHumanStepVisibilityFilter,
@@ -71,4 +71,12 @@ export function humanStepListWhere(
  */
 export function humanStepMineScope(user: VisibilityActor): Prisma.WorkflowHumanStepWhereInput {
   return { run: memberRunScope(user) };
+}
+
+/**
+ * The team term of `GET /human-steps?teamId=`: steps on runs of one team's work, owned or shared.
+ * AND it beside {@link humanStepListWhere}; it narrows only.
+ */
+export function humanStepTeamScope(teamId: string): Prisma.WorkflowHumanStepWhereInput {
+  return { run: runListTeamScope(teamId) };
 }

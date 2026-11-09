@@ -1,8 +1,9 @@
-import { resolveSetting, resolveSettings, SETTING_DEFINITIONS } from '@auto-swe/shared/config';
+import { resolveSettings } from '@auto-swe/shared/config';
 import { MAX_PINNED_TEAM_SLUGS, RUN_DETAIL_LAYOUTS } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { readDueSoonHours } from '../lib/dueSoonHours.js';
 import { sendError } from '../lib/httpErrors.js';
 import { listMcpGrants, revokeMcpGrants } from '../lib/mcpGrants.js';
 import { buildMeSummary } from '../lib/meSummary.js';
@@ -35,17 +36,7 @@ export const meRoutes: FastifyPluginAsync = async (fastify) => {
   // ADMIN's desk is member-scoped too), and what is waiting on them across those teams.
   app.get('/summary', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, async (request) => {
     const user = requireUser(request);
-    // A setting read that fails (database down) must not take the whole desk with it: the window
-    // only orders approvals, so fall back to its default.
-    let dueSoonHours: number = SETTING_DEFINITIONS['workflow.approvalDueSoonHours'].defaultValue;
-    try {
-      dueSoonHours = await resolveSetting('workflow.approvalDueSoonHours', {});
-    } catch (err) {
-      request.log.warn(
-        { err },
-        'approval due-soon window unreadable; using its default for the desk'
-      );
-    }
+    const dueSoonHours = await readDueSoonHours(request.log);
     return buildMeSummary({
       dueSoonHours,
       gate: request.repoAccessGate,

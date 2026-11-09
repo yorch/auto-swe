@@ -50,6 +50,7 @@ function newMockPrisma() {
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
     },
+    team: { findFirst: vi.fn().mockResolvedValue({ id: 'team-1' }) },
     user: {
       findUnique: vi.fn().mockResolvedValue({
         isActive: true,
@@ -1485,5 +1486,81 @@ describe('workflowRunRoutes UI evidence', () => {
     expect(res.headers['content-disposition']).toBe(
       `attachment; filename="screenshot-${evidenceId}.png"`
     );
+  });
+});
+
+describe('workflowRunRoutes GET / teamId filter', () => {
+  const TEAM = '22222222-2222-4222-8222-222222222222';
+
+  it('puts the team scope in its own AND element, so it cannot overwrite visibility keys', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs?scope=TEAM&teamId=${TEAM}&q=fix`,
+    });
+    expect(res.statusCode).toBe(200);
+    const where = lastListWhere(prisma) as { AND: Record<string, unknown>[] };
+    // [the text-filtered list, team scope]: the team term is its own element.
+    expect(where.AND).toHaveLength(2);
+    const searched = where.AND[0] as { AND: Record<string, unknown>[] };
+    expect(searched.AND[0]).toHaveProperty('OR');
+    expect(searched.AND[1]).toHaveProperty('OR');
+    expect(where.AND[1]).toEqual({
+      OR: [
+        { connection: { OR: [{ teamId: TEAM }, { shares: { some: { teamId: TEAM } } }] } },
+        {
+          workRequest: {
+            connection: { OR: [{ teamId: TEAM }, { shares: { some: { teamId: TEAM } } }] },
+          },
+        },
+        {
+          workRequest: {
+            activeWorkflows: {
+              some: {
+                repository: { OR: [{ teamId: TEAM }, { shares: { some: { teamId: TEAM } } }] },
+              },
+            },
+            isCrossRepo: false,
+          },
+        },
+        { template: { teamId: TEAM } },
+      ],
+    });
+    await app.close();
+  });
+
+  it('adds no AND wrapper without the parameter', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/workflow-runs' });
+    expect(lastListWhere(prisma).AND).toBeUndefined();
+    await app.close();
+  });
+
+  it('answers 404 TEAM_NOT_FOUND for a non-member and reads no runs', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.team.findFirst.mockResolvedValue(null);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs?teamId=${TEAM}`,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe('TEAM_NOT_FOUND');
+    expect(prisma.workflowRun.findMany).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('lets a platform ADMIN name any team', async () => {
+    const { app, prisma } = await buildApp('ADMIN');
+    prisma.team.findFirst.mockResolvedValue(null);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs?teamId=${TEAM}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(prisma.team.findFirst).not.toHaveBeenCalled();
+    await app.close();
   });
 });

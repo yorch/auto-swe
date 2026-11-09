@@ -796,6 +796,10 @@ Sharing is managed from the repository card on the **Connections** page, or over
 | `GET /api/v1/repositories/:id/share-candidates` | the owning team's leads, platform admins | Active teams in the owning team's organization, other than the owner |
 | `PUT /api/v1/repositories/:id/shares` | the owning team's leads, platform admins | Replace the set of teams it is shared with; audited |
 
+`GET /api/v1/repositories?teamId=<team>` lists only the repositories that team owns or that are
+shared to it. The filter is its own `AND` term beside reachability, so it only narrows; the caller
+must be a member of the team (a platform ADMIN may name any), otherwise `404 TEAM_NOT_FOUND`.
+
 Shares are limited to the owning team's organization, so a repository never crosses a tenant
 boundary this way. Moving a repository to a team in another organization drops the shares that no
 longer fit.

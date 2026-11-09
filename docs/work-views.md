@@ -110,10 +110,13 @@ counts the same filtered set.
 A `teamId` filter has two scopes, and which one applies depends on whether the answer is a list or a
 metric:
 
-- **List scope: owned or shared.** `GET /pull-requests` and `GET /workflow-runs/requests` match the
-  work on repositories the team owns **or** that are shared with it, so a team's board shows what it
-  can open. The request list also matches runs of a template the team owns
-  (`runListTeamScope()` in `gateway/src/lib/runTeamScope.ts`).
+- **List scope: owned or shared.** `GET /pull-requests`, `GET /workflow-runs/requests`,
+  `GET /workflow-runs`, `GET /human-steps` and `GET /repositories` match the work on repositories
+  the team owns **or** that are shared with it, so a team's board shows what it can open. The run,
+  request and human-step lists also match runs of a template the team owns
+  (`runListTeamScope()` in `gateway/src/lib/runTeamScope.ts`); the repository list is
+  `repositoryTeamScope()` alone. Agent runs have no list of their own: they list through
+  `GET /workflow-runs`.
 - **Metrics scope: owner only.** `GET /pull-requests/outcomes` and its export match pull requests
   whose attribution run (`PullRequest.runId`) is attributed to the team (`WorkflowRun.attributedTeamId`,
   `runMetricsTeamScope()`), so a repository shared with another team is counted once, by its owner.
@@ -123,6 +126,15 @@ metric:
   ADMIN may name any team.
 - **The filter only narrows.** It is its own `AND` term beside the visibility filter, so it can never
   widen what the caller may see.
+- **The dashboard sets it from `?team=<slug>`.** Each global list page reads the team's slug from its
+  address, resolves it among the caller's teams (a platform ADMIN's through every team) and passes
+  the id here; an unresolved slug is ignored and a failed lookup is an error, never an unfiltered
+  list ([teams.md](./teams.md#4-the-team-filter-on-global-pages)). A service principal skips the
+  membership check on `GET /workflow-runs?teamId=`; the filter still only narrows.
+- **Rows name their team.** A pull request row carries `ownerTeam` (`id`, `name`, `slug`) for the
+  team that owns its repository, and a request row carries `teams` (`id`, `name`) for the owners of
+  the repositories and template it ran on, found by one extra query over the page's runs, limited to
+  runs the caller may see.
 
 The request list's attention state and `pendingStepCount` count only the pending steps the caller may
 answer (the run-control rule). A member of a team a repository is shared with sees the request and its

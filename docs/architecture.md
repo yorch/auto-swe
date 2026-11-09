@@ -169,12 +169,13 @@ packages/
 | `src/app/page.tsx` | Dashboard home — KPIs, "needs attention" queue, recent activity |
 | `src/app/runs/[id]/` | Live run viewer — React Flow DAG with per-node status; bottom panel toggles between three layouts (split console, transcript, flight recorder), persisted per user via `/api/v1/me/preferences`; traces link to graph nodes and fan-out branches through `src/lib/traceLinkage.ts` |
 | `src/app/requests/`, `src/app/approvals/`, `src/app/pull-requests/`, `src/app/tickets/` | Work — requests with their attempts, pending human steps with respond forms, and the pull-request and ticket views |
+| `src/app/teams/[slug]/` | The team space — Overview, Work, Automations, Reports, Knowledge, Members and Settings tabs for one team, taken from the route slug; the team switcher and the sidebar Teams group link here ([teams.md](./teams.md#3-the-team-space)) |
 | `src/app/library/[id]/` | React Flow canvas editor — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
 | `src/app/{agents,skills,models,mcp,bundles,connections}/` | Build — agents and the agent library, skills, model configuration, MCP connections, bundles, repositories and other connections |
 | `src/app/admin/` | Admin — one area with its own sub-navigation (`layout.tsx` renders `components/layout/AdminNav.tsx`): users, teams, organizations, sessions, API tokens, scanner patterns, autonomy policies, security events, audit, analytics, LLM usage, platform settings, workflow defaults, config grants, automations and schedules, Slack channels, integrations, GitHub installations, lessons, knowledge, error baselines, evals |
 | `src/lib/navigation.ts` | The page map: sidebar groups, Admin sub-navigation, page titles and breadcrumbs. Old addresses redirect permanently through `LEGACY_REDIRECTS` in `next.config.ts` |
 | `src/hooks/` | TanStack Query hooks split by resource domain |
-| `src/stores/` | Zustand — `authStore` (identity), `teamStore` (active team), `themeStore` (theme and palette preference), `assistantStore` (assistant panel) |
+| `src/stores/` | Zustand — `authStore` (identity), `themeStore` (theme and palette preference), `assistantStore` (assistant panel) |
 | `src/components/ui/` | Design-system primitives — `Button`, `Input`, `Select`, `Textarea`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `PageHeader`, `QueryBoundary`, shaped skeleton placeholders (`LoadingState.tsx`), `FieldWrapper`, `Th`, `Stat`, `StatusBadge`, `ToggleSwitch`, `CopyButton` |
 | `src/lib/palette.ts` | Each palette and theme's colours as checked literals, for the SVG contexts that cannot resolve `var()` |
 | `src/lib/api.ts` | `ApiClient` — all fetches; no direct `fetch` in components |

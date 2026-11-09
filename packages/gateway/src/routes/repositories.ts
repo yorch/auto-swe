@@ -55,7 +55,9 @@ import { REPOSITORY_SWEEP_CAP, sweepArmedPullRequests } from '../lib/prEvaluatio
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { insensitiveName } from '../lib/repositoryHost.js';
+import { repositoryTeamScope } from '../lib/runTeamScope.js';
 import { isShellAuthor } from '../lib/specCheck.js';
+import { assertTeamParam } from '../lib/teamParam.js';
 import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
 import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { deactivateSchedulesOutsideTeams } from './scheduledWorkRequests.js';
@@ -145,6 +147,11 @@ const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 }).ext
   includeInactive: booleanQueryParam(false),
   /** Case-insensitive match on a connection's repository, organization, name or description. */
   q: z.string().trim().max(100).optional(),
+  /**
+   * Only repositories this team owns or that are shared to it. The caller must be a member of the
+   * team (404 otherwise; a platform ADMIN passes). Only narrows the list.
+   */
+  teamId: z.string().uuid().optional(),
 });
 
 const RepoParamsSchema = z.object({ id: z.string().uuid() });
@@ -815,7 +822,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { includeInactive, limit, offset, q } = request.query;
+      const { includeInactive, limit, offset, q, teamId } = request.query;
+      if (teamId) {
+        await assertTeamParam(fastify.prisma, user, teamId);
+      }
       const showInactive = includeInactive && hasRole(user.role, Role.LEAD);
       // A deactivated connection is listed only to someone who could reactivate
       // it: a platform ADMIN, or a LEAD/ADMIN of the owning team (the bar
@@ -853,6 +863,11 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             },
           ],
         };
+      }
+
+      if (teamId) {
+        // Its own AND term, so it can only narrow what reachability allows.
+        where = { AND: [where, repositoryTeamScope(teamId)] };
       }
 
       const [repos, total] = await asPlatformAdmin(

@@ -184,7 +184,13 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.pullRequest.findMany({
           include: {
             repository: {
-              select: { githubUrl: true, id: true, organizationName: true, repoName: true },
+              select: {
+                githubUrl: true,
+                id: true,
+                organizationName: true,
+                repoName: true,
+                team: { select: { id: true, name: true, slug: true } },
+              },
             },
             workflow: {
               select: {
@@ -234,6 +240,13 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           latestRun: run ? { id: run.id, status: run.status as WorkflowRunStatus } : null,
           mergedAt: row.mergedAt?.toISOString() ?? null,
           openedAt: row.openedAt.toISOString(),
+          ownerTeam: row.repository?.team
+            ? {
+                id: row.repository.team.id,
+                name: row.repository.team.name,
+                slug: row.repository.team.slug,
+              }
+            : null,
           prNumber: row.prNumber,
           repository: row.repository
             ? {
@@ -581,7 +594,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
               installation: { select: { host: true, installationId: true } },
               organizationName: true,
               repoName: true,
-              team: { select: { orgId: true } },
+              team: { select: { id: true, name: true, orgId: true, slug: true } },
               teamId: true,
             },
           },
@@ -708,6 +721,13 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           latestRun: run ? { id: run.id, status: run.status as WorkflowRunStatus } : null,
           mergedAt: row.mergedAt?.toISOString() ?? null,
           openedAt: row.openedAt.toISOString(),
+          ownerTeam: row.repository?.team
+            ? {
+                id: row.repository.team.id,
+                name: row.repository.team.name,
+                slug: row.repository.team.slug,
+              }
+            : null,
           prNumber: row.prNumber,
           repository: row.repository
             ? {

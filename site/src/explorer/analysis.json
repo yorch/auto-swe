@@ -13148,7 +13148,7 @@
       "before": 5,
       "id": "prOutcomeFilters",
       "lines": 36,
-      "path": "packages/gateway/src/routes/pullRequests.ts",
+      "path": "packages/gateway/src/lib/pullRequestOutcomesQuery.ts",
       "title": "Pull-request outcome reads and exports share one reach filter, including the stamped template column"
     },
     {
