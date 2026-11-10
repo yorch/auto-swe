@@ -21,6 +21,63 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
 
 ---
 
+## Creating the App from a manifest
+
+The quickest way to get the instance's App is GitHub's
+[manifest flow](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest),
+started from **Admin → Integrations → GitHub → Create a GitHub App**. The card is shown while no App
+ID is configured (in the database or the environment).
+
+1. Optionally name the organization that should own the App (blank means your personal account) and
+   the App's name (default `auto-swe`; GitHub requires it to be unique on the host, at most 34
+   characters). Click **Create GitHub App**.
+2. The gateway (`POST /api/v1/integrations/github-app-manifest`, ADMIN only) builds the manifest and
+   a signed `state`, and the dashboard posts the manifest to GitHub as a form, because GitHub only
+   accepts it that way. The manifest carries:
+   - the webhook URL `<PUBLIC_URL>/api/v1/webhooks/git`, created inactive when `PUBLIC_URL` is a
+     loopback address GitHub cannot reach;
+   - the permissions listed under [Creating the GitHub App](#creating-the-github-app) below;
+   - the events listed there;
+   - a redirect back to `<PUBLIC_URL>/api/v1/integrations/github-app-manifest/callback`, and a setup
+     URL of `<WEB_URL>/admin/integrations`;
+   - `public: false`, so the App can be installed only on the account that owns it.
+3. On GitHub, review and confirm **Create GitHub App**. GitHub sends the browser back to the callback
+   with a one-time code.
+4. The callback checks the `state` and exchanges the code at
+   `POST <API URL>/app-manifests/{code}/conversions`, then stores the App ID, client ID, client
+   secret and private key in the GitHub integration, sealed with the same AES-256-GCM envelope as the
+   form, and writes an audit entry naming the changed fields (never a value).
+5. The browser is sent on to the App's **installation page** on GitHub: the App still has to be
+   installed on the organization or account, and the repositories it may reach chosen there. After
+   the install GitHub returns to the integrations page with the installation id, and the page offers
+   **Save installation ID**. With that saved and the auth mode on `auto`, the platform uses the App.
+
+**Webhook secret.** One secret verifies every delivery from the instance's host. When one is
+already configured (database or `GITHUB_WEBHOOK_SECRET`), the new App is told to sign with it
+(`PATCH /app/hook/config`, authenticated as the new App), so repository webhooks that already use
+it keep verifying, and the stored secret is not replaced. When none is configured, the secret
+GitHub generated for the App is stored as the instance secret (or, when GitHub generated none, a
+random one the gateway sets on the App the same way). If GitHub refuses the
+`PATCH`, the App is still stored, the page warns that the App's deliveries will not verify, and the
+App's webhook secret has to be set on GitHub by hand.
+
+**What the callback checks.** The `state` is a single-purpose token signed by the gateway, valid for
+ten minutes, minted for this flow only (a Slack OAuth state cannot finish it, or the reverse). Its
+nonce must equal an HttpOnly, `SameSite=Lax` cookie the gateway set on the callback path in its
+answer to the dashboard's request (the same cross-origin, credentialed request sign-in relies on), so the flow finishes only in the browser that started it; the cookie is cleared on
+every callback, successful or not. The nonce also carries a digest of the API host the flow was
+started for, so a code is never presented to a different host if the integration's URLs changed
+while the flow was open. The admin who started the flow must still be an active `ADMIN`. An App ID
+configured meanwhile makes the callback store nothing: the flow never replaces an App. The code
+must match `^[A-Za-z0-9_-]+$` before it is put in a URL, the request goes through the guarded
+fetch with redirects refused, and GitHub's answer is checked field by field (numeric id, slug shape,
+an RSA private key). A failure lands on the integrations page with a fixed error code; GitHub's
+response text is never shown or logged.
+
+**GitHub Enterprise Server.** The form posts to the integration's **Base URL** and the code is
+exchanged at its **API URL**, so the App is created on the instance's own host. The flow refuses to
+start when those two URLs name different hosts.
+
 ## Creating the GitHub App
 
 ### github.com
@@ -48,6 +105,10 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
      ([pr-feedback.md](./pr-feedback.md)). An installation that only ever needed label reads
      carries the narrower **Issues: Read** until an admin re-accepts the wider permission
    - Metadata: **Read** (mandatory)
+   - Commit statuses: **Read and write** — only needed for
+     [pull-request evaluation](./pr-evaluation.md), which posts a commit status
+   - Organization permissions → Members: **Read** — only needed for
+     [the sign-in organization check](./oauth-setup.md)
 5. Set **Subscribe to events**:
    - Pull request — also the labelled deliveries that
      [pull-request label automations](./automations.md#33-pull-request-labels) read
@@ -245,6 +306,16 @@ cache keeps the two apart, so a narrow token is never served for a wider request
   `access_tokens` request for each instead of sharing the installation's single cached token.
 - The unrestricted tokens listed above still carry the installation's full repository scope; none of
   them is placed in an agent workspace.
+- The manifest flow creates only the instance's own App. An App for another approved host (Per-host
+  credentials) is registered by hand ([An App on another host](#an-app-on-another-host)).
+- The manifest flow does not replace or rotate an existing App: clear the App ID first to create a new one.
+- The installation id is offered from the query string GitHub appends after an install; the
+  platform does not look the installation up before saving it. A wrong id fails at the first token
+  mint, as one typed into the form would.
+- The manifest asks for no **Workflows** permission, so the App cannot push a change to files under
+  `.github/workflows/`. Add it on GitHub if agents are meant to edit workflow files.
+- `PUBLIC_URL` and `WEB_URL` are written into the App as they are at creation time. Changing either
+  later means editing the App's webhook URL and setup URL on GitHub.
 
 ---
 

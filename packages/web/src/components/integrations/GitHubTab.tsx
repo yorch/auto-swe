@@ -22,6 +22,7 @@ import { clearableField, countChanges } from '@/lib/configFieldPatch';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { ConfigField } from './ConfigField';
 import { ConfigStatusBadge, fieldState, groupState } from './ConfigStatusBadge';
+import { GitHubAppManifestCard } from './GitHubAppManifestCard';
 import { GitHubHostCredentialsCard } from './GitHubHostCredentialsCard';
 import { GitHubHostSecretsCard } from './GitHubHostSecretsCard';
 import { FieldGrid, IntegrationCard } from './IntegrationCard';
@@ -147,6 +148,10 @@ export function GitHubTab() {
 
   return (
     <div className="space-y-6">
+      <GitHubAppManifestCard
+        appConfigured={Boolean(data?.appId || sources.appId)}
+        installationId={data?.appInstallationId ?? null}
+      />
       <form className="space-y-6" onSubmit={handleSubmit}>
         <IntegrationCard
           description="The token the platform uses to clone, push and open pull requests, and the secret that signs the webhooks GitHub sends back."

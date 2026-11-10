@@ -234,7 +234,7 @@ const ASSISTANT_AUDIENCE = 'auto-swe:assistant';
  * ENGINEER-level user-link flow can never complete the ADMIN-only bot
  * install (or vice versa). Verified as an exact match at the callback.
  */
-export type OAuthStatePurpose = 'slack-link' | 'slack-install';
+export type OAuthStatePurpose = 'slack-link' | 'slack-install' | 'github-app-manifest';
 const OAUTH_STATE_TTL = '10m';
 
 const JWT_DEV_FALLBACK = 'dev-secret-change-me';

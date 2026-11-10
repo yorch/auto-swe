@@ -18,6 +18,7 @@ import { connectionCredentialRoutes } from './connectionCredentials.js';
 import { epicRoutes } from './epics.js';
 import { evalRoutes } from './evals.js';
 import { eventEndpointRoutes } from './eventEndpoints.js';
+import { githubAppManifestRoutes } from './githubAppManifest.js';
 import { githubApproverAppRoutes } from './githubApproverApp.js';
 import { githubHostCredentialRoutes } from './githubHostCredentials.js';
 import { githubInstallationRoutes } from './githubInstallations.js';
@@ -156,6 +157,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(githubWebhookSecretRoutes, { prefix: '/api/v1/platform' });
   await app.register(githubHostCredentialRoutes, { prefix: '/api/v1/platform' });
   await app.register(githubApproverAppRoutes, { prefix: '/api/v1/integrations' });
+  await app.register(githubAppManifestRoutes, { prefix: '/api/v1/integrations' });
   await app.register(packageRegistryRoutes, { prefix: '/api/v1/admin' });
   await app.register(mcpConnectionRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
