@@ -357,3 +357,72 @@ describe('runAuthorizedConnectionIds', () => {
     ).toEqual([]);
   });
 });
+
+describe('string maxLength and pattern', () => {
+  const schema = (prop: Record<string, unknown>) =>
+    ({ properties: { v: { type: 'string', ...prop } }, type: 'object' }) as InputSchema;
+
+  it('accepts a conforming value and fully anchors the pattern', () => {
+    const s = schema({ maxLength: 20, pattern: '[a-z]+-\\d+' });
+    expect(validateInputPayload(s, { v: 'abc-12' })).toEqual({ ok: true });
+    expect(validateInputPayload(s, { v: 'xabc-12!' }).ok).toBe(false);
+  });
+
+  it('rejects an over-long value without echoing it', () => {
+    const r = validateInputPayload(schema({ maxLength: 5 }), { v: 'secretvalue' });
+    expect(r).toEqual({ errors: ["'v' must be at most 5 characters"], ok: false });
+  });
+
+  it('applies to array items', () => {
+    const s = {
+      properties: {
+        v: { items: { pattern: 'CVE-\\d{4}-\\d{4,}', type: 'string' }, type: 'array' },
+      },
+      type: 'object',
+    } as InputSchema;
+    expect(validateInputPayload(s, { v: ['CVE-2024-12345'] })).toEqual({ ok: true });
+    expect(validateInputPayload(s, { v: ['nope'] }).ok).toBe(false);
+  });
+
+  it('does not run an adversarial pattern: (a+)+$ is refused at save', () => {
+    expect(inputSchemaProblems(schema({ pattern: '(a+)+$' }))[0]).toMatch(/groups or alternation/);
+  });
+
+  it('stays fast on polynomial patterns over a worst-case value', () => {
+    const s = schema({ pattern: 'a+a+a+$' });
+    expect(inputSchemaProblems(s)).toEqual([]);
+    const t = Date.now();
+    expect(validateInputPayload(s, { v: `${'a'.repeat(256)}!` }).ok).toBe(false);
+    expect(validateInputPayload(s, { v: `${'a'.repeat(4000)}!` }).ok).toBe(false);
+    expect(Date.now() - t).toBeLessThan(1000);
+  });
+
+  it('refuses bad schemas at save', () => {
+    for (const bad of [
+      { pattern: '[' },
+      { pattern: 'a'.repeat(201) },
+      { pattern: '' },
+      { pattern: '(a)\\1' },
+      { pattern: 'a|b' },
+      { pattern: 'a+b+c+d+' },
+      { pattern: 12 },
+      { maxLength: 1.5 },
+      { maxLength: 0 },
+      { maxLength: 1001 },
+      { maxLength: 300, pattern: 'a' },
+    ]) {
+      expect(inputSchemaProblems(schema(bad)).length, JSON.stringify(bad)).toBeGreaterThan(0);
+    }
+    expect(
+      inputSchemaProblems({
+        properties: { n: { maxLength: 3, type: 'number' } },
+        type: 'object',
+      })
+    ).toEqual(["'n': maxLength applies only to a string"]);
+  });
+
+  it('leaves existing schemas unchanged', () => {
+    expect(inputSchemaProblems(SWE_SCHEMA)).toEqual([]);
+    expect(validateInputPayload(SWE_SCHEMA, VALID)).toEqual({ ok: true });
+  });
+});

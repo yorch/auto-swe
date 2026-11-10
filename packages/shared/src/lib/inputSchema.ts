@@ -8,12 +8,13 @@
  * `{ ticketId, repoIds, … }` shape.
  *
  * Deliberately a tiny subset (object + scalar/array properties + `required` +
- * `enum` + `format:'uuid'`) so it needs no JSON-Schema dependency and stays
+ * `enum` + `format:'uuid'` + string `maxLength`/`pattern`) so it needs no JSON-Schema dependency and stays
  * trivially serializable into the `Json` column. Unknown payload keys are
  * allowed (additive — like JSON Schema's default `additionalProperties: true`).
  */
 
 import { UNIMPLEMENTED_CONNECTION_TYPES } from './connectionTypes.js';
+import { checkRegexSafety } from './regexSafety.js';
 
 export type InputFieldType = 'string' | 'number' | 'boolean' | 'array' | 'connection';
 
@@ -32,6 +33,10 @@ export interface InputSchemaProperty {
   enum?: (string | number)[];
   /** Extra string constraint. */
   format?: 'uuid';
+  /** Longest a `string` may be, in UTF-16 code units. Checked before `pattern`. */
+  maxLength?: number;
+  /** A `string` must match this expression in full (see {@link INPUT_PATTERN_MAX_VALUE_LENGTH}). */
+  pattern?: string;
   /** Inclusive bounds for a `number`. */
   minimum?: number;
   maximum?: number;
@@ -45,6 +50,8 @@ export interface InputSchemaProperty {
     type: Exclude<InputFieldType, 'array' | 'connection'>;
     format?: 'uuid';
     enum?: (string | number)[];
+    maxLength?: number;
+    pattern?: string;
   };
   /** When `type === 'connection'`, restricts the picker to connections of this type. */
   connectionType?: string;
@@ -58,8 +65,111 @@ export interface InputSchema {
 
 export type InputValidationResult = { ok: true } | { ok: false; errors: string[] };
 
+/** Hard ceiling for `maxLength`. */
+export const INPUT_MAX_LENGTH_LIMIT = 1000;
+/** Longest `pattern` source accepted. */
+export const INPUT_PATTERN_MAX_SOURCE_LENGTH = 200;
+/**
+ * Longest value a `pattern` is ever run against; a longer one fails without being tested, and a
+ * schema that declares a larger `maxLength` beside a `pattern` is refused at save.
+ */
+export const INPUT_PATTERN_MAX_VALUE_LENGTH = 256;
+/** Most unbounded repetitions (`*`, `+`, `{n,}`, wide `{n,m}`) one `pattern` may contain. */
+export const INPUT_PATTERN_MAX_REPETITIONS = 3;
+
 // Permissive UUID matcher (any RFC-4122 variant/version).
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Why a `pattern` is not acceptable, or null.
+ *
+ * A pattern is author-supplied data run in-process, on the request path, against text an
+ * external event supplied, and a backtracking engine cannot be interrupted. `validateInputPayload`
+ * is synchronous and so cannot use the pooled executor in `regexExec.ts`; the pattern is
+ * confined to a subset whose cost is bounded instead: literals, escapes, character classes,
+ * anchors and quantifiers on a single atom. No groups, alternation, backreferences or lookaround
+ * (the constructs that produce exponential blow-up), at most
+ * {@link INPUT_PATTERN_MAX_REPETITIONS} unbounded repetitions (polynomial degree), and values are
+ * capped at {@link INPUT_PATTERN_MAX_VALUE_LENGTH} characters, so the worst case is a few tens of
+ * millions of steps.
+ */
+export function inputPatternProblem(source: string): string | null {
+  if (source.length === 0) {
+    return 'must not be empty';
+  }
+  const safety = checkRegexSafety(source);
+  if (safety) {
+    return safety.message;
+  }
+  if (source.length > INPUT_PATTERN_MAX_SOURCE_LENGTH) {
+    return `is ${source.length} characters; the maximum is ${INPUT_PATTERN_MAX_SOURCE_LENGTH}`;
+  }
+  let repetitions = 0;
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i] as string;
+    if (c === '\\') {
+      const n = source[i + 1] ?? '';
+      if (/[1-9kpPcxu]/.test(n)) {
+        return `may not use the escape \\${n} (backreferences and code-point escapes are not allowed)`;
+      }
+      i++;
+    } else if (c === '[') {
+      i++;
+      if (source[i] === '^') {
+        i++;
+      }
+      for (; i < source.length && source[i] !== ']'; i++) {
+        if (source[i] === '\\') {
+          i++;
+        }
+      }
+    } else if (c === '(' || c === ')' || c === '|') {
+      return 'may not use groups or alternation; use character classes and quantifiers';
+    } else if (c === '*' || c === '+') {
+      repetitions++;
+    } else if (c === '{') {
+      const m = /^\{(\d+)(,(\d*))?\}/.exec(source.slice(i));
+      if (!m) {
+        return "may not use a bare '{'; escape it as \\{";
+      }
+      const max =
+        m[2] === undefined ? Number(m[1]) : m[3] === '' ? Number.POSITIVE_INFINITY : Number(m[3]);
+      if (Number.isFinite(max) && max > INPUT_MAX_LENGTH_LIMIT) {
+        return `repetition bound exceeds ${INPUT_MAX_LENGTH_LIMIT}`;
+      }
+      if (max > 10) {
+        repetitions++;
+      }
+      i += m[0].length - 1;
+    }
+  }
+  if (repetitions > INPUT_PATTERN_MAX_REPETITIONS) {
+    return `has ${repetitions} unbounded repetitions; the maximum is ${INPUT_PATTERN_MAX_REPETITIONS}`;
+  }
+  return null;
+}
+
+const patternCache = new Map<string, RegExp | null>();
+
+function compileInputPattern(source: string): RegExp | null {
+  const hit = patternCache.get(source);
+  if (hit !== undefined) {
+    return hit;
+  }
+  let re: RegExp | null = null;
+  if (inputPatternProblem(source) === null) {
+    try {
+      re = new RegExp(`^(?:${source})$`);
+    } catch {
+      re = null;
+    }
+  }
+  if (patternCache.size > 500) {
+    patternCache.clear();
+  }
+  patternCache.set(source, re);
+  return re;
+}
 
 /** Narrow an unknown `Json` value to an `InputSchema`. */
 export function isInputSchema(value: unknown): value is InputSchema {
@@ -153,7 +263,10 @@ function typeOf(value: unknown): InputFieldType | 'null' | 'object' {
 function checkScalar(
   key: string,
   value: unknown,
-  prop: Pick<InputSchemaProperty, 'type' | 'format' | 'enum' | 'minimum' | 'maximum' | 'integer'>,
+  prop: Pick<
+    InputSchemaProperty,
+    'type' | 'format' | 'enum' | 'minimum' | 'maximum' | 'integer' | 'maxLength' | 'pattern'
+  >,
   errors: string[]
 ): void {
   const actual = typeOf(value);
@@ -172,6 +285,20 @@ function checkScalar(
         ? `'${key}' must be a valid connection ID (UUID)`
         : `'${key}' must be a UUID`
     );
+  }
+  if (prop.type === 'string' && typeof value === 'string') {
+    // Length first, so a pattern never runs over more than it is willing to read. The value
+    // is never echoed: it came from outside.
+    const tooLong = typeof prop.maxLength === 'number' && value.length > prop.maxLength;
+    if (tooLong) {
+      errors.push(`'${key}' must be at most ${prop.maxLength} characters`);
+    }
+    if (typeof prop.pattern === 'string' && !tooLong) {
+      const re = compileInputPattern(prop.pattern);
+      if (value.length > INPUT_PATTERN_MAX_VALUE_LENGTH || re === null || !re.test(value)) {
+        errors.push(`'${key}' does not match the required pattern`);
+      }
+    }
   }
   if (Array.isArray(prop.enum) && !prop.enum.includes(value as string | number)) {
     errors.push(`'${key}' must be one of: ${prop.enum.join(', ')}`);
@@ -228,7 +355,13 @@ export function validateInputPayload(schema: InputSchema, payload: unknown): Inp
           checkScalar(
             `${key}[${i}]`,
             el,
-            { enum: items.enum, format: items.format, type: items.type },
+            {
+              enum: items.enum,
+              format: items.format,
+              maxLength: items.maxLength,
+              pattern: items.pattern,
+              type: items.type,
+            },
             errors
           );
         });
@@ -256,6 +389,39 @@ function isScalarList(v: unknown): boolean {
 
 function isCount(v: unknown): boolean {
   return typeof v === 'number' && Number.isInteger(v) && v >= 0;
+}
+
+function stringConstraintProblems(
+  p: Record<string, unknown>,
+  isString: boolean,
+  at: (m: string) => void
+): void {
+  for (const k of ['maxLength', 'pattern'] as const) {
+    if (p[k] !== undefined && !isString) {
+      at(`${k} applies only to a string`);
+      return;
+    }
+  }
+  const ml = p.maxLength;
+  if (
+    ml !== undefined &&
+    !(typeof ml === 'number' && Number.isInteger(ml) && ml >= 1 && ml <= INPUT_MAX_LENGTH_LIMIT)
+  ) {
+    at(`maxLength must be a whole number from 1 to ${INPUT_MAX_LENGTH_LIMIT}`);
+  }
+  if (p.pattern !== undefined) {
+    if (typeof p.pattern !== 'string') {
+      at('pattern must be a string');
+    } else {
+      const problem = inputPatternProblem(p.pattern);
+      if (problem) {
+        at(`pattern ${problem}`);
+      }
+      if (typeof ml === 'number' && ml > INPUT_PATTERN_MAX_VALUE_LENGTH) {
+        at(`maxLength may not exceed ${INPUT_PATTERN_MAX_VALUE_LENGTH} when a pattern is set`);
+      }
+    }
+  }
 }
 
 /**
@@ -309,6 +475,7 @@ export function inputSchemaProblems(value: unknown): string[] {
     if (p.type === 'connection' && (key === 'ticketId' || key === 'description')) {
       at('may not be a connection: the platform fills this key from text, not from a picker');
     }
+    stringConstraintProblems(p, p.type === 'string', at);
     if (p.enum !== undefined && !isScalarList(p.enum)) {
       at('enum must be a list of strings or numbers');
     }
@@ -334,8 +501,11 @@ export function inputSchemaProblems(value: unknown): string[] {
         !SCALAR_TYPES.has(items.type)
       ) {
         at('items must be { type: string | number | boolean }');
-      } else if (items.enum !== undefined && !isScalarList(items.enum)) {
-        at('items.enum must be a list of strings or numbers');
+      } else {
+        if (items.enum !== undefined && !isScalarList(items.enum)) {
+          at('items.enum must be a list of strings or numbers');
+        }
+        stringConstraintProblems(items, items.type === 'string', (m) => at(`items.${m}`));
       }
     }
     if (p.default !== undefined) {

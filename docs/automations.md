@@ -73,6 +73,22 @@ option, a key the occurrence fills, or a value the run would refuse is a `400`. 
 built again, because the template can change after the automation was saved; a payload that no
 longer fits is recorded as `FAILED_TO_START`.
 
+**Constraining a string input.** A `string` property (or the `items` of an `array`) may declare,
+besides `enum` and `format: 'uuid'`:
+
+- `maxLength` — a whole number from 1 to 1000. Checked first.
+- `pattern` — a regular expression the whole value must match (it is wrapped as `^(?:…)$`, so
+  anchors are optional). At most 200 characters, no flags. A value longer than 256 characters is
+  refused without being tested, and a `maxLength` above 256 beside a `pattern` is refused at save.
+
+Values that arrive in an event are attacker-influenced text, and a pattern is template data that
+runs in the gateway process, which a backtracking engine cannot interrupt. A pattern is therefore
+confined to literals, escapes, character classes, anchors and quantifiers applied to one atom: no
+groups, alternation, backreferences or lookaround, and at most three unbounded repetitions (`*`,
+`+`, `{n,}`, or a bound above 10). The template save and bundle validation refuse a schema
+that breaks this. A value that violates either keyword fails the occurrence's input validation
+like an `enum` violation; the error names the field and the rule, never the value.
+
 Filters are stored as the source's schema parsed them. The database refuses a source it does not
 know, and filters that break the source's invariants (an empty event or pattern list). A stored
 automation whose filters do not parse matches nothing.

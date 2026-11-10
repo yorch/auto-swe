@@ -34,6 +34,9 @@ interface FieldDraft {
   format: '' | 'uuid';
   itemType: Exclude<InputFieldType, 'array' | 'connection'>;
   connectionType: string;
+  /** Not editable here; carried through so opening a schema and saving it does not drop them. */
+  maxLength?: number;
+  pattern?: string;
 }
 
 function fieldToProperty(draft: FieldDraft): InputSchemaProperty {
@@ -49,6 +52,12 @@ function fieldToProperty(draft: FieldDraft): InputSchemaProperty {
       .split(',')
       .map((v) => v.trim())
       .filter(Boolean);
+  }
+  if (draft.type === 'string' && draft.maxLength !== undefined) {
+    prop.maxLength = draft.maxLength;
+  }
+  if (draft.type === 'string' && draft.pattern !== undefined) {
+    prop.pattern = draft.pattern;
   }
   if (draft.type === 'array') {
     prop.items = { type: draft.itemType };
@@ -68,6 +77,8 @@ function propertyToDraft(key: string, prop: InputSchemaProperty, required: boole
     id: randomId(),
     itemType: prop.items?.type ?? 'string',
     key,
+    ...(prop.maxLength !== undefined ? { maxLength: prop.maxLength } : {}),
+    ...(prop.pattern !== undefined ? { pattern: prop.pattern } : {}),
     required,
     type: prop.type,
   };
