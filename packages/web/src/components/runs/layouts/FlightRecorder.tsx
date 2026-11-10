@@ -7,7 +7,9 @@ import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
+import { nodeDisplayName, nodeGroupOf } from '@/components/workflow/nodeDisplay';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
+import { phasesOf } from '@/components/workflow/workflowPhases';
 import { useIsNarrow } from '@/hooks/useMediaQuery';
 import { stepBand } from '@/lib/runTimeline';
 import { specNodeIdOfRecording } from '@/lib/traceLinkage';
@@ -185,6 +187,22 @@ export function FlightRecorder({
     );
   }, [currentMs, run.steps, run.startedAt, totalMs]);
 
+  const currentStepInfo = useMemo(() => {
+    if (!currentStepName) {
+      return null;
+    }
+    const specId = specNodeIdOfRecording(currentStepName, linker);
+    const node = spec.nodes[specId];
+    const phases = phasesOf(spec);
+    const phase = nodeGroupOf(node);
+    return {
+      phase,
+      phaseCount: phases.length,
+      phaseIndex: phase ? phases.indexOf(phase) + 1 : 0,
+      title: node ? nodeDisplayName(node, currentStepName) : currentStepName,
+    };
+  }, [currentStepName, linker, spec]);
+
   const visibleTraces = useMemo(() => {
     if (!run.startedAt || totalMs === 0) {
       return traces;
@@ -303,10 +321,18 @@ export function FlightRecorder({
                 {formatClock(currentMs)}
               </span>
               <span className="tabular text-xs text-paper-500">/ {formatClock(totalMs)}</span>
-              {currentStepName && (
-                <Badge className="font-mono" tone="accent">
-                  {currentStepName}
-                </Badge>
+              {currentStepName && currentStepInfo && (
+                <>
+                  <Badge title={currentStepName} tone="accent">
+                    {currentStepInfo.title}
+                  </Badge>
+                  {currentStepInfo.phase && (
+                    <span className="text-xs text-paper-500">
+                      {currentStepInfo.phase} · phase {currentStepInfo.phaseIndex} of{' '}
+                      {currentStepInfo.phaseCount}
+                    </span>
+                  )}
+                </>
               )}
             </div>
           </div>

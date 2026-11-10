@@ -76,6 +76,16 @@ export function collapsibleGroups(spec: WorkflowSpec): string[] {
   return [...members].filter(([g, n]) => n >= 2 && !split.has(g)).map(([g]) => g);
 }
 
+/**
+ * The groups a large graph opens collapsed: every collapsible group when `enabled`, none
+ * otherwise. A graph of 50 nodes reads as a handful of phases first, and the viewer expands
+ * the one they care about. `foldGroups` still leaves open a group holding something the
+ * viewer is looking for, so a failed or running step is never hidden by this default.
+ */
+export function defaultCollapsedGroups(spec: WorkflowSpec, enabled: boolean): Set<string> {
+  return enabled ? new Set(collapsibleGroups(spec)) : new Set();
+}
+
 export function foldGroups(
   spec: WorkflowSpec,
   collapsed: ReadonlySet<string>,
