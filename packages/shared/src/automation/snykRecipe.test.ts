@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { VULNERABILITY_REMEDIATION_PROMPT } from '../lib/agentPrompts.js';
 import { VULNERABILITY_REMEDIATION_INPUT_SCHEMA as schema } from '../workflow/templates/vulnerabilityRemediation.js';
 import {
   EVENT_ENDPOINT_PRESETS,
@@ -65,7 +66,9 @@ const filters = InboundEventFiltersSchema.parse({
   match: [
     { op: 'eq', pointer: '/project/id', value: PROJECT },
     { op: 'in', pointer: '/project/type', value: ['npm', 'yarn', 'pnpm'] },
+    // The recipe's two mandatory rules, written as docs/inbound-events.md §6 gives them.
     { op: 'exists', pointer: '/newIssues/0' },
+    { op: 'eq', pointer: '/newIssues/0/issueType', value: 'vuln' },
   ],
 });
 
@@ -154,15 +157,36 @@ describe('a Snyk delivery through the recipe', () => {
     expect(inboundEventSource.mismatch(filters, facts)).toContain('/newIssues/0');
   });
 
-  it('starts a run with no advisory fields if the exists rule is left out', () => {
+  it('does not select a ping, which reads as a snapshot with no issues', () => {
+    const ping = { webhookId: 'w-1' };
+    expect(inboundEventSource.mismatch(filters, build(ping).facts)).not.toBeNull();
+    // Even one whose body carried the matching project is stopped by the exists rule alone.
+    const existsOnly = InboundEventFiltersSchema.parse({
+      ...filters,
+      match: [{ op: 'exists', pointer: '/newIssues/0' }],
+    });
+    const facts = inboundEventFacts(extract({ ...ping, project: { id: PROJECT } }), existsOnly);
+    expect(inboundEventSource.mismatch(existsOnly, facts)).toContain('/newIssues/0');
+  });
+
+  it('does not select a licence issue, thanks to the issueType rule', () => {
+    const { facts } = build(body([issue({ issueType: 'license', pkgName: 'left-pad' })]));
+    expect(inboundEventSource.mismatch(filters, facts)).toContain('/newIssues/0/issueType');
+  });
+
+  it('starts a run with no advisory fields if the mandatory rules are left out', () => {
     // Actual behaviour: every advisory input is optional, so an empty snapshot that is selected
-    // builds a valid payload with only the repository. The recipe's exists rule is what stops it.
+    // builds a valid payload with only the repository. The recipe's exists rule is what stops it;
+    // the brief tells the agent to change nothing when no package is named.
     const loose = InboundEventFiltersSchema.parse({ ...filters, match: [] });
     const facts = inboundEventFacts(extract(body([])), loose);
     expect(inboundEventSource.mismatch(loose, facts)).toBeNull();
     const built = buildAutomationPayload(inboundEventSource, schema, {}, REPO, facts);
     expect(built.ok).toBe(true);
     expect(built.ok && built.payload.packageName).toBeUndefined();
+    expect(VULNERABILITY_REMEDIATION_PROMPT).toContain(
+      'If the request names no affected package (an event can arrive with its fields empty), change nothing'
+    );
   });
 
   it('refuses an over-long or malformed package name', () => {

@@ -85,7 +85,10 @@ On an event-started run, the mapped values reach the implementer inside the run'
 one JSON object under a line that says the event's text is the sender's and is data
 ([inbound-events.md](./inbound-events.md) §4). The remediation prompt names the five fields, says
 their values are the sender's, and has the agent check the package and its versions against the
-repository and the package's registry before acting on them.
+repository and the package's registry before acting on them. When the request names no affected
+package (an event whose mapped fields were all empty), the prompt has the agent change nothing and
+say there was nothing to remediate; the run still starts, so an automation's match rules are what
+keep such an event from starting one ([inbound-events.md](./inbound-events.md) §6).
 
 **The run.** The implementer runs under the remediation prompt: find where the package is declared and
 which version resolves, choose the lowest fixed version, change it with the repository's own

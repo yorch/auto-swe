@@ -121,6 +121,16 @@ export function resolveTypeSource(input: {
     }
     return { fixedType: fixed, ok: true, typePointer: '' };
   }
+  // `""` addresses the whole document, which for a JSON object body is never a type and for a
+  // scalar body makes the sender's whole body the type. A row stored that way before this check
+  // is still read as it is; only a write is refused.
+  if (pointer === '') {
+    return {
+      message:
+        'typePointer must name the field that holds the event type; to give every event one type, set fixedType instead',
+      ok: false,
+    };
+  }
   return { fixedType: null, ok: true, typePointer: pointer };
 }
 

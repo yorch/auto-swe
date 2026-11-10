@@ -45,13 +45,15 @@ export interface InputSchemaProperty {
   /** Fewest and most elements an `array` may have when present. */
   minItems?: number;
   maxItems?: number;
-  /** Element type when `type === 'array'`, and optionally the values each element may take. */
+  /**
+   * Element type when `type === 'array'`, and optionally the values each element may take. No
+   * `pattern`: an array's length has no bound of its own, so a per-item pattern is refused.
+   */
   items?: {
     type: Exclude<InputFieldType, 'array' | 'connection'>;
     format?: 'uuid';
     enum?: (string | number)[];
     maxLength?: number;
-    pattern?: string;
   };
   /** When `type === 'connection'`, restricts the picker to connections of this type. */
   connectionType?: string;
@@ -74,8 +76,11 @@ export const INPUT_PATTERN_MAX_SOURCE_LENGTH = 200;
  * schema that declares a larger `maxLength` beside a `pattern` is refused at save.
  */
 export const INPUT_PATTERN_MAX_VALUE_LENGTH = 256;
-/** Most unbounded repetitions (`*`, `+`, `{n,}`, wide `{n,m}`) one `pattern` may contain. */
-export const INPUT_PATTERN_MAX_REPETITIONS = 3;
+/**
+ * Most variable-count quantifiers (`?`, `*`, `+`, `{n,}`, `{n,m}` with `m > n`) one `pattern`
+ * may contain; an exact `{n}` is not counted.
+ */
+export const INPUT_PATTERN_MAX_REPETITIONS = 2;
 
 // Permissive UUID matcher (any RFC-4122 variant/version).
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -86,12 +91,14 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * A pattern is author-supplied data run in-process, on the request path, against text an
  * external event supplied, and a backtracking engine cannot be interrupted. `validateInputPayload`
  * is synchronous and so cannot use the pooled executor in `regexExec.ts`; the pattern is
- * confined to a subset whose cost is bounded instead: literals, escapes, character classes,
- * anchors and quantifiers on a single atom. No groups, alternation, backreferences or lookaround
- * (the constructs that produce exponential blow-up), at most
- * {@link INPUT_PATTERN_MAX_REPETITIONS} unbounded repetitions (polynomial degree), and values are
- * capped at {@link INPUT_PATTERN_MAX_VALUE_LENGTH} characters, so the worst case is a few tens of
- * millions of steps.
+ * confined to a subset whose work is bounded instead: literals, escapes, character classes,
+ * anchors and quantifiers on a single atom. No groups, alternation, backreferences or lookaround,
+ * and at most {@link INPUT_PATTERN_MAX_REPETITIONS} quantifiers whose count varies. Every such
+ * quantifier counts whatever its bound — `\w{0,5}` chained fourteen times backtracks as badly as
+ * fourteen stars — so the number of ways a value can be split among them, which is what a
+ * backtracking engine explores, is at most quadratic in the value's length. Values are capped at
+ * {@link INPUT_PATTERN_MAX_VALUE_LENGTH} characters, so one check is bounded by a few hundred
+ * thousand steps. That is a bound on work, not a proof the engine is fast on every input.
  */
 export function inputPatternProblem(source: string): string | null {
   if (source.length === 0) {
@@ -105,8 +112,12 @@ export function inputPatternProblem(source: string): string | null {
     return `is ${source.length} characters; the maximum is ${INPUT_PATTERN_MAX_SOURCE_LENGTH}`;
   }
   let repetitions = 0;
+  // A `?` straight after a quantifier makes it lazy; it is not a second quantifier.
+  let afterQuantifier = false;
   for (let i = 0; i < source.length; i++) {
     const c = source[i] as string;
+    const wasAfterQuantifier = afterQuantifier;
+    afterQuantifier = false;
     if (c === '\\') {
       const n = source[i + 1] ?? '';
       if (/[1-9kpPcxu]/.test(n)) {
@@ -125,29 +136,41 @@ export function inputPatternProblem(source: string): string | null {
       }
     } else if (c === '(' || c === ')' || c === '|') {
       return 'may not use groups or alternation; use character classes and quantifiers';
-    } else if (c === '*' || c === '+') {
+    } else if (c === '*' || c === '+' || (c === '?' && !wasAfterQuantifier)) {
       repetitions++;
+      afterQuantifier = true;
     } else if (c === '{') {
       const m = /^\{(\d+)(,(\d*))?\}/.exec(source.slice(i));
       if (!m) {
         return "may not use a bare '{'; escape it as \\{";
       }
-      const max =
-        m[2] === undefined ? Number(m[1]) : m[3] === '' ? Number.POSITIVE_INFINITY : Number(m[3]);
-      if (Number.isFinite(max) && max > INPUT_MAX_LENGTH_LIMIT) {
+      const min = Number(m[1]);
+      const max = m[2] === undefined ? min : m[3] === '' ? Number.POSITIVE_INFINITY : Number(m[3]);
+      if (Math.max(min, Number.isFinite(max) ? max : 0) > INPUT_MAX_LENGTH_LIMIT) {
         return `repetition bound exceeds ${INPUT_MAX_LENGTH_LIMIT}`;
       }
-      if (max > 10) {
+      if (max !== min) {
         repetitions++;
       }
+      afterQuantifier = true;
       i += m[0].length - 1;
     }
   }
   if (repetitions > INPUT_PATTERN_MAX_REPETITIONS) {
-    return `has ${repetitions} unbounded repetitions; the maximum is ${INPUT_PATTERN_MAX_REPETITIONS}`;
+    return `has ${repetitions} quantifiers whose count varies (?, *, +, {n,} or {n,m}); the maximum is ${INPUT_PATTERN_MAX_REPETITIONS}`;
+  }
+  try {
+    new RegExp(`^(?:${source})$`);
+  } catch {
+    return 'is not a valid regular expression';
   }
   return null;
 }
+
+const UNUSABLE_PATTERN =
+  "the template's input schema declares a pattern this platform does not run; fix the schema";
+const UNUSABLE_ITEMS_PATTERN =
+  "the template's input schema declares a pattern on array items, which is not supported; fix the schema";
 
 const patternCache = new Map<string, RegExp | null>();
 
@@ -293,9 +316,14 @@ function checkScalar(
     if (tooLong) {
       errors.push(`'${key}' must be at most ${prop.maxLength} characters`);
     }
-    if (typeof prop.pattern === 'string' && !tooLong) {
-      const re = compileInputPattern(prop.pattern);
-      if (value.length > INPUT_PATTERN_MAX_VALUE_LENGTH || re === null || !re.test(value)) {
+    if (prop.pattern !== undefined && !tooLong) {
+      // A stored pattern outside the accepted subset (saved before the subset was enforced, or
+      // written around the save check) is never run: every value is refused, and the error names
+      // the schema, not the value, as the thing to fix.
+      const re = typeof prop.pattern === 'string' ? compileInputPattern(prop.pattern) : null;
+      if (re === null) {
+        errors.push(`'${key}' cannot be checked: ${UNUSABLE_PATTERN}`);
+      } else if (value.length > INPUT_PATTERN_MAX_VALUE_LENGTH || !re.test(value)) {
         errors.push(`'${key}' does not match the required pattern`);
       }
     }
@@ -350,7 +378,11 @@ export function validateInputPayload(schema: InputSchema, payload: unknown): Inp
         errors.push(`'${key}' must have at most ${prop.maxItems} item(s)`);
       }
       const items = prop.items;
-      if (items) {
+      if (items && (items as Record<string, unknown>).pattern !== undefined) {
+        // Not supported on items: an item count has no bound of its own, so a pattern per item is
+        // work proportional to the body. Refused at save; a stored one fails closed, once.
+        errors.push(`'${key}' cannot be checked: ${UNUSABLE_ITEMS_PATTERN}`);
+      } else if (items) {
         value.forEach((el, i) => {
           checkScalar(
             `${key}[${i}]`,
@@ -359,7 +391,6 @@ export function validateInputPayload(schema: InputSchema, payload: unknown): Inp
               enum: items.enum,
               format: items.format,
               maxLength: items.maxLength,
-              pattern: items.pattern,
               type: items.type,
             },
             errors
@@ -505,7 +536,14 @@ export function inputSchemaProblems(value: unknown): string[] {
         if (items.enum !== undefined && !isScalarList(items.enum)) {
           at('items.enum must be a list of strings or numbers');
         }
-        stringConstraintProblems(items, items.type === 'string', (m) => at(`items.${m}`));
+        if (items.pattern !== undefined) {
+          at(
+            'items.pattern is not supported (an array has no bound on its item count); constrain items with enum or maxLength'
+          );
+        }
+        stringConstraintProblems({ ...items, pattern: undefined }, items.type === 'string', (m) =>
+          at(`items.${m}`)
+        );
       }
     }
     if (p.default !== undefined) {

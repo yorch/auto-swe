@@ -272,6 +272,10 @@ describe('extraction', () => {
       fixedType: null,
       ok: true,
     });
+    // Neither: an empty pointer would address the whole document.
+    expect(resolveTypeSource({ typePointer: '' }).ok).toBe(false);
+    expect(resolveTypeSource({ fixedType: null, typePointer: '' }).ok).toBe(false);
+    expect(resolveTypeSource({}).ok).toBe(false);
     expect(FixedEventTypeSchema.safeParse('bad type').success).toBe(false);
     expect(FixedEventTypeSchema.safeParse('').success).toBe(false);
   });

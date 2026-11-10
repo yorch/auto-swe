@@ -154,13 +154,19 @@ export function automationOptionsProblem<F, X>(
       return problem;
     }
   }
+  // A sample stands in for text each occurrence supplies, so a value-shape constraint on a key the
+  // occurrence fills (`'sample'` against a CVE pattern) says nothing about the automation: that is
+  // checked on the real value when an occurrence arrives. Everything else is checked in full.
+  const sampleSchema = isInputSchema(inputSchema)
+    ? withoutValueShape(inputSchema, filled)
+    : inputSchema;
   for (const facts of source.samples(
     filters,
     isInputSchema(inputSchema) ? inputSchema : undefined
   )) {
     const built = buildAutomationPayload(
       source,
-      inputSchema,
+      sampleSchema,
       inputs,
       // A stand-in repository for an automation whose runs act on one; none otherwise.
       onRepository ? '00000000-0000-4000-8000-000000000000' : null,
@@ -171,4 +177,18 @@ export function automationOptionsProblem<F, X>(
     }
   }
   return null;
+}
+
+/** `schema` without `pattern` and `maxLength` on the properties named in `keys`. */
+function withoutValueShape(schema: InputSchema, keys: ReadonlySet<string>): InputSchema {
+  const properties: InputSchema['properties'] = {};
+  for (const [key, prop] of Object.entries(schema.properties)) {
+    if (keys.has(key) && (prop.pattern !== undefined || prop.maxLength !== undefined)) {
+      const { pattern: _pattern, maxLength: _maxLength, ...rest } = prop;
+      properties[key] = rest;
+    } else {
+      properties[key] = prop;
+    }
+  }
+  return { ...schema, properties };
 }

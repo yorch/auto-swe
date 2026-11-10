@@ -999,8 +999,11 @@ that has none, whether or not the template's spec changed, but only while the te
 on its latest built-in version with no A/B experiment running. A schema already stored is never
 replaced, so one an admin saved by hand stays as it is and does not gain the shipped fields. The
 spec also changes (the remediation prompt names the advisory fields), so a new built-in version is
-appended and activated on the same terms; runs already started keep the version they pinned. No
-migration is needed.
+appended and activated on the same terms; runs already started keep the version they pinned. The
+template change needs no manual step. The same change adds the migration
+`20261110000000_event_endpoint_fixed_type` (a nullable `fixed_type` column on event endpoints and
+its check constraint); the deployment's usual `prisma migrate deploy` step (`yarn db:deploy`)
+applies it, and existing endpoints keep their stored type pointer with no action.
 
 **Actions.**
 
@@ -1013,6 +1016,51 @@ migration is needed.
 
 **Verify.** `GET /api/v1/workflow-templates/:id` for the template returns an `inputSchema` naming
 `packageName`, and the template is offered when an inbound-event automation is created.
+
+---
+
+### UN-19. Input schemas enforce `pattern` and `maxLength` (`<sha of this change>`)
+
+**Affected.** A deployment with a workflow template, global or a team's, installed from a bundle
+or saved by hand, whose stored `inputSchema` gives a property (or an array's `items`) a `pattern`
+or a `maxLength`. Before `<sha of this change>` both keywords were ignored, so a schema copied
+from JSON Schema could carry them unnoticed. A deployment with no such template needs nothing.
+
+Find them in the database (a property that is itself named `pattern` or `maxLength` also matches;
+read each hit):
+
+```sql
+SELECT id, name, team_id, status FROM workflow_templates
+ WHERE input_schema::text ~ '"(pattern|maxLength)"';
+SELECT template_id, version FROM workflow_template_versions
+ WHERE input_schema::text ~ '"(pattern|maxLength)"';
+```
+
+For a bundle not yet reinstalled, search its template files for the same two keys.
+
+**What changes.** Both keywords are now checked at launch, on every path that validates a run's
+inputs (a hand launch, a work request, a template webhook, Slack and an automation). This fails
+closed:
+
+- `maxLength` is enforced: a longer value is refused.
+- A `pattern` is run only if it is within the accepted subset ([automations.md](./automations.md)):
+  no groups, alternation, backreferences or lookaround, at most two quantifiers whose count varies,
+  at most 200 characters, and a `maxLength` of at most 256 beside it. A stored pattern outside the
+  subset is never run, and **every** launch that supplies the field is refused with
+  `'<field>' cannot be checked: the template's input schema declares a pattern this platform does
+  not run`. A pattern on an array's `items` is not supported at all and refuses the field the same
+  way.
+- Saving such a schema (`PATCH /api/v1/workflow-templates/:id`) and installing a bundle that
+  carries one are refused, with a message naming the property and the rule.
+
+**Actions.** For each template the query finds, fix its schema: rewrite the pattern within the
+subset (for example `^(CVE|GHSA)-\d+$` becomes two fields, or `[A-Z]+-[0-9A-Za-z-]+`), drop an
+`items.pattern` (constrain items with `enum` or `maxLength`), and keep `maxLength` at or below 256
+beside a pattern. Save it with `PATCH /api/v1/workflow-templates/:id`, or fix the bundle and
+reinstall it. Then fix any launcher that sends a value the corrected schema refuses.
+
+**Verify.** The `PATCH` succeeds, and a launch with a conforming value starts a run instead of
+answering `cannot be checked`.
 
 ---
 

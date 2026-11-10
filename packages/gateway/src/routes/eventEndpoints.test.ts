@@ -261,6 +261,47 @@ describe('event endpoint management', () => {
     expect(back.json().data).toMatchObject({ fixedType: null, typePointer: '/kind' });
   });
 
+  it('refuses an empty typePointer unless a fixed type remains set', async () => {
+    const { app, prisma } = await build();
+    const post = (payload: Record<string, unknown>) =>
+      app.inject({ headers: AUTH, method: 'POST', payload: { ...CREATE, ...payload }, url: URL });
+    const patch = (payload: Record<string, unknown>) =>
+      app.inject({ headers: AUTH, method: 'PATCH', payload, url: `${URL}/${EP}` });
+    // The web form's "a field in the body" after a preset with no pointer sends exactly this.
+    for (const body of [{ typePointer: '' }, { fixedType: null, typePointer: '' }]) {
+      const res = await post(body);
+      expect(res.statusCode, JSON.stringify(body)).toBe(400);
+      expect(res.json().error.code).toBe('INVALID_EVENT_TYPE');
+    }
+    // A preset's fixed type with its empty pointer is the one sound use of "".
+    expect((await post({ fixedType: 'project_snapshot/v0', typePointer: '' })).statusCode).toBe(
+      201
+    );
+    // On a fixed-type endpoint, neither PATCH may clear the constant and leave "" behind.
+    for (const body of [{ typePointer: '' }, { fixedType: null, typePointer: '' }]) {
+      const res = await patch(body);
+      expect(res.statusCode, JSON.stringify(body)).toBe(400);
+      expect(res.json().error.code).toBe('INVALID_EVENT_TYPE');
+    }
+    expect(prisma.eventEndpoint.update).not.toHaveBeenCalled();
+    const kept = await patch({ fixedType: 'project_snapshot/v0' });
+    expect(kept.json().data).toMatchObject({ fixedType: 'project_snapshot/v0', typePointer: '' });
+  });
+
+  it('keeps a row stored with an empty typePointer and no fixed type editable', async () => {
+    const { app, prisma } = await build();
+    prisma.eventEndpoint.findFirst.mockResolvedValue(storedRow({ typePointer: '' }) as never);
+    const patch = (payload: Record<string, unknown>) =>
+      app.inject({ headers: AUTH, method: 'PATCH', payload, url: `${URL}/${EP}` });
+    expect((await patch({ name: 'renamed' })).statusCode).toBe(200);
+    expect((await patch({ fixedType: null })).statusCode).toBe(200);
+    for (const call of prisma.eventEndpoint.update.mock.calls) {
+      expect(call[0].data).not.toHaveProperty('typePointer', '/type');
+    }
+    // Writing the empty pointer again is a new write, and refused.
+    expect((await patch({ typePointer: '' })).statusCode).toBe(400);
+  });
+
   it('rotates a secret, keeping the old one for a day', async () => {
     const { app, audit } = await build();
     const res = await app.inject({

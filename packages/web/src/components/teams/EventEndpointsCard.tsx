@@ -105,10 +105,13 @@ function NewEndpointForm({
   };
   const orNull = (v: string) => (v.trim() === '' ? null : v.trim());
   const needsHeader = scheme !== 'autoswe-v1';
+  // A preset with a fixed type carries an empty pointer; switching it to "a field in the body"
+  // must not send that `""`, which would read the whole body as the type (the API refuses it).
+  const missingPointer = typeFrom === 'pointer' && typePointer.trim() === '';
   const valid =
     name.trim() !== '' &&
     (!needsHeader || header.trim() !== '') &&
-    (typeFrom === 'pointer' || fixedType.trim() !== '');
+    (typeFrom === 'pointer' ? !missingPointer : fixedType.trim() !== '');
   const save = () =>
     create.mutate(
       {
@@ -200,9 +203,11 @@ function NewEndpointForm({
           />
         ) : (
           <Input
+            error={missingPointer ? 'Name the field that holds the type, e.g. /type' : undefined}
             hint="JSON Pointer to the event type, e.g. /type"
             label="Type pointer"
             onChange={(e) => setTypePointer(e.target.value)}
+            required
             value={typePointer}
           />
         )}

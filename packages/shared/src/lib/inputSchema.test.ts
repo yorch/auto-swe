@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   declaredConnectionInputs,
   type InputSchema,
+  inputPatternProblem,
   inputSchemaProblems,
   isInputSchema,
   runAuthorizedConnectionIds,
@@ -373,28 +374,96 @@ describe('string maxLength and pattern', () => {
     expect(r).toEqual({ errors: ["'v' must be at most 5 characters"], ok: false });
   });
 
-  it('applies to array items', () => {
+  it('applies maxLength, but not a pattern, to array items', () => {
     const s = {
-      properties: {
-        v: { items: { pattern: 'CVE-\\d{4}-\\d{4,}', type: 'string' }, type: 'array' },
-      },
+      properties: { v: { items: { maxLength: 5, type: 'string' }, type: 'array' } },
       type: 'object',
     } as InputSchema;
-    expect(validateInputPayload(s, { v: ['CVE-2024-12345'] })).toEqual({ ok: true });
-    expect(validateInputPayload(s, { v: ['nope'] }).ok).toBe(false);
+    expect(inputSchemaProblems(s)).toEqual([]);
+    expect(validateInputPayload(s, { v: ['abc'] })).toEqual({ ok: true });
+    expect(validateInputPayload(s, { v: ['abcdef'] }).ok).toBe(false);
+
+    const patterned = {
+      properties: { v: { items: { pattern: 'CVE-\\d+', type: 'string' }, type: 'array' } },
+      type: 'object',
+    };
+    expect(inputSchemaProblems(patterned)).toEqual([
+      "'v': items.pattern is not supported (an array has no bound on its item count); constrain items with enum or maxLength",
+    ]);
+    // A stored one (saved before the check, or written around it) fails closed, once per field.
+    const r = validateInputPayload(patterned as InputSchema, { v: ['CVE-1', 'CVE-2'] });
+    expect(r).toEqual({
+      errors: [
+        "'v' cannot be checked: the template's input schema declares a pattern on array items, which is not supported; fix the schema",
+      ],
+      ok: false,
+    });
   });
 
   it('does not run an adversarial pattern: (a+)+$ is refused at save', () => {
     expect(inputSchemaProblems(schema({ pattern: '(a+)+$' }))[0]).toMatch(/groups or alternation/);
   });
 
-  it('stays fast on polynomial patterns over a worst-case value', () => {
-    const s = schema({ pattern: 'a+a+a+$' });
-    expect(inputSchemaProblems(s)).toEqual([]);
-    const t = Date.now();
-    expect(validateInputPayload(s, { v: `${'a'.repeat(256)}!` }).ok).toBe(false);
-    expect(validateInputPayload(s, { v: `${'a'.repeat(4000)}!` }).ok).toBe(false);
-    expect(Date.now() - t).toBeLessThan(1000);
+  it('refuses at save the exponential patterns that passed the old checker', () => {
+    const attacks = [
+      `${'\\w{0,10}'.repeat(8)}!`,
+      `${'\\w{0,10}'.repeat(10)}!`,
+      `${'\\w{0,5}'.repeat(14)}!`,
+      `${'.{0,10}'.repeat(8)}!`,
+      `${'a?'.repeat(60)}a{60}!`,
+      'a+a+a+$',
+      '\\w?\\w?\\w?',
+      'a{1,2}b{1,2}c{1,2}',
+      'a{2,}b*c+',
+    ];
+    for (const pattern of attacks) {
+      expect(inputPatternProblem(pattern), pattern).toMatch(/quantifiers whose count varies/);
+      expect(inputSchemaProblems(schema({ pattern })).length, pattern).toBeGreaterThan(0);
+    }
+    const items = {
+      properties: { v: { items: { pattern: '\\w*\\w*\\w*!', type: 'string' }, type: 'array' } },
+      type: 'object',
+    };
+    expect(inputSchemaProblems(items)[0]).toMatch(/items.pattern is not supported/);
+  });
+
+  it('counts a lazy quantifier once and an exact count not at all', () => {
+    expect(inputPatternProblem('a*?b+?')).toBeNull();
+    expect(inputPatternProblem('\\d{4}-\\d{4}-\\d{2,4}x{3,3}')).toBeNull();
+    expect(inputPatternProblem('a*?b+?c??')).toMatch(/has 3 quantifiers/);
+  });
+
+  it('refuses a pattern the engine would not compile', () => {
+    expect(inputPatternProblem('a{2,1}')).not.toBeNull();
+    expect(inputPatternProblem('a{2}{3}')).not.toBeNull();
+  });
+
+  it('runs the worst accepted shape over a 256-character adversarial value in well under 100 ms', () => {
+    // Two variable quantifiers over the same characters, then a character that never matches:
+    // the engine tries every split of the run between them, which is quadratic and no worse.
+    for (const pattern of ['\\w*\\w*!', '.*.*!', '[a-z]{0,256}[a-z]{0,256}!', 'a?a*!']) {
+      const s = schema({ maxLength: 256, pattern });
+      expect(inputSchemaProblems(s), pattern).toEqual([]);
+      const value = 'a'.repeat(256);
+      const t = performance.now();
+      expect(validateInputPayload(s, { v: value })).toEqual({
+        errors: ["'v' does not match the required pattern"],
+        ok: false,
+      });
+      expect(performance.now() - t, pattern).toBeLessThan(100);
+    }
+  });
+
+  it('fails closed, naming the schema, on a stored pattern outside the subset', () => {
+    // Saved before the subset was enforced: never compiled, never run, and every value refused.
+    const stored = schema({ pattern: '^(CVE|GHSA)-\\d+$' });
+    expect(inputSchemaProblems(stored).length).toBeGreaterThan(0);
+    expect(validateInputPayload(stored, { v: 'CVE-1' })).toEqual({
+      errors: [
+        "'v' cannot be checked: the template's input schema declares a pattern this platform does not run; fix the schema",
+      ],
+      ok: false,
+    });
   });
 
   it('refuses bad schemas at save', () => {
@@ -405,6 +474,7 @@ describe('string maxLength and pattern', () => {
       { pattern: '(a)\\1' },
       { pattern: 'a|b' },
       { pattern: 'a+b+c+d+' },
+      { pattern: 'a+b+c+' },
       { pattern: 12 },
       { maxLength: 1.5 },
       { maxLength: 0 },

@@ -177,6 +177,10 @@ fixed type the body does not decide it at all.
   document" there.
 - Changing an endpoint from a fixed type to a pointer needs the new `typePointer` in the same
   update; setting either one clears the other.
+- Without a fixed type, `typePointer` must name a field: creating or updating an endpoint with
+  `typePointer` `""` and no `fixedType` is refused (`400 INVALID_EVENT_TYPE`), because `""`
+  would read the whole body as the type. An endpoint stored that way earlier keeps working as it
+  is until its type is next changed.
 - Automations filter on the type as usual; every event matches a type pattern that matches the
   constant.
 - The **scope defaults to the type**, so with a constant type every event shares one scope, and the
@@ -371,18 +375,34 @@ them, because a pointer that misses simply leaves its input unfilled.
    keeps it from starting a run.
 3. **Automation.** Create an `inbound.event` automation (§4) on the endpoint with template
    `vulnerability-remediation`, a target repository (`targetConnectionId`), event types
-   `project_snapshot/v0`, and:
+   `project_snapshot/v0`, and the rules and fields below.
+
+   **Two match rules are mandatory.** Automations start with no match rules, and every advisory
+   input of the template is optional, so a delivery the rules let through always starts a run:
+
+   - `/newIssues/0` `exists`. Snyk sends a snapshot on every test of a project, new findings or
+     not, and a `ping/v0` reads as a snapshot (step 2). Without this rule each of them starts a run
+     with only the repository filled. The template's brief then tells the agent to change nothing,
+     but the run still spends a workspace and a model call.
+   - `/newIssues/0/issueType` `eq` `vuln`. A new issue can be a licence finding
+     (`issueType` `license`), which no dependency bump fixes; without this rule its package name
+     and versions are handed to the agent as if it were an advisory.
 
    | Kind | Pointer | Value |
    |---|---|---|
-   | match | `/newIssues/0` | `exists` |
+   | match (mandatory) | `/newIssues/0` | `exists` |
+   | match (mandatory) | `/newIssues/0/issueType` | `eq` `vuln` |
    | match | `/project/id` | `eq` the Snyk project id of that repository |
    | match | `/project/type` | `in` the open-source ecosystems you use (for example `npm`, `yarn`, `pnpm`; check the value against a real delivery) |
    | field `packageName` | `/newIssues/0/pkgName` | |
-   | field `vulnerableVersions` | `/newIssues/0/pkgVersions/0` | |
+   | field `vulnerableVersions` | `/newIssues/0/pkgVersions/0` | the version found in the project, not the vulnerable range (see below) |
    | field `fixedVersions` | `/newIssues/0/fixInfo/nearestFixedInVersion` | |
    | field `severity` | `/newIssues/0/issueData/severity` | |
    | field `advisoryId` | `/newIssues/0/id` | or `/newIssues/0/issueData/identifiers/CVE/0` for a CVE |
+
+   As JSON, the two mandatory rules are
+   `{ "pointer": "/newIssues/0", "op": "exists" }` and
+   `{ "pointer": "/newIssues/0/issueType", "op": "eq", "value": "vuln" }`.
 
    Set a conservative `cooldownMinutes` and `maxRunsPerDay`. One automation covers one
    repository (§4), so a second repository needs a second automation with its own project id.
@@ -415,8 +435,15 @@ them, because a pointer that misses simply leaves its input unfilled.
   documented example; the template takes those four lower-case values and anything else fails the
   start (`FAILED_TO_START`). Leave `severity` unmapped if a delivery uses another spelling.
 - **An empty delivery starts nothing only because of the `exists` rule.** Every advisory input is
-  optional, so without that rule a selected snapshot with no issues would start a run with only the
-  repository filled.
+  optional, and nothing checks at save that an automation has the rule, so without it a selected
+  snapshot with no issues starts a run with only the repository filled. The template's brief tells
+  the agent to change nothing when the request names no package, which limits what such a run
+  does, not that it runs.
+- **`vulnerableVersions` carries the installed version.** `pkgVersions` lists the versions of the
+  package found in the project, so `/newIssues/0/pkgVersions/0` is one affected version, such as
+  `4.17.20`, not the range the advisory covers. The documented example names no field holding the
+  range; the agent works the range out from the advisory and the package's registry (its brief
+  already has it check every value).
 
 ## Limitations
 

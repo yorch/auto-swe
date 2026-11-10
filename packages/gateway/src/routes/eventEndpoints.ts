@@ -328,13 +328,12 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
           );
         }
         // Setting a pointer replaces a stored constant; setting a constant replaces the pointer.
+        // Both go through `resolveTypeSource`, so an empty pointer with no constant is refused.
+        // `{ fixedType: null }` alone on a row that has no constant changes nothing, so a row
+        // stored with `""` before that check is left as it is.
         const resolved =
-          body.fixedType == null
-            ? {
-                fixedType: null,
-                ok: true as const,
-                typePointer: body.typePointer ?? row.typePointer,
-              }
+          body.fixedType == null && body.typePointer === undefined
+            ? { fixedType: null, ok: true as const, typePointer: row.typePointer }
             : resolveTypeSource({ fixedType: body.fixedType, typePointer: body.typePointer });
         if (!resolved.ok) {
           return sendError(reply, 400, 'INVALID_EVENT_TYPE', resolved.message);
