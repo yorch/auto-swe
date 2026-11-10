@@ -172,6 +172,15 @@ describe('assistantAccess', () => {
     expect(assistantAccess('GET', '/api/v1/repositories/:id/pr-evaluation')).toBe('read');
   });
 
+  it('keeps review routing out of the assistant: the override is a standing policy for a repository', () => {
+    // Pinned to the reason as well as the refusal, like the evaluation mode beside it.
+    expect(ASSISTANT_ROUTE_POLICY['PUT /api/v1/repositories/:id/review-routing']).toEqual({
+      never: 'humanDecision',
+    });
+    expect(assistantAccess('PUT', '/api/v1/repositories/:id/review-routing')).toBe('never');
+    expect(assistantAccess('GET', '/api/v1/repositories/:id/review-routing')).toBe('read');
+  });
+
   it('judges HEAD as the GET it mirrors', () => {
     expect(assistantAccess('HEAD', '/api/v1/workflow-runs/:id')).toBe('read');
   });

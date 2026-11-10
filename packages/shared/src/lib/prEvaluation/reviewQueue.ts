@@ -1,4 +1,4 @@
-import { RISK_RANK, type RoutingDecision } from './reviewRouting.js';
+import { RISK_RANK, type RoutingDecision, riskRank } from './reviewRouting.js';
 import type { RiskClass } from './types.js';
 
 /**
@@ -59,7 +59,7 @@ export function reviewBatchOf(item: QueueItem): ReviewBatch {
 
 /** An unknown risk reads as the highest, like everywhere else evaluation fails closed. */
 const riskRankOf = (risk: RiskClass | null): number =>
-  risk === null ? RISK_RANK.HIGH : RISK_RANK[risk];
+  risk === null ? RISK_RANK.HIGH : riskRank(risk);
 
 /**
  * Order the queue: batch first, then within a batch higher risk first, then (outside `quick`)

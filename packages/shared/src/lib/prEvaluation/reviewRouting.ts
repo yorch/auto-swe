@@ -3,6 +3,7 @@ import { replaceUnsafe } from './brief.js';
 import {
   countGlobStars,
   globCost,
+  globWork,
   isValidGlob,
   MAX_BOT_APPROVAL_PATHS,
   MAX_GLOB_LENGTH,
@@ -29,7 +30,31 @@ import type { ChangedFile, RiskClass } from './types.js';
 
 export const REVIEW_RISK_CLASSES = ['LOW', 'STANDARD', 'HIGH'] as const;
 
-/** Globs that always need a person: valid and bounded exactly as the bot-approval globs are. */
+/**
+ * Why a glob can never match any path, or null when it can. A denylist fails open when a typo
+ * silently turns a rule off, so spellings that cannot match are refused, not stored.
+ */
+export function unmatchableGlobReason(glob: string): string | null {
+  if (glob.includes('\\')) {
+    return 'a backslash does not escape in a path glob; paths use /';
+  }
+  if (glob.startsWith('./') || glob.startsWith('/')) {
+    return 'paths are relative to the repository root with no leading ./ or /';
+  }
+  if (glob.startsWith('!')) {
+    return 'a leading ! is a literal character, not a negation';
+  }
+  if (glob.endsWith('/')) {
+    return 'a trailing / matches nothing; write dir/** for everything under dir';
+  }
+  return null;
+}
+
+/**
+ * Globs that always need a person: valid and bounded exactly as the bot-approval globs are, and
+ * written as the matcher reads them (anchored at the repository root, case-insensitive, `/`
+ * separated; `*` stays inside one directory, `**` crosses directories).
+ */
 export const reviewRoutingPathsSchema = z
   .array(
     z
@@ -37,6 +62,12 @@ export const reviewRoutingPathsSchema = z
       .trim()
       .min(1)
       .max(MAX_GLOB_LENGTH)
+      .superRefine((glob, ctx) => {
+        const reason = unmatchableGlobReason(glob);
+        if (reason !== null) {
+          ctx.addIssue({ code: 'custom', message: `can never match: ${reason}` });
+        }
+      })
       .refine(isValidGlob, 'not a valid glob')
       .refine((g) => countGlobStars(g) <= MAX_GLOB_STARS, `more than ${MAX_GLOB_STARS} * tokens`)
   )
@@ -101,72 +132,135 @@ export function parseReviewRoutingOverride(stored: unknown): ReviewRoutingOverri
   return out as ReviewRoutingOverride;
 }
 
-/** The repository's override over the settings at its scope. */
+export const RISK_RANK: Readonly<Record<RiskClass, number>> = { HIGH: 2, LOW: 0, STANDARD: 1 };
+
+/** The rank of a risk class; a value that is not one of the three reads as the highest. */
+export function riskRank(risk: unknown): number {
+  return typeof risk === 'string' && Object.hasOwn(RISK_RANK, risk)
+    ? RISK_RANK[risk as RiskClass]
+    : RISK_RANK.HIGH;
+}
+
+/** A stored risk class as routing reads it: anything unrecognised is `HIGH`. */
+export function toRiskClass(risk: unknown): RiskClass {
+  return typeof risk === 'string' && Object.hasOwn(RISK_RANK, risk) ? (risk as RiskClass) : 'HIGH';
+}
+
+const globKey = (glob: string): string => glob.normalize('NFC').toLowerCase();
+
+/** The stricter of two values of one routing key: the one that asks for a person more often. */
+function stricterValue<K extends keyof ReviewRouting>(
+  key: K,
+  a: ReviewRouting[K],
+  b: ReviewRouting[K]
+): ReviewRouting[K] {
+  switch (key) {
+    case 'humanMinRisk':
+      return (riskRank(a) <= riskRank(b) ? a : b) as ReviewRouting[K];
+    case 'humanAboveLines': {
+      // 0 turns the size rule off, the loosest value; otherwise the lower limit asks more often.
+      const x = a as number;
+      const y = b as number;
+      return (x === 0 ? y : y === 0 ? x : Math.min(x, y)) as ReviewRouting[K];
+    }
+    case 'quickReviewMaxLines':
+      return Math.min(a as number, b as number) as ReviewRouting[K];
+    case 'humanPaths': {
+      const seen = new Set<string>();
+      const union: string[] = [];
+      for (const glob of [...(a as string[]), ...(b as string[])]) {
+        if (!seen.has(globKey(glob))) {
+          seen.add(globKey(glob));
+          union.push(glob);
+        }
+      }
+      return union as ReviewRouting[K];
+    }
+    case 'skipWhenBotApproved':
+      return ((a as boolean) && (b as boolean)) as ReviewRouting[K];
+    default:
+      return a;
+  }
+}
+
+const ROUTING_KEYS: readonly (keyof ReviewRouting)[] = [
+  'humanAboveLines',
+  'humanMinRisk',
+  'humanPaths',
+  'quickReviewMaxLines',
+  'skipWhenBotApproved',
+];
+
+/**
+ * The repository's override over the settings at its scope. An override can only add
+ * strictness: each key takes the stricter of the setting and the override, so a looser value in a
+ * stored override is inert whoever wrote it and whenever the setting changed. Paths are the
+ * union, the risk minimum the lower, the size limits the lower non-zero ones, and the bot-approval
+ * skip stays on only when both leave it on.
+ */
 export function mergeReviewRouting(
   base: ReviewRouting,
   override: ReviewRoutingOverride
 ): ReviewRouting {
-  return {
-    humanAboveLines: override.humanAboveLines ?? base.humanAboveLines,
-    humanMinRisk: override.humanMinRisk ?? base.humanMinRisk,
-    humanPaths: override.humanPaths ?? base.humanPaths,
-    quickReviewMaxLines: override.quickReviewMaxLines ?? base.quickReviewMaxLines,
-    skipWhenBotApproved: override.skipWhenBotApproved ?? base.skipWhenBotApproved,
-  };
+  const out = { ...base } as Record<string, unknown>;
+  for (const key of ROUTING_KEYS) {
+    const value = override[key];
+    if (value !== undefined) {
+      out[key] = stricterValue(key, base[key], value as never);
+    }
+  }
+  return out as ReviewRouting;
 }
 
-export const RISK_RANK: Readonly<Record<RiskClass, number>> = { HIGH: 2, LOW: 0, STANDARD: 1 };
+/** Whether `a` asks for a person less often than `b` on this key. */
+function looserThan<K extends keyof ReviewRouting>(
+  key: K,
+  a: ReviewRouting[K],
+  b: ReviewRouting[K]
+): boolean {
+  const strictest = stricterValue(key, a, b);
+  if (key === 'humanPaths') {
+    const have = new Set((a as string[]).map(globKey));
+    return (strictest as string[]).some((glob) => !have.has(globKey(glob)));
+  }
+  return JSON.stringify(strictest) !== JSON.stringify(a);
+}
 
 /**
- * The keys of `proposed` that would make routing LOOSER than `inherited`, the value the settings
- * give the repository's team and organization. The settings are ADMIN-only, so a lead's override
- * may only ask for a person more often: a lower minimum risk, a lower non-zero size limit, more
- * always-human globs, a smaller quick-review size, the bot-approval skip off. A key that equals
- * what `existing` already stores is not a change and is not reported.
+ * The keys of a proposed override that would make routing LOOSER than it is now, or whose value is
+ * looser than the effective one and so has no effect. `inherited` is the setting at the
+ * repository's scope; `existing` is the override stored today, so the comparison is against what
+ * is in force now (the setting merged with it), not the setting alone.
+ *
+ * - A key present in `proposed` is reported when its value is looser than the effective value,
+ *   unless it equals what `existing` already stores: re-saving a value that is already there
+ *   changes nothing.
+ * - With `removal` on, a key left out of `proposed` is reported when dropping it would loosen
+ *   routing, since the PUT replaces the whole override. A platform ADMIN may remove strictness;
+ *   anyone else may not.
+ *
+ * Because `mergeReviewRouting` only ever adds strictness, a looser value is inert either way; this
+ * is how a person learns that, at the time they save.
  */
 export function reviewRoutingLoosenings(
   inherited: ReviewRouting,
   proposed: ReviewRoutingOverride,
-  existing: ReviewRoutingOverride = {}
+  existing: ReviewRoutingOverride = {},
+  opts: { removal?: boolean } = {}
 ): (keyof ReviewRouting)[] {
+  const current = mergeReviewRouting(inherited, existing);
+  const next = mergeReviewRouting(inherited, proposed);
   const loosened: (keyof ReviewRouting)[] = [];
-  const changed = (key: keyof ReviewRouting) =>
-    proposed[key] !== undefined && JSON.stringify(proposed[key]) !== JSON.stringify(existing[key]);
-  if (
-    changed('humanMinRisk') &&
-    RISK_RANK[proposed.humanMinRisk as RiskClass] > RISK_RANK[inherited.humanMinRisk]
-  ) {
-    loosened.push('humanMinRisk');
-  }
-  if (changed('humanAboveLines')) {
-    const wanted = proposed.humanAboveLines as number;
-    // 0 is "no size rule": the loosest value.
-    if (
-      wanted === 0
-        ? inherited.humanAboveLines !== 0
-        : inherited.humanAboveLines !== 0 && wanted > inherited.humanAboveLines
-    ) {
-      loosened.push('humanAboveLines');
+  for (const key of ROUTING_KEYS) {
+    const value = proposed[key];
+    if (value !== undefined) {
+      const unchanged = JSON.stringify(value) === JSON.stringify(existing[key]);
+      if (!unchanged && looserThan(key, value as never, current[key] as never)) {
+        loosened.push(key);
+      }
+    } else if (opts.removal && looserThan(key, next[key] as never, current[key] as never)) {
+      loosened.push(key);
     }
-  }
-  if (changed('humanPaths')) {
-    const wanted = new Set((proposed.humanPaths as string[]).map((glob) => glob.toLowerCase()));
-    if (inherited.humanPaths.some((glob) => !wanted.has(glob.toLowerCase()))) {
-      loosened.push('humanPaths');
-    }
-  }
-  if (
-    changed('quickReviewMaxLines') &&
-    (proposed.quickReviewMaxLines as number) > inherited.quickReviewMaxLines
-  ) {
-    loosened.push('quickReviewMaxLines');
-  }
-  if (
-    changed('skipWhenBotApproved') &&
-    proposed.skipWhenBotApproved &&
-    !inherited.skipWhenBotApproved
-  ) {
-    loosened.push('skipWhenBotApproved');
   }
   return loosened;
 }
@@ -243,11 +337,28 @@ export function parseRoutingFacts(stored: unknown): RoutingFacts | null {
  * bound is kept by counting; a path the budget cannot cover reads as a match.
  */
 export const ROUTING_MATCH_BUDGET = 400_000_000;
+/**
+ * The share of that one repository may spend, so a repository with costly globs cannot leave the
+ * next repository's pull requests unchecked. A request is bounded by its total budget as well.
+ */
+export const ROUTING_REPOSITORY_MATCH_BUDGET = 100_000_000;
 
 export type RoutingMatchBudget = { remaining: number };
 
 export function createRoutingMatchBudget(units: number = ROUTING_MATCH_BUDGET): RoutingMatchBudget {
   return { remaining: units };
+}
+
+/** Take `units` from every budget; false when any of them can no longer cover it. */
+function charge(budgets: readonly RoutingMatchBudget[], units: number): boolean {
+  let covered = true;
+  for (const budget of budgets) {
+    budget.remaining -= units;
+    if (budget.remaining < 0) {
+      covered = false;
+    }
+  }
+  return covered;
 }
 
 /** The evaluation of a pull request's current head, as routing reads it. */
@@ -336,7 +447,7 @@ type PathVerdict = { matched: string | null; unchecked: boolean };
 function checkHumanPaths(
   routing: RoutingEvaluation['routing'],
   globs: readonly string[],
-  budget: RoutingMatchBudget
+  budgets: readonly RoutingMatchBudget[]
 ): PathVerdict {
   if (globs.length === 0) {
     return { matched: null, unchecked: false };
@@ -344,13 +455,15 @@ function checkHumanPaths(
   if (routing === null || routing.truncated) {
     return { matched: null, unchecked: true };
   }
-  const perChar = globs.reduce((sum, glob) => sum + Math.max(1, globCost(glob)), 0);
   for (const path of [...routing.paths, ...routing.previousPaths]) {
-    if (path.length > MAX_PATH_LENGTH || path.toLowerCase().length > MAX_PATH_LENGTH) {
+    if (
+      path.length > MAX_PATH_LENGTH ||
+      path.normalize('NFC').toLowerCase().length > MAX_PATH_LENGTH
+    ) {
       return { matched: shownPath(path), unchecked: false };
     }
-    budget.remaining -= perChar * (path.length + 1);
-    if (budget.remaining < 0) {
+    const work = globs.reduce((sum, glob) => sum + globWork(glob, path.length), 0);
+    if (!charge(budgets, work)) {
       return { matched: null, unchecked: true };
     }
     if (matchesAny(path, globs)) {
@@ -380,7 +493,7 @@ function checkHumanPaths(
 export function decideNeedsHuman(
   input: RoutingInput,
   policy: ReviewRouting,
-  budget: RoutingMatchBudget = createRoutingMatchBudget()
+  budget: RoutingMatchBudget | readonly RoutingMatchBudget[] = createRoutingMatchBudget()
 ): RoutingDecision {
   if (input.status !== 'OPEN') {
     return decided(false, ['not_open']);
@@ -393,7 +506,11 @@ export function decideNeedsHuman(
     return decided(true, ['not_evaluated']);
   }
   const reasons: RoutingReason[] = [];
-  const paths = checkHumanPaths(evaluation.routing, policy.humanPaths, budget);
+  const paths = checkHumanPaths(
+    evaluation.routing,
+    policy.humanPaths,
+    Array.isArray(budget) ? budget : [budget as RoutingMatchBudget]
+  );
   if (paths.matched !== null || paths.unchecked) {
     reasons.push('path');
   }
@@ -406,7 +523,7 @@ export function decideNeedsHuman(
   if (approvalsMet && evaluation.humanObjection) {
     reasons.push('changes_requested');
   }
-  if (RISK_RANK[evaluation.riskClass] >= RISK_RANK[policy.humanMinRisk]) {
+  if (riskRank(evaluation.riskClass) >= riskRank(policy.humanMinRisk)) {
     reasons.push('risk');
   }
   // A row that recorded no line count cannot show it is small, so the size rule asks.

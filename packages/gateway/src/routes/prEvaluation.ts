@@ -394,9 +394,11 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // PUT /api/v1/repositories/:id/review-routing — the owning team's LEAD (whatever the platform
-  // role) or a platform ADMIN. The settings behind routing are ADMIN-only and `requiredRole` is a
-  // floor, so a LEAD's override may only be STRICTER than the settings give the repository: it can
-  // ask for a person more often, never less. Anything looser is refused for a LEAD.
+  // role) or a platform ADMIN. An override can only ADD strictness: `mergeReviewRouting` takes the
+  // stricter of the setting and the override at read time, so a looser value is inert for anyone.
+  // A value looser than what is in force now is refused so the writer learns it does nothing; and
+  // because the PUT replaces the whole override, leaving out a key that carries strictness is a
+  // loosening too, refused for everyone but a platform ADMIN (who may remove it).
   app.put(
     '/repositories/:id/review-routing',
     {
@@ -422,19 +424,20 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
       const { override } = request.body;
       // An empty object overrides nothing: store NULL so "no override" has one spelling.
       const stored = override && Object.keys(override).length > 0 ? override : null;
-      if (stored && user.role !== Role.ADMIN) {
+      {
         const { inherited } = await resolveRepositoryRouting({ ...repo, reviewRouting: null });
         const loosened = reviewRoutingLoosenings(
           inherited,
-          stored,
-          parseReviewRoutingOverride(repo.reviewRouting)
+          stored ?? {},
+          parseReviewRoutingOverride(repo.reviewRouting),
+          { removal: user.role !== Role.ADMIN }
         );
         if (loosened.length > 0) {
           return sendError(
             reply,
             403,
             'ROUTING_LOOSER_THAN_SETTINGS',
-            'Only an ADMIN can make review routing looser than the settings for this repository',
+            'A repository override can only ask for a person more often than the settings and the override already in force; change the team or organization setting to loosen routing',
             { keys: loosened }
           );
         }

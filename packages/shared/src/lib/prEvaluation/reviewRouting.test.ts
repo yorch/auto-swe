@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { matchesAny } from './paths.js';
 import {
   buildRoutingFacts,
   createRoutingMatchBudget,
@@ -11,6 +12,9 @@ import {
   type RoutingEvaluation,
   type RoutingInput,
   reviewRoutingLoosenings,
+  reviewRoutingPathsSchema,
+  riskRank,
+  toRiskClass,
 } from './reviewRouting.js';
 
 const POLICY: ReviewRouting = {
@@ -381,9 +385,63 @@ describe('review routing override', () => {
   it('merges only the keys a repository sets', () => {
     expect(mergeReviewRouting(POLICY, { humanMinRisk: 'HIGH', humanPaths: ['a/**'] })).toEqual({
       ...POLICY,
-      humanMinRisk: 'HIGH',
+      humanMinRisk: 'LOW',
       humanPaths: ['a/**'],
     });
+    expect(mergeReviewRouting(POLICY, {})).toEqual(POLICY);
+  });
+
+  it('takes the stricter of the setting and the override on every key', () => {
+    const base: ReviewRouting = {
+      humanAboveLines: 300,
+      humanMinRisk: 'STANDARD',
+      humanPaths: ['secrets/**', 'Infra/**'],
+      quickReviewMaxLines: 80,
+      skipWhenBotApproved: true,
+    };
+    expect(
+      mergeReviewRouting(base, {
+        humanAboveLines: 200,
+        humanMinRisk: 'LOW',
+        humanPaths: ['infra/**', 'billing/**'],
+        quickReviewMaxLines: 10,
+        skipWhenBotApproved: false,
+      })
+    ).toEqual({
+      humanAboveLines: 200,
+      humanMinRisk: 'LOW',
+      humanPaths: ['secrets/**', 'Infra/**', 'billing/**'],
+      quickReviewMaxLines: 10,
+      skipWhenBotApproved: false,
+    });
+    // A looser value is inert: it can neither drop a glob nor raise a limit.
+    expect(
+      mergeReviewRouting(base, {
+        humanAboveLines: 0,
+        humanMinRisk: 'HIGH',
+        humanPaths: [],
+        quickReviewMaxLines: 500,
+        skipWhenBotApproved: true,
+      })
+    ).toEqual(base);
+    // 0 is "no size rule" on either side.
+    expect(
+      mergeReviewRouting({ ...base, humanAboveLines: 0 }, { humanAboveLines: 50 })
+    ).toMatchObject({ humanAboveLines: 50 });
+  });
+
+  it('keeps a team lead override from hiding a path an ADMIN added to the settings later', () => {
+    const later: ReviewRouting = {
+      humanAboveLines: 0,
+      humanMinRisk: 'LOW',
+      humanPaths: ['secrets/**'],
+      quickReviewMaxLines: 50,
+      skipWhenBotApproved: true,
+    };
+    const stale = { humanMinRisk: 'STANDARD' as const, humanPaths: ['infra/**'] };
+    const merged = mergeReviewRouting(later, stale);
+    expect(merged.humanPaths).toEqual(['secrets/**', 'infra/**']);
+    expect(merged.humanMinRisk).toBe('LOW');
   });
 
   it('reads a stored value that does not parse as no override', () => {
@@ -402,5 +460,185 @@ describe('review routing override', () => {
         skipWhenBotApproved: false,
       })
     ).toEqual({ humanMinRisk: 'HIGH', skipWhenBotApproved: false });
+  });
+});
+
+describe('the role floor against what is in force now', () => {
+  const inherited: ReviewRouting = {
+    humanAboveLines: 0,
+    humanMinRisk: 'HIGH',
+    humanPaths: [],
+    quickReviewMaxLines: 50,
+    skipWhenBotApproved: true,
+  };
+  // What an ADMIN stored on the repository.
+  const adminStored = {
+    humanAboveLines: 100,
+    humanMinRisk: 'LOW' as const,
+    humanPaths: ['payments/**'],
+    skipWhenBotApproved: false,
+  };
+
+  it('refuses an override that leaves out a key the stored override tightens', () => {
+    expect(
+      reviewRoutingLoosenings(inherited, { quickReviewMaxLines: 10 }, adminStored, {
+        removal: true,
+      }).sort()
+    ).toEqual(['humanAboveLines', 'humanMinRisk', 'humanPaths', 'skipWhenBotApproved']);
+    // Clearing the override is leaving every key out.
+    expect(reviewRoutingLoosenings(inherited, {}, adminStored, { removal: true })).toHaveLength(4);
+    // A platform ADMIN may remove strictness.
+    expect(reviewRoutingLoosenings(inherited, { quickReviewMaxLines: 10 }, adminStored)).toEqual(
+      []
+    );
+  });
+
+  it('refuses a value looser than the one in force, not only than the setting', () => {
+    const cases: [Partial<ReviewRouting>, keyof ReviewRouting][] = [
+      [{ humanAboveLines: 0 }, 'humanAboveLines'],
+      [{ humanAboveLines: 400 }, 'humanAboveLines'],
+      [{ humanPaths: [] }, 'humanPaths'],
+      [{ humanPaths: ['other/**'] }, 'humanPaths'],
+      [{ humanMinRisk: 'HIGH' }, 'humanMinRisk'],
+      [{ humanMinRisk: 'STANDARD' }, 'humanMinRisk'],
+    ];
+    for (const [proposed, key] of cases) {
+      const keep = {
+        humanAboveLines: 100,
+        humanMinRisk: 'LOW' as const,
+        humanPaths: ['payments/**'],
+        skipWhenBotApproved: false,
+      };
+      expect(
+        reviewRoutingLoosenings(inherited, { ...keep, ...proposed }, adminStored, { removal: true })
+      ).toEqual([key]);
+    }
+  });
+
+  it('lets a lead tighten further and add globs beside the stored ones', () => {
+    expect(
+      reviewRoutingLoosenings(
+        inherited,
+        {
+          humanAboveLines: 50,
+          humanMinRisk: 'LOW',
+          humanPaths: ['payments/**', 'infra/**'],
+          quickReviewMaxLines: 10,
+          skipWhenBotApproved: false,
+        },
+        adminStored,
+        { removal: true }
+      )
+    ).toEqual([]);
+  });
+
+  it('lets a lead re-save a stale override unchanged', () => {
+    const later: ReviewRouting = { ...inherited, humanMinRisk: 'LOW', humanPaths: ['secrets/**'] };
+    const stale = { humanMinRisk: 'STANDARD' as const, humanPaths: ['infra/**'] };
+    expect(reviewRoutingLoosenings(later, stale, stale, { removal: true })).toEqual([]);
+  });
+});
+
+describe('always-human globs that can never match', () => {
+  const accepts = (glob: string) => reviewRoutingPathsSchema.safeParse([glob]).success;
+
+  it('refuses a spelling the matcher cannot satisfy', () => {
+    for (const glob of ['./infra/**', '/infra/**', 'infra/', 'infra\\**', '!src/**', 'a/b/']) {
+      expect(accepts(glob), glob).toBe(false);
+    }
+  });
+
+  it('names the reason', () => {
+    const result = reviewRoutingPathsSchema.safeParse(['infra/']);
+    expect(JSON.stringify(result.error?.issues)).toContain('dir/**');
+  });
+
+  it('accepts the spellings that match, and they do', () => {
+    const cases: [string, string][] = [
+      ['infra/**', 'infra/main.tf'],
+      ['INFRA/**', 'infra/main.tf'],
+      ['infra/**', 'Infra/Deep/Main.TF'],
+      ['**/secrets/**', 'secrets/a'],
+      ['**/secrets/**', 'app/secrets/a'],
+      ['**/*.tf', 'infra/main.tf'],
+      ['infra/*', 'infra/main.tf'],
+      ['Makefile', 'Makefile'],
+    ];
+    for (const [glob, path] of cases) {
+      expect(accepts(glob), glob).toBe(true);
+      expect(matchesAny(path, [glob]), `${glob} ~ ${path}`).toBe(true);
+    }
+  });
+
+  it('states what does not match, so the documentation is exact', () => {
+    // Anchored at the repository root: `*` does not cross a directory, a bare name is that path.
+    expect(matchesAny('infra/main.tf', ['*.tf'])).toBe(false);
+    expect(matchesAny('infra/main.tf', ['infra'])).toBe(false);
+    expect(matchesAny('infra/a/b.tf', ['infra/*'])).toBe(false);
+  });
+
+  it('matches a glob and a path however they are Unicode-normalised', () => {
+    const nfc = 'config/caf\u00e9/**';
+    const nfd = 'config/cafe\u0301/**';
+    expect(matchesAny('config/cafe\u0301/x', [nfc])).toBe(true);
+    expect(matchesAny('config/caf\u00e9/x', [nfd])).toBe(true);
+    expect(matchesAny('config/caf\u00e9/x', [nfc])).toBe(true);
+  });
+});
+
+describe('an unrecognised risk class', () => {
+  it('reads as the highest', () => {
+    for (const risk of ['high', 'CRITICAL', '', null, undefined, 3, '__proto__']) {
+      expect(riskRank(risk)).toBe(2);
+      expect(toRiskClass(risk)).toBe('HIGH');
+    }
+    expect(toRiskClass('LOW')).toBe('LOW');
+  });
+
+  it('asks for a person where only HIGH would', () => {
+    const policy: ReviewRouting = { ...POLICY, humanMinRisk: 'HIGH' };
+    for (const risk of ['high', 'CRITICAL', '']) {
+      const decision = decideNeedsHuman(
+        input({ evaluation: evaluation({ riskClass: risk as never }) }),
+        policy
+      );
+      expect(decision).toMatchObject({ needsHuman: true, reason: 'risk' });
+    }
+  });
+});
+
+describe('the path match budget is charged for the work a path costs', () => {
+  it('rejects a path shorter than every glob for almost nothing', () => {
+    const budget = createRoutingMatchBudget(1000);
+    const policy: ReviewRouting = {
+      ...POLICY,
+      humanMinRisk: 'HIGH',
+      humanPaths: [`${'?'.repeat(150)}q`],
+    };
+    const decision = decideNeedsHuman(
+      input({
+        evaluation: evaluation({
+          routing: facts(Array.from({ length: 100 }, (_, i) => `src/${i}.ts`)),
+        }),
+      }),
+      policy,
+      budget
+    );
+    expect(decision).toMatchObject({ needsHuman: false, reason: 'below_threshold' });
+    expect(budget.remaining).toBeGreaterThan(0);
+  });
+
+  it('charges every budget it is given', () => {
+    const request = createRoutingMatchBudget(1_000_000);
+    const repository = createRoutingMatchBudget(50);
+    const policy: ReviewRouting = { ...POLICY, humanMinRisk: 'HIGH', humanPaths: ['infra/**'] };
+    const decision = decideNeedsHuman(
+      input({ evaluation: evaluation({ routing: facts(['src/a.ts', 'src/b.ts']) }) }),
+      policy,
+      [request, repository]
+    );
+    // The repository's share is spent, so the path cannot be shown clear; the request is charged too.
+    expect(decision).toMatchObject({ matchedPath: null, needsHuman: true, reason: 'path' });
+    expect(request.remaining).toBeLessThan(1_000_000);
   });
 });
