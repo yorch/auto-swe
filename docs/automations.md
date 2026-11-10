@@ -87,21 +87,32 @@ bound of its own, so a pattern per item would be work in proportion to the body.
 Values that arrive in an event are attacker-influenced text, and a pattern is template data that
 runs synchronously in the gateway process, where a backtracking engine cannot be interrupted. A
 pattern is therefore confined to literals, escapes, character classes, anchors and quantifiers
-applied to one atom: no groups, alternation, backreferences or lookaround, and at most two
-quantifiers whose count varies (`?`, `*`, `+`, `{n,}`, or `{n,m}` with `m` above `n`, whatever
-the bound; an exact `{n}` is not counted). This bounds the work, not the time: with two such
-quantifiers the engine's backtracking over a value of at most 256 characters grows at worst with
-the square of its length, a few hundred thousand steps per value, and the subset makes no other
-promise about speed. The template save and bundle validation refuse a schema that breaks these
-rules. A stored schema that breaks them anyway (saved before they applied) is not run: every launch
-that supplies the field is refused, with an error that names the schema as the thing to fix.
+applied to one atom: no groups, alternation, backreferences or lookaround, and at most one
+quantifier whose count varies (`?`, `*`, `+`, `{n,}`, or `{n,m}` with `m` above `n`, whatever
+the bound; an exact `{n}` is not counted). One schema may give a `pattern` to at most 8
+properties. This bounds the work, not the time. With one varying quantifier the engine's only
+choice is how much that quantifier takes, and the rest of the pattern matches each choice without
+backtracking, reading the value once. For a value of at most 256 characters and a pattern of at
+most 200, one check is therefore at most (256 + 1) × (256 + 200) steps, about 117,000; measured,
+the worst pattern found takes about a millisecond on its first call and a tenth of one after, and
+a payload that fills all 8 patterned fields stays under 50 ms. The subset makes no promise beyond
+that bound. Two varying quantifiers are refused because exact blocks after them make the search
+cubic, over 100 ms for one value. The template save and bundle validation refuse a schema that
+breaks these rules. A stored schema that breaks them anyway (saved before they applied) is not
+run: every launch that supplies the field is refused, with an error that names the schema as the
+thing to fix. Past the eighth patterned property, a stored schema's further patterns are treated
+the same way.
 
 A value that violates either keyword fails the run's input validation like an `enum` violation;
-the error names the field and the rule, never the value. At an automation's save, a key the
-occurrence fills (a mapped event field, the ticket id, the description) is built from a stand-in
-value, so its `pattern` and `maxLength` are not checked then; they are checked on the real value at
-every fire, and a value that does not fit is `FAILED_TO_START`. An option the automation stores is
-a real value and is checked in full at save.
+the error names the field and the rule, never the value. At an automation's save, a key whose
+value the sender supplies (a mapped event field, or one the source fills from the event) is built
+from a stand-in value, so its `pattern` and `maxLength` are not checked then; they are checked on
+the real value at every fire, and a value that does not fit is `FAILED_TO_START`. A pattern this
+platform does not run is still reported on such a key, so the save fails instead of every fire.
+The description, the ticket id and the repository are built by the platform the same way at every
+fire, so a constraint on them is checked in full at save: a `description` with a `maxLength` the
+built text exceeds is refused then. An option the automation stores is a real value and is checked
+in full at save.
 
 Filters are stored as the source's schema parsed them. The database refuses a source it does not
 know, and filters that break the source's invariants (an empty event or pattern list). A stored

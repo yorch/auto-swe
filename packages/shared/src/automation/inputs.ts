@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { type InputSchema, isInputSchema, validateInputPayload } from '../lib/inputSchema.js';
+import {
+  type InputSchema,
+  inputPatternProblem,
+  isInputSchema,
+  validateInputPayload,
+} from '../lib/inputSchema.js';
 import type { EventSource } from './types.js';
 
 const MAX_INPUTS_JSON = 4_000;
@@ -154,11 +159,21 @@ export function automationOptionsProblem<F, X>(
       return problem;
     }
   }
-  // A sample stands in for text each occurrence supplies, so a value-shape constraint on a key the
-  // occurrence fills (`'sample'` against a CVE pattern) says nothing about the automation: that is
-  // checked on the real value when an occurrence arrives. Everything else is checked in full.
+  // A sample stands in for text the sender supplies, so a value-shape constraint on a key the
+  // event fills (`'sample'` against a CVE pattern) says nothing about the automation: that is
+  // checked on the real value when an occurrence arrives. Only those keys are relaxed. The
+  // description, ticket id and repository are built by the platform the same way at every fire,
+  // so a constraint on them is checked in full here: a description `maxLength` the built text
+  // exceeds fails this save, not every fire.
+  const standIns = new Set<string>([
+    ...source.eventInputKeys,
+    ...(source.filledKeys?.(filters) ?? []),
+  ]);
+  for (const k of ALWAYS_FILLED) {
+    standIns.delete(k);
+  }
   const sampleSchema = isInputSchema(inputSchema)
-    ? withoutValueShape(inputSchema, filled)
+    ? withoutValueShape(inputSchema, standIns)
     : inputSchema;
   for (const facts of source.samples(
     filters,
@@ -179,13 +194,24 @@ export function automationOptionsProblem<F, X>(
   return null;
 }
 
-/** `schema` without `pattern` and `maxLength` on the properties named in `keys`. */
+/**
+ * `schema` without `pattern` and `maxLength` on the properties named in `keys`. A pattern this
+ * platform would not run is kept, so the sample check reports it ("cannot be checked") and the
+ * save fails, instead of every fire.
+ */
 function withoutValueShape(schema: InputSchema, keys: ReadonlySet<string>): InputSchema {
   const properties: InputSchema['properties'] = {};
   for (const [key, prop] of Object.entries(schema.properties)) {
-    if (keys.has(key) && (prop.pattern !== undefined || prop.maxLength !== undefined)) {
-      const { pattern: _pattern, maxLength: _maxLength, ...rest } = prop;
-      properties[key] = rest;
+    if (
+      keys.has(key) &&
+      typeof prop === 'object' &&
+      prop !== null &&
+      (prop.pattern !== undefined || prop.maxLength !== undefined)
+    ) {
+      const { pattern, maxLength: _maxLength, ...rest } = prop;
+      const usable =
+        pattern === undefined || (typeof pattern === 'string' && !inputPatternProblem(pattern));
+      properties[key] = usable ? rest : { ...rest, pattern };
     } else {
       properties[key] = prop;
     }

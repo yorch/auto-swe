@@ -78,9 +78,15 @@ export const INPUT_PATTERN_MAX_SOURCE_LENGTH = 200;
 export const INPUT_PATTERN_MAX_VALUE_LENGTH = 256;
 /**
  * Most variable-count quantifiers (`?`, `*`, `+`, `{n,}`, `{n,m}` with `m > n`) one `pattern`
- * may contain; an exact `{n}` is not counted.
+ * may contain; an exact `{n}` is not counted. Two are enough to make a run of exact blocks after
+ * them cubic in the value's length, so only one is allowed.
  */
-export const INPUT_PATTERN_MAX_REPETITIONS = 2;
+export const INPUT_PATTERN_MAX_REPETITIONS = 1;
+/**
+ * Most properties of one schema that may declare a `pattern`. Each is checked synchronously on
+ * every launch, so the count bounds the total work a single payload can ask for.
+ */
+export const INPUT_PATTERN_MAX_FIELDS = 8;
 
 // Permissive UUID matcher (any RFC-4122 variant/version).
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -93,12 +99,16 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * is synchronous and so cannot use the pooled executor in `regexExec.ts`; the pattern is
  * confined to a subset whose work is bounded instead: literals, escapes, character classes,
  * anchors and quantifiers on a single atom. No groups, alternation, backreferences or lookaround,
- * and at most {@link INPUT_PATTERN_MAX_REPETITIONS} quantifiers whose count varies. Every such
+ * and at most {@link INPUT_PATTERN_MAX_REPETITIONS} quantifier whose count varies. Every such
  * quantifier counts whatever its bound — `\w{0,5}` chained fourteen times backtracks as badly as
- * fourteen stars — so the number of ways a value can be split among them, which is what a
- * backtracking engine explores, is at most quadratic in the value's length. Values are capped at
- * {@link INPUT_PATTERN_MAX_VALUE_LENGTH} characters, so one check is bounded by a few hundred
- * thousand steps. That is a bound on work, not a proof the engine is fast on every input.
+ * fourteen stars. With one, the only choice a backtracking engine has is how much that quantifier
+ * takes: at most one attempt per length of the value plus one, and everything else in the
+ * pattern (literals, classes, anchors, exact `{n}` blocks) matches each attempt without a choice,
+ * reading at most the rest of the value and the pattern once. Values are capped at
+ * {@link INPUT_PATTERN_MAX_VALUE_LENGTH} characters and sources at
+ * {@link INPUT_PATTERN_MAX_SOURCE_LENGTH}, so one check is at most (256 + 1) × (256 + 200) steps,
+ * which measured at about a millisecond on a first call and well under one after. That is a bound
+ * on the search, not a proof about any particular engine's speed.
  */
 export function inputPatternProblem(source: string): string | null {
   if (source.length === 0) {
@@ -171,6 +181,8 @@ const UNUSABLE_PATTERN =
   "the template's input schema declares a pattern this platform does not run; fix the schema";
 const UNUSABLE_ITEMS_PATTERN =
   "the template's input schema declares a pattern on array items, which is not supported; fix the schema";
+
+const TOO_MANY_PATTERNS = `the template's input schema declares a pattern on more than ${INPUT_PATTERN_MAX_FIELDS} properties; fix the schema`;
 
 const patternCache = new Map<string, RegExp | null>();
 
@@ -361,10 +373,32 @@ export function validateInputPayload(schema: InputSchema, payload: unknown): Inp
     }
   }
 
+  // The patterned properties a schema may run, in declaration order: past the cap (refused at
+  // save; a stored schema can still carry more) a pattern fails closed instead of adding work.
+  const runnable = new Set(
+    Object.entries(schema.properties)
+      .filter(([, p]) => typeof p === 'object' && p !== null && p.pattern !== undefined)
+      .slice(0, INPUT_PATTERN_MAX_FIELDS)
+      .map(([k]) => k)
+  );
   for (const [key, prop] of Object.entries(schema.properties)) {
     const value = obj[key];
     if (value === undefined || value === null) {
       continue; // presence handled by `required`
+    }
+    if (
+      typeof prop === 'object' &&
+      prop !== null &&
+      prop.pattern !== undefined &&
+      !runnable.has(key)
+    ) {
+      errors.push(`'${key}' cannot be checked: ${TOO_MANY_PATTERNS}`);
+      continue;
+    }
+    if (typeof prop !== 'object' || prop === null) {
+      // Refused at save; a stored one fails closed instead of throwing.
+      errors.push(`'${key}' cannot be checked: the template's input schema does not describe it`);
+      continue;
     }
     if (prop.type === 'array') {
       if (!Array.isArray(value)) {
@@ -469,6 +503,20 @@ export function inputSchemaProblems(value: unknown): string[] {
   const req = (value as { required?: unknown }).required;
   if (req !== undefined && !(Array.isArray(req) && req.every((k) => typeof k === 'string'))) {
     problems.push('required must be a list of property names');
+  }
+  const patterned = Object.entries(value.properties as Record<string, unknown>).filter(
+    ([, raw]) =>
+      typeof raw === 'object' &&
+      raw !== null &&
+      (raw as { pattern?: unknown }).pattern !== undefined
+  );
+  if (patterned.length > INPUT_PATTERN_MAX_FIELDS) {
+    problems.push(
+      `${patterned.length} properties declare a pattern; the maximum is ${INPUT_PATTERN_MAX_FIELDS} (${patterned
+        .slice(INPUT_PATTERN_MAX_FIELDS)
+        .map(([k]) => `'${k}'`)
+        .join(', ')} over the limit)`
+    );
   }
   for (const [key, raw] of Object.entries(value.properties as Record<string, unknown>)) {
     const at = (m: string) => problems.push(`'${key}': ${m}`);

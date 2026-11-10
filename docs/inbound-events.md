@@ -411,7 +411,8 @@ them, because a pointer that misses simply leaves its input unfilled.
 
 - **Only the first issue is read.** A mapped field is one scalar, so `/newIssues/0` is the only
   issue acted on in a delivery. The others are not acted on, and nothing records that they were
-  skipped.
+  skipped. The `issueType` rule also reads only `/newIssues/0`, so a delivery whose first new
+  issue is a licence finding is dropped whole, even when a later one is a vulnerability.
 - **Match the repository by project id, not name.** `project.name` and `remoteRepoUrl` are text
   that anyone able to import or rename projects in the Snyk organisation chooses. Matching on the
   id (a UUID Snyk assigns) means the person who can monitor a project cannot steer a run to a
@@ -434,11 +435,13 @@ them, because a pointer that misses simply leaves its input unfilled.
 - **Severity must match exactly.** Snyk's severity is `low`, `medium`, `high` or `critical` in the
   documented example; the template takes those four lower-case values and anything else fails the
   start (`FAILED_TO_START`). Leave `severity` unmapped if a delivery uses another spelling.
-- **An empty delivery starts nothing only because of the `exists` rule.** Every advisory input is
-  optional, and nothing checks at save that an automation has the rule, so without it a selected
-  snapshot with no issues starts a run with only the repository filled. The template's brief tells
-  the agent to change nothing when the request names no package, which limits what such a run
-  does, not that it runs.
+- **An empty delivery starts nothing only because of the `exists` rule.** The engine has no
+  backstop: every advisory input is optional, and nothing checks at save that an automation has
+  the two mandatory rules. Without them every snapshot of the project and every `ping/v0` starts a
+  run with only the repository filled, and the automation's `cooldownMinutes` and `maxRunsPerDay`
+  are the only bound on how many (each spends a workspace and a model call). The template's brief
+  tells the agent to change nothing when the request names no package, which limits what such a
+  run does, not that it runs.
 - **`vulnerableVersions` carries the installed version.** `pkgVersions` lists the versions of the
   package found in the project, so `/newIssues/0/pkgVersions/0` is one affected version, such as
   `4.17.20`, not the range the advisory covers. The documented example names no field holding the
@@ -483,4 +486,10 @@ them, because a pointer that misses simply leaves its input unfilled.
   being started; sending the event again is safe, because the decision is keyed by the event.
 - **The Snyk recipe reads one issue per delivery and one repository per automation (§6).** Its issue
   pointers come from Snyk's documented example, not a recorded delivery, and Snyk's payload is
-  documented as able to change while the webhooks are in beta.
+  documented as able to change while the webhooks are in beta. Only `newIssues[0]` is handled: a
+  delivery whose first new issue is a licence finding is dropped even when a later one is a
+  vulnerability.
+- **The recipe's two match rules are required, and nothing enforces them (§6).** An automation
+  without `/newIssues/0` `exists` and `/newIssues/0/issueType` `eq` `vuln` starts a run for every
+  snapshot and ping it selects, bounded only by its cooldown and `maxRunsPerDay`. Neither the
+  automation save nor the engine checks that the rules are there.

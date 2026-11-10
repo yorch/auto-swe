@@ -976,10 +976,21 @@ promote the new version. Nothing else needs to be done.
 
 ---
 
-### UN-18. `vulnerability-remediation` declares an input schema (`<sha of this change>`)
+### UN-18. `vulnerability-remediation` declares an input schema
 
-**Affected.** A deployment whose global `vulnerability-remediation` template was seeded before
-`<sha of this change>`, and any of these holds:
+**Affected.** A deployment whose global `vulnerability-remediation` template was seeded by a build
+without the migration `20261110000000_event_endpoint_fixed_type`, which ships in the same change.
+The migration is the marker: before the upgrade it has no row in `_prisma_migrations`, and after
+it the template predates it when
+
+```sql
+SELECT t.created_at < m.finished_at AS seeded_before
+  FROM workflow_templates t, _prisma_migrations m
+ WHERE t.name = 'vulnerability-remediation' AND t.team_id IS NULL
+   AND m.migration_name = '20261110000000_event_endpoint_fixed_type';
+```
+
+returns `true`. Such a deployment is affected if any of these holds:
 
 - an admin saved an `inputSchema` on it by hand (to let an automation start it);
 - it is archived, is running an A/B experiment, or is active on a version an admin saved rather
@@ -1019,12 +1030,14 @@ applies it, and existing endpoints keep their stored type pointer with no action
 
 ---
 
-### UN-19. Input schemas enforce `pattern` and `maxLength` (`<sha of this change>`)
+### UN-19. Input schemas enforce `pattern` and `maxLength`
 
-**Affected.** A deployment with a workflow template, global or a team's, installed from a bundle
-or saved by hand, whose stored `inputSchema` gives a property (or an array's `items`) a `pattern`
-or a `maxLength`. Before `<sha of this change>` both keywords were ignored, so a schema copied
-from JSON Schema could carry them unnoticed. A deployment with no such template needs nothing.
+**Affected.** A deployment upgrading from a build without the migration
+`20261110000000_event_endpoint_fixed_type` (it ships in the same change: before the upgrade it has
+no row in `_prisma_migrations`), with a workflow template, global or a team's, installed from a bundle or saved by hand, whose
+stored `inputSchema` gives a property (or an array's `items`) a `pattern` or a `maxLength`. Earlier
+builds ignored both keywords, so a schema copied from JSON Schema could carry them unnoticed. A
+deployment with no such template needs nothing.
 
 Find them in the database (a property that is itself named `pattern` or `maxLength` also matches;
 read each hit):
@@ -1032,6 +1045,15 @@ read each hit):
 ```sql
 SELECT id, name, team_id, status FROM workflow_templates
  WHERE input_schema::text ~ '"(pattern|maxLength)"';
+```
+
+A fresh launch validates against the template's own schema, so these rows are the ones to fix.
+Each template version also keeps a snapshot of the schema it was created under, and only a retry
+of a recorded run (`POST /api/v1/work-requests/:id/retry`) validates against that snapshot. The
+snapshot cannot be edited, so a hit there needs no action beyond knowing that a retry of a run on
+that version is refused: start a new run instead. To list them, for information only:
+
+```sql
 SELECT template_id, version FROM workflow_template_versions
  WHERE input_schema::text ~ '"(pattern|maxLength)"';
 ```
@@ -1044,8 +1066,9 @@ closed:
 
 - `maxLength` is enforced: a longer value is refused.
 - A `pattern` is run only if it is within the accepted subset ([automations.md](./automations.md)):
-  no groups, alternation, backreferences or lookaround, at most two quantifiers whose count varies,
-  at most 200 characters, and a `maxLength` of at most 256 beside it. A stored pattern outside the
+  no groups, alternation, backreferences or lookaround, at most one quantifier whose count varies,
+  at most 200 characters, a `maxLength` of at most 256 beside it, and at most 8 properties with a
+  `pattern` in one schema. A stored pattern outside the
   subset is never run, and **every** launch that supplies the field is refused with
   `'<field>' cannot be checked: the template's input schema declares a pattern this platform does
   not run`. A pattern on an array's `items` is not supported at all and refuses the field the same
@@ -1054,7 +1077,8 @@ closed:
   carries one are refused, with a message naming the property and the rule.
 
 **Actions.** For each template the query finds, fix its schema: rewrite the pattern within the
-subset (for example `^(CVE|GHSA)-\d+$` becomes two fields, or `[A-Z]+-[0-9A-Za-z-]+`), drop an
+subset (for example `^(CVE|GHSA)-\d+$` becomes `[A-Z][0-9A-Za-z-]*`, which has one varying
+quantifier), drop an
 `items.pattern` (constrain items with `enum` or `maxLength`), and keep `maxLength` at or below 256
 beside a pattern. Save it with `PATCH /api/v1/workflow-templates/:id`, or fix the bundle and
 reinstall it. Then fix any launcher that sends a value the corrected schema refuses.

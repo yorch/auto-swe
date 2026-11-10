@@ -171,6 +171,40 @@ describe('automationOptionsProblem', () => {
       }
     });
 
+    it('checks a constraint on a key the platform builds, so the save fails, not every fire', () => {
+      // The description is built from the event the same way at every fire, and is far longer
+      // than 200 characters for an inbound event: no occurrence could ever start a run.
+      const shortDescription: InputSchema = {
+        ...schema,
+        properties: { ...schema.properties, description: { maxLength: 200, type: 'string' } },
+      };
+      expect(
+        automationOptionsProblem(
+          inboundEventSource,
+          filters({ cve: '/cve' }),
+          shortDescription,
+          {},
+          true
+        )
+      ).toContain("'description' must be at most 200 characters");
+      // The CVE pattern on the mapped field still saves beside an unconstrained description.
+      expect(
+        automationOptionsProblem(inboundEventSource, filters({ cve: '/cve' }), schema, {}, true)
+      ).toBeNull();
+    });
+
+    it('refuses at save a mapped field whose stored pattern this platform does not run', () => {
+      // A legacy schema, stored before the subset was enforced: relaxing its pattern for the
+      // stand-in would let the save pass and fail every fire as "cannot be checked".
+      const legacy = {
+        ...schema,
+        properties: { ...schema.properties, cve: { pattern: '(CVE|GHSA)-.+', type: 'string' } },
+      } as InputSchema;
+      expect(
+        automationOptionsProblem(inboundEventSource, filters({ cve: '/cve' }), legacy, {}, true)
+      ).toContain("'cve' cannot be checked");
+    });
+
     it('still checks an option the automation stores, which is a real value', () => {
       expect(
         automationOptionsProblem(

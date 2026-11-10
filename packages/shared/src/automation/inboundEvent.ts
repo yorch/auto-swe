@@ -205,7 +205,7 @@ export const EVENT_ENDPOINT_PRESETS: ReadonlyArray<{
       typePointer: '',
     },
     description:
-      'Snyk project snapshots: an HMAC-SHA256 hex digest of the request body in X-Hub-Signature as sha256=<hex>, a constant event type (Snyk names it only in the unsigned X-Snyk-Event header), and the Snyk project id (/project/id) as subject and scope so the cooldown and in-flight checks count per project. The body has no event id, so each delivery is keyed by a digest of its body. Snyk documents the digest as of "the request body" without saying whether it is the raw bytes; check the first delivery.',
+      'Snyk project snapshots: an HMAC-SHA256 hex digest of the request body in X-Hub-Signature as sha256=<hex>, a constant event type (Snyk names it only in the unsigned X-Snyk-Event header), and the Snyk project id (/project/id) as subject and scope so the cooldown and in-flight checks count per project. The body has no event id, so each delivery is keyed by a digest of its body. Snyk documents the digest as of "the request body" without saying whether it is the raw bytes; check the first delivery. Every automation on this endpoint needs two match rules, /newIssues/0 exists and /newIssues/0/issueType eq vuln: without them every snapshot and ping starts a run, bounded only by the cooldown and the daily cap.',
     key: 'snyk',
     label: 'Snyk project snapshot',
   },

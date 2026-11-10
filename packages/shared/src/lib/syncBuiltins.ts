@@ -1566,20 +1566,38 @@ async function syncBuiltinTemplate(
     // admin API can PATCH them, so a stored value is kept unless it is one an
     // earlier release shipped (the input schema only: nothing records earlier
     // workspace providers).
-    const fill = {
-      ...(existing.inputSchema == null && templateFields.inputSchema
+    const schemaFill =
+      existing.inputSchema == null && templateFields.inputSchema
         ? { inputSchema: templateFields.inputSchema }
-        : schemaMove),
-      ...(existing.workspaceProvider == null && templateFields.workspaceProvider
-        ? { workspaceProvider: templateFields.workspaceProvider }
-        : {}),
-    };
+        : schemaMove;
     // Conditional on the row still pointing where we read it, so an admin's
     // concurrent activation is not overwritten.
-    await prisma.workflowTemplate.updateMany({
-      data: { activeVersion: next, ...fill },
+    const advanced = await prisma.workflowTemplate.updateMany({
+      data: {
+        activeVersion: next,
+        ...(existing.workspaceProvider == null && templateFields.workspaceProvider
+          ? { workspaceProvider: templateFields.workspaceProvider }
+          : {}),
+      },
       where: { activeVersion: latestBuiltin.version, id: existing.id, teamId: null },
     });
+    if (advanced.count > 0 && 'inputSchema' in schemaFill) {
+      // A write of its own, conditional on the row still holding the schema we read (NULL, or
+      // the earlier shipped one), so a schema an admin saves while sync runs is not overwritten.
+      // The version still moves forward when it is: the two are independent.
+      await prisma.workflowTemplate.updateMany({
+        data: schemaFill,
+        where: {
+          activeVersion: next,
+          id: existing.id,
+          inputSchema:
+            existing.inputSchema == null
+              ? { equals: Prisma.AnyNull }
+              : { equals: existing.inputSchema as object },
+          teamId: null,
+        },
+      });
+    }
   }
 }
 
