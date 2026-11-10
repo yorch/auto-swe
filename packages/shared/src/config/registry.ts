@@ -448,6 +448,19 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
+  // Read by the CI-fix session (`runImplementerFixSession`, mode CI_FIX) with the repository's team.
+  'github.ciFixTestIntegrityGuard': defineSetting({
+    defaultValue: 'block',
+    description:
+      "What the CI-fix session does when the fixer's change deletes a test file or test case, adds a skip, focus or expected-failure marker, removes or loosens assertions, or changes test configuration to exclude tests or lower a coverage threshold. 'block': the change is not committed or pushed and the step fails with TEST_INTEGRITY_GUARD, ending the run where it stands for a person to look at. 'warn': the change goes through and the findings are recorded on the run. 'off': not checked. A heuristic over the diff text: it has false positives (a legitimate consolidation of tests) and false negatives (an assertion moved into a helper), so a clean result is not a proof the tests are intact.",
+    group: 'github',
+    label: 'CI-fix test-integrity guard',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.enum(['off', 'warn', 'block']),
+  }),
   'github.issueLabelAutomationsEnabled': defineSetting({
     defaultValue: false,
     description:

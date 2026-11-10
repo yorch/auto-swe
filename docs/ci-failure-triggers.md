@@ -227,6 +227,59 @@ command with `${{ }}` expressions is never run. Verification labels a fix; it ne
 being delivered, since a command that needs the workflow's setup steps fails both times for reasons
 that say nothing about the fix. Both runs' output is kept as a `ci.verify` artifact.
 
+### 2.4 The test-integrity guard
+
+A CI fix can go green by deleting the failing test, skipping it, or loosening what it asserts. The
+**test-integrity guard** reads the change a CI fix session made and refuses one that looks like that.
+It runs in every CI fix session (`executeCIFixImplementation`), so it covers this template and the CI
+loop of the engineering templates alike. It runs after the agent and its test run, and **before the
+commit and the push**: a blocked change leaves nothing on the branch.
+
+The session's change is read as the diff from the commit the session started at to the working tree
+(what the agent staged or committed itself), and a pure analyser (`@auto-swe/shared/lib/testIntegrity`)
+looks for:
+
+| Finding | What it matches |
+|---|---|
+| `test_file_deleted` | a test file removed (by directory or file-name convention: `*.test.*`, `*.spec.*`, `__tests__/`, `tests/`, `test_*.py`, `*_test.go`, `*Test.java`, `*_spec.rb`, `.feature`, …) |
+| `test_case_removed` | more test-case declarations removed than added in a test file (`it(`/`test(`, `def test_`, `func Test`, `@Test`, `#[test]`, `[Fact]`, RSpec `it '…'`, `Scenario:`). A renamed or rewritten test nets to zero |
+| `skip_marker_added` | more skip, focus or expected-failure markers added than removed (`.skip`, `.todo`, `xit`, `.only`, `@pytest.mark.skip`/`skipif`/`xfail`, `pytest.skip(`, `@unittest.skip`, `@Ignore`, `@Disabled`, `t.Skip(`, `#[ignore]`, RSpec `skip`/`pending`) |
+| `assertions_reduced` | a net drop in assertion counts in a test file (`expect(`, `assert…(`, a Python `assert` statement, `require.…(`, `t.Error`/`t.Fatal`, `.should`, `verify(`) |
+| `assertion_trivialized` | an added assertion that holds whatever the code does (`expect(true).toBe(true)`, `assert True`, `assert 1 == 1`, `assertEquals(1, 1)`, `assertTrue(true)`) |
+| `assertion_loosened` | specific assertions lost on net while the same number of weak matchers (`toBeDefined`, `toBeTruthy`, `expect.anything()`, `assertNotNull`, `is not None`) were gained |
+| `test_config_excludes` | in a test configuration file (`jest`/`vitest`/`playwright` config, `pytest.ini`, `pyproject.toml`, `tox.ini`, `.mocharc`, `pom.xml`, `build.gradle`, `package.json`, …) more ignore or exclude settings added than removed (`testPathIgnorePatterns`, `exclude:`, `--ignore`, `--deselect`, `-k "not …"`, `skipTests`) |
+| `coverage_threshold_lowered` | in the same files, a coverage threshold (`branches`, `lines`, `fail_under`, `--cov-fail-under`, …) lowered or removed |
+| `test_run_bypassed` | a test command changed so it cannot fail (`--passWithNoTests`, `jest || true`) |
+
+`github.ciFixTestIntegrityGuard` sets what a finding does. It can be overridden per team and
+organization, so a repository whose fixes legitimately rewrite tests can be set to `warn` without
+turning the guard off elsewhere.
+
+| Value | Effect |
+|---|---|
+| `block` (default) | The change is not committed or pushed. The step fails non-retryably with `TEST_INTEGRITY_GUARD`, carrying the findings. Like `SECURITY_GATE_FAILURE` it is not retried, because a retry would re-run the whole paid session and the fixer is likely to repeat itself. |
+| `warn` | The change goes through; the findings are recorded on the run. |
+| `off` | Not checked. |
+
+A blocked fix ends where any other failed fix step ends: where the template routes a failed step
+(`onFailure`, as the follow-up fix of §2.1 routes to its failure report), otherwise the run fails at
+that step with the typed error and the findings in its message. Nothing new carries it to a person;
+it is the existing failure route. In `block` mode a diff that cannot be read, or is too large to read
+in full with nothing found in the part that was read, fails as `TEST_INTEGRITY_GUARD_UNAVAILABLE`
+instead: a guard that cannot say the tests are intact does not say so. A value the setting does not
+recognise is treated as `block`.
+
+Every trip is recorded as a `ci_fix.test_integrity_guard` activity event on the run's trace
+(`blocked: true` or `false`, the findings, `mode`), which makes it queryable like
+`code_security.scan`. The [outcome report](./outcome-metrics.md) counts trips and the CI-heal rate per
+repository side by side, so a repository whose heal rate is high because fixes delete tests shows
+trips next to it.
+
+The guard is a heuristic over diff text and is not a proof. It has false positives (a legitimate
+consolidation of several tests into one parameterised test reads as `assertions_reduced`; deleting a
+test for code that was removed reads as a deletion) and false negatives (see Limitations). A blocked
+change is a prompt for a person to look, not a verdict.
+
 ## 3. When a run is not acted on
 
 `triageCiFailure` skips the run (`decision: skip`), without calling the model, when GitHub's record
@@ -324,7 +377,25 @@ See [github-app-setup.md](./github-app-setup.md).
   ([automations.md](./automations.md#the-ledger)).
 
 - **Only GitHub Actions.** A failure reported by another CI system (commit statuses, third-party
-  check runs) is not read. The run is looked up through the Actions API.
+  check runs) is not read. The run is looked up through the Actions API. Buildkite, CircleCI and
+  GitLab CI are not supported sources.
+- **The test-integrity guard is a heuristic.** It matches patterns in diff text and compares counts.
+  It does not parse any language, run the tests, or know what a test is for, and a clean result means
+  only that it recognised nothing.
+- **The guard misses evasions.** An assertion moved into a helper outside a recognised test path, a
+  test emptied but left in place (an empty body keeps its `it(`), a failing test rewritten to assert
+  the new, wrong behaviour, a try/catch that swallows the failure, a conditional that returns early,
+  a test renamed so its removal nets to zero, a framework or marker the patterns do not name, and a
+  fix that changes the code under test to special-case the test input are all invisible to it.
+- **The guard has false positives.** A legitimate consolidation of tests, a deleted test for removed
+  code, a test configuration `exclude` that is really a coverage exclude, and an assertion style the
+  counter reads as fewer assertions all trip it. In `block` mode they stop a fix a person would have
+  accepted; `warn` records the same findings without stopping.
+- **The guard reads the fix, not the branch.** It looks at what the fix session changed. A test
+  already skipped or weakened before the session, or a change made outside a CI fix session, is not
+  seen. A review fix or a person's edit is not checked.
+- **A trip is not retried, and the fixer is not told why.** A blocked fix fails the step; the fixer
+  is not given a second attempt with the findings, so a run that trips ends with no fix pushed.
 - **Only the end of each log.** The triager sees the tail of at most five failed jobs: 12,000
   characters each, 40,000 in all. A failure whose cause is printed early in a long log can be
   misdiagnosed.

@@ -65,6 +65,7 @@
     "./lib/prEvaluationWorkflow": "./dist/lib/prEvaluationWorkflow.js",
     "./lib/ciWorkflowFile": "./dist/lib/ciWorkflowFile.js",
     "./lib/ciLogScreen": "./dist/lib/ciLogScreen.js",
+    "./lib/testIntegrity": "./dist/lib/testIntegrity.js",
     "./lib/modelSpec": "./dist/lib/modelSpec.js",
     "./lib/deploymentAgents": "./dist/lib/deploymentAgents.js",
     "./lib/credentialCoverage": "./dist/lib/credentialCoverage.js",

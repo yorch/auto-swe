@@ -189,6 +189,7 @@ vi.mock('../lib/models.js', () => ({
   ),
 }));
 
+import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult } from '@auto-swe/shared/types/workflow';
 import { AgentTracer } from '../lib/agentTracer.js';
@@ -632,6 +633,109 @@ describe('runImplementerFixSession', () => {
       })
     );
     expect(out.implementationNotes).toBe('notes(true)');
+  });
+});
+
+describe('runImplementerFixSession test-integrity guard', () => {
+  const DELETES_TEST = [
+    'diff --git a/src/a.test.ts b/src/a.test.ts',
+    'deleted file mode 100644',
+    '--- a/src/a.test.ts',
+    '+++ /dev/null',
+    '@@ -1,2 +0,0 @@',
+    "-it('adds', () => {",
+    '-  expect(add(1, 2)).toBe(3);',
+    '',
+  ].join('\n');
+  const STAGED_DIFF = 'git diff --cached --no-ext-diff';
+  const cmds = () => execMock.mock.calls.map((c) => c[0]);
+
+  function stageStagedDiff(diff: string) {
+    const base = execMock.getMockImplementation();
+    execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) =>
+      cmd.startsWith(STAGED_DIFF) ? diff : base?.(cmd, options)) as never);
+    return base;
+  }
+
+  function guardSetting(value: string) {
+    vi.mocked(resolveSetting).mockImplementation((async (key: string) =>
+      key === 'github.ciFixTestIntegrityGuard' ? value : 'mastra') as never);
+  }
+
+  afterEach(() => {
+    vi.mocked(resolveSetting).mockImplementation((async () => 'mastra') as never);
+  });
+
+  it('blocks a CI fix that deletes a test before anything is committed or pushed', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    guardSetting('block');
+    const base = stageStagedDiff(DELETES_TEST);
+    try {
+      await expect(runImplementerFixSession(input())).rejects.toMatchObject({
+        nonRetryable: true,
+        type: 'TEST_INTEGRITY_GUARD',
+      });
+      expect(cmds().some((c) => c.includes('commit -m') || c.includes('push origin'))).toBe(false);
+      // Read against the commit the session started from, quoted.
+      expect(cmds().some((c) => c.includes("-U0 'abc123'"))).toBe(true);
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
+  });
+
+  it('treats an unrecognised setting value as block', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    guardSetting('banana');
+    const base = stageStagedDiff(DELETES_TEST);
+    try {
+      await expect(runImplementerFixSession(input())).rejects.toMatchObject({
+        type: 'TEST_INTEGRITY_GUARD',
+      });
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
+  });
+
+  it('pushes in warn mode and records the trip as not blocked', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    guardSetting('warn');
+    const events: Array<{ name: string; outputJson?: Record<string, unknown> }> = [];
+    vi.spyOn(AgentTracer.prototype, 'addActivityEvent').mockImplementation((opts) => {
+      events.push(opts as never);
+    });
+    const base = stageStagedDiff(DELETES_TEST);
+    try {
+      await runImplementerFixSession(input());
+      expect(cmds().some((c) => c.includes('push origin'))).toBe(true);
+      const trip = events.find((e) => e.name === 'ci_fix.test_integrity_guard');
+      expect(trip?.outputJson).toMatchObject({ blocked: false, mode: 'warn' });
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
+  });
+
+  it('does not read the diff when off', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    guardSetting('off');
+    const base = stageStagedDiff(DELETES_TEST);
+    try {
+      await runImplementerFixSession(input());
+      expect(cmds().some((c) => c.startsWith(STAGED_DIFF))).toBe(false);
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
+  });
+
+  it('does not apply to a review fix', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    guardSetting('block');
+    const base = stageStagedDiff(DELETES_TEST);
+    try {
+      await runImplementerFixSession(input({ agentKey: 'reviewFixer', mode: 'REVIEW_FIX' }));
+      expect(cmds().some((c) => c.startsWith(STAGED_DIFF))).toBe(false);
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
   });
 });
 
