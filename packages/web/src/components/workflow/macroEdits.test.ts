@@ -217,12 +217,36 @@ describe('deleting and renaming the nodes of a macro use', () => {
 
   it('does not lock a node outside every use, or one whose tag names no use', () => {
     const base = macroSpec();
-    expect(macroLockReason(base, 'done')).toBeNull();
+    expect(macroLockReason(base, 'start')).toBeNull();
     const stray: WorkflowSpec = {
       ...base,
       nodes: { ...base.nodes, done: { ...base.nodes.done, use: 'ghost' } as never },
     };
-    expect(macroLockReason(stray, 'done')).toBeNull();
+    expect(macroLockReason(stray, 'done', 'rename')).toBeNull();
+  });
+
+  it('refuses to delete a node a use routes to, and says which use', () => {
+    const spec = macroSpec();
+    expect(macroLockReason(spec, 'done')).toMatch(
+      /routed to by use .*CI loop · ci.*change its arguments first/
+    );
+    expect(deleteNodeFromSpec(spec, 'done')).toBe(spec);
+    expect(macroLockReason(spec, 'done', 'rename')).toBeNull();
+  });
+
+  it('follows nested edge arguments such as fix.handoff.rereview', () => {
+    const base = macroSpec();
+    const withoutPassed: WorkflowSpec = {
+      ...base,
+      uses: {
+        ci: {
+          args: { fix: { handoff: { rereview: 'done' } }, passed: 'start' },
+          macro: 'ciLoop@1',
+        },
+      },
+    };
+    expect(macroLockReason(withoutPassed, 'done')).toMatch(/routed to by use/);
+    expect(deleteNodeFromSpec(withoutPassed, 'done')).toBe(withoutPassed);
   });
 
   it('renaming a node a use routes to rewrites the use arguments too, so nothing drifts', () => {

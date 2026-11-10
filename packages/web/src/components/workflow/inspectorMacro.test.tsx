@@ -67,7 +67,7 @@ describe('the Macro section', () => {
     const base = macroSpec();
     const drifted: WorkflowSpec = {
       ...base,
-      nodes: { ...base.nodes, checkCI: { ...base.nodes.checkCI, title: 'Edited' } as never },
+      nodes: { ...base.nodes, checkCI: { ...base.nodes.checkCI, expr: 'false' } as never },
     };
     const onChangeSpec = renderFor(drifted, 'checkCI');
     expect(screen.getByText('Edited by hand')).toBeTruthy();

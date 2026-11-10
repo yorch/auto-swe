@@ -37,7 +37,7 @@ export { isValidWaitDuration, waitDurationMs } from './waitDuration.js';
 
 export const SPEC_SCHEMA_VERSION = 1 as const;
 
-const NodeIdSchema = z.string().min(1).max(64);
+export const NodeIdSchema = z.string().min(1).max(64);
 
 /** Terminal statuses a node (or an `onFailure` / `onExhausted` shorthand) may end the run with. */
 const TerminalStatusSchema = z.enum(['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED']);

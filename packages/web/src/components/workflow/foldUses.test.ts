@@ -128,7 +128,9 @@ describe('the editor canvas', () => {
     const { nodes } = specToFlow(macroSpec(), { editable: true });
     const byId = new Map(nodes.map((n) => [n.id, n]));
     expect(byId.get('checkCI')?.deletable).toBe(false);
-    expect(byId.get('done')?.deletable).toBeUndefined();
+    expect(byId.get('start')?.deletable).toBeUndefined();
+    // A node a use routes to is not deletable either: its arguments would dangle.
+    expect(byId.get('done')?.deletable).toBe(false);
     // The read-only viewer is unaffected.
     expect(
       specToFlow(macroSpec()).nodes.find((n) => n.id === 'checkCI')?.deletable

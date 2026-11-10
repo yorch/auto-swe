@@ -206,6 +206,23 @@ export function buildRepairRequestMessage(args: {
 }
 
 /**
+ * The spec as the model should see it: without `uses` and without any node's `use`
+ * tag. The model reads and writes flat nodes, and what is stored from its output is
+ * plain nodes, so the macro bookkeeping is detached by construction rather than
+ * left to be echoed back (and so drift) or to inflate the prompt.
+ */
+export function stripMacroTags(spec: WorkflowSpec): WorkflowSpec {
+  const { uses: _uses, ...rest } = spec;
+  const nodes = Object.fromEntries(
+    Object.entries(spec.nodes).map(([id, node]) => {
+      const { use: _use, ...bare } = node as typeof node & { use?: unknown };
+      return [id, bare];
+    })
+  );
+  return { ...rest, nodes: nodes as WorkflowSpec['nodes'] };
+}
+
+/**
  * Build the first user message for a REFINEMENT turn: the current spec plus a
  * plain-language change instruction. Unlike {@link buildAuthorRequestMessage}
  * (which generates from scratch), this seeds the model with the existing spec so
@@ -226,7 +243,7 @@ export function buildRefineRequestMessage(args: {
     '',
     '# CURRENT SPEC',
     '```json',
-    truncate(JSON.stringify(args.baseSpec, null, 2), 8000),
+    truncate(JSON.stringify(stripMacroTags(args.baseSpec), null, 2), 8000),
     '```',
     '',
     '# CATALOG',

@@ -208,7 +208,7 @@ export function parseSpec(rawInput: unknown): SpecParseResult {
   if (badPresentation.length > 0) {
     return {
       issues: badPresentation.map((message) => {
-        const m = /^node '(.*)'\.(group|title) /.exec(message);
+        const m = /^node '(.*)'\.(group|title|use) /.exec(message);
         return {
           code: 'INVALID_PRESENTATION',
           message,

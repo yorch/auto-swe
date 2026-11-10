@@ -228,6 +228,11 @@ describe('POST /workflow-templates/validate', () => {
         { code: 'INVALID_PRESENTATION', field: 'title', nodeId: 'start' },
       ],
       [
+        'bad use tag',
+        spec({ start: { ...done, use: 'not a valid id' } }),
+        { code: 'INVALID_PRESENTATION', field: 'use', nodeId: 'start' },
+      ],
+      [
         'wrong schemaVersion',
         { ...VALID, schemaVersion: 0 },
         { code: 'SCHEMA_VERSION', field: 'schemaVersion' },

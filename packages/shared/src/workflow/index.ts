@@ -35,6 +35,7 @@ export {
   buildRefineRequestMessage,
   buildRepairRequestMessage,
   renderAuthoringCatalog,
+  stripMacroTags,
   WorkflowAuthorOutputSchema,
   WorkflowExplanationSchema,
 } from './authoring.js';

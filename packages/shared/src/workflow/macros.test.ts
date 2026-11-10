@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_TEMPLATES } from './builtinTemplates.js';
 import {
@@ -357,6 +358,12 @@ describe('materializeUses', () => {
     expect(materializeUses(null)).toBe(null);
   });
 
+  it("throws rather than replace a 'nodes' that is not an object", () => {
+    for (const nodes of [[], 'x', 5, null]) {
+      expect(() => materializeUses({ ...specWith('rev', use), nodes })).toThrow(MacroUseError);
+    }
+  });
+
   it('inserts the expansion of a use with no nodes, without mutating its argument', () => {
     const raw = specWith('rev', use);
     const before = structuredClone(raw);
@@ -379,7 +386,7 @@ describe('materializeUses', () => {
     const once = materializeUses(specWith('rev', use));
     const edited = {
       ...once,
-      nodes: { ...once.nodes, review: { ...(once.nodes.review as Node), title: 'Edited' } },
+      nodes: { ...once.nodes, review: { ...(once.nodes.review as Node), status: 'EDITED' } },
     };
     expect(materializeUses(edited).nodes).toEqual(edited.nodes);
   });
@@ -420,7 +427,7 @@ describe('reexpandUse and detachUse', () => {
     const spec = materializeUses(specWith('ci', use));
     const drifted = {
       ...spec,
-      nodes: { ...spec.nodes, checkCI: { ...(spec.nodes.checkCI as Node), title: 'Hand edit' } },
+      nodes: { ...spec.nodes, checkCI: { ...(spec.nodes.checkCI as Node), expr: 'false' } },
     };
     expect(findUseProblems(drifted)).toHaveLength(1);
     const repaired = reexpandUse(drifted, 'ci');
@@ -511,6 +518,27 @@ describe('findUseProblems', () => {
     expect(findUseProblems(parseWorkflowSpec(good()))).toEqual([]);
   });
 
+  it('ignores presentation fields (group, title) but not real edits', () => {
+    const spec = good();
+    const nodes = spec.nodes as Record<string, Record<string, unknown>>;
+    const id = 'openPR';
+    const retitled = {
+      ...spec,
+      nodes: { ...nodes, [id]: { ...nodes[id], group: 'My group', title: 'Renamed' } },
+    };
+    expect(findUseProblems(retitled)).toEqual([]);
+    const edited = {
+      ...spec,
+      nodes: { ...nodes, [id]: { ...nodes[id], status: 'EDITED' } },
+    };
+    expect(collectUseProblems(edited).map((p) => p.code)).toEqual(['USE_DRIFT']);
+    const rerouted = {
+      ...spec,
+      nodes: { ...nodes, [id]: { ...nodes[id], next: 'elsewhere' } },
+    };
+    expect(collectUseProblems(rerouted).map((p) => p.code)).toEqual(['USE_DRIFT']);
+  });
+
   it('ignores key order', () => {
     const spec = good();
     const reordered = Object.fromEntries(
@@ -581,7 +609,7 @@ describe('findUseProblems', () => {
       'a hand-edited node (drift)',
       (s) => ({
         ...s,
-        nodes: { ...s.nodes, openPR: { ...(s.nodes.openPR as Node), title: 'Edited' } },
+        nodes: { ...s.nodes, openPR: { ...(s.nodes.openPR as Node), status: 'EDITED' } },
       }),
       'USE_DRIFT',
       /use 'pr' \(openPullRequest@1\) has drifted.*changed: openPR.*re-expand.*detach/,
@@ -626,7 +654,7 @@ describe('findUseProblems', () => {
     const spec = good();
     const drifted = parseWorkflowSpec({
       ...spec,
-      nodes: { ...spec.nodes, openPR: { ...(spec.nodes.openPR as Node), title: 'Edited' } },
+      nodes: { ...spec.nodes, openPR: { ...(spec.nodes.openPR as Node), status: 'EDITED' } },
     });
     const report = validateSpec(drifted);
     expect(report.errors).toEqual([
@@ -715,5 +743,190 @@ describe('the built-in templates', () => {
     expect(canonical(plain)).toBe(
       canonical(parseWorkflowSpec({ ...plainTicketToMerge, nodes: flat }))
     );
+  });
+});
+
+/** sha256 of the sorted-key JSON of an expansion. */
+const digest = (nodes: NodeMap): string =>
+  createHash('sha256').update(canonical(nodes)).digest('hex');
+
+describe('macro versions are frozen', () => {
+  // A macro version never changes what it expands to: a stored `@1` use is compared
+  // against the live expansion, so any change to a helper would turn every stored use
+  // into drift. Argument sets cover every option of every macro.
+  const FROZEN: Array<[string, string, Record<string, unknown>, string]> = [];
+  const frozen = (label: string, ref: string, args: Record<string, unknown>, hash: string) =>
+    FROZEN.push([label, ref, args, hash]);
+
+  frozen(
+    'ciLoop minimal',
+    'ciLoop@1',
+    { fix: false, passed: 'done' },
+    'a428e0ebc056a913176d106610d3422cfbcd63d54547596401ce0608ef29cc69'
+  );
+  frozen(
+    'ciLoop poll, exhausted',
+    'ciLoop@1',
+    { exhausted: 'lessonCIFailed', fix: false, passed: 'done', wait: 'pollOrSignal' },
+    '938172f10ec343c741e4b89705f218c21671d09e6f32b6e901fff80485f7d11c'
+  );
+  frozen(
+    'ciLoop signal wait',
+    'ciLoop@1',
+    { fix: false, passed: 'done', wait: 'signal' },
+    'a428e0ebc056a913176d106610d3422cfbcd63d54547596401ce0608ef29cc69'
+  );
+  frozen(
+    'ciLoop repush defaults',
+    'ciLoop@1',
+    { fix: { handoff: { repush: 'pushFix' } }, passed: 'done' },
+    '53ba93eb482aa43469b5b168f3531c3d46eff87438ea46996c0045f75fd6a7e6'
+  );
+  frozen(
+    'ciLoop repush status, numeric limit',
+    'ciLoop@1',
+    { fix: { handoff: { repush: 'pushFix', status: 'AWAITING_CI' }, limit: 5 }, passed: 'done' },
+    'f62383d1aa9114bbd4f4ee10165c6c63e91d35be8fc804abba88cf2294c212ba'
+  );
+  frozen(
+    'ciLoop repush string limit, retryIfUnchanged',
+    'ciLoop@1',
+    {
+      fix: {
+        handoff: { repush: 'pushFix' },
+        limit: 'request.payload.maxFixes ?? 2',
+        retryIfUnchanged: true,
+      },
+      passed: 'done',
+    },
+    '7bf1b7fd827dd5ebffab07fc005157d2a02ee0352b0356b6507ef5bfa3ae532e'
+  );
+  frozen(
+    'ciLoop retryIfUnchanged false',
+    'ciLoop@1',
+    { fix: { handoff: { repush: 'pushFix' }, retryIfUnchanged: false }, passed: 'done' },
+    '53ba93eb482aa43469b5b168f3531c3d46eff87438ea46996c0045f75fd6a7e6'
+  );
+  frozen(
+    'ciLoop rereview',
+    'ciLoop@1',
+    { fix: { handoff: { rereview: 'review' } }, passed: 'done' },
+    '30722649f99e6148118f48f058a469d3aa133cd402e04103ff3fcdc763766d50'
+  );
+  frozen(
+    'ciLoop rereview, poll, exhausted, limit',
+    'ciLoop@1',
+    {
+      exhausted: 'lessonCIFailed',
+      fix: { handoff: { rereview: 'review' }, limit: 3 },
+      passed: 'waitForHumanMerge',
+      wait: 'pollOrSignal',
+    },
+    '9a7b07b48755a7d969024c1f6520764476bf94505b6ae66cb64f43a299c89145'
+  );
+  frozen(
+    'reviewLoop minimal',
+    'reviewLoop@1',
+    { approved: 'done' },
+    'd4c06095e2a646940d2265417471a21893bd4a889bd053c08ca106a6379289cf'
+  );
+  frozen(
+    'reviewLoop afterFix, exhausted',
+    'reviewLoop@1',
+    { afterFix: 'clearCiResult', approved: 'openPR', exhausted: 'lessonReviewFailed' },
+    '894f85f770bd0a3e15879cc8027bba793197589a61aa96979b4a84c70b0bf59d'
+  );
+  frozen(
+    'reviewLoop limit, fixConfig',
+    'reviewLoop@1',
+    { approved: 'done', fixConfig: { allowedPaths: ['docs/**'] }, limit: 4 },
+    'dda030ba56b24b34d6989822ee15819cca670d1ede547b540d95e5363024d3d1'
+  );
+  frozen(
+    'validatePhase minimal',
+    'validatePhase@1',
+    { next: 'implement' },
+    'c6bc9be7c1beb1a9eebb5283d6f326ae53d0c06bd23d5d7f7044e62ef4dbd99b'
+  );
+  frozen(
+    'validatePhase stamp off',
+    'validatePhase@1',
+    { next: 'implement', stamp: false },
+    'dab46a58eb5a799bf22ac7116da3e1382403d8be9ad5e188ede972e42cf4711a'
+  );
+  frozen(
+    'validatePhase stamp on',
+    'validatePhase@1',
+    { next: 'implement', stamp: true },
+    'c6bc9be7c1beb1a9eebb5283d6f326ae53d0c06bd23d5d7f7044e62ef4dbd99b'
+  );
+  frozen(
+    'validatePhase stopIfNotActionable, ticketContext',
+    'validatePhase@1',
+    { next: 'implement', stopIfNotActionable: true, ticketContext: true },
+    '58b4bc84f59bd798d5e3efa9404451ee2ab6b054ddc975107d18fe4e0226a274'
+  );
+  frozen(
+    'validatePhase successCriteria',
+    'validatePhase@1',
+    { next: 'implement', successCriteria: true },
+    'c6bc9be7c1beb1a9eebb5283d6f326ae53d0c06bd23d5d7f7044e62ef4dbd99b'
+  );
+  frozen(
+    'validatePhase successCriteria custom id',
+    'validatePhase@1',
+    { next: 'implement', successCriteria: true, successCriteriaId: 'criteria' },
+    '0175f814d9a37b9adc6ce900b497a6a50e76669598279f975535ffd64596ab89'
+  );
+  frozen(
+    'validatePhase everything',
+    'validatePhase@1',
+    {
+      next: 'implement',
+      stamp: true,
+      stopIfNotActionable: true,
+      successCriteria: true,
+      successCriteriaId: 'criteria',
+      ticketContext: true,
+    },
+    '1d9e04ca712b366256fb678b119a6f4cfdb1ed57ea20409c1b1ce5e5573e53b4'
+  );
+  frozen(
+    'openPullRequest minimal',
+    'openPullRequest@1',
+    { next: 'waitForCI' },
+    '9be07e328b0691243ef54065bd38e54b2c28b1818c31472b33d84adef43befc8'
+  );
+  frozen(
+    'openPullRequest not draft',
+    'openPullRequest@1',
+    { draft: false, next: 'waitForCI' },
+    '9be07e328b0691243ef54065bd38e54b2c28b1818c31472b33d84adef43befc8'
+  );
+  frozen(
+    'openPullRequest draft',
+    'openPullRequest@1',
+    { draft: true, next: 'waitForCI' },
+    'd84e0dcbbc3c77607443a815630497554a36c1f5a568ef599459eb235ec8ec26'
+  );
+  frozen(
+    'openPullRequest resetCiRetries, status',
+    'openPullRequest@1',
+    { next: 'waitForCI', resetCiRetries: true, status: 'AWAITING_CI' },
+    '4d53f1daba5c00006c1ac6187d7a82055a91833b240267950cbb271a3d5dc6a3'
+  );
+  frozen(
+    'openPullRequest resetCiRetries off',
+    'openPullRequest@1',
+    { next: 'waitForCI', resetCiRetries: false },
+    '9be07e328b0691243ef54065bd38e54b2c28b1818c31472b33d84adef43befc8'
+  );
+
+  it.each(FROZEN)('%s expands to the recorded nodes', (label, ref, args, hash) => {
+    const actual = digest(expandUse('u', { args, macro: ref }) as NodeMap);
+    expect(
+      actual,
+      `${label}: a macro version never changes what it expands to: ship the new behaviour as @2 and keep @1`
+    ).toBe(hash);
   });
 });

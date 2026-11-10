@@ -28,7 +28,14 @@
  */
 
 import { z } from 'zod';
-import { MAX_EXPR_LENGTH, type MacroUse, type Node, NodeSchema, USE_ID_RE } from './spec.js';
+import {
+  MAX_EXPR_LENGTH,
+  type MacroUse,
+  type Node,
+  NodeIdSchema,
+  NodeSchema,
+  USE_ID_RE,
+} from './spec.js';
 import {
   type CiLoopOptions,
   ciLoop,
@@ -69,7 +76,7 @@ export interface MacroDefinition<A = unknown> {
   readonly nodeIdArgs: readonly string[];
 }
 
-const NodeRef = z.string().min(1).max(64);
+const NodeRef = NodeIdSchema;
 const DomainStatus = z.string().min(1).max(64);
 /** `maxVisits` is at most 10 000 and the loops set it to `limit - 1`. */
 const LoopLimit = z.number().int().min(2).max(10_001);
@@ -285,6 +292,9 @@ function tagOf(node: unknown): string | undefined {
 }
 
 function nodesOf(spec: SpecWithUses): RawNodes {
+  if (spec.nodes !== undefined && !isPlainObject(spec.nodes)) {
+    throw new MacroUseError("'nodes' must be an object keyed by node id");
+  }
   return isPlainObject(spec.nodes) ? spec.nodes : {};
 }
 
@@ -429,10 +439,22 @@ export interface UseProblem {
  * equal whatever their key order, and a raw node compares equal to its parsed
  * form.
  */
+function withoutPresentation(node: unknown): unknown {
+  if (!isPlainObject(node)) {
+    return node;
+  }
+  const { group: _group, ...rest } = node;
+  if (typeof node.type === 'string' && node.type.startsWith('human')) {
+    return rest;
+  }
+  const { title: _title, ...bare } = rest;
+  return bare;
+}
+
 function canonicalNode(node: unknown): string {
   const parsed = NodeSchema.safeParse(node);
   const value = parsed.success ? parsed.data : node;
-  return JSON.stringify(value, (_k, v) =>
+  return JSON.stringify(withoutPresentation(value), (_k, v) =>
     isPlainObject(v)
       ? Object.fromEntries(
           Object.keys(v)
@@ -446,7 +468,7 @@ function canonicalNode(node: unknown): string {
 /** Every disagreement between a spec's `uses` and its flat nodes, structured. */
 export function collectUseProblems(spec: SpecWithUses): UseProblem[] {
   const problems: UseProblem[] = [];
-  const nodes = nodesOf(spec);
+  const nodes: RawNodes = isPlainObject(spec.nodes) ? spec.nodes : {};
   const uses = usesOf(spec);
   const byTag = new Map<string, string[]>();
   for (const [id, node] of Object.entries(nodes)) {

@@ -26,6 +26,7 @@ import {
   formatValidationIssue,
   materializeUses,
   parseWorkflowSpec,
+  stripMacroTags,
   validateSpec,
   type WorkflowAuthorOutput,
   WorkflowAuthorOutputSchema,
@@ -90,8 +91,10 @@ function formatErrors(err: unknown): string[] {
  * model to drop it would silently delete what a person put there.
  */
 function authoredCodeIssues(spec: WorkflowSpec, baseSpec: WorkflowSpec | undefined): string[] {
+  // The model saw (and returns) the flat form, so compare against the base without its tags.
+  const flatBase = baseSpec ? stripMacroTags(baseSpec) : undefined;
   const introduced = ([id, node]: [string, unknown]) =>
-    !baseSpec || !isDeepStrictEqual(baseSpec.nodes[id], node);
+    !flatBase || !isDeepStrictEqual(flatBase.nodes[id], node);
   const container = findContainerCodeNodes(spec)
     .filter(introduced)
     .map(

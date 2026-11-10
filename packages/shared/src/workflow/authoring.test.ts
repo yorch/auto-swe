@@ -161,6 +161,21 @@ describe('buildRefineRequestMessage', () => {
     // Instructs the model to return the full spec, not a diff.
     expect(msg).toContain('FULL updated spec');
   });
+
+  it('shows the model flat nodes: no uses and no use tags', () => {
+    const spec = {
+      ...BASE_SPEC,
+      nodes: { start: { status: 'SUCCESS', type: 'terminate', use: 'pr' } },
+      uses: { pr: { args: { next: 'x' }, macro: 'openPullRequest@1' } },
+    } as unknown as WorkflowSpec;
+    const msg = buildRefineRequestMessage({ baseSpec: spec, catalog: CATALOG, instruction: 'x' });
+    expect(msg).not.toContain('"uses"');
+    expect(msg).not.toContain('"use"');
+    expect(msg).not.toContain('openPullRequest@1');
+    expect(msg).toContain('"terminate"');
+    // The input is not mutated.
+    expect((spec as { uses?: unknown }).uses).toBeDefined();
+  });
 });
 
 describe('WorkflowAuthorOutputSchema', () => {

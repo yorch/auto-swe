@@ -151,7 +151,9 @@ export function NodeInspector({
   const unknownType = !isKnownNodeType(node.type);
   const useId = nodeUseOf(node);
   // A node of a declared macro use cannot be deleted or renamed on its own (see specEdits).
-  const lockReason = spec ? macroLockReason(spec, nodeId) : null;
+  const lockReason = spec ? macroLockReason(spec, nodeId, 'rename') : null;
+  // Deleting is also refused for a node a use routes to (its arguments would dangle).
+  const deleteLockReason = spec ? macroLockReason(spec, nodeId) : null;
 
   return (
     <aside
@@ -175,10 +177,12 @@ export function NodeInspector({
           <Button
             aria-label={`Delete node ${nodeId}`}
             className="ml-auto px-2 hover:text-danger-400"
-            disabled={isEntry || lockReason !== null}
+            disabled={isEntry || deleteLockReason !== null}
             onClick={onDelete}
             size="sm"
-            title={isEntry ? 'The first step cannot be deleted' : (lockReason ?? 'Delete node')}
+            title={
+              isEntry ? 'The first step cannot be deleted' : (deleteLockReason ?? 'Delete node')
+            }
             variant="ghost"
           >
             <Icon name="trash" size={14} />
