@@ -185,13 +185,18 @@ Guided paths build on those pieces:
   remembered in the viewer's browser only, and a "Show it again" line at the foot of Home brings
   the hidden guide back. The setup card stays out of the way until the readiness check has
   answered, so a fully set-up administrator never sees a placeholder.
-- **Home** also offers a short, optional product tour from its header. Take the tour starts it, and nothing starts
-  it automatically. The tour is a card that walks through the sidebar pages the viewer's role can
-  open, from Start work, Approvals and Requests to the Workflow library, the Admin entry and Docs;
-  the Admin step names more for leads and more again for administrators, who also see the Agents
-  step. Next and Back
-  move between steps, Skip tour, Done or Escape ends it, and Take the tour again replays it. The tour
-  never blocks the page, and ending it returns focus to the button that started it.
+- **The product tour** is short and optional, and nothing starts it automatically. Take the tour on
+  Home's header starts it, and so does Take the product tour in the Help panel (the ? in the top
+  bar), which every page has. The tour is a card that walks through the sidebar pages the viewer's
+  role can open, from Start work, Approvals and Requests to the Workflow library, the Admin entry
+  and Docs; the Admin step names more for leads and more again for administrators, who also see the
+  Agents step. Next and Back move between steps, Skip tour, Done or Escape ends it, and Take the
+  tour again replays it. The tour never blocks the page, and ending it returns focus to the button
+  that started it.
+- **Page tours** cover the workflow editor and the run page. Their Help panel also offers Tour this
+  page, a card that points at the palette, canvas, node inspector, Check workflow and status bar of
+  the editor, or at the verdict, layout switch and trace of a run. A page tour ends, without
+  counting as the product tour, when the viewer leaves the page.
 - **Start work** carries a "Not sure?" chooser that recommends a mode, and a "Try a sample task"
   button on each form that only fills the fields, never launches, and leaves the review screen in
   place. The agent sample asks for a read-only explanation; the epic and workflow samples ask for a
@@ -233,7 +238,9 @@ Guided paths build on those pieces:
   the person to another browser.
 - The product tour points only at the sidebar. A step whose page link is hidden, because its
   sidebar section is collapsed or the mobile menu is closed, appears as a centered card instead.
-  Opening another page ends the tour, and it counts as seen.
+  A tour started from the Help panel keeps running when a sidebar link is followed; one started
+  from Home ends there, and counts as seen. Only the workflow editor and the run page have a page
+  tour, and a step whose element is hidden (the palette below the lg breakpoint) is centered.
 - None of the "Your first run" steps follow the selected team. The merged-pull-request step ticks
   only when the webhook that records a merge is configured, and it ticks when anyone merges a pull
   request from the viewer's request. The repository step looks at the

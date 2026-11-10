@@ -20,7 +20,9 @@
 
 import { ReactFlow, ReactFlowProvider } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { PageTour } from '@/components/tour/PageTour';
 import { Alert } from '@/components/ui/Alert';
+import { EDITOR_TOUR } from '@/lib/pageTours';
 import { DagNode } from './dagNode';
 import { FlowChrome } from './flowChrome';
 import { CheckStatus } from './templateEditor/CheckStatus';
@@ -107,6 +109,7 @@ function EditorInner({
 
   return (
     <div className="flex flex-1 min-h-[560px] flex-col overflow-hidden md:min-h-0 border-y border-ink-600 bg-ink-900">
+      <PageTour steps={EDITOR_TOUR} />
       <EditorActionBar
         actions={actions}
         checkPending={checkResult?.server.state === 'pending'}
@@ -167,6 +170,7 @@ function EditorInner({
         <div
           aria-label="Workflow editor canvas. Left and right arrows follow the flow, up and down arrows switch between branches, Enter opens a node, Home jumps to the start, Delete removes the selected node."
           className={`relative min-w-0 flex-1 bg-ink-900 ${framed ? '' : 'opacity-0'}`}
+          data-tour="editor:canvas"
           onDragOver={handleDragOver}
           onDrop={handleDrop}
           ref={canvasRef}

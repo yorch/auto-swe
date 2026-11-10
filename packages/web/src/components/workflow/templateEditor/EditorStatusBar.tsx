@@ -17,7 +17,10 @@ export function EditorStatusBar({
   observedCostUsd,
 }: EditorStatusBarProps) {
   return (
-    <div className="shrink-0 border-t border-ink-600 bg-ink-950/60 px-4 py-1.5">
+    <div
+      className="shrink-0 border-t border-ink-600 bg-ink-950/60 px-4 py-1.5"
+      data-tour="editor:status"
+    >
       <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-paper-400">
         <div className="flex items-baseline gap-1.5">
           <dt className="sr-only">Nodes</dt>

@@ -24,7 +24,15 @@ beforeAll(() => {
 
 afterEach(() => {
   cleanup();
-  act(() => useHelpStore.setState({ open: false, sections: 0, target: null }));
+  act(() =>
+    useHelpStore.setState({
+      open: false,
+      pageTour: null,
+      sections: 0,
+      target: null,
+      tourRequest: null,
+    })
+  );
 });
 
 function Page({ text }: { text: string }) {
@@ -123,5 +131,35 @@ describe('Help panel', () => {
     });
     expect(button().getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(button());
+  });
+
+  describe('tour launchers', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it('always offers the product tour, and the page tour only when the page registered one', () => {
+      render(<HelpButton />);
+      fireEvent.click(button());
+      expect(
+        screen.getByRole('button', { hidden: true, name: 'Take the product tour' })
+      ).toBeTruthy();
+      expect(screen.queryByRole('button', { hidden: true, name: 'Tour this page' })).toBeNull();
+      act(() =>
+        useHelpStore.getState().setPageTour([{ anchor: null, body: 'b', id: 'a', title: 'A' }])
+      );
+      expect(screen.getByRole('button', { hidden: true, name: 'Tour this page' })).toBeTruthy();
+    });
+
+    it('closes the panel, then requests the tour with the Help button as the opener', () => {
+      vi.useFakeTimers();
+      render(<HelpButton />);
+      fireEvent.click(button());
+      fireEvent.click(screen.getByRole('button', { hidden: true, name: 'Take the product tour' }));
+      expect(dialog().hasAttribute('open')).toBe(false);
+      expect(useHelpStore.getState().tourRequest).toBeNull();
+      act(() => {
+        vi.runAllTimers();
+      });
+      expect(useHelpStore.getState().tourRequest).toEqual({ kind: 'product', opener: button() });
+    });
   });
 });

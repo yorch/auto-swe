@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef } from 'react';
+import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { IconButton } from '@/components/ui/IconButton';
 import { Modal } from '@/components/ui/Modal';
@@ -24,6 +25,8 @@ export function HelpButton() {
   const setOpen = useHelpStore((s) => s.setOpen);
   const sections = useHelpStore((s) => s.sections);
   const setTarget = useHelpStore((s) => s.setTarget);
+  const pageTour = useHelpStore((s) => s.pageTour);
+  const requestTour = useHelpStore((s) => s.requestTour);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const targetRef = useCallback((node: HTMLDivElement | null) => setTarget(node), [setTarget]);
   // A link followed from inside the panel (the docs, a page's "Learn more") changes the route
@@ -35,6 +38,13 @@ export function HelpButton() {
       setOpen(false);
     }
   }, [pathname, setOpen]);
+  // Close the panel first, then start the tour on the next tick: the dialog hands focus back to
+  // its opener as it closes, and the tour card must be the last to take it.
+  const startTour = (kind: 'product' | 'page') => {
+    setOpen(false);
+    const opener = buttonRef.current;
+    setTimeout(() => requestTour(kind, opener), 0);
+  };
   return (
     <>
       <IconButton
@@ -67,7 +77,17 @@ export function HelpButton() {
           {sections === 0 && (
             <p className="text-sm text-paper-400">There is no extra help for this page.</p>
           )}
-          <p className="mt-6 border-t border-ink-600 pt-4">
+          <div className="mt-6 flex flex-wrap gap-2 border-t border-ink-600 pt-4">
+            {pageTour && (
+              <Button onClick={() => startTour('page')} size="sm" variant="secondary">
+                Tour this page
+              </Button>
+            )}
+            <Button onClick={() => startTour('product')} size="sm" variant="secondary">
+              Take the product tour
+            </Button>
+          </div>
+          <p className="mt-4">
             <Link
               className={cn(
                 'inline-flex items-center gap-1.5 rounded-sm text-sm text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current',

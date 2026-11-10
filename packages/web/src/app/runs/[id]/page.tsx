@@ -32,6 +32,7 @@ import { RunSummaryBand } from '@/components/runs/RunSummaryBand';
 import { RunTranscripts } from '@/components/runs/RunTranscripts';
 import { RunVerdictBanner } from '@/components/runs/RunVerdictBanner';
 import { classifyTraceAsSecurityEvent } from '@/components/security/SecurityEventList';
+import { PageTour } from '@/components/tour/PageTour';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
@@ -50,6 +51,7 @@ import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { buildDagOverlay } from '@/lib/dagOverlay';
 import { errMsg } from '@/lib/errors';
 import { IMPLEMENTER_RUNTIME_LABELS } from '@/lib/evalRuntime';
+import { RUN_TOUR } from '@/lib/pageTours';
 import { requestHref } from '@/lib/requestDisplay';
 import { validateRouteParam } from '@/lib/routeParams';
 import { findFailedStep } from '@/lib/runFailure';
@@ -454,10 +456,13 @@ export default function RunDetailPage({ params }: PageProps) {
                 {RE_RUN_HINT}
               </span>
             )}
-            <LayoutToggle onChange={setLayout} value={layout} />
+            <div data-tour="run:layout">
+              <LayoutToggle onChange={setLayout} value={layout} />
+            </div>
           </div>
         </div>
 
+        <PageTour steps={RUN_TOUR} />
         <PageHelp>
           <p>
             Below the header is the run's trace
@@ -555,6 +560,7 @@ export default function RunDetailPage({ params }: PageProps) {
       {/* ── Layout body ───────────────────────────────────────────────────── */}
       <div
         className="flex flex-1 max-lg:min-w-0 lg:min-h-[480px] lg:overflow-hidden"
+        data-tour="run:trace"
         ref={traceAnchorRef}
       >
         {spec ? (

@@ -39,6 +39,7 @@ export function EditorInspectorPanel({
         'z-20 h-full max-w-full flex-col shadow-xl lg:static lg:flex lg:shadow-none [&>aside]:min-h-0 [&>aside]:max-w-full [&>aside]:flex-1',
         selectedNode ? 'absolute inset-y-0 right-0 flex' : 'hidden'
       )}
+      data-tour="editor:inspector"
       ref={inspectorRef}
     >
       {selectedNode && (
