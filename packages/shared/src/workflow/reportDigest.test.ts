@@ -281,3 +281,51 @@ describe('buildReportDigest', () => {
     expect(digest.slackMrkdwn).not.toContain('Open reports: /admin/reports');
   });
 });
+
+describe('buildReportDigest team budget scope', () => {
+  const base = {
+    currentPeriod: {
+      end: new Date('2026-10-18T00:00:00Z'),
+      start: new Date('2026-10-12T00:00:00Z'),
+    },
+    currentRows: [],
+    oldestPendingApprovalRequestedAt: null,
+    pendingApprovalCount: 0,
+    previousPeriod: {
+      end: new Date('2026-10-11T00:00:00Z'),
+      start: new Date('2026-10-05T00:00:00Z'),
+    },
+    previousRows: [],
+    scope: { name: 'Payments', type: 'TEAM' as const },
+  };
+
+  it.each([
+    ['team', "Budget (team's cap): alert"],
+    ['org', "Budget (organization's cap): alert"],
+  ] as const)(
+    'names the %s cap in every rendering, with a percentage and no amount',
+    (scope, line) => {
+      const digest = buildReportDigest({
+        ...base,
+        budget: { percentUsed: 85.5, scope, status: 'alert' },
+      });
+      expect(digest.text).toContain(line);
+      expect(digest.text).toContain('Budget used: 85.5%');
+      expect(digest.html).toContain(line.replace(/'/g, '&#39;'));
+      expect(digest.slackMrkdwn).toContain('Budget used: 85.5%');
+      expect(JSON.stringify(digest.slackBlocks)).toContain('Budget used: 85.5%');
+      const section = digest.text
+        .split('\n')
+        .filter((l) => l.startsWith('Budget'))
+        .join('\n');
+      expect(section).not.toMatch(/usd|cents|\$/i);
+    }
+  );
+
+  it('leaves the line out without a budget, and the organization wording unchanged without scope', () => {
+    expect(buildReportDigest(base).text).not.toContain('Budget');
+    expect(
+      buildReportDigest({ ...base, budget: { percentUsed: 10, status: 'ok' } }).text
+    ).toContain('Budget: ok');
+  });
+});

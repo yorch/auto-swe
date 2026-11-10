@@ -306,6 +306,12 @@ export interface TeamOverviewRepo {
   canLaunch: boolean;
   /** The owning team's name when `relation` is `shared`; null when owned. */
   ownerTeamName: string | null;
+  /**
+   * Where the cap that binds a launch on this repository stands: for a shared repository the OWNING
+   * team's tighter cap, which is what its launches are held to. Null when no cap is set, and for an
+   * owned repository, whose status is the team's own `budget`.
+   */
+  launchBudget: BudgetStatus | null;
 }
 
 /** One recent request in a team's activity feed. */
@@ -565,6 +571,12 @@ export interface RepositorySummary {
    */
   /** `canLaunch` false means the sharing team may view the repository but not start work on it. */
   shares?: Array<{ canLaunch: boolean; team: TeamRef }>;
+  /**
+   * Where the cap that binds a launch on this repository stands, as percent only: the owning team's
+   * tighter of its own and its organization's cap. Null when neither is set. Present on the
+   * repository listing, for every repository the caller can launch on.
+   */
+  launchBudget?: BudgetStatus | null;
   _count: { activeWorkflows: number };
 }
 
@@ -1104,6 +1116,8 @@ export interface AgentTraceRecord {
 
 /** Shape returned by GET /api/v1/workflow-runs/:id (detail) */
 export interface WorkflowRunDetail extends WorkflowRunSummary {
+  /** The team that owns the run's repository, whose members control it; null when it has none. */
+  ownerTeam?: { id: string; name: string; slug: string } | null;
   review?: {
     canControl?: boolean;
     fixRetry?: { allowed: boolean; reason?: string; status?: 'queued' };
@@ -1195,6 +1209,11 @@ export interface HumanStepSummary {
   approvalsRemaining?: number;
   /** What the current user already answered on this step, or null. */
   myResponse?: string | null;
+  /**
+   * Whether the caller may answer this step: the run's control rule, not mere visibility. A member of a
+   * team the repository is shared to can see a step they cannot answer. Absent on payloads that predate it.
+   */
+  canAnswer?: boolean;
   /** Every recorded answer with its optional comment, oldest first. */
   responses?: HumanStepResponse[];
   run: {
@@ -1204,6 +1223,8 @@ export interface HumanStepSummary {
     /** The request this run belongs to; the request panel is the first place a run opens. */
     workRequestId?: string | null;
     workRequest?: { externalTicketId: string; description: string } | null;
+    /** The team that owns the run's repository; null when the run has none. */
+    ownerTeam?: { id: string; name: string; slug: string } | null;
   };
 }
 

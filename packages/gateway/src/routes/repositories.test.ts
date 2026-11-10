@@ -56,6 +56,12 @@ vi.mock('@auto-swe/shared/lib/repoPermission', () => ({
   verifiedGithubLoginFor: (...a: unknown[]) => github.verifiedGithubLoginFor(...a),
 }));
 
+// The owner-cap read has its own tests; here only which repositories it is asked about matters.
+const budgets = vi.hoisted(() => ({ ownerLaunchBudgets: vi.fn() }));
+vi.mock('../lib/teamBudgetStatus.js', () => ({
+  ownerLaunchBudgets: (...a: unknown[]) => budgets.ownerLaunchBudgets(...a),
+}));
+
 import '../test/warmAuthImports.js';
 import { resetSweepDebounceForTests } from '../lib/prEvaluationSweep.js';
 import { repositoryRoutes } from './repositories.js';
@@ -120,6 +126,7 @@ async function buildApp() {
       findUnique: vi.fn(),
     },
     teamMembership: {
+      findMany: vi.fn(),
       findUnique: vi.fn(),
     },
   };
@@ -153,6 +160,7 @@ async function buildApp() {
 
 const AUTH_HEADER = { authorization: 'Bearer fake-jwt' };
 const TEAM_ID = '22222222-2222-4222-8222-222222222222';
+const LISTED_TEAM = { id: TEAM_ID, name: 'Alpha', orgId: 'org-1', slug: 'alpha' };
 const REPO_ID = '33333333-3333-4333-8333-333333333333';
 
 function p2002(target: string[]) {
@@ -185,6 +193,8 @@ describe('repositoryRoutes', () => {
     ctx.mockPrisma.team.findUnique.mockReset();
     ctx.mockPrisma.team.findFirst.mockReset();
     ctx.mockPrisma.teamMembership.findUnique.mockReset();
+    ctx.mockPrisma.teamMembership.findMany.mockReset().mockResolvedValue([]);
+    budgets.ownerLaunchBudgets.mockReset().mockResolvedValue(new Map());
     ctx.mockPrisma.configAuditLog.create.mockClear();
     ctx.mockPrisma.prEvaluation.findMany.mockReset().mockResolvedValue([]);
     ctx.mockTemporal.startPrEvaluationWorkflow.mockReset().mockResolvedValue(undefined);
@@ -196,8 +206,8 @@ describe('repositoryRoutes', () => {
   describe('GET /api/v1/repositories', () => {
     it('returns a paginated list with meta.total/limit/offset', async () => {
       ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([
-        { id: 'repo-1', repoName: 'alpha', teamId: TEAM_ID },
-        { id: 'repo-2', repoName: 'beta', teamId: TEAM_ID },
+        { id: 'repo-1', repoName: 'alpha', team: LISTED_TEAM, teamId: TEAM_ID },
+        { id: 'repo-2', repoName: 'beta', team: LISTED_TEAM, teamId: TEAM_ID },
       ]);
       ctx.mockPrisma.connection.count.mockResolvedValueOnce(2);
 
@@ -214,6 +224,63 @@ describe('repositoryRoutes', () => {
       expect(body.meta).toEqual({ limit: 200, offset: 0, total: 2 });
     });
 
+    describe('launchBudget', () => {
+      const status = {
+        alertThresholdPercent: null,
+        percentUsed: 100,
+        scope: 'team',
+        state: 'over',
+      };
+      const row = (
+        id: string,
+        team: string,
+        shares: Array<{ canLaunch: boolean; team: string }>
+      ) => ({
+        id,
+        repoName: id,
+        shares: shares.map((s) => ({
+          canLaunch: s.canLaunch,
+          team: { id: s.team, name: s.team, slug: s.team },
+        })),
+        team: { id: team, name: team, orgId: `org-${team}`, slug: team },
+        type: 'git_repo',
+      });
+
+      it("gives a launchable shared repository its owning team's status, one read for the page", async () => {
+        ctx.authState.role = 'ENGINEER';
+        ctx.authState.sub = 'eng-1';
+        ctx.mockPrisma.teamMembership.findMany.mockResolvedValue([{ teamId: 'mine' }]);
+        ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([
+          row('owned', 'mine', []),
+          row('shared', 'owner', [{ canLaunch: true, team: 'mine' }]),
+          row('viewonly', 'other', [{ canLaunch: false, team: 'mine' }]),
+        ]);
+        ctx.mockPrisma.connection.count.mockResolvedValueOnce(3);
+        budgets.ownerLaunchBudgets.mockResolvedValue(new Map([['shared', status]]));
+
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'GET',
+          url: '/api/v1/repositories',
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(budgets.ownerLaunchBudgets).toHaveBeenCalledTimes(1);
+        const asked = budgets.ownerLaunchBudgets.mock.calls[0]?.[1] as Array<{ id: string }>;
+        expect(asked.map((r) => r.id)).toEqual(['owned', 'shared']);
+        const byId = new Map(
+          (JSON.parse(res.payload).data as Array<{ id: string; launchBudget: unknown }>).map(
+            (r) => [r.id, r]
+          )
+        );
+        expect(byId.get('shared')?.launchBudget).toEqual(status);
+        expect(byId.get('owned')?.launchBudget).toBeNull();
+        // View-only: the caller cannot launch there, so no cap is attached.
+        expect(byId.get('viewonly')?.launchBudget).toBeNull();
+        expect(res.payload).not.toMatch(/usd|cents|orgId/i);
+      });
+    });
+
     it('passes executorImageBuild through on list rows', async () => {
       ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([
         {
@@ -226,6 +293,7 @@ describe('repositoryRoutes', () => {
             start: 'npm run dev',
           },
           repoName: 'alpha',
+          team: LISTED_TEAM,
           teamId: TEAM_ID,
         },
       ]);

@@ -11,6 +11,11 @@ export interface ReportDigestInput {
     mtdUsd?: number;
     percentUsed?: number | null;
     projectedUsd?: number;
+    /**
+     * Whose cap the status is, named in the line. Given on a team digest, whose meter is the tighter
+     * of the team's own cap and its organization's; absent on an organization digest.
+     */
+    scope?: 'org' | 'team';
     status: string;
   };
   currentPeriod: { end: Date; start: Date };
@@ -36,7 +41,13 @@ export interface ReportDigest {
 }
 
 function budgetLines(budget: NonNullable<ReportDigestInput['budget']>): string[] {
-  const lines = [`Budget: ${budget.status}`];
+  const owner =
+    budget.scope === 'team'
+      ? " (team's cap)"
+      : budget.scope === 'org'
+        ? " (organization's cap)"
+        : '';
+  const lines = [`Budget${owner}: ${budget.status}`];
   if (budget.mtdUsd === undefined || budget.projectedUsd === undefined) {
     if (budget.percentUsed !== undefined && budget.percentUsed !== null) {
       lines.push(`Budget used: ${budget.percentUsed.toFixed(1)}%`);

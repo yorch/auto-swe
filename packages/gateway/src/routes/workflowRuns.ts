@@ -25,7 +25,7 @@ import { assertMcpWriteAllowed, mcpWriteAuditHook, mcpWriteBegin } from '../lib/
 import { recordRunFinalized } from '../lib/metrics.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
-import { runListTeamScope } from '../lib/runTeamScope.js';
+import { ownerTeamOfRun, runListTeamScope } from '../lib/runTeamScope.js';
 import {
   buildWorkflowRunControlFilter,
   buildWorkflowRunVisibilityFilter,
@@ -229,6 +229,34 @@ export function pinnedAgentRuntimes(value: unknown): Record<string, string> {
     )
   );
 }
+/**
+ * The review block of a run detail, with the fix retry the caller may not start turned off. The
+ * retry route answers only to someone who controls the run, so `allowed` for a viewer who merely
+ * sees it (a member of a team the repository is shared with) would offer a button that fails. The
+ * reason names the owning team, which the repository listing already shows that viewer. A retry
+ * already queued is left as it is.
+ */
+export function withControlledFixRetry<
+  T extends {
+    canControl: boolean;
+    fixRetry?: { allowed: boolean; reason?: string; status?: 'queued' };
+  },
+>(review: T, ownerTeam: { name: string } | null): T {
+  const retry = review.fixRetry;
+  if (review.canControl || !retry?.allowed) {
+    return review;
+  }
+  return {
+    ...review,
+    fixRetry: {
+      allowed: false,
+      reason: ownerTeam
+        ? `You cannot retry this fix. It is controlled by ${ownerTeam.name}: you need to belong to that team and have access to its repository.`
+        : 'You cannot retry this fix. It is controlled by the team that owns this repository: you need to belong to that team and have access to its repository.',
+    },
+  };
+}
+
 const RunTracesResponseSchema = z.object({
   data: z.array(z.unknown()),
   /**
@@ -991,10 +1019,18 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const run = await fastify.prisma.workflowRun.findFirst({
         include: {
+          // The owning team of the run's repository, the only team the detail names.
+          connection: { select: { team: { select: { id: true, name: true, slug: true } } } },
           steps: { orderBy: [{ startedAt: 'asc' }, { attempt: 'asc' }] },
           template: { select: { name: true, origin: true, teamId: true } },
           workRequest: {
-            select: { description: true, externalTicketId: true, id: true, requestPayload: true },
+            select: {
+              connection: { select: { team: { select: { id: true, name: true, slug: true } } } },
+              description: true,
+              externalTicketId: true,
+              id: true,
+              requestPayload: true,
+            },
           },
         },
         omit: { specSnapshot: !includeSpec },
@@ -1038,6 +1074,24 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
               },
             })
           : null;
+      const canControl =
+        caller.kind !== 'service' &&
+        Boolean(
+          await fastify.prisma.workflowRun.findFirst({
+            select: { id: true },
+            where: {
+              AND: [
+                { id: run.id },
+                buildWorkflowRunControlFilter(caller.user, request.repoAccessGate),
+              ],
+            },
+          })
+        );
+      const ownerTeam = ownerTeamOfRun(run);
+      const review = withControlledFixRetry(
+        { ...(await reviewRunMetadata(fastify.prisma, run.id)), canControl },
+        ownerTeam
+      );
       return {
         data: {
           agentRuntimes: pinnedAgentRuntimes(run.agentRuntimes),
@@ -1051,24 +1105,10 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           // template can carry any name, but not this origin.
           isAgentRun:
             run.template.teamId === null && run.template.origin === AGENT_RUN_TEMPLATE_ORIGIN,
+          ownerTeam,
           pullRequestId: pullRequest?.id ?? null,
           result: (run.contextSnapshot as { result?: unknown })?.result ?? null,
-          review: {
-            ...(await reviewRunMetadata(fastify.prisma, run.id)),
-            canControl:
-              caller.kind !== 'service' &&
-              Boolean(
-                await fastify.prisma.workflowRun.findFirst({
-                  select: { id: true },
-                  where: {
-                    AND: [
-                      { id: run.id },
-                      buildWorkflowRunControlFilter(caller.user, request.repoAccessGate),
-                    ],
-                  },
-                })
-              ),
-          },
+          review,
           // Absent, not null, when the caller declined it: null is a spec a run can have.
           specSnapshot: includeSpec ? (run as { specSnapshot?: unknown }).specSnapshot : undefined,
           startedAt: run.startedAt,

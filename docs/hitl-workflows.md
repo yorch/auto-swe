@@ -289,7 +289,13 @@ parameter, counts with the same filter as the list, so the count can never inclu
 not show. The filter is built by `humanStepListWhere()` in `gateway/src/lib/humanStepFilters.ts`.
 
 Each step also carries `myResponse` (the action the caller answered with: their approval row's action,
-else the stored action of a step they resolved; `null` otherwise), `responses` (every recorded
+else the stored action of a step they resolved; `null` otherwise), `canAnswer` (whether the caller
+may answer the step now: `true` for exactly the steps `actionable=true` would return to a person,
+because both read `humanStepActionableWhere()` (pending, not expired, not answered by the caller, on a
+`RUNNING` run the caller controls); a step the caller can see on a run they do not control, or on a
+run that is no longer running, is `false`, and so is every step for a service-principal token, which
+the answer route refuses),
+`responses` (every recorded
 answer as `{ action, byName, comment, resolvedAt, value }`, oldest first), and `run.workRequestId`.
 
 Response:
@@ -327,7 +333,7 @@ Response:
 
 ### `GET /api/v1/human-steps/:id`
 
-Returns a single step by ID (same shape as one element of the list above).
+Returns a single step by ID (same shape as one element of the list above, with `canAnswer` computed by the same rule).
 
 Returns `404` if the step does not exist or is not visible to the caller.
 

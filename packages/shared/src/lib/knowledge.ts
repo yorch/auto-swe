@@ -41,6 +41,8 @@ export const KnowledgeManagementFilterSchema = z.object({
   limit: z.number().int().min(1).max(100).default(25),
   query: z.string().trim().min(1).max(160).optional(),
   status: KnowledgeStatusSchema.optional(),
+  /** Narrow to items whose visibility reaches this team; see {@link knowledgeTeamReachWhere}. */
+  teamId: z.string().uuid().optional(),
   type: KnowledgeTypeSchema.optional(),
 });
 
@@ -127,6 +129,26 @@ export interface KnowledgeAccessScope {
   orgIds: string[];
   repoIds: string[];
   isPlatformAdmin: boolean;
+}
+
+/**
+ * The items whose visibility reaches one team: owned by it, originating from it (a repository's
+ * lessons), granted to it (`SELECTED_TEAMS`), or visible to its whole organization. The one
+ * definition both knowledge lists narrow by; each list ANDs it beside its own eligibility filter,
+ * so it can only narrow what the caller may already read or manage.
+ */
+export function knowledgeTeamReachWhere(team: {
+  id: string;
+  orgId: string;
+}): KnowledgeItemWhereInput {
+  return {
+    OR: [
+      { ownerTeamId: team.id },
+      { originTeamId: team.id },
+      { grants: { some: { teamId: team.id } }, visibility: 'SELECTED_TEAMS' },
+      { orgId: team.orgId, visibility: 'ORGANIZATION' },
+    ],
+  };
 }
 
 /** Prisma-compatible eligibility predicate shared by list and detail retrieval. */

@@ -15253,7 +15253,7 @@
       "before": 5,
       "id": "budgetStatusCore",
       "lines": 50,
-      "path": "packages/gateway/src/lib/orgBudgetStatus.ts",
+      "path": "packages/shared/src/lib/budgetStatus.ts",
       "title": "Budget state and percentage"
     },
     {
@@ -15261,7 +15261,7 @@
       "before": 9,
       "id": "tighterStatus",
       "lines": 24,
-      "path": "packages/gateway/src/lib/teamBudgetStatus.ts",
+      "path": "packages/shared/src/lib/budgetStatus.ts",
       "title": "Tighter of the team’s and organization’s caps"
     },
     {

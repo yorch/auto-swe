@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canApproveKnowledge,
   knowledgeReadableWhere,
+  knowledgeTeamReachWhere,
   toKnowledgeScalarProjection,
 } from './knowledge.js';
 
@@ -137,5 +138,26 @@ describe('knowledge policy', () => {
       expect(projection).not.toHaveProperty(hidden);
     }
     expect(projection).toMatchObject({ content: 'Reviewed content', id: 'knowledge-1' });
+  });
+});
+
+describe('knowledgeTeamReachWhere', () => {
+  const where = knowledgeTeamReachWhere({ id: 'team-1', orgId: 'org-1' });
+
+  it('names each way an item reaches a team, and nothing else', () => {
+    expect(where.OR).toEqual([
+      { ownerTeamId: 'team-1' },
+      { originTeamId: 'team-1' },
+      { grants: { some: { teamId: 'team-1' } }, visibility: 'SELECTED_TEAMS' },
+      { orgId: 'org-1', visibility: 'ORGANIZATION' },
+    ]);
+  });
+
+  it('carries no status or trust term, so it narrows without widening or hiding review items', () => {
+    expect(JSON.stringify(where)).not.toContain('status');
+  });
+
+  it('is a term of its own: no key beside OR for a caller to overwrite', () => {
+    expect(Object.keys(where)).toEqual(['OR']);
   });
 });

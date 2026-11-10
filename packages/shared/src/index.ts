@@ -93,6 +93,7 @@ export {
   type KnowledgeVisibility,
   KnowledgeVisibilitySchema,
   knowledgeReadableWhere,
+  knowledgeTeamReachWhere,
   type ReviseKnowledgeItem,
   ReviseKnowledgeItemSchema,
   toKnowledgeScalarProjection,

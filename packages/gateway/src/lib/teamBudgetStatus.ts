@@ -9,44 +9,12 @@
  */
 import type { PrismaClient } from '@auto-swe/shared';
 import { teamMonthSpend } from '@auto-swe/shared/lib/billing';
+import { budgetStatusFor, tighterBudgetStatus } from '@auto-swe/shared/lib/budgetStatus';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { BudgetStatus } from '@auto-swe/shared/types/api';
-import { budgetStatusFor, orgBudgetStatuses } from './orgBudgetStatus.js';
+import { orgBudgetStatuses } from './orgBudgetStatus.js';
 
-const SEVERITY: Record<BudgetStatus['state'], number> = {
-  alert: 1,
-  no_cap: -1,
-  ok: 0,
-  over: 3,
-  projected_over: 2,
-};
-
-/**
- * The tighter of two statuses: the one with the larger share of its cap used. An equal share goes
- * to the more severe state (a cap that refuses launches beats one that merely has not yet), and a
- * remaining tie to the team, the more specific of the two. A side with no cap never binds; with
- * neither capped the answer is the organization's `no_cap` status when given, else the team's.
- * Pure.
- */
-export function tighterBudgetStatus(
-  org: BudgetStatus | null | undefined,
-  team: BudgetStatus | null | undefined
-): BudgetStatus | null {
-  const capped = [team, org].filter(
-    (s): s is BudgetStatus => !!s && s.state !== 'no_cap' && s.percentUsed !== null
-  );
-  if (capped.length === 0) {
-    return org ?? team ?? null;
-  }
-  return capped.reduce((best, candidate) => {
-    const bestPct = best.percentUsed ?? 0;
-    const candidatePct = candidate.percentUsed ?? 0;
-    if (candidatePct !== bestPct) {
-      return candidatePct > bestPct ? candidate : best;
-    }
-    return SEVERITY[candidate.state] > SEVERITY[best.state] ? candidate : best;
-  });
-}
+export { tighterBudgetStatus };
 
 /**
  * The status of every named team's own cap, in one read of the teams and one spend read per team
@@ -107,6 +75,33 @@ export async function bindingBudgetStatuses(
     const status = tighterBudgetStatus(orgStatuses.get(team.orgId), teamStatuses.get(team.id));
     if (status) {
       result.set(team.id, status);
+    }
+  }
+  return result;
+}
+
+/**
+ * Where the cap a launch on each repository is held to stands, keyed by repository id: the
+ * OWNING team's binding status (its own cap or its organization's, the tighter), because the
+ * owner's budget pays for a launch through a share. One batched read for all repositories,
+ * grouped by owning team, never one per repository. A repository whose owner has no cap is
+ * absent from the map. The status is percent-only, so it carries no amount.
+ */
+export async function ownerLaunchBudgets(
+  prisma: PrismaClient,
+  repos: ReadonlyArray<{ id: string; team: { id: string; orgId: string } }>,
+  now: Date = new Date()
+): Promise<Map<string, BudgetStatus>> {
+  const owners = new Map<string, { id: string; orgId: string }>();
+  for (const repo of repos) {
+    owners.set(repo.team.id, { id: repo.team.id, orgId: repo.team.orgId });
+  }
+  const byTeam = await bindingBudgetStatuses(prisma, [...owners.values()], now);
+  const result = new Map<string, BudgetStatus>();
+  for (const repo of repos) {
+    const status = byTeam.get(repo.team.id);
+    if (status) {
+      result.set(repo.id, status);
     }
   }
   return result;

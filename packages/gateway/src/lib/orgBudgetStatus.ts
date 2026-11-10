@@ -6,63 +6,11 @@
  * says `over` is exactly a status whose launches are refused with `ORG_BUDGET_EXCEEDED`.
  */
 import type { PrismaClient } from '@auto-swe/shared';
-import { orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
-import { forecastMonthlyBudget } from '@auto-swe/shared/lib/budgetForecast';
+import { orgMonthSpend } from '@auto-swe/shared/lib/billing';
+import { budgetStatusFor, type OrgBudgetInputs } from '@auto-swe/shared/lib/budgetStatus';
 import type { BudgetStatus } from '@auto-swe/shared/types/api';
 
-export interface OrgBudgetInputs {
-  monthlyBudgetUsdCents: number | null;
-  budgetAlertThresholdPercent: number | null;
-}
-
-/**
- * The status for one cap, threshold and month-to-date spend. Pure, and the one core an
- * organization's and a team's status share: only `scope` differs.
- */
-export function budgetStatusFor(
-  org: OrgBudgetInputs,
-  spendUsd: number,
-  now: Date,
-  scope: BudgetStatus['scope'] = 'org'
-): BudgetStatus {
-  const cap = org.monthlyBudgetUsdCents;
-  if (cap == null) {
-    return {
-      alertThresholdPercent: org.budgetAlertThresholdPercent,
-      percentUsed: null,
-      scope,
-      state: 'no_cap',
-    };
-  }
-  const spentCents = usdToCents(spendUsd);
-  // A zero cap refuses every launch, so it reads as full whatever has been spent.
-  const percentUsed = cap <= 0 ? 100 : Math.round((spentCents / cap) * 1000) / 10;
-  const forecast = forecastMonthlyBudget({
-    alertThresholdPercent: org.budgetAlertThresholdPercent,
-    monthlyBudgetUsdCents: cap,
-    now,
-    spendUsd,
-  });
-  let state = forecast.status;
-  // Inside the first day of the month a pace is an extrapolation from hours of spend: $1 at half
-  // past midnight "projects" past a $1000 cap. Without a trustworthy pace the state falls back to
-  // what is known, the alert threshold.
-  if (state === 'projected_over' && forecast.lowConfidence) {
-    state =
-      forecast.alertThresholdUsd !== null && spendUsd >= forecast.alertThresholdUsd
-        ? 'alert'
-        : 'ok';
-  }
-  if (spentCents >= cap) {
-    state = 'over';
-  }
-  return {
-    alertThresholdPercent: org.budgetAlertThresholdPercent,
-    percentUsed,
-    scope,
-    state,
-  };
-}
+export { budgetStatusFor, type OrgBudgetInputs };
 
 /**
  * The status of every named organization, in one read of the organizations and one spend read per

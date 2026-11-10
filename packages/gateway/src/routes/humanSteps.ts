@@ -11,11 +11,13 @@ import {
 import { syncSlackHumanStepOutcome } from '../lib/hitlSlackSync.js';
 import { sendError } from '../lib/httpErrors.js';
 import {
+  answerableStepIds,
   humanStepListWhere,
   humanStepMineScope,
   humanStepTeamScope,
 } from '../lib/humanStepFilters.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
+import { ownerTeamOfRun, RUN_OWNER_TEAM_SELECT } from '../lib/runTeamScope.js';
 import { buildWorkflowHumanStepVisibilityFilter } from '../lib/runVisibility.js';
 import { assertTeamParam } from '../lib/teamParam.js';
 import { sendTemporalUnavailable } from '../lib/temporalErrors.js';
@@ -70,6 +72,8 @@ const ErrorResponseSchema = z.object({
 
 const HumanStepRunSchema = z.object({
   id: z.string().uuid(),
+  /** The team that owns the run's repository; null when the run has none. */
+  ownerTeam: z.object({ id: z.string(), name: z.string(), slug: z.string() }).nullable(),
   status: z.string(),
   workflowId: z.string(),
   workRequest: z
@@ -92,6 +96,8 @@ const HumanStepResponseSchema = z.object({
 
 const HumanStepListItemSchema = z.object({
   approvalsRemaining: z.number().int().min(0),
+  /** Whether the caller may answer this step now: the actionable filter's rule, not visibility. */
+  canAnswer: z.boolean(),
   context: z.unknown().nullable(),
   currentApprovers: z.number().int().min(0),
   description: z.string().nullable(),
@@ -125,6 +131,8 @@ const HumanApprovalSchema = z.object({
 
 const HumanStepDetailSchema = z.object({
   _count: z.object({ humanApprovals: z.number().int() }),
+  /** Whether the caller may answer this step now: the actionable filter's rule, not visibility. */
+  canAnswer: z.boolean(),
   context: z.unknown().nullable(),
   description: z.string().nullable(),
   fields: z.unknown().nullable(),
@@ -170,6 +178,39 @@ const RespondResponseSchema = z.object({
     status: z.string(),
   }),
 });
+
+/** A step's run as the API shows it: its fields and the owning team, never the relations read for it. */
+function projectStepRun<
+  R extends {
+    id: string;
+    status: string;
+    workflowId: string;
+    workRequestId: string | null;
+    workRequest: {
+      description: string | null;
+      externalTicketId: string | null;
+      connection?: { team: { id: string; name: string; slug: string } } | null;
+    } | null;
+    connection?: { team: { id: string; name: string; slug: string } } | null;
+  },
+>(run: R | null) {
+  if (!run) {
+    return null;
+  }
+  return {
+    id: run.id,
+    ownerTeam: ownerTeamOfRun(run),
+    status: run.status,
+    workflowId: run.workflowId,
+    workRequest: run.workRequest
+      ? {
+          description: run.workRequest.description,
+          externalTicketId: run.workRequest.externalTicketId,
+        }
+      : null,
+    workRequestId: run.workRequestId,
+  };
+}
 
 function commentOf(value: unknown): string | null {
   if (value && typeof value === 'object' && 'comment' in value) {
@@ -370,10 +411,17 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
             resolvedByUser: { select: { email: true, name: true } },
             run: {
               select: {
+                ...RUN_OWNER_TEAM_SELECT,
                 id: true,
                 status: true,
                 workflowId: true,
-                workRequest: { select: { description: true, externalTicketId: true } },
+                workRequest: {
+                  select: {
+                    ...RUN_OWNER_TEAM_SELECT.workRequest.select,
+                    description: true,
+                    externalTicketId: true,
+                  },
+                },
                 workRequestId: true,
               },
             },
@@ -384,9 +432,21 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           where,
         }),
       ]);
+      // One query over the page, by the same predicate `actionable=true` filters with.
+      // A service-principal token is refused on the answer route, so it answers nothing here.
+      const answerable =
+        request.authMethod === 'service'
+          ? new Set<string>()
+          : await answerableStepIds(
+              fastify.prisma,
+              user,
+              request.repoAccessGate,
+              steps.map((s) => s.id)
+            );
       return {
         data: steps.map((s) => ({
           approvalsRemaining: Math.max(0, s.requiredApprovers - s._count.humanApprovals),
+          canAnswer: answerable.has(s.id),
           context: s.context,
           currentApprovers: s._count.humanApprovals,
           description: s.description,
@@ -400,7 +460,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           requiredApprovers: s.requiredApprovers,
           resolvedAt: formatDate(s.resolvedAt),
           responses: stepResponses(s),
-          run: s.run,
+          run: projectStepRun(s.run),
           runId: s.runId,
           status: s.status,
           timeoutAt: formatDate(s.timeoutAt),
@@ -556,10 +616,17 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
           humanApprovals: { select: { action: true, resolvedAt: true, resolvedBy: true } },
           run: {
             select: {
+              ...RUN_OWNER_TEAM_SELECT,
               id: true,
               status: true,
               workflowId: true,
-              workRequest: { select: { description: true, externalTicketId: true } },
+              workRequest: {
+                select: {
+                  ...RUN_OWNER_TEAM_SELECT.workRequest.select,
+                  description: true,
+                  externalTicketId: true,
+                },
+              },
               workRequestId: true,
             },
           },
@@ -572,15 +639,21 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       if (!step) {
         return sendError(reply, 404, 'NOT_FOUND', 'Human step not found');
       }
+      const answerable =
+        request.authMethod === 'service'
+          ? new Set<string>()
+          : await answerableStepIds(fastify.prisma, user, request.repoAccessGate, [step.id]);
       return {
         data: {
           ...step,
+          canAnswer: answerable.has(step.id),
           humanApprovals: step.humanApprovals.map((a) => ({
             ...a,
             resolvedAt: formatDate(a.resolvedAt),
           })),
           requestedAt: formatDate(step.requestedAt),
           resolvedAt: formatDate(step.resolvedAt),
+          run: projectStepRun(step.run),
           timeoutAt: formatDate(step.timeoutAt),
         },
       };

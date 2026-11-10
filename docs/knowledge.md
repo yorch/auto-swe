@@ -16,6 +16,12 @@ Governed `KnowledgeItem` results require an explicit `searchKnowledge` agent too
 
 The worker lazily embeds up to ten recently eligible summaries per retrieval using the configured embedding model. It embeds only title and content, and writes vectors only when the current content digest, version and lifecycle still match. Search compares only vectors for the current model and matching content digest. Embedding or indexing failure degrades to bounded, authorized text matching; this mode is explicitly reported as text, not semantic search. Legacy memory remains a separate store and retrieval path.
 
+`GET /api/v1/knowledge?teamId=<team>` keeps the items whose visibility reaches one team: owned by it,
+originating from it, granted to it (`SELECTED_TEAMS`), or visible to its whole organization
+(`knowledgeTeamReachWhere` in `shared/src/lib/knowledge.ts`). It is its own `AND` term beside the
+list's eligibility filter, on both the `read` and `review` views, so it only narrows. The caller must
+be a member of the team (a platform ADMIN may name any), otherwise `404 TEAM_NOT_FOUND`.
+
 ## Repository-backed references
 
 [Repository-backed knowledge bases](./knowledge-bases.md) are a separate Git-backed reference store,

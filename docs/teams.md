@@ -16,6 +16,11 @@ contains, who sees what, and how its counts agree with the lists behind them.
 | `needsYou.items` | Up to 25 things waiting on the caller, most urgent first |
 | `needsYou.total` | How many there were before the 25-item cap |
 
+When the user has opened a team space before, My desk shows a **Continue in <Team>** link to it.
+The link comes from the stored `lastTeamSlug` preference ([§3](#navigation)) and is resolved
+through the teams the caller is a **member** of: a slug that is stale, unknown or names a team they
+are not in shows nothing, with no error, and so does a team list that has not loaded.
+
 A platform ADMIN's desk is member-scoped like anyone's: it lists only the teams they belong to and
 only the work of those teams. Their visibility and control filters are unrestricted, so every desk
 query ANDs an extra member-scope term (`memberRunScope()` in `gateway/src/lib/runTeamScope.ts`)
@@ -152,9 +157,51 @@ and team with one read of each and one spend read per capped organization or tea
 and a caller only ever receives the budgets of teams they belong to (the overview: of the team they
 ask about).
 
+A team's weekly report digest carries the same status as one line, state and percent only, naming
+whose cap it is ([reporting.md](./reporting.md#weekly-digests)).
+
+#### The cap a launch is held to
+
+A launch on a shared repository spends the **owning** team's cap, not the sharee's ([§5](#who-pays)),
+so a sharee's own `budget` can read fine while the launch is refused. `launchBudget` is the status
+of the cap that does bind it: the owning team's, as the tighter of that team's own cap and its
+organization's, in the same percent-and-state shape as `budget` and with no amount.
+
+- **On the team overview**, each entry of `repos` carries `launchBudget`: `null` for a repository
+  the team owns (its status is the team's own `budget`), for a shared one whose owner has no cap,
+  and for a view-only share; it is the owner's status for a shared **launchable** one.
+- **On `GET /api/v1/repositories`**, each item carries `launchBudget` for a repository the caller can
+  start work on (a member of the owning team, or of a team it is shared to without the view-only
+  flag; a platform ADMIN for any). It is `null` for the rest, and where no cap is set. A view-only
+  repository carries none, because the caller cannot launch there.
+- It is read with the same batched reads as `budget` (one read of the teams, one of the
+  organizations, one spend read per capped team or organization), grouped by owning team and never
+  per repository. It adds nothing to who sees what: both responses were already limited to
+  repositories the caller may see, and the status names no team and carries no cap or spend.
+
 Both overview endpoints are read by the dashboard, and they wrap differently: the overview returns
 `{ "data": { … } }`, while `GET /api/v1/me/summary` returns the desk bare, with no `data` envelope.
 A client unwraps each as its own shape.
+
+### Seeing a run versus controlling it
+
+A member of a team a repository is shared to sees the owning team's runs, and cannot steer them:
+answering a run's human steps, cancelling it and retrying a review fix need control of the run
+(the owning team's members and whoever launched it; a platform ADMIN for any).
+
+- `GET /api/v1/human-steps` and `GET /api/v1/human-steps/:id` mark each step `canAnswer`: `true` when the caller may answer it now.
+  It is the `actionable=true` predicate (pending, not expired, not already answered by the caller,
+  on a RUNNING run the caller controls), defined once in `humanStepActionableWhere()` and read by the list
+  filter and by this flag, so `canAnswer` is `true` for exactly the steps `actionable=true` returns
+  to a person. A service-principal token is refused when it answers a step, so `canAnswer` is
+  always `false` for one.
+  It is computed with one query over the page's step ids.
+- `GET /api/v1/workflow-runs/:id` carries `ownerTeam` (`id`, `name`, `slug`): the team that owns the
+  run's repository, or `null` when the run has none. It is the owner a caller who sees the
+  repository already sees in the repository list.
+- In the `review` block, `canControl` is `false` for a viewer who does not control the run, and then
+  `fixRetry.allowed` is `false` too, with a reason that names the owning team. A retry
+  already queued stays reported as queued.
 
 ## 3. The team space
 
@@ -188,8 +235,10 @@ the switcher, the sidebar and the badges list only the teams they belong to.
 - **Sidebar Teams group.** The sidebar lists the member teams as links to their spaces, each with the
   same badge: the teams the user pinned first, in pin order, else the member teams up to a limit.
 - **Preferences.** `PATCH /api/v1/me/preferences` stores two per-user hints beside the run-detail
-  layout. `lastTeamSlug` is the last member team space the user opened. `pinnedTeamSlugs` is an
-  ordered list of up to 20 slugs that the sidebar shows. Neither is checked against existing teams or
+  layout. `lastTeamSlug` is the last member team space the user opened; My desk's **Continue in <Team>**
+  link reads it. `pinnedTeamSlugs` is an ordered list of up to 20 slugs that the sidebar shows, set
+  by the pin toggle beside each team in the team switcher menu (a new pin goes last; the toggle is
+  disabled at 20). The sidebar shows every pinned team and caps only its default list. Neither is checked against existing teams or
   the caller's membership: the dashboard resolves a slug through the member team list, so a stale or
   foreign one resolves to nothing and grants nothing.
 - **Sidebar approvals badge.** The badge on Approvals counts the steps waiting on the caller across
@@ -312,12 +361,8 @@ only by the mid-run guard.
   only under it is in neither the list nor the counts, nor in `mine=true`.
 - **Platform ADMIN approvals are wider elsewhere.** The approvals page and the sidebar badge are
   platform-wide for an ADMIN; the desk is member-scoped, so the two totals differ for them.
-- **`lastTeamSlug` is stored, not acted on.** The dashboard records the last team space opened but
-  does not yet use it to choose where to land.
-- **Pins have no control in the dashboard.** `pinnedTeamSlugs` is read by the sidebar and set through
-  `PATCH /api/v1/me/preferences`; there is no pin button.
-- **Knowledge is not narrowed by `?team=`.** On the knowledge page the parameter preselects the team
-  for new items; the list itself is not filtered.
+- **`lastTeamSlug` does not choose the landing page.** My desk offers a link to the last team space
+  opened, but the dashboard always lands on My desk, never in that team's space.
 - **Overview of a deactivated team.** The overview endpoint answers for a deactivated team to a
   member; the dashboard's team lists leave deactivated teams out.
 - **The desk refreshes by polling.** It re-reads every 20 seconds and after the caller answers an
@@ -325,9 +370,13 @@ only by the mid-run guard.
 - **`queued` is a ledger state, not a scheduler queue.** The platform has no run queue; a run is
   counted as queued while its ledger row is still `STARTING`.
 - **No per-team override of the due-soon window.** `workflow.approvalDueSoonHours` is GLOBAL only.
-- **A sharee's meter shows its own caps, not the owner's.** The meter is the tighter of the team's
-  own cap and its organization's, but a launch on a shared repository is held to the OWNER's cap, so
-  a sharee can be refused (`TEAM_BUDGET_EXCEEDED`) with a meter that reads fine.
+- **`launchBudget` is the status of one cap, not of a launch.** It reads the owning team's cap and
+  its organization's at the time of the request; a launch can still be refused for a reason it does
+  not show (access, a view-only share). A repository the caller cannot start work on carries none.
+- **`ownerTeam` names the repository's owner only.** A run with no repository (a template run
+  against a team, a channel run) has `ownerTeam` `null` even when a team is attributed its spend.
+- **`canAnswer` covers human steps, not every control.** Cancelling a run is guarded by the same
+  control rule, but run detail exposes it only for the review fix retry (`canControl`).
 - **A team ADMIN can lift a cap an ORG_ADMIN set.** `PATCH /teams/:id/budget` lets a team ADMIN
   clear or raise the team's cap whoever set it, so the team cap is a self-imposed limit, not an
   organization control. It does not check that the team is active.
@@ -363,10 +412,6 @@ only by the mid-run guard.
   an ORG_ADMIN of a capped organization, and an organization report digest carries dollars only
   when its creator is an ORG_ADMIN and every target is an email to an ORG_ADMIN. A team's own spend
   is not the organization's, so this narrows the channels and does not prove the cap secret.
-- **A row menu hides what the caller may not do, with no reason.** On the repositories list the
-  Edit and Test access buttons stay visible and say why they are blocked, but the "More actions" menu
-  omits Share with teams and Deactivate for a viewer who does not lead the owning team: the menu
-  cannot show a disabled item together with its reason.
 - **Shared-repository pull requests count in a sharee's list, not in its outcomes.** The overview's
   `openPullRequests` includes pull requests on a repository shared to the team, while `pullRequests`
   (opened, merged, merge rate) counts only runs the team owns, so a shared repository is counted

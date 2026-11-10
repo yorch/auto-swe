@@ -25,7 +25,7 @@ const URL = `/api/v1/teams/${TEAM}/overview`;
 
 type TeamRole = 'ADMIN' | 'LEAD' | 'ENGINEER' | null;
 
-const teamRef = { id: TEAM, name: 'Alpha', slug: 'alpha' };
+const teamRef = { id: TEAM, name: 'Alpha', orgId: 'org-1', slug: 'alpha' };
 const repository = {
   name: 'r',
   organizationName: 'acme',
@@ -67,6 +67,13 @@ interface Fixture {
   /** The team's own cap in cents (null: none) and its month-to-date spend in USD. */
   teamCapCents?: number | null;
   teamSpendUsd?: number;
+  /** The cap (cents) and month-to-date spend (USD) of the team that OWNS the shared repository. */
+  ownerCapCents?: number | null;
+  ownerSpendUsd?: number;
+  /** The owner's organization; 'org-2' is a different one, which the fixture knows nothing of. */
+  ownerOrgId?: string;
+  /** Whether this team's share of that repository may start work (default true). */
+  sharedCanLaunch?: boolean;
   costUsd?: number | null | Error;
   members?: string[];
   openPrs?: number;
@@ -83,6 +90,7 @@ interface Fixture {
 }
 
 async function build(fx: Fixture) {
+  const ownerOrgId = fx.ownerOrgId ?? 'org-1';
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -102,8 +110,8 @@ async function build(fx: Fixture) {
           name: 'y',
           organizationName: 'acme',
           repoName: 'lib',
-          shares: [{ canLaunch: false }],
-          team: { id: OTHER_TEAM, name: 'Beta' },
+          shares: [{ canLaunch: fx.sharedCanLaunch ?? true }],
+          team: { id: OTHER_TEAM, name: 'Beta', orgId: ownerOrgId },
         },
       ]),
     },
@@ -150,16 +158,13 @@ async function build(fx: Fixture) {
     },
     team: {
       // The team's own budget row; the fixture's team sets no cap of its own.
-      findMany: vi.fn().mockResolvedValue(
-        fx.teamCapCents == null
-          ? []
-          : [
-              {
-                budgetAlertThresholdPercent: null,
-                id: TEAM,
-                monthlyBudgetUsdCents: fx.teamCapCents,
-              },
-            ]
+      findMany: vi.fn(async (args: { where: { id: { in: string[] } } }) =>
+        [
+          { id: TEAM, monthlyBudgetUsdCents: fx.teamCapCents ?? null },
+          { id: OTHER_TEAM, monthlyBudgetUsdCents: fx.ownerCapCents ?? null },
+        ]
+          .filter((t) => t.monthlyBudgetUsdCents != null && args.where.id.in.includes(t.id))
+          .map((t) => ({ ...t, budgetAlertThresholdPercent: null }))
       ),
       findUnique: vi.fn().mockResolvedValue(
         fx.teamExists === false
@@ -177,7 +182,7 @@ async function build(fx: Fixture) {
     teamMembership: {
       findMany: vi.fn().mockResolvedValue((fx.members ?? [ME]).map((userId) => ({ userId }))),
     },
-    teamSpendUsd: { [TEAM]: fx.teamSpendUsd ?? 0 },
+    teamSpendUsd: { [OTHER_TEAM]: fx.ownerSpendUsd ?? 0, [TEAM]: fx.teamSpendUsd ?? 0 },
     workflowHumanStep: {
       count: vi.fn().mockResolvedValue(fx.stale ?? 0),
       findMany: vi.fn(
@@ -471,6 +476,7 @@ describe('GET /api/v1/teams/:id/overview', () => {
         runRow({ id: 'c', status: 'TIMED_OUT', workRequestId: 'w3' }),
         runRow({ id: 'd', status: 'RUNNING', workRequestId: 'w4' }),
       ],
+      sharedCanLaunch: false,
       teamRole: 'ENGINEER',
     });
     const { data } = res.json();
@@ -483,8 +489,22 @@ describe('GET /api/v1/teams/:id/overview', () => {
       timeToMergeP50Hours: 4,
     });
     expect(data.repos).toEqual([
-      { canLaunch: true, id: 'c1', name: 'acme/api', ownerTeamName: null, relation: 'owned' },
-      { canLaunch: false, id: 'c2', name: 'acme/lib', ownerTeamName: 'Beta', relation: 'shared' },
+      {
+        canLaunch: true,
+        id: 'c1',
+        launchBudget: null,
+        name: 'acme/api',
+        ownerTeamName: null,
+        relation: 'owned',
+      },
+      {
+        canLaunch: false,
+        id: 'c2',
+        launchBudget: null,
+        name: 'acme/lib',
+        ownerTeamName: 'Beta',
+        relation: 'shared',
+      },
     ]);
   });
 
@@ -549,6 +569,78 @@ describe('GET /api/v1/teams/:id/overview', () => {
     // The control filter's marks: an unanswered, unexpired, pending step, ANDed with the run ids.
     expect(JSON.stringify(query?.where)).toContain('"humanApprovals":{"none"');
     expect(query?.where.AND.at(-1)).toEqual({ runId: { in: ['visible-only'] } });
+  });
+
+  describe('launchBudget on the repositories', () => {
+    it("is the OWNER's status for a shared repository while the team's own meter reads fine", async () => {
+      // The sharee (Alpha) is at 10% of its own cap; the owner (Beta) has spent its whole cap.
+      const { res } = await get({
+        ownerCapCents: 1000,
+        ownerSpendUsd: 10,
+        teamCapCents: 10_000,
+        teamRole: 'ENGINEER',
+        teamSpendUsd: 10,
+      });
+      const { data } = res.json();
+      expect(data.budget).toMatchObject({ percentUsed: 10, scope: 'team', state: 'ok' });
+      const [owned, shared] = data.repos;
+      expect(owned.launchBudget).toBeNull();
+      expect(shared.launchBudget).toEqual({
+        alertThresholdPercent: null,
+        percentUsed: 100,
+        scope: 'team',
+        state: 'over',
+      });
+    });
+
+    it('is null for a view-only share, and the owner is not read for it', async () => {
+      const { prisma, res } = await get({
+        ownerCapCents: 1000,
+        ownerSpendUsd: 10,
+        sharedCanLaunch: false,
+        teamRole: 'ENGINEER',
+      });
+      expect(res.json().data.repos[1]).toMatchObject({ canLaunch: false, launchBudget: null });
+      expect(prisma.team.findMany.mock.calls[0][0].where.id.in).toEqual([TEAM]);
+    });
+
+    it('is null when the owner has no cap, and carries no amount', async () => {
+      const { res } = await get({ ownerCapCents: null, teamRole: 'ENGINEER' });
+      expect(res.json().data.repos[1].launchBudget).toBeNull();
+      const { res: capped } = await get({
+        ownerCapCents: 50_000,
+        ownerSpendUsd: 100,
+        teamRole: 'ENGINEER',
+      });
+      const sharedRepo = capped.json().data.repos[1];
+      expect(sharedRepo.launchBudget).toMatchObject({ percentUsed: 20 });
+      expect(JSON.stringify(sharedRepo.launchBudget)).not.toMatch(/usd|cents|50000|100/i);
+    });
+
+    it("reads the owner's organization once, together with the team's, and never an unrelated one", async () => {
+      const { prisma } = await get({ ownerOrgId: 'org-2', teamRole: 'ENGINEER' });
+      expect(prisma.organization.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.organization.findMany.mock.calls[0][0].where.id.in.sort()).toEqual([
+        'org-1',
+        'org-2',
+      ]);
+      expect(prisma.team.findMany).toHaveBeenCalledTimes(1);
+    });
+
+    it("gives a shared repository of another organization that org's cap only", async () => {
+      // org-2 is unknown to the fixture (it has no cap row), so the status is the owner team's own.
+      const { res } = await get({
+        orgCapCents: 1000,
+        orgSpendUsd: 50,
+        ownerCapCents: 20_000,
+        ownerOrgId: 'org-2',
+        ownerSpendUsd: 50,
+        teamRole: 'ENGINEER',
+      });
+      const { data } = res.json();
+      expect(data.budget).toMatchObject({ scope: 'org', state: 'over' });
+      expect(data.repos[1].launchBudget).toMatchObject({ percentUsed: 25, scope: 'team' });
+    });
   });
 
   describe('budget', () => {

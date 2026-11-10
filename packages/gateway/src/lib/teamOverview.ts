@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import { usdToCents } from '@auto-swe/shared/lib/billing';
 import type {
+  BudgetStatus,
   TeamOverview,
   TeamOverviewActivityItem,
   TeamOverviewRepo,
@@ -180,7 +181,7 @@ async function loadActivity(
   return items;
 }
 
-async function loadRepos(deps: OverviewDeps, team: { id: string }): Promise<TeamOverviewRepo[]> {
+async function loadRepoRows(deps: OverviewDeps, team: { id: string }) {
   const { gate, prisma, user } = deps;
   const rows = await asPlatformAdmin(
     user,
@@ -195,7 +196,7 @@ async function loadRepos(deps: OverviewDeps, team: { id: string }): Promise<Team
           organizationName: true,
           repoName: true,
           shares: { select: { canLaunch: true }, where: { teamId: team.id } },
-          team: { select: { id: true, name: true } },
+          team: { select: { id: true, name: true, orgId: true } },
         },
         take: REPO_LIMIT,
         where: {
@@ -207,12 +208,24 @@ async function loadRepos(deps: OverviewDeps, team: { id: string }): Promise<Team
         },
       })
   );
+  return rows;
+}
+
+/** The rows as the overview lists them; `budgets` holds each owning team's binding status. */
+function toOverviewRepos(
+  rows: Awaited<ReturnType<typeof loadRepoRows>>,
+  teamId: string,
+  budgets: Map<string, BudgetStatus>
+): TeamOverviewRepo[] {
   return rows.map((row) => {
-    const owned = row.team.id === team.id;
+    const owned = row.team.id === teamId;
+    // An owned repository is never view-only; a shared one is by this team's own share.
+    const canLaunch = owned || row.shares.every((s) => s.canLaunch);
     return {
-      // An owned repository is never view-only; a shared one is by this team's own share.
-      canLaunch: owned || row.shares.every((s) => s.canLaunch),
+      canLaunch,
       id: row.id,
+      // The owner's cap binds a launch, so a repository no one here can launch on carries none.
+      launchBudget: owned || !canLaunch ? null : (budgets.get(row.team.id) ?? null),
       name: [row.organizationName, row.repoName].filter(Boolean).join('/') || (row.name ?? row.id),
       ownerTeamName: owned ? null : row.team.name,
       relation: owned ? 'owned' : 'shared',
@@ -303,7 +316,7 @@ export async function buildTeamOverview(
   const scope = teamDeskScope(team.id);
   const terms = deskRunTerms(user, gate, scope);
 
-  const [desk, recent, activity, pullRequests, repos, budgets] = await Promise.all([
+  const [desk, recent, activity, pullRequests, repoData] = await Promise.all([
     loadDeskEntries({ dueSoonHours, gate, prisma, scope, user }),
     latestAttempts(prisma, {
       AND: [...terms, { startedAt: { gte: new Date(now - LAST_WINDOW_DAYS * DAY_MS) } }],
@@ -317,9 +330,21 @@ export async function buildTeamOverview(
       new Date(now - PR_WINDOW_DAYS * DAY_MS),
       new Date(now)
     ),
-    loadRepos(deps, team),
-    bindingBudgetStatuses(prisma, [{ id: team.id, orgId: team.orgId }]),
+    // One batched budget read for the team and the owners of its shared repositories, whose caps
+    // bind a launch on those repositories.
+    loadRepoRows(deps, team).then(async (rows) => {
+      const owners = new Map([[team.id, { id: team.id, orgId: team.orgId }]]);
+      for (const row of rows) {
+        if (!row.shares.every((s) => s.canLaunch)) {
+          continue;
+        }
+        owners.set(row.team.id, { id: row.team.id, orgId: row.team.orgId });
+      }
+      return { budgets: await bindingBudgetStatuses(prisma, [...owners.values()]), rows };
+    }),
   ]);
+  const { budgets, rows: repoRows } = repoData;
+  const repos = toOverviewRepos(repoRows, team.id, budgets);
 
   const counts = countRunningRequests(desk.running);
   const groups = groupRequestExecutions(recent);

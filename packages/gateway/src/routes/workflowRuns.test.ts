@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { _resetKeyCacheForTests } from '@auto-swe/shared/lib/crypto';
+import { reviewRunMetadata } from '@auto-swe/shared/lib/reviewLaunch';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +10,7 @@ import { TemporalUnavailableError } from '../lib/temporalErrors.js';
 import {
   MAX_CONTEXT_ARTIFACT_BYTES,
   MAX_TRACES_PER_READ,
+  withControlledFixRetry,
   workflowRunRoutes,
 } from './workflowRuns.js';
 
@@ -262,6 +264,80 @@ describe('workflowRunRoutes GET /:id (detail)', () => {
       });
     }
   );
+
+  describe('ownerTeam', () => {
+    const owner = { id: 'team-own', name: 'Payments', slug: 'payments' };
+    const detail = async (extra: Record<string, unknown>) => {
+      const { app, prisma } = await buildApp('ENGINEER');
+      mockRun(prisma);
+      const row = await prisma.workflowRun.findFirst();
+      prisma.workflowRun.findFirst.mockResolvedValueOnce({ ...row, ...extra });
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `/api/v1/workflow-runs/${runId}`,
+      });
+      expect(res.statusCode).toBe(200);
+      return { prisma, res };
+    };
+
+    it("names the owner of the run's repository, id, name and slug only", async () => {
+      const { res } = await detail({ connection: { team: owner } });
+      expect(res.json().data.ownerTeam).toEqual(owner);
+    });
+
+    it("falls back to the request's repository, and is null when there is none", async () => {
+      const { res } = await detail({
+        workRequest: { connection: { team: owner }, description: 'd', id: 'wr-1' },
+      });
+      expect(res.json().data.ownerTeam).toEqual(owner);
+      const none = await detail({});
+      expect(none.res.json().data.ownerTeam).toBeNull();
+    });
+
+    it('turns off a fix retry the caller sees but cannot control, naming the owner team', async () => {
+      vi.mocked(reviewRunMetadata).mockResolvedValueOnce({
+        fixRetry: { allowed: true },
+        reviewable: true,
+        reviews: [],
+      } as never);
+      const { app, prisma } = await buildApp('ENGINEER');
+      mockRun(prisma);
+      const row = await prisma.workflowRun.findFirst();
+      // Visible, but the control read finds nothing: a member of a sharee team.
+      prisma.workflowRun.findFirst
+        .mockResolvedValueOnce({ ...row, connection: { team: owner } })
+        .mockResolvedValueOnce(null);
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `/api/v1/workflow-runs/${runId}`,
+      });
+      const { review } = res.json().data;
+      expect(review.canControl).toBe(false);
+      expect(review.fixRetry.allowed).toBe(false);
+      expect(review.fixRetry.reason).toContain('Payments');
+    });
+  });
+
+  describe('withControlledFixRetry', () => {
+    const team = { name: 'Payments' };
+    it('leaves a controller, a refused retry and a queued retry as they are', () => {
+      const ok = { canControl: true, fixRetry: { allowed: true } };
+      expect(withControlledFixRetry(ok, team)).toBe(ok);
+      const refused = { canControl: false, fixRetry: { allowed: false, reason: 'no' } };
+      expect(withControlledFixRetry(refused, team)).toBe(refused);
+      const queued = { canControl: false, fixRetry: { allowed: false, status: 'queued' as const } };
+      expect(withControlledFixRetry(queued, team)).toBe(queued);
+      const none = { canControl: false };
+      expect(withControlledFixRetry(none, team)).toBe(none);
+    });
+
+    it('refuses for a viewer without control, without a team name when there is none', () => {
+      const out = withControlledFixRetry({ canControl: false, fixRetry: { allowed: true } }, null);
+      expect(out.fixRetry).toEqual({ allowed: false, reason: expect.stringContaining('owns') });
+    });
+  });
 
   describe('the review page of the pull request the run opened', () => {
     const detail = (app: Awaited<ReturnType<typeof buildApp>>['app']) =>

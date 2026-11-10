@@ -6,6 +6,7 @@ import { resolveWorkflowRunAttribution } from '@auto-swe/shared/workflow';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { findLaunchRepo } from './automations/access.js';
 import { authorizeLaunch } from './launchAuthorization.js';
+import { bindingBudgetStatuses, ownerLaunchBudgets } from './teamBudgetStatus.js';
 
 /**
  * Team budgets against real Postgres: the spend a team is held to, the launch decision on a
@@ -275,6 +276,42 @@ describe.skipIf(!enabled)('team budgets against Postgres', () => {
     await setShare(true);
     expect(await launch('sharee', 'ownRepo')).toEqual({ ok: true });
     expect(await launch('outsider', 'ownRepo')).toMatchObject({ ok: false });
+  });
+
+  it("shows a sharee the OWNER's status on a shared repository while its own meter reads fine", async () => {
+    // The owner has spent $18 of an $18 cap; the sharee has spent nothing of a large cap.
+    await setCap('own', 1800);
+    await setCap('shr', 100_000_00);
+    const repos = [
+      { id: ids.ownRepo as string, team: { id: ids.own as string, orgId: ids.org as string } },
+      { id: ids.shrRepo as string, team: { id: ids.shr as string, orgId: ids.org as string } },
+    ];
+    const budgets = await ownerLaunchBudgets(prisma, repos);
+    // The exact mismatch: the launch decision refuses, and the status says so.
+    expect(budgets.get(ids.ownRepo as string)).toMatchObject({
+      percentUsed: 100,
+      scope: 'team',
+      state: 'over',
+    });
+    expect(await launch('sharee', 'ownRepo')).toMatchObject({ ok: false });
+    // The sharee's own meter is a different, healthy figure; its own repository is held to it.
+    expect(budgets.get(ids.shrRepo as string)).toMatchObject({ percentUsed: 0, state: 'ok' });
+    const own = await bindingBudgetStatuses(prisma, [
+      { id: ids.shr as string, orgId: ids.org as string },
+    ]);
+    expect(own.get(ids.shr as string)).toEqual(budgets.get(ids.shrRepo as string));
+    // Percent and state only: no amount of the owner's cap or spend reaches the payload.
+    expect(JSON.stringify([...budgets.values()])).not.toMatch(/usd|cents|1800/i);
+    // A repository whose owner has no cap, in an organization with none, has no status.
+    await setCap('own', null);
+    const uncapped = await ownerLaunchBudgets(prisma, repos.slice(0, 1));
+    expect(uncapped.has(ids.ownRepo as string)).toBe(false);
+    expect(await launch('sharee', 'ownRepo')).toEqual({ ok: true });
+    // Only the named repositories' owners are read: an unrelated team's cap never appears.
+    await setCap('other', 100);
+    expect((await ownerLaunchBudgets(prisma, repos.slice(0, 1))).size).toBe(0);
+    await setCap('other', null);
+    await setCap('shr', null);
   });
 
   describe('attributed team and billed organization agree', () => {
