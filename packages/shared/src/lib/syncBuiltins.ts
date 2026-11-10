@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { PrismaClient } from '../generated/prisma/client.js';
+import { Prisma, type PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SCANNER_PATTERNS, scannerPatternOrigin } from '../scannerPatterns/index.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
@@ -1288,6 +1288,26 @@ export const PREVIOUS_BUILTIN_INPUT_SCHEMAS: Readonly<Record<string, readonly In
   ],
 };
 
+/**
+ * Built-in templates an earlier release shipped with NO input schema and that ship one now.
+ *
+ * For every other built-in a NULL `inputSchema` on a template whose spec is unchanged is an
+ * admin's clear and is kept. For these, NULL is also exactly what the earlier release seeded, so
+ * the two cannot be told apart, and the shipped schema is filled in: without it an existing
+ * deployment's row never gets the schema (sync fills a NULL only when it appends a new spec
+ * version), and the automation engine refuses a template with none. The fill happens on the same
+ * terms as {@link PREVIOUS_BUILTIN_INPUT_SCHEMAS}: only on a template active on its latest
+ * built-in version with no A/B experiment running, and only while the row still holds NULL.
+ *
+ * The cost: an admin who clears one of these schemas has it filled again at the next boot. To opt
+ * out, set a different schema, or activate a version of your own. Add a name here only in the
+ * release that first gives that template a schema; once it ships one, a later change to it goes
+ * in {@link PREVIOUS_BUILTIN_INPUT_SCHEMAS} instead.
+ */
+export const BUILTIN_TEMPLATES_PREVIOUSLY_WITHOUT_INPUT_SCHEMA: ReadonlySet<string> = new Set([
+  'vulnerability-remediation',
+]);
+
 async function syncTemplates(prisma: PrismaClient): Promise<void> {
   for (const tmpl of BUILTIN_TEMPLATES) {
     // Legacy SWE templates predate the column and expect a git workspace.
@@ -1359,6 +1379,9 @@ function isUniqueViolation(err: unknown): boolean {
  *   runs no A/B experiment, and still stores a schema an earlier release
  *   shipped ({@link PREVIOUS_BUILTIN_INPUT_SCHEMAS}); any other value is an
  *   admin's edit and is kept.
+ * - **Built-in first given an `inputSchema`** → a NULL stored schema is filled
+ *   on the same terms, with or without a spec change, for the templates in
+ *   {@link BUILTIN_TEMPLATES_PREVIOUSLY_WITHOUT_INPUT_SCHEMA} only.
  *
  * Safe under concurrent gateway boots: a version-number clash means another
  * replica appended the same spec first.
@@ -1475,9 +1498,30 @@ async function syncBuiltinTemplate(
     onPreviousBuiltin && !experimentRunning
       ? shippedInputSchemaUpdate(tmpl.name, existing.inputSchema, templateFields.inputSchema)
       : {};
+  // A NULL that an earlier release seeded (not an admin's clear): see
+  // BUILTIN_TEMPLATES_PREVIOUSLY_WITHOUT_INPUT_SCHEMA.
+  const schemaFirstFill =
+    onPreviousBuiltin &&
+    !experimentRunning &&
+    existing.inputSchema == null &&
+    templateFields.inputSchema !== undefined &&
+    BUILTIN_TEMPLATES_PREVIOUSLY_WITHOUT_INPUT_SCHEMA.has(tmpl.name);
   if (latestBuiltin && canonicalJson(latestBuiltin.spec) === canonicalJson(spec)) {
     await auditBuiltinVersion(prisma, latestBuiltin.id, spec);
-    if ('inputSchema' in schemaMove) {
+    if (schemaFirstFill && templateFields.inputSchema) {
+      // Conditional on the row still holding NULL on the version we read, so a schema an admin
+      // saves concurrently is not overwritten.
+      await prisma.workflowTemplate.updateMany({
+        data: { inputSchema: templateFields.inputSchema },
+        where: {
+          activeVersion: latestBuiltin.version,
+          id: existing.id,
+          inputSchema: { equals: Prisma.AnyNull },
+          status: 'ACTIVE',
+          teamId: null,
+        },
+      });
+    } else if ('inputSchema' in schemaMove) {
       // Conditional on the row still holding what we read, so an admin's
       // concurrent edit or activation is not overwritten.
       await prisma.workflowTemplate.updateMany({

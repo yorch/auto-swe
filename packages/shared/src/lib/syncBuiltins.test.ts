@@ -9,6 +9,7 @@ import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 import { hasAuthoredCode } from '../workflow/containerCode.js';
 import { SWE_INPUT_SCHEMA } from '../workflow/templates/index.js';
 import {
+  BUILTIN_TEMPLATES_PREVIOUSLY_WITHOUT_INPUT_SCHEMA,
   PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES,
   PREVIOUS_BUILTIN_INPUT_SCHEMAS,
   seedCoreDefaults,
@@ -637,6 +638,106 @@ describe('syncBuiltins — built-in input schemas', () => {
       type: 'object',
     });
     expect(sharing).toEqual(['ticket-to-merge', 'ticket-to-merge-qodo']);
+  });
+});
+
+describe('syncBuiltins — a built-in first given an input schema', () => {
+  const NAME = 'vulnerability-remediation';
+  const shipped = BUILTIN_TEMPLATES.find((t) => t.name === NAME)?.inputSchema;
+
+  /** A database an earlier release seeded: the current spec, and no schema at all. */
+  async function seedWithoutSchema() {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const row = template(tables, NAME);
+    row.inputSchema = null;
+    return { prisma, row, tables };
+  }
+
+  it('ships a schema for the template', () => {
+    expect(shipped).toBeDefined();
+  });
+
+  it('fills the NULL schema when the spec is unchanged, cutting no version', async () => {
+    const { prisma, row, tables } = await seedWithoutSchema();
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toEqual(shipped);
+    expect(row.activeVersion).toBe(1);
+    expect(versionsOf(tables, row.id)).toHaveLength(1);
+  });
+
+  it('is a no-op on the boot after', async () => {
+    const { prisma, row, tables } = await seedWithoutSchema();
+    await seedSweStarter(prisma);
+    const before = structuredClone(row);
+    await seedSweStarter(prisma);
+    expect(row).toEqual(before);
+    expect(versionsOf(tables, row.id)).toHaveLength(1);
+  });
+
+  it('fills it together with the new version when the spec changed too', async () => {
+    const { prisma, row, tables } = await seedWithoutSchema();
+    (versionsOf(tables, row.id)[0] as Row).spec = { old: 'spec' };
+    await seedSweStarter(prisma);
+    expect(row.activeVersion).toBe(2);
+    expect(row.inputSchema).toEqual(shipped);
+  });
+
+  it('keeps a schema an admin set', async () => {
+    const { prisma, row } = await seedWithoutSchema();
+    const admins = { properties: { ticketId: { type: 'string' } }, type: 'object' };
+    row.inputSchema = admins;
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toEqual(admins);
+  });
+
+  it('leaves the NULL alone once an admin moved the template off its built-in version', async () => {
+    const { prisma, row, tables } = await seedWithoutSchema();
+    tables.workflowTemplateVersion.push({
+      createdBy: 'admin-1',
+      generatedBy: null,
+      id: 'v-admin',
+      spec: { admin: 'spec' },
+      templateId: row.id,
+      version: 2,
+    });
+    row.activeVersion = 2;
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toBeNull();
+  });
+
+  it('leaves the NULL alone on an archived template', async () => {
+    const { prisma, row } = await seedWithoutSchema();
+    row.status = 'ARCHIVED';
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toBeNull();
+  });
+
+  it('leaves the NULL alone while an A/B experiment runs', async () => {
+    const { prisma, row } = await seedWithoutSchema();
+    Object.assign(row, { experimentSplit: 20, experimentVersion: 1 });
+    await seedSweStarter(prisma);
+    expect(row.inputSchema).toBeNull();
+  });
+
+  it('fills no other built-in: a cleared schema elsewhere stays cleared', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const others = tables.workflowTemplate.filter((t) => t.inputSchema != null && t.name !== NAME);
+    expect(others.length).toBeGreaterThan(0);
+    for (const t of others) {
+      t.inputSchema = null;
+    }
+    await seedSweStarter(prisma);
+    for (const t of others) {
+      expect(t.inputSchema, String(t.name)).toBeNull();
+    }
+  });
+
+  it('lists only built-in templates that ship a schema now', () => {
+    for (const name of BUILTIN_TEMPLATES_PREVIOUSLY_WITHOUT_INPUT_SCHEMA) {
+      expect(BUILTIN_TEMPLATES.find((t) => t.name === name)?.inputSchema, name).toBeDefined();
+    }
   });
 });
 

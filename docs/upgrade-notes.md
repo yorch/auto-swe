@@ -976,6 +976,45 @@ promote the new version. Nothing else needs to be done.
 
 ---
 
+### UN-18. `vulnerability-remediation` declares an input schema (`<sha of this change>`)
+
+**Affected.** A deployment whose global `vulnerability-remediation` template was seeded before
+`<sha of this change>`, and any of these holds:
+
+- an admin saved an `inputSchema` on it by hand (to let an automation start it);
+- it is archived, is running an A/B experiment, or is active on a version an admin saved rather
+  than its latest built-in version;
+- something launches it through `POST /api/v1/workflow-templates/:id/runs` with a payload that
+  names `packageName`, `vulnerableVersions`, `fixedVersions`, `severity`, `advisoryId` or `budget`
+  with a value of another type, a `severity` other than `critical`, `high`, `medium` or `low`, or
+  no `connectionId`.
+
+A deployment with none of these needs nothing.
+
+**What changes.** The template declares its run inputs ([maintenance-workflows.md](./maintenance-workflows.md)
+§2): the SWE inputs, with only `connectionId` required, and five optional advisory fields an
+`inbound.event` automation can map. At gateway start-up, sync fills the schema into a stored row
+that has none, whether or not the template's spec changed, but only while the template is active
+on its latest built-in version with no A/B experiment running. A schema already stored is never
+replaced, so one an admin saved by hand stays as it is and does not gain the shipped fields. The
+spec also changes (the remediation prompt names the advisory fields), so a new built-in version is
+appended and activated on the same terms; runs already started keep the version they pinned. No
+migration is needed.
+
+**Actions.**
+
+1. If an admin saved a schema by hand, compare it with the shipped one in
+   `packages/shared/src/workflow/templates/vulnerabilityRemediation.ts`; to adopt the shipped one,
+   save it over yours with `PATCH /api/v1/workflow-templates/:id`.
+2. If the template is archived, experimenting, or on an admin's version, save the shipped schema
+   the same way when you want automations to start it.
+3. Fix any launcher whose payload the new schema refuses.
+
+**Verify.** `GET /api/v1/workflow-templates/:id` for the template returns an `inputSchema` naming
+`packageName`, and the template is offered when an inbound-event automation is created.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

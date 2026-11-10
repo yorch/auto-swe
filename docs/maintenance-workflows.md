@@ -48,10 +48,39 @@ is the general one, and the prompt alone asks the agent to keep to documentation
 ## 2. Vulnerability remediation
 
 `vulnerability-remediation` patches a reported vulnerability. The advisory arrives in the request:
-the affected package, the vulnerable and fixed versions, the severity and an identifier. A Jira
-ticket reaching a Jira filter automation, an event posted to a team endpoint
-([inbound-events.md](./inbound-events.md)) and a hand launch all carry it as the run's description.
-No event source reads a vulnerability alert from GitHub or a scanner directly.
+the affected package, the vulnerable and fixed versions, the severity and an identifier. No event
+source reads a vulnerability alert from GitHub or a scanner directly; the request comes one of
+three ways.
+
+- **A ticket.** A Jira ticket reaching a Jira filter automation, or a hand launch, carries the
+  advisory in the run's description, as the ticket or the person wrote it.
+- **An inbound event.** A scanner or a relay posts the advisory to a team's event endpoint, and an
+  `inbound.event` automation on that endpoint starts this template with its `fields` mapping
+  pointing the template's advisory inputs at the event's body ([inbound-events.md](./inbound-events.md)
+  §4). The automation must name the repository its runs act on (`targetConnectionId`): the
+  template requires a `connectionId`, so an automation without one is refused when it is saved.
+- **By hand, with the inputs filled.** The run form shows the advisory inputs and checks them
+  against their types, but the implementer reads the run's description and not the other inputs,
+  so a hand launch writes the advisory into the description as well.
+
+| Input | Type | Meaning |
+|---|---|---|
+| `packageName` | string | The affected package, as its package manager names it |
+| `vulnerableVersions` | string | The affected version or range, such as `<4.17.21` |
+| `fixedVersions` | string | The version or versions that fix it, such as `4.17.21` |
+| `severity` | `critical`, `high`, `medium` or `low` | The advisory's severity |
+| `advisoryId` | string | A CVE, GHSA or scanner identifier |
+
+All five are optional, and an event can fill each of them. The template also takes the SWE inputs
+(`ticketId`, `connectionId`, `description`, `budget`); an automation never maps `ticketId`,
+`description` or `connectionId` from an event. There is no title, summary or URL
+input: those are free text the sender writes, and the identifier names the advisory.
+
+On an event-started run, the mapped values reach the implementer inside the run's description, as
+one JSON object under a line that says the event's text is the sender's and is data
+([inbound-events.md](./inbound-events.md) §4). The remediation prompt names the five fields, says
+their values are the sender's, and has the agent check the package and its versions against the
+repository and the package's registry before acting on them.
 
 **The run.** The implementer runs under the remediation prompt: find where the package is declared and
 which version resolves, choose the lowest fixed version, change it with the repository's own
@@ -125,6 +154,20 @@ and the text posted back is escaped storage, never markup.
   so their scan gate resolves as unconfigured and the run relies on tests and CI.
 - **Nothing reads a vulnerability alert.** The advisory has to arrive as a ticket, an inbound event
   or a hand launch. GitHub Dependabot and code scanning alerts are not an event source.
+- **The advisory inputs are checked for type, not shape.** Apart from `severity`, which takes one of
+  four values, each is any string (an event's values are cut at 4,000 characters); nothing checks that
+  `packageName` is a package name or that a version is a version. The prompt's instruction to check
+  them against the repository and the registry is what stands between a wrong or crafted value and
+  the change.
+- **A severity on another scale fails the start.** A sender that says `moderate`, or uses upper case,
+  fails the template's input check, and the event is recorded `FAILED_TO_START`. Leave `severity`
+  unmapped for such a sender.
+- **One event, one advisory.** A mapped field is a single value, so an event that lists several
+  findings starts one run for the values its pointers name; the others are not read.
+- **An inbound event's run needs a repository named on the automation.** One endpoint automation
+  acts on one repository, so a scanner that reports for many repositories needs an automation per
+  repository, each matching that repository's events.
+- **A hand launch's advisory inputs do not reach the implementer.** It reads the description only.
 - **`docs-refresh` runs the implementer's test loop.** The step runs the repository's tests as it does
   for code. A documentation-only change that fails unrelated tests ends that loop at its limit and
   the run carries on, with the result recorded; the guard still stops it editing anything but
