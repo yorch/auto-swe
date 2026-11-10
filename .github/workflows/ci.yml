@@ -656,9 +656,9 @@ jobs:
           NEEDS_INPUT_SNAPSHOT_PG_TEST: '1'
         run: yarn test packages/worker/src/activities/pruneNeedsInputSnapshot.pg.test.ts
 
-      # Agent run concurrency slots: a run stopped at a pending ask step holds
-      # no container and so no slot; the exclusion is a relation filter on the
-      # human step (kind, status, node id) that a mocked Prisma does not evaluate.
+      # Agent run concurrency slots: a run stopped at a pending ask step still
+      # holds its slot, and the live-run query is a relation filter that a mocked
+      # Prisma does not evaluate.
       - name: Agent run slots (database-backed tests)
         env:
           AGENT_RUN_SLOTS_PG_TEST: '1'

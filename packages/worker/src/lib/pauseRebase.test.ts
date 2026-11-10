@@ -174,6 +174,30 @@ describe('rebaseOntoMovedBranch', () => {
     expect(files).not.toContain('secret.txt');
   });
 
+  it.each([
+    ['a tag', (sha: string) => git(work, 'tag', 'origin/feature', sha)],
+    ['a local branch', (sha: string) => git(work, 'branch', 'origin/feature', sha)],
+  ])('ignores %s named origin/<branch> that the agent planted, so the base cannot be moved', async (_label, plant) => {
+    // An evil commit on top of the remote tip that writes a file outside the allowed paths.
+    git(work, 'checkout', '-q', '--detach', 'HEAD~1');
+    writeFileSync(join(work, 'evil.txt'), 'pwn\n');
+    git(work, 'add', '-A');
+    git(work, 'commit', '-m', 'evil');
+    const evil = git(work, 'rev-parse', 'HEAD');
+    git(work, 'checkout', '-q', 'feature');
+    plant(evil);
+    pushMeanwhile('theirs.txt', 'theirs\n');
+
+    const head = await rebaseOntoMovedBranch(workspace(), 'feature', {
+      guard: guardFor(['agent.txt']),
+    });
+
+    expect(head).toBeDefined();
+    const files = git(work, 'ls-tree', '-r', '--name-only', head as string);
+    expect(files).not.toContain('evil.txt');
+    expect(git(work, 'log', '--format=%s', head as string)).toBe('agent work\nteammate\nbase');
+  });
+
   it('reports a fetch failure as retryable, not as an absent branch', async () => {
     const ws = workspace();
     await expect(

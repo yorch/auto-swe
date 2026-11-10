@@ -26,8 +26,10 @@
  *  - the commit runs with hooks off, and every git call here runs with the same
  *    hardening `gitAuthed` uses (`gitWithAuthHeader`: no hooks, no system or global
  *    config) plus `GIT_NO_REPLACE_OBJECTS`, so `git replace` cannot hide a file;
- *  - no ref is read after the agent starts, so `update-ref` moves nothing the check
- *    looks at.
+ *  - no ref the agent could have written is read after it starts, so `update-ref` moves
+ *    nothing the check looks at. The one exception is `refs/remotes/origin/<branch>` on a
+ *    resumed run (`lib/pauseRebase.ts`): the worker fetches it with a forced refspec
+ *    itself, reads it fully qualified, and passes only the resulting sha on.
  * What remains is outside the agent's reach in this model: replacing the `git`
  * binary itself, which needs root in the container and is the limit the workspace
  * hardening already documents.

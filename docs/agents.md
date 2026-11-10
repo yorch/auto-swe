@@ -1254,7 +1254,11 @@ existing node gains a field.
   remote branch, so a teammate's files do not count but everything the agent replayed does. A
   failed re-check fails with the guard's own non-retryable error. A remote that cannot be reached
   fails retryably, and any other replay failure that is not a conflict fails non-retryably, both
-  as `NEEDS_INPUT_REBASE_FAILED`.
+  as `NEEDS_INPUT_REBASE_FAILED`. The base of the replay is read from the remote-tracking ref the
+  worker itself fetched, fully qualified, and only its commit id is used afterwards; a tag or branch
+  the agent names `origin/<branch>` is never consulted. After a replay the reported diff and the
+  post-diff security scan run on the rebased tree, so they include the commits the teammate
+  pushed.
 - A worker fleet running mixed versions fails the resume of a `final` round with
   `NEEDS_INPUT_RESTORE_FAILED`; roll the fleet over as a whole.
 - The digest of the work so far masks credential shapes and the clone credential by value, and

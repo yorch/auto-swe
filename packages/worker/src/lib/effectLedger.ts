@@ -177,8 +177,7 @@ export async function recordEffect(effect: EffectInput): Promise<void> {
  * resolves: the class of the first write the tracker refused, or null when it refused none.
  * `wrote` is whether anything reached the ticket (`SyncTrackerOptions.onOutcome`). A failure
  * records `FAILED`; no failure and a write records `DONE`; no failure and no write (a GitHub
- * `workflow_started`, a Jira issue with no matching transition, a Linear issue already in the
- * target state) records `SKIPPED`. A caller that could not learn `wrote` (undefined) is taken to
+ * `workflow_started`, a Jira or Linear issue already in the target status) records `SKIPPED`. A caller that could not learn `wrote` (undefined) is taken to
  * have written. A result a caller did not get (a mocked or absent one, `undefined`) records
  * nothing.
  */

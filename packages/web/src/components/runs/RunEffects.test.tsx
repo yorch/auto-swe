@@ -58,6 +58,13 @@ describe('RunEffects', () => {
     expect(screen.getByText('auto/JIRA-1').closest('a')).toBeNull();
   });
 
+  it('shows a sync that wrote nothing as skipped, not as done', async () => {
+    mock([effect({ id: 'e3', kind: 'TRACKER', status: 'SKIPPED', target: 'JIRA-1' })]);
+    render(withQuery(<RunEffects live={false} runId="run-1" />));
+    expect(await screen.findByText('Skipped')).toBeTruthy();
+    expect(screen.queryByText('Done')).toBeNull();
+  });
+
   it('renders nothing for a run that changed nothing outside', async () => {
     mock([]);
     const { container } = render(withQuery(<RunEffects live={false} runId="run-1" />));

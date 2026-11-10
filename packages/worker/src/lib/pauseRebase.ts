@@ -77,17 +77,22 @@ export async function rebaseOntoMovedBranch(
       true
     );
   }
-  const remote = shellQuote(`origin/${branch}`);
+  // Fully qualified, and only the resulting sha is used afterwards. A short `origin/<branch>`
+  // resolves `$GIT_DIR/<name>`, `refs/<name>`, `refs/tags/<name>` and `refs/heads/<name>`
+  // before `refs/remotes/<name>`, any of which the agent can plant to point the base (and so
+  // the guard's diff) at a commit of its choosing. The forced fetch above is what sets this ref.
   const remoteSha = (
     await workspace.exec(
-      guardedGit(`rev-parse --verify ${shellQuote(`origin/${branch}^{commit}`)}`)
+      guardedGit(
+        `rev-parse --verify ${shellQuote(`refs/remotes/origin/${branch}^{commit}`)}`
+      )
     )
   ).trim();
-  if (!REV.test(remoteSha)) {
+  if (!SHA.test(remoteSha)) {
     throw rebaseFailed(`Could not read the remote ${branch} to rebase onto. Nothing was pushed.`);
   }
   const ancestor = (
-    await workspace.exec(`${guardedGit(`merge-base --is-ancestor ${remote} HEAD`)}; echo "rc=$?"`)
+    await workspace.exec(`${guardedGit(`merge-base --is-ancestor ${remoteSha} HEAD`)}; echo "rc=$?"`)
   ).trim();
   if (ancestor.endsWith('rc=0')) {
     return undefined;
@@ -107,7 +112,7 @@ export async function rebaseOntoMovedBranch(
     '-c core.fsmonitor=false',
     '-c rebase.autoStash=false',
   ].join(' ');
-  const upstream = replayBase ? `--onto ${remote} ${replayBase}` : remote;
+  const upstream = replayBase ? `--onto ${remoteSha} ${replayBase}` : remoteSha;
   try {
     await workspace.exec(
       `GIT_EDITOR=true GIT_SEQUENCE_EDITOR=true ${guardedGit(`${hardened} rebase --no-verify ${upstream}`)}`
