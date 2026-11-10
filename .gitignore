@@ -27,6 +27,8 @@ packages/web/public/trace-viewer/
 !.env.*.example
 
 # ── Local infra state ───────────────────────────────────────────
+# `yarn quickstart` service logs, pids and chosen layout.
+/.quickstart/
 # Local infra volumes created by `docker:infra:up` (root-owned).
 # Anchored to the repo root so it never shadows a source dir named `data`.
 # Docker bind-mount data directories (Postgres, Temporal Postgres)

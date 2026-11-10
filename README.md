@@ -90,6 +90,17 @@ For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per
 
 ## Local development
 
+One command does everything below except connecting GitHub — `.env`, infrastructure, database,
+model credentials, then the gateway, worker and dashboard — and prints the next steps:
+
+```bash
+ANTHROPIC_API_KEY=… OPENAI_API_KEY=… yarn quickstart    # or: just quickstart
+```
+
+`yarn quickstart --check` previews it without changing anything; `yarn quickstart down` stops it.
+The options, including a single-Postgres evaluation layout, and the limits of the script are in
+[`docs/quickstart.md`](./docs/quickstart.md). The manual steps follow.
+
 ```bash
 # 1. Install dependencies
 npm install -g corepack && corepack enable && yarn install

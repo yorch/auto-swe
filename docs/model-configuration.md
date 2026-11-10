@@ -414,7 +414,7 @@ failing it, because the worker starts without it.
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — schema + admin user.
 2. Start gateway + web only (not the worker yet).
-3. The DB seed already created the built-in `Agent` rows — the model-backed agents with default model specs, plus the sub-role personas that inherit a parent's model — along with the `EmbeddingConfig` singleton. Sign in as admin and add a `ProviderCredential` at `/models` → Credentials.
+3. The DB seed already created the built-in `Agent` rows — the model-backed agents with default model specs, plus the sub-role personas that inherit a parent's model. It does not create the `EmbeddingConfig` singleton or any credential: `yarn quickstart` writes them from `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, or an admin adds them at `/models` (Credentials, Embeddings).
 4. Add at least one `ProviderCredential` on the Credentials tab. For the seeded defaults you need at minimum `anthropic` (for the agent roles) and `openai` (for embeddings).
 5. Start the worker. `assertConfigReady()` walks the DB; missing pieces are listed in a single rolled-up error pointing back to the dashboard.
 

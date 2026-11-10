@@ -1,0 +1,29 @@
+# Single-Postgres overlay for evaluation setups — NOT for production.
+#
+# Layer it over docker-compose.infra.yml (`yarn quickstart --single-postgres`
+# does this, or `-f docker-compose.infra.yml -f docker-compose.single-postgres.yml`).
+# Temporal and the application share the one `postgres` service: the
+# application keeps `${POSTGRES_DB}` (engineering_system) and Temporal's own
+# schema setup creates its `temporal` and `temporal_visibility` databases beside
+# it. That saves one Postgres container; it costs the isolation described in
+# docs/quickstart.md (Limitations).
+#
+# Only wiring changes here: which host Temporal's existing POSTGRES_SEEDS
+# variable names, and what waits for it. The Temporal image, its environment
+# contract, infra/scripts/setup-postgres.sh and infra/dynamicconfig/ are the
+# files docker-compose.infra.yml already uses, unmodified.
+services:
+  postgres-temporal:
+    # A profile nothing enables keeps the dedicated instance from starting.
+    profiles: ["unused-single-postgres"]
+
+  temporal-setup:
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+    environment:
+      - POSTGRES_SEEDS=postgres
+
+  temporal:
+    environment:
+      - POSTGRES_SEEDS=postgres

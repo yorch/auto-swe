@@ -38,6 +38,7 @@
     "invariants:check": "node scripts/check-invariants.mjs",
     "migrations:check": "node scripts/check-migrations.mjs",
     "env:setup": "node scripts/env-setup.mjs",
+    "quickstart": "node scripts/quickstart.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "biome check .",

@@ -23,6 +23,10 @@ prod_full := prod_traefik + " -f docker-compose.watchtower.yml"
 default:
     @just --list
 
+# One-command local bring-up: .env, infra, database, model credentials, gateway + worker + web. Pass flags through (e.g. `just quickstart --check`).
+quickstart *args:
+    node scripts/quickstart.mjs {{ args }}
+
 # Start backing services for native development (Postgres, Temporal + Web UI, Garage with COMPOSE_PROFILES=objectstore).
 infra-up:
     {{ infra }} up -d

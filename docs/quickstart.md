@@ -15,6 +15,47 @@ This is the local-development path. For a production install, follow
 - **A GitHub token** with access to a repository you are happy to receive a pull request on, for
   the engineering workflow. Workflows that do not touch a repository do not need one.
 
+## The one-command path
+
+```bash
+npm install -g corepack && corepack enable
+ANTHROPIC_API_KEY=… OPENAI_API_KEY=… yarn quickstart     # or: just quickstart
+```
+
+`yarn quickstart` runs steps 1 to 6 and step 8 below in order and is safe to repeat: it creates `.env` if
+there is none (and validates it if there is), installs dependencies, starts the infrastructure,
+waits until Postgres is healthy and the Temporal namespace exists, applies the migrations, seeds
+the database, stores the model credentials and the embedding configuration, then starts the
+gateway, the worker and the dashboard in the background and prints what to do next. Service
+output goes to `.quickstart/<service>.log`; `yarn quickstart down` stops the three services and the
+infrastructure containers and keeps the data.
+
+| Option | Effect |
+|---|---|
+| `--check` | Prints the plan, which keys were found and what the host lacks, and changes nothing |
+| `--anthropic-key-env NAME`, `--openai-key-env NAME` | Read a key from a differently named environment variable. The flags take a variable name, never a key, so no key appears in `ps` |
+| `--single-postgres` | Evaluation layout: Temporal shares the application's Postgres (below) |
+| `--no-start` | Stop after the database and model configuration |
+| `--skip-install` | Do not run `yarn install --immutable` |
+
+The keys are stored encrypted in the database (under `CONFIG_ENCRYPTION_KEY`), as the dashboard
+would store them; they are not written to `.env` or anywhere in the repository. A credential or
+embedding configuration that already exists is left as it is. Without both keys the script still
+brings up everything except the worker, and says so: the worker refuses to start until every agent
+can reach a model (step 8).
+
+### Sharing one Postgres
+
+`yarn quickstart --single-postgres` layers `docker-compose.single-postgres.yml` over the
+infrastructure file. The dedicated `postgres-temporal` container does not start; Temporal's schema
+setup and server point at the application's `postgres` service, where they create their own
+`temporal` and `temporal_visibility` databases beside `engineering_system`. The overlay changes
+only which host the existing `POSTGRES_SEEDS` variable names and what waits for it: the Temporal
+image, `infra/scripts/setup-postgres.sh` and the files in `infra/dynamicconfig/` are the ones the
+default stack uses. It exists to save a container and a volume on an evaluation machine, not as a
+production layout; the default path is unchanged. Switching an existing installation between the
+two layouts starts Temporal on an empty schema, so previous workflow history is not visible.
+
 ## 1. Install
 
 ```bash
@@ -60,11 +101,12 @@ profile.
 ## 4. Create the database
 
 ```bash
-yarn db:migrate && yarn db:generate && yarn db:seed
+yarn db:deploy && yarn db:generate && yarn db:seed
 ```
 
 The seed creates the admin account, a default team, the built-in workflow templates, skills,
-scanner patterns, and agents.
+scanner patterns, and agents. It does not create model credentials or the embedding configuration;
+step 6 adds them.
 
 ## 5. Start the gateway and the dashboard
 
@@ -116,6 +158,29 @@ Then watch it:
 
 The run ends with a pull request on your repository and then waits for a person to merge it.
 By default auto-swe never merges (the opt-in `auto` mode and bot approval of [pr-evaluation.md](./pr-evaluation.md) are off).
+
+## Limitations
+
+- **The 15-minute target is not measured.** The one-command path removes the manual steps and the
+  waits between them; the time it takes depends on the machine, the network (image pulls and
+  `yarn install`) and Docker, and no timing is recorded here.
+- **It needs two API keys, or the dashboard.** The seeded agents use Anthropic models and
+  embeddings use OpenAI (`openai/text-embedding-3-large`). Other providers are configured at
+  `/models`; the script stores only these two.
+- **GitHub is not configured by the script.** The first run still needs a token entered at
+  `/admin/integrations` (or `GITHUB_TOKEN` in `.env`) and a connection for the repository.
+- **Services run in development mode** (`yarn dev:*`, detached, with file watching), not from built
+  images. For the Docker stack use `yarn docker:app:up`; for production see
+  [deployment.md](./deployment.md).
+- **Ports are fixed.** Dashboard 3000, gateway 8080, Postgres 5432, and the Temporal gRPC (7233) and UI (8233) ports. A port in
+  use makes the step that needs it fail; the script does not choose another.
+- **`down` stops only what `up` started**, found through the pid files in `.quickstart/`. A service
+  started by hand keeps running.
+- **The single-Postgres layout is for evaluation.** Temporal's workload and the application share
+  one server's connections, disk and failure domain, and the `temporal` databases are created by
+  Temporal's setup script on the application's server. Backups of that server cover both.
+- **Node 26 is checked, not installed.** The script stops with the install instruction when Node,
+  Yarn or Docker is missing.
 
 ## Next
 

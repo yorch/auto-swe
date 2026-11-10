@@ -899,6 +899,11 @@ Dockerfile; it has the specific rules and what has already been tried and does n
 
 ## 8. Local Development Quickstart
 
+`ANTHROPIC_API_KEY=… OPENAI_API_KEY=… yarn quickstart` (`scripts/quickstart.mjs`; `--check` previews)
+does steps 1–3 below, stores the model credentials and the embedding config the worker's boot gate
+needs, and starts the gateway, web and worker; see [`docs/quickstart.md`](./docs/quickstart.md). The manual
+steps:
+
 ```bash
 # 1. Install
 npm install -g corepack && corepack enable && yarn install
