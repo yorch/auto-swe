@@ -127,6 +127,8 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
                     select: { role: true, userId: true },
                     where: { userId: user.sub },
                   },
+                  monthlyBudgetUsdCents: true,
+                  name: true,
                   organization: {
                     select: { id: true, monthlyBudgetUsdCents: true },
                   },

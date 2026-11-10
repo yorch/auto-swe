@@ -123,6 +123,10 @@ function buildHarness(opts?: {
         ...(opts?.teamOrgId
           ? {
               team: {
+                id: 'team-1',
+                memberships: [],
+                monthlyBudgetUsdCents: null,
+                name: 'Team',
                 organization: { id: opts.teamOrgId, monthlyBudgetUsdCents: null },
                 orgId: opts.teamOrgId,
               },
@@ -247,14 +251,18 @@ describe('POST /workflow-templates/:id/runs: the org a connection-less run is bi
     const h = buildHarness({ teamOrgId: 'org-t' });
     await h.app.ready();
     expect((await run(h)).statusCode).toBe(201);
-    expect(h.runInputs[0]).toMatchObject({ billingOrgId: 'org-t', connectionId: null });
+    expect(h.runInputs[0]).toMatchObject({
+      billingOrgId: 'org-t',
+      billingTeamId: 'team-1',
+      connectionId: null,
+    });
   });
 
   it('stamps no org for a global template, which no org decision gates', async () => {
     const h = buildHarness();
     await h.app.ready();
     expect((await run(h)).statusCode).toBe(201);
-    expect(h.runInputs[0]).toMatchObject({ billingOrgId: null });
+    expect(h.runInputs[0]).toMatchObject({ billingOrgId: null, billingTeamId: null });
   });
 });
 

@@ -74,6 +74,10 @@ vi.mock('./runlessBudget.js', () => runless);
 const orgGuard = vi.hoisted(() => ({ assertOrgBudgetAvailable: vi.fn(async () => {}) }));
 vi.mock('./orgBudgetGuard.js', () => orgGuard);
 
+// Likewise the owning team's cap.
+const teamGuard = vi.hoisted(() => ({ assertTeamBudgetAvailable: vi.fn(async () => {}) }));
+vi.mock('./teamBudgetGuard.js', () => teamGuard);
+
 // The unregistered-agent check only judges activities the boot gate walked, so
 // it needs the gate to have run. `gatedStepNames()` returns null in a bare
 // process, which is "cannot judge" — a test asserting the warning has to say

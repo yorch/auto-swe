@@ -57,7 +57,9 @@ async function buildApp(role: 'ENGINEER' | 'ADMIN' = 'ENGINEER') {
         return cost === undefined ? null : { costUsdAccrued: cost };
       }),
     },
+    team: { findMany: vi.fn() },
     teamMembership: { findMany: vi.fn() },
+    teamSpendUsd: {} as Record<string, number>,
     workflowHumanStep: { findMany: vi.fn() },
     workflowRun: { findMany: vi.fn() },
   };
@@ -86,6 +88,8 @@ describe('GET /api/v1/me/summary', () => {
   beforeEach(() => {
     mocks.resolveSetting.mockReset().mockResolvedValue(24);
     ctx.prisma.organization.findMany.mockReset().mockResolvedValue([]);
+    ctx.prisma.team.findMany.mockReset().mockResolvedValue([]);
+    ctx.prisma.teamSpendUsd = {};
     for (const key of Object.keys(orgSpend)) {
       delete orgSpend[key];
     }
@@ -187,6 +191,31 @@ describe('GET /api/v1/me/summary', () => {
         ['alpha', 10, 'ok'],
         ['beta', 200, 'over'],
       ]);
+    });
+
+    it("shows the team's own cap when it is the tighter, in one team query, with no dollars", async () => {
+      ctx.prisma.teamMembership.findMany.mockResolvedValue([
+        inOrg(teamA, 'org-1'),
+        inOrg(teamB, 'org-1'),
+      ]);
+      ctx.prisma.organization.findMany.mockResolvedValue([capped('org-1', 100_000)]);
+      orgSpend['org-1'] = 100;
+      ctx.prisma.team.findMany.mockResolvedValue([capped('team-a', 1000)]);
+      ctx.prisma.teamSpendUsd = { 'team-a': 5 };
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/me/summary',
+      });
+      const { teams } = res.json() as {
+        teams: { slug: string; budget: { percentUsed: number; scope: string } }[];
+      };
+      expect(teams.map((t) => [t.slug, t.budget.percentUsed, t.budget.scope])).toEqual([
+        ['alpha', 50, 'team'],
+        ['beta', 10, 'org'],
+      ]);
+      expect(ctx.prisma.team.findMany).toHaveBeenCalledTimes(1);
+      expect(res.body).not.toMatch(/usd|cents/i);
     });
 
     it('never asks for an org the caller has no team in', async () => {
@@ -455,6 +484,7 @@ describe('GET /api/v1/me/summary', () => {
     const admin = await buildApp('ADMIN');
     admin.prisma.teamMembership.findMany.mockResolvedValue([membership(teamA)]);
     admin.prisma.organization.findMany.mockResolvedValue([]);
+    admin.prisma.team.findMany.mockResolvedValue([]);
     admin.prisma.workflowHumanStep.findMany.mockResolvedValue([]);
     admin.prisma.workflowRun.findMany.mockResolvedValue([]);
     const res = await admin.app.inject({

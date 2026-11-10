@@ -28,19 +28,23 @@ import {
   refusalKey,
   SCHEDULE_FIRE_SOURCE,
 } from '@auto-swe/shared/lib/automationLedger';
-import { orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
+import { isTeamOverBudget, orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
 import {
   decideRepoAccess,
   REPO_ACCESS_REFUSAL_MESSAGE,
 } from '@auto-swe/shared/lib/repoAccessDecision';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
-import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
+import { canTeamLaunchOnRepo, repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { liveInFlightExecution, type SettledLookup } from '@auto-swe/shared/lib/requestInFlight';
 import { ApplicationFailure, log } from '@temporalio/activity';
 import { workflowSettledStatus } from '../lib/agentRunSlots.js';
 
 /** The Temporal failure type a refused fire carries. */
 export const SCHEDULED_FIRE_REFUSED = 'SCHEDULED_FIRE_REFUSED';
+
+/** Why a schedule of a view-only sharee team does not fire. */
+const VIEW_ONLY_SCHEDULE_MESSAGE =
+  "the repository is shared with the schedule's team to view only; the owning team has to allow that team to start work, or the schedule has to be re-assigned or deleted";
 
 /** How long an identical refusal is not re-audited, so a per-minute cron cannot flood the log. */
 const REFUSAL_AUDIT_DEDUP_MS = 60 * 60 * 1000;
@@ -60,6 +64,7 @@ export type ScheduledFireRefusalReason =
   | 'gate-unreadable'
   | 'not-an-org-member'
   | 'org-budget-exceeded'
+  | 'team-budget-exceeded'
   | 'request-in-flight'
   | keyof typeof REPO_ACCESS_REFUSAL_MESSAGE;
 
@@ -201,6 +206,7 @@ export async function scheduledFireRefusal(
         select: {
           isActive: true,
           memberships: { select: { userId: true }, where: { userId: owner.id } },
+          monthlyBudgetUsdCents: true,
           organization: { select: { isActive: true, monthlyBudgetUsdCents: true } },
           orgId: true,
         },
@@ -238,14 +244,22 @@ export async function scheduledFireRefusal(
   // column is only nulled by `onDelete: SetNull`), so there is no team whose
   // claim could be checked: it is unclaimed too, until an ADMIN or the owning
   // team's lead re-saves it.
+  const scheduleTeamId = schedule.teamId;
   const claimed =
-    schedule.teamId != null &&
-    (repo.teamId === schedule.teamId || repo.shares.some((s) => s.teamId === schedule.teamId));
-  if (!claimed) {
+    scheduleTeamId != null &&
+    (repo.teamId === scheduleTeamId || repo.shares.some((s) => s.teamId === scheduleTeamId));
+  if (scheduleTeamId == null || !claimed) {
     return refuse(
       'schedule-team-unclaimed',
       "the schedule's team no longer owns or shares the repository; an admin or the owning team's lead must re-assign or delete it"
     );
+  }
+
+  // A schedule of a team the repository is shared with VIEW-ONLY cannot start work on it, whoever
+  // acts: the acting user's other teams (the owning team, another share) do not lift the team's own
+  // restriction, exactly as an automation of that team is held. Per TEAM, not per user.
+  if (!canTeamLaunchOnRepo(repo, scheduleTeamId)) {
+    return refuse('share-view-only', VIEW_ONLY_SCHEDULE_MESSAGE);
   }
 
   // Fail closed on an unreadable gate. The gateway can fall back to `off` for
@@ -287,6 +301,14 @@ export async function scheduledFireRefusal(
     if (usdToCents(totalUsd) >= cap) {
       return refuse('org-budget-exceeded', 'the organization has exceeded its monthly budget cap');
     }
+  }
+  // The team that OWNS the repository pays for the fire, also when the schedule belongs to a
+  // team the repository is shared with: the run is attributed to the owner, so its own cap binds.
+  if (await isTeamOverBudget(db, repo.teamId, repo.team.monthlyBudgetUsdCents)) {
+    return refuse(
+      'team-budget-exceeded',
+      'the team that owns the repository has exceeded its monthly budget cap'
+    );
   }
 
   // A re-run of the standing request pushes the schedule's one branch too. A
@@ -386,6 +408,7 @@ export async function recordScheduledFireRefusal(
 const REFUSAL_OUTCOME: Partial<Record<ScheduledFireRefusalReason, string>> = {
   'org-budget-exceeded': 'SUPPRESSED_BUDGET',
   'request-in-flight': 'SUPPRESSED_IN_FLIGHT',
+  'team-budget-exceeded': 'SUPPRESSED_BUDGET',
 };
 
 /**
@@ -527,6 +550,7 @@ export async function assertScheduledFireSourceSnapshot(
       isActive: true,
       shares: {
         select: {
+          canLaunch: true,
           team: {
             select: {
               isActive: true,
@@ -590,14 +614,21 @@ export async function assertScheduledFireSourceSnapshot(
       'the current target no longer matches its saved source tuple'
     );
   }
+  const scheduleTeamId = schedule.teamId;
   const claimExists =
-    schedule.teamId === repo.teamId ||
-    repo.shares.some((share) => share.teamId === schedule.teamId && share.team.isActive);
-  if (!claimExists) {
+    scheduleTeamId != null &&
+    (scheduleTeamId === repo.teamId ||
+      repo.shares.some((share) => share.teamId === scheduleTeamId && share.team.isActive));
+  if (scheduleTeamId == null || !claimExists) {
     return fail(
       'schedule-team-unclaimed',
       'the schedule team no longer owns or shares the repository'
     );
+  }
+
+  // The schedule's own team may be a view-only sharee: per team, whoever acts (see the fire check).
+  if (!canTeamLaunchOnRepo(repo, scheduleTeamId)) {
+    return fail('share-view-only', VIEW_ONLY_SCHEDULE_MESSAGE);
   }
 
   if (owner.role !== 'ADMIN') {

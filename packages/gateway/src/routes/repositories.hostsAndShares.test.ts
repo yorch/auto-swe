@@ -2,7 +2,7 @@
 import { ConnectionTypeSchema } from '@auto-swe/shared/lib/connectionTypes';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const DB_NULL = vi.hoisted(() => ({ __sentinel: 'Prisma.DbNull' }));
 vi.mock('@auto-swe/shared', () => ({
@@ -68,6 +68,8 @@ async function buildApp() {
     connectionTeamShare: {
       createMany: vi.fn().mockResolvedValue({ count: 0 }),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      findFirst: vi.fn(),
+      update: vi.fn().mockResolvedValue({}),
     },
     gitHubInstallation: { findUnique: vi.fn() },
     knowledgeItem: { count: vi.fn().mockResolvedValue(0) },
@@ -504,6 +506,148 @@ describe('repository sharing', () => {
     expect(ctx.prisma.$queryRaw).toHaveBeenCalled();
     expect(ctx.prisma.configAuditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ action: 'UPDATE', entityId: REPO }),
+    });
+  });
+
+  it('keeps the canLaunch of a team that stays in the set and defaults a new team to launching', async () => {
+    ctx.prisma.connection.findUnique.mockResolvedValue({
+      id: REPO,
+      shares: [{ teamId: OTHER_TEAM }],
+      team: { orgId: ORG },
+      teamId: TEAM,
+      type: 'git_repo',
+    });
+    const NEW_TEAM = '99999999-9999-4999-8999-999999999999';
+    ctx.prisma.team.findMany.mockResolvedValue([{ id: OTHER_TEAM }, { id: NEW_TEAM }]);
+    expect((await share([OTHER_TEAM, NEW_TEAM])).statusCode).toBe(200);
+    // Only teams leaving the set are deleted, so a staying share keeps its flag; the insert never
+    // names `canLaunch`, so an existing row is skipped untouched and a new one takes the default.
+    expect(ctx.prisma.connectionTeamShare.deleteMany).toHaveBeenCalledWith({
+      where: { connectionId: REPO, teamId: { notIn: [OTHER_TEAM, NEW_TEAM] } },
+    });
+    const { data, skipDuplicates } = ctx.prisma.connectionTeamShare.createMany.mock.calls[0][0];
+    expect(skipDuplicates).toBe(true);
+    for (const row of data) {
+      expect(row).not.toHaveProperty('canLaunch');
+    }
+  });
+
+  describe('PATCH /:id/shares/:teamId', () => {
+    function setLaunch(canLaunch: unknown, teamId = OTHER_TEAM) {
+      return ctx.app.inject({
+        headers: AUTH,
+        method: 'PATCH',
+        payload: { canLaunch },
+        url: `/api/v1/repositories/${REPO}/shares/${teamId}`,
+      });
+    }
+
+    beforeEach(() => {
+      ctx.prisma.connection.findUnique.mockResolvedValue({
+        id: REPO,
+        teamId: TEAM,
+        type: 'git_repo',
+      });
+      ctx.prisma.connectionTeamShare.findFirst.mockResolvedValue({
+        canLaunch: true,
+        id: 'share-1',
+      });
+    });
+
+    it('makes a share view-only and audits the change', async () => {
+      const res = await setLaunch(false);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toEqual({ canLaunch: false, teamId: OTHER_TEAM });
+      expect(ctx.prisma.connectionTeamShare.update).toHaveBeenCalledWith({
+        data: { canLaunch: false },
+        where: { id: 'share-1' },
+      });
+      expect(ctx.prisma.configAuditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ action: 'UPDATE', entityId: REPO }),
+      });
+    });
+
+    it('is a no-op, without an audit row, when nothing changes', async () => {
+      expect((await setLaunch(true)).statusCode).toBe(200);
+      expect(ctx.prisma.connectionTeamShare.update).not.toHaveBeenCalled();
+      expect(ctx.prisma.configAuditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('404s a team the repository is not shared with, and 400s a non-boolean body', async () => {
+      ctx.prisma.connectionTeamShare.findFirst.mockResolvedValue(null);
+      expect((await setLaunch(false)).statusCode).toBe(404);
+      expect((await setLaunch('no')).statusCode).toBe(400);
+    });
+
+    it('refuses someone who does not lead the owning team', async () => {
+      ctx.auth.role = 'LEAD';
+      ctx.prisma.teamMembership.findUnique.mockResolvedValue(null);
+      const res = await setLaunch(false);
+      expect(res.statusCode).toBe(403);
+      expect(ctx.prisma.connectionTeamShare.update).not.toHaveBeenCalled();
+    });
+
+    describe('who may change a share', () => {
+      afterEach(() => ctx.prisma.teamMembership.findUnique.mockReset());
+
+      /** Team memberships by team id; a team the caller is not in answers null. */
+      function memberOf(roles: Record<string, string>, isActive = true) {
+        ctx.prisma.teamMembership.findUnique.mockImplementation(
+          async ({ where }: { where: { userId_teamId: { teamId: string } } }) => {
+            const role = roles[where.userId_teamId.teamId];
+            return role ? { role, team: { isActive } } : null;
+          }
+        );
+      }
+
+      it('lets a LEAD of the owning team change it', async () => {
+        ctx.auth.role = 'LEAD';
+        memberOf({ [TEAM]: 'LEAD' });
+        expect((await setLaunch(false)).statusCode).toBe(200);
+        expect(ctx.prisma.connectionTeamShare.update).toHaveBeenCalled();
+      });
+
+      it('refuses an ADMIN of the SHARED team: sharing it gives no say over the share', async () => {
+        ctx.auth.role = 'LEAD';
+        memberOf({ [OTHER_TEAM]: 'ADMIN' });
+        const res = await setLaunch(true);
+        expect(res.statusCode).toBe(403);
+        expect(ctx.prisma.connectionTeamShare.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses an ENGINEER of the owning team, whatever the platform role', async () => {
+        ctx.auth.role = 'LEAD';
+        memberOf({ [TEAM]: 'ENGINEER' });
+        expect((await setLaunch(false)).statusCode).toBe(403);
+        // A platform ENGINEER never reaches the handler at all.
+        (ctx.auth as { role: string }).role = 'ENGINEER';
+        memberOf({ [TEAM]: 'LEAD' });
+        expect((await setLaunch(false)).statusCode).toBe(403);
+        expect(ctx.prisma.connectionTeamShare.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses a LEAD of an owning team that is no longer active', async () => {
+        ctx.auth.role = 'LEAD';
+        memberOf({ [TEAM]: 'LEAD' }, false);
+        expect((await setLaunch(false)).statusCode).toBe(403);
+      });
+
+      it('answers SHARE_NOT_FOUND only to someone who manages the repository', async () => {
+        ctx.prisma.connectionTeamShare.findFirst.mockResolvedValue(null);
+        // A non-manager is refused before the share is looked up: whether a team has a share
+        // on a repository is not theirs to probe.
+        ctx.auth.role = 'LEAD';
+        memberOf({ [OTHER_TEAM]: 'ADMIN' });
+        const refused = await setLaunch(false);
+        expect(refused.statusCode).toBe(403);
+        expect(refused.body).not.toContain('SHARE_NOT_FOUND');
+        expect(ctx.prisma.connectionTeamShare.findFirst).not.toHaveBeenCalled();
+
+        memberOf({ [TEAM]: 'LEAD' });
+        const missing = await setLaunch(false);
+        expect(missing.statusCode).toBe(404);
+        expect(missing.json().error.code).toBe('SHARE_NOT_FOUND');
+      });
     });
   });
 

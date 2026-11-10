@@ -5,6 +5,7 @@ import { getModelPrice } from './costTracking.js';
 import { getModelSpec } from './models.js';
 import { resolveBilledOrg } from './orgBudgetGuard.js';
 import { currentSpendOwner } from './spendOwner.js';
+import { resolveBilledTeam } from './teamBudgetGuard.js';
 
 /** The `ApplicationFailure` type of a refused call; the run viewer keys on it. */
 export const MODEL_UNPRICED = 'MODEL_UNPRICED';
@@ -16,11 +17,12 @@ export const MODEL_UNPRICED = 'MODEL_UNPRICED';
 export const MODEL_PRICE_UNAVAILABLE = 'MODEL_PRICE_UNAVAILABLE';
 
 /** Which USD cap a call would be counted against. */
-export type UsdCapKind = 'channel' | 'organization';
+export type UsdCapKind = 'channel' | 'organization' | 'team';
 
 const CAP_LABEL: Record<UsdCapKind, string> = {
   channel: "this channel's monthly budget",
   organization: "this organization's monthly budget",
+  team: "the owning team's monthly budget",
 };
 
 /**
@@ -68,14 +70,29 @@ async function findUsdCap(scope: {
   }
   const resolved = await resolveBilledOrg(workflowId);
   const orgId = resolved.stable ? resolved.orgId : ((await currentSpendOwner()).orgId ?? null);
-  if (!orgId) {
-    return null; // No org bills this call: it is outside every org cap.
+  if (orgId) {
+    const org = await prisma.organization.findUnique({
+      select: { monthlyBudgetUsdCents: true },
+      where: { id: orgId },
+    });
+    if (org?.monthlyBudgetUsdCents != null) {
+      return 'organization';
+    }
   }
-  const org = await prisma.organization.findUnique({
+  // The owning team's own cap watches the call as well: spend on a model with no price never
+  // reaches it either. The team the run is attributed to, as the mid-run team guard counts it.
+  const billedTeam = await resolveBilledTeam(workflowId);
+  const teamId = billedTeam.stable
+    ? billedTeam.teamId
+    : ((await currentSpendOwner()).teamId ?? null);
+  if (!teamId) {
+    return null; // No team's spend includes this call: it is outside every team cap.
+  }
+  const team = await prisma.team.findUnique({
     select: { monthlyBudgetUsdCents: true },
-    where: { id: orgId },
+    where: { id: teamId },
   });
-  return org?.monthlyBudgetUsdCents != null ? 'organization' : null;
+  return team?.monthlyBudgetUsdCents != null ? 'team' : null;
 }
 
 /**

@@ -10,7 +10,6 @@ import type {
   WorkflowRunStatus,
 } from '@auto-swe/shared/types/api';
 import { humanStepListWhere, humanStepMineScope, humanStepTeamScope } from './humanStepFilters.js';
-import { orgBudgetStatuses } from './orgBudgetStatus.js';
 import { groupRequestExecutions } from './requestExecutions.js';
 import {
   memberRunScope,
@@ -22,6 +21,7 @@ import {
   teamsOfRun,
 } from './runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter, type VisibilityActor } from './runVisibility.js';
+import { bindingBudgetStatuses } from './teamBudgetStatus.js';
 import type { MaybeGate } from './tenantScope.js';
 
 /** Items on the desk's list; `total` still counts every one. */
@@ -459,14 +459,15 @@ export async function buildMeSummary({
     queuedCount.set(teamId, counts.queued);
   }
 
-  // One read for every org the caller's teams belong to, never one per team.
-  const budgets = await orgBudgetStatuses(
+  // One read for every org and team the caller belongs to, never one per team: each team shows
+  // the tighter of its own cap and its organization's.
+  const budgets = await bindingBudgetStatuses(
     prisma,
-    memberships.map((m) => m.team.orgId)
+    memberships.map((m) => ({ id: m.team.id, orgId: m.team.orgId }))
   );
 
   const teams: MeSummaryTeam[] = memberships.map(({ role, team }) => ({
-    budget: budgets.get(team.orgId) ?? null,
+    budget: budgets.get(team.id) ?? null,
     myRole: role,
     name: team.name,
     needsYou: needsYou.get(team.id) ?? 0,

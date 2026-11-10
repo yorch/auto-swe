@@ -21,7 +21,10 @@ const REPO: LaunchRepo = {
   repoName: 'api',
   shares: [],
   team: {
+    id: 'team-1',
     memberships: [{ userId: USER.sub }],
+    monthlyBudgetUsdCents: null,
+    name: 'Payments',
     organization: { monthlyBudgetUsdCents: null },
     orgId: 'org-1',
   },

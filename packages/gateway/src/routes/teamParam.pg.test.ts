@@ -446,6 +446,7 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
       const carol = await overview('carol', 'teamc');
       expect(carol.repos).toEqual([
         {
+          canLaunch: true,
           id: ids.repoa,
           name: expect.any(String),
           ownerTeamName: `ts-a-${suffix}`,

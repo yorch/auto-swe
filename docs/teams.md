@@ -106,9 +106,10 @@ role of LEAD does not raise anything for a non-member: only the platform ADMIN i
 | `pullRequests` | everyone | Last 30 days, owner-attributed: `opened`, `merged`, `closedUnmerged`, `mergeRate`, `timeToMergeP50Hours`. The same filters and summary as `GET /api/v1/pull-requests/outcomes?scope=TEAM&teamId=` (`teamPullRequestOutcomes()` in `gateway/src/lib/pullRequestOutcomesQuery.ts`) |
 | `activity` | everyone | Up to 10 recent requests the caller may see on the team's work: `title`, `state` (`active`, `attention`, `success`, `failed`), repository, the launcher's **name**, time. Cancelled and skipped attempts are left out |
 | `repos` | everyone | Active repositories the team owns or that are shared to it, that the caller may reach (membership and the access gate): `relation` is `owned` or `shared`, and a shared one names the owning team |
-| `budget` | everyone | The budget that binds work on the team's repositories: `scope`, `state`, `percentUsed`, `alertThresholdPercent`. Percent only, for every viewer level ([the budget meter](#the-budget-meter)); `null` when no cap is set |
+| `budget` | everyone | The budget that binds work on the team's repositories: `scope`, `state`, `percentUsed`, `alertThresholdPercent`. Percent only, for every viewer level ([the budget meter](#the-budget-meter)); `null` when neither the team nor its organization sets a cap |
 | `lead` | `lead`, `admin` | `unownedFailures`, `staleApprovals`, `openPullRequests` |
-| `admin.monthCostUsdCents` | `admin` | This calendar month's spend (UTC) attributed to the team, in cents; `null` when it cannot be computed. Absent for a team ADMIN who is not an ORG_ADMIN of a capped organization |
+| `repos[].canLaunch` | everyone | `false` when the repository is shared to the team view-only; always `true` for an owned one |
+| `admin.monthCostUsdCents` | `admin` | This calendar month's spend (UTC) attributed to the team, in cents; `null` when it cannot be computed. Absent for a team ADMIN who is not an ORG_ADMIN when the binding cap is the organization's; present when the team's own cap binds |
 
 `lead` and `admin` are **absent** from the JSON for a lower view, not `null`, and their queries are
 not run. Other members' emails never appear: a launcher is a display name only.
@@ -129,23 +130,27 @@ The same `teamId` parameter narrows `GET /human-steps`, `GET /workflow-runs` and
 ### The budget meter
 
 `budget` is on each team of `GET /api/v1/me/summary` and on the team overview. It is the status of
-the **organization** the team belongs to, because the organization's monthly cap is what refuses a
-launch (`402 ORG_BUDGET_EXCEEDED`); `scope` is therefore always `org`.
+the cap that binds the team's work: the **tighter** of the team's own cap and its organization's, by
+the share of its cap already used ([§5](#5-team-budgets)). `scope` says which: `team` when the team's
+cap binds, `org` otherwise. The organization's cap refuses a launch with `402 ORG_BUDGET_EXCEEDED`,
+the team's with `402 TEAM_BUDGET_EXCEEDED`.
 
 | Field | Meaning |
 |---|---|
 | `state` | `ok`; `alert` (month-to-date spend is at or past the alert threshold); `projected_over` (the month's pace would pass the cap); `over` (spend has reached the cap, which is when launches are refused). `no_cap` appears only on the status endpoint |
 | `percentUsed` | Month-to-date spend as a share of the cap, one decimal, 100 or more once over |
-| `alertThresholdPercent` | The organization's alert threshold, or `null` |
+| `alertThresholdPercent` | The alert threshold of the cap `scope` names: the team's own when `scope` is `team`, the organization's otherwise; `null` when that cap sets none |
 
 The state is the budget report's forecast ([reporting.md](./reporting.md#budget)), with `over`
 defined as the launch gate defines it. The spend is the one the cap is compared against
-(`orgMonthSpend`). A response never carries the cap or the spend in dollars, whatever the viewer's
+(`orgMonthSpend` for the organization, `teamMonthSpend` for the team). A tie in the share used goes
+to the more severe state, then to the team. A response never carries the cap or the spend in dollars, whatever the viewer's
 role: dollars are read by an ORG_ADMIN (or platform ADMIN) at `GET /api/v1/platform/organizations/:orgId/budget`.
 Any member of an organization reads the same percentage-only status at
 `GET /api/v1/platform/organizations/:orgId/budget/status`. The desk reads every team's organization
-with one read of the organizations and one spend read per capped organization, not one per team, and a caller only ever receives the organizations of teams they
-belong to (the overview: of the team they ask about).
+and team with one read of each and one spend read per capped organization or team, not one per team,
+and a caller only ever receives the budgets of teams they belong to (the overview: of the team they
+ask about).
 
 Both overview endpoints are read by the dashboard, and they wrap differently: the overview returns
 `{ "data": { … } }`, while `GET /api/v1/me/summary` returns the desk bare, with no `data` envelope.
@@ -222,6 +227,70 @@ the list it reads ([work-views.md](./work-views.md#teamid-semantics)).
 A service principal that names a `teamId` on `GET /api/v1/workflow-runs` skips the membership check;
 it has no memberships, and the filter still only narrows what its token may see.
 
+## 5. Team budgets
+
+A team may hold its own monthly cap in addition to its organization's. It is a column on the team's
+own row (`monthlyBudgetUsdCents`, `budgetAlertThresholdPercent`), not a registry setting: the launch
+gate and the mid-run guard read it from the row, and nothing resolves it through the scope cascade.
+
+### Who sets it
+
+| Route | Who | Does |
+|---|---|---|
+| `GET /api/v1/teams/:id/budget` | team `ADMIN`, `ORG_ADMIN` of the team's organization, platform `ADMIN` | The cap, the alert threshold (1 to 100) and this month's spend in cents |
+| `PATCH /api/v1/teams/:id/budget` | the same | Set or clear (`null`) either; the cap is a whole number of cents from 0 up, and 0 refuses every launch. Audited |
+| `GET /api/v1/teams/:id/budget/status` | any member of the team, and the same three roles | The binding status, percent and state only |
+
+A team `LEAD` and a platform `LEAD` are refused the first two (`403`). A caller with no standing on
+the team gets the `404 TEAM_NOT_FOUND` an unknown team gets. The responses are wrapped in `data`.
+The team ADMIN reads the team's own spend in dollars here because the cap is theirs; the
+organization's cap and spend stay an ORG_ADMIN's.
+
+### Who pays
+
+The **owning team** pays for a run on a repository, also when another team launched it through a
+share: the owner's provider credentials, its cap and its spend. `teamMonthSpend` counts a run under
+`WorkflowRun.attributedTeamId` — the owner of the run's repository, and only for a run with no
+repository the channel's, the service principal's or the template's team, and last the team its
+connection-less launch was held to (`RunInput.billingTeamId`, stamped beside `billingOrgId` by every
+launch that applies the cap with no repository: an automation fire on a global template, a template
+run or webhook, a service principal's run, a re-run). The launch gate, the spend and the mid-run
+guard therefore name one team. A launch is refused with
+`402 TEAM_BUDGET_EXCEEDED` when that owner has reached its cap, after the organization's check. The
+body names no amount, and names the team only to one of its members; a sharee is told that the team
+owning the repository is over budget. A platform ADMIN is not exempt.
+
+Spend is the month's finalized runs (by the month they ended in, UTC), plus what in-flight runs have
+accrued so far, plus runless workflows stamped with the team. Read in one snapshot, a finalizing run
+is on exactly one side. The cap is checked at every launch path that checks the organization's
+([launch paths](#launch-paths-and-the-team-cap)), and again before each model call of a running run,
+which stops with a non-retryable `BUDGET_EXCEEDED` once its owner team is at the cap. A cap of 0 is
+at the cap with nothing spent, so it refuses every launch and also stops every in-flight run of the
+team at its next model call.
+
+### View-only shares
+
+A share carries `canLaunch` (default `true`). A share with `canLaunch` `false` lets the sharing
+team's members see the repository, its runs and lessons, and refuses their launches with
+`403 REPOSITORY_VIEW_ONLY`. The owning team and a platform ADMIN are never view-only, and steering a
+run that is already going is not a launch. A schedule or automation owned by a team the repository
+is shared with view-only is refused at fire time (`share-view-only` for a schedule, a recorded
+suppression for an automation). The check is on that team, not on the acting user, so a user who also
+belongs to the owning team does not lift it; the owning team's own schedules are unaffected. A git
+repository shared view-only is not usable either as a secondary connection of a run (a declared
+input, a step's `connectionRef`) by that team. Set it per share with `PATCH /api/v1/repositories/:id/shares/:teamId`
+([repositories.md](./repositories.md#3-sharing-with-other-teams)).
+
+### Launch paths and the team cap
+
+Every path that applies the organization's cap applies the owning team's: work requests and
+re-runs, template runs and webhooks (connection-less runs against the template's team), epics, PRD
+runs, schedules and their fires, the Slack run modal, automations, service principals, and the
+review and review-fix launches. The channel-assistant code task and the children of an epic or PRD
+run have no launch-time check of their own, as for the organization; the mid-run guard covers them.
+Pull-request evaluation starts and eval screens check neither cap at launch either, and are held
+only by the mid-run guard.
+
 ---
 
 ## Limitations
@@ -256,9 +325,37 @@ it has no memberships, and the filter still only narrows what its token may see.
 - **`queued` is a ledger state, not a scheduler queue.** The platform has no run queue; a run is
   counted as queued while its ledger row is still `STARTING`.
 - **No per-team override of the due-soon window.** `workflow.approvalDueSoonHours` is GLOBAL only.
-- **The budget meter is the organization's, until teams set their own.** A team has no cap of its
-  own, so every team of an organization shows the same percentage, and a team cannot be warned
-  before the organization is. `scope` is reserved for a per-team cap.
+- **A sharee's meter shows its own caps, not the owner's.** The meter is the tighter of the team's
+  own cap and its organization's, but a launch on a shared repository is held to the OWNER's cap, so
+  a sharee can be refused (`TEAM_BUDGET_EXCEEDED`) with a meter that reads fine.
+- **A team ADMIN can lift a cap an ORG_ADMIN set.** `PATCH /teams/:id/budget` lets a team ADMIN
+  clear or raise the team's cap whoever set it, so the team cap is a self-imposed limit, not an
+  organization control. It does not check that the team is active.
+- **Two month-spend figures.** The overview's `admin.monthCostUsdCents` sums runs by the month they
+  started in, over the runs the caller may see; `teamMonthSpend`, which the cap and
+  `GET /teams/:id/budget` read, counts by the month a run ended in and adds in-flight and runless
+  spend. They differ around month boundaries and for runs the caller cannot see.
+- **Cancelling a run without its workflow finalizing drops its ledger spend.** The cancel path that
+  ends a run before the workflow finalizes it (`workflowFinalizes` false) sets `endedAt` without
+  `costUsdAccrued`, so the run's ledger spend leaves both the organization's and the team's totals.
+- **Evaluation and PR-evaluation starts are covered only mid-run.** See
+  [launch paths](#launch-paths-and-the-team-cap).
+- **The team cap is best-effort under concurrency**, exactly like the organization's. Spend is
+  recorded after a launch returns, so launches that arrive together read the same total, and a
+  running run can spend past the cap until the mid-run guard's cache window (about 30 s) catches up.
+- **Runs without an owning team count against no team cap.** A run with no `attributedTeamId` (a
+  row from before the column, or a run no team can be derived for) is in the organization's spend
+  and in no team's.
+- **There is no per-sharee spend split.** A sharee's launches add to the owner's spend with no
+  breakdown by launching team; the launcher's name is on the run.
+- **A run is billed whole to the month it ends in**, for the team as for the organization, so a run
+  that crosses a month boundary lands entirely in the later month.
+- **Dollars are team ADMIN's by design.** `GET /teams/:id/budget` returns the team's own month spend
+  in dollars to a team ADMIN even when the organization has a cap they cannot read, because the
+  team's spend is a slice of the organization's and the cap itself is not revealed. In an
+  organization with a single team that slice is the whole spend, and with the organization meter's
+  percentage it gives the cap away: the overview's withholding rule narrows the channels and does
+  not seal the organization's cap there.
 - **The meter is not a secrecy boundary for the cap.** The percentage is rounded to one decimal and
   the dollars are an ORG_ADMIN's to read, so on its own it gives pace and state, not an allowance.
   Someone who also sees a dollar figure of the organization's spend elsewhere could work the cap

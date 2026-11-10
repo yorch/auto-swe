@@ -215,6 +215,110 @@ async function readOrgMonthSpend(
   };
 }
 
+/** A team's spend this month, in USD, by where it is recorded. */
+export interface TeamMonthSpend {
+  /** Runs finalized this month (UTC) that were attributed to the team. */
+  finalizedUsd: number;
+  /** Attributed runs still in flight: their ledger row's accrual, else their trace rows. */
+  inFlightUsd: number;
+  /** Workflows that keep no run, stamped with the team on their trace rows this month. */
+  runlessUsd: number;
+  totalUsd: number;
+}
+
+/**
+ * What a team has spent this month, including what is not finalized yet.
+ *
+ * **One attribution rule.** A run belongs to `WorkflowRun.attributedTeamId`, written when the run
+ * is created by `resolveWorkflowRunAttribution`: the team that OWNS the run's repository, and only
+ * for a run with no repository the channel's, the service principal's or the template's team. A
+ * repository shared to another team therefore spends the OWNER's budget, never the sharee's, and
+ * a run is counted for exactly one team. The launch gate asks the same question of the same owner
+ * (`decideTeamBudgets`), so a launch is refused against the team whose spend it will add to.
+ * A run with no attribution (rows that predate the column, a run no team is derivable for) counts
+ * against no team.
+ *
+ * Unlike an organization, a team has no ledger table: finalized spend is read from the finalized
+ * runs themselves (`costUsdAccrued`, set in the same transaction as `endedAt`), and a run is
+ * finalized in the month its `endedAt` falls in, as `OrgMonthlyUsage` bills it. Read under one
+ * REPEATABLE READ snapshot, a finalizing run is on exactly one side — in flight (`endedAt` null)
+ * or finalized — so it is never counted twice and never missed. When the pool cannot give the
+ * snapshot a connection in time (P2028), the same reads run without it. Read-only; no lock.
+ */
+export async function teamMonthSpend(db: PrismaClient, teamId: string): Promise<TeamMonthSpend> {
+  try {
+    return await db.$transaction((tx) => readTeamMonthSpend(tx, teamId), {
+      isolationLevel: 'RepeatableRead',
+    });
+  } catch (err) {
+    if (!isTransactionTimeout(err)) {
+      throw err;
+    }
+    return readTeamMonthSpend(db, teamId);
+  }
+}
+
+async function readTeamMonthSpend(
+  db: Prisma.TransactionClient,
+  teamId: string
+): Promise<TeamMonthSpend> {
+  const monthStart = new Date(`${currentYearMonth()}-01T00:00:00.000Z`);
+  const [finalized, inFlightRuns, runless] = await Promise.all([
+    db.workflowRun.aggregate({
+      _sum: { costUsdAccrued: true },
+      where: { attributedTeamId: teamId, endedAt: { gte: monthStart } },
+    }),
+    db.workflowRun.findMany({
+      select: { id: true, workflowId: true },
+      where: { attributedTeamId: teamId, endedAt: null },
+    }),
+    db.agentTrace.aggregate({
+      _sum: { costUsd: true },
+      where: { createdAt: { gte: monthStart }, runId: null, teamId },
+    }),
+  ]);
+  const ledgers = inFlightRuns.length
+    ? await db.activeWorkflow.findMany({
+        select: { costUsdAccrued: true, temporalWorkflowId: true },
+        where: { temporalWorkflowId: { in: inFlightRuns.map((r) => r.workflowId) } },
+      })
+    : [];
+  const withLedger = new Set(ledgers.map((l) => l.temporalWorkflowId));
+  const ledgerless = inFlightRuns.filter((r) => !withLedger.has(r.workflowId)).map((r) => r.id);
+  const traced = ledgerless.length
+    ? await runUnscoped('scoped by run ids already filtered to the team', ['AgentTrace'], () =>
+        db.agentTrace.aggregate({ _sum: { costUsd: true }, where: { runId: { in: ledgerless } } })
+      )
+    : null;
+  const finalizedUsd = finalized._sum.costUsdAccrued ?? 0;
+  const inFlightUsd =
+    ledgers.reduce((sum, l) => sum + l.costUsdAccrued, 0) + (traced?._sum.costUsd ?? 0);
+  const runlessUsd = runless._sum.costUsd ?? 0;
+  return {
+    finalizedUsd,
+    inFlightUsd,
+    runlessUsd,
+    totalUsd: finalizedUsd + inFlightUsd + runlessUsd,
+  };
+}
+
+/**
+ * Has `teamId` spent its monthly cap? `false` when it sets none. Best-effort under concurrency,
+ * exactly like the organization's cap: spend is recorded after a launch returns, so two launches
+ * that arrive together read the same total and a running run can spend past the cap. A zero cap
+ * is reached by any spend, including none, so it refuses every launch.
+ */
+export async function isTeamOverBudget(
+  db: PrismaClient,
+  teamId: string,
+  capCents: number | null | undefined
+): Promise<boolean> {
+  if (capCents == null) {
+    return false;
+  }
+  return usdToCents((await teamMonthSpend(db, teamId)).totalUsd) >= capCents;
+}
+
 /**
  * USD → whole cents for comparison with a cents cap. Costs carry micro-dollar
  * precision, so a small epsilon keeps values like 9.9999999e-05 rounding right.

@@ -64,6 +64,9 @@ interface Fixture {
   /** The viewer's role in the team's org (null: not a member). */
   orgRole?: 'ORG_ADMIN' | 'ORG_MEMBER' | null;
   orgSpendUsd?: number;
+  /** The team's own cap in cents (null: none) and its month-to-date spend in USD. */
+  teamCapCents?: number | null;
+  teamSpendUsd?: number;
   costUsd?: number | null | Error;
   members?: string[];
   openPrs?: number;
@@ -86,12 +89,20 @@ async function build(fx: Fixture) {
   const prisma = {
     connection: {
       findMany: vi.fn().mockResolvedValue([
-        { id: 'c1', name: 'x', organizationName: 'acme', repoName: 'api', team: teamRef },
+        {
+          id: 'c1',
+          name: 'x',
+          organizationName: 'acme',
+          repoName: 'api',
+          shares: [],
+          team: teamRef,
+        },
         {
           id: 'c2',
           name: 'y',
           organizationName: 'acme',
           repoName: 'lib',
+          shares: [{ canLaunch: false }],
           team: { id: OTHER_TEAM, name: 'Beta' },
         },
       ]),
@@ -138,6 +149,18 @@ async function build(fx: Fixture) {
       ]),
     },
     team: {
+      // The team's own budget row; the fixture's team sets no cap of its own.
+      findMany: vi.fn().mockResolvedValue(
+        fx.teamCapCents == null
+          ? []
+          : [
+              {
+                budgetAlertThresholdPercent: null,
+                id: TEAM,
+                monthlyBudgetUsdCents: fx.teamCapCents,
+              },
+            ]
+      ),
       findUnique: vi.fn().mockResolvedValue(
         fx.teamExists === false
           ? null
@@ -154,6 +177,7 @@ async function build(fx: Fixture) {
     teamMembership: {
       findMany: vi.fn().mockResolvedValue((fx.members ?? [ME]).map((userId) => ({ userId }))),
     },
+    teamSpendUsd: { [TEAM]: fx.teamSpendUsd ?? 0 },
     workflowHumanStep: {
       count: vi.fn().mockResolvedValue(fx.stale ?? 0),
       findMany: vi.fn(
@@ -302,6 +326,38 @@ describe('GET /api/v1/teams/:id/overview', () => {
     expect(prisma.workflowRun.aggregate).not.toHaveBeenCalled();
   });
 
+  it("shows the team's own cap, and the spend to its ADMIN, when the team's cap is the tighter", async () => {
+    const { data } = (
+      await get({
+        costUsd: 12.345,
+        orgCapCents: 100_000,
+        orgRole: 'ORG_MEMBER',
+        orgSpendUsd: 450,
+        teamCapCents: 1000,
+        teamRole: 'ADMIN',
+        teamSpendUsd: 8,
+      })
+    ).res.json();
+    expect(data.budget).toMatchObject({ percentUsed: 80, scope: 'team' });
+    expect(data.admin).toEqual({ monthCostUsdCents: 1235 });
+  });
+
+  it("keeps the organization's meter, and withholds the spend, when the org's cap is the tighter", async () => {
+    const { data } = (
+      await get({
+        costUsd: 12.345,
+        orgCapCents: 100_000,
+        orgRole: 'ORG_MEMBER',
+        orgSpendUsd: 900,
+        teamCapCents: 1_000_000,
+        teamRole: 'ADMIN',
+        teamSpendUsd: 8,
+      })
+    ).res.json();
+    expect(data.budget).toMatchObject({ percentUsed: 90, scope: 'org' });
+    expect(data.admin).toEqual({});
+  });
+
   it('keeps the spend for an ORG_ADMIN who is also the team ADMIN, and for a platform ADMIN', async () => {
     const orgAdmin = await get({
       costUsd: 12.345,
@@ -427,8 +483,8 @@ describe('GET /api/v1/teams/:id/overview', () => {
       timeToMergeP50Hours: 4,
     });
     expect(data.repos).toEqual([
-      { id: 'c1', name: 'acme/api', ownerTeamName: null, relation: 'owned' },
-      { id: 'c2', name: 'acme/lib', ownerTeamName: 'Beta', relation: 'shared' },
+      { canLaunch: true, id: 'c1', name: 'acme/api', ownerTeamName: null, relation: 'owned' },
+      { canLaunch: false, id: 'c2', name: 'acme/lib', ownerTeamName: 'Beta', relation: 'shared' },
     ]);
   });
 

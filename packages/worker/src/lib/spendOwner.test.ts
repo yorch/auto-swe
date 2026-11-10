@@ -101,6 +101,30 @@ describe('currentSpendOwner', () => {
     expect(await currentSpendOwner()).toEqual({ orgId: 'org-of-request', teamId: 'request' });
   });
 
+  it('attributes a connection-less run on a team-less template to the team its launch was held to', async () => {
+    h.run.mockResolvedValue({
+      channel: null,
+      connection: null,
+      template: { team: null },
+      workRequest: {
+        billingOrgId: 'org-of-launcher',
+        billingTeam: team('launcher'),
+        connection: null,
+      },
+    });
+    expect(await currentSpendOwner()).toEqual({ orgId: 'org-of-launcher', teamId: 'launcher' });
+
+    // A stamped team outside the charged org is not trusted for a team: the org alone stands.
+    _resetConfigCacheForTests();
+    h.run.mockResolvedValue({
+      channel: null,
+      connection: null,
+      template: { team: null },
+      workRequest: { billingOrgId: 'org-stamped', billingTeam: team('launcher'), connection: null },
+    });
+    expect(await currentSpendOwner()).toEqual({ orgId: 'org-stamped' });
+  });
+
   it('prefers what the activity declared, without touching the workflow rows', async () => {
     const owner = await withSpendOwner(Promise.resolve({ orgId: 'o', teamId: 't' }), () =>
       currentSpendOwner()

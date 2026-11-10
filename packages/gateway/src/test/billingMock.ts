@@ -24,3 +24,28 @@ export async function orgMonthSpend(
   const finalizedUsd = Number(usage?.costUsdAccrued ?? 0);
   return { finalizedUsd, inFlightUsd: 0, runlessUsd: 0, totalUsd: finalizedUsd };
 }
+
+/**
+ * Stand-in for `teamMonthSpend` and `isTeamOverBudget`: a team's spend is whatever the hand-built
+ * Prisma mock lists in `teamSpendUsd`, keyed by team id. The real functions are tested in
+ * `shared/src/lib/billing.test.ts` and, against a database, in `lib/teamBudget.pg.test.ts`.
+ */
+export async function teamMonthSpend(
+  db: { teamSpendUsd?: Record<string, number> },
+  teamId: string
+) {
+  const finalizedUsd = db.teamSpendUsd?.[teamId] ?? 0;
+  return { finalizedUsd, inFlightUsd: 0, runlessUsd: 0, totalUsd: finalizedUsd };
+}
+
+export async function isTeamOverBudget(
+  db: { teamSpendUsd?: Record<string, number> },
+  teamId: string,
+  capCents: number | null | undefined
+) {
+  if (capCents == null) {
+    return false;
+  }
+  const { totalUsd } = await teamMonthSpend(db, teamId);
+  return Math.round(totalUsd * 100 + 1e-9) >= capCents;
+}

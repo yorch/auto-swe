@@ -17,6 +17,7 @@ const m = vi.hoisted(() => ({
 }));
 vi.mock('@auto-swe/shared/config', () => ({ resolveSettings: vi.fn(async () => m.limits) }));
 vi.mock('@auto-swe/shared/lib/billing', () => ({
+  isTeamOverBudget: vi.fn(async () => false),
   orgMonthSpend: vi.fn(async () => ({ totalUsd: 0 })),
   usdToCents: (usd: number) => usd * 100,
 }));

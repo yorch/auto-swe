@@ -92,6 +92,9 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
             inputSchema: null,
             team: {
               id: 'team-1',
+              memberships: [],
+              monthlyBudgetUsdCents: null,
+              name: 'Team',
               organization: { id: 'org-1', monthlyBudgetUsdCents: null },
               orgId: 'org-1',
             },
@@ -183,6 +186,9 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
         inputSchema: null,
         team: {
           id: 'team-1',
+          memberships: [],
+          monthlyBudgetUsdCents: null,
+          name: 'Team',
           organization: { id: 'org-1', monthlyBudgetUsdCents: 5000 },
         },
         teamId: 'team-1',
@@ -236,6 +242,9 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
         inputSchema: null,
         team: {
           id: 'team-1',
+          memberships: [],
+          monthlyBudgetUsdCents: null,
+          name: 'Team',
           organization: { id: 'org-1', monthlyBudgetUsdCents: null },
         },
         teamId: 'team-1',
@@ -281,7 +290,13 @@ describe('POST /api/v1/workflow-templates/:id/runs (generic trigger)', () => {
             activeVersion: 1,
             id: TEMPLATE_ID,
             inputSchema: null,
-            team: { id: 'team-1', organization: { id: 'org-1', monthlyBudgetUsdCents: null } },
+            team: {
+              id: 'team-1',
+              memberships: [],
+              monthlyBudgetUsdCents: null,
+              name: 'Team',
+              organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+            },
             teamId: 'team-1',
             workspaceProvider: 'api_only',
           }

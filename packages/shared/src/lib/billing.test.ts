@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../index.js';
-import { billedOrgId, orgMonthSpend, usdToCents } from './billing.js';
+import {
+  billedOrgId,
+  isTeamOverBudget,
+  orgMonthSpend,
+  teamMonthSpend,
+  usdToCents,
+} from './billing.js';
 
 const ORG = 'org-1';
 
@@ -319,5 +325,116 @@ describe('usdToCents', () => {
     expect(usdToCents(9.9999999e-5)).toBe(0);
     expect(usdToCents(0.099999999)).toBe(10);
     expect(usdToCents(10)).toBe(1000);
+  });
+});
+
+describe('teamMonthSpend', () => {
+  function teamDb(opts: {
+    finalized?: number | null;
+    inFlight?: { id: string; workflowId: string }[];
+    ledgers?: { temporalWorkflowId: string; costUsdAccrued: number }[];
+    tracedCost?: number | null;
+    runlessCost?: number | null;
+  }) {
+    const tx = {
+      activeWorkflow: { findMany: vi.fn(async () => opts.ledgers ?? []) },
+      agentTrace: {
+        aggregate: vi.fn(async (args: { where: { runId?: unknown } }) => ({
+          _sum: {
+            costUsd:
+              args.where.runId === null ? (opts.runlessCost ?? null) : (opts.tracedCost ?? null),
+          },
+        })),
+      },
+      workflowRun: {
+        aggregate: vi.fn(async () => ({ _sum: { costUsdAccrued: opts.finalized ?? null } })),
+        findMany: vi.fn(async () => opts.inFlight ?? []),
+      },
+    };
+    const $transaction = vi.fn(async (fn: (t: typeof tx) => unknown, _o: unknown) => fn(tx));
+    return { $transaction, db: { ...tx, $transaction } as unknown as PrismaClient, tx };
+  }
+
+  it('sums finalized, in-flight and runless spend, in one repeatable-read snapshot', async () => {
+    const { db, $transaction } = teamDb({
+      finalized: 5,
+      inFlight: [
+        { id: 'r1', workflowId: 'wf-1' },
+        { id: 'r2', workflowId: 'wf-2' },
+      ],
+      ledgers: [{ costUsdAccrued: 3, temporalWorkflowId: 'wf-1' }],
+      runlessCost: 1,
+      tracedCost: 2,
+    });
+    expect(await teamMonthSpend(db, 'team-1')).toEqual({
+      finalizedUsd: 5,
+      inFlightUsd: 5,
+      runlessUsd: 1,
+      totalUsd: 11,
+    });
+    expect($transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: 'RepeatableRead',
+    });
+  });
+
+  it('counts only finalized runs that ended this UTC month, and in-flight ones by endedAt null', async () => {
+    const { db, tx } = teamDb({});
+    await teamMonthSpend(db, 'team-1');
+    const monthStart = new Date(`${new Date().toISOString().slice(0, 7)}-01T00:00:00.000Z`);
+    expect(tx.workflowRun.aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { attributedTeamId: 'team-1', endedAt: { gte: monthStart } },
+      })
+    );
+    expect(tx.workflowRun.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { attributedTeamId: 'team-1', endedAt: null } })
+    );
+    expect(tx.agentTrace.aggregate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { createdAt: { gte: monthStart }, runId: null, teamId: 'team-1' },
+      })
+    );
+  });
+
+  it('does not read traces for a run its ledger row covers', async () => {
+    const { db, tx } = teamDb({
+      inFlight: [{ id: 'r1', workflowId: 'wf-1' }],
+      ledgers: [{ costUsdAccrued: 4, temporalWorkflowId: 'wf-1' }],
+    });
+    expect((await teamMonthSpend(db, 'team-1')).inFlightUsd).toBe(4);
+    // Only the runless read: the covered run's traces are not summed on top of its ledger.
+    expect(tx.agentTrace.aggregate).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the same reads without the snapshot when the pool times out (P2028)', async () => {
+    const { db, $transaction } = teamDb({ finalized: 2 });
+    $transaction.mockRejectedValueOnce(Object.assign(new Error('timeout'), { code: 'P2028' }));
+    expect((await teamMonthSpend(db, 'team-1')).totalUsd).toBe(2);
+  });
+});
+
+describe('isTeamOverBudget', () => {
+  const at = (usd: number) => teamDbSpend(usd);
+  function teamDbSpend(usd: number) {
+    return {
+      $transaction: async (fn: (t: unknown) => unknown) =>
+        fn({
+          activeWorkflow: { findMany: async () => [] },
+          agentTrace: { aggregate: async () => ({ _sum: { costUsd: null } }) },
+          workflowRun: {
+            aggregate: async () => ({ _sum: { costUsdAccrued: usd } }),
+            findMany: async () => [],
+          },
+        }),
+      activeWorkflow: { findMany: vi.fn(async () => []) },
+      agentTrace: { aggregate: vi.fn(async () => ({ _sum: { costUsd: null } })) },
+    } as unknown as PrismaClient;
+  }
+
+  it('is false without a cap and true at or past it, including a zero cap', async () => {
+    expect(await isTeamOverBudget(at(1_000_000), 't', null)).toBe(false);
+    expect(await isTeamOverBudget(at(9.99), 't', 1000)).toBe(false);
+    expect(await isTeamOverBudget(at(10), 't', 1000)).toBe(true);
+    expect(await isTeamOverBudget(at(0), 't', 0)).toBe(true);
   });
 });

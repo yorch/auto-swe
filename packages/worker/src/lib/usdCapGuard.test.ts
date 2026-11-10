@@ -5,6 +5,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     activeWorkflow: { findFirst: vi.fn() },
     organization: { findUnique: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
+    team: { findUnique: vi.fn() },
     workflowRun: { findUnique: vi.fn() },
   },
 }));
@@ -40,6 +41,7 @@ const findLedgerRow = vi.mocked(prisma.activeWorkflow.findFirst);
 const findChannel = vi.mocked(prisma.slackChannel.findUnique);
 const findRun = vi.mocked(prisma.workflowRun.findUnique);
 const findOrg = vi.mocked(prisma.organization.findUnique);
+const findTeam = vi.mocked(prisma.team.findUnique);
 
 const UNPRICED = 'openrouter/no-price-here';
 
@@ -76,6 +78,7 @@ beforeEach(() => {
   // A run no connection or repository places anywhere unless a test says otherwise.
   findRun.mockResolvedValue({ id: 'run-1', workRequest: null } as never);
   findOrg.mockResolvedValue(null as never);
+  findTeam.mockResolvedValue(null as never);
   currentSpendOwnerMock.mockResolvedValue({});
 });
 
@@ -222,6 +225,29 @@ describe('assertModelPricedForUsdCap', () => {
     expect(findOrg).not.toHaveBeenCalled();
     currentSpendOwnerMock.mockResolvedValue({ orgId: 'org-1' });
     findOrg.mockResolvedValue({ monthlyBudgetUsdCents: null } as never);
+    await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
+  });
+
+  it("refuses an unpriced model under the run's owning team's own USD cap", async () => {
+    findRun.mockResolvedValue({
+      attributedTeamId: 'team-1',
+      id: 'run-1',
+      workRequest: null,
+    } as never);
+    findTeam.mockResolvedValue({ monthlyBudgetUsdCents: 5000 } as never);
+    const err = await refusal(assertModelPricedForUsdCap(UNPRICED));
+    expect(err.type).toBe(MODEL_UNPRICED);
+    expect(err.message).toContain('team');
+    expect(findTeam).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'team-1' } }));
+  });
+
+  it('proceeds for an unpriced model when the owning team sets no cap', async () => {
+    findRun.mockResolvedValue({
+      attributedTeamId: 'team-1',
+      id: 'run-1',
+      workRequest: null,
+    } as never);
+    findTeam.mockResolvedValue({ monthlyBudgetUsdCents: null } as never);
     await expect(assertModelPricedForUsdCap(UNPRICED)).resolves.toBeUndefined();
   });
 

@@ -229,7 +229,11 @@ describe('POST /workflow-templates/:id/runs with a service principal token', () 
       s.templateTeamId = templateTeamId;
       const h = harness(s);
       expect((await h.run()).statusCode).toBe(201);
-      expect(h.runInputs[0]).toMatchObject({ billingOrgId: 'org-1', connectionId: null });
+      expect(h.runInputs[0]).toMatchObject({
+        billingOrgId: 'org-1',
+        billingTeamId: SP_TEAM,
+        connectionId: null,
+      });
       await h.app.close();
     }
   });

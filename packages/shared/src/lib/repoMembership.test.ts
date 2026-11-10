@@ -5,6 +5,8 @@ import {
   isRepoTeam,
   repoMembersSelect,
   repoMemberWhere,
+  teamMayUseConnection,
+  templateMayUseConnection,
 } from './repoMembership.js';
 
 const repo = {
@@ -37,6 +39,7 @@ describe('repoMembership', () => {
     expect(repoMembersSelect({ userId: true }, { userId: 'u' })).toEqual({
       shares: {
         select: {
+          canLaunch: true,
           team: { select: { memberships: { select: { userId: true }, where: { userId: 'u' } } } },
         },
       },
@@ -61,5 +64,40 @@ describe('team-level reach (a service principal belongs to a team, not to its me
     expect(isRepoTeam(repo, 'owner')).toBe(true);
     expect(isRepoTeam(repo, 'shared')).toBe(true);
     expect(isRepoTeam(repo, 'stranger')).toBe(false);
+  });
+});
+
+describe('a connection used as a secondary connection of a run', () => {
+  const git = {
+    shares: [
+      { canLaunch: true, teamId: 'launch-sharee' },
+      { canLaunch: false, teamId: 'view-sharee' },
+    ],
+    teamId: 'owner',
+    type: 'git_repo',
+  };
+
+  it('counts a view-only share for nothing on a git repository', () => {
+    expect(teamMayUseConnection(git, 'owner')).toBe(true);
+    expect(teamMayUseConnection(git, 'launch-sharee')).toBe(true);
+    expect(teamMayUseConnection(git, 'view-sharee')).toBe(false);
+    expect(teamMayUseConnection(git, 'stranger')).toBe(false);
+  });
+
+  it('reads a share without the flag as launchable, like the column default', () => {
+    expect(
+      teamMayUseConnection({ ...git, shares: [{ teamId: 'view-sharee' }] }, 'view-sharee')
+    ).toBe(true);
+  });
+
+  it('keeps any other connection type on plain reach', () => {
+    const mcp = { shares: [{ canLaunch: false, teamId: 'sharee' }], teamId: 'owner', type: 'mcp' };
+    expect(teamMayUseConnection(mcp, 'sharee')).toBe(true);
+  });
+
+  it('lets a global template use any connection and holds a team template to the rule', () => {
+    expect(templateMayUseConnection(git, null)).toBe(true);
+    expect(templateMayUseConnection(git, 'view-sharee')).toBe(false);
+    expect(templateMayUseConnection(git, 'launch-sharee')).toBe(true);
   });
 });

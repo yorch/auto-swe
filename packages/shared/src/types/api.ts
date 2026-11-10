@@ -235,6 +235,25 @@ export interface BudgetStatus {
   alertThresholdPercent: number | null;
 }
 
+/**
+ * A team's own monthly cap, as a team ADMIN (or an ORG_ADMIN, or a platform ADMIN) manages it.
+ * Dollar amounts appear only here and in the repo's other admin-only budget reads.
+ */
+export interface TeamBudgetSettings {
+  /** The cap in cents; null when the team sets none and only the organization's cap applies. */
+  monthlyBudgetUsdCents: number | null;
+  /** Alert threshold as a percentage of the cap, 1 to 100; null for the default. */
+  budgetAlertThresholdPercent: number | null;
+  /** Spend this calendar month (UTC) attributed to the team, in cents. */
+  monthSpendUsdCents: number;
+}
+
+/** Body of `PATCH /api/v1/teams/:id/budget`; an omitted key is left unchanged. */
+export interface UpdateTeamBudgetBody {
+  monthlyBudgetUsdCents?: number | null;
+  budgetAlertThresholdPercent?: number | null;
+}
+
 /** What kind of obligation a "Needs you" row is. */
 export type MeNeedsYouKind = 'approval' | 'approval_due_soon' | 'failed_run' | 'pr_merge';
 
@@ -283,6 +302,8 @@ export interface TeamOverviewRepo {
   /** `owner/name`. */
   name: string;
   relation: 'owned' | 'shared';
+  /** False when the repository is shared to the team view-only; always true for an owned one. */
+  canLaunch: boolean;
   /** The owning team's name when `relation` is `shared`; null when owned. */
   ownerTeamName: string | null;
 }
@@ -374,6 +395,8 @@ export interface TeamDetail extends TeamSummary {
 
 /** A repository shared with a team, and the team that owns it. */
 export interface SharedRepoRef extends RepoRef {
+  /** False when this team may view the repository but not start work on it. */
+  canLaunch: boolean;
   team: { id: string; name: string; slug: string };
 }
 
@@ -540,7 +563,8 @@ export interface RepositorySummary {
    * Further teams whose members may see and launch on this repository. The
    * owning `team` keeps management. Present on the repository listing.
    */
-  shares?: Array<{ team: TeamRef }>;
+  /** `canLaunch` false means the sharing team may view the repository but not start work on it. */
+  shares?: Array<{ canLaunch: boolean; team: TeamRef }>;
   _count: { activeWorkflows: number };
 }
 

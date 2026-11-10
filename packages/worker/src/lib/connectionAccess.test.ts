@@ -39,7 +39,12 @@ function runOf(templateTeam: string | null) {
 }
 
 function connectionOf(
-  overrides: Partial<{ isActive: boolean; shares: { teamId: string }[]; teamId: string }> = {}
+  overrides: Partial<{
+    isActive: boolean;
+    shares: { canLaunch?: boolean; teamId: string }[];
+    teamId: string;
+    type: string;
+  }> = {}
 ) {
   (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
     isActive: true,
@@ -95,6 +100,26 @@ describe('assertRunMayUseConnection', () => {
     connectionOf({ shares: [{ teamId: 'team-a' }], teamId: 'team-b' });
 
     await expect(assertRunMayUseConnection(CONNECTION_ID, 'mcp')).resolves.toBeUndefined();
+  });
+
+  it('refuses a git repository shared with the template team view-only', async () => {
+    runOf('team-a');
+    connectionOf({
+      shares: [{ canLaunch: false, teamId: 'team-a' }],
+      teamId: 'team-b',
+      type: 'git_repo',
+    });
+    await expect(assertRunMayUseConnection(CONNECTION_ID, 'step')).rejects.toThrow(
+      'not reachable from this run'
+    );
+
+    // Launchable, it is reachable.
+    connectionOf({
+      shares: [{ canLaunch: true, teamId: 'team-a' }],
+      teamId: 'team-b',
+      type: 'git_repo',
+    });
+    await expect(assertRunMayUseConnection(CONNECTION_ID, 'step')).resolves.toBeUndefined();
   });
 
   it('allows any connection from a global template, which only an admin may author', async () => {

@@ -131,6 +131,7 @@ async function loadRepoWithMembership(prisma: Prisma, repoId: string, userId: st
       // `teamId` is what a schedule's own `teamId` is matched against.
       shares: {
         select: {
+          canLaunch: true,
           team: {
             select: { memberships: { select: { role: true, userId: true }, where: { userId } } },
           },
@@ -139,7 +140,10 @@ async function loadRepoWithMembership(prisma: Prisma, repoId: string, userId: st
       },
       team: {
         select: {
+          id: true,
           memberships: { select: { role: true, userId: true }, where: { userId } },
+          monthlyBudgetUsdCents: true,
+          name: true,
           organization: { select: { id: true, monthlyBudgetUsdCents: true } },
           orgId: true,
         },

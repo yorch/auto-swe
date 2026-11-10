@@ -10,19 +10,27 @@ import { orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
 import { forecastMonthlyBudget } from '@auto-swe/shared/lib/budgetForecast';
 import type { BudgetStatus } from '@auto-swe/shared/types/api';
 
-interface OrgBudgetInputs {
+export interface OrgBudgetInputs {
   monthlyBudgetUsdCents: number | null;
   budgetAlertThresholdPercent: number | null;
 }
 
-/** The status for one organization's cap, threshold and month-to-date spend. Pure. */
-export function budgetStatusFor(org: OrgBudgetInputs, spendUsd: number, now: Date): BudgetStatus {
+/**
+ * The status for one cap, threshold and month-to-date spend. Pure, and the one core an
+ * organization's and a team's status share: only `scope` differs.
+ */
+export function budgetStatusFor(
+  org: OrgBudgetInputs,
+  spendUsd: number,
+  now: Date,
+  scope: BudgetStatus['scope'] = 'org'
+): BudgetStatus {
   const cap = org.monthlyBudgetUsdCents;
   if (cap == null) {
     return {
       alertThresholdPercent: org.budgetAlertThresholdPercent,
       percentUsed: null,
-      scope: 'org',
+      scope,
       state: 'no_cap',
     };
   }
@@ -51,7 +59,7 @@ export function budgetStatusFor(org: OrgBudgetInputs, spendUsd: number, now: Dat
   return {
     alertThresholdPercent: org.budgetAlertThresholdPercent,
     percentUsed,
-    scope: 'org',
+    scope,
     state,
   };
 }

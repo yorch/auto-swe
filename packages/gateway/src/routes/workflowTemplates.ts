@@ -2280,6 +2280,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           team: {
             select: {
               id: true,
+              // Filtered to the caller, so a refusal may name the team to a member only.
+              memberships: {
+                select: { userId: true },
+                where: { userId: user?.sub ?? '00000000-0000-0000-0000-000000000000' },
+              },
+              monthlyBudgetUsdCents: true,
+              name: true,
               organization: { select: { id: true, monthlyBudgetUsdCents: true } },
               orgId: true,
             },
@@ -2470,15 +2477,28 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // and stamped on the request (`billingOrgId`) so billing, the in-flight
       // figure and the mid-run cap count the run against that same org.
       let billingOrgId: string | null = null;
+      // The team whose own cap the same decision applied, stamped beside the org (`billingTeamId`):
+      // the last source of the run's attributed team, so its spend counts where it was gated.
+      let billingTeamId: string | null = null;
       if (caller.kind === 'user') {
         // A person's connection-less run spends its template team's org.
         if (!connectionId && tpl.team?.organization) {
           billingOrgId = tpl.team.organization.id;
+          billingTeamId = tpl.team.id;
           const authorization = await authorizeLaunch(fastify.prisma, caller.user, {
             gate: request.repoAccessGate,
             log: request.log,
             orgs: [tpl.team.organization],
             repos: [],
+            // The run spends its template's team, the team it is attributed to.
+            teams: [
+              {
+                id: tpl.team.id,
+                isMember: tpl.team.memberships.length > 0,
+                monthlyBudgetUsdCents: tpl.team.monthlyBudgetUsdCents,
+                name: tpl.team.name,
+              },
+            ],
           });
           if (!authorization.ok) {
             return sendLaunchRefusal(reply, authorization.refusal);
@@ -2491,16 +2511,33 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         // templates and its own team's, so that is the template team's org whenever the
         // template has a team, and the one org a global template's run can be charged to.
         const principalTeam = await fastify.prisma.team.findUnique({
-          select: { organization: { select: { id: true, monthlyBudgetUsdCents: true } } },
+          select: {
+            id: true,
+            monthlyBudgetUsdCents: true,
+            name: true,
+            organization: { select: { id: true, monthlyBudgetUsdCents: true } },
+          },
           where: { id: caller.principal.teamId },
         });
         billingOrgId = principalTeam?.organization?.id ?? null;
+        billingTeamId = principalTeam?.id ?? null;
         const orgs = [tpl.team?.organization, principalTeam?.organization].filter(
           (o): o is { id: string; monthlyBudgetUsdCents: number | null } => !!o
         );
+        // Attribution puts such a run on the principal's team before the template's, so the
+        // principal's team is held to its cap, and the template's too (stricter, like the orgs).
+        const teams = [principalTeam, tpl.team]
+          .filter((t): t is NonNullable<typeof t> => !!t)
+          .map((t) => ({
+            id: t.id,
+            isMember: false,
+            monthlyBudgetUsdCents: t.monthlyBudgetUsdCents,
+            name: t.name,
+          }));
         const authorization = await authorizeServiceLaunch(fastify.prisma, caller.principal, {
           orgs,
           repos: [],
+          teams,
         });
         if (!authorization.ok) {
           return sendLaunchRefusal(reply, authorization.refusal);
@@ -2613,6 +2650,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           },
           runInput: {
             billingOrgId,
+            billingTeamId,
             connectionId,
             description,
             externalTicketId,

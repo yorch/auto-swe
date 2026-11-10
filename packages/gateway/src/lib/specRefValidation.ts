@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@auto-swe/shared';
-import { templateReachesConnection } from '@auto-swe/shared/lib/repoMembership';
+import { templateMayUseConnection } from '@auto-swe/shared/lib/repoMembership';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 
@@ -101,7 +101,12 @@ export async function findSpecRefProblems(
       ids.length > 0
         ? await runUnscoped('existence check on author-supplied UUIDs', ['Connection'], () =>
             prisma.connection.findMany({
-              select: { id: true, shares: { select: { teamId: true } }, teamId: true },
+              select: {
+                id: true,
+                shares: { select: { canLaunch: true, teamId: true } },
+                teamId: true,
+                type: true,
+              },
               where: { id: { in: ids }, isActive: true, type: 'mcp' },
             })
           )
@@ -121,8 +126,8 @@ export async function findSpecRefProblems(
       // The connection exists, but a team's template may use only a connection that
       // team owns or has been shared with it: a literal reference is not a licence to
       // spend another team's token. Global templates are admin-authored and may use
-      // any (see `templateReachesConnection`).
-      if (!templateReachesConnection(connection, templateTeamId)) {
+      // any (see `templateMayUseConnection`).
+      if (!templateMayUseConnection(connection, templateTeamId)) {
         warnings.push({
           code: 'MCP_REF_NOT_REACHABLE',
           field: 'connectionRef',

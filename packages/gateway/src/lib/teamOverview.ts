@@ -15,7 +15,6 @@ import {
   teamDeskScope,
 } from './meSummary.js';
 import { isOrgAdmin } from './orgAccess.js';
-import { orgBudgetStatuses } from './orgBudgetStatus.js';
 import { asPlatformAdmin } from './platformAdminScope.js';
 import { teamPullRequestOutcomes } from './pullRequestOutcomesQuery.js';
 import { groupRequestExecutions } from './requestExecutions.js';
@@ -27,6 +26,7 @@ import {
   runMetricsTeamScope,
 } from './runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter, type VisibilityActor } from './runVisibility.js';
+import { bindingBudgetStatuses } from './teamBudgetStatus.js';
 import { type MaybeGate, reachableConnections } from './tenantScope.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -194,6 +194,7 @@ async function loadRepos(deps: OverviewDeps, team: { id: string }): Promise<Team
           name: true,
           organizationName: true,
           repoName: true,
+          shares: { select: { canLaunch: true }, where: { teamId: team.id } },
           team: { select: { id: true, name: true } },
         },
         take: REPO_LIMIT,
@@ -209,6 +210,8 @@ async function loadRepos(deps: OverviewDeps, team: { id: string }): Promise<Team
   return rows.map((row) => {
     const owned = row.team.id === team.id;
     return {
+      // An owned repository is never view-only; a shared one is by this team's own share.
+      canLaunch: owned || row.shares.every((s) => s.canLaunch),
       id: row.id,
       name: [row.organizationName, row.repoName].filter(Boolean).join('/') || (row.name ?? row.id),
       ownerTeamName: owned ? null : row.team.name,
@@ -315,14 +318,14 @@ export async function buildTeamOverview(
       new Date(now)
     ),
     loadRepos(deps, team),
-    orgBudgetStatuses(prisma, [team.orgId]),
+    bindingBudgetStatuses(prisma, [{ id: team.id, orgId: team.orgId }]),
   ]);
 
   const counts = countRunningRequests(desk.running);
   const groups = groupRequestExecutions(recent);
   const overview: TeamOverview = {
     activity,
-    budget: budgets.get(team.orgId) ?? null,
+    budget: budgets.get(team.id) ?? null,
     last7d: {
       failed: groups.filter((g) => g.status === 'FAILED' || g.status === 'TIMED_OUT').length,
       started: groups.length,
@@ -390,10 +393,16 @@ export async function buildTeamOverview(
   if (viewerLevel === 'lead') {
     return withLead;
   }
-  // The team's spend in dollars sits beside the organization's percentage, and the two together
-  // give away the cap, which is an ORG_ADMIN's. So the figure is attached only to a viewer who may
-  // read the cap anyway, or when the organization has none; otherwise the key is absent.
-  if (overview.budget !== null && !(await isOrgAdmin(prisma, user, team.orgId))) {
+  // The team's spend in dollars sits beside a percentage of a cap, and the two together give the
+  // cap away. When the binding cap is the TEAM's own, it is the team ADMIN's to read (they set it
+  // and read it at `GET /teams/:id/budget`), so the figure is attached. When it is the
+  // organization's, the cap is an ORG_ADMIN's: the figure is attached only to one, and otherwise
+  // the key is absent. With no cap at all there is nothing to give away.
+  if (
+    overview.budget !== null &&
+    overview.budget.scope !== 'team' &&
+    !(await isOrgAdmin(prisma, user, team.orgId))
+  ) {
     return { ...withLead, admin: {} };
   }
   return { ...withLead, admin: { monthCostUsdCents: await monthCostCents(deps, team.id, now) } };

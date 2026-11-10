@@ -39,7 +39,7 @@ import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance } from 'fastify';
 import { getErrorName } from '../../plugins/auth.js';
 import { authorizeLaunch } from '../launchAuthorization.js';
-import { isOrgOverBudget } from '../orgAccess.js';
+import { isOrgOverBudget, isTeamOverBudget } from '../orgAccess.js';
 import { webhookRepositoryWhere } from '../repositoryHost.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../systemTemplate.js';
 import { isValidTicketId } from '../ticketId.js';
@@ -139,9 +139,12 @@ export function ownerLockKey(ownerKey: string): string {
 export const connectionInclude = {
   automations: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
   installation: { select: { isActive: true } },
+  // Whether the team an automation acts for may START work through its share.
+  shares: { select: { canLaunch: true, teamId: true } },
   team: {
     select: {
       id: true,
+      monthlyBudgetUsdCents: true,
       organization: { select: { id: true, monthlyBudgetUsdCents: true } },
       orgId: true,
     },
@@ -226,6 +229,7 @@ export type EngineTeam = EngineConnection['team'];
 /** What a team automation's decision reads of its team (the shape of `EngineTeam`). */
 export const engineTeamSelect = {
   id: true,
+  monthlyBudgetUsdCents: true,
   organization: { select: { id: true, monthlyBudgetUsdCents: true } },
   orgId: true,
 } satisfies Prisma.TeamSelect;
@@ -360,6 +364,18 @@ export async function decideAndStart<F, X>(
         );
       }
     }
+    // A repository shared view-only to the automation's team can be read by it, not started on.
+    if (
+      foreignTarget &&
+      connection?.shares.some((s) => s.teamId === team.id && s.canLaunch === false)
+    ) {
+      return recordDecision(
+        prisma,
+        fireBase,
+        'SUPPRESSED_PRECONDITION',
+        'the repository is shared with this team to view only'
+      );
+    }
     // A source that acts only for a platform member: the account on the host must be one.
     let requestedById: string | null = null;
     const actor = source.actor?.(facts) ?? null;
@@ -399,6 +415,18 @@ export async function decideAndStart<F, X>(
         fireBase,
         'SUPPRESSED_BUDGET',
         'the repository’s organization is over its monthly budget'
+      );
+    }
+    // The team whose spend the run joins: the OWNER of the repository it acts on (also when the
+    // automation belongs to a team the repository is shared with), else the automation's own team.
+    // The same team `resolveWorkflowRunAttribution` attributes the run to.
+    const capTeam = connection ? connection.team : team;
+    if (capTeam && (await isTeamOverBudget(prisma, capTeam.id, capTeam.monthlyBudgetUsdCents))) {
+      return recordDecision(
+        prisma,
+        fireBase,
+        'SUPPRESSED_BUDGET',
+        'the team that owns the work is over its monthly budget'
       );
     }
     const template = await resolveAutomationTemplate(
@@ -508,6 +536,9 @@ export async function decideAndStart<F, X>(
             // A run with no repository spends its team's org, the one gated above: stamped so
             // it is billed, counted in flight and capped mid-run against that org.
             billingOrgId: connection ? null : team.orgId,
+            // And its team, the one whose cap `capTeam` held it to: a global template names no
+            // team of its own, so without this the run's spend would count against none.
+            billingTeamId: connection ? null : team.id,
             connectionId: connection?.id ?? null,
             description: run.description,
             externalTicketId: run.ticketId,

@@ -6,7 +6,8 @@
  * decides it up front; a path with no user of its own — an automation fire — must decide it
  * here, or the run spends a credential nobody authorized.
  *
- * The rule is the acting **team's** reach (`isRepoTeam`: owns it, or has it shared).
+ * The rule is the acting **team's** reach (`teamMayUseConnection`: owns it, or has it shared —
+ * and for a git repository, not shared view-only, which lets a team see it and not use its token).
  * `templateReachesConnection` is deliberately not used: its global-template branch answers
  * `true` for any connection, which is sound for a literal id an ADMIN wrote into a spec's
  * `connectionRef`, and a bypass for a *payload binding* — chosen by a team LEAD filling in a
@@ -16,7 +17,7 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { declaredConnectionInputs, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
-import { isRepoTeam } from '@auto-swe/shared/lib/repoMembership';
+import { teamMayUseConnection } from '@auto-swe/shared/lib/repoMembership';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 
 /**
@@ -49,13 +50,13 @@ export async function declaredConnectionProblem(args: {
   const declared = declaredConnectionInputs(args.inputSchema, args.payload);
   const others = declared.filter((field) => field.connectionId !== args.primaryConnectionId);
   // Unscoped on purpose: the ids come from the payload, and the question is whether the acting
-  // team reaches them — `isRepoTeam` below is that decision. A tenant filter would answer a
+  // team reaches them — `teamMayUseConnection` below is that decision. A tenant filter would answer a
   // different question (what this scope can see) and would refuse a connection shared with the team.
   const rows =
     others.length === 0
       ? []
       : await runUnscoped(
-          'a payload names connections by id; reach is decided by isRepoTeam below',
+          'a payload names connections by id; reach is decided by teamMayUseConnection below',
           ['Connection'],
           () =>
             args.prisma.connection.findMany({
@@ -63,7 +64,7 @@ export async function declaredConnectionProblem(args: {
                 id: true,
                 installation: { select: { host: true, installationId: true, isActive: true } },
                 isActive: true,
-                shares: { select: { teamId: true } },
+                shares: { select: { canLaunch: true, teamId: true } },
                 teamId: true,
                 type: true,
               },
@@ -81,7 +82,7 @@ export async function declaredConnectionProblem(args: {
     const row = byId.get(connectionId);
     // Inactive refuses too: the run could not load it, and a fire that cannot start should
     // say so now rather than fail inside the worker with the same information.
-    if (!row?.isActive || !isRepoTeam(row, args.teamId)) {
+    if (!row?.isActive || !teamMayUseConnection(row, args.teamId)) {
       return `the connection in '${field}' is not one this team can use`;
     }
     // The same two refusals a launch makes on a declared connection: a retired GitHub

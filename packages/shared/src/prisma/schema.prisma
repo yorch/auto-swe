@@ -921,6 +921,9 @@ model ConnectionTeamShare {
   team         Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
   createdById  String?    @map("created_by_id") @db.Uuid
   createdBy    User?      @relation("ConnectionShareCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  /// False makes the share view-only: the sharing team's members see the repository but cannot
+  /// start work on it. The owner's team and budget pay for runs on it either way.
+  canLaunch    Boolean    @default(true) @map("can_launch")
   createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz
 
   @@unique([connectionId, teamId])
@@ -1245,6 +1248,11 @@ model Team {
   /// Default persona prompt for all channel assistants belonging to this team.
   /// Channel-level personaPrompt overrides this. Null = no team-wide persona.
   defaultPersonaPrompt String?      @map("default_persona_prompt")
+  /// Optional monthly spend cap in USD cents on runs attributed to this team (the owner of the
+  /// run's repository). Binds beside the organization's cap. Null = the team sets none.
+  monthlyBudgetUsdCents       Int?  @map("monthly_budget_usd_cents")
+  /// Percent of the team's cap at which to start warning (1-100). Null = the default.
+  budgetAlertThresholdPercent Int?  @map("budget_alert_threshold_percent")
   createdAt            DateTime     @default(now()) @map("created_at") @db.Timestamptz
   updatedAt            DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -1262,6 +1270,8 @@ model Team {
   eventEndpoints        EventEndpoint[]
   workflowTemplates     WorkflowTemplate[]
   attributedWorkflowRuns WorkflowRun[]          @relation("WorkflowRunAttributedTeam")
+  /// Connection-less requests charged to this team (`RunInput.billingTeamId`).
+  billedRunInputs       RunInput[]
   reportDigestSubscriptions ReportDigestSubscription[]
   shellAudits           WorkflowShellAudit[]
   providerCredentials   ProviderCredential[]
@@ -1836,6 +1846,14 @@ model RunInput {
   /// inherit it.
   billingOrgId     String?       @map("billing_org_id") @db.Uuid
   billingOrg       Organization? @relation(fields: [billingOrgId], references: [id], onDelete: SetNull)
+  /// The team a launch with no connection and no repository-derived team charged this request to:
+  /// the team whose own monthly cap the launch decision held it to (an automation's team, a
+  /// service principal's team, a template's team). It is the LAST source of the run's
+  /// `attributedTeamId`, so the team cap that gated the launch is the one the spend counts
+  /// against. Null whenever the launch named a connection, and on rows that predate it. Re-runs
+  /// of the request inherit it.
+  billingTeamId    String?       @map("billing_team_id") @db.Uuid
+  billingTeam      Team?         @relation(fields: [billingTeamId], references: [id], onDelete: SetNull)
   /// Immutable source identity recorded by the authorized launch transaction.
   /// Null on legacy rows; UNKNOWN is explicit and never promoted from absent links.
   knowledgeSourceKind WorkflowRunKnowledgeSourceKind? @map("knowledge_source_kind")
@@ -1890,6 +1908,7 @@ model RunInput {
   @@unique([requestedById, idempotencyKey])
   @@index([connectionId])
   @@index([billingOrgId])
+  @@index([billingTeamId])
   @@index([requestedById])
   @@index([requestedByServiceId, createdAt])
   @@index([externalTicketId])
@@ -2426,6 +2445,8 @@ model WorkflowRun {
   @@index([templateId])
   @@index([workRequestId])
   @@index([attributedTeamId, startedAt])
+  // Serves `teamMonthSpend`'s finalized aggregate (attributed team, ended this month).
+  @@index([attributedTeamId, endedAt])
   @@index([attributedRepoId, startedAt])
   @@index([attributedOrgId, startedAt])
   @@index([launchedById])

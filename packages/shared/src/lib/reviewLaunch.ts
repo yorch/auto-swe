@@ -121,7 +121,7 @@ export async function prepareReviewLaunch(db: PrismaClient, input: PrepareReview
     throw new ReviewLaunchError('REVIEW_NOTHING_TO_REVIEW', 'Source run has no repository');
   }
   const repo = await db.connection.findUnique({
-    include: { team: { select: { orgId: true } } },
+    include: { team: { select: { monthlyBudgetUsdCents: true, orgId: true } } },
     where: { id: connectionId },
   });
   if (!repo?.isActive || repo.type !== 'git_repo') {

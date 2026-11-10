@@ -28,7 +28,10 @@ function launchRepoSelect(userId: string) {
     shares: repoMembersSelect({ userId: true }, { userId }).shares,
     team: {
       select: {
+        id: true,
         memberships: { select: { role: true, userId: true }, where: { userId } },
+        monthlyBudgetUsdCents: true,
+        name: true,
         organization: { select: { monthlyBudgetUsdCents: true } },
         orgId: true,
       },
@@ -83,6 +86,7 @@ export async function teamAutomationAccess(prisma: PrismaClient, teamId: string,
       id: true,
       isActive: true,
       memberships: { select: { role: true }, where: { userId: user.sub } },
+      monthlyBudgetUsdCents: true,
       name: true,
       organization: { select: { id: true, monthlyBudgetUsdCents: true } },
       orgId: true,

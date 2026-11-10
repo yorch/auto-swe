@@ -229,7 +229,10 @@ export async function handleRunModalSubmission(
       shares: repoMembersSelect({ userId: true }, { userId: user.id }).shares,
       team: {
         select: {
+          id: true,
           memberships: { select: { userId: true }, where: { userId: user.id } },
+          monthlyBudgetUsdCents: true,
+          name: true,
           organization: { select: { id: true, monthlyBudgetUsdCents: true } },
           orgId: true,
         },

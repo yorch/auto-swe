@@ -57,6 +57,11 @@ export type ValidateRunConnectionResult =
   | {
       budgetCap: number | null;
       budgetOrgId: string | null;
+      /**
+       * The connection's OWNING team and its own cap, for a caller `authorizeLaunch` did not
+       * judge (a webhook), which holds the run to it with `assertTeamBudget`.
+       */
+      budgetTeam: { id: string; monthlyBudgetUsdCents: number | null } | null;
       ok: true;
       source: LaunchRepositorySource | null;
     }
@@ -90,6 +95,7 @@ export async function validateRunConnection(
 
   let budgetOrgId: string | null = null;
   let budgetCap: number | null = null;
+  let budgetTeam: { id: string; monthlyBudgetUsdCents: number | null } | null = null;
   let source: LaunchRepositorySource | null = null;
   /** The run's own connection type, for a declared field that repeats its id. */
   let primaryConnectionType: string | null = null;
@@ -139,6 +145,10 @@ export async function validateRunConnection(
 
     budgetOrgId = connection.team.organization?.id ?? null;
     budgetCap = connection.team.organization?.monthlyBudgetUsdCents ?? null;
+    budgetTeam = {
+      id: connection.team.id,
+      monthlyBudgetUsdCents: connection.team.monthlyBudgetUsdCents,
+    };
     primaryConnectionType = connection.type;
     if (connection.team.orgId) {
       source = { orgId: connection.team.orgId, repoId: connection.id, teamId: connection.teamId };
@@ -161,7 +171,7 @@ export async function validateRunConnection(
     return { ok: false };
   }
 
-  return { budgetCap, budgetOrgId, ok: true, source };
+  return { budgetCap, budgetOrgId, budgetTeam, ok: true, source };
 }
 
 /**

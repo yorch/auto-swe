@@ -473,10 +473,13 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
             team: {
               select: {
+                id: true,
                 memberships: {
                   select: { userId: true },
                   where: { userId: user.sub },
                 },
+                monthlyBudgetUsdCents: true,
+                name: true,
                 organization: {
                   select: { id: true, monthlyBudgetUsdCents: true },
                 },
@@ -948,7 +951,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
                   shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
                   team: {
                     select: {
+                      id: true,
                       memberships: { select: { userId: true }, where: { userId: user.sub } },
+                      monthlyBudgetUsdCents: true,
+                      name: true,
                       organization: { select: { monthlyBudgetUsdCents: true } },
                       orgId: true,
                     },

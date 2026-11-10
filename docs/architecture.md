@@ -854,7 +854,9 @@ repository access, then membership of every org the launch spends against, then 
 A launch with no connection that spends against an org — a template run or template webhook call
 (the template team's org), a service principal's template run (its own team's org), a team
 automation (the team's org) — records that org on the request as `RunInput.billingOrgId`, so the run
-is billed to, counted under and capped by the org its launch was gated against. A re-run reuses the
+is billed to, counted under and capped by the org its launch was gated against, and records the
+team the same decision held to its own cap as `RunInput.billingTeamId`, the last source of the run's
+attributed team. A re-run reuses the
 request, and so the org: a connection-less re-run is gated against the org the request is charged
 to — for a service principal's run, the principal's team's org, so the person re-running it must be
 a member of that org. A request charged to no org (its connection or org was deleted, or its

@@ -475,6 +475,14 @@ jobs:
           TEAM_SCOPE_PG_TEST: '1'
         run: yarn test packages/gateway/src/routes/teamParam.pg.test.ts
 
+      # Team budgets: the spend a team is held to (finalized, in flight and runless, never twice,
+      # inside the UTC month), the owner's cap binding a sharee's launch, view-only shares, and the
+      # attributed-team / billed-organization rule. Relational filters a mocked Prisma would not run.
+      - name: Team budgets (database-backed tests)
+        env:
+          TEAM_BUDGET_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/teamBudget.pg.test.ts
+
       # The personal desk: its approval, failure and pull-request counts against the lists they
       # summarise, the platform ADMIN's member scope, and the per-team buckets, all relational
       # predicates a mocked Prisma would not evaluate.
