@@ -84,7 +84,7 @@ describe('HumanStepCard for a paused agent', () => {
 
   it('shows the work so far and the questions, with a select and text fields to answer them', () => {
     render(<HumanStepCard step={asked()} />);
-    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    fireEvent.click(screen.getByRole('button', { name: RESPOND }));
     expect(screen.getByText('Files changed: a.ts')).toBeTruthy();
     expect(screen.getByText(/The agent stopped to ask/)).toBeTruthy();
     expect(screen.getByLabelText(/Which library\?/)).toBeTruthy();

@@ -6044,6 +6044,8 @@
     "GitHubHostCredential": "Encrypted PAT and/or GitHub App credentials for one approved non-instance GitHub host family; sent only to that host.",
     "GitHubHostWebhookSecret": "Schema entity; inspect fields and relationship declarations below.",
     "GitHubInstallation": "A GitHub App installation, identified by its host and installation id; repositories may point only at an installation on their own host. retiredReason marks a retirement a GitHub webhook made, which only a webhook reverses.",
+    "HarnessProfile": "A named, admin-approved Claude Code profile: the git repository it comes from; its versions are immutable.",
+    "HarnessProfileVersion": "One approved, hash-pinned snapshot of a profile (pinned commit, content hash, stored archive) that an Agent version binds and a run pins.",
     "HumanApproval": "Distinct human response linked to a human step.",
     "HumanErrorBaseline": "Schema entity; inspect fields and relationship declarations below.",
     "HumanStepDailyRollup": "Versioned daily human-step aggregates by scope and resolution dimensions: counts, wait-time sums/buckets and timeouts.",
@@ -6094,6 +6096,7 @@
     "RollupBuiltDay": "Completion marker for a day and rollup bucket version, recorded with the rebuilt daily aggregates.",
     "RollupSweepState": "Named rollup sweep watermark and pending dirty days retained for recomputation.",
     "RunCallback": "The callback one launch asked for, with its URL encrypted; reports only the execution that asked.",
+    "RunEffect": "Record-only row for one external write a run made (git push, tracker sync, MCP write tool, ticket creation): kind, target, outcome and failure class, owned by the run.",
     "RunEvidence": "Run-linked screenshot, video, trace or log artifact with source, node/attempt identity and optional caption, page URL and dimensions.",
     "RunInput": "Stored submitted payload and request history, reused by runs: the organization a connection-free launch was gated against, the service principal that requested it, and whether the platform generated its ticket id.",
     "ScannerPattern": "Schema entity; inspect fields and relationship declarations below.",
@@ -6152,7 +6155,9 @@
       "Agent",
       "AgentSkillRef",
       "InstalledBundle",
-      "PackageRegistry"
+      "PackageRegistry",
+      "HarnessProfile",
+      "HarnessProfileVersion"
     ],
     "Evaluation & memory": [
       "MemoryItem",
@@ -6189,6 +6194,7 @@
       "WorkflowArtifact",
       "WorkflowArtifactChunk",
       "RunEvidence",
+      "RunEffect",
       "WorkflowHttpCall",
       "WorkflowRun",
       "WorkflowOutcomeReference",
