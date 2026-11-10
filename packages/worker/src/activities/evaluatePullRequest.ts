@@ -34,6 +34,7 @@ import {
   botApprovalRefusalConditions,
   briefDetail,
   buildBrief,
+  buildRoutingFacts,
   type ChangedFile,
   type Classification,
   changedPathsAllowed,
@@ -1604,6 +1605,10 @@ export async function evaluatePullRequestWith(
         changedLines: listed.files.reduce((sum, f) => sum + f.additions + f.deletions, 0),
         connectionId: connection.id,
         headSha: pr.headSha,
+        // What the review queue's routing reads: a person's request for changes that stood, and
+        // every changed path with each rename's source. The brief keeps only the first fifty
+        // files to read, which is not enough to say a file was not touched.
+        humanObjection: hasHumanObjection(reviews, pr.author ?? ''),
         mode: statusMode,
         prNumber: input.prNumber,
         readiness: asJson({
@@ -1617,6 +1622,9 @@ export async function evaluatePullRequestWith(
         requesterId: launcher.requesterId,
         requiredApprovers: classification.requiredApprovers,
         riskClass: classification.riskClass,
+        routingPaths: asJson(
+          buildRoutingFacts(listed.files, { listTruncated: !!listed.truncated })
+        ),
         statusState: status.state,
         triggeredBy: input.trigger,
         // A row whose launcher set is unresolved can never count as reviewed evidence: the
@@ -1626,6 +1634,7 @@ export async function evaluatePullRequestWith(
       select: { id: true },
     });
     unrecorded.active = false;
+    await recordHostHead(connection.id, input.prNumber, pr.headSha);
 
     // An arming cancelled before the final status is only recorded here, on the row of this head.
     const autoMerge = disarmedEarly
@@ -2303,6 +2312,28 @@ async function postBrief(
   }
 }
 
+/**
+ * Records the head an evaluation just read from the host on the pull request's row, so the review
+ * queue's `hostHeadSha` self-heals whenever an evaluation lands: a push whose webhook was lost,
+ * delivered late, or overwritten by the platform's own push is corrected here. Only an existing
+ * open row is touched (none is created), and `headSha` and `ciStatus`, which the CI wait is keyed
+ * on, never move. Best effort: bookkeeping must not fail an evaluation that has already landed.
+ */
+async function recordHostHead(
+  connectionId: string,
+  prNumber: number,
+  headSha: string
+): Promise<void> {
+  try {
+    await prisma.pullRequest.updateMany({
+      data: { hostHeadSha: headSha },
+      where: { prNumber, repoId: connectionId, status: 'OPEN' },
+    });
+  } catch (err) {
+    logWarn('pr evaluation: the pull request head could not be recorded', safeErrorMeta(err));
+  }
+}
+
 /** The arming was cancelled before the final status; this records it on the evaluation's row. */
 async function recordEarlyDisarm(
   connectionId: string,
@@ -2456,6 +2487,7 @@ async function retractUnrecordedApproval(args: {
           triggeredBy: args.trigger,
         },
       });
+      await recordHostHead(args.connectionId, args.prNumber, args.pr.headSha);
     }
   } catch (err) {
     logWarn('pr evaluation: an unrecorded bot approval could not be retracted', safeErrorMeta(err));
@@ -2527,6 +2559,7 @@ async function failClosed(args: {
         triggeredBy: input.trigger,
       },
     });
+    await recordHostHead(args.connectionId, input.prNumber, pr.headSha);
   } catch (persistErr) {
     logWarn(
       'pr evaluation: the failed evaluation could not be recorded',

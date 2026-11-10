@@ -51,9 +51,19 @@ import { gitWithAuthHeader, shellQuote, type Workspace } from './workspace.js';
 /** `gitIdentity` is optional so a fake workspace need not carry one. */
 type Exec = Pick<Workspace, 'exec'> & { gitIdentity?: GitIdentity };
 
-/** A hardened, replace-proof git call. */
+/**
+ * Pins the repository to `<cwd>/.git` with `<cwd>` as its work tree, by environment. The agent
+ * can write `core.worktree` into `.git/config` (the push scrub only rewrites it afterwards), and
+ * a work tree that is an ancestor of the checkout turns a `.`-relative pathspec into a path that
+ * matches nothing, so a porcelain `git diff` prints an empty diff for a real change. The
+ * environment variable beats the config key, and a plumbing call with no relative pathspec does
+ * not look at the work tree at all.
+ */
+const PIN_REPOSITORY = 'GIT_DIR="$(pwd -P)/.git" GIT_WORK_TREE="$(pwd -P)"';
+
+/** A hardened, replace-proof git call, pinned to this checkout (see {@link PIN_REPOSITORY}). */
 const guardedGit = (subcommand: string): string =>
-  `GIT_NO_REPLACE_OBJECTS=1 ${gitWithAuthHeader(subcommand)}`;
+  `GIT_NO_REPLACE_OBJECTS=1 ${PIN_REPOSITORY} ${gitWithAuthHeader(subcommand)}`;
 
 /**
  * Whether `changedPath` (repo-relative, as git lists it) is covered by an `allowedPaths` entry.
@@ -160,22 +170,25 @@ export async function startPathGuard(
 
 /**
  * Commit what is staged (a no-op when nothing is). Unguarded: the original command, and
- * undefined is returned. Guarded: after the commit, pin the committed sha once, check its
- * tree before returning, and return it — the caller pushes exactly that commit.
+ * undefined is returned. Guarded, or `hardened` (a session whose committed result is analysed
+ * afterwards, such as the test-integrity gate): hooks off, then pin the committed sha once and
+ * return it; a guard also checks that commit's tree before returning. The caller pushes exactly
+ * that commit.
  */
 export async function commitStaged(
   workspace: Exec,
   message: string,
-  guard: PathGuard | undefined
+  guard: PathGuard | undefined,
+  options: { hardened?: boolean } = {}
 ): Promise<string | undefined> {
   const identity = workspace.gitIdentity ?? DEFAULT_GIT_IDENTITY;
   const text = shellQuote(withCoAuthorTrailer(message, identity));
-  if (!guard) {
+  if (!guard && !options.hardened) {
     await workspace.exec(`git diff --cached --quiet || git commit -m ${text}`);
     return undefined;
   }
   // Hooks off (the hardening sets `core.hooksPath=/dev/null`; `--no-verify` as well), so a
-  // `pre-commit` hook cannot add a file after the staged tree was looked at.
+  // `pre-commit` hook cannot add or remove a file after the staged tree was looked at.
   await workspace.exec(
     `${guardedGit('diff --cached --quiet')} || ` +
       guardedGit(
@@ -190,8 +203,74 @@ export async function commitStaged(
       'DIFF_CHECK_FAILED'
     );
   }
-  await assertCommittedTreeWithinAllowedPaths(workspace, guard, sha);
+  if (guard) {
+    await assertCommittedTreeWithinAllowedPaths(workspace, guard, sha);
+  }
   return sha;
+}
+
+/** The commit `HEAD` is at, read with the hardened git call; undefined when it cannot be read. */
+export async function readHeadSha(workspace: Exec): Promise<string | undefined> {
+  return (await readSha(workspace, 'HEAD')) || undefined;
+}
+
+/**
+ * The hardened command the test-integrity gate reads the change with: `git diff-tree`, the
+ * plumbing that compares two commits' trees and so depends on neither the work tree, the index nor
+ * a relative path. (The porcelain `git diff -- .` it replaces read nothing when the agent set
+ * `core.worktree` to an ancestor, with exit 0.) Pinned to the checkout's own `.git`, no attribute,
+ * driver, textconv, prefix or relative-path setting of the repository can change what is read:
+ * `--text` shows a file marked `-diff` or `binary` as text, the prefixes are explicit, renames are
+ * detected, and generated files (lockfiles) are left out by top-anchored pathspecs. The analyser
+ * also drops generated paths itself, so the exclusion only bounds the size.
+ */
+export function testIntegrityDiffCommand(
+  from: string,
+  to: string,
+  kind: 'patch' | 'name-status',
+  excludes: readonly string[]
+): string {
+  const config =
+    '-c core.attributesFile=/dev/null -c core.quotepath=false -c diff.mnemonicPrefix=false ' +
+    '-c diff.noprefix=false -c diff.relative=false -c diff.renames=true ';
+  const flags =
+    'diff-tree -r --no-commit-id --no-ext-diff --no-textconv --no-color --find-renames ' +
+    '--ignore-submodules=none --src-prefix=a/ --dst-prefix=b/ ';
+  const specs = [':(top)', ...excludes].map((p) => shellQuote(p)).join(' ');
+  return guardedGit(
+    `${config}${flags}${kind === 'patch' ? '-p --text -U1' : '--name-status'} ${shellQuote(from)} ${shellQuote(to)} -- ${specs}`
+  );
+}
+
+/**
+ * The trees of two commits and the paths that differ between them, unfiltered, read the same
+ * pinned plumbing way. For the gate's "empty diff but a changed tree" check
+ * (`commitWithTestIntegrity`).
+ */
+export async function readTreeChange(
+  workspace: Exec,
+  from: string,
+  to: string
+): Promise<{ treesDiffer: boolean; paths: string[] }> {
+  const trees = (
+    await workspace.exec(
+      guardedGit(`rev-parse ${shellQuote(`${from}^{tree}`)} ${shellQuote(`${to}^{tree}`)}`)
+    )
+  )
+    .trim()
+    .split('\n');
+  if (trees.length !== 2 || !trees.every((t) => SHA.test(t))) {
+    throw new Error('could not read the trees of the two commits');
+  }
+  const names = await workspace.exec(
+    guardedGit(
+      `diff-tree -r --name-only --no-renames --ignore-submodules=none -z ${shellQuote(from)} ${shellQuote(to)}`
+    )
+  );
+  return {
+    paths: names.split('\0').filter((p) => p !== ''),
+    treesDiffer: trees[0] !== trees[1],
+  };
 }
 
 /**

@@ -9,7 +9,7 @@ const m = vi.hoisted(() => ({
   prisma: {
     activeWorkflow: { findFirst: vi.fn() },
     connection: { findUniqueOrThrow: vi.fn() },
-    pullRequest: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+    pullRequest: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     runEffect: {
       create: vi.fn(async () => ({})),
       findFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
@@ -641,6 +641,35 @@ describe('the run effects a PR activity records', () => {
     await expect(createOrUpdatePullRequest(request, codeResult)).resolves.toEqual({
       prNumber: 7,
       prUrl: 'https://example.test/pull/7',
+    });
+  });
+});
+
+describe('createOrUpdatePullRequest: the head the host reports', () => {
+  it('sets it on a freshly created row', async () => {
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.prisma.pullRequest.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ hostHeadSha: codeResult.headSha }),
+    });
+  });
+
+  it('replaces it only when unrecorded or still the previous platform head', async () => {
+    m.prisma.pullRequest.findFirst.mockResolvedValue({
+      headSha: 'old-platform-head',
+      id: 'pr-row',
+      prNumber: 5,
+      status: 'OPEN',
+    });
+    await createOrUpdatePullRequest(request, codeResult);
+    // The main update never carries it; the conditional write is what a webhook-recorded newer
+    // head (a person's push) survives.
+    expect(m.prisma.pullRequest.update.mock.calls[0]?.[0].data).not.toHaveProperty('hostHeadSha');
+    expect(m.prisma.pullRequest.updateMany).toHaveBeenCalledWith({
+      data: { hostHeadSha: codeResult.headSha },
+      where: {
+        id: 'pr-row',
+        OR: [{ hostHeadSha: null }, { hostHeadSha: 'old-platform-head' }],
+      },
     });
   });
 });

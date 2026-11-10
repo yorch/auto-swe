@@ -185,6 +185,87 @@ describe('computeOutcomeReport', () => {
   });
 });
 
+describe('CI heal and the test-integrity guard, per repository', () => {
+  const runs = [
+    // repo-a: two items needed a CI fix; one healed, one was stopped by the guard.
+    run('a1', { workItemKey: 'k-a1' }),
+    run('a2', { workItemKey: 'k-a2' }),
+    // repo-a: an item that never needed a CI fix but was tripped in warn mode.
+    run('a3', { workItemKey: 'k-a3' }),
+    // repo-b: one item, healed, no trips.
+    run('b1', { repoId: 'repo-b', repoName: 'acme/b', workItemKey: 'k-b1' }),
+  ];
+  const prs = [
+    pr('a1', { ciStatus: 'PASSED' }),
+    pr('a2', { ciStatus: 'FAILED' }),
+    pr('a3', { ciStatus: 'PASSED' }),
+    pr('b1', { ciStatus: 'PASSED' }),
+  ];
+  const steps = ['a1', 'a2', 'b1'].map((runId) => ({
+    runId,
+    stepName: 'executeCIFixImplementation',
+  }));
+  const guardTrips = [
+    { blocked: true, runId: 'a2' },
+    { blocked: true, runId: 'a2' },
+    { blocked: false, runId: 'a3' },
+  ];
+  const report = computeOutcomeReport({
+    generatedAt,
+    guardTrips,
+    pullRequests: prs,
+    runs,
+    steps,
+    window,
+  });
+  const repo = (id: string) => report.byRepo.find((r) => r.repoId === id);
+
+  it('reports the heal rate and the trips per repository', () => {
+    expect(repo('repo-a')?.ciHeal).toMatchObject({
+      guard: { blocked: 2, itemsTripped: 2, trips: 3 },
+      itemsHealed: 1,
+      itemsWithCiFix: 2,
+      rate: 0.5,
+    });
+    expect(repo('repo-b')?.ciHeal).toMatchObject({
+      guard: { blocked: 0, itemsTripped: 0, trips: 0 },
+      itemsHealed: 1,
+      itemsWithCiFix: 1,
+      rate: 1,
+    });
+  });
+
+  it('sums the trips overall and counts them as an input', () => {
+    expect(report.overall.ciHeal.guard).toEqual({ blocked: 2, itemsTripped: 2, trips: 3 });
+    expect(report.inputs.guardTrips).toBe(3);
+  });
+
+  it('reads as zero trips when the caller supplied none', () => {
+    const none = computeOutcomeReport({ generatedAt, pullRequests: prs, runs, steps, window });
+    expect(none.overall.ciHeal.guard).toEqual({ blocked: 0, itemsTripped: 0, trips: 0 });
+    expect(none.inputs.guardTrips).toBe(0);
+  });
+
+  it('renders a snapshot stored before the guard existed as no trips', () => {
+    const legacy = JSON.parse(JSON.stringify(report));
+    for (const group of [legacy.overall, ...legacy.byRepo, ...legacy.byTemplate]) {
+      group.ciHeal.guard = undefined;
+    }
+    legacy.inputs.guardTrips = undefined;
+    const md = renderOutcomeReportMarkdown(legacy);
+    expect(md).toContain('test-integrity guard trips: 0');
+    expect(md).toContain('| acme/a (low sample) | 2 | 1 | 50.0% (9-91%) | 0 | 0 | 0 |');
+  });
+
+  it('renders a CI-healing table per repository beside the trips', () => {
+    const md = renderOutcomeReportMarkdown(report);
+    expect(md).toContain('## CI healing by repository');
+    expect(md).toContain('| acme/a (low sample) | 2 | 1 | 50.0% (9-91%) | 3 | 2 | 2 |');
+    expect(md).toContain('| acme/b (low sample) | 1 | 1 | 100.0%');
+    expect(md).toContain('the test-integrity guard tripped 3 time(s) on 2 item(s), 2 blocked');
+  });
+});
+
 describe('work that cannot open a pull request', () => {
   const runs = [
     run('m1', { workItemKey: 'k-m' }),

@@ -1,8 +1,11 @@
-import { type Prisma, Role } from '@auto-swe/shared';
+import { Prisma, Role } from '@auto-swe/shared';
 import { resolveSetting, resolveSettings } from '@auto-swe/shared/config';
 import {
   autoArmingRefusals,
   type BranchRulesLike,
+  parseReviewRoutingOverride,
+  reviewRoutingLoosenings,
+  reviewRoutingOverrideSchema,
   summarizeBriefEngagement,
   summarizeFirstViews,
 } from '@auto-swe/shared/lib/prEvaluation';
@@ -24,6 +27,7 @@ import { paginationQuery } from '../lib/pagination.js';
 import { REPOSITORY_SWEEP_CAP, sweepArmedPullRequests } from '../lib/prEvaluationSweep.js';
 import { isCheckConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
+import { resolveRepositoryRouting } from '../lib/reviewQueue.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { canManageTeamRepos } from './repositories.js';
@@ -39,6 +43,9 @@ const SetPolicyBody = z
   .refine((body) => body.mode !== undefined || body.botApproval !== undefined, {
     message: 'Provide mode, botApproval, or both',
   });
+
+/** `override: null` clears the repository's override; keys left out of an object inherit. */
+const SetRoutingBody = z.object({ override: reviewRoutingOverrideSchema.nullable() });
 
 const ListQuery = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
   /** Only evaluations whose pull request merged; omitted or `false` applies no merge filter. */
@@ -351,6 +358,105 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
           warnings,
         },
       };
+    }
+  );
+
+  const ROUTING_REPO_SELECT = {
+    id: true,
+    reviewRouting: true,
+    team: { select: { orgId: true } },
+    teamId: true,
+  } as const;
+
+  // GET /api/v1/repositories/:id/review-routing — who must review, for repositories the caller can reach
+  app.get(
+    '/repositories/:id/review-routing',
+    {
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      schema: { params: RepoParams },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const repo = await fastify.prisma.connection.findFirst({
+        select: ROUTING_REPO_SELECT,
+        where: {
+          id: request.params.id,
+          type: 'git_repo',
+          ...(user.role === Role.ADMIN ? {} : reachableConnections(user, request.repoAccessGate)),
+        },
+      });
+      if (!repo) {
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      const { effective } = await resolveRepositoryRouting(repo);
+      return { data: { effective, override: parseReviewRoutingOverride(repo.reviewRouting) } };
+    }
+  );
+
+  // PUT /api/v1/repositories/:id/review-routing — the owning team's LEAD (whatever the platform
+  // role) or a platform ADMIN. An override can only ADD strictness: `mergeReviewRouting` takes the
+  // stricter of the setting and the override at read time, so a looser value is inert for anyone.
+  // A value looser than what is in force now is refused so the writer learns it does nothing; and
+  // because the PUT replaces the whole override, leaving out a key that carries strictness is a
+  // loosening too, refused for everyone but a platform ADMIN (who may remove it).
+  app.put(
+    '/repositories/:id/review-routing',
+    {
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      schema: { body: SetRoutingBody, params: RepoParams },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const repo = await fastify.prisma.connection.findFirst({
+        select: ROUTING_REPO_SELECT,
+        where: {
+          id: request.params.id,
+          type: 'git_repo',
+          ...(user.role === Role.ADMIN ? {} : reachableConnections(user, request.repoAccessGate)),
+        },
+      });
+      if (!repo) {
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+        return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
+      }
+      const { override } = request.body;
+      // An empty object overrides nothing: store NULL so "no override" has one spelling.
+      const stored = override && Object.keys(override).length > 0 ? override : null;
+      {
+        const { inherited } = await resolveRepositoryRouting({ ...repo, reviewRouting: null });
+        const loosened = reviewRoutingLoosenings(
+          inherited,
+          stored ?? {},
+          parseReviewRoutingOverride(repo.reviewRouting),
+          { removal: user.role !== Role.ADMIN }
+        );
+        if (loosened.length > 0) {
+          return sendError(
+            reply,
+            403,
+            'ROUTING_LOOSER_THAN_SETTINGS',
+            'A repository override can only ask for a person more often than the settings and the override already in force; change the team or organization setting to loosen routing',
+            { keys: loosened }
+          );
+        }
+      }
+      await fastify.prisma.connection.update({
+        data: { reviewRouting: stored ?? Prisma.DbNull },
+        select: { id: true },
+        where: { id: repo.id },
+      });
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: user,
+        after: { reviewRouting: stored },
+        before: { reviewRouting: parseReviewRoutingOverride(repo.reviewRouting) },
+        entityId: repo.id,
+        entityType: 'Connection',
+      });
+      const { effective } = await resolveRepositoryRouting({ ...repo, reviewRouting: stored });
+      return { data: { effective, override: stored ?? {} } };
     }
   );
 

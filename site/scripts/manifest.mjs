@@ -157,6 +157,7 @@ export const SIDEBAR = [
       'docs/kubernetes-helm',
       'docs/upgrade-notes',
       'docs/audit-log',
+      'docs/enterprise-readiness',
       'docs/user-activity',
       'docs/model-configuration',
       'docs/oauth-setup',

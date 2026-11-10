@@ -370,7 +370,7 @@ describe('prEvaluation settings', () => {
   ) as (keyof typeof SETTING_DEFINITIONS)[];
 
   it('are all ADMIN-only, in the prEvaluation group, and not pinned to a run', () => {
-    expect(keys).toHaveLength(21);
+    expect(keys).toHaveLength(26);
     for (const key of keys) {
       const def = SETTING_DEFINITIONS[key];
       expect(def.group, key).toBe('prEvaluation');

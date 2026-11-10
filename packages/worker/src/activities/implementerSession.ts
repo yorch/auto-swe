@@ -36,8 +36,10 @@ import { withRunDetection } from '../lib/runDetection.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
+import { resolveTestIntegrityMode, type TestIntegrityGuardMode } from '../lib/testIntegrityGate.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
-import { commitStaged, diffForResult, pushRefspec, startPathGuard } from './allowedPaths.js';
+import { diffForResult, pushRefspec, startPathGuard } from './allowedPaths.js';
+import { commitWithTestIntegrity, startTestIntegritySession } from './testIntegritySession.js';
 import {
   boundTestOutput,
   detectTestCommand,
@@ -61,6 +63,13 @@ import {
 } from './workspace.js';
 
 export type FixMode = 'CI_FIX' | 'REVIEW_FIX' | 'GATE_FIX' | 'PR_FEEDBACK';
+
+/**
+ * The fix sessions whose goal is to make a failing check pass (CI, a quality gate, the checks a
+ * pull request's feedback round triggers), and so the ones the test-integrity guard covers. A
+ * review fix answers a reviewer's comments, where removing a test can be the request.
+ */
+const TEST_GUARDED_MODES: ReadonlySet<FixMode> = new Set(['CI_FIX', 'GATE_FIX', 'PR_FEEDBACK']);
 
 /**
  * Connection (git_repo) row shape (the shared index doesn't export Prisma model
@@ -177,6 +186,11 @@ export async function runImplementerFixSession(
   }
   // First, before a clone or a container exists (see executeImplementation).
   await assertRolePricedForUsdCap(input.agentKey);
+  const activityCtx = await currentRequestContext();
+  // Before the paid session: a lookup that throws afterwards would fail retryably and re-run it.
+  const guardMode: TestIntegrityGuardMode = TEST_GUARDED_MODES.has(mode)
+    ? await resolveTestIntegrityMode(activityCtx)
+    : 'off';
   const repo = await withRunDetection(await resolveSessionRepo(previousCodeResult));
 
   const repoRef = toRepoRef(repo);
@@ -237,6 +251,9 @@ export async function runImplementerFixSession(
     }
     await workspace.runSetup?.();
 
+    // The commit the fixer starts from, so the test-integrity gate reads exactly what the session
+    // changed — staged or committed by the agent itself. Fails closed here in block mode.
+    const integrity = await startTestIntegritySession(workspace, guardMode, tracer);
     // The commit the checkout is at before the agent runs (after the sync): what a pause saves the tree against.
     const startSha = (await workspace.exec('git rev-parse HEAD')).trim();
 
@@ -265,7 +282,6 @@ export async function runImplementerFixSession(
     // The session runs as its own persona (ciFixer / reviewFixer / gateFixer):
     // that Agent row's prompt, tools, skills and MCP binding, with the model
     // inherited from the implementer unless the persona overrides it.
-    const activityCtx = await currentRequestContext();
     turns = await buildImplementerTurnRunner({
       ...(input.allowPause ? { allowPause: true } : {}),
       agentKey: input.agentKey,
@@ -388,7 +404,16 @@ export async function runImplementerFixSession(
     // Commit and push the fix (skip the commit if the agent made no changes
     // to avoid empty CI cycles; push is still safe — it's a no-op then).
     await workspace.exec('git add -A');
-    const pushSha = await commitStaged(workspace, input.commitMessage, pathGuard);
+    // Fixes made from a failure (CI, gate, pull-request feedback): a fix that goes green by
+    // deleting, skipping or weakening the tests is not a fix. The commit is made with hooks off and
+    // its own diff analysed before anything is pushed (docs/ci-failure-triggers.md).
+    const pushSha = await commitWithTestIntegrity(
+      workspace,
+      input.commitMessage,
+      pathGuard,
+      integrity,
+      tracer
+    );
     // Never push on behalf of a run that has already been cancelled.
     throwIfActivityCancelled();
     await recordGitPush(previousCodeResult.branch, pushSha, () =>

@@ -1,5 +1,8 @@
 import type { InputSchema } from '../lib/inputSchema.js';
 import { isAnthropicSpec } from '../lib/modelSpec.js';
+import type { ReviewTimeSummary } from '../lib/prEvaluation/reviewerTime.js';
+import type { ReviewBatch, ReviewQueueSummary } from '../lib/prEvaluation/reviewQueue.js';
+import type { ReviewRouting, RoutingReason } from '../lib/prEvaluation/reviewRouting.js';
 import type { PreviewConfig } from '../lib/previewConfig.js';
 import type { PullRequestState } from '../lib/pullRequest.js';
 import type { RepoSetup } from '../lib/repoSetup.js';
@@ -1775,6 +1778,64 @@ export interface PullRequestListItem {
   /** Null when the caller may not see the run. */
   latestRun: WorkItemRunRef | null;
   costUsd: number | null;
+  /** Review routing for this pull request; omitted where the route does not compute it. */
+  review?: PullRequestReviewRouting;
+}
+
+/** Whether a pull request needs a person's attention, and where it sits in the review queue. */
+export interface PullRequestReviewRouting {
+  /** Where the pull request sits among the open ones; null outside the attention order. */
+  position: number | null;
+  batch: ReviewBatch;
+  needsHuman: boolean;
+  /** The deciding reason. */
+  reason: RoutingReason;
+  /** Every reason that holds, strongest first. */
+  reasons: RoutingReason[];
+  /** A file of the change that matched the repository's always-human paths. */
+  matchedPath: string | null;
+  /** Null when the pull request has no evaluation at its current head. */
+  riskClass: 'LOW' | 'STANDARD' | 'HIGH' | null;
+  changedLines: number | null;
+}
+
+/** Counts over the open pull requests an attention-ordered list covered. */
+export interface PullRequestQueueMeta extends ReviewQueueSummary {
+  /**
+   * The queue is cut: more open pull requests matched than one read orders (it covers the oldest),
+   * or the evaluation read hit its row cap.
+   */
+  truncated: boolean;
+  /**
+   * The evaluation read hit its row cap. A pull request whose evaluation was cut off reads as not
+   * evaluated, so it asks for a person.
+   */
+  evaluationsTruncated: boolean;
+}
+
+/** Response data of GET /api/v1/pull-requests/review-time. */
+export interface PullRequestReviewTimeResponse {
+  window: { start: string; end: string; days: number };
+  /** Pull requests opened in the window, ready for review, in the caller's scope. */
+  overall: ReviewTimeSummary;
+  byRepository: {
+    repository: { id: string; org: string; name: string };
+    summary: ReviewTimeSummary;
+  }[];
+  /** `teamId` null is work with no persisted team attribution; `Other team` is masked. */
+  byTeam: { teamId: string | null; teamName: string; summary: ReviewTimeSummary }[];
+  /** The open queue right now over the same scope, not limited to the window. */
+  queue: PullRequestQueueMeta;
+  /** A row cap cut into the window's pull requests or their evaluations. */
+  truncated: boolean;
+}
+
+/** Response data of GET/PUT /api/v1/repositories/:id/review-routing. */
+export interface RepositoryReviewRouting {
+  /** What this repository stores; keys left out inherit. */
+  override: Partial<ReviewRouting>;
+  /** The routing in force: the settings at the repository's scope with the override applied. */
+  effective: ReviewRouting;
 }
 
 /** One changed file of the review page. Every string is host or repository text: plain text only. */

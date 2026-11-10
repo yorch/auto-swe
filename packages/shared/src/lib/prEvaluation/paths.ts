@@ -272,7 +272,7 @@ function compile(glob: string): Compiled[] | null {
   }
   let result: Compiled[] | null = null;
   if (glob.length > 0 && glob.length <= MAX_GLOB_LENGTH && !glob.includes('\0')) {
-    const expanded = expandBraces(glob.toLowerCase());
+    const expanded = expandBraces(glob.normalize('NFC').toLowerCase());
     result = expanded
       ? expanded.map((alternative) => {
           const tokens = tokenize(alternative);
@@ -293,6 +293,21 @@ function compile(glob: string): Compiled[] | null {
 /** Whether a glob is well formed and within bounds; a bad one never matches anything. */
 export function isValidGlob(glob: string): boolean {
   return compile(glob) !== null;
+}
+
+/**
+ * Work matching one glob against a path of `length` characters costs, in the budget's units: the
+ * tokens of every brace alternative the path is long enough for (a shorter path is rejected in
+ * constant time, before any token is walked), times the path length, plus one for the call.
+ */
+export function globWork(glob: string, length: number): number {
+  let work = 1;
+  for (const alt of compile(glob) ?? []) {
+    if (alt.minLength <= length) {
+      work += alt.tokens.length * (length + 1);
+    }
+  }
+  return work;
 }
 
 /** Number of `*` runs in a glob. */
@@ -365,8 +380,8 @@ function preparePath(path: string): PreparedPath | null {
   if (path.length > MAX_PATH_LENGTH) {
     return null;
   }
-  const text = path.toLowerCase();
-  // Lower-casing can change length (rare); anything out of bounds never matches.
+  const text = path.normalize('NFC').toLowerCase();
+  // Normalising and lower-casing can change length (rare); anything out of bounds never matches.
   if (text.length > MAX_PATH_LENGTH) {
     return null;
   }

@@ -2,6 +2,12 @@ import { Readable } from 'node:stream';
 import type { Prisma } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
 import {
+  reviewBatchOf,
+  reviewTimeOf,
+  summarizeReviewQueue,
+  summarizeReviewTime,
+} from '@auto-swe/shared/lib/prEvaluation';
+import {
   PULL_REQUEST_STATES,
   type PullRequestState,
   pullRequestUrl,
@@ -13,6 +19,8 @@ import type {
   PullRequestCockpit,
   PullRequestListItem,
   PullRequestOutcomesResponse,
+  PullRequestQueueMeta,
+  PullRequestReviewTimeResponse,
   WorkflowRunStatus,
 } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
@@ -41,16 +49,27 @@ import {
   resolveReviewerWrite,
   type WriteUnavailable,
 } from '../lib/reviewerCredential.js';
+import {
+  buildReviewQueueRows,
+  orderRows,
+  type ReviewQueueRow,
+  ROUTING_REPOSITORY_SELECT,
+} from '../lib/reviewQueue.js';
 import { repositoryTeamScope } from '../lib/runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { assertTeamParam } from '../lib/teamParam.js';
 import { teamMembershipFilter } from '../lib/templateLaunch.js';
-import { reachableConnections } from '../lib/tenantScope.js';
+import { memberTeams, reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { MAX_DRAFTS_PER_PULL_REQUEST } from './pullRequestReview.js';
 
 const Query = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
   draft: z.enum(['any', 'draft', 'ready']).default('any'),
+  /**
+   * `newest` pages by opening time. `attention` orders the open pull requests as a review queue
+   * (batches by risk and size, what needs a person first); it covers open pull requests only.
+   */
+  order: z.enum(['newest', 'attention']).default('newest'),
   repoId: z.string().uuid().optional(),
   scope: z.enum(['MINE', 'TEAM']).default('MINE'),
   state: z.enum([...PULL_REQUEST_STATES, 'all']).default('all'),
@@ -58,6 +77,9 @@ const Query = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
   /** Substring match on the ticket id of the request the PR came from. */
   ticket: z.string().trim().max(200).optional(),
 });
+
+/** Open pull requests one attention-ordered read orders; one more is fetched to detect a cut. */
+const ATTENTION_ROW_CAP = 1000;
 
 const OutcomesQuery = refineCustomRange(
   z.object({
@@ -97,6 +119,34 @@ const writeReasonOf = (write: ReviewerWrite): WriteUnavailable | null =>
 const NO_COMPARE: CompareResult = { reason: 'not-found', type: 'unavailable' };
 
 const OUTCOMES_TOP_REPOSITORIES = 10;
+
+const ReviewTimeQuery = refineCustomRange(
+  z.object({
+    ...customRangeFields,
+    repoId: z.string().uuid().optional(),
+    scope: z.enum(['MINE', 'TEAM']).default('TEAM'),
+    teamId: z.string().uuid().optional(),
+    window: z.coerce.number().int().min(1).max(365).default(30),
+  })
+);
+/** The pull-request numbers of each repository in a cohort. */
+function numbersByRepository(
+  pulls: readonly { prNumber: number | null; repoId: string | null }[]
+): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
+  for (const pull of pulls) {
+    if (pull.repoId !== null && pull.prNumber !== null) {
+      const numbers = out.get(pull.repoId) ?? new Set<number>();
+      numbers.add(pull.prNumber);
+      out.set(pull.repoId, numbers);
+    }
+  }
+  return out;
+}
+
+/** Evaluations read for one reviewer-time summary; beyond it the summary says it is cut. */
+const REVIEW_TIME_EVALUATION_CAP = 50_000;
+const REVIEW_TIME_TOP_REPOSITORIES = 10;
 
 const OutcomesExportQuery = refineCustomRange(
   z.object({
@@ -145,18 +195,28 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { querystring: Query },
     },
-    async (request) => {
+    async (request, reply) => {
       const user = requireUser(request);
       if (request.query.teamId) {
         await assertTeamParam(fastify.prisma, user, request.query.teamId);
       }
-      const { draft, limit, offset, repoId, scope, state, teamId, ticket } = request.query;
+      const { draft, limit, offset, order, repoId, scope, state, teamId, ticket } = request.query;
+      if (order === 'attention' && state !== 'all' && state !== 'OPEN') {
+        return sendError(
+          reply,
+          400,
+          'ATTENTION_ORDER_OPEN_ONLY',
+          'The attention order covers open pull requests only'
+        );
+      }
       const filters: Prisma.PullRequestWhereInput[] = [
         user.role === 'ADMIN'
           ? {}
           : { repository: reachableConnections(user, request.repoAccessGate) },
       ];
-      if (state !== 'all') {
+      if (order === 'attention') {
+        filters.push({ status: 'OPEN' });
+      } else if (state !== 'all') {
         filters.push({ status: state });
       }
       if (draft !== 'any') {
@@ -180,36 +240,115 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const where: Prisma.PullRequestWhereInput = { AND: filters };
-      const [rows, total, instanceBaseUrl] = await Promise.all([
-        fastify.prisma.pullRequest.findMany({
-          include: {
-            repository: {
-              select: {
-                githubUrl: true,
-                id: true,
-                organizationName: true,
-                repoName: true,
-                team: { select: { id: true, name: true, slug: true } },
-              },
-            },
-            workflow: {
-              select: {
-                costUsdAccrued: true,
-                repoId: true,
-                temporalWorkflowId: true,
-                workRequest: { select: { externalTicketId: true, id: true } },
-              },
-            },
+      const listInclude = {
+        repository: {
+          select: {
+            githubUrl: true,
+            id: true,
+            organizationName: true,
+            repoName: true,
+            team: { select: { id: true, name: true, slug: true } },
           },
-          orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
-          skip: offset,
-          take: limit,
+        },
+        workflow: {
+          select: {
+            costUsdAccrued: true,
+            repoId: true,
+            temporalWorkflowId: true,
+            workRequest: { select: { externalTicketId: true, id: true } },
+          },
+        },
+      } as const;
+      // Attention order: every open pull request in scope (up to the cap, oldest kept) is built
+      // into the queue and ordered, then the requested page of it is read in full.
+      let queue: {
+        /** More open pull requests matched than the queue holds. */
+        capped: boolean;
+        meta: PullRequestQueueMeta;
+        positions: Map<string, number>;
+        rows: Map<string, ReviewQueueRow>;
+      } | null = null;
+      let pageIds: string[] | null = null;
+      if (order === 'attention') {
+        const light = await fastify.prisma.pullRequest.findMany({
+          orderBy: [{ openedAt: 'asc' }, { id: 'asc' }],
+          select: {
+            headSha: true,
+            hostHeadSha: true,
+            id: true,
+            isDraft: true,
+            openedAt: true,
+            prNumber: true,
+            repoId: true,
+            repository: { select: ROUTING_REPOSITORY_SELECT },
+            status: true,
+          },
+          take: ATTENTION_ROW_CAP + 1,
           where,
-        }),
-        fastify.prisma.pullRequest.count({ where }),
+        });
+        const capped = light.length > ATTENTION_ROW_CAP;
+        const { evaluationsTruncated, rows: built } = await buildReviewQueueRows(
+          fastify.prisma,
+          light.slice(0, ATTENTION_ROW_CAP)
+        );
+        const entries = orderRows(built);
+        queue = {
+          capped,
+          meta: {
+            ...summarizeReviewQueue(built, new Date()),
+            evaluationsTruncated,
+            truncated: capped || evaluationsTruncated,
+          },
+          positions: new Map(entries.map((e) => [e.id, e.position])),
+          rows: new Map(built.map((row) => [row.id, row])),
+        };
+        pageIds = entries.slice(offset, offset + limit).map((e) => e.id);
+      }
+      const [pageRows, total, instanceBaseUrl] = await Promise.all([
+        pageIds
+          ? fastify.prisma.pullRequest.findMany({
+              include: listInclude,
+              where: { id: { in: pageIds } },
+            })
+          : fastify.prisma.pullRequest.findMany({
+              include: listInclude,
+              orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+              skip: offset,
+              take: limit,
+              where,
+            }),
+        // A cut queue holds fewer pull requests than matched: count them, so `total` is honest.
+        queue && !queue.capped
+          ? Promise.resolve(queue.positions.size)
+          : fastify.prisma.pullRequest.count({ where }),
         // Where a repository that names no host of its own links its PRs.
         resolveGitHubBaseUrl(),
       ]);
+      const rows = pageIds
+        ? pageIds.flatMap((id) => pageRows.find((row) => row.id === id) ?? [])
+        : pageRows;
+      // The newest-first page gets the same routing labels, built for just its rows.
+      let pageQueue = queue?.rows ?? null;
+      if (!pageQueue && rows.length > 0) {
+        const ids = rows.map((row) => row.id);
+        const routing = await fastify.prisma.pullRequest.findMany({
+          select: {
+            headSha: true,
+            hostHeadSha: true,
+            id: true,
+            isDraft: true,
+            openedAt: true,
+            prNumber: true,
+            repoId: true,
+            repository: { select: ROUTING_REPOSITORY_SELECT },
+            status: true,
+          },
+          where: { id: { in: ids } },
+        });
+        pageQueue = new Map(
+          (await buildReviewQueueRows(fastify.prisma, routing)).rows.map((row) => [row.id, row])
+        );
+      }
 
       const ledgerOf = (row: (typeof rows)[number]) =>
         row.workflow && row.workflow.repoId === row.repoId ? row.workflow : null;
@@ -231,7 +370,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const data: PullRequestListItem[] = rows.map((row) => {
         const ledger = ledgerOf(row);
         const run = ledger ? runByWorkflow.get(ledger.temporalWorkflowId) : undefined;
-        return {
+        const item: PullRequestListItem = {
           ciStatus: row.ciStatus,
           closedAt: row.closedAt?.toISOString() ?? null,
           costUsd: ledger?.costUsdAccrued ?? null,
@@ -263,8 +402,24 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
             : null,
           workRequestId: ledger?.workRequest?.id ?? null,
         };
+        const routed = pageQueue?.get(row.id);
+        return routed
+          ? {
+              ...item,
+              review: {
+                batch: reviewBatchOf(routed),
+                changedLines: routed.changedLines,
+                matchedPath: routed.decision.matchedPath,
+                needsHuman: routed.decision.needsHuman,
+                position: queue?.positions.get(row.id) ?? null,
+                reason: routed.decision.reason,
+                reasons: routed.decision.reasons,
+                riskClass: routed.riskClass,
+              },
+            }
+          : item;
       });
-      return { data, meta: { limit, offset, total } };
+      return { data, meta: { limit, offset, total, ...(queue ? { queue: queue.meta } : {}) } };
     }
   );
 
@@ -425,6 +580,192 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         isTruncated,
         previous: capped ? null : summarizePullRequestOutcomes(previous),
         previousComplete: !capped,
+        window: { days, end: end.toISOString(), start: start.toISOString() },
+      };
+      return { data };
+    }
+  );
+
+  // Reviewer time for the pull requests opened in the window that were ready for review, from the
+  // timestamps the platform stores (see `lib/prEvaluation/reviewerTime.ts`), plus the open queue now.
+  app.get(
+    '/review-time',
+    { onRequest: engineerOnly, schema: { querystring: ReviewTimeQuery } },
+    async (request) => {
+      const user = requireUser(request);
+      if (request.query.teamId) {
+        await assertTeamParam(fastify.prisma, user, request.query.teamId);
+      }
+      const { days, end, start } = resolveWindow(request.query, request.query.window);
+      const scopeFilters = (from: Date, to: Date) =>
+        outcomesFilters(user, request.repoAccessGate, request.query, from, to);
+      const pulls = await fastify.prisma.pullRequest.findMany({
+        orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+        select: {
+          id: true,
+          mergedAt: true,
+          openedAt: true,
+          prNumber: true,
+          repoId: true,
+          repository: { select: { id: true, organizationName: true, repoName: true } },
+          reviewVisits: {
+            orderBy: { firstVisitedAt: 'asc' },
+            select: { firstVisitedAt: true },
+            take: 1,
+          },
+          run: { select: { attributedTeamId: true } },
+        },
+        take: OUTCOMES_ROW_CAP + 1,
+        // A draft has not asked for review yet.
+        where: { AND: [...scopeFilters(start, end), { isDraft: false }] },
+      });
+      const cohort = pulls.slice(0, OUTCOMES_ROW_CAP);
+      const withNumbers = cohort.filter((p) => p.repoId !== null && p.prNumber !== null);
+      const evaluations =
+        withNumbers.length === 0
+          ? []
+          : await fastify.prisma.prEvaluation.findMany({
+              orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+              select: {
+                changesRequestedCount: true,
+                connectionId: true,
+                createdAt: true,
+                firstHumanReviewAt: true,
+                headSha: true,
+                prNumber: true,
+                triggeredBy: true,
+              },
+              take: REVIEW_TIME_EVALUATION_CAP + 1,
+              // Exact pairs: each repository asks only for its own cohort's numbers, so the cap is
+              // spent on the cohort and not on other pull requests that share a number elsewhere.
+              where: {
+                createdAt: { gte: start },
+                OR: [...numbersByRepository(withNumbers)].map(([connectionId, numbers]) => ({
+                  connectionId,
+                  prNumber: { in: [...numbers] },
+                })),
+              },
+            });
+      const evaluationsCut = evaluations.length > REVIEW_TIME_EVALUATION_CAP;
+      const byPull = new Map<string, typeof evaluations>();
+      for (const row of evaluations.slice(0, REVIEW_TIME_EVALUATION_CAP)) {
+        const key = `${row.connectionId}:${row.prNumber}`;
+        byPull.set(key, [...(byPull.get(key) ?? []), row]);
+      }
+      const measured = cohort.map((pull) => ({
+        pull,
+        time: reviewTimeOf({
+          evaluations:
+            pull.repoId !== null && pull.prNumber !== null
+              ? (byPull.get(`${pull.repoId}:${pull.prNumber}`) ?? [])
+              : [],
+          firstViewedAt: pull.reviewVisits[0]?.firstVisitedAt ?? null,
+          id: pull.id,
+          mergedAt: pull.mergedAt,
+          openedAt: pull.openedAt,
+        }),
+      }));
+
+      const byRepo = new Map<string, typeof measured>();
+      for (const row of measured) {
+        if (row.pull.repository) {
+          byRepo.set(row.pull.repository.id, [...(byRepo.get(row.pull.repository.id) ?? []), row]);
+        }
+      }
+      const byRepository = [...byRepo.values()]
+        .sort((a, b) => b.length - a.length)
+        .slice(0, REVIEW_TIME_TOP_REPOSITORIES)
+        .map((group) => {
+          const repository = group[0]?.pull.repository as NonNullable<
+            (typeof measured)[number]['pull']['repository']
+          >;
+          return {
+            repository: {
+              id: repository.id,
+              name: repository.repoName ?? '',
+              org: repository.organizationName ?? '',
+            },
+            summary: summarizeReviewTime(group.map((row) => row.time)),
+          };
+        });
+
+      // Team attribution is the run's persisted one, owner-only like the other metrics; a team the
+      // caller does not belong to is masked, and a pull request with no attribution is its own row.
+      const teamIds = [...new Set(measured.flatMap((row) => row.pull.run?.attributedTeamId ?? []))];
+      const teams =
+        teamIds.length === 0
+          ? []
+          : await runUnscoped(
+              'review-time team labels are limited to the caller member teams; others are masked',
+              ['Team'],
+              () =>
+                fastify.prisma.team.findMany({
+                  select: { id: true, name: true },
+                  where: {
+                    AND: [{ id: { in: teamIds } }, user.role === 'ADMIN' ? {} : memberTeams(user)],
+                  },
+                })
+            );
+      const teamNames = new Map(teams.map((team) => [team.id, team.name]));
+      const byTeamGroups = new Map<
+        string,
+        { teamId: string | null; teamName: string; rows: typeof measured }
+      >();
+      for (const row of measured) {
+        const attributed = row.pull.run?.attributedTeamId ?? null;
+        const known = attributed !== null && teamNames.has(attributed);
+        const key = attributed === null ? '' : known ? attributed : '__other__';
+        const group = byTeamGroups.get(key) ?? {
+          rows: [],
+          teamId: known ? attributed : null,
+          teamName:
+            attributed === null
+              ? 'Unattributed'
+              : known
+                ? (teamNames.get(attributed) as string)
+                : 'Other team',
+        };
+        group.rows.push(row);
+        byTeamGroups.set(key, group);
+      }
+      const byTeam = [...byTeamGroups.values()]
+        .sort((a, b) => b.rows.length - a.rows.length)
+        .map(({ rows: teamRows, ...team }) => ({
+          ...team,
+          summary: summarizeReviewTime(teamRows.map((row) => row.time)),
+        }));
+
+      // The open queue right now, over the same scope but not limited to the window.
+      const open = await fastify.prisma.pullRequest.findMany({
+        orderBy: [{ openedAt: 'asc' }, { id: 'asc' }],
+        select: {
+          headSha: true,
+          hostHeadSha: true,
+          id: true,
+          isDraft: true,
+          openedAt: true,
+          prNumber: true,
+          repoId: true,
+          repository: { select: ROUTING_REPOSITORY_SELECT },
+          status: true,
+        },
+        take: ATTENTION_ROW_CAP + 1,
+        where: { AND: [...scopeFilters(new Date(0), new Date(8.64e15)), { status: 'OPEN' }] },
+      });
+      const queueBuild = await buildReviewQueueRows(
+        fastify.prisma,
+        open.slice(0, ATTENTION_ROW_CAP)
+      );
+      const data: PullRequestReviewTimeResponse = {
+        byRepository,
+        byTeam,
+        overall: summarizeReviewTime(measured.map((row) => row.time)),
+        queue: {
+          ...summarizeReviewQueue(queueBuild.rows, new Date()),
+          evaluationsTruncated: queueBuild.evaluationsTruncated,
+          truncated: open.length > ATTENTION_ROW_CAP || queueBuild.evaluationsTruncated,
+        },
+        truncated: pulls.length > OUTCOMES_ROW_CAP || evaluationsCut,
         window: { days, end: end.toISOString(), start: start.toISOString() },
       };
       return { data };

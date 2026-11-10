@@ -153,7 +153,7 @@ export function skimProof(file: ChangedFile, ignoredFromSkim: readonly string[])
 }
 
 /** Control, zero-width and bidi-override characters: invisible in a rendered comment. */
-function replaceUnsafe(raw: string, substitute: string): string {
+export function replaceUnsafe(raw: string, substitute: string): string {
   return Array.from(raw, (ch) => {
     const code = ch.codePointAt(0) as number;
     const unsafe =

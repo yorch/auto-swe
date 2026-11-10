@@ -60,6 +60,16 @@ describe('Pull requests page', () => {
     expect(screen.getByText('No open pull requests')).toBeTruthy();
   });
 
+  it('asks for the review queue, open pull requests only, when ordered by attention', () => {
+    nav.search = 'order=attention&state=MERGED';
+    usePullRequests.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
+    render(<PullRequestsPage />);
+    expect(usePullRequests).toHaveBeenCalledWith(
+      expect.objectContaining({ order: 'attention', state: 'OPEN' }),
+      expect.anything()
+    );
+  });
+
   it('reads its filters from the address and ignores values it does not know', () => {
     nav.search =
       'state=MERGED&draft=ready&scope=TEAM&ticket=JIRA-1&offset=30&repo=3f2b8c1e-7a4d-4e5b-9c10-1a2b3c4d5e6f';

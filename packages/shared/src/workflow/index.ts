@@ -98,6 +98,7 @@ export {
 } from './macros.js';
 export type {
   OutcomeGroupMetrics,
+  OutcomeGuardTrip,
   OutcomePullRequest,
   OutcomeRepoRow,
   OutcomeReport,

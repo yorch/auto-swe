@@ -1217,4 +1217,271 @@ describe('pr evaluation routes', () => {
       expect(res.statusCode).toBe(404);
     });
   });
+  describe('review routing of a repository', () => {
+    const url = `/api/v1/repositories/${REPO}/review-routing`;
+    const ROUTING_DEFAULTS = {
+      'prEvaluation.humanAboveLines': 0,
+      'prEvaluation.humanMinRisk': 'LOW',
+      'prEvaluation.humanPaths': [],
+      'prEvaluation.humanSkipsBotApproved': true,
+      'prEvaluation.quickReviewMaxLines': 100,
+    };
+    const repo = (reviewRouting: unknown = null) => ({
+      id: REPO,
+      reviewRouting,
+      team: { orgId: 'org-1' },
+      teamId: TEAM,
+    });
+
+    beforeEach(() => {
+      settings.values = { ...DEFAULTS, ...ROUTING_DEFAULTS };
+    });
+
+    it('reads the settings at the repository scope with its override added to them', async () => {
+      settings.values = {
+        ...DEFAULTS,
+        ...ROUTING_DEFAULTS,
+        'prEvaluation.humanMinRisk': 'STANDARD',
+        'prEvaluation.humanPaths': ['secrets/**'],
+      };
+      ctx.prisma.connection.findFirst.mockResolvedValue(
+        // HIGH is looser than the setting, so it is inert; the glob is added.
+        repo({ humanMinRisk: 'HIGH', humanPaths: ['infra/**'] })
+      );
+      const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toEqual({
+        effective: {
+          humanAboveLines: 0,
+          humanMinRisk: 'STANDARD',
+          humanPaths: ['secrets/**', 'infra/**'],
+          quickReviewMaxLines: 100,
+          skipWhenBotApproved: true,
+        },
+        override: { humanMinRisk: 'HIGH', humanPaths: ['infra/**'] },
+      });
+      expect(settings.ctx.at(-1)).toEqual({ orgId: 'org-1', teamId: TEAM });
+    });
+
+    it('is 404 for a repository outside the caller reach', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(null);
+      expect((await ctx.app.inject({ headers: AUTH, method: 'GET', url })).statusCode).toBe(404);
+    });
+
+    it('lets the owning team LEAD store a stricter override, audited, and clears it with null', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.prisma.connection.findFirst.mockResolvedValue(repo());
+      leadOfTeam(true);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { override: { humanAboveLines: 300, humanPaths: ['src/payments/**'] } },
+        url,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.prisma.connection.update.mock.calls[0][0].data).toEqual({
+        reviewRouting: { humanAboveLines: 300, humanPaths: ['src/payments/**'] },
+      });
+      expect(ctx.prisma.configAuditLog.create).toHaveBeenCalled();
+      expect(res.json().data.effective.humanAboveLines).toBe(300);
+
+      ctx.prisma.connection.update.mockClear();
+      const cleared = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { override: null },
+        url,
+      });
+      expect(cleared.statusCode).toBe(200);
+      expect(ctx.prisma.connection.update.mock.calls[0][0].data).toEqual({
+        reviewRouting: { __sentinel: 'DbNull' },
+      });
+      expect(cleared.json().data.override).toEqual({});
+    });
+
+    it('accepts a team LEAD whose platform role is ENGINEER', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.prisma.connection.findFirst.mockResolvedValue(repo());
+      leadOfTeam(true);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { override: { humanPaths: ['infra/**'] } },
+        url,
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('refuses a team LEAD any value looser than the settings, and says which keys', async () => {
+      ctx.authState.role = 'LEAD';
+      settings.values = {
+        ...DEFAULTS,
+        ...ROUTING_DEFAULTS,
+        'prEvaluation.humanAboveLines': 500,
+        'prEvaluation.humanMinRisk': 'STANDARD',
+        'prEvaluation.humanPaths': ['infra/**'],
+        'prEvaluation.humanSkipsBotApproved': false,
+      };
+      ctx.prisma.connection.findFirst.mockResolvedValue(repo());
+      leadOfTeam(true);
+      for (const override of [
+        { humanPaths: [] },
+        { humanMinRisk: 'HIGH' },
+        { humanAboveLines: 0 },
+        { humanAboveLines: 900 },
+        { quickReviewMaxLines: 5000 },
+        { skipWhenBotApproved: true },
+      ]) {
+        const res = await ctx.app.inject({
+          headers: AUTH,
+          method: 'PUT',
+          payload: { override },
+          url,
+        });
+        expect(res.statusCode, JSON.stringify(override)).toBe(403);
+        expect(res.json().error.code).toBe('ROUTING_LOOSER_THAN_SETTINGS');
+        expect(res.json().error.details.keys).toEqual(Object.keys(override));
+      }
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+      // Stricter than the settings on every key is accepted.
+      const ok = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: {
+          override: {
+            humanAboveLines: 100,
+            humanMinRisk: 'LOW',
+            humanPaths: ['infra/**', 'db/**'],
+          },
+        },
+        url,
+      });
+      expect(ok.statusCode).toBe(200);
+    });
+
+    it('refuses an ADMIN a value that would loosen routing, which would be inert', async () => {
+      ctx.authState.role = 'ADMIN';
+      settings.values = {
+        ...DEFAULTS,
+        ...ROUTING_DEFAULTS,
+        'prEvaluation.humanMinRisk': 'STANDARD',
+      };
+      ctx.prisma.connection.findFirst.mockResolvedValue(repo());
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { override: { humanMinRisk: 'HIGH' } },
+        url,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.details.keys).toEqual(['humanMinRisk']);
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    describe('with strictness already stored on the repository', () => {
+      const stored = {
+        humanAboveLines: 100,
+        humanMinRisk: 'LOW',
+        humanPaths: ['payments/**'],
+        skipWhenBotApproved: false,
+      };
+      const put = (override: unknown) =>
+        ctx.app.inject({ headers: AUTH, method: 'PUT', payload: { override }, url });
+
+      beforeEach(() => {
+        settings.values = {
+          ...DEFAULTS,
+          ...ROUTING_DEFAULTS,
+          'prEvaluation.humanMinRisk': 'HIGH',
+        };
+        ctx.prisma.connection.findFirst.mockResolvedValue(repo(stored));
+      });
+
+      it('refuses a lead an override that leaves out what the stored one tightens', async () => {
+        ctx.authState.role = 'LEAD';
+        leadOfTeam(true);
+        for (const override of [
+          { quickReviewMaxLines: 10 },
+          null,
+          { humanPaths: ['payments/**'] },
+        ]) {
+          const res = await put(override);
+          expect(res.statusCode, JSON.stringify(override)).toBe(403);
+          expect(res.json().error.code).toBe('ROUTING_LOOSER_THAN_SETTINGS');
+        }
+        const dropped = await put({ quickReviewMaxLines: 10 });
+        expect(dropped.json().error.details.keys.sort()).toEqual([
+          'humanAboveLines',
+          'humanMinRisk',
+          'humanPaths',
+          'skipWhenBotApproved',
+        ]);
+        expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+      });
+
+      it('refuses a lead a value looser than the one stored, though the setting allows it', async () => {
+        ctx.authState.role = 'LEAD';
+        leadOfTeam(true);
+        for (const override of [
+          { ...stored, humanAboveLines: 0 },
+          { ...stored, humanMinRisk: 'HIGH' },
+          { ...stored, humanPaths: [] },
+        ]) {
+          const res = await put(override);
+          expect(res.statusCode, JSON.stringify(override)).toBe(403);
+          expect(res.json().error.details.keys).toHaveLength(1);
+        }
+      });
+
+      it('lets a lead add to what is stored, and re-save it unchanged', async () => {
+        ctx.authState.role = 'LEAD';
+        leadOfTeam(true);
+        expect((await put(stored)).statusCode).toBe(200);
+        expect((await put({ ...stored, humanPaths: ['payments/**', 'db/**'] })).statusCode).toBe(
+          200
+        );
+      });
+
+      it('lets an ADMIN remove it, or clear the override', async () => {
+        ctx.authState.role = 'ADMIN';
+        expect((await put({ quickReviewMaxLines: 10 })).statusCode).toBe(200);
+        expect((await put(null)).statusCode).toBe(200);
+      });
+    });
+
+    it('refuses a caller who does not lead the owning team', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.prisma.connection.findFirst.mockResolvedValue(repo());
+      leadOfTeam(false);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { override: { humanMinRisk: 'HIGH' } },
+        url,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unknown key, a bad risk class and an invalid glob', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.prisma.connection.findFirst.mockResolvedValue(repo());
+      leadOfTeam(true);
+      for (const override of [
+        { surprise: true },
+        { humanMinRisk: 'EXTREME' },
+        { humanPaths: ['a*b*c*d*e*f*g*h*i*'] },
+        { humanAboveLines: -1 },
+      ]) {
+        const res = await ctx.app.inject({
+          headers: AUTH,
+          method: 'PUT',
+          payload: { override },
+          url,
+        });
+        expect(res.statusCode, JSON.stringify(override)).toBe(400);
+      }
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+    });
+  });
 });

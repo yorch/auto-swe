@@ -685,9 +685,15 @@ describe('webhook routes', () => {
     });
 
     describe('lifecycle events', () => {
-      const pr = (action: string, extra: Record<string, unknown> = {}, merged = false) => {
+      const pr = (
+        action: string,
+        extra: Record<string, unknown> = {},
+        merged = false,
+        top: Record<string, unknown> = {}
+      ) => {
         const body = JSON.stringify({
           action,
+          ...top,
           pull_request: { merged, number: 42, ...extra },
           repository: { full_name: 'acme/payments-api' },
         });
@@ -778,6 +784,72 @@ describe('webhook routes', () => {
           expect(JSON.parse(res.payload).data).toEqual({ ignored: true });
         }
         expect(updateManyCalls).toHaveLength(0);
+      });
+
+      describe('a push (synchronize)', () => {
+        const SHA = 'B'.repeat(40);
+
+        it('records the head the host reports, apart from the head the platform pushed', async () => {
+          const res = await pr('synchronize', { head: { sha: SHA } });
+          expect(JSON.parse(res.payload).data).toEqual({ updated: true });
+          expect(updateManyCalls).toEqual([
+            {
+              data: { hostHeadSha: 'b'.repeat(40) },
+              where: { hostHeadSha: null, id: 'pr-row-1', status: 'OPEN' },
+            },
+          ]);
+          // The CI wait is keyed on `headSha`; a person's push must never move it.
+          expect(JSON.stringify(updateManyCalls)).not.toContain('"headSha"');
+        });
+
+        it('is taken only when the push continues from the recorded head (or none is recorded)', async () => {
+          await pr('synchronize', { head: { sha: SHA } }, false, { before: 'A'.repeat(40) });
+          expect(updateManyCalls).toEqual([
+            {
+              data: { hostHeadSha: 'b'.repeat(40) },
+              where: {
+                id: 'pr-row-1',
+                OR: [{ hostHeadSha: null }, { hostHeadSha: 'a'.repeat(40) }],
+                status: 'OPEN',
+              },
+            },
+          ]);
+          // A late delivery is a write that matches no row: an older `before` cannot overwrite,
+          // and the handler still answers 200 rather than an error GitHub would not retry.
+        });
+
+        it('writes only to a tracked row, and never creates one', async () => {
+          trackedPr = null;
+          const res = await pr('synchronize', { head: { sha: SHA } });
+          expect(JSON.parse(res.payload).data).toEqual({
+            ignored: true,
+            reason: 'No tracked pull request',
+          });
+          expect(updateManyCalls).toHaveLength(0);
+        });
+
+        it('ignores a push whose payload carries no usable head', async () => {
+          for (const head of [
+            undefined,
+            { sha: '' },
+            { sha: 'not a sha' },
+            { sha: 'g'.repeat(40) },
+          ]) {
+            const res = await pr('synchronize', head === undefined ? {} : { head });
+            expect(JSON.parse(res.payload).data).toEqual({ ignored: true });
+          }
+          expect(updateManyCalls).toHaveLength(0);
+        });
+
+        it('records the head of a reopened PR too', async () => {
+          prRowStatus = 'CLOSED';
+          await pr('reopened', { head: { sha: SHA } });
+          expect(updateManyCalls[0]?.data).toEqual({
+            closedAt: null,
+            hostHeadSha: 'b'.repeat(40),
+            status: 'OPEN',
+          });
+        });
       });
 
       const closedRow = () => ({
@@ -2564,12 +2636,13 @@ describe('webhook routes', () => {
         expect(prRowStatus).toBe('OPEN');
       });
 
-      it('/git does not record a close, reopen or edit either', async () => {
+      it('/git does not record a close, reopen, edit or push either', async () => {
         trackedPr = trackedOn('repo-github');
         for (const [action, pull_request] of [
           ['closed', { merged: false, number: 7 }],
           ['reopened', { merged: false, number: 7 }],
           ['edited', { merged: false, number: 7, title: 'hijacked' }],
+          ['synchronize', { head: { sha: 'c'.repeat(40) }, merged: false, number: 7 }],
         ] as const) {
           const body = JSON.stringify({
             action,

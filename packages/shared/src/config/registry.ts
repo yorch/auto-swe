@@ -13,6 +13,11 @@ import {
   MAX_GLOB_STARS,
 } from '../lib/prEvaluation/paths.js';
 import { MAX_FILE_GLOB_COST } from '../lib/prEvaluation/policy.js';
+import {
+  REVIEW_RISK_CLASSES,
+  reviewRoutingLineCount,
+  reviewRoutingPathsSchema,
+} from '../lib/prEvaluation/reviewRouting.js';
 import { CONVENTIONAL_COMMIT_TYPES, PR_TITLE_FORMATS } from '../lib/prTitle.js';
 import { IMPLEMENTER_RUNTIMES } from '../types/api.js';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
@@ -467,6 +472,21 @@ export const SETTING_DEFINITIONS = {
     restartRequired: false,
     runPinned: false,
     schema: z.boolean(),
+  }),
+  // Read by the fix sessions (`runImplementerFixSession`: CI_FIX, GATE_FIX, PR_FEEDBACK) and by
+  // `executeImplementation` when the step carries `refuseWorkflowChanges` (the ci-triage fix),
+  // with the repository's team. Resolved before the agent session starts.
+  'github.ciFixTestIntegrityGuard': defineSetting({
+    defaultValue: 'warn',
+    description:
+      "What a fix session does when the change it made deletes a test file or test case, adds a skip, focus or expected-failure marker, removes or loosens assertions, changes the test command or CI so failures are ignored, or changes test configuration to exclude tests or lower a coverage threshold. Covers the CI-fix, quality-gate-fix and pull-request-feedback fix sessions and the ci-triage-and-fix implement step. 'warn' (default): the change goes through and the findings are recorded on the run and counted in the outcome report. 'block': the change is committed without hooks, its diff is analysed, and a high-severity finding stops the step with TEST_INTEGRITY_GUARD before anything is pushed; the step then follows its template's failure route, and the fixer is not told why it failed. 'off': not checked. A heuristic over the diff text with false positives (a consolidation of tests, a deleted test for removed code) and false negatives (an assertion moved into a helper, a failing test rewritten to expect the wrong value), so a clean result is not a proof the tests are intact. Overridable per team or organization, not per repository.",
+    group: 'github',
+    label: 'Fix-session test-integrity guard',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.enum(['off', 'warn', 'block']),
   }),
   'github.issueLabelAutomationsEnabled': defineSetting({
     defaultValue: false,
@@ -944,6 +964,55 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.max(1000000),
     unit: 'lines',
   }),
+  'prEvaluation.humanAboveLines': defineSetting({
+    defaultValue: 0,
+    description:
+      'Review routing: a ready pull request with more changed lines than this asks for a person, whatever its risk class, unless the approvals it needs already stand. 0 turns the size rule off. A repository override can only lower it or turn it on: the stricter of the two applies, so a looser repository value has no effect, and loosening it for one repository is not supported (change this setting at its team or organization). Routing orders and labels the review queue; it never changes the approvals a pull request needs.',
+    group: 'prEvaluation',
+    label: 'Routing: always ask for a person above',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: reviewRoutingLineCount,
+    unit: 'lines',
+  }),
+  'prEvaluation.humanMinRisk': defineSetting({
+    defaultValue: 'LOW',
+    description:
+      'Review routing: the lowest risk class that asks for a person, unless the approvals the pull request needs already stand. LOW asks for a person on every ready, evaluated pull request that does not have its approvals; STANDARD leaves low-risk changes off the attention queue; HIGH keeps only high-risk ones. A repository override can only lower it: the stricter of the two applies, so a higher repository value has no effect (change this setting at its team or organization to raise it). Routing orders and labels the review queue; it never changes the approvals a pull request needs.',
+    group: 'prEvaluation',
+    label: 'Routing: lowest risk that asks for a person',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.enum(REVIEW_RISK_CLASSES),
+  }),
+  'prEvaluation.humanPaths': defineSetting({
+    defaultValue: [],
+    description:
+      'Review routing: globs of paths whose change always asks for a person, whatever approvals already stand, so a pull request that matches one stays on the attention queue until it is merged or closed. Matched against every changed file and the previous path of a renamed one. Globs are anchored at the repository root and case-insensitive; `*` stays inside one directory and `**` crosses directories: `infra/**` matches everything under infra at any depth, `**/*.tf` a .tf file anywhere, while `*.tf` matches only a root file and a bare `infra` only a file of that name. A leading ./, / or !, a backslash and a trailing / can never match and are refused. A path that cannot be checked (too long to match, or a list the evaluation cut or never recorded) counts as a match. A repository override can only add globs: the union applies, so a repository cannot remove one.',
+    group: 'prEvaluation',
+    label: 'Routing: paths that always ask for a person',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: reviewRoutingPathsSchema,
+  }),
+  'prEvaluation.humanSkipsBotApproved': defineSetting({
+    defaultValue: true,
+    description:
+      'Review routing: on, a pull request the approver App approved, with auto-merge armed, asks for no person unless the risk, size or path rule fires. Off, such a pull request still asks for a person. With the lowest-risk setting at LOW the risk rule fires on every pull request, so this only takes effect with it at STANDARD or HIGH. A repository override can only turn it off: it stays on only when both leave it on.',
+    group: 'prEvaluation',
+    label: 'Routing: skip bot-approved pull requests',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'prEvaluation.lowApprovers': defineSetting({
     defaultValue: 1,
     description: 'Approving reviews required on a pull request classed low risk.',
@@ -1004,6 +1073,19 @@ export const SETTING_DEFINITIONS = {
     restartRequired: false,
     runPinned: false,
     schema: z.boolean(),
+  }),
+  'prEvaluation.quickReviewMaxLines': defineSetting({
+    defaultValue: 100,
+    description:
+      'Review routing: a low-risk change of at most this many changed lines is a quick review, batched with its peers and listed smallest first. A repository override can only lower it: the lower value applies.',
+    group: 'prEvaluation',
+    label: 'Routing: quick-review size',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: reviewRoutingLineCount,
+    unit: 'lines',
   }),
   'prEvaluation.requiredStatusContext': defineSetting({
     defaultValue: 'auto-swe/pr-evaluation',
