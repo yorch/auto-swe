@@ -94,4 +94,24 @@ describe('MyTeams', () => {
     );
     expect(screen.getByText('Over the org budget')).toBeTruthy();
   });
+
+  it('words the meter by the scope the server sent', () => {
+    render(
+      <MyTeams
+        teams={[
+          team({
+            budget: { alertThresholdPercent: 80, percentUsed: 30, scope: 'team', state: 'ok' },
+          }),
+          team({
+            budget: { alertThresholdPercent: null, percentUsed: 30, scope: 'org', state: 'ok' },
+            slug: 'platform',
+            teamId: 't2',
+          }),
+        ]}
+      />
+    );
+    const meters = screen.getAllByTestId('budget-meter').map((m) => m.textContent);
+    expect(meters[0]).toContain('30% of the team budget this month');
+    expect(meters[1]).toContain('30% of the org budget this month');
+  });
 });

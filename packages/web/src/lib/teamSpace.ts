@@ -34,15 +34,43 @@ export function teamSlugFromPath(pathname: string): string | null {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+/** What the Settings tab offers: every section, the Budget section alone, or nothing. */
+export type TeamSettingsScope = 'full' | 'budget' | null;
+
 /**
- * Settings holds the team's configuration. It is for a team ADMIN or LEAD (the caller's own team
- * role, `myRole`) and for a platform ADMIN, who bypasses team checks.
+ * Whether the caller reaches the team's full configuration: a team ADMIN or LEAD (the caller's
+ * own team role, `myRole`) or a platform ADMIN, who bypasses team checks.
  */
-export function canSeeTeamSettings(
+export function hasFullTeamSettings(
   platformRole: string | null | undefined,
   myRole: string | null | undefined
 ): boolean {
   return hasRole(platformRole, 'ADMIN') || hasRole(myRole, 'LEAD');
+}
+
+/**
+ * Settings is `full` for a team ADMIN or LEAD and a platform ADMIN, `budget` for an ORG_ADMIN of
+ * the team's organization who is otherwise below team LEAD (the Budget section only), and null
+ * for everyone else.
+ */
+export function teamSettingsScope(
+  platformRole: string | null | undefined,
+  myRole: string | null | undefined,
+  isOrgAdmin: boolean
+): TeamSettingsScope {
+  if (hasFullTeamSettings(platformRole, myRole)) {
+    return 'full';
+  }
+  return isOrgAdmin ? 'budget' : null;
+}
+
+/** Whether the Settings tab is offered at all. */
+export function canSeeTeamSettings(
+  platformRole: string | null | undefined,
+  myRole: string | null | undefined,
+  isOrgAdmin = false
+): boolean {
+  return teamSettingsScope(platformRole, myRole, isOrgAdmin) !== null;
 }
 
 /** `Lead`, `Admin`, `Engineer` — how a team role reads in the chrome. */

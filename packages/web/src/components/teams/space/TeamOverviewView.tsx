@@ -67,7 +67,16 @@ function ActivityRow({ item }: { item: TeamOverviewActivityItem }) {
  * A team's overview. The sections that depend on the caller's team role render only when the
  * server sent them (`lead`, `admin`): the platform role never decides what is shown here.
  */
-export function TeamOverviewView({ overview, slug }: { overview: TeamOverview; slug: string }) {
+export function TeamOverviewView({
+  canManageBudget = false,
+  overview,
+  slug,
+}: {
+  /** True for a caller who may open the Budget section without being the team's admin (ORG_ADMIN). */
+  canManageBudget?: boolean;
+  overview: TeamOverview;
+  slug: string;
+}) {
   const { last7d, pullRequests: pr } = overview;
   const q = `?team=${encodeURIComponent(slug)}`;
   return (
@@ -115,6 +124,17 @@ export function TeamOverviewView({ overview, slug }: { overview: TeamOverview; s
         <Card data-testid="budget-panel">
           <CardHeader className="mb-2">
             <CardTitle>Budget</CardTitle>
+            {(overview.viewerLevel === 'admin' || canManageBudget) && (
+              <Link
+                className={cn(
+                  'text-xs text-paper-300 underline-offset-2 hover:underline',
+                  FOCUS_RING
+                )}
+                href={`/teams/${encodeURIComponent(slug)}/settings?tab=budget`}
+              >
+                Manage budget
+              </Link>
+            )}
           </CardHeader>
           <BudgetMeter budget={overview.budget} />
         </Card>
@@ -224,13 +244,24 @@ export function TeamOverviewView({ overview, slug }: { overview: TeamOverview; s
                       {repo.name}
                     </span>
                   </span>
-                  {repo.relation === 'owned' ? (
-                    <Badge tone="neutral" variant="outline">
-                      owned
-                    </Badge>
-                  ) : (
-                    <OwnerChip ownerName={repo.ownerTeamName ?? 'another team'} />
-                  )}
+                  <span className="flex shrink-0 items-center gap-2">
+                    {!repo.canLaunch && (
+                      <Badge
+                        title="Owner team set this repository to view only for your team"
+                        tone="muted"
+                        variant="outline"
+                      >
+                        View only
+                      </Badge>
+                    )}
+                    {repo.relation === 'owned' ? (
+                      <Badge tone="neutral" variant="outline">
+                        owned
+                      </Badge>
+                    ) : (
+                      <OwnerChip ownerName={repo.ownerTeamName ?? 'another team'} />
+                    )}
+                  </span>
                 </li>
               ))}
             </ul>

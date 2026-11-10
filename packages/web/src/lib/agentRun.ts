@@ -199,6 +199,14 @@ export interface LaunchErrorView {
   previousRunId?: string;
 }
 
+/** Fixed wording for a launch on a repository shared as view only; the server text is not shown. */
+const VIEW_ONLY_LAUNCH_ERROR: LaunchErrorView = {
+  hint: 'Ask a lead of the team that owns the repository to allow launching for your team.',
+  message: 'This repository is view only for your team.',
+  retryable: false,
+  title: 'View only',
+};
+
 /** Explains a failed launch (or re-run) by the gateway's error code. */
 export function describeLaunchError(err: unknown): LaunchErrorView {
   const message = err instanceof Error ? err.message : 'The launch failed';
@@ -306,6 +314,8 @@ export function describeLaunchError(err: unknown): LaunchErrorView {
     }
     case 'AGENT_RUN_NOT_FOUND':
       return { message, retryable: false, title: 'Agent run not found' };
+    case 'REPOSITORY_VIEW_ONLY':
+      return VIEW_ONLY_LAUNCH_ERROR;
     default:
       break;
   }

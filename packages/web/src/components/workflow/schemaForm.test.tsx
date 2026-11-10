@@ -24,6 +24,11 @@ vi.mock('@/hooks/useRepositories', () => ({
   }),
 }));
 
+// The view-only lookup reads the caller's teams; this test supplies the repositories itself.
+vi.mock('@/hooks/useViewOnlyRepos', () => ({
+  useIsViewOnly: () => (repo: { id: string }) => repo.id === 'conn-view-only',
+}));
+
 describe('SchemaFieldInput', () => {
   it('renders a connection picker filtered by connectionType', () => {
     render(

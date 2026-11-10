@@ -47,6 +47,28 @@ const REPOS = [
 ];
 
 describe('EpicLaunchForm', () => {
+  it('leaves repositories that are view only for the caller out of the choices and says so', async () => {
+    const viewOnly = {
+      ...REPOS[1],
+      id: 'r3',
+      repoName: 'ui',
+      shares: [{ canLaunch: false, team: { id: 'mine', name: 'Mine', slug: 'mine' } }],
+      team: { id: 'owner', name: 'Owner', slug: 'owner' },
+    };
+    setupFetchMock({
+      'GET /api/v1/epics': () => ({ data: [], meta: { limit: 50, offset: 0, total: 0 } }),
+      'GET /api/v1/repositories': () => ({ data: [...REPOS, viewOnly] }),
+      'GET /api/v1/teams': () => ({
+        data: [{ id: 'mine', myRole: 'LEAD', name: 'Mine', slug: 'mine' }],
+      }),
+    });
+    render(withQuery(<EpicLaunchForm onLaunched={pushSpy} />));
+    expect(await screen.findByTestId('epic-view-only-repos')).toBeTruthy();
+    expect(screen.getAllByRole('checkbox')).toHaveLength(2);
+    expect(screen.getByTestId('epic-view-only-repos').textContent).toMatch(/view only/);
+    expect(screen.queryByTestId('epic-hidden-repos')).toBeNull();
+  });
+
   it('rejects single-repo selection ', async () => {
     setupFetchMock({
       'GET /api/v1/epics': () => ({ data: [], meta: { limit: 50, offset: 0, total: 0 } }),

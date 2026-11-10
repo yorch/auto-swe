@@ -42,4 +42,28 @@ describe('ShareRepoModal', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Remove sharing' }));
     await waitFor(() => expect(wrote()).toBe(true));
   });
+
+  it('lists current sharees with a launch switch, and a revoked team is not saved back', async () => {
+    const fetchSpy = setupFetchMock({
+      'GET /api/v1/repositories/r1/share-candidates': () => ({
+        data: [{ id: 't2', name: 'Platform', slug: 'platform' }],
+      }),
+      'PUT /api/v1/repositories/r1/shares': () => ({ data: [] }),
+    });
+    render(withQuery(<ShareRepoModal onClose={() => {}} repo={repo} />));
+    expect(
+      (await screen.findByRole('switch', { name: 'Can launch work: Platform' })).getAttribute(
+        'aria-checked'
+      )
+    ).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'Revoke access for Platform' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Revoke access for Platform?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke' }));
+    await waitFor(() =>
+      expect((screen.getByLabelText('Platform') as HTMLInputElement).checked).toBe(false)
+    );
+    const puts = fetchSpy.mock.calls.filter(([, init]) => (init as RequestInit)?.method === 'PUT');
+    expect(puts).toHaveLength(1);
+    expect(JSON.parse((puts[0][1] as RequestInit).body as string)).toEqual({ teamIds: [] });
+  });
 });

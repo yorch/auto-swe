@@ -23,6 +23,7 @@ import {
 } from '@/hooks/useKnowledgeBases';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useRetriedRun } from '@/hooks/useRuns';
+import { useIsViewOnly } from '@/hooks/useViewOnlyRepos';
 import {
   AGENT_RUN_MAX_PROMPT_CHARS,
   type AgentRunDeliver,
@@ -41,6 +42,7 @@ import {
 } from '@/lib/agentRun';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { groupedRepoOptions } from '@/lib/repoGroups';
+import { VIEW_ONLY_REASON } from '@/lib/repoLaunch';
 import { requestHref } from '@/lib/requestDisplay';
 import { AGENT_SAMPLE_PROMPT } from '@/lib/sampleTasks';
 
@@ -98,6 +100,7 @@ export function AgentRunForm({
   const submitting = useRef(false);
 
   const repos = useRepositories({ limit: 500 });
+  const isViewOnly = useIsViewOnly();
   const scope = useStartScope();
   const repoId = values.repoId || null;
   const agents = useAgentRunAgents(repoId);
@@ -316,7 +319,9 @@ export function AgentRunForm({
         hint={repos.isError ? 'Could not load repositories' : 'Repositories your teams can reach'}
         label="Repository"
         onChange={(v) => set('repoId', v)}
-        options={groupedRepoOptions(gitRepos, scope?.team ?? null, connectionLabel)}
+        options={groupedRepoOptions(gitRepos, scope?.team ?? null, connectionLabel, (r) =>
+          isViewOnly(r) ? VIEW_ONLY_REASON : null
+        )}
         placeholder={repos.isLoading ? 'Loading…' : 'Choose a repository…'}
         required
         value={values.repoId}

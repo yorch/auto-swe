@@ -30,8 +30,14 @@ const base: TeamOverview = {
   },
   queued: 1,
   repos: [
-    { id: 'r1', name: 'acme/api', ownerTeamName: null, relation: 'owned' },
-    { id: 'r2', name: 'acme/shared-ui', ownerTeamName: 'Design', relation: 'shared' },
+    { canLaunch: true, id: 'r1', name: 'acme/api', ownerTeamName: null, relation: 'owned' },
+    {
+      canLaunch: false,
+      id: 'r2',
+      name: 'acme/shared-ui',
+      ownerTeamName: 'Design',
+      relation: 'shared',
+    },
   ],
   running: 2,
   team: {
@@ -150,5 +156,55 @@ describe('TeamOverviewView', () => {
     render(<TeamOverviewView overview={{ ...base, viewerLevel: 'admin' }} slug="payments" />);
     expect(screen.queryByTestId('lead-panel')).toBeNull();
     expect(screen.queryByTestId('admin-panel')).toBeNull();
+  });
+
+  it('words the Budget card by the scope the server sent', () => {
+    render(
+      <TeamOverviewView
+        overview={{
+          ...base,
+          budget: { alertThresholdPercent: 80, percentUsed: 60, scope: 'team', state: 'ok' },
+        }}
+        slug="payments"
+      />
+    );
+    expect(
+      within(screen.getByTestId('budget-panel')).getByRole('progressbar').getAttribute('aria-label')
+    ).toBe('Team budget');
+    expect(screen.getByTestId('budget-meter').textContent).toContain('60% of the team budget');
+  });
+
+  it('links an admin-level viewer from the Budget card to the Settings budget section only', () => {
+    const budget = {
+      alertThresholdPercent: null,
+      percentUsed: 10,
+      scope: 'org' as const,
+      state: 'ok' as const,
+    };
+    const { rerender } = render(
+      <TeamOverviewView overview={{ ...base, budget, viewerLevel: 'admin' }} slug="payments" />
+    );
+    expect(screen.getByRole('link', { name: 'Manage budget' }).getAttribute('href')).toBe(
+      '/teams/payments/settings?tab=budget'
+    );
+    rerender(
+      <TeamOverviewView overview={{ ...base, budget, viewerLevel: 'lead' }} slug="payments" />
+    );
+    expect(screen.queryByRole('link', { name: 'Manage budget' })).toBeNull();
+    rerender(
+      <TeamOverviewView
+        canManageBudget
+        overview={{ ...base, budget, viewerLevel: 'engineer' }}
+        slug="payments"
+      />
+    );
+    expect(screen.getByRole('link', { name: 'Manage budget' })).toBeTruthy();
+  });
+
+  it('marks repositories with canLaunch off as view only', () => {
+    render(<TeamOverviewView overview={base} slug="payments" />);
+    expect(screen.getAllByText('View only')).toHaveLength(1);
+    expect(screen.getByText('acme/shared-ui').closest('li')?.textContent).toContain('View only');
+    expect(screen.getByTitle('acme/api').closest('li')?.textContent).not.toContain('View only');
   });
 });

@@ -156,6 +156,22 @@ describe('describeLaunchError', () => {
     expect(v.hint).toMatch(/organization administrator/);
   });
 
+  it.each(['REPOSITORY_VIEW_ONLY'])(
+    'explains the view-only refusal %s with fixed wording',
+    (code) => {
+      const v = describeLaunchError(e(403, code, 'server says: team t-123 cannot launch ($5)'));
+      expect(v.title).toBe('View only');
+      expect(v.message).toBe('This repository is view only for your team.');
+      expect(JSON.stringify(v)).not.toMatch(/t-123|\$5|server says/);
+      expect(v.retryable).toBe(false);
+    }
+  );
+
+  it('does not guess view only from the text of another 403', () => {
+    const v = describeLaunchError(e(403, 'FORBIDDEN', 'This repository is view-only for team x'));
+    expect(v.title).toBe('Not allowed');
+  });
+
   it('marks RUN_CONFLICT as a possible duplicate, not a failure to retry', () => {
     const v = describeLaunchError(e(409, 'RUN_CONFLICT'));
     expect(v.duplicate).toBe(true);

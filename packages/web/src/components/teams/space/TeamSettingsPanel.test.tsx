@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
 import { nav, resetNavigation } from '@/test/mockNavigation';
@@ -126,5 +126,158 @@ describe('TeamSettingsPanel sections', () => {
     await screen.findByRole('tab', { name: 'General' });
     expect(screen.queryByRole('tab', { name: 'Service principals' })).toBeNull();
     expect(screen.queryByLabelText('Persona')).toBeNull();
+  });
+});
+
+describe('TeamSettingsPanel budget and sharing', () => {
+  const t = (id: string, name: string) => ({ id, name, slug: id });
+  const mock = (extra: Record<string, () => unknown> = {}) =>
+    setupFetchMock({
+      [`GET /api/v1/teams/${TEAM_ID}`]: () => team(null),
+      [`GET /api/v1/teams/${TEAM_ID}/budget`]: () => ({
+        data: {
+          budgetAlertThresholdPercent: null,
+          monthlyBudgetUsdCents: null,
+          monthSpendUsdCents: 100,
+        },
+      }),
+      [`GET /api/v1/teams/${TEAM_ID}/budget/status`]: () => ({
+        data: { alertThresholdPercent: null, percentUsed: null, scope: 'org', state: 'no_cap' },
+      }),
+      'GET /api/v1/platform/organizations': () => ({ data: [] }),
+      'GET /api/v1/repositories': () => ({ data: [] }),
+      ...extra,
+    });
+
+  it('offers the Budget tab to a team ADMIN who is not a platform admin', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+    mock();
+    renderPanel('ADMIN');
+    expect(await screen.findByRole('tab', { name: 'Budget' })).toBeTruthy();
+  });
+
+  it('hides the Budget tab from a team LEAD, even a platform LEAD', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+    mock();
+    renderPanel('LEAD');
+    await screen.findByRole('tab', { name: 'General' });
+    // Let the org lookup settle: it must not grant the tab to a non-ORG_ADMIN.
+    await waitFor(() => expect(screen.queryByRole('tab', { name: 'Budget' })).toBeNull());
+  });
+
+  it('offers the Budget tab to an ORG_ADMIN of the team’s organization only', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+    mock({
+      'GET /api/v1/platform/organizations': () => ({
+        data: [
+          { id: 'other', name: 'Other', role: 'ORG_ADMIN', slug: 'other' },
+          { id: 'o', name: 'Acme', role: 'ORG_ADMIN', slug: 'acme' },
+        ],
+      }),
+    });
+    renderPanel('LEAD');
+    expect(await screen.findByRole('tab', { name: 'Budget' })).toBeTruthy();
+  });
+
+  it('shows an ORG_ADMIN below team LEAD the Budget section alone', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+    mock({
+      'GET /api/v1/platform/organizations': () => ({
+        data: [{ id: 'o', name: 'Acme', role: 'ORG_ADMIN', slug: 'acme' }],
+      }),
+    });
+    resetNavigation('tab=automation', '/teams/payments/settings');
+    renderPanel('ENGINEER');
+    expect(await screen.findByTestId('team-budget-section')).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: 'General' })).toBeNull();
+    expect(screen.queryByText('Shared with this team')).toBeNull();
+  });
+
+  it('does not grant the tab for ORG_ADMIN of a different organization', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+    mock({
+      'GET /api/v1/platform/organizations': () => ({
+        data: [{ id: 'other', name: 'Other', role: 'ORG_ADMIN', slug: 'other' }],
+      }),
+    });
+    renderPanel('LEAD');
+    await screen.findByRole('tab', { name: 'General' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole('tab', { name: 'Budget' })).toBeNull();
+  });
+
+  it('shows the Budget section with the Model configuration link to a platform ADMIN', async () => {
+    mock();
+    resetNavigation('tab=budget', '/teams/payments/settings');
+    renderPanel('ADMIN');
+    expect(await screen.findByTestId('team-budget-section')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Model configuration' })).toBeTruthy();
+  });
+
+  it('omits the Model configuration link for a team ADMIN who cannot reach the page', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+    mock();
+    resetNavigation('tab=budget', '/teams/payments/settings');
+    renderPanel('ADMIN');
+    await screen.findByTestId('team-budget-section');
+    expect(screen.queryByRole('link', { name: 'Model configuration' })).toBeNull();
+  });
+
+  it('lets the owning team set who may launch on each shared repository', async () => {
+    const owned = {
+      id: 'r1',
+      organizationName: 'acme',
+      repoName: 'api',
+      shares: [{ canLaunch: false, team: t('t2', 'Platform') }],
+      team: t(TEAM_ID, 'Payments'),
+    };
+    mock({ 'GET /api/v1/repositories': () => ({ data: [owned] }) });
+    renderPanel('LEAD');
+    const card = await screen.findByTestId('shared-out');
+    expect(
+      within(card)
+        .getByRole('switch', { name: 'Can launch work: Platform' })
+        .getAttribute('aria-checked')
+    ).toBe('false');
+    expect(within(card).getByRole('button', { name: 'Revoke access for Platform' })).toBeTruthy();
+  });
+
+  it('shows no share management to a team member below lead', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });
+    mock({
+      'GET /api/v1/repositories': () => ({
+        data: [
+          {
+            id: 'r1',
+            organizationName: 'acme',
+            repoName: 'api',
+            shares: [{ canLaunch: true, team: t('t2', 'Platform') }],
+            team: t(TEAM_ID, 'Payments'),
+          },
+        ],
+      }),
+    });
+    renderPanel('ENGINEER');
+    await screen.findByRole('tab', { name: 'General' });
+    expect(screen.queryByTestId('shared-out')).toBeNull();
+  });
+
+  it('puts a View only chip on repositories shared with this team without launch rights', async () => {
+    const sharedIn = {
+      canLaunch: false,
+      id: 'r9',
+      organizationName: 'acme',
+      repoName: 'ui',
+      team: t('own', 'Design'),
+    };
+    setupFetchMock({
+      [`GET /api/v1/teams/${TEAM_ID}`]: () => ({
+        data: { ...team(null).data, sharedRepositories: [sharedIn] },
+      }),
+    });
+    renderPanel('LEAD');
+    const chip = await screen.findByText('View only');
+    expect(chip.closest('li')?.textContent).toContain('acme/ui');
+    expect(chip.closest('li')?.textContent).toContain('from Design');
   });
 });

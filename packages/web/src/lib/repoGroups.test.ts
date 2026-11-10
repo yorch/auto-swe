@@ -54,3 +54,17 @@ describe('groupReposByTeam', () => {
     expect(options[2]?.textValue).toContain('Shared with Payments');
   });
 });
+
+describe('groupedRepoOptions blocked reasons', () => {
+  it('lists a blocked repository disabled with its reason beside the group', () => {
+    const options = groupedRepoOptions(
+      [repo('a', payments), repo('b', platform)],
+      null,
+      (r) => r.id,
+      (r) => (r.id === 'b' ? 'View only' : null)
+    );
+    const b = options.find((o) => o.value === 'b');
+    expect(b).toMatchObject({ description: 'Platform · View only', disabled: true });
+    expect(options.find((o) => o.value === 'a')).not.toHaveProperty('disabled');
+  });
+});

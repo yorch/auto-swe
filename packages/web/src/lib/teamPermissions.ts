@@ -111,3 +111,16 @@ export function repoManageReason(ownerTeamName: string | null | undefined, actio
 export function runControlReason(ownerTeamName: string | null | undefined, action: string): string {
   return `Only members of ${ownerTeamName ?? 'the owning team'} or the launcher can ${action} this run.`;
 }
+
+/**
+ * Whether the caller may read and set a team's own monthly budget: the team's ADMIN, an ORG_ADMIN
+ * of the team's organization, or a platform ADMIN. The platform LEAD role confers nothing here,
+ * and a team LEAD (below team ADMIN) is not enough: the dollar figures are an admin's to see.
+ */
+export function canManageTeamBudget(
+  platformRole: string | null | undefined,
+  teamRole: string | null | undefined,
+  isOrgAdmin: boolean
+): boolean {
+  return hasRole(platformRole, 'ADMIN') || hasRole(teamRole, 'ADMIN') || isOrgAdmin;
+}

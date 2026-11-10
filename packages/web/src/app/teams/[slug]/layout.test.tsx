@@ -113,6 +113,28 @@ describe('team space layout', () => {
     expect(screen.getByRole('link', { name: 'Members' })).toBeTruthy();
   });
 
+  it('offers an ORG_ADMIN of the team’s organization Settings even as a plain engineer', async () => {
+    gateway([team('payments', 'Payments', 'ENGINEER')], {
+      'GET /api/v1/platform/organizations': () => ({
+        data: [{ id: 'org-1', name: 'Acme Corp', role: 'ORG_ADMIN', slug: 'acme' }],
+      }),
+    });
+    renderLayout('payments');
+    expect(await screen.findByRole('link', { name: 'Settings' })).toBeTruthy();
+  });
+
+  it('does not offer Settings to an ORG_ADMIN of another organization', async () => {
+    gateway([team('payments', 'Payments', 'ENGINEER')], {
+      'GET /api/v1/platform/organizations': () => ({
+        data: [{ id: 'org-9', name: 'Other', role: 'ORG_ADMIN', slug: 'other' }],
+      }),
+    });
+    renderLayout('payments');
+    await screen.findByRole('heading', { name: 'Payments' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull();
+  });
+
   it('judges Settings by the team role, not the platform role', async () => {
     // A platform LEAD who is only an ENGINEER on this team.
     useAuthStore.setState({ isAuthenticated: true, user: { role: 'LEAD', sub: 'me' } });

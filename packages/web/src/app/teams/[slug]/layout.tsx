@@ -8,16 +8,18 @@ import { Badge } from '@/components/ui/Badge';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar } from '@/components/ui/TabBar';
+import { useUserOrgs } from '@/hooks/useAdmin';
 import { useTeams } from '@/hooks/useTeams';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { hasRole } from '@/lib/roles';
 import { validateRouteParam } from '@/lib/routeParams';
+import { canManageTeamBudget } from '@/lib/teamPermissions';
 import {
-  canSeeTeamSettings,
   TEAM_ROLE_LABEL,
   TEAM_TABS,
   type TeamTabId,
   teamHref,
+  teamSettingsScope,
   teamTabFromPath,
 } from '@/lib/teamSpace';
 import { useAuthStore } from '@/stores/authStore';
@@ -43,6 +45,11 @@ export default function TeamSpaceLayout({
   const memberTeams = useTeams({ memberOnly: true });
   const allTeams = useTeams({ enabled: isPlatformAdmin });
   const { loaded, lastTeamSlug, setLastTeamSlug } = useUserPreferences();
+  // An ORG_ADMIN of the team's organization may open Settings for its Budget section; the lookup
+  // is skipped for callers who already hold the budget some other way.
+  const holdsBudget =
+    isPlatformAdmin || hasRole(memberTeams.data?.find((t) => t.slug === slug)?.myRole, 'ADMIN');
+  const userOrgs = useUserOrgs({ enabled: !holdsBudget });
 
   const team =
     (slug ? memberTeams.data?.find((t) => t.slug === slug) : undefined) ??
@@ -80,7 +87,11 @@ export default function TeamSpaceLayout({
     return <NotFound />;
   }
 
-  const canSeeSettings = canSeeTeamSettings(platformRole, team.myRole);
+  const isOrgAdmin = (userOrgs.data ?? []).some(
+    (o) => o.id === team.orgId && o.role === 'ORG_ADMIN'
+  );
+  const canSeeSettings = teamSettingsScope(platformRole, team.myRole, isOrgAdmin) !== null;
+  const canManageBudget = canManageTeamBudget(platformRole, team.myRole, isOrgAdmin);
   const tabs = TEAM_TABS.filter((tab) => tab.id !== 'settings' || canSeeSettings).map((tab) => ({
     href: teamHref(team.slug, tab.id),
     id: tab.id,
@@ -89,7 +100,7 @@ export default function TeamSpaceLayout({
   const active: TeamTabId = teamTabFromPath(pathname) ?? 'overview';
 
   return (
-    <TeamSpaceProvider value={{ canSeeSettings, team }}>
+    <TeamSpaceProvider value={{ canManageBudget, canSeeSettings, team }}>
       <div className="space-y-6">
         <PageHeader
           className="mb-0"

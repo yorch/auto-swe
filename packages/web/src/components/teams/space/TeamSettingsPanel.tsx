@@ -6,11 +6,13 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { KnowledgeBaseLinksPanel } from '@/components/knowledgeBases/KnowledgeBaseLinksSection';
+import { RepoShareAccess } from '@/components/repositories/RepoShareAccess';
 import { EgressAllowlistEditor } from '@/components/teams/EgressAllowlistEditor';
 import { EventEndpointsCard } from '@/components/teams/EventEndpointsCard';
 import { ServicePrincipalsSection } from '@/components/teams/ServicePrincipalsSection';
 import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamAgentLibrarySection } from '@/components/teams/TeamAgentLibrarySection';
+import { TeamBudgetSection } from '@/components/teams/TeamBudgetSection';
 import { TeamCallbackEndpointsSection } from '@/components/teams/TeamCallbackEndpointsSection';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { Alert } from '@/components/ui/Alert';
@@ -23,16 +25,20 @@ import { Icon } from '@/components/ui/Icon';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { Textarea } from '@/components/ui/Textarea';
+import { useUserOrgs } from '@/hooks/useAdmin';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
+import { useRepositories } from '@/hooks/useRepositories';
 import { useTeam, useUpdateTeam } from '@/hooks/useTeams';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { api } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
+import { VIEW_ONLY_CHIP } from '@/lib/repoLaunch';
 import { hasRole } from '@/lib/roles';
-import { teamPermissions } from '@/lib/teamPermissions';
+import { canManageTeamBudget, teamPermissions } from '@/lib/teamPermissions';
+import { hasFullTeamSettings } from '@/lib/teamSpace';
 import { useAuthStore } from '@/stores/authStore';
 
-type SettingsTab = 'general' | 'service-principals' | 'automation' | 'sandbox';
+type SettingsTab = 'general' | 'budget' | 'service-principals' | 'automation' | 'sandbox';
 
 /** Persona text beyond this many characters is probably unintended; shown as a counter, not enforced. */
 const PERSONA_SOFT_LIMIT = 4000;
@@ -67,6 +73,23 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
     canManageTeamAgents,
     canManageCallbacks,
   } = teamPermissions(platformRole, summary.myRole);
+  // An ORG_ADMIN of the team's organization may manage its budget without being on the team; the
+  // lookup is skipped for the callers who qualify some other way.
+  const platformAdminRole = hasRole(platformRole, 'ADMIN');
+  const teamAdminRole = hasRole(summary.myRole, 'ADMIN');
+  const userOrgs = useUserOrgs({ enabled: !platformAdminRole && !teamAdminRole });
+  const isOrgAdmin = (userOrgs.data ?? []).some(
+    (o) => o.id === summary.orgId && o.role === 'ORG_ADMIN'
+  );
+  const canManageBudget = canManageTeamBudget(platformRole, summary.myRole, isOrgAdmin);
+  // An ORG_ADMIN who is below team LEAD reaches the Budget section and nothing else.
+  const fullSettings = hasFullTeamSettings(platformRole, summary.myRole);
+  const budgetOnly = !fullSettings && isOrgAdmin;
+  // The owning team's leads see who its repositories are shared with, to set what each may do.
+  const ownedRepos = useRepositories({ limit: 500 });
+  const sharedOut = canManage
+    ? (ownedRepos.data ?? []).filter((r) => r.team?.id === id && (r.shares?.length ?? 0) > 0)
+    : [];
   const updateTeam = useUpdateTeam(id);
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -97,6 +120,14 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
     }
   }
 
+  if (!fullSettings && (userOrgs.isLoading || budgetOnly)) {
+    return budgetOnly ? (
+      <div {...tabPanelProps('team-settings', 'budget')}>
+        <TeamBudgetSection canManageCredentials={false} teamId={id} />
+      </div>
+    ) : null;
+  }
+
   if (isLoading || isError || !team) {
     return (
       <QueryBoundary
@@ -118,6 +149,7 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
 
   const tabs: { id: SettingsTab; label: string }[] = [
     { id: 'general', label: 'General' },
+    ...(canManageBudget ? [{ id: 'budget' as const, label: 'Budget' }] : []),
     ...(canManage ? [{ id: 'service-principals' as const, label: 'Service principals' }] : []),
     { id: 'automation', label: 'Events & agents' },
     ...(canEditAllowlists ? [{ id: 'sandbox' as const, label: 'Sandbox policy' }] : []),
@@ -209,13 +241,49 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
                     <RepoLine
                       key={r.id}
                       name={`${r.organizationName}/${r.repoName}`}
-                      trailing={<span className="text-xs text-paper-500">from {r.team.name}</span>}
+                      trailing={
+                        <span className="flex items-center gap-2 text-xs text-paper-500">
+                          {!r.canLaunch && (
+                            <Badge
+                              title="Owner team set this repository to view only for your team"
+                              tone="muted"
+                              variant="outline"
+                            >
+                              {VIEW_ONLY_CHIP}
+                            </Badge>
+                          )}
+                          from {r.team.name}
+                        </span>
+                      }
                     />
                   ))}
                 </ul>
               </Card>
             )}
           </div>
+
+          {sharedOut.length > 0 && (
+            <Card data-testid="shared-out">
+              <CardHeader className="mb-2">
+                <CardTitle>Shared with other teams</CardTitle>
+                <span className="text-xs text-paper-500 tabular-nums">{sharedOut.length}</span>
+              </CardHeader>
+              <p className="mb-3 text-sm text-paper-400">
+                Choose whether each team can start work on a repository or only view it. Work a
+                sharing team starts is billed to this team.
+              </p>
+              <div className="space-y-4">
+                {sharedOut.map((r) => (
+                  <div key={r.id}>
+                    <p className="font-mono text-sm text-paper-200">
+                      {r.organizationName}/{r.repoName}
+                    </p>
+                    <RepoShareAccess repo={r} />
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
 
           {canManage && (
             <Card>
@@ -293,6 +361,12 @@ export function TeamSettingsPanel({ team: summary }: { team: TeamSummary }) {
               </Button>
             </Card>
           )}
+        </div>
+      )}
+
+      {tab === 'budget' && canManageBudget && (
+        <div {...tabPanelProps('team-settings', 'budget')}>
+          <TeamBudgetSection canManageCredentials={isPlatformAdmin} teamId={id} />
         </div>
       )}
 

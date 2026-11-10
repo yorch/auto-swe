@@ -15,6 +15,7 @@ import { SearchInput } from '@/components/ui/Toolbar';
 import { useCreateEpic } from '@/hooks/useEpics';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useRepositories } from '@/hooks/useRepositories';
+import { useIsViewOnly } from '@/hooks/useViewOnlyRepos';
 import { errMsg } from '@/lib/errors';
 import { groupReposByTeam } from '@/lib/repoGroups';
 import { EPIC_SAMPLE, sampleEpicTicketId } from '@/lib/sampleTasks';
@@ -35,8 +36,15 @@ export function EpicLaunchForm({
   const { data: allRepos = [] } = useRepositories();
   // An epic may span only repositories whose owning team the caller leads.
   const scope = useStartScope();
-  const repos = allRepos.filter((r) => !r.team || epicAllowsTeam(scope, r.team.id));
-  const hiddenRepoCount = allRepos.length - repos.length;
+  const isViewOnly = useIsViewOnly();
+  const repos = allRepos.filter(
+    (r) => (!r.team || epicAllowsTeam(scope, r.team.id)) && !isViewOnly(r)
+  );
+  // View-only shares cannot take new work, so they are left out of the choices and counted.
+  const viewOnlyCount = allRepos.filter(
+    (r) => (!r.team || epicAllowsTeam(scope, r.team.id)) && isViewOnly(r)
+  ).length;
+  const hiddenRepoCount = allRepos.length - repos.length - viewOnlyCount;
   const create = useCreateEpic();
   const [externalTicketId, setExternalTicketId] = useState('');
   const [description, setDescription] = useState('');
@@ -238,6 +246,12 @@ export function EpicLaunchForm({
           <p className="text-xs text-paper-500" data-testid="epic-hidden-repos">
             {hiddenRepoCount} {hiddenRepoCount === 1 ? 'repository is' : 'repositories are'} not
             listed: an epic may span only repositories owned by a team you lead.
+          </p>
+        )}
+        {viewOnlyCount > 0 && (
+          <p className="text-xs text-paper-500" data-testid="epic-view-only-repos">
+            {viewOnlyCount} {viewOnlyCount === 1 ? 'repository is' : 'repositories are'} not listed:
+            the owner team set {viewOnlyCount === 1 ? 'it' : 'them'} to view only for your team.
           </p>
         )}
         {repos.length < 2 && (

@@ -6,7 +6,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useTeamOverview } from '@/hooks/useTeamOverview';
 
 export default function TeamOverviewPage() {
-  const { team } = useTeamSpace();
+  const { canManageBudget, team } = useTeamSpace();
   const query = useTeamOverview(team.id);
   return (
     <QueryBoundary
@@ -18,7 +18,13 @@ export default function TeamOverviewPage() {
       onRetry={() => void query.refetch()}
       shape="cards"
     >
-      {query.data && <TeamOverviewView overview={query.data} slug={team.slug} />}
+      {query.data && (
+        <TeamOverviewView
+          canManageBudget={canManageBudget}
+          overview={query.data}
+          slug={team.slug}
+        />
+      )}
     </QueryBoundary>
   );
 }

@@ -2,6 +2,7 @@
 
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
+import { RepoShareAccess } from '@/components/repositories/RepoShareAccess';
 import { Alert } from '@/components/ui/Alert';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
@@ -67,6 +68,21 @@ export function ShareRepoModal({
       subtitle={`Members of the teams you pick can see this repository and start runs on it. ${repo.team.name} keeps managing it, and runs keep its budget and settings.`}
       title={connectionLabel(repo)}
     >
+      {currentlyShared > 0 && (
+        <fieldset className="mb-5">
+          <legend className="label-mono mb-1">Current access</legend>
+          <RepoShareAccess
+            onRevoked={(teamId) =>
+              setSelected((current) => {
+                const next = new Set(current);
+                next.delete(teamId);
+                return next;
+              })
+            }
+            repo={repo}
+          />
+        </fieldset>
+      )}
       <form className="space-y-5" onSubmit={(e) => void handleSave(e).catch(() => {})}>
         {candidates.isLoading && <SkeletonRows label="teams" rows={3} />}
         {candidates.isError && (

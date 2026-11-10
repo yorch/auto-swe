@@ -15,7 +15,7 @@ export interface RepoGroup<T> {
 interface Groupable {
   /** Always present from the gateway; tolerated as absent so a row without one is not dropped. */
   team?: TeamRef;
-  shares?: Array<{ team: TeamRef }>;
+  shares?: Array<{ canLaunch?: boolean; team: TeamRef }>;
 }
 
 /**
@@ -65,14 +65,22 @@ export function groupReposByTeam<T extends Groupable>(
 export function groupedRepoOptions<T extends Groupable & { id: string }>(
   repos: T[],
   scope: ScopeTeam | null,
-  label: (repo: T) => string
+  label: (repo: T) => string,
+  /** A reason a repository cannot be picked; it is listed disabled with the reason beside it. */
+  blockedReason?: (repo: T) => string | null
 ) {
   return groupReposByTeam(repos, scope).flatMap((group) =>
-    group.repos.map((repo) => ({
-      description: group.label || undefined,
-      label: label(repo),
-      textValue: `${label(repo)} ${group.label}`.trim(),
-      value: repo.id,
-    }))
+    group.repos.map((repo) => {
+      const reason = blockedReason?.(repo) ?? null;
+      return {
+        description: reason
+          ? [group.label, reason].filter(Boolean).join(' · ')
+          : group.label || undefined,
+        ...(reason ? { disabled: true } : {}),
+        label: label(repo),
+        textValue: `${label(repo)} ${group.label}`.trim(),
+        value: repo.id,
+      };
+    })
   );
 }

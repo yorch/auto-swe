@@ -583,8 +583,9 @@ export interface UserOrg {
   slug: string;
 }
 
-export function useUserOrgs() {
+export function useUserOrgs(options: { enabled?: boolean } = {}) {
   return useQuery({
+    enabled: options.enabled ?? true,
     queryFn: () =>
       api.get<{ data: UserOrg[] }>('/api/v1/platform/organizations').then((r) => r.data),
     queryKey: ['user-orgs'],
