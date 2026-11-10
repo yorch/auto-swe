@@ -1,9 +1,12 @@
 import {
   assertShellImageAllowed,
   collectAuthoredCode,
+  collectUseProblems,
   findInternalSteps,
   findInvalidPresentation,
   formatValidationIssue,
+  MacroUseError,
+  materializeUses,
   parseWorkflowSpec,
   ShellImageNotAllowedError,
   type ShellNodeWithId,
@@ -165,7 +168,22 @@ function zodIssueLocation(path: unknown): Pick<SpecParseIssue, 'nodeId' | 'field
  * what the save routes put in their 400 body, so `parseSpecOrThrow` and the validate route cannot
  * disagree about what is wrong; `issues` is the same finding split per node for display.
  */
-export function parseSpec(input: unknown): SpecParseResult {
+export function parseSpec(rawInput: unknown): SpecParseResult {
+  // A spec authored as `uses` carries no nodes of its own: expand them first, so every
+  // check below (and the stored value) sees the flat spec the interpreter runs.
+  let input: unknown;
+  try {
+    input = materializeUses(rawInput);
+  } catch (err) {
+    if (!(err instanceof MacroUseError)) {
+      throw err;
+    }
+    return {
+      issues: [{ code: 'USE_INVALID', field: 'uses', message: err.message }],
+      message: err.message,
+      ok: false,
+    };
+  }
   // Strict check: the spec must already declare the current SPEC_SCHEMA_VERSION.
   // The codemod machinery runs at workflow start (templates.ts → migrateSpec) to
   // upgrade already-stored specs, but the editor is expected to migrate before
@@ -190,7 +208,7 @@ export function parseSpec(input: unknown): SpecParseResult {
   if (badPresentation.length > 0) {
     return {
       issues: badPresentation.map((message) => {
-        const m = /^node '(.*)'\.(group|title) /.exec(message);
+        const m = /^node '(.*)'\.(group|title|use) /.exec(message);
         return {
           code: 'INVALID_PRESENTATION',
           message,
@@ -217,6 +235,22 @@ export function parseSpec(input: unknown): SpecParseResult {
     return {
       issues: issues.length > 0 ? issues : [{ code: 'SCHEMA_INVALID', message }],
       message,
+      ok: false,
+    };
+  }
+  // `uses` and the nodes must agree (unknown macro, bad arguments, a hand-edit that drifted
+  // from its expansion): a save refuses the disagreement rather than store a spec whose
+  // authored form misdescribes what runs.
+  const useProblems = collectUseProblems(parsed);
+  if (useProblems.length > 0) {
+    return {
+      issues: useProblems.map((p) => ({
+        code: p.code,
+        field: p.nodeId ? 'use' : p.useId ? `uses.${p.useId}` : 'uses',
+        message: p.message,
+        ...(p.nodeId ? { nodeId: p.nodeId } : {}),
+      })),
+      message: useProblems.map((p) => p.message).join('; '),
       ok: false,
     };
   }

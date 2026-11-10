@@ -1,16 +1,12 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   CI_ATTEMPTS_PATH,
-  ciLoop,
   ciWaitEntry,
   failureLesson,
-  mergeNodes,
-  openPullRequest,
   prResult,
-  reviewLoop,
   terminate,
-  validatePhase,
 } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Two-person rule: two independent humanApproval gates, asked about code that is
@@ -48,8 +44,8 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
     'change-management requirement.',
   entry: 'validate',
   name: 'four-eyes',
-  nodes: mergeNodes(
-    validatePhase({ next: 'implement' }),
+  ...authored(
+    macro('validate', 'validatePhase@1', { next: 'implement' }),
     {
       implement: {
         group: 'implement',
@@ -61,13 +57,13 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
         type: 'step',
       },
     },
-    reviewLoop({ approved: 'openPR', exhausted: 'lessonReviewFailed' }),
-    openPullRequest({ next: ciWaitEntry(), status: 'AWAITING_CI' }),
+    macro('review', 'reviewLoop@1', { approved: 'openPR', exhausted: 'lessonReviewFailed' }),
+    macro('pr', 'openPullRequest@1', { next: ciWaitEntry(), status: 'AWAITING_CI' }),
     // The pull request is open, so a CI fix is pushed by the fix session itself and
     // `repushAfterFix` only re-arms the CI wait for the new head. A fix that changed
     // nothing is counted as a spent attempt instead of waiting for a CI event that
     // cannot come.
-    ciLoop({
+    macro('ci', 'ciLoop@1', {
       exhausted: 'lessonCIFailed',
       fix: {
         handoff: { repush: 'repushAfterFix', status: 'AWAITING_CI' },

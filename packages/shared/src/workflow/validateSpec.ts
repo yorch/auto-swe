@@ -14,6 +14,11 @@
  *                          `exports` entry, or a node id — results land at
  *                          `nodes.<id>.output`) contains `__proto__` / `prototype` /
  *                          `constructor`, which the interpreter refuses at run time
+ *     - USE_*              the spec's `uses` (macro invocations kept beside the flat nodes)
+ *                          disagree with its nodes: an invalid use id, an unknown macro or
+ *                          version, refused arguments, a node tagged with an undeclared use,
+ *                          a use with no nodes, or drift between a use's nodes and a fresh
+ *                          expansion (`macros.ts`, `collectUseProblems`)
  *   warnings (advisory):
  *     - UNKNOWN_NODE_REF   a `{ from: "nodes.<id>..." }` binding names a node
  *                          that doesn't exist (may reference a not-yet-added node)
@@ -52,6 +57,7 @@
  */
 
 import { checkExprSyntax, RESERVED_SEGMENTS } from './expr.js';
+import { collectUseProblems } from './macros.js';
 import {
   type EvalScorer,
   hasTerminalShorthand,
@@ -715,6 +721,16 @@ export function validateSpec(
         .join(' | ')}); a folded view would hide the path between them`,
       nodeId: pieces[1]?.[0],
       severity: 'warning',
+    });
+  }
+
+  for (const problem of collectUseProblems(spec)) {
+    errors.push({
+      code: problem.code,
+      field: problem.nodeId ? 'use' : problem.useId ? `uses.${problem.useId}` : 'uses',
+      message: problem.message,
+      ...(problem.nodeId ? { nodeId: problem.nodeId } : {}),
+      severity: 'error',
     });
   }
 

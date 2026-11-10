@@ -1,11 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  terminate,
-  validatePhase,
-} from './authoring/index.js';
+import { prResult, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Human categorises risk level; higher risk → stricter approval chain.
@@ -17,8 +12,8 @@ export const TIERED_ESCALATION_SPEC: WorkflowSpec = {
     'high-risk ones need team-lead approval within 48 hours.',
   entry: 'validate',
   name: 'tiered-escalation',
-  nodes: mergeNodes(
-    validatePhase({ next: 'implement', successCriteria: false }),
+  ...authored(
+    macro('validate', 'validatePhase@1', { next: 'implement', successCriteria: false }),
     {
       implement: {
         group: 'implement',
@@ -65,7 +60,7 @@ export const TIERED_ESCALATION_SPEC: WorkflowSpec = {
       terminateRejected: terminate('FAILED', { group: 'approval', title: 'Rejected' }),
       terminateTimedOut: terminate('TIMED_OUT', { group: 'approval', title: 'Approval timed out' }),
     },
-    openPullRequest({ next: 'done' }),
+    macro('pr', 'openPullRequest@1', { next: 'done' }),
     {
       done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
     }

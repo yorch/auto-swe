@@ -1,11 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  terminate,
-  validatePhase,
-} from './authoring/index.js';
+import { prResult, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Database migration workflow: implement → dry-run migration in a shell
@@ -24,8 +19,8 @@ export const DB_MIGRATION_DRY_RUN_SPEC: WorkflowSpec = {
     'request is opened.',
   entry: 'validate',
   name: 'db-migration-dry-run',
-  nodes: mergeNodes(
-    validatePhase({ next: 'implement', successCriteria: false }),
+  ...authored(
+    macro('validate', 'validatePhase@1', { next: 'implement', successCriteria: false }),
     {
       implement: {
         group: 'implement',
@@ -72,7 +67,7 @@ export const DB_MIGRATION_DRY_RUN_SPEC: WorkflowSpec = {
       terminateRejected: terminate('FAILED', { group: 'approval', title: 'Rejected' }),
       terminateTimedOut: terminate('TIMED_OUT', { group: 'approval', title: 'Approval timed out' }),
     },
-    openPullRequest({ next: 'done' }),
+    macro('pr', 'openPullRequest@1', { next: 'done' }),
     {
       done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
     }

@@ -76,8 +76,10 @@ export function EditorInspectorPanel({
             nodes: { ...spec.nodes, [selectedNodeId]: next },
           });
         }}
+        onChangeSpec={onChange}
         onDelete={onDelete}
         onRename={onRename}
+        spec={spec}
         stepMeta={selectedStepMeta}
         stepRegistry={stepRegistry}
       />

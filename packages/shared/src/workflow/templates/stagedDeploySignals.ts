@@ -1,15 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  ciLoop,
-  ciWaitEntry,
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  reviewLoop,
-  signalGate,
-  terminate,
-  validatePhase,
-} from './authoring/index.js';
+import { ciWaitEntry, prResult, signalGate, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Standard review + CI, then two additional signal gates: staging deploy result
@@ -30,8 +21,8 @@ export const STAGED_DEPLOY_SIGNALS_SPEC: WorkflowSpec = {
     'one starts.',
   entry: 'validate',
   name: 'staged-deploy-signals',
-  nodes: mergeNodes(
-    validatePhase({ next: 'implement' }),
+  ...authored(
+    macro('validate', 'validatePhase@1', { next: 'implement' }),
     {
       implement: {
         group: 'implement',
@@ -43,9 +34,9 @@ export const STAGED_DEPLOY_SIGNALS_SPEC: WorkflowSpec = {
         type: 'step',
       },
     },
-    reviewLoop({ approved: 'openPR' }),
-    openPullRequest({ next: ciWaitEntry(), status: 'AWAITING_CI' }),
-    ciLoop({
+    macro('review', 'reviewLoop@1', { approved: 'openPR' }),
+    macro('pr', 'openPullRequest@1', { next: ciWaitEntry(), status: 'AWAITING_CI' }),
+    macro('ci', 'ciLoop@1', {
       fix: { handoff: { repush: 'repushAfterCIFix' } },
       passed: 'waitForStaging',
     }),

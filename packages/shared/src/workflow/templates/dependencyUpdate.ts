@@ -1,15 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  ciLoop,
-  ciWaitEntry,
-  failureLesson,
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  qualityGate,
-  terminate,
-  validatePhase,
-} from './authoring/index.js';
+import { ciWaitEntry, failureLesson, prResult, qualityGate, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Tailored for dependency bumps: implement → full test suite → open PR → CI loop.
@@ -23,8 +14,8 @@ export const DEPENDENCY_UPDATE_SPEC: WorkflowSpec = {
     'and CI are the quality gate for mechanical dependency bumps.',
   entry: 'validate',
   name: 'dependency-update',
-  nodes: mergeNodes(
-    validatePhase({ next: 'implement', successCriteria: false }),
+  ...authored(
+    macro('validate', 'validatePhase@1', { next: 'implement', successCriteria: false }),
     {
       implement: {
         group: 'implement',
@@ -37,8 +28,8 @@ export const DEPENDENCY_UPDATE_SPEC: WorkflowSpec = {
       },
       runTests: qualityGate('runTests', 'openPR', { group: 'verify' }),
     },
-    openPullRequest({ next: ciWaitEntry() }),
-    ciLoop({
+    macro('pr', 'openPullRequest@1', { next: ciWaitEntry() }),
+    macro('ci', 'ciLoop@1', {
       exhausted: 'lessonCIFailed',
       fix: { handoff: { repush: 'repushAfterFix' } },
       passed: 'done',

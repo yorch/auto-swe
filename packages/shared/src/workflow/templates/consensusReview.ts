@@ -1,15 +1,12 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   CI_ATTEMPTS_PATH,
-  ciLoop,
   ciWaitEntry,
   failureLesson,
-  mergeNodes,
-  openPullRequest,
   prResult,
   terminate,
-  validatePhase,
 } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Two independent agent review network calls run in parallel via fanOut, on code
@@ -41,7 +38,7 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
     'before a person sees the pull request.',
   entry: 'validate',
   name: 'consensus-review',
-  nodes: mergeNodes(
+  ...authored(
     {
       // ── Branch nodes (run inside fanOut) ─────────────────────────────────
       branchApproved: terminate('SUCCESS', { group: 'reviewer branch', title: 'Branch approved' }),
@@ -79,7 +76,7 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
       },
     },
     // ── Main graph ────────────────────────────────────────────────────────
-    validatePhase({ next: 'implement' }),
+    macro('validate', 'validatePhase@1', { next: 'implement' }),
     {
       implement: {
         group: 'implement',
@@ -180,11 +177,11 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
         title: 'Review failed',
       }),
     },
-    openPullRequest({ next: ciWaitEntry(), status: 'AWAITING_CI' }),
+    macro('pr', 'openPullRequest@1', { next: ciWaitEntry(), status: 'AWAITING_CI' }),
     // The pull request is open, so a CI fix is pushed by the fix session itself and
     // `repushAfterFix` only re-arms the CI wait for the new head. The reviewers run after.
     // A CI fix that changed nothing is counted as a spent attempt instead of waiting.
-    ciLoop({
+    macro('ci', 'ciLoop@1', {
       exhausted: 'lessonCIFailed',
       fix: {
         handoff: { repush: 'repushAfterFix', status: 'AWAITING_CI' },

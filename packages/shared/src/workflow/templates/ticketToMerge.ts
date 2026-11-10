@@ -1,16 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  ciLoop,
-  ciWaitEntry,
-  mergeNodes,
-  type NodeMap,
-  openPullRequest,
-  prResult,
-  reviewLoop,
-  terminate,
-  validatePhase,
-  validatePhaseEntry,
-} from './authoring/index.js';
+import { ciWaitEntry, prResult, terminate, validatePhaseEntry } from './authoring/index.js';
+import { type Authored, authored, macro } from './authoring/macro.js';
 
 /**
  * The seeded ticket-to-merge template, and the global default: a ticket in, a
@@ -46,7 +36,7 @@ export const TICKET_TO_MERGE_SPEC: WorkflowSpec = {
     'the logs, then wait for a person to merge. The lesson is stored for the next run.',
   entry: validatePhaseEntry({ ticketContext: true }),
   name: 'ticket-to-merge',
-  nodes: ticketToMergeNodes('waitForHumanMerge', { uiVerify: true }),
+  ...ticketToMergeNodes('waitForHumanMerge', { uiVerify: true }),
   schemaVersion: SPEC_SCHEMA_VERSION,
 };
 
@@ -55,9 +45,13 @@ export const TICKET_TO_MERGE_SPEC: WorkflowSpec = {
  * `ticket-to-merge` hands off to the merge wait; a template that checks something between green CI
  * and the merge wait passes its own first node and adds the nodes it needs beside the result.
  */
-export function ticketToMergeNodes(passed: string, options: { uiVerify?: boolean } = {}): NodeMap {
-  return mergeNodes(
-    validatePhase({ next: 'implement', stopIfNotActionable: true, ticketContext: true }),
+export function ticketToMergeNodes(passed: string, options: { uiVerify?: boolean } = {}): Authored {
+  return authored(
+    macro('validate', 'validatePhase@1', {
+      next: 'implement',
+      stopIfNotActionable: true,
+      ticketContext: true,
+    }),
     {
       implement: {
         group: 'implement',
@@ -89,14 +83,14 @@ export function ticketToMergeNodes(passed: string, options: { uiVerify?: boolean
         : {}),
     },
     // ── Review loop, then CI loop; a CI fix re-enters the review via clearCiResult ──
-    reviewLoop({
+    macro('review', 'reviewLoop@1', {
       afterFix: 'clearCiResult',
       approved: 'openPR',
       exhausted: 'lessonReviewFailed',
     }),
     // CI wait: signal (webhook, default) vs poll (active GitHub query)
-    openPullRequest({ next: ciWaitEntry('pollOrSignal'), status: 'AWAITING_CI' }),
-    ciLoop({
+    macro('pr', 'openPullRequest@1', { next: ciWaitEntry('pollOrSignal'), status: 'AWAITING_CI' }),
+    macro('ci', 'ciLoop@1', {
       exhausted: 'lessonCIFailed',
       fix: { handoff: { rereview: 'review' } },
       passed,
