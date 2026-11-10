@@ -50,7 +50,7 @@ vi.mock('../lib/agentTracer.js', () => ({
 import { prisma } from '@auto-swe/shared/db';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { mcpUrlForConnection } from '../lib/config/mcpConnection.js';
-import { mcpCallTool } from './mcpCallTool.js';
+import { callMcpConnectionTool, mcpCallTool } from './mcpCallTool.js';
 
 const mockedUrl = vi.mocked(mcpUrlForConnection);
 const mockedLoad = vi.mocked(loadMcpTools);
@@ -339,5 +339,107 @@ describe('mcpCallTool governance', () => {
     expect(second).toEqual(first);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(recorded).toEqual([]);
+  });
+});
+
+describe('callMcpConnectionTool modes', () => {
+  const base = { connectionId: 'c1', nodeId: 'do', tool: 'search_docs' } as const;
+  const hint = (readOnlyHint: boolean) => ({ mcp: { annotations: { readOnlyHint } } });
+  function loaded(tool: unknown) {
+    return {
+      close: vi.fn().mockResolvedValue(undefined),
+      tools: { mcp_search_docs: tool },
+    } as never;
+  }
+
+  beforeEach(() => {
+    vi.mocked(prisma.autonomyDecision.findFirst).mockReset();
+    vi.mocked(prisma.autonomyDecision.findFirst).mockResolvedValue(null);
+    vi.mocked(prisma.workflowOutcomeReference.findFirst).mockReset();
+    vi.mocked(prisma.workflowOutcomeReference.create).mockReset();
+    vi.mocked(prisma.workflowOutcomeReference.updateMany).mockReset();
+    vi.mocked(prisma.workflowOutcomeReference.updateMany).mockResolvedValue({ count: 1 } as never);
+    mockedUrl.mockResolvedValue({ url: 'https://mcp.example.com/mcp' });
+  });
+
+  it('readOnly refuses a tool without readOnlyHint before executing or touching the ledger', async () => {
+    const execute = vi.fn();
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockedLoad.mockResolvedValue({ close, tools: { mcp_search_docs: { execute } } } as never);
+
+    await expect(
+      callMcpConnectionTool({ ...base, mode: 'readOnly', step: 'readSource' })
+    ).rejects.toMatchObject({ message: expect.stringMatching(/read-only/), type: 'NOT_SENT' });
+    expect(execute).not.toHaveBeenCalled();
+    expect(prisma.workflowOutcomeReference.findFirst).not.toHaveBeenCalled();
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+    expect(prisma.autonomyDecision.findFirst).not.toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  it('readOnly calls a readOnlyHint tool without gating or a ledger row', async () => {
+    const execute = vi.fn().mockResolvedValue({ hits: 1 });
+    mockedLoad.mockResolvedValue(loaded({ execute, ...hint(true) }));
+
+    const out = await callMcpConnectionTool({ ...base, mode: 'readOnly', step: 'readSource' });
+
+    expect(out).toEqual({ readOnly: true, result: { hits: 1 } });
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+    expect(prisma.autonomyDecision.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('mutating claims the ledger and gates on approval even for a readOnlyHint tool', async () => {
+    const execute = vi.fn().mockResolvedValue({ ok: 1 });
+    mockedLoad.mockResolvedValue(loaded({ execute, ...hint(true) }));
+
+    const out = await callMcpConnectionTool({ ...base, mode: 'mutating', step: 'writeOutcome' });
+
+    expect(out).toEqual({ readOnly: true, result: { ok: 1 } });
+    expect(prisma.autonomyDecision.findFirst).toHaveBeenCalled();
+    expect(prisma.workflowOutcomeReference.create).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('mutating refuses without calling when an approval is missing', async () => {
+    vi.mocked(prisma.autonomyDecision.findFirst)
+      .mockResolvedValueOnce({
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        payload: { decision: 'require_approval' },
+      } as never)
+      .mockResolvedValueOnce(null);
+    const execute = vi.fn();
+    mockedLoad.mockResolvedValue(loaded({ execute, ...hint(true) }));
+
+    await expect(
+      callMcpConnectionTool({ ...base, mode: 'mutating', step: 'writeOutcome' })
+    ).rejects.toHaveProperty('type', 'APPROVAL_REQUIRED');
+    expect(execute).not.toHaveBeenCalled();
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+  });
+
+  it('auto treats a readOnlyHint tool as a read and an unannotated one as a mutation', async () => {
+    const execute = vi.fn().mockResolvedValue({ ok: 1 });
+    mockedLoad.mockResolvedValue(loaded({ execute, ...hint(true) }));
+    await callMcpConnectionTool({ ...base, mode: 'auto', step: 'runTool' });
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+
+    mockedLoad.mockResolvedValue(loaded({ execute }));
+    const out = await callMcpConnectionTool({ ...base, mode: 'auto', step: 'runTool' });
+    expect(out.readOnly).toBe(false);
+    expect(prisma.workflowOutcomeReference.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a recorded outcome without executing again', async () => {
+    vi.mocked(prisma.workflowOutcomeReference.findFirst).mockResolvedValue({
+      result: { result: { first: true } },
+      state: 'DONE',
+    } as never);
+    const execute = vi.fn();
+    mockedLoad.mockResolvedValue(loaded({ execute }));
+
+    const out = await callMcpConnectionTool({ ...base, mode: 'mutating', step: 'runTool' });
+
+    expect(out).toEqual({ readOnly: false, result: { first: true } });
+    expect(execute).not.toHaveBeenCalled();
   });
 });

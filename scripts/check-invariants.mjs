@@ -654,6 +654,7 @@ const GUARDED_FETCH_MODULES = [
   'packages/worker/src/agents/mcpTools.ts',
   'packages/worker/src/lib/callbackSender.ts',
   // Every file under packages/worker/src/lib/scm/ is covered too (scmProviderFiles()).
+  'packages/worker/src/connectors/httpApi.ts',
 ];
 
 /**

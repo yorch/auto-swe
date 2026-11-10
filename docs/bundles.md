@@ -90,7 +90,7 @@ const { ok, errors } = validateBundle(signed);
 ```
 
 `validateBundle` checks the schema, re-derives the content hash, refuses a dependency on a connection
-type with no connector behind it, and runs the same scanner-pattern safety gate the server applies. It is intentionally pure and synchronous so it runs in CI.
+type outside the supported list, and runs the same scanner-pattern safety gate the server applies. It is intentionally pure and synchronous so it runs in CI.
 
 The CLI also scaffolds, validates, and signs:
 
@@ -203,10 +203,12 @@ separately.
   repository, so the step fails on every repository whose team has not added that image.
 - **Bundles do not export connection instances.** A template that needs a repository, an issue
   tracker, a document store or an MCP server only declares `dependencies[].connectionType` — one of
-  the types a generic step can actually reach (`git_repo`, `mcp`, `issue_tracker`, `notion`,
-  `confluence`, `zendesk`, `slack_workspace`); the installer must map those to local `Connection`
-  rows. A bundle cannot declare a dependency on a type whose connector is still a placeholder
-  (`http_api`, `hubspot`), because a generic step over one fails with `CONNECTOR_NOT_IMPLEMENTED`.
+  the types in a fixed allowlist (`git_repo`, `mcp`, `issue_tracker`, `notion`, `confluence`,
+  `zendesk`, `slack_workspace`). Install creates no `Connection` row and maps nothing; it only
+  refuses a bundle that declares a type outside the list, and the operator creates the rows. A
+  bundle cannot declare a dependency on `http_api` or `hubspot`, because neither is on the
+  allowlist; nothing in the install code treats them differently, so this is a current limitation
+  and not a technical constraint.
 - **No central registry.** There is no auto-swe marketplace or hosted registry; distribution is
   file/URL based and trust is pinned to ed25519 public keys.
 - **MCP connection IDs are not portable.** A template spec referencing an `mcp` connection will

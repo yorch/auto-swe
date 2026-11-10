@@ -118,9 +118,8 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
-const { assertApprovalSatisfied, findRecordedOutcome, notSent, performOnce } = await import(
-  './externalWrite.js'
-);
+const { assertApprovalSatisfied, findRecordedOutcome, notSent, notSentRetryable, performOnce } =
+  await import('./externalWrite.js');
 
 /** Record a decision, one second after the previous one. */
 function record(
@@ -242,6 +241,22 @@ describe('performOnce', () => {
     expect(ledger).toEqual([{ ...KEY, attempt: 1, result: { ok: 1 }, state: 'DONE' }]);
   });
 
+  it('releases the claim for a not-sent failure that Temporal may retry', async () => {
+    const failure = notSentRetryable('rate limited');
+    expect(failure.nonRetryable).toBe(false);
+    await expect(
+      performOnce({
+        attempt: 1,
+        dispatch: async () => {
+          throw failure;
+        },
+        key: KEY,
+      })
+    ).rejects.toBe(failure);
+
+    expect(ledger).toEqual([]);
+  });
+
   it('releases the claim when the connector refused before sending', async () => {
     // A refused call never reached the provider, so a retry may try again — leaving the claim would
     // turn a deterministic refusal into an ambiguity nobody can resolve.
@@ -258,6 +273,23 @@ describe('performOnce', () => {
     expect(ledger).toEqual([]);
     expect(audit).toHaveBeenLastCalledWith(
       expect.objectContaining({ name: 'external_write', outputJson: { outcome: 'refused' } })
+    );
+  });
+
+  it('records a retryable refusal as deferred, not refused', async () => {
+    await expect(
+      performOnce({
+        attempt: 1,
+        dispatch: async () => {
+          throw notSentRetryable('rate limited');
+        },
+        key: KEY,
+      })
+    ).rejects.toThrow(/rate limited/);
+
+    expect(ledger).toEqual([]);
+    expect(audit).toHaveBeenLastCalledWith(
+      expect.objectContaining({ name: 'external_write', outputJson: { outcome: 'deferred' } })
     );
   });
 
