@@ -124,7 +124,7 @@ Top-level files that matter:
   directories instead, and confirm the file count it reports matches the one in the CI log:
 
   ```bash
-  yarn biome check defaults docs infra packages scripts site \
+  yarn biome check defaults deploy docs infra packages scripts site \
     biome.json package.json tsconfig.base.json vitest.config.ts
   ```
 
