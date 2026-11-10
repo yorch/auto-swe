@@ -22,8 +22,14 @@ function run(id: string, over: Record<string, unknown> = {}) {
     status: 'SUCCESS',
     template: { name: 'Engineering' },
     templateId: 't1',
+    templateVersion: 1,
     workflowId: `wf-${id}`,
-    workRequest: { externalTicketId: 'PAY-1', id: `req-${id}`, ticketIsSynthetic: false },
+    workRequest: {
+      externalTicketId: 'PAY-1',
+      id: `req-${id}`,
+      payload: null,
+      ticketIsSynthetic: false,
+    },
     ...over,
   };
 }
@@ -54,6 +60,16 @@ function fakeDb(runs: unknown[]) {
         .fn()
         .mockResolvedValue([{ runId: 'r1', stepName: 'executeReviewFixImplementation' }]),
     },
+    workflowTemplateVersion: {
+      findMany: vi.fn().mockResolvedValue([
+        {
+          spec: { nodes: [{ step: 'createOrUpdatePullRequest' }] },
+          templateId: 't1',
+          version: 1,
+        },
+        { spec: { nodes: [{ step: 'postSlackMessage' }] }, templateId: 't-slack', version: 1 },
+      ]),
+    },
   };
 }
 
@@ -80,5 +96,49 @@ describe('buildOutcomeReport', () => {
     const where = db.workflowRun.findMany.mock.calls[0]?.[0].where.startedAt.gte as Date;
     // Window starts 2025-12-10; the lookback reaches 30 days earlier.
     expect(where.toISOString()).toBe('2025-11-10T00:00:00.000Z');
+  });
+
+  it('joins a review-fix follow-up to its origin and sets aside a no-PR template', async () => {
+    const origin = '11111111-1111-4111-8111-111111111111';
+    const db = fakeDb([
+      run(origin, { costUsdAccrued: 2 }),
+      run('r2', {
+        costUsdAccrued: 1,
+        startedAt: new Date('2026-03-01T03:00:00Z'),
+        workRequest: {
+          externalTicketId: 'agent-run-x',
+          id: 'req-fix',
+          payload: {
+            feedbackEventId: origin,
+            feedbackTrigger: 'review_findings',
+            pullRequestNumber: 3,
+          },
+          ticketIsSynthetic: true,
+        },
+      }),
+      run('r3', {
+        attributedRepoId: null,
+        costUsdAccrued: 5,
+        template: { name: 'Slack' },
+        templateId: 't-slack',
+        workRequest: null,
+      }),
+    ]);
+    db.pullRequest.findMany.mockResolvedValue([
+      {
+        ciStatus: 'PASSED',
+        mergedAt: new Date('2026-03-02T00:00:00Z'),
+        runId: origin,
+        status: 'MERGED',
+      },
+    ]);
+    const report = await buildOutcomeReport(db as unknown as OutcomeReportDb, { now: NOW });
+    const o = report.overall;
+    expect(o.prWorkItems).toBe(1);
+    expect(o.states.merged).toBe(1);
+    expect(o.states.no_pr).toBe(0);
+    expect(o.cost.mergedItemsUsd).toBe(3);
+    expect(o.noPrWork).toEqual({ costUsd: 5, items: 1, runs: 1 });
+    expect(o.unlinkedFollowUps.items).toBe(0);
   });
 });

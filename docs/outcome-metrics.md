@@ -12,8 +12,8 @@ report against their own data (see [Publishing your numbers](#6-publishing-your-
 It extends the [delivery report](./reporting.md#delivery), which answers the same questions per run
 for a signed-in user's visible scope and reads daily rollups. The outcome report differs in three
 ways: it spans the whole deployment (so it is ADMIN-only), it groups attempts at the same ticket into
-one **work item** so retries are charged to the work that eventually merged, and it adds merge rate
-over settled work, review rounds and the cost of work that never merged.
+one **work item** so retries and review-fix follow-ups are charged to the work that eventually merged,
+and it adds merge rate over settled work, review rounds and the cost of work that never merged.
 
 ## 1. Getting the report
 
@@ -56,8 +56,38 @@ the window start so a retry of older work does not count as new work.
 
 **Work item.** All runs for the same ticket in the same repository (case-insensitive ticket id).
 A ticket id the platform generated itself (a launch that named no ticket) is only a correlation key,
-so the work request groups instead; a run with no work request is its own item. A retry, a re-run and
-a fix run launched after a failure therefore join the item they belong to.
+so the work request groups instead; a run with no work request is its own item. A retry and a re-run
+therefore join the item they belong to.
+
+**Follow-up runs.** A review-fix or PR-feedback run launches under a platform-generated ticket id, so
+it would otherwise be an item of its own. When its launch recorded the run it acts on, it joins that
+run's item, with its cost and its review rounds. Two launches record it: a stored review fix
+(`reviewFixOfRunId` in the run payload) and PR feedback started from review findings (a
+`review_findings` trigger, whose `feedbackEventId` is the originating run's id). A chain of follow-ups
+resolves to the first run. Any other PR-feedback run (a human's changes-requested review, a comment)
+names a pull request and a GitHub event id, not a run, so it cannot be joined: it is a follow-up
+**without an originating run**, reported under [work outside the merge rate](#work-outside-the-merge-rate)
+and in no rate. The item is attributed to the template and repository of the run that merged it, else
+of its latest run that is not a follow-up.
+
+**Merge-rate work.** An item is in the merge rate when it has a linked pull request or at least one
+run that could open one. A run could open one when its pinned template version names a
+pull-request step (`createOrUpdatePullRequest`, `pushCiFixToPullRequest`,
+`pushPrFeedbackToPullRequest`) or it is an agent run launched with `deliver: draft_pr`; a missing
+template version counts as capable. A run that completed a Slack, Zendesk or Notion template, or a
+review that only comments, is not failed work for lacking a pull request.
+
+#### Work outside the merge rate
+
+| Kind | Rule | Where it shows |
+|---|---|---|
+| No pull-request work | no run in the item could open a pull request and none did | `noPrWork` (items, runs, spend) |
+| Unlinked follow-ups | the item holds only follow-up runs whose originating run is not in the data | `unlinkedFollowUps` (items, runs, spend) |
+
+Both are counted in `workItems`, `runs`, `runsByStatus` and `cost.totalUsd`. They are in no state count,
+no settled count, no rate, not in `unmergedSettledUsd` and not in cost per merged PR, which divides the
+spend of merge-rate work by merged pull requests. The Markdown shows them in their own section and in
+an "Outside the merge rate" column.
 
 **State of an item**, in this order:
 
@@ -69,25 +99,26 @@ a fix run launched after a failure therefore join the item they belong to.
 | `closed_unmerged` | otherwise, it has pull requests and all are `CLOSED` |
 | `no_pr` | otherwise: every run ended and none produced a pull request |
 
-**Settled items** are `merged`, `closed_unmerged` and `no_pr`. `open` and `running` are undecided and
-are counted and costed but left out of every rate's denominator.
+States are assigned to merge-rate items only. **Settled items** are `merged`, `closed_unmerged` and
+`no_pr`. `open` and `running` are undecided and are counted and costed but left out of every rate's
+denominator.
 
 | Metric | Definition |
 |---|---|
-| Merge rate | merged items / settled items, with a 95% Wilson interval. Items that failed, timed out or were cancelled without a pull request are in the denominator. |
+| Merge rate | merged items / settled items, with a 95% Wilson interval. Merge-rate items that failed, timed out or were cancelled without a pull request are in the denominator; work outside the merge rate is not. |
 | Decided PR merge rate | merged items / (merged + closed unmerged items): of the pull requests a human decided, the share merged. |
 | Review rounds | per item with at least one pull request, the number of finished `executeReviewFixImplementation` steps across all its runs. Reported as mean, median, maximum and the number of items with at least one. |
 | CI-heal rate | of items with at least one finished `executeCIFixImplementation` step and a pull request, the share whose pull request has CI `PASSED` or merged. |
 | Time to merge | for merged items with a merge timestamp, the time from the item's earliest run start to its first merge. Median and p90 with the sample size. |
-| Cost per merged PR | the recorded cost of every run in the cohort, retries and failures included, divided by the number of merged pull requests. Null when none merged. |
+| Cost per merged PR | the recorded cost of every run of merge-rate work, retries, follow-ups and failures included, divided by the number of merged pull requests. Null when none merged. |
 | Cost per merged PR, settled | the same, counting only items that settled, so work still in flight is not charged to the merges that have happened. |
-| Spend on unmerged | the recorded cost of items that settled without a merge. |
+| Spend on unmerged | the recorded cost of merge-rate items that settled without a merge. |
 
 Cost is each run's `costUsdAccrued`; when that is zero the matching `ActiveWorkflow` ledger row is
 used, as in the delivery report. It is the model-call cost the platform recorded, nothing else.
 
 **Attribution.** An item belongs to the template and repository of the run that merged it, else of its
-latest run. A repository is the run's persisted `attributedRepoId`; a run without one is reported under
+latest run that is not a follow-up. A repository is the run's persisted `attributedRepoId`; a run without one is reported under
 `Unattributed`.
 
 **Low sample.** A group with fewer than 30 settled items is marked `low sample`. The interval is the
@@ -96,8 +127,8 @@ honest statement of how little a small group says.
 ## 4. What the report shows about failure
 
 Besides the rates, the Markdown carries a table of items by state (merged, closed unmerged, ended
-without a pull request, open, running), the count of runs by status, and the spend split into merged,
-unmerged and undecided. A merge rate is read alongside the spend that did not produce a merge, and a
+without a pull request, open, running), the count of runs by status, the spend split into merged,
+unmerged and undecided, and the work kept outside the merge rate with its own spend. A merge rate is read alongside the spend that did not produce a merge, and a
 low cost per merged PR on a few merges is flagged as low sample rather than presented as a result.
 
 ## 5. Reading it correctly
@@ -129,6 +160,13 @@ low cost per merged PR on a few merges is flagged as low sample rather than pres
   not counted.
 - Ticket grouping needs a ticket id the launch named. Work launched without one is one item per work
   request, so a retry that creates a new request is counted as separate work.
+- Only follow-ups launched from stored review findings carry the run they act on. A PR-feedback run
+  started by a human review or comment is not joined to the item whose pull request it addresses: its
+  cost and review rounds stay out of that item, and it is reported under unlinked follow-ups. The same
+  holds for any follow-up whose originating run started more than 30 days before the window start.
+- Whether a run could open a pull request is read from its template version's step names (and the
+  `deliver` option of an agent run). A template that reaches a pull-request step only through something
+  the spec does not inline is treated as unable to, and its failures fall outside the merge rate.
 - A retry of work whose first run is more than 30 days before the window start is counted as new work.
 - Reads are capped at 50,000 runs; the report marks itself `truncated` and covers a subset when the
   cap is hit.

@@ -9,11 +9,13 @@ import type { PrismaClient } from '../index.js';
 import {
   CI_FIX_STEP,
   computeOutcomeReport,
+  followUpFromPayload,
   type OutcomePullRequest,
   type OutcomeReport,
   type OutcomeRun,
   type OutcomeStep,
   REVIEW_ROUND_STEP,
+  runCanOpenPullRequest,
   workItemKeyFor,
 } from '../workflow/outcomeMetrics.js';
 import { matchingActiveWorkflows } from './runActiveWorkflows.js';
@@ -30,7 +32,12 @@ const ID_CHUNK = 1_000;
 
 export type OutcomeReportDb = Pick<
   PrismaClient,
-  'activeWorkflow' | 'connection' | 'pullRequest' | 'workflowRun' | 'workflowStep'
+  | 'activeWorkflow'
+  | 'connection'
+  | 'pullRequest'
+  | 'workflowRun'
+  | 'workflowStep'
+  | 'workflowTemplateVersion'
 >;
 
 /** The window the schedule uses: the trailing `days` complete UTC days before `now`. */
@@ -69,9 +76,10 @@ export async function buildOutcomeReport(
           status: true,
           template: { select: { name: true } },
           templateId: true,
+          templateVersion: true,
           workflowId: true,
           workRequest: {
-            select: { externalTicketId: true, id: true, ticketIsSynthetic: true },
+            select: { externalTicketId: true, id: true, payload: true, ticketIsSynthetic: true },
           },
         },
         take: OUTCOME_REPORT_ROW_CAP + 1,
@@ -108,13 +116,46 @@ export async function buildOutcomeReport(
     }
   }
 
+  // Whether a run's template can open a pull request is read from the version the run pinned.
+  const versionPairs = [
+    ...new Map(
+      runRows.map((run) => [
+        `${run.templateId}:${run.templateVersion}`,
+        { templateId: run.templateId, version: run.templateVersion },
+      ])
+    ).values(),
+  ];
+  const specs = new Map<string, unknown>();
+  for (let offset = 0; offset < versionPairs.length; offset += 200) {
+    const pairs = versionPairs.slice(offset, offset + 200);
+    const found = await runUnscoped(
+      'the outcome report reads the template versions its runs pinned',
+      ['WorkflowTemplateVersion'],
+      () =>
+        db.workflowTemplateVersion.findMany({
+          select: { spec: true, templateId: true, version: true },
+          where: { OR: pairs },
+        })
+    );
+    for (const version of found) {
+      specs.set(`${version.templateId}:${version.version}`, version.spec);
+    }
+  }
+
   const runs: OutcomeRun[] = runRows.map((run) => {
+    const followUp = followUpFromPayload(run.workRequest?.payload);
     const own = Number(run.costUsdAccrued);
     const legacy = ledger.get(run.workflowId);
     const legacyCost = legacy ? Number(legacy.costUsdAccrued) : 0;
     return {
+      canOpenPullRequest: runCanOpenPullRequest(
+        specs.get(`${run.templateId}:${run.templateVersion}`),
+        run.workRequest?.payload
+      ),
       costUsd: own > 0 ? own : legacyCost,
+      followUpOfRunId: followUp.followUpOfRunId,
       id: run.id,
+      isFollowUp: followUp.isFollowUp,
       repoId: run.attributedRepoId,
       repoName: run.attributedRepoId
         ? (repos.get(run.attributedRepoId) ?? 'Inaccessible repository')

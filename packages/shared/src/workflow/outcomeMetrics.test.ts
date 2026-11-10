@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeOutcomeReport,
+  followUpFromPayload,
   type OutcomePullRequest,
   type OutcomeRun,
   renderOutcomeReportMarkdown,
+  runCanOpenPullRequest,
   workItemKeyFor,
 } from './outcomeMetrics.js';
 
@@ -14,8 +16,11 @@ const generatedAt = new Date(T0 + 40 * 24 * H);
 
 function run(id: string, over: Partial<OutcomeRun> = {}): OutcomeRun {
   return {
+    canOpenPullRequest: true,
     costUsd: 1,
+    followUpOfRunId: null,
     id,
+    isFollowUp: false,
     repoId: 'repo-a',
     repoName: 'acme/a',
     startedAt: new Date(T0),
@@ -177,5 +182,187 @@ describe('computeOutcomeReport', () => {
     expect(md).toContain('(low sample)');
     expect(md).toContain('Docs draft x');
     expect(md).toContain('Cost per merged PR $21.00');
+  });
+});
+
+describe('work that cannot open a pull request', () => {
+  const runs = [
+    run('m1', { workItemKey: 'k-m' }),
+    run('x1', { workItemKey: 'k-x' }),
+    // A Slack-style template: succeeded, never had a pull request to produce.
+    run('s1', {
+      canOpenPullRequest: false,
+      costUsd: 4,
+      repoId: null,
+      templateId: 'ts',
+      templateName: 'Slack',
+      workItemKey: 'k-s1',
+    }),
+    run('s2', {
+      canOpenPullRequest: false,
+      costUsd: 6,
+      repoId: null,
+      templateId: 'ts',
+      templateName: 'Slack',
+      workItemKey: 'k-s2',
+    }),
+  ];
+  const prs = [pr('m1', { mergedAt: new Date(T0 + H), status: 'MERGED' })];
+  const report = computeOutcomeReport({ generatedAt, pullRequests: prs, runs, steps: [], window });
+  const o = report.overall;
+
+  it('keeps it out of the denominators and the unmerged spend', () => {
+    expect(o.workItems).toBe(4);
+    expect(o.prWorkItems).toBe(2);
+    expect(o.states).toEqual({ closed_unmerged: 0, merged: 1, no_pr: 1, open: 0, running: 0 });
+    expect(o.settledItems).toBe(2);
+    expect(o.mergeRate).toBe(0.5);
+    expect(o.cost.unmergedSettledUsd).toBe(1);
+  });
+
+  it('reports it on its own and leaves it out of cost per merged PR', () => {
+    expect(o.noPrWork).toEqual({ costUsd: 10, items: 2, runs: 2 });
+    expect(o.cost.totalUsd).toBe(12);
+    expect(o.cost.perMergedPr).toBe(2);
+    expect(report.byTemplate.find((t) => t.templateName === 'Slack')).toMatchObject({
+      mergeRate: null,
+      prWorkItems: 0,
+      settledItems: 0,
+    });
+    const md = renderOutcomeReportMarkdown(report);
+    expect(md).toContain('## Work outside the merge rate');
+    expect(md).toContain('| No run could open a pull request | 2 | 2 | $10.00 |');
+  });
+
+  it('still counts it as merge-rate work when a pull request exists', () => {
+    const withPr = computeOutcomeReport({
+      generatedAt,
+      pullRequests: [pr('s1')],
+      runs: [runs[2] as OutcomeRun],
+      steps: [],
+      window,
+    });
+    expect(withPr.overall.prWorkItems).toBe(1);
+    expect(withPr.overall.noPrWork.items).toBe(0);
+  });
+});
+
+describe('follow-up runs', () => {
+  const origin = run('o1', { costUsd: 5, workItemKey: 'k-o' });
+  const fix = run('f1', {
+    costUsd: 2,
+    followUpOfRunId: 'o1',
+    isFollowUp: true,
+    startedAt: new Date(T0 + 2 * H),
+    templateId: 'tf',
+    templateName: 'Address PR feedback',
+    workItemKey: 'request:f1',
+  });
+  const steps = [
+    { runId: 'f1', stepName: 'executeReviewFixImplementation' },
+    { runId: 'f1', stepName: 'executeReviewFixImplementation' },
+  ];
+
+  it('joins the item of the run it acts on, with its cost and review rounds', () => {
+    const report = computeOutcomeReport({
+      generatedAt,
+      pullRequests: [pr('o1', { mergedAt: new Date(T0 + 9 * H), status: 'MERGED' })],
+      runs: [origin, fix],
+      steps,
+      window,
+    });
+    const o = report.overall;
+    expect(o.workItems).toBe(1);
+    expect(o.states.merged).toBe(1);
+    expect(o.states.no_pr).toBe(0);
+    expect(o.cost.mergedItemsUsd).toBe(7);
+    expect(o.reviewRounds).toMatchObject({ itemsWithAnyRound: 1, itemsWithPr: 1, max: 2 });
+    expect(o.unlinkedFollowUps.items).toBe(0);
+  });
+
+  it('follows a chain of follow-ups and attributes an unmerged item to the original run', () => {
+    const second = run('f2', {
+      followUpOfRunId: 'f1',
+      isFollowUp: true,
+      startedAt: new Date(T0 + 3 * H),
+      templateId: 'tf',
+      templateName: 'Address PR feedback',
+      workItemKey: 'request:f2',
+    });
+    const report = computeOutcomeReport({
+      generatedAt,
+      pullRequests: [pr('o1', { status: 'OPEN' })],
+      runs: [origin, fix, second],
+      steps: [],
+      window,
+    });
+    expect(report.overall.workItems).toBe(1);
+    expect(report.overall.states.open).toBe(1);
+    expect(report.byTemplate.map((t) => t.templateName)).toEqual(['Engineering']);
+  });
+
+  it('keeps a follow-up with no originating run on its own, outside every rate', () => {
+    const orphan = run('f9', {
+      canOpenPullRequest: false,
+      costUsd: 3,
+      followUpOfRunId: 'gone',
+      isFollowUp: true,
+      status: 'FAILED',
+      workItemKey: 'request:f9',
+    });
+    const report = computeOutcomeReport({
+      generatedAt,
+      pullRequests: [],
+      runs: [orphan],
+      steps: [],
+      window,
+    });
+    const o = report.overall;
+    expect(o.unlinkedFollowUps).toEqual({ costUsd: 3, items: 1, runs: 1 });
+    expect(o.states.no_pr).toBe(0);
+    expect(o.settledItems).toBe(0);
+    expect(o.cost.unmergedSettledUsd).toBe(0);
+    expect(o.cost.totalUsd).toBe(3);
+  });
+});
+
+describe('followUpFromPayload', () => {
+  const id = '11111111-1111-4111-8111-111111111111';
+  it('reads the originating run from a stored review fix', () => {
+    expect(followUpFromPayload({ deliver: 'none', reviewFixOfRunId: id })).toEqual({
+      followUpOfRunId: id,
+      isFollowUp: true,
+    });
+  });
+  it('reads it from PR feedback started by review findings, not from a GitHub event id', () => {
+    const base = { feedbackEventId: id, feedbackTrigger: 'review_findings', pullRequestNumber: 4 };
+    expect(followUpFromPayload(base)).toEqual({ followUpOfRunId: id, isFollowUp: true });
+    expect(
+      followUpFromPayload({ ...base, feedbackEventId: '777', feedbackTrigger: 'changes_requested' })
+    ).toEqual({ followUpOfRunId: null, isFollowUp: true });
+  });
+  it('treats anything else as not a follow-up', () => {
+    expect(followUpFromPayload(null)).toEqual({ followUpOfRunId: null, isFollowUp: false });
+    expect(followUpFromPayload({ deliver: 'none' })).toEqual({
+      followUpOfRunId: null,
+      isFollowUp: false,
+    });
+  });
+});
+
+describe('runCanOpenPullRequest', () => {
+  it('finds a pull-request step in the spec', () => {
+    expect(runCanOpenPullRequest({ nodes: [{ step: 'createOrUpdatePullRequest' }] }, null)).toBe(
+      true
+    );
+    expect(runCanOpenPullRequest({ nodes: [{ step: 'postSlackMessage' }] }, null)).toBe(false);
+  });
+  it('lets an agent run through only when it asked for a draft PR', () => {
+    const spec = { nodes: [{ step: 'runAgentTask' }] };
+    expect(runCanOpenPullRequest(spec, { deliver: 'draft_pr' })).toBe(true);
+    expect(runCanOpenPullRequest(spec, { deliver: 'none' })).toBe(false);
+  });
+  it('counts a missing spec as capable', () => {
+    expect(runCanOpenPullRequest(undefined, null)).toBe(true);
   });
 });

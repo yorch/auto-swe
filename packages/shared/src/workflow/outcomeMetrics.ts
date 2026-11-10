@@ -9,7 +9,7 @@
  */
 import { MIN_SAMPLES_FOR_SIGNIFICANCE, percentile, wilsonInterval } from './analytics.js';
 
-export const OUTCOME_METRICS_METHOD_VERSION = 1;
+export const OUTCOME_METRICS_METHOD_VERSION = 2;
 
 /** Terminal fix-loop steps counted as one round each. */
 export const REVIEW_ROUND_STEP = 'executeReviewFixImplementation';
@@ -27,6 +27,16 @@ export interface OutcomeRun {
   status: string;
   startedAt: Date;
   costUsd: number;
+  /**
+   * Whether this run could have opened a pull request: its pinned template has a step that pushes
+   * to one, or it is an agent run that asked for a draft PR (`runCanOpenPullRequest`). Work no run of
+   * which can is not merge-rate work, however it ended.
+   */
+  canOpenPullRequest: boolean;
+  /** A review-fix or PR-feedback run: it acts on work a different run produced. */
+  isFollowUp: boolean;
+  /** The run a follow-up acts on, when its launch recorded one (`followUpFromPayload`). */
+  followUpOfRunId: string | null;
 }
 
 export interface OutcomePullRequest {
@@ -43,17 +53,38 @@ export interface OutcomeStep {
   stepName: string;
 }
 
+/**
+ * What a work item is measured as. `pr_work` is the merge-rate population. `no_pr_work` never had a
+ * run that could open a pull request (a Slack, Zendesk or Notion template, a review that only
+ * comments). `unlinked_follow_up` is made only of follow-up runs whose originating run was not found.
+ */
+export type WorkItemKind = 'pr_work' | 'no_pr_work' | 'unlinked_follow_up';
+
 export type WorkItemState = 'merged' | 'open' | 'running' | 'closed_unmerged' | 'no_pr';
 
+/** Work kept out of every merge-rate figure, counted and costed on its own. */
+export interface OutcomeSideWork {
+  items: number;
+  runs: number;
+  costUsd: number;
+}
+
 export interface OutcomeGroupMetrics {
-  /** Work items whose first run started in the window. */
+  /** All work items whose first run started in the window, merge-rate work or not. */
   workItems: number;
+  /** Items in the merge-rate population: they have a pull request or a run that could open one. */
+  prWorkItems: number;
+  /** All runs of all the items. */
   runs: number;
   runsByStatus: Record<string, number>;
-  /** Items by where they stand now. `open` and `running` are undecided. */
+  /** Merge-rate items by where they stand now. `open` and `running` are undecided. */
   states: Record<WorkItemState, number>;
-  /** Items with an outcome: merged, closed unmerged, or ended without a pull request. */
+  /** Merge-rate items with an outcome: merged, closed unmerged, or no pull request from a run that could open one. */
   settledItems: number;
+  /** Items none of whose runs could open a pull request. In no rate, no state, no merged-PR cost. */
+  noPrWork: OutcomeSideWork;
+  /** Follow-up runs (review fix, PR feedback) whose originating run is not in the data. */
+  unlinkedFollowUps: OutcomeSideWork;
   prsOpened: number;
   prsMerged: number;
   prsClosedUnmerged: number;
@@ -79,13 +110,14 @@ export interface OutcomeGroupMetrics {
   };
   timeToMergeMs: { n: number; median: number | null; p90: number | null };
   cost: {
+    /** Every run's cost in the group: merge-rate work plus the two side-work buckets. */
     totalUsd: number;
     mergedItemsUsd: number;
     /** Items that settled without a merge: the spend a merge rate below 1 leaves behind. */
     unmergedSettledUsd: number;
     /** Items still open or running: outcome unknown. */
     undecidedUsd: number;
-    /** All cohort spend / merged pull requests. Null when none merged. */
+    /** Merge-rate spend (merged, unmerged and undecided) / merged pull requests. Null when none merged. */
     perMergedPr: number | null;
     /** Settled-item spend / merged pull requests: leaves out work whose outcome is not yet known. */
     perMergedPrSettled: number | null;
@@ -119,7 +151,8 @@ export interface OutcomeReport {
 /**
  * Which attempts belong together. A real ticket id groups every run for it in one repository; a
  * platform-generated id (`ticketIsSynthetic`) is a correlation key, so the work request groups
- * instead; a run with no request stands alone.
+ * instead; a run with no request stands alone. A follow-up run is re-pointed at the run it acts on
+ * afterwards, in `computeOutcomeReport`, because that needs the other runs.
  */
 export function workItemKeyFor(run: {
   id: string;
@@ -137,7 +170,79 @@ export function workItemKeyFor(run: {
   return `run:${run.id}`;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Whether a run is a follow-up, and which run it acts on, read from its work request's payload.
+ * Two launch paths record the originating run id: a stored review fix (`reviewFixOfRunId`) and the
+ * PR-feedback run started from review findings (`feedbackTrigger: 'review_findings'`, whose
+ * `feedbackEventId` the payload schema requires to be that run's UUID). Any other PR-feedback run
+ * names a pull request and a GitHub event id, not a run: it is a follow-up with no pointer.
+ */
+export function followUpFromPayload(payload: unknown): {
+  isFollowUp: boolean;
+  followUpOfRunId: string | null;
+} {
+  const body = asRecord(payload);
+  if (!body) {
+    return { followUpOfRunId: null, isFollowUp: false };
+  }
+  const stored = body.reviewFixOfRunId;
+  if (typeof stored === 'string' && UUID_RE.test(stored)) {
+    return { followUpOfRunId: stored, isFollowUp: true };
+  }
+  if (
+    typeof body.feedbackTrigger !== 'string' ||
+    typeof body.feedbackEventId !== 'string' ||
+    typeof body.pullRequestNumber !== 'number'
+  ) {
+    return { followUpOfRunId: null, isFollowUp: false };
+  }
+  return {
+    followUpOfRunId:
+      body.feedbackTrigger === 'review_findings' && UUID_RE.test(body.feedbackEventId)
+        ? body.feedbackEventId
+        : null,
+    isFollowUp: true,
+  };
+}
+
+const PR_STEPS = [
+  'createOrUpdatePullRequest',
+  'pushCiFixToPullRequest',
+  'pushPrFeedbackToPullRequest',
+];
+
+/**
+ * Whether a run could have opened or updated a pull request: its template version's spec names a
+ * step that does, or it is an agent run (`runAgentTask`) launched to deliver a draft PR. A text
+ * search of the serialised spec, so a step reached only through something the spec does not inline
+ * is not seen. A missing or unreadable spec counts as capable, so work is never dropped on a guess.
+ */
+export function runCanOpenPullRequest(spec: unknown, payload: unknown): boolean {
+  if (spec === undefined || spec === null) {
+    return true;
+  }
+  let text: string;
+  try {
+    text = JSON.stringify(spec) ?? '';
+  } catch {
+    return true;
+  }
+  if (PR_STEPS.some((step) => text.includes(`"${step}"`))) {
+    return true;
+  }
+  return text.includes('"runAgentTask"') && asRecord(payload)?.deliver === 'draft_pr';
+}
+
 interface WorkItem {
+  kind: WorkItemKind;
   runs: OutcomeRun[];
   prs: OutcomePullRequest[];
   reviewRounds: number;
@@ -155,11 +260,27 @@ function buildItems(
   pullRequests: readonly OutcomePullRequest[],
   steps: readonly OutcomeStep[]
 ): WorkItem[] {
+  const byId = new Map(runs.map((run) => [run.id, run]));
+  // A follow-up joins the item of the run it acts on (and so of that run's own origin, if any).
+  const keyOf = (run: OutcomeRun): string => {
+    const seen = new Set<string>();
+    let current = run;
+    while (current.followUpOfRunId && !seen.has(current.id)) {
+      seen.add(current.id);
+      const origin = byId.get(current.followUpOfRunId);
+      if (!origin) {
+        break;
+      }
+      current = origin;
+    }
+    return current.workItemKey;
+  };
   const byKey = new Map<string, OutcomeRun[]>();
   for (const run of runs) {
-    const group = byKey.get(run.workItemKey) ?? [];
+    const key = keyOf(run);
+    const group = byKey.get(key) ?? [];
     group.push(run);
-    byKey.set(run.workItemKey, group);
+    byKey.set(key, group);
   }
   const prsByRun = new Map<string, OutcomePullRequest[]>();
   for (const pr of pullRequests) {
@@ -204,11 +325,21 @@ function buildItems(
       state === 'merged'
         ? sorted.find((run) => (prsByRun.get(run.id) ?? []).some((pr) => pr.status === 'MERGED'))
         : undefined;
-    const anchor = mergedRun ?? (sorted[sorted.length - 1] as OutcomeRun);
+    const original = sorted.filter((run) => !run.isFollowUp);
+    const anchor = mergedRun ?? ((original.length > 0 ? original : sorted).at(-1) as OutcomeRun);
+    let kind: WorkItemKind;
+    if (prs.length > 0 || original.some((run) => run.canOpenPullRequest)) {
+      kind = 'pr_work';
+    } else if (sorted.some((run) => run.isFollowUp)) {
+      kind = 'unlinked_follow_up';
+    } else {
+      kind = 'no_pr_work';
+    }
     items.push({
       anchor,
       ciFixes: sorted.reduce((sum, run) => sum + (roundsByRun.get(run.id)?.ci ?? 0), 0),
       costUsd: sorted.reduce((sum, run) => sum + run.costUsd, 0),
+      kind,
       mergedAt: mergedTimes.length > 0 ? Math.min(...mergedTimes) : null,
       prs,
       reviewRounds: sorted.reduce((sum, run) => sum + (roundsByRun.get(run.id)?.review ?? 0), 0),
@@ -238,16 +369,25 @@ function groupMetrics(items: readonly WorkItem[]): OutcomeGroupMetrics {
   let prsMerged = 0;
   let prsClosedUnmerged = 0;
   const cost = { merged: 0, total: 0, undecided: 0, unmerged: 0 };
+  const noPrWork: OutcomeSideWork = { costUsd: 0, items: 0, runs: 0 };
+  const unlinkedFollowUps: OutcomeSideWork = { costUsd: 0, items: 0, runs: 0 };
   for (const item of items) {
-    states[item.state] += 1;
     runs += item.runs.length;
     for (const run of item.runs) {
       runsByStatus[run.status] = (runsByStatus[run.status] ?? 0) + 1;
     }
+    cost.total += item.costUsd;
+    if (item.kind !== 'pr_work') {
+      const side = item.kind === 'no_pr_work' ? noPrWork : unlinkedFollowUps;
+      side.items += 1;
+      side.runs += item.runs.length;
+      side.costUsd += item.costUsd;
+      continue;
+    }
+    states[item.state] += 1;
     prsOpened += item.prs.length;
     prsMerged += item.prs.filter((pr) => pr.status === 'MERGED').length;
     prsClosedUnmerged += item.prs.filter((pr) => pr.status === 'CLOSED').length;
-    cost.total += item.costUsd;
     if (item.state === 'merged') {
       cost.merged += item.costUsd;
     } else if (item.state === 'open' || item.state === 'running') {
@@ -257,14 +397,16 @@ function groupMetrics(items: readonly WorkItem[]): OutcomeGroupMetrics {
     }
   }
   const settledItems = states.merged + states.closed_unmerged + states.no_pr;
+  const prItems = items.filter((item) => item.kind === 'pr_work');
+  const prWorkUsd = cost.merged + cost.unmerged + cost.undecided;
 
-  const withPr = items.filter((item) => item.prs.length > 0);
+  const withPr = prItems.filter((item) => item.prs.length > 0);
   const rounds = withPr.map((item) => item.reviewRounds).sort((a, b) => a - b);
-  const withCiFix = items.filter((item) => item.ciFixes > 0 && item.prs.length > 0);
+  const withCiFix = prItems.filter((item) => item.ciFixes > 0 && item.prs.length > 0);
   const healed = withCiFix.filter((item) =>
     item.prs.some((pr) => pr.ciStatus === 'PASSED' || pr.status === 'MERGED')
   ).length;
-  const mergeDurations = items
+  const mergeDurations = prItems
     .flatMap((item) =>
       item.state === 'merged' && item.mergedAt !== null
         ? [Math.max(0, item.mergedAt - item.startedAt)]
@@ -281,7 +423,7 @@ function groupMetrics(items: readonly WorkItem[]): OutcomeGroupMetrics {
     },
     cost: {
       mergedItemsUsd: cost.merged,
-      perMergedPr: prsMerged > 0 ? cost.total / prsMerged : null,
+      perMergedPr: prsMerged > 0 ? prWorkUsd / prsMerged : null,
       perMergedPrSettled: prsMerged > 0 ? (cost.merged + cost.unmerged) / prsMerged : null,
       totalUsd: cost.total,
       undecidedUsd: cost.undecided,
@@ -291,9 +433,11 @@ function groupMetrics(items: readonly WorkItem[]): OutcomeGroupMetrics {
     lowSample: settledItems < MIN_SAMPLES_FOR_SIGNIFICANCE,
     mergeRate: ratio(states.merged, settledItems),
     mergeRateInterval: wilsonInterval(states.merged, settledItems),
+    noPrWork,
     prsClosedUnmerged,
     prsMerged,
     prsOpened,
+    prWorkItems: prItems.length,
     reviewRounds: {
       itemsWithAnyRound: rounds.filter((n) => n > 0).length,
       itemsWithPr: withPr.length,
@@ -310,6 +454,7 @@ function groupMetrics(items: readonly WorkItem[]): OutcomeGroupMetrics {
       n: mergeDurations.length,
       p90: percentile(mergeDurations, 0.9),
     },
+    unlinkedFollowUps,
     workItems: items.length,
   };
 }
@@ -397,7 +542,7 @@ function cell(text: string): string {
 function row(label: string, m: OutcomeGroupMetrics): string {
   return `| ${[
     cell(label) + (m.lowSample ? ' (low sample)' : ''),
-    m.workItems,
+    m.prWorkItems,
     m.settledItems,
     `${pct(m.mergeRate)}${interval(m.mergeRateInterval)}`,
     num(m.reviewRounds.mean),
@@ -405,12 +550,13 @@ function row(label: string, m: OutcomeGroupMetrics): string {
     formatDurationMs(m.timeToMergeMs.median),
     usd(m.cost.perMergedPr),
     usd(m.cost.unmergedSettledUsd),
+    `${m.noPrWork.items + m.unlinkedFollowUps.items} items, ${usd(m.noPrWork.costUsd + m.unlinkedFollowUps.costUsd)}`,
   ].join(' | ')} |`;
 }
 
 const TABLE_HEAD = [
-  '| | Items | Settled | Merge rate (95% CI) | Review rounds (mean) | CI-heal rate | Median time to merge | Cost per merged PR | Spend on unmerged |',
-  '|---|---|---|---|---|---|---|---|---|',
+  '| | Merge-rate items | Settled | Merge rate (95% CI) | Review rounds (mean) | CI-heal rate | Median time to merge | Cost per merged PR | Spend on unmerged | Outside the merge rate |',
+  '|---|---|---|---|---|---|---|---|---|---|',
 ];
 
 /** The report as Markdown. Every figure is read from `report`; nothing is recomputed. */
@@ -453,13 +599,22 @@ export function renderOutcomeReportMarkdown(report: OutcomeReport): string {
     '',
     `Spend: ${usd(o.cost.totalUsd)} total, of which ${usd(o.cost.mergedItemsUsd)} on items that merged, ` +
       `${usd(o.cost.unmergedSettledUsd)} on items that settled without a merge and ` +
-      `${usd(o.cost.undecidedUsd)} on items not yet decided. Cost per merged PR ${usd(o.cost.perMergedPr)} ` +
-      `counts all of it; ${usd(o.cost.perMergedPrSettled)} leaves out the undecided share.`,
+      `${usd(o.cost.undecidedUsd)} on items not yet decided; the rest, ${usd(o.noPrWork.costUsd + o.unlinkedFollowUps.costUsd)}, is work outside the merge rate. Cost per merged PR ${usd(o.cost.perMergedPr)} ` +
+      `counts the first three; ${usd(o.cost.perMergedPrSettled)} leaves out the undecided share.`,
     '',
     `Time to merge: n=${o.timeToMergeMs.n}, median ${formatDurationMs(o.timeToMergeMs.median)}, ` +
       `p90 ${formatDurationMs(o.timeToMergeMs.p90)}. CI heal: ${o.ciHeal.itemsHealed} of ` +
       `${o.ciHeal.itemsWithCiFix} items that needed a CI fix ended with passing CI or a merge. ` +
       `Review rounds: ${o.reviewRounds.itemsWithAnyRound} of ${o.reviewRounds.itemsWithPr} items with a pull request needed at least one.`,
+    '',
+    '## Work outside the merge rate',
+    '',
+    'Kept out of every rate, state count and cost-per-merged-PR figure above, and reported here instead.',
+    '',
+    '| Kind | Work items | Runs | Spend |',
+    '|---|---|---|---|',
+    `| No run could open a pull request | ${o.noPrWork.items} | ${o.noPrWork.runs} | ${usd(o.noPrWork.costUsd)} |`,
+    `| Follow-up runs with no originating run found | ${o.unlinkedFollowUps.items} | ${o.unlinkedFollowUps.runs} | ${usd(o.unlinkedFollowUps.costUsd)} |`,
     '',
     '## By template',
     '',
@@ -476,7 +631,9 @@ export function renderOutcomeReportMarkdown(report: OutcomeReport): string {
     `- A group with fewer than ${report.lowSampleBelow} settled items is marked low sample; treat its rates as anecdote.`,
     '- Recent items are right-censored: an item still open or running is excluded from the merge rate, and time to merge counts only merges that have happened, so a young window reads fast.',
     '- Cost is what the platform recorded for model calls. It excludes human review time, CI minutes and infrastructure.',
-    '- A work item is attributed to the template and repository of the run that merged it, else of its latest run, so retried work can carry spend recorded under another template.',
+    '- A work item with no pull request is in the merge rate only if one of its runs could open one (its template has a pull-request step, or an agent run asked for a draft PR). Other work is counted under "Work outside the merge rate".',
+    '- A review-fix or PR-feedback run joins the work item of the run it acts on when its launch recorded that run; otherwise it is reported on its own, outside the merge rate.',
+    '- A work item is attributed to the template and repository of the run that merged it, else of its latest original run, so retried work can carry spend recorded under another template.',
     '',
   ];
   return lines.join('\n');
