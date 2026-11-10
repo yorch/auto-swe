@@ -98,7 +98,7 @@ ANTHROPIC_API_KEY=… OPENAI_API_KEY=… yarn quickstart    # or: just quickstar
 ```
 
 `yarn quickstart --check` previews it without changing anything; `yarn quickstart down` stops it.
-The options, including a single-Postgres evaluation layout, and the limits of the script are in
+The options and the limits of the script are in
 [`docs/quickstart.md`](./docs/quickstart.md). The manual steps follow.
 
 ```bash

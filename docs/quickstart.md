@@ -34,7 +34,6 @@ infrastructure containers and keeps the data.
 |---|---|
 | `--check` | Prints the plan, which keys were found and what the host lacks, and changes nothing |
 | `--anthropic-key-env NAME`, `--openai-key-env NAME` | Read a key from a differently named environment variable. The flags take a variable name, never a key, so no key appears in `ps` |
-| `--single-postgres` | Evaluation layout: Temporal shares the application's Postgres (below) |
 | `--no-start` | Stop after the database and model configuration |
 | `--skip-install` | Do not run `yarn install --immutable` |
 
@@ -43,18 +42,6 @@ would store them; they are not written to `.env` or anywhere in the repository. 
 embedding configuration that already exists is left as it is. Without both keys the script still
 brings up everything except the worker, and says so: the worker refuses to start until every agent
 can reach a model (step 8).
-
-### Sharing one Postgres
-
-`yarn quickstart --single-postgres` layers `docker-compose.single-postgres.yml` over the
-infrastructure file. The dedicated `postgres-temporal` container does not start; Temporal's schema
-setup and server point at the application's `postgres` service, where they create their own
-`temporal` and `temporal_visibility` databases beside `engineering_system`. The overlay changes
-only which host the existing `POSTGRES_SEEDS` variable names and what waits for it: the Temporal
-image, `infra/scripts/setup-postgres.sh` and the files in `infra/dynamicconfig/` are the ones the
-default stack uses. It exists to save a container and a volume on an evaluation machine, not as a
-production layout; the default path is unchanged. Switching an existing installation between the
-two layouts starts Temporal on an empty schema, so previous workflow history is not visible.
 
 ## 1. Install
 
@@ -176,9 +163,10 @@ By default auto-swe never merges (the opt-in `auto` mode and bot approval of [pr
   use makes the step that needs it fail; the script does not choose another.
 - **`down` stops only what `up` started**, found through the pid files in `.quickstart/`. A service
   started by hand keeps running.
-- **The single-Postgres layout is for evaluation.** Temporal's workload and the application share
-  one server's connections, disk and failure domain, and the `temporal` databases are created by
-  Temporal's setup script on the application's server. Backups of that server cover both.
+- **Two Postgres containers start.** Temporal keeps its own (`postgres-temporal`) beside the
+  application's. Pointing Temporal at the application's server would change the Temporal server's
+  configuration (`POSTGRES_SEEDS`), which this repository does not do, so there is no
+  single-Postgres layout.
 - **Node 26 is checked, not installed.** The script stops with the install instruction when Node,
   Yarn or Docker is missing.
 

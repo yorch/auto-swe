@@ -55,8 +55,6 @@ Options:
   --anthropic-key-env V   environment variable holding the Anthropic API key (default ${DEFAULT_KEY_ENV.anthropic})
   --openai-key-env V      environment variable holding the OpenAI API key, used for
                           embeddings (default ${DEFAULT_KEY_ENV.openai})
-  --single-postgres       evaluation only: Temporal shares the application's Postgres
-                          (see docs/quickstart.md)
   --no-start              stop after the database and model configuration
   --skip-install          do not run \`yarn install --immutable\`
   -h, --help              this text
@@ -79,7 +77,6 @@ export function parseQuickstartArgs(argv) {
         help: { short: 'h', type: 'boolean' },
         'no-start': { type: 'boolean' },
         'openai-key-env': { type: 'string' },
-        'single-postgres': { type: 'boolean' },
         'skip-install': { type: 'boolean' },
       },
     });
@@ -107,7 +104,6 @@ export function parseQuickstartArgs(argv) {
       help: values.help === true,
       noStart: values['no-start'] === true,
       openaiKeyEnv: values['openai-key-env'] ?? DEFAULT_KEY_ENV.openai,
-      singlePostgres: values['single-postgres'] === true,
       skipInstall: values['skip-install'] === true,
     },
   };
@@ -155,12 +151,8 @@ export function missingProviders(keys) {
 }
 
 /** Arguments to `scripts/compose.mjs` for the infrastructure stack. */
-export function composeArgs({ singlePostgres }) {
-  const files = ['-f', 'docker-compose.infra.yml'];
-  if (singlePostgres) {
-    files.push('-f', 'docker-compose.single-postgres.yml');
-  }
-  return ['scripts/compose.mjs', '--add-profile', 'temporal-ui', ...files];
+export function composeArgs() {
+  return ['scripts/compose.mjs', '--add-profile', 'temporal-ui', '-f', 'docker-compose.infra.yml'];
 }
 
 /**
@@ -169,7 +161,7 @@ export function composeArgs({ singlePostgres }) {
  * step does not apply, shown in the plan.
  */
 export function buildPlan(options, state) {
-  const compose = composeArgs(options);
+  const compose = composeArgs();
   const node = process.execPath;
   const steps = [
     {
@@ -191,9 +183,7 @@ export function buildPlan(options, state) {
     },
     {
       id: 'infra',
-      label: options.singlePostgres
-        ? 'start infrastructure, Temporal sharing the application Postgres'
-        : 'start infrastructure (Postgres, Temporal, Temporal UI, object store)',
+      label: 'start infrastructure (Postgres, Temporal, Temporal UI, object store)',
       run: [node, [...compose, 'up', '-d']],
     },
     { fn: 'waitInfra', id: 'wait-infra', label: 'wait for Postgres and the Temporal namespace' },
@@ -524,17 +514,7 @@ async function waitService(service) {
   return verdict === 'ready';
 }
 
-function readState() {
-  try {
-    return JSON.parse(readFileSync(resolve(ROOT, STATE_DIR, 'state.json'), 'utf8'));
-  } catch {
-    return {};
-  }
-}
-
-async function down(options) {
-  const stateFile = readState();
-  const singlePostgres = options.singlePostgres || stateFile.singlePostgres === true;
+async function down() {
   for (const service of SERVICES) {
     const pid = recordedPid(service);
     if (pid !== null) {
@@ -549,7 +529,7 @@ async function down(options) {
     }
     rmSync(pidFile(service), { force: true });
   }
-  const r = spawnSync(process.execPath, [...composeArgs({ singlePostgres }), 'down'], {
+  const r = spawnSync(process.execPath, [...composeArgs(), 'down'], {
     cwd: ROOT,
     stdio: 'inherit',
   });
@@ -608,10 +588,6 @@ export async function main(argv, env = process.env) {
   }
 
   mkdirSync(resolve(ROOT, STATE_DIR), { recursive: true });
-  writeFileSync(
-    resolve(ROOT, STATE_DIR, 'state.json'),
-    JSON.stringify({ singlePostgres: options.singlePostgres })
-  );
 
   const started = [];
   for (const [i, step] of plan.entries()) {

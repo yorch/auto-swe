@@ -24,23 +24,15 @@ describe('parseQuickstartArgs', () => {
       check: false,
       command: 'up',
       openaiKeyEnv: 'OPENAI_API_KEY',
-      singlePostgres: false,
     });
   });
 
   it('reads flags and the down command', () => {
-    const { options } = parseQuickstartArgs([
-      'down',
-      '--single-postgres',
-      '--check',
-      '--no-start',
-      '--skip-install',
-    ]);
+    const { options } = parseQuickstartArgs(['down', '--check', '--no-start', '--skip-install']);
     expect(options).toMatchObject({
       check: true,
       command: 'down',
       noStart: true,
-      singlePostgres: true,
       skipInstall: true,
     });
   });
@@ -95,8 +87,8 @@ describe('keys', () => {
 });
 
 describe('composeArgs', () => {
-  it('layers the single-Postgres overlay only on request, through compose.mjs', () => {
-    const base = composeArgs({ singlePostgres: false });
+  it('uses the infrastructure file only, through compose.mjs', () => {
+    const base = composeArgs();
     expect(base).toEqual([
       'scripts/compose.mjs',
       '--add-profile',
@@ -105,10 +97,6 @@ describe('composeArgs', () => {
       'docker-compose.infra.yml',
     ]);
     expect(base).not.toContain('--profile');
-    expect(composeArgs({ singlePostgres: true }).slice(-2)).toEqual([
-      '-f',
-      'docker-compose.single-postgres.yml',
-    ]);
   });
 });
 
