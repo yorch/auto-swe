@@ -153,6 +153,7 @@ export const SIDEBAR = [
     slugs: [
       'docs/configuration',
       'docs/deployment',
+      'docs/kubernetes-helm',
       'docs/upgrade-notes',
       'docs/audit-log',
       'docs/user-activity',

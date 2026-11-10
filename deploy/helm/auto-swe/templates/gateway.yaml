@@ -1,0 +1,107 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-gateway
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      {{- include "auto-swe.selectorLabels" (dict "ctx" . "component" "gateway") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "auto-swe.selectorLabels" (dict "ctx" . "component" "gateway") | nindent 8 }}
+      annotations:
+        # Roll the pods when the non-secret config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.gateway.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: gateway
+          image: {{ include "auto-swe.image" (dict "ctx" . "component" "gateway") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # The image entrypoint runs `prisma migrate deploy` (idempotent; a no-op
+          # after the migration Job) and then starts Fastify.
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            {{- include "auto-swe.serverEnvFrom" . | nindent 12 }}
+          env:
+            - name: PORT
+              value: "8080"
+            - name: HOSTNAME
+              value: 0.0.0.0
+            {{- range $key, $value := .Values.gateway.env }}
+            - name: {{ $key }}
+              value: {{ $value | toString | quote }}
+            {{- end }}
+          # /health answers 200 once Fastify is listening, whatever Temporal's state.
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+          {{- if .Values.config.artifacts.fs.existingClaim }}
+          volumeMounts:
+            # Read-only: the gateway serves evidence and transcripts, never writes one.
+            - name: artifacts
+              mountPath: /var/lib/auto-swe/artifacts
+              readOnly: true
+          {{- end }}
+      {{- if .Values.config.artifacts.fs.existingClaim }}
+      volumes:
+        {{- include "auto-swe.artifactVolume" . | trim | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gateway.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gateway.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gateway.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-gateway
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "auto-swe.selectorLabels" (dict "ctx" . "component" "gateway") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.gatewayPort }}
+      targetPort: http

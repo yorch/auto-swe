@@ -1,0 +1,125 @@
+{{- if and .Values.worker.enabled .Values.workspaces.manage }}
+{{- $ns := .Values.workspaces.namespace }}
+{{- $p := .Values.worker.proxies }}
+# The namespace agent workspace pods run in, mirroring
+# infra/kubernetes/workspace-namespace.yaml with this release's worker filled in.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $ns }}
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+    # Workspace pods are built to pass `restricted`; the namespace enforces it.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# Default-deny, then allow exactly: DNS, this release's worker proxies, and the
+# public internet minus every private and link-local range (which keeps a
+# workspace off the cloud metadata endpoint and cluster-internal addresses).
+# Workspaces are reached through the API server (kubectl exec), so no ingress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workspace-egress
+  namespace: {{ $ns }}
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      asw/role: workspace
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "auto-swe.selectorLabels" (dict "ctx" . "component" "worker") | nindent 14 }}
+      ports:
+        - { protocol: TCP, port: {{ $p.modelPort }} }
+        {{- if $p.registryPort }}
+        - { protocol: TCP, port: {{ $p.registryPort }} }
+        {{- end }}
+        {{- if $p.egressPort }}
+        - { protocol: TCP, port: {{ $p.egressPort }} }
+        {{- end }}
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fc00::/7
+              - fe80::/10
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: workspaces
+  namespace: {{ $ns }}
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+spec:
+  hard:
+    {{- range $key, $value := .Values.workspaces.quota }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+---
+# What the worker needs in this namespace and nothing else: pods, exec into them,
+# and the one Secret per pod carrying the registry-proxy token (created owned by its
+# pod; never read, so no get, list or patch on secrets). The worker checks these
+# verbs at start and refuses to run without them. `pods/exec` is a shell in every
+# workspace: keep anything else, and every other Secret, out of this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-worker
+  namespace: {{ $ns }}
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-worker
+  namespace: {{ $ns }}
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "auto-swe.fullname" . }}-worker
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "auto-swe.workerServiceAccount" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

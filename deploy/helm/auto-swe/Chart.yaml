@@ -1,0 +1,19 @@
+apiVersion: v2
+name: auto-swe
+description: >-
+  The auto-swe gateway, worker and web dashboard on Kubernetes, against an external
+  PostgreSQL (with pgvector) and an external Temporal. Agent workspaces run as pods
+  through the worker's Kubernetes workspace backend.
+type: application
+# The chart's own version; bump it with any template or values change.
+version: 0.1.0
+# The default image tag for all three services. Pin a release tag or a digest in
+# production (image.*.tag / image.*.digest): `main` moves.
+appVersion: main
+home: https://github.com/yorch/auto-swe
+sources:
+  - https://github.com/yorch/auto-swe
+keywords:
+  - temporal
+  - agents
+  - workflows

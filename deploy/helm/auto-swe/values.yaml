@@ -1,0 +1,180 @@
+# Values for the auto-swe chart. See docs/kubernetes-helm.md.
+#
+# Nothing secret has a default here. Either name a Secret you manage
+# (secrets.existingSecret, recommended) or pass the values at install time
+# (secrets.values.*, e.g. from a values file kept out of version control).
+
+# Public URLs, as a browser reaches them. Both are required.
+urls:
+  # The gateway, e.g. https://api.example.com. Becomes PUBLIC_URL, BETTER_AUTH_URL
+  # and the dashboard's NEXT_PUBLIC_API_URL; GitHub and Slack call back to it.
+  api: ""
+  # The dashboard, e.g. https://app.example.com. Becomes WEB_URL and CORS_ORIGIN.
+  web: ""
+
+image:
+  registry: ghcr.io/yorch/auto-swe
+  # Defaults to the chart's appVersion. Pin a release tag, or set a digest
+  # (sha256:…), which wins over the tag.
+  tag: ""
+  # Always, because the default tag moves; IfNotPresent once a digest is pinned.
+  pullPolicy: Always
+  gateway: { repository: gateway, digest: "" }
+  worker: { repository: worker, digest: "" }
+  web: { repository: web, digest: "" }
+imagePullSecrets: []
+
+# External Temporal frontend (host:port). Required.
+temporal:
+  address: ""
+
+secrets:
+  # Name of an existing Secret in the release namespace holding at least
+  # DATABASE_URL, CONFIG_ENCRYPTION_KEY, BETTER_AUTH_SECRET and JWT_SECRET. Every
+  # key in it reaches the gateway and the worker as an environment variable, so
+  # bootstrap fallbacks (GITHUB_TOKEN, GITHUB_WEBHOOK_SECRET, AWS_ACCESS_KEY_ID /
+  # AWS_SECRET_ACCESS_KEY for S3, …) can live in it too. The web dashboard gets none.
+  existingSecret: ""
+  # Used only when existingSecret is empty: the chart renders a Secret from these.
+  # The four required ones fail the render when left blank.
+  values:
+    # postgresql://user:password@host:5432/db?sslmode=require. The database needs
+    # the pgvector extension (0.8 or later).
+    DATABASE_URL: ""
+    # base64 of 32 random bytes: openssl rand -base64 32. Back it up; losing it
+    # makes every stored credential unreadable.
+    CONFIG_ENCRYPTION_KEY: ""
+    # At least 32 random characters; the same on every gateway replica.
+    BETTER_AUTH_SECRET: ""
+    JWT_SECRET: ""
+  # Further keys for the rendered Secret (same reach as existingSecret's keys).
+  extra: {}
+
+# Non-secret environment for the gateway and the worker (rendered into a ConfigMap).
+config:
+  defaultTeamSlug: default
+  # OTLP/gRPC collector, e.g. http://otel-collector.observability:4317. Empty: no export.
+  otelExporterEndpoint: ""
+  # Artifact store (docs/deployment.md §5c). With neither S3 nor a filesystem
+  # claim, large artifacts are stored inline in Postgres.
+  artifacts:
+    s3:
+      bucket: ""
+      region: us-east-1
+      endpoint: ""
+      forcePathStyle: false
+      prefix: workflow-artifacts
+    # An existing ReadWriteMany PersistentVolumeClaim, mounted read-only into the
+    # gateway and read-write into the worker at /var/lib/auto-swe/artifacts.
+    fs:
+      existingClaim: ""
+  # Any other non-secret variable (RATE_LIMIT_MAX, TRUST_PROXY, WORKSPACE_IMAGE, …).
+  extraEnv: {}
+
+# Runs `prisma migrate deploy` as a Helm pre-install / pre-upgrade hook, from the
+# gateway image, before any new pod starts. The gateway's own entrypoint runs the
+# same idempotent command at start; with the Job it finds nothing left to apply.
+migrations:
+  enabled: true
+  activeDeadlineSeconds: 600
+  backoffLimit: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+
+podSecurityContext:
+  runAsNonRoot: true
+  # The images' `node` user.
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile: { type: RuntimeDefault }
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  capabilities: { drop: [ALL] }
+
+gateway:
+  replicas: 2
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { memory: 1Gi }
+  env: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+web:
+  replicas: 2
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  # Optional NEXT_PUBLIC_* links shown in the dashboard.
+  temporalUiUrl: ""
+  grafanaUrl: ""
+  env: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# The worker runs agent workspaces as pods (WORKSPACE_BACKEND=kubernetes). It is
+# a single replica: its proxies keep per-workspace state in memory.
+worker:
+  # false: run the worker elsewhere (for example on an isolated Docker host with
+  # docker-compose.prod.yml, which shell and container steps need) against the
+  # same database and Temporal.
+  enabled: true
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits: { memory: 2Gi }
+  # The Claude Code harness's model proxy is required on this backend; the
+  # registry and egress proxies are optional (empty port: off).
+  proxies:
+    modelPort: 8790
+    registryPort: ""
+    egressPort: ""
+  env: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  serviceAccount:
+    # Name of the ServiceAccount the worker runs as; defaults to <release>-worker.
+    name: ""
+    annotations: {}
+
+# The namespace workspace pods run in, and what the worker may do there.
+workspaces:
+  namespace: auto-swe-workspaces
+  # Render the namespace (PodSecurity restricted), its NetworkPolicy, quota and the
+  # worker's Role/RoleBinding, mirroring infra/kubernetes/workspace-namespace.yaml.
+  # false: apply that reference manifest yourself.
+  manage: true
+  # The worker refuses to start unless a probe pod proves the NetworkPolicy is
+  # enforced. Only false skips that check (a local cluster with no policy CNI).
+  requireNetworkPolicy: true
+  runtimeClassName: ""
+  storageLimit: 10Gi
+  maxLifetimeSec: 86400
+  # Secret names in the workspace namespace for pulling executor images.
+  imagePullSecrets: []
+  quota:
+    pods: "50"
+    requests.cpu: "100"
+    requests.memory: 200Gi
+    requests.ephemeral-storage: 500Gi
+
+service:
+  type: ClusterIP
+  gatewayPort: 8080
+  webPort: 3000
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  # Hosts are taken from urls.api and urls.web.
+  tls: []
+  #  - secretName: auto-swe-tls
+  #    hosts: [api.example.com, app.example.com]

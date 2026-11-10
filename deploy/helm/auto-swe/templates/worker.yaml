@@ -1,0 +1,213 @@
+{{- if .Values.worker.enabled }}
+{{- $proxyHost := include "auto-swe.workerProxyHost" . }}
+{{- $p := .Values.worker.proxies }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "auto-swe.workerServiceAccount" . }}
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+  {{- with .Values.worker.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+# One replica, replaced rather than rolled: the model and registry proxies keep
+# per-workspace token registrations in memory, so a workspace whose request
+# reached another replica would be refused.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-worker
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "auto-swe.selectorLabels" (dict "ctx" . "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "auto-swe.selectorLabels" (dict "ctx" . "component" "worker") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.worker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "auto-swe.workerServiceAccount" . }}
+      # kubectl inside the worker authenticates with this ServiceAccount's token.
+      automountServiceAccountToken: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        # The worker refuses to boot until the gateway has synced the built-in
+        # agents, skills and scanner patterns; wait for it instead of crash-looping.
+        - name: wait-for-gateway
+          image: {{ include "auto-swe.image" (dict "ctx" . "component" "worker") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - node
+            - -e
+            - |
+              const url = process.env.API_INTERNAL_URL + '/health';
+              const deadline = Date.now() + 15 * 60 * 1000;
+              (async () => {
+                while (Date.now() < deadline) {
+                  try {
+                    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+                    if (res.ok) process.exit(0);
+                  } catch {}
+                  await new Promise((r) => setTimeout(r, 3000));
+                }
+                console.error('gateway not healthy at ' + url);
+                process.exit(1);
+              })();
+          env:
+            - name: API_INTERNAL_URL
+              value: {{ include "auto-swe.gatewayInternalUrl" . | quote }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 128Mi }
+      containers:
+        - name: worker
+          image: {{ include "auto-swe.image" (dict "ctx" . "component" "worker") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: model-proxy
+              containerPort: {{ $p.modelPort }}
+            {{- if $p.registryPort }}
+            - name: registry-proxy
+              containerPort: {{ $p.registryPort }}
+            {{- end }}
+            {{- if $p.egressPort }}
+            - name: egress-proxy
+              containerPort: {{ $p.egressPort }}
+            {{- end }}
+          envFrom:
+            {{- include "auto-swe.serverEnvFrom" . | nindent 12 }}
+          env:
+            - name: WORKSPACE_BACKEND
+              value: kubernetes
+            - name: K8S_WORKSPACE_NAMESPACE
+              value: {{ .Values.workspaces.namespace | quote }}
+            - name: K8S_REQUIRE_NETWORK_POLICY
+              value: {{ .Values.workspaces.requireNetworkPolicy | toString | quote }}
+            - name: K8S_WORKSPACE_STORAGE_LIMIT
+              value: {{ .Values.workspaces.storageLimit | quote }}
+            - name: K8S_WORKSPACE_MAX_LIFETIME_SEC
+              value: {{ .Values.workspaces.maxLifetimeSec | toString | quote }}
+            {{- with .Values.workspaces.runtimeClassName }}
+            - name: K8S_WORKSPACE_RUNTIME_CLASS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.workspaces.imagePullSecrets }}
+            - name: K8S_WORKSPACE_IMAGE_PULL_SECRETS
+              value: {{ join "," . | quote }}
+            {{- end }}
+            # Workspace pods reach the proxies through the worker-proxy Service; the
+            # pod's own hostname is not resolvable from another pod.
+            - name: HARNESS_MODEL_PROXY_PORT
+              value: {{ $p.modelPort | toString | quote }}
+            - name: HARNESS_MODEL_PROXY_URL
+              value: {{ printf "http://%s:%v" $proxyHost $p.modelPort | quote }}
+            - name: HARNESS_MODEL_PROXY_BIND
+              value: 0.0.0.0
+            {{- if $p.registryPort }}
+            - name: REGISTRY_PROXY_PORT
+              value: {{ $p.registryPort | toString | quote }}
+            - name: REGISTRY_PROXY_URL
+              value: {{ printf "http://%s:%v" $proxyHost $p.registryPort | quote }}
+            - name: REGISTRY_PROXY_BIND
+              value: 0.0.0.0
+            {{- end }}
+            {{- if $p.egressPort }}
+            - name: EGRESS_PROXY_PORT
+              value: {{ $p.egressPort | toString | quote }}
+            - name: EGRESS_PROXY_URL
+              value: {{ printf "http://%s:%v" $proxyHost $p.egressPort | quote }}
+            - name: EGRESS_PROXY_BIND
+              value: 0.0.0.0
+            {{- end }}
+            {{- range $key, $value := .Values.worker.env }}
+            - name: {{ $key }}
+              value: {{ $value | toString | quote }}
+            {{- end }}
+          # The worker touches /tmp/worker-alive while its Temporal poller runs;
+          # the same check as the image's HEALTHCHECK.
+          startupProbe:
+            exec:
+              command: ["sh", "-c", "test -n \"$(find /tmp/worker-alive -mmin -2 2>/dev/null)\""]
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "test -n \"$(find /tmp/worker-alive -mmin -2 2>/dev/null)\""]
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          {{- if .Values.config.artifacts.fs.existingClaim }}
+          volumeMounts:
+            - name: artifacts
+              mountPath: /var/lib/auto-swe/artifacts
+          {{- end }}
+      {{- if .Values.config.artifacts.fs.existingClaim }}
+      volumes:
+        {{- include "auto-swe.artifactVolume" . | trim | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.worker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+# How workspace pods reach the worker's proxies. Each request carries a
+# per-workspace token the proxy checks; nothing else is served on these ports.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-worker-proxy
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "auto-swe.selectorLabels" (dict "ctx" . "component" "worker") | nindent 4 }}
+  ports:
+    - name: model-proxy
+      port: {{ $p.modelPort }}
+      targetPort: model-proxy
+    {{- if $p.registryPort }}
+    - name: registry-proxy
+      port: {{ $p.registryPort }}
+      targetPort: registry-proxy
+    {{- end }}
+    {{- if $p.egressPort }}
+    - name: egress-proxy
+      port: {{ $p.egressPort }}
+      targetPort: egress-proxy
+    {{- end }}
+{{- end }}

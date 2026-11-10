@@ -596,7 +596,7 @@ https://temporal.example.com (optional, internal only)  →  temporal-1:8233
 
 ### Kubernetes
 
-The same images run on Kubernetes; there is no shipped Helm chart. There are two ways to run the worker:
+The same images run on Kubernetes. [`kubernetes-helm.md`](./kubernetes-helm.md) describes the Helm chart in `deploy/helm/auto-swe`, which deploys the gateway, the web dashboard and a worker on the Kubernetes backend below against an external Postgres and Temporal. There are two ways to run the worker:
 
 - **Docker backend (default).** The worker is the only stateful pod (Docker socket): run it as a single-replica StatefulSet on a dedicated node pool with the socket mounted via `hostPath`. Everything else is a stock Deployment.
 - **Kubernetes backend** (`WORKSPACE_BACKEND=kubernetes`). Agent workspaces are pods in their own namespace, so the worker needs no Docker socket and no `docker-socket-proxy`. Workflow shell steps, container steps and container-step sidecars that require shared volumes are not available on this backend (they fail with `WORKSPACE_BACKEND_UNSUPPORTED`); preview-service sidecars are supported in the workspace pod. The worker is a single replica (its proxies keep per-workspace state in memory). See [`architecture.md`](./architecture.md#kubernetes-backend) and its Limitations.

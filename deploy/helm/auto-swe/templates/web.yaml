@@ -1,0 +1,106 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-web
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  replicas: {{ .Values.web.replicas }}
+  selector:
+    matchLabels:
+      {{- include "auto-swe.selectorLabels" (dict "ctx" . "component" "web") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "auto-swe.selectorLabels" (dict "ctx" . "component" "web") | nindent 8 }}
+      {{- with .Values.web.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: web
+          image: {{ include "auto-swe.image" (dict "ctx" . "component" "web") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 3000
+          # No Secret and no shared ConfigMap: the dashboard reads only these.
+          # NEXT_PUBLIC_* are read per request, so a change is a restart, not a rebuild.
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            # The standalone Next server binds to HOSTNAME, which Kubernetes sets to the pod name.
+            - name: HOSTNAME
+              value: 0.0.0.0
+            - name: NEXT_PUBLIC_API_URL
+              value: {{ .Values.urls.api | trimSuffix "/" | quote }}
+            - name: API_INTERNAL_URL
+              value: {{ include "auto-swe.gatewayInternalUrl" . | quote }}
+            {{- with .Values.web.temporalUiUrl }}
+            - name: NEXT_PUBLIC_TEMPORAL_UI_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.web.grafanaUrl }}
+            - name: NEXT_PUBLIC_GRAFANA_URL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- range $key, $value := .Values.web.env }}
+            - name: {{ $key }}
+              value: {{ $value | toString | quote }}
+            {{- end }}
+          startupProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.web.resources | nindent 12 }}
+      {{- with .Values.web.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.web.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-web
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "auto-swe.selectorLabels" (dict "ctx" . "component" "web") | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.webPort }}
+      targetPort: http
