@@ -397,7 +397,11 @@ The same spec is shown three ways, none of which changes it:
   group of two or more nodes can be folded into one card with a count. Edges into the group lead
   to the card and each distinct way out of it is drawn as an exit. A group holding a node that
   failed, is running or pending, carries a diff mark, or is selected stays open. Clicking a card, or
-  pressing Enter on it, opens that group. The editor never folds, because a hidden node is one the
+  pressing Enter on it, opens that group. A static graph of more than 20 nodes (the library view,
+  with no run statuses or diff marks) opens with every group already folded, so it reads as a few
+  phases first; a run's graph and a diff open expanded, because folding there would move the layout
+  under the viewer. The run recorder names the current step by its title with its phase ("phase 2 of
+  5"), and the launch summary lists the template's phases. The editor never folds, because a hidden node is one the
   author cannot change.
 - **Outline.** The steps as a list in flow order (a walk from the entry that follows each node's edges
   in order), gathered under their `group` headings, with a status beside each row when a run overlay
@@ -478,6 +482,9 @@ event can follow. These two templates never wait for one:
   beside its canvas instead.
 - `group` and `title` are not part of the natural-language authoring prompt, so a generated draft
   carries none until an author adds them.
+- Phases are the distinct `group` labels in breadth-first order from the entry. In a branching
+  template that is an approximation of the order a run takes, and a phase on an untaken branch is
+  still counted.
 - A group is collapsed all at once or expanded one card at a time; there is no per-group collapse
   control on the canvas (the outline folds each heading separately).
 
