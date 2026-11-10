@@ -1927,6 +1927,7 @@ model User {
   harnessProfileVersions HarnessProfileVersion[] @relation("HarnessProfileApprover")
   schedulesActingAs     ScheduledWorkRequest[]   @relation("ScheduleActsAs")
   automations           Automation[]             @relation("AutomationCreator")
+  enabledAutomations    Automation[]             @relation("AutomationEnabler")
   servicePrincipals     ServicePrincipal[]       @relation("ServicePrincipalCreator")
   eventEndpoints        EventEndpoint[]          @relation("EventEndpointCreator")
   configPermissions     ConfigPermission[]
@@ -2230,6 +2231,15 @@ model Automation {
   template        WorkflowTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   createdById     String?           @map("created_by_id") @db.Uuid
   createdBy       User?             @relation("AutomationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  /// The person who last switched it on (set at create and by any change that leaves it on). For a
+  /// source with no person to act for it runs on the platform credential, and the engine asks at
+  /// every fire whether this person is still an active LEAD of the managing team; when not, it
+  /// switches itself off. Null: nobody is recorded, which fails that check.
+  lastEnabledById String?           @map("last_enabled_by_id") @db.Uuid
+  lastEnabledBy   User?             @relation("AutomationEnabler", fields: [lastEnabledById], references: [id], onDelete: SetNull)
+  /// Why the engine switched it off (a fixed sentence), and when. Cleared when it is switched on.
+  autoDisabledReason String?        @map("auto_disabled_reason")
+  autoDisabledAt  DateTime?         @map("auto_disabled_at") @db.Timestamptz
   createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -2243,6 +2253,7 @@ model Automation {
   @@index([targetConnectionId])
   @@index([templateId])
   @@index([createdById])
+  @@index([lastEnabledById])
   @@map("automations")
 }
 

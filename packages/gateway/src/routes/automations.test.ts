@@ -649,6 +649,18 @@ describe('automationRoutes (event automations)', () => {
       });
     });
 
+    it('records the person who saved it on as the one it answers to, and no one for a draft', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      expect((await post(VALID)).statusCode).toBe(201);
+      expect(ctx.prisma.automation.create.mock.calls[0]?.[0].data).toMatchObject({
+        lastEnabledById: 'user-1',
+      });
+      expect((await post({ ...VALID, enabled: false })).statusCode).toBe(201);
+      expect(ctx.prisma.automation.create.mock.calls[1]?.[0].data).toMatchObject({
+        lastEnabledById: null,
+      });
+    });
+
     it('refuses a plain member and a shared team’s lead', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
       expect((await post(VALID)).statusCode).toBe(403);
@@ -816,12 +828,59 @@ describe('automationRoutes (event automations)', () => {
       const res = await patch({ inputs: { mode: 'fix' } });
       expect(res.statusCode).toBe(200);
       expect(ctx.prisma.automation.update.mock.calls[0]?.[0].data).toEqual({
+        autoDisabledAt: null,
+        autoDisabledReason: null,
         inputs: { mode: 'fix' },
+        lastEnabledById: 'user-1',
       });
       expect(ctx.prisma.configAuditLog.create.mock.calls[0]?.[0].data).toMatchObject({
         action: 'UPDATE',
         entityType: 'Automation',
       });
+    });
+
+    it('makes whoever leaves it on the person it answers to', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.automation.findUnique.mockResolvedValue(
+        stored({ enabled: true, lastEnabledById: 'user-gone' })
+      );
+      expect((await patch({ name: 'renamed' })).statusCode).toBe(200);
+      expect(ctx.prisma.automation.update.mock.calls[0]?.[0].data).toMatchObject({
+        lastEnabledById: 'user-1',
+      });
+    });
+
+    it('takes an automation the engine switched off over, and clears the reason, when switched on', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.automation.findUnique.mockResolvedValue(
+        stored({
+          autoDisabledReason: 'the person who switched it on is no longer an active user',
+          enabled: false,
+          lastEnabledById: 'user-gone',
+        })
+      );
+      expect((await patch({ enabled: true })).statusCode).toBe(200);
+      expect(ctx.prisma.automation.update.mock.calls[0]?.[0].data).toMatchObject({
+        autoDisabledAt: null,
+        autoDisabledReason: null,
+        enabled: true,
+        lastEnabledById: 'user-1',
+      });
+    });
+
+    it('leaves who it answers to, and why it was switched off, alone while it stays off', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead, null, false));
+      ctx.prisma.automation.findUnique.mockResolvedValue(
+        stored({ autoDisabledReason: 'x', enabled: false, lastEnabledById: 'user-gone' })
+      );
+      expect((await patch({ name: 'renamed' })).statusCode).toBe(200);
+      const data = ctx.prisma.automation.update.mock.calls[0]?.[0].data ?? {};
+      expect(data).not.toHaveProperty('lastEnabledById');
+      expect(data).not.toHaveProperty('autoDisabledReason');
+      expect((await patch({ enabled: false })).statusCode).toBe(200);
+      expect(ctx.prisma.automation.update.mock.calls[1]?.[0].data).not.toHaveProperty(
+        'lastEnabledById'
+      );
     });
 
     it('lets an automation be switched off without a launch decision, even on an inactive repository', async () => {

@@ -45,6 +45,8 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
   const org = `ci-${suffix}`;
   const ownerKey = `github.com/${org}/repo`;
   let automationId: string;
+  /** A LEAD of the fixture team: the person every fixture automation answers to. */
+  let leadId: string;
   let templateId: string;
   let repoId: string;
   let teamId: string;
@@ -119,6 +121,11 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
         const team = await prisma.team.create({
           data: { name: `ci-team-${suffix}`, orgId: organization.id, slug: `ci-team-${suffix}` },
         });
+        const lead = await prisma.user.create({ data: { email: `lead-${suffix}@example.test` } });
+        await prisma.teamMembership.create({
+          data: { role: 'LEAD', teamId: team.id, userId: lead.id },
+        });
+        leadId = lead.id;
         const repo = await prisma.connection.create({
           data: { organizationName: org, repoName: 'repo', teamId: team.id, type: 'git_repo' },
         });
@@ -140,6 +147,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
             cooldownMinutes: 0,
             filters: filters(),
             inputs: { mode: 'fix' },
+            lastEnabledById: leadId,
             maxRunsPerDay: 3,
             name: 'main',
             source: WORKFLOW_RUN_FAILED,
@@ -233,6 +241,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
         connectionId: repoId,
         cooldownMinutes: 0,
         filters: filters({ workflowPatterns: ['.github/workflows/lint.yml'] }),
+        lastEnabledById: leadId,
         maxRunsPerDay: 3,
         name: 'lint',
         source: WORKFLOW_RUN_FAILED,
@@ -269,12 +278,109 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
     });
   });
 
+  describe('the authority of the person who switched an automation on', () => {
+    /** An automation on its own branch, answering to a fresh user who leads the fixture team. */
+    async function lapsing(label: string, role: 'LEAD' | 'MEMBER' = 'LEAD') {
+      const user = await prisma.user.create({
+        data: { email: `${label}-${suffix}@example.test` },
+      });
+      await prisma.teamMembership.create({ data: { role, teamId, userId: user.id } });
+      const row = await prisma.automation.create({
+        data: {
+          connectionId: repoId,
+          cooldownMinutes: 0,
+          filters: filters({ branchPatterns: [`${label}/*`] }),
+          lastEnabledById: user.id,
+          maxRunsPerDay: 50,
+          name: label,
+          source: WORKFLOW_RUN_FAILED,
+          templateId,
+        },
+      });
+      return { row, user };
+    }
+    const reload = (id: string) =>
+      runUnscoped('test fixture', ['Automation'], () =>
+        prisma.automation.findUniqueOrThrow({ where: { id } })
+      );
+
+    it('switches the automation off at its next fire once the person may no longer manage the team’s automations', async () => {
+      const { row, user } = await lapsing('left');
+      await expect(deliver({ branch: 'left/a', runId: '700' })).resolves.toMatchObject({
+        outcome: 'STARTED',
+      });
+      await prisma.teamMembership.deleteMany({ where: { teamId, userId: user.id } });
+
+      const result = await deliver({ branch: 'left/b', headSha: 'f'.repeat(40), runId: '701' });
+      expect(result).toMatchObject({
+        outcome: 'SUPPRESSED_PRECONDITION',
+        reason: expect.stringContaining('may no longer manage the automations of the team'),
+      });
+      expect(started).toHaveLength(1);
+      expect(await reload(row.id)).toMatchObject({
+        autoDisabledReason:
+          'the person who switched it on may no longer manage the automations of the team',
+        enabled: false,
+      });
+      // Off, so it no longer matches: a later failure on its branch is not decided at all.
+      await expect(deliver({ branch: 'left/c', runId: '702' })).resolves.toMatchObject({
+        ignored: true,
+      });
+      await prisma.automation.delete({ where: { id: row.id } });
+    });
+
+    it('audits the switch-off once, as the system, however many fires found it', async () => {
+      const { row, user } = await lapsing('race');
+      await prisma.user.update({ data: { isActive: false }, where: { id: user.id } });
+      const results = await Promise.all(
+        ['1', '2', '3'].map((n) =>
+          deliver({ branch: `race/${n}`, headSha: n.repeat(40), runId: `71${n}` })
+        )
+      );
+      expect(outcomes(results)).toEqual([
+        'SUPPRESSED_PRECONDITION',
+        'SUPPRESSED_PRECONDITION',
+        'SUPPRESSED_PRECONDITION',
+      ]);
+      expect(started).toHaveLength(0);
+      const audits = await prisma.configAuditLog.findMany({
+        where: { action: 'UPDATE', entityId: row.id, entityType: 'Automation' },
+      });
+      expect(audits).toHaveLength(1);
+      expect(audits[0]).toMatchObject({ actorId: null });
+      await prisma.automation.delete({ where: { id: row.id } });
+    });
+
+    it('refuses an automation nobody is recorded as having switched on', async () => {
+      const { row } = await lapsing('nobody');
+      await prisma.automation.update({ data: { lastEnabledById: null }, where: { id: row.id } });
+      await expect(deliver({ branch: 'nobody/a', runId: '720' })).resolves.toMatchObject({
+        outcome: 'SUPPRESSED_PRECONDITION',
+        reason: expect.stringContaining('no one is recorded'),
+      });
+      expect(await reload(row.id)).toMatchObject({ enabled: false });
+      await prisma.automation.delete({ where: { id: row.id } });
+    });
+
+    it('lets a platform ADMIN stand behind an automation without being on the team', async () => {
+      const { row, user } = await lapsing('admin', 'MEMBER');
+      await prisma.user.update({ data: { role: 'ADMIN' }, where: { id: user.id } });
+      await prisma.teamMembership.deleteMany({ where: { teamId, userId: user.id } });
+      await expect(deliver({ branch: 'admin/a', runId: '730' })).resolves.toMatchObject({
+        outcome: 'STARTED',
+      });
+      expect(await reload(row.id)).toMatchObject({ enabled: true });
+      await prisma.automation.delete({ where: { id: row.id } });
+    });
+  });
+
   it('keeps its decisions when the automation is deleted and recreated', async () => {
     const temp = await prisma.automation.create({
       data: {
         connectionId: repoId,
         cooldownMinutes: 0,
         filters: filters({ branchPatterns: ['tmp'] }),
+        lastEnabledById: leadId,
         name: 'temp',
         source: WORKFLOW_RUN_FAILED,
         templateId,
@@ -291,6 +397,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
         connectionId: repoId,
         cooldownMinutes: 0,
         filters: filters({ branchPatterns: ['tmp'] }),
+        lastEnabledById: leadId,
         name: 'again',
         source: WORKFLOW_RUN_FAILED,
         templateId,
@@ -334,6 +441,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
       data: {
         connectionId: repoId,
         filters: filters({ events: ['push', 'schedule'] }),
+        lastEnabledById: leadId,
         name: 'nightly',
         source: WORKFLOW_RUN_FAILED,
       },
@@ -386,6 +494,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
       data: {
         connectionId: repoId,
         filters: { labels: ['auto-swe'] },
+        lastEnabledById: leadId,
         name: 'issues',
         source: ISSUE_LABELED,
         templateId: swe.id,
@@ -467,7 +576,13 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
   it('keeps every automation owned: a repository or a team, never neither', async () => {
     const base = { filters: filters(), name: 'owned', source: WORKFLOW_RUN_FAILED };
     await expect(prisma.automation.create({ data: base })).rejects.toThrow();
-    const onTeam = await prisma.automation.create({ data: { ...base, teamId } });
+    const onTeam = await prisma.automation.create({
+      data: {
+        lastEnabledById: leadId,
+        ...base,
+        teamId,
+      },
+    });
     try {
       expect(onTeam.connectionId).toBeNull();
       // A team's decisions are taken under their own lock, on their own ledger.
@@ -514,7 +629,12 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
       await expect(prisma.automation.create({ data: bad })).rejects.toThrow();
     }
     const ok = await prisma.automation.create({
-      data: { ...base, targetConnectionId: repoId, teamId },
+      data: {
+        lastEnabledById: leadId,
+        ...base,
+        targetConnectionId: repoId,
+        teamId,
+      },
     });
     await prisma.automation.delete({ where: { id: ok.id } });
   });
@@ -540,7 +660,11 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
       await expect(prisma.automation.create({ data: bad })).rejects.toThrow();
     }
     const ok = await prisma.automation.create({
-      data: { ...base, filters: { jql: 'project = PAY' } },
+      data: {
+        lastEnabledById: leadId,
+        ...base,
+        filters: { jql: 'project = PAY' },
+      },
     });
     await prisma.automation.delete({ where: { id: ok.id } });
   });
@@ -562,7 +686,11 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
     }
     for (const triggers of [['qodo_findings'], ['changes_requested', 'command', 'qodo_findings']]) {
       const ok = await prisma.automation.create({
-        data: { ...base, filters: { pullRequests, triggers } },
+        data: {
+          lastEnabledById: leadId,
+          ...base,
+          filters: { pullRequests, triggers },
+        },
       });
       await prisma.automation.delete({ where: { id: ok.id } });
     }
@@ -573,6 +701,7 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
       data: {
         connectionId: repoId,
         filters: { jql: 'project = PAY' },
+        lastEnabledById: leadId,
         name: 'jira',
         source: JIRA_FILTER_NEW_ISSUE,
       },

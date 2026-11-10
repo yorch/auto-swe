@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
+  // What the check on the person who switched an automation on answers.
+  authority: { ok: true } as { ok: true } | { ok: false; reason: string },
   enabled: true,
   overBudget: false,
   overTeams: new Set<string>(),
@@ -30,6 +32,12 @@ vi.mock('@auto-swe/shared/lib/repoMembership', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/lib/repoMembership')>()),
   isRepoMember: vi.fn(() => true),
 }));
+vi.mock('./enablerAuthority.js', () => ({
+  checkEnablerAuthority: vi.fn(async () => m.authority),
+}));
+vi.mock('./orphanedAutomation.js', () => ({
+  disableOrphanedAutomation: vi.fn(async () => true),
+}));
 vi.mock('../orgAccess.js', () => ({
   isOrgOverBudget: vi.fn(async () => m.overBudget),
   isTeamOverBudget: vi.fn(async (_p: unknown, teamId: string) => m.overTeams.has(teamId)),
@@ -50,6 +58,7 @@ import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
 import { PR_FEEDBACK_INPUT_SCHEMA } from '@auto-swe/shared/lib/prFeedback';
 import { FAKE_TEAM_SOURCE, fakeTeamSource } from '../../test/fakeTeamSource.js';
 import { isOrgOverBudget } from '../orgAccess.js';
+import { checkEnablerAuthority } from './enablerAuthority.js';
 import {
   actorLaunchDecision,
   automationMatches,
@@ -59,6 +68,7 @@ import {
   ownerLockKey,
 } from './engine.js';
 import { handleInboundEvent, TARGET_UNAVAILABLE } from './inboundEvent.js';
+import { disableOrphanedAutomation } from './orphanedAutomation.js';
 import { normalizeWorkflowRunEvent } from './workflowRunFailed.js';
 
 const REPO_ID = 42;
@@ -201,7 +211,9 @@ function trigger(over: Record<string, unknown> = {}) {
     events: ['push'],
     id: 'aaaaaaaa-0000-4000-8000-000000000001',
     inputs: { mode: 'fix' },
+    lastEnabledById: 'user-lead' as string | null,
     maxRunsPerDay: 10,
+    name: 'trigger',
     templateId: null,
     workflowPatterns: ['.github/workflows/**'],
     ...over,
@@ -406,6 +418,9 @@ function harness(
 }
 
 beforeEach(() => {
+  m.authority = { ok: true };
+  vi.mocked(checkEnablerAuthority).mockClear();
+  vi.mocked(disableOrphanedAutomation).mockClear();
   m.enabled = true;
   m.overBudget = false;
   m.overTeams.clear();
@@ -854,7 +869,9 @@ describe('owners that are not a repository', () => {
     filters: { topics: ['deploys'] },
     id: 'bbbbbbbb-0000-4000-8000-000000000001',
     inputs: {},
+    lastEnabledById: 'user-lead',
     maxRunsPerDay: 10,
+    name: 'team automation',
     source: FAKE_TEAM_SOURCE,
     templateId: null,
   };
@@ -1488,5 +1505,96 @@ describe('run initiator provenance (decideAndStart)', () => {
     ).resolves.toMatchObject({ outcome: 'STARTED' });
     expect(startedRequest(h)).toMatchObject({ initiatedById: RETRIER, trigger: 'automation' });
     expect(h.runInputs[0]).toMatchObject({ requestedById: null });
+  });
+});
+
+describe('the authority of the person who switched an automation on', () => {
+  const LAPSED = {
+    ok: false as const,
+    reason: 'the person who switched it on is no longer an active user',
+  };
+
+  it('asks about the enabling person and the team that manages the repository', async () => {
+    const h = harness({ triggers: [trigger({ lastEnabledById: 'user-lead' })] });
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'STARTED' });
+    expect(checkEnablerAuthority).toHaveBeenCalledWith(h.db, 'user-lead', 'team-1');
+    expect(disableOrphanedAutomation).not.toHaveBeenCalled();
+  });
+
+  it('switches the automation off and records why when the authority has lapsed', async () => {
+    m.authority = LAPSED;
+    const h = harness({ triggers: [trigger({ name: 'ci fixer' })] });
+    await expect(handle(h)).resolves.toMatchObject({
+      outcome: 'SUPPRESSED_PRECONDITION',
+      reason: `the automation was switched off: ${LAPSED.reason}`,
+    });
+    expect(h.started).toHaveLength(0);
+    expect(h.fires[0]).toMatchObject({ outcome: 'SUPPRESSED_PRECONDITION' });
+    expect(disableOrphanedAutomation).toHaveBeenCalledTimes(1);
+    expect(disableOrphanedAutomation).toHaveBeenCalledWith(
+      h.fastify,
+      expect.objectContaining({
+        automation: expect.objectContaining({ name: 'ci fixer' }),
+        reason: LAPSED.reason,
+        teamId: 'team-1',
+      })
+    );
+  });
+
+  it('does not consult it when a person acts through the occurrence', async () => {
+    m.authority = LAPSED;
+    const h = harness();
+    const withActor = {
+      ...workflowRunFailedSource,
+      actor: () => ({ id: '1', login: 'someone' }),
+    };
+    await decideAndStart(h.fastify as never, withActor as never, {
+      automation: trigger() as never,
+      connection: null,
+      facts: occurrence(failed).facts,
+      now: new Date(),
+      ownerKey: '@team/team-1',
+      retry: { kind: 'redelivery' },
+      startRetryDelayMs: 0,
+      team: {
+        id: 'team-1',
+        monthlyBudgetUsdCents: null,
+        organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+        orgId: 'org-1',
+      },
+    });
+    expect(checkEnablerAuthority).not.toHaveBeenCalled();
+    expect(disableOrphanedAutomation).not.toHaveBeenCalled();
+  });
+
+  it('asks about the automation’s own team for a team automation', async () => {
+    const h = harness({ template: undefined });
+    await decideAndStart(h.fastify as never, fakeTeamSource, {
+      automation: {
+        cooldownMinutes: 0,
+        enabled: true,
+        filters: { topics: ['deploys'] },
+        id: 'bbbbbbbb-0000-4000-8000-000000000009',
+        inputs: {},
+        lastEnabledById: 'user-lead',
+        maxRunsPerDay: 10,
+        name: 'team automation',
+        source: FAKE_TEAM_SOURCE,
+        templateId: null,
+      },
+      connection: null,
+      facts: { eventId: 'e-auth', topic: 'deploys' },
+      now: new Date(),
+      ownerKey: '@team/team-7',
+      retry: { kind: 'redelivery' },
+      startRetryDelayMs: 0,
+      team: {
+        id: 'team-7',
+        monthlyBudgetUsdCents: null,
+        organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+        orgId: 'org-1',
+      },
+    }).catch(() => undefined);
+    expect(checkEnablerAuthority).toHaveBeenCalledWith(h.db, 'user-lead', 'team-7');
   });
 });

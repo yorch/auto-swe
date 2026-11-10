@@ -386,6 +386,15 @@ function Automations() {
                                   Off
                                 </Badge>
                               )}
+                              {!r.enabled && r.automation?.autoDisabledReason && (
+                                <Badge
+                                  title={r.automation.autoDisabledReason}
+                                  tone="warning"
+                                  variant="outline"
+                                >
+                                  Switched off by the platform
+                                </Badge>
+                              )}
                               {r.kind === 'template_webhook' && !r.signatureRequired && (
                                 <Badge tone="warning" variant="outline">
                                   {r.signed ? 'Signature optional' : 'Unsigned'}

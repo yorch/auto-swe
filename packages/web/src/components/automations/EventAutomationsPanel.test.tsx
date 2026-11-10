@@ -311,6 +311,17 @@ describe('EventAutomationsPanel: Jira filter automations', () => {
     expect(screen.getByText('Last poll failed: constructor')).toBeTruthy();
   });
 
+  it('says why the platform switched an automation off, and only while it is off', () => {
+    const reason = 'the person who switched it on is no longer an active user';
+    state.automations = [
+      { ...automation, autoDisabledReason: reason, enabled: false, id: 'off-1', name: 'orphan' },
+      { ...automation, autoDisabledReason: reason, enabled: true, id: 'on-1', name: 'taken over' },
+    ];
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
+    expect(screen.getAllByText(/switched off by the platform/i)).toHaveLength(1);
+    expect(screen.getByText(new RegExp(reason))).toBeTruthy();
+  });
+
   it('says nothing about polling for a disabled automation or another source', () => {
     state.automations = [
       { ...jira, enabled: false },

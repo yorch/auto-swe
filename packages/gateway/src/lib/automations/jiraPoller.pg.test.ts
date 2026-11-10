@@ -57,6 +57,8 @@ const TICKET_RUN_SCHEMA: InputSchema = {
 describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
   const suffix = crypto.randomBytes(4).toString('hex');
   let automationId: string;
+  /** A LEAD of the fixture team: the person every fixture automation answers to. */
+  let leadId: string;
   let automation: PollableAutomation;
   let repoId: string;
   let templateId: string;
@@ -135,6 +137,11 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
         const team = await prisma.team.create({
           data: { name: `jp-team-${suffix}`, orgId: organization.id, slug: `jp-team-${suffix}` },
         });
+        const lead = await prisma.user.create({ data: { email: `lead-${suffix}@example.test` } });
+        await prisma.teamMembership.create({
+          data: { role: 'LEAD', teamId: team.id, userId: lead.id },
+        });
+        leadId = lead.id;
         const repo = await prisma.connection.create({
           data: {
             organizationName: `jp-${suffix}`,
@@ -157,6 +164,7 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
             connectionId: repo.id,
             cooldownMinutes: 0,
             filters: { jql: 'status = Open' },
+            lastEnabledById: leadId,
             maxRunsPerDay: 100,
             name: 'jira',
             source: JIRA_FILTER_NEW_ISSUE,
@@ -294,6 +302,7 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
         data: {
           connectionId: repoId,
           filters: { jql: 'status = Open' },
+          lastEnabledById: leadId,
           name: 'jira-other',
           source: JIRA_FILTER_NEW_ISSUE,
         },
@@ -488,6 +497,7 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
             connectionId: repoId,
             cooldownMinutes: 0,
             filters: { jql: 'status = Open' },
+            lastEnabledById: leadId,
             maxRunsPerDay: 100,
             name: 'jira status',
             source: JIRA_FILTER_STATUS_CHANGED,
@@ -769,6 +779,7 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
             data: {
               connectionId: repoId,
               filters: { jql: '  ' },
+              lastEnabledById: leadId,
               name: 'bad',
               source: JIRA_FILTER_STATUS_CHANGED,
               templateId,

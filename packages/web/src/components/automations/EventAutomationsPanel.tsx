@@ -117,6 +117,12 @@ function AutomationRow({
             {automation.targetConnection &&
               ` · on ${automation.targetConnection.organizationName}/${automation.targetConnection.repoName}`}
           </div>
+          {!automation.enabled && automation.autoDisabledReason && (
+            <p className="mt-1 text-warning-400 text-xs">
+              Switched off by the platform: {automation.autoDisabledReason}. Review it, then switch
+              it on to take responsibility for it.
+            </p>
+          )}
           {isJiraFilterSource(automation.source) && automation.enabled && (
             <PollStatus state={automation.pollState ?? null} />
           )}

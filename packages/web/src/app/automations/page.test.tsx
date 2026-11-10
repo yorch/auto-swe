@@ -159,6 +159,27 @@ describe('GovernAutomationsPage', () => {
     expect(await screen.findByText('team automations of Payments')).toBeTruthy();
   });
 
+  it('marks an event automation the platform switched off, with the reason on hover', async () => {
+    const reason = 'the person who switched it on is no longer an active user';
+    setupFetchMock({
+      'GET /api/v1/automations': () => ({
+        data: [
+          {
+            ...eventRow,
+            automation: { autoDisabledReason: reason },
+            enabled: false,
+          },
+        ],
+      }),
+      'GET /api/v1/repositories': () => ({ data: [REPO] }),
+      'GET /api/v1/scheduled-work-requests': () => ({ data: [] }),
+    });
+    render(withQuery(<GovernAutomationsPage />));
+    const row = (await screen.findByText('mainline CI')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('Off')).toBeTruthy();
+    expect(within(row).getByTitle(reason).textContent).toBe('Switched off by the platform');
+  });
+
   it('shows a schedule whose Temporal schedule is gone as off, with its stored last fire', async () => {
     setupFetchMock({
       'GET /api/v1/automations': () => ({ data: [] }),

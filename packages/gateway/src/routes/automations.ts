@@ -145,6 +145,9 @@ function withoutTicketText(facts: unknown, includeTitle: boolean): unknown {
 }
 
 const automationSelect = {
+  // Why the engine switched it off, and when; null unless it did.
+  autoDisabledAt: true,
+  autoDisabledReason: true,
   connectionId: true,
   cooldownMinutes: true,
   createdAt: true,
@@ -153,6 +156,8 @@ const automationSelect = {
   filters: true,
   id: true,
   inputs: true,
+  // Who it answers to: asked again at every fire for a source with no person acting.
+  lastEnabledById: true,
   maxRunsPerDay: true,
   name: true,
   // How polling is going, for a source that polls; null for every other.
@@ -930,6 +935,8 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           // Stored as the source parsed it (deduplicated, trimmed).
           filters: parseFilters(source, body.filters) as Prisma.InputJsonObject,
           inputs: body.inputs as Prisma.InputJsonObject,
+          // The person who saved it on answers for it; one saved off has no one yet.
+          lastEnabledById: body.enabled ? user.sub : null,
           maxRunsPerDay: body.maxRunsPerDay,
           name: body.name,
           source: source.key,
@@ -1035,9 +1042,15 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const { filters, inputs, ...rest } = body;
+      // Whoever leaves it on takes it over: they passed the launch decision above, so they are who
+      // the engine asks about at every fire, and a reason it was switched off no longer applies.
+      const leftOn = (body.enabled ?? existing.enabled) !== false;
       const updated = await fastify.prisma.automation.update({
         data: {
           ...rest,
+          ...(leftOn
+            ? { autoDisabledAt: null, autoDisabledReason: null, lastEnabledById: user.sub }
+            : {}),
           ...(filters ? { filters: parseFilters(source, filters) as Prisma.InputJsonObject } : {}),
           ...(inputs ? { inputs: inputs as Prisma.InputJsonObject } : {}),
         },

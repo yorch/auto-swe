@@ -1377,6 +1377,46 @@ D days` after the next 05:17 UTC run (or `RUN_HISTORY_PRUNE_CRON`); with `0` it 
 
 ---
 
+### UN-31. Automations answer to the person who last switched them on (`<fixing commit SHA>`)
+
+**Affected.** A deployment upgrading from a build without the migration
+`20261120000000_automation_enabler_authority` (it ships in the same change: before the upgrade it has
+no row in `_prisma_migrations`) that has event automations on a source with no person acting for it
+(`github.workflow_run.failed`, `jira.filter.new_issue`, `jira.filter.status_changed`,
+`inbound.event`, or a pull-request-feedback automation whose trigger is Qodo's findings). A
+deployment with none needs nothing.
+
+**What changes.** The migration records each automation's creator as the person it answers to. From
+then on every fire of those sources asks whether that person is still an active user who holds
+`team.automations.manage` on the managing team. An automation whose answer is no is **switched
+off at its next fire**, with the reason shown on the Automations page, an audit entry, and a Slack
+notice to the team's `slackNotifyChannel` when it has one. This includes an automation whose creator
+was deleted (its creator is null, so no one is recorded), and one whose creator has left the team or
+no longer holds that capability.
+
+**Actions.** Find the automations that will be switched off:
+
+```sql
+SELECT a.id, a.name, a.source, a.enabled
+  FROM automations a
+  LEFT JOIN users u ON u.id = a.last_enabled_by_id
+ WHERE a.enabled
+   AND a.source IN ('github.workflow_run.failed', 'jira.filter.new_issue',
+                    'jira.filter.status_changed', 'inbound.event', 'github.pull_request.feedback')
+   AND (u.id IS NULL OR NOT u.is_active);
+```
+
+An automation whose person is still an active user but no longer holds the capability is not
+listed (that needs the team's membership). For each one you want to keep, have someone who manages
+the managing team's automations open it and change it or switch it off and on again: that records
+them. Automations run unchanged until then;
+none is switched off at deploy time.
+
+**Verify.** After a manager saves it, `last_enabled_by_id` holds their id, and the next fire starts a
+run instead of recording `the automation was switched off`.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

@@ -47,6 +47,8 @@ import { isValidTicketId } from '../ticketId.js';
 import { launchTrackedWorkflow } from '../workflowLaunch.js';
 import { findLaunchRepo } from './access.js';
 import { declaredConnectionProblem } from './declaredConnections.js';
+import { checkEnablerAuthority } from './enablerAuthority.js';
+import { disableOrphanedAutomation } from './orphanedAutomation.js';
 
 /** Attempts at starting the workflow before the decision is given up. */
 const START_ATTEMPTS = 3;
@@ -82,7 +84,10 @@ export class AutomationStartError extends Error {
 /** The fields of an automation the engine reads. */
 export interface AutomationRow {
   id: string;
+  name: string;
   enabled: boolean;
+  /** Who last switched it on: asked again at every fire for a source with no person acting. */
+  lastEnabledById: string | null;
   source: string;
   filters: Prisma.JsonValue;
   inputs: Prisma.JsonValue;
@@ -398,6 +403,25 @@ export async function decideAndStart<F, X>(
         );
       }
       requestedById = decided.userId;
+    } else {
+      // Nobody acts through this occurrence (CI, a Jira filter, an event), so the run rests on the
+      // authority of whoever last switched the automation on. That was decided once, at save:
+      // ask again, and when it has lapsed switch the automation off rather than let it run on.
+      const authority = await checkEnablerAuthority(prisma, automation.lastEnabledById, team.id);
+      if (!authority.ok) {
+        await disableOrphanedAutomation(fastify, {
+          automation,
+          now,
+          reason: authority.reason,
+          teamId: team.id,
+        });
+        return recordDecision(
+          prisma,
+          fireBase,
+          'SUPPRESSED_PRECONDITION',
+          `the automation was switched off: ${authority.reason}`
+        );
+      }
     }
     const org = team?.organization;
     if (org && (await isOrgOverBudget(prisma, org.id, org.monthlyBudgetUsdCents))) {

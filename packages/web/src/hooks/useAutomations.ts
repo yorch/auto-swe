@@ -14,6 +14,9 @@ export interface EventAutomation {
   team?: { id: string; name: string } | null;
   name: string;
   enabled: boolean;
+  /** Why the platform switched it off (a fixed sentence), and when; null unless it did. */
+  autoDisabledReason?: string | null;
+  autoDisabledAt?: string | null;
   /** An event source key, e.g. `github.workflow_run.failed`. */
   source: string;
   /** The source's filters. */

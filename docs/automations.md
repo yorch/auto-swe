@@ -231,6 +231,38 @@ automation uses the source's default template. For CI, pushing a fix onto a pull
 is gated this way. A gated value is refused with `OPTION_DISABLED` or `INVALID_INPUTS`. The run
 decides again when it acts.
 
+### Who an automation answers to
+
+An automation's run starts on the platform credential. Saving one that can start runs is a launch
+decision made on the person saving it, once. So that the decision does not outlive that person's
+standing, the automation records **the person who last switched it on** (`lastEnabledById`), and
+the engine asks again at every fire whether that person still stands behind it.
+
+- **Who is recorded.** Creating an enabled automation records the creator. Any change that leaves
+  an automation on records the person making it, because they pass the same launch decision: a
+  rename or a new filter by another lead takes it over. An automation saved off has no one until it
+  is switched on, and a change that leaves it off changes nothing here.
+- **What is asked.** Whether that person is an active user who holds `team.automations.manage` on
+  the team that manages the automation (the repository's owning team, or a team automation's own
+  team): the capability that lets someone create and change automations, so the two cannot
+  disagree ([permissions.md](./permissions.md)). Their GitHub permission is not read again,
+  because that check is made at save.
+- **Which fires.** An occurrence that names no person to act for: CI failures, both Jira sources,
+  inbound events, and a pull-request-feedback trigger that is not a person's (Qodo's findings). An
+  occurrence with an `actor` (a label, a push, a person's review) re-checks that person's own
+  standing instead, as §3.1 describes, and does not ask about the one who enabled the automation.
+- **When it has lapsed.** The automation is switched off (`enabled` false) with the reason and the
+  time kept on the row (`autoDisabledReason`, `autoDisabledAt`), the change is written to the audit
+  log as the system's, and the managing team's Slack channel (`slackNotifyChannel`) is told when it
+  has one. The occurrence that found it is recorded as `SUPPRESSED_PRECONDITION` with the reason.
+  Two fires that race on one automation switch it off, audit and notify once.
+- **Switching it back on.** A current manager of the team's automations switches it on, which is a launch decision made on them
+  and makes them the person it answers to. That clears the reason. **Decide again** then takes the
+  suppressed occurrence again.
+
+The Automations page marks such a row **Switched off by the platform**, with the reason on hover,
+and a repository's automations list says why under the name.
+
 ## 2. From occurrence to run
 
 A source's webhook normalizer turns a verified delivery into an occurrence, without calling the
@@ -750,6 +782,17 @@ recorded as `FAILED_TO_START` with its code.
 
 ## Limitations
 
+- **A lapse is found at the next fire, not when it happens.** An automation whose person left stays
+  on, and shows nothing, until an occurrence of its source arrives. A quiet one is not switched
+  off, and no one is told, until then.
+- **Only the capability is asked again.** A person who still holds it but has lost write permission on
+  the repository on GitHub is not found at fire time; that is checked at save.
+- **A Jira filter that was switched off by a lapse takes a new baseline when it is switched on.**
+  What matched in the meantime starts nothing (§3.2), as for any automation switched off and on.
+- **The Slack notice is best effort.** A team with no `slackNotifyChannel`, no usable bot token or
+  an unreachable Slack still has the row, the ledger decision and the audit entry, and nothing else.
+- **Editing an enabled automation takes it over.** A lead who changes a filter on someone else's
+  running automation becomes the person it answers to, with no separate step.
 - **`pattern` and `maxLength` are checked by the gateway only.** The web launch form does not
   check either keyword, so a value that breaks one is refused only when it is submitted. The
   template editor's input-schema builder does not edit them: it carries a string property's
