@@ -33,7 +33,8 @@ ServiceAccount token: it runs `kubectl` against the workspace namespace with it.
   enabled; AKS with Azure NPM, Cilium or Calico). The worker launches a probe pod at start and
   refuses to run if it can reach the cloud metadata endpoint or the cluster API address.
 - **Rights to create** a Namespace, and a Role and RoleBinding in it, for the person or pipeline
-  running `helm install`. Without them, set `workspaces.manage=false` and apply
+  running `helm install`. If the namespace already exists, set `workspaces.createNamespace=false`
+  to manage only the policy objects in it. Without the rights, set `workspaces.manage=false` and apply
   `infra/kubernetes/workspace-namespace.yaml` yourself (bind its Role to the chart's worker
   ServiceAccount, `<release>-worker` unless `worker.serviceAccount.name` says otherwise).
 - **A node-pool `podPidsLimit`**: Kubernetes has no per-pod PID cap, so `WORKSPACE_PIDS_LIMIT` is
@@ -100,6 +101,7 @@ GitHub App** registers the instance's App from a manifest ([`github-app-setup.md
 | `worker.proxies.modelPort` / `registryPort` / `egressPort` | 8790 / off / off | The worker's proxy ports, served through `<release>-worker-proxy` |
 | `workspaces.namespace` | `auto-swe-workspaces` | Where workspace pods run (`K8S_WORKSPACE_NAMESPACE`) |
 | `workspaces.manage` | true | Render that namespace's resources (section 1) |
+| `workspaces.createNamespace` | true | Render the Namespace object itself; set `false` when the namespace already exists (for example applied from `infra/kubernetes/workspace-namespace.yaml`), which `helm install` would otherwise fail on. The other objects are still rendered into it, and its `pod-security.kubernetes.io/enforce=restricted` label is then yours to keep |
 | `workspaces.requireNetworkPolicy` | true | Only `false` skips the worker's start-up proof that the policy is enforced — for a local cluster |
 | `workspaces.runtimeClassName`, `storageLimit`, `maxLifetimeSec`, `imagePullSecrets`, `quota` | —, `10Gi`, 86400, —, see `values.yaml` | The `K8S_WORKSPACE_*` settings and the namespace quota |
 | `migrations.enabled=false` | on | Drops the migration hook Job; the gateway entrypoint still migrates at start |

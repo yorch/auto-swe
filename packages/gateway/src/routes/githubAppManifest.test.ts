@@ -71,15 +71,16 @@ async function buildApp(role: string, fetchImpl: typeof fetch) {
   const prisma = {
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     gitHubConfig: {
+      create: vi.fn(async (args: { data: Record<string, unknown> }) => ({
+        ...args.data,
+        appInstallationId: null,
+        authMode: null,
+        baseUrl: null,
+      })),
       findUnique: vi.fn().mockResolvedValue(null),
-      upsert: vi.fn(
-        async (args: { create: Record<string, unknown>; update: Record<string, unknown> }) => ({
-          ...args.create,
-          appInstallationId: null,
-          authMode: null,
-          baseUrl: null,
-        })
-      ),
+      findUniqueOrThrow: vi.fn().mockResolvedValue({}),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      upsert: vi.fn(),
     },
     user: { findUnique: vi.fn().mockResolvedValue({ isActive: true, role: 'ADMIN' }) },
   };
@@ -225,18 +226,18 @@ describe('githubAppManifestRoutes', () => {
     expect(calls[0].init.method).toBe('POST');
     expect(calls[0].init.redirect).toBe('error');
 
-    const write = admin.prisma.gitHubConfig.upsert.mock.calls[0][0] as {
-      update: Record<string, unknown>;
+    const write = admin.prisma.gitHubConfig.create.mock.calls[0][0] as {
+      data: Record<string, unknown>;
     };
-    expect(write.update.appId).toBe('4242');
-    expect(write.update.appClientId).toBe('Iv23.abc');
+    expect(write.data.appId).toBe('4242');
+    expect(write.data.appClientId).toBe('Iv23.abc');
     // Secrets are written only as envelope columns, never as plaintext fields.
-    expect(write.update).not.toHaveProperty('appPrivateKey');
-    expect(write.update).not.toHaveProperty('appClientSecret');
-    expect(new TextDecoder().decode(write.update.appPrivateKeyCiphertext as Uint8Array)).toBe(
+    expect(write.data).not.toHaveProperty('appPrivateKey');
+    expect(write.data).not.toHaveProperty('appClientSecret');
+    expect(new TextDecoder().decode(write.data.appPrivateKeyCiphertext as Uint8Array)).toBe(
       `sealed:${PEM}`
     );
-    expect(new TextDecoder().decode(write.update.webhookSecretCiphertext as Uint8Array)).toBe(
+    expect(new TextDecoder().decode(write.data.webhookSecretCiphertext as Uint8Array)).toBe(
       'sealed:gh-generated-secret'
     );
 
@@ -265,10 +266,10 @@ describe('githubAppManifestRoutes', () => {
     });
     const headers = (patch?.init.headers ?? {}) as Record<string, string>;
     expect(String(headers.Authorization)).toMatch(/^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
-    const write = admin.prisma.gitHubConfig.upsert.mock.calls[0][0] as {
-      update: Record<string, unknown>;
+    const write = admin.prisma.gitHubConfig.create.mock.calls[0][0] as {
+      data: Record<string, unknown>;
     };
-    expect(write.update).not.toHaveProperty('webhookSecretCiphertext');
+    expect(write.data).not.toHaveProperty('webhookSecretCiphertext');
   });
 
   it('stores the App but warns when the existing webhook secret cannot be set on it', async () => {
@@ -282,7 +283,7 @@ describe('githubAppManifestRoutes', () => {
     expect(res.headers.location).toBe(
       'https://app.example.com/admin/integrations?github_app_warning=WEBHOOK_SECRET_UNALIGNED'
     );
-    expect(admin.prisma.gitHubConfig.upsert).toHaveBeenCalledTimes(1);
+    expect(admin.prisma.gitHubConfig.create).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a callback without the browser cookie, with a forged state or a lesser flow', async () => {
@@ -299,7 +300,7 @@ describe('githubAppManifestRoutes', () => {
     const missing = await callback({ state: state ?? '' }, cookie?.value);
     expect(missing.headers.location).toContain('github_app_error=INVALID_CALLBACK');
     expect(calls).toHaveLength(0);
-    expect(admin.prisma.gitHubConfig.upsert).not.toHaveBeenCalled();
+    expect(admin.prisma.gitHubConfig.create).not.toHaveBeenCalled();
   });
 
   it('refuses when the starter is no longer an active ADMIN', async () => {
@@ -345,7 +346,7 @@ describe('githubAppManifestRoutes', () => {
         `https://app.example.com/admin/integrations?github_app_error=${code}`
       );
     }
-    expect(admin.prisma.gitHubConfig.upsert).not.toHaveBeenCalled();
+    expect(admin.prisma.gitHubConfig.create).not.toHaveBeenCalled();
   });
 
   it('refuses a code that could change the request path', async () => {
@@ -361,5 +362,60 @@ describe('githubAppManifestRoutes', () => {
     const { cookie, state } = await start();
     const res = await callback({ code: 'abc', state: state ?? '' }, cookie?.value);
     expect(res.headers.location).toBe('https://github.com/apps/auto-swe-acme/installations/new');
+  });
+
+  it('falls back to /github-apps/<slug> on GitHub Enterprise Server', async () => {
+    resolveGitHubConfig.mockResolvedValue({
+      ...DOTCOM,
+      apiUrl: 'https://ghe.corp/api/v3',
+      baseUrl: 'https://ghe.corp',
+    });
+    respond = () =>
+      Response.json(conversion({ html_url: 'https://evil.example/apps/x' }), { status: 201 });
+    const { cookie, state } = await start();
+    const res = await callback({ code: 'abc', state: state ?? '' }, cookie?.value);
+    expect(res.headers.location).toBe(
+      'https://ghe.corp/github-apps/auto-swe-acme/installations/new'
+    );
+  });
+
+  it('loses a race on an existing row without overwriting the winner', async () => {
+    const { cookie, state } = await start();
+    admin.prisma.gitHubConfig.findUnique.mockResolvedValueOnce({ appId: null });
+    admin.prisma.gitHubConfig.updateMany.mockResolvedValueOnce({ count: 0 });
+    const res = await callback({ code: 'abc', state: state ?? '' }, cookie?.value);
+    expect(res.headers.location).toBe(
+      'https://app.example.com/admin/integrations?github_app_error=APP_ALREADY_CONFIGURED'
+    );
+    const claim = admin.prisma.gitHubConfig.updateMany.mock.calls[0][0] as {
+      where: { OR: unknown[] };
+    };
+    expect(claim.where.OR).toEqual([{ appId: null }, { appId: '' }]);
+    expect(admin.prisma.gitHubConfig.upsert).not.toHaveBeenCalled();
+    expect(admin.prisma.configAuditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('loses a race to a concurrent first write of the singleton', async () => {
+    const { cookie, state } = await start();
+    admin.prisma.gitHubConfig.create.mockRejectedValueOnce(
+      Object.assign(new Error('unique'), { code: 'P2002' })
+    );
+    const res = await callback({ code: 'abc', state: state ?? '' }, cookie?.value);
+    expect(res.headers.location).toContain('github_app_error=APP_ALREADY_CONFIGURED');
+    expect(admin.prisma.configAuditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('stores no webhook secret that GitHub never received', async () => {
+    respond = (call) =>
+      call.url.endsWith('/conversions')
+        ? Response.json(conversion({ webhook_secret: null }), { status: 201 })
+        : new Response('{}', { status: 500 });
+    const { cookie, state } = await start();
+    const res = await callback({ code: 'abc', state: state ?? '' }, cookie?.value);
+    expect(res.headers.location).toContain('github_app_warning=WEBHOOK_SECRET_UNALIGNED');
+    const write = admin.prisma.gitHubConfig.create.mock.calls[0][0] as {
+      data: Record<string, unknown>;
+    };
+    expect(write.data).not.toHaveProperty('webhookSecretCiphertext');
   });
 });

@@ -90,9 +90,11 @@ export function GitHubAppManifestCard({
       )}
       {warning === 'WEBHOOK_SECRET_UNALIGNED' && (
         <Alert className="mb-4" title="App created; webhook secret not set" variant="warning">
-          The App is stored, but GitHub did not accept the instance webhook secret for it, so its
-          deliveries will not verify. Set the App&apos;s webhook secret on GitHub to the one saved
-          here, then install the App from its settings page.
+          The App is stored, but GitHub did not accept a webhook secret for it, so its deliveries
+          will not verify. Stored secrets cannot be read back, so choose a new random value, enter
+          it as the webhook secret in the App&apos;s settings on GitHub, and enter the same value
+          under Webhook secret in the GitHub card on this page. Then install the App from its
+          settings page.
         </Alert>
       )}
       {offerInstallation && (
