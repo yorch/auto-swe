@@ -74,6 +74,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [local-agents.md](./local-agents.md) | Claude Code CLI/Desktop and Codex setup, delegation skills, OAuth consent, polling and local review |
 | [github-app-setup.md](./github-app-setup.md) | GitHub App creation (from a manifest or by hand), permissions, installation, auth modes |
 | [slack-app-setup.md](./slack-app-setup.md) | Slack app manifest import and admin configuration |
+| [live-checks.md](./live-checks.md) | Suites and the scheduled workflow that run the mocked paths against real Temporal, Docker, a model, GitHub, Confluence and pgvector — what each asserts, the secrets and fixture repository they need, cost, and what they do not prove |
 | [packages/cli/README.md](../packages/cli/README.md) | `auto-swe` CLI — work requests, runs, workflow templates, tokens, bundles |
 
 Also here: [`slack-app-manifest.json`](./slack-app-manifest.json).

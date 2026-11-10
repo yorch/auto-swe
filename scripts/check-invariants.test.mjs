@@ -3,8 +3,10 @@ import {
   autoMergeNamingViolations,
   envCredentialViolations,
   immediateMergeViolations,
+  liveSuiteViolations,
   optInSuiteViolations,
   slackWriterViolations,
+  workflowTriggers,
 } from './check-invariants.mjs';
 
 const PG = 'packages/gateway/src/routes/x.pg.test.ts';
@@ -77,6 +79,71 @@ describe('optInSuiteViolations', () => {
     );
     const v = optInSuiteViolations([{ path: DOCKER, src: gated('DOCKER_FLAG') }], yml);
     expect(v[0].detail).toContain('not run by any');
+  });
+});
+
+describe('liveSuiteViolations', () => {
+  const LIVE = 'packages/worker/src/live/z.live.test.ts';
+  const live = (steps, on = '  schedule:\n    - cron: "0 5 * * *"\n  workflow_dispatch:\n') =>
+    `on:\n${on}jobs:\n  t:\n    steps:\n${steps
+      .map(([name, env, run, extra = '']) => {
+        const envBlock = env ? `        env:\n          ${env}\n` : '';
+        return `      - name: ${name}\n${extra}${envBlock}        run: ${run}\n`;
+      })
+      .join('\n')}`;
+  const suite = { path: LIVE, src: gated('LIVE_FLAG') };
+
+  it('passes a live suite run by a scheduled, dispatchable workflow with its flag set', () => {
+    const yml = live([['z', "LIVE_FLAG: '1'", `yarn test ${LIVE}`]]);
+    expect(liveSuiteViolations([suite], yml)).toEqual([]);
+  });
+
+  it('reports a live suite no step of the live workflow runs', () => {
+    const v = liveSuiteViolations([suite], live([]));
+    expect(v).toHaveLength(1);
+    expect(v[0]).toMatchObject({ file: LIVE, invariant: 'live-suites-run-in-live-workflow' });
+  });
+
+  it('reports a live suite run under the wrong flag or on a conditional step', () => {
+    const wrong = live([['z', "OTHER: '1'", `yarn test ${LIVE}`]]);
+    expect(liveSuiteViolations([suite], wrong)[0].detail).toContain('does not set LIVE_FLAG');
+    const cond = live([['z', "LIVE_FLAG: '1'", `yarn test ${LIVE}`, '        if: always()\n']]);
+    expect(liveSuiteViolations([suite], cond)[0].detail).toContain('has `if:`');
+  });
+
+  it('is not satisfied by a step of ci.yml-style naming in the wrong pattern', () => {
+    // A `.docker.test.ts` path in the live workflow does not count as running a live suite.
+    const yml = live([['z', "LIVE_FLAG: '1'", 'yarn test packages/worker/src/x.docker.test.ts']]);
+    expect(liveSuiteViolations([suite], yml)[0].detail).toContain('not run by any');
+  });
+
+  it('refuses a pull-request, push or caller trigger', () => {
+    for (const trigger of ['pull_request', 'pull_request_target', 'push', 'workflow_call']) {
+      const yml = live(
+        [['z', "LIVE_FLAG: '1'", `yarn test ${LIVE}`]],
+        `  schedule:\n    - cron: "0 5 * * *"\n  workflow_dispatch:\n  ${trigger}:\n`
+      );
+      const v = liveSuiteViolations([suite], yml);
+      expect(v.map((x) => x.detail)).toEqual([
+        expect.stringContaining(`triggered by \`${trigger}\``),
+      ]);
+    }
+  });
+
+  it('requires both a schedule and a manual trigger', () => {
+    const yml = live([['z', "LIVE_FLAG: '1'", `yarn test ${LIVE}`]], '  workflow_dispatch:\n');
+    expect(liveSuiteViolations([suite], yml).map((x) => x.detail)).toEqual([
+      expect.stringContaining('no `schedule` trigger'),
+    ]);
+  });
+
+  it('reads the triggers of a block-form on:', () => {
+    expect(
+      workflowTriggers(
+        'on:\n  push:\n    branches: [main]\n  schedule:\n    - cron: x\nenv:\n  a: b\n'
+      )
+    ).toEqual(['push', 'schedule']);
+    expect(workflowTriggers('name: x\n')).toBeNull();
   });
 });
 

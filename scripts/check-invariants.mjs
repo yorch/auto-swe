@@ -522,6 +522,25 @@ const RULE = 'opt-in-suites-run-in-ci';
 /** The suffixes of suites that skip themselves without their flag. */
 const OPT_IN_SUITE = /\.(?:pg|docker)\.test\.ts$/;
 
+// Live suites (`*.live.test.ts`) talk to real services with real credentials, so they run from
+// their own workflow, never from `ci.yml` (which runs on pull requests, forks included). The same
+// rule holds for them there: a step names the suite, sets its flag, and carries no `if:`.
+const LIVE_WORKFLOW = '.github/workflows/live-e2e.yml';
+const LIVE_RULE = 'live-suites-run-in-live-workflow';
+const LIVE_SUITE = /\.live\.test\.ts$/;
+
+/** Where each kind of opt-in suite must be run from, and how a step names one. */
+const CI_TARGET = {
+  pattern: /packages\/[^\s'"]+\.(?:pg|docker)\.test\.ts/g,
+  rule: RULE,
+  workflow: CI_WORKFLOW,
+};
+const LIVE_TARGET = {
+  pattern: /packages\/[^\s'"]+\.live\.test\.ts/g,
+  rule: LIVE_RULE,
+  workflow: LIVE_WORKFLOW,
+};
+
 /** Each workflow step as `{ line, text }`, the slice from its `- key:` line to the next one. */
 function workflowSteps(yml) {
   const steps = [];
@@ -540,15 +559,16 @@ function workflowSteps(yml) {
  * The violations of invariant 6 for `suites` (`{ path, src }`, repo-relative) against the text of
  * `ci.yml`. Pure, so the rule is tested without touching the repository.
  */
-export function optInSuiteViolations(suites, ciYml) {
+export function optInSuiteViolations(suites, ciYml, target = CI_TARGET) {
+  const workflow = target.workflow;
   const out = [];
-  const add = (file, line, detail, why) => out.push({ detail, file, invariant: RULE, line, why });
+  const add = (file, line, detail, why) =>
+    out.push({ detail, file, invariant: target.rule, line, why });
   const named = new Map(); // suite path -> the steps whose `yarn test` line names it
   for (const step of workflowSteps(ciYml)) {
     const lines = step.text.split('\n');
     const runs = lines.filter((l) => !l.trim().startsWith('#') && l.includes('yarn test'));
-    for (const path of runs.join('\n').match(/packages\/[^\s'"]+\.(?:pg|docker)\.test\.ts/g) ??
-      []) {
+    for (const path of runs.join('\n').match(new RegExp(target.pattern)) ?? []) {
       named.set(path, [...(named.get(path) ?? []), { ...step, lines }]);
     }
   }
@@ -559,7 +579,7 @@ export function optInSuiteViolations(suites, ciYml) {
       add(
         file,
         1,
-        `${file} is not run by any \`yarn test\` step in ${CI_WORKFLOW}`,
+        `${file} is not run by any \`yarn test\` step in ${workflow}`,
         'Opt-in suites skip themselves in the unit-test job, so a suite no step names never ' +
           'runs anywhere while CI stays green. Add a step that sets its flag.'
       );
@@ -583,7 +603,7 @@ export function optInSuiteViolations(suites, ciYml) {
           !step.lines.some((l) => new RegExp(`^\\s+${flag}:\\s*['"]?1['"]?\\s*(#.*)?$`).test(l))
         ) {
           add(
-            CI_WORKFLOW,
+            workflow,
             step.line,
             `the step running ${file} does not set ${flag}: '1'`,
             `The suite skips every test unless ${flag}=1, and a skipped suite is a passing step.`
@@ -592,7 +612,7 @@ export function optInSuiteViolations(suites, ciYml) {
       }
       if (step.lines.some((l) => /^\s+(?:- )?(?:if|continue-on-error):/.test(l))) {
         add(
-          CI_WORKFLOW,
+          workflow,
           step.line,
           `the step running ${file} has \`if:\` or \`continue-on-error:\``,
           'A condition can skip the suite and continue-on-error swallows its failure; either way the step stays green.'
@@ -609,6 +629,74 @@ function checkOptInSuitesRunInCi() {
     src: read(path),
   }));
   failures.push(...optInSuiteViolations(suites, read(CI_WORKFLOW)));
+}
+
+/** The triggers named under a workflow's top-level `on:` key (block form); null without one. */
+export function workflowTriggers(yml) {
+  const lines = yml.split('\n');
+  const start = lines.findIndex((l) => /^on:\s*(#.*)?$/.test(l));
+  if (start < 0) {
+    return null;
+  }
+  const triggers = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^\S/.test(line)) {
+      break;
+    }
+    const m = /^ {2}([A-Za-z_]+):/.exec(line);
+    if (m) {
+      triggers.push(m[1]);
+    }
+  }
+  return triggers;
+}
+
+const LIVE_FORBIDDEN_TRIGGERS = ['pull_request', 'pull_request_target', 'push', 'workflow_call'];
+
+/**
+ * The violations of the live-suite rule: every `*.live.test.ts` is run by a step of
+ * `live-e2e.yml`, and that workflow starts only on a schedule or by hand. A pull-request, push or
+ * reusable-workflow trigger would hand secrets to a run an outsider can shape, or spend them on
+ * every commit, and a live suite would no longer be opt-in. Pure, like the rule above.
+ */
+export function liveSuiteViolations(suites, liveYml) {
+  const out = optInSuiteViolations(suites, liveYml, LIVE_TARGET);
+  const add = (detail, why) =>
+    out.push({ detail, file: LIVE_WORKFLOW, invariant: LIVE_RULE, line: 1, why });
+  if (suites.length === 0 && liveYml === '') {
+    return out;
+  }
+  const triggers = workflowTriggers(liveYml);
+  if (triggers === null) {
+    add(`${LIVE_WORKFLOW} has no \`on:\` block`, 'Without it the triggers cannot be checked.');
+    return out;
+  }
+  for (const t of triggers.filter((x) => LIVE_FORBIDDEN_TRIGGERS.includes(x))) {
+    add(
+      `${LIVE_WORKFLOW} is triggered by \`${t}\``,
+      'The workflow holds real credentials and spends real money: it runs on a schedule or on ' +
+        'demand only, never for a pull request, a push or a caller.'
+    );
+  }
+  for (const t of ['schedule', 'workflow_dispatch']) {
+    if (!triggers.includes(t)) {
+      add(
+        `${LIVE_WORKFLOW} has no \`${t}\` trigger`,
+        'Live checks run on a schedule and on demand; without both, either nothing runs them ' +
+          'regularly or nobody can run one by hand.'
+      );
+    }
+  }
+  return out;
+}
+
+function checkLiveSuitesRunInLiveWorkflow() {
+  const suites = walk('packages', (f) => LIVE_SUITE.test(f)).map((path) => ({
+    path,
+    src: read(path),
+  }));
+  const yml = existsSync(join(ROOT, LIVE_WORKFLOW)) ? read(LIVE_WORKFLOW) : '';
+  failures.push(...liveSuiteViolations(suites, yml));
 }
 
 // ---------------------------------------------------------------------------
@@ -959,6 +1047,7 @@ function main() {
   checkConnectorFetchesSetRedirect();
   checkOperatorUrlFetchesAreGuarded();
   checkOptInSuitesRunInCi();
+  checkLiveSuitesRunInLiveWorkflow();
   checkComposeProfilesAreAdded();
   checkCredentialsAreNotInEnv();
   checkNoImmediateMerge();
@@ -988,6 +1077,9 @@ function report() {
   console.log('  connector fetches state a redirect policy');
   console.log('  fetches to operator-supplied URLs resolve and pin their address');
   console.log('  every database- or Docker-backed test suite runs in CI with its opt-in flag set');
+  console.log(
+    '  every live suite runs from live-e2e.yml, which starts only on a schedule or on demand'
+  );
   console.log('  compose entry points add profiles to COMPOSE_PROFILES, never replace them');
   console.log('  credentials reach a workspace command through secretEnv, never an env list');
   console.log(

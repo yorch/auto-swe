@@ -129,6 +129,29 @@ export async function resolveKnowledgeExecutionScope(): Promise<KnowledgeExecuti
 }
 
 /**
+ * Rank `ids` by cosine similarity to `embedding`, counting only vectors that match the item's
+ * current content digest and the embedding spec in force. Split out so a live pgvector suite runs
+ * the same statement the search runs.
+ */
+export async function rankKnowledgeByEmbedding(
+  ids: string[],
+  embedding: number[],
+  spec: string,
+  limit: number
+): Promise<Array<{ id: string; similarity: number }>> {
+  return prisma.$queryRaw<Array<{ id: string; similarity: number }>>(Prisma.sql`
+    SELECT id, 1 - (embedding <=> ${JSON.stringify(embedding)}::vector) AS similarity
+    FROM knowledge_items
+    WHERE id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})
+      AND embedding IS NOT NULL
+      AND embedding_digest = content_digest
+      AND embedding_model = ${spec}
+    ORDER BY embedding <=> ${JSON.stringify(embedding)}::vector ASC, id ASC
+    LIMIT ${limit}
+  `);
+}
+
+/**
  * Retrieve only records admitted by the shared scope policy, then rank the bounded eligible set.
  * The semantic path excludes vectors whose digest or model no longer matches current content.
  */
@@ -179,16 +202,7 @@ export async function searchWorkflowKnowledge(
     await indexKnowledgeCandidates(candidates, currentSpec);
     const ids = candidates.map((candidate) => candidate.id);
     if (ids.length) {
-      const ranked = await prisma.$queryRaw<Array<{ id: string; similarity: number }>>(Prisma.sql`
-        SELECT id, 1 - (embedding <=> ${JSON.stringify(embedding)}::vector) AS similarity
-        FROM knowledge_items
-        WHERE id IN (${Prisma.join(ids.map((id) => Prisma.sql`${id}::uuid`))})
-          AND embedding IS NOT NULL
-          AND embedding_digest = content_digest
-          AND embedding_model = ${spec}
-        ORDER BY embedding <=> ${JSON.stringify(embedding)}::vector ASC, id ASC
-        LIMIT ${limit}
-      `);
+      const ranked = await rankKnowledgeByEmbedding(ids, embedding, spec, limit);
       const byId = new Map(ranked.map((row) => [row.id, row.similarity]));
       const rows = await prisma.knowledgeItem.findMany({
         select: {

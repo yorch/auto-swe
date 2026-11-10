@@ -1,0 +1,209 @@
+name: Live end-to-end
+
+# Runs the live suites (`*.live.test.ts`, docs/live-checks.md) against real services: a real
+# Temporal and Postgres, a real Docker daemon, a real model, a fixture repository on GitHub, and
+# the optional connector accounts below. They cost money and need credentials, so this workflow
+#   - starts only on a schedule or by hand, never for a pull request or a push, and
+#   - does nothing, with a notice that says why, when its secrets are not configured (a fork, a
+#     deployment that did not opt in).
+# `yarn invariants:check` enforces both: no live suite may be missing from this file, and no
+# pull-request, push or reusable-workflow trigger may appear below.
+on:
+  schedule:
+    - cron: '23 4 * * 1,4'
+  workflow_dispatch:
+
+# One stack at a time: a second run would fight the first for the fixture repository and ports.
+concurrency:
+  group: live-e2e
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Decides whether the credentials the end-to-end check needs are present. A job-level `if:` on
+  # the next job turns the answer into a clean skip rather than a red run.
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - name: Check required secrets
+        id: check
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LIVE_E2E_FIXTURE_REPO: ${{ vars.LIVE_E2E_FIXTURE_REPO }}
+          LIVE_E2E_GITHUB_TOKEN: ${{ secrets.LIVE_E2E_GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          missing=""
+          for name in ANTHROPIC_API_KEY OPENAI_API_KEY LIVE_E2E_GITHUB_TOKEN LIVE_E2E_FIXTURE_REPO; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Live checks skipped::Not configured:$missing. Add the secrets and the LIVE_E2E_FIXTURE_REPO variable described in docs/live-checks.md to run them."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  live:
+    needs: preflight
+    if: needs.preflight.outputs.enabled == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # The stack's own database, as `yarn env:setup init` writes it into `.env`. Named here so the
+      # suites that open the database directly can confirm they are looking at this one.
+      LIVE_E2E_DATABASE_URL: postgresql://postgres:password@localhost:5432/engineering_system
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: '.node-version'
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Generate Prisma client
+        run: yarn db:generate
+
+      - name: Create the environment file
+        run: |
+          yarn env:setup init
+          # The gateway and the dashboard origin the bootstrap signs in from.
+          {
+            echo "BETTER_AUTH_URL=http://localhost:8080"
+            echo "CORS_ORIGIN=http://localhost:8080,http://localhost:3000"
+          } >> .env
+
+      - name: Start the infrastructure
+        run: |
+          yarn docker:infra:up
+          for _ in $(seq 1 90); do
+            if (echo > /dev/tcp/127.0.0.1/7233) 2>/dev/null && (echo > /dev/tcp/127.0.0.1/5432) 2>/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          # The namespace is created by a one-shot container after the server accepts connections.
+          sleep 20
+
+      - name: Migrate and seed the database
+        run: |
+          yarn db:deploy
+          yarn db:seed
+
+      - name: Start the gateway
+        run: |
+          nohup yarn dev:gateway > gateway.log 2>&1 &
+          for _ in $(seq 1 90); do
+            if curl -fsS http://localhost:8080/health > /dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          echo "::error::the gateway did not become healthy"
+          tail -n 80 gateway.log
+          exit 1
+
+      # Credentials, the fixture connection, an API token and the fixture repository itself. The
+      # worker is started after this, because it refuses to boot until model credentials exist.
+      - name: Provision the stack
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.LIVE_E2E_GITHUB_TOKEN }}
+          LIVE_E2E_FIXTURE_REPO: ${{ vars.LIVE_E2E_FIXTURE_REPO }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          SEED_ADMIN_PASSWORD=$(grep '^SEED_ADMIN_PASSWORD=' .env | cut -d= -f2-)
+          echo "::add-mask::$SEED_ADMIN_PASSWORD"
+          export SEED_ADMIN_PASSWORD
+          node scripts/live-e2e-stack.mjs bootstrap
+
+      - name: Start the worker
+        env:
+          GITHUB_TOKEN: ${{ secrets.LIVE_E2E_GITHUB_TOKEN }}
+        run: |
+          nohup yarn dev:worker > worker.log 2>&1 &
+          worker_pid=$!
+          sleep 45
+          if ! kill -0 "$worker_pid" 2>/dev/null; then
+            echo "::error::the worker exited during start-up"
+            tail -n 80 worker.log
+            exit 1
+          fi
+
+      # The commit the eval check pins its case to, when an eval fixture is configured.
+      - name: Resolve the eval baseline
+        if: vars.LIVE_EVALS_REPO_URL != ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.LIVE_E2E_GITHUB_TOKEN }}
+          LIVE_E2E_FIXTURE_REPO: ${{ vars.LIVE_E2E_FIXTURE_REPO }}
+        run: |
+          sha=$(curl -fsS -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$LIVE_E2E_FIXTURE_REPO/commits/main" | jq -r .sha)
+          echo "LIVE_EVALS_BASELINE_SHA=$sha" >> "$GITHUB_ENV"
+
+      # Every live suite, in one step so that a failure in one does not hide the others. A suite
+      # whose flag is set but whose credentials are absent skips itself with a warning naming
+      # what is missing; the step fails if any suite fails. The flags below are the same ones the
+      # suites test, and the invariant check reads this step to confirm that.
+      - name: Live suites
+        env:
+          DATABASE_URL: ${{ env.LIVE_E2E_DATABASE_URL }}
+          GITHUB_TOKEN: ${{ secrets.LIVE_E2E_GITHUB_TOKEN }}
+          LIVE_CONFLUENCE: '1'
+          LIVE_CONFLUENCE_API_TOKEN: ${{ secrets.LIVE_CONFLUENCE_API_TOKEN }}
+          LIVE_CONFLUENCE_BASE_URL: ${{ vars.LIVE_CONFLUENCE_BASE_URL }}
+          LIVE_CONFLUENCE_EMAIL: ${{ vars.LIVE_CONFLUENCE_EMAIL }}
+          LIVE_CONFLUENCE_SPACE_KEY: ${{ vars.LIVE_CONFLUENCE_SPACE_KEY }}
+          LIVE_E2E: '1'
+          LIVE_E2E_FIXTURE_REPO: ${{ vars.LIVE_E2E_FIXTURE_REPO }}
+          LIVE_EVALS: '1'
+          LIVE_EVALS_REPO_URL: ${{ vars.LIVE_EVALS_REPO_URL }}
+          LIVE_GITHUB_CHECKOUT: '1'
+          LIVE_GITHUB_REVIEW: '1'
+          LIVE_KNOWLEDGE_PGVECTOR: '1'
+          LIVE_MCP_OAUTH: '1'
+        run: |
+          rc=0
+          yarn workspace @auto-swe/shared build
+          echo "::group::knowledge pgvector"
+          yarn test packages/worker/src/live/knowledgePgvector.live.test.ts || rc=1
+          echo "::endgroup::"
+          echo "::group::confluence"
+          yarn test packages/worker/src/live/confluence.live.test.ts || rc=1
+          echo "::endgroup::"
+          echo "::group::github review comments"
+          yarn test packages/worker/src/live/githubReview.live.test.ts || rc=1
+          echo "::endgroup::"
+          echo "::group::github checkout"
+          yarn test packages/worker/src/live/githubCheckout.live.test.ts || rc=1
+          echo "::endgroup::"
+          echo "::group::mcp oauth"
+          yarn test packages/worker/src/live/mcpOAuth.live.test.ts || rc=1
+          echo "::endgroup::"
+          echo "::group::evals"
+          yarn test packages/worker/src/live/evals.live.test.ts || rc=1
+          echo "::endgroup::"
+          echo "::group::end to end"
+          yarn test packages/worker/src/live/endToEnd.live.test.ts || rc=1
+          echo "::endgroup::"
+          exit $rc
+
+      - name: Stack logs
+        if: always()
+        run: |
+          for f in gateway.log worker.log; do
+            if [ -f "$f" ]; then echo "::group::$f"; tail -n 200 "$f"; echo "::endgroup::"; fi
+          done
+
+      - name: Stop the stack
+        if: always()
+        run: yarn docker:infra:down

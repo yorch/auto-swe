@@ -163,6 +163,7 @@ export const SIDEBAR = [
       'docs/local-agents',
       'docs/github-app-setup',
       'docs/slack-app-setup',
+      'docs/live-checks',
       'reference/cli',
     ],
   },
