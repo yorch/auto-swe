@@ -224,6 +224,7 @@ These fields mean the same on every node type that has them; the per-type tables
 |---|---|---|
 | `group` | every node | Presentation only: a phase label (up to 40 characters) that groups nodes on the canvas and in the outline. See [architecture.md](./architecture.md#presentation-fields-group-and-title). |
 | `title` | every node | Presentation only on the non-human nodes: a name (up to 80 characters) shown in place of the id. On the four human nodes it is required and is the approver's heading (up to 200 characters). |
+| `use` | every node | Presentation only: the id of the spec-level `uses` entry (a macro such as `ciLoop@1` with its arguments) whose expansion produced the node — a letter then up to 31 letters or digits. Nothing at run time reads it; `validateSpec` reports a node tagged with an undeclared use, and a use whose tagged nodes differ from a fresh expansion, as errors (`packages/shared/src/workflow/macros.ts`). |
 | `next` | `step`, `agent`, `mcp`, `shell`, `containerStep`, `eval`, `set` | The node to run afterwards. A node with no `next` ends the run with status `SUCCESS` and an empty result; `validateSpec` warns `NODE_CANT_TERMINATE` so it is visible. Prefer an explicit `terminate`. |
 | `onFail` | dispatch nodes | `"block"`, `"warn"` or `{ "retry": N }` (§4). |
 | `onError` | dispatch nodes | `"fail"` (default) or `"continue"` (§4). |

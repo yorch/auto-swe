@@ -81,6 +81,20 @@ export {
   REQUEST_CHANGES_OPTION,
   runSpec,
 } from './interpreter.js';
+export type { MacroDefinition, MacroUse, UseProblem, UseProblemCode } from './macros.js';
+export {
+  collectUseProblems,
+  detachUse,
+  expandUse,
+  findUseProblems,
+  getMacro,
+  isValidUseId,
+  MACROS,
+  MacroUseError,
+  materializeUses,
+  reexpandUse,
+  useEntry,
+} from './macros.js';
 export type {
   OutcomeGroupMetrics,
   OutcomePullRequest,
@@ -180,12 +194,14 @@ export {
   MAX_FANOUT_CONCURRENCY,
   MAX_NODE_GROUP_LENGTH,
   MAX_NODE_TITLE_LENGTH,
+  MAX_USE_ID_LENGTH,
   NodeSchema,
   nodeEdges,
   parseWorkflowSpec,
   readNodeEdge,
   SPEC_SCHEMA_VERSION,
   setNodeEdge,
+  USE_ID_RE,
   WorkflowSpecSchema,
   waitDurationMs,
 } from './spec.js';

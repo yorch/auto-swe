@@ -40,6 +40,7 @@ const DOC_ORDER = [
 const COMMON_FIELDS = [
   'group',
   'title',
+  'use',
   'next',
   'onFail',
   'onError',
