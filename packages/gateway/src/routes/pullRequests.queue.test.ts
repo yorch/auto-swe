@@ -69,8 +69,11 @@ const evaluation = (n: number, over: Record<string, unknown> = {}) => ({
   autoMergeEnabled: false,
   botApproved: false,
   changedLines: 20,
+  changesRequestedCount: 0,
   connectionId: REPO,
   headSha: `sha${n}`,
+  humanObjection: false,
+  id: `eval-${n}`,
   prNumber: n,
   requiredApprovers: 1,
   riskClass: 'LOW',
@@ -146,9 +149,10 @@ describe('GET /api/v1/pull-requests order=attention', () => {
     expect(body.data[3].review).toMatchObject({ needsHuman: false, reason: 'draft' });
     expect(body.meta.queue).toMatchObject({
       batches: { deep: 2, none: 1, quick: 1, standard: 0 },
-      capped: false,
+      evaluationsTruncated: false,
       needsHuman: 3,
       open: 4,
+      truncated: false,
     });
     expect(body.meta.total).toBe(4);
     // Only open pull requests are ordered, inside the same visibility filter.
@@ -164,10 +168,21 @@ describe('GET /api/v1/pull-requests order=attention', () => {
       pull(1, { repository: overridden }),
       pull(2, { repository: overridden }),
     ]);
-    b.prisma.prEvaluation.findMany.mockResolvedValue([
-      { ...evaluation(1), brief: { path: [{ flagged: false, path: 'src/pay/charge.ts' }] } },
-      { ...evaluation(2), brief: { path: [{ flagged: false, path: 'src/other.ts' }] } },
-    ]);
+    const facts = (paths: string[], previousPaths: string[] = []) => ({
+      paths,
+      previousPaths,
+      truncated: false,
+    });
+    const stored: Record<string, unknown> = {
+      'eval-1': facts(['src/other.ts', 'src/pay/charge.ts']),
+      'eval-2': facts(['src/other.ts']),
+    };
+    b.prisma.prEvaluation.findMany.mockImplementation(
+      async (args: { select: Record<string, unknown>; where: { id?: { in: string[] } } }) =>
+        'routingPaths' in args.select
+          ? (args.where.id?.in ?? []).map((id) => ({ id, routingPaths: stored[id] }))
+          : [evaluation(1), evaluation(2)]
+    );
     const res = await b.app.inject({ headers: AUTH, url: '/api/v1/pull-requests?order=attention' });
     const byId = Object.fromEntries(
       res.json().data.map((r: { id: string; review: unknown }) => [r.id, r.review])
@@ -200,6 +215,165 @@ describe('GET /api/v1/pull-requests order=attention', () => {
     expect(body.data.map((r: { id: string }) => r.id)).toEqual(['pr-2', 'pr-1']);
     expect(body.data[0].review).toMatchObject({ batch: 'quick', position: null });
     expect(body.meta.queue).toBeUndefined();
+  });
+});
+
+describe('the attention queue fails safe', () => {
+  type Built = Awaited<ReturnType<typeof buildApp>>;
+  const facts = (paths: string[], previousPaths: string[] = []) => ({
+    paths,
+    previousPaths,
+    truncated: false,
+  });
+  /** Evaluations newest first, as the route reads them, and the stored path lists by id. */
+  function serve(b: Built, evaluations: unknown[], stored: Record<string, unknown> = {}) {
+    b.prisma.prEvaluation.findMany.mockImplementation(
+      async (args: { select: Record<string, unknown>; where: { id?: { in: string[] } } }) =>
+        'routingPaths' in args.select
+          ? (args.where.id?.in ?? []).map((id) => ({ id, routingPaths: stored[id] ?? null }))
+          : evaluations
+    );
+  }
+  async function reviewOf(b: Built, pulls: unknown[], id = 'pr-1') {
+    b.prisma.pullRequest.findMany.mockResolvedValue(pulls);
+    const res = await b.app.inject({ headers: AUTH, url: '/api/v1/pull-requests?order=attention' });
+    expect(res.statusCode).toBe(200);
+    const row = res.json().data.find((r: { id: string }) => r.id === id);
+    return { body: res.json(), review: row.review };
+  }
+
+  beforeEach(() => {
+    settings.values = { ...ROUTING, 'prEvaluation.humanMinRisk': 'HIGH' };
+  });
+
+  it('treats a pull request whose newest evaluation is for another head as not evaluated', async () => {
+    const b = await buildApp();
+    // The row still holds the head a human pushed over; the newest evaluation is for it, and the
+    // approvals and the LOW class belong to the head before.
+    serve(b, [
+      evaluation(1, {
+        headSha: 'old',
+        requiredApprovers: 1,
+        riskClass: 'HIGH',
+        trustedApprovers: 1,
+      }),
+      evaluation(1, { headSha: 'sha1', id: 'eval-older', riskClass: 'LOW' }),
+    ]);
+    const { review } = await reviewOf(b, [pull(1)]);
+    expect(review).toMatchObject({ needsHuman: true, reason: 'not_evaluated', riskClass: null });
+  });
+
+  it('uses the newest evaluation of the head and the approvals counted there', async () => {
+    const b = await buildApp();
+    serve(b, [
+      evaluation(1, { id: 'newest', riskClass: 'HIGH', trustedApprovers: 0 }),
+      evaluation(1, { id: 'older', riskClass: 'HIGH', trustedApprovers: 2 }),
+    ]);
+    const { review } = await reviewOf(b, [pull(1)]);
+    expect(review).toMatchObject({ needsHuman: true, reason: 'risk' });
+  });
+
+  it('keeps an always-human path ahead of standing approvals, and matches a rename source', async () => {
+    const b = await buildApp();
+    const overridden = { ...repository, reviewRouting: { humanPaths: ['infra/**'] } };
+    serve(
+      b,
+      [
+        evaluation(1, { requiredApprovers: 2, riskClass: 'HIGH', trustedApprovers: 2 }),
+        evaluation(2, { requiredApprovers: 1, trustedApprovers: 1 }),
+        evaluation(3, { requiredApprovers: 1, trustedApprovers: 1 }),
+      ],
+      {
+        // The protected file is the 300th path, far past the brief's first fifty.
+        'eval-1': facts([...Array.from({ length: 299 }, (_, i) => `src/f${i}.ts`), 'infra/a.tf']),
+        'eval-2': facts(['src/moved.tf'], ['infra/old.tf']),
+        'eval-3': facts(['src/ok.ts']),
+      }
+    );
+    const pulls = [1, 2, 3].map((n) => pull(n, { repository: overridden }));
+    b.prisma.pullRequest.findMany.mockResolvedValue(pulls);
+    const res = await b.app.inject({ headers: AUTH, url: '/api/v1/pull-requests?order=attention' });
+    const byId = Object.fromEntries(
+      res.json().data.map((r: { id: string; review: unknown }) => [r.id, r.review])
+    );
+    expect(byId['pr-1']).toMatchObject({
+      matchedPath: 'infra/a.tf',
+      needsHuman: true,
+      reason: 'path',
+    });
+    expect(byId['pr-2']).toMatchObject({ matchedPath: 'infra/old.tf', needsHuman: true });
+    expect(byId['pr-3']).toMatchObject({ needsHuman: false, reason: 'approvals_met' });
+  });
+
+  it('asks when an always-human path is set and the row recorded no path list', async () => {
+    const b = await buildApp();
+    const overridden = { ...repository, reviewRouting: { humanPaths: ['infra/**'] } };
+    serve(b, [evaluation(1, { requiredApprovers: 1, trustedApprovers: 1 })]);
+    const { review } = await reviewOf(b, [pull(1, { repository: overridden })]);
+    expect(review).toMatchObject({ matchedPath: null, needsHuman: true, reason: 'path' });
+  });
+
+  it('does not clear approvals that stand beside a request for changes, old rows included', async () => {
+    const b = await buildApp();
+    serve(b, [
+      evaluation(1, { humanObjection: true, trustedApprovers: 1 }),
+      evaluation(2, { changesRequestedCount: 1, humanObjection: null, trustedApprovers: 1 }),
+      evaluation(3, { humanObjection: null, trustedApprovers: 1 }),
+    ]);
+    b.prisma.pullRequest.findMany.mockResolvedValue([pull(1), pull(2), pull(3)]);
+    const res = await b.app.inject({ headers: AUTH, url: '/api/v1/pull-requests?order=attention' });
+    const byId = Object.fromEntries(
+      res
+        .json()
+        .data.map((r: { id: string; review: { reason: string } }) => [r.id, r.review.reason])
+    );
+    expect(byId).toEqual({
+      'pr-1': 'changes_requested',
+      'pr-2': 'changes_requested',
+      'pr-3': 'approvals_met',
+    });
+  });
+
+  it('keeps a bot-approved, armed pull request in the queue when the skip is off', async () => {
+    const b = await buildApp();
+    serve(b, [evaluation(1, { autoMergeEnabled: true, botApproved: true })]);
+    settings.values = { ...ROUTING, 'prEvaluation.humanMinRisk': 'STANDARD' };
+    const skipped = await reviewOf(b, [pull(1)]);
+    expect(skipped.review).toMatchObject({ needsHuman: false, reason: 'bot_approved' });
+    const off = { ...repository, reviewRouting: { skipWhenBotApproved: false } };
+    const kept = await reviewOf(b, [pull(1, { repository: off })]);
+    expect(kept.review).toMatchObject({ needsHuman: true, reason: 'bot_approved_review' });
+  });
+
+  it('reads only small columns for the evaluations, and exact pairs', async () => {
+    const b = await buildApp();
+    serve(b, [evaluation(1)]);
+    await reviewOf(b, [pull(1), pull(2)]);
+    const call = b.prisma.prEvaluation.findMany.mock.calls[0]?.[0];
+    expect(Object.keys(call.select)).not.toContain('brief');
+    expect(Object.keys(call.select)).not.toContain('routingPaths');
+    expect(call.where).toEqual({ OR: [{ connectionId: REPO, prNumber: { in: [1, 2] } }] });
+    // No always-human path is set, so no path list is read at all.
+    expect(b.prisma.prEvaluation.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('says so when the evaluation read is cut, and counts the pull requests when the queue is', async () => {
+    const b = await buildApp();
+    const many = Array.from({ length: 1001 }, (_, i) =>
+      pull(i + 1, { id: `pr-${i + 1}`, openedAt: new Date(1_700_000_000_000 + i) })
+    );
+    serve(
+      b,
+      Array.from({ length: 20_001 }, (_, i) => evaluation(i + 1, { id: `e${i}` }))
+    );
+    b.prisma.pullRequest.count.mockResolvedValue(1500);
+    const { body } = await reviewOf(b, many);
+    expect(body.meta.queue).toMatchObject({
+      evaluationsTruncated: true,
+      open: 1000,
+      truncated: true,
+    });
+    expect(body.meta.total).toBe(1500);
   });
 });
 
@@ -255,7 +429,13 @@ describe('GET /api/v1/pull-requests/review-time', () => {
     });
     expect(data.byRepository[0]).toMatchObject({ repository: { name: 'api', org: 'acme' } });
     expect(data.byTeam).toEqual([expect.objectContaining({ teamId: TEAM, teamName: 'Payments' })]);
-    expect(data.queue).toMatchObject({ needsHuman: 1, open: 1 });
+    expect(data.queue).toMatchObject({ needsHuman: 1, open: 1, truncated: false });
+    expect(data.truncated).toBe(false);
+    // The cohort's evaluations are asked for as exact (repository, number) pairs.
+    const cohortRead = b.prisma.prEvaluation.findMany.mock.calls.find(
+      (call) => 'firstHumanReviewAt' in call[0].select
+    )?.[0];
+    expect(cohortRead.where.OR).toEqual([{ connectionId: REPO, prNumber: { in: [1, 2] } }]);
     // Drafts have not asked for review, so they are outside the cohort.
     const cohortWhere = b.prisma.pullRequest.findMany.mock.calls.find(
       (call) => 'reviewVisits' in call[0].select

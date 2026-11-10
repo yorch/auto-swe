@@ -644,10 +644,10 @@ All are ADMIN-only registry settings in the `prEvaluation` group; see
 | `prEvaluation.standardApprovers` | 1 | team, organization | Approvals a `STANDARD` change needs. |
 | `prEvaluation.highApprovers` | 2 | team, organization | Approvals a `HIGH` change needs. |
 | `prEvaluation.sensitivePaths` | empty | team, organization | Globs added to the built-in sensitive list. |
-| `prEvaluation.humanMinRisk` | `LOW` | team, organization | Review routing (§12.1): the lowest risk class that asks for a person. |
-| `prEvaluation.humanAboveLines` | 0 | team, organization | Review routing: a ready pull request with more changed lines than this always asks for a person; 0 turns the size rule off. |
-| `prEvaluation.humanPaths` | empty | team, organization | Review routing: globs; a change touching a file that matches one always asks for a person. |
-| `prEvaluation.humanSkipsBotApproved` | on | team, organization | Review routing: a pull request the approver App approved, with auto-merge armed, asks for no person unless another rule fires. |
+| `prEvaluation.humanMinRisk` | `LOW` | team, organization | Review routing (§12.1): the lowest risk class that asks for a person, unless the approvals it needs already stand. |
+| `prEvaluation.humanAboveLines` | 0 | team, organization | Review routing: a ready pull request with more changed lines than this asks for a person, unless the approvals it needs already stand; 0 turns the size rule off. |
+| `prEvaluation.humanPaths` | empty | team, organization | Review routing: globs; a change touching a file (or a rename's previous path) that matches one always asks for a person, whatever approvals stand. |
+| `prEvaluation.humanSkipsBotApproved` | on | team, organization | Review routing: on, a pull request the approver App approved, with auto-merge armed, asks for no person unless the risk, size or path rule fires; off, it still asks. |
 | `prEvaluation.quickReviewMaxLines` | 100 | team, organization | Review routing: a `LOW` change of at most this many lines is a quick review. |
 
 ### 12.1 Review routing and the attention queue
@@ -657,26 +657,47 @@ meets them. It orders and labels a queue. It does not change the approvals a pul
 risk class and the host's branch rules still decide those, so a pull request routing leaves off the
 queue can still be blocked on a required approval.
 
-`needsHuman` is computed per open pull request from the evaluation of its **current head**
+`needsHuman` is computed per open pull request from the newest evaluation of its **current head**
 (`decideNeedsHuman` in `packages/shared/src/lib/prEvaluation/reviewRouting.ts`), with the first
-reason that holds reported as `reason` and every one as `reasons`:
+reason that holds reported as `reason` and every one as `reasons`. The rules apply in this order:
 
 | Reason | `needsHuman` | When |
 |---|---|---|
 | `not_open` | no | The pull request is merged or closed. |
 | `draft` | no | It is a draft: it has not asked for review. |
-| `not_evaluated` | yes | No evaluation exists at its current head. Nothing says it is safe, so it asks. |
-| `approvals_met` | no | The evaluation's trusted human approvals already reach the approvals it requires. |
-| `path`, `risk`, `size` | yes | A changed file in the brief's read list matches `humanPaths`, the class is at or above `humanMinRisk`, or the changed lines exceed `humanAboveLines`. |
-| `bot_approved` | no | No rule above fired, the approver App's approval stands and auto-merge is armed, and `humanSkipsBotApproved` is on. |
+| `not_evaluated` | yes | There is no evaluation, or the newest evaluation is for a different head than the one the pull request row holds. Nothing says the current head is safe, so it asks. |
+| `path` | yes | A changed file, or the previous path of a renamed one, matches `humanPaths`; or the paths could not all be checked (see below). It outranks standing approvals: a path rule means always. |
+| `approvals_met` | no | No path rule fired, the evaluation's trusted human approvals reach the approvals it requires, and no person's request for changes stands. |
+| `changes_requested` | yes | The approvals are met but a person's request for changes stands at the evaluated head. |
+| `risk`, `size` | yes | The class is at or above `humanMinRisk`, or the changed lines exceed `humanAboveLines` (an evaluation that recorded no line count counts as over the limit). They apply after approvals: a change that already has the approvals it needs is not sent for another look because of its risk or size. |
+| `bot_approved` | no | No rule above fired, the approver App's approval stands, auto-merge is armed, and `humanSkipsBotApproved` is on. |
+| `bot_approved_review` | yes | The same, with `humanSkipsBotApproved` off: a person still looks. |
 | `below_threshold` | no | No rule fired. |
 
 The default (`humanMinRisk` `LOW`, no size rule, no paths) asks for a person on every ready,
 evaluated pull request that lacks its approvals, so an unconfigured repository changes nothing but
-the order. Setting `humanMinRisk` to `STANDARD` takes low-risk changes off the attention queue.
+the order. Setting `humanMinRisk` to `STANDARD` takes low-risk changes off the attention queue. With
+`humanMinRisk` at `LOW` the risk rule fires on every pull request, so `humanSkipsBotApproved` only
+takes effect once it is `STANDARD` or `HIGH`.
 
-The paths are matched against the files the stored brief lists to read, which are the changed files
-without a skim proof (§4).
+**Which evaluation counts.** The newest evaluation of the pull request counts, and only when its
+head is the head the platform's pull-request row holds. That row's head is written when the worker
+opens or updates the pull request; a push by a person reaches it only when the worker next writes
+it, not from the webhook. So when the newest evaluation is for another head (a human pushed and the
+row has not caught up, or the push has no evaluation yet), the pull request reads `not_evaluated`
+and asks for a person, and the approvals and risk class of the older head are never used. The
+approvals counted are the ones the evaluation counted at its own head.
+
+**Paths.** Each evaluation stores every changed path and every rename's previous path in
+`pr_evaluations.routing_paths`, apart from the brief (which keeps only its first fifty files to read
+and is never read by the queue). The path rule fails safe: a list the evaluation cut (more than 5000
+paths, more than 100,000 characters of path text, a path over 1024 characters, or a file list the
+host itself truncated), an evaluation that stored no list (a row from before it was recorded, or an
+evaluation that failed), a path too long to match and a request that has used up its match budget
+all read as a match, and the pull request asks for a person with no `matchedPath`. The match budget
+(400 million glob-token by path-character units, about a second of work) is spent across one queue
+read, so a list of pathological globs cannot hold the gateway's event loop. `matchedPath` is shown
+with control, zero-width and bidirectional-override characters replaced.
 
 **Per-repository configuration.** Each routing value is a registry setting, so it can differ per
 team and per organization (§12). A repository can override any subset on its own row
@@ -685,8 +706,17 @@ team and per organization (§12). A repository can override any subset on its ow
 the repository's team and organization scope. The override is a repository column rather than a
 setting scope because a repository is not a scope of the registry: the same reason the mode, the
 title format and bot approval are columns. `GET` and `PUT /api/v1/repositories/:id/review-routing`
-read and write it (§13). The owning team's LEAD or a platform ADMIN may set it, since it cannot
-loosen an approval requirement; the write is audited.
+read and write it (§13); the write is audited. A key whose stored value no longer parses falls back to
+the setting for that key alone; the other keys still apply.
+
+The settings are ADMIN-only, and a role floor is one no grant lowers, so the override cannot be used
+to go around it. The owning team's LEAD may write the override only where it is **stricter** than the
+settings give that repository: a lower `humanMinRisk`, a lower non-zero `humanAboveLines` (turning
+the size rule on counts), more `humanPaths` globs (every setting glob must still be there), a lower
+`quickReviewMaxLines`, `skipWhenBotApproved` off. Anything looser is `403 ROUTING_LOOSER_THAN_SETTINGS`
+naming the keys, and needs a platform ADMIN. Clearing the override is always allowed. The check runs
+when the override is written; it is not repeated when an ADMIN later tightens the settings, so an
+override that was valid then can be looser than the settings are now until it is rewritten.
 
 **The queue.** `GET /api/v1/pull-requests?order=attention` lists the open pull requests the caller
 can reach, in the same scope as the newest-first list, ordered by batch:
@@ -701,8 +731,11 @@ can reach, in the same scope as the newest-first list, ordered by batch:
 Inside a batch a higher risk comes first, then the longest-waiting pull request, then the id.
 Each item carries `review`: `needsHuman`, `reason`, `reasons`, `matchedPath`, `batch`, `position`,
 `riskClass` and `changedLines`; the list's `meta.queue` carries the open count, the count that needs a
-person, the batch counts, the oldest and median wait in milliseconds and `capped`. The newest-first
-list carries `review` too, with a null `position`. The Pull requests page offers the order as
+person, the batch counts, the oldest and median wait in milliseconds, `truncated` (the open count
+was cut, or the evaluation read was) and `evaluationsTruncated` (the evaluation read of at most
+20,000 rows was; a pull request whose evaluation fell outside it reads `not_evaluated`). The
+newest-first list carries `review` too, with a null `position`. When the queue is cut, `meta.total`
+is the count of all matching open pull requests, not the number ordered. The Pull requests page offers the order as
 **Needs attention first**.
 
 ## 13. REST routes
@@ -712,8 +745,8 @@ list carries `review` too, with a null `position`. The Pull requests page offers
 | `GET /api/v1/repositories/:id/pr-evaluation` | ENGINEER | Enabled flag, mode and where it came from, whether auto-merge is allowed, the status context, the thresholds in force, the evidence figures, whether bot approval is on, allowed by the deployment and has an approver App to use (booleans only), and the repository's last evaluation |
 | `PUT /api/v1/repositories/:id/pr-evaluation` | LEAD of the owning team, or ADMIN | Body `{ "mode"?: "off" \| "advisory" \| "enforce" \| "auto" \| null, "botApproval"?: boolean }`, at least one; `null` inherits. `auto` is ADMIN-only and may answer `400 AUTO_NOT_READY`. `botApproval: true` is ADMIN-only, needs the resulting mode to be `auto`, and may answer `400 BOT_APPROVAL_NOT_READY` with every unmet reason (§16.1); any mode other than `auto` sets it false in the same update. Two writes that race on the same repository can answer `409 PR_EVALUATION_CONFLICT`: reload and retry. The response carries the resulting `mode`, `modeSource`, `botApproval` and `warnings` under `data` (`warnings` is non-empty for `enforce` when the status context is not shown to be a required check) |
 | `GET /api/v1/repositories/:id/review-routing` | ENGINEER | The repository's routing override and the routing in force (§12.1) |
-| `PUT /api/v1/repositories/:id/review-routing` | LEAD of the owning team, or ADMIN | Body `{ "override": { ... } \| null }`; `null` or `{}` clears the override. Keys: `humanMinRisk`, `humanAboveLines`, `humanPaths`, `quickReviewMaxLines`, `skipWhenBotApproved`; an unknown key is a `400`. Audited |
-| `GET /api/v1/pull-requests?order=attention` | ENGINEER | The open pull requests as a review queue, with `needsHuman` and its reason on each (§12.1). `state` other than `OPEN` or `all` answers `400 ATTENTION_ORDER_OPEN_ONLY`. Orders at most 1000 open pull requests (the oldest kept) and says `meta.queue.capped` when more matched |
+| `PUT /api/v1/repositories/:id/review-routing` | LEAD of the owning team (whatever the platform role), or ADMIN | Body `{ "override": { ... } \| null }`; `null` or `{}` clears the override. Keys: `humanMinRisk`, `humanAboveLines`, `humanPaths`, `quickReviewMaxLines`, `skipWhenBotApproved`; an unknown key is a `400`. A team LEAD may only write values stricter than the settings (`403 ROUTING_LOOSER_THAN_SETTINGS`, §12.1); an ADMIN may write any. Audited. The in-app assistant may not call it |
+| `GET /api/v1/pull-requests?order=attention` | ENGINEER | The open pull requests as a review queue, with `needsHuman` and its reason on each (§12.1). `state` other than `OPEN` or `all` answers `400 ATTENTION_ORDER_OPEN_ONLY`. Orders at most 1000 open pull requests (the oldest kept) and says `meta.queue.truncated` when more matched or the evaluation read was cut |
 | `GET /api/v1/pull-requests/review-time` | ENGINEER | Reviewer time per pull request cohort, repository and team, and the open queue now ([reporting.md](./reporting.md#reviewer-time)) |
 | `GET /api/v1/pr-evaluations` | ENGINEER | Evaluations, newest first, for repositories you can reach. Filters `repoId`, `riskClass`, `merged`; `limit` (default 50, at most 100) and `offset`. Each row reports whether a brief exists and its length, not the brief |
 | `GET /api/v1/pr-evaluations/engagement` | ENGINEER | Whether reviewers act on the brief, for repositories you can reach: `days` (default 30, 1 to 365) and `repoId`. Evaluations, how many a person reviewed, the median minutes to the first review, the share of reviewed ones with a request for changes, and where inline comments landed (on a flagged file, on a file the brief said to skim, elsewhere), and `pullRequestsViewed` with `medianMinutesToFirstView`, how soon a pull request opened in the window was first opened on the review page. Reads at most 5000 evaluations and 5000 first visits and says `capped` when the window held more of either |
@@ -1036,11 +1069,14 @@ documentation change as a platform pull request and read the evaluation's reason
   not recorded against a pull request, so they are not shown.
 - **Routing orders a queue; it enforces nothing.** A pull request routing leaves off the attention
   queue can still be blocked by a required approval, and nothing nudges a person about it. The
-  queue orders at most 1000 open pull requests (the oldest kept). A pull request with no evaluation
-  at its current head, for any reason, reads as `not_evaluated`: the queue does not tell a pull
-  request never evaluated from one whose evaluation is for an older head. The always-human paths see
-  the brief's read list only, so a file with a skim proof never matches. Waiting time counts from
-  the opening of the pull request, which overstates it for one opened as a draft.
+  queue orders at most 1000 open pull requests (the oldest kept) and reads at most 20,000
+  evaluation rows. A pull request with no evaluation at its current head, for any reason, reads as
+  `not_evaluated`: the queue does not tell a pull request never evaluated from one whose newest
+  evaluation is for another head. Because the pull-request row's head is written by the worker and
+  not by the webhook, a pull request a person pushed to reads `not_evaluated` until the worker
+  writes the row again, even when the push has been evaluated. Waiting time counts from the opening of the pull request, which overstates
+  it for one opened as a draft. An override a team lead wrote stays in force if an ADMIN later
+  tightens the settings beneath it.
 - **The engagement counts are approximate and say nothing about reading.** A delivery GitHub sends
   twice counts twice, a review that arrives before its head's evaluation row exists is not counted,
   and one person's several logins count as several. Rows written before the counts existed read as

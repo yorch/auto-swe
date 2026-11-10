@@ -1047,6 +1047,50 @@ describe('evaluatePullRequest: the facts the evidence gate counts', () => {
     });
   });
 
+  it('persists every changed path and rename source for review routing, and a standing objection', async () => {
+    const many = Array.from({ length: 80 }, (_, i) => ({
+      additions: 1,
+      deletions: 0,
+      path: `src/f${i}.ts`,
+      status: 'modified',
+    }));
+    const scm = fakeScm({
+      listPullRequestFiles: async () => ({
+        files: [
+          ...many,
+          {
+            additions: 0,
+            deletions: 0,
+            path: 'src/moved.ts',
+            previousPath: 'infra/main.tf',
+            similarity: 100,
+            status: 'renamed',
+          },
+        ],
+        truncated: false,
+      }),
+      listPullRequestReviews: async () => [
+        { commitId: HEAD, login: 'zed', state: 'CHANGES_REQUESTED', submittedAt: null },
+      ],
+    });
+    await evaluatePullRequestWith(INPUT, depsWith(scm));
+    const row = m.created[0] as { humanObjection: boolean; routingPaths: Record<string, unknown> };
+    expect(row.humanObjection).toBe(true);
+    expect((row.routingPaths.paths as string[]).length).toBe(81);
+    expect(row.routingPaths).toMatchObject({ previousPaths: ['infra/main.tf'], truncated: false });
+  });
+
+  it('marks the stored path list cut when the host truncated the file list', async () => {
+    const scm = fakeScm({
+      listPullRequestFiles: async () => ({ files: [...lowFiles()], truncated: true }),
+    });
+    await evaluatePullRequestWith(INPUT, depsWith(scm));
+    expect(m.created[0]).toMatchObject({
+      humanObjection: false,
+      routingPaths: { truncated: true },
+    });
+  });
+
   it('persists a null requester when the work has no user requester', async () => {
     m.request.mockImplementation(async () => ({
       requestedById: null,

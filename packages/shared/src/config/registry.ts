@@ -947,7 +947,7 @@ export const SETTING_DEFINITIONS = {
   'prEvaluation.humanAboveLines': defineSetting({
     defaultValue: 0,
     description:
-      'Review routing: a ready pull request with more changed lines than this always asks for a person, whatever its risk class. 0 turns the size rule off. A repository can override it. Routing orders and labels the review queue; it never changes the approvals a pull request needs.',
+      'Review routing: a ready pull request with more changed lines than this asks for a person, whatever its risk class, unless the approvals it needs already stand. 0 turns the size rule off. A repository can override it: its team lead may only lower it (or turn it on), loosening it needs an ADMIN. Routing orders and labels the review queue; it never changes the approvals a pull request needs.',
     group: 'prEvaluation',
     label: 'Routing: always ask for a person above',
     overridableAt: ['TEAM', 'ORGANIZATION'],
@@ -960,7 +960,7 @@ export const SETTING_DEFINITIONS = {
   'prEvaluation.humanMinRisk': defineSetting({
     defaultValue: 'LOW',
     description:
-      'Review routing: the lowest risk class that asks for a person. LOW asks for a person on every ready, evaluated pull request that does not already have its approvals; STANDARD leaves low-risk changes off the attention queue; HIGH keeps only high-risk ones. A repository can override it. Routing orders and labels the review queue; it never changes the approvals a pull request needs.',
+      'Review routing: the lowest risk class that asks for a person, unless the approvals the pull request needs already stand. LOW asks for a person on every ready, evaluated pull request that does not have its approvals; STANDARD leaves low-risk changes off the attention queue; HIGH keeps only high-risk ones. A repository can override it: its team lead may only lower it, raising it needs an ADMIN. Routing orders and labels the review queue; it never changes the approvals a pull request needs.',
     group: 'prEvaluation',
     label: 'Routing: lowest risk that asks for a person',
     overridableAt: ['TEAM', 'ORGANIZATION'],
@@ -972,7 +972,7 @@ export const SETTING_DEFINITIONS = {
   'prEvaluation.humanPaths': defineSetting({
     defaultValue: [],
     description:
-      'Review routing: globs of paths whose change always asks for a person. Matched against the files the reviewer brief lists to read. A repository can override it.',
+      'Review routing: globs of paths whose change always asks for a person, whatever approvals already stand. Matched against every changed file and the previous path of a renamed one. A path that cannot be checked (too long to match, or a list the evaluation cut or never recorded) counts as a match. A repository can override it: its team lead may only add globs, removing one needs an ADMIN.',
     group: 'prEvaluation',
     label: 'Routing: paths that always ask for a person',
     overridableAt: ['TEAM', 'ORGANIZATION'],
@@ -984,7 +984,7 @@ export const SETTING_DEFINITIONS = {
   'prEvaluation.humanSkipsBotApproved': defineSetting({
     defaultValue: true,
     description:
-      'Review routing: a pull request the approver App approved, with auto-merge armed, does not ask for a person unless another routing rule fires. A repository can override it.',
+      'Review routing: on, a pull request the approver App approved, with auto-merge armed, asks for no person unless the risk, size or path rule fires. Off, such a pull request still asks for a person. With the lowest-risk setting at LOW the risk rule fires on every pull request, so this only takes effect with it at STANDARD or HIGH. A repository can override it: its team lead may only turn it off.',
     group: 'prEvaluation',
     label: 'Routing: skip bot-approved pull requests',
     overridableAt: ['TEAM', 'ORGANIZATION'],
@@ -1057,7 +1057,7 @@ export const SETTING_DEFINITIONS = {
   'prEvaluation.quickReviewMaxLines': defineSetting({
     defaultValue: 100,
     description:
-      'Review routing: a low-risk change of at most this many changed lines is a quick review, batched with its peers and listed smallest first. A repository can override it.',
+      'Review routing: a low-risk change of at most this many changed lines is a quick review, batched with its peers and listed smallest first. A repository can override it: its team lead may only lower it, raising it needs an ADMIN.',
     group: 'prEvaluation',
     label: 'Routing: quick-review size',
     overridableAt: ['TEAM', 'ORGANIZATION'],

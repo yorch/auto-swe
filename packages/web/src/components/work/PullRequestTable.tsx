@@ -32,6 +32,8 @@ const REASON_LABELS: Record<string, string> = {
   approvals_met: 'approvals already in place',
   below_threshold: 'below the routing thresholds',
   bot_approved: 'approved by the bot',
+  bot_approved_review: 'approved by the bot, a person still looks',
+  changes_requested: 'a person asked for changes',
   draft: 'still a draft',
   not_evaluated: 'not evaluated at this head',
   not_open: 'not open',

@@ -484,7 +484,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PUT /api/v1/pull-requests/:id/viewed': 'confirm',
   'PUT /api/v1/repositories/:id/credential': { never: 'secret' },
   'PUT /api/v1/repositories/:id/pr-evaluation': { never: 'humanDecision' },
-  'PUT /api/v1/repositories/:id/review-routing': 'confirm',
+  'PUT /api/v1/repositories/:id/review-routing': { never: 'humanDecision' },
   'PUT /api/v1/repositories/:id/setup/eval-datasets/:datasetId': 'confirm',
   'PUT /api/v1/repositories/:id/setup/secrets/:name': { never: 'secret' },
   'PUT /api/v1/repositories/:id/shares': 'confirm',

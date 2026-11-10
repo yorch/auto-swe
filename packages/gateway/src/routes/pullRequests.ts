@@ -129,6 +129,21 @@ const ReviewTimeQuery = refineCustomRange(
     window: z.coerce.number().int().min(1).max(365).default(30),
   })
 );
+/** The pull-request numbers of each repository in a cohort. */
+function numbersByRepository(
+  pulls: readonly { prNumber: number | null; repoId: string | null }[]
+): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
+  for (const pull of pulls) {
+    if (pull.repoId !== null && pull.prNumber !== null) {
+      const numbers = out.get(pull.repoId) ?? new Set<number>();
+      numbers.add(pull.prNumber);
+      out.set(pull.repoId, numbers);
+    }
+  }
+  return out;
+}
+
 /** Evaluations read for one reviewer-time summary; beyond it the summary says it is cut. */
 const REVIEW_TIME_EVALUATION_CAP = 50_000;
 const REVIEW_TIME_TOP_REPOSITORIES = 10;
@@ -247,6 +262,8 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // Attention order: every open pull request in scope (up to the cap, oldest kept) is built
       // into the queue and ordered, then the requested page of it is read in full.
       let queue: {
+        /** More open pull requests matched than the queue holds. */
+        capped: boolean;
         meta: PullRequestQueueMeta;
         positions: Map<string, number>;
         rows: Map<string, ReviewQueueRow>;
@@ -269,12 +286,17 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           where,
         });
         const capped = light.length > ATTENTION_ROW_CAP;
-        const built = await buildReviewQueueRows(fastify.prisma, light.slice(0, ATTENTION_ROW_CAP));
+        const { evaluationsTruncated, rows: built } = await buildReviewQueueRows(
+          fastify.prisma,
+          light.slice(0, ATTENTION_ROW_CAP)
+        );
         const entries = orderRows(built);
         queue = {
+          capped,
           meta: {
             ...summarizeReviewQueue(built, new Date()),
-            capped,
+            evaluationsTruncated,
+            truncated: capped || evaluationsTruncated,
           },
           positions: new Map(entries.map((e) => [e.id, e.position])),
           rows: new Map(built.map((row) => [row.id, row])),
@@ -294,7 +316,10 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
               take: limit,
               where,
             }),
-        queue ? Promise.resolve(queue.positions.size) : fastify.prisma.pullRequest.count({ where }),
+        // A cut queue holds fewer pull requests than matched: count them, so `total` is honest.
+        queue && !queue.capped
+          ? Promise.resolve(queue.positions.size)
+          : fastify.prisma.pullRequest.count({ where }),
         // Where a repository that names no host of its own links its PRs.
         resolveGitHubBaseUrl(),
       ]);
@@ -319,7 +344,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           where: { id: { in: ids } },
         });
         pageQueue = new Map(
-          (await buildReviewQueueRows(fastify.prisma, routing)).map((row) => [row.id, row])
+          (await buildReviewQueueRows(fastify.prisma, routing)).rows.map((row) => [row.id, row])
         );
       }
 
@@ -609,10 +634,14 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
                 triggeredBy: true,
               },
               take: REVIEW_TIME_EVALUATION_CAP + 1,
+              // Exact pairs: each repository asks only for its own cohort's numbers, so the cap is
+              // spent on the cohort and not on other pull requests that share a number elsewhere.
               where: {
-                connectionId: { in: [...new Set(withNumbers.map((p) => p.repoId as string))] },
                 createdAt: { gte: start },
-                prNumber: { in: [...new Set(withNumbers.map((p) => p.prNumber as number))] },
+                OR: [...numbersByRepository(withNumbers)].map(([connectionId, numbers]) => ({
+                  connectionId,
+                  prNumber: { in: [...numbers] },
+                })),
               },
             });
       const evaluationsCut = evaluations.length > REVIEW_TIME_EVALUATION_CAP;
@@ -720,19 +749,20 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         take: ATTENTION_ROW_CAP + 1,
         where: { AND: [...scopeFilters(new Date(0), new Date(8.64e15)), { status: 'OPEN' }] },
       });
-      const queueRows = await buildReviewQueueRows(
+      const queueBuild = await buildReviewQueueRows(
         fastify.prisma,
         open.slice(0, ATTENTION_ROW_CAP)
       );
       const data: PullRequestReviewTimeResponse = {
         byRepository,
         byTeam,
-        isTruncated: pulls.length > OUTCOMES_ROW_CAP || evaluationsCut,
         overall: summarizeReviewTime(measured.map((row) => row.time)),
         queue: {
-          ...summarizeReviewQueue(queueRows, new Date()),
-          capped: open.length > ATTENTION_ROW_CAP,
+          ...summarizeReviewQueue(queueBuild.rows, new Date()),
+          evaluationsTruncated: queueBuild.evaluationsTruncated,
+          truncated: open.length > ATTENTION_ROW_CAP || queueBuild.evaluationsTruncated,
         },
+        truncated: pulls.length > OUTCOMES_ROW_CAP || evaluationsCut,
         window: { days, end: end.toISOString(), start: start.toISOString() },
       };
       return { data };

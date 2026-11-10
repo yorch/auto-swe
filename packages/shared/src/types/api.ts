@@ -1777,8 +1777,16 @@ export interface PullRequestReviewRouting {
 
 /** Counts over the open pull requests an attention-ordered list covered. */
 export interface PullRequestQueueMeta extends ReviewQueueSummary {
-  /** More open pull requests matched than one read orders; the queue covers the oldest. */
-  capped: boolean;
+  /**
+   * The queue is cut: more open pull requests matched than one read orders (it covers the oldest),
+   * or the evaluation read hit its row cap.
+   */
+  truncated: boolean;
+  /**
+   * The evaluation read hit its row cap. A pull request whose evaluation was cut off reads as not
+   * evaluated, so it asks for a person.
+   */
+  evaluationsTruncated: boolean;
 }
 
 /** Response data of GET /api/v1/pull-requests/review-time. */
@@ -1794,8 +1802,8 @@ export interface PullRequestReviewTimeResponse {
   byTeam: { teamId: string | null; teamName: string; summary: ReviewTimeSummary }[];
   /** The open queue right now over the same scope, not limited to the window. */
   queue: PullRequestQueueMeta;
-  /** The row cap cut into the window's pull requests. */
-  isTruncated: boolean;
+  /** A row cap cut into the window's pull requests or their evaluations. */
+  truncated: boolean;
 }
 
 /** Response data of GET/PUT /api/v1/repositories/:id/review-routing. */

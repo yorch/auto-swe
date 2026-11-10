@@ -564,6 +564,13 @@ model PrEvaluation {
   commentsOnFlagged     Int       @default(0) @map("comments_on_flagged")
   commentsOnSkimmed     Int       @default(0) @map("comments_on_skimmed")
   commentsElsewhere     Int       @default(0) @map("comments_elsewhere")
+  /// Every changed path, every rename's previous path and whether either list was cut
+  /// (`RoutingFacts`), for the review queue's always-human path rule. NULL on a row written before
+  /// it was recorded, and on a failure row: routing reads that as paths it cannot check.
+  routingPaths          Json?     @map("routing_paths")
+  /// Whether a person's request for changes stood when the evaluation ran; NULL on a row written
+  /// before it was recorded.
+  humanObjection        Boolean?  @map("human_objection")
   createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([connectionId, prNumber])

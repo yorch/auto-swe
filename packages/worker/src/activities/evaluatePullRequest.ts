@@ -34,6 +34,7 @@ import {
   botApprovalRefusalConditions,
   briefDetail,
   buildBrief,
+  buildRoutingFacts,
   type ChangedFile,
   type Classification,
   changedPathsAllowed,
@@ -1604,6 +1605,10 @@ export async function evaluatePullRequestWith(
         changedLines: listed.files.reduce((sum, f) => sum + f.additions + f.deletions, 0),
         connectionId: connection.id,
         headSha: pr.headSha,
+        // What the review queue's routing reads: a person's request for changes that stood, and
+        // every changed path with each rename's source. The brief keeps only the first fifty
+        // files to read, which is not enough to say a file was not touched.
+        humanObjection: hasHumanObjection(reviews, pr.author ?? ''),
         mode: statusMode,
         prNumber: input.prNumber,
         readiness: asJson({
@@ -1617,6 +1622,9 @@ export async function evaluatePullRequestWith(
         requesterId: launcher.requesterId,
         requiredApprovers: classification.requiredApprovers,
         riskClass: classification.riskClass,
+        routingPaths: asJson(
+          buildRoutingFacts(listed.files, { listTruncated: !!listed.truncated })
+        ),
         statusState: status.state,
         triggeredBy: input.trigger,
         // A row whose launcher set is unresolved can never count as reviewed evidence: the

@@ -4,6 +4,7 @@ import {
   autoArmingRefusals,
   type BranchRulesLike,
   parseReviewRoutingOverride,
+  reviewRoutingLoosenings,
   reviewRoutingOverrideSchema,
   summarizeBriefEngagement,
   summarizeFirstViews,
@@ -392,13 +393,14 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // PUT /api/v1/repositories/:id/review-routing — owning-team LEAD or platform ADMIN. Routing only
-  // orders and labels the review queue; it never changes the approvals a pull request needs, so
-  // a LEAD may set it.
+  // PUT /api/v1/repositories/:id/review-routing — the owning team's LEAD (whatever the platform
+  // role) or a platform ADMIN. The settings behind routing are ADMIN-only and `requiredRole` is a
+  // floor, so a LEAD's override may only be STRICTER than the settings give the repository: it can
+  // ask for a person more often, never less. Anything looser is refused for a LEAD.
   app.put(
     '/repositories/:id/review-routing',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { body: SetRoutingBody, params: RepoParams },
     },
     async (request, reply) => {
@@ -420,6 +422,23 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
       const { override } = request.body;
       // An empty object overrides nothing: store NULL so "no override" has one spelling.
       const stored = override && Object.keys(override).length > 0 ? override : null;
+      if (stored && user.role !== Role.ADMIN) {
+        const { inherited } = await resolveRepositoryRouting({ ...repo, reviewRouting: null });
+        const loosened = reviewRoutingLoosenings(
+          inherited,
+          stored,
+          parseReviewRoutingOverride(repo.reviewRouting)
+        );
+        if (loosened.length > 0) {
+          return sendError(
+            reply,
+            403,
+            'ROUTING_LOOSER_THAN_SETTINGS',
+            'Only an ADMIN can make review routing looser than the settings for this repository',
+            { keys: loosened }
+          );
+        }
+      }
       await fastify.prisma.connection.update({
         data: { reviewRouting: stored ?? Prisma.DbNull },
         select: { id: true },

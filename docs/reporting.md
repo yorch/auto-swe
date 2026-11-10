@@ -101,7 +101,12 @@ range, `scope` (`TEAM` by default, or `MINE`), `teamId` and `repoId`. Its cohort
 opened in the window that are not drafts now, in the caller's repository scope. It reports an overall
 summary, a summary per repository (the ten with most pull requests), a summary per team and the open
 queue at the time of the read. It is a live read of at most 10,000 pull requests and 50,000
-evaluations, with `isTruncated` set when either cut the cohort, and it does not use the rollups.
+evaluations, with `truncated` set when either cut the cohort, and it does not use the rollups. The
+evaluations are read as exact (repository, pull request number) pairs of the cohort. When the
+evaluation cap cuts, the oldest evaluations go first, so a pull request's ready time can read later
+than it was and its waits shorter: treat a `truncated` read as understated. The open queue carries
+`truncated` too (more open pull requests than the 1,000 it orders, or its 20,000-row evaluation read
+was cut) and `evaluationsTruncated` for the second case alone.
 
 Every figure is built from timestamps the platform stores, in `packages/shared/src/lib/prEvaluation/reviewerTime.ts`:
 
@@ -116,14 +121,26 @@ Every figure is built from timestamps the platform stores, in `packages/shared/s
 | `changeRequestRate` | The share of reviewed pull requests with at least one review asking for changes. |
 
 Each duration reports `count`, `p50` and `p90` in milliseconds. A span whose end precedes its start
-reads as no wait. A summary with fewer than 30 reviewed pull requests is marked `lowSample`; treat its
-percentiles as anecdote. Team attribution is the run's persisted `attributedTeamId`, owner-only like
+reads as no wait, so a review recorded before the ready time (a review that arrived before the
+evaluation row, say) counts as zero rather than negative. A summary with fewer than 30 reviewed pull requests is marked `lowSample`; treat its
+percentiles as anecdote. A visit to the review page by anyone counts as the
+first view, including the person who requested the work, so `timeToFirstView` can measure the
+requester looking at their own pull request. The cohort
+excludes pull requests that are drafts now, judged by the current draft flag: one opened as a draft
+and marked ready later is in it, and one converted back to a draft is not. Team attribution is the run's persisted `attributedTeamId`, owner-only like
 the other metrics; a team the caller does not belong to is `Other team` and a pull request with no
 attribution is `Unattributed`.
 
 The queue figures count the open pull requests in scope now, whatever the window: the open count,
 how many need a person under each repository's [review routing](./pr-evaluation.md#121-review-routing-and-the-attention-queue),
 the batch counts, and the oldest and median wait of those that need one.
+
+Team scoping differs between the two views of the open queue. The attention order
+(`GET /api/v1/pull-requests?order=attention&teamId=`) scopes by repository: pull requests of
+repositories the team owns or that are shared to it, because it lists work to open. The review-time
+report (cohort and open queue alike) scopes by the run's owner-only attribution, because it reports
+a rate per team and a shared repository must not be counted by both teams. For a team with a shared
+repository the two open counts therefore differ.
 
 ## Data bounds
 
