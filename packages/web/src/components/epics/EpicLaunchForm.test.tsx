@@ -69,6 +69,34 @@ describe('EpicLaunchForm', () => {
     expect(screen.queryByTestId('epic-hidden-repos')).toBeNull();
   });
 
+  it('disables a repository whose owner budget is spent, with the reason and no amount', async () => {
+    const over = {
+      ...REPOS[1],
+      id: 'r4',
+      launchBudget: { alertThresholdPercent: 80, percentUsed: 120, scope: 'team', state: 'over' },
+      repoName: 'spent',
+    };
+    const nearing = {
+      ...REPOS[1],
+      id: 'r5',
+      launchBudget: { alertThresholdPercent: 80, percentUsed: 91, scope: 'team', state: 'alert' },
+      repoName: 'nearing',
+    };
+    setupFetchMock({
+      'GET /api/v1/epics': () => ({ data: [], meta: { limit: 50, offset: 0, total: 0 } }),
+      'GET /api/v1/repositories': () => ({ data: [REPOS[0], over, nearing] }),
+    });
+    render(withQuery(<EpicLaunchForm onLaunched={pushSpy} />));
+    const boxes = await screen.findAllByRole('checkbox');
+    expect(boxes).toHaveLength(3);
+    expect((boxes[1] as HTMLInputElement).disabled).toBe(true);
+    expect((boxes[2] as HTMLInputElement).disabled).toBe(false);
+    expect(screen.getByTestId('epic-budget-reason').textContent).toBe(
+      "Over platform's budget this month. Ask platform's team lead."
+    );
+    expect(screen.getByTestId('epic-budget-hint').textContent).toBe('91% of budget used');
+  });
+
   it('rejects single-repo selection ', async () => {
     setupFetchMock({
       'GET /api/v1/epics': () => ({ data: [], meta: { limit: 50, offset: 0, total: 0 } }),

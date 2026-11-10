@@ -741,6 +741,10 @@ sees), plus the owning organization's `orgId` and `orgName`; it never carries an
 role. `?member=true` restricts the list to the caller's own teams, even for a platform admin. The
 dashboard derives which teams the caller leads from this list, with no per-team request.
 
+On the connections list, a row's "More actions" menu keeps **Share with teams** and
+**Deactivate** (or **Reactivate**) for everyone and shows them disabled, with the owning team's
+leads named as the ones who can, when the caller does not lead the owning team.
+
 A team's own page (`GET /api/v1/teams/:id`) lists the repositories it owns and, separately, the ones
 shared with it, each marked "shared by" its owning team and read-only. The shared list shows only
 active repositories, and under an enforcing repo-access gate only those the viewer's GitHub
@@ -805,6 +809,10 @@ Sharing is managed from the repository card on the **Connections** page, or over
 `GET /api/v1/repositories?teamId=<team>` lists only the repositories that team owns or that are
 shared to it. The filter is its own `AND` term beside reachability, so it only narrows; the caller
 must be a member of the team (a platform ADMIN may name any), otherwise `404 TEAM_NOT_FOUND`.
+
+Each listed repository the caller can start work on carries `launchBudget`: where the owning team's
+cap, which a launch there is held to, stands (percent and state, no amount; `null` where no cap is
+set or the caller cannot launch). The semantics are in [teams.md](./teams.md#the-cap-a-launch-is-held-to).
 
 Shares are limited to the owning team's organization, so a repository never crosses a tenant
 boundary this way. Moving a repository to a team in another organization drops the shares that no

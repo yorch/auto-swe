@@ -2,7 +2,7 @@
 
 import type { MeNeedsYouItem, MeSummary } from '@auto-swe/shared/types/api';
 import { cleanup, render, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('next/navigation', () => ({
@@ -15,6 +15,15 @@ vi.mock('@/hooks/useRequests', () => ({
 }));
 const useMeSummary = vi.fn();
 vi.mock('@/hooks/useMeSummary', () => ({ useMeSummary: () => useMeSummary() }));
+const useUserPreferences = vi.fn();
+vi.mock('@/hooks/useUserPreferences', () => ({
+  useUserPreferences: () => useUserPreferences(),
+}));
+const useTeams = vi.fn();
+vi.mock('@/hooks/useTeams', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useTeams')>()),
+  useTeams: (...args: unknown[]) => useTeams(...args),
+}));
 vi.mock('@/components/setup/SetupReadiness', () => ({
   SetupReadiness: () => <div>setup readiness</div>,
 }));
@@ -72,6 +81,15 @@ function summary(items: MeNeedsYouItem[] = [], total = items.length): MeSummary 
 
 const withSummary = (data: MeSummary) => useMeSummary.mockReturnValue({ ...ready, data });
 
+beforeEach(() => {
+  useUserPreferences.mockReturnValue({ lastTeamSlug: null, loaded: true });
+  useTeams.mockReturnValue({
+    data: [{ id: 't1', myRole: 'LEAD', name: 'Payments', slug: 'payments' }],
+    isError: false,
+    isSuccess: true,
+  });
+});
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -88,6 +106,47 @@ describe('Home product tour', () => {
 });
 
 describe('My desk', () => {
+  it('offers Continue in the last-visited member team beside the header actions', () => {
+    useRequests.mockReturnValue(bucket(0));
+    withSummary(summary());
+    useUserPreferences.mockReturnValue({ lastTeamSlug: 'payments', loaded: true });
+    render(<HomePage />);
+    const header = within(document.querySelector('header') as HTMLElement);
+    const link = header.getByRole('link', { name: 'Continue in Payments' });
+    expect(link.getAttribute('href')).toBe('/teams/payments');
+    expect(header.getByRole('link', { name: 'Start work' })).toBeTruthy();
+    expect(useTeams).toHaveBeenCalledWith({ memberOnly: true });
+  });
+
+  it('omits Continue when the remembered slug is not a member team', () => {
+    useRequests.mockReturnValue(bucket(0));
+    withSummary(summary());
+    useUserPreferences.mockReturnValue({ lastTeamSlug: 'elsewhere', loaded: true });
+    render(<HomePage />);
+    expect(screen.queryByRole('link', { name: /Continue in/ })).toBeNull();
+  });
+
+  it('omits Continue when no team is remembered', () => {
+    useRequests.mockReturnValue(bucket(0));
+    withSummary(summary());
+    render(<HomePage />);
+    expect(screen.queryByRole('link', { name: /Continue in/ })).toBeNull();
+  });
+
+  it('omits Continue while the team list is loading or failed', () => {
+    useRequests.mockReturnValue(bucket(0));
+    withSummary(summary());
+    useUserPreferences.mockReturnValue({ lastTeamSlug: 'payments', loaded: true });
+    useTeams.mockReturnValue({ data: undefined, isError: false, isSuccess: false });
+    const { unmount } = render(<HomePage />);
+    expect(screen.queryByRole('link', { name: /Continue in/ })).toBeNull();
+    unmount();
+    useTeams.mockReturnValue({ data: undefined, isError: true, isSuccess: false });
+    render(<HomePage />);
+    expect(screen.queryByRole('link', { name: /Continue in/ })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Start work' })).toBeTruthy();
+  });
+
   it('moves the lifecycle explainer into the Help panel instead of the page', () => {
     useRequests.mockReturnValue(bucket(0));
     withSummary(summary());

@@ -11,6 +11,7 @@ import {
   type KnowledgeManagementProjection,
   type KnowledgeScalarProjection,
   knowledgeReadableWhere,
+  knowledgeTeamReachWhere,
   ReviseKnowledgeItemSchema,
   toKnowledgeScalarProjection,
 } from './knowledge.js';
@@ -539,16 +540,31 @@ export async function getKnowledgeWorkflowEligibilityWhere(
   return knowledgeReadableWhere(workflowKnowledgeActorScope(principal, repositoryCapability));
 }
 
+/** The team term of a knowledge list; a team that does not exist reaches nothing. */
+async function teamNarrowing(db: Db, teamId: string): Promise<Prisma.KnowledgeItemWhereInput> {
+  const team = await db.team.findUnique({
+    select: { id: true, orgId: true },
+    where: { id: teamId },
+  });
+  return team ? knowledgeTeamReachWhere(team) : { id: { in: [] } };
+}
+
 export async function listReadableKnowledge(
   db: Db,
   authenticatedUserId: string,
   repositoryCapability: KnowledgeRepositoryGateCapability,
-  limit = 25
+  limit = 25,
+  options: { teamId?: string } = {}
 ): Promise<KnowledgeScalarProjection[]> {
   const repositories = capabilityRepositories(repositoryCapability, 'user', authenticatedUserId);
   const actor = await resolveKnowledgeActorScope(db, authenticatedUserId);
   actor.repoIds = actor.repoIds.filter((repoId) => repositories.includes(repoId));
-  return listByKnowledgeScope(db, actor, limit);
+  return listByKnowledgeScope(
+    db,
+    actor,
+    limit,
+    options.teamId ? await teamNarrowing(db, options.teamId) : undefined
+  );
 }
 
 export async function listKnowledgeForWorkflow(
@@ -570,7 +586,8 @@ export async function listKnowledgeForWorkflow(
 async function listByKnowledgeScope(
   db: Db,
   actor: KnowledgeActorScope,
-  limit: number
+  limit: number,
+  narrowing?: Prisma.KnowledgeItemWhereInput
 ): Promise<KnowledgeScalarProjection[]> {
   if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
     throw new RangeError('limit must be 1..100');
@@ -589,7 +606,10 @@ async function listByKnowledgeScope(
         visibility: true,
       },
       take: limit,
-      where: knowledgeReadableWhere(actor),
+      // The team term is its own AND element: it narrows, whatever the eligibility filter holds.
+      where: narrowing
+        ? { AND: [knowledgeReadableWhere(actor), narrowing] }
+        : knowledgeReadableWhere(actor),
     });
   const rows = actor.isPlatformAdmin
     ? await runUnscoped('explicit platform ADMIN readable knowledge list', ['KnowledgeItem'], query)
@@ -687,6 +707,9 @@ async function queryManagedKnowledge(
   }
   if (itemId) {
     conditions.push({ id: itemId });
+  }
+  if (filter.teamId) {
+    conditions.push(await teamNarrowing(db, filter.teamId));
   }
   if (!platformAdmin) {
     conditions.push({ OR: [{ repoId: null }, { repoId: { in: [...repoIds] } }] });

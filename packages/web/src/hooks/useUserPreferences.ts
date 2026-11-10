@@ -68,5 +68,6 @@ export function useUserPreferences() {
     pinnedTeamSlugs: pinned,
     setLastTeamSlug: (slug: string) => mutation.mutate({ lastTeamSlug: slug }),
     setLayout: (layout: RunDetailLayout) => mutation.mutate({ runDetailLayout: layout }),
+    setPinnedTeamSlugs: (slugs: string[]) => mutation.mutate({ pinnedTeamSlugs: slugs }),
   };
 }

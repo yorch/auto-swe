@@ -50,11 +50,13 @@ describe('knowledge routes', () => {
   let app: FastifyInstance;
   let repoAllowed: boolean;
   let actorRole: string;
+  let teamMember: boolean;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     repoAllowed = true;
     actorRole = 'LEAD';
+    teamMember = true;
     app = Fastify();
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
@@ -64,6 +66,7 @@ describe('knowledge routes', () => {
     app.decorate('prisma', {
       connection: { findFirst: async () => (repoAllowed ? { id: REPO } : null) },
       organizationMembership: { findFirst: async () => null },
+      team: { findFirst: async () => (teamMember ? { id: TEAM } : null) },
       teamMembership: { findFirst: async () => ({ role: 'LEAD' }) },
       user: { findUniqueOrThrow: async () => ({ role: actorRole }) },
     } as never);
@@ -78,6 +81,50 @@ describe('knowledge routes', () => {
       url,
       ...(payload ? { payload } : {}),
     });
+
+  describe('GET / teamId', () => {
+    it('answers 404 TEAM_NOT_FOUND to a non-member and reads nothing', async () => {
+      teamMember = false;
+      for (const view of ['read', 'review']) {
+        const response = await send('GET', `/api/v1/knowledge?view=${view}&teamId=${TEAM}`);
+        expect(response.statusCode).toBe(404);
+      }
+      expect(mocked.listReadableKnowledge).not.toHaveBeenCalled();
+      expect(mocked.listManagedKnowledge).not.toHaveBeenCalled();
+    });
+
+    it('hands a member team to both lists, which narrow by it and never widen', async () => {
+      expect((await send('GET', `/api/v1/knowledge?teamId=${TEAM}`)).statusCode).toBe(200);
+      expect(mocked.listReadableKnowledge).toHaveBeenCalledWith(
+        expect.anything(),
+        ACTOR,
+        expect.anything(),
+        100,
+        { teamId: TEAM }
+      );
+      await send('GET', `/api/v1/knowledge?view=review&teamId=${TEAM}`);
+      expect(mocked.listManagedKnowledge).toHaveBeenCalledWith(
+        expect.anything(),
+        ACTOR,
+        expect.anything(),
+        expect.objectContaining({ teamId: TEAM })
+      );
+    });
+
+    it('lets a platform ADMIN name any team, and leaves an unnarrowed list unchanged', async () => {
+      teamMember = false;
+      actorRole = 'ADMIN';
+      expect((await send('GET', `/api/v1/knowledge?teamId=${TEAM}`)).statusCode).toBe(200);
+      await send('GET', '/api/v1/knowledge');
+      expect(mocked.listReadableKnowledge).toHaveBeenLastCalledWith(
+        expect.anything(),
+        ACTOR,
+        expect.anything(),
+        100,
+        {}
+      );
+    });
+  });
 
   it('creates source-gated curated repo knowledge with authenticated actor and server capability', async () => {
     const response = await send('POST', '/api/v1/knowledge', { ...input, repoId: REPO });
@@ -187,7 +234,8 @@ describe('knowledge routes', () => {
       expect.anything(),
       ACTOR,
       { opaque: true },
-      100
+      100,
+      {}
     );
   });
 

@@ -180,11 +180,31 @@ describe('Sidebar Teams group', () => {
     expect(links.map((a) => a.getAttribute('href'))).toEqual(['/teams/c', '/teams/a']);
   });
 
+  it('falls back to the default list once the last pin is removed, or only stale pins remain', () => {
+    teamNav.entries = [entry('a', 'Alpha'), entry('b', 'Beta')];
+    resetNavigation('', '/');
+    for (const pinned of [[], ['gone']]) {
+      teamNav.pinned = pinned;
+      const { unmount } = render(<Sidebar onClose={() => undefined} open />);
+      const links = Array.from(screen.getByRole('list', { name: 'Teams' }).querySelectorAll('a'));
+      expect(links.map((a) => a.getAttribute('href'))).toEqual(['/teams/a', '/teams/b']);
+      unmount();
+    }
+  });
+
   it('shows at most eight teams when nothing is pinned', () => {
     teamNav.entries = Array.from({ length: 11 }, (_, i) => entry(`t${i}`, `Team ${i}`));
     resetNavigation('', '/');
     render(<Sidebar onClose={() => undefined} open />);
     expect(screen.getByRole('list', { name: 'Teams' }).querySelectorAll('a')).toHaveLength(8);
+  });
+
+  it('lists every pinned team, beyond the default limit of eight', () => {
+    teamNav.entries = Array.from({ length: 12 }, (_, i) => entry(`t${i}`, `Team ${i}`));
+    teamNav.pinned = teamNav.entries.slice(0, 10).map((e) => e.team.slug);
+    resetNavigation('', '/');
+    render(<Sidebar onClose={() => undefined} open />);
+    expect(screen.getByRole('list', { name: 'Teams' }).querySelectorAll('a')).toHaveLength(10);
   });
 
   it('marks the team whose space is open', () => {

@@ -57,6 +57,7 @@ import { booleanQueryParam } from '../lib/queryParams.js';
 import { insensitiveName } from '../lib/repositoryHost.js';
 import { repositoryTeamScope } from '../lib/runTeamScope.js';
 import { isShellAuthor } from '../lib/specCheck.js';
+import { ownerLaunchBudgets } from '../lib/teamBudgetStatus.js';
 import { assertTeamParam } from '../lib/teamParam.js';
 import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
 import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
@@ -887,7 +888,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
                     team: { select: { id: true, name: true, slug: true } },
                   },
                 },
-                team: { select: { id: true, name: true, slug: true } },
+                team: { select: { id: true, name: true, orgId: true, slug: true } },
               },
               orderBy: { repoName: 'asc' },
               skip: offset,
@@ -898,7 +899,47 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           ])
       );
 
-      return { data: repos.map(redactConnection), meta: { limit, offset, total } };
+      // Where the cap a launch is held to stands: the OWNING team's, which a sharee's launch spends
+      // against. Only for a repository the caller can start work on, and read once for the page.
+      const myTeamIds =
+        user.role === Role.ADMIN || repos.length === 0
+          ? null
+          : new Set(
+              (
+                await fastify.prisma.teamMembership.findMany({
+                  select: { teamId: true },
+                  // Bounded to the teams this page names, so the read stays tied to the listing.
+                  where: {
+                    teamId: {
+                      in: [
+                        ...new Set(
+                          repos.flatMap((r) => [r.team.id, ...r.shares.map((s) => s.team.id)])
+                        ),
+                      ],
+                    },
+                    userId: user.sub,
+                  },
+                })
+              ).map((m) => m.teamId)
+            );
+      const launchable = repos.filter(
+        (repo) =>
+          repo.type === 'git_repo' &&
+          (myTeamIds === null ||
+            myTeamIds.has(repo.team.id) ||
+            repo.shares.some((s) => s.canLaunch !== false && myTeamIds.has(s.team.id)))
+      );
+      const launchBudgets = await ownerLaunchBudgets(fastify.prisma, launchable);
+      const launchableIds = new Set(launchable.map((repo) => repo.id));
+
+      return {
+        data: repos.map(({ team: { orgId: _orgId, ...team }, ...repo }) => ({
+          ...redactConnection(repo),
+          launchBudget: launchableIds.has(repo.id) ? (launchBudgets.get(repo.id) ?? null) : null,
+          team,
+        })),
+        meta: { limit, offset, total },
+      };
     }
   );
 

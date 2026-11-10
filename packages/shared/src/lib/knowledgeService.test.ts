@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../generated/prisma/client.js';
+import { knowledgeTeamReachWhere } from './knowledge.js';
 import {
   approveKnowledgeItem,
   createCuratedKnowledgeItem,
@@ -299,6 +300,31 @@ describe('knowledge lifecycle service', () => {
       null
     );
     expect(JSON.stringify(findFirst.mock.calls[0]?.[0])).not.toContain(repoId);
+  });
+
+  it('ANDs a team term beside the eligibility filter on both lists, and a missing team reaches nothing', async () => {
+    const findUnique = vi.fn().mockResolvedValue({ id: teamId, orgId: 'org-1' });
+    const { db, findMany } = readScopeDb({
+      team: { findMany: vi.fn().mockResolvedValue([{ id: teamId }]), findUnique },
+    });
+    const capability = await createUserKnowledgeRepositoryCapability(
+      db,
+      'user-1',
+      vi.fn().mockResolvedValue(true)
+    );
+    await listReadableKnowledge(db, 'user-1', capability, 25, { teamId });
+    const readable = findMany.mock.calls.at(-1)?.[0].where;
+    expect(readable.AND).toHaveLength(2);
+    expect(readable.AND[1]).toEqual(knowledgeTeamReachWhere({ id: teamId, orgId: 'org-1' }));
+    // Without the option the filter is the eligibility predicate alone.
+    await listReadableKnowledge(db, 'user-1', capability, 25);
+    expect(findMany.mock.calls.at(-1)?.[0].where.AND).toBeUndefined();
+    await listManagedKnowledge(db, 'user-1', capability, { teamId });
+    const managed = findMany.mock.calls.at(-1)?.[0].where.AND as unknown[];
+    expect(managed).toContainEqual(knowledgeTeamReachWhere({ id: teamId, orgId: 'org-1' }));
+    findUnique.mockResolvedValue(null);
+    await listReadableKnowledge(db, 'user-1', capability, 25, { teamId });
+    expect(findMany.mock.calls.at(-1)?.[0].where.AND[1]).toEqual({ id: { in: [] } });
   });
 
   it('runs the platform-admin readable list through the actual KnowledgeItem tenant guard scope', async () => {

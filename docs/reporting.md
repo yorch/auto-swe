@@ -155,8 +155,12 @@ ranked runs exist.
 Digest subscriptions target exactly one organization or team and deliver weekly summaries by email,
 Slack, or both. They compare the last seven completed UTC days with the seven days before them,
 including delivery metrics, top templates, the worst gate when at least ten run/gate pairs exist,
-pending approval age, and organization budget status. Organization subscriptions include a budget
-section; team subscriptions do not. The section carries month-to-date and projected spend in
+pending approval age, and budget status. Organization subscriptions include a budget section with the
+organization's status. Team subscriptions include a short budget line when a cap is set: the state and
+the percent used of the cap that binds the team, the team's own or its organization's, whichever has
+used the larger share, with the line naming whose it is (the meter's rule, defined once in
+`shared/src/lib/budgetStatus.ts`). It is a percentage for every reader and never carries an amount;
+with no cap set there is no line. The organization section carries month-to-date and projected spend in
 dollars only when the subscription's creator is currently an ORG_ADMIN (or platform ADMIN) and every
 target is an email to an ORG_ADMIN of the organization (or platform ADMIN); a Slack channel or any
 other recipient makes it a state and a percentage. Send-test delivers immediately without changing the scheduled

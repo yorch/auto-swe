@@ -45,24 +45,26 @@ vi.mock('@/hooks/useApprovals', () => ({
   useApprovalsCount: () => steps.count ?? steps.rows.length,
   useTeamApprovalsCount: (teamId: string | undefined) => (teamId ? steps.teamCount : null),
 }));
+/** Every props object the inbox handed a card, for asserting what the inbox passes down. */
+const cardProps = vi.hoisted(() => ({ seen: [] as Array<{ ownerName?: unknown; step: unknown }> }));
 vi.mock('@/components/approvals/HumanStepCard', () => ({
-  HumanStepCard: ({
-    defaultExpanded,
-    onAnswered,
-    step,
-  }: {
+  HumanStepCard: (props: {
     defaultExpanded?: boolean;
     onAnswered?: (message: string) => void;
+    ownerName?: string | null;
     step: { title?: string };
-  }) => (
-    <button
-      data-expanded={String(Boolean(defaultExpanded))}
-      onClick={() => onAnswered?.('Approved “x”.')}
-      type="button"
-    >
-      {step.title}
-    </button>
-  ),
+  }) => {
+    cardProps.seen.push({ ownerName: props.ownerName, step: props.step });
+    return (
+      <button
+        data-expanded={String(Boolean(props.defaultExpanded))}
+        onClick={() => props.onAnswered?.('Approved “x”.')}
+        type="button"
+      >
+        {props.step.title}
+      </button>
+    );
+  },
 }));
 
 import GovernApprovalsPage from './page';
@@ -242,5 +244,26 @@ describe('approvals page team filter', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Show all pending' }));
     expect(nav.replace.mock.calls.at(-1)?.[0]).not.toContain('actionable');
+  });
+
+  it('hands each inbox card its own step, which names the owner, with no ownerName override', () => {
+    cardProps.seen = [];
+    const owned = {
+      ...step('a', 'APPROVAL', 'Owned'),
+      canAnswer: false,
+      run: {
+        id: 'r1',
+        ownerTeam: { id: 't1', name: 'Payments', slug: 'payments' },
+        status: 'RUNNING',
+        workflowId: 'w1',
+      },
+    };
+    steps.rows = [owned];
+    render(<GovernApprovalsPage />);
+    expect(cardProps.seen.length).toBeGreaterThan(0);
+    for (const seen of cardProps.seen) {
+      expect(seen.ownerName).toBeUndefined();
+      expect(seen.step).toBe(owned);
+    }
   });
 });

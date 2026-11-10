@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   orgWideReportsEnabled: false,
   slackPosts: [] as Array<{ blocks: unknown[]; channelId: string; text: string }>,
   subscriptions: [] as Array<Record<string, unknown>>,
+  teamSpendFails: false,
+  teamSpendUsd: 0,
   updates: [] as Array<{ id: string; data: Record<string, unknown> }>,
 }));
 
@@ -171,6 +173,13 @@ vi.mock('@auto-swe/shared/lib/reportDigestUnsubscribe', () => ({
 }));
 vi.mock('@auto-swe/shared/lib/billing', () => ({
   orgMonthSpend: async () => ({ totalUsd: 123.45 }),
+  teamMonthSpend: async () => {
+    if (mocks.teamSpendFails) {
+      throw new Error('billing read failed');
+    }
+    return { totalUsd: mocks.teamSpendUsd };
+  },
+  usdToCents: (usd: number) => Math.round(usd * 100),
 }));
 vi.mock('@auto-swe/shared/lib/budgetForecast', () => ({
   forecastMonthlyBudget: () => ({ projectedUsd: 400, status: 'within_budget' }),
@@ -244,6 +253,8 @@ beforeEach(() => {
   mocks.orgWideReportsEnabled = false;
   mocks.budgetReaderEmails = [];
   mocks.creatorMayReadBudget = true;
+  mocks.teamSpendUsd = 0;
+  mocks.teamSpendFails = false;
 });
 
 describe('sendReportDigests', () => {
@@ -344,6 +355,74 @@ describe('sendReportDigests', () => {
       await sendReportDigests(baseInput);
       expect(mocks.emails[0]?.text).toContain('Budget used: 12.3%');
       expect(mocks.emails[0]?.text).not.toContain('123.45');
+    });
+  });
+
+  describe('team budget line', () => {
+    const org = {
+      budgetAlertThresholdPercent: 80,
+      id: 'org-1',
+      monthlyBudgetUsdCents: null,
+      name: 'Acme',
+    };
+    const teamDigest = (teamCap: number | null, orgCap: number | null, overrides = {}) =>
+      subscription('team-budget', {
+        emailRecipients: ['member@example.test'],
+        slackChannel: { slackChannelId: 'C1' },
+        team: {
+          budgetAlertThresholdPercent: null,
+          id: 'team-1',
+          monthlyBudgetUsdCents: teamCap,
+          name: 'Team',
+          organization: { ...org, monthlyBudgetUsdCents: orgCap },
+          orgId: 'org-1',
+        },
+        ...overrides,
+      });
+    const budgetSection = (text: string) =>
+      text
+        .split('\n')
+        .filter((line) => line.startsWith('Budget'))
+        .join('\n');
+
+    it("shows the team's cap when it is the tighter, as percent only, to every reader", async () => {
+      mocks.teamSpendUsd = 50;
+      mocks.subscriptions = [teamDigest(10_000, 100_000)];
+      await expect(sendReportDigests(baseInput)).resolves.toMatchObject({ sent: 1 });
+      const section = budgetSection(mocks.emails[0]?.text ?? '');
+      expect(section).toContain("Budget (team's cap):");
+      expect(section).toContain('Budget used: 50.0%');
+      expect(section).not.toMatch(/usd|cents|\$|\d{3,}/i);
+      // Slack escapes markup characters; the content is the same.
+      expect(budgetSection(mocks.slackPosts[0]?.text ?? '').replaceAll('\\', '')).toBe(section);
+    });
+
+    it("shows the organization's cap when it is the tighter", async () => {
+      mocks.teamSpendUsd = 5;
+      mocks.subscriptions = [teamDigest(100_000, 20_000)];
+      await sendReportDigests(baseInput);
+      const section = budgetSection(mocks.emails[0]?.text ?? '');
+      expect(section).toContain("Budget (organization's cap):");
+      expect(section).toContain('Budget used: 61.7%');
+      expect(section).not.toMatch(/usd|cents|\$/i);
+    });
+
+    it('still sends, without the budget line, when the spend cannot be read', async () => {
+      mocks.teamSpendFails = true;
+      mocks.subscriptions = [teamDigest(10_000, null)];
+      await expect(sendReportDigests(baseInput)).resolves.toMatchObject({ failed: 0, sent: 1 });
+      expect(mocks.emails[0]?.text).not.toContain('Budget');
+      expect(logWarn).toHaveBeenCalledWith(
+        expect.stringContaining('without its budget line'),
+        expect.objectContaining({ error: 'billing read failed' })
+      );
+    });
+
+    it('has no budget section when neither cap is set', async () => {
+      mocks.subscriptions = [teamDigest(null, null)];
+      await sendReportDigests(baseInput);
+      expect(mocks.emails[0]?.text).not.toContain('Budget');
+      expect(JSON.stringify(mocks.slackPosts)).not.toContain('Budget');
     });
   });
 

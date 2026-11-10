@@ -102,6 +102,15 @@ describe('run reviews', () => {
     render(withQuery(<RunReviews run={retryable(allowed, canControl)} />));
     expect(screen.queryByRole('button', { name: 'Retry fix' })).toBeNull();
   });
+  it('shows a blocked fix retry with the server reason, keeping it focusable', () => {
+    const detail = retryable(false, true);
+    Object.assign(detail.review?.fixRetry ?? {}, { reason: 'A retry is already in flight.' });
+    render(withQuery(<RunReviews run={detail} />));
+    const button = screen.getByRole('button', { name: 'Retry fix' });
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(button.getAttribute('title')).toBe('A retry is already in flight.');
+    expect(screen.getByTestId('blocked-reason').textContent).toBe('A retry is already in flight.');
+  });
   it('shows retry errors without losing the verdict', async () => {
     setupFetchMock({
       'POST /api/v1/workflow-runs/source-1/reviews/fix-retry': () => {

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withQuery } from '@/test/rtl-helpers';
@@ -42,6 +43,8 @@ interface Stub {
   secondRepo?: boolean;
   /** The caller's team may see `repo-2` but not launch on it. */
   viewOnly?: boolean;
+  /** Read per request: the owner's budget has run out for `repo-1`. */
+  overBudget?: boolean;
   limits?: unknown;
   launch?: () => Response;
 }
@@ -73,7 +76,21 @@ function stubGateway(stub: Stub = {}) {
           : {}),
       };
       return json({
-        data: [REPO, NOT_GIT, ...(stub.secondRepo || stub.viewOnly ? [other] : [])],
+        data: [
+          stub.overBudget
+            ? {
+                ...REPO,
+                launchBudget: {
+                  alertThresholdPercent: null,
+                  percentUsed: 120,
+                  scope: 'team',
+                  state: 'over',
+                },
+              }
+            : REPO,
+          NOT_GIT,
+          ...(stub.secondRepo || stub.viewOnly ? [other] : []),
+        ],
         meta: { limit: 500, offset: 0, total: stub.secondRepo ? 3 : 2 },
       });
     }
@@ -214,6 +231,31 @@ describe('AgentRunForm', { timeout: 30_000 }, () => {
     expect(screen.getByText(/Platform ceiling: 50\./)).toBeTruthy();
     expect(screen.getByText(/Platform ceiling: 1800\./)).toBeTruthy();
     expect(screen.queryByRole('option', { name: /My MCP/ })).toBeNull();
+  });
+
+  it('clears a chosen repository whose budget has since run out, with a note', async () => {
+    const stub: Stub = {};
+    stubGateway(stub);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AgentRunForm />
+      </QueryClientProvider>
+    );
+    await fill();
+    expect(screen.getByText(/Platform ceiling: 50\./)).toBeTruthy();
+    stub.overBudget = true;
+    await act(async () => {
+      await qc.invalidateQueries();
+    });
+    expect(await screen.findByText('Repository cleared')).toBeTruthy();
+    expect(screen.getByText(/Over platform's budget this month/)).toBeTruthy();
+    expect((screen.getByRole('combobox', { name: /repository/i }) as HTMLInputElement).value).toBe(
+      ''
+    );
+    expect((screen.getByRole('combobox', { name: /agent/i }) as HTMLInputElement).disabled).toBe(
+      true
+    );
   });
 
   it('refuses a cap above the ceiling client-side and sends nothing', async () => {

@@ -19,7 +19,13 @@ import { humanStepRoutes } from './humanSteps.js';
  */
 const enabled = process.env.HUMAN_STEPS_PG_TEST === '1';
 
-type Item = { id: string; myResponse: string | null; status: string; runId: string };
+type Item = {
+  canAnswer: boolean;
+  id: string;
+  myResponse: string | null;
+  status: string;
+  runId: string;
+};
 type Page = { data: Item[]; meta?: { limit: number; offset: number; total: number } };
 
 describe.skipIf(!enabled)('human-step list against Postgres', () => {
@@ -105,6 +111,8 @@ describe.skipIf(!enabled)('human-step list against Postgres', () => {
       ['runA', 'alice'],
       ['runA2', 'alice'],
       ['runB', 'bob'],
+      // Alice requested it, so she sees it; bob launched it, so only he controls it.
+      ['runC', 'alice'],
     ] as const) {
       const wr = await prisma.runInput.create({
         data: {
@@ -122,7 +130,8 @@ describe.skipIf(!enabled)('human-step list against Postgres', () => {
             templateId: ids.tpl,
             templateVersion: 1,
             // Alice controls her own runs, so she can answer their pending steps.
-            ...(owner === 'alice' ? { launchedById: ids.alice } : {}),
+            ...(owner === 'alice' && key !== 'runC' ? { launchedById: ids.alice } : {}),
+            ...(key === 'runC' ? { launchedById: ids.bob } : {}),
             workflowId: `wf-${key}-${suffix}`,
             workRequestId: wr.id,
           },
@@ -183,6 +192,8 @@ describe.skipIf(!enabled)('human-step list against Postgres', () => {
       resolvedBy: 'alice',
       status: 'RESOLVED',
     });
+    // Alice sees this one but does not control its run: waiting on bob, not on her.
+    await step('seeOnly', 'runC', {});
     // Bob's run: alice cannot see it, whoever resolved the step.
     await step('hidden', 'runB', {
       payload: { action: 'approve' },
@@ -197,7 +208,7 @@ describe.skipIf(!enabled)('human-step list against Postgres', () => {
     const people = present('alice', 'bob', 'admin');
     // Tolerates a failed beforeAll: only ids that were created are matched, never `undefined`.
     await prisma.workflowRun.deleteMany({
-      where: { id: { in: present('runA', 'runA2', 'runB') } }, // cascades steps
+      where: { id: { in: present('runA', 'runA2', 'runB', 'runC') } }, // cascades steps
     });
     await prisma.runInput.deleteMany({ where: { requestedById: { in: people } } });
     await unscoped(async () => {
@@ -326,6 +337,25 @@ describe.skipIf(!enabled)('human-step list against Postgres', () => {
     expect(all.data.some((s) => s.id === ids.timedOut)).toBe(true);
     const pending = await list('alice');
     expect(pending.data.every((s) => s.status === 'PENDING')).toBe(true);
-    expect(stepIds(pending)).toEqual(want('multiPending', 'bobRow', 'pending'));
+    expect(stepIds(pending)).toEqual(want('multiPending', 'bobRow', 'pending', 'seeOnly'));
+  });
+
+  it('marks canAnswer for exactly the steps actionable=true returns, on every status', async () => {
+    const actionable = new Set(stepIds(await list('alice', 'actionable=true')));
+    // Answered, resolved, timed out, cancelled, and a visible step on a run alice does not control
+    // are all in the full list, and none of them may be answerable.
+    const everything = await list('alice', 'status=ALL');
+    expect(everything.data.some((s) => s.id === ids.seeOnly)).toBe(true);
+    for (const s of everything.data) {
+      expect(s.canAnswer, `${s.id} (${s.status})`).toBe(actionable.has(s.id));
+    }
+    expect(actionable).toEqual(new Set(want('bobRow', 'pending')));
+    // The default (visibility) list carries the same flag, so the page never has to guess.
+    const pending = await list('alice');
+    expect(pending.data.find((s) => s.id === ids.seeOnly)?.canAnswer).toBe(false);
+    expect(pending.data.find((s) => s.id === ids.pending)?.canAnswer).toBe(true);
+    // A platform ADMIN controls every run, but an answered or expired step is still not open.
+    const admin = await list('admin', `status=ALL&runId=${ids.runC}`);
+    expect(admin.data.find((s) => s.id === ids.seeOnly)?.canAnswer).toBe(true);
   });
 });

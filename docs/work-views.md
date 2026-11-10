@@ -466,7 +466,9 @@ reload.
   run, offers "Open review" beside the host link. The run detail (`GET /api/v1/workflow-runs/:id`)
   carries it as `pullRequestId`: the newest pull request recorded against the run that has a number,
   and only one in a repository the caller can reach, so the link never leads to a 404. It is null
-  otherwise, and always null for a service principal.
+  otherwise, and always null for a service principal. It also carries `ownerTeam` (the team that
+  owns the run's repository) and the `canControl` flag of its `review` block, which is `false` for a viewer who sees the run
+  through a shared repository without controlling it ([teams.md](./teams.md#seeing-a-run-versus-controlling-it)).
 - **Pull request outcomes** — a card on **Platform analytics** (`/admin/analytics`) for the page's
   date range: merge rate, median and 95th-percentile time to merge, PRs opened (with merged, closed
   unmerged, open and draft counts), each against the previous window, and the ten repositories with

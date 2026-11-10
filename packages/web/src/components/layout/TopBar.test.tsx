@@ -9,6 +9,9 @@ const status = vi.hoisted(() => ({ value: 'pending' as GatewayStatus }));
 
 vi.mock('@/hooks/useGatewayStatus', () => ({ useGatewayStatus: () => status.value }));
 vi.mock('@/hooks/useTeamNav', () => ({ useTeamNav: () => ({ entries: [], isLoading: false }) }));
+vi.mock('@/hooks/useUserPreferences', () => ({
+  useUserPreferences: () => ({ pinnedTeamSlugs: [], setPinnedTeamSlugs: () => undefined }),
+}));
 vi.mock('@/hooks/useApprovals', () => ({ useApprovalsCount: () => 0 }));
 vi.mock('@/hooks/useAssistant', () => ({ useAssistantStatus: () => ({ data: undefined }) }));
 vi.mock('next/navigation', () => ({

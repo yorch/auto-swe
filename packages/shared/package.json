@@ -41,6 +41,7 @@
     "./lib/rollupBuiltDays": "./dist/lib/rollupBuiltDays.js",
     "./lib/billing": "./dist/lib/billing.js",
     "./lib/budgetForecast": "./dist/lib/budgetForecast.js",
+    "./lib/budgetStatus": "./dist/lib/budgetStatus.js",
     "./lib/channelBudget": "./dist/lib/channelBudget.js",
     "./lib/channelTask": "./dist/lib/channelTask.js",
     "./lib/agentRun": "./dist/lib/agentRun.js",

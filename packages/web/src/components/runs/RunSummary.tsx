@@ -110,7 +110,12 @@ export function RunSummary({
             Needs a response
           </SummaryHeading>
           {pendingSteps.map((step) => (
-            <HumanStepCard key={step.id} showRunLink={false} step={step} />
+            <HumanStepCard
+              key={step.id}
+              ownerName={run.ownerTeam?.name}
+              showRunLink={false}
+              step={step}
+            />
           ))}
         </section>
       )}
@@ -118,7 +123,12 @@ export function RunSummary({
         <section aria-label="Approver responses" className="space-y-3">
           <SummaryHeading count={answeredSteps.length}>Responses</SummaryHeading>
           {answeredSteps.map((step) => (
-            <HumanStepCard key={step.id} showRunLink={false} step={step} />
+            <HumanStepCard
+              key={step.id}
+              ownerName={run.ownerTeam?.name}
+              showRunLink={false}
+              step={step}
+            />
           ))}
         </section>
       )}

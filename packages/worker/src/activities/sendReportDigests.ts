@@ -1,7 +1,8 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import { orgMonthSpend } from '@auto-swe/shared/lib/billing';
+import { orgMonthSpend, teamMonthSpend } from '@auto-swe/shared/lib/billing';
 import { forecastMonthlyBudget } from '@auto-swe/shared/lib/budgetForecast';
+import { budgetStatusFor, tighterBudgetStatus } from '@auto-swe/shared/lib/budgetStatus';
 import { createReportDigestUnsubscribeToken } from '@auto-swe/shared/lib/reportDigestUnsubscribe';
 import { builtRollupDays } from '@auto-swe/shared/lib/rollupBuiltDays';
 import { resolvePublicUrl, resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
@@ -119,7 +120,9 @@ export async function sendReportDigests(input: {
           slackChannel: { select: { slackChannelId: true } },
           team: {
             select: {
+              budgetAlertThresholdPercent: true,
               id: true,
+              monthlyBudgetUsdCents: true,
               name: true,
               organization: {
                 select: {
@@ -371,7 +374,7 @@ export async function sendReportDigests(input: {
               })()
             : undefined;
         digest = buildReportDigest({
-          budget,
+          budget: budget ?? (await teamBudget(subscription, organization, now)),
           currentPeriod: { end: new Date(currentEnd.getTime() - DAY_MS), start: currentStart },
           currentRows,
           now,
@@ -629,6 +632,61 @@ function digestCandidateEmails(subscription: {
         .filter((email) => !optedOut.has(email))
     ),
   ];
+}
+
+/**
+ * The budget line of a TEAM digest: the binding cap's state and percent used, the team's own cap
+ * or its organization's, whichever has used the larger share, and never an amount. A percentage
+ * of a cap is safe for any reader, so unlike the organization digest nothing here depends on who
+ * receives it. Undefined when neither cap is set, and when the spend cannot be read: the line is
+ * a courtesy and its absence must not fail the digest.
+ */
+async function teamBudget(
+  subscription: {
+    scope: string;
+    team?: {
+      budgetAlertThresholdPercent: number | null;
+      id: string;
+      monthlyBudgetUsdCents: number | null;
+      orgId: string;
+    } | null;
+  },
+  organization:
+    | {
+        budgetAlertThresholdPercent: number | null;
+        id: string;
+        monthlyBudgetUsdCents: number | null;
+      }
+    | null
+    | undefined,
+  now: Date
+): Promise<{ percentUsed: number | null; scope: 'org' | 'team'; status: string } | undefined> {
+  const team = subscription.team;
+  if (subscription.scope !== 'TEAM' || !team || !organization) {
+    return undefined;
+  }
+  let orgSpend: Awaited<ReturnType<typeof orgMonthSpend>> | null;
+  let teamSpend: Awaited<ReturnType<typeof teamMonthSpend>> | null;
+  try {
+    [orgSpend, teamSpend] = await Promise.all([
+      organization.monthlyBudgetUsdCents == null ? null : orgMonthSpend(prisma, organization.id),
+      team.monthlyBudgetUsdCents == null ? null : teamMonthSpend(prisma, team.id),
+    ]);
+  } catch (error) {
+    logWarn('report digest sent without its budget line: the spend could not be read', {
+      error: error instanceof Error ? error.message : String(error),
+      teamId: team.id,
+    });
+    return undefined;
+  }
+  const status = tighterBudgetStatus(
+    orgSpend ? budgetStatusFor(organization, orgSpend.totalUsd, now, 'org') : undefined,
+    teamSpend ? budgetStatusFor(team, teamSpend.totalUsd, now, 'team') : undefined
+  );
+  if (!status || status.state === 'no_cap') {
+    return undefined;
+  }
+  return { percentUsed: status.percentUsed, scope: status.scope, status: status.state };
 }
 
 /**

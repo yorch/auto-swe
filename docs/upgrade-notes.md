@@ -916,7 +916,7 @@ the `mcp` node or another implemented connector, or remove it.
 
 ---
 
-### Epics and PRD runs need team LEAD on each owning team (`<fixing commit SHA>`)
+### Epics and PRD runs need team LEAD on each owning team (`8ed7461f`)
 
 **Affected.** Deployments whose API or CLI callers start epics (`POST /api/v1/epics`) or PRD runs
 (`POST /api/v1/prd-runs`) as a platform LEAD who is only an ENGINEER on the team that owns one of
@@ -933,7 +933,7 @@ PRD run. Check automation that starts either under a service account.
 
 ---
 
-### Organization budget dollars are ORG_ADMIN's; members read a percentage (`<fixing commit SHA>`)
+### Organization budget dollars are ORG_ADMIN's; members read a percentage (`8ed7461f`)
 
 **Affected.** Deployments whose API, CLI or script consumers read an organization's budget as a
 plain ORG_MEMBER, or parse the `402 ORG_BUDGET_EXCEEDED` body for the cap.

@@ -2,6 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { TeamChip } from '@/components/teams/TeamChip';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -30,6 +31,7 @@ import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { ApiError, api } from '@/lib/api';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
+import { teamGatedBoundary } from '@/lib/teamGate';
 import { cn } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -118,6 +120,8 @@ function Knowledge() {
     if (slugTeamId) {
       setTeamId(slugTeamId);
     }
+    // The page offset counted the previous list.
+    setOffset(0);
   }, [slugTeamId]);
 
   // Typing filters the server's list: wait for a pause.
@@ -135,13 +139,18 @@ function Knowledge() {
       api.get<{ data: { orgId: string } }>(`/api/v1/teams/${teamId}`).then((result) => result.data),
     queryKey: ['knowledge-team-scope', teamId],
   });
-  const items = useKnowledge({
-    offset,
-    q: query || undefined,
-    status: status || undefined,
-    type: type || undefined,
-    view,
-  });
+  // The `?team=` filter narrows the list; the Team select below is the create/permission target.
+  const items = useKnowledge(
+    {
+      offset,
+      q: query || undefined,
+      status: status || undefined,
+      teamId: teamFromSlug.teamId,
+      type: type || undefined,
+      view,
+    },
+    { enabled: !teamFromSlug.blocked }
+  );
   const perms = useKnowledgePermissions(teamId || undefined, teamScope.data?.orgId);
   const detail = useKnowledgeDetail(selected);
   const create = useKnowledgeCreate();
@@ -161,7 +170,8 @@ function Knowledge() {
     baseline !== null &&
     (editTitle !== baseline.title || editContent !== baseline.content);
   useUnsavedChangesGuard(dirty);
-  const filtersActive = !!(query || status || type || view !== 'read');
+  const teamFilterActive = !!teamFromSlug.team;
+  const filtersActive = !!(query || status || type || view !== 'read' || teamFilterActive);
 
   function clearFilters() {
     setSearch('');
@@ -170,6 +180,9 @@ function Knowledge() {
     setType('');
     setView('read');
     setOffset(0);
+    if (teamFilterActive) {
+      teamFromSlug.clear();
+    }
   }
 
   function openItem(item: KnowledgeItem) {
@@ -543,6 +556,7 @@ function Knowledge() {
         subtitle="Curated references, decisions and policies that agents recall. Lessons are captured from runs; knowledge is reviewed by people before it is trusted."
         title="Knowledge"
       />
+      <TeamChip onRemove={teamFromSlug.clear} team={teamFromSlug.team} />
       <Card>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Select
@@ -678,14 +692,7 @@ function Knowledge() {
             <CardHeader>
               <CardTitle>Items</CardTitle>
             </CardHeader>
-            <QueryBoundary
-              error={items.error}
-              isError={items.isError}
-              isFetching={items.isFetching}
-              isLoading={items.isLoading}
-              label="knowledge"
-              onRetry={() => void items.refetch()}
-            >
+            <QueryBoundary {...teamGatedBoundary(teamFromSlug, items)} label="knowledge">
               {listed.length === 0 ? (
                 filtersActive || offset > 0 ? (
                   <EmptyState

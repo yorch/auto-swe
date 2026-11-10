@@ -35,14 +35,20 @@ export interface KnowledgePermissions {
 const root = '/api/v1/knowledge';
 const invalidate = (qc: ReturnType<typeof useQueryClient>) =>
   qc.invalidateQueries({ queryKey: ['knowledge'] });
-export function useKnowledge(params: {
-  q?: string;
-  status?: string;
-  type?: string;
-  offset?: number;
-  view?: 'read' | 'review';
-}) {
+export function useKnowledge(
+  params: {
+    q?: string;
+    status?: string;
+    type?: string;
+    offset?: number;
+    view?: 'read' | 'review';
+    /** Narrow to one of the caller's teams (the `?team=` filter of a global page). */
+    teamId?: string;
+  },
+  options: { enabled?: boolean } = {}
+) {
   return useQuery({
+    enabled: options.enabled ?? true,
     queryFn: () => {
       const search = new URLSearchParams();
       for (const [key, value] of Object.entries(params)) {

@@ -1,4 +1,5 @@
-import type { TeamRef } from '@auto-swe/shared/types/api';
+import type { BudgetStatus, TeamRef } from '@auto-swe/shared/types/api';
+import { launchBudgetHint, launchBudgetReason } from '@/lib/repoLaunch';
 
 /** The team a piece of work is being started for. */
 export interface ScopeTeam {
@@ -16,6 +17,7 @@ interface Groupable {
   /** Always present from the gateway; tolerated as absent so a row without one is not dropped. */
   team?: TeamRef;
   shares?: Array<{ canLaunch?: boolean; team: TeamRef }>;
+  launchBudget?: BudgetStatus | null;
 }
 
 /**
@@ -71,12 +73,14 @@ export function groupedRepoOptions<T extends Groupable & { id: string }>(
 ) {
   return groupReposByTeam(repos, scope).flatMap((group) =>
     group.repos.map((repo) => {
-      const reason = blockedReason?.(repo) ?? null;
+      // An exhausted launch budget blocks like view only does; a nearing one only shows its percent.
+      const reason = blockedReason?.(repo) ?? launchBudgetReason(repo);
+      const hint = reason ? null : launchBudgetHint(repo);
+      const description = [group.label, reason ?? hint?.text].filter(Boolean).join(' · ');
       return {
-        description: reason
-          ? [group.label, reason].filter(Boolean).join(' · ')
-          : group.label || undefined,
+        description: description || undefined,
         ...(reason ? { disabled: true } : {}),
+        ...(hint?.warn ? { tone: 'warning' as const } : {}),
         label: label(repo),
         textValue: `${label(repo)} ${group.label}`.trim(),
         value: repo.id,

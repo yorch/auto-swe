@@ -18,6 +18,7 @@ import { useRepositories } from '@/hooks/useRepositories';
 import { useIsViewOnly } from '@/hooks/useViewOnlyRepos';
 import { errMsg } from '@/lib/errors';
 import { groupReposByTeam } from '@/lib/repoGroups';
+import { launchBudgetHint, launchBudgetReason } from '@/lib/repoLaunch';
 import { EPIC_SAMPLE, sampleEpicTicketId } from '@/lib/sampleTasks';
 
 /**
@@ -48,7 +49,10 @@ export function EpicLaunchForm({
   const create = useCreateEpic();
   const [externalTicketId, setExternalTicketId] = useState('');
   const [description, setDescription] = useState('');
-  const [repoIds, setRepoIds] = useState<string[]>([]);
+  const [pickedIds, setRepoIds] = useState<string[]>([]);
+  // A repository whose owner's budget is spent cannot be chosen, even if it was ticked before.
+  const overBudgetIds = new Set(allRepos.filter((r) => launchBudgetReason(r)).map((r) => r.id));
+  const repoIds = pickedIds.filter((id) => !overBudgetIds.has(id));
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [repoFilter, setRepoFilter] = useState('');
@@ -206,6 +210,8 @@ export function EpicLaunchForm({
                     </div>
                   )}
                   {group.repos.map((r) => {
+                    const budgetReason = launchBudgetReason(r);
+                    const budgetHint = budgetReason ? null : launchBudgetHint(r);
                     const checked = repoIds.includes(r.id);
                     return (
                       <Checkbox
@@ -213,6 +219,19 @@ export function EpicLaunchForm({
                         className={`border-b border-ink-600 px-3 py-2.5 last:border-b-0 ${
                           checked ? 'bg-accent-400/[0.06]' : 'hover:bg-ink-700/40'
                         }`}
+                        disabled={Boolean(budgetReason)}
+                        hint={
+                          budgetReason ? (
+                            <span data-testid="epic-budget-reason">{budgetReason}</span>
+                          ) : budgetHint ? (
+                            <span
+                              className={budgetHint.warn ? 'text-warning-400' : undefined}
+                              data-testid="epic-budget-hint"
+                            >
+                              {budgetHint.text}
+                            </span>
+                          ) : undefined
+                        }
                         key={r.id}
                         label={
                           <>

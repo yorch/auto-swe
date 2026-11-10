@@ -4,9 +4,9 @@ import type { HumanStepSummary } from '@auto-swe/shared/types/api';
 import { approvalAllowsRequestChanges } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
+import { GuardedButton } from '@/components/teams/GuardedButton';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
-import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Icon, type IconName } from '@/components/ui/Icon';
@@ -248,6 +248,11 @@ export interface HumanStepCardProps {
   defaultExpanded?: boolean;
   /** Called once an answer is recorded, with a sentence saying what was recorded. */
   onAnswered?: (message: string) => void;
+  /**
+   * The team that owns the run's repository, named in the reason when the caller may not answer.
+   * Used only when the step's `run.ownerTeam` is absent.
+   */
+  ownerName?: string | null;
 }
 
 export function HumanStepCard({
@@ -255,6 +260,7 @@ export function HumanStepCard({
   showRunLink = true,
   defaultExpanded = false,
   onAnswered,
+  ownerName,
 }: HumanStepCardProps) {
   const respond = useRespondToApproval();
   useTick(step.status === 'PENDING' && !!step.timeoutAt);
@@ -346,6 +352,14 @@ export function HumanStepCard({
   const expired = isExpired(step);
   const youApproved = step.status === 'PENDING' && step.myResponse === 'approve';
   const canRespond = step.status === 'PENDING' && !expired && !youApproved;
+  // The step carries its run's owner, so the inbox (which passes no ownerName) names it too.
+  // A caller-supplied name is the fallback for payloads without one.
+  const owner = step.run.ownerTeam?.name ?? ownerName ?? 'the owning team';
+  // Absent `canAnswer` (an older payload) leaves the controls on and lets the gateway refuse.
+  const answerBlocked =
+    step.canAnswer === false
+      ? `You cannot answer this step. It is controlled by ${owner}: you need to belong to that team and have access to its repository.`
+      : null;
   const responses = step.responses ?? [];
   const requestId = step.run.workRequestId;
 
@@ -458,15 +472,16 @@ export function HumanStepCard({
             </Badge>
           )}
           {canRespond && (
-            <Button
+            <GuardedButton
               aria-expanded={expanded}
+              blockedReason={expanded ? null : answerBlocked}
               className="h-[40px] lg:h-8"
               onClick={toggleExpanded}
               size="sm"
               variant={expanded ? 'ghost' : 'secondary'}
             >
               {expanded ? 'Collapse' : respondLabel(step.kind)}
-            </Button>
+            </GuardedButton>
           )}
         </div>
       </div>
@@ -536,7 +551,8 @@ export function HumanStepCard({
                   : 'Decide on this step. Either way you can leave a note.'}
               </p>
               <div className="flex gap-2 max-sm:w-full max-sm:*:flex-1">
-                <Button
+                <GuardedButton
+                  blockedReason={answerBlocked}
                   className="h-[40px] lg:h-8"
                   disabled={respond.isPending}
                   onClick={() => openDialog('reject')}
@@ -545,9 +561,10 @@ export function HumanStepCard({
                 >
                   <Icon name="close" size={13} />
                   Reject
-                </Button>
+                </GuardedButton>
                 {approvalAllowsRequestChanges(step.options) && (
-                  <Button
+                  <GuardedButton
+                    blockedReason={answerBlocked}
                     className="h-[40px] lg:h-8"
                     disabled={respond.isPending}
                     onClick={() => openDialog('request_changes')}
@@ -556,9 +573,10 @@ export function HumanStepCard({
                   >
                     <Icon name="edit" size={13} />
                     Request changes
-                  </Button>
+                  </GuardedButton>
                 )}
-                <Button
+                <GuardedButton
+                  blockedReason={answerBlocked}
                   className="h-[40px] lg:h-8"
                   disabled={respond.isPending}
                   onClick={() => openDialog('approve')}
@@ -567,7 +585,7 @@ export function HumanStepCard({
                 >
                   <Icon name="check" size={13} />
                   Approve
-                </Button>
+                </GuardedButton>
               </div>
             </div>
           )}
@@ -577,7 +595,8 @@ export function HumanStepCard({
               <h4 className="text-xs font-medium text-paper-400">Choose one</h4>
               <div className="flex flex-wrap gap-2">
                 {step.options.map((opt) => (
-                  <Button
+                  <GuardedButton
+                    blockedReason={answerBlocked}
                     className="h-[40px] lg:h-8"
                     disabled={respond.isPending}
                     key={opt.value}
@@ -589,7 +608,7 @@ export function HumanStepCard({
                     variant="secondary"
                   >
                     {opt.label}
-                  </Button>
+                  </GuardedButton>
                 ))}
               </div>
             </div>
@@ -647,7 +666,8 @@ export function HumanStepCard({
                   />
                 );
               })}
-              <Button
+              <GuardedButton
+                blockedReason={answerBlocked}
                 className="h-[40px] lg:h-8"
                 disabled={respond.isPending}
                 onClick={() => {
@@ -684,7 +704,7 @@ export function HumanStepCard({
                 variant="primary"
               >
                 {pendingAction === 'submit' ? 'Submitting…' : 'Submit'}
-              </Button>
+              </GuardedButton>
             </div>
           )}
 
@@ -707,7 +727,8 @@ export function HumanStepCard({
                   rows={hasContext ? 10 : 8}
                   value={reviewText}
                 />
-                <Button
+                <GuardedButton
+                  blockedReason={answerBlocked}
                   className="h-[40px] lg:h-8"
                   disabled={respond.isPending}
                   onClick={() => handleRespond('submit', reviewText)}
@@ -715,7 +736,7 @@ export function HumanStepCard({
                   variant="primary"
                 >
                   {pendingAction === 'submit' ? 'Submitting…' : 'Submit'}
-                </Button>
+                </GuardedButton>
               </div>
             </div>
           )}

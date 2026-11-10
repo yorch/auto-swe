@@ -232,6 +232,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/billing.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/budgetStatus',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/budgetStatus.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/budgetForecast',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/budgetForecast.ts'),
       },

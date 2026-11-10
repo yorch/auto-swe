@@ -45,7 +45,7 @@ import { useLedTeamIds, useTeams } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
-import { canWriteTeamResource, repoManageReason } from '@/lib/teamPermissions';
+import { canWriteTeamResource, repoLeadReason, repoManageReason } from '@/lib/teamPermissions';
 import { useAuthStore } from '@/stores/authStore';
 
 type ModalMode =
@@ -282,6 +282,8 @@ export default function ConnectionsPage() {
             ) : (
               <DataTable
                 actions={(r) => {
+                  const manageReason = (repo: typeof r) =>
+                    canManageTeam(repo.team?.id) ? null : repoLeadReason(repo.team?.name);
                   const isGitRepo = !r.type || r.type === 'git_repo';
                   const label = connectionLabel(r);
                   const menu: ActionMenuItem[] = [
@@ -317,11 +319,13 @@ export default function ConnectionsPage() {
                           },
                         ]
                       : []),
-                    // The server decides: only the owning team's leads (and
-                    // platform admins) may change sharing.
-                    ...(canManageTeam(r.team?.id) && isGitRepo
+                    // The server decides: only the owning team's leads (and platform admins)
+                    // may change sharing or switch a connection off. Others see the entries
+                    // disabled, with who can.
+                    ...(isGitRepo
                       ? [
                           {
+                            disabledReason: manageReason(r),
                             icon: 'teams' as const,
                             id: 'share',
                             label: 'Share with teams',
@@ -329,17 +333,14 @@ export default function ConnectionsPage() {
                           },
                         ]
                       : []),
-                    ...(canManageTeam(r.team?.id)
-                      ? [
-                          {
-                            icon: (r.isActive ? 'pause' : 'play') as 'pause' | 'play',
-                            id: 'toggle-active',
-                            label: r.isActive ? 'Deactivate' : 'Reactivate',
-                            onAction: () => setMode({ kind: 'toggle', repo: r }),
-                            tone: r.isActive ? ('danger' as const) : ('default' as const),
-                          },
-                        ]
-                      : []),
+                    {
+                      disabledReason: manageReason(r),
+                      icon: (r.isActive ? 'pause' : 'play') as 'pause' | 'play',
+                      id: 'toggle-active',
+                      label: r.isActive ? 'Deactivate' : 'Reactivate',
+                      onAction: () => setMode({ kind: 'toggle', repo: r }),
+                      tone: r.isActive ? ('danger' as const) : ('default' as const),
+                    },
                   ];
                   return (
                     <>

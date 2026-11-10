@@ -42,7 +42,7 @@ import {
 } from '@/lib/agentRun';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { groupedRepoOptions } from '@/lib/repoGroups';
-import { VIEW_ONLY_REASON } from '@/lib/repoLaunch';
+import { launchBudgetReason, VIEW_ONLY_REASON } from '@/lib/repoLaunch';
 import { requestHref } from '@/lib/requestDisplay';
 import { AGENT_SAMPLE_PROMPT } from '@/lib/sampleTasks';
 
@@ -113,6 +113,16 @@ export function AgentRunForm({
   );
 
   const gitRepos = (repos.data ?? []).filter((r) => r.type === 'git_repo');
+  // A repository chosen (or linked) before its budget ran out is dropped, as the epic form does,
+  // and the note says why. The server stays the authority.
+  const [clearedRepo, setClearedRepo] = useState<string | null>(null);
+  const overBudgetRepo = values.repoId
+    ? gitRepos.find((r) => r.id === values.repoId && launchBudgetReason(r))
+    : undefined;
+  if (overBudgetRepo) {
+    setClearedRepo(`${connectionLabel(overBudgetRepo)}: ${launchBudgetReason(overBudgetRepo)}`);
+    setValues((v) => ({ ...v, repoId: '' }));
+  }
   const agentList = agents.data ?? [];
   // A repository change can drop the chosen agent (an org's overrides differ).
   const agent = agentList.find((a) => a.key === values.agentKey);
@@ -132,6 +142,9 @@ export function AgentRunForm({
 
   const set = <K extends keyof AgentRunFormValues>(key: K, value: AgentRunFormValues[K]) => {
     setValues((v) => ({ ...v, [key]: value }));
+    if (key === 'repoId') {
+      setClearedRepo(null);
+    }
     // A launch error is about the values it was sent with.
     if (launch.isError) {
       launch.reset();
@@ -312,6 +325,11 @@ export function AgentRunForm({
         </Alert>
       )}
       {launchError && <LaunchErrorAlert view={launchError} />}
+      {clearedRepo && !values.repoId && (
+        <Alert title="Repository cleared" variant="warning">
+          {clearedRepo}
+        </Alert>
+      )}
 
       <Combobox
         emptyMessage="No repositories match"

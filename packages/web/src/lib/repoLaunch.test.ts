@@ -1,5 +1,6 @@
+import type { BudgetStatus } from '@auto-swe/shared/types/api';
 import { describe, expect, it } from 'vitest';
-import { isViewOnlyFor } from './repoLaunch';
+import { isViewOnlyFor, launchBudgetHint, launchBudgetReason } from './repoLaunch';
 
 const t = (id: string) => ({ id, name: id, slug: id });
 const mine = new Set(['pay']);
@@ -39,5 +40,50 @@ describe('isViewOnlyFor', () => {
   });
   it('is not view only for a repository the caller reaches through no share', () => {
     expect(isViewOnlyFor({ shares: [], team: t('own') }, mine, false)).toBe(false);
+  });
+});
+
+const budget = (state: BudgetStatus['state'], percentUsed: number | null): BudgetStatus => ({
+  alertThresholdPercent: 80,
+  percentUsed,
+  scope: 'team',
+  state,
+});
+
+describe('launch budget wording', () => {
+  const owner = { id: 'o', name: 'Design', slug: 'design' };
+  it('blocks only an over budget, naming the owner and no amount', () => {
+    const reason = launchBudgetReason({ launchBudget: budget('over', 130), team: owner });
+    expect(reason).toBe("Over Design's budget this month. Ask Design's team lead.");
+    expect(reason).not.toMatch(/\d/);
+    for (const state of ['ok', 'alert', 'projected_over', 'no_cap'] as const) {
+      expect(launchBudgetReason({ launchBudget: budget(state, 90), team: owner })).toBeNull();
+    }
+    expect(launchBudgetReason({ launchBudget: null, team: owner })).toBeNull();
+    expect(launchBudgetReason({ team: owner })).toBeNull();
+  });
+  it("points at an organization admin when the organization's cap is the spent one", () => {
+    const reason = launchBudgetReason({
+      launchBudget: { ...budget('over', 130), scope: 'org' },
+      team: owner,
+    });
+    expect(reason).toBe("The organization's monthly budget is spent. Ask an organization admin.");
+    expect(reason).not.toMatch(/\d|Design/);
+  });
+  it('falls back to a neutral owner without a team', () => {
+    expect(launchBudgetReason({ launchBudget: budget('over', 100) })).toContain(
+      "the owning team's budget"
+    );
+  });
+  it('shows a floored percent, warning when nearing or projected over', () => {
+    expect(launchBudgetHint({ launchBudget: budget('ok', 49.9) })).toEqual({
+      text: '49% of budget used',
+      warn: false,
+    });
+    expect(launchBudgetHint({ launchBudget: budget('alert', 85) })?.warn).toBe(true);
+    expect(launchBudgetHint({ launchBudget: budget('projected_over', 70) })?.warn).toBe(true);
+    expect(launchBudgetHint({ launchBudget: budget('over', 120) })).toBeNull();
+    expect(launchBudgetHint({ launchBudget: budget('no_cap', null) })).toBeNull();
+    expect(launchBudgetHint({ launchBudget: null })).toBeNull();
   });
 });

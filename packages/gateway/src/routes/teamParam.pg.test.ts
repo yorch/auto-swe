@@ -448,6 +448,7 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
         {
           canLaunch: true,
           id: ids.repoa,
+          launchBudget: null,
           name: expect.any(String),
           ownerTeamName: `ts-a-${suffix}`,
           relation: 'shared',

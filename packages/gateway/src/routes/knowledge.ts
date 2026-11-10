@@ -21,6 +21,7 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { sendError } from '../lib/httpErrors.js';
+import { assertTeamParam } from '../lib/teamParam.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -29,6 +30,7 @@ const ListQuery = z.object({
   offset: z.coerce.number().int().min(0).max(100).default(0),
   q: z.string().trim().min(1).max(160).optional(),
   status: z.enum(['UNREVIEWED', 'APPROVED', 'REJECTED', 'SUPERSEDED']).optional(),
+  teamId: z.string().uuid().optional(),
   type: z.enum(['LEARNING', 'REFERENCE', 'DECISION', 'POLICY']).optional(),
   view: z.enum(['read', 'review']).default('read'),
 });
@@ -74,9 +76,15 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const capability = await capabilityFor(user, request);
-      const { limit, offset, q, status, type, view } = request.query;
+      const { limit, offset, q, status, teamId, type, view } = request.query;
+      // A member's team, or any for a platform ADMIN; it only narrows what the caller may read.
+      if (teamId) {
+        await assertTeamParam(fastify.prisma, user, teamId);
+      }
       if (view === 'read') {
-        const safe = await listReadableKnowledge(fastify.prisma, user.sub, capability, 100);
+        const safe = await listReadableKnowledge(fastify.prisma, user.sub, capability, 100, {
+          ...(teamId ? { teamId } : {}),
+        });
         const filtered = safe.filter(
           (item) =>
             (!status || item.status === status) &&
@@ -95,6 +103,7 @@ export const knowledgeRoutes: FastifyPluginAsync = async (fastify) => {
           limit: Math.min(100, limit + offset),
           query: q,
           status,
+          teamId,
           type,
         });
         const data = managed.slice(offset, offset + limit);

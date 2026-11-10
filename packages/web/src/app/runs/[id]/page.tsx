@@ -430,7 +430,7 @@ export default function RunDetailPage({ params }: PageProps) {
             {!isTerminalWorkflowRunStatus(run.status) && (
               <GuardedButton
                 aria-describedby="cancel-run-hint"
-                blockedReason={denied ? runControlReason(null, 'cancel') : null}
+                blockedReason={denied ? runControlReason(run.ownerTeam?.name, 'cancel') : null}
                 className={TOUCH_SM}
                 disabled={cancelRun.isPending}
                 onClick={() => setShowCancelConfirm(true)}
@@ -448,7 +448,7 @@ export default function RunDetailPage({ params }: PageProps) {
             {canReRun && (
               <GuardedButton
                 aria-describedby="re-run-hint"
-                blockedReason={denied ? runControlReason(null, 're-run') : null}
+                blockedReason={denied ? runControlReason(run.ownerTeam?.name, 're-run') : null}
                 className={TOUCH_SM}
                 disabled={reRunLocked}
                 onClick={handleReRun}

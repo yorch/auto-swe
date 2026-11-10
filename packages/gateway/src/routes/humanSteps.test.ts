@@ -62,6 +62,8 @@ describe('human step routes', () => {
   const app = Fastify();
 
   let listRows: Array<Record<string, unknown>> = [];
+  let answerableIds: string[] | null = null;
+  const answerableCalls: Array<Record<string, unknown>> = [];
   let stepRow: Record<string, unknown> | null = null;
   let updateManyCount = 1;
   const updateManyCalls: UpdateManyCall[] = [];
@@ -101,6 +103,14 @@ describe('human step routes', () => {
         },
         findFirst: async () => stepRow,
         findMany: async (args: Record<string, unknown>) => {
+          // The `canAnswer` read names the page's ids first; it is kept apart from the list reads.
+          const ids = (args.where as { AND?: Array<{ id?: { in: string[] } }> }).AND?.[0]?.id?.in;
+          if (ids) {
+            answerableCalls.push(args);
+            return answerableIds
+              ? listRows.filter((r) => answerableIds?.includes(r.id as string))
+              : listRows;
+          }
           findManyCalls.push(args);
           return listRows;
         },
@@ -164,6 +174,110 @@ describe('human step routes', () => {
       expect(body.data[0].run.workflowId).toBe('eng-acme-repo-JIRA-1');
       // signalName is intentionally not part of the list projection
       expect(body.data[0].signalName).toBeUndefined();
+    });
+  });
+
+  describe('run.ownerTeam', () => {
+    const owner = { id: 'team-own', name: 'Payments', slug: 'payments' };
+    const runWith = (extra: Record<string, unknown>) => ({
+      ...(pendingStep().run as Record<string, unknown>),
+      ...extra,
+    });
+
+    it("names the owner of the run's repository and drops the relations it read", async () => {
+      listRows = [pendingStep({ run: runWith({ connection: { team: owner } }) })];
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      const { run } = JSON.parse(res.payload).data[0];
+      expect(run.ownerTeam).toEqual(owner);
+      expect(run.connection).toBeUndefined();
+      expect(run.workRequest).toEqual({ description: 'Add endpoint', externalTicketId: 'JIRA-1' });
+    });
+
+    it("falls back to the request's repository, and is null with none", async () => {
+      listRows = [
+        pendingStep({
+          run: runWith({
+            workRequest: { connection: { team: owner }, description: 'd', externalTicketId: 'T-1' },
+          }),
+        }),
+        pendingStep({ id: '00000000-0000-4000-8000-0000000000b1' }),
+      ];
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      const data = JSON.parse(res.payload).data;
+      expect(data[0].run.ownerTeam).toEqual(owner);
+      expect(data[1].run.ownerTeam).toBeNull();
+    });
+
+    it('is read in the list query itself: no extra query per step', async () => {
+      listRows = [pendingStep(), pendingStep({ id: '00000000-0000-4000-8000-0000000000b2' })];
+      const before = findManyCalls.length;
+      await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      expect(findManyCalls.length - before).toBe(1);
+      const select = (findManyCalls.at(-1) as { include: { run: { select: object } } }).include.run
+        .select;
+      expect(select).toHaveProperty('connection.select.team');
+    });
+  });
+
+  describe('GET / canAnswer', () => {
+    const other = '00000000-0000-4000-8000-0000000000a1';
+
+    it('is one batched query over the page, by the predicate actionable=true filters with', async () => {
+      listRows = [pendingStep(), pendingStep({ id: other })];
+      const before = findManyCalls.length;
+      const answerableBefore = answerableCalls.length;
+      // Both reads build `new Date()` into the expiry term; pin it so they compare equal.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      try {
+        await app.inject({
+          headers: AUTH,
+          method: 'GET',
+          url: '/api/v1/human-steps?actionable=true',
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+      // One list read and exactly one more for the whole page: no per-step query.
+      expect(findManyCalls.slice(before)).toHaveLength(1);
+      expect(answerableCalls.slice(answerableBefore)).toHaveLength(1);
+      const list = findManyCalls.at(-1) as { where: Record<string, unknown> };
+      const answerable = answerableCalls.at(-1) as { where: Record<string, unknown> };
+      expect(answerable.where).toEqual({
+        AND: [{ id: { in: [STEP_ID, other] } }, list.where],
+      });
+    });
+
+    it('is true only for the ids the answerable query returns', async () => {
+      listRows = [pendingStep(), pendingStep({ id: other })];
+      // The caller can see both but control only the first.
+      answerableIds = [STEP_ID];
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      answerableIds = null;
+      const data = JSON.parse(res.payload).data as Array<{ canAnswer: boolean; id: string }>;
+      expect(data.map((d) => [d.id, d.canAnswer])).toEqual([
+        [STEP_ID, true],
+        [other, false],
+      ]);
+    });
+
+    it('is false for a service-principal caller, who is refused on the answer route', async () => {
+      listRows = [pendingStep()];
+      const before = answerableCalls.length;
+      const res = await app.inject({
+        headers: { ...AUTH, 'x-test-auth': 'service' },
+        method: 'GET',
+        url: '/api/v1/human-steps',
+      });
+      const data = JSON.parse(res.payload).data as Array<{ canAnswer: boolean }>;
+      expect(data.map((d) => d.canAnswer)).toEqual([false]);
+      expect(answerableCalls.length - before).toBe(0);
+    });
+
+    it('asks nothing extra for an empty page', async () => {
+      listRows = [];
+      const before = answerableCalls.length;
+      await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/human-steps' });
+      expect(answerableCalls.length - before).toBe(0);
     });
   });
 
@@ -323,6 +437,18 @@ describe('human step routes', () => {
       expect(JSON.stringify(where.run)).not.toBe(JSON.stringify(plain.run));
     });
 
+    it('requires a RUNNING run, as its own AND element beside the control filter', async () => {
+      const where = await listWhere('/api/v1/human-steps?actionable=true');
+      expect(where.AND).toEqual([{ run: { status: 'RUNNING' } }]);
+      expect(where.run).toEqual(
+        buildWorkflowRunControlFilter({ role: 'ENGINEER', sub: USER_ID } as never, undefined)
+      );
+      // answeredByMe ANDs beside it, never over it.
+      const both = await listWhere('/api/v1/human-steps?actionable=true&answeredByMe=true');
+      expect(both.AND).toHaveLength(2);
+      expect(both.AND).toContainEqual({ run: { status: 'RUNNING' } });
+    });
+
     it('a plain list carries no actionable narrowing', async () => {
       const where = await listWhere('/api/v1/human-steps');
       expect(where.humanApprovals).toBeUndefined();
@@ -439,7 +565,8 @@ describe('human step routes', () => {
       // requires the caller's resolvedBy or approval row. A PENDING step never has either.
       expect(both.status).toBe('PENDING');
       expect(both.humanApprovals).toEqual({ none: { resolvedBy: USER_ID } });
-      expect(andOf()).toHaveLength(1);
+      expect(andOf()).toHaveLength(2);
+      expect(andOf()).toContainEqual({ run: { status: 'RUNNING' } });
     });
 
     it('runs no count for a default request, the sidebar poll, or actionable', async () => {

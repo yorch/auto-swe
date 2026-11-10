@@ -1,7 +1,11 @@
 import type { BudgetStatus } from '@auto-swe/shared/types/api';
 import { describe, expect, it, vi } from 'vitest';
 import { budgetStatusFor } from './orgBudgetStatus.js';
-import { bindingBudgetStatuses, tighterBudgetStatus } from './teamBudgetStatus.js';
+import {
+  bindingBudgetStatuses,
+  ownerLaunchBudgets,
+  tighterBudgetStatus,
+} from './teamBudgetStatus.js';
 
 vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -107,5 +111,45 @@ describe('bindingBudgetStatuses', () => {
     expect(result.get('t2')).toMatchObject({ percentUsed: 10, scope: 'org' });
     expect(prisma.team.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.organization.findMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ownerLaunchBudgets', () => {
+  const repos = [
+    { id: 'r1', team: { id: 'owner', orgId: 'o1' } },
+    { id: 'r2', team: { id: 'owner', orgId: 'o1' } },
+    { id: 'r3', team: { id: 'free', orgId: 'o1' } },
+  ];
+  const prismaWith = (orgCap: number | null) => ({
+    organization: {
+      findMany: vi.fn(async () => [
+        { budgetAlertThresholdPercent: null, id: 'o1', monthlyBudgetUsdCents: orgCap },
+      ]),
+    },
+    orgMonthlyUsage: { findUnique: vi.fn(async () => ({ costUsdAccrued: 0 })) },
+    team: {
+      findMany: vi.fn(async () => [
+        { budgetAlertThresholdPercent: null, id: 'owner', monthlyBudgetUsdCents: 1000 },
+        { budgetAlertThresholdPercent: null, id: 'free', monthlyBudgetUsdCents: null },
+      ]),
+    },
+    // The OWNER is at its cap; any sharee team's own spend is never read here.
+    teamSpendUsd: { owner: 10 },
+  });
+
+  it("gives every repository its owning team's status from one batched read", async () => {
+    const prisma = prismaWith(null);
+    const result = await ownerLaunchBudgets(prisma as never, repos, MID_MONTH);
+    expect(result.get('r1')).toMatchObject({ percentUsed: 100, scope: 'team', state: 'over' });
+    expect(result.get('r2')).toEqual(result.get('r1'));
+    // No cap on the owner or its organization: nothing to show.
+    expect(result.has('r3')).toBe(false);
+    expect(prisma.team.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.organization.findMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries percent only, never an amount', async () => {
+    const result = await ownerLaunchBudgets(prismaWith(100_000) as never, repos, MID_MONTH);
+    expect(JSON.stringify([...result.values()])).not.toMatch(/usd|cents/i);
   });
 });

@@ -20,6 +20,24 @@ vi.mock('@/hooks/useRepositories', () => ({
         repoName: 'repo',
         type: 'git_repo',
       },
+      {
+        id: 'conn-over',
+        launchBudget: { alertThresholdPercent: 80, percentUsed: 120, scope: 'team', state: 'over' },
+        name: 'spent',
+        organizationName: 'acme',
+        repoName: 'spent',
+        team: { id: 'own', name: 'Owner', slug: 'owner' },
+        type: 'git_repo_budget',
+      },
+      {
+        id: 'conn-warn',
+        launchBudget: { alertThresholdPercent: 80, percentUsed: 91, scope: 'team', state: 'alert' },
+        name: 'nearing',
+        organizationName: 'acme',
+        repoName: 'nearing',
+        team: { id: 'own', name: 'Owner', slug: 'owner' },
+        type: 'git_repo_budget',
+      },
     ],
   }),
 }));
@@ -47,6 +65,24 @@ describe('SchemaFieldInput', () => {
     expect(options.length).toBe(1);
     expect(options[0].textContent).toContain('My Notion');
     expect(screen.queryByText(/acme/)).toBeNull();
+  });
+
+  it('disables a repository whose owner budget is spent and warns on a nearing one', () => {
+    render(
+      <SchemaFieldInput
+        name="connectionId"
+        onChange={() => undefined}
+        prop={{ connectionType: 'git_repo_budget', type: 'connection' }}
+        value=""
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /show options/i }));
+    const over = screen.getByRole('option', { name: /spent/ });
+    expect(over.getAttribute('aria-disabled')).toBe('true');
+    expect(over.textContent).toContain("Over Owner's budget this month. Ask Owner's team lead.");
+    const warn = screen.getByRole('option', { name: /nearing/ });
+    expect(warn.getAttribute('aria-disabled')).not.toBe('true');
+    expect(warn.textContent).toContain('91% of budget used');
   });
 
   it('labels a field by its title, and renders a choice list as checkboxes', () => {

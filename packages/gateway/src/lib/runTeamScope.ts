@@ -189,3 +189,24 @@ export function teamsOfRun(run: RunTeamRow): {
   const owner = repositories.find((repo) => repo.team)?.team ?? run.template?.team ?? null;
   return { owner, teamIds };
 }
+
+/**
+ * What {@link ownerTeamOfRun} reads, as a `select` on a `WorkflowRun`: the owning team of the run's
+ * repository, and of its request's repository for a run that records none itself.
+ */
+export const RUN_OWNER_TEAM_SELECT = {
+  connection: { select: { team: teamRef } },
+  workRequest: { select: { connection: { select: { team: teamRef } } } },
+} as const;
+
+/**
+ * The team that owns the run's repository, or null when it has none. Only the repository's owner
+ * is named, which anyone who sees the repository already sees in the repository listing; a team
+ * attributed only through a template or channel is not.
+ */
+export function ownerTeamOfRun(run: {
+  connection?: { team: { id: string; name: string; slug: string } } | null;
+  workRequest?: { connection?: { team: { id: string; name: string; slug: string } } | null } | null;
+}): { id: string; name: string; slug: string } | null {
+  return run.connection?.team ?? run.workRequest?.connection?.team ?? null;
+}
