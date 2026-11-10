@@ -185,6 +185,25 @@ describe('fetchOwnRepoPermission', () => {
     expect(headers.Authorization).toBe('Bearer user-tok');
   });
 
+  it('exposes the oauth scopes header only when GitHub sent one', async () => {
+    stub(() =>
+      reply({ permissions: { pull: true, push: true } }, { headers: { 'x-oauth-scopes': 'repo' } })
+    );
+    await expect(fetchOwnRepoPermission(OWN)).resolves.toEqual({
+      oauthScopes: 'repo',
+      ok: true,
+      permission: 'write',
+    });
+    stub(() => reply({ permissions: { pull: true, push: true } }));
+    const bare = await fetchOwnRepoPermission(OWN);
+    expect(bare).not.toHaveProperty('oauthScopes');
+  });
+
+  it('never exposes the scopes header from the collaborator lookup', async () => {
+    stub(() => reply({ permission: 'write' }, { headers: { 'x-oauth-scopes': 'repo' } }));
+    await expect(fetchRepoPermission(QUERY)).resolves.toEqual({ ok: true, permission: 'write' });
+  });
+
   it('maps the permission flags to levels, strongest first', async () => {
     for (const [permissions, expected] of [
       [{ admin: true, pull: true, push: true }, 'admin'],

@@ -25,6 +25,7 @@ import { fetchOwnRepoPermission, permissionMeets } from '@auto-swe/shared/lib/gi
 import { recordRepoPermission } from '@auto-swe/shared/lib/repoAccessProjection';
 import { isRepoMember, repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
+import type { TokenWriteCapability } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -39,6 +40,32 @@ const SaveSchema = z.object({
   // clone URL, and a pasted trailing newline is the common way to break both.
   token: z.string().trim().min(1).max(1000).regex(/^\S+$/, 'must not contain whitespace'),
 });
+
+/**
+ * Can this token write pull-request reviews? Only a classic token answers: its
+ * `x-oauth-scopes` header lists scopes, and `repo` covers private and public
+ * repositories. Fine-grained and App tokens send no header or an empty one, and whether a
+ * `public_repo`-only token suffices depends on repository visibility we do not
+ * know, so both are `unverifiable`. The header is untrusted host text: it is
+ * classified here and never returned or logged.
+ */
+export function classifyWriteCapability(oauthScopes: string | undefined): TokenWriteCapability {
+  if (oauthScopes === undefined) {
+    return 'unverifiable';
+  }
+  const scopes = oauthScopes
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  // Present but empty: fine-grained tokens may send the header with no scopes, so it says nothing.
+  if (scopes.length === 0) {
+    return 'unverifiable';
+  }
+  if (scopes.includes('repo')) {
+    return 'ok';
+  }
+  return scopes.includes('public_repo') ? 'unverifiable' : 'insufficient';
+}
 
 export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -236,6 +263,8 @@ export const connectionCredentialRoutes: FastifyPluginAsync = async (fastify) =>
           lastFour: saved.tokenLastFour,
           permission: lookup.permission,
           updatedAt: saved.updatedAt,
+          // Advisory only: nothing above refused on it and nothing stores it.
+          writeCapability: classifyWriteCapability(lookup.oauthScopes),
         },
       });
     }

@@ -112,6 +112,79 @@ describe('connectionCredentialRoutes', () => {
     });
   }
 
+  describe('writeCapability', () => {
+    async function capabilityFor(lookup: unknown) {
+      fetchOwnRepoPermission.mockResolvedValue(lookup);
+      const res = await save();
+      expect(res.statusCode).toBe(201);
+      return { body: res.payload, data: JSON.parse(res.payload).data };
+    }
+
+    it('is ok for a classic token with repo', async () => {
+      const { data } = await capabilityFor({
+        oauthScopes: 'read:user, repo',
+        ok: true,
+        permission: 'write',
+      });
+      expect(data.writeCapability).toBe('ok');
+    });
+
+    it('is insufficient, without blocking the save, for a classic token lacking repo', async () => {
+      const { data, body } = await capabilityFor({
+        oauthScopes: 'read:user',
+        ok: true,
+        permission: 'write',
+      });
+      expect(data.writeCapability).toBe('insufficient');
+      expect(body).not.toContain('read:user');
+      expect(ctx.prisma.connectionCredential.upsert).toHaveBeenCalled();
+    });
+
+    it('is unverifiable for public_repo alone (visibility is unknown)', async () => {
+      const { data } = await capabilityFor({
+        oauthScopes: 'public_repo',
+        ok: true,
+        permission: 'write',
+      });
+      expect(data.writeCapability).toBe('unverifiable');
+    });
+
+    it('is unverifiable when GitHub sent no scopes header (fine-grained token)', async () => {
+      const { data } = await capabilityFor({ ok: true, permission: 'write' });
+      expect(data.writeCapability).toBe('unverifiable');
+    });
+
+    it.each(['', '  '])(
+      'is unverifiable when the scopes header is present but empty (%j)',
+      async (header) => {
+        const { data } = await capabilityFor({
+          oauthScopes: header,
+          ok: true,
+          permission: 'write',
+        });
+        expect(data.writeCapability).toBe('unverifiable');
+      }
+    );
+
+    it('never carries scope names or header text, and stores nothing about it', async () => {
+      const { body } = await capabilityFor({
+        oauthScopes: 'repo, admin:org, delete_repo',
+        ok: true,
+        permission: 'write',
+      });
+      expect(body).not.toMatch(/admin:org|delete_repo/);
+      const upsert = ctx.prisma.connectionCredential.upsert.mock.calls[0][0];
+      expect(JSON.stringify(upsert)).not.toMatch(/admin:org|writeCapability/);
+    });
+
+    it('a failed check still refuses as before and reports no capability', async () => {
+      fetchOwnRepoPermission.mockResolvedValue({ failure: 'unavailable', ok: false });
+      const res = await save();
+      expect(res.statusCode).toBe(503);
+      expect(res.payload).not.toContain('writeCapability');
+    });
+  });
+
   it('verifies the token with GitHub, stores it encrypted, and never echoes it', async () => {
     const res = await save();
     expect(res.statusCode).toBe(201);
