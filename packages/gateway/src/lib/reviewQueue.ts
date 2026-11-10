@@ -10,8 +10,10 @@ import {
   type QueueItem,
   type ReviewRouting,
   type RiskClass,
+  ROUTING_REPOSITORY_MATCH_BUDGET,
   type RoutingDecision,
   type RoutingFacts,
+  toRiskClass,
 } from '@auto-swe/shared/lib/prEvaluation';
 
 /** Evaluation rows read for one queue; far above any queue the pull-request cap allows. */
@@ -20,6 +22,8 @@ export const EVALUATION_ROW_CAP = 20_000;
 const ROUTING_PATHS_CHUNK = 100;
 
 const ROUTING_KEYS = [
+  'prEvaluation.defaultMode',
+  'prEvaluation.enabled',
   'prEvaluation.humanAboveLines',
   'prEvaluation.humanMinRisk',
   'prEvaluation.humanPaths',
@@ -30,6 +34,8 @@ const ROUTING_KEYS = [
 /** The repository fields routing reads; select them wherever a queue is built. */
 export const ROUTING_REPOSITORY_SELECT = {
   id: true,
+  isActive: true,
+  prEvaluationMode: true,
   reviewRouting: true,
   team: { select: { orgId: true } },
   teamId: true,
@@ -37,6 +43,8 @@ export const ROUTING_REPOSITORY_SELECT = {
 
 export type RoutingRepository = {
   id: string;
+  isActive: boolean;
+  prEvaluationMode: string | null;
   reviewRouting: unknown;
   team: { orgId: string | null } | null;
   teamId: string;
@@ -45,6 +53,8 @@ export type RoutingRepository = {
 /** The pull-request fields a queue is built from. */
 export type QueuePullRequest = {
   headSha: string;
+  /** The head the host last reported (a push, a synchronize webhook); null until one arrived. */
+  hostHeadSha: string | null;
   id: string;
   isDraft: boolean;
   openedAt: Date;
@@ -79,10 +89,16 @@ const STRICTEST_ROUTING: ReviewRouting = {
   skipWhenBotApproved: false,
 };
 
-/** The routing in force for a repository: the settings at its scope, its override over them. */
+/**
+ * The routing in force for a repository: the settings at its scope, its override over them (which
+ * can only add strictness). `evaluating` says whether evaluations are being kept current for the
+ * repository; when they are not, a stored evaluation is a snapshot nothing refreshes and must not
+ * decide anything.
+ */
 export async function resolveRepositoryRouting(
-  repository: Pick<RoutingRepository, 'reviewRouting' | 'team' | 'teamId'>
-): Promise<{ effective: ReviewRouting; inherited: ReviewRouting }> {
+  repository: Pick<RoutingRepository, 'reviewRouting' | 'team' | 'teamId'> &
+    Partial<Pick<RoutingRepository, 'isActive' | 'prEvaluationMode'>>
+): Promise<{ effective: ReviewRouting; evaluating: boolean; inherited: ReviewRouting }> {
   const settings = await resolveSettings(ROUTING_KEYS, {
     ...(repository.team?.orgId ? { orgId: repository.team.orgId } : {}),
     teamId: repository.teamId,
@@ -94,8 +110,11 @@ export async function resolveRepositoryRouting(
     quickReviewMaxLines: settings['prEvaluation.quickReviewMaxLines'],
     skipWhenBotApproved: settings['prEvaluation.humanSkipsBotApproved'],
   };
+  const mode = repository.prEvaluationMode ?? settings['prEvaluation.defaultMode'];
   return {
     effective: mergeReviewRouting(inherited, parseReviewRoutingOverride(repository.reviewRouting)),
+    evaluating:
+      settings['prEvaluation.enabled'] === true && repository.isActive !== false && mode !== 'off',
     inherited,
   };
 }
@@ -174,9 +193,12 @@ export async function buildReviewQueueRows(
     }
   }
   const policies = new Map<string, ReviewRouting>();
+  const evaluating = new Map<string, boolean>();
   await Promise.all(
     [...repositories.values()].map(async (repository) => {
-      policies.set(repository.id, (await resolveRepositoryRouting(repository)).effective);
+      const resolved = await resolveRepositoryRouting(repository);
+      policies.set(repository.id, resolved.effective);
+      evaluating.set(repository.id, resolved.evaluating);
     })
   );
 
@@ -189,12 +211,29 @@ export async function buildReviewQueueRows(
       pull.repoId !== null && pull.prNumber !== null
         ? newest.get(pairKey(pull.repoId, pull.prNumber))
         : undefined;
-    const row = found && found.headSha === pull.headSha ? found : undefined;
+    // The evaluation counts only at the head the host last reported (a push the platform has
+    // not evaluated leaves the newest row at an older head), and only while evaluations are
+    // being kept current for the repository: switched off, a stored row is a stale snapshot.
+    const currentHead = pull.hostHeadSha ?? pull.headSha;
+    const kept = pull.repository !== null && evaluating.get(pull.repository.id) === true;
+    const row = kept && found && found.headSha === currentHead ? found : undefined;
     return { policy, pull, row };
   });
   type Item = (typeof items)[number];
 
-  const budget = createRoutingMatchBudget();
+  // One budget for the request and one per repository: a repository with costly globs cannot use
+  // up the work another repository's pull requests need, and the request stays bounded overall.
+  const requestBudget = createRoutingMatchBudget();
+  const repositoryBudgets = new Map<string, ReturnType<typeof createRoutingMatchBudget>>();
+  const budgetsFor = (item: { pull: QueuePullRequest }) => {
+    const key = item.pull.repository?.id ?? '';
+    let own = repositoryBudgets.get(key);
+    if (!own) {
+      own = createRoutingMatchBudget(ROUTING_REPOSITORY_MATCH_BUDGET);
+      repositoryBudgets.set(key, own);
+    }
+    return [requestBudget, own];
+  };
   const decide = (item: Item, routing: RoutingFacts | null): RoutingDecision =>
     decideNeedsHuman(
       {
@@ -203,11 +242,12 @@ export async function buildReviewQueueRows(
               autoMergeEnabled: item.row.autoMergeEnabled,
               botApproved: item.row.botApproved,
               changedLines: item.row.changedLines,
-              // A row from before the flag was recorded reads as standing when any review at
-              // its head asked for changes.
-              humanObjection: item.row.humanObjection ?? item.row.changesRequestedCount > 0,
+              // The flag is written when the row is created; a request for changes after that
+              // only bumps the count on the same row. Either one stands the objection.
+              humanObjection:
+                item.row.humanObjection === true || item.row.changesRequestedCount > 0,
               requiredApprovers: item.row.requiredApprovers,
-              riskClass: item.row.riskClass as RiskClass,
+              riskClass: toRiskClass(item.row.riskClass),
               routing,
               trustedApprovers: item.row.trustedApprovers,
             }
@@ -216,7 +256,7 @@ export async function buildReviewQueueRows(
         status: item.pull.status as 'OPEN' | 'MERGED' | 'CLOSED',
       },
       item.policy,
-      budget
+      budgetsFor(item)
     );
 
   // The path list is large, so it is read only for pull requests whose rules look at it, and a
@@ -254,7 +294,7 @@ export async function buildReviewQueueRows(
       id: pull.id,
       openedAt: pull.openedAt,
       quickReviewMaxLines: policy.quickReviewMaxLines,
-      riskClass: row ? (row.riskClass as RiskClass) : null,
+      riskClass: row ? toRiskClass(row.riskClass) : null,
     })),
   };
 }

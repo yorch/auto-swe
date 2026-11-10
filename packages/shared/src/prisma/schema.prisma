@@ -428,6 +428,11 @@ model PullRequest {
   repository Connection?     @relation(fields: [repoId], references: [id])
   prNumber   Int?            @map("pr_number")
   headSha    String          @map("head_sha")
+  /// The head the host last reported for this pull request, from `synchronize` webhooks and the
+  /// platform's own pushes; NULL until one arrived. `headSha` above is the commit the platform
+  /// last pushed, and the CI wait is keyed on it, so a person's push must not move it. The review
+  /// queue counts an evaluation only when it is for `hostHeadSha ?? headSha`.
+  hostHeadSha String?        @map("host_head_sha")
   /// OPEN | MERGED | CLOSED (closed unmerged); see `PULL_REQUEST_STATES`.
   status     String
   ciStatus   String          @default("PENDING") @map("ci_status")

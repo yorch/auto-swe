@@ -780,6 +780,56 @@ describe('webhook routes', () => {
         expect(updateManyCalls).toHaveLength(0);
       });
 
+      describe('a push (synchronize)', () => {
+        const SHA = 'B'.repeat(40);
+
+        it('records the head the host reports, apart from the head the platform pushed', async () => {
+          const res = await pr('synchronize', { head: { sha: SHA } });
+          expect(JSON.parse(res.payload).data).toEqual({ updated: true });
+          expect(updateManyCalls).toEqual([
+            {
+              data: { hostHeadSha: 'b'.repeat(40) },
+              where: { id: 'pr-row-1', status: 'OPEN' },
+            },
+          ]);
+          // The CI wait is keyed on `headSha`; a person's push must never move it.
+          expect(JSON.stringify(updateManyCalls)).not.toContain('"headSha"');
+        });
+
+        it('writes only to a tracked row, and never creates one', async () => {
+          trackedPr = null;
+          const res = await pr('synchronize', { head: { sha: SHA } });
+          expect(JSON.parse(res.payload).data).toEqual({
+            ignored: true,
+            reason: 'No tracked pull request',
+          });
+          expect(updateManyCalls).toHaveLength(0);
+        });
+
+        it('ignores a push whose payload carries no usable head', async () => {
+          for (const head of [
+            undefined,
+            { sha: '' },
+            { sha: 'not a sha' },
+            { sha: 'g'.repeat(40) },
+          ]) {
+            const res = await pr('synchronize', head === undefined ? {} : { head });
+            expect(JSON.parse(res.payload).data).toEqual({ ignored: true });
+          }
+          expect(updateManyCalls).toHaveLength(0);
+        });
+
+        it('records the head of a reopened PR too', async () => {
+          prRowStatus = 'CLOSED';
+          await pr('reopened', { head: { sha: SHA } });
+          expect(updateManyCalls[0]?.data).toEqual({
+            closedAt: null,
+            hostHeadSha: 'b'.repeat(40),
+            status: 'OPEN',
+          });
+        });
+      });
+
       const closedRow = () => ({
         closedAt: new Date('2026-10-01T00:00:00Z'),
         id: 'pr-row-1',
@@ -2564,12 +2614,13 @@ describe('webhook routes', () => {
         expect(prRowStatus).toBe('OPEN');
       });
 
-      it('/git does not record a close, reopen or edit either', async () => {
+      it('/git does not record a close, reopen, edit or push either', async () => {
         trackedPr = trackedOn('repo-github');
         for (const [action, pull_request] of [
           ['closed', { merged: false, number: 7 }],
           ['reopened', { merged: false, number: 7 }],
           ['edited', { merged: false, number: 7, title: 'hijacked' }],
+          ['synchronize', { head: { sha: 'c'.repeat(40) }, merged: false, number: 7 }],
         ] as const) {
           const body = JSON.stringify({
             action,

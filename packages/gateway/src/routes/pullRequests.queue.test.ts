@@ -29,6 +29,8 @@ const REPO = '00000000-0000-4000-8000-0000000000a1';
 const TEAM = '00000000-0000-4000-8000-00000000000b';
 
 const ROUTING = {
+  'prEvaluation.defaultMode': 'advisory',
+  'prEvaluation.enabled': true,
   'prEvaluation.humanAboveLines': 0,
   'prEvaluation.humanMinRisk': 'LOW',
   'prEvaluation.humanPaths': [],
@@ -39,7 +41,9 @@ const ROUTING = {
 const repository = {
   githubUrl: 'https://github.com/acme/api',
   id: REPO,
+  isActive: true,
   organizationName: 'acme',
+  prEvaluationMode: null,
   repoName: 'api',
   reviewRouting: null,
   team: { orgId: null },
@@ -343,6 +347,136 @@ describe('the attention queue fails safe', () => {
     const off = { ...repository, reviewRouting: { skipWhenBotApproved: false } };
     const kept = await reviewOf(b, [pull(1, { repository: off })]);
     expect(kept.review).toMatchObject({ needsHuman: true, reason: 'bot_approved_review' });
+  });
+
+  it('does not clear approvals when a change request was counted after the row was written', async () => {
+    const b = await buildApp();
+    // The worker wrote humanObjection=false at creation; a later CHANGES_REQUESTED only bumped
+    // the count on the same row.
+    serve(b, [
+      evaluation(1, { changesRequestedCount: 1, humanObjection: false, trustedApprovers: 1 }),
+    ]);
+    const { review } = await reviewOf(b, [pull(1)]);
+    expect(review).toMatchObject({ needsHuman: true, reason: 'changes_requested' });
+  });
+
+  it('does not let approvals at an older head decide after a person pushed', async () => {
+    const b = await buildApp();
+    // The host reported head B through a synchronize webhook; the newest evaluation is for A and
+    // has its approvals. No evaluation of B has landed (evaluation failed, or is off).
+    serve(b, [evaluation(1, { headSha: 'aaaa', trustedApprovers: 1 })]);
+    const pushed = await reviewOf(b, [pull(1, { headSha: 'aaaa', hostHeadSha: 'bbbb' })]);
+    expect(pushed.review).toMatchObject({ needsHuman: true, reason: 'not_evaluated' });
+    // Once B's evaluation lands as the newest row, it decides, without the worker's help.
+    serve(b, [
+      evaluation(1, { headSha: 'bbbb', id: 'eval-b', trustedApprovers: 1 }),
+      evaluation(1, { headSha: 'aaaa', id: 'eval-a', trustedApprovers: 0 }),
+    ]);
+    const landed = await reviewOf(b, [pull(1, { headSha: 'aaaa', hostHeadSha: 'bbbb' })]);
+    expect(landed.review).toMatchObject({ needsHuman: false, reason: 'approvals_met' });
+    // With no host-reported head yet, the platform's own head is the one an evaluation must match.
+    serve(b, [evaluation(1, { headSha: 'aaaa', trustedApprovers: 1 })]);
+    const own = await reviewOf(b, [pull(1, { headSha: 'aaaa', hostHeadSha: null })]);
+    expect(own.review).toMatchObject({ needsHuman: false, reason: 'approvals_met' });
+  });
+
+  it('treats a stored evaluation as unknown while evaluation is off for the repository', async () => {
+    const b = await buildApp();
+    serve(b, [evaluation(1, { trustedApprovers: 1 })]);
+    const rows = [pull(1)];
+    for (const off of [{ 'prEvaluation.enabled': false }, { 'prEvaluation.defaultMode': 'off' }]) {
+      settings.values = { ...ROUTING, ...off };
+      const { review } = await reviewOf(b, rows);
+      expect(review).toMatchObject({ needsHuman: true, reason: 'not_evaluated' });
+    }
+    // The repository's own mode wins over the default, and a deactivated repository is off too.
+    settings.values = { ...ROUTING };
+    const modeOff = { ...repository, prEvaluationMode: 'off' };
+    expect((await reviewOf(b, [pull(1, { repository: modeOff })])).review.reason).toBe(
+      'not_evaluated'
+    );
+    const inactive = { ...repository, isActive: false };
+    expect((await reviewOf(b, [pull(1, { repository: inactive })])).review.reason).toBe(
+      'not_evaluated'
+    );
+    const modeOn = { ...repository, prEvaluationMode: 'enforce' };
+    settings.values = { ...ROUTING, 'prEvaluation.defaultMode': 'off' };
+    expect((await reviewOf(b, [pull(1, { repository: modeOn })])).review.reason).toBe(
+      'approvals_met'
+    );
+  });
+
+  it('reads an unrecognised risk class as HIGH', async () => {
+    const b = await buildApp();
+    for (const riskClass of ['high', 'CRITICAL', '']) {
+      serve(b, [evaluation(1, { riskClass })]);
+      const { review } = await reviewOf(b, [pull(1)]);
+      expect(review).toMatchObject({ needsHuman: true, reason: 'risk', riskClass: 'HIGH' });
+    }
+  });
+
+  it('gives each repository its own path-match budget', async () => {
+    const b = await buildApp();
+    const costly = [
+      `*?*?*?*?*?*?*?*?${'?'.repeat(180)}q`,
+      ...['r', 's', 't'].map((c) => `${'?'.repeat(199)}${c}`),
+    ];
+    const heavy = { ...repository, id: 'heavy', reviewRouting: { humanPaths: costly } };
+    const light = { ...repository, id: 'light', reviewRouting: { humanPaths: ['infra/**'] } };
+    const longPaths = Array.from({ length: 5000 }, (_, i) => `${'a'.repeat(250)}/${i}`);
+    const rows = [
+      ...Array.from({ length: 40 }, (_, i) =>
+        pull(i + 1, {
+          id: `h${i}`,
+          openedAt: new Date(1_700_000_000_000 + i),
+          prNumber: i + 1,
+          repoId: 'heavy',
+          repository: heavy,
+        })
+      ),
+      pull(1, { id: 'l1', prNumber: 1, repoId: 'light', repository: light }),
+    ];
+    b.prisma.pullRequest.findMany.mockResolvedValue(rows);
+    b.prisma.prEvaluation.findMany.mockImplementation(
+      async (args: { select: Record<string, unknown>; where: { id?: { in: string[] } } }) =>
+        'routingPaths' in args.select
+          ? (args.where.id?.in ?? []).map((id) => ({
+              id,
+              routingPaths: {
+                paths: id.startsWith('l') ? ['src/ok.ts'] : longPaths,
+                previousPaths: [],
+                truncated: false,
+              },
+            }))
+          : [
+              ...Array.from({ length: 40 }, (_, i) =>
+                evaluation(i + 1, {
+                  connectionId: 'heavy',
+                  headSha: `sha${i + 1}`,
+                  id: `h${i}`,
+                  requiredApprovers: 1,
+                  trustedApprovers: 1,
+                })
+              ),
+              evaluation(1, {
+                connectionId: 'light',
+                headSha: 'sha1',
+                id: 'l1',
+                requiredApprovers: 1,
+                trustedApprovers: 1,
+              }),
+            ]
+    );
+    const res = await b.app.inject({ headers: AUTH, url: '/api/v1/pull-requests?order=attention' });
+    const byId = Object.fromEntries(
+      res
+        .json()
+        .data.map((r: { id: string; review: { reason: string } }) => [r.id, r.review.reason])
+    );
+    // The heavy repository runs out of its own budget and reads as unchecked ...
+    expect(byId.h39).toBe('path');
+    // ... and the light one is still checked, and clears on its approvals.
+    expect(byId.l1).toBe('approvals_met');
   });
 
   it('reads only small columns for the evaluations, and exact pairs', async () => {

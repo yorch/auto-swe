@@ -274,6 +274,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           orderBy: [{ openedAt: 'asc' }, { id: 'asc' }],
           select: {
             headSha: true,
+            hostHeadSha: true,
             id: true,
             isDraft: true,
             openedAt: true,
@@ -333,6 +334,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         const routing = await fastify.prisma.pullRequest.findMany({
           select: {
             headSha: true,
+            hostHeadSha: true,
             id: true,
             isDraft: true,
             openedAt: true,
@@ -738,6 +740,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         orderBy: [{ openedAt: 'asc' }, { id: 'asc' }],
         select: {
           headSha: true,
+          hostHeadSha: true,
           id: true,
           isDraft: true,
           openedAt: true,

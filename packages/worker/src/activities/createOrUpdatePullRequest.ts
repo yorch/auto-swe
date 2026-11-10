@@ -155,6 +155,8 @@ async function doCreateOrUpdatePullRequest(
         ...(ownAttribution.runId ? ownAttribution : {}),
         ciStatus: 'PENDING',
         headSha: codeResult.headSha,
+        // The platform's push is also the host's head now; a person's earlier push no longer is.
+        hostHeadSha: codeResult.headSha,
         workflowId: ownWorkflow?.id,
       },
       where: { id: existingPR.id },

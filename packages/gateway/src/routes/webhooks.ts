@@ -114,6 +114,7 @@ const PullRequestWebhookSchema = z.object({
   action: z.string(),
   pull_request: z.object({
     closed_at: z.string().nullish(),
+    head: z.object({ sha: z.string() }).optional(),
     merged: z.boolean(),
     merged_at: z.string().nullish(),
     number: z.number(),
@@ -155,12 +156,14 @@ interface PullRequestRef {
 export type PullRequestEvent =
   /** Payload didn't match the expected shape at all. */
   | { type: 'unrecognized' }
-  /** Valid payload but not a lifecycle change we track (opened, synchronize, ...). */
+  /** Valid payload but not a lifecycle change we track (opened, assigned, ...). */
   | { type: 'ignored' }
   | ({ type: 'merged'; mergedAt: Date } & PullRequestRef)
   /** Closed without merging. */
   | ({ type: 'closed'; closedAt: Date } & PullRequestRef)
-  | ({ type: 'reopened' } & PullRequestRef)
+  | ({ type: 'reopened'; headSha?: string } & PullRequestRef)
+  /** A push: the head the host now reports. */
+  | ({ type: 'pushed'; headSha: string } & PullRequestRef)
   | ({ type: 'draft'; isDraft: boolean } & PullRequestRef)
   | ({ type: 'retitled'; title: string } & PullRequestRef);
 
@@ -186,6 +189,11 @@ function eventTime(iso: string | null | undefined): Date {
   return at && !Number.isNaN(at.getTime()) ? at : new Date();
 }
 
+/** A commit id as the host writes it (lower-case hex, SHA-1 or SHA-256); null for anything else. */
+function hostHeadSha(sha: string | undefined): string | null {
+  return sha !== undefined && /^[0-9a-f]{7,64}$/i.test(sha) ? sha.toLowerCase() : null;
+}
+
 /** Pure mapping from a GitHub `pull_request` webhook body to a domain event. */
 export function normalizeGitHubPullRequestEvent(body: unknown): PullRequestEvent {
   const parsed = PullRequestWebhookSchema.safeParse(body);
@@ -207,8 +215,15 @@ export function normalizeGitHubPullRequestEvent(body: unknown): PullRequestEvent
       return pr.merged
         ? { ...ref, mergedAt: eventTime(pr.merged_at), type: 'merged' }
         : { ...ref, closedAt: eventTime(pr.closed_at), type: 'closed' };
-    case 'reopened':
-      return { ...ref, type: 'reopened' };
+    case 'reopened': {
+      const headSha = hostHeadSha(pr.head?.sha);
+      return { ...ref, ...(headSha ? { headSha } : {}), type: 'reopened' };
+    }
+    case 'synchronize': {
+      // A push moves the head. A payload without a usable one tells us nothing to record.
+      const headSha = hostHeadSha(pr.head?.sha);
+      return headSha ? { ...ref, headSha, type: 'pushed' } : { type: 'ignored' };
+    }
     case 'ready_for_review':
       return { ...ref, isDraft: false, type: 'draft' };
     case 'converted_to_draft':
@@ -1036,8 +1051,20 @@ async function recordPullRequestChange(
         });
       case 'reopened':
         return fastify.prisma.pullRequest.updateMany({
-          data: { closedAt: null, status: 'OPEN' },
+          data: {
+            closedAt: null,
+            ...(event.headSha ? { hostHeadSha: event.headSha } : {}),
+            status: 'OPEN',
+          },
           where: { ...where, status: 'CLOSED' },
+        });
+      case 'pushed':
+        // The head the host reports, kept apart from `headSha`, the commit the platform pushed
+        // and the CI wait is keyed on. The review queue counts an evaluation only at this head,
+        // so a person's push reads as not evaluated until its evaluation lands.
+        return fastify.prisma.pullRequest.updateMany({
+          data: { hostHeadSha: event.headSha },
+          where: { ...where, status: 'OPEN' },
         });
       case 'draft':
         return fastify.prisma.pullRequest.updateMany({

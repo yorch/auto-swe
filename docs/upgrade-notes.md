@@ -957,6 +957,30 @@ dollars, make its creator an ORG_ADMIN and send it by email to ORG_ADMIN recipie
 
 ---
 
+### Review routing: a repository override can only tighten, and the queue follows the host's head (`<fixing commit SHA>`)
+
+**Affected.** Deployments with a stored `connections.review_routing` override that is looser than
+the team or organization `prEvaluation.humanMinRisk`, `humanAboveLines`, `humanPaths`,
+`humanSkipsBotApproved` or `quickReviewMaxLines` setting (an ADMIN could write one), or whose
+repository is read by the attention queue (`GET /api/v1/pull-requests?order=attention`) while
+evaluation is off for it.
+
+**What changes.** An override is now combined with the setting by taking the stricter value, so a
+looser value stored earlier stops having any effect, and the repository follows the setting for that
+key. A pull request whose repository has evaluation off (the feature switch, the repository's mode
+or its deactivation) reads `not_evaluated` instead of from a stored evaluation. A new nullable
+column, `pull_requests.host_head_sha` (migration `20261110000300_pull_request_host_head`), records
+the head the host reports from `synchronize` webhooks; it is filled as pushes arrive and needs no
+backfill. Glob entries in `prEvaluation.humanPaths` or an override that can never match (a leading
+`./`, `/` or `!`, a backslash, a trailing `/`) are refused when written; an entry already stored
+that way is still stored and still matches nothing.
+
+**Actions.** Apply the migration (`yarn db:deploy`). To keep a looser routing for a repository,
+change the setting at its team or organization scope: the override cannot do it. Review stored
+`humanPaths` entries for the spellings above and rewrite them (`infra/` becomes `infra/**`).
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,
