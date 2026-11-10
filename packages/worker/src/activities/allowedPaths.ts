@@ -51,9 +51,19 @@ import { gitWithAuthHeader, shellQuote, type Workspace } from './workspace.js';
 /** `gitIdentity` is optional so a fake workspace need not carry one. */
 type Exec = Pick<Workspace, 'exec'> & { gitIdentity?: GitIdentity };
 
-/** A hardened, replace-proof git call. */
+/**
+ * Pins the repository to `<cwd>/.git` with `<cwd>` as its work tree, by environment. The agent
+ * can write `core.worktree` into `.git/config` (the push scrub only rewrites it afterwards), and
+ * a work tree that is an ancestor of the checkout turns a `.`-relative pathspec into a path that
+ * matches nothing, so a porcelain `git diff` prints an empty diff for a real change. The
+ * environment variable beats the config key, and a plumbing call with no relative pathspec does
+ * not look at the work tree at all.
+ */
+const PIN_REPOSITORY = 'GIT_DIR="$(pwd -P)/.git" GIT_WORK_TREE="$(pwd -P)"';
+
+/** A hardened, replace-proof git call, pinned to this checkout (see {@link PIN_REPOSITORY}). */
 const guardedGit = (subcommand: string): string =>
-  `GIT_NO_REPLACE_OBJECTS=1 ${gitWithAuthHeader(subcommand)}`;
+  `GIT_NO_REPLACE_OBJECTS=1 ${PIN_REPOSITORY} ${gitWithAuthHeader(subcommand)}`;
 
 /**
  * Whether `changedPath` (repo-relative, as git lists it) is covered by an `allowedPaths` entry.
@@ -205,10 +215,14 @@ export async function readHeadSha(workspace: Exec): Promise<string | undefined> 
 }
 
 /**
- * The hardened `git diff` command the test-integrity gate reads: from `from` to the commit that
- * will be pushed. No attribute, driver, textconv, prefix or relative-path setting of the
- * repository can change what is read: `--text` shows a file marked `-diff` or `binary` as text,
- * the prefixes are explicit, renames are detected, and generated files (lockfiles) are left out.
+ * The hardened command the test-integrity gate reads the change with: `git diff-tree`, the
+ * plumbing that compares two commits' trees and so depends on neither the work tree, the index nor
+ * a relative path. (The porcelain `git diff -- .` it replaces read nothing when the agent set
+ * `core.worktree` to an ancestor, with exit 0.) Pinned to the checkout's own `.git`, no attribute,
+ * driver, textconv, prefix or relative-path setting of the repository can change what is read:
+ * `--text` shows a file marked `-diff` or `binary` as text, the prefixes are explicit, renames are
+ * detected, and generated files (lockfiles) are left out by top-anchored pathspecs. The analyser
+ * also drops generated paths itself, so the exclusion only bounds the size.
  */
 export function testIntegrityDiffCommand(
   from: string,
@@ -216,15 +230,47 @@ export function testIntegrityDiffCommand(
   kind: 'patch' | 'name-status',
   excludes: readonly string[]
 ): string {
-  const common =
+  const config =
     '-c core.attributesFile=/dev/null -c core.quotepath=false -c diff.mnemonicPrefix=false ' +
-    '-c diff.noprefix=false -c diff.relative=false -c diff.renames=true ' +
-    'diff --no-ext-diff --no-textconv --no-color --find-renames --ignore-submodules=none ' +
-    '--src-prefix=a/ --dst-prefix=b/ ';
-  const specs = ['.', ...excludes].map((p) => shellQuote(p)).join(' ');
+    '-c diff.noprefix=false -c diff.relative=false -c diff.renames=true ';
+  const flags =
+    'diff-tree -r --no-commit-id --no-ext-diff --no-textconv --no-color --find-renames ' +
+    '--ignore-submodules=none --src-prefix=a/ --dst-prefix=b/ ';
+  const specs = [':(top)', ...excludes].map((p) => shellQuote(p)).join(' ');
   return guardedGit(
-    `${common}${kind === 'patch' ? '--text -U0' : '--name-status'} ${shellQuote(from)} ${shellQuote(to)} -- ${specs}`
+    `${config}${flags}${kind === 'patch' ? '-p --text -U1' : '--name-status'} ${shellQuote(from)} ${shellQuote(to)} -- ${specs}`
   );
+}
+
+/**
+ * The trees of two commits and the paths that differ between them, unfiltered, read the same
+ * pinned plumbing way. For the gate's "empty diff but a changed tree" check
+ * (`commitWithTestIntegrity`).
+ */
+export async function readTreeChange(
+  workspace: Exec,
+  from: string,
+  to: string
+): Promise<{ treesDiffer: boolean; paths: string[] }> {
+  const trees = (
+    await workspace.exec(
+      guardedGit(`rev-parse ${shellQuote(`${from}^{tree}`)} ${shellQuote(`${to}^{tree}`)}`)
+    )
+  )
+    .trim()
+    .split('\n');
+  if (trees.length !== 2 || !trees.every((t) => SHA.test(t))) {
+    throw new Error('could not read the trees of the two commits');
+  }
+  const names = await workspace.exec(
+    guardedGit(
+      `diff-tree -r --name-only --no-renames --ignore-submodules=none -z ${shellQuote(from)} ${shellQuote(to)}`
+    )
+  );
+  return {
+    paths: names.split('\0').filter((p) => p !== ''),
+    treesDiffer: trees[0] !== trees[1],
+  };
 }
 
 /**

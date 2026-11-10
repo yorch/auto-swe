@@ -1616,7 +1616,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   passes can reach it may survive, and a process started by another `docker exec` in the instant
   between the sweep and the call is not covered. A replaced `git` binary (or `sh`, `sed`) is not
   touched by the sweep at all; the config rewrite, the repository pin and hook suppression close
-  the configuration routes, not that one. Closing it means performing the push from a separate trusted
+  the configuration routes, not that one. The same limit applies to the test-integrity guard of fix
+  sessions, which reads the change with that `git` (see the Limitations of
+  [ci-failure-triggers.md](./ci-failure-triggers.md#limitations)): tampering below git defeats every
+  git-based check. Closing it means performing the push from a separate trusted
   container, which the workspace (a container layer, not a volume) does not support for those paths.
   Agent runs are the exception: they check and push from a fresh container the agent never ran in
   ([agent-runs.md §4](./agent-runs.md#4-delivery-and-the-trust-boundary)). The

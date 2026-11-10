@@ -68,7 +68,7 @@ describe('parseUnifiedDiff', () => {
     const [file] = parseUnifiedDiff(modify('a.test.ts', ['old'], ['new', 'newer']));
     expect(file?.path).toBe('a.test.ts');
     expect(file?.removed).toEqual(['old']);
-    expect(file?.added).toEqual([
+    expect(file?.added.map(({ line, text }) => ({ line, text }))).toEqual([
       { line: 10, text: 'new' },
       { line: 11, text: 'newer' },
     ]);

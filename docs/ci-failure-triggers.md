@@ -241,31 +241,67 @@ looks like that.
 | The first fix of this template (`implement`, `executeImplementation`) | yes: a step that carries `refuseWorkflowChanges` is a fix from untrusted CI text, and the guard rides on that marker |
 | The quality-gate fix (`executeGateFixImplementation`) | yes |
 | The pull-request feedback fix (`executePrFeedbackImplementation`) and its CI follow-up | yes |
-| The agent-run follow-up (`runAgentPrFeedbackTask`), which resumes the agent that opened the pull request | no |
+| **The agent-run follow-up (`runAgentPrFeedbackTask`), which resumes the agent that opened the pull request, including the `retryAgentFix` step ("Fix CI with the same agent") of `address-pr-feedback`** | **NO: a CI-fix path that reaches a push with no guard** |
 | A review fix (`executeReviewFixImplementation`), which answers a reviewer's comments | no: removing a test can be what the reviewer asked for |
 | The initial implementation of a ticket, and anything a person pushes | no |
 
 **What it reads.** The fix is committed first, with hooks disabled (`--no-verify` and
 `core.hooksPath=/dev/null`, so a hook the agent planted cannot change the commit afterwards), and the
-guard reads `git diff <commit the session started at> <the commit>`. That commit's sha is the one
-pushed (`<sha>:refs/heads/<branch>`), so what is analysed is what is pushed, whatever the agent did
-to the index or to `HEAD`. A block throws before the push; the commit exists only in the discarded
-workspace. The diff is read with `--text`, explicit `a/` and `b/` prefixes and `--find-renames`,
-with attribute files, external diff drivers and text conversion off, so a `-diff` or `binary`
-attribute (even in `.git/info/attributes`) or a `diff.mnemonicPrefix` setting cannot blind it.
-Lockfiles and minified files (`yarn.lock`, `package-lock.json`, `pnpm-lock.yaml`, `go.sum`,
-`Cargo.lock`, `poetry.lock`, `*.min.js`, …) are left out of the diff, so a fix that regenerates one
-is not too large to read. The starting commit is read before the agent runs.
+guard reads `git diff-tree -p <commit the session started at> <the commit>`. That commit's sha is the
+one pushed (`<sha>:refs/heads/<branch>`), so what is analysed is what is pushed, whatever the agent
+did to the index or to `HEAD`. A block throws before the push; the commit exists only in the
+discarded workspace.
 
-A pure analyser (`@auto-swe/shared/lib/testIntegrity`) ignores comment-only lines (so commenting a
-test or an assertion out reads as removing it) and compares counts across the **whole diff**, so a
-renamed file, a test moved to another file, or a split or merge nets to zero. Findings:
+The read does not depend on the work tree. `diff-tree` is plumbing that compares two commits' trees
+with no relative pathspec, and every git call of the guard (the starting commit, the commit, the
+diff, the path guard) runs with `GIT_DIR` and `GIT_WORK_TREE` set to the checkout, which beat a
+`core.worktree` the agent wrote into `.git/config`. (A porcelain `git diff -- .` printed an empty
+diff, with exit 0, once `core.worktree` named an ancestor of the checkout.) The diff is read with
+`--text`, one line of context (`-U1`), explicit `a/` and `b/` prefixes and `--find-renames`, with
+attribute files, external diff drivers and text conversion off, so a `-diff` or `binary` attribute
+(even in `.git/info/attributes`) or a `diff.mnemonicPrefix` setting cannot blind it. Lockfiles and
+minified files (`yarn.lock`, `package-lock.json`, `pnpm-lock.yaml`, `go.sum`, `Cargo.lock`,
+`poetry.lock`, `*.min.js`, …) are left out of the diff by top-anchored pathspecs, so a fix that
+regenerates one is not too large to read. The starting commit is read before the agent runs.
+
+An empty diff is believed only when the two commits hold the same files. When the diff reads as empty
+but the committed tree differs from the starting tree at any path that is not a lockfile or minified
+file, the change is treated as unreadable: `block` fails it as `TEST_INTEGRITY_GUARD_UNAVAILABLE`, and
+`warn` records a `degraded` event. Nothing reads as clean by being unreadable.
+
+A pure analyser (`@auto-swe/shared/lib/testIntegrity`) compares counts across the **whole diff**, so
+a renamed file, a test moved to another file, or a split or merge nets to zero. It reads comments in
+two ways. What a line is **credited** with (an assertion, a test case) has every comment removed, so
+a comment never counts as a test. What a line is **charged** with (a skip marker, a trivial or weak
+assertion, an exclusion) has only the comments that cannot be code removed: a line that starts with
+`//` or `#`, and a block comment that starts a line. A comment after code is kept as code, so
+`it.skip(…) // note` reads as a skip and so does a trailing comment that merely mentions one.
+`#` is a comment only outside JavaScript and TypeScript, an unquoted backslash escapes the next
+character (so `/a\//` is not a comment), a lone CR, U+2028 and U+2029 end a line, and block-comment
+state is carried only across lines that are consecutive in the file, never from one hunk to the
+next. What holds for commenting a test out:
+
+- commenting it out line by line with `//` or `#` reads as removing it (`test_case_removed`,
+  `assertions_reduced`);
+- wrapping unchanged tests in added delimiters (`/*` … `*/`, a Python triple-quote line, Ruby
+  `=begin` … `=end`) removes no line, so a block comment that opens among the added lines and is
+  not closed among the same consecutive added lines is `test_commented_out`. A comment added whole
+  is not, and neither is one opener edited into another (`/** old` to `/** new`);
+- an added bare `return` as the first statement of a test, when the diff shows the opening line
+  next to it, is `early_return_added`. `return` written on the opening line itself
+  (`it('x', () => { return;`) is a `skip_marker_added`. A `return` that is not the first statement,
+  an early return written through a condition, or a test whose opening line spans several lines is
+  not seen.
+
+Findings:
 
 | Finding | What it matches |
 |---|---|
 | `test_file_deleted` | a test source file removed, or renamed to a name no runner collects, when the change as a whole loses test cases or assertions. Test source files are those named by convention (`*.test.*`, `*.spec.*`, `test_*.py`, `*_test.go`, `*Test.java`, `*_spec.rb`, `.feature`, scripts under `__tests__/`); fixtures and helpers are not |
 | `test_case_removed` | more test-case declarations removed than added across the diff (`it(`/`test(`, `def test_`, `func Test`, `@Test`, `#[test]` including inline in Rust sources, `[Fact]`, RSpec `it '…'`, `Scenario:`) |
-| `skip_marker_added` | more skip, focus, disabling or expected-failure markers added than removed: `.skip`, `.todo`, `xit`, `.only`, `skipIf(true)`, `runIf(false)`, `pytest.mark.skip`/`skipif`/`xfail` (also as `pytestmark = …`), `pytest.skip(`, `unittest.skip`, `raise SkipTest`, `@Ignore`, `@Disabled`, `t.Skip(`, `#[ignore]`, RSpec `skip`/`pending`, `if (false)`, an early `return` as the first statement of a test body, `try { expect(…) } catch {}` |
+| `skip_marker_added` | more skip, focus, disabling or expected-failure markers added than removed: `.skip`, `.todo`, `xit`, `.only`, `skipIf(true)`, `runIf(false)`, `pytest.mark.skip`/`skipif`/`xfail` (also as `pytestmark = …`), `pytest.skip(`, `unittest.skip`, `raise SkipTest`, `@Ignore`, `@Disabled`, `t.Skip(`, `#[ignore]`, RSpec `skip`/`pending`, `if (false)`, `return` written on the same line as the opening of a test body, `try { expect(…) } catch {}` |
+| `test_commented_out` | a block comment opened in a test file (`/*`, a Python triple-quote line, Ruby `=begin`) and not closed among the same consecutive added lines, which comments out code the diff does not show |
+| `early_return_added` | a bare `return` added as the first statement of a test whose opening line the diff shows (high) |
 | `assertions_reduced` | a net drop in assertion counts across the diff's test files (`expect(`, `assert…(`, a Python `assert`, `require.…(`, `t.Error`/`t.Fatal`, `.should`, `verify(`); a line removed and added unchanged elsewhere cancels |
 | `assertion_trivialized` | an added assertion that holds whatever the code does (`expect(true).toBe(true)`, `expect(x).toBe(x)`, `assert True`, `assert 1 == 1`, `assertEquals(1, 1)`) |
 | `assertion_loosened` | specific assertions lost on net while the same number of weak matchers (`toBeDefined`, `toBeTruthy`, `expect.anything()`, `assertNotNull`, `is not None`, `toThrow()`) were gained |
@@ -449,8 +485,22 @@ See [github-app-setup.md](./github-app-setup.md).
   a fix a person would have accepted, which is why the default is `warn`.
 - **The guard reads the fix, not the branch.** It looks at what the fix session changed. A test
   already skipped or weakened before the session, or a change made outside a fix session, is not
-  seen. The review fix, the agent-run pull-request follow-up and a person's edit are not checked
-  (§2.4).
+  seen. The review fix, a person's edit and **the agent-run pull-request follow-up (the
+  `retryAgentFix` step, "Fix CI with the same agent", of `address-pr-feedback`) are not checked: that
+  CI-fix path reaches a push with no guard** (§2.4).
+- **A replaced `git` binary defeats every git-based check.** The guard, the path guard and the push
+  all trust the `git` the workspace image provides, and the agent runs as root in that container.
+  Replacing `git` (or `sh`) hands the guard whatever diff the agent wants it to read. Pinning the
+  repository, hooks off and plumbing reads close every configuration route, not tampering below git.
+  The same limit is stated for authenticated git in
+  [architecture.md](./architecture.md#10-limitations).
+- **Block-comment and early-return detection read what the diff shows.** A block comment is seen
+  only when its opener is among the added lines; one that extends an opener already in the file, by
+  adding only a closer earlier, is not. A bare `return` is seen only as the first statement of a
+  test whose opening line is one line the diff shows as context or as an added line. Strings,
+  template literals and regular expression literals are not parsed, so a comment delimiter inside
+  one can read either way; the credit reading removes comments aggressively and the charge reading
+  keeps them, so these errors fall toward a finding.
 - **It reads what git reports.** The diff is rendered by git with attributes and drivers off. A
   change git does not show (an ignored file, a path the exclusion list leaves out, a file the agent
   committed under a lockfile or `*.min.js` name) is not read. A change over the analysis cap is

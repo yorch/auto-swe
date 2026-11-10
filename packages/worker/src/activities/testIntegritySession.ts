@@ -9,7 +9,7 @@
  * it. The commit runs with hooks off, the diff is read from the starting commit to the commit's
  * own sha, and that same sha is the one pushed (`pushRefspec`), so analysed and pushed are one.
  */
-import { generatedPathspecs } from '@auto-swe/shared/lib/testIntegrity';
+import { generatedPathspecs, isGeneratedPath } from '@auto-swe/shared/lib/testIntegrity';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { runTestIntegrityGate, type TestIntegrityGuardMode } from '../lib/testIntegrityGate.js';
@@ -17,6 +17,7 @@ import {
   commitStaged,
   type PathGuard,
   readHeadSha,
+  readTreeChange,
   testIntegrityDiffCommand,
 } from './allowedPaths.js';
 import type { Workspace } from './workspace.js';
@@ -84,11 +85,39 @@ export async function commitWithTestIntegrity(
   const excludes = generatedPathspecs();
   await runTestIntegrityGate({
     mode: session.mode,
-    readDiff: () =>
-      workspace.exec(testIntegrityDiffCommand(session.startSha, sha, 'patch', excludes)),
+    readDiff: async () => {
+      const diff = await workspace.exec(
+        testIntegrityDiffCommand(session.startSha, sha, 'patch', excludes)
+      );
+      if (diff.trim() === '') {
+        await assertEmptyDiffIsReal(workspace, session.startSha, sha);
+      }
+      return diff;
+    },
     readNameStatus: () =>
       workspace.exec(testIntegrityDiffCommand(session.startSha, sha, 'name-status', excludes)),
     tracer,
   });
   return sha;
+}
+
+/**
+ * An empty diff is only believable when the two commits really hold the same files. The diff is
+ * read by plumbing pinned to the checkout, so an empty answer for a different commit means
+ * something below the analyser hid the change, and "nothing found" must not be read as "intact".
+ * Throws (which the gate turns into `TEST_INTEGRITY_GUARD_UNAVAILABLE` in `block` mode and a
+ * `degraded` event in `warn` mode) when the trees differ at a path that is not a generated file,
+ * or differ at no readable path at all. A change that touched only lockfiles is empty by design.
+ */
+async function assertEmptyDiffIsReal(workspace: Exec, startSha: string, sha: string) {
+  const change = await readTreeChange(workspace, startSha, sha);
+  if (!change.treesDiffer) {
+    return;
+  }
+  if (change.paths.length === 0 || change.paths.some((p) => !isGeneratedPath(p))) {
+    throw new Error(
+      'the diff of the committed change read as empty although its tree differs from the one the ' +
+        'session started from, so the change could not be read'
+    );
+  }
 }

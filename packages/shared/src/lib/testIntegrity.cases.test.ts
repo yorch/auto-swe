@@ -366,7 +366,7 @@ describe('cheap evasions', () => {
 
 describe('helpers', () => {
   it('lists generated files as exclude pathspecs', () => {
-    expect(generatedPathspecs()).toContain(':(exclude,glob)**/yarn.lock');
+    expect(generatedPathspecs()).toContain(':(top,exclude,glob)**/yarn.lock');
   });
 
   it('reads a name-status list when the diff was too large', () => {

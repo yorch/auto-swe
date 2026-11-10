@@ -652,7 +652,7 @@ describe('runImplementerFixSession test-integrity guard', () => {
     '-  expect(add(1, 2)).toBe(3);',
     '',
   ].join('\n');
-  const GUARD_DIFF = ' --text -U0 ';
+  const GUARD_DIFF = ' --text -U1 ';
   const cmds = () => execMock.mock.calls.map((c) => c[0]);
 
   /** The exec the gate sees: a readable starting sha and the given committed diff. */

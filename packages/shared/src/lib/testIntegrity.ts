@@ -22,6 +22,8 @@ export type TestIntegrityKind =
   | 'snapshot_updated'
   | 'test_case_removed'
   | 'skip_marker_added'
+  | 'test_commented_out'
+  | 'early_return_added'
   | 'assertions_reduced'
   | 'assertion_trivialized'
   | 'assertion_loosened'
@@ -87,13 +89,13 @@ export const GENERATED_BASENAMES: readonly string[] = [
 export const GENERATED_GLOBS: readonly string[] = ['*.min.js', '*.min.css'];
 
 /**
- * The `git diff` pathspec arguments (unquoted) that leave generated files out of the diff the
+ * The `git diff-tree` pathspec arguments (unquoted, anchored at the top of the repository) that leave generated files out of the diff the
  * analyser reads, so a lockfile-regenerating fix does not push the diff past the size cap.
  */
 export function generatedPathspecs(): string[] {
   return [
-    ...GENERATED_BASENAMES.map((n) => `:(exclude,glob)**/${n}`),
-    ...GENERATED_GLOBS.map((g) => `:(exclude,glob)**/${g}`),
+    ...GENERATED_BASENAMES.map((n) => `:(top,exclude,glob)**/${n}`),
+    ...GENERATED_GLOBS.map((g) => `:(top,exclude,glob)**/${g}`),
   ];
 }
 
@@ -115,7 +117,43 @@ interface FileDiff {
   /** The diff has a `Binary files … differ` or `GIT binary patch` stanza for this file. */
   binary: boolean;
   removed: string[];
-  added: Array<{ line: number; text: string }>;
+  /**
+   * Parallel to `removed`: an id that changes wherever the removed lines stop being consecutive in
+   * the old file (a context line, an added line or a new hunk comes between).
+   */
+  removedRun: number[];
+  added: AddedLine[];
+}
+
+interface AddedLine {
+  /** Line in the new file. */
+  line: number;
+  text: string;
+  /**
+   * Added lines with the same `run` are consecutive in the new file: nothing unchanged or removed
+   * comes between them. A comment can only be read across lines of one run.
+   */
+  run: number;
+  /** The line before this one in the new file, when the diff shows it (context or added). */
+  prev?: string;
+  /** The lines removed directly before this run of added lines: what it replaces, if anything. */
+  replaced?: string[];
+}
+
+/**
+ * The line terminators a language treats as a line break and `git` does not: a lone CR, U+2028 and
+ * U+2029. `// note<CR>it.skip(…)` is a comment and a statement to a JavaScript engine, and one
+ * diff line to git, so the analyser splits there too.
+ */
+const LINE_BREAKS = /\r\n|[\r\u2028\u2029]/;
+
+function logicalLines(text: string): string[] {
+  const parts = text.split(LINE_BREAKS);
+  // A CRLF file's lines end in a CR: that is a terminator, not an extra empty line.
+  if (parts.length > 1 && parts[parts.length - 1] === '') {
+    parts.pop();
+  }
+  return parts;
 }
 
 function stripPrefix(raw: string): string {
@@ -134,6 +172,11 @@ export function parseUnifiedDiff(diff: string): FileDiff[] {
   let current: FileDiff | undefined;
   let newLine = 0;
   let inHunk = false;
+  let run = 0;
+  let prev: string | undefined;
+  let lastKind = '';
+  let removedGroup: string[] = [];
+  let replaced: string[] | undefined;
   for (const line of diff.split('\n')) {
     if (line.startsWith('diff --git ')) {
       const rest = line.slice('diff --git '.length);
@@ -151,6 +194,7 @@ export function parseUnifiedDiff(diff: string): FileDiff[] {
         oldPath,
         path,
         removed: [],
+        removedRun: [],
         renamed: false,
       };
       files.push(current);
@@ -183,17 +227,43 @@ export function parseUnifiedDiff(diff: string): FileDiff[] {
     if (hunk) {
       newLine = Number(hunk[1]);
       inHunk = true;
+      run += 1;
+      prev = undefined;
+      lastKind = '';
+      removedGroup = [];
+      replaced = undefined;
       continue;
     }
     if (!inHunk) {
       continue;
     }
     if (line.startsWith('+')) {
-      current.added.push({ line: newLine, text: line.slice(1) });
+      if (lastKind !== '+') {
+        run += 1;
+        replaced = lastKind === '-' ? removedGroup : undefined;
+      }
+      lastKind = '+';
+      for (const text of logicalLines(line.slice(1))) {
+        current.added.push({ line: newLine, prev, replaced, run, text });
+        prev = text;
+      }
       newLine += 1;
     } else if (line.startsWith('-')) {
-      current.removed.push(line.slice(1));
+      if (lastKind !== '-') {
+        run += 1;
+        removedGroup = [];
+      }
+      lastKind = '-';
+      for (const text of logicalLines(line.slice(1))) {
+        removedGroup.push(text);
+        current.removed.push(text);
+        current.removedRun.push(run);
+      }
     } else if (line.startsWith(' ')) {
+      lastKind = ' ';
+      run += 1;
+      const parts = logicalLines(line.slice(1));
+      prev = parts[parts.length - 1];
       newLine += 1;
     }
   }
@@ -294,81 +364,186 @@ function commentStyle(path: string): CommentStyle {
   if (/\.(json|jsonc)$/.test(path)) {
     return { hash: false, slash: true };
   }
+  // `#` is a private-field sigil in JavaScript and TypeScript, never a comment.
+  if (/\.[cm]?[jt]sx?$/.test(path)) {
+    return { hash: false, slash: true };
+  }
   return { hash: true, slash: true };
 }
 
-/** Index of `token` in `text` at or after `from`, outside a quoted string; -1 when none. */
-function indexOutsideString(text: string, token: string, from = 0): number {
+interface LineState {
+  text: string;
+  inBlock: boolean;
+}
+
+/**
+ * One line with comments removed, scanned left to right so whichever of `//` and `/*` comes first
+ * wins. A backslash outside a string escapes the next character, which keeps the `//` inside a
+ * regular expression literal such as `/a\//` from reading as a comment. Quoted strings are
+ * skipped. `#[` and `#!` (Rust attributes, shebangs) are not comments.
+ */
+function stripLineLenient(original: string, style: CommentStyle, startInBlock: boolean): LineState {
+  let out = '';
+  let inBlock = startInBlock;
   let quote = '';
-  for (let i = 0; i < text.length; i += 1) {
-    const ch = text[i] as string;
-    if (quote) {
-      if (ch === '\\') {
-        i += 1;
-      } else if (ch === quote) {
-        quote = '';
+  for (let i = 0; i < original.length; ) {
+    const ch = original[i] as string;
+    if (inBlock) {
+      const end = original.indexOf('*/', i);
+      if (end < 0) {
+        return { inBlock: true, text: out };
       }
+      inBlock = false;
+      out += ' ';
+      i = end + 2;
       continue;
     }
-    if (i >= from && text.startsWith(token, i)) {
-      return i;
+    if (ch === '\\') {
+      out += ch + (original[i + 1] ?? '');
+      i += 2;
+      continue;
+    }
+    if (quote) {
+      out += ch;
+      if (ch === quote) {
+        quote = '';
+      }
+      i += 1;
+      continue;
+    }
+    if (style.slash && original.startsWith('/*', i)) {
+      inBlock = true;
+      i += 2;
+      continue;
+    }
+    if (style.slash && original.startsWith('//', i)) {
+      break;
+    }
+    if (style.hash && ch === '#' && !/[[!]/.test(original[i + 1] ?? '')) {
+      break;
     }
     if (ch === '"' || ch === "'" || ch === '`') {
       quote = ch;
     }
+    out += ch;
+    i += 1;
   }
-  return -1;
+  return { inBlock, text: out };
+}
+
+/**
+ * One line with only the comments that cannot be code removed: a line that starts (after
+ * whitespace) with `//` or `#`, and a block comment that starts a line. A `//` or `/*` after code
+ * is kept as code, because a comment reader that is wrong there hides what a JavaScript engine,
+ * Python or a shell would run (`const re = /[/]/; it.skip(…)`, a lone line break, a regex). The
+ * price is that a trailing comment that mentions `it.skip(` reads as a skip.
+ */
+function stripLineStrict(original: string, style: CommentStyle, startInBlock: boolean): LineState {
+  let s = original;
+  let inBlock = startInBlock;
+  for (;;) {
+    if (inBlock) {
+      const end = s.indexOf('*/');
+      if (end < 0) {
+        return { inBlock: true, text: '' };
+      }
+      s = s.slice(end + 2);
+      inBlock = false;
+    }
+    const t = s.trimStart();
+    if (style.slash && t.startsWith('/*')) {
+      s = t.slice(2);
+      inBlock = true;
+      continue;
+    }
+    if (style.slash && t.startsWith('//')) {
+      return { inBlock: false, text: '' };
+    }
+    if (style.hash && t.startsWith('#') && !/^#[[!]/.test(t)) {
+      return { inBlock: false, text: '' };
+    }
+    return { inBlock: false, text: t === '' ? '' : s };
+  }
 }
 
 /**
  * The code of each line with comments removed: a comment-only line becomes empty, so commenting a
  * test or an assertion out counts as removing it, and deleting a comment is not an edit to a test.
- * Block comments are tracked across the lines given; `#[` and `#!` (Rust attributes) are not
- * comments. A heuristic: it knows nothing of template literals or regular expressions.
+ *
+ * `lenient` removes every comment it can find, wherever on the line, and is what a line is
+ * credited with (an assertion, a test case: a comment must not count as one). `strict` removes
+ * only what cannot be code, and is what a line is charged with (a skip marker, a trivial
+ * assertion). Block comments are tracked across lines, but only across lines that are consecutive
+ * in the file (`runs`): the lines of two hunks are not, so a comment opened in one hunk says
+ * nothing about the next. Without that, editing a doc-comment opener blanked every later deleted
+ * assertion of the file.
  */
-function stripComments(lines: readonly string[], style: CommentStyle): string[] {
+function stripComments(
+  lines: readonly string[],
+  runs: readonly number[],
+  style: CommentStyle,
+  mode: 'lenient' | 'strict'
+): string[] {
   let inBlock = false;
-  return lines.map((original) => {
-    let s = original;
-    if (inBlock) {
-      const end = s.indexOf('*/');
-      if (end < 0) {
-        return '';
-      }
-      s = s.slice(end + 2);
+  let lastRun = Number.NaN;
+  return lines.map((original, i) => {
+    if (runs[i] !== lastRun) {
       inBlock = false;
+      lastRun = runs[i] as number;
     }
-    if (style.slash) {
-      if (/^\s*\*(?!\/)(\s|$)/.test(s)) {
-        return '';
-      }
-      for (let from = 0; ; ) {
-        const open = indexOutsideString(s, '/*', from);
-        if (open < 0) {
-          break;
-        }
-        const close = s.indexOf('*/', open + 2);
-        if (close < 0) {
-          s = s.slice(0, open);
-          inBlock = true;
-          break;
-        }
-        s = `${s.slice(0, open)} ${s.slice(close + 2)}`;
-        from = open;
-      }
-      const line = indexOutsideString(s, '//');
-      if (line >= 0) {
-        s = s.slice(0, line);
-      }
+    // A leading ` * text` is the body of a block comment whose opener the diff did not show.
+    if (mode === 'lenient' && !inBlock && style.slash && /^\s*\*(?!\/)(\s|$)/.test(original)) {
+      return '';
     }
-    if (style.hash) {
-      const hash = indexOutsideString(s, '#');
-      if (hash >= 0 && !/^[[!]/.test(s.slice(hash + 1, hash + 2))) {
-        s = s.slice(0, hash);
-      }
-    }
-    return s.trim() === '' ? '' : s;
+    const result =
+      mode === 'lenient'
+        ? stripLineLenient(original, style, inBlock)
+        : stripLineStrict(original, style, inBlock);
+    inBlock = result.inBlock;
+    return result.text.trim() === '' ? '' : result.text;
   });
+}
+
+/**
+ * Added lines that open a block comment (`/*`, a Python triple-quote line, Ruby `=begin`) whose end is not
+ * among the same run of added lines: the body it hides is unchanged code the diff does not show,
+ * so adding only the delimiters comments a test out without removing a line. A comment added whole
+ * (opener, body and closer all new, consecutive) is not flagged.
+ */
+function wrappedBlockComments(file: FileDiff, style: CommentStyle): number[] {
+  const python = /\.pyi?$/.test(file.path);
+  const ruby = /\.rb$/.test(file.path);
+  const flagged: number[] = [];
+  let open: { line: number; run: number; closes: (text: string) => boolean } | undefined;
+  for (const a of file.added) {
+    if (open) {
+      if (a.run !== open.run) {
+        flagged.push(open.line);
+        open = undefined;
+      } else if (open.closes(a.text)) {
+        open = undefined;
+        continue;
+      } else {
+        continue;
+      }
+    }
+    if (python && /^\s*(?:"{3}|'{3})\s*$/.test(a.text)) {
+      open = { closes: (t) => /^\s*(?:"{3}|'{3})\s*$/.test(t), line: a.line, run: a.run };
+    } else if (ruby && /^=begin\b/.test(a.text)) {
+      open = { closes: (t) => /^=end\b/.test(t), line: a.line, run: a.run };
+    } else if (
+      style.slash &&
+      stripLineLenient(a.text, style, false).inBlock &&
+      // An opener that replaces an opener (`/** old` -> `/** new`) leaves the comment where it was.
+      !a.replaced?.some((r) => stripLineLenient(r, style, false).inBlock)
+    ) {
+      open = { closes: (t) => t.includes('*/'), line: a.line, run: a.run };
+    }
+  }
+  if (open) {
+    flagged.push(open.line);
+  }
+  return flagged;
 }
 
 // ── Patterns ──────────────────────────────────────────────────────────────────────────────────
@@ -545,21 +720,23 @@ interface Prepared {
   file: FileDiff;
   /** Removed lines, comments stripped. */
   removed: string[];
-  /** Added lines, comments stripped. */
+  /** Added lines, only what cannot be code stripped: what a line is charged with. */
   added: Array<{ line: number; text: string }>;
+  /** Parallel to `added`, every comment stripped: what a line is credited with. */
+  addedLenient: string[];
   source: boolean;
   rust: boolean;
 }
 
 function prepare(file: FileDiff): Prepared {
   const style = commentStyle(file.path);
-  const removed = stripComments(file.removed, style);
-  const addedText = stripComments(
-    file.added.map((a) => a.text),
-    style
-  );
+  const removed = stripComments(file.removed, file.removedRun, style, 'lenient');
+  const addedRaw = file.added.map((a) => a.text);
+  const addedRuns = file.added.map((a) => a.run);
+  const addedStrict = stripComments(addedRaw, addedRuns, style, 'strict');
   return {
-    added: file.added.map((a, i) => ({ line: a.line, text: addedText[i] as string })),
+    added: file.added.map((a, i) => ({ line: a.line, text: addedStrict[i] as string })),
+    addedLenient: stripComments(addedRaw, addedRuns, style, 'lenient'),
     file,
     removed,
     rust: !isTestFilePath(file.path) && isRustSource(file.path),
@@ -613,6 +790,15 @@ function stringsOnKey(lines: readonly string[]): Set<string> {
 
 const norm = (line: string) => line.trim();
 
+function strictPrev(prev: string | undefined, style: CommentStyle): string {
+  return prev === undefined ? '' : stripLineStrict(prev, style, false).text;
+}
+
+/** A line that opens a test case's body: a declaration of one that ends where its body starts. */
+function isTestOpenerLine(line: string): boolean {
+  return countMatches(line, TEST_CASE_PATTERNS) > 0 && /(?:\{|:|=>|\bdo)\s*$/.test(line);
+}
+
 /** Assertion lines of a prepared file after cancelling lines present on both sides of the diff. */
 function assertionCounts(
   prepared: Prepared[]
@@ -623,8 +809,8 @@ function assertionCounts(
     for (const r of p.removed) {
       removedSet.add(norm(r));
     }
-    for (const a of p.added) {
-      addedSet.add(norm(a.text));
+    for (const a of p.addedLenient) {
+      addedSet.add(norm(a));
     }
   }
   const out = new Map<Prepared, { removed: number; added: number; weakR: number; weakA: number }>();
@@ -639,12 +825,13 @@ function assertionCounts(
         weakR += countMatches(r, WEAK_ASSERTION_PATTERNS);
       }
     }
-    for (const a of p.added) {
-      if (!removedSet.has(norm(a.text))) {
-        added += countMatches(a.text, ASSERTION_PATTERNS);
+    p.added.forEach((a, i) => {
+      const credited = p.addedLenient[i] as string;
+      if (!removedSet.has(norm(credited))) {
+        added += countMatches(credited, ASSERTION_PATTERNS);
         weakA += countMatches(a.text, WEAK_ASSERTION_PATTERNS);
       }
-    }
+    });
     out.set(p, { added, removed, weakA, weakR });
   }
   return out;
@@ -674,7 +861,7 @@ function analyseFiles(parsed: FileDiff[]): TestIntegrityFinding[] {
   const tests = prepared.filter((p) => p.source);
   const caseOf = (p: Prepared) => ({
     added: countMatches(
-      p.added.map((a) => a.text).join('\n'),
+      p.addedLenient.join('\n'),
       p.rust ? RUST_CASE_PATTERNS : TEST_CASE_PATTERNS
     ),
     removed: countMatches(p.removed.join('\n'), p.rust ? RUST_CASE_PATTERNS : TEST_CASE_PATTERNS),
@@ -706,7 +893,7 @@ function analyseFiles(parsed: FileDiff[]): TestIntegrityFinding[] {
   // package.json to jest.config.js is not lowered.
   const configFiles = prepared.filter((p) => isTestConfigPath(p.file.path));
   const before = thresholds(configFiles.flatMap((p) => p.removed));
-  const after = thresholds(configFiles.flatMap((p) => p.added.map((a) => a.text)));
+  const after = thresholds(configFiles.flatMap((p) => p.addedLenient));
   const lowered: string[] = [];
   for (const [key, oldValues] of before) {
     const newValues = after.get(key);
@@ -722,6 +909,7 @@ function analyseFiles(parsed: FileDiff[]): TestIntegrityFinding[] {
   for (const p of prepared) {
     const f = p.file;
     const addedText = p.added.map((a) => a.text).join('\n');
+    const addedCredit = p.addedLenient.join('\n');
     const removedText = p.removed.join('\n');
 
     if (isGitattributes(f.path) || isGitattributes(f.oldPath)) {
@@ -757,7 +945,7 @@ function analyseFiles(parsed: FileDiff[]): TestIntegrityFinding[] {
 
     if (p.source || p.rust) {
       const c = cases.get(p) as { added: number; removed: number };
-      const parameterised = countMatches(addedText, PARAMETERISED_PATTERNS) > 0;
+      const parameterised = countMatches(addedCredit, PARAMETERISED_PATTERNS) > 0;
       if (f.deleted && p.source) {
         const lostElsewhere = netCases > 0 || netAssertions > 0;
         if (lostElsewhere || (c.removed === 0 && !anyNewTestFile)) {
@@ -792,13 +980,36 @@ function analyseFiles(parsed: FileDiff[]): TestIntegrityFinding[] {
     }
 
     if (p.source) {
+      const wrapped = wrappedBlockComments(f, commentStyle(f.path));
+      if (wrapped.length > 0) {
+        add(
+          f,
+          'test_commented_out',
+          'a block comment is opened in the test file and not closed among the lines added with it, ' +
+            'so it comments out code the diff does not show',
+          { line: wrapped[0] }
+        );
+      }
+      const early = p.added.find(
+        (x, i) =>
+          /^\s*return(?:\s+(?:undefined|null|void\s+0))?\s*;?\s*$/.test(x.text) &&
+          isTestOpenerLine(strictPrev(f.added[i]?.prev, commentStyle(f.path)))
+      );
+      if (early) {
+        add(
+          f,
+          'early_return_added',
+          'a bare return was added as the first statement of a test, so its assertions never run',
+          { line: early.line }
+        );
+      }
       const a = assertions.get(p) as {
         added: number;
         removed: number;
         weakA: number;
         weakR: number;
       };
-      const parameterised = countMatches(addedText, PARAMETERISED_PATTERNS) > 0;
+      const parameterised = countMatches(addedCredit, PARAMETERISED_PATTERNS) > 0;
       if (netAssertions > 0 && a.removed > a.added) {
         add(
           f,
@@ -864,7 +1075,7 @@ function analyseFiles(parsed: FileDiff[]): TestIntegrityFinding[] {
       }
       if (!/package\.json$/.test(f.path)) {
         const was = stringsOnKey(p.removed);
-        const now = stringsOnKey(p.added.map((x) => x.text));
+        const now = stringsOnKey(p.addedLenient);
         if (was.size > 0 && now.size > 0) {
           if (now.size < was.size) {
             add(
@@ -941,9 +1152,10 @@ function analyseFiles(parsed: FileDiff[]): TestIntegrityFinding[] {
 }
 
 /**
- * Findings for one unified diff. Read it with `git diff --text --find-renames
- * --src-prefix=a/ --dst-prefix=b/` (see the gate); no context lines are needed. An empty list means the
- * analyser recognised nothing, not that the tests are intact.
+ * Findings for one unified diff. Read it with `git diff-tree -p --text --find-renames -U1
+ * --src-prefix=a/ --dst-prefix=b/` (see the gate); one line of context is what lets it see the
+ * line before an added one. An empty list means the analyser recognised nothing, not that the
+ * tests are intact.
  */
 export function analyseTestIntegrity(diff: string): TestIntegrityResult {
   const truncatedDiff = diff.length > MAX_ANALYSED_DIFF_CHARS;
