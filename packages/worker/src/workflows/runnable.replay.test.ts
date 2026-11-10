@@ -93,6 +93,8 @@ describe('RunnableWorkflow — history replay', () => {
       'container-step',
       'context-spill',
       'eval',
+      'fail-edge-terminal',
+      'fail-edge',
       'fan-out-block-cancel',
       'fan-out-cancel',
       'fan-out-human-gate',
@@ -111,6 +113,9 @@ describe('RunnableWorkflow — history replay', () => {
       'shell',
       'signal-timeout',
       'signal',
+      'status-field',
+      'store-as',
+      'visit-limit',
     ]);
   });
 
@@ -200,6 +205,47 @@ describe('RunnableWorkflow — history replay', () => {
     );
     const names = scheduled.map((e) => e.activityTaskScheduledEventAttributes?.activityType?.name);
     expect(names).toContain('storeContextOverflowBatch');
+  });
+
+  it('the store-as fixture completed through the branch its stored value selected', () => {
+    // The cond reads `context.verdict`, not the node's output. A cond that could not
+    // read the stored path would fail the run instead of completing it.
+    const types = eventsOf('store-as').map((e) => e.eventType);
+    expect(types.at(-1)).toBe(EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED);
+    expect(types).not.toContain(EventType.EVENT_TYPE_WORKFLOW_EXECUTION_FAILED);
+  });
+
+  it('the fail-edge fixture failed its step and routed to the handler', () => {
+    // The activity failed for good (non-retryable), so the failure is on the
+    // history, and the run still completed rather than failing.
+    const types = eventsOf('fail-edge').map((e) => e.eventType);
+    expect(types).toContain(EventType.EVENT_TYPE_ACTIVITY_TASK_FAILED);
+    expect(types.at(-1)).toBe(EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED);
+  });
+
+  it('the fail-edge-terminal fixture ended the run at the onFailure shorthand', () => {
+    const types = eventsOf('fail-edge-terminal').map((e) => e.eventType);
+    expect(types).toContain(EventType.EVENT_TYPE_ACTIVITY_TASK_FAILED);
+    expect(types.at(-1)).toBe(EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED);
+  });
+
+  it('the status-field fixture set the domain status on every visited node', () => {
+    // Init (set), build and review (steps): three entries, each a status write.
+    const scheduled = eventsOf('status-field').filter(
+      (e) => e.eventType === EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+    );
+    const names = scheduled.map((e) => e.activityTaskScheduledEventAttributes?.activityType?.name);
+    expect(names.filter((n) => n === 'updateDomainState')).toHaveLength(3);
+  });
+
+  it('the visit-limit fixture walked the loop body to its bound and no further', () => {
+    // maxVisits: 2 — the body runs twice; the third entry routes to onExhausted,
+    // so exactly two executeImplementation activities were scheduled.
+    const scheduled = eventsOf('visit-limit').filter(
+      (e) => e.eventType === EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+    );
+    const names = scheduled.map((e) => e.activityTaskScheduledEventAttributes?.activityType?.name);
+    expect(names.filter((n) => n === 'executeImplementation')).toHaveLength(2);
   });
 
   it('the signal-timeout fixture timed out rather than resumed', () => {

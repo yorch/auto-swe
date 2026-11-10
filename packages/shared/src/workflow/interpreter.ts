@@ -24,6 +24,7 @@ import type {
   HumanInputNode,
   HumanReviewNode,
   Node,
+  RouteTarget,
   SetNode,
   ShellNode,
   SignalNode,
@@ -292,6 +293,15 @@ export interface Dispatcher {
    * interpreter treats it as "no pending steering".
    */
   drainSteering?(): string[];
+
+  /**
+   * Set the run's domain status (the `ActiveWorkflow.currentStatus` the dashboard
+   * shows) when a node that declares `status` is entered. Called once per node
+   * visit, before the node dispatches and never again on an `onFail` retry.
+   * Best-effort: a failure is swallowed (a run cancellation still propagates).
+   * Optional — a dispatcher without it makes `status` a no-op.
+   */
+  setDomainStatus?(status: string): Promise<void>;
 }
 
 export interface InterpreterResult {
@@ -499,6 +509,42 @@ async function walk(
     const recordingId = nodeIdPrefix ? `${nodeIdPrefix}${nodeId}` : nodeId;
     const nodeDispatcher = identityRecordingDispatcher(dispatcher, nodeId, node);
 
+    // Loop bound. The count lives in the run context, which is workflow state, so a
+    // replay recomputes it; a fan-out branch has its own sealed `nodes`, so its count
+    // is per branch.
+    if (node.maxVisits !== undefined) {
+      const visits = (Number(lookupPath(ctx, `nodes.${nodeId}.visits`)) || 0) + 1;
+      setPath(ctx, `nodes.${nodeId}.visits`, visits);
+      if (visits > node.maxVisits) {
+        if (node.onExhausted === undefined) {
+          throw new Error(
+            `node '${nodeId}' exceeded maxVisits (${node.maxVisits}) with no onExhausted`
+          );
+        }
+        const route: RouteTarget = node.onExhausted;
+        if (typeof route === 'string') {
+          currentNodeId = route;
+        } else {
+          terminal = terminalFromRoute(route);
+          currentNodeId = undefined;
+        }
+        continue;
+      }
+    }
+
+    // Domain status, once per visit: `onFail` retries re-dispatch inside the node
+    // and never come back through here.
+    if (node.status !== undefined && node.type !== 'terminate' && dispatcher.setDomainStatus) {
+      try {
+        await dispatcher.setDomainStatus(node.status);
+      } catch (err) {
+        if (isBranchCancelled(err) || isRunCancellation(dispatcher, err)) {
+          throw err;
+        }
+        // best-effort
+      }
+    }
+
     try {
       switch (node.type) {
         case 'step':
@@ -507,7 +553,7 @@ async function walk(
         case 'eval':
         case 'containerStep':
         case 'shell': {
-          currentNodeId = await runDispatchNode(
+          const routed = await runDispatchNode(
             recordingId,
             nodeId,
             node,
@@ -515,6 +561,12 @@ async function walk(
             nodeDispatcher,
             cancellationSink
           );
+          if (isTerminalRoute(routed)) {
+            terminal = routed.terminal;
+            currentNodeId = undefined;
+          } else {
+            currentNodeId = routed;
+          }
           break;
         }
         case 'set': {
@@ -590,6 +642,22 @@ async function walk(
     exports: undefined,
     result: terminal?.result ?? {},
     status: terminal?.status ?? 'SUCCESS',
+  };
+}
+
+/** A routed failure that ends the run (or fan-out branch) the way a `terminate` node would. */
+interface TerminalRoute {
+  terminal: { status: string; result: Record<string, unknown> };
+}
+
+function isTerminalRoute(route: string | undefined | TerminalRoute): route is TerminalRoute {
+  return typeof route === 'object' && route !== null;
+}
+
+function terminalFromRoute(route: Exclude<RouteTarget, string>): TerminalRoute['terminal'] {
+  return {
+    result: route.message !== undefined ? { message: route.message } : {},
+    status: route.status,
   };
 }
 
@@ -790,7 +858,7 @@ async function runDispatchNode(
   ctx: Context,
   dispatcher: Dispatcher,
   cancellationSink?: BranchSink
-): Promise<string | undefined> {
+): Promise<string | undefined | TerminalRoute> {
   const packer = DISPATCH_PACKERS[node.type] as DispatchPacker<DispatchNode>;
   let inputs: Record<string, unknown>;
   let invoke: (args: AttemptArgs) => Promise<unknown>;
@@ -829,8 +897,10 @@ async function runDispatchNode(
     nodeId,
     onError: node.onError,
     onFail: node.onFail,
+    onFailure: node.onFailure,
     shouldAbort: cancellationSink?.shouldAbort,
     specNodeId,
+    storeAs: node.storeAs,
   });
 }
 
@@ -869,11 +939,22 @@ async function runRetryable(args: {
   next: string | undefined;
   onFail: StepNode['onFail'];
   onError: StepNode['onError'];
+  /** Where the node goes once it has finally failed; wins over `onFail` block/warn and `onError`. */
+  onFailure?: RouteTarget;
+  /** Extra context path the output is also written to. */
+  storeAs?: string;
   dispatcher: Dispatcher;
   /** Fan-out branch abort check; a retry must not start once the fan-out is decided. */
   shouldAbort?: () => boolean;
-}): Promise<string | undefined> {
+}): Promise<string | undefined | TerminalRoute> {
   const { nodeId, specNodeId, inputs, ctx, invoke, next, onFail, onError, dispatcher } = args;
+  const { onFailure, storeAs } = args;
+  const writeOutput = (value: unknown): void => {
+    setPath(ctx, `nodes.${specNodeId}.output`, value);
+    if (storeAs !== undefined) {
+      setPath(ctx, storeAs, value);
+    }
+  };
 
   // A quality-gate / shell-step may return { passed: false, ... } to signal a
   // logical failure without throwing. Treat that the same as a thrown error
@@ -925,7 +1006,7 @@ async function runRetryable(args: {
         break;
       }
 
-      setPath(ctx, `nodes.${specNodeId}.output`, output);
+      writeOutput(output);
       await safeRecord(dispatcher, {
         attempt,
         inputs,
@@ -951,14 +1032,14 @@ async function runRetryable(args: {
       lastError = err;
       lastFailedAsGate = false;
       // Legacy onError: 'continue' wins — record SKIPPED and proceed.
-      if (onError === 'continue') {
+      if (onError === 'continue' && onFailure === undefined) {
         await safeRecord(dispatcher, {
           attempt,
           error: describeStepError(err),
           nodeId,
           status: 'SKIPPED',
         });
-        setPath(ctx, `nodes.${specNodeId}.output`, null);
+        writeOutput(null);
         setPath(ctx, `nodes.${specNodeId}.error`, String(err));
         return next;
       }
@@ -984,13 +1065,25 @@ async function runRetryable(args: {
     }
   }
 
-  // All attempts exhausted. Decide terminal mode from onFail (default block).
+  // All attempts exhausted. An `onFailure` route wins over every onFail / onError mode:
+  // the failed rows are already recorded, so surface the failure in context and go there.
+  if (onFailure !== undefined) {
+    setPath(ctx, `nodes.${specNodeId}.output`, lastOutput ?? null);
+    setPath(
+      ctx,
+      `nodes.${specNodeId}.error`,
+      lastError && !lastFailedAsGate ? String(lastError) : gateFailureMessage(lastOutput)
+    );
+    return typeof onFailure === 'string' ? onFailure : { terminal: terminalFromRoute(onFailure) };
+  }
+
+  // Decide terminal mode from onFail (default block).
   const mode = onFail ?? 'block';
   const terminalBlock = mode === 'block' || (typeof mode === 'object' && 'retry' in mode);
 
   if (!terminalBlock) {
     // warn: surface the failure in context but continue.
-    setPath(ctx, `nodes.${specNodeId}.output`, lastOutput ?? null);
+    writeOutput(lastOutput ?? null);
     if (lastError) {
       setPath(ctx, `nodes.${specNodeId}.error`, String(lastError));
     }

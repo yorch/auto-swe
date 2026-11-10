@@ -1,0 +1,739 @@
+{
+  "description": "Diagnose a failed GitHub Actions run from its logs and classify it (regression, test bug, configuration, dependency, flaky, infrastructure). In fix mode, when code can fix it, open a draft pull request into the branch that failed and revise it while its own CI fails, as many times as the trigger allows — or, where allowed, push it onto a pull request's own branch. Never changes workflow files. Started by a CI-failure trigger.",
+  "entry": "triage",
+  "name": "ci-triage-and-fix",
+  "nodes": {
+    "checkChanged": {
+      "expr": "context.currentCodeResult.filesChanged.length == 0",
+      "onFalse": "runLint",
+      "onTrue": "noChange",
+      "type": "cond"
+    },
+    "checkCI": {
+      "expr": "context.ciResultPayload.passed == true",
+      "onFalse": "incCIRetries",
+      "onTrue": "done",
+      "type": "cond"
+    },
+    "checkCILimit": {
+      "expr": "context.ciRetries >= ((request.payload.maxCiFixAttempts ?? 2) + 1)",
+      "onFalse": "fetchLogs",
+      "onTrue": "terminateCIFailed",
+      "type": "cond"
+    },
+    "checkCiFixChanged": {
+      "expr": "nodes.ciFix.output.headSha == context.currentCodeResult.headSha",
+      "onFalse": "updateCodeAfterCIFix",
+      "onTrue": "incCIRetries",
+      "type": "cond"
+    },
+    "checkPushed": {
+      "expr": "nodes.pushFix.output.pushed == true",
+      "onFalse": "openPR",
+      "onTrue": "startPushWatch",
+      "type": "cond"
+    },
+    "checkPushedAgain": {
+      "expr": "nodes.pushFixAgain.output.pushed == true",
+      "onFalse": "reportPushFailed",
+      "onTrue": "storePushedAgain",
+      "type": "cond"
+    },
+    "checkPushedCi": {
+      "expr": "nodes.watchPushedCi.output.ciPassed == false",
+      "onFalse": "finishPushed",
+      "onTrue": "checkPushRetries",
+      "type": "cond"
+    },
+    "checkPushRetries": {
+      "expr": "(request.payload.maxCiFixAttempts ?? 2) == 0",
+      "onFalse": "fetchPushedLogs",
+      "onTrue": "reportPushFailed",
+      "type": "cond"
+    },
+    "checkPushRetryFix": {
+      "expr": "nodes.pushRetryFix.output.headSha == context.currentCodeResult.headSha",
+      "onFalse": "keepPushRetryFix",
+      "onTrue": "reportPushFailed",
+      "type": "cond"
+    },
+    "checkSkipped": {
+      "expr": "context.ciTriage.decision == 'skip'",
+      "onFalse": "reportDiagnosis",
+      "onTrue": "skipped",
+      "type": "cond"
+    },
+    "ciFix": {
+      "config": {
+        "refuseWorkflowChanges": true,
+        "untrustedCiLogs": true
+      },
+      "inputs": {
+        "failureContext": {
+          "from": "context.lastCILogs"
+        },
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "checkCiFixChanged",
+      "step": "executeCIFixImplementation",
+      "type": "step"
+    },
+    "diagnosed": {
+      "result": {
+        "category": {
+          "from": "context.ciTriage.category"
+        },
+        "confidence": {
+          "from": "context.ciTriage.confidence"
+        },
+        "decision": {
+          "from": "context.ciTriage.decision"
+        },
+        "reason": {
+          "from": "context.ciTriage.reason"
+        },
+        "rootCause": {
+          "from": "context.ciTriage.rootCause"
+        },
+        "run": {
+          "from": "context.ciTriage.run"
+        },
+        "suggestedFix": {
+          "from": "context.ciTriage.suggestedFix"
+        },
+        "summary": {
+          "from": "context.ciTriage.summary"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "done": {
+      "result": {
+        "category": {
+          "from": "context.ciTriage.category"
+        },
+        "confidence": {
+          "from": "context.ciTriage.confidence"
+        },
+        "decision": {
+          "from": "context.ciTriage.decision"
+        },
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        },
+        "reason": {
+          "from": "context.ciTriage.reason"
+        },
+        "rootCause": {
+          "from": "context.ciTriage.rootCause"
+        },
+        "run": {
+          "from": "context.ciTriage.run"
+        },
+        "suggestedFix": {
+          "from": "context.ciTriage.suggestedFix"
+        },
+        "summary": {
+          "from": "context.ciTriage.summary"
+        },
+        "verification": {
+          "from": "context.ciVerification"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "fetchLogs": {
+      "inputs": {
+        "logsUrl": {
+          "from": "context.ciResultPayload.logsUrl"
+        }
+      },
+      "next": "ciFix",
+      "step": "fetchCILogs",
+      "storeAs": "context.lastCILogs",
+      "type": "step"
+    },
+    "fetchPushedLogs": {
+      "inputs": {
+        "logsUrl": {
+          "from": "nodes.watchPushedCi.output.logsUrl"
+        }
+      },
+      "maxVisits": 1,
+      "next": "pushRetryFix",
+      "onExhausted": "reportPushFailed",
+      "onFail": "warn",
+      "step": "fetchCILogs",
+      "type": "step"
+    },
+    "finishPushed": {
+      "next": "pushed",
+      "onError": "continue",
+      "step": "finishCiFixPush",
+      "type": "step"
+    },
+    "finishPushFailed": {
+      "next": "pushFailed",
+      "onError": "continue",
+      "step": "finishCiFixPush",
+      "type": "step"
+    },
+    "fixFailed": {
+      "result": {
+        "category": {
+          "from": "context.ciTriage.category"
+        },
+        "confidence": {
+          "from": "context.ciTriage.confidence"
+        },
+        "decision": {
+          "from": "context.ciTriage.decision"
+        },
+        "error": {
+          "from": "nodes.implement.error"
+        },
+        "reason": {
+          "from": "context.ciTriage.reason"
+        },
+        "rootCause": {
+          "from": "context.ciTriage.rootCause"
+        },
+        "run": {
+          "from": "context.ciTriage.run"
+        },
+        "suggestedFix": {
+          "from": "context.ciTriage.suggestedFix"
+        },
+        "summary": {
+          "from": "context.ciTriage.summary"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "implement": {
+      "config": {
+        "refuseWorkflowChanges": true
+      },
+      "inputs": {
+        "ciDiagnosis": {
+          "from": "context.ciTriage.brief"
+        }
+      },
+      "next": "checkChanged",
+      "onFailure": "implementFailed",
+      "status": "IMPLEMENTING",
+      "step": "executeImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "implementFailed": {
+      "next": "reportFixFailed",
+      "type": "set",
+      "values": {
+        "context.ciTriage.decision": {
+          "literal": "report"
+        },
+        "context.ciTriage.reason": {
+          "literal": "a fix was attempted but failed before a pull request was opened"
+        }
+      }
+    },
+    "incCIRetries": {
+      "next": "checkCILimit",
+      "type": "set",
+      "values": {
+        "context.ciRetries": {
+          "expr": "context.ciRetries + 1"
+        }
+      }
+    },
+    "keepPushRetryFix": {
+      "next": "pushFixAgain",
+      "type": "set",
+      "values": {
+        "context.currentCodeResult": {
+          "from": "nodes.pushRetryFix.output"
+        }
+      }
+    },
+    "keepVerification": {
+      "next": "routeDelivery",
+      "type": "set",
+      "values": {
+        "context.ciVerification": {
+          "from": "nodes.verifyFix.output.verification"
+        },
+        "context.currentCodeResult": {
+          "from": "nodes.verifyFix.output.codeResult"
+        }
+      }
+    },
+    "loadCiWaitConfig": {
+      "next": "routeCiWait",
+      "step": "resolveCiWaitConfig",
+      "type": "step"
+    },
+    "noChange": {
+      "next": "reportDiagnosis",
+      "type": "set",
+      "values": {
+        "context.ciTriage.decision": {
+          "literal": "report"
+        },
+        "context.ciTriage.reason": {
+          "literal": "the fix attempt changed no files, so no pull request was opened"
+        }
+      }
+    },
+    "openPR": {
+      "config": {
+        "draft": true
+      },
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "savePrInfo",
+      "step": "createOrUpdatePullRequest",
+      "type": "step"
+    },
+    "pollForCI": {
+      "inputs": {
+        "deadlineSec": {
+          "from": "nodes.loadCiWaitConfig.output.deadlineSec"
+        },
+        "graceSec": {
+          "from": "nodes.loadCiWaitConfig.output.graceSec"
+        },
+        "intervalSec": {
+          "from": "nodes.loadCiWaitConfig.output.intervalSec"
+        },
+        "ref": {
+          "from": "context.currentCodeResult.branch"
+        }
+      },
+      "next": "storePollResult",
+      "onError": "fail",
+      "step": "waitForCiByPolling",
+      "type": "step"
+    },
+    "pushed": {
+      "result": {
+        "category": {
+          "from": "context.ciTriage.category"
+        },
+        "confidence": {
+          "from": "context.ciTriage.confidence"
+        },
+        "decision": {
+          "from": "context.ciTriage.decision"
+        },
+        "pushedCommitSha": {
+          "from": "context.pushedCommitSha"
+        },
+        "reason": {
+          "from": "context.ciTriage.reason"
+        },
+        "rootCause": {
+          "from": "context.ciTriage.rootCause"
+        },
+        "run": {
+          "from": "context.ciTriage.run"
+        },
+        "suggestedFix": {
+          "from": "context.ciTriage.suggestedFix"
+        },
+        "summary": {
+          "from": "context.ciTriage.summary"
+        },
+        "verification": {
+          "from": "context.ciVerification"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "pushFailed": {
+      "result": {
+        "category": {
+          "from": "context.ciTriage.category"
+        },
+        "confidence": {
+          "from": "context.ciTriage.confidence"
+        },
+        "decision": {
+          "from": "context.ciTriage.decision"
+        },
+        "error": {
+          "literal": "the pushed fix did not pass the pull request's CI"
+        },
+        "pushedCommitSha": {
+          "from": "context.pushedCommitSha"
+        },
+        "reason": {
+          "from": "context.ciTriage.reason"
+        },
+        "rootCause": {
+          "from": "context.ciTriage.rootCause"
+        },
+        "run": {
+          "from": "context.ciTriage.run"
+        },
+        "suggestedFix": {
+          "from": "context.ciTriage.suggestedFix"
+        },
+        "summary": {
+          "from": "context.ciTriage.summary"
+        },
+        "verification": {
+          "from": "context.ciVerification"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "pushFix": {
+      "config": {
+        "keepWorkBranch": true
+      },
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "triage": {
+          "from": "context.ciTriage"
+        }
+      },
+      "next": "checkPushed",
+      "onFailure": "openPR",
+      "step": "pushCiFixToPullRequest",
+      "type": "step"
+    },
+    "pushFixAgain": {
+      "config": {
+        "keepWorkBranch": true
+      },
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "triage": {
+          "from": "context.ciTriage"
+        }
+      },
+      "next": "checkPushedAgain",
+      "onFailure": "reportPushFailed",
+      "step": "pushCiFixToPullRequest",
+      "type": "step"
+    },
+    "pushRetryFix": {
+      "config": {
+        "refuseWorkflowChanges": true,
+        "untrustedCiLogs": true
+      },
+      "inputs": {
+        "failureContext": {
+          "from": "nodes.fetchPushedLogs.output"
+        },
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "checkPushRetryFix",
+      "onFailure": "reportPushFailed",
+      "step": "executeCIFixImplementation",
+      "type": "step"
+    },
+    "reportDiagnosis": {
+      "inputs": {
+        "triage": {
+          "from": "context.ciTriage"
+        }
+      },
+      "next": "diagnosed",
+      "onFail": "warn",
+      "step": "reportCiTriage",
+      "type": "step"
+    },
+    "reportFix": {
+      "inputs": {
+        "fixPrUrl": {
+          "from": "context.prUrl"
+        },
+        "pushRefusedReason": {
+          "from": "nodes.pushFix.output.reason"
+        },
+        "triage": {
+          "from": "context.ciTriage"
+        },
+        "verification": {
+          "from": "context.ciVerification"
+        }
+      },
+      "next": "loadCiWaitConfig",
+      "onFail": "warn",
+      "step": "reportCiTriage",
+      "type": "step"
+    },
+    "reportFixFailed": {
+      "inputs": {
+        "triage": {
+          "from": "context.ciTriage"
+        }
+      },
+      "next": "fixFailed",
+      "onFail": "warn",
+      "step": "reportCiTriage",
+      "type": "step"
+    },
+    "reportPushed": {
+      "inputs": {
+        "pushedCommitSha": {
+          "from": "context.pushedCommitSha"
+        },
+        "triage": {
+          "from": "context.ciTriage"
+        },
+        "verification": {
+          "from": "context.ciVerification"
+        }
+      },
+      "next": "watchPushedCi",
+      "onFail": "warn",
+      "step": "reportCiTriage",
+      "type": "step"
+    },
+    "reportPushFailed": {
+      "inputs": {
+        "pushedCommitSha": {
+          "from": "context.pushedCommitSha"
+        },
+        "pushFailed": {
+          "literal": true
+        },
+        "pushRetryAttempted": {
+          "expr": "(nodes.fetchPushedLogs.visits ?? 0) >= 1"
+        },
+        "pushRetryPushed": {
+          "expr": "nodes.pushFixAgain.output.pushed == true"
+        },
+        "pushRetryRefusedReason": {
+          "from": "nodes.pushFixAgain.output.reason"
+        },
+        "triage": {
+          "from": "context.ciTriage"
+        },
+        "verification": {
+          "from": "context.ciVerification"
+        }
+      },
+      "next": "finishPushFailed",
+      "onFail": "warn",
+      "step": "reportCiTriage",
+      "type": "step"
+    },
+    "repushAfterFix": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "loadCiWaitConfig",
+      "step": "createOrUpdatePullRequest",
+      "type": "step"
+    },
+    "routeCiWait": {
+      "expr": "nodes.loadCiWaitConfig.output.mode == 'poll'",
+      "onFalse": "waitForCI",
+      "onTrue": "pollForCI",
+      "type": "cond"
+    },
+    "routeDelivery": {
+      "expr": "request.payload.pullRequestDelivery == 'push'",
+      "onFalse": "openPR",
+      "onTrue": "pushFix",
+      "type": "cond"
+    },
+    "routeTriage": {
+      "expr": "context.ciTriage.decision == 'fix'",
+      "onFalse": "checkSkipped",
+      "onTrue": "implement",
+      "type": "cond"
+    },
+    "runLint": {
+      "next": "runTypecheck",
+      "onFail": "warn",
+      "step": "runLint",
+      "type": "step"
+    },
+    "runTests": {
+      "next": "verifyFix",
+      "onFail": "warn",
+      "step": "runTests",
+      "type": "step"
+    },
+    "runTypecheck": {
+      "next": "runTests",
+      "onFail": "warn",
+      "step": "runTypecheck",
+      "type": "step"
+    },
+    "savePrInfo": {
+      "next": "reportFix",
+      "type": "set",
+      "values": {
+        "context.ciRetries": {
+          "literal": 0
+        },
+        "context.prNumber": {
+          "from": "nodes.openPR.output.prNumber"
+        },
+        "context.prUrl": {
+          "from": "nodes.openPR.output.prUrl"
+        }
+      }
+    },
+    "skipped": {
+      "result": {
+        "category": {
+          "from": "context.ciTriage.category"
+        },
+        "confidence": {
+          "from": "context.ciTriage.confidence"
+        },
+        "decision": {
+          "from": "context.ciTriage.decision"
+        },
+        "reason": {
+          "from": "context.ciTriage.reason"
+        },
+        "rootCause": {
+          "from": "context.ciTriage.rootCause"
+        },
+        "run": {
+          "from": "context.ciTriage.run"
+        },
+        "suggestedFix": {
+          "from": "context.ciTriage.suggestedFix"
+        },
+        "summary": {
+          "from": "context.ciTriage.summary"
+        }
+      },
+      "status": "SKIPPED",
+      "type": "terminate"
+    },
+    "startPushWatch": {
+      "next": "reportPushed",
+      "type": "set",
+      "values": {
+        "context.pushedCommitSha": {
+          "from": "nodes.pushFix.output.commitSha"
+        }
+      }
+    },
+    "storePollResult": {
+      "next": "checkCI",
+      "type": "set",
+      "values": {
+        "context.ciResultPayload.logsUrl": {
+          "from": "nodes.pollForCI.output.logsUrl"
+        },
+        "context.ciResultPayload.passed": {
+          "from": "nodes.pollForCI.output.ciPassed"
+        }
+      }
+    },
+    "storePushedAgain": {
+      "next": "reportPushed",
+      "type": "set",
+      "values": {
+        "context.pushedCommitSha": {
+          "from": "nodes.pushFixAgain.output.commitSha"
+        }
+      }
+    },
+    "terminateCIFailed": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "terminateCITimedOut": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "TIMED_OUT",
+      "type": "terminate"
+    },
+    "triage": {
+      "next": "routeTriage",
+      "step": "triageCiFailure",
+      "storeAs": "context.ciTriage",
+      "type": "step"
+    },
+    "updateCodeAfterCIFix": {
+      "next": "repushAfterFix",
+      "type": "set",
+      "values": {
+        "context.currentCodeResult": {
+          "from": "nodes.ciFix.output"
+        }
+      }
+    },
+    "verifyFix": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "triage": {
+          "from": "context.ciTriage"
+        }
+      },
+      "next": "keepVerification",
+      "onFailure": "routeDelivery",
+      "step": "verifyCiFix",
+      "type": "step"
+    },
+    "waitForCI": {
+      "name": "ciPipelineSignal",
+      "onReceive": "checkCI",
+      "onTimeout": "terminateCITimedOut",
+      "storeAs": "context.ciResultPayload",
+      "timeout": "4h",
+      "type": "signal"
+    },
+    "watchPushedCi": {
+      "inputs": {
+        "ref": {
+          "from": "context.pushedCommitSha"
+        }
+      },
+      "next": "checkPushedCi",
+      "onFailure": "finishPushed",
+      "step": "waitForCiByPolling",
+      "type": "step"
+    }
+  },
+  "schemaVersion": 1
+}

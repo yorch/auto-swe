@@ -5,8 +5,9 @@ export interface OpenPullRequestOptions {
   /** Node that follows the pull request being recorded. */
   next: string;
   /**
-   * Also reset `context.ciRetries` to 0 when the pull request is recorded, for a
-   * template with no `initCounters` ahead of its CI loop. Default false.
+   * Also reset `context.ciRetries` to 0 when the pull request is recorded. Only a CI loop
+   * with an expression limit counts in `context.ciRetries` (see `ciLoop`); every other loop
+   * counts visits to `fetchLogs` and needs no reset. Default false.
    */
   resetCiRetries?: boolean;
   /**
@@ -15,6 +16,8 @@ export interface OpenPullRequestOptions {
    * the node carries no `config` at all, so existing templates are unchanged.
    */
   draft?: boolean;
+  /** Domain status stamped when `openPR` is entered (normally `AWAITING_CI`). Default none. */
+  status?: string;
 }
 
 /**
@@ -35,6 +38,7 @@ export function openPullRequest(opts: OpenPullRequestOptions): NodeMap {
       group,
       inputs: { codeResult: { from: 'context.currentCodeResult' } },
       next: 'savePrInfo',
+      ...(opts.status ? { status: opts.status } : {}),
       step: 'createOrUpdatePullRequest',
       title: 'Open the pull request',
       type: 'step',

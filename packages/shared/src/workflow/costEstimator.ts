@@ -48,6 +48,12 @@ export const DEFAULT_ROLE_PRICING: Record<
 
 export const DEFAULT_FANOUT_WIDTH = 4;
 
+/** A route that names a node; the terminal shorthand object leads nowhere and costs nothing. */
+function routeId(node: Node, field: 'next' | 'onFailure' | 'onExhausted'): string | undefined {
+  const route = (node as unknown as Record<string, unknown>)[field];
+  return typeof route === 'string' ? route : undefined;
+}
+
 /**
  * Why a node contributes nothing to the estimate. Kept as a closed set so the
  * editor can render one sentence per class rather than a per-node list.
@@ -127,7 +133,18 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
       return 0;
     }
     onStack.add(nodeId);
-    const usd = costOf(nodeId, node);
+    let usd = costOf(nodeId, node);
+    // `onFailure` / `onExhausted` are alternatives to the node's normal continuation, so the
+    // worst case takes the dearer of the two. The node's own cost is what is left once its
+    // `next` arm is taken out; a branching node has no `next` and so owns nothing here.
+    const failureArms = Math.max(
+      walk(routeId(node, 'onFailure')),
+      walk(routeId(node, 'onExhausted'))
+    );
+    if (failureArms > 0) {
+      const own = usd - walk(routeId(node, 'next'));
+      usd = Math.max(usd, own + failureArms);
+    }
     onStack.delete(nodeId);
     memo.set(nodeId, usd);
     return usd;

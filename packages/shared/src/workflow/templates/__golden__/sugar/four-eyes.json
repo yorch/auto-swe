@@ -1,0 +1,391 @@
+{
+  "description": "Implement, run the agent review loop, open the PR and wait for CI (a failing CI is fixed by the agent: 2 fix attempts, and a third failure fails the run), then require two sequential human approvals (e.g. author sign-off followed by independent reviewer sign-off) on the code that passed CI. Requesting changes — with a required note — sends the change back for a fix and through CI again (2 fix attempts, a third change request fails the run), and both people sign off again; rejecting stops the run. A fix that changes nothing goes straight back to the two people, marked as unchanged. Models a four-eyes / two-person-rule change-management requirement.",
+  "entry": "validate",
+  "name": "four-eyes",
+  "nodes": {
+    "checkApproval": {
+      "expr": "nodes.review.output.approved == true",
+      "onFalse": "storeRejection",
+      "onTrue": "forgetRejection",
+      "type": "cond"
+    },
+    "checkCI": {
+      "expr": "context.ciResultPayload.passed == true",
+      "onFalse": "fetchLogs",
+      "onTrue": "storeSignoffContext",
+      "type": "cond"
+    },
+    "checkCiFixChanged": {
+      "expr": "nodes.ciFix.output.headSha == context.currentCodeResult.headSha",
+      "onFalse": "updateCodeAfterCIFix",
+      "onTrue": "fetchLogs",
+      "type": "cond"
+    },
+    "checkSignoffFixChanged": {
+      "expr": "nodes.signoffFix.output.headSha == context.currentCodeResult.headSha",
+      "onFalse": "updateCodeAfterSignoffFix",
+      "onTrue": "storeSignoffContextUnchanged",
+      "type": "cond"
+    },
+    "checkStalled": {
+      "expr": "nodes.review.output.stalled == true",
+      "onFalse": "reviewFix",
+      "onTrue": "lessonReviewFailed",
+      "type": "cond"
+    },
+    "ciFix": {
+      "inputs": {
+        "failureContext": {
+          "from": "context.lastCILogs"
+        },
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "checkCiFixChanged",
+      "step": "executeCIFixImplementation",
+      "type": "step"
+    },
+    "done": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "fetchLogs": {
+      "inputs": {
+        "logsUrl": {
+          "from": "context.ciResultPayload.logsUrl"
+        }
+      },
+      "maxVisits": 2,
+      "next": "ciFix",
+      "onExhausted": "lessonCIFailed",
+      "step": "fetchCILogs",
+      "storeAs": "context.lastCILogs",
+      "type": "step"
+    },
+    "firstSignoff": {
+      "contextFrom": "context.signoffContext",
+      "description": "CI has passed on the head commit in the context, and the pull request is open. Confirm you have read the implementation and are satisfied it meets the requirements. If rejectedBefore is above 0 this is a repeat round and both people sign off again: changedSinceLastSignoff says whether the code changed, and noChangeMade means the fix made no change and this is the code that was sent back before. Approve to move to the second sign-off, request changes (with a note) to send it back for a fix, or reject to stop the run.",
+      "onApprove": "secondSignoff",
+      "onReject": "terminateRejected",
+      "onRequestChanges": "noteFirstSignoffChanges",
+      "onTimeout": "terminateTimedOut",
+      "timeout": "24h",
+      "title": "First sign-off — author / team-lead review",
+      "type": "humanApproval"
+    },
+    "forgetRejection": {
+      "next": "openPR",
+      "type": "set",
+      "values": {
+        "context.lastReviewFingerprint": {
+          "literal": ""
+        }
+      }
+    },
+    "implement": {
+      "next": "review",
+      "status": "IMPLEMENTING",
+      "step": "executeImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "lessonCIFailed": {
+      "inputs": {
+        "outcome": {
+          "literal": "CI_FAILED"
+        }
+      },
+      "next": "terminateCIFailed",
+      "onError": "continue",
+      "step": "commitToMemory",
+      "type": "step"
+    },
+    "lessonReviewFailed": {
+      "inputs": {
+        "outcome": {
+          "literal": "REVIEW_FAILED"
+        }
+      },
+      "next": "terminateReviewFailed",
+      "onError": "continue",
+      "step": "commitToMemory",
+      "type": "step"
+    },
+    "noteFirstSignoffChanges": {
+      "next": "signoffFix",
+      "type": "set",
+      "values": {
+        "context.signoffRejectionSummary": {
+          "from": "nodes.firstSignoff.output.comment"
+        }
+      }
+    },
+    "noteSecondSignoffChanges": {
+      "next": "signoffFix",
+      "type": "set",
+      "values": {
+        "context.signoffRejectionSummary": {
+          "from": "nodes.secondSignoff.output.comment"
+        }
+      }
+    },
+    "openPR": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "savePrInfo",
+      "status": "AWAITING_CI",
+      "step": "createOrUpdatePullRequest",
+      "type": "step"
+    },
+    "repushAfterFix": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "waitForCI",
+      "status": "AWAITING_CI",
+      "step": "createOrUpdatePullRequest",
+      "type": "step"
+    },
+    "review": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "previousFingerprint": {
+          "default": "",
+          "from": "context.lastReviewFingerprint"
+        },
+        "successCriteria": {
+          "from": "context.successCriteria"
+        }
+      },
+      "next": "checkApproval",
+      "status": "IN_REVIEW",
+      "step": "runReviewNetwork",
+      "type": "step"
+    },
+    "reviewFix": {
+      "inputs": {
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "rejectionSummary": {
+          "from": "context.lastRejectionSummary"
+        }
+      },
+      "maxVisits": 2,
+      "next": "review",
+      "onExhausted": "lessonReviewFailed",
+      "step": "executeReviewFixImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "savePrInfo": {
+      "next": "waitForCI",
+      "type": "set",
+      "values": {
+        "context.prNumber": {
+          "from": "nodes.openPR.output.prNumber"
+        },
+        "context.prUrl": {
+          "from": "nodes.openPR.output.prUrl"
+        }
+      }
+    },
+    "secondSignoff": {
+      "contextFrom": "context.signoffContext",
+      "description": "You are a second, independent reviewer. CI has passed on the head commit in the context. Confirm the change is safe to merge. If rejectedBefore is above 0 this is a repeat round and the first reviewer has signed off again: changedSinceLastSignoff says whether the code changed, and noChangeMade means the fix made no change. Approve to finish, request changes (with a note) to send it back for a fix, or reject to stop the run.",
+      "onApprove": "done",
+      "onReject": "terminateRejected",
+      "onRequestChanges": "noteSecondSignoffChanges",
+      "onTimeout": "terminateTimedOut",
+      "timeout": "24h",
+      "title": "Second sign-off — independent reviewer",
+      "type": "humanApproval"
+    },
+    "setSuccessCriteria": {
+      "next": "implement",
+      "type": "set",
+      "values": {
+        "context.successCriteria": {
+          "default": [],
+          "from": "nodes.validate.output.successCriteria"
+        }
+      }
+    },
+    "signoffFix": {
+      "inputs": {
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "rejectionSummary": {
+          "from": "context.signoffRejectionSummary"
+        }
+      },
+      "maxVisits": 2,
+      "next": "checkSignoffFixChanged",
+      "onExhausted": "terminateRejected",
+      "step": "executeReviewFixImplementation",
+      "type": "step"
+    },
+    "storeRejection": {
+      "next": "checkStalled",
+      "type": "set",
+      "values": {
+        "context.lastRejectionSummary": {
+          "default": "",
+          "from": "nodes.review.output.rejectionSummary"
+        },
+        "context.lastReviewFingerprint": {
+          "default": "",
+          "from": "nodes.review.output.rejectionFingerprint"
+        }
+      }
+    },
+    "storeSignoffContext": {
+      "next": "firstSignoff",
+      "status": "IN_REVIEW",
+      "type": "set",
+      "values": {
+        "context.signoffContext.changedSinceLastSignoff": {
+          "expr": "(nodes.signoffFix.visits ?? 0) > 0"
+        },
+        "context.signoffContext.ciPassed": {
+          "literal": true
+        },
+        "context.signoffContext.headSha": {
+          "from": "context.currentCodeResult.headSha"
+        },
+        "context.signoffContext.noChangeMade": {
+          "literal": false
+        },
+        "context.signoffContext.prUrl": {
+          "from": "context.prUrl"
+        },
+        "context.signoffContext.rejectedBefore": {
+          "default": 0,
+          "from": "nodes.signoffFix.visits"
+        }
+      }
+    },
+    "storeSignoffContextUnchanged": {
+      "next": "firstSignoff",
+      "type": "set",
+      "values": {
+        "context.signoffContext.changedSinceLastSignoff": {
+          "literal": false
+        },
+        "context.signoffContext.noChangeMade": {
+          "literal": true
+        },
+        "context.signoffContext.rejectedBefore": {
+          "default": 0,
+          "from": "nodes.signoffFix.visits"
+        }
+      }
+    },
+    "terminateCIFailed": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "terminateCITimedOut": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "TIMED_OUT",
+      "type": "terminate"
+    },
+    "terminateRejected": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "terminateReviewFailed": {
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "terminateTimedOut": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "TIMED_OUT",
+      "type": "terminate"
+    },
+    "updateCodeAfterCIFix": {
+      "next": "repushAfterFix",
+      "type": "set",
+      "values": {
+        "context.currentCodeResult": {
+          "from": "nodes.ciFix.output"
+        }
+      }
+    },
+    "updateCodeAfterSignoffFix": {
+      "next": "repushAfterFix",
+      "type": "set",
+      "values": {
+        "context.currentCodeResult": {
+          "from": "nodes.signoffFix.output"
+        },
+        "nodes.fetchLogs.visits": {
+          "literal": 0
+        }
+      }
+    },
+    "validate": {
+      "next": "setSuccessCriteria",
+      "onError": "continue",
+      "status": "VALIDATING_CONTEXT",
+      "step": "validateContext",
+      "type": "step"
+    },
+    "waitForCI": {
+      "name": "ciPipelineSignal",
+      "onReceive": "checkCI",
+      "onTimeout": "terminateCITimedOut",
+      "storeAs": "context.ciResultPayload",
+      "timeout": "4h",
+      "type": "signal"
+    }
+  },
+  "schemaVersion": 1
+}

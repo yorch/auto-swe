@@ -88,7 +88,7 @@ describe('diffSpecs', () => {
     const b = spec({
       nodes: {
         done: { status: 'SUCCESS', type: 'terminate' },
-        start: permuted as WorkflowSpec['nodes'][string],
+        start: permuted as unknown as WorkflowSpec['nodes'][string],
       },
     });
     // Sanity check: the b literal really did land with reversed key order.
@@ -128,5 +128,25 @@ describe('diffSpecs', () => {
     expect(d.addedNodes).toEqual(['d']);
     expect(d.changedNodes).toEqual(['b']);
     expect(d.unchangedNodes).toEqual(['a', 'c']);
+  });
+
+  it('reports a change to a plumbing field as a real edit, not presentation', () => {
+    const plain = spec();
+    for (const extra of [
+      { storeAs: 'context.out' },
+      { onFailure: { status: 'FAILED' } },
+      { status: 'Working' },
+      { maxVisits: 3, onExhausted: 'done' },
+    ]) {
+      const edited = spec({
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          start: { next: 'done', step: 'executeImplementation', type: 'step', ...extra },
+        } as WorkflowSpec['nodes'],
+      });
+      const d = diffSpecs(plain, edited);
+      expect(d.changedNodes).toEqual(['start']);
+      expect(d.presentationOnlyNodes).toEqual([]);
+    }
   });
 });

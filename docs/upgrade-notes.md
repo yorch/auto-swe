@@ -872,6 +872,31 @@ succeeds.
 
 ---
 
+### UN-16. Built-in workflows use `storeAs`, `onFailure`, `status` and `maxVisits` (`89b23456`)
+
+**Affected.** Any deployment where the gateway can run newer code than the worker, even briefly:
+the gateway syncs the built-in templates at start-up, and a worker built before `89b23456`
+ignores the four new node fields.
+
+**What changes.** The built-in templates are re-versioned with fewer nodes. A worker that does not
+know the fields runs the new specs wrongly: `storeAs` is dropped (review and pull-request steps get
+no code result), the review, CI and sign-off loops have no attempt limit, and `onFailure` routes
+become blocking failures. A run started in that window also replays differently once the worker is
+upgraded. Runs started before the sync pin the older template version and are unaffected. An
+installation whose `workflowAuthor` agent prompt was edited keeps its edit and does not learn the
+new fields. No migration is needed.
+
+**Actions.** Upgrade the worker before, or together with, the gateway. If the gateway ran first,
+cancel and re-run any run started from a built-in template since, rather than letting it continue.
+To give a customised `workflowAuthor` the new fields, re-apply the built-in prompt from the agent
+library.
+
+**Verify.** `printenv COMMIT_HASH` in the worker container names a commit that contains
+`89b23456` (section 1), and a new `ticket-to-merge` run stops its review loop after the configured
+number of rounds.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

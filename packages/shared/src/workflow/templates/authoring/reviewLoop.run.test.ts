@@ -19,16 +19,15 @@ async function run(
       Node
     >),
     // What ticket-to-merge does after an approval: CI fails once, a fix goes back into the review.
-    ciFix: { next: 'setReviewing', type: 'set', values: { 'context.ci': { literal: 1 } } },
+    ciFix: { next: 'review', type: 'set', values: { 'context.ci': { literal: 1 } } },
     ciGate: { expr: 'context.ci == 0', onFalse: 'done', onTrue: 'ciFix', type: 'cond' },
     done: { status: 'SUCCESS', type: 'terminate' },
     init: {
-      next: 'setReviewing',
+      next: 'review',
       type: 'set',
       values: {
         'context.ci': { literal: 0 },
         'context.currentCodeResult': { literal: { filesChanged: [] } },
-        'context.reviewRetries': { literal: 0 },
       },
     },
     lessonFailed: { result: { via: { literal: 'lesson' } }, status: 'FAILED', type: 'terminate' },

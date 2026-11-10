@@ -1,0 +1,90 @@
+{
+  "description": "Implement the migration code, run it as a dry run in a throwaway container to preview the SQL, then require a person to review the plan and approve it before the pull request is opened.",
+  "entry": "validate",
+  "name": "db-migration-dry-run",
+  "nodes": {
+    "done": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "dryRunMigration": {
+      "command": "yarn db:migrate --dry-run 2>&1",
+      "image": "node:24-alpine",
+      "next": "storeDryRunResult",
+      "onFail": "warn",
+      "type": "shell"
+    },
+    "implement": {
+      "next": "dryRunMigration",
+      "status": "IMPLEMENTING",
+      "step": "executeImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "openPR": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "savePrInfo",
+      "step": "createOrUpdatePullRequest",
+      "type": "step"
+    },
+    "reviewMigrationPlan": {
+      "contextFrom": "context.dryRunSummary",
+      "description": "Review the dry-run output above. Approve to open the PR, reject to discard.",
+      "onApprove": "openPR",
+      "onReject": "terminateRejected",
+      "onTimeout": "terminateTimedOut",
+      "timeout": "24h",
+      "title": "Approve migration plan before opening PR",
+      "type": "humanApproval"
+    },
+    "savePrInfo": {
+      "next": "done",
+      "type": "set",
+      "values": {
+        "context.prNumber": {
+          "from": "nodes.openPR.output.prNumber"
+        },
+        "context.prUrl": {
+          "from": "nodes.openPR.output.prUrl"
+        }
+      }
+    },
+    "storeDryRunResult": {
+      "next": "reviewMigrationPlan",
+      "type": "set",
+      "values": {
+        "context.dryRunSummary": {
+          "from": "nodes.dryRunMigration.output.summary"
+        }
+      }
+    },
+    "terminateRejected": {
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "terminateTimedOut": {
+      "status": "TIMED_OUT",
+      "type": "terminate"
+    },
+    "validate": {
+      "next": "implement",
+      "onError": "continue",
+      "status": "VALIDATING_CONTEXT",
+      "step": "validateContext",
+      "type": "step"
+    }
+  },
+  "schemaVersion": 1
+}

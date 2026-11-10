@@ -239,10 +239,8 @@ describe('model-catalog-refresh template', () => {
       expect(result.status).toBe('SUCCESS');
       expect(steps.map((s) => s.step)).toEqual([
         'listProviderModels',
-        'updateDomainState',
         'executeImplementation',
         'runTests',
-        'updateDomainState',
         'runReviewNetwork',
         'checkPriceListNotes',
         'createOrUpdatePullRequest',
@@ -256,11 +254,10 @@ describe('model-catalog-refresh template', () => {
       ]);
       const result = await runSpec(spec, base(), d);
       expect(result.status).toBe('SUCCESS');
-      expect(steps.map((s) => s.step).slice(5)).toEqual([
+      expect(steps.map((s) => s.step).slice(3)).toEqual([
         'runReviewNetwork',
         'checkPriceListNotes',
         'executeReviewFixImplementation',
-        'updateDomainState',
         'runReviewNetwork',
         'checkPriceListNotes',
         'createOrUpdatePullRequest',
@@ -305,11 +302,7 @@ describe('model-catalog-refresh template', () => {
       const { d, steps } = dispatcher([]);
       const result = await runSpec(spec, base(), d);
       expect(result.status).toBe('SUCCESS');
-      expect(steps.map((s) => s.step)).toEqual([
-        'listProviderModels',
-        'updateDomainState',
-        'executeImplementation',
-      ]);
+      expect(steps.map((s) => s.step)).toEqual(['listProviderModels', 'executeImplementation']);
     });
   });
 });

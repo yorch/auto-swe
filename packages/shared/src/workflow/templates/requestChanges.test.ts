@@ -175,6 +175,30 @@ describe('four-eyes: request changes at either sign-off', () => {
     expect(notified.filter((n) => n === 'firstSignoff')).toHaveLength(2);
     expect(notified.filter((n) => n === 'secondSignoff')).toHaveLength(1);
     expect(fixSummaries).toEqual([CHANGES]);
+    // The round count the approvers see is the fixer's visit count.
+    const context = result.finalContext.context as Record<string, Record<string, unknown>>;
+    expect(context.signoffContext).toMatchObject({
+      changedSinceLastSignoff: true,
+      rejectedBefore: 1,
+    });
+  });
+
+  it('shows a first round as not rejected before, and gives a change a fresh CI budget', async () => {
+    const first = await runTemplate(FOUR_EYES_SPEC, green({}));
+    const context = first.result.finalContext.context as Record<string, Record<string, unknown>>;
+    expect(context.signoffContext).toMatchObject({
+      changedSinceLastSignoff: false,
+      rejectedBefore: 0,
+    });
+    // Two red CIs spend the CI budget (limit 3); a change request resets it, so two more
+    // red CIs after it are fixed again instead of failing the run.
+    const red = { passed: false };
+    const again = await runTemplate(FOUR_EYES_SPEC, {
+      ciPipelineSignal: [red, red, { passed: true }, red, red, { passed: true }],
+      hitl_firstSignoff: [changes(), { action: 'approve' }],
+      hitl_secondSignoff: [{ action: 'approve' }],
+    });
+    expect(again.result.status).toBe('SUCCESS');
   });
 
   it('request changes at the second gate asks the first again too', async () => {

@@ -281,3 +281,23 @@ export const NODE_HELP: Record<SpecNode['type'], NodeHelp> = {
 export function nodeHelp(type: SpecNode['type']): NodeHelp {
   return NODE_HELP[type];
 }
+
+const DISPATCH_PLUMBING =
+  ' Optional on this node: `storeAs` copies the output to a context path (never under `nodes.`), and `onFailure` routes to a node, or ends the run with `{ status, message }`, once retries are spent — for a thrown error or a failed gate — and wins over `onFail` block and warn.';
+
+const FLOW_FIELDS =
+  ' On any node: `status` sets the run’s domain status on entry, and `maxVisits` with `onExhausted` sends the next entry past the limit elsewhere (the count is at nodes.<id>.visits).';
+
+const DISPATCH_TYPES: ReadonlySet<SpecNode['type']> = new Set([
+  'agent',
+  'containerStep',
+  'eval',
+  'mcp',
+  'shell',
+  'step',
+]);
+
+// Append the optional plumbing fields every node of the kind accepts to its `output` help.
+for (const [type, help] of Object.entries(NODE_HELP)) {
+  help.output += `${DISPATCH_TYPES.has(type as SpecNode['type']) ? DISPATCH_PLUMBING : ''}${FLOW_FIELDS}`;
+}

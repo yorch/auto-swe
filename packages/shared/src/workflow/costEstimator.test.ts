@@ -110,6 +110,31 @@ describe('estimateSpecCost', () => {
     expect(result.perStep).toEqual([{ nodeId: 'i', step: 'implement', usd: 90 }]);
   });
 
+  it('prices an onFailure / onExhausted route as the worst-case alternative to next', () => {
+    const base = {
+      cheap: { next: 't', step: 'cheapPlanner', type: 'step' },
+      costly: { next: 't', step: 'implement', type: 'step' },
+      t: { status: 'SUCCESS', type: 'terminate' },
+    } as const;
+    const run = (head: Record<string, unknown>) =>
+      estimateSpecCost(spec({ entry: 'a', nodes: { ...base, a: head } as never }), {
+        pricing: PRICING,
+        stepLookup: lookup,
+      }).totalUsd;
+    // $18 planner + $90 implementer on the failure arm: the dearer path wins.
+    expect(run({ next: 't', onFailure: 'costly', step: 'cheapPlanner', type: 'step' })).toBeCloseTo(
+      108,
+      6
+    );
+    expect(
+      run({ maxVisits: 2, next: 't', onExhausted: 'costly', step: 'cheapPlanner', type: 'step' })
+    ).toBeCloseTo(108, 6);
+    // The terminal shorthand leads nowhere, so it adds nothing.
+    expect(
+      run({ next: 't', onFailure: { status: 'FAILED' }, step: 'cheapPlanner', type: 'step' })
+    ).toBeCloseTo(18, 6);
+  });
+
   it('ignores nodes without a costHint', () => {
     const result = estimateSpecCost(
       spec({

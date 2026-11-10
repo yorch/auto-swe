@@ -29,6 +29,8 @@ function makeDispatcher(opts: {
 }): {
   dispatcher: Dispatcher;
   calls: Call[];
+  /** Every domain status a node's `status` field set, in order. */
+  statuses: string[];
   records: Array<{
     nodeId: string;
     nodeType?: string;
@@ -38,6 +40,7 @@ function makeDispatcher(opts: {
   }>;
 } {
   const calls: Call[] = [];
+  const statuses: string[] = [];
   const records: Array<{
     nodeId: string;
     nodeType?: string;
@@ -79,6 +82,9 @@ function makeDispatcher(opts: {
     async recordStep({ nodeId, nodeType, specNodeId, status, stepName }) {
       records.push({ nodeId, nodeType, specNodeId, status, stepName });
     },
+    async setDomainStatus(status) {
+      statuses.push(status);
+    },
     async waitSignal(name) {
       const q = opts.signalQueue[name];
       if (!q || q.length === 0) {
@@ -87,7 +93,7 @@ function makeDispatcher(opts: {
       return q.shift();
     },
   };
-  return { calls, dispatcher, records };
+  return { calls, dispatcher, records, statuses };
 }
 
 const baseCtx = (): Context => ({
@@ -1644,7 +1650,7 @@ describe('TICKET_TO_MERGE_SPEC', () => {
 
   it('happy path: validate → implement → approve → CI pass → human merge → done', async () => {
     const codeResult = { branch: 'auto/TEST', diff: 'd', filesChanged: [], headSha: 'sha1' };
-    const { dispatcher, calls } = makeDispatcher({
+    const { dispatcher, statuses } = makeDispatcher({
       signalQueue: {
         ciPipelineSignal: [{ passed: true }],
         humanMergeSignal: [true],
@@ -1665,9 +1671,6 @@ describe('TICKET_TO_MERGE_SPEC', () => {
     // Verify ordered domain-state transitions match the hardcoded workflow. The final
     // COMPLETED is not one of them: the spec has no stamp for it because
     // `finalizeWorkflowRun` writes COMPLETED when the run ends SUCCESS.
-    const statuses = calls
-      .filter((c) => c.step === 'updateDomainState')
-      .map((c) => c.inputs.status);
     expect(statuses).toEqual([
       'VALIDATING_CONTEXT',
       'IMPLEMENTING',

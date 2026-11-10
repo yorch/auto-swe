@@ -86,30 +86,26 @@ export function waitForCi(wait: CiWaitMode = 'signal'): NodeMap {
 
 /** What happens to the code a CI fix produced. */
 export type CiFixHandoff =
-  /** Push the fix to the pull request (a step with this id), then wait for CI again. */
-  | { repush: string }
+  /**
+   * Push the fix to the pull request (a step with this id), then wait for CI again. `status`
+   * is the domain status the push step stamps when it is entered (the wait that follows).
+   */
+  | { repush: string; status?: string }
   /** Clear the CI result and go back into the review, to `then`, via `clearCiResult`. */
   | { rereview: string };
+
+/**
+ * Where the loop's fix budget is counted: `fetchLogs` is entered once per fix attempt, so
+ * its visit count is the number of attempts made. A template that gives a rejected change a
+ * fresh CI budget sets this path back to 0.
+ */
+export const CI_ATTEMPTS_PATH = 'nodes.fetchLogs.visits';
 
 export interface CiLoopOptions {
   /** Where a passing CI goes next. */
   passed: string;
   /** How CI is awaited. Default `'signal'`. */
   wait?: CiWaitMode;
-  /**
-   * The fix loop. `false` is a bare gate: a failing CI ends the run
-   * (`checkCI -> terminateCIFailed`) with no fix attempt. Otherwise a failure
-   * fetches the logs and asks the implementer for a fix, up to `limit` times
-   * (default 3), then `handoff` decides where the fixed code goes.
-   *
-   * `retryIfUnchanged` guards a fix that changed nothing. The fix session commits only
-   * when there is a diff, so a no-op leaves the head the failed CI already judged, no new
-   * CI event ever arrives for it, and a signal wait would run to its timeout. With the
-   * option, `checkCiFixChanged` compares the fix's head with the one that failed and sends
-   * an unchanged fix back to `incCIRetries`: it counts as a spent attempt and the loop
-   * tries again until the limit, instead of waiting. Off by default, so the other
-   * templates keep the nodes they were seeded with.
-   */
   /**
    * Where a run goes when CI has failed for good — every fix attempt spent, or
    * the first failure when there is no fix loop. Default `terminateCIFailed`; a
@@ -118,8 +114,26 @@ export interface CiLoopOptions {
    */
   exhausted?: string;
   /**
-   * `limit` is a number, or an expression evaluated against the run context each time it is
-   * checked — e.g. a run-input option with a fallback, `request.payload.maxFixes ?? 2`.
+   * The fix loop. `false` is a bare gate: a failing CI ends the run
+   * (`checkCI -> terminateCIFailed`) with no fix attempt. Otherwise a failure
+   * fetches the logs and asks the implementer for a fix, then `handoff` decides where
+   * the fixed code goes.
+   *
+   * `limit` (default 3) counts CI failures, so `limit - 1` fixes are attempted before the
+   * run goes to `exhausted`. A number becomes `maxVisits` on `fetchLogs`. A string is an
+   * expression evaluated against the run context each time it is checked — e.g. a run-input
+   * option with a fallback, `request.payload.maxFixes ?? 2` — which `maxVisits` cannot hold
+   * (it is a constant), so that form keeps a `context.ciRetries` counter with its
+   * `incCIRetries` / `checkCILimit` nodes. The counter must be initialised to 0 first
+   * (`openPullRequest({ resetCiRetries: true })`).
+   *
+   * `retryIfUnchanged` guards a fix that changed nothing. The fix session commits only
+   * when there is a diff, so a no-op leaves the head the failed CI already judged, no new
+   * CI event ever arrives for it, and a signal wait would run to its timeout. With the
+   * option, `checkCiFixChanged` compares the fix's head with the one that failed and sends
+   * an unchanged fix back round the loop: it counts as a spent attempt and the loop
+   * tries again until the limit, instead of waiting. Off by default, so the other
+   * templates keep the nodes they were seeded with.
    */
   fix: false | { limit?: number | string; handoff: CiFixHandoff; retryIfUnchanged?: boolean };
 }
@@ -131,25 +145,28 @@ export interface CiLoopOptions {
  *                   |
  *               (failed)
  *                   v
- *   incCIRetries -> checkCILimit --over limit--> terminateCIFailed
- *                        |
- *                    (under)
- *                        v
- *   fetchLogs -> storeLogs -> ciFix -> updateCodeAfterCIFix -> <repush> -> wait entry
+ *   fetchLogs --(attempt `limit`)--> terminateCIFailed
+ *       |          (stores context.lastCILogs)
+ *       v
+ *   ciFix -> updateCodeAfterCIFix -> <repush> -> wait entry
  *
- * plus the two CI terminals. The counter lives at `context.ciRetries` and must be
- * initialised to 0 first (`initCounters`, or the pull-request step). Entry node, and
+ * plus the two CI terminals. `ciFix` keeps its output as `context.currentCodeResult`
+ * (`storeAs`) — except with `retryIfUnchanged`, where `updateCodeAfterCIFix` keeps it only
+ * after `checkCiFixChanged` has compared the new head with the old one. Entry node, and
  * where a repush re-enters the wait: {@link ciWaitEntry}.
  */
 export function ciLoop(opts: CiLoopOptions): NodeMap {
   const loop = 'CI loop';
   const wait = opts.wait ?? 'signal';
   const fix = opts.fix;
+  const exhausted = opts.exhausted ?? 'terminateCIFailed';
+  const counted = fix !== false && typeof fix.limit === 'string';
+  const failedTo = !fix ? exhausted : counted ? 'incCIRetries' : 'fetchLogs';
   const nodes: NodeMap = mergeNodes(waitForCi(wait), {
     checkCI: {
       expr: 'context.ciResultPayload.passed == true',
       group: loop,
-      onFalse: fix ? 'incCIRetries' : (opts.exhausted ?? 'terminateCIFailed'),
+      onFalse: failedTo,
       onTrue: opts.passed,
       title: 'CI passed?',
       type: 'cond',
@@ -160,58 +177,62 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
     return nodes;
   }
   const handoff = fix.handoff;
+  const limit = fix.limit ?? 3;
+  const maxFixes = typeof limit === 'number' ? limit - 1 : 0;
+  if (typeof limit === 'number' && limit < 2) {
+    throw new Error(`ciLoop: limit must be at least 2 (got ${limit})`);
+  }
+  // Where an unchanged fix goes to spend an attempt, and which node holds the budget.
+  const retry = counted ? 'incCIRetries' : 'fetchLogs';
+  const afterFix = 'repush' in handoff ? handoff.repush : 'clearCiResult';
   return mergeNodes(
     nodes,
     {
-      checkCILimit: {
-        expr: `context.ciRetries >= ${typeof fix.limit === 'string' ? `(${fix.limit})` : (fix.limit ?? 3)}`,
-        group: loop,
-        onFalse: 'fetchLogs',
-        onTrue: opts.exhausted ?? 'terminateCIFailed',
-        title: 'Out of attempts?',
-        type: 'cond',
-      },
       ciFix: {
         group: loop,
         inputs: {
           failureContext: { from: 'context.lastCILogs' },
           previousCodeResult: { from: 'context.currentCodeResult' },
         },
-        next: fix.retryIfUnchanged ? 'checkCiFixChanged' : 'updateCodeAfterCIFix',
+        next: fix.retryIfUnchanged ? 'checkCiFixChanged' : afterFix,
         step: 'executeCIFixImplementation',
+        // With the unchanged-fix check the new code must not replace the old head before the
+        // comparison, so `updateCodeAfterCIFix` keeps it afterwards.
+        ...(fix.retryIfUnchanged ? {} : { storeAs: 'context.currentCodeResult' }),
         title: 'Fix the CI failure',
         type: 'step',
       },
       fetchLogs: {
         group: loop,
         inputs: { logsUrl: { from: 'context.ciResultPayload.logsUrl' } },
-        next: 'storeLogs',
+        ...(counted ? {} : { maxVisits: maxFixes, onExhausted: exhausted }),
+        next: 'ciFix',
         step: 'fetchCILogs',
+        storeAs: 'context.lastCILogs',
         title: 'Fetch the CI logs',
         type: 'step',
       },
-      incCIRetries: {
-        group: loop,
-        next: 'checkCILimit',
-        title: 'Count the attempt',
-        type: 'set',
-        values: { 'context.ciRetries': { expr: 'context.ciRetries + 1' } },
-      },
-      storeLogs: {
-        group: loop,
-        next: 'ciFix',
-        title: 'Keep the logs',
-        type: 'set',
-        values: { 'context.lastCILogs': { from: 'nodes.fetchLogs.output' } },
-      },
-      updateCodeAfterCIFix: {
-        group: loop,
-        next: 'repush' in handoff ? handoff.repush : 'clearCiResult',
-        title: 'Keep the fixed code',
-        type: 'set',
-        values: { 'context.currentCodeResult': { from: 'nodes.ciFix.output' } },
-      },
     },
+    counted
+      ? {
+          // An expression limit: the counter is context state, checked before the fetch.
+          checkCILimit: {
+            expr: `context.ciRetries >= (${limit})`,
+            group: loop,
+            onFalse: 'fetchLogs',
+            onTrue: exhausted,
+            title: 'Out of attempts?',
+            type: 'cond',
+          },
+          incCIRetries: {
+            group: loop,
+            next: 'checkCILimit',
+            title: 'Count the attempt',
+            type: 'set',
+            values: { 'context.ciRetries': { expr: 'context.ciRetries + 1' } },
+          },
+        }
+      : undefined,
     fix.retryIfUnchanged
       ? {
           checkCiFixChanged: {
@@ -220,9 +241,16 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
             expr: 'nodes.ciFix.output.headSha == context.currentCodeResult.headSha',
             group: loop,
             onFalse: 'updateCodeAfterCIFix',
-            onTrue: 'incCIRetries',
+            onTrue: retry,
             title: 'Did the fix change nothing?',
             type: 'cond',
+          },
+          updateCodeAfterCIFix: {
+            group: loop,
+            next: afterFix,
+            title: 'Keep the fixed code',
+            type: 'set',
+            values: { 'context.currentCodeResult': { from: 'nodes.ciFix.output' } },
           },
         }
       : undefined,
@@ -234,6 +262,7 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
             // The wait starts over the way it first did: with `pollOrSignal`, through the
             // router, so a deployment that only polls does not sit out the webhook timeout.
             next: ciWaitEntry(wait),
+            ...(handoff.status ? { status: handoff.status } : {}),
             step: 'createOrUpdatePullRequest',
             title: 'Push the fix',
             type: 'step',

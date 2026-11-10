@@ -1,13 +1,6 @@
 import { DOCS_MAINTAINER_PROMPT } from '../../lib/agentPrompts.js';
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  statusStamp,
-  storeCodeResult,
-  terminate,
-} from './authoring/index.js';
+import { mergeNodes, openPullRequest, prResult, terminate } from './authoring/index.js';
 
 /**
  * What the documentation step may change: markdown anywhere, and anything under `docs/`. The
@@ -32,11 +25,10 @@ export const DOCS_REFRESH_SPEC: WorkflowSpec = {
     'against the source, fix what has drifted and write what is missing (a README when there ' +
     'is none), then open a draft pull request. Only markdown files or files under docs/ can change. A run with nothing ' +
     'to change opens none, so it suits a schedule.',
-  entry: 'setImplementing',
+  entry: 'implement',
   name: 'docs-refresh',
   nodes: mergeNodes(
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         config: {
           allowedPaths: DOCS_REFRESH_ALLOWED_PATHS,
@@ -44,19 +36,20 @@ export const DOCS_REFRESH_SPEC: WorkflowSpec = {
         },
         group: 'implement',
         next: 'checkChanges',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Update the documentation',
         type: 'step',
       },
       checkChanges: {
         expr: 'nodes.implement.output.filesChanged.length == 0',
         group: 'implement',
-        onFalse: 'storeCodeResult',
+        onFalse: 'openPR',
         onTrue: 'doneNoChange',
         title: 'Anything changed?',
         type: 'cond',
       },
-      storeCodeResult: storeCodeResult('openPR', { group: 'implement' }),
     },
     openPullRequest({ draft: true, next: 'done' }),
     {

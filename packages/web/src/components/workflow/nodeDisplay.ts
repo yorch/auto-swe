@@ -28,3 +28,42 @@ export function nodeGroupOf(node: SpecNode | undefined): string | undefined {
   const group = node && typeof node.group === 'string' ? node.group.trim() : '';
   return group || undefined;
 }
+
+const STOP_STATUS_WORD: Record<string, string> = {
+  FAILED: 'FAILED',
+  SKIPPED: 'SKIPPED',
+  SUCCESS: 'SUCCESS',
+  TIMED_OUT: 'TIMED OUT',
+};
+
+function stopChip(prefix: string, route: unknown): string | undefined {
+  if (typeof route !== 'object' || route === null) {
+    return undefined;
+  }
+  const status = (route as { status?: string }).status ?? '';
+  return `${prefix}: stop ${STOP_STATUS_WORD[status] ?? status}`;
+}
+
+/**
+ * The plain-text notes a card shows for the optional flow fields: the domain
+ * `status` it sets, its visit limit, and the stop-the-run shorthands (which have
+ * no target node and so draw no edge). A `terminate` node's `status` is its
+ * terminal status and already its sublabel, so it is not repeated.
+ */
+export function nodeFlowNotes(node: SpecNode | undefined): {
+  status?: string;
+  maxVisits?: string;
+  chips: string[];
+} {
+  if (!node) {
+    return { chips: [] };
+  }
+  const r = node as unknown as Record<string, unknown>;
+  const status = node.type !== 'terminate' && typeof r.status === 'string' ? r.status : undefined;
+  const maxVisits =
+    typeof r.maxVisits === 'number'
+      ? `max ${r.maxVisits} ${r.maxVisits === 1 ? 'visit' : 'visits'}`
+      : undefined;
+  const chips = [stopChip('on failure', r.onFailure), stopChip('out of attempts', r.onExhausted)];
+  return { chips: chips.filter((c): c is string => c !== undefined), maxVisits, status };
+}

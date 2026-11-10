@@ -1,26 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { ciLoop } from './ciLoop.js';
-import { mergeNodes, statusStamp } from './common.js';
+import { mergeNodes, qualityGate } from './common.js';
 import { openPullRequest } from './openPullRequest.js';
 import { reviewLoop } from './reviewLoop.js';
 import { validatePhase } from './validatePhase.js';
 
 describe('mergeNodes', () => {
   it('combines disjoint maps, keeping every node', () => {
-    const merged = mergeNodes({ a: statusStamp('A', 'b') }, undefined, {
-      b: statusStamp('B', 'a'),
+    const merged = mergeNodes({ a: qualityGate('runLint', 'b') }, undefined, {
+      b: qualityGate('runTests', 'a'),
     });
     expect(Object.keys(merged)).toEqual(['a', 'b']);
   });
 
   it('throws on a duplicate id instead of letting the later node replace the earlier', () => {
-    expect(() => mergeNodes({ x: statusStamp('A', 'n') }, { x: statusStamp('B', 'n') })).toThrow(
-      /duplicate node id 'x'/
-    );
+    expect(() =>
+      mergeNodes({ x: qualityGate('runLint', 'n') }, { x: qualityGate('runTests', 'n') })
+    ).toThrow(/duplicate node id 'x'/);
   });
 
   it('throws when two helpers emit the same fixed id', () => {
-    // Both emit `setReviewing`, `review`, … : a template that used one twice would
+    // Both emit `review`, `reviewFix`, … : a template that used one twice would
     // silently keep only the second loop's wiring.
     expect(() => mergeNodes(reviewLoop({ approved: 'a' }), reviewLoop({ approved: 'b' }))).toThrow(
       /duplicate node id/
@@ -33,7 +33,7 @@ describe('mergeNodes', () => {
   it('catches a hand-written node that collides with a helper id', () => {
     expect(() =>
       mergeNodes(ciLoop({ fix: false, passed: 'done' }), {
-        checkCI: statusStamp('X', 'done'),
+        checkCI: qualityGate('runLint', 'done'),
       })
     ).toThrow(/'checkCI'/);
   });
@@ -50,7 +50,7 @@ describe('mergeNodes', () => {
   it('lets disjoint helpers combine, as the templates do', () => {
     expect(() =>
       mergeNodes(
-        validatePhase({ next: 'setImplementing' }),
+        validatePhase({ next: 'implement' }),
         reviewLoop({ approved: 'openPR' }),
         openPullRequest({ next: 'waitForCI' }),
         ciLoop({ fix: { handoff: { repush: 'repushAfterCIFix' } }, passed: 'done' })

@@ -1,4 +1,4 @@
-import { mergeNodes, type NodeMap, statusStamp, terminate } from './common.js';
+import { mergeNodes, type NodeMap, terminate } from './common.js';
 
 export interface ValidatePhaseOptions {
   /** Node the phase hands over to once it is done (normally `setImplementing`). */
@@ -27,14 +27,20 @@ export interface ValidatePhaseOptions {
    */
   stopIfNotActionable?: boolean;
   /**
-   * Add the `setValidating` status stamp in front of `validate` (default true).
-   * With it, the phase's entry node is `setValidating`; without it, `validate`.
+   * Stamp the `VALIDATING_CONTEXT` status on the phase's entry node (default true) — the
+   * ticket gatherer when `ticketContext` is on, `validate` otherwise.
    */
   stamp?: boolean;
 }
 
+/** The phase's entry node: the ticket gatherer when it runs, `validate` otherwise. */
+export function validatePhaseEntry(opts: Pick<ValidatePhaseOptions, 'ticketContext'> = {}): string {
+  return opts.ticketContext ? 'gatherTicket' : 'validate';
+}
+
 /**
- * The validate-context prologue: `setValidating -> validate -> setSuccessCriteria`.
+ * The validate-context prologue: `validate -> setSuccessCriteria`, with the
+ * `VALIDATING_CONTEXT` status on its entry node ({@link validatePhaseEntry}).
  *
  * `validate` is non-blocking (`onError: 'continue'`): a validation failure is
  * a finding for the implementer, not a reason to stop the run.
@@ -46,16 +52,8 @@ export function validatePhase(opts: ValidatePhaseOptions): NodeMap {
   const withTicket = opts.ticketContext ?? false;
   const withStop = opts.stopIfNotActionable ?? false;
   const afterCheck = withCriteria ? criteriaId : opts.next;
+  const status = opts.stamp === false ? {} : { status: 'VALIDATING_CONTEXT' };
   return mergeNodes(
-    opts.stamp === false
-      ? {}
-      : {
-          setValidating: statusStamp(
-            'VALIDATING_CONTEXT',
-            withTicket ? 'gatherTicket' : 'validate',
-            { group }
-          ),
-        },
     withTicket
       ? {
           // A failed gather is no ticket, not a stopped run: validate and implement go on with the
@@ -64,6 +62,7 @@ export function validatePhase(opts: ValidatePhaseOptions): NodeMap {
             group,
             next: 'setTicket',
             onError: 'continue',
+            ...status,
             step: 'gatherTicketContext',
             title: 'Gather the ticket context',
             type: 'step',
@@ -85,6 +84,7 @@ export function validatePhase(opts: ValidatePhaseOptions): NodeMap {
         ...(withTicket ? { inputs: { ticket: { from: 'context.ticket' } } } : {}),
         next: withStop ? 'checkActionable' : afterCheck,
         onError: 'continue',
+        ...(withTicket ? {} : status),
         step: 'validateContext',
         title: 'Validate the ticket context',
         type: 'step',

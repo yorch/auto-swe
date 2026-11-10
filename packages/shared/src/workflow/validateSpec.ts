@@ -52,7 +52,13 @@
  */
 
 import { checkExprSyntax, RESERVED_SEGMENTS } from './expr.js';
-import { type EvalScorer, type Node, nodeEdges, type WorkflowSpec } from './spec.js';
+import {
+  type EvalScorer,
+  hasTerminalShorthand,
+  type Node,
+  nodeEdges,
+  type WorkflowSpec,
+} from './spec.js';
 import { EXECUTOR_STEP_ALIASES, getStepMetadata, hasStep } from './stepRegistry.js';
 
 export type ValidationSeverity = 'error' | 'warning';
@@ -69,6 +75,16 @@ export interface ValidationReport {
   errors: ValidationIssue[];
   warnings: ValidationIssue[];
 }
+
+/** Node types that write `nodes.<id>.output` and accept the `storeAs` / `onFailure` fields. */
+const DISPATCH_TYPES: ReadonlySet<string> = new Set([
+  'step',
+  'agent',
+  'mcp',
+  'eval',
+  'shell',
+  'containerStep',
+]);
 
 /** Target node ids of a node's outgoing edges (shared enumerator in spec.ts). */
 function outgoingEdges(node: Node): string[] {
@@ -368,7 +384,60 @@ export function validateSpec(
         severity: 'error',
       });
     }
+    if (node.maxVisits !== undefined && node.onExhausted === undefined) {
+      errors.push({
+        code: 'MAX_VISITS_WITHOUT_ONEXHAUSTED',
+        field: 'onExhausted',
+        message: `maxVisits is set but onExhausted is not; name where the run goes on visit ${node.maxVisits + 1}`,
+        nodeId: id,
+        severity: 'error',
+      });
+    }
+    if ('onFailure' in node && node.onFailure === id) {
+      errors.push({
+        code: 'ON_FAILURE_SELF',
+        field: 'onFailure',
+        message: 'onFailure points at the node itself, so a failing node would retry forever',
+        nodeId: id,
+        severity: 'error',
+      });
+    }
+    if (node.onExhausted !== undefined && node.maxVisits === undefined) {
+      warnings.push({
+        code: 'IGNORED_FIELD',
+        field: 'onExhausted',
+        message: 'onExhausted has no effect without maxVisits',
+        nodeId: id,
+        severity: 'warning',
+      });
+    }
     for (const { field, segments } of writePathSegments(id, node)) {
+      // Only the dispatch nodes: signal and human `storeAs` predate this rule and keep their
+      // behaviour.
+      if (field === 'storeAs' && segments[0] === 'nodes' && DISPATCH_TYPES.has(node.type)) {
+        errors.push({
+          code: 'STORE_AS_NODES_PATH',
+          field,
+          message:
+            "storeAs may not write under 'nodes.': that namespace holds each node's own output",
+          nodeId: id,
+          severity: 'error',
+        });
+      } else if (
+        field === 'storeAs' &&
+        DISPATCH_TYPES.has(node.type) &&
+        (segments[0] !== 'context' || segments.length < 2 || segments.includes(''))
+      ) {
+        errors.push({
+          code: 'STORE_AS_PATH',
+          field,
+          message:
+            "storeAs must be a path under 'context.' (for example 'context.draft'): writing " +
+            "'context' itself, 'request' or an empty segment would replace state other nodes read",
+          nodeId: id,
+          severity: 'error',
+        });
+      }
       const reserved = segments.find((seg) => RESERVED_SEGMENTS.has(seg));
       if (reserved !== undefined) {
         errors.push({
@@ -587,7 +656,12 @@ export function validateSpec(
   }
 
   // ── Termination: at least one terminate reachable; flag nodes that can't reach one ──
-  const terminals = [...nodeIds].filter((id) => (spec.nodes[id] as Node).type === 'terminate');
+  // A node routing to the `{ status, message }` shorthand ends the run exactly as a
+  // terminate node would, so it counts as a terminal exit.
+  const terminals = [...nodeIds].filter((id) => {
+    const n = spec.nodes[id] as Node;
+    return n.type === 'terminate' || hasTerminalShorthand(n);
+  });
   const reachableTerminals = terminals.filter((id) => reachable.has(id));
   if (reachableTerminals.length === 0) {
     errors.push({

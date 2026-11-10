@@ -1,5 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { mergeNodes, statusStamp, terminate } from './authoring/index.js';
+import { mergeNodes, terminate } from './authoring/index.js';
 
 /**
  * PRD Decomposition workflow: a PM submits a PRD document, the system
@@ -13,26 +13,18 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
     'Analyse a PRD for engineering readiness, collect PM feedback, decompose it into epics ' +
     'and stories, get Engineering sign-off, then create tracker tickets and submit each story ' +
     'as an implementation work request automatically.',
-  entry: 'setAnalyzing',
+  entry: 'analyzePrd',
   name: 'prd-decomposition',
   nodes: mergeNodes({
-    // Each phase has its own status vocabulary, so these stamps stay explicit.
-    setAnalyzing: statusStamp('ANALYZING', 'analyzePrd', { group: 'analyze' }),
+    // Each phase has its own status vocabulary, stamped on the phase's first node.
     analyzePrd: {
       group: 'analyze',
-      next: 'storePrdAnalysis',
+      next: 'pmReview',
+      status: 'ANALYZING',
       step: 'analyzePrd',
+      storeAs: 'context.analysis',
       title: 'Analyse the PRD',
       type: 'step',
-    },
-    storePrdAnalysis: {
-      group: 'analyze',
-      next: 'pmReview',
-      title: 'Keep the analysis',
-      type: 'set',
-      values: {
-        'context.analysis': { from: 'nodes.analyzePrd.output' },
-      },
     },
     pmReview: {
       contentFrom: 'context.analysis',
@@ -41,7 +33,7 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
         'before the system decomposes the PRD into stories. Timeout skips PM feedback.',
       group: 'PM review',
       onSubmit: 'setPmFeedbackReceived',
-      onTimeout: 'setDecomposing',
+      onTimeout: 'decomposePrd',
       storeAs: 'context.pmReviewPayload',
       timeout: '7d',
       title: 'PM Review: PRD Readiness Analysis',
@@ -49,33 +41,25 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
     },
     setPmFeedbackReceived: {
       group: 'PM review',
-      next: 'setDecomposing',
+      next: 'decomposePrd',
       title: 'Note that PM feedback arrived',
       type: 'set',
       values: {
         'context.pmFeedbackReceived': { literal: true },
       },
     },
-    setDecomposing: statusStamp('DECOMPOSING', 'decomposePrd', { group: 'decompose' }),
     decomposePrd: {
       group: 'decompose',
       inputs: {
         analysis: { from: 'context.analysis' },
         pmFeedback: { default: null, from: 'context.pmReviewPayload.value' },
       },
-      next: 'storeDecomposition',
+      next: 'engReview',
+      status: 'DECOMPOSING',
       step: 'decomposePrd',
+      storeAs: 'context.decomposition',
       title: 'Decompose into epics and stories',
       type: 'step',
-    },
-    storeDecomposition: {
-      group: 'decompose',
-      next: 'engReview',
-      title: 'Keep the decomposition',
-      type: 'set',
-      values: {
-        'context.decomposition': { from: 'nodes.decomposePrd.output' },
-      },
     },
     engReview: {
       contentFrom: 'context.decomposition',
@@ -92,7 +76,7 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
     },
     storeEngReview: {
       group: 'engineering review',
-      next: 'setCreatingTickets',
+      next: 'createTrackerItems',
       title: 'Keep the sign-off',
       type: 'set',
       values: {
@@ -103,30 +87,19 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
       group: 'engineering review',
       title: 'Review timed out',
     }),
-    setCreatingTickets: statusStamp('CREATING_TICKETS', 'createTrackerItems', {
-      group: 'tickets',
-    }),
     createTrackerItems: {
       group: 'tickets',
       inputs: {
         decomposition: { from: 'context.decomposition' },
       },
-      next: 'storeTrackerItems',
+      next: 'submitPrdWorkRequests',
       onFail: 'warn',
+      status: 'CREATING_TICKETS',
       step: 'createTrackerItems',
+      storeAs: 'context.trackerItems',
       title: 'Create the tracker tickets',
       type: 'step',
     },
-    storeTrackerItems: {
-      group: 'tickets',
-      next: 'setSubmitting',
-      title: 'Keep the tickets',
-      type: 'set',
-      values: {
-        'context.trackerItems': { from: 'nodes.createTrackerItems.output' },
-      },
-    },
-    setSubmitting: statusStamp('SUBMITTING', 'submitPrdWorkRequests', { group: 'submit' }),
     submitPrdWorkRequests: {
       group: 'submit',
       inputs: {
@@ -134,6 +107,7 @@ export const PRD_DECOMPOSITION_SPEC: WorkflowSpec = {
         trackerItems: { default: null, from: 'context.trackerItems' },
       },
       next: 'done',
+      status: 'SUBMITTING',
       step: 'submitPrdWorkRequests',
       title: 'Submit the work requests',
       type: 'step',

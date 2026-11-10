@@ -1,5 +1,11 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { mergeNodes, prResult, qodoReview, terminate } from './authoring/index.js';
+import {
+  mergeNodes,
+  prResult,
+  qodoReview,
+  terminate,
+  validatePhaseEntry,
+} from './authoring/index.js';
 import { ticketToMergeNodes } from './ticketToMerge.js';
 
 /**
@@ -24,11 +30,11 @@ export const TICKET_TO_MERGE_QODO_SPEC: WorkflowSpec = {
     'open action_required finding asks a person to continue or stop, and anything else goes on ' +
     'to the merge wait. It does nothing while qodo.enabled is off. With it on, a repository ' +
     'without the Qodo pull request bot waits the configured Qodo review wait on every run.',
-  entry: 'setValidating',
+  entry: validatePhaseEntry({ ticketContext: true }),
   name: 'ticket-to-merge-qodo',
   nodes: mergeNodes(
     ticketToMergeNodes('qodoReview', { uiVerify: true }),
-    qodoReview({ next: 'setAwaitingHumanMerge', onBlocked: 'qodoDecision' }),
+    qodoReview({ next: 'waitForHumanMerge', onBlocked: 'qodoDecision' }),
     {
       qodoDecision: {
         description:
@@ -37,7 +43,7 @@ export const TICKET_TO_MERGE_QODO_SPEC: WorkflowSpec = {
         group: 'Qodo review',
         onTimeout: 'terminateQodoTimedOut',
         options: [
-          { label: 'Continue to the merge wait', next: 'setAwaitingHumanMerge', value: 'continue' },
+          { label: 'Continue to the merge wait', next: 'waitForHumanMerge', value: 'continue' },
           { label: 'Stop the run', next: 'terminateQodoStopped', value: 'stop' },
         ],
         storeAs: 'context.qodoChoice',

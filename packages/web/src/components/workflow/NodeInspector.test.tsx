@@ -653,3 +653,51 @@ describe('NodeInspector authored commands', () => {
     cleanup();
   });
 });
+
+describe('NodeInspector flow control', () => {
+  it('writes storeAs and clears it to remove the key', () => {
+    const onChangeNode = renderInspector(STEP, 'run');
+    fireEvent.change(screen.getByLabelText('Store result at'), {
+      target: { value: 'context.out' },
+    });
+    expect(onChangeNode.mock.calls[0]?.[0]).toMatchObject({ storeAs: 'context.out' });
+  });
+
+  it('routes On failure to a node', () => {
+    const onChangeNode = renderInspector(STEP, 'run');
+    pick('On failure', 'b');
+    expect(onChangeNode.mock.calls[0]?.[0]).toMatchObject({ onFailure: 'b' });
+  });
+
+  it('offers the stop shorthand and edits its status', () => {
+    const onChangeNode = renderInspector(STEP, 'run');
+    pick('On failure', 'Stop the run');
+    expect(onChangeNode.mock.calls[0]?.[0]).toMatchObject({ onFailure: { status: 'FAILED' } });
+  });
+
+  it('shows the stored shorthand and no duplicate edge dropdown', () => {
+    renderInspector(
+      { ...STEP, onFailure: { message: 'x', status: 'TIMED_OUT' } } as SpecNode,
+      'run'
+    );
+    expect(screen.getByLabelText('Stop message')).toHaveProperty('value', 'x');
+    expect(screen.getAllByRole('button', { name: /On failure/i })).toHaveLength(1);
+  });
+
+  it('commits max visits on blur, and drops an invalid value', () => {
+    const onChangeNode = renderInspector(STEP, 'run');
+    const input = screen.getByLabelText('Max visits');
+    fireEvent.change(input, { target: { value: '4' } });
+    fireEvent.blur(input);
+    expect(onChangeNode.mock.calls[0]?.[0]).toMatchObject({ maxVisits: 4 });
+  });
+
+  it('has no status field on a terminate node, but does on others', () => {
+    cleanup();
+    renderInspector({ status: 'FAILED', type: 'terminate' } as SpecNode, 'end');
+    expect(screen.queryByLabelText('Status')).toBeNull();
+    cleanup();
+    renderInspector(STEP, 'run');
+    expect(screen.getByLabelText('Status')).toBeTruthy();
+  });
+});

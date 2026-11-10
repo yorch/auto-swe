@@ -7,8 +7,6 @@ import {
   openPullRequest,
   prResult,
   qualityGate,
-  statusStamp,
-  storeCodeResult,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -22,26 +20,25 @@ export const CODE_AND_CI_SPEC: WorkflowSpec = {
     'Fully automated: implement the change, run lint, type checks and tests, open a pull ' +
     'request, then fix CI failures from the logs and push, up to 3 times. No agent review ' +
     'and no human approval. Use for low-risk, well-tested codebases.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'code-and-ci',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing', successCriteria: false }),
+    validatePhase({ next: 'implement', successCriteria: false }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'storeCodeResult',
+        next: 'runLint',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
       },
-      storeCodeResult: storeCodeResult('runLint', { group: 'implement' }),
       runLint: qualityGate('runLint', 'runTypecheck', { group: 'verify' }),
       runTypecheck: qualityGate('runTypecheck', 'runTests', { group: 'verify' }),
       runTests: qualityGate('runTests', 'openPR', { group: 'verify' }),
     },
-    // This template has no initCounters, so recording the PR also zeroes the CI counter.
-    openPullRequest({ next: ciWaitEntry(), resetCiRetries: true }),
+    openPullRequest({ next: ciWaitEntry() }),
     ciLoop({
       exhausted: 'lessonCIFailed',
       fix: { handoff: { repush: 'repushAfterFix' } },

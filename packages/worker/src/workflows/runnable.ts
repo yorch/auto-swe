@@ -258,6 +258,10 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
     async resolveHumanStep(args) {
       await stateActivities.resolveHumanStep({ ...args, runId });
     },
+    async setDomainStatus(status) {
+      // Same activity as the `updateDomainState` step, with no step row recorded.
+      await stateActivities.updateDomainState(workflowInfo().workflowId, status);
+    },
     async waitSignal(name, timeout, opts) {
       // No stale-payload reset here: a signal that lands before the interpreter
       // reaches its wait node (a CI webhook racing the PR-open step is the

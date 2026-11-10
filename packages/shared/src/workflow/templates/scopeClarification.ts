@@ -1,13 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  initCounters,
-  mergeNodes,
-  prResult,
-  reviewLoop,
-  statusStamp,
-  terminate,
-  validatePhase,
-} from './authoring/index.js';
+import { mergeNodes, prResult, reviewLoop, terminate, validatePhase } from './authoring/index.js';
 
 /**
  * Collects human guidance before implementation starts.
@@ -63,24 +55,24 @@ export const SCOPE_CLARIFICATION_SPEC: WorkflowSpec = {
     // No status stamp here: the run starts at `clarify`, and this template's
     // validate node is entered from it.
     validatePhase({
-      next: 'setImplementing',
+      next: 'implement',
       stamp: false,
       successCriteriaId: 'successCriteria',
     }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
         // Without this binding the human's answers never reach the implementer.
         inputs: { guidance: { default: '', from: 'context.clarification' } },
-        next: 'initCounters',
+        next: 'review',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement with the guidance',
         type: 'step',
       },
-      initCounters: initCounters('setReviewing', { ci: false, group: 'implement' }),
     },
-    reviewLoop({ approved: 'openPR', keepFixId: 'updateCodeAfterFix' }),
+    reviewLoop({ approved: 'openPR' }),
     {
       openPR: {
         group: 'finish',

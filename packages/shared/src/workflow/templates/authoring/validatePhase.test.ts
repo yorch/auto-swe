@@ -1,20 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { expectWellFormed } from './testUtil.js';
-import { validatePhase } from './validatePhase.js';
+import { validatePhase, validatePhaseEntry } from './validatePhase.js';
 
 describe('validatePhase', () => {
-  it('default: setValidating -> validate -> setSuccessCriteria -> next', () => {
+  it('default: validate (with the status) -> setSuccessCriteria -> next', () => {
     const nodes = validatePhase({ next: 'setImplementing' });
-    expect(Object.keys(nodes).sort()).toEqual(['setSuccessCriteria', 'setValidating', 'validate']);
-    expect(nodes.setValidating).toMatchObject({
-      config: { status: 'VALIDATING_CONTEXT' },
-      next: 'validate',
-    });
+    expect(Object.keys(nodes).sort()).toEqual(['setSuccessCriteria', 'validate']);
     expect(nodes.validate).toMatchObject({
       next: 'setSuccessCriteria',
       onError: 'continue',
+      status: 'VALIDATING_CONTEXT',
       step: 'validateContext',
     });
+    expect(validatePhaseEntry()).toBe('validate');
     expect(nodes.setSuccessCriteria).toMatchObject({
       next: 'setImplementing',
       values: {
@@ -24,19 +22,19 @@ describe('validatePhase', () => {
         },
       },
     });
-    expectWellFormed(nodes, 'setValidating', ['setImplementing']);
+    expectWellFormed(nodes, 'validate', ['setImplementing']);
   });
 
   it('without success criteria, validate goes straight to `next`', () => {
     const nodes = validatePhase({ next: 'setImplementing', successCriteria: false });
-    expect(Object.keys(nodes).sort()).toEqual(['setValidating', 'validate']);
+    expect(Object.keys(nodes).sort()).toEqual(['validate']);
     expect(nodes.validate).toMatchObject({ next: 'setImplementing' });
-    expectWellFormed(nodes, 'setValidating', ['setImplementing']);
+    expectWellFormed(nodes, 'validate', ['setImplementing']);
   });
 
-  it('without the stamp, the phase starts at validate', () => {
+  it('without the stamp, validate carries no status', () => {
     const nodes = validatePhase({ next: 'setImplementing', stamp: false });
-    expect(nodes.setValidating).toBeUndefined();
+    expect(nodes.validate).not.toHaveProperty('status');
     expectWellFormed(nodes, 'validate', ['setImplementing']);
   });
 
@@ -56,19 +54,20 @@ describe('validatePhase', () => {
   });
 
   describe('with ticket context', () => {
-    it('gathers the ticket between the stamp and validate, and hands it to validate', () => {
+    it('gathers the ticket (carrying the status) before validate, and hands it to validate', () => {
       const nodes = validatePhase({ next: 'setImplementing', ticketContext: true });
       expect(Object.keys(nodes).sort()).toEqual([
         'gatherTicket',
         'setSuccessCriteria',
         'setTicket',
-        'setValidating',
         'validate',
       ]);
-      expect(nodes.setValidating).toMatchObject({ next: 'gatherTicket' });
+      expect(validatePhaseEntry({ ticketContext: true })).toBe('gatherTicket');
+      expect(nodes.validate).not.toHaveProperty('status');
       expect(nodes.gatherTicket).toMatchObject({
         next: 'setTicket',
         onError: 'continue',
+        status: 'VALIDATING_CONTEXT',
         step: 'gatherTicketContext',
         type: 'step',
       });
@@ -81,12 +80,12 @@ describe('validatePhase', () => {
         inputs: { ticket: { from: 'context.ticket' } },
         step: 'validateContext',
       });
-      expectWellFormed(nodes, 'setValidating', ['setImplementing']);
+      expectWellFormed(nodes, 'gatherTicket', ['setImplementing']);
     });
 
-    it('starts at the gatherer when there is no stamp', () => {
+    it('carries no status when there is no stamp', () => {
       const nodes = validatePhase({ next: 'setImplementing', stamp: false, ticketContext: true });
-      expect(nodes.setValidating).toBeUndefined();
+      expect(nodes.gatherTicket).not.toHaveProperty('status');
       expectWellFormed(nodes, 'gatherTicket', ['setImplementing']);
     });
 
@@ -124,7 +123,7 @@ describe('validatePhase', () => {
         status: 'FAILED',
         type: 'terminate',
       });
-      expectWellFormed(nodes, 'setValidating', ['setImplementing']);
+      expectWellFormed(nodes, 'validate', ['setImplementing']);
     });
 
     it('carries why the ticket could not be read, when it gathers the ticket', () => {
@@ -147,13 +146,13 @@ describe('validatePhase', () => {
     it('goes straight to `next` when there are no success criteria to keep', () => {
       const nodes = validatePhase({ ...stop, successCriteria: false });
       expect(nodes.checkActionable).toMatchObject({ onFalse: 'setImplementing' });
-      expectWellFormed(nodes, 'setValidating', ['setImplementing']);
+      expectWellFormed(nodes, 'validate', ['setImplementing']);
     });
 
     it('follows the gatherer when the ticket context is on', () => {
       const nodes = validatePhase({ ...stop, ticketContext: true });
       expect(nodes.setTicket).toMatchObject({ next: 'validate' });
-      expectWellFormed(nodes, 'setValidating', ['setImplementing']);
+      expectWellFormed(nodes, 'gatherTicket', ['setImplementing']);
     });
 
     it('is off by default: no extra nodes', () => {

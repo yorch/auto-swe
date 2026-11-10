@@ -1,14 +1,13 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
+  CI_ATTEMPTS_PATH,
   ciLoop,
   ciWaitEntry,
   failureLesson,
-  initCounters,
   mergeNodes,
   openPullRequest,
   prResult,
   reviewLoop,
-  statusStamp,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -47,37 +46,34 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
     'and both people sign off again; rejecting stops the run. A fix that changes nothing goes ' +
     'straight back to the two people, marked as unchanged. Models a four-eyes / two-person-rule ' +
     'change-management requirement.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'four-eyes',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing' }),
+    validatePhase({ next: 'implement' }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'initCounters',
+        next: 'review',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
       },
-      initCounters: initCounters('setReviewing', {
-        counters: ['context.signoffRetries'],
-        group: 'implement',
-      }),
     },
-    reviewLoop({ approved: 'setAwaitingCi', exhausted: 'lessonReviewFailed' }),
-    {
-      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
-    },
-    openPullRequest({ next: ciWaitEntry() }),
+    reviewLoop({ approved: 'openPR', exhausted: 'lessonReviewFailed' }),
+    openPullRequest({ next: ciWaitEntry(), status: 'AWAITING_CI' }),
     // The pull request is open, so a CI fix is pushed by the fix session itself and
     // `repushAfterFix` only re-arms the CI wait for the new head. A fix that changed
     // nothing is counted as a spent attempt instead of waiting for a CI event that
     // cannot come.
     ciLoop({
       exhausted: 'lessonCIFailed',
-      fix: { handoff: { repush: 'repushAfterFix' }, retryIfUnchanged: true },
-      passed: 'setAwaitingSignoff',
+      fix: {
+        handoff: { repush: 'repushAfterFix', status: 'AWAITING_CI' },
+        retryIfUnchanged: true,
+      },
+      passed: 'storeSignoffContext',
     }),
     {
       // The agent review and CI loops store what blocked them before the run fails. The
@@ -87,19 +83,22 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
         group: 'review loop',
       }),
       lessonCIFailed: failureLesson('CI_FAILED', 'terminateCIFailed', { group: 'CI loop' }),
-      setAwaitingSignoff: statusStamp('IN_REVIEW', 'storeSignoffContext', { group: 'approval' }),
       storeSignoffContext: {
         group: 'approval',
         next: 'firstSignoff',
+        // `nodes.signoffFix.visits` is the number of change requests sent back so far.
+        status: 'IN_REVIEW',
         title: 'Show the approvers the green change',
         type: 'set',
         values: {
-          'context.signoffContext.changedSinceLastSignoff': { expr: 'context.signoffRetries > 0' },
+          'context.signoffContext.changedSinceLastSignoff': {
+            expr: '(nodes.signoffFix.visits ?? 0) > 0',
+          },
           'context.signoffContext.ciPassed': { literal: true },
           'context.signoffContext.headSha': { from: 'context.currentCodeResult.headSha' },
           'context.signoffContext.noChangeMade': { literal: false },
           'context.signoffContext.prUrl': { from: 'context.prUrl' },
-          'context.signoffContext.rejectedBefore': { from: 'context.signoffRetries' },
+          'context.signoffContext.rejectedBefore': { default: 0, from: 'nodes.signoffFix.visits' },
         },
       },
       // The fix changed nothing: the same green code, shown again and marked as unchanged.
@@ -111,7 +110,7 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
         values: {
           'context.signoffContext.changedSinceLastSignoff': { literal: false },
           'context.signoffContext.noChangeMade': { literal: true },
-          'context.signoffContext.rejectedBefore': { from: 'context.signoffRetries' },
+          'context.signoffContext.rejectedBefore': { default: 0, from: 'nodes.signoffFix.visits' },
         },
       },
       firstSignoff: {
@@ -154,7 +153,7 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
       // ── A change request: keep the note, fix, CI again, both sign-offs again ──
       noteFirstSignoffChanges: {
         group: 'approval',
-        next: 'incSignoffRetries',
+        next: 'signoffFix',
         title: 'Keep the requested changes',
         type: 'set',
         values: {
@@ -163,35 +162,23 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
       },
       noteSecondSignoffChanges: {
         group: 'approval',
-        next: 'incSignoffRetries',
+        next: 'signoffFix',
         title: 'Keep the requested changes',
         type: 'set',
         values: {
           'context.signoffRejectionSummary': { from: 'nodes.secondSignoff.output.comment' },
         },
       },
-      incSignoffRetries: {
-        group: 'approval',
-        next: 'checkSignoffLimit',
-        title: 'Count the change request',
-        type: 'set',
-        values: { 'context.signoffRetries': { expr: 'context.signoffRetries + 1' } },
-      },
-      checkSignoffLimit: {
-        expr: 'context.signoffRetries >= 3',
-        group: 'approval',
-        onFalse: 'signoffFix',
-        onTrue: 'terminateRejected',
-        title: 'Out of attempts?',
-        type: 'cond',
-      },
+      // The third change request fails the run: the fixer is entered twice at most.
       signoffFix: {
         group: 'approval',
         inputs: {
           previousCodeResult: { from: 'context.currentCodeResult' },
           rejectionSummary: { from: 'context.signoffRejectionSummary' },
         },
+        maxVisits: 2,
         next: 'checkSignoffFixChanged',
+        onExhausted: 'terminateRejected',
         step: 'executeReviewFixImplementation',
         title: 'Fix the change a reviewer sent back',
         type: 'step',
@@ -208,17 +195,14 @@ export const FOUR_EYES_SPEC: WorkflowSpec = {
       },
       updateCodeAfterSignoffFix: {
         group: 'approval',
-        next: 'setAwaitingCiAfterSignoff',
+        next: 'repushAfterFix',
         title: 'Keep the fixed code and reset the CI attempts',
         type: 'set',
         values: {
-          'context.ciRetries': { literal: 0 },
+          [CI_ATTEMPTS_PATH]: { literal: 0 },
           'context.currentCodeResult': { from: 'nodes.signoffFix.output' },
         },
       },
-      setAwaitingCiAfterSignoff: statusStamp('AWAITING_CI', 'repushAfterFix', {
-        group: 'approval',
-      }),
       terminateRejected: terminate('FAILED', {
         group: 'approval',
         result: prResult(),

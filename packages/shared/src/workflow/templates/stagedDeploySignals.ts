@@ -2,13 +2,11 @@ import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   ciLoop,
   ciWaitEntry,
-  initCounters,
   mergeNodes,
   openPullRequest,
   prResult,
   reviewLoop,
   signalGate,
-  statusStamp,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -30,26 +28,23 @@ export const STAGED_DEPLOY_SIGNALS_SPEC: WorkflowSpec = {
     'again until it confirms production monitoring is healthy. Models a canary or ' +
     'release-train pipeline where each promotion stage must be confirmed before the next ' +
     'one starts.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'staged-deploy-signals',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing' }),
+    validatePhase({ next: 'implement' }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'initCounters',
+        next: 'review',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
       },
-      initCounters: initCounters('setReviewing', { group: 'implement' }),
     },
-    reviewLoop({ approved: 'setAwaitingCi' }),
-    {
-      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
-    },
-    openPullRequest({ next: ciWaitEntry() }),
+    reviewLoop({ approved: 'openPR' }),
+    openPullRequest({ next: ciWaitEntry(), status: 'AWAITING_CI' }),
     ciLoop({
       fix: { handoff: { repush: 'repushAfterCIFix' } },
       passed: 'waitForStaging',
