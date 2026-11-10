@@ -137,4 +137,61 @@ describe('Knowledge page', () => {
       expect(spy.mock.calls.some(([u]) => String(u).endsWith('/api/v1/teams/t1'))).toBe(true)
     );
   });
+
+  it('narrows the list to the ?team= team, with a removable chip', async () => {
+    resetNavigation('team=payments', '/knowledge');
+    const spy = mock();
+    render(withQuery(<KnowledgePage />));
+    await screen.findByText('Deploy policy');
+    const listCalls = spy.mock.calls
+      .map(([u]) => String(u))
+      .filter((u) => u.includes('/api/v1/knowledge?'));
+    expect(listCalls.length).toBeGreaterThan(0);
+    // Never fetched unfiltered while the slug resolved, then always with the team.
+    expect(listCalls.every((u) => u.includes('teamId=t1'))).toBe(true);
+    expect(screen.getByTestId('team-chip').textContent).toContain('Payments');
+    fireEvent.click(screen.getByRole('button', { name: /Remove the Payments team filter/ }));
+    await waitFor(() => expect(screen.queryByTestId('team-chip')).toBeNull());
+    await waitFor(() =>
+      expect(
+        spy.mock.calls.some(
+          ([u]) => String(u).includes('/api/v1/knowledge?') && !String(u).includes('teamId=')
+        )
+      ).toBe(true)
+    );
+  });
+
+  it('says no matches for an empty team-narrowed list, and Clear filters drops the team', async () => {
+    resetNavigation('team=payments', '/knowledge');
+    mock([]);
+    render(withQuery(<KnowledgePage />));
+    expect(await screen.findByText('No knowledge matches these filters')).toBeTruthy();
+    expect(screen.queryByText('No knowledge yet')).toBeNull();
+    fireEvent.click(screen.getAllByRole('button', { name: 'Clear filters' })[0] as HTMLElement);
+    await waitFor(() => expect(screen.queryByTestId('team-chip')).toBeNull());
+  });
+
+  it('lists without a team filter when there is no ?team=', async () => {
+    const spy = mock();
+    render(withQuery(<KnowledgePage />));
+    await screen.findByText('Deploy policy');
+    expect(
+      spy.mock.calls.every(
+        ([u]) => !String(u).includes('/api/v1/knowledge?') || !String(u).includes('teamId=')
+      )
+    ).toBe(true);
+    expect(screen.queryByTestId('team-chip')).toBeNull();
+  });
+
+  it('shows an error instead of the all-teams list when the team lookup fails', async () => {
+    resetNavigation('team=payments', '/knowledge');
+    const spy = mock([item()], {
+      'GET /api/v1/teams': () => {
+        throw new Error('teams offline');
+      },
+    });
+    render(withQuery(<KnowledgePage />));
+    await waitFor(() => expect(screen.queryByText('Deploy policy')).toBeNull());
+    expect(spy.mock.calls.every(([u]) => !String(u).includes('/api/v1/knowledge?'))).toBe(true);
+  });
 });

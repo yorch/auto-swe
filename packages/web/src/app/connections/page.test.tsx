@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withQuery } from '@/test/rtl-helpers';
 
@@ -128,6 +128,70 @@ describe('Connections page', () => {
       render(withQuery(<ConnectionsPage />));
       expect(screen.queryByTestId('owner-chip')).toBeNull();
       expect(screen.getByText(/Read-only for you/)).toBeTruthy();
+    } finally {
+      repos.list = [];
+      auth.myTeams = [];
+    }
+  });
+
+  it('shows Share and Deactivate disabled with the owner named for a caller who cannot manage', () => {
+    auth.role = 'LEAD';
+    auth.myTeams = ['t1'];
+    repos.list = [
+      {
+        _count: { activeWorkflows: 0 },
+        defaultBranch: 'main',
+        description: null,
+        id: 'r2',
+        isActive: true,
+        language: null,
+        name: 'ui',
+        organizationName: 'acme',
+        repoName: 'ui',
+        team: { id: 't2', name: 'Design', slug: 'design' },
+        type: 'git_repo',
+      },
+    ];
+    try {
+      render(withQuery(<ConnectionsPage />));
+      fireEvent.click(screen.getByRole('button', { name: /More actions for acme\/ui/ }));
+      for (const name of ['Share with teams', 'Deactivate']) {
+        const item = screen.getByRole('menuitem', { name });
+        expect(item.getAttribute('aria-disabled')).toBe('true');
+        expect(
+          document.getElementById(item.getAttribute('aria-describedby') ?? '')?.textContent
+        ).toBe('Only leads of Design or an administrator can do this.');
+      }
+    } finally {
+      repos.list = [];
+      auth.myTeams = [];
+    }
+  });
+
+  it('leaves Share and Deactivate enabled for a lead of the owning team', () => {
+    auth.role = 'LEAD';
+    auth.myTeams = ['t1'];
+    repos.list = [
+      {
+        _count: { activeWorkflows: 0 },
+        defaultBranch: 'main',
+        description: null,
+        id: 'r1',
+        isActive: true,
+        language: null,
+        name: 'api',
+        organizationName: 'acme',
+        repoName: 'api',
+        team: { id: 't1', name: 'Payments', slug: 'payments' },
+        type: 'git_repo',
+      },
+    ];
+    try {
+      render(withQuery(<ConnectionsPage />));
+      fireEvent.click(screen.getByRole('button', { name: /More actions for acme\/api/ }));
+      expect(
+        screen.getByRole('menuitem', { name: 'Deactivate' }).getAttribute('aria-disabled')
+      ).toBeNull();
     } finally {
       repos.list = [];
       auth.myTeams = [];

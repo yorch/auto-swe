@@ -332,3 +332,89 @@ describe('HumanStepCard decisions', () => {
     expect(onAnswered).toHaveBeenCalledWith('Choice recorded for “Approve plan”.');
   });
 });
+
+describe('HumanStepCard answer guard', () => {
+  it('blocks the respond control with the owner named when the caller cannot answer', () => {
+    render(<HumanStepCard ownerName="Payments" step={approvalStep({ canAnswer: false })} />);
+    const button = screen.getByRole('button', { name: RESPOND });
+    expect(button.getAttribute('aria-disabled')).toBe('true');
+    expect(button.getAttribute('title')).toBe(
+      'You cannot answer this step. It is controlled by Payments: you need to belong to that team and have access to its repository.'
+    );
+    expect(screen.getByTestId('blocked-reason').textContent).toBe(
+      'You cannot answer this step. It is controlled by Payments: you need to belong to that team and have access to its repository.'
+    );
+    fireEvent.click(button);
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+  });
+
+  it('blocks Approve and Reject on a card that opens expanded, without opening a dialog', () => {
+    render(<HumanStepCard defaultExpanded step={approvalStep({ canAnswer: false })} />);
+    const approve = screen.getByRole('button', { name: 'Approve' });
+    expect(approve.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(approve);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getAllByTestId('blocked-reason')[0].textContent).toContain('the owning team');
+  });
+
+  it.each([true, undefined])('leaves the controls on when canAnswer is %s', (canAnswer) => {
+    render(<HumanStepCard step={approvalStep({ canAnswer })} />);
+    const button = screen.getByRole('button', { name: RESPOND });
+    expect(button.getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(button);
+    expect(
+      screen.getByRole('button', { name: 'Approve' }).getAttribute('aria-disabled')
+    ).toBeNull();
+  });
+});
+
+describe('HumanStepCard owner name in the answer guard', () => {
+  function ownedStep(ownerTeam: HumanStepSummary['run']['ownerTeam'] | undefined) {
+    const step = approvalStep({ canAnswer: false });
+    return { ...step, run: { ...step.run, ownerTeam } } as HumanStepSummary;
+  }
+
+  it('names the owning team from the step in the inbox, where no ownerName is passed', () => {
+    render(<HumanStepCard step={ownedStep({ id: 't1', name: 'Payments', slug: 'payments' })} />);
+    expect(screen.getByTestId('blocked-reason').textContent).toBe(
+      'You cannot answer this step. It is controlled by Payments: you need to belong to that team and have access to its repository.'
+    );
+    expect(screen.getByRole('button', { name: RESPOND }).getAttribute('title')).toBe(
+      'You cannot answer this step. It is controlled by Payments: you need to belong to that team and have access to its repository.'
+    );
+  });
+
+  it('prefers the step owner over a name a caller passes', () => {
+    render(
+      <HumanStepCard
+        ownerName="Stale"
+        step={ownedStep({ id: 't1', name: 'Payments', slug: 'payments' })}
+      />
+    );
+    expect(screen.getByTestId('blocked-reason').textContent).toContain('Payments');
+    expect(screen.queryByText(/Stale/)).toBeNull();
+  });
+
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+  ])('falls back to the caller name when ownerTeam is %s', (_label, ownerTeam) => {
+    render(<HumanStepCard ownerName="Design" step={ownedStep(ownerTeam)} />);
+    expect(screen.getByTestId('blocked-reason').textContent).toBe(
+      'You cannot answer this step. It is controlled by Design: you need to belong to that team and have access to its repository.'
+    );
+  });
+
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+  ])(
+    'falls back to "the owning team" when ownerTeam is %s and no name is passed',
+    (_label, ownerTeam) => {
+      render(<HumanStepCard step={ownedStep(ownerTeam)} />);
+      expect(screen.getByTestId('blocked-reason').textContent).toBe(
+        'You cannot answer this step. It is controlled by the owning team: you need to belong to that team and have access to its repository.'
+      );
+    }
+  );
+});

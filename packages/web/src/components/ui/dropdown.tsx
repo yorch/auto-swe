@@ -20,6 +20,8 @@ export interface DropdownOption {
   /** A second, muted line under the label. */
   description?: ReactNode;
   disabled?: boolean;
+  /** `warning` tints the second line, for a note that is not a block. */
+  tone?: 'warning';
 }
 
 // "" is a real option value here ("All", "None", "inherit") and is used as
@@ -155,7 +157,14 @@ export function DropdownItem({ option }: { option: DropdownOption; compact?: boo
           <span className="min-w-0">
             <span className="block truncate">{option.label}</span>
             {option.description && (
-              <span className="block text-xs text-paper-500">{option.description}</span>
+              <span
+                className={cn(
+                  'block text-xs',
+                  option.tone === 'warning' ? 'text-warning-400' : 'text-paper-500'
+                )}
+              >
+                {option.description}
+              </span>
             )}
           </span>
         </>

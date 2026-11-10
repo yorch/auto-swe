@@ -107,6 +107,11 @@ export function repoManageReason(ownerTeamName: string | null | undefined, actio
   return `Only leads of ${ownerTeamName ?? 'the owning team'} or an administrator can ${action} this repository.`;
 }
 
+/** Why a menu entry on a repository is unavailable, for items that are not named in the message. */
+export function repoLeadReason(ownerTeamName: string | null | undefined): string {
+  return `Only leads of ${ownerTeamName ?? 'the owning team'} or an administrator can do this.`;
+}
+
 /** Why a run control is unavailable: the owning team's members and the launcher may use it. */
 export function runControlReason(ownerTeamName: string | null | undefined, action: string): string {
   return `Only members of ${ownerTeamName ?? 'the owning team'} or the launcher can ${action} this run.`;

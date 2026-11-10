@@ -236,6 +236,26 @@ describe('run page summary band', () => {
     }
   });
 
+  it('names the owning team in the guarded reason when the run reports it', async () => {
+    state.layout = 'A';
+    run.status = 'RUNNING';
+    Object.assign(run as Record<string, unknown>, {
+      ownerTeam: { id: 't1', name: 'Payments', slug: 'payments' },
+      review: { canControl: false, reviewable: false, reviews: [] },
+    });
+    try {
+      await renderPage();
+      const cancel = screen.getByRole('button', { name: 'Cancel run' });
+      expect(cancel.getAttribute('title')).toBe(
+        'Only members of Payments or the launcher can cancel this run.'
+      );
+    } finally {
+      run.status = 'FAILED';
+      delete (run as Record<string, unknown>).review;
+      delete (run as Record<string, unknown>).ownerTeam;
+    }
+  });
+
   it('explains gates once on the page and keeps the lifecycle explainer in the Help panel', async () => {
     state.layout = 'A';
     await renderPage();

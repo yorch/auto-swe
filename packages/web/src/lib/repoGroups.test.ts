@@ -68,3 +68,37 @@ describe('groupedRepoOptions blocked reasons', () => {
     expect(options.find((o) => o.value === 'a')).not.toHaveProperty('disabled');
   });
 });
+
+describe('groupedRepoOptions launch budgets', () => {
+  const b = (state: 'ok' | 'alert' | 'over', percentUsed: number) => ({
+    alertThresholdPercent: 80,
+    percentUsed,
+    scope: 'team' as const,
+    state,
+  });
+  const repos = [
+    { ...repo('r-ok', platform), launchBudget: b('ok', 40) },
+    { ...repo('r-alert', platform), launchBudget: b('alert', 88) },
+    { ...repo('r-over', platform), launchBudget: b('over', 120) },
+    { ...repo('r-none', platform), launchBudget: null },
+  ];
+  const options = groupedRepoOptions(repos, null, (r) => r.id);
+  const by = (id: string) => options.find((o) => o.value === id);
+
+  it('shows the percent, warning-toned when nearing, and leaves it selectable', () => {
+    expect(by('r-ok')?.description).toBe('Platform · 40% of budget used');
+    expect(by('r-ok')).not.toHaveProperty('disabled');
+    expect(by('r-alert')?.description).toBe('Platform · 88% of budget used');
+    expect(by('r-alert')).toMatchObject({ tone: 'warning' });
+    expect(by('r-alert')).not.toHaveProperty('disabled');
+  });
+  it('disables an over-budget repository with the reason and no amount', () => {
+    expect(by('r-over')).toMatchObject({
+      description: "Platform · Over Platform's budget this month. Ask Platform's team lead.",
+      disabled: true,
+    });
+  });
+  it('is unchanged without a budget', () => {
+    expect(by('r-none')?.description).toBe('Platform');
+  });
+});

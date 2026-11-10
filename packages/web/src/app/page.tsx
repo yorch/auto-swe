@@ -7,6 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { MyTeams } from '@/components/desk/MyTeams';
 import { NeedsYouList } from '@/components/desk/NeedsYouList';
+import { ResumeTeamLink } from '@/components/desk/ResumeTeamLink';
 import { HowItWorks } from '@/components/help/HowItWorks';
 import { RequestList } from '@/components/requests/RequestList';
 import { FirstRunChecklist } from '@/components/setup/FirstRunChecklist';
@@ -262,6 +263,7 @@ export default function HomePage() {
       <PageHeader
         actions={
           <>
+            <ResumeTeamLink />
             <TourLauncher />
             <ButtonLink href="/library" variant="secondary">
               Browse workflows

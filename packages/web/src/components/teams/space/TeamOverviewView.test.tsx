@@ -30,10 +30,18 @@ const base: TeamOverview = {
   },
   queued: 1,
   repos: [
-    { canLaunch: true, id: 'r1', name: 'acme/api', ownerTeamName: null, relation: 'owned' },
+    {
+      canLaunch: true,
+      id: 'r1',
+      launchBudget: null,
+      name: 'acme/api',
+      ownerTeamName: null,
+      relation: 'owned',
+    },
     {
       canLaunch: false,
       id: 'r2',
+      launchBudget: null,
       name: 'acme/shared-ui',
       ownerTeamName: 'Design',
       relation: 'shared',
@@ -206,5 +214,30 @@ describe('TeamOverviewView', () => {
     expect(screen.getAllByText('View only')).toHaveLength(1);
     expect(screen.getByText('acme/shared-ui').closest('li')?.textContent).toContain('View only');
     expect(screen.getByTitle('acme/api').closest('li')?.textContent).not.toContain('View only');
+  });
+
+  it('shows the owner budget meter on a shared repository, and hides it when null', () => {
+    const withBudget: TeamOverview = {
+      ...base,
+      repos: [
+        base.repos[0],
+        {
+          ...base.repos[1],
+          launchBudget: {
+            alertThresholdPercent: 80,
+            percentUsed: 62.4,
+            scope: 'team',
+            state: 'ok',
+          },
+        },
+      ],
+    };
+    const { unmount } = render(<TeamOverviewView overview={withBudget} slug="payments" />);
+    const line = screen.getByTestId('repo-launch-budget');
+    expect(within(line).getByText("Launches here follow Design's budget")).toBeTruthy();
+    expect(within(line).getByText('62% of the team budget this month')).toBeTruthy();
+    unmount();
+    render(<TeamOverviewView overview={base} slug="payments" />);
+    expect(screen.queryByTestId('repo-launch-budget')).toBeNull();
   });
 });

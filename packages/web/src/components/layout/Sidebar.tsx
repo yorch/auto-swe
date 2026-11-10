@@ -204,7 +204,7 @@ const SIDEBAR_TEAM_LIMIT = 8;
 
 /**
  * The caller's teams as links to their spaces, each with what is waiting on them. The teams the
- * user pinned come first (in pin order); with none pinned, the member teams, up to a limit.
+ * user pinned come first (in pin order); with none pinned, the member teams, up to a limit (pins are not capped here: they have their own).
  */
 function TeamsGroup({ pathname }: { pathname: string }) {
   const { entries } = useTeamNav();
@@ -212,7 +212,7 @@ function TeamsGroup({ pathname }: { pathname: string }) {
   const pinned = pinnedTeamSlugs
     .map((slug) => entries.find((e) => e.team.slug === slug))
     .filter((e): e is (typeof entries)[number] => !!e);
-  const shown = (pinned.length > 0 ? pinned : entries).slice(0, SIDEBAR_TEAM_LIMIT);
+  const shown = pinned.length > 0 ? pinned : entries.slice(0, SIDEBAR_TEAM_LIMIT);
   if (shown.length === 0) {
     return null;
   }

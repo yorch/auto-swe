@@ -65,6 +65,7 @@ export const ICON_PATHS = {
   more: 'M12 12h.01M19 12h.01M5 12h.01',
   package: 'M21 8l-9-5-9 5v8l9 5 9-5V8zM3.3 7.5L12 12.5l8.7-5M12 22V12.5',
   pause: 'M6 4h4v16H6zM14 4h4v16h-4z',
+  pin: 'M12 17v5M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z',
   play: 'M6 4l14 8-14 8V4z',
   plug: 'M9 2v6M15 2v6M6 8h12v4a6 6 0 01-12 0V8zM12 18v4',
   plus: 'M12 5v14M5 12h14',

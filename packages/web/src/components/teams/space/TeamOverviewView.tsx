@@ -237,31 +237,41 @@ export function TeamOverviewView({
           ) : (
             <ul className="divide-y divide-ink-600">
               {overview.repos.map((repo) => (
-                <li className="flex items-center justify-between gap-3 py-2.5" key={repo.id}>
-                  <span className="flex min-w-0 items-center gap-2">
-                    <Icon className="shrink-0 text-paper-500" name="repositories" size={14} />
-                    <span className="truncate font-mono text-sm text-paper-200" title={repo.name}>
-                      {repo.name}
+                <li className="py-2.5" key={repo.id}>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Icon className="shrink-0 text-paper-500" name="repositories" size={14} />
+                      <span className="truncate font-mono text-sm text-paper-200" title={repo.name}>
+                        {repo.name}
+                      </span>
                     </span>
-                  </span>
-                  <span className="flex shrink-0 items-center gap-2">
-                    {!repo.canLaunch && (
-                      <Badge
-                        title="Owner team set this repository to view only for your team"
-                        tone="muted"
-                        variant="outline"
-                      >
-                        View only
-                      </Badge>
-                    )}
-                    {repo.relation === 'owned' ? (
-                      <Badge tone="neutral" variant="outline">
-                        owned
-                      </Badge>
-                    ) : (
-                      <OwnerChip ownerName={repo.ownerTeamName ?? 'another team'} />
-                    )}
-                  </span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      {!repo.canLaunch && (
+                        <Badge
+                          title="Owner team set this repository to view only for your team"
+                          tone="muted"
+                          variant="outline"
+                        >
+                          View only
+                        </Badge>
+                      )}
+                      {repo.relation === 'owned' ? (
+                        <Badge tone="neutral" variant="outline">
+                          owned
+                        </Badge>
+                      ) : (
+                        <OwnerChip ownerName={repo.ownerTeamName ?? 'another team'} />
+                      )}
+                    </span>
+                  </div>
+                  {repo.relation === 'shared' && repo.launchBudget && (
+                    <div className="mt-1.5" data-testid="repo-launch-budget">
+                      <p className="mb-1 text-xs text-paper-500">
+                        {`Launches here follow ${repo.ownerTeamName ?? 'the owning team'}'s budget`}
+                      </p>
+                      <BudgetMeter budget={repo.launchBudget} variant="compact" />
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>

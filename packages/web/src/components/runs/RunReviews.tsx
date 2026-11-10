@@ -4,6 +4,7 @@ import type { WorkflowRunDetail } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { GuardedButton } from '@/components/teams/GuardedButton';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -211,6 +212,10 @@ export function RunReviews({ run }: { run: WorkflowRunDetail }) {
                 <Button disabled variant="secondary">
                   Fix retry queued
                 </Button>
+              ) : review.fixRetry?.allowed === false && review.fixRetry.reason ? (
+                <GuardedButton blockedReason={review.fixRetry.reason} variant="secondary">
+                  Retry fix
+                </GuardedButton>
               ) : review.canControl && review.fixRetry?.allowed ? (
                 <RetryFixButton key={String(fix.attemptId ?? 'initial')} runId={run.id} />
               ) : null}
