@@ -260,6 +260,10 @@ else's request resolves anyone else's token or none.
   it at once: it is never part of an answer, a log line or an audit row.
 - Each send is audited as `PullRequestReview` with counts and ids and no text
   ([`audit-log.md`](./audit-log.md)).
+- A send whose outcome is unknown can be checked with the same token: `POST …/review/check` only
+  reads, as the person, and matches by head, event, text, time window and line comments, so a miss
+  proves nothing and an identical review sent twice in the window is indistinguishable
+  ([`work-views.md`](./work-views.md)).
 
 The routes and their refusals are in [`work-views.md`](./work-views.md) §2.5 and §2.6.
 
@@ -267,8 +271,13 @@ The routes and their refusals are in [`work-views.md`](./work-views.md) §2.5 an
 
 ## Limitations
 
-- **A token's scope is not checked when it is saved**, so one that cannot write (a read-only
-  fine-grained token) fails at its first send from the review page with `HOST_FORBIDDEN`, not at save.
+- **Token scope is checked at save only for classic tokens, and only advisorily.** A classic token
+  reports its scopes, so the save response carries `writeCapability`: `ok` with the `repo` scope,
+  `insufficient` without it. A fine-grained or App token reports none (or an empty list), and
+  `public_repo` alone
+  depends on repository visibility the save does not know, so both are `unverifiable`, as is any
+  failed or inconclusive answer. `insufficient` never blocks the save and nothing is stored; a
+  token that cannot write still fails at its first send from the review page with `HOST_FORBIDDEN`.
 - **Sending from the review page is not a run, so the launcher rules do not apply to it.** A person
   who launched or requested the work can approve from the page if the host lets them; the platform
   then sets that approval aside when it counts approvals, and the page warns them for the latest run
@@ -298,7 +307,8 @@ The routes and their refusals are in [`work-views.md`](./work-views.md) §2.5 an
   scope it to this one.
 - **The access check reads the owner's role, not the token's scopes.** GitHub reports a
   fine-grained token's owner as `admin` even when the token itself can only read, so such a token
-  passes both the save check and the access gate and then fails when the run pushes.
+  passes both the save check and the access gate and then fails when the run pushes. Its
+  `writeCapability` is `unverifiable`, never `ok`.
 - **Webhooks still use the platform's secret.** The `signal` CI wait strategy needs GitHub to
   deliver webhooks signed with the platform's webhook secret, which a user cannot configure on a
   repository they connected themselves. A deployment whose repositories are reached through user

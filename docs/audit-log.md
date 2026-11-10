@@ -58,12 +58,14 @@ when the system acted, such as a webhook or a sweep), `beforeJson`, `afterJson`,
   (`POST /api/v1/pull-requests/:id/review`) or sending a pull request back to the agent
   (`POST …/send-back`) writes one `CREATE` row of entity type `PullRequestReview`, with the pull
   request's id as `entityId` and the person as actor, after the host accepted it. `afterJson` is
-  `{ kind: "review", event, comments, hasBody, headSha, githubReviewId, prNumber, repositoryId }` or
+  `{ kind: "review", event, comments, hasBody, headSha, githubReviewId, prNumber, repositoryId }`
+  (plus `confirmed: true` when the review was found on the host by
+  `POST …/review/check` after a send whose outcome was unknown, rather than answered by the send) or
   `{ kind: "send-back", hasNote, headSha, githubCommentId, prNumber, repositoryId }`. It records
   counts and ids, never the text of a review, a comment or a note, and never a token. A review's row
   commits in one transaction with the deletion of the drafts it sent; a refused or failed send, and
-  one whose outcome is unknown, leaves no row, and a failed audit write is logged without failing a
-  send that already happened.
+  one whose outcome is unknown, leaves no row until a check finds the review on the host, and a
+  failed audit write is logged without failing a send that already happened.
 - **Sign-ins.** Each session created by better-auth writes a `CREATE` row of entity type `Session`
   with `afterJson` `{ "event": "sign_in" }`, the user as actor, and a context of `via: "session"`
   plus the request id and truncated address. The address is the request's (`request.ip`), not the
