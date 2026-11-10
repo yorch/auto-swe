@@ -121,6 +121,48 @@ export function isWorkspaceTargetType(type: ConnectionType): boolean {
   return METADATA[type]?.isWorkspaceTarget ?? false;
 }
 
+/** The generic steps that dispatch on a connection's type. */
+export type GenericConnectionStep = 'readSource' | 'writeOutcome' | 'runTool';
+
+/**
+ * Which connection types each generic step can really act on. A type absent from a step's list
+ * has no implementation behind that step, and the worker fails the step with
+ * `CONNECTOR_NOT_IMPLEMENTED` rather than report success without acting. `git_repo` is absent
+ * everywhere: repository work runs through the engineering activities, not these steps. An `mcp`
+ * connection is reached by the `mcp` node, not by these steps.
+ */
+export const GENERIC_STEP_CONNECTION_TYPES: Record<
+  GenericConnectionStep,
+  readonly ConnectionType[]
+> = {
+  readSource: ['notion', 'zendesk', 'issue_tracker', 'confluence'],
+  runTool: ['zendesk', 'slack_workspace', 'issue_tracker', 'confluence'],
+  writeOutcome: ['notion', 'zendesk', 'slack_workspace', 'issue_tracker', 'confluence'],
+};
+
+/** The non-retryable failure type the worker raises for a step with no implementation. */
+export const CONNECTOR_NOT_IMPLEMENTED = 'CONNECTOR_NOT_IMPLEMENTED';
+
+/**
+ * Connection types no step of any kind can act on: they can be stored, but nothing sends a
+ * request through them. A template cannot declare one as a `connection` input.
+ */
+export const UNIMPLEMENTED_CONNECTION_TYPES: readonly ConnectionType[] = ['http_api', 'hubspot'];
+
+/** Why `step` cannot act on a `type` connection, or null when it can. */
+export function genericStepRefusal(step: GenericConnectionStep, type: string): string | null {
+  if ((GENERIC_STEP_CONNECTION_TYPES[step] as readonly string[]).includes(type)) {
+    return null;
+  }
+  const where =
+    type === 'mcp'
+      ? ' Use an `mcp` node to call an MCP server.'
+      : type === 'git_repo'
+        ? ' Repository work runs through the engineering activities.'
+        : '';
+  return `${step} has no implementation for ${type} connections, so the step is refused rather than report success without acting.${where}`;
+}
+
 /**
  * Notion-specific config stored in `Connection.config`.
  *

@@ -56,8 +56,8 @@ const DESTINATIONS: Record<ConnectionType, (config: unknown) => CredentialDestin
   // columns on a `git_repo` row are inert — nothing reads them — so there is no
   // destination to bind.
   git_repo: () => null,
-  // Both are placeholder handlers that never send their token
-  // (`genericActions.ts` returns `ok: true` without a request). Whoever gives one a
+  // Neither has a connector: `genericActions.ts` fails every step over them with
+  // `CONNECTOR_NOT_IMPLEMENTED` and never sends a token. Whoever gives one a
   // real sender must give it a destination here.
   http_api: () => null,
   hubspot: () => null,

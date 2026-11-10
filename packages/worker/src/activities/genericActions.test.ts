@@ -123,17 +123,6 @@ describe('input validation', () => {
 });
 
 describe('readSource', () => {
-  it('reads from an http_api connection (placeholder)', async () => {
-    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeConnection('http_api')
-    );
-
-    const result = await readSource({ connectionId: '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5' });
-    expect(result.ok).toBe(true);
-    expect(result.connectionType).toBe('http_api');
-    expect(result.placeholder).toBe(true);
-  });
-
   it('reads from a notion connection', async () => {
     (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
       makeConnection('notion', { token: true })
@@ -1140,7 +1129,7 @@ describe('refusals before the provider call leave no claim', () => {
       makeConnection('carrier_pigeon', { token: true })
     );
 
-    await expect(writeOutcome(writeArgs)).rejects.toThrow('Unsupported connection type');
+    await expect(writeOutcome(writeArgs)).rejects.toThrow('no implementation for carrier_pigeon');
     expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
   });
 
@@ -1460,5 +1449,49 @@ describe('issue_tracker writeOutcome: ticket plan', () => {
       ).rejects.toThrow('ticket plan shape');
     }
     expect(createIssue).not.toHaveBeenCalled();
+  });
+});
+
+describe('steps with no connector implementation fail loudly', () => {
+  const connectionId = '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5';
+
+  const cases: Array<[string, string, () => Promise<unknown>]> = [
+    ...['http_api', 'hubspot', 'mcp', 'git_repo', 'slack_workspace'].map(
+      (type): [string, string, () => Promise<unknown>] => [
+        'readSource',
+        type,
+        () => readSource({ connectionId }),
+      ]
+    ),
+    ...['http_api', 'hubspot', 'mcp', 'git_repo'].map(
+      (type): [string, string, () => Promise<unknown>] => [
+        'writeOutcome',
+        type,
+        () => writeOutcome({ connectionId, data: { a: 1 } }),
+      ]
+    ),
+    ...['http_api', 'hubspot', 'mcp', 'git_repo', 'notion'].map(
+      (type): [string, string, () => Promise<unknown>] => [
+        'runTool',
+        type,
+        () => runTool({ connectionId, inputs: {}, tool: 'anything' }),
+      ]
+    ),
+  ];
+
+  it.each(cases)('%s on a %s connection fails non-retryably', async (step, type, call) => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection(type)
+    );
+
+    const failure = await call().then(
+      () => null,
+      (e: Error & { type?: string }) => e
+    );
+    expect(failure).not.toBeNull();
+    expect(failure?.type).toBe('CONNECTOR_NOT_IMPLEMENTED');
+    expect(failure?.message).toContain(`${step} has no implementation for ${type}`);
+    // Nothing was claimed, so a retry-ambiguity row cannot be left behind.
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
   });
 });

@@ -1752,9 +1752,14 @@ Current constraints of the system as built. Deliberate product boundaries are in
   *second visit* is a different node id, so it acts. That is completed-result caching, not
   exactly-once delivery: the remote call and the ledger row are not one transaction (see
   [autonomy-policies.md §4.1](./autonomy-policies.md#41-the-mutation-boundary)).
-  A write node that names no explicit payload writes its own inputs, less `connectionId`. Notion, Confluence, Zendesk, Slack, and issue-tracker outcomes are concrete;
-  `http_api`, `hubspot`, and `mcp` still return placeholder results pending provider-specific
-  activity packs. The `record` workspace provider metadata currently targets `zendesk` only.
+  A write node that names no explicit payload writes its own inputs, less `connectionId`. The steps are concrete for these connection types: `readSource` for Notion, Zendesk, issue
+  trackers and Confluence; `writeOutcome` for those and Slack; `runTool` for Zendesk, Slack, issue
+  trackers and Confluence. Any other pairing, including every step over `http_api`, `hubspot`,
+  `mcp` or `git_repo`, fails with a non-retryable `CONNECTOR_NOT_IMPLEMENTED` before the provider
+  is contacted or a ledger row is claimed, so no step reports success without acting
+  (`GENERIC_STEP_CONNECTION_TYPES` in `shared/lib/connectionTypes.ts` is the matrix). A template's
+  `inputSchema` cannot declare a `connection` field of type `http_api` or `hubspot`; saving one is
+  refused. The `record` workspace provider metadata currently targets `zendesk` only.
 - **A template's declared connections are authorized at launch, and mutating tools obey the
   approval gate.** The launch takes the same decision for each `connection`-typed field the
   template's `inputSchema` declares, not only for `payload.connectionId`: a node may name its own

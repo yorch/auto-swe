@@ -242,6 +242,15 @@ describe('inputSchemaProblems', () => {
     }
   });
 
+  it.each(['http_api', 'hubspot'])('refuses a connection input typed %s', (connectionType) => {
+    expect(
+      inputSchemaProblems({
+        properties: { target: { connectionType, type: 'connection' } },
+        type: 'object',
+      }).join('\n')
+    ).toMatch(new RegExp(`'target'.*${connectionType}.*no connector yet`));
+  });
+
   it('still allows connectionId as a connection, which is the run’s own', () => {
     expect(
       inputSchemaProblems({

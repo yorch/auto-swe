@@ -206,7 +206,7 @@ separately.
   the types a generic step can actually reach (`git_repo`, `mcp`, `issue_tracker`, `notion`,
   `confluence`, `zendesk`, `slack_workspace`); the installer must map those to local `Connection`
   rows. A bundle cannot declare a dependency on a type whose connector is still a placeholder
-  (`http_api`, `hubspot`), because installing it would produce a template that silently does nothing.
+  (`http_api`, `hubspot`), because a generic step over one fails with `CONNECTOR_NOT_IMPLEMENTED`.
 - **No central registry.** There is no auto-swe marketplace or hosted registry; distribution is
   file/URL based and trust is pinned to ed25519 public keys.
 - **MCP connection IDs are not portable.** A template spec referencing an `mcp` connection will
