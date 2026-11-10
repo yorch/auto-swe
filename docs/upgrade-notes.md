@@ -872,10 +872,10 @@ succeeds.
 
 ---
 
-### UN-16. Built-in workflows use `storeAs`, `onFailure`, `status` and `maxVisits` (`89b23456`)
+### UN-16. Built-in workflows use `storeAs`, `onFailure`, `status` and `maxVisits` (`674c0e10`)
 
 **Affected.** Any deployment where the gateway can run newer code than the worker, even briefly:
-the gateway syncs the built-in templates at start-up, and a worker built before `89b23456`
+the gateway syncs the built-in templates at start-up, and a worker built before `674c0e10`
 ignores the four new node fields.
 
 **What changes.** The built-in templates are re-versioned with fewer nodes. A worker that does not
@@ -892,7 +892,7 @@ To give a customised `workflowAuthor` the new fields, re-apply the built-in prom
 library.
 
 **Verify.** `printenv COMMIT_HASH` in the worker container names a commit that contains
-`89b23456` (section 1), and a new `ticket-to-merge` run stops its review loop after the configured
+`674c0e10` (section 1), and a new `ticket-to-merge` run stops its review loop after the configured
 number of rounds.
 
 ---
