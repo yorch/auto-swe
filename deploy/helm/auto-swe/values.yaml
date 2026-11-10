@@ -151,6 +151,12 @@ workspaces:
   # worker's Role/RoleBinding, mirroring infra/kubernetes/workspace-namespace.yaml.
   # false: apply that reference manifest yourself.
   manage: true
+  # Render the Namespace object itself (with the PodSecurity labels). Set false when the
+  # namespace already exists, e.g. applied from infra/kubernetes/workspace-namespace.yaml,
+  # which `helm install` would otherwise fail on; the policy objects are still rendered into
+  # it. Label it pod-security.kubernetes.io/enforce=restricted yourself in that case.
+  # Ignored when manage is false.
+  createNamespace: true
   # The worker refuses to start unless a probe pod proves the NetworkPolicy is
   # enforced. Only false skips that check (a local cluster with no policy CNI).
   requireNetworkPolicy: true

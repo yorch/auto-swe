@@ -1,6 +1,7 @@
 {{- if and .Values.worker.enabled .Values.workspaces.manage }}
 {{- $ns := .Values.workspaces.namespace }}
 {{- $p := .Values.worker.proxies }}
+{{- if .Values.workspaces.createNamespace }}
 # The namespace agent workspace pods run in, mirroring
 # infra/kubernetes/workspace-namespace.yaml with this release's worker filled in.
 apiVersion: v1
@@ -13,6 +14,7 @@ metadata:
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
 ---
+{{- end }}
 # Default-deny, then allow exactly: DNS, this release's worker proxies, and the
 # public internet minus every private and link-local range (which keeps a
 # workspace off the cloud metadata endpoint and cluster-internal addresses).

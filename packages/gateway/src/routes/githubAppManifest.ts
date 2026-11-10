@@ -45,7 +45,11 @@ import {
   setAppWebhookSecret,
 } from '../lib/githubAppManifest.js';
 import { sendError } from '../lib/httpErrors.js';
-import { auditConfigWrite, updateGitHubConfig } from '../lib/systemConfigService.js';
+import {
+  auditConfigWrite,
+  GitHubAppAlreadyStoredError,
+  updateGitHubConfig,
+} from '../lib/systemConfigService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /** Binds the flow to the browser that started it; cleared by the callback whatever the outcome. */
@@ -240,16 +244,37 @@ export const githubAppManifestRoutes: FastifyPluginAsync<GitHubAppManifestRouteO
           pem: created.pem,
           secret: generated,
         });
-        webhookSecretToStore = generated;
+        // Stored only when GitHub accepted it. Otherwise no side holds a secret the admin could
+        // read back (stored secrets are write-only), so none is stored: the warning tells the
+        // admin to enter one new value in both places.
+        webhookSecretToStore = webhookAligned ? generated : undefined;
       }
 
-      const result = await updateGitHubConfig(fastify.prisma, {
-        appClientId: created.clientId,
-        appClientSecret: created.clientSecret,
-        appId: created.id,
-        appPrivateKey: created.pem,
-        ...(webhookSecretToStore ? { webhookSecret: webhookSecretToStore } : {}),
-      });
+      // The write itself claims the singleton (only while no App id is stored), so of two
+      // callbacks that both passed the check above exactly one stores its App.
+      let result: Awaited<ReturnType<typeof updateGitHubConfig>>;
+      try {
+        result = await updateGitHubConfig(
+          fastify.prisma,
+          {
+            appClientId: created.clientId,
+            appClientSecret: created.clientSecret,
+            appId: created.id,
+            appPrivateKey: created.pem,
+            ...(webhookSecretToStore ? { webhookSecret: webhookSecretToStore } : {}),
+          },
+          { onlyIfNoApp: true }
+        );
+      } catch (err) {
+        if (err instanceof GitHubAppAlreadyStoredError) {
+          request.log.warn(
+            { appId: created.id },
+            'another GitHub App was stored first; this one was not'
+          );
+          return backToIntegrations(reply, 'APP_ALREADY_CONFIGURED');
+        }
+        throw err;
+      }
       await auditConfigWrite(fastify.prisma, request.log, payload.sub, {
         ...result,
         auditAfterJson: {

@@ -483,6 +483,14 @@ jobs:
           ME_SUMMARY_PG_TEST: '1'
         run: yarn test packages/gateway/src/routes/meSummary.pg.test.ts
 
+      # The outcome report's loader: which runs fall in the cohort and window, and how
+      # pull requests, fix-loop steps, pinned template versions and ledger rows join
+      # to them, are relational selects a fake Prisma client only echoes back.
+      - name: Outcome report (database-backed tests)
+        env:
+          OUTCOME_REPORT_PG_TEST: '1'
+        run: yarn test packages/shared/src/lib/outcomeReport.pg.test.ts
+
       # The read tools against the real route plugins and the same tables: what a
       # tool returns for a team member, an outsider, an ADMIN and a deactivated
       # user is what REST returns for them. Its own step, for the same reason: it

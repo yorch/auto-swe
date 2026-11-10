@@ -261,9 +261,24 @@ export async function getGitHubConfig(prisma: PrismaClient) {
   };
 }
 
+/** Thrown by `updateGitHubConfig` with `onlyIfNoApp` when another writer stored an App first. */
+export class GitHubAppAlreadyStoredError extends Error {
+  constructor() {
+    super('A GitHub App is already stored');
+    this.name = 'GitHubAppAlreadyStoredError';
+  }
+}
+
+/**
+ * `onlyIfNoApp` makes the write a claim on the singleton: it succeeds only while no App id is
+ * stored, decided by the write itself (a conditional `updateMany`, or a `create` that the primary
+ * key refuses a second time) rather than by an earlier read, so of two concurrent writers exactly
+ * one wins and the other gets `GitHubAppAlreadyStoredError` without having overwritten anything.
+ */
 export async function updateGitHubConfig(
   prisma: PrismaClient,
-  body: GitHubConfigInput
+  body: GitHubConfigInput,
+  opts: { onlyIfNoApp?: boolean } = {}
 ): Promise<ConfigUpdateResult> {
   const {
     token,
@@ -305,11 +320,35 @@ export async function updateGitHubConfig(
   sealInto(data, 'appClientSecret', appClientSecret);
   sealInto(data, 'appPrivateKey', appPrivateKey);
 
-  const row = await prisma.gitHubConfig.upsert({
-    create: { id: 'default', ...data },
-    update: data,
-    where: { id: 'default' },
-  });
+  let row: GitHubConfigRow;
+  if (opts.onlyIfNoApp) {
+    if (existing) {
+      const claimed = await prisma.gitHubConfig.updateMany({
+        data,
+        where: { id: 'default', OR: [{ appId: null }, { appId: '' }] },
+      });
+      if (claimed.count === 0) {
+        throw new GitHubAppAlreadyStoredError();
+      }
+      row = await prisma.gitHubConfig.findUniqueOrThrow({ where: { id: 'default' } });
+    } else {
+      try {
+        row = await prisma.gitHubConfig.create({ data: { id: 'default', ...data } });
+      } catch (err) {
+        // P2002: a concurrent writer created the singleton first.
+        if ((err as { code?: string }).code === 'P2002') {
+          throw new GitHubAppAlreadyStoredError();
+        }
+        throw err;
+      }
+    }
+  } else {
+    row = await prisma.gitHubConfig.upsert({
+      create: { id: 'default', ...data },
+      update: data,
+      where: { id: 'default' },
+    });
+  }
 
   const changedFields = changedKeys([
     ['token', token],

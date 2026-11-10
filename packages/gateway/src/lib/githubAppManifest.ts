@@ -319,6 +319,11 @@ export async function setAppWebhookSecret(input: {
  * could check, else the github.com shape on the configured web host.
  */
 export function installationUrl(app: ConvertedGitHubApp, baseUrl: string): string {
-  const page = app.htmlUrl ?? `${baseUrl.replace(/\/$/, '')}/apps/${app.slug}`;
+  const base = baseUrl.replace(/\/$/, '');
+  // GitHub Enterprise Server serves an App's page at /github-apps/<slug>; github.com and
+  // GHE.com tenants (`<t>.ghe.com`) serve it at /apps/<slug>.
+  const host = new URL(base).hostname.toLowerCase();
+  const path = host === 'github.com' || host.endsWith('.ghe.com') ? 'apps' : 'github-apps';
+  const page = app.htmlUrl ?? `${base}/${path}/${app.slug}`;
   return `${page}/installations/new`;
 }

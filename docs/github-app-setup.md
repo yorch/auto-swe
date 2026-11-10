@@ -57,9 +57,17 @@ already configured (database or `GITHUB_WEBHOOK_SECRET`), the new App is told to
 (`PATCH /app/hook/config`, authenticated as the new App), so repository webhooks that already use
 it keep verifying, and the stored secret is not replaced. When none is configured, the secret
 GitHub generated for the App is stored as the instance secret (or, when GitHub generated none, a
-random one the gateway sets on the App the same way). If GitHub refuses the
-`PATCH`, the App is still stored, the page warns that the App's deliveries will not verify, and the
-App's webhook secret has to be set on GitHub by hand.
+random one the gateway sets on the App the same way, stored only if GitHub accepted it). If GitHub
+refuses the `PATCH`, the App is still stored and the page warns that the App's deliveries will not
+verify. Stored secrets are write-only in the dashboard, so the page asks for a new value rather than
+a copy: choose a random string, enter it as the webhook secret in the App's settings on GitHub, and
+enter the same string under **Webhook secret** in the GitHub card on the integrations page. A secret
+the gateway generated but GitHub never received is not stored.
+
+**Concurrent callbacks.** Storing the App is a conditional write on the `GitHubConfig` singleton
+that succeeds only while no App id is stored, so of two callbacks that race, one stores its App and
+the other lands on the integrations page with `APP_ALREADY_CONFIGURED` without overwriting it. The
+losing callback's App was already created on GitHub and remains there; delete it from GitHub.
 
 **What the callback checks.** The `state` is a single-purpose token signed by the gateway, valid for
 ten minutes, minted for this flow only (a Slack OAuth state cannot finish it, or the reverse). Its
