@@ -1629,6 +1629,47 @@ Things to know:
 - `onFailure` fires after a node's own retries. It does not catch an unevaluable binding, a
   cancellation, or the transition cap (§4).
 
+## 9. Macros
+
+A macro is a named, versioned piece of the engineering workflow (a CI wait and fix loop, a review
+loop) that a spec records by name and arguments instead of by its dozen nodes. The spec is still
+flat: the macro's nodes sit in `nodes` under their ordinary ids, and the run, the worker and
+analytics read only those. What the macro adds is metadata saying where the nodes came from.
+
+```jsonc
+{
+  "uses": {
+    "ci": {
+      "macro": "ciLoop@1",
+      "args": { "passed": "done", "fix": { "handoff": { "repush": "repushAfterFix" } } }
+    }
+  }
+}
+```
+
+- `uses` maps a use id (a letter, then up to 31 letters or digits) to `{ macro, args }`. Every node
+  the macro produced carries `"use": "<id>"`.
+- Four macros exist: `validatePhase@1`, `reviewLoop@1`, `openPullRequest@1` and `ciLoop@1`. Their
+  arguments are those of the authoring helpers they wrap, as plain JSON; node ids a macro routes to
+  (`passed`, `approved`, `next`, `exhausted`) are arguments, and every other node the macro creates
+  has a fixed id, so one spec holds at most one use of each macro.
+- **Writing expands.** A spec saved with a `uses` entry and no tagged nodes (an author or a bundle
+  wrote only the use) is expanded when it is written, and the stored version holds the nodes.
+  Expansion never happens at run time. A bundle's manifest keeps the spec as authored, so its
+  content hash and signature cover the `uses` arguments.
+- **Hand edits are refused.** A save fails when a use's tagged nodes differ from a fresh expansion
+  of its arguments, when a node names an undeclared use, or when the macro or its arguments are
+  unknown. Change the arguments and re-expand, or detach the use so its nodes become ordinary.
+- **A macro version never changes what it expands to.** A test pins each version's expansion over
+  a corpus of arguments; a changed expansion ships as the next version (`ciLoop@2`), so a stored
+  spec keeps meaning what it meant.
+- **A `title` or `group` on a macro node may be changed**; any other change to a tagged node is
+  drift.
+
+The read-only graph of a template folds a use into one card. In the template editor the inspector's
+Macro section edits a use's arguments, re-expands it, or detaches it. The nodes of a use cannot be
+deleted or renamed one at a time, and a node a use routes to cannot be deleted.
+
 ## Limitations
 
 - **`readSource`, `writeOutcome` and `runTool` act on a subset of connection types.** `readSource`
@@ -1662,3 +1703,11 @@ Things to know:
   by Temporal; use a `terminate` node for the other four statuses' `result` payloads, since the
   shorthand carries only `message`.
 - **Write paths do not understand brackets**, unlike read paths.
+- **A macro appears once per spec.** Its nodes have fixed ids, so a second use of the same macro
+  collides; only `policyGatedWrite` and `signalGate` take a prefix, and neither is a macro.
+- **Only four helpers are macros.** `ciLoop`'s fix step takes no `fixConfig` argument, so a template
+  that customises it keeps the plain helper.
+- **The workflow author agent neither reads nor writes `uses`.** It is shown the flat nodes and
+  returns a flat spec, so a refined template loses its macro metadata.
+- **The editor's canvas does not stop an edit to a macro node's fields.** A change other than
+  `title` or `group` is refused at save as drift; re-expand or detach the use first.

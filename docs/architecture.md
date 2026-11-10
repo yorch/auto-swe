@@ -400,6 +400,12 @@ interpreter owns all four, so they are workflow state and replay the same way. C
 `onFailure` and `onExhausted` node ids as the dearer alternative to `next`. Semantics and
 gotchas are in [workflow-nodes.md §8](./workflow-nodes.md#8-plumbing-fields).
 
+**Macros** record a piece of the engineering workflow by name and arguments (`uses` on the spec, a
+`use` tag on each node it produced) beside the flat nodes. The nodes stay the canonical spec: a write
+expands a use into them, a save refuses nodes that differ from a fresh expansion, and the
+interpreter, worker and analytics never read the metadata. See
+[workflow-nodes.md §9](./workflow-nodes.md#9-macros).
+
 #### Reading a large graph
 
 The same spec is shown three ways, none of which changes it:

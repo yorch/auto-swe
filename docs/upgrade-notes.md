@@ -957,6 +957,25 @@ dollars, make its creator an ORG_ADMIN and send it by email to ORG_ADMIN recipie
 
 ---
 
+### UN-18. Built-in templates carry macro metadata and are re-versioned (`2899bcb0`)
+
+**Affected.** Any deployment with a built-in template in a running A/B experiment, or with
+reporting that compares a built-in template version over time.
+
+**What changes.** The gateway syncs the built-in templates at start-up, and every one built on the four macro helpers gains a
+`uses` map and `use` node tags (metadata only; the nodes are unchanged), so each is appended as a new
+version. A template whose latest version is its previous built-in version is activated on the new
+one. A template in a live experiment stays on its old version, and the start-up log warns. Version
+history and per-version analytics split at the sync. An older gateway or worker reads the new specs
+and ignores the metadata, so a mixed-version deploy runs the same graph.
+
+**Actions.** For each built-in template in an experiment, end or promote the experiment, then
+promote the new version. Nothing else needs to be done.
+
+**Verify.** The template's active version in the library is the newest built-in version.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,
