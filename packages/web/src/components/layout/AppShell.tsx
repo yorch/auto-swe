@@ -7,6 +7,7 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
+import { TourHost } from '@/components/tour/TourHost';
 import { useApprovalsStream } from '@/hooks/useApprovals';
 import { usePageViewEvents } from '@/hooks/usePageViewEvents';
 
@@ -98,6 +99,7 @@ function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscree
           )}
         </div>
       </div>
+      <TourHost />
       <AssistantPanel />
     </>
   );

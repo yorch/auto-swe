@@ -2,24 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ProductTour } from '@/components/tour/ProductTour';
+import { restoreTourFocus, TOUR_SEEN_KEY } from '@/components/tour/tourSupport';
 import { BUTTON_STYLE, buttonClassName } from '@/components/ui/Button';
-import { focusMainContent, useDismissed, writeDismissed } from '@/lib/dismissed';
+import {
+  DISMISSED_CHANGE_EVENT,
+  readDismissed,
+  useDismissed,
+  writeDismissed,
+} from '@/lib/dismissed';
 import { buildTourSteps } from '@/lib/tourSteps';
 import { useAuthStore } from '@/stores/authStore';
 
-/** The "tour seen" flag, kept with the other per-viewer flags in `lib/dismissed.ts`. */
-export const TOUR_SEEN_KEY = 'product-tour';
-
-/** The first link or button of the sidebar drawer, when it is outside any inert region. */
-function focusOpenDrawer(): void {
-  const drawer = document.querySelector<HTMLElement>('[data-tour="sidebar"]');
-  if (!drawer || drawer.closest('[inert]')) {
-    return;
-  }
-  drawer
-    .querySelector<HTMLElement>('a[href], button:not([disabled])')
-    ?.focus({ preventScroll: true });
-}
+export { TOUR_SEEN_KEY };
 
 /**
  * A quiet button on Home that starts the product tour. Only a click starts it. Ending the tour
@@ -47,26 +41,23 @@ export function TourLauncher() {
     []
   );
 
+  // The tour can also be run from the Help panel, which records it as seen without this button.
+  const userId = useAuthStore((s) => s.user?.sub);
+  useEffect(() => {
+    const sync = () => {
+      if (readDismissed(TOUR_SEEN_KEY, userId)) {
+        dismiss();
+      }
+    };
+    window.addEventListener(DISMISSED_CHANGE_EVENT, sync);
+    return () => window.removeEventListener(DISMISSED_CHANGE_EVENT, sync);
+  }, [userId, dismiss]);
+
   const onEnd = useCallback(() => {
     setRunning(false);
     dismiss();
-    // The button stays mounted, so focus goes back to where the tour was started; if it is
-    // gone, the main region keeps the user's place. A focus call can also be a silent no-op: with
-    // the mobile menu open the whole page, launcher and main region included, is `inert`. Check
-    // each call took, and last fall back to the open drawer, which sits outside the inert page.
-    const button = buttonRef.current;
-    if (button?.isConnected) {
-      button.focus();
-      if (document.activeElement === button) {
-        return;
-      }
-    }
-    focusMainContent();
-    const main = document.getElementById('main-content');
-    if (main && document.activeElement === main) {
-      return;
-    }
-    focusOpenDrawer();
+    // The button stays mounted, so focus goes back to where the tour was started.
+    restoreTourFocus(buttonRef.current);
   }, [dismiss]);
 
   if (!ready) {

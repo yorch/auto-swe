@@ -4,7 +4,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { useOverlayPosition } from 'react-aria';
 import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui/Button';
-import type { TourStep } from '@/lib/tourSteps';
+import type { PageTourStep } from '@/lib/tourSteps';
 
 const RING_OUTLINE = '2px solid var(--color-accent-400)';
 
@@ -61,7 +61,7 @@ const CARD =
   'w-80 max-h-[calc(100vh-1.5rem)] max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-lg border border-ink-400 bg-ink-800 p-4 text-left text-sm leading-relaxed text-paper-200 shadow-2xl shadow-black/40';
 
 interface ProductTourProps {
-  steps: TourStep[];
+  steps: PageTourStep[];
   /** Called when the tour ends by any route: Done (`true`), Skip tour or Escape (`false`). */
   onEnd: (completed: boolean) => void;
 }

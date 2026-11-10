@@ -45,6 +45,7 @@ export function EditorActionBar({
         <Button
           aria-busy={checkPending}
           data-check-workflow=""
+          data-tour="editor:check"
           onClick={onCheck}
           size="sm"
           variant="secondary"

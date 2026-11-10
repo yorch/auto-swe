@@ -20,6 +20,7 @@ export function PaletteRail({ steps, open, paletteRef, onAdd, onClose }: Palette
         'z-20 h-full shadow-xl lg:static lg:block lg:shadow-none',
         open ? 'absolute inset-y-0 left-0 block' : 'hidden'
       )}
+      data-tour="editor:palette"
       ref={paletteRef}
     >
       <NodePalette

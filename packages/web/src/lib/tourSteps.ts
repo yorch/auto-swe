@@ -26,6 +26,13 @@ export interface TourStep {
   roles: Role[];
 }
 
+/**
+ * A step of a per-page tour: the part of a step the tour card needs. A page registers these
+ * through `PageTour`; its anchors are `data-tour` attributes the page itself renders, and the
+ * page's own test checks each one exists.
+ */
+export type PageTourStep = Pick<TourStep, 'id' | 'anchor' | 'title' | 'body'>;
+
 const ALL: Role[] = ['ENGINEER', 'LEAD', 'ADMIN'];
 const ADMIN_ONLY: Role[] = ['ADMIN'];
 
