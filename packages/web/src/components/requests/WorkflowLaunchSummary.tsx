@@ -5,6 +5,7 @@ import { useMemo } from 'react';
 import { ReviewList } from '@/components/requests/LaunchSteps';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { nodeDisplayName } from '@/components/workflow/nodeDisplay';
+import { phasesOf } from '@/components/workflow/workflowPhases';
 import { useWorkflowTemplate } from '@/hooks/useTemplates';
 
 export function WorkflowLaunchSummary({ templateId }: { templateId: string }) {
@@ -25,7 +26,7 @@ export function WorkflowLaunchSummary({ templateId }: { templateId: string }) {
           )
         ),
       ];
-      return { humanSteps, outputs, signals };
+      return { humanSteps, outputs, phases: phasesOf(spec), signals };
     } catch {
       return null;
     }
@@ -43,6 +44,9 @@ export function WorkflowLaunchSummary({ templateId }: { templateId: string }) {
       {summary ? (
         <ReviewList
           items={[
+            ...(summary.phases.length > 0
+              ? [{ label: 'Phases', value: summary.phases.join(' · ') }]
+              : []),
             {
               label: 'Declared outputs',
               value: summary.outputs.length ? (
