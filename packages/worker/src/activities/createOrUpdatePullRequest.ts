@@ -156,11 +156,21 @@ async function doCreateOrUpdatePullRequest(
         ...(ownAttribution.runId ? ownAttribution : {}),
         ciStatus: 'PENDING',
         headSha: codeResult.headSha,
-        // The platform's push is also the host's head now; a person's earlier push no longer is.
-        hostHeadSha: codeResult.headSha,
         workflowId: ownWorkflow?.id,
       },
       where: { id: existingPR.id },
+    });
+    // The platform's push is also the host's head now, unless a webhook has recorded a newer one
+    // since this row was read: a person's push lands between the read and this write, and
+    // overwriting its head with the platform's would make the review queue count an evaluation
+    // of the platform's commit as current. Only an unrecorded head, or the one the push
+    // continues from (the row's previous platform head), is replaced.
+    await prisma.pullRequest.updateMany({
+      data: { hostHeadSha: codeResult.headSha },
+      where: {
+        id: existingPR.id,
+        OR: [{ hostHeadSha: null }, { hostHeadSha: existingPR.headSha }],
+      },
     });
 
     // No PR-host write happens here (the new head arrived with the push, which the ledger
@@ -281,6 +291,7 @@ async function doCreateOrUpdatePullRequest(
     data: {
       ciStatus: 'PENDING',
       headSha: codeResult.headSha,
+      hostHeadSha: codeResult.headSha,
       isDraft: options.draft === true,
       prNumber,
       repoId: repo.id,

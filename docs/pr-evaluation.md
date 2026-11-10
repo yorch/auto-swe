@@ -668,7 +668,7 @@ reason that holds reported as `reason` and every one as `reasons`. The rules app
 | `not_evaluated` | yes | There is no evaluation; or the newest evaluation is for a different head than the one the host last reported for the pull request; or evaluation is off for the repository (the feature switch, the repository's mode or its deactivation), so a stored evaluation is a snapshot nothing keeps current. Nothing says the current head is safe, so it asks. |
 | `path` | yes | A changed file, or the previous path of a renamed one, matches `humanPaths`; or the paths could not all be checked (see below). It outranks standing approvals: a path rule means always, and so a pull request that matches one stays on the attention queue until it is merged or closed, whatever approvals it collects. |
 | `approvals_met` | no | No path rule fired, the evaluation's trusted human approvals reach the approvals it requires, and no person's request for changes stands. |
-| `changes_requested` | yes | The approvals are met but a person's request for changes stands at the evaluated head: the evaluation recorded the objection, or a review asking for changes was counted on the row afterwards. It stands until the next evaluation of the pull request records it cleared (a later approval or a dismissal starts one). |
+| `changes_requested` | yes | The approvals are met but a person's request for changes stands at the evaluated head: the evaluation recorded the objection, or a review asking for changes was counted on the row afterwards. A row written before the column existed has no recorded objection, which reads as none, so a request for changes recorded before then counts only through the changes-requested count on the row. It stands until the next evaluation of the pull request records it cleared (a later approval or a dismissal starts one). |
 | `risk`, `size` | yes | The class is at or above `humanMinRisk`, or the changed lines exceed `humanAboveLines` (an evaluation that recorded no line count counts as over the limit). They apply after approvals: a change that already has the approvals it needs is not sent for another look because of its risk or size. |
 | `bot_approved` | no | No rule above fired, the approver App's approval stands, auto-merge is armed, and `humanSkipsBotApproved` is on. |
 | `bot_approved_review` | yes | The same, with `humanSkipsBotApproved` off: a person still looks. |
@@ -685,15 +685,23 @@ head is the head the host last reported for the pull request. The pull-request r
 `head_sha`, the commit the platform last pushed (the CI wait is keyed on it, and a person's push
 never moves it), and `host_head_sha`, the head the host reports, written from every `synchronize`
 (and `reopened`) webhook the platform receives for a pull request it tracks, and from the platform's
-own pushes. Routing compares the evaluation with `host_head_sha`, or with `head_sha` while no
-webhook has reported one. A push that has no evaluation yet therefore reads `not_evaluated` and asks
+own pushes. Routing compares the evaluation with `host_head_sha`, or with `head_sha` while nothing
+has recorded one. Three writers keep `host_head_sha` current, and none lets an older value replace
+a newer one: a `synchronize` delivery is taken only when the recorded value is empty or equals the
+push's `before` (the branch's previous head), so a late delivery is dropped; the platform's own
+push replaces it only when it is empty or still the previous platform head, so it cannot undo a
+person's push recorded since; and every evaluation that stores a row sets it to the head it read
+from the host, which heals a value that was lost, late or overwritten. A push that has no evaluation yet therefore reads `not_evaluated` and asks
 for a person: the newest evaluation is for an older head, so its approvals and risk class are not
 used. Once an evaluation of the new head lands, it is the newest and decides. When no evaluation of
 the new head ever lands (evaluation is off for the repository or globally, the evaluation fails, or
 the delivery is lost), the pull request keeps reading `not_evaluated`. The approvals counted are the
-ones the evaluation counted at its own head. A lost `synchronize` delivery is the one gap: the row
-keeps the earlier head until another delivery or a platform push moves it, and the queue then
-compares against that earlier head (see Limitations).
+ones the evaluation counted at its own head. The remaining gap is a push the platform never hears
+of: with no `synchronize` webhook (a deployment that waits for CI by polling and receives none, or
+a delivery GitHub did not make), the row keeps the earlier head, and an evaluation of that head
+still counts until the next evaluation of the pull request lands and corrects it (see
+Limitations). The routing may order and label, and approvals and branch rules still decide what a
+pull request needs.
 
 **What a glob may say.** Matching is anchored at the repository root, case-insensitive, and
 compares paths and globs after Unicode NFC normalisation; `/` is the only separator. `*` and `?`
@@ -1126,11 +1134,20 @@ documentation change as a platform pull request and read the evaluation's reason
   `not_evaluated`: the queue does not tell a pull request never evaluated from one whose newest
   evaluation is for another head, or from one whose repository stopped evaluating. Waiting time
   counts from the opening of the pull request, which overstates it for one opened as a draft.
-- **The queue trusts the head the host last reported, and a lost delivery leaves the earlier one.**
-  The head comes from `synchronize` webhooks (and the platform's own pushes). If one is lost, the row
-  keeps the earlier head, and an evaluation of that head still counts until another delivery or
-  a platform push moves it. A webhook delivered out of order can move the head back to an older
-  one, which fails safe (`not_evaluated`) until the next delivery.
+- **The queue trusts the head the platform last recorded, and a push it never hears of leaves the
+  earlier one.** The head comes from `synchronize` webhooks, the platform's own pushes and every
+  landed evaluation. A deployment that receives no `synchronize` webhooks (CI wait in poll mode with
+  no webhook configured), a delivery GitHub did not make, and a row that predates the column
+  (`host_head_sha` empty, so the platform's own head is compared) all keep the old head. A person's
+  push then goes unseen by the queue: an evaluation of the old head still counts, with its
+  approvals and risk class, so the pull request can read `approvals_met` and stay off the attention
+  queue until the next evaluation of it lands. This is a labelling gap only; the host's branch
+  rules decide what merges, and auto-merge binds to the live head. Out-of-order deliveries cannot
+  move the head back, and an unknown head is never invented: the queue cannot tell a never-written
+  value from a correct one, so it trusts the platform's own head in that case.
+- **A change request recorded before the column existed counts only through its count.** An
+  evaluation row written before `human_objection` existed reads as no recorded objection; such a
+  request for changes affects routing only through the row's changes-requested count.
 - **An always-human path never leaves the queue until the pull request is merged or closed.** A
   `humanPaths` match outranks approvals, so approvals do not clear it. That is the rule's purpose, and
   the cost is a standing item on the attention queue for as long as the pull request touches the path.

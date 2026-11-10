@@ -380,6 +380,13 @@ describe('the attention queue fails safe', () => {
     expect(own.review).toMatchObject({ needsHuman: false, reason: 'approvals_met' });
   });
 
+  it("with no recorded host head, an evaluation at any other head than the platform's is not evaluated", async () => {
+    const b = await buildApp();
+    serve(b, [evaluation(1, { headSha: 'bbbb', trustedApprovers: 1 })]);
+    const { review } = await reviewOf(b, [pull(1, { headSha: 'aaaa', hostHeadSha: null })]);
+    expect(review).toMatchObject({ needsHuman: true, reason: 'not_evaluated' });
+  });
+
   it('treats a stored evaluation as unknown while evaluation is off for the repository', async () => {
     const b = await buildApp();
     serve(b, [evaluation(1, { trustedApprovers: 1 })]);

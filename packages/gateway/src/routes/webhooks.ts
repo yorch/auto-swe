@@ -112,6 +112,8 @@ import { resolveDefaultTemplate } from './workRequests.js';
 // malformed-but-signed body is ignored gracefully instead of throwing a 500.
 const PullRequestWebhookSchema = z.object({
   action: z.string(),
+  // `synchronize` only: the head the branch had before this push.
+  before: z.string().optional(),
   pull_request: z.object({
     closed_at: z.string().nullish(),
     head: z.object({ sha: z.string() }).optional(),
@@ -163,7 +165,7 @@ export type PullRequestEvent =
   | ({ type: 'closed'; closedAt: Date } & PullRequestRef)
   | ({ type: 'reopened'; headSha?: string } & PullRequestRef)
   /** A push: the head the host now reports. */
-  | ({ type: 'pushed'; headSha: string } & PullRequestRef)
+  | ({ type: 'pushed'; headSha: string; previousHeadSha?: string } & PullRequestRef)
   | ({ type: 'draft'; isDraft: boolean } & PullRequestRef)
   | ({ type: 'retitled'; title: string } & PullRequestRef);
 
@@ -222,7 +224,10 @@ export function normalizeGitHubPullRequestEvent(body: unknown): PullRequestEvent
     case 'synchronize': {
       // A push moves the head. A payload without a usable one tells us nothing to record.
       const headSha = hostHeadSha(pr.head?.sha);
-      return headSha ? { ...ref, headSha, type: 'pushed' } : { type: 'ignored' };
+      const previousHeadSha = hostHeadSha(payload.before);
+      return headSha
+        ? { ...ref, headSha, ...(previousHeadSha ? { previousHeadSha } : {}), type: 'pushed' }
+        : { type: 'ignored' };
     }
     case 'ready_for_review':
       return { ...ref, isDraft: false, type: 'draft' };
@@ -1050,6 +1055,8 @@ async function recordPullRequestChange(
           where: { ...where, status: 'OPEN' },
         });
       case 'reopened':
+        // The row is CLOSED, so no push can have been recorded since it closed; a head carried
+        // by the event is the one the pull request reopens at.
         return fastify.prisma.pullRequest.updateMany({
           data: {
             closedAt: null,
@@ -1062,9 +1069,22 @@ async function recordPullRequestChange(
         // The head the host reports, kept apart from `headSha`, the commit the platform pushed
         // and the CI wait is keyed on. The review queue counts an evaluation only at this head,
         // so a person's push reads as not evaluated until its evaluation lands.
+        //
+        // Deliveries can arrive out of order and GitHub does not retry, so the write is taken
+        // only when this push continues from what the row already says: the recorded host head
+        // is the push's `before`, or nothing is recorded yet (unknown, so any reported head is
+        // better than the platform's). An older delivery, whose `before` is behind, matches
+        // neither and cannot overwrite a newer value; a push without `before` is not accepted
+        // over a recorded value either.
         return fastify.prisma.pullRequest.updateMany({
           data: { hostHeadSha: event.headSha },
-          where: { ...where, status: 'OPEN' },
+          where: {
+            ...where,
+            status: 'OPEN',
+            ...(event.previousHeadSha
+              ? { OR: [{ hostHeadSha: null }, { hostHeadSha: event.previousHeadSha }] }
+              : { hostHeadSha: null }),
+          },
         });
       case 'draft':
         return fastify.prisma.pullRequest.updateMany({
@@ -1075,6 +1095,12 @@ async function recordPullRequestChange(
         return fastify.prisma.pullRequest.updateMany({ data: { title: event.title }, where });
     }
   })();
+  if (event.type === 'pushed' && result.count === 0) {
+    fastify.log.debug(
+      { prNumber: event.prNumber },
+      'pull request push not recorded: it does not continue from the recorded head'
+    );
+  }
   return { updated: result.count > 0 };
 }
 

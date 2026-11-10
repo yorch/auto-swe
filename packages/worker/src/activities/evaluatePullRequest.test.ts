@@ -21,6 +21,7 @@ const m = vi.hoisted(() => ({
   onInvalidate: undefined as (() => void) | undefined,
   platformPr: vi.fn(),
   previous: vi.fn(),
+  prUpdateMany: vi.fn(),
   repoHost: { value: 'github.com' },
   request: vi.fn(),
   resolveSettingsCtx: [] as unknown[],
@@ -63,7 +64,7 @@ vi.mock('@auto-swe/shared/db', () => ({
       update: m.update,
       updateMany: m.updateMany,
     },
-    pullRequest: { findFirst: m.platformPr },
+    pullRequest: { findFirst: m.platformPr, updateMany: m.prUpdateMany },
     runEvidence: { groupBy: m.uiEvidence },
     runInput: { findUnique: m.request },
     user: { findMany: m.user },
@@ -261,6 +262,7 @@ beforeEach(() => {
     teamId: 'team-1',
   });
   m.platformPr.mockReset();
+  m.prUpdateMany.mockReset();
   m.platformPr.mockResolvedValue({
     runId: 'run-1',
     workflow: { temporalWorkflowId: WORKFLOW_ID, workRequestId: WORK_REQUEST },
@@ -2031,6 +2033,39 @@ describe('evaluatePullRequest: cheap checks first', () => {
     const scm = fakeScm();
     await evaluatePullRequestWith(INPUT, depsWith(scm));
     expect(scm.calls).toEqual([]);
+  });
+});
+
+describe('evaluatePullRequest: the host head on the pull request row', () => {
+  const hostHeadWrites = () => m.prUpdateMany.mock.calls.map((c) => c[0]);
+
+  it('records the head it evaluated, so a stale recorded head heals', async () => {
+    await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+    expect(hostHeadWrites()).toEqual([
+      {
+        data: { hostHeadSha: HEAD },
+        where: { prNumber: INPUT.prNumber, repoId: CONNECTION, status: 'OPEN' },
+      },
+    ]);
+    // The CI wait is keyed on `headSha` and `ciStatus`; an evaluation never moves them.
+    expect(JSON.stringify(hostHeadWrites())).not.toMatch(/"headSha"|ciStatus/);
+  });
+
+  it('records it on the failure row too, and never creates a pull request row', async () => {
+    const scm = fakeScm({
+      listPullRequestFiles: async () => {
+        throw new TypeError('bad');
+      },
+    });
+    await evaluatePullRequestWith(INPUT, depsWith(scm));
+    expect(hostHeadWrites()).toHaveLength(1);
+    expect(hostHeadWrites()[0]).toMatchObject({ data: { hostHeadSha: HEAD } });
+  });
+
+  it('does not fail an evaluation that landed when the write fails', async () => {
+    m.prUpdateMany.mockRejectedValueOnce(new Error('db down'));
+    const result = await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));
+    expect(result.outcome).toBe('evaluated');
   });
 });
 

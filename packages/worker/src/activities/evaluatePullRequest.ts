@@ -1634,6 +1634,7 @@ export async function evaluatePullRequestWith(
       select: { id: true },
     });
     unrecorded.active = false;
+    await recordHostHead(connection.id, input.prNumber, pr.headSha);
 
     // An arming cancelled before the final status is only recorded here, on the row of this head.
     const autoMerge = disarmedEarly
@@ -2311,6 +2312,28 @@ async function postBrief(
   }
 }
 
+/**
+ * Records the head an evaluation just read from the host on the pull request's row, so the review
+ * queue's `hostHeadSha` self-heals whenever an evaluation lands: a push whose webhook was lost,
+ * delivered late, or overwritten by the platform's own push is corrected here. Only an existing
+ * open row is touched (none is created), and `headSha` and `ciStatus`, which the CI wait is keyed
+ * on, never move. Best effort: bookkeeping must not fail an evaluation that has already landed.
+ */
+async function recordHostHead(
+  connectionId: string,
+  prNumber: number,
+  headSha: string
+): Promise<void> {
+  try {
+    await prisma.pullRequest.updateMany({
+      data: { hostHeadSha: headSha },
+      where: { prNumber, repoId: connectionId, status: 'OPEN' },
+    });
+  } catch (err) {
+    logWarn('pr evaluation: the pull request head could not be recorded', safeErrorMeta(err));
+  }
+}
+
 /** The arming was cancelled before the final status; this records it on the evaluation's row. */
 async function recordEarlyDisarm(
   connectionId: string,
@@ -2464,6 +2487,7 @@ async function retractUnrecordedApproval(args: {
           triggeredBy: args.trigger,
         },
       });
+      await recordHostHead(args.connectionId, args.prNumber, args.pr.headSha);
     }
   } catch (err) {
     logWarn('pr evaluation: an unrecorded bot approval could not be retracted', safeErrorMeta(err));
@@ -2535,6 +2559,7 @@ async function failClosed(args: {
         triggeredBy: input.trigger,
       },
     });
+    await recordHostHead(args.connectionId, input.prNumber, pr.headSha);
   } catch (persistErr) {
     logWarn(
       'pr evaluation: the failed evaluation could not be recorded',

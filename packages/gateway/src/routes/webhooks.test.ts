@@ -685,9 +685,15 @@ describe('webhook routes', () => {
     });
 
     describe('lifecycle events', () => {
-      const pr = (action: string, extra: Record<string, unknown> = {}, merged = false) => {
+      const pr = (
+        action: string,
+        extra: Record<string, unknown> = {},
+        merged = false,
+        top: Record<string, unknown> = {}
+      ) => {
         const body = JSON.stringify({
           action,
+          ...top,
           pull_request: { merged, number: 42, ...extra },
           repository: { full_name: 'acme/payments-api' },
         });
@@ -789,11 +795,27 @@ describe('webhook routes', () => {
           expect(updateManyCalls).toEqual([
             {
               data: { hostHeadSha: 'b'.repeat(40) },
-              where: { id: 'pr-row-1', status: 'OPEN' },
+              where: { hostHeadSha: null, id: 'pr-row-1', status: 'OPEN' },
             },
           ]);
           // The CI wait is keyed on `headSha`; a person's push must never move it.
           expect(JSON.stringify(updateManyCalls)).not.toContain('"headSha"');
+        });
+
+        it('is taken only when the push continues from the recorded head (or none is recorded)', async () => {
+          await pr('synchronize', { head: { sha: SHA } }, false, { before: 'A'.repeat(40) });
+          expect(updateManyCalls).toEqual([
+            {
+              data: { hostHeadSha: 'b'.repeat(40) },
+              where: {
+                id: 'pr-row-1',
+                OR: [{ hostHeadSha: null }, { hostHeadSha: 'a'.repeat(40) }],
+                status: 'OPEN',
+              },
+            },
+          ]);
+          // A late delivery is a write that matches no row: an older `before` cannot overwrite,
+          // and the handler still answers 200 rather than an error GitHub would not retry.
         });
 
         it('writes only to a tracked row, and never creates one', async () => {
