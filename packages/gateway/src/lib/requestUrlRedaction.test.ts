@@ -169,3 +169,14 @@ describe('digest unsubscribe token query parameter', () => {
     expect(redactLogText(url)).toBe('/api/v1/report-digests/unsubscribe?token=[redacted]');
   });
 });
+
+describe('OAuth and GitHub App manifest callback parameters (code, state)', () => {
+  it('redacts the one-time code and the signed state from a callback URL', () => {
+    const url = redactRequestUrl(
+      '/api/v1/integrations/github-app-manifest/callback?code=abc123&state=signed.value&x=1'
+    );
+    expect(url).not.toContain('abc123');
+    expect(url).not.toContain('signed.value');
+    expect(url).toContain('x=1');
+  });
+});

@@ -392,9 +392,22 @@ function composePs(options) {
   return r.status === 0 ? parseComposeState(r.stdout) : [];
 }
 
+/**
+ * The environment a child process gets: the caller's, minus the provider keys. Model credentials
+ * live encrypted in the database, so a service that inherited one would silently gain an
+ * environment fallback the platform does not intend.
+ */
+function childEnv() {
+  const env = { ...process.env };
+  for (const name of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY']) {
+    delete env[name];
+  }
+  return env;
+}
+
 function runStep(step, keys) {
   const [cmd, args] = step.run;
-  const env = { ...process.env };
+  const env = childEnv();
   if (step.passKeys) {
     env.QUICKSTART_ANTHROPIC_API_KEY = keys.anthropic ?? '';
     env.QUICKSTART_OPENAI_API_KEY = keys.openai ?? '';
@@ -435,6 +448,7 @@ function startService(service) {
   const child = spawn('yarn', [`dev:${service}`], {
     cwd: ROOT,
     detached: true,
+    env: childEnv(),
     stdio: ['ignore', fd, fd],
   });
   child.unref();

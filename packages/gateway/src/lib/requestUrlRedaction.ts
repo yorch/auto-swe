@@ -31,9 +31,11 @@ export const REDACTED_SEGMENT = '[redacted]';
 
 /**
  * Query parameters that carry a credential: `dl` is a transcript download link's
- * signed token and `token` is a report-digest unsubscribe token.
+ * signed token, `token` is a report-digest unsubscribe token, and `code` and `state` are an
+ * OAuth or GitHub App manifest callback's one-time code and signed state (a manifest code is
+ * redeemable for the App's private key until it is used or expires).
  */
-export const SECRET_QUERY_PARAMS: ReadonlySet<string> = new Set(['dl', 'token']);
+export const SECRET_QUERY_PARAMS: ReadonlySet<string> = new Set(['code', 'dl', 'state', 'token']);
 
 function decodeQueryKey(key: string): string {
   try {

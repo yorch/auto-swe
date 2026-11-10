@@ -939,8 +939,8 @@ async function confluenceRunTool(
 }
 
 /**
- * Run an arbitrary tool against the target connection. Placeholder for non-git
- * types pending the domain-specific activity packs.
+ * Run an arbitrary tool against the target connection. Only the connection types in
+ * `GENERIC_STEP_CONNECTION_TYPES` are supported; any other type fails non-retryably.
  *
  * Governed exactly like `writeOutcome`: `postComment`, `postMessage` and
  * `createIssue` change state outside the platform, so they are recorded against

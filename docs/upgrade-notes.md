@@ -897,6 +897,25 @@ number of rounds.
 
 ---
 
+### UN-17. Generic steps on connection types with no implementation now fail
+
+**Affected.** Deployments with a custom template or bundle whose generic `readSource`,
+`writeOutcome` or `runTool` step targets a connection of type `http_api`, `hubspot` or `mcp`, a
+`git_repo` or `notion` `runTool`, or a `slack_workspace` `readSource`; or an input schema with an
+`http_api` or `hubspot` connection field.
+
+**What changes.** Those steps used to report success without acting. They now fail with the
+non-retryable `CONNECTOR_NOT_IMPLEMENTED`, and saving a template whose input schema declares an
+`http_api` or `hubspot` connection field is refused. Steps that already ran keep their recorded
+outcome. No migration is needed.
+
+**Actions.** Audit custom templates for the pairings above. Replace a step that never acted with
+the `mcp` node or another implemented connector, or remove it.
+
+**Verify.** A run of the template no longer ends in `CONNECTOR_NOT_IMPLEMENTED`.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,
