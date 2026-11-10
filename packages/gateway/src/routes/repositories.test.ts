@@ -1835,6 +1835,30 @@ describe('repositoryRoutes', () => {
       expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
     });
 
+    it('refuses to move an http_api token from one base URL to another', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue(
+        stored({ config: { baseUrl: 'https://api.a.example/v1' }, type: 'http_api' })
+      );
+
+      const res = await patch({ config: { baseUrl: 'https://collector.b.example/v1' } });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('TOKEN_ORIGIN_CHANGE');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses an http_api row with a token and no base URL gaining one', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue(
+        stored({ config: {}, type: 'http_api' })
+      );
+
+      const res = await patch({ config: { baseUrl: 'https://api.a.example/v1' } });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('TOKEN_ORIGIN_CHANGE');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
     it('refuses clearing the destination, which is the same move in two steps', async () => {
       ctx.mockPrisma.connection.findUnique.mockResolvedValue(stored());
 
@@ -1899,6 +1923,99 @@ describe('repositoryRoutes', () => {
       ctx.mockPrisma.connection.findUnique.mockResolvedValue(stored({ apiKeyCiphertext: null }));
       const noToken = await patch({ config: { baseUrl: 'https://anywhere.example' } });
       expect(noToken.statusCode).toBe(200);
+    });
+  });
+
+  describe('http_api config validation', () => {
+    const goodConfig = { authType: 'bearer', baseUrl: 'https://api.example.com/v1' };
+    const post = (config: unknown) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: { config, teamId: TEAM_ID, type: 'http_api' },
+        url: '/api/v1/repositories',
+      });
+    const patch = (config: unknown) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload: { config },
+        url: `/api/v1/repositories/${REPO_ID}`,
+      });
+
+    it.each([
+      ['http scheme', { baseUrl: 'http://api.example.com' }, 'INVALID_CONFIG'],
+      ['userinfo', { baseUrl: 'https://u:p@api.example.com' }, 'INVALID_CONFIG'],
+      [
+        'a credential default header',
+        { ...goodConfig, defaultHeaders: { Cookie: 'a' } },
+        'INVALID_CONFIG',
+      ],
+      ['an unknown key', { ...goodConfig, allowPrivateNetwork: true }, 'INVALID_CONFIG'],
+      [
+        'a tab hiding a dot segment',
+        { baseUrl: 'https://example.com/v1/.\t./x' },
+        'INVALID_CONFIG',
+      ],
+      ['loopback', { baseUrl: 'https://127.0.0.1/api' }, 'BASE_URL_REFUSED'],
+      ['a private address', { baseUrl: 'https://10.0.0.5/api' }, 'BASE_URL_REFUSED'],
+      ['cloud metadata', { baseUrl: 'https://169.254.169.254/' }, 'BASE_URL_REFUSED'],
+    ])('refuses %s on create', async (_name, config, code) => {
+      const res = await post(config);
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.code).toBe(code);
+      expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+    });
+
+    it('accepts a valid config on create', async () => {
+      ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ id: TEAM_ID, isActive: true });
+      ctx.mockPrisma.connection.create.mockResolvedValueOnce({ id: REPO_ID, teamId: TEAM_ID });
+      const res = await post(goodConfig);
+      expect(res.statusCode).toBe(201);
+      expect(ctx.mockPrisma.connection.create).toHaveBeenCalled();
+    });
+
+    it('refuses a bad config and a private base URL on update', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        apiKeyCiphertext: null,
+        config: goodConfig,
+        id: REPO_ID,
+        teamId: TEAM_ID,
+        type: 'http_api',
+      });
+      const bad = await patch({ baseUrl: 'http://api.example.com' });
+      expect(bad.statusCode).toBe(400);
+      expect(JSON.parse(bad.payload).error.code).toBe('INVALID_CONFIG');
+      const priv = await patch({ baseUrl: 'https://192.168.1.1/' });
+      expect(priv.statusCode).toBe(400);
+      expect(JSON.parse(priv.payload).error.code).toBe('BASE_URL_REFUSED');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('accepts a valid config on update', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        apiKeyCiphertext: null,
+        config: goodConfig,
+        id: REPO_ID,
+        teamId: TEAM_ID,
+        type: 'http_api',
+      });
+      ctx.mockPrisma.connection.update.mockResolvedValueOnce({ id: REPO_ID, teamId: TEAM_ID });
+      const res = await patch({ ...goodConfig, baseUrl: 'https://api.example.com/v2' });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.connection.update).toHaveBeenCalled();
+    });
+
+    it('does not validate other connection types this way', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        apiKeyCiphertext: null,
+        config: {},
+        id: REPO_ID,
+        teamId: TEAM_ID,
+        type: 'hubspot',
+      });
+      ctx.mockPrisma.connection.update.mockResolvedValueOnce({ id: REPO_ID, teamId: TEAM_ID });
+      expect((await patch({ anything: 1 })).statusCode).toBe(200);
     });
   });
 

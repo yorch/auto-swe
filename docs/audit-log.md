@@ -123,7 +123,7 @@ external id or tool name), a `status` (`DONE` or `FAILED`), the path it took (`v
 
 | Kind | Recorded when |
 |---|---|
-| `MCP_TOOL` | An agent calls an MCP tool the server did not annotate `readOnlyHint: true`, through the harness relay or the Mastra binding. A tool with no annotation counts as a mutation. This includes the `mcp` workflow node's call. |
+| `MCP_TOOL` | An agent calls an MCP tool the server did not annotate `readOnlyHint: true`, through the harness relay or the Mastra binding. A tool with no annotation counts as a mutation. This includes the `mcp` workflow node's call and the `writeOutcome` and `runTool` steps over an `mcp` connection, which reach the server through the same binding; a `writeOutcome` to a tool annotated read-only is governed by the approval check but is not a row. A result with `isError: true` is recorded `DONE` by the binding and the step then fails. |
 | `PULL_REQUEST` | The pull request step creates a PR on the host (`target` is its URL; `detail` has the number, branch and head). A failed create is recorded too. A retry that gets back the PR an earlier attempt opened does not record it again. Re-arming a PR that is already open writes only the platform's own row, not the host, so it is not an effect; the new head is the `GIT_PUSH`. |
 | `GIT_PUSH` | A step pushes a branch: the implementer and its fix sessions, the merge-conflict resolver, and an agent run's gated commit (`target` is the branch; `detail` has the head commit when known). A rejected push is recorded, then the error is thrown as before. |
 | `TRACKER` | A tracker write: the PR-opened, run-started and run-finished syncs, and the epics and stories a PRD run creates. A provider never throws on a failed call: `syncOnEvent` resolves the class of the first write the tracker refused (`rejected`, `unauthorized`, `server_error` and so on), and the row is `FAILED` with that class as its error; a create that returns null is `FAILED` too. Every step of a sync event runs even if an earlier one failed. A GitHub sync the repository check declined (`out_of_scope`, `no_repository`) is recorded as a refused sync the same way. A sync that had nothing to send (a GitHub run-started, a Jira issue with no matching transition, a Linear issue already in the target state) cannot be told from one that went through and is recorded `DONE`. A create that was never attempted (no credentials, a GitHub project key that is not `owner/repo`, or one outside the repositories the run targets) records nothing. |
@@ -186,7 +186,8 @@ in-app assistant may call the route (a read).
   fetch are not rows. The classification trusts the server's `readOnlyHint`.
 - Run effects cover the sites listed in section 5 only. Not covered: the tracker syncs the gateway
   sends from CI and merge webhooks; Slack posts and notifications; run callbacks and outbound
-  event deliveries; the `writeOutcome` and `runTool` workflow nodes' connector writes; GitHub
+  event deliveries; the `writeOutcome` and `runTool` workflow nodes' connector writes (over an
+  `mcp` connection, only calls to tools not annotated read-only are covered); GitHub
   actions taken by the review-feedback and CI-fix paths other than the push; the remote side effects
   of a command an agent runs in `bash` (a `git push` or `curl` typed there is not seen, though the
   shell scanner may block it); and anything a plugin or sub-agent does that does not go through the

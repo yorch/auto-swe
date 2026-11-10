@@ -37,7 +37,7 @@ import { AgentTracer } from './agentTracer.js';
 
 async function recordWrite(
   key: Partial<OutcomeKey>,
-  outcome: 'done' | 'replayed' | 'refused' | 'ambiguous'
+  outcome: 'done' | 'replayed' | 'refused' | 'deferred' | 'ambiguous'
 ): Promise<void> {
   try {
     const tracer = new AgentTracer();
@@ -130,6 +130,15 @@ export const NOT_SENT_ERROR = 'NOT_SENT';
 /** Raise a refusal the ledger can recognise as "nothing was sent". */
 export function notSent(message: string): ApplicationFailure {
   return ApplicationFailure.nonRetryable(message, NOT_SENT_ERROR);
+}
+
+/**
+ * Like {@link notSent}, but Temporal retries it: the provider provably did not act (it answered
+ * 429, or the host never resolved), and the same request may succeed later. The ledger releases
+ * the claim because `definitelyNotSent` keys on the failure type alone.
+ */
+export function notSentRetryable(message: string): ApplicationFailure {
+  return ApplicationFailure.create({ message, nonRetryable: false, type: NOT_SENT_ERROR });
 }
 
 export function definitelyNotSent(err: unknown): boolean {
@@ -238,7 +247,16 @@ export async function performOnce<T>(args: {
     if (definitelyNotSent(err)) {
       await releaseOutcome(args.key);
     }
-    await recordWrite(args.key, definitelyNotSent(err) ? 'refused' : 'ambiguous');
+    // A retryable NOT_SENT (429, unresolved host) is deferred: Temporal will try it again, so
+    // reporting it as a final refusal would overstate what happened.
+    await recordWrite(
+      args.key,
+      definitelyNotSent(err)
+        ? (err as ApplicationFailure).nonRetryable
+          ? 'refused'
+          : 'deferred'
+        : 'ambiguous'
+    );
     throw err;
   }
 }
@@ -254,13 +272,16 @@ export async function performOnce<T>(args: {
  * look a ticket up.
  *
  * Note this is keyed on the tool *name* alone, not on the connection type: the
- * names below are the ones the connector implementations accept as reads, and a
- * placeholder handler that performs no write is still treated as a mutation.
+ * names below are the ones the connector implementations accept as reads. It does
+ * not apply to `mcp`, whose tool names belong to the server: `runTool` hands those to
+ * the MCP core, which classifies by the tool's `readOnlyHint`.
  */
 const READ_ONLY_CONNECTOR_TOOLS: ReadonlySet<string> = new Set([
   'fetchIssue',
   'fetchPage',
+  'fetchRecord',
   'fetchTicket',
+  'searchRecords',
 ]);
 
 /** Whether a tool call may change state outside the platform. */

@@ -13,6 +13,7 @@ import {
   assertApprovalSatisfied,
   findRecordedOutcome,
   mutationScope,
+  notSent,
   type OutcomeKey,
   performOnce,
 } from '../lib/externalWrite.js';
@@ -48,28 +49,82 @@ export interface McpCallToolResult {
  * policy governs it. The MCP client is always disconnected in `finally`.
  */
 export async function mcpCallTool(input: McpCallToolInput): Promise<McpCallToolResult> {
-  // Heartbeats while the whole activity runs: its LLM call can outlast the
-  // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
-  return withHeartbeat('mcpCallTool', mcpCallToolImpl(input));
+  // The core heartbeats while the call runs: an MCP call can take up to its 60 s timeout, which can
+  // outlast the heartbeat timeout, and a heartbeat is how a cancellation reaches the activity.
+  const { result } = await callMcpConnectionTool({
+    connectionId: input.connectionRef,
+    mode: 'auto',
+    step: 'mcpNode',
+    tool: input.tool,
+    ...(input.inputs !== undefined ? { inputs: input.inputs } : {}),
+    ...(input.nodeId !== undefined ? { nodeId: input.nodeId } : {}),
+  });
+  return { result };
 }
 
-async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResult> {
+export type McpInvokeStep = 'mcpNode' | 'readSource' | 'writeOutcome' | 'runTool';
+
+/**
+ * How a call is governed.
+ * - `readOnly`: refused (`notSent`, before the call and before any ledger write) unless the server
+ *   annotated the tool `readOnlyHint: true`.
+ * - `auto`: as the `mcp` node — a mutation unless the tool is annotated read-only.
+ * - `mutating`: always a mutation (approval guard + outcome ledger), even for a read-only tool.
+ */
+export type McpInvokeMode = 'readOnly' | 'auto' | 'mutating';
+
+export interface CallMcpConnectionToolInput {
+  connectionId: string;
+  tool: string;
+  inputs?: unknown;
+  /** The step's recording id; with a run id it keys the outcome ledger. */
+  nodeId?: string;
+  step: McpInvokeStep;
+  mode: McpInvokeMode;
+}
+
+/**
+ * The MCP tool-call core shared by the `mcp` node and the generic readSource / writeOutcome /
+ * runTool steps. Same safety for all: template-team reach check, URL resolution, the connection's
+ * tool allowlist before connecting, `loadMcpTools` (allowlist + result screening), the client closed
+ * and the trace persisted in `finally`, cancellation raced against the call, and heartbeats while it
+ * runs (the caller needs none of its own).
+ *
+ * Governance: the ledger is read before the approval guard; the guard and every connection check
+ * run before the `performOnce` claim; refusals made by `mode` use `notSent`, so no PENDING row is
+ * left. The ledger key exists only when `nodeId` and a run id are both present.
+ *
+ * `readOnly` in the result is the server's `readOnlyHint` for the tool, whatever `mode` governed.
+ *
+ * An MCP tool-level error (`isError: true` in the CallToolResult) is NOT inspected: it is returned
+ * as `result` like any payload (and recorded in the ledger for a governed call). Only a thrown
+ * error — transport failure, timeout, a screened result's block — fails the call. A caller that
+ * wants to treat `isError` as failure must check `result` itself.
+ */
+export async function callMcpConnectionTool(
+  input: CallMcpConnectionToolInput
+): Promise<{ result: unknown; readOnly: boolean }> {
+  return withHeartbeat('mcpCallTool', callMcpConnectionToolImpl(input));
+}
+
+async function callMcpConnectionToolImpl(
+  input: CallMcpConnectionToolInput
+): Promise<{ result: unknown; readOnly: boolean }> {
+  const label = input.step === 'mcpNode' ? 'mcp node' : input.step;
   throwIfActivityCancelled();
-  // The `connectionRef` is a literal in the spec, so nothing upstream authorized it:
+  // The connection id is a literal in the spec, so nothing upstream authorized it:
   // without this a template can name another team's MCP server and spend its token.
-  await assertRunMayUseConnection(input.connectionRef, 'mcp');
-  const target = await mcpUrlForConnection(input.connectionRef);
+  await assertRunMayUseConnection(input.connectionId, 'mcp');
+  const target = await mcpUrlForConnection(input.connectionId);
   if (!target) {
-    throw new Error(
-      `mcp node: connection '${input.connectionRef}' is not an active mcp connection`
-    );
+    throw new Error(`${label}: connection '${input.connectionId}' is not an active mcp connection`);
   }
   const { url } = target;
   // The same allowlist `loadMcpTools` enforces when it binds, checked first so a refused tool
   // never costs a connection and the error names the cause rather than a missing tool.
   if (target.allowedTools && !target.allowedTools.includes(input.tool)) {
     throw new Error(
-      `mcp node: tool '${input.tool}' is not permitted by the connection's tool allowlist`
+      `${label}: tool '${input.tool}' is not permitted by the connection's tool allowlist`
     );
   }
 
@@ -84,7 +139,7 @@ async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResu
     const tool = loaded.tools[key];
     if (!tool?.execute) {
       throw new Error(
-        `mcp node: tool '${input.tool}' not found on ${url} (available: ${
+        `${label}: tool '${input.tool}' not found on ${url} (available: ${
           Object.keys(loaded.tools).join(', ') || 'none'
         })`
       );
@@ -93,15 +148,21 @@ async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResu
     // change anything is a property of the tool, and the tool list is what tells
     // us. A server that annotates a tool `readOnlyHint: true` gets a call that
     // is neither gated on an approval nor written to the outcome ledger — the
-    // same treatment a connector read gets. Everything else is a mutation, and
-    // is refused when the run recorded a policy decision requiring an approval
+    // same treatment a connector read gets, unless `mode` is `mutating`. Everything else is a
+    // mutation, and is refused when the run recorded a policy decision requiring an approval
     // that never came, and recorded so an activity retry returns the first
     // result instead of invoking the remote tool twice.
     const readOnly = mcpToolIsReadOnly(tool);
+    if (input.mode === 'readOnly' && !readOnly) {
+      throw notSent(
+        `${label}: tool '${input.tool}' is not annotated read-only by the server, so it cannot be used to read a source`
+      );
+    }
+    const governed = input.mode === 'mutating' || !readOnly;
     const scope = await mutationScope();
     const ledgerKey: OutcomeKey | null =
-      !readOnly && input.nodeId && scope.runId
-        ? { connectionId: input.connectionRef, nodeId: input.nodeId, runId: scope.runId }
+      governed && input.nodeId && scope.runId
+        ? { connectionId: input.connectionId, nodeId: input.nodeId, runId: scope.runId }
         : null;
     // The ledger is consulted before the approval guard, as in `writeOutcome`
     // and `runTool`: the effect already happened, and returning what it produced
@@ -110,10 +171,10 @@ async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResu
     if (ledgerKey) {
       const existing = await findRecordedOutcome<McpCallToolResult>(ledgerKey);
       if (existing) {
-        return existing;
+        return { readOnly, result: existing.result };
       }
       await assertApprovalSatisfied(ledgerKey.runId);
-    } else if (!readOnly && scope.runId) {
+    } else if (governed && scope.runId) {
       await assertApprovalSatisfied(scope.runId);
     }
 
@@ -125,6 +186,7 @@ async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResu
       input: Record<string, unknown>,
       context?: unknown
     ) => Promise<unknown>;
+    const args = (input.inputs ?? {}) as Record<string, unknown>;
     // The MCP call takes no abort signal, so a cancel abandons it rather than
     // waiting out its timeout; the client is still closed in `finally`.
     // The ledger holds the activity's result, not the remote payload, so a retry returns exactly
@@ -132,11 +194,12 @@ async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResu
     // twice on a response that was lost — and an MCP call is the one effect here with no
     // intermediate system to reconcile against.
     const call = async (): Promise<McpCallToolResult> => ({
-      result: await raceActivityCancellation(execute(input.inputs ?? {})),
+      result: await raceActivityCancellation(execute(args)),
     });
-    return ledgerKey
+    const done = ledgerKey
       ? await performOnce({ attempt: scope.attempt, dispatch: call, key: ledgerKey })
       : await call();
+    return { readOnly, result: done.result };
   } finally {
     await loaded.close();
     await persistActivityTrace(tracer, 'mcp');

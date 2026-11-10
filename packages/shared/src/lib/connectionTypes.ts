@@ -129,25 +129,38 @@ export type GenericConnectionStep = 'readSource' | 'writeOutcome' | 'runTool';
  * has no implementation behind that step, and the worker fails the step with
  * `CONNECTOR_NOT_IMPLEMENTED` rather than report success without acting. `git_repo` is absent
  * everywhere: repository work runs through the engineering activities, not these steps. An `mcp`
- * connection is reached by the `mcp` node, not by these steps.
+ * connection is reachable from these steps (through the same governed core as the `mcp` node),
+ * as well as from the `mcp` node itself.
  */
 export const GENERIC_STEP_CONNECTION_TYPES: Record<
   GenericConnectionStep,
   readonly ConnectionType[]
 > = {
-  readSource: ['notion', 'zendesk', 'issue_tracker', 'confluence'],
-  runTool: ['zendesk', 'slack_workspace', 'issue_tracker', 'confluence'],
-  writeOutcome: ['notion', 'zendesk', 'slack_workspace', 'issue_tracker', 'confluence'],
+  readSource: ['notion', 'zendesk', 'issue_tracker', 'confluence', 'http_api', 'hubspot', 'mcp'],
+  runTool: [
+    'zendesk',
+    'slack_workspace',
+    'issue_tracker',
+    'confluence',
+    'http_api',
+    'hubspot',
+    'mcp',
+    'notion',
+  ],
+  writeOutcome: [
+    'notion',
+    'zendesk',
+    'slack_workspace',
+    'issue_tracker',
+    'confluence',
+    'http_api',
+    'hubspot',
+    'mcp',
+  ],
 };
 
 /** The non-retryable failure type the worker raises for a step with no implementation. */
 export const CONNECTOR_NOT_IMPLEMENTED = 'CONNECTOR_NOT_IMPLEMENTED';
-
-/**
- * Connection types no step of any kind can act on: they can be stored, but nothing sends a
- * request through them. A template cannot declare one as a `connection` input.
- */
-export const UNIMPLEMENTED_CONNECTION_TYPES: readonly ConnectionType[] = ['http_api', 'hubspot'];
 
 /** Why `step` cannot act on a `type` connection, or null when it can. */
 export function genericStepRefusal(step: GenericConnectionStep, type: string): string | null {
@@ -155,11 +168,7 @@ export function genericStepRefusal(step: GenericConnectionStep, type: string): s
     return null;
   }
   const where =
-    type === 'mcp'
-      ? ' Use an `mcp` node to call an MCP server.'
-      : type === 'git_repo'
-        ? ' Repository work runs through the engineering activities.'
-        : '';
+    type === 'git_repo' ? ' Repository work runs through the engineering activities.' : '';
   return `${step} has no implementation for ${type} connections, so the step is refused rather than report success without acting.${where}`;
 }
 
@@ -249,4 +258,236 @@ export type ConfluenceConnectionConfig = z.infer<typeof ConfluenceConnectionConf
 export function parseConfluenceConnectionConfig(config: unknown): ConfluenceConnectionConfig {
   const parsed = ConfluenceConnectionConfigSchema.safeParse(config ?? {});
   return parsed.success ? parsed.data : {};
+}
+
+/** Most `defaultHeaders` a generic HTTP API connection may carry. */
+export const MAX_HTTP_API_DEFAULT_HEADERS = 20;
+/** Longest header value the generic HTTP API connector will send. */
+export const MAX_HTTP_API_HEADER_VALUE_LENGTH = 2048;
+
+/** An RFC 9110 `token`: the only characters a header name may contain. */
+const HTTP_HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,100}$/;
+/** Visible ASCII plus space and tab: no CR, LF or other control character. */
+const HTTP_HEADER_VALUE_RE = /^[\t\x20-\x7e]*$/;
+
+/**
+ * Header names a generic HTTP API connection may not set — in `defaultHeaders`, in a step's
+ * per-request headers, or as `authHeaderName`. They either carry a credential (the connection's
+ * own `authType` is the one sanctioned way to send one), or change how the message is framed or
+ * who it is addressed to.
+ */
+const FORBIDDEN_HTTP_API_HEADERS = new Set([
+  'authorization',
+  'connection',
+  'content-length',
+  'cookie',
+  'expect',
+  'forwarded',
+  'host',
+  'keep-alive',
+  'set-cookie',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+  // Headers some servers read to rewrite the path or the method after the request is built.
+  'x-http-method',
+  'x-http-method-override',
+  'x-method-override',
+  'x-original-url',
+  'x-real-ip',
+  'x-rewrite-url',
+]);
+
+/** Longest `baseUrl` accepted. */
+export const MAX_HTTP_API_BASE_URL_LENGTH = 2048;
+
+export function isHttpHeaderName(name: string): boolean {
+  return HTTP_HEADER_NAME_RE.test(name);
+}
+
+export function isHttpHeaderValue(value: string): boolean {
+  return value.length <= MAX_HTTP_API_HEADER_VALUE_LENGTH && HTTP_HEADER_VALUE_RE.test(value);
+}
+
+/** Whether a header name is one a generic HTTP API connection refuses to let anyone set. */
+export function isForbiddenHttpApiHeader(name: string): boolean {
+  const lower = name.toLowerCase();
+  return (
+    FORBIDDEN_HTTP_API_HEADERS.has(lower) ||
+    lower.startsWith('proxy-') ||
+    lower.startsWith('x-forwarded-')
+  );
+}
+
+/** Why a base URL cannot be the prefix of a credentialed API, or null when it can. */
+function httpApiBaseUrlProblem(value: string): string | null {
+  if (value.length > MAX_HTTP_API_BASE_URL_LENGTH) {
+    return `baseUrl must be at most ${MAX_HTTP_API_BASE_URL_LENGTH} characters`;
+  }
+  // Checked on the raw string: the URL parser strips tabs and newlines, so `/.\t./` would
+  // otherwise become a `..` segment after the segment check below has looked at it.
+  if ([...value].some((ch) => ch.charCodeAt(0) <= 0x20 || ch.charCodeAt(0) === 0x7f)) {
+    return 'baseUrl must not contain whitespace or control characters';
+  }
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return 'baseUrl must be an absolute URL';
+  }
+  if (url.protocol !== 'https:') {
+    return 'baseUrl must use https';
+  }
+  if (url.username || url.password) {
+    return 'baseUrl must not contain credentials';
+  }
+  if (value.includes('?') || value.includes('#')) {
+    return 'baseUrl must not contain a query or fragment';
+  }
+  // Checked on the raw string: `new URL` normalises `/v1/%2e%2e/` before a check on `pathname`
+  // could see it.
+  if (value.includes('\\') || /%(?:2e|2f|5c|00|25)/i.test(value)) {
+    return 'baseUrl must not contain backslashes or encoded dots, slashes or percent signs';
+  }
+  if (value.split('/').some((segment) => segment === '.' || segment === '..')) {
+    return 'baseUrl must not contain "." or ".." segments';
+  }
+  if (url.port === '0') {
+    return 'baseUrl must not use port 0';
+  }
+  return null;
+}
+
+/**
+ * Generic HTTP API config stored in `Connection.config`.
+ *
+ * `baseUrl` is the origin plus an optional path prefix every request is confined to. It is
+ * https-only and there is **no private-network opt-in**: the row is editable by a team LEAD,
+ * and the connector sends the connection's token to it, so a self-service opt-in would be no
+ * guard at all (see {@link ConfluenceConnectionConfigSchema}). The token's destination is the
+ * origin of `baseUrl` (`credentialDestination.ts`), so moving it with a token stored is refused.
+ *
+ * Strict (unknown keys fail) so a misspelt `authType` is an error and not a silent `bearer`.
+ */
+export const HttpApiConnectionConfigSchema = z
+  .object({
+    /** The header carrying the token when `authType` is `header`, e.g. `X-Api-Key`. */
+    authHeaderName: z.string().optional(),
+    /** How the stored API token is presented. Defaults to `bearer`. */
+    authType: z.enum(['bearer', 'header', 'basic', 'none']).optional(),
+    baseUrl: z.string().superRefine((value, ctx) => {
+      const problem = httpApiBaseUrlProblem(value);
+      if (problem) {
+        ctx.addIssue({ code: 'custom', message: problem });
+      }
+    }),
+    /** The user name for `basic`; the stored API token is the password. */
+    basicUsername: z.string().min(1).max(256).optional(),
+    /** Static, non-credential headers sent on every request. */
+    defaultHeaders: z.record(z.string(), z.string()).optional(),
+  })
+  .strict()
+  .superRefine((config, ctx) => {
+    const authType = config.authType ?? 'bearer';
+    const authHeader = config.authHeaderName?.toLowerCase();
+    if (config.authHeaderName !== undefined) {
+      if (!isHttpHeaderName(config.authHeaderName)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: 'authHeaderName is not a valid header name',
+          path: ['authHeaderName'],
+        });
+      } else if (isForbiddenHttpApiHeader(config.authHeaderName)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `authHeaderName may not be ${config.authHeaderName}`,
+          path: ['authHeaderName'],
+        });
+      }
+    }
+    if (authType === 'header' && !config.authHeaderName) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'authHeaderName is required when authType is header',
+        path: ['authHeaderName'],
+      });
+    }
+    if (authType !== 'header' && config.authHeaderName !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'authHeaderName applies only when authType is header',
+        path: ['authHeaderName'],
+      });
+    }
+    if (authType !== 'basic' && config.basicUsername !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'basicUsername applies only when authType is basic',
+        path: ['basicUsername'],
+      });
+    }
+    if (config.basicUsername?.includes(':')) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'basicUsername must not contain a colon',
+        path: ['basicUsername'],
+      });
+    }
+    const entries = Object.entries(config.defaultHeaders ?? {});
+    if (entries.length > MAX_HTTP_API_DEFAULT_HEADERS) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `defaultHeaders may hold at most ${MAX_HTTP_API_DEFAULT_HEADERS} headers`,
+        path: ['defaultHeaders'],
+      });
+    }
+    const seen = new Set<string>();
+    for (const [name, value] of entries) {
+      const lower = name.toLowerCase();
+      const path = ['defaultHeaders', name];
+      if (!isHttpHeaderName(name)) {
+        ctx.addIssue({ code: 'custom', message: `${name} is not a valid header name`, path });
+      } else if (isForbiddenHttpApiHeader(name) || lower === authHeader) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${name} may not be a default header: credentials go in the connection's API token`,
+          path,
+        });
+      } else if (seen.has(lower)) {
+        ctx.addIssue({ code: 'custom', message: `${name} is listed twice`, path });
+      }
+      seen.add(lower);
+      if (!isHttpHeaderValue(value)) {
+        ctx.addIssue({ code: 'custom', message: `the value of ${name} is not valid`, path });
+      }
+    }
+  });
+
+export type HttpApiConnectionConfig = z.infer<typeof HttpApiConnectionConfigSchema>;
+
+export type HttpApiConnectionConfigResult =
+  | { ok: true; config: HttpApiConnectionConfig }
+  | { ok: false; reason: string };
+
+/**
+ * Parse a stored `http_api` config for use.
+ *
+ * Unlike the other `parseXConnectionConfig` helpers, this does **not** fall back to `{}`: an
+ * empty config here would be a connector with no destination, and a fallback that "works"
+ * would hide the refusal the worker has to make. It returns a result the caller must look at;
+ * the reason names the offending fields, never their values.
+ */
+export function parseHttpApiConnectionConfig(config: unknown): HttpApiConnectionConfigResult {
+  const parsed = HttpApiConnectionConfigSchema.safeParse(config ?? {});
+  if (parsed.success) {
+    return { config: parsed.data, ok: true };
+  }
+  const reason = parsed.error.issues
+    .map((issue) => {
+      const where = issue.path.length > 0 ? `${issue.path.join('.')}: ` : '';
+      return `${where}${issue.message}`;
+    })
+    .join('; ');
+  return { ok: false, reason };
 }

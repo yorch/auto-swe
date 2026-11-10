@@ -385,11 +385,11 @@ export function verifyContentHash(manifest: BundleManifest): {
  * at the code level. The server refuses an install naming any other, and the SDK validator
  * applies the same list so an author learns it before shipping.
  *
- * A type belongs here when a generic step can actually reach it — `readSource`,
- * `writeOutcome` or `runTool` has a real implementation; `http_api` and `hubspot` have none,
- * and a step over one fails with `CONNECTOR_NOT_IMPLEMENTED`. Without them a bundle could not
- * ship any of the non-engineering templates the platform already runs, which is
- * exactly what a repository-free workflow pack is made of.
+ * Install only checks a declared type against this list; it creates and maps no connection.
+ * `http_api` and `hubspot` are not on it, which is a current limitation: nothing in the
+ * install path treats them differently. Without the listed types a bundle could not ship any
+ * of the non-engineering templates the platform already runs, which is exactly what a
+ * repository-free workflow pack is made of.
  */
 export const SUPPORTED_BUNDLE_CONNECTION_TYPES: readonly string[] = [
   'git_repo',

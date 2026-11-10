@@ -50,13 +50,21 @@ export interface GuardOptions {
   classify?: (address: string, allowPrivate: boolean) => AddressVerdict;
 }
 
+export type SsrfBlockedReason = 'refused' | 'unresolvable';
+
 export const SSRF_BLOCKED_CODE = 'ESSRF_BLOCKED';
 
 /** Thrown (and surfaced from `fetch`) when the resolved address set is refused. */
 export class SsrfBlockedError extends Error {
   readonly code = SSRF_BLOCKED_CODE;
-  constructor(message: string) {
+  /**
+   * `unresolvable`: the name did not resolve (or resolved to nothing usable), which may pass on
+   * its own. `refused`: the destination is not permitted. Callers key on this, never on the text.
+   */
+  readonly reason: SsrfBlockedReason;
+  constructor(message: string, reason: SsrfBlockedReason = 'refused') {
     super(message);
+    this.reason = reason;
     this.name = 'SsrfBlockedError';
   }
 }
@@ -150,12 +158,12 @@ export async function resolveAndCheck(
       }),
     ]);
   } catch {
-    throw new SsrfBlockedError(`host '${host}' could not be resolved`);
+    throw new SsrfBlockedError(`host '${host}' could not be resolved`, 'unresolvable');
   } finally {
     clearTimeout(timer);
   }
   if (addresses.length === 0) {
-    throw new SsrfBlockedError(`host '${host}' could not be resolved`);
+    throw new SsrfBlockedError(`host '${host}' could not be resolved`, 'unresolvable');
   }
   const verdicts = new Set<AddressVerdict>();
   for (const a of addresses) {
@@ -196,7 +204,12 @@ export function makeGuardedLookup(opts: GuardOptions = {}) {
         const ordered = [...addresses].sort((a, b) => a.family - b.family);
         const usable = want === 0 ? ordered : ordered.filter((a) => a.family === want);
         if (usable.length === 0) {
-          cb(new SsrfBlockedError(`host '${bareHost(hostname)}' has no usable address`));
+          cb(
+            new SsrfBlockedError(
+              `host '${bareHost(hostname)}' has no usable address`,
+              'unresolvable'
+            )
+          );
           return;
         }
         if (o.all) {

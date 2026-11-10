@@ -298,11 +298,9 @@ end-to-end path. Where the platform stops today:
   REST contracts, but no Confluence instance was reachable from this environment, so they are
   unexercised against a live service.
 - Salesforce, Workday, Google Docs and Intercom are not connection types; they are reachable only
-  through a generic `http_api` connection or an `mcp` server. The `http_api` and `hubspot`
-  connection types can be stored but have no connector: a `readSource`, `writeOutcome` or `runTool`
-  step over one fails with a non-retryable `CONNECTOR_NOT_IMPLEMENTED` error, never success, and a
-  template cannot declare either as a `connection` input. An `mcp` server is reached by the `mcp`
-  node, not by those steps. There is no connector marketplace — bundles install from a file or a URL against trust anchors set in
+  through a generic `http_api` connection (https only, one JSON-oriented request per step, no
+  pagination helper) or an `mcp` server. There
+  is no connector marketplace — bundles install from a file or a URL against trust anchors set in
   the environment.
 - The run viewer is built around a code diff and CI status. A document, record change, or message
   produced by a non-code workflow is shown as raw step output, not rendered.

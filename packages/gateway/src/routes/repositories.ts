@@ -9,7 +9,10 @@ import {
 import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 // From the subpath, not the barrel: this module is pure (zod only), so a test that
 // mocks the barrel to avoid instantiating the Prisma client still gets the real one.
-import { isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
+import {
+  HttpApiConnectionConfigSchema,
+  isConnectionType,
+} from '@auto-swe/shared/lib/connectionTypes';
 import { credentialDestinationChanged } from '@auto-swe/shared/lib/credentialDestination';
 import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { type PermissionLookup, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
@@ -34,6 +37,7 @@ import {
   RepoSetupSchema,
   RepoSetupSecretNameSchema,
 } from '@auto-swe/shared/lib/repoSetup';
+import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { ToolKeySchema } from '@auto-swe/shared/lib/toolCatalog';
@@ -101,6 +105,30 @@ const GateCommandsSchema = z
   .partialRecord(z.enum(REPO_GATE_COMMAND_KEYS), z.string().max(4000).nullable())
   .nullable()
   .optional();
+
+/**
+ * The problem with an `http_api` connection's config, or null when it is usable.
+ *
+ * The shape comes from the shared strict schema, which the worker applies again before it sends
+ * anything; the SSRF text check is the early refusal. There is no private-network opt-in for
+ * this type, so a private address is refused outright (`allowPrivate` is never set).
+ */
+function httpApiConfigProblem(
+  config: unknown
+): { code: 'BASE_URL_REFUSED' | 'INVALID_CONFIG'; message: string } | null {
+  const parsed = HttpApiConnectionConfigSchema.safeParse(config);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => `${issue.path.length > 0 ? `${issue.path.join('.')}: ` : ''}${issue.message}`)
+      .join('; ');
+    return { code: 'INVALID_CONFIG', message: `Invalid http_api config — ${detail}` };
+  }
+  const safety = checkProbeUrl(parsed.data.baseUrl, { allowPrivate: false });
+  if (!safety.ok) {
+    return { code: 'BASE_URL_REFUSED', message: safety.reason };
+  }
+  return null;
+}
 
 const CreateRepoSchema = z.object({
   apiToken: z.string().optional(),
@@ -966,6 +994,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         ...rest
       } = request.body;
 
+      if (type === 'http_api' && config != null) {
+        const problem = httpApiConfigProblem(config);
+        if (problem) {
+          return sendError(reply, 400, problem.code, problem.message);
+        }
+      }
+
       if (type === 'git_repo' && (!organizationName || !repoName)) {
         return sendError(
           reply,
@@ -1484,6 +1519,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             'REPO_EXISTS',
             'That repository is already onboarded on that host'
           );
+        }
+      }
+
+      if (repo.type === 'http_api' && config != null) {
+        const problem = httpApiConfigProblem(config);
+        if (problem) {
+          return sendError(reply, 400, problem.code, problem.message);
         }
       }
 

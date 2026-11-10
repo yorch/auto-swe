@@ -53,18 +53,23 @@ export const reviewLaunchActivities = proxyActivities<
 });
 
 export const genericActivities = proxyActivities<
-  Pick<
-    typeof activitiesType,
-    | 'resolveWorkspace'
-    | 'readSource'
-    | 'writeOutcome'
-    | 'publishOutcome'
-    | 'runTool'
-    | 'parseAgentOutput'
-  >
+  Pick<typeof activitiesType, 'resolveWorkspace' | 'publishOutcome' | 'parseAgentOutput'>
 >({
   retry: RETRY_STANDARD,
   startToCloseTimeout: T_1M,
+});
+
+// The generic connector steps make network calls that can outlast a minute (an MCP server's list
+// and call timeouts alone add to 75 s), so they carry the `mcp` node's options: the longer cap, and
+// a heartbeat timeout whose heartbeats the activities pump (`withHeartbeat`), which is also how a
+// cancellation reaches them. Kept apart from `genericActivities` so the quick local activities
+// above keep their one-minute bound.
+export const genericConnectorActivities = proxyActivities<
+  Pick<typeof activitiesType, 'readSource' | 'writeOutcome' | 'runTool'>
+>({
+  heartbeatTimeout: T_2M,
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_10M,
 });
 
 export const agentActivities = proxyActivities<
