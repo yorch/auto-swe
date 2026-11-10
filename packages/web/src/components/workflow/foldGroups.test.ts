@@ -9,6 +9,7 @@ import { layoutSpec } from '@/lib/workflowLayout';
 import { foldBookkeeping } from './foldBookkeeping';
 import {
   collapsibleGroups,
+  defaultCollapsedGroups,
   foldedGroupId,
   foldGroups,
   GROUP_STEP,
@@ -184,6 +185,42 @@ describe('foldGroups', () => {
     const layout = layoutSpec(fold.spec, fold.extraEdges);
     expect(layout.nodes.map((n) => n.id).sort()).toEqual([G, 'post', 'pre'].sort());
     expect(layout.edges.map((e) => `${e.from}>${e.to}`).sort()).toEqual([`${G}>post`, `pre>${G}`]);
+  });
+});
+
+describe('defaultCollapsedGroups', () => {
+  it('collapses exactly the collapsible groups when enabled', () => {
+    expect(defaultCollapsedGroups(LINE, true)).toEqual(new Set(collapsibleGroups(LINE)));
+    expect(defaultCollapsedGroups(LINE, true)).toEqual(new Set(['g']));
+  });
+
+  it('collapses nothing when disabled', () => {
+    expect(defaultCollapsedGroups(LINE, false)).toEqual(new Set());
+  });
+
+  it('leaves out a group split by an outside node or holding one member', () => {
+    const mixed = spec(
+      {
+        a: { group: 'split', next: 'mid', step: 'x', type: 'step' },
+        b: { group: 'split', next: 'end', step: 'x', type: 'step' },
+        c: { group: 'solo', next: 'd', step: 'x', type: 'step' },
+        d: { group: 'pair', next: 'e', step: 'x', type: 'step' },
+        e: { group: 'pair', next: 'end', step: 'x', type: 'step' },
+        end: { status: 'SUCCESS', type: 'terminate' },
+        mid: { next: 'b', step: 'x', type: 'step' },
+      },
+      'a'
+    );
+    expect(defaultCollapsedGroups(mixed, true)).toEqual(new Set(['pair']));
+  });
+
+  it('keeps open a group holding a node the viewer is looking for', () => {
+    // `b` stands in for a failed node: its group must not fold away under the default.
+    const keep = new Set(['b']);
+    const fold = foldGroups(LINE, defaultCollapsedGroups(LINE, true), keep);
+    expect(fold.spec).toBe(LINE);
+    expect(fold.folded).toEqual({});
+    expect(fold.spec.nodes.b).toBeDefined();
   });
 });
 

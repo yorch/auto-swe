@@ -49,7 +49,7 @@ import { FlowChrome } from './flowChrome';
 import { flowGestureProps, gesturesLocked } from './flowGestures';
 import { focusWhenReady } from './focusWhenReady';
 import { foldBookkeeping } from './foldBookkeeping';
-import { foldGroups } from './foldGroups';
+import { defaultCollapsedGroups, foldGroups } from './foldGroups';
 import { specToFlow } from './specToFlow';
 import { WorkflowOutline } from './WorkflowOutline';
 
@@ -75,6 +75,13 @@ interface Props {
    * viewer can flip it either way; the spec itself is never changed.
    */
   foldBookkeeping?: boolean;
+  /**
+   * Start with each `group` folded into one card, so a large graph opens as a handful of
+   * phases. Defaults to on for a static graph (no run statuses, no diff markers) past
+   * {@link AUTO_FOLD_NODE_COUNT} nodes. A group holding a failed, running or pending step stays
+   * open. Display only; the spec is never changed.
+   */
+  foldGroups?: boolean;
   /** Offer a Graph / Outline switch. The outline lists the same spec as rows. */
   outline?: boolean;
   /**
@@ -112,6 +119,7 @@ function InnerDag({
   onSelect,
   height,
   foldBookkeeping: foldDefault,
+  foldGroups: foldGroupsDefault,
   outline,
   narrowScrollSafe = false,
 }: Props) {
@@ -122,13 +130,21 @@ function InnerDag({
   const [folded, setFolded] = useState(
     () => foldDefault ?? Object.keys(fullSpec.nodes).length > AUTO_FOLD_NODE_COUNT
   );
-  // Groups the viewer has collapsed into cards. Nothing starts collapsed, and a different
-  // spec (another version) starts over: its labels mean other groups.
-  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+  // Groups collapsed into cards. A large graph starts with every group collapsed, a small one
+  // with none, and a different spec (another version) starts over: its labels mean other
+  // groups.
+  // Only a static view starts folded. A run's graph (statuses) would re-lay out at every phase
+  // change without refitting, and a diff (markers) must show both sides alike.
+  const groupsStartFolded =
+    foldGroupsDefault ??
+    (!statuses && !diffMarkers && Object.keys(fullSpec.nodes).length > AUTO_FOLD_NODE_COUNT);
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() =>
+    defaultCollapsedGroups(fullSpec, groupsStartFolded)
+  );
   const specContentKey = JSON.stringify(fullSpec);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the spec's content is the trigger
   useEffect(() => {
-    setCollapsed(new Set());
+    setCollapsed(defaultCollapsedGroups(fullSpec, groupsStartFolded));
   }, [specContentKey]);
   // What the viewer is looking at is never folded away: a node that failed, is
   // running or waiting, was changed in a diff, or is selected stays on the canvas.
