@@ -976,7 +976,7 @@ promote the new version. Nothing else needs to be done.
 
 ---
 
-### UN-18. `vulnerability-remediation` declares an input schema
+### UN-19. `vulnerability-remediation` declares an input schema
 
 **Affected.** A deployment whose global `vulnerability-remediation` template was seeded by a build
 without the migration `20261110000000_event_endpoint_fixed_type`, which ships in the same change.
@@ -1030,7 +1030,7 @@ applies it, and existing endpoints keep their stored type pointer with no action
 
 ---
 
-### UN-19. Input schemas enforce `pattern` and `maxLength`
+### UN-20. Input schemas enforce `pattern` and `maxLength`
 
 **Affected.** A deployment upgrading from a build without the migration
 `20261110000000_event_endpoint_fixed_type` (it ships in the same change: before the upgrade it has
