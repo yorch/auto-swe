@@ -25,7 +25,7 @@ An endpoint (`EventEndpoint`) has:
 | `scheme` | How a call is verified: `autoswe-v1`, `hmac-sha256` or `shared-secret-header` (§2) |
 | `signatureHeader`, `signaturePrefix`, `signatureEncoding` | For `hmac-sha256` and `shared-secret-header`: the header the value is in, text before it (`sha256=`, `Bearer `), and for an HMAC whether it is `hex` or `base64` |
 | `format` | `json`, or `cloudevents` (§3.2) |
-| `typePointer`, `idPointer`, `subjectPointer`, `scopePointer`, `timePointer` | Where in the event its type, id, subject, scope and time are (§3) |
+| `typePointer` or `fixedType`, `idPointer`, `subjectPointer`, `scopePointer`, `timePointer` | Where in the event its type, id, subject, scope and time are, or for the type a constant `fixedType` instead (§3.1.1). Exactly one of `typePointer` and `fixedType` is set |
 | the secret | Sealed with the same AES-256-GCM envelope as every other stored credential; only its last four characters are ever shown |
 
 Its receiver is `POST /api/v1/webhooks/events/<endpoint id>`. The id is not a credential: a call
@@ -152,7 +152,7 @@ value is **missing**. Only the document's own keys are followed.
 
 | Field | Read with | When missing |
 |---|---|---|
-| type | `typePointer` | The event is refused: `422 EVENT_TYPE_MISSING`. It must be text (or a number or true/false, read as text), at most 256 characters |
+| type | `fixedType` if set, else `typePointer` | The event is refused: `422 EVENT_TYPE_MISSING`. It must be text (or a number or true/false, read as text), at most 256 characters |
 | id | `idPointer` | `sha256:<hex>` of the raw body, so the same body is the same event |
 | subject | `subjectPointer` | the id |
 | scope | `scopePointer` | the type |
@@ -161,6 +161,27 @@ value is **missing**. Only the document's own keys are followed.
 An id, subject or scope longer than 200 characters, or with characters other than letters, digits
 and `. _ : @ + = / -`, is kept as `sha256:<hex>` of its text, so no ledger key carries arbitrary
 text and two different values never share a key.
+
+### 3.1.1 A fixed event type
+
+Some senders carry the type only in an unsigned header (Snyk's `X-Snyk-Event`, GitHub's
+`X-GitHub-Event`) or send a single kind of event, so no signed body field holds it. An endpoint
+can declare `fixedType` instead of `typePointer`: every event it accepts has that type. The
+receiver never reads a header to decide the type; only the authenticated body decides, and with a
+fixed type the body does not decide it at all.
+
+- `fixedType` is 1 to 256 characters of letters, digits and `. _ : @ + = / -`. Sending it together
+  with a non-empty `typePointer` is refused (`400 INVALID_EVENT_TYPE`). It is stored with
+  `typePointer` `""`, which a fixed-type endpoint never resolves, so `""` does not mean "the whole
+  document" there.
+- Changing an endpoint from a fixed type to a pointer needs the new `typePointer` in the same
+  update; setting either one clears the other.
+- Automations filter on the type as usual; every event matches a type pattern that matches the
+  constant.
+- The **scope defaults to the type**, so with a constant type every event shares one scope, and the
+  cooldown (counted per scope, §5) then spaces all of the endpoint's events apart. Set
+  `scopePointer` to a body field that tells sources apart (a project or repository id) to keep the
+  cooldown per source.
 
 ### 3.2 CloudEvents
 
@@ -314,7 +335,8 @@ limit, an earlier run or the budget holds it back.
 - **Pointers only.** The type, id and values are read with JSON Pointers into the body (or the
   CloudEvents envelope). A sender that puts its event type or id only in a header (GitHub's
   `X-GitHub-Event` and `X-GitHub-Delivery`) cannot be read by those headers; point at a body field
-  instead, or let the id fall back to the body's digest.
+  instead, or let the id fall back to the body's digest. The type alone can instead be a constant
+  (§3.1.1), which cannot tell a sender's event kinds apart.
 - **Structured CloudEvents only.** Binary-mode CloudEvents (attributes in `ce-*` headers) and
   batches are refused; a sender that can only send binary mode cannot use a CloudEvents endpoint.
 - **No expression language.** Conditions are `eq`, `in`, `glob` and `exists` on single values, all

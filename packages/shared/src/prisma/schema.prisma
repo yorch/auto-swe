@@ -2057,6 +2057,8 @@ model EventEndpoint {
   format                   String    @default("json")
   /// JSON Pointers (RFC 6901) into the event document.
   typePointer              String    @map("type_pointer")
+  /// A constant event type instead of a pointer; then typePointer is "" and never resolved.
+  fixedType                String?   @map("fixed_type")
   idPointer                String?   @map("id_pointer")
   subjectPointer           String?   @map("subject_pointer")
   scopePointer             String?   @map("scope_pointer")

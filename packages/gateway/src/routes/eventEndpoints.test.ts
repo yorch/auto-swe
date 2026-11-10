@@ -19,6 +19,7 @@ function storedRow(over: Record<string, unknown> = {}) {
     ...newSecretColumns('whsec_stored_secret_value').data,
     createdAt: new Date(),
     enabled: true,
+    fixedType: null,
     format: 'json',
     id: EP,
     idPointer: '/id',
@@ -224,6 +225,40 @@ describe('event endpoint management', () => {
     expect((await post({ typePointer: 'type' })).statusCode).toBe(400);
     expect((await post({ secret: 'short' })).statusCode).toBe(400);
     expect((await post({ scheme: 'hmac-sha256', signatureHeader: 'X-Sig' })).statusCode).toBe(201);
+  });
+
+  it('takes the type from a pointer or a fixed value, never both or neither', async () => {
+    const { app, prisma, audit } = await build();
+    const post = (payload: Record<string, unknown>) =>
+      app.inject({ headers: AUTH, method: 'POST', payload: { ...CREATE, ...payload }, url: URL });
+    const both = await post({ fixedType: 'snyk.project', typePointer: '/type' });
+    expect(both.statusCode).toBe(400);
+    expect(both.json().error.code).toBe('INVALID_EVENT_TYPE');
+    expect((await post({ fixedType: 'bad type' })).statusCode).toBe(400);
+    expect((await post({ fixedType: '' })).statusCode).toBe(400);
+    // Neither: the default pointer.
+    await post({});
+    expect(prisma.eventEndpoint.create.mock.calls[0]?.[0].data).toMatchObject({
+      fixedType: null,
+      typePointer: '/type',
+    });
+    const fixed = await post({ fixedType: 'snyk.project' });
+    expect(fixed.statusCode).toBe(201);
+    expect(fixed.json().data).toMatchObject({ fixedType: 'snyk.project', typePointer: '' });
+    expect(JSON.stringify(audit.at(-1))).toContain('snyk.project');
+  });
+
+  it('switches an endpoint between a pointer and a fixed type on update', async () => {
+    const { app } = await build();
+    const patch = (payload: Record<string, unknown>) =>
+      app.inject({ headers: AUTH, method: 'PATCH', payload, url: `${URL}/${EP}` });
+    const toFixed = await patch({ fixedType: 'snyk.project' });
+    expect(toFixed.json().data).toMatchObject({ fixedType: 'snyk.project', typePointer: '' });
+    expect((await patch({ fixedType: 'x', typePointer: '/type' })).statusCode).toBe(400);
+    // Clearing the constant without saying where the type is leaves nothing to read.
+    expect((await patch({ fixedType: null })).statusCode).toBe(400);
+    const back = await patch({ typePointer: '/kind' });
+    expect(back.json().data).toMatchObject({ fixedType: null, typePointer: '/kind' });
   });
 
   it('rotates a secret, keeping the old one for a day', async () => {
