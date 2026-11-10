@@ -206,7 +206,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
     ? folded.exits.map((e) => ({ id: e.port, kind: 'next' as const, label: e.label }))
     : handlePortsFor(d.node);
   const unknown = !folded && !isKnownNodeType(d.node.type);
-  const name = folded ? folded.group : nodeDisplayName(d.node, id);
+  const name = folded ? folded.title : nodeDisplayName(d.node, id);
   const group = folded ? undefined : nodeGroupOf(d.node);
   const notes = folded ? null : nodeFlowNotes(d.node);
   const noteLine = notes ? [notes.status, notes.maxVisits, ...notes.chips] : [];
@@ -234,7 +234,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
       style={{ height: NODE_HEIGHT, width: NODE_WIDTH }}
       // The id is the node's identity (edges, analytics, run history key on it),
       // so it stays reachable even when a title is what the card shows.
-      title={folded ? `${folded.group}: ${folded.memberIds.join(', ')}` : id}
+      title={folded ? `${folded.title}: ${folded.memberIds.join(', ')}` : id}
     >
       {/* Target handle — left edge, accepts all incoming edges */}
       <Handle
@@ -273,7 +273,13 @@ export function DagNode({ id, data, selected }: NodeProps) {
                 <Icon name="lock" size={11} />
               </span>
             )}
-            {folded ? 'Group' : unknown ? 'Unknown' : CATEGORY_LABEL[d.node.type]}
+            {folded
+              ? folded.kind === 'use'
+                ? 'Macro'
+                : 'Group'
+              : unknown
+                ? 'Unknown'
+                : CATEGORY_LABEL[d.node.type]}
           </span>
         </div>
         {folded && (

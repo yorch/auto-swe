@@ -49,7 +49,7 @@ import { FlowChrome } from './flowChrome';
 import { flowGestureProps, gesturesLocked } from './flowGestures';
 import { focusWhenReady } from './focusWhenReady';
 import { foldBookkeeping } from './foldBookkeeping';
-import { defaultCollapsedGroups, foldGroups } from './foldGroups';
+import { defaultCollapsed, foldGroups } from './foldGroups';
 import { specToFlow } from './specToFlow';
 import { WorkflowOutline } from './WorkflowOutline';
 
@@ -139,12 +139,12 @@ function InnerDag({
     foldGroupsDefault ??
     (!statuses && !diffMarkers && Object.keys(fullSpec.nodes).length > AUTO_FOLD_NODE_COUNT);
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() =>
-    defaultCollapsedGroups(fullSpec, groupsStartFolded)
+    defaultCollapsed(fullSpec, groupsStartFolded)
   );
   const specContentKey = JSON.stringify(fullSpec);
   // biome-ignore lint/correctness/useExhaustiveDependencies: the spec's content is the trigger
   useEffect(() => {
-    setCollapsed(defaultCollapsedGroups(fullSpec, groupsStartFolded));
+    setCollapsed(defaultCollapsed(fullSpec, groupsStartFolded));
   }, [specContentKey]);
   // What the viewer is looking at is never folded away: a node that failed, is
   // running or waiting, was changed in a diff, or is selected stays on the canvas.
@@ -298,7 +298,7 @@ function InnerDag({
       pendingFocus.current = card.memberIds[0] ?? null;
       setCollapsed((prev) => {
         const next = new Set(prev);
-        next.delete(card.group);
+        next.delete(card.key);
         return next;
       });
     },
