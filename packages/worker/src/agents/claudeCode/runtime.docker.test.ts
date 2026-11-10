@@ -65,6 +65,8 @@ vi.mock('../mcpTools.js', async (importOriginal) => ({
 }));
 // `docker cp` through the same helper the worker uses, minus the Temporal heartbeat.
 vi.mock('../../lib/execUtils.js', () => ({
+  // The snapshot's artifact transfer heartbeats while it runs; there is no activity here.
+  withHeartbeat: async <T>(_label: string, work: Promise<T>) => work,
   // `docker cp - <container>:<dir> < tar` (the daemon unpacks the profile archive).
   execShellAsync: async (command: string) => {
     const { stdout } = await promisify(execFile)('sh', ['-c', command]);
