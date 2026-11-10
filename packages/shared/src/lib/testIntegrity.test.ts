@@ -381,23 +381,23 @@ describe('analyseTestIntegrity: limits', () => {
     expect(kinds(diff)).toEqual(['assertions_reduced']);
   });
 
-  it('known false positive: consolidating tests reads as a reduction', () => {
-    expect(
-      kinds(
-        modify(
-          'src/a.test.ts',
-          [
-            "it('a', () => {",
-            '  expect(f(1)).toBe(1);',
-            '});',
-            "it('b', () => {",
-            '  expect(f(2)).toBe(2);',
-            '});',
-          ],
-          ["it.each([1, 2])('f %i', (n) => {", '  expect(f(n)).toBe(n);', '});']
-        )
+  it('a consolidation into a parameterised test reads as a reduction at low severity', () => {
+    const result = analyseTestIntegrity(
+      modify(
+        'src/a.test.ts',
+        [
+          "it('a', () => {",
+          '  expect(f(1)).toBe(1);',
+          '});',
+          "it('b', () => {",
+          '  expect(f(2)).toBe(2);',
+          '});',
+        ],
+        ["it.each([1, 2])('f %i', (n) => {", '  expect(f(n)).toBe(n);', '});']
       )
-    ).toContain('assertions_reduced');
+    );
+    expect(result.findings.map((f) => f.severity)).toEqual(['low', 'low']);
+    expect(result.findings.map((f) => f.kind)).toContain('assertions_reduced');
   });
 
   it('summarises findings one per line', () => {
@@ -405,7 +405,7 @@ describe('analyseTestIntegrity: limits', () => {
       modify('src/a.test.ts', ["it('a', () => {"], ["it.skip('a', () => {"])
     );
     expect(summariseTestIntegrity(findings)).toBe(
-      'skip_marker_added src/a.test.ts:10 — 1 more skip, focus or expected-failure marker(s) added than removed'
+      'skip_marker_added src/a.test.ts:10 — 1 more skip, focus, disabling or expected-failure marker(s) added than removed'
     );
   });
 });

@@ -56,16 +56,17 @@ import { withRunDetection } from '../lib/runDetection.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
+import { resolveTestIntegrityMode, type TestIntegrityGuardMode } from '../lib/testIntegrityGate.js';
 import { resolveTicketContext } from '../lib/ticketFallback.js';
 import { requestHasTrackerTicket } from '../lib/trackerTicket.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import {
-  commitStaged,
   diffForResult,
   type PathGuardOptions,
   pushRefspec,
   startPathGuard,
 } from './allowedPaths.js';
+import { commitWithTestIntegrity, startTestIntegritySession } from './testIntegritySession.js';
 import {
   boundTestOutput,
   detectTestCommand,
@@ -180,6 +181,13 @@ export async function executeImplementation(
   // repository's default. Clone, path guard and diff must all use the same one.
   const baseBranch = await resolveRequestBaseBranch(request, repo);
   const activityCtx = await currentRequestContext();
+  // A step that implements from untrusted CI text or feedback (it carries
+  // `refuseWorkflowChanges`, the same marker the workflow-file refusal keys on) is a fix: the
+  // test-integrity guard covers it. Resolved before the paid session, like the fix sessions do.
+  const guardMode: TestIntegrityGuardMode =
+    guardOptions?.refuseWorkflowChanges === true
+      ? await resolveTestIntegrityMode(activityCtx)
+      : 'off';
   let services: ReturnType<typeof PreviewConfigSchema.parse>['services'];
   if (repo.previewConfig) {
     const implementerConfig = await resolveImplementerConfig(activityCtx, 'implementer');
@@ -253,6 +261,8 @@ export async function executeImplementation(
     // this session answers for its own changes from here. `baseSha` (the base branch's
     // tip, read before the agent) is what the whole change is reported against.
     pathGuard = await startPathGuard(workspace, baseBranch, allowedPaths, baseSha, guardOptions);
+    // The commit this attempt's change is measured from, for the test-integrity guard.
+    const integrity = await startTestIntegritySession(workspace, guardMode, tracer);
 
     // Detect test framework
     const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
@@ -518,7 +528,13 @@ export async function executeImplementation(
     // the pushed branch the agent may have had nothing left to change, and an
     // empty `git commit` exits non-zero. A guarded step also checks the committed
     // range here, before the push.
-    const pushSha = await commitStaged(workspace, commitSummary, pathGuard);
+    const pushSha = await commitWithTestIntegrity(
+      workspace,
+      commitSummary,
+      pathGuard,
+      integrity,
+      tracer
+    );
     // Never push on behalf of a run that has already been cancelled.
     throwIfActivityCancelled();
     await workspace.gitAuthed(`push origin ${pushRefspec(branch, pushSha)}`);

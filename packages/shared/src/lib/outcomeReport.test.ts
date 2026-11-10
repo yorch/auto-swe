@@ -117,6 +117,21 @@ describe('buildOutcomeReport', () => {
     expect(report.inputs.guardTrips).toBe(2);
   });
 
+  it('counts a trip once per workflow attempt at a node, however many events it left', async () => {
+    const db = fakeDb(
+      [run('r1', { costUsdAccrued: 3, status: 'FAILED' })],
+      [
+        // Temporal retried the same dispatch: one attempt, one trip, blocked once any blocked.
+        { outputJson: { blocked: false }, recordingId: 'ciFix', runId: 'r1', stepAttempt: 1 },
+        { outputJson: { blocked: true }, recordingId: 'ciFix', runId: 'r1', stepAttempt: 1 },
+        // A second workflow attempt is a second trip.
+        { outputJson: { blocked: false }, recordingId: 'ciFix', runId: 'r1', stepAttempt: 2 },
+      ]
+    );
+    const report = await buildOutcomeReport(db as unknown as OutcomeReportDb, { now: NOW });
+    expect(report.overall.ciHeal.guard).toEqual({ blocked: 1, itemsTripped: 1, trips: 2 });
+  });
+
   it('reads runs from the lookback before the window so older work is not recounted', async () => {
     const db = fakeDb([]);
     await buildOutcomeReport(db as unknown as OutcomeReportDb, { now: NOW });

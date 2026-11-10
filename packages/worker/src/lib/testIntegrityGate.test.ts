@@ -142,5 +142,64 @@ describe('runTestIntegrityGate', () => {
       runTestIntegrityGate({ mode: 'block', readDiff: async () => huge, tracer: t.tracer })
     );
     expect(failure.type).toBe('TEST_INTEGRITY_GUARD_UNAVAILABLE');
+    // The report can see how often the guard read less than the whole change.
+    expect(t.addActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: TEST_INTEGRITY_EVENT,
+        outputJson: expect.objectContaining({ degraded: true, truncatedDiff: true }),
+      })
+    );
+  });
+
+  it('records the degraded read in warn mode too, and lets the change through', async () => {
+    const t = tracer();
+    const huge = `${FIXES_SOURCE}${'+x\n'.repeat(1_400_000)}`;
+    await expect(
+      runTestIntegrityGate({ mode: 'warn', readDiff: async () => huge, tracer: t.tracer })
+    ).resolves.toEqual([]);
+    expect(t.addActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outputJson: expect.objectContaining({ degraded: true, truncatedDiff: true }),
+      })
+    );
+  });
+
+  it('sees a deleted test file in an oversized diff through the name-status list', async () => {
+    const t = tracer();
+    const huge = `${FIXES_SOURCE}${'+x\n'.repeat(1_400_000)}`;
+    const failure = await failureOf(
+      runTestIntegrityGate({
+        mode: 'block',
+        readDiff: async () => huge,
+        readNameStatus: async () => 'D\tsrc/a.test.ts\n',
+        tracer: t.tracer,
+      })
+    );
+    expect(failure.type).toBe('TEST_INTEGRITY_GUARD');
+    expect(failure.message).toContain('test_file_deleted src/a.test.ts');
+  });
+
+  it('records but does not block on low-severity findings', async () => {
+    const t = tracer();
+    const fixture = [
+      'diff --git a/test/fixtures/a.json b/test/fixtures/a.json',
+      'deleted file mode 100644',
+      '--- a/test/fixtures/a.json',
+      '+++ /dev/null',
+      '@@ -1 +0,0 @@',
+      '-{}',
+      '',
+    ].join('\n');
+    const findings = await runTestIntegrityGate({
+      mode: 'block',
+      readDiff: async () => fixture,
+      tracer: t.tracer,
+    });
+    expect(findings).toHaveLength(1);
+    expect(t.addActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outputJson: expect.objectContaining({ blocked: false, highCount: 0, mode: 'block' }),
+      })
+    );
   });
 });

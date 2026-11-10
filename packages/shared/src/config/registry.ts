@@ -453,13 +453,15 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
-  // Read by the CI-fix session (`runImplementerFixSession`, mode CI_FIX) with the repository's team.
+  // Read by the fix sessions (`runImplementerFixSession`: CI_FIX, GATE_FIX, PR_FEEDBACK) and by
+  // `executeImplementation` when the step carries `refuseWorkflowChanges` (the ci-triage fix),
+  // with the repository's team. Resolved before the agent session starts.
   'github.ciFixTestIntegrityGuard': defineSetting({
-    defaultValue: 'block',
+    defaultValue: 'warn',
     description:
-      "What the CI-fix session does when the fixer's change deletes a test file or test case, adds a skip, focus or expected-failure marker, removes or loosens assertions, or changes test configuration to exclude tests or lower a coverage threshold. 'block': the change is not committed or pushed and the step fails with TEST_INTEGRITY_GUARD, ending the run where it stands for a person to look at. 'warn': the change goes through and the findings are recorded on the run. 'off': not checked. A heuristic over the diff text: it has false positives (a legitimate consolidation of tests) and false negatives (an assertion moved into a helper), so a clean result is not a proof the tests are intact.",
+      "What a fix session does when the change it made deletes a test file or test case, adds a skip, focus or expected-failure marker, removes or loosens assertions, changes the test command or CI so failures are ignored, or changes test configuration to exclude tests or lower a coverage threshold. Covers the CI-fix, quality-gate-fix and pull-request-feedback fix sessions and the ci-triage-and-fix implement step. 'warn' (default): the change goes through and the findings are recorded on the run and counted in the outcome report. 'block': the change is committed without hooks, its diff is analysed, and a high-severity finding stops the step with TEST_INTEGRITY_GUARD before anything is pushed; the step then follows its template's failure route, and the fixer is not told why it failed. 'off': not checked. A heuristic over the diff text with false positives (a consolidation of tests, a deleted test for removed code) and false negatives (an assertion moved into a helper, a failing test rewritten to expect the wrong value), so a clean result is not a proof the tests are intact. Overridable per team or organization, not per repository.",
     group: 'github',
-    label: 'CI-fix test-integrity guard',
+    label: 'Fix-session test-integrity guard',
     overridableAt: ['TEAM', 'ORGANIZATION'],
     requiredRole: 'ADMIN',
     restartRequired: false,

@@ -160,22 +160,25 @@ export async function startPathGuard(
 
 /**
  * Commit what is staged (a no-op when nothing is). Unguarded: the original command, and
- * undefined is returned. Guarded: after the commit, pin the committed sha once, check its
- * tree before returning, and return it — the caller pushes exactly that commit.
+ * undefined is returned. Guarded, or `hardened` (a session whose committed result is analysed
+ * afterwards, such as the test-integrity gate): hooks off, then pin the committed sha once and
+ * return it; a guard also checks that commit's tree before returning. The caller pushes exactly
+ * that commit.
  */
 export async function commitStaged(
   workspace: Exec,
   message: string,
-  guard: PathGuard | undefined
+  guard: PathGuard | undefined,
+  options: { hardened?: boolean } = {}
 ): Promise<string | undefined> {
   const identity = workspace.gitIdentity ?? DEFAULT_GIT_IDENTITY;
   const text = shellQuote(withCoAuthorTrailer(message, identity));
-  if (!guard) {
+  if (!guard && !options.hardened) {
     await workspace.exec(`git diff --cached --quiet || git commit -m ${text}`);
     return undefined;
   }
   // Hooks off (the hardening sets `core.hooksPath=/dev/null`; `--no-verify` as well), so a
-  // `pre-commit` hook cannot add a file after the staged tree was looked at.
+  // `pre-commit` hook cannot add or remove a file after the staged tree was looked at.
   await workspace.exec(
     `${guardedGit('diff --cached --quiet')} || ` +
       guardedGit(
@@ -190,8 +193,38 @@ export async function commitStaged(
       'DIFF_CHECK_FAILED'
     );
   }
-  await assertCommittedTreeWithinAllowedPaths(workspace, guard, sha);
+  if (guard) {
+    await assertCommittedTreeWithinAllowedPaths(workspace, guard, sha);
+  }
   return sha;
+}
+
+/** The commit `HEAD` is at, read with the hardened git call; undefined when it cannot be read. */
+export async function readHeadSha(workspace: Exec): Promise<string | undefined> {
+  return (await readSha(workspace, 'HEAD')) || undefined;
+}
+
+/**
+ * The hardened `git diff` command the test-integrity gate reads: from `from` to the commit that
+ * will be pushed. No attribute, driver, textconv, prefix or relative-path setting of the
+ * repository can change what is read: `--text` shows a file marked `-diff` or `binary` as text,
+ * the prefixes are explicit, renames are detected, and generated files (lockfiles) are left out.
+ */
+export function testIntegrityDiffCommand(
+  from: string,
+  to: string,
+  kind: 'patch' | 'name-status',
+  excludes: readonly string[]
+): string {
+  const common =
+    '-c core.attributesFile=/dev/null -c core.quotepath=false -c diff.mnemonicPrefix=false ' +
+    '-c diff.noprefix=false -c diff.relative=false -c diff.renames=true ' +
+    'diff --no-ext-diff --no-textconv --no-color --find-renames --ignore-submodules=none ' +
+    '--src-prefix=a/ --dst-prefix=b/ ';
+  const specs = ['.', ...excludes].map((p) => shellQuote(p)).join(' ');
+  return guardedGit(
+    `${common}${kind === 'patch' ? '--text -U0' : '--name-status'} ${shellQuote(from)} ${shellQuote(to)} -- ${specs}`
+  );
 }
 
 /**

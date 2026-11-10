@@ -180,6 +180,7 @@ export async function buildOutcomeReport(
   const pullRequests: OutcomePullRequest[] = [];
   const steps: OutcomeStep[] = [];
   const guardTrips: OutcomeGuardTrip[] = [];
+  const tripIndex = new Map<string, OutcomeGuardTrip>();
   for (const ids of chunks(runIds)) {
     const [prs, fixSteps, trips] = await Promise.all([
       runUnscoped('the outcome report joins pull requests to its runs', ['PullRequest'], () =>
@@ -203,7 +204,7 @@ export async function buildOutcomeReport(
         ['AgentTrace'],
         () =>
           db.agentTrace.findMany({
-            select: { outputJson: true, runId: true },
+            select: { outputJson: true, recordingId: true, runId: true, stepAttempt: true },
             where: {
               runId: { in: ids },
               toolName: TEST_INTEGRITY_GUARD_EVENT,
@@ -222,7 +223,24 @@ export async function buildOutcomeReport(
           : {};
       // A gate that could not read the change is not a trip: it found nothing.
       if (trip.runId && body.degraded !== true) {
-        guardTrips.push({ blocked: body.blocked === true, runId: trip.runId });
+        // One trip per workflow attempt at a node: Temporal retries of the same dispatch and the
+        // gate's two events (a warning, then a block) record the same fix once. A trace with no
+        // node identity (written outside the interpreter) counts on its own.
+        const key =
+          trip.recordingId != null && trip.stepAttempt != null
+            ? `${trip.runId}|${trip.recordingId}|${trip.stepAttempt}`
+            : undefined;
+        const blocked = body.blocked === true;
+        const seen = key ? tripIndex.get(key) : undefined;
+        if (seen) {
+          seen.blocked = seen.blocked || blocked;
+        } else {
+          const entry = { blocked, runId: trip.runId };
+          guardTrips.push(entry);
+          if (key) {
+            tripIndex.set(key, entry);
+          }
+        }
       }
     }
     for (const step of fixSteps) {

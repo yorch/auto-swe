@@ -310,7 +310,11 @@ describe('runImplementerFixSession allowedPaths', () => {
 
   it('runs the original commit and diff when the step sets no list', async () => {
     findRepo.mockResolvedValue(REPO as never);
+    // The test-integrity guard has its own describe below; off, the commit is the original one.
+    vi.mocked(resolveSetting).mockImplementation((async (key: string) =>
+      key === 'github.ciFixTestIntegrityGuard' ? 'off' : 'mastra') as never);
     await runImplementerFixSession(input());
+    vi.mocked(resolveSetting).mockImplementation((async () => 'mastra') as never);
     expect(cmds().some((c) => c.includes('rev-parse --verify') || c.includes('--no-verify'))).toBe(
       false
     );
@@ -637,6 +641,7 @@ describe('runImplementerFixSession', () => {
 });
 
 describe('runImplementerFixSession test-integrity guard', () => {
+  const START = 'a'.repeat(40);
   const DELETES_TEST = [
     'diff --git a/src/a.test.ts b/src/a.test.ts',
     'deleted file mode 100644',
@@ -647,13 +652,18 @@ describe('runImplementerFixSession test-integrity guard', () => {
     '-  expect(add(1, 2)).toBe(3);',
     '',
   ].join('\n');
-  const STAGED_DIFF = 'git diff --cached --no-ext-diff';
+  const GUARD_DIFF = ' --text -U0 ';
   const cmds = () => execMock.mock.calls.map((c) => c[0]);
 
-  function stageStagedDiff(diff: string) {
+  /** The exec the gate sees: a readable starting sha and the given committed diff. */
+  function stageCommittedDiff(diff: string, head: string = START) {
     const base = execMock.getMockImplementation();
-    execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) =>
-      cmd.startsWith(STAGED_DIFF) ? diff : base?.(cmd, options)) as never);
+    execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) => {
+      if (cmd.includes('rev-parse --verify')) {
+        return `${head}\n`;
+      }
+      return cmd.includes(GUARD_DIFF) ? diff : base?.(cmd, options);
+    }) as never);
     return base;
   }
 
@@ -666,47 +676,52 @@ describe('runImplementerFixSession test-integrity guard', () => {
     vi.mocked(resolveSetting).mockImplementation((async () => 'mastra') as never);
   });
 
-  it('blocks a CI fix that deletes a test before anything is committed or pushed', async () => {
+  it('blocks a CI fix that deletes a test: committed without hooks, analysed, never pushed', async () => {
     findRepo.mockResolvedValue(REPO as never);
     guardSetting('block');
-    const base = stageStagedDiff(DELETES_TEST);
+    const base = stageCommittedDiff(DELETES_TEST);
     try {
       await expect(runImplementerFixSession(input())).rejects.toMatchObject({
         nonRetryable: true,
         type: 'TEST_INTEGRITY_GUARD',
       });
-      expect(cmds().some((c) => c.includes('commit -m') || c.includes('push origin'))).toBe(false);
-      // Read against the commit the session started from, quoted.
-      expect(cmds().some((c) => c.includes("-U0 'abc123'"))).toBe(true);
+      expect(cmds().some((c) => c.includes('push origin'))).toBe(false);
+      // The commit has hooks off, and the diff is read between the starting commit and the
+      // committed sha, both quoted.
+      expect(cmds().some((c) => c.includes('commit --no-verify'))).toBe(true);
+      expect(cmds().some((c) => c.includes(`${GUARD_DIFF}'${START}' '${START}'`))).toBe(true);
     } finally {
       execMock.mockImplementation(base as never);
     }
   });
 
-  it('treats an unrecognised setting value as block', async () => {
+  it('treats an unrecognised setting value as the default (warn), not off', async () => {
     findRepo.mockResolvedValue(REPO as never);
     guardSetting('banana');
-    const base = stageStagedDiff(DELETES_TEST);
+    const base = stageCommittedDiff(DELETES_TEST);
     try {
-      await expect(runImplementerFixSession(input())).rejects.toMatchObject({
-        type: 'TEST_INTEGRITY_GUARD',
-      });
+      await runImplementerFixSession(input());
+      expect(cmds().some((c) => c.includes(GUARD_DIFF))).toBe(true);
+      expect(cmds().some((c) => c.includes('push origin'))).toBe(true);
     } finally {
       execMock.mockImplementation(base as never);
     }
   });
 
-  it('pushes in warn mode and records the trip as not blocked', async () => {
+  it('pushes the analysed commit by sha in warn mode and records the trip as not blocked', async () => {
     findRepo.mockResolvedValue(REPO as never);
     guardSetting('warn');
     const events: Array<{ name: string; outputJson?: Record<string, unknown> }> = [];
     vi.spyOn(AgentTracer.prototype, 'addActivityEvent').mockImplementation((opts) => {
       events.push(opts as never);
     });
-    const base = stageStagedDiff(DELETES_TEST);
+    const base = stageCommittedDiff(DELETES_TEST);
     try {
       await runImplementerFixSession(input());
-      expect(cmds().some((c) => c.includes('push origin'))).toBe(true);
+      // Pushed by sha, so a branch the agent moved cannot ride along.
+      expect(cmds().some((c) => c.includes(`push origin ${START}:refs/heads/'auto/T-1'`))).toBe(
+        true
+      );
       const trip = events.find((e) => e.name === 'ci_fix.test_integrity_guard');
       expect(trip?.outputJson).toMatchObject({ blocked: false, mode: 'warn' });
     } finally {
@@ -714,13 +729,14 @@ describe('runImplementerFixSession test-integrity guard', () => {
     }
   });
 
-  it('does not read the diff when off', async () => {
+  it('runs the original commit and does not read a diff when off', async () => {
     findRepo.mockResolvedValue(REPO as never);
     guardSetting('off');
-    const base = stageStagedDiff(DELETES_TEST);
+    const base = stageCommittedDiff(DELETES_TEST);
     try {
       await runImplementerFixSession(input());
-      expect(cmds().some((c) => c.startsWith(STAGED_DIFF))).toBe(false);
+      expect(cmds().some((c) => c.includes(GUARD_DIFF))).toBe(false);
+      expect(cmds().some((c) => c.includes('commit --no-verify'))).toBe(false);
     } finally {
       execMock.mockImplementation(base as never);
     }
@@ -729,13 +745,55 @@ describe('runImplementerFixSession test-integrity guard', () => {
   it('does not apply to a review fix', async () => {
     findRepo.mockResolvedValue(REPO as never);
     guardSetting('block');
-    const base = stageStagedDiff(DELETES_TEST);
+    const base = stageCommittedDiff(DELETES_TEST);
     try {
       await runImplementerFixSession(input({ agentKey: 'reviewFixer', mode: 'REVIEW_FIX' }));
-      expect(cmds().some((c) => c.startsWith(STAGED_DIFF))).toBe(false);
+      expect(cmds().some((c) => c.includes(GUARD_DIFF))).toBe(false);
     } finally {
       execMock.mockImplementation(base as never);
     }
+  });
+
+  it.each([
+    ['gateFixer', 'GATE_FIX'],
+    ['reviewFixer', 'PR_FEEDBACK'],
+  ] as const)('covers the %s %s session too', async (agentKey, mode) => {
+    findRepo.mockResolvedValue(REPO as never);
+    guardSetting('block');
+    const base = stageCommittedDiff(DELETES_TEST);
+    try {
+      await expect(runImplementerFixSession(input({ agentKey, mode }))).rejects.toMatchObject({
+        type: 'TEST_INTEGRITY_GUARD',
+      });
+      expect(cmds().some((c) => c.includes('push origin'))).toBe(false);
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
+  });
+
+  it('fails closed before the paid session when the starting commit is unreadable in block mode', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    guardSetting('block');
+    // The default exec answers rev-parse with a value that is not a sha.
+    await expect(runImplementerFixSession(input())).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'TEST_INTEGRITY_GUARD_UNAVAILABLE',
+    });
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(cmds().some((c) => c.includes('push origin'))).toBe(false);
+  });
+
+  it('resolves the setting before the workspace exists, so a failing lookup costs nothing', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    vi.mocked(resolveSetting).mockImplementation((async (key: string) => {
+      if (key === 'github.ciFixTestIntegrityGuard') {
+        throw new Error('config store down');
+      }
+      return 'mastra';
+    }) as never);
+    await expect(runImplementerFixSession(input())).rejects.toThrow('config store down');
+    expect(execMock).not.toHaveBeenCalled();
+    expect(generateMock).not.toHaveBeenCalled();
   });
 });
 
