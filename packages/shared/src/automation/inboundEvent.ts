@@ -180,6 +180,25 @@ export const EVENT_ENDPOINT_PRESETS: ReadonlyArray<{
     key: 'hmac-github-style',
     label: 'HMAC-SHA256, GitHub-style header',
   },
+  {
+    config: {
+      fixedType: 'project_snapshot/v0',
+      format: 'json',
+      idPointer: null,
+      scheme: 'hmac-sha256',
+      scopePointer: '/project/id',
+      signatureEncoding: 'hex',
+      signatureHeader: 'X-Hub-Signature',
+      signaturePrefix: 'sha256=',
+      subjectPointer: '/project/id',
+      timePointer: null,
+      typePointer: '',
+    },
+    description:
+      'Snyk project snapshots: an HMAC-SHA256 hex digest of the request body in X-Hub-Signature as sha256=<hex>, a constant event type (Snyk names it only in the unsigned X-Snyk-Event header), and the Snyk project id (/project/id) as subject and scope so the cooldown and in-flight checks count per project. The body has no event id, so each delivery is keyed by a digest of its body. Snyk documents the digest as of "the request body" without saying whether it is the raw bytes; check the first delivery.',
+    key: 'snyk',
+    label: 'Snyk project snapshot',
+  },
 ];
 
 /** One verified event, as every automation of its endpoint reads it. Never stored whole. */

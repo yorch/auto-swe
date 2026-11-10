@@ -62,6 +62,7 @@ integrations: check them against what the sender actually posts.
 | auto-swe signed JSON | `autoswe-v1` | JSON | type `/type`, id `/id`, subject `/subject` |
 | CloudEvents | `autoswe-v1` | CloudEvents | the event's attributes (§3.2) |
 | HMAC-SHA256, GitHub-style header | `hmac-sha256` in `X-Hub-Signature-256` as `sha256=<hex>` | JSON | placeholders (`/action`, `/id`): set them to where the sender puts its type and id |
+| Snyk project snapshot | `hmac-sha256` in `X-Hub-Signature` as `sha256=<hex>` | JSON | constant type `project_snapshot/v0`, subject and scope `/project/id`, no id pointer (§6) |
 
 ## 2. Signing a call
 
@@ -321,6 +322,102 @@ limit, an earlier run or the budget holds it back.
   change to it fails verification. Under `shared-secret-header` the call is authenticated by the
   secret alone, and the body is whatever its holder sent; nothing binds the two.
 
+## 6. Recipe: Snyk to `vulnerability-remediation`
+
+Snyk posts a `project_snapshot/v0` webhook each time it tests a monitored project. With a Snyk
+event endpoint and one automation, a new open-source dependency finding starts the
+[`vulnerability-remediation`](./maintenance-workflows.md#2-vulnerability-remediation) template on
+the repository, which opens a draft pull request that a person merges.
+
+**What was checked.** The signature, the headers and the payload's top-level shape come from
+Snyk's public webhook documentation ("Webhooks" and "Validation and versioning of payloads", under
+docs.snyk.io/snyk-api/using-specific-snyk-apis/webhooks-apis). Snyk's page shows `newIssues` only
+as an empty array described as "issues matching API responses", and gives the issue object in its
+separate issue example. The issue pointers below are taken from that example and are **not**
+confirmed against a recorded delivery: send a test and read the first real body before trusting
+them, because a pointer that misses simply leaves its input unfilled.
+
+**What Snyk sends** (documented):
+
+- `X-Hub-Signature: sha256=<hex>`, described as the HMAC hex digest of the request body, keyed
+  with the webhook's secret. The documentation's own example re-serialises the parsed JSON, so it
+  does not say the digest is over the exact bytes sent. This receiver verifies the raw bytes: if
+  the first delivery answers `401`, that is the first thing to look at.
+- `X-Snyk-Event` (`project_snapshot/v0`, and `ping/v0` for a test), `X-Snyk-Transport-ID`
+  and `X-Snyk-Timestamp`. No header is read here (§5): the event type is the preset's constant, and
+  the body has no event id, so each delivery is keyed by a digest of its body.
+- A body of `project`, `org`, `group`, `newIssues[]` and `removedIssues[]`. The event fires on every
+  test of an existing project, whether or not anything is new, not on import. Documented targets
+  are open-source and container projects. Snyk Code and Infrastructure as Code findings are not
+  delivered by this webhook.
+- Documented project fields: `id`, `name`, `type` (the documented example is `maven`),
+  `origin`, `remoteRepoUrl`, `branch`, `importingUser` and more. Documented issue fields (from the
+  example): `id`, `issueType`, `pkgName`, `pkgVersions` (an array), `issueData.severity`,
+  `issueData.identifiers` (arrays under keys such as `CVE`, `CWE` and `ALTERNATIVE`, the last
+  holding the `SNYK-…` id in the example), `issueData.nearestFixedInVersion` and
+  `fixInfo.nearestFixedInVersion`. The set of `project.type` values and the key under which a GHSA
+  id would appear are not in the pages read.
+
+**Steps.**
+
+1. **Endpoint.** On the team's event-endpoint card choose the preset **Snyk project snapshot** and
+   save. Keep the secret it shows once. The preset is `hmac-sha256` in `X-Hub-Signature` with
+   prefix `sha256=` and `hex` encoding, a constant type `project_snapshot/v0` (§3.1.1), and
+   `/project/id` as subject and scope, so the cooldown and the in-flight check count per Snyk
+   project.
+2. **Register the webhook** with Snyk: the endpoint's URL and the secret, through Snyk's webhooks
+   API as its documentation describes. Snyk sends `ping/v0` to test; because the type is a
+   constant, a ping is read as a `project_snapshot/v0` event, and the `exists` rule below is what
+   keeps it from starting a run.
+3. **Automation.** Create an `inbound.event` automation (§4) on the endpoint with template
+   `vulnerability-remediation`, a target repository (`targetConnectionId`), event types
+   `project_snapshot/v0`, and:
+
+   | Kind | Pointer | Value |
+   |---|---|---|
+   | match | `/newIssues/0` | `exists` |
+   | match | `/project/id` | `eq` the Snyk project id of that repository |
+   | match | `/project/type` | `in` the open-source ecosystems you use (for example `npm`, `yarn`, `pnpm`; check the value against a real delivery) |
+   | field `packageName` | `/newIssues/0/pkgName` | |
+   | field `vulnerableVersions` | `/newIssues/0/pkgVersions/0` | |
+   | field `fixedVersions` | `/newIssues/0/fixInfo/nearestFixedInVersion` | |
+   | field `severity` | `/newIssues/0/issueData/severity` | |
+   | field `advisoryId` | `/newIssues/0/id` | or `/newIssues/0/issueData/identifiers/CVE/0` for a CVE |
+
+   Set a conservative `cooldownMinutes` and `maxRunsPerDay`. One automation covers one
+   repository (§4), so a second repository needs a second automation with its own project id.
+
+**What the recipe does not do, and why.**
+
+- **Only the first issue is read.** A mapped field is one scalar, so `/newIssues/0` is the only
+  issue acted on in a delivery. The others are not acted on, and nothing records that they were
+  skipped.
+- **Match the repository by project id, not name.** `project.name` and `remoteRepoUrl` are text
+  that anyone able to import or rename projects in the Snyk organisation chooses. Matching on the
+  id (a UUID Snyk assigns) means the person who can monitor a project cannot steer a run to a
+  different repository by naming a project after it. They can still make the sender's text
+  (a package name, versions) arrive for the repository whose project they control, so those values
+  stay data the run checks (§5), bounded in length and alphabet by the template.
+- **Open-source dependency findings only.** A container or base-image finding needs a different fix
+  (the image, not a manifest), so the `/project/type` rule filters those out. Snyk Code and
+  Infrastructure as Code findings are not delivered by this webhook at all.
+- **A kill switch.** While `workflow.inboundEventsEnabled` is off the endpoint answers `409` (§1).
+- **Dropped deliveries stay dropped.** The body is capped at 128 KiB, and a per-address rate limit
+  can refuse a burst. A project with many new issues can exceed the cap. Snyk's documentation does
+  not describe retries, so assume a refused or failed delivery is not sent again.
+- **Overlap with Snyk's own fix pull requests.** If Snyk's automatic fix or upgrade pull requests
+  are on for the project, both may open a change for one finding. Turn one of them off for the
+  project or expect a duplicate.
+- **No personal data.** Do not map `importingUser` (name, username, email) or any other person's
+  details into a field; the template has no input for them and the run description would carry
+  them.
+- **Severity must match exactly.** Snyk's severity is `low`, `medium`, `high` or `critical` in the
+  documented example; the template takes those four lower-case values and anything else fails the
+  start (`FAILED_TO_START`). Leave `severity` unmapped if a delivery uses another spelling.
+- **An empty delivery starts nothing only because of the `exists` rule.** Every advisory input is
+  optional, so without that rule a selected snapshot with no issues would start a run with only the
+  repository filled.
+
 ## Limitations
 
 - **Qodo is not an inbound-event sender.** Qodo emits no outbound webhooks, so there is nothing for
@@ -357,3 +454,6 @@ limit, an earlier run or the budget holds it back.
 - **No per-sender IP allowlist,** and the rate limit is per client address, not per endpoint.
 - **The receiver answers after deciding.** A sender with a short timeout may give up while a run is
   being started; sending the event again is safe, because the decision is keyed by the event.
+- **The Snyk recipe reads one issue per delivery and one repository per automation (§6).** Its issue
+  pointers come from Snyk's documented example, not a recorded delivery, and Snyk's payload is
+  documented as able to change while the webhooks are in beta.

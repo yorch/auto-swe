@@ -330,6 +330,7 @@ describe('extraction', () => {
       'autoswe-json',
       'cloudevents',
       'hmac-github-style',
+      'snyk',
     ]);
   });
 });

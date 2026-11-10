@@ -71,7 +71,12 @@ three ways.
 | `severity` | `critical`, `high`, `medium` or `low` | The advisory's severity |
 | `advisoryId` | string | A CVE, GHSA or scanner identifier |
 
-All five are optional, and an event can fill each of them. The template also takes the SWE inputs
+All five are optional, and an event can fill each of them. The four strings are bounded in length
+and in alphabet, with no space allowed: `packageName` up to 214 characters of letters, digits and
+`@ . _ / : + ~ -`; `vulnerableVersions` and `fixedVersions` up to 128 characters of letters, digits
+and `. , < > = ~ ^ * + : _ | -` (`vulnerableVersions` also `! [ ] ( )`); `advisoryId` up to 64
+characters of letters, digits and `. _ : -`, starting with a letter or digit. A value outside its
+bounds fails the run's input check, and the event is recorded `FAILED_TO_START`. The template also takes the SWE inputs
 (`ticketId`, `connectionId`, `description`, `budget`); an automation never maps `ticketId`,
 `description` or `connectionId` from an event. There is no title, summary or URL
 input: those are free text the sender writes, and the identifier names the advisory.
@@ -152,13 +157,17 @@ and the text posted back is escaped storage, never markup.
   npm, pnpm and Yarn Berry. Python, JVM and Go have none, and their audit tools read vulnerability
   data from hosts the registry proxy does not relay ([package-registries.md](./package-registries.md)),
   so their scan gate resolves as unconfigured and the run relies on tests and CI.
-- **Nothing reads a vulnerability alert.** The advisory has to arrive as a ticket, an inbound event
-  or a hand launch. GitHub Dependabot and code scanning alerts are not an event source.
-- **The advisory inputs are checked for type, not shape.** Apart from `severity`, which takes one of
-  four values, each is any string (an event's values are cut at 4,000 characters); nothing checks that
-  `packageName` is a package name or that a version is a version. The prompt's instruction to check
-  them against the repository and the registry is what stands between a wrong or crafted value and
-  the change.
+- **No scanner is a built-in event source.** The advisory arrives as a ticket, an inbound event or a
+  hand launch. Snyk is wired through an event endpoint ([inbound-events.md
+  §6](./inbound-events.md#6-recipe-snyk-to-vulnerability-remediation)); GitHub Dependabot and code
+  scanning alerts are not an event source.
+- **The advisory inputs are checked for alphabet and length, not meaning.** `severity` takes one of
+  four values; each string is limited to the characters and length in §2. That keeps a sentence out
+  but not a plausible-looking wrong value: nothing checks that `packageName` names a package the
+  repository uses or that a version exists. A range that needs a space (`>=1.0.0 <2.0.0`) is
+  refused; write it with a comma or leave the field unmapped. The prompt's instruction to check the
+  values against the repository and the registry is what stands between a wrong or crafted value
+  and the change.
 - **A severity on another scale fails the start.** A sender that says `moderate`, or uses upper case,
   fails the template's input check, and the event is recorded `FAILED_TO_START`. Leave `severity`
   unmapped for such a sender.

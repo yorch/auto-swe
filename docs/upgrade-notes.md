@@ -986,8 +986,9 @@ promote the new version. Nothing else needs to be done.
   than its latest built-in version;
 - something launches it through `POST /api/v1/workflow-templates/:id/runs` with a payload that
   names `packageName`, `vulnerableVersions`, `fixedVersions`, `severity`, `advisoryId` or `budget`
-  with a value of another type, a `severity` other than `critical`, `high`, `medium` or `low`, or
-  no `connectionId`.
+  with a value of another type, a `severity` other than `critical`, `high`, `medium` or `low`, a
+  `packageName`, version or `advisoryId` longer or with other characters than §2 of the
+  maintenance doc allows, or no `connectionId`.
 
 A deployment with none of these needs nothing.
 
