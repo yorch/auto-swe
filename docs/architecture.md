@@ -279,7 +279,8 @@ sequenceDiagram
     Worker->>DB: finalizeWorkflowRun (cost, tokens, org billing)
 ```
 
-**CI verdicts are matched to a commit, not just to a PR.** The `/webhooks/ci` handler only signals a
+**CI verdicts are matched to a commit, not just to a PR.** The `check_run` handler (reached at
+`/webhooks/ci`, and at `/webhooks/git` for an App's single webhook URL) only signals a
 run when the tracked pull request is awaiting a verdict *at the head the event describes*
 (`ciStatus = PENDING` at that `headSha`). That pairing is what stops a redelivered verdict for an
 older commit from resuming a run that has already moved on. `createOrUpdatePullRequest` arms it by
@@ -1752,9 +1753,14 @@ Current constraints of the system as built. Deliberate product boundaries are in
   *second visit* is a different node id, so it acts. That is completed-result caching, not
   exactly-once delivery: the remote call and the ledger row are not one transaction (see
   [autonomy-policies.md §4.1](./autonomy-policies.md#41-the-mutation-boundary)).
-  A write node that names no explicit payload writes its own inputs, less `connectionId`. Notion, Confluence, Zendesk, Slack, and issue-tracker outcomes are concrete;
-  `http_api`, `hubspot`, and `mcp` still return placeholder results pending provider-specific
-  activity packs. The `record` workspace provider metadata currently targets `zendesk` only.
+  A write node that names no explicit payload writes its own inputs, less `connectionId`. The steps are concrete for these connection types: `readSource` for Notion, Zendesk, issue
+  trackers and Confluence; `writeOutcome` for those and Slack; `runTool` for Zendesk, Slack, issue
+  trackers and Confluence. Any other pairing, including every step over `http_api`, `hubspot`,
+  `mcp` or `git_repo`, fails with a non-retryable `CONNECTOR_NOT_IMPLEMENTED` before the provider
+  is contacted or a ledger row is claimed, so no step reports success without acting
+  (`GENERIC_STEP_CONNECTION_TYPES` in `shared/lib/connectionTypes.ts` is the matrix). A template's
+  `inputSchema` cannot declare a `connection` field of type `http_api` or `hubspot`; saving one is
+  refused. The `record` workspace provider metadata currently targets `zendesk` only.
 - **A template's declared connections are authorized at launch, and mutating tools obey the
   approval gate.** The launch takes the same decision for each `connection`-typed field the
   template's `inputSchema` declares, not only for `payload.connectionId`: a node may name its own

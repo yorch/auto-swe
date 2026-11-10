@@ -18,6 +18,7 @@ import { connectionCredentialRoutes } from './connectionCredentials.js';
 import { epicRoutes } from './epics.js';
 import { evalRoutes } from './evals.js';
 import { eventEndpointRoutes } from './eventEndpoints.js';
+import { githubAppManifestRoutes } from './githubAppManifest.js';
 import { githubApproverAppRoutes } from './githubApproverApp.js';
 import { githubHostCredentialRoutes } from './githubHostCredentials.js';
 import { githubInstallationRoutes } from './githubInstallations.js';
@@ -35,6 +36,7 @@ import { modelConfigRoutes } from './modelConfig.js';
 import { organizationRoutes } from './organizations.js';
 import { orgBudgetRoutes } from './orgBudget.js';
 import { orgMembersRoutes } from './orgMembers.js';
+import { outcomeReportRoutes } from './outcomeReports.js';
 import { packageRegistryRoutes } from './packageRegistries.js';
 import { prdRunRoutes } from './prdRuns.js';
 import { prEvaluationRoutes } from './prEvaluation.js';
@@ -93,6 +95,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(ticketRoutes, { prefix: '/api/v1/tickets' });
   await app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
   await app.register(reportsRoutes, { prefix: '/api/v1/reports' });
+  await app.register(outcomeReportRoutes, { prefix: '/api/v1/reports/outcomes' });
   await app.register(reportDigestRoutes, { prefix: '/api/v1/report-digests' });
   await app.register(humanErrorBaselineRoutes, { prefix: '/api/v1/human-error-baselines' });
   await app.register(organizationRoutes, { prefix: '/api/v1/platform/organizations' });
@@ -154,6 +157,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(githubWebhookSecretRoutes, { prefix: '/api/v1/platform' });
   await app.register(githubHostCredentialRoutes, { prefix: '/api/v1/platform' });
   await app.register(githubApproverAppRoutes, { prefix: '/api/v1/integrations' });
+  await app.register(githubAppManifestRoutes, { prefix: '/api/v1/integrations' });
   await app.register(packageRegistryRoutes, { prefix: '/api/v1/admin' });
   await app.register(mcpConnectionRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.

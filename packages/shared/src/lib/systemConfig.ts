@@ -1472,6 +1472,8 @@ export interface ScheduledSweepsConfig {
   knowledgeBaseSync: SweepSchedule;
   /// Asks each tracked skill source which commit its ref names now; only flags, never updates.
   skillSourceSync: SweepSchedule;
+  /// Regenerates the outcome report from run data and stores one snapshot (docs/outcome-metrics.md).
+  outcomeReport: SweepSchedule;
   /// Re-checks each Slack channel's privacy and records who is in each private one.
   slackChannelSync: SweepSchedule & {
     /// How old a channel's synced member list may be and still give its members the
@@ -1530,6 +1532,8 @@ function envCron(name: string, fallback: string): string {
 ///   SKILL_SOURCE_SYNC_ENABLED     default true — one cheap request per source, and
 ///                                 it only flags: it never changes a skill
 ///   SKILL_SOURCE_SYNC_CRON        default `41 5 * * *`
+///   OUTCOME_REPORT_ENABLED        default true — it reads run data and stores one snapshot
+///   OUTCOME_REPORT_CRON           default `37 2 * * 1`
 ///   SLACK_CHANNEL_SYNC_ENABLED    default false — it needs the bot's `channels:read` and
 ///                                 `groups:read` scopes, and grants dashboard access
 ///   SLACK_CHANNEL_SYNC_CRON       default `29 * * * *`
@@ -1586,6 +1590,10 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
     modelDiscovery: {
       cronExpression: envCron('MODEL_DISCOVERY_CRON', '17 3 * * *'),
       enabled: envFlag('MODEL_DISCOVERY_ENABLED', true),
+    },
+    outcomeReport: {
+      cronExpression: envCron('OUTCOME_REPORT_CRON', '37 2 * * 1'),
+      enabled: envFlag('OUTCOME_REPORT_ENABLED', true),
     },
     repoAccess: {
       cronExpression: envCron('REPO_ACCESS_SYNC_CRON', '23 * * * *'),
@@ -1659,6 +1667,8 @@ export function validateScheduledSweepsEnv(): string[] {
   );
   check('SKILL_SOURCE_SYNC_ENABLED', flag, "'true' or 'false'");
   check('SKILL_SOURCE_SYNC_CRON', cron, 'a five-field cron expression such as "41 5 * * *"');
+  check('OUTCOME_REPORT_ENABLED', flag, "'true' or 'false'");
+  check('OUTCOME_REPORT_CRON', cron, 'a five-field cron expression such as "37 2 * * 1"');
   check('CALLBACK_DELIVERY_ENABLED', flag, "'true' or 'false'");
   check('CALLBACK_DELIVERY_CRON', cron, 'a five-field cron expression such as "* * * * *"');
   check('CALLBACK_DELIVERY_PRUNE_ENABLED', flag, "'true' or 'false'");

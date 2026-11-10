@@ -34,6 +34,7 @@ export {
 export { ScheduledConsolidationWorkflow } from './scheduledConsolidation.js';
 export { ScheduledEvalWorkflow } from './scheduledEval.js';
 export { ScheduledModelDiscoveryWorkflow } from './scheduledModelDiscovery.js';
+export { ScheduledOutcomeReportWorkflow } from './scheduledOutcomeReport.js';
 export { ScheduledRepoAccessSyncWorkflow } from './scheduledRepoAccessSync.js';
 export { ScheduledRepoDependencyScanWorkflow } from './scheduledRepoDependencyScan.js';
 export { ScheduledReportDigestWorkflow } from './scheduledReportDigest.js';

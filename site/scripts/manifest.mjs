@@ -140,6 +140,7 @@ export const SIDEBAR = [
       'docs/work-views',
       'docs/teams',
       'docs/reporting',
+      'docs/outcome-metrics',
       'docs/bundles',
       'docs/qodo',
       'docs/transcripts',
@@ -152,6 +153,7 @@ export const SIDEBAR = [
     slugs: [
       'docs/configuration',
       'docs/deployment',
+      'docs/kubernetes-helm',
       'docs/upgrade-notes',
       'docs/audit-log',
       'docs/user-activity',
@@ -161,6 +163,7 @@ export const SIDEBAR = [
       'docs/local-agents',
       'docs/github-app-setup',
       'docs/slack-app-setup',
+      'docs/live-checks',
       'reference/cli',
     ],
   },

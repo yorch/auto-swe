@@ -361,8 +361,8 @@ export function verifyContentHash(manifest: BundleManifest): {
  * applies the same list so an author learns it before shipping.
  *
  * A type belongs here when a generic step can actually reach it — `readSource`,
- * `writeOutcome` or `runTool` has a real implementation, not the placeholder that
- * reports `ok: true` for `http_api` and `hubspot`. Without them a bundle could not
+ * `writeOutcome` or `runTool` has a real implementation; `http_api` and `hubspot` have none,
+ * and a step over one fails with `CONNECTOR_NOT_IMPLEMENTED`. Without them a bundle could not
  * ship any of the non-engineering templates the platform already runs, which is
  * exactly what a repository-free workflow pack is made of.
  */

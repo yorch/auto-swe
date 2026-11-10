@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   CONNECTION_TYPES,
   ConnectionTypeSchema,
+  GENERIC_STEP_CONNECTION_TYPES,
+  genericStepRefusal,
   getConnectionTypeMetadata,
   getWorkspaceTargetTypes,
   isConnectionType,
   isWorkspaceTargetType,
   listConnectionTypes,
+  UNIMPLEMENTED_CONNECTION_TYPES,
 } from './connectionTypes.js';
 
 describe('connectionTypes', () => {
@@ -62,5 +65,36 @@ describe('connectionTypes', () => {
 
     expect(isWorkspaceTargetType('git_repo')).toBe(true);
     expect(isWorkspaceTargetType('mcp')).toBe(false);
+  });
+});
+
+describe('generic step support', () => {
+  it('refuses the connector-less types on every generic step', () => {
+    for (const step of ['readSource', 'writeOutcome', 'runTool'] as const) {
+      for (const type of ['http_api', 'hubspot', 'mcp', 'git_repo']) {
+        expect(genericStepRefusal(step, type)).toContain(`${step} has no implementation`);
+      }
+    }
+  });
+
+  it('accepts what has an implementation', () => {
+    expect(genericStepRefusal('readSource', 'notion')).toBeNull();
+    expect(genericStepRefusal('writeOutcome', 'slack_workspace')).toBeNull();
+    expect(genericStepRefusal('runTool', 'zendesk')).toBeNull();
+    // Slack has no read, and Notion has no named tools.
+    expect(genericStepRefusal('readSource', 'slack_workspace')).not.toBeNull();
+    expect(genericStepRefusal('runTool', 'notion')).not.toBeNull();
+  });
+
+  it('keeps unimplemented types out of every step list', () => {
+    for (const types of Object.values(GENERIC_STEP_CONNECTION_TYPES)) {
+      for (const type of UNIMPLEMENTED_CONNECTION_TYPES) {
+        expect(types).not.toContain(type);
+      }
+    }
+  });
+
+  it('points an mcp connection at the mcp node', () => {
+    expect(genericStepRefusal('runTool', 'mcp')).toContain('`mcp` node');
   });
 });

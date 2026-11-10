@@ -8,6 +8,11 @@ import {
   parseZendeskConnectionConfig,
 } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
+import {
+  CONNECTOR_NOT_IMPLEMENTED,
+  type GenericConnectionStep,
+  genericStepRefusal,
+} from '@auto-swe/shared/lib/connectionTypes';
 import { ApplicationFailure } from '@temporalio/activity';
 import { z } from 'zod';
 import {
@@ -56,9 +61,9 @@ function validateInput<T>(schema: z.ZodType<T>, value: unknown): T {
  *
  * These are the foundation for non-SWE templates. Each handler is responsible
  * for loading its Connection, decrypting the API token, and producing a
- * structured result. For Phase 1 the non-git handlers are placeholders that
- * validate the connection and surface its metadata; concrete API calls land in
- * the domain-specific activity packs.
+ * structured result. A connection type with no implementation behind a step
+ * (`GENERIC_STEP_CONNECTION_TYPES`) fails that step with a non-retryable
+ * `CONNECTOR_NOT_IMPLEMENTED`; no step reports success without acting.
  */
 
 export interface ReadSourceInput {
@@ -70,7 +75,6 @@ export interface ReadSourceResult {
   connectionType: ConnectionType;
   data?: unknown;
   ok: boolean;
-  placeholder?: boolean;
 }
 
 export interface WriteOutcomeInput {
@@ -83,7 +87,6 @@ export interface WriteOutcomeInput {
 export interface WriteOutcomeResult {
   connectionType: ConnectionType;
   ok: boolean;
-  placeholder?: boolean;
   reference?: string;
   /** Every item a multi-item write created (a ticket plan's issues), epic first. */
   references?: string[];
@@ -107,7 +110,6 @@ export interface RunToolResult {
   connectionType: ConnectionType;
   ok: boolean;
   output?: unknown;
-  placeholder?: boolean;
 }
 
 /**
@@ -148,19 +150,6 @@ function getApiToken(connection: {
 }
 
 // ── Read source ─────────────────────────────────────────────────────────────
-
-async function gitRepoReadSource(_connection: unknown, query: unknown): Promise<ReadSourceResult> {
-  const q = typeof query === 'object' && query != null ? query : {};
-  return {
-    connectionType: 'git_repo',
-    data: {
-      hint: 'Use the SWE activities (executeImplementation, shellStep) for git_repo work',
-      query: q,
-    },
-    ok: true,
-    placeholder: true,
-  };
-}
 
 function requireToken(token: string | null): string {
   if (!token) {
@@ -247,22 +236,24 @@ async function confluenceReadSource(
   return { connectionType: 'confluence', data: content, ok: true };
 }
 
-async function genericReadSource(
-  connectionType: ConnectionType,
-  _connection: unknown,
-  _token: string | null
-): Promise<ReadSourceResult> {
-  return {
-    connectionType,
-    ok: true,
-    placeholder: true,
-  };
+/**
+ * A step with no implementation for this connection type fails, non-retryably and loudly: a
+ * step that reports `ok: true` without acting lets a run finish "successfully" having done nothing.
+ */
+function refuseUnimplemented(step: GenericConnectionStep, connectionType: string): never {
+  const refusal = genericStepRefusal(step, connectionType);
+  if (refusal) {
+    throw ApplicationFailure.nonRetryable(refusal, CONNECTOR_NOT_IMPLEMENTED);
+  }
+  throw ApplicationFailure.nonRetryable(
+    `${step} reached a ${connectionType} connection with no handler`,
+    CONNECTOR_NOT_IMPLEMENTED
+  );
 }
 
 /**
- * Read a source object from the target connection. For `git_repo` this returns
- * a pointer that the SWE path already covers; for other types it is a
- * placeholder awaiting the domain-specific activity pack.
+ * Read a source object from the target connection. Types with no read
+ * implementation fail with `CONNECTOR_NOT_IMPLEMENTED`.
  */
 export async function readSource(input: ReadSourceInput): Promise<ReadSourceResult> {
   const { connectionId, query } = validateInput(
@@ -272,8 +263,6 @@ export async function readSource(input: ReadSourceInput): Promise<ReadSourceResu
   const connection = await loadConnection(connectionId, 'readSource');
   const token = getApiToken(connection);
   switch (connection.type) {
-    case 'git_repo':
-      return gitRepoReadSource(connection, query);
     case 'notion':
       return notionReadSource(connection, token, query);
     case 'zendesk':
@@ -282,40 +271,11 @@ export async function readSource(input: ReadSourceInput): Promise<ReadSourceResu
       return issueTrackerReadSource(connection, token, query);
     case 'confluence':
       return confluenceReadSource(connection, token, query);
-    case 'http_api':
-    case 'hubspot':
-    case 'mcp':
-    case 'slack_workspace':
-      return genericReadSource(connection.type, connection, token);
     default:
-      throw ApplicationFailure.nonRetryable(
-        `Unsupported connection type for readSource: ${connection.type}`
-      );
+      // Every other type (`git_repo`, `http_api`, `hubspot`, `mcp`, `slack_workspace`, or one
+      // this build does not know) has no read implementation: fail rather than report success.
+      return refuseUnimplemented('readSource', connection.type);
   }
-}
-
-const WRITE_OUTCOME_TYPES: ReadonlySet<string> = new Set([
-  'git_repo',
-  'notion',
-  'zendesk',
-  'slack_workspace',
-  'issue_tracker',
-  'confluence',
-  'http_api',
-  'hubspot',
-  'mcp',
-]);
-
-async function gitRepoWriteOutcome(
-  _connection: unknown,
-  _data: unknown
-): Promise<WriteOutcomeResult> {
-  return {
-    connectionType: 'git_repo',
-    ok: true,
-    placeholder: true,
-    reference: 'Use createOrUpdatePullRequest for git_repo outcomes',
-  };
 }
 
 function textToNotionBlocks(text: string): NotionBlock[] {
@@ -740,17 +700,9 @@ function isCreatePageData(d: Record<string, unknown>): boolean {
   );
 }
 
-async function genericWriteOutcome(
-  connectionType: ConnectionType,
-  _connection: unknown,
-  _token: string | null
-): Promise<WriteOutcomeResult> {
-  return { connectionType, ok: true, placeholder: true };
-}
-
 /**
- * Write a validated outcome to the target connection. Placeholder for non-git
- * types pending the domain-specific activity packs.
+ * Write a validated outcome to the target connection. Types with no write
+ * implementation fail with `CONNECTOR_NOT_IMPLEMENTED`.
  */
 export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutcomeResult> {
   const { connectionId, data, nodeId } = validateInput(
@@ -777,10 +729,8 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
   async function prepare() {
     const connection = await loadConnection(connectionId, 'writeOutcome');
     const token = getApiToken(connection);
-    if (!WRITE_OUTCOME_TYPES.has(connection.type)) {
-      throw ApplicationFailure.nonRetryable(
-        `Unsupported connection type for writeOutcome: ${connection.type}`
-      );
+    if (genericStepRefusal('writeOutcome', connection.type)) {
+      refuseUnimplemented('writeOutcome', connection.type);
     }
     return { connection, token };
   }
@@ -790,8 +740,6 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
   ): Promise<WriteOutcomeResult> {
     const { connection, token } = prepared;
     switch (connection.type) {
-      case 'git_repo':
-        return gitRepoWriteOutcome(connection, data);
       case 'notion':
         return notionWriteOutcome(connection, token, data);
       case 'zendesk':
@@ -802,12 +750,8 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
         return issueTrackerWriteOutcome(connection, token, data);
       case 'confluence':
         return confluenceWriteOutcome(connection, token, data);
-      case 'http_api':
-      case 'hubspot':
-      case 'mcp':
-        return genericWriteOutcome(connection.type, connection, token);
       default:
-        // Unreachable: `prepare()` refuses any type outside `WRITE_OUTCOME_TYPES`.
+        // Unreachable: `prepare()` refuses any type outside `GENERIC_STEP_CONNECTION_TYPES.writeOutcome`.
         throw ApplicationFailure.nonRetryable(
           `Unsupported connection type for writeOutcome: ${connection.type}`
         );
@@ -835,31 +779,6 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
   // produced, and one that may have reached the provider without recording anything refuses rather
   // than acting twice.
   return performOnce({ attempt: scope.attempt, dispatch: () => perform(prepared), key: ledgerKey });
-}
-
-const RUN_TOOL_TYPES: ReadonlySet<string> = new Set([
-  'git_repo',
-  'zendesk',
-  'slack_workspace',
-  'issue_tracker',
-  'confluence',
-  'http_api',
-  'hubspot',
-  'mcp',
-  'notion',
-]);
-
-async function gitRepoRunTool(
-  _connection: unknown,
-  tool: string,
-  _inputs: unknown
-): Promise<RunToolResult> {
-  return {
-    connectionType: 'git_repo',
-    ok: true,
-    output: { hint: `git_repo tool ${tool} is handled by the SWE activity set` },
-    placeholder: true,
-  };
 }
 
 async function zendeskRunTool(
@@ -1019,17 +938,9 @@ async function confluenceRunTool(
   throw notSent(`Unsupported Confluence tool: ${tool}`);
 }
 
-async function genericRunTool(
-  connectionType: ConnectionType,
-  _connection: unknown,
-  _token: string | null
-): Promise<RunToolResult> {
-  return { connectionType, ok: true, placeholder: true };
-}
-
 /**
- * Run an arbitrary tool against the target connection. Placeholder for non-git
- * types pending the domain-specific activity packs.
+ * Run an arbitrary tool against the target connection. Only the connection types in
+ * `GENERIC_STEP_CONNECTION_TYPES` are supported; any other type fails non-retryably.
  *
  * Governed exactly like `writeOutcome`: `postComment`, `postMessage` and
  * `createIssue` change state outside the platform, so they are recorded against
@@ -1056,10 +967,8 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
   async function prepare() {
     const connection = await loadConnection(connectionId, 'runTool');
     const token = getApiToken(connection);
-    if (!RUN_TOOL_TYPES.has(connection.type)) {
-      throw ApplicationFailure.nonRetryable(
-        `Unsupported connection type for runTool: ${connection.type}`
-      );
+    if (genericStepRefusal('runTool', connection.type)) {
+      refuseUnimplemented('runTool', connection.type);
     }
     return { connection, token };
   }
@@ -1067,8 +976,6 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
   async function perform(prepared: Awaited<ReturnType<typeof prepare>>): Promise<RunToolResult> {
     const { connection, token } = prepared;
     switch (connection.type) {
-      case 'git_repo':
-        return gitRepoRunTool(connection, tool, inputs);
       case 'zendesk':
         return zendeskRunTool(connection, token, tool, inputs);
       case 'slack_workspace':
@@ -1077,13 +984,8 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
         return issueTrackerRunTool(connection, token, tool, inputs);
       case 'confluence':
         return confluenceRunTool(connection, token, tool, inputs);
-      case 'http_api':
-      case 'hubspot':
-      case 'mcp':
-      case 'notion':
-        return genericRunTool(connection.type, connection, token);
       default:
-        // Unreachable: `prepare()` refuses any type outside `RUN_TOOL_TYPES`.
+        // Unreachable: `prepare()` refuses any type outside `GENERIC_STEP_CONNECTION_TYPES.runTool`.
         throw ApplicationFailure.nonRetryable(
           `Unsupported connection type for runTool: ${connection.type}`
         );

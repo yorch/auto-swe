@@ -12,6 +12,7 @@ import { SlackTab } from './SlackTab';
 
 vi.mock('./GitHubHostCredentialsCard', () => ({ GitHubHostCredentialsCard: () => null }));
 vi.mock('./GitHubHostSecretsCard', () => ({ GitHubHostSecretsCard: () => null }));
+vi.mock('./GitHubAppManifestCard', () => ({ GitHubAppManifestCard: () => null }));
 vi.mock('@/hooks/useSlackChannels', () => ({
   useSlackWorkspaces: () => ({ data: [], isLoading: false }),
 }));

@@ -1133,6 +1133,8 @@ describe('systemConfig resolvers', () => {
       'WORKSPACE_REAPER_CRON',
       'SKILL_SOURCE_SYNC_ENABLED',
       'SKILL_SOURCE_SYNC_CRON',
+      'OUTCOME_REPORT_ENABLED',
+      'OUTCOME_REPORT_CRON',
       'AUTOMATION_DECISION_PRUNE_ENABLED',
       'AUTOMATION_DECISION_PRUNE_CRON',
       'AGENT_TRANSCRIPT_PRUNE_ENABLED',
@@ -1186,6 +1188,7 @@ describe('systemConfig resolvers', () => {
         callbackDeliveryPrune: { cronExpression: '47 4 * * *', enabled: true },
         knowledgeBaseSync: { cronExpression: '*/30 * * * *', enabled: true },
         modelDiscovery: { cronExpression: '17 3 * * *', enabled: true },
+        outcomeReport: { cronExpression: '37 2 * * 1', enabled: true },
         repoAccess: { cronExpression: '23 * * * *', enabled: false },
         repoDependency: { cronExpression: '0 4 * * *', enabled: true },
         reportDigest: { cronExpression: '0 13 * * 1', enabled: true },
@@ -1215,6 +1218,8 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('WORKSPACE_REAPER_CRON', '*/10 * * * *');
       vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'false');
       vi.stubEnv('SKILL_SOURCE_SYNC_CRON', '7 6 * * 2');
+      vi.stubEnv('OUTCOME_REPORT_ENABLED', 'false');
+      vi.stubEnv('OUTCOME_REPORT_CRON', '5 3 * * 2');
       vi.stubEnv('AUTOMATION_DECISION_PRUNE_ENABLED', 'false');
       vi.stubEnv('AUTOMATION_DECISION_PRUNE_CRON', '1 2 * * *');
       vi.stubEnv('CALLBACK_DELIVERY_ENABLED', 'false');
@@ -1246,6 +1251,7 @@ describe('systemConfig resolvers', () => {
         callbackDeliveryPrune: { cronExpression: '3 3 * * *', enabled: false },
         knowledgeBaseSync: { cronExpression: '*/30 * * * *', enabled: true },
         modelDiscovery: { cronExpression: '0 5 * * 1', enabled: false },
+        outcomeReport: { cronExpression: '5 3 * * 2', enabled: false },
         repoAccess: { cronExpression: '5 * * * *', enabled: true },
         repoDependency: { cronExpression: '30 2 * * 1', enabled: false },
         reportDigest: { cronExpression: '0 14 * * 1', enabled: false },
@@ -1301,6 +1307,8 @@ describe('systemConfig resolvers', () => {
         vi.stubEnv('WORKSPACE_REAPER_CRON', '*/15 * * * *');
         vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'true');
         vi.stubEnv('SKILL_SOURCE_SYNC_CRON', '41 5 * * *');
+        vi.stubEnv('OUTCOME_REPORT_ENABLED', 'true');
+        vi.stubEnv('OUTCOME_REPORT_CRON', '37 2 * * 1');
         expect(validateScheduledSweepsEnv()).toEqual([]);
       });
 

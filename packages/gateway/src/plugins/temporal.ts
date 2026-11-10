@@ -74,6 +74,7 @@ export const RUN_REAPER_SCHEDULE_ID = 'auto-swe-run-reaper';
 export const WORKSPACE_REAPER_SCHEDULE_ID = 'auto-swe-workspace-reaper';
 export const AUTOMATION_DECISION_PRUNE_SCHEDULE_ID = 'auto-swe-automation-decision-prune';
 export const SKILL_SOURCE_SYNC_SCHEDULE_ID = 'auto-swe-skill-source-sync';
+export const OUTCOME_REPORT_SCHEDULE_ID = 'auto-swe-outcome-report';
 export const SLACK_CHANNEL_SYNC_SCHEDULE_ID = 'auto-swe-slack-channel-sync';
 export const CALLBACK_DELIVERY_SCHEDULE_ID = 'auto-swe-callback-delivery';
 export const CALLBACK_DELIVERY_PRUNE_SCHEDULE_ID = 'auto-swe-callback-delivery-prune';
@@ -322,6 +323,15 @@ export interface SkillSourceSyncScheduleConfig {
 }
 
 /**
+ * The outcome-report regeneration. The workflow reads the run data itself, so the schedule carries
+ * no arguments.
+ */
+export interface OutcomeReportScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
+/**
  * The Slack channel sweep. The workflow reads the active channels itself, so the
  * schedule carries no arguments.
  */
@@ -506,6 +516,7 @@ declare module 'fastify' {
       triggerReportDigestTest: (subscriptionId: string) => Promise<void>;
       syncAuditActivityPruneSchedule: (config: AuditActivityPruneScheduleConfig) => Promise<void>;
       syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
+      syncOutcomeReportSchedule: (config: OutcomeReportScheduleConfig) => Promise<void>;
       syncSlackChannelSyncSchedule: (config: SlackChannelSyncScheduleConfig) => Promise<void>;
       getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
       triggerRepoDependencyScanNow: () => Promise<void>;
@@ -713,6 +724,17 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledSkillSourceSyncWorkflow',
+    };
+  }
+
+  // Outcome-report action. The workflow reads the run data itself, so the schedule carries no
+  // arguments.
+  function makeOutcomeReportScheduleAction() {
+    return {
+      args: [] as unknown[],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledOutcomeReportWorkflow',
     };
   }
 
@@ -1609,6 +1631,16 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     async syncModelDiscoverySchedule(config: ModelDiscoveryScheduleConfig): Promise<void> {
       await upsertSchedule(MODEL_DISCOVERY_SCHEDULE_ID, {
         action: makeModelDiscoveryScheduleAction(),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    // ── Outcome report regeneration (one system-wide Temporal Schedule) ──
+
+    async syncOutcomeReportSchedule(config: OutcomeReportScheduleConfig): Promise<void> {
+      await upsertSchedule(OUTCOME_REPORT_SCHEDULE_ID, {
+        action: makeOutcomeReportScheduleAction(),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

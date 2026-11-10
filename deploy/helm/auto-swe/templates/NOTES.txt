@@ -1,0 +1,19 @@
+auto-swe {{ .Chart.AppVersion }} is deployed as release {{ .Release.Name }}.
+
+  Dashboard: {{ .Values.urls.web }}
+  Gateway:   {{ .Values.urls.api }}
+
+Next steps (docs/kubernetes-helm.md):
+  1. Seed the database once from a checkout of the repository (admin user, default
+     team): DATABASE_URL=... yarn db:seed — the chart does not run the seed.
+  2. Sign in as the seeded admin, add a model provider credential at /models, and
+     configure GitHub at /admin/integrations (or create a GitHub App there).
+{{- if .Values.worker.enabled }}
+  3. The worker starts once the gateway is healthy, and refuses to start unless it
+     holds its RBAC in namespace {{ .Values.workspaces.namespace }}{{ if .Values.workspaces.requireNetworkPolicy }} and the CNI enforces
+     that namespace's NetworkPolicy{{ end }}:
+       kubectl -n {{ .Release.Namespace }} logs deploy/{{ include "auto-swe.fullname" . }}-worker
+{{- else }}
+  3. worker.enabled is false: run the worker elsewhere against the same database
+     and Temporal.
+{{- end }}

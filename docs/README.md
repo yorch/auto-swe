@@ -56,6 +56,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [work-views.md](./work-views.md) | The pull-request and ticket views — the recorded PR lifecycle and its webhook events, the two list APIs, and how visibility is applied to every row and aggregate |
 | [teams.md](./teams.md) | The personal desk — a person's teams and what is waiting on them across all of them, who sees what, and how its counts agree with the lists behind them |
 | [reporting.md](./reporting.md) | Delivery, quality, budget, automation, and approval reports — cohorts, calculations, bounds, and limitations |
+| [outcome-metrics.md](./outcome-metrics.md) | Merge rate, review rounds, CI-heal rate, time to merge and cost per merged pull request per template and repository, computed from run data with failures included — the definitions, the scheduled regeneration, and how an operator publishes their own numbers |
 
 ## Configuration & operations
 
@@ -63,6 +64,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 |-----|--------|
 | [configuration.md](./configuration.md) | Where every knob lives — the environment/integration/registry split, the setting registry and its cascade, who may change what, run pinning |
 | [deployment.md](./deployment.md) | Production runbook — environment, database, Temporal, images, service layout, smoke test, day-2 ops, hardening |
+| [kubernetes-helm.md](./kubernetes-helm.md) | The Helm chart for the gateway, worker and web dashboard — values, secrets, the migration Job, probes, the workspace namespace, and what it does not deploy |
 | [upgrade-notes.md](./upgrade-notes.md) | What an operator does on a deployment that ran earlier code — fixed defects that exposed a credential, keyed by the condition and the fixing commit: who is affected, what was exposed and for how long, what to rotate or purge, how to verify the fix |
 | [user-activity.md](./user-activity.md) | First-party activity events — authenticated denials, sensitive reads and exports, and opt-in page views; what is recorded, retention, and the privacy stance |
 | [audit-log.md](./audit-log.md) | The append-only audit log — what is recorded, the `context` that says how a request arrived (credential path, truncated address, assistant or MCP client), launch and sign-in rows, and privacy |
@@ -70,8 +72,9 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [oauth-setup.md](./oauth-setup.md) | GitHub, Google, and Okta sign-in; magic-link email |
 | [mcp-server.md](./mcp-server.md) | The MCP endpoint — Streamable HTTP transport, how a bearer token is verified on every request, protected resource metadata, the `mcp.*` switches |
 | [local-agents.md](./local-agents.md) | Claude Code CLI/Desktop and Codex setup, delegation skills, OAuth consent, polling and local review |
-| [github-app-setup.md](./github-app-setup.md) | GitHub App creation, permissions, installation, auth modes |
+| [github-app-setup.md](./github-app-setup.md) | GitHub App creation (from a manifest or by hand), permissions, installation, auth modes |
 | [slack-app-setup.md](./slack-app-setup.md) | Slack app manifest import and admin configuration |
+| [live-checks.md](./live-checks.md) | Suites and the scheduled workflow that run the mocked paths against real Temporal, Docker, a model, GitHub, Confluence and pgvector — what each asserts, the secrets and fixture repository they need, cost, and what they do not prove |
 | [packages/cli/README.md](../packages/cli/README.md) | `auto-swe` CLI — work requests, runs, workflow templates, tokens, bundles |
 
 Also here: [`slack-app-manifest.json`](./slack-app-manifest.json).

@@ -1880,6 +1880,42 @@ describe('webhook routes', () => {
       ]);
     });
 
+    // An App has one webhook URL, so its check_run deliveries arrive at /git.
+    it.each(['/api/v1/webhooks/ci', '/api/v1/webhooks/git'])(
+      'records and signals a failing check_run delivered to %s',
+      async (url) => {
+        const body = ciPayload('failure');
+        const res = await inject(url, body, sign(body), { 'x-github-event': 'check_run' });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(res.payload).data).toEqual({
+          conclusion: 'failure',
+          signaled: ['wf-ci-1'],
+        });
+        expect(updateManyCalls).toEqual([
+          {
+            data: { ciStatus: 'FAILED' },
+            where: { ciStatus: 'PENDING', headSha: HEAD_SHA, id: 'pr-row-1' },
+          },
+        ]);
+        expect(signalCalls).toEqual([
+          {
+            args: [{ logsUrl: 'https://github.com/acme/payments-api/runs/1', passed: false }],
+            signalName: 'ciPipelineSignal',
+            workflowId: 'wf-ci-1',
+          },
+        ]);
+      }
+    );
+
+    it('refuses an unsigned check_run at /git before looking at it', async () => {
+      const body = ciPayload('failure');
+      const res = await inject('/api/v1/webhooks/git', body, undefined, {
+        'x-github-event': 'check_run',
+      });
+      expect(res.statusCode).toBe(401);
+      expect(signalCalls).toEqual([]);
+    });
+
     it('is idempotent: a redelivered webhook whose ciStatus is unchanged signals nothing', async () => {
       // count: 0 simulates the PR already sitting at ciStatus=FAILED.
       updateManyResultCounts = [0];

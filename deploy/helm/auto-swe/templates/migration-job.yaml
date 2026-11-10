@@ -1,0 +1,52 @@
+{{- if .Values.migrations.enabled }}
+# `prisma migrate deploy`, run by the gateway image's own entrypoint, before any
+# new pod of this release starts. The entrypoint migrates and then execs its
+# arguments; a no-op `node` makes the Job exit once the migration has applied. A
+# failed or timed-out migration fails the install or upgrade, so no pod of the new
+# version rolls out against a schema it does not expect.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-migrate
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migrations.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrations.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "auto-swe.selectorLabels" (dict "ctx" . "component" "migrate") | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: migrate
+          image: {{ include "auto-swe.image" (dict "ctx" . "component" "gateway") }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # The image's ENTRYPOINT (docker-entrypoint.sh) runs the migration.
+          args: ["node", "-e", "process.exit(0)"]
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "auto-swe.secretName" . }}
+                  key: DATABASE_URL
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.migrations.resources | nindent 12 }}
+{{- end }}

@@ -1,0 +1,39 @@
+{{- include "auto-swe.validate" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "auto-swe.fullname" . }}-config
+  labels:
+    {{- include "auto-swe.labels" . | nindent 4 }}
+data:
+  # Pinned so nothing in extraEnv can switch the images onto in-source dev secrets.
+  NODE_ENV: production
+  TEMPORAL_ADDRESS: {{ .Values.temporal.address | quote }}
+  PUBLIC_URL: {{ .Values.urls.api | trimSuffix "/" | quote }}
+  BETTER_AUTH_URL: {{ .Values.urls.api | trimSuffix "/" | quote }}
+  WEB_URL: {{ .Values.urls.web | trimSuffix "/" | quote }}
+  CORS_ORIGIN: {{ .Values.urls.web | trimSuffix "/" | quote }}
+  DEFAULT_TEAM_SLUG: {{ .Values.config.defaultTeamSlug | quote }}
+  API_INTERNAL_URL: {{ include "auto-swe.gatewayInternalUrl" . | quote }}
+  {{- with .Values.config.otelExporterEndpoint }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.artifacts.s3 }}
+  {{- if .bucket }}
+  ARTIFACT_S3_BUCKET: {{ .bucket | quote }}
+  ARTIFACT_S3_REGION: {{ .region | quote }}
+  ARTIFACT_S3_PREFIX: {{ .prefix | quote }}
+  ARTIFACT_S3_FORCE_PATH_STYLE: {{ .forcePathStyle | toString | quote }}
+  {{- with .endpoint }}
+  ARTIFACT_S3_ENDPOINT: {{ . | quote }}
+  {{- end }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.config.artifacts.fs.existingClaim }}
+  ARTIFACT_FS_DIR: /var/lib/auto-swe/artifacts
+  {{- end }}
+  {{- range $key, $value := .Values.config.extraEnv }}
+  {{- if ne $key "NODE_ENV" }}
+  {{ $key }}: {{ $value | toString | quote }}
+  {{- end }}
+  {{- end }}

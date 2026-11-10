@@ -40,6 +40,9 @@ repository, template, and team slices; inaccessible repository names appear as `
 repository`, and templates hidden by the workflow-template visibility rule appear as `Private
 template`, without dropping their counts.
 
+The [outcome report](./outcome-metrics.md) groups retries of the same ticket into one work item and
+adds merge rate over settled work, review rounds and the cost of work that never merged.
+
 ## Quality
 
 Gate metrics are grouped per `(run, gate)` pair. The first-attempt pass rate is the share of pairs

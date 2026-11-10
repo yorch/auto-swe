@@ -216,6 +216,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/runActiveWorkflows.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/outcomeReport',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/outcomeReport.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/rollupBuiltDays',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/rollupBuiltDays.ts'),
       },
