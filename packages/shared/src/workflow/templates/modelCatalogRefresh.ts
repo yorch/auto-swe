@@ -1,13 +1,7 @@
 import { BUILTIN_MODELS_PATH } from '../../lib/builtinModels.js';
 import { type Node, SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  qualityGate,
-  reviewLoop,
-  terminate,
-} from './authoring/index.js';
+import { prResult, qualityGate, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 type StepNode = Extract<Node, { type: 'step' }>;
 
@@ -81,7 +75,7 @@ export const MODEL_CATALOG_REFRESH_SPEC: WorkflowSpec = {
     'request is still open, opens none. Point it at your auto-swe fork and schedule it.',
   entry: 'setCriteria',
   name: 'model-catalog-refresh',
-  nodes: mergeNodes(
+  ...authored(
     {
       setCriteria: {
         group: 'prepare',
@@ -136,7 +130,7 @@ export const MODEL_CATALOG_REFRESH_SPEC: WorkflowSpec = {
         config: { command: MODEL_CATALOG_REFRESH_TEST_COMMAND },
       },
     },
-    reviewLoop({
+    macro('review', 'reviewLoop@1', {
       approved: 'checkPriceNotes',
       fixConfig: {
         allowedPaths: MODEL_CATALOG_REFRESH_ALLOWED_PATHS,
@@ -185,7 +179,7 @@ export const MODEL_CATALOG_REFRESH_SPEC: WorkflowSpec = {
       },
       terminateOutOfScope: terminate('FAILED', { title: 'Change outside the catalog file' }),
     },
-    openPullRequest({ draft: true, next: 'done' }),
+    macro('pr', 'openPullRequest@1', { draft: true, next: 'done' }),
     {
       done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Draft PR opened' }),
       // No group on the extra terminals: a second terminal in `finish` would split it in two.

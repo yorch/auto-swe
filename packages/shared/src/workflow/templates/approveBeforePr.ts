@@ -1,14 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  ciWaitEntry,
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  qualityGate,
-  terminate,
-  validatePhase,
-  waitForCi,
-} from './authoring/index.js';
+import { ciWaitEntry, prResult, qualityGate, terminate, waitForCi } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Simplest supervised flow: implement → tests → human approve → open PR.
@@ -27,8 +19,8 @@ export const APPROVE_BEFORE_PR_SPEC: WorkflowSpec = {
     'Useful when a person must sign off on every change before reviewers can see it.',
   entry: 'validate',
   name: 'approve-before-pr',
-  nodes: mergeNodes(
-    validatePhase({ next: 'implement', successCriteria: false }),
+  ...authored(
+    macro('validate', 'validatePhase@1', { next: 'implement', successCriteria: false }),
     {
       implement: {
         group: 'implement',
@@ -71,7 +63,7 @@ export const APPROVE_BEFORE_PR_SPEC: WorkflowSpec = {
       terminateRejected: terminate('FAILED', { group: 'approval', title: 'Rejected' }),
       terminateTimedOut: terminate('TIMED_OUT', { group: 'approval', title: 'Approval timed out' }),
     },
-    openPullRequest({ next: ciWaitEntry(), status: 'AWAITING_CI' }),
+    macro('pr', 'openPullRequest@1', { next: ciWaitEntry(), status: 'AWAITING_CI' }),
     // CI is observed, not enforced: both outcomes complete the run.
     waitForCi(),
     {

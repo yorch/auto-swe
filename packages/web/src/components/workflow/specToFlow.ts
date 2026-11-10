@@ -15,6 +15,7 @@ import type { DagNodeData } from './dagNode';
 import type { FoldedGroup } from './foldGroups';
 import { hasDisplayTitle, nodeDisplayName, nodeGroupOf } from './nodeDisplay';
 import { isKnownNodeType } from './nodeTypeTone';
+import { macroLockReason } from './specEdits';
 
 /**
  * How far "fit view" may zoom, for both the initial view and the toolbar's fit
@@ -136,7 +137,7 @@ export function specToFlow(
         : undefined;
       return {
         ariaLabel: [
-          `${card.group} group, ${card.memberIds.length} steps, collapsed`,
+          `${card.title} ${card.kind === 'use' ? 'macro' : 'group'}, ${card.memberIds.length} steps, collapsed`,
           ran !== undefined ? `${ran} ran` : null,
           'press Enter to expand',
         ]
@@ -172,6 +173,9 @@ export function specToFlow(
         status,
         subLabel,
       },
+      // A node of a macro use cannot be deleted on its own (see `specEdits`); without
+      // this React Flow's Delete key would drop it from the canvas but not the spec.
+      ...(opts.editable && macroLockReason(spec, n.id) ? { deletable: false } : {}),
       id: n.id,
       position: { x: n.x, y: n.y },
       type: 'dag',

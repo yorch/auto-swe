@@ -25,7 +25,7 @@ export interface SpecDiff {
   /** Node IDs unchanged across the two specs. */
   unchangedNodes: string[];
   /**
-   * Node IDs whose only difference is `group` / `title` (a human node's `title` is
+   * Node IDs whose only difference is `group` / `title` / `use` (a human node's `title` is
    * content, not presentation). They are neither changed nor unchanged: a spec that
    * merely gained group labels would otherwise report every node as changed and bury
    * the real edits.
@@ -58,7 +58,7 @@ function canonical(value: unknown): string {
 
 /** The node without its presentation-only fields. A human node's `title` stays. */
 function withoutPresentation(node: Node): Node {
-  const { group: _group, ...rest } = node as Node & { group?: unknown };
+  const { group: _group, use: _use, ...rest } = node as Node & { group?: unknown; use?: unknown };
   if (node.type.startsWith('human')) {
     return rest as Node;
   }

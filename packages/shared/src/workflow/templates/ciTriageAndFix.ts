@@ -1,15 +1,7 @@
 import { CI_TRIAGE_DEFAULTS } from '../../lib/ciTrigger.js';
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  ciLoop,
-  ciWaitEntry,
-  mergeNodes,
-  type NodeMap,
-  openPullRequest,
-  prResult,
-  qualityGate,
-  terminate,
-} from './authoring/index.js';
+import { ciLoop, ciWaitEntry, prResult, qualityGate, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /** What every outcome reports: the diagnosis and the run it was made for. */
 const TRIAGE_RESULT = {
@@ -28,7 +20,7 @@ const REFUSE_WORKFLOW_CHANGES = { refuseWorkflowChanges: true } as const;
 
 export { CI_TRIAGE_INPUT_SCHEMA } from '../../lib/ciTrigger.js';
 
-const nodes: NodeMap = mergeNodes(
+const built = authored(
   {
     triage: {
       group: 'triage',
@@ -371,7 +363,7 @@ const nodes: NodeMap = mergeNodes(
   },
   // A draft into the failing branch: a release branch for a push, the author's branch for
   // a pull request. Nothing is pushed to either.
-  openPullRequest({ draft: true, next: 'reportFix', resetCiRetries: true }),
+  macro('pr', 'openPullRequest@1', { draft: true, next: 'reportFix', resetCiRetries: true }),
   {
     reportFix: {
       group: 'pull request',
@@ -392,6 +384,8 @@ const nodes: NodeMap = mergeNodes(
   // Polling as an option: a draft into a feature branch often runs no CI at all
   // (`on.pull_request.branches` names only main), and the poll reports that instead
   // of waiting four hours for a webhook that never comes.
+  // Plain helper, not a `ci` use: the fix step is edited below (`ciFix` config), and a use
+  // whose nodes were edited after expansion would be drift.
   ciLoop({
     // The trigger's option, with the payload contract's default for a hand-started run. The
     // limit is an expression, which `maxVisits` (a constant) cannot hold, so this loop keeps the
@@ -417,6 +411,7 @@ const nodes: NodeMap = mergeNodes(
     }),
   }
 );
+const nodes = built.nodes;
 
 // The CI loop's own fix step refuses workflow changes too…
 const ciFix = nodes.ciFix;
@@ -448,4 +443,5 @@ export const CI_TRIAGE_AND_FIX_SPEC: WorkflowSpec = {
   name: 'ci-triage-and-fix',
   nodes,
   schemaVersion: SPEC_SCHEMA_VERSION,
+  uses: built.uses,
 };

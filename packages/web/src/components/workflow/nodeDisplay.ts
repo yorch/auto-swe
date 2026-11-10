@@ -29,6 +29,12 @@ export function nodeGroupOf(node: SpecNode | undefined): string | undefined {
   return group || undefined;
 }
 
+/** The id of the macro use (the spec's `uses` key) the node was expanded from, if any. */
+export function nodeUseOf(node: SpecNode | undefined): string | undefined {
+  const use = node && typeof node.use === 'string' ? node.use.trim() : '';
+  return use || undefined;
+}
+
 const STOP_STATUS_WORD: Record<string, string> = {
   FAILED: 'FAILED',
   SKIPPED: 'SKIPPED',

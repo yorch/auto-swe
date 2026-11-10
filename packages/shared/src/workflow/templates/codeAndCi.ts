@@ -1,15 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  ciLoop,
-  ciWaitEntry,
-  failureLesson,
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  qualityGate,
-  terminate,
-  validatePhase,
-} from './authoring/index.js';
+import { ciWaitEntry, failureLesson, prResult, qualityGate, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Fully automated fast path: implement → local quality gates → open PR → CI loop.
@@ -22,8 +13,8 @@ export const CODE_AND_CI_SPEC: WorkflowSpec = {
     'and no human approval. Use for low-risk, well-tested codebases.',
   entry: 'validate',
   name: 'code-and-ci',
-  nodes: mergeNodes(
-    validatePhase({ next: 'implement', successCriteria: false }),
+  ...authored(
+    macro('validate', 'validatePhase@1', { next: 'implement', successCriteria: false }),
     {
       implement: {
         group: 'implement',
@@ -38,8 +29,8 @@ export const CODE_AND_CI_SPEC: WorkflowSpec = {
       runTypecheck: qualityGate('runTypecheck', 'runTests', { group: 'verify' }),
       runTests: qualityGate('runTests', 'openPR', { group: 'verify' }),
     },
-    openPullRequest({ next: ciWaitEntry() }),
-    ciLoop({
+    macro('pr', 'openPullRequest@1', { next: ciWaitEntry() }),
+    macro('ci', 'ciLoop@1', {
       exhausted: 'lessonCIFailed',
       fix: { handoff: { repush: 'repushAfterFix' } },
       passed: 'done',

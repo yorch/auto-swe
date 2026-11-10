@@ -37,7 +37,7 @@ export { isValidWaitDuration, waitDurationMs } from './waitDuration.js';
 
 export const SPEC_SCHEMA_VERSION = 1 as const;
 
-const NodeIdSchema = z.string().min(1).max(64);
+export const NodeIdSchema = z.string().min(1).max(64);
 
 /** Terminal statuses a node (or an `onFailure` / `onExhausted` shorthand) may end the run with. */
 const TerminalStatusSchema = z.enum(['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED']);
@@ -103,15 +103,17 @@ const InputMapSchema = z.record(z.string(), BindingSchema);
 
 /**
  * Presentation-only node metadata, shared by every node schema so the 15 of
- * them do not each repeat it. Neither field is read by the interpreter, the
- * worker, the cost estimator or analytics: they exist for the canvas, the
- * outline and the run viewer.
+ * them do not each repeat it. None of these fields is read by the interpreter,
+ * the worker, the cost estimator or analytics: they exist for the canvas, the
+ * outline, the run viewer and authoring tools.
  *
  *   - `group`: a short phase label ("review loop", "CI loop"). Nodes sharing a
  *     label are drawn and listed together, and a view may fold them into one card.
  *   - `title`: a human-readable name shown in place of the node id.
+ *   - `use`: the id of the spec-level `uses` entry (a macro invocation) whose
+ *     expansion produced the node.
  *
- * Both are optional and absent on every spec stored before they existed, so an
+ * All are optional and absent on every spec stored before they existed, so an
  * old spec parses and hashes exactly as it did. The human nodes already carry a
  * REQUIRED `title` (the approver's inbox heading) with its own, longer bound;
  * they take only the group field, and the canvas reads their `title` as the
@@ -128,6 +130,12 @@ const InputMapSchema = z.record(z.string(), BindingSchema);
  */
 export const MAX_NODE_GROUP_LENGTH = 40;
 export const MAX_NODE_TITLE_LENGTH = 80;
+/**
+ * Upper bound on a node's `use` tag, and the shape of a key of the spec's `uses`
+ * map: a letter, then up to 31 letters or digits.
+ */
+export const MAX_USE_ID_LENGTH = 32;
+export const USE_ID_RE = /^[A-Za-z][A-Za-z0-9]{0,31}$/;
 const tolerantLabel = (max: number) =>
   z
     .unknown()
@@ -141,6 +149,11 @@ const tolerantLabel = (max: number) =>
     .optional();
 const NodeGroupFields = {
   group: tolerantLabel(MAX_NODE_GROUP_LENGTH),
+  /**
+   * Presentation-only: the key of the spec's `uses` entry this node was expanded
+   * from (see `macros.ts`). Tolerant like `group`.
+   */
+  use: tolerantLabel(MAX_USE_ID_LENGTH),
   ...NodeFlowFields,
 };
 const NodeMetaFields = {
@@ -164,7 +177,10 @@ export function findInvalidPresentation(raw: unknown): string[] {
       continue;
     }
     const n = node as Record<string, unknown>;
-    const fields: Array<[string, number]> = [['group', MAX_NODE_GROUP_LENGTH]];
+    const fields: Array<[string, number]> = [
+      ['group', MAX_NODE_GROUP_LENGTH],
+      ['use', MAX_USE_ID_LENGTH],
+    ];
     if (typeof n.type !== 'string' || !n.type.startsWith('human')) {
       fields.push(['title', MAX_NODE_TITLE_LENGTH]);
     }
@@ -177,6 +193,8 @@ export function findInvalidPresentation(raw: unknown): string[] {
         issues.push(
           `node '${id}'.${field} must be a non-blank string of at most ${max} characters`
         );
+      } else if (field === 'use' && !USE_ID_RE.test(v)) {
+        issues.push(`node '${id}'.use must be a letter followed by letters or digits (got '${v}')`);
       }
     }
   }
@@ -683,6 +701,38 @@ export type HumanDecisionNode = z.infer<typeof HumanDecisionNodeSchema>;
 export type HumanInputNode = z.infer<typeof HumanInputNodeSchema>;
 export type HumanReviewNode = z.infer<typeof HumanReviewNodeSchema>;
 
+/**
+ * One macro invocation kept beside the flat spec: which versioned macro
+ * (`'ciLoop@1'`) and the JSON arguments it was expanded with. Metadata only —
+ * the flat `nodes` stay the canonical, executed form, and nothing at run time
+ * reads this. `macros.ts` expands, re-expands and checks it.
+ */
+const UseSchema = z.object({
+  args: z.record(z.string(), z.unknown()),
+  macro: z.string(),
+});
+export type MacroUse = z.infer<typeof UseSchema>;
+
+/**
+ * The spec-level `uses` map. OPTIONAL with no default, so a spec without it
+ * parses (and serialises) exactly as before. READING IS TOLERANT, for the same
+ * reason as the node presentation fields: before this field existed an unknown
+ * top-level `uses` key was stripped, and a bundle installs its spec raw, so a
+ * value that is not a map of `{ macro, args }` degrades to absent instead of
+ * failing the parse. Keys are not checked here: `findUseProblems` reports a key
+ * that is not a valid use id, along with every other authoring problem.
+ */
+const UsesSchema = z
+  .unknown()
+  .transform((v): Record<string, MacroUse> | undefined => {
+    if (v === undefined) {
+      return undefined;
+    }
+    const parsed = z.record(z.string(), UseSchema).safeParse(v);
+    return parsed.success ? parsed.data : undefined;
+  })
+  .optional();
+
 export const WorkflowSpecSchema = z
   .object({
     description: z.string().max(2000).default(''),
@@ -690,6 +740,7 @@ export const WorkflowSpecSchema = z
     name: z.string().min(1).max(120),
     nodes: z.record(NodeIdSchema, NodeSchema),
     schemaVersion: z.literal(SPEC_SCHEMA_VERSION),
+    uses: UsesSchema,
   })
   .superRefine((spec, ctx) => {
     if (!spec.nodes[spec.entry]) {

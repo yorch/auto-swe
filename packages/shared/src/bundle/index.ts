@@ -20,6 +20,7 @@ import { SCANNER_PATTERN_TYPES } from '../lib/scannerPatternTypes.js';
 import { stableStringify } from '../lib/stableJson.js';
 import { IMPLEMENTER_RUNTIMES, REASONING_LEVELS, runtimeModelError } from '../types/api.js';
 import { collectShellNodes } from '../workflow/containerCode.js';
+import { MacroUseError, materializeUses } from '../workflow/macros.js';
 import { isShellImageAllowed } from '../workflow/shellImageAllowlist.js';
 import { type WorkflowSpec, WorkflowSpecSchema } from '../workflow/spec.js';
 import { formatValidationIssue, validateSpec } from '../workflow/validateSpec.js';
@@ -115,6 +116,25 @@ export const BundleScannerPatternSchema = z.object({
   type: z.enum(SCANNER_PATTERN_TYPES),
 });
 
+/**
+ * A bundle template's spec with any `uses` expanded into flat nodes, or the
+ * message of the {@link MacroUseError} that stopped it. The manifest keeps the
+ * authored spec (it is inside the content hash and the signature); everything
+ * that checks or installs a template reads this flat form.
+ */
+export function materializeBundleSpec(
+  raw: unknown
+): { ok: true; spec: unknown } | { ok: false; message: string } {
+  try {
+    return { ok: true, spec: materializeUses(raw) };
+  } catch (err) {
+    if (err instanceof MacroUseError) {
+      return { message: err.message, ok: false };
+    }
+    throw err;
+  }
+}
+
 export const BundleTemplateSchema = z.object({
   description: z.string().optional(),
   /**
@@ -148,7 +168,12 @@ export const BundleTemplateSchema = z.object({
    * rather than discovered by the first run that tries to load it.
    */
   spec: z.unknown().superRefine((v, ctx) => {
-    const parsed = WorkflowSpecSchema.safeParse(v);
+    const materialized = materializeBundleSpec(v);
+    if (!materialized.ok) {
+      ctx.addIssue({ code: 'custom', message: materialized.message, path: [] });
+      return;
+    }
+    const parsed = WorkflowSpecSchema.safeParse(materialized.spec);
     if (!parsed.success) {
       for (const issue of parsed.error.issues) {
         ctx.addIssue({ code: 'custom', message: issue.message, path: issue.path });
@@ -467,8 +492,9 @@ export function bundleAgentRuntimeWarnings(manifest: BundleManifest): string[] {
  */
 export function bundleContainerImageWarnings(manifest: BundleManifest): string[] {
   return manifest.entities.templates.flatMap((t) => {
-    const parsed = WorkflowSpecSchema.safeParse(t.spec);
-    if (!parsed.success) {
+    const materialized = materializeBundleSpec(t.spec);
+    const parsed = materialized.ok ? WorkflowSpecSchema.safeParse(materialized.spec) : null;
+    if (!parsed?.success) {
       return []; // validateBundleTemplates reports it
     }
     return collectShellNodes(parsed.data as WorkflowSpec)
@@ -507,7 +533,12 @@ export function validateBundleTemplates(manifest: BundleManifest): string[] {
       );
       continue;
     }
-    const parsed = WorkflowSpecSchema.safeParse(t.spec);
+    const materialized = materializeBundleSpec(t.spec);
+    if (!materialized.ok) {
+      errors.push(`template '${t.name}': ${materialized.message}`);
+      continue;
+    }
+    const parsed = WorkflowSpecSchema.safeParse(materialized.spec);
     if (!parsed.success) {
       errors.push(
         `template '${t.name}': ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`

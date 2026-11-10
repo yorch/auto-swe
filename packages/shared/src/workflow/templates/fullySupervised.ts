@@ -1,5 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { mergeNodes, openPullRequest, prResult, terminate } from './authoring/index.js';
+import { prResult, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Kitchen-sink supervised flow: all four HITL node types chained.
@@ -18,7 +19,7 @@ export const FULLY_SUPERVISED_SPEC: WorkflowSpec = {
     'appears in sequence, so it doubles as a tour of what a person can be asked to do.',
   entry: 'gatherContext',
   name: 'fully-supervised',
-  nodes: mergeNodes(
+  ...authored(
     {
       gatherContext: {
         description:
@@ -134,7 +135,7 @@ export const FULLY_SUPERVISED_SPEC: WorkflowSpec = {
       terminateRejected: terminate('FAILED', { group: 'approval', title: 'Rejected' }),
       terminateTimedOut: terminate('TIMED_OUT', { group: 'approval', title: 'Approval timed out' }),
     },
-    openPullRequest({ next: 'done' }),
+    macro('pr', 'openPullRequest@1', { next: 'done' }),
     {
       done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
     }
