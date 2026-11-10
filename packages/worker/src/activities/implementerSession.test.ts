@@ -61,6 +61,10 @@ const execMock = vi.fn(async (cmd: string, _options?: { timeoutMs?: number }) =>
   if (cmd.includes('merge-base --is-ancestor')) {
     return 'rc=0\n';
   }
+  if (cmd.includes('refs/remotes/origin/')) {
+    // The resume rebase reads the fetched remote ref fully qualified and wants a full id.
+    return `${'a'.repeat(40)}\n`;
+  }
   if (cmd.includes('rev-parse')) {
     return 'abc123\n';
   }
@@ -980,7 +984,10 @@ describe('runImplementerFixSession ask and resume', () => {
       resumeInput: resumeInputFor(surface()),
     });
     const all = commands();
-    const rebase = all.findIndex((c) => c.includes('rebase') && c.includes("'origin/auto/T-1'"));
+    // Rebased onto the commit id of the fetched ref, never onto a name the agent could shadow.
+    const rebase = all.findIndex(
+      (c) => c.includes('rebase') && c.includes('1234567890123456789012345678901234567890')
+    );
     const push = all.findIndex((c) => c.includes('push origin'));
     expect(rebase).toBeGreaterThan(-1);
     expect(push).toBeGreaterThan(rebase);
