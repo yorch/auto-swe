@@ -140,6 +140,7 @@ export const SIDEBAR = [
       'docs/work-views',
       'docs/teams',
       'docs/reporting',
+      'docs/outcome-metrics',
       'docs/bundles',
       'docs/qodo',
       'docs/transcripts',

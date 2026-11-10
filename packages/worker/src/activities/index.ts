@@ -137,6 +137,8 @@ export { explainWorkflowSpec } from './explainWorkflowSpec.js';
 export type { FlagOrgSignalsInput, FlagOrgSignalsResult } from './flagOrgSignals.js';
 export { flagOrgSignals } from './flagOrgSignals.js';
 export { gatherTicketContext } from './gatherTicketContext.js';
+export type { GenerateOutcomeReportResult } from './generateOutcomeReport.js';
+export { generateOutcomeReport } from './generateOutcomeReport.js';
 // Natural-language workflow authoring (generate a WorkflowSpec from a description)
 export type {
   GenerateWorkflowSpecInput,

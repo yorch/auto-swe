@@ -82,6 +82,22 @@ export {
   runSpec,
 } from './interpreter.js';
 export type {
+  OutcomeGroupMetrics,
+  OutcomePullRequest,
+  OutcomeRepoRow,
+  OutcomeReport,
+  OutcomeRun,
+  OutcomeStep,
+  OutcomeTemplateRow,
+  WorkItemState,
+} from './outcomeMetrics.js';
+export {
+  computeOutcomeReport,
+  OUTCOME_METRICS_METHOD_VERSION,
+  renderOutcomeReportMarkdown,
+  workItemKeyFor,
+} from './outcomeMetrics.js';
+export type {
   BuiltinStepName,
   StepCategory,
   StepFieldDef,

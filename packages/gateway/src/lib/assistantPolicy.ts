@@ -195,6 +195,8 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/reports/budget': 'read',
   'GET /api/v1/reports/delivery': 'read',
   'GET /api/v1/reports/hitl': 'read',
+  'GET /api/v1/reports/outcomes': 'read',
+  'GET /api/v1/reports/outcomes/latest': 'read',
   'GET /api/v1/reports/quality': 'read',
   'GET /api/v1/repositories': 'read',
   'GET /api/v1/repositories/:id/dependencies': 'read',

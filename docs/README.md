@@ -56,6 +56,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [work-views.md](./work-views.md) | The pull-request and ticket views — the recorded PR lifecycle and its webhook events, the two list APIs, and how visibility is applied to every row and aggregate |
 | [teams.md](./teams.md) | The personal desk — a person's teams and what is waiting on them across all of them, who sees what, and how its counts agree with the lists behind them |
 | [reporting.md](./reporting.md) | Delivery, quality, budget, automation, and approval reports — cohorts, calculations, bounds, and limitations |
+| [outcome-metrics.md](./outcome-metrics.md) | Merge rate, review rounds, CI-heal rate, time to merge and cost per merged pull request per template and repository, computed from run data with failures included — the definitions, the scheduled regeneration, and how an operator publishes their own numbers |
 
 ## Configuration & operations
 
