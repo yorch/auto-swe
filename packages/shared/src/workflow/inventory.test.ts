@@ -49,7 +49,13 @@ function schemaEdges(type: NodeType): string[] {
   const out: string[] = [];
   const walk = (schema: z.ZodType, at: string, optional: boolean): void => {
     const { inner, optional: opt } = unwrap(schema);
-    if (inner === NODE_ID_SCHEMA) {
+    // A route target is the node-id schema or a union of it with a terminal shorthand object
+    // (`onFailure`, `onExhausted`); only the node-id arm is an edge.
+    const isRoute =
+      inner === NODE_ID_SCHEMA ||
+      (inner instanceof z.ZodUnion &&
+        (inner.options as z.ZodType[]).some((o) => o === NODE_ID_SCHEMA));
+    if (isRoute) {
       out.push(`${at}${optional || opt ? '?' : ''}`);
     } else if (inner instanceof z.ZodArray) {
       walk(inner.element as z.ZodType, `${at}[]`, false);
@@ -116,9 +122,9 @@ describe('workflow inventory', () => {
         }
       }
     }
-    expect(edgeFields('terminate')).toEqual([]);
-    expect(edgeFields('humanDecision')).toEqual(['onTimeout', 'options[].next']);
-    expect(edgeFields('step')).toEqual(['next?']);
+    expect(edgeFields('terminate')).toEqual(['onExhausted?']);
+    expect(edgeFields('humanDecision')).toEqual(['onExhausted?', 'onTimeout', 'options[].next']);
+    expect(edgeFields('step')).toEqual(['next?', 'onExhausted?', 'onFailure?']);
   });
 
   it('maps each executor step back to the node type it backs', () => {

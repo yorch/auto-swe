@@ -3,14 +3,14 @@ import { ticketToMergeNodes } from './ticketToMerge.js';
 
 describe('ticket-to-merge UI verification', () => {
   it('runs uiVerify after implementation and warns on failed verification', () => {
-    const nodes = ticketToMergeNodes('setAwaitingHumanMerge', { uiVerify: true });
+    const nodes = ticketToMergeNodes('waitForHumanMerge', { uiVerify: true });
 
     expect(nodes.implement).toMatchObject({
       next: 'uiVerify',
       step: 'executeImplementation',
     });
     expect(nodes.uiVerify).toMatchObject({
-      next: 'initCounters',
+      next: 'clearCiResult',
       onFail: 'warn',
       step: 'uiVerify',
       type: 'step',
@@ -19,7 +19,7 @@ describe('ticket-to-merge UI verification', () => {
 
   it('leaves callers that do not opt in unchanged', () => {
     expect(ticketToMergeNodes('qodoReview').implement).toMatchObject({
-      next: 'initCounters',
+      next: 'clearCiResult',
     });
   });
 });

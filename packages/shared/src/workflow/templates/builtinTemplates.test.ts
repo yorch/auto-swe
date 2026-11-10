@@ -34,9 +34,10 @@ describe.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const))(
     it('does not stamp COMPLETED itself: the finalizer writes it when the run ends SUCCESS', () => {
       for (const [id, node] of Object.entries(spec.nodes)) {
         const stampsCompleted =
-          node.type === 'step' &&
-          node.step === 'updateDomainState' &&
-          node.config?.status === 'COMPLETED';
+          node.status === 'COMPLETED' ||
+          (node.type === 'step' &&
+            node.step === 'updateDomainState' &&
+            node.config?.status === 'COMPLETED');
         expect(stampsCompleted, id).toBe(false);
       }
     });

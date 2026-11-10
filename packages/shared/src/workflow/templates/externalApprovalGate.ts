@@ -2,13 +2,11 @@ import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   ciLoop,
   ciWaitEntry,
-  initCounters,
   mergeNodes,
   openPullRequest,
   prResult,
   reviewLoop,
   signalGate,
-  statusStamp,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -24,26 +22,23 @@ export const EXTERNAL_APPROVAL_GATE_SPEC: WorkflowSpec = {
     'Implement, have the review agents check it, open a pull request and wait for CI. Then ' +
     'pause until an external system (a deploy pipeline or change-management board) sends ' +
     'its decision. An approval lets the run finish; a rejection or a timeout ends it.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'external-approval-gate',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing' }),
+    validatePhase({ next: 'implement' }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'initCounters',
+        next: 'review',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
       },
-      initCounters: initCounters('setReviewing', { group: 'implement' }),
     },
-    reviewLoop({ approved: 'setAwaitingCi' }),
-    {
-      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
-    },
-    openPullRequest({ next: ciWaitEntry() }),
+    reviewLoop({ approved: 'openPR' }),
+    openPullRequest({ next: ciWaitEntry(), status: 'AWAITING_CI' }),
     ciLoop({
       fix: { handoff: { repush: 'repushAfterCIFix' } },
       passed: 'waitForDeployGate',

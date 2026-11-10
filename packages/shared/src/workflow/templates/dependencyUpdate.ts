@@ -7,8 +7,6 @@ import {
   openPullRequest,
   prResult,
   qualityGate,
-  statusStamp,
-  storeCodeResult,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -23,24 +21,23 @@ export const DEPENDENCY_UPDATE_SPEC: WorkflowSpec = {
     'Implement the dependency update, run the full test suite, open a pull request, then ' +
     'fix CI failures from the logs and push, up to 3 times. Skips the agent review: tests ' +
     'and CI are the quality gate for mechanical dependency bumps.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'dependency-update',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing', successCriteria: false }),
+    validatePhase({ next: 'implement', successCriteria: false }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'storeCodeResult',
+        next: 'runTests',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
       },
-      storeCodeResult: storeCodeResult('runTests', { group: 'implement' }),
       runTests: qualityGate('runTests', 'openPR', { group: 'verify' }),
     },
-    // This template has no initCounters, so recording the PR also zeroes the CI counter.
-    openPullRequest({ next: ciWaitEntry(), resetCiRetries: true }),
+    openPullRequest({ next: ciWaitEntry() }),
     ciLoop({
       exhausted: 'lessonCIFailed',
       fix: { handoff: { repush: 'repushAfterFix' } },

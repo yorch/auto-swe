@@ -1,12 +1,10 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   ciWaitEntry,
-  initCounters,
   mergeNodes,
   openPullRequest,
   prResult,
   qualityGate,
-  statusStamp,
   terminate,
   validatePhase,
   waitForCi,
@@ -27,77 +25,53 @@ export const APPROVE_BEFORE_PR_SPEC: WorkflowSpec = {
     'opened. Requesting changes — with a required note — sends the code back for a fix that ' +
     'is tested and approved again (a third change request fails the run); rejecting stops it. ' +
     'Useful when a person must sign off on every change before reviewers can see it.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'approve-before-pr',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing', successCriteria: false }),
+    validatePhase({ next: 'implement', successCriteria: false }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'initCounters',
+        next: 'runTests',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
       },
-      initCounters: initCounters('runTests', {
-        ci: false,
-        counters: ['context.approvalRetries'],
-        group: 'implement',
-        review: false,
-      }),
       runTests: qualityGate('runTests', 'approve', { group: 'verify' }),
       approve: {
         description:
           'Tests passed. Approve to open the PR, request changes (with a note) to send it ' +
           'back for a fix, or reject to discard.',
         group: 'approval',
-        onApprove: 'setAwaitingCi',
+        onApprove: 'openPR',
         onReject: 'terminateRejected',
-        onRequestChanges: 'incApprovalRetries',
+        onRequestChanges: 'approvalFix',
         onTimeout: 'terminateTimedOut',
         timeout: '24h',
         title: 'Approve implementation before opening PR',
         type: 'humanApproval',
       },
-      incApprovalRetries: {
-        group: 'approval',
-        next: 'checkApprovalLimit',
-        title: 'Count the change request',
-        type: 'set',
-        values: { 'context.approvalRetries': { expr: 'context.approvalRetries + 1' } },
-      },
-      checkApprovalLimit: {
-        expr: 'context.approvalRetries >= 3',
-        group: 'approval',
-        onFalse: 'approvalFix',
-        onTrue: 'terminateRejected',
-        title: 'Out of attempts?',
-        type: 'cond',
-      },
+      // The third change request fails the run: the fixer is entered twice at most.
       approvalFix: {
         group: 'approval',
         inputs: {
           previousCodeResult: { from: 'context.currentCodeResult' },
           rejectionSummary: { from: 'nodes.approve.output.comment' },
         },
-        next: 'updateCodeAfterApprovalFix',
+        maxVisits: 2,
+        next: 'runTests',
+        onExhausted: 'terminateRejected',
         step: 'executeReviewFixImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Fix the change the approver sent back',
         type: 'step',
       },
-      updateCodeAfterApprovalFix: {
-        group: 'approval',
-        next: 'runTests',
-        title: 'Keep the fixed code',
-        type: 'set',
-        values: { 'context.currentCodeResult': { from: 'nodes.approvalFix.output' } },
-      },
       terminateRejected: terminate('FAILED', { group: 'approval', title: 'Rejected' }),
       terminateTimedOut: terminate('TIMED_OUT', { group: 'approval', title: 'Approval timed out' }),
-      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
     },
-    openPullRequest({ next: ciWaitEntry() }),
+    openPullRequest({ next: ciWaitEntry(), status: 'AWAITING_CI' }),
     // CI is observed, not enforced: both outcomes complete the run.
     waitForCi(),
     {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PR_FEEDBACK_TEMPLATE_NAME } from '../../lib/prFeedback.js';
 import { type Dispatcher, runSpec } from '../interpreter.js';
-import type { Node } from '../spec.js';
+import { type Node, nodeEdges } from '../spec.js';
 import { validateSpec } from '../validateSpec.js';
 import { ADDRESS_PR_FEEDBACK_SPEC } from './addressPrFeedback.js';
 import { BUILTIN_TEMPLATES } from './index.js';
@@ -48,9 +48,8 @@ describe('address-pr-feedback', () => {
     while (queue.length > 0) {
       const id = queue.pop() as string;
       const node = ADDRESS_PR_FEEDBACK_SPEC.nodes[id];
-      for (const next of ['next', 'onTrue', 'onFalse']) {
-        const target = (node as Record<string, unknown>)[next];
-        if (typeof target === 'string' && !reachable.has(target)) {
+      for (const [, target] of nodeEdges(node)) {
+        if (!reachable.has(target)) {
           reachable.add(target);
           queue.push(target);
         }
@@ -68,12 +67,7 @@ describe('address-pr-feedback', () => {
       }
       seen.add(id);
       const node = ADDRESS_PR_FEEDBACK_SPEC.nodes[id];
-      const ok =
-        node.type === 'terminate' ||
-        ['next', 'onTrue', 'onFalse']
-          .map((k) => (node as Record<string, unknown>)[k])
-          .filter((t): t is string => typeof t === 'string')
-          .some((t) => ends(t, seen));
+      const ok = node.type === 'terminate' || nodeEdges(node).some(([, t]) => ends(t, seen));
       memo.set(id, ok);
       return ok;
     };
@@ -111,6 +105,11 @@ describe('address-pr-feedback', () => {
     expect(dispatched).toEqual(['gatherPrFeedback', 'respondToPrFeedback']);
   });
 });
+
+/** A step that throws, as a failed activity does. */
+const THROWS = (): never => {
+  throw new Error('boom');
+};
 
 const GATHER_FIX = {
   decision: 'fix',
@@ -170,11 +169,11 @@ describe('address-pr-feedback — paths after gather', () => {
   it('every terminal path after the work branch exists goes through finishPrFeedbackPush', async () => {
     for (const [name, overrides] of [
       ['push refused', { pushPrFeedbackToPullRequest: { pushed: false, reason: 'x' } }],
-      ['push threw', { pushPrFeedbackToPullRequest: null }],
-      ['fix failed', { executePrFeedbackImplementation: null }],
+      ['push threw', { pushPrFeedbackToPullRequest: THROWS }],
+      ['fix failed', { executePrFeedbackImplementation: THROWS }],
       ['no change', { executePrFeedbackImplementation: { ...CODE_RESULT, filesChanged: [] } }],
       ['pushed, CI passed', {}],
-      ['pushed, CI unreadable', { waitForCiByPolling: null }],
+      ['pushed, CI unreadable', { waitForCiByPolling: THROWS }],
     ] as const) {
       const { dispatched } = await walk(overrides);
       expect(
@@ -188,7 +187,7 @@ describe('address-pr-feedback — paths after gather', () => {
     const { dispatched, result } = await walk({
       pushPrFeedbackToPullRequest: { commitSha: 'c'.repeat(40), pushed: true },
       respondToPrFeedback: { commented: true, verdict: { summary: 's', threads: [] } },
-      waitForCiByPolling: null,
+      waitForCiByPolling: THROWS,
     });
     expect(result.status).toBe('SUCCESS');
     const responds = dispatched.filter((d) => d.step === 'respondToPrFeedback');
@@ -198,7 +197,7 @@ describe('address-pr-feedback — paths after gather', () => {
   it('a thrown push replies a fixed reason and cleans up', async () => {
     const seen: { skipReason?: unknown }[] = [];
     const { dispatched, result } = await walk({
-      pushPrFeedbackToPullRequest: null,
+      pushPrFeedbackToPullRequest: THROWS,
       respondToPrFeedback: (i: { skipReason?: string }) => {
         seen.push({ skipReason: i.skipReason });
         return { commented: true };

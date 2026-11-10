@@ -387,6 +387,17 @@ Reading is tolerant by design: a stored or bundle-installed spec may carry a `ti
 shape, because before these fields existed such a key was ignored. A bad value therefore drops that
 field and nothing else, and never fails run creation or hides a run's graph.
 
+#### Plumbing fields: `storeAs`, `onFailure`, `status`, `maxVisits`
+
+Four optional fields let a node do the bookkeeping that used to take a node of its own. `storeAs`
+copies a dispatch node's output to a context path; `onFailure` routes a node that has finally failed
+(thrown error or failed gate, after any `onFail` retry) to a node or ends the run with a status;
+`status` sets the domain status on entering any node, before it dispatches; and `maxVisits` with
+`onExhausted` sends the entry past the limit elsewhere, counting at `nodes.<id>.visits`. The
+interpreter owns all four, so they are workflow state and replay the same way. Cost estimation reads
+`onFailure` and `onExhausted` node ids as the dearer alternative to `next`. Semantics and
+gotchas are in [workflow-nodes.md §8](./workflow-nodes.md#8-plumbing-fields).
+
 #### Reading a large graph
 
 The same spec is shown three ways, none of which changes it:
@@ -1365,6 +1376,9 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
+- **A node's `status` field writes the live domain status only**, as a free-form string; it does not
+  update the pinned run record. The `onFailure` / `onExhausted` terminal shorthand cannot end a run
+  `CANCELLED`.
 - **Historical PRs without a repository-matched active workflow and run remain unattributed.**
   Historical human-step and approval rows do not have a resolution source and remain null.
 - **The input cap bounds dollar-equivalent input tokens, not dollars.** Output tokens have their own

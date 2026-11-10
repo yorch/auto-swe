@@ -23,7 +23,9 @@ export type EdgeKind =
   | 'onApprove'
   | 'onReject'
   | 'onRequestChanges'
-  | 'onSubmit';
+  | 'onSubmit'
+  | 'onFailure'
+  | 'onExhausted';
 
 export interface LayoutEdge {
   from: string;

@@ -1,0 +1,291 @@
+{
+  "description": "Implement, have the review agents check it (up to 3 attempts), open a pull request and wait for CI. Then pause until an external system confirms the staging deploy, and again until it confirms production monitoring is healthy. Models a canary or release-train pipeline where each promotion stage must be confirmed before the next one starts.",
+  "entry": "validate",
+  "name": "staged-deploy-signals",
+  "nodes": {
+    "checkApproval": {
+      "expr": "nodes.review.output.approved == true",
+      "onFalse": "storeRejection",
+      "onTrue": "forgetRejection",
+      "type": "cond"
+    },
+    "checkCI": {
+      "expr": "context.ciResultPayload.passed == true",
+      "onFalse": "fetchLogs",
+      "onTrue": "waitForStaging",
+      "type": "cond"
+    },
+    "checkMonitoring": {
+      "expr": "context.monitorPayload.healthy == true",
+      "onFalse": "terminateRollbackRequired",
+      "onTrue": "done",
+      "type": "cond"
+    },
+    "checkStaging": {
+      "expr": "context.stagingPayload.deployed == true",
+      "onFalse": "terminateStagingFailed",
+      "onTrue": "waitForMonitoring",
+      "type": "cond"
+    },
+    "checkStalled": {
+      "expr": "nodes.review.output.stalled == true",
+      "onFalse": "reviewFix",
+      "onTrue": "terminateReviewFailed",
+      "type": "cond"
+    },
+    "ciFix": {
+      "inputs": {
+        "failureContext": {
+          "from": "context.lastCILogs"
+        },
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "repushAfterCIFix",
+      "step": "executeCIFixImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "done": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "fetchLogs": {
+      "inputs": {
+        "logsUrl": {
+          "from": "context.ciResultPayload.logsUrl"
+        }
+      },
+      "maxVisits": 2,
+      "next": "ciFix",
+      "onExhausted": "terminateCIFailed",
+      "step": "fetchCILogs",
+      "storeAs": "context.lastCILogs",
+      "type": "step"
+    },
+    "forgetRejection": {
+      "next": "openPR",
+      "type": "set",
+      "values": {
+        "context.lastReviewFingerprint": {
+          "literal": ""
+        }
+      }
+    },
+    "implement": {
+      "next": "review",
+      "status": "IMPLEMENTING",
+      "step": "executeImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "openPR": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "savePrInfo",
+      "status": "AWAITING_CI",
+      "step": "createOrUpdatePullRequest",
+      "type": "step"
+    },
+    "repushAfterCIFix": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "waitForCI",
+      "step": "createOrUpdatePullRequest",
+      "type": "step"
+    },
+    "review": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "previousFingerprint": {
+          "default": "",
+          "from": "context.lastReviewFingerprint"
+        },
+        "successCriteria": {
+          "from": "context.successCriteria"
+        }
+      },
+      "next": "checkApproval",
+      "status": "IN_REVIEW",
+      "step": "runReviewNetwork",
+      "type": "step"
+    },
+    "reviewFix": {
+      "inputs": {
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "rejectionSummary": {
+          "from": "context.lastRejectionSummary"
+        }
+      },
+      "maxVisits": 2,
+      "next": "review",
+      "onExhausted": "terminateReviewFailed",
+      "step": "executeReviewFixImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "savePrInfo": {
+      "next": "waitForCI",
+      "type": "set",
+      "values": {
+        "context.prNumber": {
+          "from": "nodes.openPR.output.prNumber"
+        },
+        "context.prUrl": {
+          "from": "nodes.openPR.output.prUrl"
+        }
+      }
+    },
+    "setSuccessCriteria": {
+      "next": "implement",
+      "type": "set",
+      "values": {
+        "context.successCriteria": {
+          "default": [],
+          "from": "nodes.validate.output.successCriteria"
+        }
+      }
+    },
+    "storeRejection": {
+      "next": "checkStalled",
+      "type": "set",
+      "values": {
+        "context.lastRejectionSummary": {
+          "default": "",
+          "from": "nodes.review.output.rejectionSummary"
+        },
+        "context.lastReviewFingerprint": {
+          "default": "",
+          "from": "nodes.review.output.rejectionFingerprint"
+        }
+      }
+    },
+    "terminateCIFailed": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "terminateCITimedOut": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "TIMED_OUT",
+      "type": "terminate"
+    },
+    "terminateMonitorTimedOut": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "TIMED_OUT",
+      "type": "terminate"
+    },
+    "terminateReviewFailed": {
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "terminateRollbackRequired": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "terminateStagingFailed": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "terminateStagingTimedOut": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "TIMED_OUT",
+      "type": "terminate"
+    },
+    "validate": {
+      "next": "setSuccessCriteria",
+      "onError": "continue",
+      "status": "VALIDATING_CONTEXT",
+      "step": "validateContext",
+      "type": "step"
+    },
+    "waitForCI": {
+      "name": "ciPipelineSignal",
+      "onReceive": "checkCI",
+      "onTimeout": "terminateCITimedOut",
+      "storeAs": "context.ciResultPayload",
+      "timeout": "4h",
+      "type": "signal"
+    },
+    "waitForMonitoring": {
+      "name": "productionMonitorSignal",
+      "onReceive": "checkMonitoring",
+      "onTimeout": "terminateMonitorTimedOut",
+      "storeAs": "context.monitorPayload",
+      "timeout": "2h",
+      "type": "signal"
+    },
+    "waitForStaging": {
+      "name": "stagingDeploySignal",
+      "onReceive": "checkStaging",
+      "onTimeout": "terminateStagingTimedOut",
+      "storeAs": "context.stagingPayload",
+      "timeout": "1h",
+      "type": "signal"
+    }
+  },
+  "schemaVersion": 1
+}

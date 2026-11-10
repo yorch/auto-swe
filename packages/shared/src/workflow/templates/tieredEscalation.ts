@@ -3,8 +3,6 @@ import {
   mergeNodes,
   openPullRequest,
   prResult,
-  statusStamp,
-  storeCodeResult,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -17,20 +15,20 @@ export const TIERED_ESCALATION_SPEC: WorkflowSpec = {
     "After implementation, a person rates the change's risk (low, medium or high). Low-risk " +
     'changes go straight to a pull request, medium-risk ones need senior sign-off, and ' +
     'high-risk ones need team-lead approval within 48 hours.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'tiered-escalation',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing', successCriteria: false }),
+    validatePhase({ next: 'implement', successCriteria: false }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'storeCodeResult',
+        next: 'riskDecision',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
       },
-      storeCodeResult: storeCodeResult('riskDecision', { group: 'implement' }),
       riskDecision: {
         description: 'This helps route the change to the right approval chain.',
         group: 'approval',

@@ -4,8 +4,6 @@ import {
   openPullRequest,
   prResult,
   qualityGate,
-  statusStamp,
-  storeCodeResult,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -18,20 +16,20 @@ export const SECURITY_TRIAGE_SPEC: WorkflowSpec = {
     'Implement, run a vulnerability scan, then ask a person how to proceed. Three choices: ' +
     'fix the issues now, accept the risk and open the pull request anyway, or abandon the ' +
     'change.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'security-triage',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing', successCriteria: false }),
+    validatePhase({ next: 'implement', successCriteria: false }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'storeCodeResult',
+        next: 'vulnScan',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
       },
-      storeCodeResult: storeCodeResult('vulnScan', { group: 'implement' }),
       vulnScan: qualityGate('runVulnScan', 'securityDecision', { group: 'security triage' }),
       securityDecision: {
         description: 'Vulnerability scan complete. Choose how to proceed.',
@@ -54,17 +52,11 @@ export const SECURITY_TRIAGE_SPEC: WorkflowSpec = {
           gateOutput: { from: 'nodes.vulnScan.output' },
           previousCodeResult: { from: 'context.currentCodeResult' },
         },
-        next: 'updateCodeAfterFix',
+        next: 'openPR',
         step: 'executeGateFixImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Fix the vulnerabilities',
         type: 'step',
-      },
-      updateCodeAfterFix: {
-        group: 'security triage',
-        next: 'openPR',
-        title: 'Keep the fixed code',
-        type: 'set',
-        values: { 'context.currentCodeResult': { from: 'nodes.fixVulns.output' } },
       },
       terminateAbandoned: terminate('FAILED', { group: 'security triage', title: 'Abandoned' }),
     },

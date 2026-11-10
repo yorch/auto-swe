@@ -27,6 +27,8 @@ export const FIT_VIEW_OPTIONS = { maxZoom: 1.2, minZoom: 0.8, padding: 0.18 };
 
 const EDGE_LABEL: Partial<Record<EdgeKind, string>> = {
   onApprove: 'approve',
+  onExhausted: 'out of attempts',
+  onFailure: 'on failure',
   onFalse: 'false',
   onReceive: 'signal',
   onReject: 'reject',
@@ -44,6 +46,8 @@ function edgeStroke(t: Tokens): Record<EdgeKind, string> {
     join: t.accent400,
     next: t.paper400,
     onApprove: t.success400,
+    onExhausted: t.warning400,
+    onFailure: t.danger400,
     onFalse: t.danger400,
     onReceive: t.info400,
     onReject: t.danger400,
@@ -177,6 +181,8 @@ export function specToFlow(
   const edges: RFEdge[] = layout.edges.map((e) => {
     const color = strokes[e.kind];
     const dashed = opts.diffMarkers?.[e.from] === 'removed';
+    // Failure and loop-bound routes are exceptional paths: always dashed.
+    const exceptional = e.kind === 'onFailure' || e.kind === 'onExhausted';
     const label = EDGE_LABEL[e.kind];
     return {
       animated: opts.statuses?.byNodeId[e.from]?.status === 'RUNNING',
@@ -202,7 +208,7 @@ export function specToFlow(
       sourceHandle: e.port,
       style: {
         stroke: color,
-        strokeDasharray: dashed ? '4 4' : undefined,
+        strokeDasharray: dashed ? '4 4' : exceptional ? '6 3' : undefined,
         strokeWidth: 1.5,
       },
       target: e.to,

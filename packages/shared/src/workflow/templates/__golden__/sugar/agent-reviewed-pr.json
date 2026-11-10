@@ -1,0 +1,237 @@
+{
+  "description": "Implement the change, have the review agents check it (up to 3 attempts), open a pull request, then wait for CI. No human approval steps, and it never merges: the run ends when CI is green and the pull request waits for a person. Use this when the agent review is a sufficient quality gate before a pull request.",
+  "entry": "validate",
+  "name": "agent-reviewed-pr",
+  "nodes": {
+    "checkApproval": {
+      "expr": "nodes.review.output.approved == true",
+      "onFalse": "storeRejection",
+      "onTrue": "forgetRejection",
+      "type": "cond"
+    },
+    "checkCI": {
+      "expr": "context.ciResultPayload.passed == true",
+      "onFalse": "fetchLogs",
+      "onTrue": "done",
+      "type": "cond"
+    },
+    "checkStalled": {
+      "expr": "nodes.review.output.stalled == true",
+      "onFalse": "reviewFix",
+      "onTrue": "lessonReviewFailed",
+      "type": "cond"
+    },
+    "ciFix": {
+      "inputs": {
+        "failureContext": {
+          "from": "context.lastCILogs"
+        },
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "repushAfterCIFix",
+      "step": "executeCIFixImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "done": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "fetchLogs": {
+      "inputs": {
+        "logsUrl": {
+          "from": "context.ciResultPayload.logsUrl"
+        }
+      },
+      "maxVisits": 2,
+      "next": "ciFix",
+      "onExhausted": "lessonCIFailed",
+      "step": "fetchCILogs",
+      "storeAs": "context.lastCILogs",
+      "type": "step"
+    },
+    "forgetRejection": {
+      "next": "openPR",
+      "type": "set",
+      "values": {
+        "context.lastReviewFingerprint": {
+          "literal": ""
+        }
+      }
+    },
+    "implement": {
+      "next": "review",
+      "status": "IMPLEMENTING",
+      "step": "executeImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "lessonCIFailed": {
+      "inputs": {
+        "outcome": {
+          "literal": "CI_FAILED"
+        }
+      },
+      "next": "terminateCIFailed",
+      "onError": "continue",
+      "step": "commitToMemory",
+      "type": "step"
+    },
+    "lessonReviewFailed": {
+      "inputs": {
+        "outcome": {
+          "literal": "REVIEW_FAILED"
+        }
+      },
+      "next": "terminateReviewFailed",
+      "onError": "continue",
+      "step": "commitToMemory",
+      "type": "step"
+    },
+    "openPR": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "savePrInfo",
+      "status": "AWAITING_CI",
+      "step": "createOrUpdatePullRequest",
+      "type": "step"
+    },
+    "repushAfterCIFix": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "waitForCI",
+      "step": "createOrUpdatePullRequest",
+      "type": "step"
+    },
+    "review": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "previousFingerprint": {
+          "default": "",
+          "from": "context.lastReviewFingerprint"
+        },
+        "successCriteria": {
+          "from": "context.successCriteria"
+        }
+      },
+      "next": "checkApproval",
+      "status": "IN_REVIEW",
+      "step": "runReviewNetwork",
+      "type": "step"
+    },
+    "reviewFix": {
+      "inputs": {
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "rejectionSummary": {
+          "from": "context.lastRejectionSummary"
+        }
+      },
+      "maxVisits": 2,
+      "next": "review",
+      "onExhausted": "lessonReviewFailed",
+      "step": "executeReviewFixImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "savePrInfo": {
+      "next": "waitForCI",
+      "type": "set",
+      "values": {
+        "context.prNumber": {
+          "from": "nodes.openPR.output.prNumber"
+        },
+        "context.prUrl": {
+          "from": "nodes.openPR.output.prUrl"
+        }
+      }
+    },
+    "setSuccessCriteria": {
+      "next": "implement",
+      "type": "set",
+      "values": {
+        "context.successCriteria": {
+          "default": [],
+          "from": "nodes.validate.output.successCriteria"
+        }
+      }
+    },
+    "storeRejection": {
+      "next": "checkStalled",
+      "type": "set",
+      "values": {
+        "context.lastRejectionSummary": {
+          "default": "",
+          "from": "nodes.review.output.rejectionSummary"
+        },
+        "context.lastReviewFingerprint": {
+          "default": "",
+          "from": "nodes.review.output.rejectionFingerprint"
+        }
+      }
+    },
+    "terminateCIFailed": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "terminateCITimedOut": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "TIMED_OUT",
+      "type": "terminate"
+    },
+    "terminateReviewFailed": {
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "validate": {
+      "next": "setSuccessCriteria",
+      "onError": "continue",
+      "status": "VALIDATING_CONTEXT",
+      "step": "validateContext",
+      "type": "step"
+    },
+    "waitForCI": {
+      "name": "ciPipelineSignal",
+      "onReceive": "checkCI",
+      "onTimeout": "terminateCITimedOut",
+      "storeAs": "context.ciResultPayload",
+      "timeout": "4h",
+      "type": "signal"
+    }
+  },
+  "schemaVersion": 1
+}

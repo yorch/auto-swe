@@ -587,6 +587,119 @@ const SCENARIOS: Scenario[] = [
     ),
   },
   {
+    // storeAs: the step's output is also written to a context path, and the cond
+    // after it reads that path rather than nodes.<id>.output.
+    name: 'store-as',
+    spec: spec(
+      {
+        check: {
+          expr: 'context.verdict.ok',
+          onFalse: 'failed',
+          onTrue: 'done',
+          type: 'cond',
+        },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        failed: { status: 'FAILED', type: 'terminate' },
+        implement: {
+          next: 'check',
+          step: 'executeImplementation',
+          storeAs: 'context.verdict',
+          type: 'step',
+        },
+      },
+      'implement'
+    ),
+  },
+  {
+    // onFailure: a step whose activity finally fails routes to a handler node
+    // instead of failing the run. The handler sets a context flag and the run
+    // completes. Non-retryable, so the failure is recorded once.
+    activities: () => ({
+      executeImplementation: async () => {
+        throw ApplicationFailure.nonRetryable('fixture failure');
+      },
+    }),
+    name: 'fail-edge',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        handler: {
+          next: 'done',
+          type: 'set',
+          values: { 'context.recovered': { literal: true } },
+        },
+        work: { next: 'done', onFailure: 'handler', step: 'executeImplementation', type: 'step' },
+      },
+      'work'
+    ),
+  },
+  {
+    // onFailure with the terminal shorthand: the same failure, but the run ends
+    // as FAILED with the message, exactly as a terminate node would end it.
+    activities: () => ({
+      executeImplementation: async () => {
+        throw ApplicationFailure.nonRetryable('fixture failure');
+      },
+    }),
+    name: 'fail-edge-terminal',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        work: {
+          next: 'done',
+          onFailure: { message: 'implementation gave up', status: 'FAILED' },
+          step: 'executeImplementation',
+          type: 'step',
+        },
+      },
+      'work'
+    ),
+  },
+  {
+    // status: entering a node that declares one sets the run's domain status (the
+    // updateDomainState activity), once per visit. Covers a set node and two steps.
+    name: 'status-field',
+    spec: spec(
+      {
+        build: {
+          next: 'review',
+          status: 'Implementing',
+          step: 'executeImplementation',
+          type: 'step',
+        },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        init: {
+          next: 'build',
+          status: 'Starting',
+          type: 'set',
+          values: { 'context.n': { literal: 0 } },
+        },
+        review: { next: 'done', status: 'Reviewing', step: 'executeImplementation', type: 'step' },
+      },
+      'init'
+    ),
+  },
+  {
+    // maxVisits + onExhausted: the loop body is entered twice, and the third entry
+    // routes to onExhausted. Walked until exhausted, so the visit count and the
+    // exhaustion route are both on the recorded path.
+    name: 'visit-limit',
+    spec: spec(
+      {
+        again: { next: 'work', type: 'set', values: { 'context.laps': { literal: true } } },
+        exhausted: { status: 'FAILED', type: 'terminate' },
+        work: {
+          maxVisits: 2,
+          next: 'again',
+          onExhausted: 'exhausted',
+          step: 'executeImplementation',
+          type: 'step',
+        },
+      },
+      'work'
+    ),
+  },
+  {
     // A fan-out whose branches each run a fan-out. The inner pool shares the
     // run-wide transition cap and branch-index allocation with the outer one.
     name: 'nested-fan-out',
@@ -1102,6 +1215,9 @@ async function record(scenario: Scenario, env: TestWorkflowEnvironment): Promise
           ? { runId: `replay-${input.workflowId}`, spec: childSpec }
           : { error: `no child spec for template '${input.templateId}'` };
       },
+      // Run after finalization on current code (`dispatch-review-launches` patch); unregistered,
+      // it fails and retries in the recorder's worker and the history carries the retry noise.
+      dispatchReviewLaunches: async () => {},
       executeImplementation: async () => ({ ok: true, summary: 'fixture' }),
       finalizeWorkflowRun: async () => {},
       mcpCallTool: async () => ({ ok: true, result: 'fixture' }),

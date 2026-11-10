@@ -4,8 +4,6 @@ import {
   openPullRequest,
   prResult,
   qualityGate,
-  statusStamp,
-  storeCodeResult,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -18,22 +16,22 @@ export const HUMAN_CODE_REVIEW_SPEC: WorkflowSpec = {
     'Implement, run lint and type checks, then show the diff to a human reviewer before the ' +
     'pull request is opened. The reviewer can leave notes for the agent to address, or ' +
     'approve the diff as it is.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'human-code-review',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing', successCriteria: false }),
+    validatePhase({ next: 'implement', successCriteria: false }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
         next: 'runLint',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
       },
       runLint: qualityGate('runLint', 'runTypecheck', { group: 'implement' }),
-      runTypecheck: qualityGate('runTypecheck', 'storeCodeResult', { group: 'implement' }),
-      storeCodeResult: storeCodeResult('humanReview', { group: 'implement' }),
+      runTypecheck: qualityGate('runTypecheck', 'humanReview', { group: 'implement' }),
       humanReview: {
         contentFrom: 'context.currentCodeResult.diff',
         description: 'Review the diff and leave notes for the agent. Submit to continue.',
@@ -69,17 +67,11 @@ export const HUMAN_CODE_REVIEW_SPEC: WorkflowSpec = {
           previousCodeResult: { from: 'context.currentCodeResult' },
           rejectionSummary: { from: 'context.reviewFeedback' },
         },
-        next: 'updateCodeAfterFeedback',
+        next: 'openPR',
         step: 'executeReviewFixImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Address the reviewer notes',
         type: 'step',
-      },
-      updateCodeAfterFeedback: {
-        group: 'human review',
-        next: 'openPR',
-        title: 'Keep the revised code',
-        type: 'set',
-        values: { 'context.currentCodeResult': { from: 'nodes.addressFeedback.output' } },
       },
     },
     openPullRequest({ next: 'done' }),

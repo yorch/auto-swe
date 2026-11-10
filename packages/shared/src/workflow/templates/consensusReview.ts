@@ -1,13 +1,12 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
+  CI_ATTEMPTS_PATH,
   ciLoop,
   ciWaitEntry,
   failureLesson,
-  initCounters,
   mergeNodes,
   openPullRequest,
   prResult,
-  statusStamp,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -40,7 +39,7 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
     'either rejects, the agent addresses the combined feedback, CI runs again, and both ' +
     'reviewers look again (up to 3 rounds). Use it when you want two independent opinions ' +
     'before a person sees the pull request.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'consensus-review',
   nodes: mergeNodes(
     {
@@ -80,20 +79,17 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
       },
     },
     // ── Main graph ────────────────────────────────────────────────────────
-    validatePhase({ next: 'setImplementing' }),
+    validatePhase({ next: 'implement' }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'initCounters',
+        next: 'openPR',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
       },
-      initCounters: initCounters('setAwaitingCi', { group: 'implement' }),
-      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
-      // CI passed: the reviewers see exactly the code that is on the pull request.
-      setReviewing: statusStamp('IN_REVIEW', 'fanOutReview', { group: 'consensus review' }),
       // The consensus review: two reviewer slots, both must approve.
       fanOutReview: {
         // Two reviewer slots — each branch runs runBranchReview independently.
@@ -104,6 +100,8 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
         join: 'storeConsensusResult',
         onBranchFail: 'continue',
         over: { literal: [{ id: 1 }, { id: 2 }] },
+        // CI passed: the reviewers see exactly the code that is on the pull request.
+        status: 'IN_REVIEW',
         subgraph: 'runBranchReview',
         title: 'Run both reviewers',
         type: 'fanOut',
@@ -118,21 +116,14 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
       checkConsensus: {
         expr: 'nodes.fanOutReview.output.failed == 0',
         group: 'consensus review',
-        onFalse: 'incReviewRetries',
+        onFalse: 'storeLastRejection',
         onTrue: 'done',
         title: 'Both approved?',
         type: 'cond',
       },
-      incReviewRetries: {
-        group: 'consensus review',
-        next: 'storeLastRejection',
-        title: 'Count the attempt',
-        type: 'set',
-        values: { 'context.reviewRetries': { expr: 'context.reviewRetries + 1' } },
-      },
       storeLastRejection: {
         group: 'consensus review',
-        next: 'checkReviewLimit',
+        next: 'consensusFix',
         title: 'Record why it was rejected',
         type: 'set',
         values: {
@@ -142,21 +133,16 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
           },
         },
       },
-      checkReviewLimit: {
-        expr: 'context.reviewRetries >= 3',
-        group: 'consensus review',
-        onFalse: 'consensusFix',
-        onTrue: 'lessonReviewFailed',
-        title: 'Out of attempts?',
-        type: 'cond',
-      },
+      // The third rejection ends the run: the fixer is entered twice at most.
       consensusFix: {
         group: 'consensus review',
         inputs: {
           previousCodeResult: { from: 'context.currentCodeResult' },
           rejectionSummary: { from: 'context.lastRejectionSummary' },
         },
+        maxVisits: 2,
         next: 'checkConsensusFixChanged',
+        onExhausted: 'lessonReviewFailed',
         step: 'executeReviewFixImplementation',
         title: 'Fix the review findings',
         type: 'step',
@@ -169,23 +155,20 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
         expr: 'nodes.consensusFix.output.headSha == context.currentCodeResult.headSha',
         group: 'consensus review',
         onFalse: 'updateCodeAfterFix',
-        onTrue: 'setReviewing',
+        onTrue: 'fanOutReview',
         title: 'Did the fix change nothing?',
         type: 'cond',
       },
       updateCodeAfterFix: {
         group: 'consensus review',
-        next: 'setAwaitingCiAfterFix',
+        next: 'repushAfterFix',
         title: 'Keep the fixed code and reset the CI attempts',
         type: 'set',
         values: {
-          'context.ciRetries': { literal: 0 },
+          [CI_ATTEMPTS_PATH]: { literal: 0 },
           'context.currentCodeResult': { from: 'nodes.consensusFix.output' },
         },
       },
-      setAwaitingCiAfterFix: statusStamp('AWAITING_CI', 'repushAfterFix', {
-        group: 'consensus review',
-      }),
       // A consensus that runs out of attempts stores what the reviewers rejected before the
       // run fails. The rejection is the last round's per-branch results, read as text.
       lessonReviewFailed: failureLesson('REVIEW_FAILED', 'terminateReviewFailed', {
@@ -197,14 +180,17 @@ export const CONSENSUS_REVIEW_SPEC: WorkflowSpec = {
         title: 'Review failed',
       }),
     },
-    openPullRequest({ next: ciWaitEntry() }),
+    openPullRequest({ next: ciWaitEntry(), status: 'AWAITING_CI' }),
     // The pull request is open, so a CI fix is pushed by the fix session itself and
     // `repushAfterFix` only re-arms the CI wait for the new head. The reviewers run after.
     // A CI fix that changed nothing is counted as a spent attempt instead of waiting.
     ciLoop({
       exhausted: 'lessonCIFailed',
-      fix: { handoff: { repush: 'repushAfterFix' }, retryIfUnchanged: true },
-      passed: 'setReviewing',
+      fix: {
+        handoff: { repush: 'repushAfterFix', status: 'AWAITING_CI' },
+        retryIfUnchanged: true,
+      },
+      passed: 'fanOutReview',
     }),
     {
       lessonCIFailed: failureLesson('CI_FAILED', 'terminateCIFailed', { group: 'CI loop' }),

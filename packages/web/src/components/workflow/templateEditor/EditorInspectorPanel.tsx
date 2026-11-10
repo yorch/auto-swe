@@ -1,5 +1,5 @@
 import type { Node as SpecNode, StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
-import type { RefObject } from 'react';
+import { type RefObject, useMemo } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { cn } from '@/lib/utils';
@@ -33,6 +33,16 @@ export function EditorInspectorPanel({
   onDelete,
   onRename,
 }: EditorInspectorPanelProps) {
+  const knownStatuses = useMemo(
+    () => [
+      ...new Set(
+        Object.values(spec.nodes).flatMap((n) =>
+          n.type !== 'terminate' && typeof n.status === 'string' ? [n.status] : []
+        )
+      ),
+    ],
+    [spec]
+  );
   return (
     <div
       className={cn(
@@ -54,6 +64,7 @@ export function EditorInspectorPanel({
         allNodeIds={Object.keys(spec.nodes)}
         isEntry={selectedNodeId === spec.entry}
         knownGroups={knownGroups}
+        knownStatuses={knownStatuses}
         node={selectedNode}
         nodeId={selectedNodeId}
         onChangeNode={(next) => {

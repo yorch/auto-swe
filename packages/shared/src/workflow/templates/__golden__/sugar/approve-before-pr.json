@@ -1,0 +1,123 @@
+{
+  "description": "Implement, run tests, then require explicit human approval before the pull request is opened. Requesting changes — with a required note — sends the code back for a fix that is tested and approved again (a third change request fails the run); rejecting stops it. Useful when a person must sign off on every change before reviewers can see it.",
+  "entry": "validate",
+  "name": "approve-before-pr",
+  "nodes": {
+    "approvalFix": {
+      "inputs": {
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "rejectionSummary": {
+          "from": "nodes.approve.output.comment"
+        }
+      },
+      "maxVisits": 2,
+      "next": "runTests",
+      "onExhausted": "terminateRejected",
+      "step": "executeReviewFixImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "approve": {
+      "description": "Tests passed. Approve to open the PR, request changes (with a note) to send it back for a fix, or reject to discard.",
+      "onApprove": "openPR",
+      "onReject": "terminateRejected",
+      "onRequestChanges": "approvalFix",
+      "onTimeout": "terminateTimedOut",
+      "timeout": "24h",
+      "title": "Approve implementation before opening PR",
+      "type": "humanApproval"
+    },
+    "checkCI": {
+      "expr": "context.ciResultPayload.passed == true",
+      "onFalse": "done",
+      "onTrue": "done",
+      "type": "cond"
+    },
+    "done": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "implement": {
+      "next": "runTests",
+      "status": "IMPLEMENTING",
+      "step": "executeImplementation",
+      "storeAs": "context.currentCodeResult",
+      "type": "step"
+    },
+    "openPR": {
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "savePrInfo",
+      "status": "AWAITING_CI",
+      "step": "createOrUpdatePullRequest",
+      "type": "step"
+    },
+    "runTests": {
+      "next": "approve",
+      "onFail": "warn",
+      "step": "runTests",
+      "type": "step"
+    },
+    "savePrInfo": {
+      "next": "waitForCI",
+      "type": "set",
+      "values": {
+        "context.prNumber": {
+          "from": "nodes.openPR.output.prNumber"
+        },
+        "context.prUrl": {
+          "from": "nodes.openPR.output.prUrl"
+        }
+      }
+    },
+    "terminateCITimedOut": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "TIMED_OUT",
+      "type": "terminate"
+    },
+    "terminateRejected": {
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "terminateTimedOut": {
+      "status": "TIMED_OUT",
+      "type": "terminate"
+    },
+    "validate": {
+      "next": "implement",
+      "onError": "continue",
+      "status": "VALIDATING_CONTEXT",
+      "step": "validateContext",
+      "type": "step"
+    },
+    "waitForCI": {
+      "name": "ciPipelineSignal",
+      "onReceive": "checkCI",
+      "onTimeout": "terminateCITimedOut",
+      "storeAs": "context.ciResultPayload",
+      "timeout": "4h",
+      "type": "signal"
+    }
+  },
+  "schemaVersion": 1
+}

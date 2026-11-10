@@ -684,6 +684,7 @@ NODE TYPES (set "type" to one of these). Edge fields (next/onTrue/...) must refe
 - humanReview:   { "type":"humanReview", "title":"...", "contentFrom":"<context path>", "storeAs"?:"<key>", "onSubmit":"<id>", "onTimeout":"<id>", "timeout":"24h" }
 
 FAILURE POLICY: "onFail" = "block" (default, fail the run) | "warn" (record the failure, continue via next) | { "retry": N } (1-10 re-runs). "onError" = "fail" (default) | "continue" (swallow a thrown error and continue). "continue" covers thrown errors only, not a passed:false from a shell exit or a blocked eval; it wins before retries (a thrown error with onError "continue" skips any remaining {retry:N}). Inside a fanOut, a node that blocks fails its branch and onBranchFail decides.
+OPTIONAL NODE FIELDS (use instead of bookkeeping set/cond nodes): "storeAs":"context.x" on step/agent/mcp/shell/containerStep/eval copies the output to that path (never under "nodes."). "onFailure":"<id>" | {"status":"FAILED"|"TIMED_OUT"|"SKIPPED"|"SUCCESS","message"?} on those nodes routes there once retries are spent, for a thrown error or passed:false, and wins over onFail "block"/"warn". "status":"<label>" on any node sets the domain status on entry. "maxVisits":N with "onExhausted":"<id>"|{status,message?} on any node sends the (N+1)th entry elsewhere, bounding a loop; the count is at nodes.<id>.visits.
 
 BINDINGS (used in inputs / set.values / eval.target / fanOut.over). Exactly one form per value:
 - { "from":"<dot.path>", "default"?:<value> }   // read a value from the run context

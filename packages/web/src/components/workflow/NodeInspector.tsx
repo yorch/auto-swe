@@ -26,6 +26,7 @@ import { Select } from '@/components/ui/Select';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { type HandleKind, handlePortsFor } from './dagNode';
 import { type Binding, InputsBindingsSection, InspectorSection } from './inspectorFields';
+import { FlowFieldsSection } from './inspectorFlow';
 import {
   AgentSection,
   CondSection,
@@ -56,6 +57,8 @@ interface InspectorProps {
   allNodeIds: string[];
   /** Group labels already used in the spec, offered as suggestions. */
   knownGroups?: string[];
+  /** Domain statuses already used in the spec, offered as suggestions. */
+  knownStatuses?: string[];
   onChangeNode: (next: SpecNode) => void;
   onRename: (oldId: string, newId: string) => void;
   onDelete: () => void;
@@ -65,6 +68,8 @@ const HANDLE_LABEL_FULL: Record<HandleKind, string> = {
   join: 'Join',
   next: 'Next',
   onApprove: 'On approve',
+  onExhausted: 'Out of attempts',
+  onFailure: 'On failure',
   onFalse: 'On false',
   onReceive: 'On receive',
   onReject: 'On reject',
@@ -106,6 +111,7 @@ export function NodeInspector({
   isEntry,
   allNodeIds,
   knownGroups,
+  knownStatuses,
   onChangeNode,
   onRename,
   onDelete,
@@ -221,6 +227,15 @@ export function NodeInspector({
               onChange={(inputs) => onChangeNode({ ...node, inputs } as SpecNode)}
             />
           )}
+        {!unknownType && (
+          <FlowFieldsSection
+            allNodeIds={allNodeIds}
+            knownStatuses={knownStatuses}
+            node={node}
+            nodeId={nodeId}
+            onChange={onChangeNode}
+          />
+        )}
         {/* Outgoing-edge connections — explicit dropdowns alongside the
             canvas drag-to-connect. On big graphs with tiny nodes the
             dropdowns are often the only practical way to retarget an edge. */}
@@ -446,7 +461,10 @@ function EdgeConnectionsSection({
   allNodeIds: string[];
   onSetEdge: (field: string, target: string | null) => void;
 }) {
-  const handles = handlePortsFor(node);
+  // Failure and loop-bound routes are edited in the Flow control section.
+  const handles = handlePortsFor(node).filter(
+    (h) => h.id !== 'onFailure' && h.id !== 'onExhausted'
+  );
   if (handles.length === 0) {
     return null;
   }

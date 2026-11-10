@@ -17,7 +17,7 @@ import { Icon } from '@/components/ui/Icon';
 import { cn } from '@/lib/utils';
 import { type DiffKind, type EdgeKind, NODE_HEIGHT, NODE_WIDTH } from '@/lib/workflowLayout';
 import type { FoldedGroup } from './foldGroups';
-import { nodeDisplayName, nodeGroupOf } from './nodeDisplay';
+import { nodeDisplayName, nodeFlowNotes, nodeGroupOf } from './nodeDisplay';
 import { isKnownNodeType, nodeTypeIcon, nodeTypeLabel, nodeTypeTone } from './nodeTypeTone';
 
 /** The source-handle ids a node exposes are exactly the edge kinds the layout
@@ -113,7 +113,12 @@ export function handlePortsFor(node: SpecNode): HandlePort[] {
       })),
     ];
   }
-  return handleKindsFor(node).map(port);
+  const kinds = handleKindsFor(node);
+  // Failure and loop-bound edges exist only where a spec names them.
+  const extra = (['onFailure', 'onExhausted'] as const).filter(
+    (k) => typeof (node as Record<string, unknown>)[k] === 'string'
+  );
+  return [...kinds, ...extra].map(port);
 }
 
 const port = (kind: HandleKind): HandlePort => ({
@@ -156,6 +161,8 @@ const HANDLE_BG: Record<HandleKind, string> = {
   join: 'bg-accent-400',
   next: 'bg-paper-400',
   onApprove: 'bg-success-400',
+  onExhausted: 'bg-warning-400',
+  onFailure: 'bg-danger-400',
   onFalse: 'bg-danger-400',
   onReceive: 'bg-info-400',
   onReject: 'bg-danger-400',
@@ -170,6 +177,8 @@ const HANDLE_LABEL: Record<HandleKind, string> = {
   join: 'join',
   next: '→',
   onApprove: 'approve',
+  onExhausted: 'out of attempts',
+  onFailure: 'on failure',
   onFalse: 'false',
   onReceive: 'recv',
   onReject: 'reject',
@@ -199,6 +208,8 @@ export function DagNode({ id, data, selected }: NodeProps) {
   const unknown = !folded && !isKnownNodeType(d.node.type);
   const name = folded ? folded.group : nodeDisplayName(d.node, id);
   const group = folded ? undefined : nodeGroupOf(d.node);
+  const notes = folded ? null : nodeFlowNotes(d.node);
+  const noteLine = notes ? [notes.status, notes.maxVisits, ...notes.chips] : [];
   const stripeClass = d.status ? STATUS_STRIPE[d.status.status] : null;
   const diffBorder = d.diff ? DIFF_BORDER[d.diff] : null;
   const isLive = d.status?.status === 'RUNNING' || d.status?.status === 'PENDING';
@@ -283,6 +294,18 @@ export function DagNode({ id, data, selected }: NodeProps) {
           <div className="flex items-center gap-0.5 text-xs text-paper-500">
             <Icon name="chevronRight" size={11} />
             Expand
+          </div>
+        )}
+        {noteLine.length > 0 && (
+          <div className="flex min-w-0 flex-nowrap gap-1 overflow-hidden">
+            {noteLine.map((t) => (
+              <span
+                className="max-w-full truncate rounded border border-ink-500 px-1.5 text-xs leading-4 text-paper-400"
+                key={t}
+              >
+                {t}
+              </span>
+            ))}
           </div>
         )}
         {group && !d.status && <GroupBadge group={group} />}

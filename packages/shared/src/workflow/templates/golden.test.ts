@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -21,9 +21,21 @@ import { BUILTIN_TEMPLATES } from './index.js';
  */
 
 const GOLDEN_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '__golden__');
+/**
+ * Reviewed snapshots of the templates rewritten on the node fields `status`, `storeAs`,
+ * `onFailure` and `maxVisits`. The files beside them are the previous release's specs (the
+ * syncBuiltins rollout test seeds from them), so they are left as they were.
+ * `UPDATE_SUGAR_GOLDEN=1 yarn vitest run packages/shared/src/workflow/templates/golden.test.ts`
+ * rewrites these snapshots; read the diff before committing it.
+ */
+const SUGAR_DIR = path.join(GOLDEN_DIR, 'sugar');
 
 function golden(name: string): WorkflowSpec {
   return JSON.parse(readFileSync(path.join(GOLDEN_DIR, `${name}.json`), 'utf8')) as WorkflowSpec;
+}
+
+function sugarGolden(name: string): WorkflowSpec {
+  return JSON.parse(readFileSync(path.join(SUGAR_DIR, `${name}.json`), 'utf8')) as WorkflowSpec;
 }
 
 /** Drop `group`, and `title` on every node type that did not already have one. */
@@ -63,450 +75,6 @@ function removePassThrough(spec: WorkflowSpec, id: string): WorkflowSpec {
   return {
     ...spec,
     entry: spec.entry === id ? to : spec.entry,
-    nodes: nodes as WorkflowSpec['nodes'],
-  };
-}
-
-/**
- * The nodes of the CI wait-and-fix loop `consensus-review` and `four-eyes` gained, written out
- * by hand (not derived from `ciLoop`). `checkCI` already existed and only changes its edges.
- * The CI fix is pushed by the fix session itself, so `repushAfterFix` only re-arms the PR row.
- */
-function ciFixNodes(): Record<string, unknown> {
-  return {
-    checkCILimit: {
-      expr: 'context.ciRetries >= 3',
-      onFalse: 'fetchLogs',
-      onTrue: 'terminateCIFailed',
-      type: 'cond',
-    },
-    ciFix: {
-      inputs: {
-        failureContext: { from: 'context.lastCILogs' },
-        previousCodeResult: { from: 'context.currentCodeResult' },
-      },
-      next: 'checkCiFixChanged',
-      step: 'executeCIFixImplementation',
-      type: 'step',
-    },
-    // A fix that changed nothing makes no commit, so no CI event would follow: it counts as a
-    // spent attempt and the loop goes round again instead of waiting.
-    checkCiFixChanged: {
-      expr: 'nodes.ciFix.output.headSha == context.currentCodeResult.headSha',
-      onFalse: 'updateCodeAfterCIFix',
-      onTrue: 'incCIRetries',
-      type: 'cond',
-    },
-    fetchLogs: {
-      inputs: { logsUrl: { from: 'context.ciResultPayload.logsUrl' } },
-      next: 'storeLogs',
-      step: 'fetchCILogs',
-      type: 'step',
-    },
-    incCIRetries: {
-      next: 'checkCILimit',
-      type: 'set',
-      values: { 'context.ciRetries': { expr: 'context.ciRetries + 1' } },
-    },
-    repushAfterFix: {
-      inputs: { codeResult: { from: 'context.currentCodeResult' } },
-      next: 'waitForCI',
-      step: 'createOrUpdatePullRequest',
-      type: 'step',
-    },
-    storeLogs: {
-      next: 'ciFix',
-      type: 'set',
-      values: { 'context.lastCILogs': { from: 'nodes.fetchLogs.output' } },
-    },
-    updateCodeAfterCIFix: {
-      next: 'repushAfterFix',
-      type: 'set',
-      values: { 'context.currentCodeResult': { from: 'nodes.ciFix.output' } },
-    },
-  };
-}
-
-const GENERIC_REJECTION =
-  'A human reviewer rejected this change at sign-off and left no written reason. ' +
-  'Re-check it against the success criteria and the pull request description.';
-
-const PR_RESULT = {
-  prNumber: { from: 'context.prNumber' },
-  prUrl: { from: 'context.prUrl' },
-};
-
-const AWAITING_CI_STAMP = (next: string) => ({
-  config: { status: 'AWAITING_CI' },
-  next,
-  step: 'updateDomainState',
-  type: 'step',
-});
-
-/** consensus-review: PR and CI first, then the two-reviewer consensus on the green code. */
-function consensusReviewAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
-  const nodes: Record<string, unknown> = { ...g.nodes };
-  const at = (id: string) => nodes[id] as Record<string, unknown>;
-  const init = at('initCounters') as { values: Record<string, unknown> };
-  nodes.initCounters = {
-    ...init,
-    next: 'setAwaitingCi',
-    values: { 'context.ciRetries': { literal: 0 }, ...init.values },
-  };
-  nodes.checkCI = { ...at('checkCI'), onFalse: 'incCIRetries', onTrue: 'setReviewing' };
-  nodes.checkConsensus = { ...at('checkConsensus'), onTrue: 'done' };
-  nodes.setReviewing = {
-    config: { status: 'IN_REVIEW' },
-    next: 'fanOutReview',
-    step: 'updateDomainState',
-    type: 'step',
-  };
-  nodes.consensusFix = { ...at('consensusFix'), next: 'checkConsensusFixChanged' };
-  nodes.checkConsensusFixChanged = {
-    expr: 'nodes.consensusFix.output.headSha == context.currentCodeResult.headSha',
-    onFalse: 'updateCodeAfterFix',
-    onTrue: 'setReviewing',
-    type: 'cond',
-  };
-  nodes.updateCodeAfterFix = {
-    next: 'setAwaitingCiAfterFix',
-    type: 'set',
-    values: {
-      'context.ciRetries': { literal: 0 },
-      'context.currentCodeResult': { from: 'nodes.consensusFix.output' },
-    },
-  };
-  nodes.setAwaitingCiAfterFix = AWAITING_CI_STAMP('repushAfterFix');
-  nodes.terminateReviewFailed = { ...at('terminateReviewFailed'), result: PR_RESULT };
-  Object.assign(nodes, ciFixNodes());
-  return {
-    ...g,
-    nodes: nodes as WorkflowSpec['nodes'],
-  };
-}
-
-/** four-eyes: agent review, PR, CI loop, then both sign-offs on the green code. */
-function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
-  const nodes: Record<string, unknown> = { ...g.nodes };
-  const at = (id: string) => nodes[id] as Record<string, unknown>;
-  const init = at('initCounters') as { values: Record<string, unknown> };
-  nodes.initCounters = {
-    ...init,
-    values: {
-      'context.ciRetries': { literal: 0 },
-      ...init.values,
-      'context.signoffRetries': { literal: 0 },
-    },
-  };
-  nodes.checkApproval = { ...at('checkApproval'), onTrue: 'setAwaitingCi' };
-  nodes.checkCI = { ...at('checkCI'), onFalse: 'incCIRetries', onTrue: 'setAwaitingSignoff' };
-  Object.assign(nodes, ciFixNodes());
-  Object.assign(nodes, {
-    checkSignoffLimit: {
-      expr: 'context.signoffRetries >= 3',
-      onFalse: 'signoffFix',
-      onTrue: 'terminateRejected',
-      type: 'cond',
-    },
-    askRejectionReason: {
-      description:
-        'Say what should change. The fix is told this. Leave it empty or let it time out ' +
-        'and the fix gets only the fact that the change was rejected.',
-      fields: [{ key: 'reason', label: 'What should change?', required: false, type: 'text' }],
-      onSubmit: 'checkRejectionReason',
-      onTimeout: 'incSignoffRetries',
-      storeAs: 'context.signoffRejection',
-      timeout: '1h',
-      title: 'Why was it rejected?',
-      type: 'humanInput',
-    },
-    checkRejectionReason: {
-      expr: "(context.signoffRejection.value.reason ?? '') != ''",
-      onFalse: 'incSignoffRetries',
-      onTrue: 'keepRejectionReason',
-      type: 'cond',
-    },
-    checkSignoffFixChanged: {
-      expr: 'nodes.signoffFix.output.headSha == context.currentCodeResult.headSha',
-      onFalse: 'updateCodeAfterSignoffFix',
-      onTrue: 'storeSignoffContextUnchanged',
-      type: 'cond',
-    },
-    firstSignoff: {
-      ...at('firstSignoff'),
-      contextFrom: 'context.signoffContext',
-      description:
-        'CI has passed on the head commit in the context, and the pull request is open. ' +
-        'Confirm you have read the implementation and are satisfied it meets the requirements. ' +
-        'If rejectedBefore is above 0 this is a repeat round and both people sign off again: ' +
-        'changedSinceLastSignoff says whether the code changed, and noChangeMade means the ' +
-        'fix made no change and this is the code that was rejected before.',
-      onReject: 'askRejectionReason',
-    },
-    keepRejectionReason: {
-      next: 'incSignoffRetries',
-      type: 'set',
-      values: {
-        'context.signoffRejectionSummary': { from: 'context.signoffRejection.value.reason' },
-      },
-    },
-    incSignoffRetries: {
-      next: 'checkSignoffLimit',
-      type: 'set',
-      values: { 'context.signoffRetries': { expr: 'context.signoffRetries + 1' } },
-    },
-    secondSignoff: {
-      ...at('secondSignoff'),
-      contextFrom: 'context.signoffContext',
-      description:
-        'You are a second, independent reviewer. CI has passed on the head commit in the ' +
-        'context. Confirm the change is safe to merge. If rejectedBefore is above 0 this is a ' +
-        'repeat round and the first reviewer has signed off again: changedSinceLastSignoff ' +
-        'says whether the code changed, and noChangeMade means the fix made no change.',
-      onApprove: 'done',
-      onReject: 'askRejectionReason',
-    },
-    setAwaitingCiAfterSignoff: AWAITING_CI_STAMP('repushAfterFix'),
-    setAwaitingSignoff: {
-      config: { status: 'IN_REVIEW' },
-      next: 'storeSignoffContext',
-      step: 'updateDomainState',
-      type: 'step',
-    },
-    signoffFix: {
-      inputs: {
-        previousCodeResult: { from: 'context.currentCodeResult' },
-        rejectionSummary: { from: 'context.signoffRejectionSummary' },
-      },
-      next: 'checkSignoffFixChanged',
-      step: 'executeReviewFixImplementation',
-      type: 'step',
-    },
-    storeSignoffContext: {
-      next: 'firstSignoff',
-      type: 'set',
-      values: {
-        'context.signoffContext.changedSinceLastSignoff': { expr: 'context.signoffRetries > 0' },
-        'context.signoffContext.ciPassed': { literal: true },
-        'context.signoffContext.headSha': { from: 'context.currentCodeResult.headSha' },
-        'context.signoffContext.noChangeMade': { literal: false },
-        'context.signoffContext.prUrl': { from: 'context.prUrl' },
-        'context.signoffContext.rejectedBefore': { from: 'context.signoffRetries' },
-        'context.signoffRejection': { literal: null },
-        'context.signoffRejectionSummary': { literal: GENERIC_REJECTION },
-      },
-    },
-    storeSignoffContextUnchanged: {
-      next: 'firstSignoff',
-      type: 'set',
-      values: {
-        'context.signoffContext.changedSinceLastSignoff': { literal: false },
-        'context.signoffContext.noChangeMade': { literal: true },
-        'context.signoffContext.rejectedBefore': { from: 'context.signoffRetries' },
-        'context.signoffRejection': { literal: null },
-        'context.signoffRejectionSummary': { literal: GENERIC_REJECTION },
-      },
-    },
-    terminateRejected: { ...at('terminateRejected'), result: PR_RESULT },
-    terminateTimedOut: { ...at('terminateTimedOut'), result: PR_RESULT },
-    updateCodeAfterSignoffFix: {
-      next: 'setAwaitingCiAfterSignoff',
-      type: 'set',
-      values: {
-        'context.ciRetries': { literal: 0 },
-        'context.currentCodeResult': { from: 'nodes.signoffFix.output' },
-      },
-    },
-  });
-  return {
-    ...g,
-    description:
-      'Implement, run the agent review loop, open the PR and wait for CI (a failing CI is ' +
-      'fixed by the agent: 2 fix attempts, and a third failure fails the run), then require two ' +
-      'sequential human approvals (e.g. author sign-off followed by independent reviewer sign-off) ' +
-      'on the code that passed CI. A rejection asks for a reason, sends the change back for a fix ' +
-      'and through CI again (2 fix attempts, a third rejection fails the run), and both people ' +
-      'sign off again. A fix that changes nothing goes straight back to the two people, marked as ' +
-      'unchanged. Models a four-eyes / two-person-rule change-management requirement.',
-    nodes: nodes as WorkflowSpec['nodes'],
-  };
-}
-
-/**
- * four-eyes: `request changes` replaces the ask-why `humanInput` — each sign-off
- * gate routes it to a set node that keeps the required note for the fix, and the
- * note lives in the response (`nodes.<gate>.output.comment`) rather than a second
- * human step. `onReject` stops the run directly again.
- */
-function fourEyesRequestChanges(g: WorkflowSpec): WorkflowSpec {
-  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
-  delete nodes.askRejectionReason;
-  delete nodes.checkRejectionReason;
-  delete nodes.keepRejectionReason;
-  for (const id of ['storeSignoffContext', 'storeSignoffContextUnchanged']) {
-    const values = nodes[id]?.values as Record<string, unknown>;
-    delete values['context.signoffRejection'];
-    delete values['context.signoffRejectionSummary'];
-  }
-  const first = nodes.firstSignoff as Record<string, unknown>;
-  first.onReject = 'terminateRejected';
-  first.onRequestChanges = 'noteFirstSignoffChanges';
-  first.description =
-    'CI has passed on the head commit in the context, and the pull request is open. ' +
-    'Confirm you have read the implementation and are satisfied it meets the requirements. ' +
-    'If rejectedBefore is above 0 this is a repeat round and both people sign off again: ' +
-    'changedSinceLastSignoff says whether the code changed, and noChangeMade means the ' +
-    'fix made no change and this is the code that was sent back before. Approve to move to ' +
-    'the second sign-off, request changes (with a note) to send it back for a fix, or ' +
-    'reject to stop the run.';
-  const second = nodes.secondSignoff as Record<string, unknown>;
-  second.onReject = 'terminateRejected';
-  second.onRequestChanges = 'noteSecondSignoffChanges';
-  second.description =
-    'You are a second, independent reviewer. CI has passed on the head commit in the ' +
-    'context. Confirm the change is safe to merge. If rejectedBefore is above 0 this is a ' +
-    'repeat round and the first reviewer has signed off again: changedSinceLastSignoff ' +
-    'says whether the code changed, and noChangeMade means the fix made no change. ' +
-    'Approve to finish, request changes (with a note) to send it back for a fix, or ' +
-    'reject to stop the run.';
-  nodes.noteFirstSignoffChanges = {
-    next: 'incSignoffRetries',
-    type: 'set',
-    values: {
-      'context.signoffRejectionSummary': { from: 'nodes.firstSignoff.output.comment' },
-    },
-  };
-  nodes.noteSecondSignoffChanges = {
-    next: 'incSignoffRetries',
-    type: 'set',
-    values: {
-      'context.signoffRejectionSummary': { from: 'nodes.secondSignoff.output.comment' },
-    },
-  };
-  return {
-    ...g,
-    description:
-      'Implement, run the agent review loop, open the PR and wait for CI (a failing CI is ' +
-      'fixed by the agent: 2 fix attempts, and a third failure fails the run), then require two ' +
-      'sequential human approvals (e.g. author sign-off followed by independent reviewer ' +
-      'sign-off) on the code that passed CI. Requesting changes — with a required note — sends ' +
-      'the change back for a fix and through CI again (2 fix attempts, a third change request ' +
-      'fails the run), and both people sign off again; rejecting stops the run. A fix that ' +
-      'changes nothing goes straight back to the two people, marked as unchanged. Models a ' +
-      'four-eyes / two-person-rule change-management requirement.',
-    nodes: nodes as WorkflowSpec['nodes'],
-  };
-}
-
-/**
- * approve-before-pr: the gate gains `request changes`, which counts a round,
- * fixes the code with the note as `rejectionSummary`, and re-runs the tests
- * before the gate. A third request fails the run; rejecting still stops it.
- */
-function approveBeforePrRequestChanges(g: WorkflowSpec): WorkflowSpec {
-  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
-  nodes.implement = { ...nodes.implement, next: 'initCounters' };
-  nodes.initCounters = {
-    next: 'runTests',
-    type: 'set',
-    values: {
-      'context.approvalRetries': { literal: 0 },
-      'context.currentCodeResult': { from: 'nodes.implement.output' },
-    },
-  };
-  delete nodes.storeCodeResult;
-  (nodes.runTests as Record<string, unknown>).next = 'approve';
-  const approve = nodes.approve as Record<string, unknown>;
-  approve.onRequestChanges = 'incApprovalRetries';
-  approve.description =
-    'Tests passed. Approve to open the PR, request changes (with a note) to send it ' +
-    'back for a fix, or reject to discard.';
-  nodes.incApprovalRetries = {
-    next: 'checkApprovalLimit',
-    type: 'set',
-    values: { 'context.approvalRetries': { expr: 'context.approvalRetries + 1' } },
-  };
-  nodes.checkApprovalLimit = {
-    expr: 'context.approvalRetries >= 3',
-    onFalse: 'approvalFix',
-    onTrue: 'terminateRejected',
-    type: 'cond',
-  };
-  nodes.approvalFix = {
-    inputs: {
-      previousCodeResult: { from: 'context.currentCodeResult' },
-      rejectionSummary: { from: 'nodes.approve.output.comment' },
-    },
-    next: 'updateCodeAfterApprovalFix',
-    step: 'executeReviewFixImplementation',
-    type: 'step',
-  };
-  nodes.updateCodeAfterApprovalFix = {
-    next: 'runTests',
-    type: 'set',
-    values: { 'context.currentCodeResult': { from: 'nodes.approvalFix.output' } },
-  };
-  return {
-    ...g,
-    description:
-      'Implement, run tests, then require explicit human approval before the pull request is ' +
-      'opened. Requesting changes — with a required note — sends the code back for a fix that ' +
-      'is tested and approved again (a third change request fails the run); rejecting stops ' +
-      'it. Useful when a person must sign off on every change before reviewers can see it.',
-    nodes: nodes as WorkflowSpec['nodes'],
-  };
-}
-
-/**
- * fully-supervised: the final gate gains `request changes`, fixed by the same
- * session that applies review notes and sent straight back to the gate, capped
- * at three rounds.
- */
-function fullySupervisedRequestChanges(g: WorkflowSpec): WorkflowSpec {
-  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
-  const store = nodes.storeCodeResult as { values: Record<string, unknown> };
-  store.values = {
-    'context.approvalRetries': { literal: 0 },
-    ...store.values,
-  };
-  const approve = nodes.finalApproval as Record<string, unknown>;
-  approve.onRequestChanges = 'incApprovalRetries';
-  approve.description =
-    'Approve to open a pull request that reviewers can see, request changes ' +
-    '(with a note) to send the code back for a fix, or reject to stop the run.';
-  nodes.incApprovalRetries = {
-    next: 'checkApprovalLimit',
-    type: 'set',
-    values: { 'context.approvalRetries': { expr: 'context.approvalRetries + 1' } },
-  };
-  nodes.checkApprovalLimit = {
-    expr: 'context.approvalRetries >= 3',
-    onFalse: 'addressApprovalChanges',
-    onTrue: 'terminateRejected',
-    type: 'cond',
-  };
-  nodes.addressApprovalChanges = {
-    inputs: {
-      previousCodeResult: { from: 'context.currentCodeResult' },
-      rejectionSummary: { from: 'nodes.finalApproval.output.comment' },
-    },
-    next: 'updateCodeAfterApprovalChanges',
-    step: 'executeReviewFixImplementation',
-    type: 'step',
-  };
-  nodes.updateCodeAfterApprovalChanges = {
-    next: 'finalApproval',
-    type: 'set',
-    values: { 'context.currentCodeResult': { from: 'nodes.addressApprovalChanges.output' } },
-  };
-  return {
-    ...g,
-    description:
-      'The most hands-on workflow: collect requirements up front, implement, show the diff ' +
-      'for review, let the reviewer decide whether to apply their notes, then require final ' +
-      'approval before the pull request is opened — which can also send the code back ' +
-      'with a required note for a fix, up to three rounds. Every kind of human step ' +
-      'appears in sequence, so it doubles as a tour of what a person can be asked to do.',
     nodes: nodes as WorkflowSpec['nodes'],
   };
 }
@@ -556,480 +124,71 @@ function withNotionDraftPolicyGate(g: WorkflowSpec): WorkflowSpec {
   return { ...g, nodes } as WorkflowSpec;
 }
 
-/**
- * Deliberate departures from the golden, keyed by template name. Anything not
- * listed here must match exactly.
- */
-/**
- * ticket-to-merge stores a lesson when its review or CI loop runs out of attempts or its
- * merge wait times out, and tags each `commitToMemory` step with the outcome it records. The
- * three lesson steps sit on the loops' exhausted edges and the merge wait's timeout edge, and
- * continue to the same terminals on error.
- */
-/**
- * `ticket-to-merge` gathers the run's tracker ticket before validating it: `gatherTicket`
- * (non-blocking) digests the ticket, its parent and its newest comments, `setTicket` keeps the text
- * in `context.ticket`, and `validate` and `implement` take it as their `ticket` input.
- */
-function withTicketGatherer(g: WorkflowSpec): WorkflowSpec {
-  const nodes = { ...g.nodes } as Record<string, unknown>;
-  const ticketInput = { ticket: { from: 'context.ticket' } };
-  nodes.setValidating = { ...(nodes.setValidating as object), next: 'gatherTicket' };
-  nodes.gatherTicket = {
-    next: 'setTicket',
-    onError: 'continue',
-    step: 'gatherTicketContext',
-    type: 'step',
-  };
-  nodes.setTicket = {
-    next: 'validate',
-    type: 'set',
-    values: { 'context.ticket': { default: '', from: 'nodes.gatherTicket.output.text' } },
-  };
-  nodes.validate = { ...(nodes.validate as object), inputs: ticketInput };
-  nodes.implement = { ...(nodes.implement as object), inputs: ticketInput };
-  return { ...g, nodes } as WorkflowSpec;
-}
+const SUGAR_REASON =
+  'plumbing removed by status/storeAs/onFailure/maxVisits: status stamps, copy-out sets, ' +
+  'failure ladders and retry counters are fields on the node they belonged to';
 
-/**
- * `ticket-to-merge` ends the run, FAILED, when `validate` reports the request is not actionable
- * (every criterion it found is an ambiguity), instead of implementing it anyway.
- */
-function withNotActionableStop(g: WorkflowSpec): WorkflowSpec {
-  const nodes = { ...g.nodes } as Record<string, unknown>;
-  nodes.validate = { ...(nodes.validate as object), next: 'checkActionable' };
-  nodes.checkActionable = {
-    expr: 'nodes.validate.output.actionable == false',
-    onFalse: 'setSuccessCriteria',
-    onTrue: 'terminateNotActionable',
-    type: 'cond',
-  };
-  nodes.terminateNotActionable = {
-    result: {
-      ambiguities: { default: [], from: 'nodes.validate.output.ambiguities' },
-      message: {
-        literal:
-          'The request is not actionable: validation found nothing it could verify, ' +
-          'only the ambiguities listed here. Paste the ticket text or add acceptance ' +
-          'criteria to the request, then re-run.',
-      },
-      ticketUnavailableReason: {
-        default: '',
-        from: 'nodes.gatherTicket.output.unavailableReason',
-      },
-    },
-    status: 'FAILED',
-    type: 'terminate',
-  };
-  return { ...g, nodes } as WorkflowSpec;
-}
-
-/**
- * `ticket-to-merge` hands what `validate` extracted to `implement` as its `successCriteria` input,
- * so the implementer knows what done means and which parts were flagged ambiguous.
- */
-function withCriteriaHandoff(g: WorkflowSpec): WorkflowSpec {
-  const nodes = { ...g.nodes } as Record<string, unknown>;
-  const implement = nodes.implement as { inputs?: Record<string, unknown> };
-  nodes.implement = {
-    ...implement,
-    inputs: {
-      ...implement.inputs,
-      successCriteria: { default: [], from: 'context.successCriteria' },
-    },
-  };
-  return { ...g, nodes } as WorkflowSpec;
-}
-
-function ticketToMergeFailureLessons(g: WorkflowSpec): WorkflowSpec {
-  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
-  const lesson = (outcome: string, next: string) => ({
-    inputs: { outcome: { literal: outcome } },
-    next,
-    onError: 'continue',
-    step: 'commitToMemory',
-    type: 'step',
-  });
-  (nodes.checkReviewLimit as Record<string, unknown>).onTrue = 'lessonReviewFailed';
-  (nodes.checkCILimit as Record<string, unknown>).onTrue = 'lessonCIFailed';
-  nodes.lessonReviewFailed = lesson('REVIEW_FAILED', 'terminateReviewFailed');
-  nodes.lessonCIFailed = lesson('CI_FAILED', 'terminateCIFailed');
-  (nodes.waitForHumanMerge as Record<string, unknown>).onTimeout = 'lessonMergeTimedOut';
-  nodes.lessonMergeTimedOut = lesson('MERGE_TIMED_OUT', 'terminateMergeTimedOut');
-  nodes.commitLesson = { inputs: { outcome: { literal: 'MERGED' } }, ...nodes.commitLesson };
-  return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
-}
-
-/**
- * The other engineering templates store a lesson the same way when a review or CI loop runs
- * out of attempts: a `commitToMemory` step on the loop's exhausted edge (`checkReviewLimit` /
- * `checkCILimit`) that continues to the same terminal, on error too.
- */
-function failureLessons(g: WorkflowSpec, loops: ReadonlyArray<'review' | 'ci'>): WorkflowSpec {
-  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
-  const lesson = (outcome: string, next: string) => ({
-    inputs: { outcome: { literal: outcome } },
-    next,
-    onError: 'continue',
-    step: 'commitToMemory',
-    type: 'step',
-  });
-  if (loops.includes('review')) {
-    (nodes.checkReviewLimit as Record<string, unknown>).onTrue = 'lessonReviewFailed';
-    nodes.lessonReviewFailed = lesson('REVIEW_FAILED', 'terminateReviewFailed');
-  }
-  if (loops.includes('ci')) {
-    (nodes.checkCILimit as Record<string, unknown>).onTrue = 'lessonCIFailed';
-    nodes.lessonCIFailed = lesson('CI_FAILED', 'terminateCIFailed');
-  }
-  return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
-}
-
-/**
- * ci-triage-and-fix checks a fix against the failing step's own command after the tests and
- * before delivery, keeps what it found, and reports it with the fix.
- */
-function ciTriageVerification(g: WorkflowSpec): WorkflowSpec {
-  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
-  nodes.runTests = { ...nodes.runTests, next: 'verifyFix' };
-  nodes.verifyFix = {
-    inputs: {
-      codeResult: { from: 'context.currentCodeResult' },
-      triage: { from: 'context.ciTriage' },
-    },
-    next: 'storeVerification',
-    onFail: 'warn',
-    step: 'verifyCiFix',
-    type: 'step',
-  };
-  nodes.storeVerification = {
-    expr: 'nodes.verifyFix.output == null',
-    onFalse: 'keepVerification',
-    onTrue: 'routeDelivery',
-    type: 'cond',
-  };
-  nodes.keepVerification = {
-    next: 'routeDelivery',
-    type: 'set',
-    values: {
-      'context.ciVerification': { from: 'nodes.verifyFix.output.verification' },
-      'context.currentCodeResult': { from: 'nodes.verifyFix.output.codeResult' },
-    },
-  };
-  const verification = { from: 'context.ciVerification' };
-  for (const id of ['reportPushed', 'reportFix']) {
-    const node = nodes[id] as { inputs: Record<string, unknown> };
-    node.inputs = { ...node.inputs, verification };
-  }
-  for (const id of ['pushed', 'done']) {
-    const node = nodes[id] as { result: Record<string, unknown> };
-    node.result = { ...node.result, verification };
-  }
-  return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
-}
-
-/**
- * ci-triage-and-fix watches the pull request's CI on a pushed fix: one follow-up attempt when
- * it fails (unless the trigger allows no revisions), then a comment, and the run's work branch
- * removed when it ends.
- */
-function ciTriagePushWatch(g: WorkflowSpec): WorkflowSpec {
-  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
-  const verification = { from: 'context.ciVerification' };
-  const pushed = { from: 'context.pushedCommitSha' };
-  nodes.checkPushed = { ...nodes.checkPushed, onTrue: 'startPushWatch' };
-  nodes.pushFix = { ...nodes.pushFix, config: { keepWorkBranch: true } };
-  nodes.startPushWatch = {
-    next: 'reportPushed',
-    type: 'set',
-    values: {
-      'context.pushedCommitSha': { from: 'nodes.pushFix.output.commitSha' },
-      'context.pushRetries': { literal: 0 },
-    },
-  };
-  nodes.reportPushed = {
-    ...nodes.reportPushed,
-    inputs: { pushedCommitSha: pushed, triage: { from: 'context.ciTriage' }, verification },
-    next: 'watchPushedCi',
-  };
-  nodes.watchPushedCi = {
-    inputs: { ref: pushed },
-    next: 'checkPushedCi',
-    onError: 'continue',
-    step: 'waitForCiByPolling',
-    type: 'step',
-  };
-  nodes.checkPushedCi = {
-    expr: 'nodes.watchPushedCi.output.ciPassed == false',
-    onFalse: 'finishPushed',
-    onTrue: 'checkPushRetries',
-    type: 'cond',
-  };
-  nodes.checkPushRetries = {
-    expr: 'context.pushRetries >= 1 || (request.payload.maxCiFixAttempts ?? 2) == 0',
-    onFalse: 'countPushRetry',
-    onTrue: 'reportPushFailed',
-    type: 'cond',
-  };
-  nodes.countPushRetry = {
-    next: 'fetchPushedLogs',
-    type: 'set',
-    values: { 'context.pushRetries': { expr: 'context.pushRetries + 1' } },
-  };
-  nodes.fetchPushedLogs = {
-    inputs: { logsUrl: { from: 'nodes.watchPushedCi.output.logsUrl' } },
-    next: 'pushRetryFix',
-    onFail: 'warn',
-    step: 'fetchCILogs',
-    type: 'step',
-  };
-  nodes.pushRetryFix = {
-    config: { refuseWorkflowChanges: true, untrustedCiLogs: true },
-    inputs: {
-      failureContext: { from: 'nodes.fetchPushedLogs.output' },
-      previousCodeResult: { from: 'context.currentCodeResult' },
-    },
-    next: 'checkPushRetryFix',
-    onFail: 'warn',
-    step: 'executeCIFixImplementation',
-    type: 'step',
-  };
-  nodes.checkPushRetryFix = {
-    expr:
-      'nodes.pushRetryFix.output == null || ' +
-      'nodes.pushRetryFix.output.headSha == context.currentCodeResult.headSha',
-    onFalse: 'keepPushRetryFix',
-    onTrue: 'reportPushFailed',
-    type: 'cond',
-  };
-  nodes.keepPushRetryFix = {
-    next: 'pushFixAgain',
-    type: 'set',
-    values: { 'context.currentCodeResult': { from: 'nodes.pushRetryFix.output' } },
-  };
-  nodes.pushFixAgain = {
-    config: { keepWorkBranch: true },
-    inputs: {
-      codeResult: { from: 'context.currentCodeResult' },
-      triage: { from: 'context.ciTriage' },
-    },
-    next: 'checkPushedAgain',
-    onFail: 'warn',
-    step: 'pushCiFixToPullRequest',
-    type: 'step',
-  };
-  nodes.checkPushedAgain = {
-    expr: 'nodes.pushFixAgain.output.pushed == true',
-    onFalse: 'reportPushFailed',
-    onTrue: 'storePushedAgain',
-    type: 'cond',
-  };
-  nodes.storePushedAgain = {
-    next: 'reportPushed',
-    type: 'set',
-    values: { 'context.pushedCommitSha': { from: 'nodes.pushFixAgain.output.commitSha' } },
-  };
-  nodes.reportPushFailed = {
-    inputs: {
-      pushFailed: { literal: true },
-      pushRetryAttempted: { expr: 'context.pushRetries >= 1' },
-      pushRetryPushed: { expr: 'nodes.pushFixAgain.output.pushed == true' },
-      pushRetryRefusedReason: { from: 'nodes.pushFixAgain.output.reason' },
-      pushedCommitSha: pushed,
-      triage: { from: 'context.ciTriage' },
-      verification,
-    },
-    next: 'finishPushFailed',
-    onFail: 'warn',
-    step: 'reportCiTriage',
-    type: 'step',
-  };
-  nodes.finishPushFailed = {
-    next: 'pushFailed',
-    onError: 'continue',
-    step: 'finishCiFixPush',
-    type: 'step',
-  };
-  nodes.pushFailed = {
-    ...nodes.pushed,
-    result: {
-      ...(nodes.pushed as { result: Record<string, unknown> }).result,
-      error: { literal: "the pushed fix did not pass the pull request's CI" },
-      pushedCommitSha: pushed,
-    },
-    status: 'FAILED',
-  };
-  nodes.finishPushed = {
-    next: 'pushed',
-    onError: 'continue',
-    step: 'finishCiFixPush',
-    type: 'step',
-  };
-  nodes.pushed = {
-    ...nodes.pushed,
-    result: {
-      ...(nodes.pushed as { result: Record<string, unknown> }).result,
-      pushedCommitSha: pushed,
-    },
-  };
-  return { ...g, nodes: nodes as WorkflowSpec['nodes'] };
-}
-
-/**
- * The catalog refresh's guidance carries community price-list figures as a
- * cross-check: the prompt says what they are, and one rule says how to use them.
- * Both prompts share the rules, so both change.
- */
-function catalogRefreshPriceListRule(g: WorkflowSpec): WorkflowSpec {
-  const rule =
-    "- A provider section may end with community price-list figures. They are a cross-check, never a source: do not copy, cite or round to one. Where the figure on the official page differs from the list's, read the page again; keep only what the page shows, and add a comment `// price list says $<input> / $<output>` on that row so the reviewer looks at it.\n";
-  const edit = (prompt: string) =>
-    prompt
-      .replace(
-        "that text is the platform's own list of live model ids, not a person's instructions.",
-        "that text is the platform's own list of live model ids, with price-list figures for cross-checking, not a person's instructions."
-      )
-      .replace(
-        '- For every row you add or whose price you change,',
-        `${rule}- For every row you add or whose price you change,`
-      );
-  const nodes = structuredClone(g.nodes) as unknown as Record<
-    string,
-    { config: { systemPrompt: string } }
-  >;
-  for (const id of ['implement', 'reviewFix']) {
-    const node = nodes[id];
-    if (node) {
-      node.config.systemPrompt = edit(node.config.systemPrompt);
-    }
-  }
-  return { ...g, nodes: nodes as unknown as WorkflowSpec['nodes'] };
-}
-
-/**
- * The price-list rule, checked in code after the review approves: an approval goes
- * through `checkPriceNotes`, and an unexplained difference re-enters the review
- * loop's fix path with the check's summary as the finding.
- */
-function catalogRefreshPriceNoteCheck(g: WorkflowSpec): WorkflowSpec {
-  const nodes = structuredClone(g.nodes) as unknown as Record<string, Record<string, unknown>>;
-  (nodes.checkApproval as Record<string, unknown>).onTrue = 'checkPriceNotes';
-  nodes.checkPriceNotes = {
-    inputs: { codeResult: { from: 'context.currentCodeResult' } },
-    next: 'priceNotesOk',
-    step: 'checkPriceListNotes',
-    type: 'step',
-  };
-  nodes.priceNotesOk = {
-    expr: 'nodes.checkPriceNotes.output.ok == true',
-    onFalse: 'storePriceNoteFindings',
-    onTrue: 'checkScope',
-    type: 'cond',
-  };
-  nodes.storePriceNoteFindings = {
-    next: 'checkReviewLimit',
-    type: 'set',
-    values: {
-      'context.lastRejectionSummary': { from: 'nodes.checkPriceNotes.output.summary' },
-      'context.reviewRetries': { expr: 'context.reviewRetries + 1' },
-    },
-  };
-  return { ...g, nodes: nodes as unknown as WorkflowSpec['nodes'] };
-}
-
-const FAILURE_LESSONS_REASON =
+const FINALIZER = 'the finalizer already writes COMPLETED on SUCCESS';
+const LESSONS =
   'a review or CI loop that runs out of attempts stores a lesson about what blocked it ' +
   'before the run fails';
+const STALL =
+  'the review loop stops when two consecutive rejected reviews carry the same findings, ' +
+  'going where running out of attempts goes; an approval clears the remembered findings first';
+const CI_FIRST =
+  'CI (with a 2-attempt fix loop) runs before the final gate and a rejection goes fix -> CI -> ' +
+  'gate again';
+const TICKET_HEAD =
+  'the run’s tracker ticket is gathered before validation and handed to validate and implement, ' +
+  'a request validation finds not actionable ends the run FAILED before implement, and ' +
+  'implement receives validate’s success criteria';
 
+/**
+ * The templates held to a sugar snapshot, with what changed in them before the sugar did
+ * (the history is only text; the snapshot is what the build is held to).
+ */
+const SUGARED: Record<string, string> = {
+  'address-pr-feedback': '',
+  'agent-reviewed-pr': `${FINALIZER}; ${LESSONS}; ${STALL};`,
+  'approve-before-pr':
+    `${FINALIZER}; the gate offers request changes, a fix that is re-tested before the gate, ` +
+    'and a third request fails the run;',
+  'ci-triage-and-fix':
+    'a fix is checked against the failing step’s own command before it is delivered; a fix ' +
+    'pushed onto a pull request has its CI watched, with one follow-up attempt;',
+  'code-and-ci': `${FINALIZER}; ${LESSONS};`,
+  'consensus-review': `${FINALIZER}; ${CI_FIRST}; ${LESSONS}; ${STALL};`,
+  'db-migration-dry-run': '',
+  'dependency-update': `${FINALIZER}; ${LESSONS};`,
+  'docs-refresh': 'the description names the markdown prompt and the docs-directory path guard;',
+  'external-approval-gate': `${STALL};`,
+  'four-eyes': `${FINALIZER}; ${CI_FIRST}; ${LESSONS} (not for the sign-off loop); ${STALL};`,
+  'fully-supervised': 'the final approval offers request changes, capped at three rounds;',
+  hotfix: '',
+  'human-code-review': '',
+  'model-catalog-refresh': `the guidance carries price-list figures, checked in code after the review; ${STALL};`,
+  'parallel-fan-out': '',
+  'prd-decomposition': '',
+  'scope-clarification': `${STALL};`,
+  'security-triage': '',
+  'staged-deploy-signals': `${STALL};`,
+  'ticket-to-merge': `${FINALIZER}; ${LESSONS}; ${TICKET_HEAD}; ${STALL};`,
+  'ticket-to-merge-qodo': `${TICKET_HEAD}; ${STALL};`,
+  'tiered-escalation': '',
+  'vulnerability-remediation': '',
+};
+
+/** Deliberate departures from the golden, keyed by template name. Anything not listed must match. */
 const INTENDED_CHANGES: Record<
   string,
   { reason: string; apply: (g: WorkflowSpec) => WorkflowSpec }
 > = {
-  'docs-refresh': {
-    apply: (g) => ({
-      ...g,
-      description: g.description?.replace(
-        'Only markdown can change.',
-        'Only markdown files or files under docs/ can change.'
-      ),
-    }),
-    reason: 'the description distinguishes the markdown prompt from the docs-directory path guard',
-  },
-  // Seven templates stamped COMPLETED just before their SUCCESS terminate. The finalizer
-  // (`finalizeWorkflowRun`) already writes COMPLETED on a SUCCESS run, so the node was a
-  // second write of the same fact. Removing it retargets what pointed at it to `done`.
-  ...Object.fromEntries(
-    ['agent-reviewed-pr', 'code-and-ci', 'ticket-to-merge', 'dependency-update'].map((name) => [
-      name,
-      {
-        apply: (g: WorkflowSpec) => removePassThrough(g, 'setCompleted'),
-        reason: 'the finalizer already writes COMPLETED on SUCCESS',
-      },
-    ])
-  ),
   'notion-content-draft': {
     apply: withNotionDraftPolicyGate,
     reason:
       'the paragraph it appends is an internal write, so the template records the autonomy ' +
       'decision the audit log and any later policy edit are held to, and waits for approval when ' +
       'the policy asks for one, exactly as its brand-review sibling does',
-  },
-  'agent-reviewed-pr': {
-    apply: (g: WorkflowSpec) =>
-      failureLessons(removePassThrough(g, 'setCompleted'), ['review', 'ci']),
-    reason: `the finalizer already writes COMPLETED on SUCCESS; ${FAILURE_LESSONS_REASON}`,
-  },
-  'code-and-ci': {
-    apply: (g: WorkflowSpec) => failureLessons(removePassThrough(g, 'setCompleted'), ['ci']),
-    reason: `the finalizer already writes COMPLETED on SUCCESS; ${FAILURE_LESSONS_REASON}`,
-  },
-  'dependency-update': {
-    apply: (g: WorkflowSpec) => failureLessons(removePassThrough(g, 'setCompleted'), ['ci']),
-    reason: `the finalizer already writes COMPLETED on SUCCESS; ${FAILURE_LESSONS_REASON}`,
-  },
-  'ticket-to-merge': {
-    apply: (g: WorkflowSpec) =>
-      withCriteriaHandoff(
-        withNotActionableStop(
-          withTicketGatherer(ticketToMergeFailureLessons(removePassThrough(g, 'setCompleted')))
-        )
-      ),
-    reason:
-      'the finalizer already writes COMPLETED on SUCCESS; a review or CI loop that runs out ' +
-      'of attempts, or a merge wait that times out, stores a lesson about what happened ' +
-      'before the run ends, and every commitToMemory step names the outcome it records; ' +
-      "the run's tracker ticket is gathered before validation and handed to validate and implement; " +
-      'a request validation finds not actionable ends the run FAILED before implement, saying why ' +
-      'the ticket could not be read when it could not; ' +
-      "implement receives validate's success criteria, ambiguity entries included",
-  },
-  'ticket-to-merge-qodo': {
-    apply: (g: WorkflowSpec) => withCriteriaHandoff(withNotActionableStop(g)),
-    reason:
-      'it is built on the ticket-to-merge node graph, so a request validation finds not ' +
-      'actionable ends the run FAILED before implement, saying why the ticket could not be read ' +
-      "when it could not, and implement receives validate's success criteria, ambiguity entries included",
-  },
-  // The two templates that ended the run on the first CI failure now fix and retry like their
-  // siblings, with CI ahead of the human / consensus gates (and the setCompleted removal above).
-  'consensus-review': {
-    apply: (g: WorkflowSpec) =>
-      failureLessons(consensusReviewAfterCiFirst(removePassThrough(g, 'setCompleted')), [
-        'review',
-        'ci',
-      ]),
-    reason:
-      'the finalizer already writes COMPLETED on SUCCESS; the PR opens straight after the ' +
-      'implementation, a failing CI is fixed (2 attempts) before anything else, and the ' +
-      'two-reviewer consensus runs on the green code, a rejection going fix -> CI -> consensus; ' +
-      FAILURE_LESSONS_REASON,
-  },
-  'ci-triage-and-fix': {
-    apply: (g: WorkflowSpec) => ciTriagePushWatch(ciTriageVerification(g)),
-    reason:
-      'a fix is checked against the failing step’s own command before it is delivered, and ' +
-      'the result is reported with the fix; a fix pushed onto a pull request has its CI ' +
-      'watched, with one follow-up attempt and a comment when it still fails',
   },
   // `writes: 'split'` names the two write nodes autoWrite/manualWrite, so the
   // result's `nodes.writeOutcome` reference pointed at a node that never runs.
@@ -1042,107 +201,19 @@ const INTENDED_CHANGES: Record<
       },
     ])
   ),
-  'approve-before-pr': {
-    apply: (g: WorkflowSpec) => approveBeforePrRequestChanges(removePassThrough(g, 'setCompleted')),
-    reason:
-      'the finalizer already writes COMPLETED on SUCCESS; the gate offers request changes, ' +
-      'which counts a round, fixes the code with the note and re-runs the tests before the ' +
-      'gate — a third request fails the run; the storeCodeResult node is gone because ' +
-      'initCounters and the fix set node keep context.currentCodeResult current',
-  },
-  'four-eyes': {
-    apply: (g: WorkflowSpec) =>
-      failureLessons(
-        fourEyesRequestChanges(fourEyesAfterCiFirst(removePassThrough(g, 'setCompleted'))),
-        ['review', 'ci']
-      ),
-    reason:
-      'the finalizer already writes COMPLETED on SUCCESS; CI (with a 2-attempt fix loop) runs ' +
-      'after the agent review and before the two sign-offs, which see the green code, and a ' +
-      'rejection goes fix -> CI -> both sign-offs again instead of failing the run; the agent ' +
-      'review and CI loops store a lesson when they run out of attempts (the sign-off loop ' +
-      'does not); request changes replaces the ask-why humanInput — the required note rides ' +
-      'in the gate answer — while a rejection stops the run directly',
-  },
-  'fully-supervised': {
-    apply: (g: WorkflowSpec) => fullySupervisedRequestChanges(g),
-    reason:
-      'the final approval offers request changes, fixed by the review-fix session and sent ' +
-      'straight back to the gate, capped at three rounds',
-  },
-  'model-catalog-refresh': {
-    apply: (g: WorkflowSpec) => catalogRefreshPriceNoteCheck(catalogRefreshPriceListRule(g)),
-    reason:
-      'the guidance carries community price-list figures as a cross-check, which the prompts ' +
-      'name and one rule says how to use; after the review approves, a step checks that rule in ' +
-      'code and sends an unexplained difference back to the fixer',
-  },
+  ...Object.fromEntries(
+    Object.entries(SUGARED).map(([name, history]) => [
+      name,
+      {
+        // The previous release's spec differs from today's by more than this test can express
+        // as edits (the plumbing nodes are gone and their ids with them), so the target is the
+        // reviewed snapshot in `__golden__/sugar/`.
+        apply: () => sugarGolden(name),
+        reason: history ? `${history} ${SUGAR_REASON}` : SUGAR_REASON,
+      },
+    ])
+  ),
 };
-
-/**
- * Every template built on `reviewLoop` stops when two consecutive rejected reviews carry the same
- * findings, routing to wherever running out of attempts goes (read off `checkReviewLimit`, so a
- * template whose exhausted route another change moved keeps both together).
- */
-const REVIEW_STALL_TEMPLATES = [
-  'agent-reviewed-pr',
-  'external-approval-gate',
-  'four-eyes',
-  'model-catalog-refresh',
-  'scope-clarification',
-  'staged-deploy-signals',
-  'ticket-to-merge',
-  'ticket-to-merge-qodo',
-];
-
-const REVIEW_STALL_REASON =
-  'the review loop stops when two consecutive rejected reviews carry the same findings ' +
-  '(reviewer, category, file, count), going where running out of attempts goes; an approval ' +
-  'clears the remembered findings first';
-
-function withReviewStallStop(g: WorkflowSpec): WorkflowSpec {
-  const nodes = structuredClone(g.nodes) as unknown as Record<string, Record<string, unknown>>;
-  const exhausted = (nodes.checkReviewLimit as { onTrue: string }).onTrue;
-  nodes.review.inputs = {
-    ...(nodes.review.inputs as object),
-    previousFingerprint: { default: '', from: 'context.lastReviewFingerprint' },
-  };
-  nodes.storeRejection.next = 'checkStalled';
-  nodes.storeRejection.values = {
-    ...(nodes.storeRejection.values as object),
-    'context.lastReviewFingerprint': {
-      default: '',
-      from: 'nodes.review.output.rejectionFingerprint',
-    },
-  };
-  nodes.forgetRejection = {
-    next: (nodes.checkApproval as { onTrue: string }).onTrue,
-    type: 'set',
-    values: { 'context.lastReviewFingerprint': { literal: '' } },
-  };
-  (nodes.checkApproval as { onTrue: string }).onTrue = 'forgetRejection';
-  nodes.checkStalled = {
-    expr: 'nodes.review.output.stalled == true',
-    onFalse: 'checkReviewLimit',
-    onTrue: exhausted,
-    type: 'cond',
-  };
-  return { ...g, nodes: nodes as unknown as WorkflowSpec['nodes'] };
-}
-
-/** The template's intended change: its own entry, then the stall stop where it applies. */
-function intendedChange(
-  name: string
-): { reason: string; apply: (g: WorkflowSpec) => WorkflowSpec } | undefined {
-  const own = INTENDED_CHANGES[name];
-  if (!REVIEW_STALL_TEMPLATES.includes(name)) {
-    return own;
-  }
-  return {
-    apply: (g) => withReviewStallStop(own ? own.apply(g) : g),
-    reason: own ? `${own.reason}; ${REVIEW_STALL_REASON}` : REVIEW_STALL_REASON,
-  };
-}
 
 /** Point `done`'s issueUrl at the split write nodes instead of the absent `writeOutcome`. */
 function issueUrlFromSplitWrites(spec: WorkflowSpec): WorkflowSpec {
@@ -1162,13 +233,30 @@ describe('built-in templates match their pre-helper golden specs', () => {
     expect(files).toEqual(BUILTIN_TEMPLATES.map((t) => t.name).sort());
   });
 
+  it('has a sugar snapshot for exactly the templates that name one', () => {
+    if (process.env.UPDATE_SUGAR_GOLDEN === '1') {
+      return;
+    }
+    const files = readdirSync(SUGAR_DIR)
+      .filter((f) => f.endsWith('.json'))
+      .map((f) => f.slice(0, -'.json'.length))
+      .sort();
+    expect(files).toEqual(Object.keys(SUGARED).sort());
+  });
+
   it.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const))(
     '%s expands to its golden flat spec',
     (name, spec) => {
-      const change = intendedChange(name);
+      const built = stripPresentation(spec);
+      if (process.env.UPDATE_SUGAR_GOLDEN === '1' && name in SUGARED) {
+        mkdirSync(SUGAR_DIR, { recursive: true });
+        writeFileSync(path.join(SUGAR_DIR, `${name}.json`), `${JSON.stringify(built, null, 2)}\n`);
+        return;
+      }
+      const change = INTENDED_CHANGES[name];
       const expected = change ? change.apply(golden(name)) : golden(name);
       // Strict: a key left as `undefined` would pass toEqual but is not the golden's bytes.
-      expect(stripPresentation(spec)).toStrictEqual(expected);
+      expect(built).toStrictEqual(expected);
     }
   );
 

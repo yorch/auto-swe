@@ -3,12 +3,10 @@ import {
   ciLoop,
   ciWaitEntry,
   failureLesson,
-  initCounters,
   mergeNodes,
   openPullRequest,
   prResult,
   reviewLoop,
-  statusStamp,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -24,26 +22,23 @@ export const AGENT_REVIEWED_PR_SPEC: WorkflowSpec = {
     'request, then wait for CI. No human approval steps, and it never merges: the run ends ' +
     'when CI is green and the pull request waits for a person. Use this when the agent ' +
     'review is a sufficient quality gate before a pull request.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'agent-reviewed-pr',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing' }),
+    validatePhase({ next: 'implement' }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'initCounters',
+        next: 'review',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
       },
-      initCounters: initCounters('setReviewing', { group: 'implement' }),
     },
-    reviewLoop({ approved: 'setAwaitingCi', exhausted: 'lessonReviewFailed' }),
-    {
-      setAwaitingCi: statusStamp('AWAITING_CI', 'openPR', { group: 'pull request' }),
-    },
-    openPullRequest({ next: ciWaitEntry() }),
+    reviewLoop({ approved: 'openPR', exhausted: 'lessonReviewFailed' }),
+    openPullRequest({ next: ciWaitEntry(), status: 'AWAITING_CI' }),
     ciLoop({
       exhausted: 'lessonCIFailed',
       fix: { handoff: { repush: 'repushAfterCIFix' } },

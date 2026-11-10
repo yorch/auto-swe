@@ -3,8 +3,6 @@ import {
   mergeNodes,
   openPullRequest,
   prResult,
-  statusStamp,
-  storeCodeResult,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -24,20 +22,20 @@ export const DB_MIGRATION_DRY_RUN_SPEC: WorkflowSpec = {
     'Implement the migration code, run it as a dry run in a throwaway container to preview ' +
     'the SQL, then require a person to review the plan and approve it before the pull ' +
     'request is opened.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'db-migration-dry-run',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing', successCriteria: false }),
+    validatePhase({ next: 'implement', successCriteria: false }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'storeMigrationCode',
+        next: 'dryRunMigration',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the migration',
         type: 'step',
       },
-      storeMigrationCode: storeCodeResult('dryRunMigration', { group: 'implement' }),
       dryRunMigration: {
         // Customise image + command for your stack; the image must be on the
         // team's shell allowlist or the node is rejected when its container

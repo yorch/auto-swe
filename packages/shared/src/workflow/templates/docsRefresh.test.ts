@@ -21,7 +21,7 @@ describe('DOCS_REFRESH_SPEC', () => {
   it('opens a draft pull request only when something changed', () => {
     expect(nodes.checkChanges).toMatchObject({
       expr: 'nodes.implement.output.filesChanged.length == 0',
-      onFalse: 'storeCodeResult',
+      onFalse: 'openPR',
       onTrue: 'doneNoChange',
     });
     expect(nodes.openPR).toMatchObject({ config: { draft: true } });

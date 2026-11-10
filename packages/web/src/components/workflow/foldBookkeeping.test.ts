@@ -77,7 +77,7 @@ describe('foldBookkeeping', () => {
 
   it('shrinks the ticket-to-merge template and keeps every non-bookkeeping node', () => {
     const { spec: folded, hidden } = foldBookkeeping(TICKET_TO_MERGE_SPEC);
-    expect(hidden.length).toBeGreaterThan(10);
+    expect(hidden.length).toBeGreaterThan(5);
     for (const [id, node] of Object.entries(TICKET_TO_MERGE_SPEC.nodes)) {
       if (!hidden.includes(id)) {
         expect(folded.nodes[id]?.type).toBe(node.type);

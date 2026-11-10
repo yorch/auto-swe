@@ -24,7 +24,7 @@ describe('ticket-to-merge-qodo', () => {
 
   it('hands off to Qodo when CI passes, not to the merge wait', () => {
     expect(nodes.checkCI?.onTrue).toBe('qodoReview');
-    expect(TICKET_TO_MERGE_SPEC.nodes.checkCI).toMatchObject({ onTrue: 'setAwaitingHumanMerge' });
+    expect(TICKET_TO_MERGE_SPEC.nodes.checkCI).toMatchObject({ onTrue: 'waitForHumanMerge' });
   });
 
   it('reads the final head and the pull request the run opened', () => {
@@ -41,7 +41,7 @@ describe('ticket-to-merge-qodo', () => {
   it('sends a blocking review to a person and every other result to the merge wait', () => {
     expect(nodes.qodoGate).toMatchObject({
       expr: 'nodes.qodoReview.output.blocking == true',
-      onFalse: 'setAwaitingHumanMerge',
+      onFalse: 'waitForHumanMerge',
       onTrue: 'qodoDecision',
     });
   });
@@ -55,7 +55,7 @@ describe('ticket-to-merge-qodo', () => {
     };
     expect(decision.type).toBe('humanDecision');
     expect(decision.options.map((o) => [o.value, o.next])).toEqual([
-      ['continue', 'setAwaitingHumanMerge'],
+      ['continue', 'waitForHumanMerge'],
       ['stop', 'terminateQodoStopped'],
     ]);
     expect(decision.onTimeout).toBe('terminateQodoTimedOut');

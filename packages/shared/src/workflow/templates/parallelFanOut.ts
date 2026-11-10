@@ -3,7 +3,6 @@ import {
   mergeNodes,
   openPullRequest,
   prResult,
-  statusStamp,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -35,12 +34,11 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
     'time (feature, tests and documentation). Each branch is implemented in isolation. The ' +
     'branches are merged into one integration branch, with the merge-conflict agent ' +
     'resolving any conflicts, and a single pull request is opened.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'parallel-fan-out',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing' }),
+    validatePhase({ next: 'buildSubtasks' }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'buildSubtasks', { group: 'implement' }),
       branchDone: {
         group: 'fan-out',
         title: 'Branch done',
@@ -85,6 +83,7 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
         group: 'implement',
         title: 'Split into subtasks',
         next: 'fanOutImpl',
+        status: 'IMPLEMENTING',
         type: 'set',
         values: {
           // `id` names each branch (`<prefix>/<ticket>/<id>`); title and
@@ -118,22 +117,6 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
         onTrue: 'recordIntegrationBranch',
         type: 'cond',
       },
-      checkMerge: {
-        group: 'merge',
-        title: 'Merged cleanly?',
-        expr: 'nodes.merge.output.passed == true',
-        onFalse: 'resolveConflict',
-        onTrue: 'buildIntegratedResult',
-        type: 'cond',
-      },
-      checkResolved: {
-        group: 'merge',
-        title: 'Conflicts resolved?',
-        expr: 'nodes.resolveConflict.output.passed == true',
-        onFalse: 'terminateMergeFailed',
-        onTrue: 'buildIntegratedResult',
-        type: 'cond',
-      },
       fanOutImpl: {
         group: 'fan-out',
         title: 'Implement each subtask in parallel',
@@ -152,8 +135,11 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
         group: 'fan-out',
         title: 'Implement one subtask',
         inputs: { subtask: { from: 'subtask' } },
-        next: 'recordBranchResult',
+        next: 'branchDone',
         step: 'executeImplementation',
+        // The fanOut `exports` list reads this at join time, and `branchDone` reports its
+        // branch for the pluck.
+        storeAs: 'context.currentCodeResult',
         type: 'step',
       },
       merge: {
@@ -163,19 +149,11 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
           sourceBranches: { from: 'nodes.fanOutImpl.output.plucked' },
           targetBranch: { from: 'context.integrationBranch' },
         },
-        next: 'checkMerge',
-        onFail: 'warn',
+        // A conflict (`passed: false`) or a failed merge hands over to the resolver.
+        next: 'buildIntegratedResult',
+        onFailure: 'resolveConflict',
         step: 'mergeBranches',
         type: 'step',
-      },
-      // Stash the branch's implementer output: the fanOut `exports` list reads
-      // it at join time, and `branchDone` reports its branch for the pluck.
-      recordBranchResult: {
-        group: 'fan-out',
-        title: 'Keep the branch result',
-        next: 'branchDone',
-        type: 'set',
-        values: { 'context.currentCodeResult': { from: 'nodes.implementBranch.output' } },
       },
       recordIntegrationBranch: {
         group: 'merge',
@@ -194,8 +172,8 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
           sourceBranches: { from: 'nodes.fanOutImpl.output.plucked' },
           targetBranch: { from: 'context.integrationBranch' },
         },
-        next: 'checkResolved',
-        onFail: 'warn',
+        next: 'buildIntegratedResult',
+        onFailure: 'terminateMergeFailed',
         step: 'resolveMergeConflict',
         type: 'step',
       },

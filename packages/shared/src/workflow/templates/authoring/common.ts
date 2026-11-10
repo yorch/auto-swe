@@ -57,33 +57,6 @@ export function terminate(
   };
 }
 
-/**
- * A status stamp: an `updateDomainState` step that writes the run's phase label
- * to `ActiveWorkflow.currentStatus` before the work of that phase starts.
- */
-export function statusStamp(status: string, next: string, p: Presentation = {}): Node {
-  return {
-    config: { status },
-    next,
-    step: 'updateDomainState',
-    ...present({ title: `Set status: ${status}`, ...p }),
-    type: 'step',
-  };
-}
-
-/**
- * A `set` node that stores the implementer's output as `context.currentCodeResult`,
- * the shape every later step reads. `from` defaults to the node id `implement`.
- */
-export function storeCodeResult(next: string, p: Presentation = {}, from = 'implement'): Node {
-  return {
-    next,
-    ...present({ title: 'Keep the implementation', ...p }),
-    type: 'set',
-    values: { 'context.currentCodeResult': { from: `nodes.${from}.output` } },
-  };
-}
-
 const GATE_TITLES: Record<string, string> = {
   runLint: 'Lint',
   runTests: 'Run the tests',
@@ -103,30 +76,6 @@ export function qualityGate(step: string, next: string, p: Presentation = {}): N
     step,
     ...present({ title: GATE_TITLES[step] ?? `Run ${step}`, ...p }),
     type: 'step',
-  };
-}
-
-/**
- * The `set` node that opens the implement-then-review flow: it initialises the
- * retry counters and keeps the implementer's output as `context.currentCodeResult`.
- * `ci` / `review` choose which counters exist (both by default); a template only
- * initialises the loops it has. `counters` names extra context paths to start at 0, for a
- * template with a loop of its own (`four-eyes` counts sign-off rejections).
- */
-export function initCounters(
-  next: string,
-  opts: { ci?: boolean; review?: boolean; counters?: string[] } & Presentation = {}
-): Node {
-  return {
-    next,
-    ...present({ title: 'Initialise the counters', ...opts }),
-    type: 'set',
-    values: {
-      ...(opts.ci === false ? {} : { 'context.ciRetries': { literal: 0 } }),
-      'context.currentCodeResult': { from: 'nodes.implement.output' },
-      ...(opts.review === false ? {} : { 'context.reviewRetries': { literal: 0 } }),
-      ...Object.fromEntries((opts.counters ?? []).map((path) => [path, { literal: 0 }])),
-    },
   };
 }
 

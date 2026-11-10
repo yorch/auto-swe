@@ -3,22 +3,18 @@ import { reviewLoop } from './reviewLoop.js';
 import { expectWellFormed } from './testUtil.js';
 
 describe('reviewLoop', () => {
-  it('expands to eleven plain nodes under the ids the templates have always used', () => {
+  it('expands to seven plain nodes', () => {
     const nodes = reviewLoop({ approved: 'next' });
     expect(Object.keys(nodes).sort()).toEqual([
       'checkApproval',
-      'checkReviewLimit',
       'checkStalled',
       'forgetRejection',
-      'incReviewRetries',
       'review',
       'reviewFix',
-      'setReviewing',
       'storeRejection',
       'terminateReviewFailed',
-      'updateCodeAfterReviewFix',
     ]);
-    expectWellFormed(nodes, 'setReviewing', ['next']);
+    expectWellFormed(nodes, 'review', ['next']);
   });
 
   it('stops on a repeated rejection before the limit, to the same place as running out', () => {
@@ -37,19 +33,16 @@ describe('reviewLoop', () => {
     });
     expect(nodes.checkStalled).toMatchObject({
       expr: 'nodes.review.output.stalled == true',
-      onFalse: 'checkReviewLimit',
+      onFalse: 'reviewFix',
       onTrue: 'terminateReviewFailed',
       type: 'cond',
-    });
-    expect(nodes.incReviewRetries).toMatchObject({
-      values: { 'context.reviewRetries': { expr: 'context.reviewRetries + 1' } },
     });
   });
 
   it('sends a stall to `exhausted` when given one, as it does the limit', () => {
     const nodes = reviewLoop({ approved: 'n', exhausted: 'lessonReviewFailed' });
     expect(nodes.checkStalled).toMatchObject({ onTrue: 'lessonReviewFailed' });
-    expect(nodes.checkReviewLimit).toMatchObject({ onTrue: 'lessonReviewFailed' });
+    expect(nodes.reviewFix).toMatchObject({ onExhausted: 'lessonReviewFailed' });
   });
 
   it('is one group', () => {
@@ -60,36 +53,32 @@ describe('reviewLoop', () => {
   it('routes an approval to `approved` and a fix back into the review by default', () => {
     const nodes = reviewLoop({ approved: 'openPR' });
     expect(nodes.checkApproval).toMatchObject({
-      onFalse: 'incReviewRetries',
+      onFalse: 'storeRejection',
       onTrue: 'forgetRejection',
     });
     expect(nodes.forgetRejection).toMatchObject({
       next: 'openPR',
       values: { 'context.lastReviewFingerprint': { literal: '' } },
     });
-    expect(nodes.updateCodeAfterReviewFix).toMatchObject({ next: 'setReviewing' });
-    expect(nodes.setReviewing).toMatchObject({ config: { status: 'IN_REVIEW' }, next: 'review' });
+    expect(nodes.reviewFix).toMatchObject({
+      next: 'review',
+      storeAs: 'context.currentCodeResult',
+    });
+    expect(nodes.review).toMatchObject({ next: 'checkApproval', status: 'IN_REVIEW' });
   });
 
   it('sends the fixed code to `afterFix` when given one', () => {
     const nodes = reviewLoop({ afterFix: 'clearCiResult', approved: 'n' });
-    expect(nodes.updateCodeAfterReviewFix).toMatchObject({ next: 'clearCiResult' });
+    expect(nodes.reviewFix).toMatchObject({ next: 'clearCiResult' });
   });
 
-  it('puts the attempt limit in the cond, 3 unless told otherwise', () => {
-    expect(reviewLoop({ approved: 'n' }).checkReviewLimit).toMatchObject({
-      expr: 'context.reviewRetries >= 3',
+  it('bounds the fixer with maxVisits: limit - 1 fixes, 2 unless told otherwise', () => {
+    expect(reviewLoop({ approved: 'n' }).reviewFix).toMatchObject({
+      maxVisits: 2,
+      onExhausted: 'terminateReviewFailed',
     });
-    expect(reviewLoop({ approved: 'n', limit: 5 }).checkReviewLimit).toMatchObject({
-      expr: 'context.reviewRetries >= 5',
-    });
-  });
-
-  it('can name the keep-the-fix node differently without breaking the wiring', () => {
-    const nodes = reviewLoop({ approved: 'n', keepFixId: 'updateCodeAfterFix' });
-    expect(nodes.updateCodeAfterReviewFix).toBeUndefined();
-    expect(nodes.reviewFix).toMatchObject({ next: 'updateCodeAfterFix' });
-    expectWellFormed(nodes, 'setReviewing', ['n']);
+    expect(reviewLoop({ approved: 'n', limit: 5 }).reviewFix).toMatchObject({ maxVisits: 4 });
+    expect(() => reviewLoop({ approved: 'n', limit: 1 })).toThrow(/at least 2/);
   });
 
   it('terminates a failed review with a bare FAILED (no result)', () => {

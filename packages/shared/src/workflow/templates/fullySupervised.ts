@@ -1,11 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  statusStamp,
-  terminate,
-} from './authoring/index.js';
+import { mergeNodes, openPullRequest, prResult, terminate } from './authoring/index.js';
 
 /**
  * Kitchen-sink supervised flow: all four HITL node types chained.
@@ -46,7 +40,7 @@ export const FULLY_SUPERVISED_SPEC: WorkflowSpec = {
         ],
         group: 'gather context',
         onSubmit: 'storeContext',
-        onTimeout: 'setImplementing',
+        onTimeout: 'implement',
         storeAs: 'context.requirements',
         timeout: '15m',
         title: 'Provide implementation context',
@@ -54,28 +48,19 @@ export const FULLY_SUPERVISED_SPEC: WorkflowSpec = {
       },
       storeContext: {
         group: 'gather context',
-        next: 'setImplementing',
+        next: 'implement',
         title: 'Keep the answers',
         type: 'set',
         values: { 'context.requirements': { from: 'nodes.gatherContext.output.data' } },
       },
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'storeCodeResult',
+        next: 'reviewDiff',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
-      },
-      storeCodeResult: {
-        group: 'implement',
-        next: 'reviewDiff',
-        title: 'Keep the implementation',
-        type: 'set',
-        values: {
-          'context.approvalRetries': { literal: 0 },
-          'context.currentCodeResult': { from: 'nodes.implement.output' },
-        },
       },
       reviewDiff: {
         contentFrom: 'context.currentCodeResult.diff',
@@ -112,17 +97,11 @@ export const FULLY_SUPERVISED_SPEC: WorkflowSpec = {
           previousCodeResult: { from: 'context.currentCodeResult' },
           rejectionSummary: { from: 'context.reviewNotes' },
         },
-        next: 'updateCodeAfterNotes',
+        next: 'finalApproval',
         step: 'executeReviewFixImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Address the reviewer notes',
         type: 'step',
-      },
-      updateCodeAfterNotes: {
-        group: 'human review',
-        next: 'finalApproval',
-        title: 'Keep the revised code',
-        type: 'set',
-        values: { 'context.currentCodeResult': { from: 'nodes.addressNotes.output' } },
       },
       finalApproval: {
         description:
@@ -131,44 +110,26 @@ export const FULLY_SUPERVISED_SPEC: WorkflowSpec = {
         group: 'approval',
         onApprove: 'openPR',
         onReject: 'terminateRejected',
-        onRequestChanges: 'incApprovalRetries',
+        onRequestChanges: 'addressApprovalChanges',
         onTimeout: 'terminateTimedOut',
         timeout: '24h',
         title: 'Final approval — open the PR?',
         type: 'humanApproval',
       },
-      incApprovalRetries: {
-        group: 'approval',
-        next: 'checkApprovalLimit',
-        title: 'Count the change request',
-        type: 'set',
-        values: { 'context.approvalRetries': { expr: 'context.approvalRetries + 1' } },
-      },
-      checkApprovalLimit: {
-        expr: 'context.approvalRetries >= 3',
-        group: 'approval',
-        onFalse: 'addressApprovalChanges',
-        onTrue: 'terminateRejected',
-        title: 'Out of attempts?',
-        type: 'cond',
-      },
+      // The third change request ends the run: the fixer is entered twice at most.
       addressApprovalChanges: {
         group: 'approval',
         inputs: {
           previousCodeResult: { from: 'context.currentCodeResult' },
           rejectionSummary: { from: 'nodes.finalApproval.output.comment' },
         },
-        next: 'updateCodeAfterApprovalChanges',
+        maxVisits: 2,
+        next: 'finalApproval',
+        onExhausted: 'terminateRejected',
         step: 'executeReviewFixImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Fix the change the approver sent back',
         type: 'step',
-      },
-      updateCodeAfterApprovalChanges: {
-        group: 'approval',
-        next: 'finalApproval',
-        title: 'Keep the revised code',
-        type: 'set',
-        values: { 'context.currentCodeResult': { from: 'nodes.addressApprovalChanges.output' } },
       },
       terminateRejected: terminate('FAILED', { group: 'approval', title: 'Rejected' }),
       terminateTimedOut: terminate('TIMED_OUT', { group: 'approval', title: 'Approval timed out' }),

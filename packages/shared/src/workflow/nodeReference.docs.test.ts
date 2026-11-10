@@ -46,6 +46,10 @@ const COMMON_FIELDS = [
   'retry',
   'startToCloseTimeout',
   'heartbeatTimeout',
+  'onFailure',
+  'status',
+  'maxVisits',
+  'onExhausted',
 ];
 
 const LABELS = [

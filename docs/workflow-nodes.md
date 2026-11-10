@@ -189,6 +189,16 @@ retry and timeout policy, so `retry`, `startToCloseTimeout` and `heartbeatTimeou
 effect and `validateSpec` reports them as `IGNORED_FIELD`. Use `onFail: { "retry": N }` for a
 workflow-level retry.
 
+**`onFailure`** is the one failure route. Once a dispatch node has finally failed — its `onFail`
+retries are spent, and whether the activity threw or returned `passed: false` — the run goes to the
+node id it names, or ends as a `terminate` node with that `status` and `message` would
+(`{ "status": "FAILED", "message": "…" }`; the status is one of `SUCCESS`, `FAILED`, `TIMED_OUT`,
+`SKIPPED`, never `CANCELLED`). It wins over `onFail: "block"` and `"warn"` and over `onError:
+"continue"`, but an `onFail: { "retry": N }` still runs first. Both kinds of failure are unified at
+the route: `nodes.<id>.output` holds the last attempt's output (`null` after a throw) and
+`nodes.<id>.error` is set in either case, so the target can read why it was reached. Without
+`onFailure` nothing changes.
+
 Three failures bypass `onFail` and `onError` altogether:
 
 - **A binding that cannot be evaluated** (an `expr` that raises a type error) fails the node before
@@ -219,6 +229,9 @@ These fields mean the same on every node type that has them; the per-type tables
 | `onError` | dispatch nodes | `"fail"` (default) or `"continue"` (§4). |
 | `retry`, `startToCloseTimeout` | dispatch nodes | Accepted so stored specs parse; never read (§4). |
 | `heartbeatTimeout` | `step`, `agent`, `mcp`, `eval` | Accepted so stored specs parse; never read (§4). |
+| `onFailure` | dispatch nodes | A node id, or `{ "status", "message"? }`: where the node goes once it has finally failed (§4). |
+| `status` | every node | A free-form label (up to 64 characters) written as the run's domain status when the node is entered (§8). A `terminate` node's own `status` is its terminal status and overrides it. |
+| `maxVisits`, `onExhausted` | every node | Bound how often the node may be entered; the entry after the Nth goes to `onExhausted` instead (§8). `onExhausted` takes the same value as `onFailure`. |
 
 ## 6. Node reference
 
@@ -237,6 +250,7 @@ every registered step with its description and config fields.
 | `step` | yes | The registered step's name. An unknown name is a `UNKNOWN_STEP` warning and fails at run time. |
 | `config` | no | Static settings for the step. Each step declares its own config fields; a missing required one is a `MISSING_CONFIG` warning. |
 | `inputs` | no | Bindings resolved when the node runs. A step reads its own named inputs; several accept a required config field from `inputs` instead. |
+| `storeAs` | no | Also write the node's output to this context path, such as `context.draft` (§8). The path may not start with `nodes.`. |
 
 `next`, `onFail`, `onError`, `group`, `title` and the ignored `retry`, `startToCloseTimeout`,
 `heartbeatTimeout` are as in §5.
@@ -314,6 +328,7 @@ system prompt, the skills and the tools; the node supplies the message.
 | `workspace` | no | `true` runs the agent in a throwaway checkout of the run's repository, at the run's branch (the base branch before the run has pushed one), with the workspace tools its Agent grants. Nothing it changes is kept. |
 | `knowledgeBases` | no | Defaults to `true`. With `workspace: true`, mounts the run's pinned read-only [KB references](./knowledge-bases.md) and binds their search scope; `false` omits both for this node. |
 | `spanName` | no | The trace and cost-attribution name (default `llm.agent_node`). |
+| `storeAs` | no | Also write the node's output to this context path, such as `context.draft` (§8). The path may not start with `nodes.`. |
 
 **Edges.** `next`.
 
@@ -379,6 +394,7 @@ arguments.
 | `tool` | yes | The tool's name as the server lists it. |
 | `inputs` | no | Bindings; the resolved object is the tool's argument object. |
 | `spanName` | no | Accepted but ignored (`IGNORED_FIELD`). |
+| `storeAs` | no | Also write the node's output to this context path, such as `context.draft` (§8). The path may not start with `nodes.`. |
 
 **Edges.** `next`.
 
@@ -457,6 +473,7 @@ run's branch, and push any changes it makes.
 | `cpus` | no | A CPU limit from 0.1 to 8 (default 1). |
 | `timeoutMs` | no | The command's wall clock, 1000–3600000 ms (default 600000), capped at 50 minutes when it runs. |
 | `config` | no | Accepted for the editor's form; not passed to the container. |
+| `storeAs` | no | Also write the node's output to this context path, such as `context.draft` (§8). The path may not start with `nodes.`. |
 
 **Edges.** `next`.
 
@@ -556,6 +573,7 @@ JSON, and the container answers with JSON. Untrusted code runs in the same locke
 | `network` | no | `"none"` (default) or `"egress"`, capped by the run's [egress policy](./run-activity.md#run-egress-policy). A `sidecar` always runs on bridge networking, under the egress allowlist, and is refused where the policy forbids network access. |
 | `memory`, `cpus` | no | As for `shell`. |
 | `timeoutMs` | no | The command's wall clock (default 600000 ms), capped at 50 minutes. For `sidecar` it bounds the HTTP request; waiting for readiness is bounded separately by `readyTimeoutMs`. |
+| `storeAs` | no | Also write the node's output to this context path, such as `context.draft` (§8). The path may not start with `nodes.`. |
 
 **Edges.** `next`.
 
@@ -625,6 +643,7 @@ passes, either to stop the run or to branch on.
 | `candidateRef` | no | A binding to the branch a `gate` scorer checks out; default the run's work branch. |
 | `inputs` | no | Accepted but ignored by the scorers (`IGNORED_FIELD`). The bindings are still resolved and recorded on the step, so one that raises still fails the node. |
 | `spanName` | no | Accepted but ignored (`IGNORED_FIELD`). |
+| `storeAs` | no | Also write the node's output to this context path, such as `context.draft` (§8). The path may not start with `nodes.`. |
 
 Scorer kinds: `gate` (with `gate`, a quality gate such as `runTests`, and optional `command`) runs a
 real check against the candidate branch, and needs a run started from a work request with a ticket
@@ -1529,6 +1548,86 @@ gates on
 The built-in `ticket-to-merge-qodo` template places this pattern between green CI and the merge
 wait (see [qodo.md §6](./qodo.md#6-waiting-for-qodos-review-in-a-workflow)).
 
+## 8. Plumbing fields
+
+Four optional field groups replace bookkeeping nodes that specs used to carry. Each is absent on a
+spec saved without it, so such a spec parses and runs as it always did.
+
+**`storeAs`** (`step`, `agent`, `mcp`, `shell`, `containerStep`, `eval`) writes the node's output to
+a context path as well as to `nodes.<id>.output`. The path is the full path (`context.draft`), is
+written only when the node passes, and may not start with `nodes.` (`STORE_AS_NODES_PATH` error:
+that namespace belongs to the interpreter). It replaces a `set` node that copied the output.
+
+**`onFailure`** is described in §4. It replaces a `cond` after an `onFail: "warn"` node that tested
+`nodes.<id>.error` and `nodes.<id>.output.passed` separately. A node id target adds an edge to the
+graph; the `{ status, message? }` shorthand does not, and counts as a terminal exit, so a spec whose
+only exit is a shorthand has no `NO_TERMINAL` or `NODE_CANT_TERMINATE` finding. Inside a `fanOut`
+branch a shorthand ends the branch, which the fan-out's `onBranchFail` then handles.
+
+**`status`** (every node except as noted) sets the run's domain status when the node is entered,
+once per visit and before the node dispatches. It replaces an `updateDomainState` step placed ahead
+of the node. It writes no step row, so it does not appear in the run's step list, and a failed write
+is ignored. An `onFail` retry does not set it again, since a retry stays inside the node. On a
+`terminate` node `status` is the terminal status, not this label.
+
+**`maxVisits`** with **`onExhausted`** bounds a loop on the node itself. Every entry to the node
+counts, and the entry after the `maxVisits`th goes to `onExhausted` (a node id, or the terminal
+shorthand) without running the node. The count is at `nodes.<id>.visits` and can be read by any
+later node. `maxVisits` without `onExhausted` is a `MAX_VISITS_WITHOUT_ONEXHAUSTED` error. It
+replaces a counter `set` node plus a `cond`.
+
+Before, a bounded draft loop took five nodes of plumbing: a `set` bumping `context.attempts`, the
+draft, a `set` copying its text to `context.draft`, an `updateDomainState` step, and a `cond`
+testing the counter. After:
+
+```json
+{
+  "schemaVersion": 1,
+  "name": "bounded-draft",
+  "description": "Draft until the check passes, at most three times, with failures routed.",
+  "entry": "draft",
+  "nodes": {
+    "draft": {
+      "type": "agent",
+      "agentRef": "contentWriter",
+      "status": "Drafting",
+      "storeAs": "context.draft",
+      "maxVisits": 3,
+      "onExhausted": { "status": "FAILED", "message": "No draft passed the check in three tries." },
+      "onFailure": { "status": "FAILED", "message": "The writer failed." },
+      "next": "check"
+    },
+    "check": {
+      "type": "eval",
+      "target": { "from": "context.draft.text" },
+      "scorers": [{ "kind": "pii" }],
+      "onFail": "warn",
+      "next": "decide"
+    },
+    "decide": {
+      "type": "cond",
+      "expr": "nodes.check.output.passed == true",
+      "onTrue": "done",
+      "onFalse": "draft"
+    },
+    "done": {
+      "type": "terminate",
+      "status": "SUCCESS",
+      "result": { "text": { "from": "context.draft.text" } }
+    }
+  }
+}
+```
+
+Things to know:
+
+- `maxVisits` counts node entries, not failures, and the transition cap (§4) still applies on top:
+  the counter does not extend it.
+- Inside a `fanOut` branch the count is per branch, because each branch keeps its own sealed copy of
+  the context (§2) and so its own `nodes.<id>.visits`.
+- `onFailure` fires after a node's own retries. It does not catch an unevaluable binding, a
+  cancellation, or the transition cap (§4).
+
 ## Limitations
 
 - **No per-node activity timeouts or retry policy.** The worker fixes them per kind of step; the node
@@ -1549,4 +1648,9 @@ wait (see [qodo.md §6](./qodo.md#6-waiting-for-qodos-review-in-a-workflow)).
   out by a later node.
 - **A loop's termination is not proven.** `validateSpec` checks that a path to a `terminate`
   exists, not that a loop takes it; the transition cap is the backstop.
+- **`status` writes the live domain status only.** It updates the run's current status label, not
+  the pinned run record, and the value is a free-form string with no registry of known labels.
+- **The `onFailure` and `onExhausted` shorthand cannot end a run `CANCELLED`.** Cancellation is set
+  by Temporal; use a `terminate` node for the other four statuses' `result` payloads, since the
+  shorthand carries only `message`.
 - **Write paths do not understand brackets**, unlike read paths.

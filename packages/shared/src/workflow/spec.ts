@@ -39,6 +39,40 @@ export const SPEC_SCHEMA_VERSION = 1 as const;
 
 const NodeIdSchema = z.string().min(1).max(64);
 
+/** Terminal statuses a node (or an `onFailure` / `onExhausted` shorthand) may end the run with. */
+const TerminalStatusSchema = z.enum(['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED']);
+
+/** Context path a node writes its output to (same shape as signal / human `storeAs`). */
+const StoreAsSchema = z.string().min(1);
+
+/**
+ * A route target: a node id, or the terminal shorthand that ends the run (or the
+ * fan-out branch) exactly as a `terminate` node with that status and message would.
+ */
+const RouteTargetSchema = z.union([
+  NodeIdSchema,
+  z.object({
+    message: z.string().max(2000).optional(),
+    status: TerminalStatusSchema,
+  }),
+]);
+export type RouteTarget = z.infer<typeof RouteTargetSchema>;
+/** `onFailure`: where a node goes once it has finally failed. */
+const OnFailureSchema = RouteTargetSchema;
+
+/**
+ * Fields every node type accepts. All optional and absent on every spec stored
+ * before they existed, so an old spec parses and behaves as it did.
+ *   - `status`: domain status set when the node is entered (not on a retry)
+ *   - `maxVisits` + `onExhausted`: loop bound; the (maxVisits+1)th entry routes to `onExhausted`
+ * A `terminate` node's own `status` (its terminal status) overrides this one.
+ */
+const NodeFlowFields = {
+  maxVisits: z.number().int().min(1).max(10_000).optional(),
+  onExhausted: RouteTargetSchema.optional(),
+  status: z.string().min(1).max(64).optional(),
+};
+
 const WaitTimeoutSchema = z.string().min(1).refine(isValidWaitDuration, {
   message: "timeout must be a positive duration such as '30m', '24h' or '7d'",
 });
@@ -107,6 +141,7 @@ const tolerantLabel = (max: number) =>
     .optional();
 const NodeGroupFields = {
   group: tolerantLabel(MAX_NODE_GROUP_LENGTH),
+  ...NodeFlowFields,
 };
 const NodeMetaFields = {
   ...NodeGroupFields,
@@ -187,9 +222,11 @@ const StepNodeSchema = z.object({
   next: NodeIdSchema.optional(),
   onError: OnErrorSchema.optional(),
   onFail: OnFailSchema.optional(),
+  onFailure: OnFailureSchema.optional(),
   retry: RetryPolicySchema,
   startToCloseTimeout: z.string().optional(),
   step: z.string().min(1),
+  storeAs: StoreAsSchema.optional(),
   type: z.literal('step'),
 });
 
@@ -210,9 +247,11 @@ const AgentNodeSchema = z.object({
   next: NodeIdSchema.optional(),
   onError: OnErrorSchema.optional(),
   onFail: OnFailSchema.optional(),
+  onFailure: OnFailureSchema.optional(),
   retry: RetryPolicySchema,
   spanName: z.string().optional(),
   startToCloseTimeout: z.string().optional(),
+  storeAs: StoreAsSchema.optional(),
   /** Per-node system-prompt override (wins over the Agent's own prompt). */
   systemPrompt: z.string().optional(),
   type: z.literal('agent'),
@@ -242,9 +281,11 @@ const McpNodeSchema = z.object({
   next: NodeIdSchema.optional(),
   onError: OnErrorSchema.optional(),
   onFail: OnFailSchema.optional(),
+  onFailure: OnFailureSchema.optional(),
   retry: RetryPolicySchema,
   spanName: z.string().optional(),
   startToCloseTimeout: z.string().optional(),
+  storeAs: StoreAsSchema.optional(),
   /** Name of the MCP tool to invoke on the server. */
   tool: z.string().min(1),
   type: z.literal('mcp'),
@@ -294,10 +335,12 @@ const EvalNodeSchema = z.object({
   next: NodeIdSchema.optional(),
   onError: OnErrorSchema.optional(),
   onFail: OnFailSchema.optional(),
+  onFailure: OnFailureSchema.optional(),
   retry: RetryPolicySchema,
   scorers: z.array(EvalScorerSchema).min(1),
   spanName: z.string().optional(),
   startToCloseTimeout: z.string().optional(),
+  storeAs: StoreAsSchema.optional(),
   /** Binding to the value being scored (e.g. a diff at `nodes.implement.output.diff`). */
   target: BindingSchema,
   type: z.literal('eval'),
@@ -334,7 +377,7 @@ const TerminateNodeSchema = z.object({
   // CANCELLED is intentionally omitted: it's set out-of-band by Temporal on a
   // cancellation signal, never reachable by a terminate node, so the spec can't
   // declare it even though `WorkflowRunStatus` includes it.
-  status: z.enum(['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED']),
+  status: TerminalStatusSchema,
   type: z.literal('terminate'),
 });
 
@@ -459,8 +502,10 @@ const ShellNodeSchema = z.object({
   next: NodeIdSchema.optional(),
   onError: OnErrorSchema.optional(),
   onFail: OnFailSchema.optional(),
+  onFailure: OnFailureSchema.optional(),
   retry: RetryPolicySchema,
   startToCloseTimeout: z.string().optional(),
+  storeAs: StoreAsSchema.optional(),
   /** Wall-clock cap inside the container (ms). Default 600_000. */
   timeoutMs: z.number().int().min(1000).max(3_600_000).optional(),
   type: z.literal('shell'),
@@ -496,6 +541,7 @@ const ContainerStepNodeSchema = z.object({
   next: NodeIdSchema.optional(),
   onError: OnErrorSchema.optional(),
   onFail: OnFailSchema.optional(),
+  onFailure: OnFailureSchema.optional(),
   retry: RetryPolicySchema,
   /** Sidecar HTTP contract (required when transport === 'sidecar'). */
   sidecar: z
@@ -507,6 +553,7 @@ const ContainerStepNodeSchema = z.object({
     })
     .optional(),
   startToCloseTimeout: z.string().optional(),
+  storeAs: StoreAsSchema.optional(),
   timeoutMs: z.number().int().min(1000).max(3_600_000).optional(),
   /**
    * How the container returns its result:
@@ -674,7 +721,7 @@ export const WorkflowSpecSchema = z
  */
 export function nodeEdges(node: Node): Array<[field: string, target: string]> {
   const edges: Array<[string, string]> = [];
-  const add = (field: string, target: string | undefined): void => {
+  const add = (field: string, target: RouteTarget | undefined): void => {
     if (typeof target === 'string') {
       edges.push([field, target]);
     }
@@ -684,9 +731,12 @@ export function nodeEdges(node: Node): Array<[field: string, target: string]> {
     case 'agent':
     case 'mcp':
     case 'eval':
-    case 'set':
     case 'shell':
     case 'containerStep':
+      add('next', node.next);
+      add('onFailure', node.onFailure);
+      break;
+    case 'set':
       add('next', node.next);
       break;
     case 'cond':
@@ -731,7 +781,22 @@ export function nodeEdges(node: Node): Array<[field: string, target: string]> {
       break;
     }
   }
+  add('onExhausted', node.onExhausted);
   return edges;
+}
+
+/**
+ * Does the node route to the terminal shorthand (ending the run) on failure or exhaustion?
+ * `onExhausted` only counts alongside `maxVisits`: without it the route can never fire.
+ */
+export function hasTerminalShorthand(node: Node): boolean {
+  const failure = 'onFailure' in node ? node.onFailure : undefined;
+  return (
+    (typeof failure === 'object' && failure !== null) ||
+    (node.maxVisits !== undefined &&
+      typeof node.onExhausted === 'object' &&
+      node.onExhausted !== null)
+  );
 }
 
 /**

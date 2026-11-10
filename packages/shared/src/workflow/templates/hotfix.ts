@@ -4,8 +4,6 @@ import {
   openPullRequest,
   prResult,
   qualityGate,
-  statusStamp,
-  storeCodeResult,
   terminate,
   validatePhase,
 } from './authoring/index.js';
@@ -20,20 +18,20 @@ export const HOTFIX_SPEC: WorkflowSpec = {
     'The fastest path from ticket to open pull request. Implement, run lint and type checks ' +
     '(warnings never block), then open the pull request immediately: no agent review, no CI ' +
     'wait, no human approval. Intended for urgent production incidents only.',
-  entry: 'setValidating',
+  entry: 'validate',
   name: 'hotfix',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing', successCriteria: false }),
+    validatePhase({ next: 'implement', successCriteria: false }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
-        next: 'storeCodeResult',
+        next: 'runLint',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Implement the ticket',
         type: 'step',
       },
-      storeCodeResult: storeCodeResult('runLint', { group: 'implement' }),
       runLint: qualityGate('runLint', 'runTypecheck', { group: 'verify' }),
       runTypecheck: qualityGate('runTypecheck', 'openPR', { group: 'verify' }),
     },

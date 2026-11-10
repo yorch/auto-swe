@@ -1,13 +1,11 @@
 import { BUILTIN_MODELS_PATH } from '../../lib/builtinModels.js';
 import { type Node, SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
-  initCounters,
   mergeNodes,
   openPullRequest,
   prResult,
   qualityGate,
   reviewLoop,
-  statusStamp,
   terminate,
 } from './authoring/index.js';
 
@@ -104,12 +102,11 @@ export const MODEL_CATALOG_REFRESH_SPEC: WorkflowSpec = {
       checkPrevious: {
         expr: 'nodes.listModels.output.previousRefreshOpen == true',
         group: 'prepare',
-        onFalse: 'setImplementing',
+        onFalse: 'implement',
         onTrue: 'donePreviousOpen',
         title: 'Is the last refresh still open?',
         type: 'cond',
       },
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         config: {
           allowedPaths: MODEL_CATALOG_REFRESH_ALLOWED_PATHS,
@@ -118,23 +115,24 @@ export const MODEL_CATALOG_REFRESH_SPEC: WorkflowSpec = {
         group: 'implement',
         inputs: { guidance: { from: 'nodes.listModels.output.guidance' } },
         next: 'checkChanges',
+        status: 'IMPLEMENTING',
         step: 'executeImplementation',
+        storeAs: 'context.currentCodeResult',
         title: 'Update the catalog',
         type: 'step',
       },
       checkChanges: {
         expr: 'nodes.implement.output.filesChanged.length == 0',
         group: 'implement',
-        onFalse: 'initCounters',
+        onFalse: 'runTests',
         onTrue: 'doneNoChange',
         title: 'Anything changed?',
         type: 'cond',
       },
-      initCounters: initCounters('runTests', { ci: false, group: 'implement' }),
       // Advisory (warn mode): a failure is recorded and the run goes on. CI on the draft
       // pull request is the hard check.
       runTests: {
-        ...(qualityGate('runTests', 'setReviewing', { group: 'verify' }) as StepNode),
+        ...(qualityGate('runTests', 'review', { group: 'verify' }) as StepNode),
         config: { command: MODEL_CATALOG_REFRESH_TEST_COMMAND },
       },
     },
@@ -148,7 +146,7 @@ export const MODEL_CATALOG_REFRESH_SPEC: WorkflowSpec = {
     {
       // The price-list rule, checked in code once the review approves: an added or repriced
       // row that differs from the list without a comment goes back to the fixer as a
-      // rejection would, and counts against the same attempt limit.
+      // rejection would, and counts against the same attempt limit (the fixer's visits).
       checkPriceNotes: {
         group: 'review loop',
         inputs: { codeResult: { from: 'context.currentCodeResult' } },
@@ -167,12 +165,11 @@ export const MODEL_CATALOG_REFRESH_SPEC: WorkflowSpec = {
       },
       storePriceNoteFindings: {
         group: 'review loop',
-        next: 'checkReviewLimit',
+        next: 'reviewFix',
         title: 'Record the unexplained differences',
         type: 'set',
         values: {
           'context.lastRejectionSummary': { from: 'nodes.checkPriceNotes.output.summary' },
-          'context.reviewRetries': { expr: 'context.reviewRetries + 1' },
         },
       },
       // The cumulative change, including every review fix, must be exactly the catalog file.

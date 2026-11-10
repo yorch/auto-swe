@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ciLoop, ciWaitEntry, waitForCi } from './ciLoop.js';
+import { CI_ATTEMPTS_PATH, ciLoop, ciWaitEntry, waitForCi } from './ciLoop.js';
 import { expectWellFormed } from './testUtil.js';
 
 describe('waitForCi', () => {
@@ -54,19 +54,25 @@ describe('ciLoop', () => {
     });
     expect(Object.keys(nodes).sort()).toEqual([
       'checkCI',
-      'checkCILimit',
       'ciFix',
       'fetchLogs',
-      'incCIRetries',
       'repushAfterCIFix',
-      'storeLogs',
       'terminateCIFailed',
       'terminateCITimedOut',
-      'updateCodeAfterCIFix',
       'waitForCI',
     ]);
-    expect(nodes.checkCI).toMatchObject({ onFalse: 'incCIRetries', onTrue: 'finish' });
-    expect(nodes.updateCodeAfterCIFix).toMatchObject({ next: 'repushAfterCIFix' });
+    expect(nodes.checkCI).toMatchObject({ onFalse: 'fetchLogs', onTrue: 'finish' });
+    // The log fetch holds the budget (two fixes of three failures) and keeps its output.
+    expect(nodes.fetchLogs).toMatchObject({
+      maxVisits: 2,
+      next: 'ciFix',
+      onExhausted: 'terminateCIFailed',
+      storeAs: 'context.lastCILogs',
+    });
+    expect(nodes.ciFix).toMatchObject({
+      next: 'repushAfterCIFix',
+      storeAs: 'context.currentCodeResult',
+    });
     expect(nodes.repushAfterCIFix).toMatchObject({
       next: 'waitForCI',
       step: 'createOrUpdatePullRequest',
@@ -74,20 +80,24 @@ describe('ciLoop', () => {
     expectWellFormed(nodes, 'waitForCI', ['finish']);
   });
 
-  it('retryIfUnchanged routes a no-op fix back to the attempt counter, never to the CI wait', () => {
+  it('retryIfUnchanged routes a no-op fix back to spend an attempt, never to the CI wait', () => {
     const nodes = ciLoop({
       fix: { handoff: { repush: 'repushAfterFix' }, retryIfUnchanged: true },
       passed: 'finish',
     });
+    // The head is compared before the new code replaces the old, so `ciFix` stores nothing itself.
     expect(nodes.ciFix).toMatchObject({ next: 'checkCiFixChanged' });
+    expect(nodes.ciFix).not.toHaveProperty('storeAs');
     expect(nodes.checkCiFixChanged).toMatchObject({
       expr: 'nodes.ciFix.output.headSha == context.currentCodeResult.headSha',
       onFalse: 'updateCodeAfterCIFix',
-      onTrue: 'incCIRetries',
+      onTrue: 'fetchLogs',
     });
+    expect(nodes.updateCodeAfterCIFix).toMatchObject({ next: 'repushAfterFix' });
     const plain = ciLoop({ fix: { handoff: { repush: 'repushAfterFix' } }, passed: 'finish' });
     expect('checkCiFixChanged' in plain).toBe(false);
-    expect(plain.ciFix).toMatchObject({ next: 'updateCodeAfterCIFix' });
+    expect('updateCodeAfterCIFix' in plain).toBe(false);
+    expect(plain.ciFix).toMatchObject({ next: 'repushAfterFix' });
   });
 
   it('with pollOrSignal, a repush re-enters the wait through the poll-or-signal router', () => {
@@ -103,23 +113,31 @@ describe('ciLoop', () => {
   it('lets the repush step take a different id', () => {
     const nodes = ciLoop({ fix: { handoff: { repush: 'repushAfterFix' } }, passed: 'f' });
     expect(nodes.repushAfterCIFix).toBeUndefined();
-    expect(nodes.updateCodeAfterCIFix).toMatchObject({ next: 'repushAfterFix' });
+    expect(nodes.ciFix).toMatchObject({ next: 'repushAfterFix' });
+  });
+
+  it('can stamp a status on the repush step', () => {
+    const nodes = ciLoop({
+      fix: { handoff: { repush: 'repushAfterFix', status: 'AWAITING_CI' } },
+      passed: 'f',
+    });
+    expect(nodes.repushAfterFix).toMatchObject({ status: 'AWAITING_CI' });
   });
 
   it('with a rereview handoff: the fix clears the CI result and re-enters the review', () => {
     const nodes = ciLoop({
-      fix: { handoff: { rereview: 'setReviewing' } },
+      fix: { handoff: { rereview: 'review' } },
       passed: 'merge',
       wait: 'pollOrSignal',
     });
-    expect(nodes.updateCodeAfterCIFix).toMatchObject({ next: 'clearCiResult' });
+    expect(nodes.ciFix).toMatchObject({ next: 'clearCiResult' });
     expect(nodes.clearCiResult).toMatchObject({
-      next: 'setReviewing',
+      next: 'review',
       values: { 'context.ciResultPayload': { literal: null } },
     });
     expect(nodes.repushAfterCIFix).toBeUndefined();
     expect(nodes.loadCiWaitConfig).toBeDefined();
-    expectWellFormed(nodes, 'loadCiWaitConfig', ['merge', 'setReviewing']);
+    expectWellFormed(nodes, 'loadCiWaitConfig', ['merge', 'review']);
   });
 
   it('with fix: false it is a bare gate that fails on the first red CI', () => {
@@ -134,19 +152,33 @@ describe('ciLoop', () => {
     expectWellFormed(nodes, 'waitForCI', ['finish']);
   });
 
-  it('puts the attempt limit in the cond, 3 unless told otherwise', () => {
-    const limit = (n?: number) =>
-      ciLoop({ fix: { handoff: { repush: 'r' }, limit: n }, passed: 'f' }).checkCILimit;
-    expect(limit()).toMatchObject({ expr: 'context.ciRetries >= 3' });
-    expect(limit(6)).toMatchObject({ expr: 'context.ciRetries >= 6' });
+  it('bounds the fixes with maxVisits on the log fetch: limit - 1, 2 unless told otherwise', () => {
+    const fetch = (n?: number) =>
+      ciLoop({ fix: { handoff: { repush: 'r' }, limit: n }, passed: 'f' }).fetchLogs;
+    expect(fetch()).toMatchObject({ maxVisits: 2 });
+    expect(fetch(6)).toMatchObject({ maxVisits: 5 });
+    expect(() => fetch(1)).toThrow(/at least 2/);
   });
 
-  it('takes the limit as an expression, parenthesised so it binds as one operand', () => {
-    const node = ciLoop({
+  it('exports the path a template resets to give a rejected change a fresh CI budget', () => {
+    expect(CI_ATTEMPTS_PATH).toBe('nodes.fetchLogs.visits');
+  });
+
+  it('takes the limit as an expression, which keeps a counter (maxVisits is a constant)', () => {
+    const nodes = ciLoop({
       fix: { handoff: { repush: 'r' }, limit: 'request.payload.n ?? 2' },
       passed: 'f',
-    }).checkCILimit;
-    expect(node).toMatchObject({ expr: 'context.ciRetries >= (request.payload.n ?? 2)' });
+    });
+    expect(nodes.checkCILimit).toMatchObject({
+      expr: 'context.ciRetries >= (request.payload.n ?? 2)',
+      onFalse: 'fetchLogs',
+    });
+    expect(nodes.checkCI).toMatchObject({ onFalse: 'incCIRetries' });
+    expect(nodes.incCIRetries).toMatchObject({
+      next: 'checkCILimit',
+      values: { 'context.ciRetries': { expr: 'context.ciRetries + 1' } },
+    });
+    expect(nodes.fetchLogs).not.toHaveProperty('maxVisits');
   });
 
   it('reports the pull request on both CI terminals', () => {
