@@ -525,6 +525,17 @@ jobs:
           MODEL_SUGGESTIONS_PG_TEST: '1'
         run: yarn test packages/shared/src/lib/modelSuggestions.pg.test.ts
 
+      # Built-in template sync: the first fill of a template's input schema, both
+      # with the spec unchanged and on an upgrade that appends a version, is
+      # guarded by `inputSchema: { equals: Prisma.AnyNull }`, which must match SQL
+      # NULL and JSON null and nothing else. The suite races an admin's save
+      # against each guarded write and checks it is not overwritten. The fake
+      # client cannot evaluate that filter.
+      - name: Built-in template sync (database-backed tests)
+        env:
+          SYNC_BUILTINS_PG_TEST: '1'
+        run: yarn test packages/shared/src/lib/syncBuiltins.pg.test.ts
+
       # Template names: the check's name predicate must agree with the (team_id, name)
       # unique index the save routes rely on (exact comparison, NULL team never collides).
       - name: Template names (database-backed tests)

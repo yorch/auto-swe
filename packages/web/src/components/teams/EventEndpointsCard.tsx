@@ -77,6 +77,10 @@ function NewEndpointForm({
   const [prefix, setPrefix] = useState(base?.signaturePrefix ?? '');
   const [encoding, setEncoding] = useState(base?.signatureEncoding ?? 'hex');
   const [typePointer, setTypePointer] = useState(base?.typePointer ?? '/type');
+  const [typeFrom, setTypeFrom] = useState<'pointer' | 'fixed'>(
+    base?.fixedType ? 'fixed' : 'pointer'
+  );
+  const [fixedType, setFixedType] = useState(base?.fixedType ?? '');
   const [idPointer, setIdPointer] = useState(base?.idPointer ?? '');
   const [subjectPointer, setSubjectPointer] = useState(base?.subjectPointer ?? '');
   const [scopePointer, setScopePointer] = useState(base?.scopePointer ?? '');
@@ -93,13 +97,21 @@ function NewEndpointForm({
     setEncoding(p.signatureEncoding ?? 'hex');
     setFormat(p.format);
     setTypePointer(p.typePointer);
+    setTypeFrom(p.fixedType ? 'fixed' : 'pointer');
+    setFixedType(p.fixedType ?? '');
     setIdPointer(p.idPointer ?? '');
     setSubjectPointer(p.subjectPointer ?? '');
     setScopePointer(p.scopePointer ?? '');
   };
   const orNull = (v: string) => (v.trim() === '' ? null : v.trim());
   const needsHeader = scheme !== 'autoswe-v1';
-  const valid = name.trim() !== '' && (!needsHeader || header.trim() !== '');
+  // A preset with a fixed type carries an empty pointer; switching it to "a field in the body"
+  // must not send that `""`, which would read the whole body as the type (the API refuses it).
+  const missingPointer = typeFrom === 'pointer' && typePointer.trim() === '';
+  const valid =
+    name.trim() !== '' &&
+    (!needsHeader || header.trim() !== '') &&
+    (typeFrom === 'pointer' ? !missingPointer : fixedType.trim() !== '');
   const save = () =>
     create.mutate(
       {
@@ -112,7 +124,9 @@ function NewEndpointForm({
         signatureHeader: needsHeader ? header.trim() : null,
         signaturePrefix: needsHeader && prefix !== '' ? prefix : null,
         subjectPointer: orNull(subjectPointer),
-        typePointer: typePointer.trim(),
+        ...(typeFrom === 'fixed'
+          ? { fixedType: fixedType.trim(), typePointer: '' }
+          : { fixedType: null, typePointer: typePointer.trim() }),
       },
       { onSuccess: (created) => onDone(created.secret) }
     );
@@ -170,12 +184,33 @@ function NewEndpointForm({
         )}
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Input
-          hint="JSON Pointer to the event type, e.g. /type"
-          label="Type pointer"
-          onChange={(e) => setTypePointer(e.target.value)}
-          value={typePointer}
+        <Select
+          hint="A constant suits senders that put the type in a header, which is never trusted"
+          label="Event type"
+          onChange={(v) => setTypeFrom(v as 'pointer' | 'fixed')}
+          options={[
+            { label: 'A field in the body', value: 'pointer' },
+            { label: 'A fixed value', value: 'fixed' },
+          ]}
+          value={typeFrom}
         />
+        {typeFrom === 'fixed' ? (
+          <Input
+            hint="Every event is this type; set a scope pointer to tell sources apart"
+            label="Fixed type"
+            onChange={(e) => setFixedType(e.target.value)}
+            value={fixedType}
+          />
+        ) : (
+          <Input
+            error={missingPointer ? 'Name the field that holds the type, e.g. /type' : undefined}
+            hint="JSON Pointer to the event type, e.g. /type"
+            label="Type pointer"
+            onChange={(e) => setTypePointer(e.target.value)}
+            required
+            value={typePointer}
+          />
+        )}
         <Input
           hint="Empty: a digest of the body"
           label="Id pointer"
@@ -244,9 +279,12 @@ function EndpointRow({
               ` · previous ···${endpoint.previousSecretLastFour ?? ''} accepted until ${new Date(endpoint.previousSecretExpiresAt).toLocaleString()}`}
           </div>
           <div className="mt-0.5 text-paper-500 text-xs">
-            type {endpoint.typePointer || '(whole)'} · id {endpoint.idPointer ?? 'body digest'} ·
-            subject {endpoint.subjectPointer ?? 'the id'} · scope{' '}
-            {endpoint.scopePointer ?? 'the type'}
+            type{' '}
+            {endpoint.fixedType
+              ? `“${endpoint.fixedType}” (fixed)`
+              : endpoint.typePointer || '(whole)'}{' '}
+            · id {endpoint.idPointer ?? 'body digest'} · subject{' '}
+            {endpoint.subjectPointer ?? 'the id'} · scope {endpoint.scopePointer ?? 'the type'}
           </div>
         </div>
         <ToggleSwitch

@@ -9,8 +9,10 @@ import {
   CLOUDEVENTS_POINTERS,
   EVENT_ENDPOINT_FORMATS,
   EVENT_ENDPOINT_SCHEMES,
+  FixedEventTypeSchema,
   INBOUND_EVENT,
   JsonPointerSchema,
+  resolveTypeSource,
   SIGNATURE_ENCODINGS,
   SignatureHeaderSchema,
 } from '@auto-swe/shared/automation';
@@ -39,6 +41,7 @@ const Prefix = z
   .refine((s) => !/[\r\n]/.test(s), 'one line');
 
 const ConfigFields = {
+  fixedType: FixedEventTypeSchema.nullable(),
   format: z.enum(EVENT_ENDPOINT_FORMATS),
   idPointer: JsonPointerSchema.nullable(),
   name: z.string().trim().min(1).max(100),
@@ -55,6 +58,7 @@ const ConfigFields = {
 const CreateBody = z.object({
   ...ConfigFields,
   enabled: z.boolean().default(true),
+  fixedType: ConfigFields.fixedType.optional(),
   idPointer: ConfigFields.idPointer.optional(),
   scopePointer: ConfigFields.scopePointer.optional(),
   /** Omit to have one generated (returned once). */
@@ -110,6 +114,7 @@ function normaliseScheme(
 const publicSelect = {
   createdAt: true,
   enabled: true,
+  fixedType: true,
   format: true,
   id: true,
   idPointer: true,
@@ -235,6 +240,14 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
               timePointer: null,
               typePointer: '/type',
             };
+      // A fixed type replaces the pointer; the default `/type` applies only to neither.
+      const typeSource = resolveTypeSource({
+        fixedType: body.fixedType,
+        typePointer: body.fixedType ? body.typePointer : (body.typePointer ?? defaults.typePointer),
+      });
+      if (!typeSource.ok) {
+        return sendError(reply, 400, 'INVALID_EVENT_TYPE', typeSource.message);
+      }
       const secret = newSecretColumns(body.secret);
       const created = await fastify.prisma.eventEndpoint.create({
         data: {
@@ -242,6 +255,7 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
           ...secret.data,
           createdById: user.sub,
           enabled: body.enabled,
+          fixedType: typeSource.fixedType,
           format: body.format,
           idPointer: body.idPointer === undefined ? defaults.idPointer : body.idPointer,
           name: body.name,
@@ -250,7 +264,7 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
             body.subjectPointer === undefined ? defaults.subjectPointer : body.subjectPointer,
           teamId: access.team.id,
           timePointer: body.timePointer === undefined ? defaults.timePointer : body.timePointer,
-          typePointer: body.typePointer ?? defaults.typePointer,
+          typePointer: typeSource.typePointer,
         },
         select: publicSelect,
       });
@@ -301,7 +315,34 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
       if (scheme && !scheme.ok) {
         return sendError(reply, 400, 'INVALID_SCHEME', scheme.message);
       }
+      // The type is one of a pointer or a constant. Setting one clears the other; sending both,
+      // or clearing the only one, is refused.
+      let typeColumns: { typePointer: string; fixedType: string | null } | null = null;
+      if (body.typePointer !== undefined || body.fixedType !== undefined) {
+        if (body.fixedType === null && body.typePointer === undefined && row.fixedType !== null) {
+          return sendError(
+            reply,
+            400,
+            'INVALID_EVENT_TYPE',
+            'Clearing fixedType needs a typePointer to read the type from'
+          );
+        }
+        // Setting a pointer replaces a stored constant; setting a constant replaces the pointer.
+        // Both go through `resolveTypeSource`, so an empty pointer with no constant is refused.
+        // `{ fixedType: null }` alone on a row that has no constant changes nothing, so a row
+        // stored with `""` before that check is left as it is.
+        const resolved =
+          body.fixedType == null && body.typePointer === undefined
+            ? { fixedType: null, ok: true as const, typePointer: row.typePointer }
+            : resolveTypeSource({ fixedType: body.fixedType, typePointer: body.typePointer });
+        if (!resolved.ok) {
+          return sendError(reply, 400, 'INVALID_EVENT_TYPE', resolved.message);
+        }
+        typeColumns = resolved;
+      }
       const {
+        fixedType: _f,
+        typePointer: _t,
         scheme: _s,
         signatureEncoding: _e,
         signatureHeader: _h,
@@ -310,7 +351,7 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
       } = body;
       const before = view({ ...row });
       const updated = await fastify.prisma.eventEndpoint.update({
-        data: { ...rest, ...(scheme?.ok ? scheme.value : {}) },
+        data: { ...rest, ...(typeColumns ?? {}), ...(scheme?.ok ? scheme.value : {}) },
         select: publicSelect,
         where: { id: row.id },
       });
