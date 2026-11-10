@@ -83,16 +83,16 @@ export async function rebaseOntoMovedBranch(
   // the guard's diff) at a commit of its choosing. The forced fetch above is what sets this ref.
   const remoteSha = (
     await workspace.exec(
-      guardedGit(
-        `rev-parse --verify ${shellQuote(`refs/remotes/origin/${branch}^{commit}`)}`
-      )
+      guardedGit(`rev-parse --verify ${shellQuote(`refs/remotes/origin/${branch}^{commit}`)}`)
     )
   ).trim();
   if (!SHA.test(remoteSha)) {
     throw rebaseFailed(`Could not read the remote ${branch} to rebase onto. Nothing was pushed.`);
   }
   const ancestor = (
-    await workspace.exec(`${guardedGit(`merge-base --is-ancestor ${remoteSha} HEAD`)}; echo "rc=$?"`)
+    await workspace.exec(
+      `${guardedGit(`merge-base --is-ancestor ${remoteSha} HEAD`)}; echo "rc=$?"`
+    )
   ).trim();
   if (ancestor.endsWith('rc=0')) {
     return undefined;
