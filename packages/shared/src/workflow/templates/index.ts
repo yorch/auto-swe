@@ -36,7 +36,10 @@ import { STAGED_DEPLOY_SIGNALS_SPEC } from './stagedDeploySignals.js';
 import { TICKET_TO_MERGE_SPEC } from './ticketToMerge.js';
 import { TICKET_TO_MERGE_QODO_SPEC } from './ticketToMergeQodo.js';
 import { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
-import { VULNERABILITY_REMEDIATION_SPEC } from './vulnerabilityRemediation.js';
+import {
+  VULNERABILITY_REMEDIATION_INPUT_SCHEMA,
+  VULNERABILITY_REMEDIATION_SPEC,
+} from './vulnerabilityRemediation.js';
 import { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';
 
 export interface BuiltinTemplate {
@@ -103,8 +106,9 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     spec: DOCS_REFRESH_SPEC,
   },
   {
-    // The request carries the advisory: a ticket, a Jira filter match, or an inbound event.
+    // The request carries the advisory: a ticket's text, or the fields an inbound event maps.
     description: VULNERABILITY_REMEDIATION_SPEC.description,
+    inputSchema: VULNERABILITY_REMEDIATION_INPUT_SCHEMA,
     name: VULNERABILITY_REMEDIATION_SPEC.name,
     spec: VULNERABILITY_REMEDIATION_SPEC,
   },
@@ -434,5 +438,9 @@ export { STAGED_DEPLOY_SIGNALS_SPEC } from './stagedDeploySignals.js';
 export { TICKET_TO_MERGE_SPEC } from './ticketToMerge.js';
 export { TICKET_TO_MERGE_QODO_SPEC } from './ticketToMergeQodo.js';
 export { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
-export { VULNERABILITY_REMEDIATION_SPEC } from './vulnerabilityRemediation.js';
+export {
+  VULNERABILITY_REMEDIATION_INPUT_SCHEMA,
+  VULNERABILITY_REMEDIATION_SPEC,
+  VULNERABILITY_SEVERITIES,
+} from './vulnerabilityRemediation.js';
 export { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';

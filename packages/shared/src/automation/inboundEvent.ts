@@ -56,7 +56,16 @@ export const JsonPointerSchema = z
 
 /** Where the event's own fields are in its document. */
 export interface EventEndpointPointers {
+  /**
+   * Where the type is in the body. Ignored when `fixedType` is set (stored as `""` then): a
+   * fixed-type endpoint never resolves it, so `""` does not mean "the whole document" there.
+   */
   typePointer: string;
+  /**
+   * A constant event type for senders that carry the type in an unsigned header, or have a
+   * single kind of event. Only the signed body decides an event's type, so no header is read.
+   */
+  fixedType?: string | null;
   idPointer: string | null;
   subjectPointer: string | null;
   scopePointer: string | null;
@@ -88,6 +97,43 @@ export const CLOUDEVENTS_POINTERS: EventEndpointPointers = {
  * Starting points for an endpoint's configuration: data, not behaviour. Each is only what the
  * form fills in; every field can be changed before it is saved.
  */
+/** The characters a constant event type may use (also enforced by a CHECK constraint). */
+export const FIXED_EVENT_TYPE_RE = /^[A-Za-z0-9._:@+=/-]{1,256}$/;
+
+export const FixedEventTypeSchema = z
+  .string()
+  .max(MAX_EVENT_TYPE_CHARS)
+  .regex(FIXED_EVENT_TYPE_RE, 'letters, digits and . _ : @ + = / - only');
+
+/**
+ * Exactly one of `typePointer` (non-empty) and `fixedType` configures the type. Returns the
+ * stored pair: a fixed type is stored with `typePointer` `""`.
+ */
+export function resolveTypeSource(input: {
+  typePointer?: string | null;
+  fixedType?: string | null;
+}): { ok: true; typePointer: string; fixedType: string | null } | { ok: false; message: string } {
+  const fixed = input.fixedType ?? null;
+  const pointer = input.typePointer ?? '';
+  if (fixed !== null) {
+    if (pointer !== '') {
+      return { message: 'Set either typePointer or fixedType, not both', ok: false };
+    }
+    return { fixedType: fixed, ok: true, typePointer: '' };
+  }
+  // `""` addresses the whole document, which for a JSON object body is never a type and for a
+  // scalar body makes the sender's whole body the type. A row stored that way before this check
+  // is still read as it is; only a write is refused.
+  if (pointer === '') {
+    return {
+      message:
+        'typePointer must name the field that holds the event type; to give every event one type, set fixedType instead',
+      ok: false,
+    };
+  }
+  return { fixedType: null, ok: true, typePointer: pointer };
+}
+
 export const EVENT_ENDPOINT_PRESETS: ReadonlyArray<{
   key: string;
   label: string;
@@ -144,6 +190,25 @@ export const EVENT_ENDPOINT_PRESETS: ReadonlyArray<{
     key: 'hmac-github-style',
     label: 'HMAC-SHA256, GitHub-style header',
   },
+  {
+    config: {
+      fixedType: 'project_snapshot/v0',
+      format: 'json',
+      idPointer: null,
+      scheme: 'hmac-sha256',
+      scopePointer: '/project/id',
+      signatureEncoding: 'hex',
+      signatureHeader: 'X-Hub-Signature',
+      signaturePrefix: 'sha256=',
+      subjectPointer: '/project/id',
+      timePointer: null,
+      typePointer: '',
+    },
+    description:
+      'Snyk project snapshots: an HMAC-SHA256 hex digest of the request body in X-Hub-Signature as sha256=<hex>, a constant event type (Snyk names it only in the unsigned X-Snyk-Event header), and the Snyk project id (/project/id) as subject and scope so the cooldown and in-flight checks count per project. The body has no event id, so each delivery is keyed by a digest of its body. Snyk documents the digest as of "the request body" without saying whether it is the raw bytes; check the first delivery. Every automation on this endpoint needs two match rules, /newIssues/0 exists and /newIssues/0/issueType eq vuln: without them every snapshot and ping starts a run, bounded only by the cooldown and the daily cap.',
+    key: 'snyk',
+    label: 'Snyk project snapshot',
+  },
 ];
 
 /** One verified event, as every automation of its endpoint reads it. Never stored whole. */
@@ -187,8 +252,9 @@ export function eventKeyText(text: string, hash: (text: string) => string): stri
 
 /**
  * The event's own fields, read with the endpoint's pointers. The type is required and must be
- * text; the id falls back to a digest of the raw body (`bodyDigest`, hex SHA-256), the subject to
- * the id, and the scope to the type.
+ * text, or the endpoint's constant `fixedType`; the id falls back to a digest of the raw body (`bodyDigest`, hex SHA-256), the subject to
+ * the id, and the scope to the type (so with a fixed type the default scope is that constant;
+ * set `scopePointer` for a per-source scope).
  */
 export function extractInboundEvent(input: {
   endpointId: string;
@@ -210,7 +276,8 @@ export function extractInboundEvent(input: {
     const text = scalarText(found.value);
     return text === null || text.length === 0 ? null : text;
   };
-  const type = read(pointers.typePointer);
+  // A fixed type wins and the pointer is never resolved: `""` would address the whole document.
+  const type = pointers.fixedType ? pointers.fixedType : read(pointers.typePointer);
   if (type === null) {
     return {
       code: 'EVENT_TYPE_MISSING',

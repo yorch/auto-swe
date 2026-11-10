@@ -180,7 +180,9 @@ const SUGARED: Record<string, string> = {
   'ticket-to-merge': `${FINALIZER}; ${LESSONS}; ${TICKET_HEAD}; ${STALL};`,
   'ticket-to-merge-qodo': `${TICKET_HEAD}; ${STALL};`,
   'tiered-escalation': '',
-  'vulnerability-remediation': '',
+  'vulnerability-remediation':
+    'the brief names the advisory fields an event fills and has the agent check their values ' +
+    'against the repository and the registry;',
 };
 
 /** Deliberate departures from the golden, keyed by template name. Anything not listed must match. */

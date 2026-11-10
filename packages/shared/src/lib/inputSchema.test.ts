@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   declaredConnectionInputs,
+  INPUT_PATTERN_MAX_FIELDS,
   type InputSchema,
+  inputPatternProblem,
   inputSchemaProblems,
   isInputSchema,
   runAuthorizedConnectionIds,
@@ -355,5 +357,218 @@ describe('runAuthorizedConnectionIds', () => {
     expect(
       runAuthorizedConnectionIds({ inputSchema: null, payload: null, workspaceConnectionId: null })
     ).toEqual([]);
+  });
+});
+
+describe('string maxLength and pattern', () => {
+  const schema = (prop: Record<string, unknown>) =>
+    ({ properties: { v: { type: 'string', ...prop } }, type: 'object' }) as InputSchema;
+  /** `pre`, then as many `unit`s as fit in the longest accepted source, then `post`. */
+  const fill = (pre: string, unit: string, post: string) => {
+    let s = pre;
+    while ((s + unit + post).length <= 200) {
+      s += unit;
+    }
+    return s + post;
+  };
+
+  it('accepts a conforming value and fully anchors the pattern', () => {
+    const s = schema({ maxLength: 20, pattern: '[a-z]+-\\d{2}' });
+    expect(validateInputPayload(s, { v: 'abc-12' })).toEqual({ ok: true });
+    expect(validateInputPayload(s, { v: 'xabc-12!' }).ok).toBe(false);
+  });
+
+  it('rejects an over-long value without echoing it', () => {
+    const r = validateInputPayload(schema({ maxLength: 5 }), { v: 'secretvalue' });
+    expect(r).toEqual({ errors: ["'v' must be at most 5 characters"], ok: false });
+  });
+
+  it('applies maxLength, but not a pattern, to array items', () => {
+    const s = {
+      properties: { v: { items: { maxLength: 5, type: 'string' }, type: 'array' } },
+      type: 'object',
+    } as InputSchema;
+    expect(inputSchemaProblems(s)).toEqual([]);
+    expect(validateInputPayload(s, { v: ['abc'] })).toEqual({ ok: true });
+    expect(validateInputPayload(s, { v: ['abcdef'] }).ok).toBe(false);
+
+    const patterned = {
+      properties: { v: { items: { pattern: 'CVE-\\d+', type: 'string' }, type: 'array' } },
+      type: 'object',
+    };
+    expect(inputSchemaProblems(patterned)).toEqual([
+      "'v': items.pattern is not supported (an array has no bound on its item count); constrain items with enum or maxLength",
+    ]);
+    // A stored one (saved before the check, or written around it) fails closed, once per field.
+    const r = validateInputPayload(patterned as InputSchema, { v: ['CVE-1', 'CVE-2'] });
+    expect(r).toEqual({
+      errors: [
+        "'v' cannot be checked: the template's input schema declares a pattern on array items, which is not supported; fix the schema",
+      ],
+      ok: false,
+    });
+  });
+
+  it('does not run an adversarial pattern: (a+)+$ is refused at save', () => {
+    expect(inputSchemaProblems(schema({ pattern: '(a+)+$' }))[0]).toMatch(/groups or alternation/);
+  });
+
+  it('refuses at save the exponential patterns that passed the old checker', () => {
+    const attacks = [
+      `${'\\w{0,10}'.repeat(8)}!`,
+      `${'\\w{0,10}'.repeat(10)}!`,
+      `${'\\w{0,5}'.repeat(14)}!`,
+      `${'.{0,10}'.repeat(8)}!`,
+      `${'a?'.repeat(60)}a{60}!`,
+      'a+a+a+$',
+      '\\w?\\w?\\w?',
+      'a{1,2}b{1,2}c{1,2}',
+      'a{2,}b*c+',
+      // Two varying quantifiers and a run of exact blocks: cubic in the value's length.
+      fill('a*a*', '[a]{6}', 'b'),
+      fill('.*.*', '.{6}', 'b'),
+      fill('a*a*', '\\w{4}', 'b'),
+      fill('a*a*', 'a{9}', 'b'),
+      '\\w*\\w*!',
+      'a?a*!',
+    ];
+    for (const pattern of attacks) {
+      expect(inputPatternProblem(pattern), pattern).toMatch(/quantifiers whose count varies/);
+      expect(inputSchemaProblems(schema({ pattern })).length, pattern).toBeGreaterThan(0);
+    }
+    const items = {
+      properties: { v: { items: { pattern: '\\w*\\w*\\w*!', type: 'string' }, type: 'array' } },
+      type: 'object',
+    };
+    expect(inputSchemaProblems(items)[0]).toMatch(/items.pattern is not supported/);
+  });
+
+  it('counts a lazy quantifier once and an exact count not at all', () => {
+    expect(inputPatternProblem('a*?')).toBeNull();
+    expect(inputPatternProblem('\\d{4}-\\d{4}-\\d{2,4}x{3,3}')).toBeNull();
+    expect(inputPatternProblem('a*?b+?')).toMatch(/has 2 quantifiers/);
+    expect(inputPatternProblem('a*?b+?c??')).toMatch(/has 3 quantifiers/);
+  });
+
+  it('refuses a pattern the engine would not compile', () => {
+    expect(inputPatternProblem('a{2,1}')).not.toBeNull();
+    expect(inputPatternProblem('a{2}{3}')).not.toBeNull();
+  });
+
+  it('runs the worst accepted shapes over a 256-character adversarial value in well under 20 ms', () => {
+    // One varying quantifier, then as many exact blocks as fit, then a character that never
+    // matches: the engine tries every length of the quantifier, and each try reads the rest.
+    const worst = [
+      fill('[a-z]{0,256}', '.{4}', 'b'),
+      fill('.{0,255}', '\\w{6}', 'b'),
+      fill('a*', '[\\s\\S]{1000}', 'b'),
+      fill('\\w*', '[a-zA-Z0-9._-]{2}', 'b'),
+      fill('', 'a{6}', '.*b'),
+      fill('a*?', '[^b]{9}', '$b'),
+    ];
+    for (const pattern of worst) {
+      // A fresh copy, so the first call compiles the expression and runs it cold.
+      const s = schema({ maxLength: 256, pattern });
+      expect(inputSchemaProblems(s), pattern).toEqual([]);
+      for (const value of ['a'.repeat(256), `${'ab'.repeat(127)}a!`]) {
+        const t = performance.now();
+        expect(validateInputPayload(s, { v: value })).toEqual({
+          errors: ["'v' does not match the required pattern"],
+          ok: false,
+        });
+        expect(performance.now() - t, pattern).toBeLessThan(20);
+      }
+    }
+  });
+
+  it(`refuses more than ${INPUT_PATTERN_MAX_FIELDS} patterned properties, and the most allowed check fast`, () => {
+    const properties: Record<string, unknown> = {};
+    const payload: Record<string, string> = {};
+    for (let i = 0; i < INPUT_PATTERN_MAX_FIELDS; i++) {
+      // A distinct source per field, so no field reuses another's compiled expression.
+      properties[`f${i}`] = {
+        maxLength: 256,
+        pattern: fill(`[a-z]{0,${200 + i}}`, '.{4}', 'b'),
+        type: 'string',
+      };
+      payload[`f${i}`] = 'a'.repeat(256);
+    }
+    const full = { properties, type: 'object' } as InputSchema;
+    expect(inputSchemaProblems(full)).toEqual([]);
+    const t = performance.now();
+    const r = validateInputPayload(full, payload);
+    expect(performance.now() - t).toBeLessThan(50);
+    expect(r.ok).toBe(false);
+    expect(r.ok ? [] : r.errors).toHaveLength(INPUT_PATTERN_MAX_FIELDS);
+
+    const over = {
+      properties: { ...properties, extra: { pattern: 'x', type: 'string' } },
+      type: 'object',
+    };
+    expect(inputSchemaProblems(over)).toEqual([
+      `${INPUT_PATTERN_MAX_FIELDS + 1} properties declare a pattern; the maximum is ${INPUT_PATTERN_MAX_FIELDS} ('extra' over the limit)`,
+    ]);
+    // Stored anyway: the patterns past the cap are not run, and a value for one is refused.
+    const stored = over as InputSchema;
+    expect(validateInputPayload(stored, { extra: 'x' })).toEqual({
+      errors: [
+        `'extra' cannot be checked: the template's input schema declares a pattern on more than ${INPUT_PATTERN_MAX_FIELDS} properties; fix the schema`,
+      ],
+      ok: false,
+    });
+    expect(validateInputPayload(stored, { f0: 'a'.repeat(200) }).ok).toBe(false);
+    expect(validateInputPayload(stored, {})).toEqual({ ok: true });
+  });
+
+  it('fails closed, rather than throwing, on a stored property that is null', () => {
+    const stored = { properties: { v: null }, type: 'object' } as unknown as InputSchema;
+    expect(inputSchemaProblems(stored)).toEqual(["'v': must be an object"]);
+    expect(validateInputPayload(stored, { v: 'x' })).toEqual({
+      errors: ["'v' cannot be checked: the template's input schema does not describe it"],
+      ok: false,
+    });
+    expect(validateInputPayload(stored, {})).toEqual({ ok: true });
+  });
+
+  it('fails closed, naming the schema, on a stored pattern outside the subset', () => {
+    // Saved before the subset was enforced: never compiled, never run, and every value refused.
+    const stored = schema({ pattern: '^(CVE|GHSA)-\\d+$' });
+    expect(inputSchemaProblems(stored).length).toBeGreaterThan(0);
+    expect(validateInputPayload(stored, { v: 'CVE-1' })).toEqual({
+      errors: [
+        "'v' cannot be checked: the template's input schema declares a pattern this platform does not run; fix the schema",
+      ],
+      ok: false,
+    });
+  });
+
+  it('refuses bad schemas at save', () => {
+    for (const bad of [
+      { pattern: '[' },
+      { pattern: 'a'.repeat(201) },
+      { pattern: '' },
+      { pattern: '(a)\\1' },
+      { pattern: 'a|b' },
+      { pattern: 'a+b+c+d+' },
+      { pattern: 'a+b+c+' },
+      { pattern: 12 },
+      { maxLength: 1.5 },
+      { maxLength: 0 },
+      { maxLength: 1001 },
+      { maxLength: 300, pattern: 'a' },
+    ]) {
+      expect(inputSchemaProblems(schema(bad)).length, JSON.stringify(bad)).toBeGreaterThan(0);
+    }
+    expect(
+      inputSchemaProblems({
+        properties: { n: { maxLength: 3, type: 'number' } },
+        type: 'object',
+      })
+    ).toEqual(["'n': maxLength applies only to a string"]);
+  });
+
+  it('leaves existing schemas unchanged', () => {
+    expect(inputSchemaProblems(SWE_SCHEMA)).toEqual([]);
+    expect(validateInputPayload(SWE_SCHEMA, VALID)).toEqual({ ok: true });
   });
 });

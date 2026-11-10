@@ -4,10 +4,12 @@ import {
   CLOUDEVENTS_POINTERS,
   EVENT_ENDPOINT_PRESETS,
   extractInboundEvent,
+  FixedEventTypeSchema,
   type InboundEvent,
   isCloudEventEnvelope,
   MAX_EVENT_FACTS_CHARS,
   MAX_EVENT_VALUE_CHARS,
+  resolveTypeSource,
   SignatureHeaderSchema,
 } from '../inboundEvent.js';
 import { automationOptionsProblem, buildAutomationPayload } from '../inputs.js';
@@ -229,6 +231,55 @@ describe('extraction', () => {
     });
   });
 
+  it('uses a fixed type, never resolving the pointer, and defaults the scope to it', () => {
+    const base = { bodyDigest: 'd', endpointId: ENDPOINT, hash: sha };
+    const got = extractInboundEvent({
+      ...base,
+      document: { type: 'ignored' },
+      pointers: { ...POINTERS, fixedType: 'snyk.project', typePointer: '' },
+    });
+    expect(got.ok && got.event.type).toBe('snyk.project');
+    expect(got.ok && got.event.scope).toBe('snyk.project');
+    // "" addresses the whole document, which a fixed-type endpoint must not read as its type.
+    const scalar = extractInboundEvent({
+      ...base,
+      document: 'whole',
+      pointers: { ...POINTERS, fixedType: 'k', typePointer: '' },
+    });
+    expect(scalar.ok && scalar.event.type).toBe('k');
+    const scoped = extractInboundEvent({
+      ...base,
+      document: { project: 'p1' },
+      pointers: { ...POINTERS, fixedType: 'k', scopePointer: '/project', typePointer: '' },
+    });
+    expect(scoped.ok && scoped.event.scope).toBe('p1');
+    const long = extractInboundEvent({
+      ...base,
+      document: {},
+      pointers: { ...POINTERS, fixedType: 'a'.repeat(257), typePointer: '' },
+    });
+    expect(long).toMatchObject({ code: 'EVENT_TYPE_TOO_LONG', ok: false });
+  });
+
+  it('accepts exactly one source for the type', () => {
+    expect(resolveTypeSource({ fixedType: 'x', typePointer: '/type' }).ok).toBe(false);
+    expect(resolveTypeSource({ fixedType: 'x' })).toEqual({
+      fixedType: 'x',
+      ok: true,
+      typePointer: '',
+    });
+    expect(resolveTypeSource({ typePointer: '/type' })).toMatchObject({
+      fixedType: null,
+      ok: true,
+    });
+    // Neither: an empty pointer would address the whole document.
+    expect(resolveTypeSource({ typePointer: '' }).ok).toBe(false);
+    expect(resolveTypeSource({ fixedType: null, typePointer: '' }).ok).toBe(false);
+    expect(resolveTypeSource({}).ok).toBe(false);
+    expect(FixedEventTypeSchema.safeParse('bad type').success).toBe(false);
+    expect(FixedEventTypeSchema.safeParse('').success).toBe(false);
+  });
+
   it('keeps an id with unsafe characters or excess length only as a hash', () => {
     const id = 'a~b#c';
     const got = extractInboundEvent({
@@ -283,6 +334,7 @@ describe('extraction', () => {
       'autoswe-json',
       'cloudevents',
       'hmac-github-style',
+      'snyk',
     ]);
   });
 });
