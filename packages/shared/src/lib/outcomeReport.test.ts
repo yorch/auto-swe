@@ -34,11 +34,12 @@ function run(id: string, over: Record<string, unknown> = {}) {
   };
 }
 
-function fakeDb(runs: unknown[]) {
+function fakeDb(runs: unknown[], traces: unknown[] = []) {
   return {
     activeWorkflow: {
       findMany: vi.fn().mockResolvedValue([{ costUsdAccrued: 7, temporalWorkflowId: 'wf-r2' }]),
     },
+    agentTrace: { findMany: vi.fn().mockResolvedValue(traces) },
     connection: {
       findMany: vi
         .fn()
@@ -88,6 +89,32 @@ describe('buildOutcomeReport', () => {
     expect(report.overall.reviewRounds.itemsWithAnyRound).toBe(1);
     expect(report.byRepo[0]?.repoName).toBe('acme/api');
     expect(report.inputs.truncated).toBe(false);
+  });
+
+  it('counts test-integrity guard trips by run and ignores a gate that degraded', async () => {
+    const db = fakeDb(
+      [
+        run('r1', { costUsdAccrued: 3, status: 'FAILED' }),
+        run('r2', { costUsdAccrued: 1, startedAt: new Date('2026-03-01T06:00:00Z') }),
+      ],
+      [
+        { outputJson: { blocked: true, mode: 'block' }, runId: 'r1' },
+        { outputJson: { blocked: false, mode: 'warn' }, runId: 'r2' },
+        { outputJson: { blocked: true, degraded: true, mode: 'block' }, runId: 'r2' },
+        { outputJson: null, runId: null },
+      ]
+    );
+    const report = await buildOutcomeReport(db as unknown as OutcomeReportDb, { now: NOW });
+    expect(db.agentTrace.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          toolName: 'ci_fix.test_integrity_guard',
+          type: 'activity_event',
+        }),
+      })
+    );
+    expect(report.overall.ciHeal.guard).toEqual({ blocked: 1, itemsTripped: 1, trips: 2 });
+    expect(report.inputs.guardTrips).toBe(2);
   });
 
   it('reads runs from the lookback before the window so older work is not recounted', async () => {

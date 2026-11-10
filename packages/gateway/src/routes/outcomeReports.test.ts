@@ -19,6 +19,7 @@ vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
 function mockPrisma(snapshot: { id: string } | null) {
   return {
     activeWorkflow: { findMany: vi.fn().mockResolvedValue([]) },
+    agentTrace: { findMany: vi.fn().mockResolvedValue([]) },
     connection: { findMany: vi.fn().mockResolvedValue([]) },
     pullRequest: { findMany: vi.fn().mockResolvedValue([]) },
     workflowArtifact: { findFirst: vi.fn().mockResolvedValue(snapshot) },

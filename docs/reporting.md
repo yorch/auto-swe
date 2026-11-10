@@ -41,7 +41,9 @@ repository`, and templates hidden by the workflow-template visibility rule appea
 template`, without dropping their counts.
 
 The [outcome report](./outcome-metrics.md) groups retries of the same ticket into one work item and
-adds merge rate over settled work, review rounds and the cost of work that never merged.
+adds merge rate over settled work, review rounds and the cost of work that never merged. Its
+[CI healing by repository](./outcome-metrics.md#ci-healing-by-repository) table puts each repository's
+CI-heal rate beside the trips of the CI-fix test-integrity guard.
 
 ## Quality
 

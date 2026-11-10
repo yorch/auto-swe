@@ -220,6 +220,24 @@ describe.skipIf(!enabled)('outcome report against Postgres', () => {
     });
     await pullRequest('B', 'CLOSED', { ciStatus: 'FAILED' });
     await step('B', 'ci-1', CI_FIX, 'FAILED');
+    // B's fix was stopped by the test-integrity guard; a second event is a gate that could not
+    // read the change and is not a trip.
+    for (const outputJson of [
+      { blocked: true, mode: 'block' },
+      { blocked: true, degraded: true, mode: 'block' },
+    ]) {
+      await prisma.agentTrace.create({
+        data: {
+          agentKey: 'ciFixer',
+          nodeId: 'implementerSession',
+          outputJson,
+          runId: ids.runB as string,
+          seq: outputJson.degraded ? 1 : 0,
+          toolName: 'ci_fix.test_integrity_guard',
+          type: 'activity_event',
+        },
+      });
+    }
 
     // C: failed, never opened a pull request.
     await run({
@@ -509,6 +527,12 @@ describe.skipIf(!enabled)('outcome report against Postgres', () => {
     // A (PASSED CI) healed, B (CLOSED, CI FAILED) did not.
     expect(eng.ciHeal).toMatchObject({ itemsHealed: 1, itemsWithCiFix: 2 });
     expect(eng.ciHeal.rate).toBeCloseTo(0.5);
+  });
+
+  it('counts test-integrity guard trips from real trace rows, a degraded gate excluded', () => {
+    const eng = template('eng');
+    expect(eng.ciHeal.guard).toEqual({ blocked: 1, itemsTripped: 1, trips: 1 });
+    expect(report.inputs.guardTrips).toBeGreaterThanOrEqual(1);
   });
 
   it('keeps a PR-less template in noPrWork, out of the merge-rate denominators', () => {

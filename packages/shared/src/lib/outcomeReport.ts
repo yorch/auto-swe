@@ -10,6 +10,7 @@ import {
   CI_FIX_STEP,
   computeOutcomeReport,
   followUpFromPayload,
+  type OutcomeGuardTrip,
   type OutcomePullRequest,
   type OutcomeReport,
   type OutcomeRun,
@@ -20,6 +21,7 @@ import {
 } from '../workflow/outcomeMetrics.js';
 import { matchingActiveWorkflows } from './runActiveWorkflows.js';
 import { runUnscoped } from './tenantGuard.js';
+import { TEST_INTEGRITY_GUARD_EVENT } from './testIntegrity.js';
 
 export const OUTCOME_REPORT_ROW_CAP = 50_000;
 /** How far before the window to read runs, so a retry of older work is not mistaken for new work. */
@@ -33,6 +35,7 @@ const ID_CHUNK = 1_000;
 export type OutcomeReportDb = Pick<
   PrismaClient,
   | 'activeWorkflow'
+  | 'agentTrace'
   | 'connection'
   | 'pullRequest'
   | 'workflowRun'
@@ -176,8 +179,9 @@ export async function buildOutcomeReport(
 
   const pullRequests: OutcomePullRequest[] = [];
   const steps: OutcomeStep[] = [];
+  const guardTrips: OutcomeGuardTrip[] = [];
   for (const ids of chunks(runIds)) {
-    const [prs, fixSteps] = await Promise.all([
+    const [prs, fixSteps, trips] = await Promise.all([
       runUnscoped('the outcome report joins pull requests to its runs', ['PullRequest'], () =>
         db.pullRequest.findMany({
           select: { ciStatus: true, mergedAt: true, runId: true, status: true },
@@ -194,8 +198,33 @@ export async function buildOutcomeReport(
           },
         })
       ),
+      runUnscoped(
+        'the outcome report counts test-integrity guard trips of its runs',
+        ['AgentTrace'],
+        () =>
+          db.agentTrace.findMany({
+            select: { outputJson: true, runId: true },
+            where: {
+              runId: { in: ids },
+              toolName: TEST_INTEGRITY_GUARD_EVENT,
+              type: 'activity_event',
+            },
+          })
+      ),
     ]);
     pullRequests.push(...prs);
+    for (const trip of trips) {
+      const body =
+        trip.outputJson !== null &&
+        typeof trip.outputJson === 'object' &&
+        !Array.isArray(trip.outputJson)
+          ? (trip.outputJson as Record<string, unknown>)
+          : {};
+      // A gate that could not read the change is not a trip: it found nothing.
+      if (trip.runId && body.degraded !== true) {
+        guardTrips.push({ blocked: body.blocked === true, runId: trip.runId });
+      }
+    }
     for (const step of fixSteps) {
       if (step.stepName) {
         steps.push({ runId: step.runId, stepName: step.stepName });
@@ -203,5 +232,13 @@ export async function buildOutcomeReport(
     }
   }
 
-  return computeOutcomeReport({ generatedAt: now, pullRequests, runs, steps, truncated, window });
+  return computeOutcomeReport({
+    generatedAt: now,
+    guardTrips,
+    pullRequests,
+    runs,
+    steps,
+    truncated,
+    window,
+  });
 }

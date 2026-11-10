@@ -9,7 +9,7 @@
  */
 import { MIN_SAMPLES_FOR_SIGNIFICANCE, percentile, wilsonInterval } from './analytics.js';
 
-export const OUTCOME_METRICS_METHOD_VERSION = 2;
+export const OUTCOME_METRICS_METHOD_VERSION = 3;
 
 /** Terminal fix-loop steps counted as one round each. */
 export const REVIEW_ROUND_STEP = 'executeReviewFixImplementation';
@@ -51,6 +51,12 @@ export interface OutcomePullRequest {
 export interface OutcomeStep {
   runId: string;
   stepName: string;
+}
+
+/** One trip of the CI-fix test-integrity guard: `blocked` when the fix was stopped, else only warned. */
+export interface OutcomeGuardTrip {
+  runId: string;
+  blocked: boolean;
 }
 
 /**
@@ -107,6 +113,16 @@ export interface OutcomeGroupMetrics {
     itemsHealed: number;
     rate: number | null;
     rateInterval: [number, number] | null;
+    /**
+     * Test-integrity guard trips on the group's CI fixes: every trip recorded by a run of a
+     * merge-rate item, whether it blocked the fix or only warned.
+     */
+    guard: {
+      trips: number;
+      blocked: number;
+      /** Merge-rate items with at least one trip. */
+      itemsTripped: number;
+    };
   };
   timeToMergeMs: { n: number; median: number | null; p90: number | null };
   cost: {
@@ -140,7 +156,13 @@ export interface OutcomeReport {
   window: { start: string; end: string };
   generatedAt: string;
   /** Rows the report was built from, and whether a source was cut at its cap. */
-  inputs: { runs: number; pullRequests: number; steps: number; truncated: boolean };
+  inputs: {
+    runs: number;
+    pullRequests: number;
+    steps: number;
+    guardTrips: number;
+    truncated: boolean;
+  };
   /** Minimum settled items for a rate to stop being marked low-sample. */
   lowSampleBelow: number;
   overall: OutcomeGroupMetrics;
@@ -247,6 +269,8 @@ interface WorkItem {
   prs: OutcomePullRequest[];
   reviewRounds: number;
   ciFixes: number;
+  guardTrips: number;
+  guardBlocked: number;
   startedAt: number;
   costUsd: number;
   state: WorkItemState;
@@ -258,7 +282,8 @@ interface WorkItem {
 function buildItems(
   runs: readonly OutcomeRun[],
   pullRequests: readonly OutcomePullRequest[],
-  steps: readonly OutcomeStep[]
+  steps: readonly OutcomeStep[],
+  guardTrips: readonly OutcomeGuardTrip[]
 ): WorkItem[] {
   const byId = new Map(runs.map((run) => [run.id, run]));
   // A follow-up joins the item of the run it acts on (and so of that run's own origin, if any).
@@ -301,6 +326,14 @@ function buildItems(
     roundsByRun.set(step.runId, entry);
   }
 
+  const tripsByRun = new Map<string, { trips: number; blocked: number }>();
+  for (const trip of guardTrips) {
+    const entry = tripsByRun.get(trip.runId) ?? { blocked: 0, trips: 0 };
+    entry.trips += 1;
+    entry.blocked += trip.blocked ? 1 : 0;
+    tripsByRun.set(trip.runId, entry);
+  }
+
   const items: WorkItem[] = [];
   for (const group of byKey.values()) {
     const sorted = [...group].sort(
@@ -339,6 +372,8 @@ function buildItems(
       anchor,
       ciFixes: sorted.reduce((sum, run) => sum + (roundsByRun.get(run.id)?.ci ?? 0), 0),
       costUsd: sorted.reduce((sum, run) => sum + run.costUsd, 0),
+      guardBlocked: sorted.reduce((sum, run) => sum + (tripsByRun.get(run.id)?.blocked ?? 0), 0),
+      guardTrips: sorted.reduce((sum, run) => sum + (tripsByRun.get(run.id)?.trips ?? 0), 0),
       kind,
       mergedAt: mergedTimes.length > 0 ? Math.min(...mergedTimes) : null,
       prs,
@@ -406,6 +441,11 @@ function groupMetrics(items: readonly WorkItem[]): OutcomeGroupMetrics {
   const healed = withCiFix.filter((item) =>
     item.prs.some((pr) => pr.ciStatus === 'PASSED' || pr.status === 'MERGED')
   ).length;
+  const guard = {
+    blocked: prItems.reduce((sum, item) => sum + item.guardBlocked, 0),
+    itemsTripped: prItems.filter((item) => item.guardTrips > 0).length,
+    trips: prItems.reduce((sum, item) => sum + item.guardTrips, 0),
+  };
   const mergeDurations = prItems
     .flatMap((item) =>
       item.state === 'merged' && item.mergedAt !== null
@@ -416,6 +456,7 @@ function groupMetrics(items: readonly WorkItem[]): OutcomeGroupMetrics {
 
   return {
     ciHeal: {
+      guard,
       itemsHealed: healed,
       itemsWithCiFix: withCiFix.length,
       rate: ratio(healed, withCiFix.length),
@@ -463,6 +504,8 @@ export interface ComputeOutcomeReportInput {
   runs: readonly OutcomeRun[];
   pullRequests: readonly OutcomePullRequest[];
   steps: readonly OutcomeStep[];
+  /** Test-integrity guard trips of the runs; omitted when the caller did not read them. */
+  guardTrips?: readonly OutcomeGuardTrip[];
   window: { start: Date; end: Date };
   generatedAt: Date;
   truncated?: boolean;
@@ -474,7 +517,12 @@ export interface ComputeOutcomeReportInput {
  * and their finished fix-loop steps.
  */
 export function computeOutcomeReport(input: ComputeOutcomeReportInput): OutcomeReport {
-  const items = buildItems(input.runs, input.pullRequests, input.steps).filter(
+  const items = buildItems(
+    input.runs,
+    input.pullRequests,
+    input.steps,
+    input.guardTrips ?? []
+  ).filter(
     (item) =>
       item.startedAt >= input.window.start.getTime() && item.startedAt < input.window.end.getTime()
   );
@@ -509,6 +557,7 @@ export function computeOutcomeReport(input: ComputeOutcomeReportInput): OutcomeR
     byTemplate,
     generatedAt: input.generatedAt.toISOString(),
     inputs: {
+      guardTrips: (input.guardTrips ?? []).length,
       pullRequests: input.pullRequests.length,
       runs: input.runs.length,
       steps: input.steps.length,
@@ -554,6 +603,33 @@ function row(label: string, m: OutcomeGroupMetrics): string {
   ].join(' | ')} |`;
 }
 
+/**
+ * The guard figures of a group. A snapshot stored by an earlier method version (the scheduled
+ * report keeps the newest eight) has none, and is rendered as no trips.
+ */
+function guardOf(m: OutcomeGroupMetrics): OutcomeGroupMetrics['ciHeal']['guard'] {
+  return m.ciHeal.guard ?? { blocked: 0, itemsTripped: 0, trips: 0 };
+}
+
+function ciHealRow(label: string, m: OutcomeGroupMetrics): string {
+  const h = m.ciHeal;
+  const guard = guardOf(m);
+  return `| ${[
+    cell(label) + (h.itemsWithCiFix < MIN_SAMPLES_FOR_SIGNIFICANCE ? ' (low sample)' : ''),
+    h.itemsWithCiFix,
+    h.itemsHealed,
+    `${pct(h.rate)}${interval(h.rateInterval)}`,
+    guard.trips,
+    guard.blocked,
+    guard.itemsTripped,
+  ].join(' | ')} |`;
+}
+
+const CI_HEAL_HEAD = [
+  '| | Items with a CI fix | Healed | CI-heal rate (95% CI) | Guard trips | Blocked | Items tripped |',
+  '|---|---|---|---|---|---|---|',
+];
+
 const TABLE_HEAD = [
   '| | Merge-rate items | Settled | Merge rate (95% CI) | Review rounds (mean) | CI-heal rate | Median time to merge | Cost per merged PR | Spend on unmerged | Outside the merge rate |',
   '|---|---|---|---|---|---|---|---|---|---|',
@@ -570,7 +646,7 @@ export function renderOutcomeReportMarkdown(report: OutcomeReport): string {
       'definitions in docs/outcome-metrics.md).',
     '',
     `Runs read: ${report.inputs.runs}; pull requests: ${report.inputs.pullRequests}; ` +
-      `fix-loop steps: ${report.inputs.steps}.` +
+      `fix-loop steps: ${report.inputs.steps}; test-integrity guard trips: ${report.inputs.guardTrips ?? 0}.` +
       (report.inputs.truncated
         ? ' **A source hit its row cap: the figures below cover a subset.**'
         : ''),
@@ -604,7 +680,9 @@ export function renderOutcomeReportMarkdown(report: OutcomeReport): string {
     '',
     `Time to merge: n=${o.timeToMergeMs.n}, median ${formatDurationMs(o.timeToMergeMs.median)}, ` +
       `p90 ${formatDurationMs(o.timeToMergeMs.p90)}. CI heal: ${o.ciHeal.itemsHealed} of ` +
-      `${o.ciHeal.itemsWithCiFix} items that needed a CI fix ended with passing CI or a merge. ` +
+      `${o.ciHeal.itemsWithCiFix} items that needed a CI fix ended with passing CI or a merge; ` +
+      `the test-integrity guard tripped ${guardOf(o).trips} time(s) on ${guardOf(o).itemsTripped} item(s), ` +
+      `${guardOf(o).blocked} blocked. ` +
       `Review rounds: ${o.reviewRounds.itemsWithAnyRound} of ${o.reviewRounds.itemsWithPr} items with a pull request needed at least one.`,
     '',
     '## Work outside the merge rate',
@@ -625,6 +703,15 @@ export function renderOutcomeReportMarkdown(report: OutcomeReport): string {
     '',
     ...TABLE_HEAD,
     ...report.byRepo.map((r) => row(r.repoName, r)),
+    '',
+    '## CI healing by repository',
+    '',
+    'Of the items that needed a CI fix and have a pull request, the share whose pull request ended with ' +
+      'passing CI or a merge, beside the trips of the test-integrity guard (a fix that deleted, skipped or ' +
+      'weakened tests). A blocked trip is a fix that was stopped before it was pushed.',
+    '',
+    ...CI_HEAL_HEAD,
+    ...report.byRepo.map((r) => ciHealRow(r.repoName, r)),
     '',
     '## Reading these figures',
     '',

@@ -108,7 +108,8 @@ denominator.
 | Merge rate | merged items / settled items, with a 95% Wilson interval. Merge-rate items that failed, timed out or were cancelled without a pull request are in the denominator; work outside the merge rate is not. |
 | Decided PR merge rate | merged items / (merged + closed unmerged items): of the pull requests a human decided, the share merged. |
 | Review rounds | per item with at least one pull request, the number of finished `executeReviewFixImplementation` steps across all its runs. Reported as mean, median, maximum and the number of items with at least one. |
-| CI-heal rate | of items with at least one finished `executeCIFixImplementation` step and a pull request, the share whose pull request has CI `PASSED` or merged. |
+| CI-heal rate | of items with at least one finished `executeCIFixImplementation` step and a pull request, the share whose pull request has CI `PASSED` or merged. Reported for the whole report, per template and per repository (see [CI healing by repository](#ci-healing-by-repository)). |
+| Guard trips | the `ci_fix.test_integrity_guard` events recorded on the runs of merge-rate items (see [the guard](./ci-failure-triggers.md#24-the-test-integrity-guard)): the number of trips, how many of them blocked the fix, and the number of items with at least one. A gate that could not read the change records the same event marked `degraded` and is not a trip. |
 | Time to merge | for merged items with a merge timestamp, the time from the item's earliest run start to its first merge. Median and p90 with the sample size. |
 | Cost per merged PR | the recorded cost of every run of merge-rate work, retries, follow-ups and failures included, divided by the number of merged pull requests. Null when none merged. |
 | Cost per merged PR, settled | the same, counting only items that settled, so work still in flight is not charged to the merges that have happened. |
@@ -116,6 +117,19 @@ denominator.
 
 Cost is each run's `costUsdAccrued`; when that is zero the matching `ActiveWorkflow` ledger row is
 used, as in the delivery report. It is the model-call cost the platform recorded, nothing else.
+
+#### CI healing by repository
+
+The CI-heal rate is computed for every group the report slices by, and the Markdown prints it per
+repository in its own table beside the guard's trips, with the 95% Wilson interval and a `low sample`
+mark below 30 items with a CI fix. The two are read together because a heal rate can be raised by a
+fix that deleted, skipped or weakened the failing test: that fix turns CI green. A repository with a
+high heal rate and a long run of trips is healing by that route; a trip that blocked the fix is a
+fix that was stopped before it was pushed, and its item counts in the denominator when it has a pull
+request, as it did not heal.
+
+The rate is the platform's, not a measure of test quality: a guard that did not trip says only that
+it recognised nothing, and the rate does not count fixes the guard or a person never saw.
 
 **Attribution.** An item belongs to the template and repository of the run that merged it, else of its
 latest run that is not a follow-up. A repository is the run's persisted `attributedRepoId`; a run without one is reported under
@@ -155,6 +169,14 @@ low cost per merged PR on a few merges is flagged as low sample rather than pres
 
 ## Limitations
 
+- The guard-trip counts come from the trace events the CI-fix session records. A run whose traces
+  were deleted by retention shows no trips, and a repository whose guard is `off` shows none either.
+  A trip is a heuristic finding (see [the guard's limits](./ci-failure-triggers.md#limitations)), not a
+  confirmed deletion of a test.
+- The CI-heal rate counts items whose pull request CI passed or merged. It does not say whether the
+  tests that passed are the tests the repository had before the fix.
+- Only GitHub Actions CI is read, so the heal rate covers pull requests whose CI status the platform
+  records. Buildkite, CircleCI and GitLab CI are not sources.
 - The report does not count human review rounds on the pull request. Review rounds are the fix rounds
   the platform's own review network triggered. Change requests a person makes on the pull request are
   not counted.
