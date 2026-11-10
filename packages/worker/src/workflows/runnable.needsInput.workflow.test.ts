@@ -483,6 +483,9 @@ describe('ask and resume (TestWorkflowEnvironment)', () => {
       runId: 'run-test-1',
       status: 'CANCELLED',
     });
+    const ids = markerIds(await handle.fetchHistory());
+    expect(ids).toContain('needs-input-v1');
+    expect(ids).toContain('needs-input-cancel-v1');
   }, 120_000);
 
   it('ends CANCELLED, and closes the open question, when the run is cancelled while waiting', async () => {

@@ -2697,7 +2697,7 @@ model RunEffect {
   action      String
   /// External id, URL, branch or tool name.
   target      String?
-  /// DONE | FAILED.
+  /// DONE | FAILED | SKIPPED (`RUN_EFFECT_STATUSES`).
   status      String
   /// harness_relay | mastra_mcp | activity.
   via         String

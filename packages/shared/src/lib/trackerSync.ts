@@ -7,11 +7,11 @@ import {
 import type { ResolvedIssueTrackerConfig } from './integrations/registry.js';
 import { createIssueTrackerProvider } from './integrations/registry.js';
 import type { TicketFailureClass } from './integrations/ticketFailure.js';
-import type { TrackerSyncEvent } from './integrations/types.js';
+import type { TrackerSyncEvent, TrackerSyncOutcome } from './integrations/types.js';
 import { resolveGitHubBaseUrl } from './systemConfig.js';
 import { runUnscoped } from './tenantGuard.js';
 
-export type { TrackerSyncEvent };
+export type { TrackerSyncEvent, TrackerSyncOutcome };
 
 // Lazy DB access, as in systemConfig.ts: importing this module must not load the client.
 async function db() {
@@ -291,6 +291,11 @@ export interface SyncTrackerOptions {
   warn?: (message: string, meta: Record<string, unknown>) => void;
   /** The provider's logger. Its warnings carry the raw provider error. */
   log?: { warn: (obj: unknown, msg?: string) => void };
+  /**
+   * Called once with the whole outcome, the failure the call resolves and whether any write
+   * reached the ticket. Optional: a caller that only needs the failure class ignores it.
+   */
+  onOutcome?: (outcome: TrackerSyncOutcome) => void;
 }
 
 /**
@@ -299,20 +304,35 @@ export interface SyncTrackerOptions {
  * repository check declined a GitHub write, `'no_repository'` when no repository could be resolved from a GitHub id (a bare number, a URL, a
  * foreign key),
  * `'no_transition'` when no transition to a status named like the target was found on a Jira ticket, `'unknown'` when the sync
- * itself failed, and null otherwise (including events that write nothing).
+ * itself failed, and null otherwise (including events that write nothing). `opts.onOutcome`
+ * additionally reports whether anything was written.
  */
 export async function syncTrackerOnEvent(
   event: TrackerSyncEvent,
   config: ResolvedIssueTrackerConfig,
   opts: SyncTrackerOptions
 ): Promise<TicketFailureClass | null> {
+  const outcome = await syncTrackerOutcome(event, config, opts);
+  try {
+    opts.onOutcome?.(outcome);
+  } catch {
+    // A reporting sink must not change the sync's result.
+  }
+  return outcome.failure;
+}
+
+async function syncTrackerOutcome(
+  event: TrackerSyncEvent,
+  config: ResolvedIssueTrackerConfig,
+  opts: SyncTrackerOptions
+): Promise<TrackerSyncOutcome> {
   try {
     // Every other GitHub sync writes (a comment, a PR link posted as one, or closing the issue),
     // and the ticket id is user-supplied; Jira and Linear ids name no repository. Starting a
     // workflow writes nothing on GitHub (it has no 'In Progress' transition), so it needs no check.
     if (config.provider === 'github') {
       if (event.type === 'workflow_started') {
-        return null;
+        return { failure: null, wrote: false };
       }
       const scope = opts.runInputId ? await loadRunTrackerScope(opts.runInputId) : null;
       if (!scope || !isGitHubTicketInScope(event.issueId, config.baseUrl, scope)) {
@@ -326,14 +346,19 @@ export async function syncTrackerOnEvent(
           outOfScope ? TRACKER_SYNC_OUT_OF_SCOPE : TRACKER_SYNC_NO_REPOSITORY,
           { event: event.type, runInputId: opts.runInputId ?? null }
         );
-        return outOfScope ? 'out_of_scope' : 'no_repository';
+        return { failure: outOfScope ? 'out_of_scope' : 'no_repository', wrote: false };
       }
     }
     const provider = createIssueTrackerProvider(config, { log: opts.log });
     if (!provider) {
-      return null;
+      return { failure: null, wrote: false };
     }
-    return (await provider.syncOnEvent(event)) ?? null;
+    if (provider.syncOnEventOutcome) {
+      const outcome = await provider.syncOnEventOutcome(event);
+      return { failure: outcome.failure ?? null, wrote: outcome.wrote };
+    }
+    // A provider that cannot say what it wrote is taken to have written.
+    return { failure: (await provider.syncOnEvent(event)) ?? null, wrote: true };
   } catch {
     // Reported through `warn`, the sink every caller passes. The error is not logged here: it can
     // carry provider text, and the provider's own `log` already reports what it chose to.
@@ -341,7 +366,7 @@ export async function syncTrackerOnEvent(
       event: event.type,
       runInputId: opts.runInputId ?? null,
     });
-    return 'unknown';
+    return { failure: 'unknown', wrote: false };
   }
 }
 

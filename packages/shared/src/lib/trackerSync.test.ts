@@ -451,6 +451,56 @@ describe('syncTrackerOnEvent', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  describe('the outcome it reports through onOutcome', () => {
+    const JIRA = { ...GITHUB, provider: 'jira' } as ResolvedIssueTrackerConfig;
+
+    it('passes through what a provider that reports its writes says', async () => {
+      const onOutcome = vi.fn();
+      mocks.createProvider.mockReturnValue({
+        syncOnEvent: mocks.syncOnEvent,
+        syncOnEventOutcome: vi.fn(async () => ({ failure: null, wrote: false })),
+      });
+      await expect(
+        syncTrackerOnEvent(EVENT, JIRA, { onOutcome, runInputId: null })
+      ).resolves.toBeNull();
+      expect(onOutcome).toHaveBeenCalledWith({ failure: null, wrote: false });
+      expect(mocks.syncOnEvent).not.toHaveBeenCalled();
+    });
+
+    it('takes a provider that cannot say to have written', async () => {
+      const onOutcome = vi.fn();
+      mocks.syncOnEvent.mockResolvedValueOnce(null);
+      await syncTrackerOnEvent(EVENT, JIRA, { onOutcome, runInputId: null });
+      expect(onOutcome).toHaveBeenCalledWith({ failure: null, wrote: true });
+    });
+
+    it('says nothing was written for GitHub workflow_started and for a declined scope', async () => {
+      const onOutcome = vi.fn();
+      await syncTrackerOnEvent({ ...EVENT, type: 'workflow_started' }, GITHUB, {
+        onOutcome,
+        runInputId: 'wr-1',
+      });
+      expect(onOutcome).toHaveBeenLastCalledWith({ failure: null, wrote: false });
+      await syncTrackerOnEvent({ ...EVENT, issueId: 'attacker/public#1' }, GITHUB, {
+        onOutcome,
+        runInputId: 'wr-1',
+        warn: vi.fn(),
+      });
+      expect(onOutcome).toHaveBeenLastCalledWith({ failure: 'out_of_scope', wrote: false });
+    });
+
+    it('says nothing was written when the sync throws, and a throwing sink changes nothing', async () => {
+      const onOutcome = vi.fn(() => {
+        throw new Error('sink');
+      });
+      mocks.syncOnEvent.mockRejectedValueOnce(new Error('db down'));
+      await expect(
+        syncTrackerOnEvent(EVENT, JIRA, { onOutcome, runInputId: null, warn: vi.fn() })
+      ).resolves.toBe('unknown');
+      expect(onOutcome).toHaveBeenCalledWith({ failure: 'unknown', wrote: false });
+    });
+  });
+
   describe('the comment failure it reports', () => {
     const JIRA = { ...GITHUB, provider: 'jira' } as ResolvedIssueTrackerConfig;
 

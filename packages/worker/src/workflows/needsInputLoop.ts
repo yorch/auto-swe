@@ -29,7 +29,11 @@ export const NEEDS_INPUT_FINAL_PATCH = 'needs-input-final-round-v1';
 /** Gates closing the open question's human step when the wait for its answer is cancelled. */
 export const NEEDS_INPUT_CANCEL_PATCH = 'needs-input-cancel-v1';
 
-/** The most times one round is put to the person again after an answer that cannot be used. */
+/**
+ * The most times one round is put to the person again after an answer that cannot be used.
+ * Part of the workflow's recorded control flow: changing it takes a new patched marker, or a
+ * history recorded under the old value replays into a different path.
+ */
 export const MAX_REASKS_PER_ROUND = 3;
 
 export interface AskDeps {
@@ -171,6 +175,9 @@ export async function runWithNeedsInput(args: {
       }
       // The same round, the same questions, a step of its own: the round is not used up and
       // the activity does not run again.
+      // The superseded question leaves the inbox now: it would otherwise stay PENDING until
+      // the run ends, next to the repeat that replaces it.
+      await deps.resolveHumanStep({ nodeId, status: 'CANCELLED' }).catch(() => {});
       reasks += 1;
       nodeId = reaskRecordingId(key, round, reasks);
       description = `Your previous answer could not be used (${mapped.reason.slice(0, 200)}). Please answer again.\n\n${ask.description}`;

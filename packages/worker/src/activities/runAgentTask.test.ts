@@ -468,35 +468,17 @@ describe('concurrency and kill switch', () => {
     expect(createWorkspace).not.toHaveBeenCalled();
   });
 
-  it('does not count a run that is paused for input against the cap while it waits', async () => {
+  it('counts a run that is paused for input like any other: it keeps its slot while it waits', async () => {
     m.settings['workspace.agentRunMaxConcurrentPerTeam'] = 1;
     m.slots = [
       { launchedAt: new Date(1), teamId: 'team-1', workflowId: 'paused' },
       { launchedAt: new Date(2), teamId: 'team-1', workflowId: 'wf-1' },
     ];
-    m.waiting.mockResolvedValue([{ run: { workflowId: 'paused' } }]);
-    await runAgentTask({ request: request() });
-    expect(m.waiting.mock.calls[0]?.[0]).toMatchObject({
-      where: {
-        kind: 'INPUT',
-        nodeId: { contains: ':ask:' },
-        run: { workflowId: { in: ['paused', 'wf-1'] } },
-        status: 'PENDING',
-      },
-    });
-    expect(createWorkspace).toHaveBeenCalled();
-  });
-
-  it('still counts the older run when the waiting lookup fails', async () => {
-    m.settings['workspace.agentRunMaxConcurrentPerTeam'] = 1;
-    m.slots = [
-      { launchedAt: new Date(1), teamId: 'team-1', workflowId: 'paused' },
-      { launchedAt: new Date(2), teamId: 'team-1', workflowId: 'wf-1' },
-    ];
-    m.waiting.mockRejectedValue(new Error('db down'));
     expect((await failureOf(runAgentTask({ request: request() }))).type).toBe(
       'AGENT_RUN_CONCURRENCY_EXCEEDED'
     );
+    // No lookup of waiting runs is made.
+    expect(m.waiting).not.toHaveBeenCalled();
   });
 
   it('refuses a run that is not among the oldest N in flight', async () => {

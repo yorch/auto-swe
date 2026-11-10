@@ -62,7 +62,7 @@ type Exec = Pick<Workspace, 'exec'> & { gitIdentity?: GitIdentity };
 const PIN_REPOSITORY = 'GIT_DIR="$(pwd -P)/.git" GIT_WORK_TREE="$(pwd -P)"';
 
 /** A hardened, replace-proof git call, pinned to this checkout (see {@link PIN_REPOSITORY}). */
-const guardedGit = (subcommand: string): string =>
+export const guardedGit = (subcommand: string): string =>
   `GIT_NO_REPLACE_OBJECTS=1 ${PIN_REPOSITORY} ${gitWithAuthHeader(subcommand)}`;
 
 /**

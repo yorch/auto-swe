@@ -255,6 +255,52 @@ describe('JiraProvider.syncOnEvent', () => {
     await expect(provider(client).syncOnEvent(failed)).resolves.toBe('unknown');
   });
 
+  describe('syncOnEventOutcome reports whether anything was written', () => {
+    const completed = { issueId: 'AIDEVEX-8', type: 'workflow_completed' } as const;
+
+    it('wrote: true for a comment the tracker took', async () => {
+      const client = { post: vi.fn(async () => ({ id: '1' })) } as unknown as AtlassianClient;
+      await expect(provider(client).syncOnEventOutcome(failed)).resolves.toEqual({
+        failure: null,
+        wrote: true,
+      });
+    });
+
+    it('wrote: true when a transition was posted', async () => {
+      const get = vi.fn(async () => ({ transitions: [{ id: '31', name: 'Done' }] }));
+      const post = vi.fn(async () => ({}));
+      const client = { get, post } as unknown as AtlassianClient;
+      await expect(provider(client).syncOnEventOutcome(completed)).resolves.toEqual({
+        failure: null,
+        wrote: true,
+      });
+    });
+
+    it('wrote: false when the ticket is already in the target status', async () => {
+      const get = vi.fn(async (path: string) =>
+        path.includes('/transitions')
+          ? { transitions: [] }
+          : { fields: { status: { name: 'Done' } } }
+      );
+      const client = { get, post: vi.fn() } as unknown as AtlassianClient;
+      await expect(provider(client).syncOnEventOutcome(completed)).resolves.toEqual({
+        failure: null,
+        wrote: false,
+      });
+    });
+
+    it('wrote: false with the failure class when a comment is refused', async () => {
+      const post = vi.fn(async () => {
+        throw new AtlassianError(403, 'auth', 'refused');
+      });
+      const client = { post } as unknown as AtlassianClient;
+      await expect(provider(client).syncOnEventOutcome(failed)).resolves.toEqual({
+        failure: 'forbidden',
+        wrote: false,
+      });
+    });
+  });
+
   describe('workflow_completed (a status transition, no comment)', () => {
     const completed = { issueId: 'AIDEVEX-8', type: 'workflow_completed' } as const;
     const withPr = { ...completed, prTitle: 'Fix it', prUrl: 'https://gh/pr/1' } as const;

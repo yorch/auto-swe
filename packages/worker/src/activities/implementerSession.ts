@@ -418,7 +418,10 @@ export async function runImplementerFixSession(
     // A resumed session waited on a person while the branch could move: replay its commits on
     // top of the remote so the push fast-forwards. The path guard ran on the commit above.
     if (resume) {
-      const rebased = await rebaseOntoMovedBranch(workspace, previousCodeResult.branch);
+      const rebased = await rebaseOntoMovedBranch(workspace, previousCodeResult.branch, {
+        guard: pathGuard,
+        replayBase: resumeCheckoutSha(resume),
+      });
       if (rebased && pushSha) {
         pushSha = rebased;
       }

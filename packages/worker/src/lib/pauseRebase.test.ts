@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import type { PathGuard } from '../activities/allowedPaths.js';
 import type { Workspace } from '../activities/workspace.js';
 import { rebaseOntoMovedBranch } from './pauseRebase.js';
 
@@ -102,5 +103,99 @@ describe('rebaseOntoMovedBranch', () => {
     expect(git(work, 'status', '--porcelain')).toBe('');
     expect(() => git(work, 'rev-parse', '--verify', 'REBASE_HEAD')).toThrow();
     expect(git(origin, 'rev-parse', 'feature')).toBe(remoteBefore);
+  });
+
+  const guardFor = (allowedPaths: string[]): PathGuard => ({
+    allowedPaths,
+    refuseWorkflowChanges: false,
+    report: { sha: git(work, 'rev-parse', 'HEAD'), twoTree: true },
+    sessionBase: git(work, 'rev-parse', 'HEAD~1'),
+  });
+
+  it('replays only the commits after the resume checkout when the branch was force-moved', async () => {
+    // An earlier round pushed "agent work"; the run resumes from there and commits more.
+    git(work, 'push', 'origin', 'feature');
+    const replayBase = git(work, 'rev-parse', 'HEAD');
+    writeFileSync(join(work, 'resumed.txt'), 'resumed\n');
+    git(work, 'add', '-A');
+    git(work, 'commit', '-m', 'resumed work');
+    // Meanwhile the branch is force-moved: the earlier push is gone from it.
+    git(other, 'fetch', 'origin');
+    git(other, 'reset', '--hard', 'origin/main');
+    writeFileSync(join(other, 'theirs.txt'), 'theirs\n');
+    git(other, 'add', '-A');
+    git(other, 'commit', '-m', 'teammate');
+    git(other, 'push', '--force', 'origin', 'HEAD:feature');
+
+    await rebaseOntoMovedBranch(workspace(), 'feature', { replayBase });
+
+    expect(git(work, 'log', '--format=%s', 'HEAD')).toBe('resumed work\nteammate\nbase');
+  });
+
+  it('re-checks the replayed result against the path guard, measured from the remote branch', async () => {
+    pushMeanwhile('theirs.txt', 'theirs\n');
+    // The teammate's file is outside the allowed paths and does not count; the agent's does.
+    const head = await rebaseOntoMovedBranch(workspace(), 'feature', {
+      guard: guardFor(['agent.txt']),
+    });
+    expect(head).toBe(git(work, 'rev-parse', 'HEAD'));
+  });
+
+  it('refuses a replayed change outside the allowed paths', async () => {
+    pushMeanwhile('theirs.txt', 'theirs\n');
+    await expect(
+      rebaseOntoMovedBranch(workspace(), 'feature', { guard: guardFor(['docs/']) })
+    ).rejects.toMatchObject({ nonRetryable: true, type: 'DIFF_OUTSIDE_ALLOWED_PATHS' });
+  });
+
+  it('ignores a replace ref the agent planted, so it cannot swap in a different commit', async () => {
+    const agentCommit = git(work, 'rev-parse', 'HEAD');
+    // An evil twin of the agent commit that also writes a file outside the allowed paths.
+    git(work, 'checkout', '-q', '--detach', 'HEAD~1');
+    writeFileSync(join(work, 'agent.txt'), 'agent\n');
+    writeFileSync(join(work, 'secret.txt'), 'pwn\n');
+    git(work, 'add', '-A');
+    git(work, 'commit', '-m', 'agent work');
+    const evil = git(work, 'rev-parse', 'HEAD');
+    git(work, 'checkout', '-q', 'feature');
+    git(work, 'replace', agentCommit, evil);
+    pushMeanwhile('theirs.txt', 'theirs\n');
+
+    const head = await rebaseOntoMovedBranch(workspace(), 'feature', {
+      guard: guardFor(['agent.txt']),
+    });
+
+    expect(head).toBeDefined();
+    const files = execFileSync('git', ['ls-tree', '-r', '--name-only', head as string], {
+      cwd: work,
+      encoding: 'utf8',
+      env: { ...ENV, GIT_NO_REPLACE_OBJECTS: '1' },
+    });
+    expect(files).not.toContain('secret.txt');
+  });
+
+  it('reports a fetch failure as retryable, not as an absent branch', async () => {
+    const ws = workspace();
+    await expect(
+      rebaseOntoMovedBranch(
+        {
+          exec: ws.exec,
+          gitAuthed: async () => {
+            throw new Error('network down');
+          },
+        },
+        'feature'
+      )
+    ).rejects.toMatchObject({ nonRetryable: false, type: 'NEEDS_INPUT_REBASE_FAILED' });
+  });
+
+  it('reports a failure that is not a conflict as such, not as a push conflict', async () => {
+    pushMeanwhile('theirs.txt', 'theirs\n');
+    // A dirty tree refuses the rebase before any commit is replayed.
+    writeFileSync(join(work, 'a.txt'), 'dirty\n');
+    await expect(rebaseOntoMovedBranch(workspace(), 'feature')).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'NEEDS_INPUT_REBASE_FAILED',
+    });
   });
 });

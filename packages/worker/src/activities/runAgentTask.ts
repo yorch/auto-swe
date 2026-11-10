@@ -360,7 +360,8 @@ export async function runAgentTaskCore(
     }
     // The caps cover the whole run, not each round: what earlier rounds used is carried in
     // the saved state and taken off here. Spent already, the loop still gets the smallest
-    // budget (one step, one second) and stops at once with its stopped reason.
+    // budget (one step, one second) and stops at once with its stopped reason. That floor
+    // can overshoot a cap by at most the pause limit's rounds plus one (one step each).
     const used = carriedUsage(resume);
     const loopStartedAt = Date.now();
     const loopInput: AgentLoopInput = {
@@ -575,9 +576,9 @@ async function runAgentTaskImpl({
     global: settings['workspace.agentRunMaxConcurrentGlobal'],
     perTeam: settings['workspace.agentRunMaxConcurrentPerTeam'],
   };
-  // A resumed run was admitted when it first started, and while it waited it held no
-  // container (its slot is not counted, see `loadLiveAgentRunSlots`). A cap lowered
-  // meanwhile must not refuse it now; only the kill switch (a limit of 0) still does.
+  // A resumed run was admitted when it first started and kept its slot while it waited
+  // (see `loadLiveAgentRunSlots`). A cap lowered meanwhile must not refuse it now; only
+  // the kill switch (a limit of 0) still does.
   const admission: AdmissionDecision =
     resumeInput !== undefined
       ? limits.global <= 0 || limits.perTeam <= 0

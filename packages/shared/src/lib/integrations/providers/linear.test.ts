@@ -142,6 +142,22 @@ describe('LinearProvider.syncOnEvent comment failures', () => {
   });
 });
 
+describe('LinearProvider.syncOnEventOutcome', () => {
+  it('wrote: true when the state was updated', async () => {
+    mockLinear();
+    await expect(
+      provider().syncOnEventOutcome({ issueId: 'iss-1', type: 'workflow_completed' })
+    ).resolves.toEqual({ failure: null, wrote: true });
+  });
+
+  it('wrote: false when the issue is already in the target state', async () => {
+    mockLinear('st-shipped');
+    await expect(
+      provider().syncOnEventOutcome({ issueId: 'iss-1', type: 'workflow_completed' })
+    ).resolves.toEqual({ failure: null, wrote: false });
+  });
+});
+
 describe('LinearProvider.syncOnEvent transition and link failures', () => {
   const completed = { issueId: 'iss-1', type: 'workflow_completed' } as const;
   const withPr = { ...completed, prTitle: 'Fix', prUrl: 'https://gh/pr/1' } as const;

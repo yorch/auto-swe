@@ -213,6 +213,45 @@ describe('runWithNeedsInput', () => {
       expect(invoke.mock.calls[1]?.[0]?.resumeInput?.round).toBe(1);
     });
 
+    it('closes each superseded step as cancelled before opening its repeat', async () => {
+      const h = harness([submit('nope'), submit('nope'), submit('B')]);
+      const events: string[] = [];
+      h.resolveHumanStep.mockImplementation(async (a) => {
+        events.push(`resolve ${a.nodeId} ${a.status}`);
+      });
+      h.createHumanStep.mockImplementation(async (a) => {
+        events.push(`create ${a.nodeId}`);
+      });
+      await runWithNeedsInput({
+        deps: h.deps,
+        invoke: async (p) => (p.resumeInput ? { text: 'final' } : pauseOf()),
+        key: 'k',
+        label: 'x',
+        limits,
+      });
+      expect(events).toEqual([
+        'create k:ask:1',
+        'resolve k:ask:1 CANCELLED',
+        'create k:ask:1.1',
+        'resolve k:ask:1.1 CANCELLED',
+        'create k:ask:1.2',
+      ]);
+    });
+
+    it('does not fail the re-ask when closing the superseded step fails', async () => {
+      const h = harness([submit('nope'), submit('B')]);
+      h.resolveHumanStep.mockRejectedValue(new Error('db down'));
+      await expect(
+        runWithNeedsInput({
+          deps: h.deps,
+          invoke: async (p) => (p.resumeInput ? { text: 'final' } : pauseOf()),
+          key: 'k',
+          label: 'x',
+          limits,
+        })
+      ).resolves.toEqual({ text: 'final' });
+    });
+
     it('fails NEEDS_INPUT_INVALID_ANSWER after the most re-asks', async () => {
       const h = harness(Array.from({ length: MAX_REASKS_PER_ROUND + 2 }, () => submit('nope')));
       const invoke = vi.fn(async () => pauseOf());

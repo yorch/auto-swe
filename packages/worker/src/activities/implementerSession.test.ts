@@ -58,6 +58,9 @@ vi.mock('../lib/scm/index.js', () => ({
 }));
 
 const execMock = vi.fn(async (cmd: string, _options?: { timeoutMs?: number }) => {
+  if (cmd.includes('merge-base --is-ancestor')) {
+    return 'rc=0\n';
+  }
   if (cmd.includes('rev-parse')) {
     return 'abc123\n';
   }
@@ -967,9 +970,9 @@ describe('runImplementerFixSession ask and resume', () => {
   it('replays a resumed session on top of a branch that moved while it waited, before the push', async () => {
     execMock.mockImplementation((async (cmd: string) => {
       if (cmd.includes('merge-base --is-ancestor')) {
-        return 'no\n';
+        return 'rc=1\n';
       }
-      return cmd.includes('rev-parse') ? 'abc123\n' : '';
+      return cmd.includes('rev-parse') ? '1234567890123456789012345678901234567890\n' : '';
     }) as never);
     await runImplementerFixSession({
       ...input(),
@@ -986,12 +989,15 @@ describe('runImplementerFixSession ask and resume', () => {
   it('fails a resumed session non-retryably, pushing nothing, when the moved branch conflicts', async () => {
     execMock.mockImplementation((async (cmd: string) => {
       if (cmd.includes('merge-base --is-ancestor')) {
-        return 'no\n';
+        return 'rc=1\n';
+      }
+      if (cmd.includes('ls-files -u')) {
+        return 'U\n';
       }
       if (cmd.includes('rebase') && !cmd.includes('--abort')) {
         throw new Error('CONFLICT');
       }
-      return cmd.includes('rev-parse') ? 'abc123\n' : '';
+      return cmd.includes('rev-parse') ? '1234567890123456789012345678901234567890\n' : '';
     }) as never);
     const failure = await runImplementerFixSession({
       ...input(),

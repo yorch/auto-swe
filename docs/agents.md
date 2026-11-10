@@ -1235,21 +1235,28 @@ existing node gains a field.
 
 **Limitations.**
 
-- An agent run waiting on an answer holds no container, so the worker's admission does not count it
-  against the concurrency caps while its `:ask:` input step is pending, and a resumed activity skips
-  the capacity check (the kill switch still applies), so a cap lowered meanwhile cannot refuse it.
-  The gateway's early refusal at launch still counts a waiting run (it is the friendly check; the
-  worker decides). The wall-clock and `maxSteps` caps cover the whole run: each pause saves the
+- A paused agent run keeps its concurrency slot for the whole wait, and a resumed activity skips
+  the capacity check (the kill switch still applies), so a resumed run is never re-refused when a
+  cap was lowered meanwhile. The wall-clock and `maxSteps` caps cover the whole run: each pause saves the
   steps and time used in the state (`usedSteps`, `usedElapsedMs`) and the resume takes them off its
   budget, never below one step and one second, so a run already at its cap stops at once with its
-  stopped reason. A state saved without them starts counting from zero. Only the agent run
+  stopped reason; that floor can overshoot a cap by at most the pause limit's rounds plus one.
+  A state saved without them starts counting from zero. Only the agent run
   (`runAgentTask`) carries them; the other surfaces restart their step budget on each resume.
 - Nothing is pushed while a run waits. If someone else pushes to the work branch in the meantime,
   the resumed `executeImplementation` and fix sessions fetch it before their push and replay their
   commits on top (never a force-push). A conflict fails the step non-retryably with
   `NEEDS_INPUT_PUSH_CONFLICT`, naming no file contents, and pushes nothing. The agent run
-  publishes a branch of its own, so it has nothing to rebase onto. The path guard checks the commit
-  before the replay, so a teammate's files do not count against `allowedPaths`.
+  publishes a branch of its own, so it has nothing to rebase onto. The replay runs with the guarded
+  hardening (no system or global config, no hooks, no replace refs, no attributes file), replays
+  only the commits made since the commit the run resumed from, and the replayed result is checked
+  against `allowedPaths` and the workflow-change refusal again before the push, measured from the
+  remote branch, so a teammate's files do not count but everything the agent replayed does. A
+  failed re-check fails with the guard's own non-retryable error. A remote that cannot be reached
+  fails retryably, and any other replay failure that is not a conflict fails non-retryably, both
+  as `NEEDS_INPUT_REBASE_FAILED`.
+- A worker fleet running mixed versions fails the resume of a `final` round with
+  `NEEDS_INPUT_RESTORE_FAILED`; roll the fleet over as a whole.
 - The digest of the work so far masks credential shapes and the clone credential by value, and
   nothing else: it is a heuristic over the agent's last message, not a proof that no secret reached
   the question text a person sees.
@@ -1259,7 +1266,7 @@ existing node gains a field.
 - The saved working tree is kept after a resume applies it, so a Temporal retry of the resumed
   activity can restore it again. The artifact (`kind` `needs_input.snapshot`) is removed by the
   transcript retention sweep once it is older than the retention window and its run has ended (or
-  it has no run); a run still waiting keeps its snapshot, so the wait is bounded by
+  it has no run); a run still waiting keeps its snapshot, and so does a run row left `RUNNING` indefinitely, so the wait is bounded by
   `workflow.needsInputTimeoutSeconds`, not by retention. Deleting a run removes the row but not
   an S3 object.
 

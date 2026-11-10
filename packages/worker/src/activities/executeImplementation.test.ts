@@ -1299,7 +1299,13 @@ describe('executeImplementation ask and resume', () => {
     workspaceMock.gitAuthed.mockResolvedValue('');
     workspaceMock.exec.mockImplementation(async (command: string) => {
       if (command.includes('merge-base --is-ancestor')) {
-        return 'no\n';
+        return 'rc=1\n';
+      }
+      if (command.includes('rev-parse')) {
+        return `${'1'.repeat(40)}\n`;
+      }
+      if (command.includes('ls-files -u')) {
+        return 'U\n';
       }
       if (command.includes('rebase') && !command.includes('--abort')) {
         throw new Error('CONFLICT');
