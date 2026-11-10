@@ -35,6 +35,10 @@ const STATES: { label: string; value: StateFilter }[] = [
 ];
 // The repository filter loads one page of connections; a full page means there may be more.
 const REPOSITORY_PAGE = 100;
+const ORDERS = [
+  { label: 'Newest first', value: 'newest' },
+  { label: 'Needs attention first', value: 'attention' },
+] as const;
 const DRAFTS = [
   { label: 'Drafts and ready', value: 'any' },
   { label: 'Drafts only', value: 'draft' },
@@ -48,6 +52,7 @@ function PullRequests() {
   const rawState = params.get('state');
   const state: StateFilter =
     rawState === 'all' ? 'all' : (PULL_REQUEST_STATES.find((s) => s === rawState) ?? 'OPEN');
+  const order = params.get('order') === 'attention' ? 'attention' : 'newest';
   const draft = DRAFTS.find((option) => option.value === params.get('draft'))?.value ?? 'any';
   // Only a uuid is sent: anything else in the address would just be a 400.
   const rawRepo = params.get('repo') ?? '';
@@ -65,20 +70,36 @@ function PullRequests() {
       draft,
       limit: PAGE_SIZE,
       offset,
+      // The queue covers open pull requests only, so it asks for exactly those.
+      ...(order === 'attention' ? { order } : {}),
       repoId: repoId || undefined,
       scope,
-      state,
+      state: order === 'attention' ? 'OPEN' : state,
       ticket: ticket || undefined,
     },
     { enabled: !teamFilter.blocked, teamId: teamFilter.teamId }
   );
   const pullRequests = data ?? [];
   const total = meta?.total ?? 0;
-  const filtered = scope !== 'MINE' || state !== 'OPEN' || draft !== 'any' || repoId || ticket;
+  const filtered =
+    scope !== 'MINE' ||
+    state !== 'OPEN' ||
+    draft !== 'any' ||
+    repoId ||
+    ticket ||
+    order === 'attention';
 
   const clearFilters = () => {
     setTicketDraft('');
-    update({ draft: null, offset: null, repo: null, scope: null, state: null, ticket: null });
+    update({
+      draft: null,
+      offset: null,
+      order: null,
+      repo: null,
+      scope: null,
+      state: null,
+      ticket: null,
+    });
   };
 
   return (
@@ -123,12 +144,26 @@ function PullRequests() {
             />
             <Select
               appearance="pill"
-              aria-label="State"
-              onChange={(value) => update({ offset: null, state: value === 'OPEN' ? null : value })}
-              options={STATES}
-              prefix="State:"
-              value={state}
+              aria-label="Order"
+              onChange={(value) =>
+                update({ offset: null, order: value === 'newest' ? null : value })
+              }
+              options={[...ORDERS]}
+              prefix="Order:"
+              value={order}
             />
+            {order === 'newest' && (
+              <Select
+                appearance="pill"
+                aria-label="State"
+                onChange={(value) =>
+                  update({ offset: null, state: value === 'OPEN' ? null : value })
+                }
+                options={STATES}
+                prefix="State:"
+                value={state}
+              />
+            )}
             <Select
               appearance="pill"
               aria-label="Draft"
@@ -192,7 +227,7 @@ function PullRequests() {
                 title={filtered ? 'No pull requests match these filters' : 'No open pull requests'}
               />
             ) : (
-              <PullRequestTable pullRequests={pullRequests} />
+              <PullRequestTable ordered={order === 'attention'} pullRequests={pullRequests} />
             )}
           </QueryBoundary>
         </Card>

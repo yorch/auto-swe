@@ -21,6 +21,25 @@ function prLabel(pr: PullRequestListItem): string {
   return `${name}${pr.prNumber == null ? '' : ` #${pr.prNumber}`}`;
 }
 
+const BATCH_LABELS = {
+  deep: 'Deep review',
+  none: 'No review needed',
+  quick: 'Quick review',
+  standard: 'Standard review',
+} as const;
+
+const REASON_LABELS: Record<string, string> = {
+  approvals_met: 'approvals already in place',
+  below_threshold: 'below the routing thresholds',
+  bot_approved: 'approved by the bot',
+  draft: 'still a draft',
+  not_evaluated: 'not evaluated at this head',
+  not_open: 'not open',
+  path: 'touches a path that always needs a person',
+  risk: 'risk class',
+  size: 'larger than the routing size limit',
+};
+
 function columnsFor(viewerTeamId?: string): DataTableColumn<PullRequestListItem>[] {
   return [
     {
@@ -65,6 +84,27 @@ function columnsFor(viewerTeamId?: string): DataTableColumn<PullRequestListItem>
       ),
       header: 'State',
       id: 'state',
+    },
+    {
+      // Plain text: the reason and batch are fixed labels, the matched path is repository text.
+      cell: (pr) =>
+        pr.review ? (
+          <div className="text-xs">
+            <span className={pr.review.needsHuman ? 'text-paper-100' : 'text-paper-500'}>
+              {pr.review.position !== null && `${pr.review.position}. `}
+              {BATCH_LABELS[pr.review.batch]}
+            </span>
+            <span className="block text-paper-500">
+              {pr.review.riskClass ? `${pr.review.riskClass.toLowerCase()} risk, ` : ''}
+              {REASON_LABELS[pr.review.reason] ?? pr.review.reason}
+              {pr.review.matchedPath ? `: ${pr.review.matchedPath}` : ''}
+            </span>
+          </div>
+        ) : (
+          <span className="text-paper-500">—</span>
+        ),
+      header: 'Attention',
+      id: 'attention',
     },
     {
       cell: (pr) =>
@@ -125,9 +165,12 @@ function columnsFor(viewerTeamId?: string): DataTableColumn<PullRequestListItem>
  * under it.
  */
 export function PullRequestTable({
+  ordered = false,
   pullRequests,
   viewerTeamId,
 }: {
+  /** The rows are in review-queue order rather than newest first. */
+  ordered?: boolean;
   pullRequests: PullRequestListItem[];
   /** Inside a team's space: owners other than this team read "owned by …". */
   viewerTeamId?: string;
@@ -151,7 +194,11 @@ export function PullRequestTable({
         ) : null;
       }}
       actionsLabel="Review"
-      caption="Pull requests opened by the platform, newest first"
+      caption={
+        ordered
+          ? 'Open pull requests opened by the platform, in review order'
+          : 'Pull requests opened by the platform, newest first'
+      }
       columns={columnsFor(viewerTeamId)}
       getRowId={(pr) => pr.id}
       revealActions={false}

@@ -13,6 +13,11 @@ import {
   MAX_GLOB_STARS,
 } from '../lib/prEvaluation/paths.js';
 import { MAX_FILE_GLOB_COST } from '../lib/prEvaluation/policy.js';
+import {
+  REVIEW_RISK_CLASSES,
+  reviewRoutingLineCount,
+  reviewRoutingPathsSchema,
+} from '../lib/prEvaluation/reviewRouting.js';
 import { CONVENTIONAL_COMMIT_TYPES, PR_TITLE_FORMATS } from '../lib/prTitle.js';
 import { IMPLEMENTER_RUNTIMES } from '../types/api.js';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
@@ -937,6 +942,55 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.max(1000000),
     unit: 'lines',
   }),
+  'prEvaluation.humanAboveLines': defineSetting({
+    defaultValue: 0,
+    description:
+      'Review routing: a ready pull request with more changed lines than this always asks for a person, whatever its risk class. 0 turns the size rule off. A repository can override it. Routing orders and labels the review queue; it never changes the approvals a pull request needs.',
+    group: 'prEvaluation',
+    label: 'Routing: always ask for a person above',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: reviewRoutingLineCount,
+    unit: 'lines',
+  }),
+  'prEvaluation.humanMinRisk': defineSetting({
+    defaultValue: 'LOW',
+    description:
+      'Review routing: the lowest risk class that asks for a person. LOW asks for a person on every ready, evaluated pull request that does not already have its approvals; STANDARD leaves low-risk changes off the attention queue; HIGH keeps only high-risk ones. A repository can override it. Routing orders and labels the review queue; it never changes the approvals a pull request needs.',
+    group: 'prEvaluation',
+    label: 'Routing: lowest risk that asks for a person',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.enum(REVIEW_RISK_CLASSES),
+  }),
+  'prEvaluation.humanPaths': defineSetting({
+    defaultValue: [],
+    description:
+      'Review routing: globs of paths whose change always asks for a person. Matched against the files the reviewer brief lists to read. A repository can override it.',
+    group: 'prEvaluation',
+    label: 'Routing: paths that always ask for a person',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: reviewRoutingPathsSchema,
+  }),
+  'prEvaluation.humanSkipsBotApproved': defineSetting({
+    defaultValue: true,
+    description:
+      'Review routing: a pull request the approver App approved, with auto-merge armed, does not ask for a person unless another routing rule fires. A repository can override it.',
+    group: 'prEvaluation',
+    label: 'Routing: skip bot-approved pull requests',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'prEvaluation.lowApprovers': defineSetting({
     defaultValue: 1,
     description: 'Approving reviews required on a pull request classed low risk.',
@@ -997,6 +1051,19 @@ export const SETTING_DEFINITIONS = {
     restartRequired: false,
     runPinned: false,
     schema: z.boolean(),
+  }),
+  'prEvaluation.quickReviewMaxLines': defineSetting({
+    defaultValue: 100,
+    description:
+      'Review routing: a low-risk change of at most this many changed lines is a quick review, batched with its peers and listed smallest first. A repository can override it.',
+    group: 'prEvaluation',
+    label: 'Routing: quick-review size',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: reviewRoutingLineCount,
+    unit: 'lines',
   }),
   'prEvaluation.requiredStatusContext': defineSetting({
     defaultValue: 'auto-swe/pr-evaluation',

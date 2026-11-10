@@ -31,6 +31,8 @@ export function usePullRequests(
     scope: WorkScope;
     state: PullRequestState | 'all';
     draft: 'any' | 'draft' | 'ready';
+    /** `attention` orders the open pull requests as a review queue; omitted is newest first. */
+    order?: 'attention';
     repoId?: string;
     ticket?: string;
     limit: number;

@@ -11,6 +11,13 @@ vi.mock('@auto-swe/shared/lib/systemConfig', async (orig) => ({
   resolveGitHubBaseUrl: vi.fn(async () => 'https://github.com'),
 }));
 
+vi.mock('@auto-swe/shared/config', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/config')>()),
+  resolveSettings: vi.fn(async (keys: string[]) =>
+    Object.fromEntries(keys.map((k) => [k, k.endsWith('humanMinRisk') ? 'LOW' : 0]))
+  ),
+}));
+
 import { reachableConnections } from '../lib/tenantScope.js';
 import { pullRequestRoutes } from './pullRequests.js';
 
@@ -28,6 +35,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ENGINEER') {
       .send({ error: { code: error.code ?? 'INTERNAL_ERROR', message: error.message } })
   );
   const prisma = {
+    prEvaluation: { findMany: vi.fn().mockResolvedValue([]) },
     pullRequest: { count: vi.fn().mockResolvedValue(0), findMany: vi.fn().mockResolvedValue([]) },
     team: { findFirst: vi.fn().mockResolvedValue({ id: TEAM }) },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },

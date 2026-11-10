@@ -713,6 +713,12 @@ model Connection {
   /// unless `pr_evaluation_mode = 'auto'`. Changing the mode away from `auto` must write false in
   /// the same update.
   prEvaluationBotApproval Boolean          @default(false) @map("pr_evaluation_bot_approval")
+  /// Per-repository override of who must review: a partial `ReviewRoutingOverride` (minimum risk,
+  /// size threshold, always-human paths, quick-review size, bot-approval skip). NULL, and any key
+  /// left out, inherit the `prEvaluation.human*` settings at the repository's team and
+  /// organization scope. It only orders and labels the review queue; it never changes the
+  /// approvals a pull request needs.
+  reviewRouting        Json?               @map("review_routing")
   isActive             Boolean             @default(true) @map("is_active")
   consolidationEnabled Boolean             @default(true) @map("consolidation_enabled")
   /// Optional per-connection overrides for phase-2 quality-gate commands. Shape:

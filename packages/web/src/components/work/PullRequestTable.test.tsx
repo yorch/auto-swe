@@ -100,4 +100,33 @@ describe('PullRequestTable', () => {
     expect(screen.getByText('Merged')).toBeTruthy();
     expect(screen.getByText('Untitled pull request')).toBeTruthy();
   });
+
+  it('shows the review batch, position and why a pull request needs a person', () => {
+    render(
+      <PullRequestTable
+        ordered
+        pullRequests={[
+          pr({
+            review: {
+              batch: 'deep',
+              changedLines: 900,
+              matchedPath: 'src/pay/charge.ts',
+              needsHuman: true,
+              position: 1,
+              reason: 'path',
+              reasons: ['path', 'risk'],
+              riskClass: 'HIGH',
+            },
+          }),
+        ]}
+      />
+    );
+    expect(screen.getByText('1. Deep review')).toBeTruthy();
+    expect(
+      screen.getByText(/high risk, touches a path that always needs a person: src\/pay\/charge\.ts/)
+    ).toBeTruthy();
+    expect(
+      screen.getByText('Open pull requests opened by the platform, in review order')
+    ).toBeTruthy();
+  });
 });

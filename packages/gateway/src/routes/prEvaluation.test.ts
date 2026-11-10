@@ -1217,4 +1217,112 @@ describe('pr evaluation routes', () => {
       expect(res.statusCode).toBe(404);
     });
   });
+  describe('review routing of a repository', () => {
+    const url = `/api/v1/repositories/${REPO}/review-routing`;
+    const ROUTING_DEFAULTS = {
+      'prEvaluation.humanAboveLines': 0,
+      'prEvaluation.humanMinRisk': 'LOW',
+      'prEvaluation.humanPaths': [],
+      'prEvaluation.humanSkipsBotApproved': true,
+      'prEvaluation.quickReviewMaxLines': 100,
+    };
+    const repo = (reviewRouting: unknown = null) => ({
+      id: REPO,
+      reviewRouting,
+      team: { orgId: 'org-1' },
+      teamId: TEAM,
+    });
+
+    beforeEach(() => {
+      settings.values = { ...DEFAULTS, ...ROUTING_DEFAULTS };
+    });
+
+    it('reads the settings at the repository scope with its override on top', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repo({ humanMinRisk: 'HIGH' }));
+      const res = await ctx.app.inject({ headers: AUTH, method: 'GET', url });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toEqual({
+        effective: {
+          humanAboveLines: 0,
+          humanMinRisk: 'HIGH',
+          humanPaths: [],
+          quickReviewMaxLines: 100,
+          skipWhenBotApproved: true,
+        },
+        override: { humanMinRisk: 'HIGH' },
+      });
+      expect(settings.ctx.at(-1)).toEqual({ orgId: 'org-1', teamId: TEAM });
+    });
+
+    it('is 404 for a repository outside the caller reach', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(null);
+      expect((await ctx.app.inject({ headers: AUTH, method: 'GET', url })).statusCode).toBe(404);
+    });
+
+    it('lets the owning team LEAD store an override, audited, and clears it with null', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.prisma.connection.findFirst.mockResolvedValue(repo());
+      leadOfTeam(true);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { override: { humanMinRisk: 'STANDARD', humanPaths: ['src/payments/**'] } },
+        url,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.prisma.connection.update.mock.calls[0][0].data).toEqual({
+        reviewRouting: { humanMinRisk: 'STANDARD', humanPaths: ['src/payments/**'] },
+      });
+      expect(ctx.prisma.configAuditLog.create).toHaveBeenCalled();
+      expect(res.json().data.effective.humanMinRisk).toBe('STANDARD');
+
+      ctx.prisma.connection.update.mockClear();
+      const cleared = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { override: null },
+        url,
+      });
+      expect(cleared.statusCode).toBe(200);
+      expect(ctx.prisma.connection.update.mock.calls[0][0].data).toEqual({
+        reviewRouting: { __sentinel: 'DbNull' },
+      });
+      expect(cleared.json().data.override).toEqual({});
+    });
+
+    it('refuses a caller who does not lead the owning team', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.prisma.connection.findFirst.mockResolvedValue(repo());
+      leadOfTeam(false);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'PUT',
+        payload: { override: { humanMinRisk: 'HIGH' } },
+        url,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unknown key, a bad risk class and an invalid glob', async () => {
+      ctx.authState.role = 'LEAD';
+      ctx.prisma.connection.findFirst.mockResolvedValue(repo());
+      leadOfTeam(true);
+      for (const override of [
+        { surprise: true },
+        { humanMinRisk: 'EXTREME' },
+        { humanPaths: ['a*b*c*d*e*f*g*h*i*'] },
+        { humanAboveLines: -1 },
+      ]) {
+        const res = await ctx.app.inject({
+          headers: AUTH,
+          method: 'PUT',
+          payload: { override },
+          url,
+        });
+        expect(res.statusCode, JSON.stringify(override)).toBe(400);
+      }
+      expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+    });
+  });
 });
