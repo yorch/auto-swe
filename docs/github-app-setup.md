@@ -89,7 +89,9 @@ start when those two URLs name different hosts.
    - **GitHub App name**: `auto-swe` (or any unique name)
    - **Homepage URL**: your auto-swe dashboard URL
    - **Webhook URL**: `<your-gateway-url>/api/v1/webhooks/git`
-     (add a second webhook or use the same URL for CI events at `/api/v1/webhooks/ci`)
+     A GitHub App has exactly one webhook URL, and `/api/v1/webhooks/git` also handles the App's
+     `check_run` and `workflow_run` CI events, so no second URL is needed. (`/api/v1/webhooks/ci`
+     accepts the same CI events, for a repository webhook that carries only those.)
      These routes have their own per-address request ceiling (`WEBHOOK_RATE_LIMIT_MAX`, default 6000 per window); size it above the App's peak delivery rate, because GitHub does not retry a `429` (see [deployment.md](./deployment.md#limitations)).
    - **Webhook secret**: any random string — save it; you will also enter it in the PAT/webhook card
 4. Set **Repository permissions**:

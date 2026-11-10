@@ -279,7 +279,8 @@ sequenceDiagram
     Worker->>DB: finalizeWorkflowRun (cost, tokens, org billing)
 ```
 
-**CI verdicts are matched to a commit, not just to a PR.** The `/webhooks/ci` handler only signals a
+**CI verdicts are matched to a commit, not just to a PR.** The `check_run` handler (reached at
+`/webhooks/ci`, and at `/webhooks/git` for an App's single webhook URL) only signals a
 run when the tracked pull request is awaiting a verdict *at the head the event describes*
 (`ciStatus = PENDING` at that `headSha`). That pairing is what stops a redelivered verdict for an
 older commit from resuming a run that has already moved on. `createOrUpdatePullRequest` arms it by

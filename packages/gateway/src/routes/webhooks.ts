@@ -282,6 +282,302 @@ async function handleWorkflowRunDelivery(
   );
 }
 
+/**
+ * A `check_run` delivery: records the CI verdict on the tracked pull requests at the head
+ * commit and signals the workflows parked on it. Both `/ci` and `/git` answer with this, because
+ * a GitHub App has one webhook URL and so receives its check runs on `/git`.
+ */
+async function handleCheckRunDelivery(
+  fastify: FastifyInstance,
+  request: FastifyRequest,
+  reply: FastifyReply,
+  verifiedHost: string | null
+) {
+  const event = normalizeGitHubCheckRunEvent(request.body);
+  if (event.type === 'unrecognized') {
+    return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
+  }
+  if (event.type === 'ignored') {
+    return { data: { ignored: true } };
+  }
+  if (
+    !deliveryHostMatches(verifiedHost, event.repoHtmlUrl) ||
+    (await claimsHostWithOwnSecret(fastify.prisma, verifiedHost, event.repoHtmlUrl))
+  ) {
+    return HOST_MISMATCH;
+  }
+
+  const { conclusion, headSha, org, repoName } = event;
+  const repositoryWhere = await webhookRepositoryWhere(
+    fastify.prisma,
+    org,
+    repoName,
+    event.repoHtmlUrl,
+    verifiedHost
+  );
+
+  // Find tracked PRs by commit SHA
+  const pullRequests = await fastify.prisma.pullRequest.findMany({
+    include: {
+      // What the check-run lookup needs to decide whether the repository is
+      // on the instance's host, and which installation to mint for.
+      repository: {
+        select: {
+          githubApiUrl: true,
+          githubUrl: true,
+          id: true,
+          installation: { select: { host: true, installationId: true } },
+          organizationName: true,
+          repoName: true,
+        },
+      },
+      workflow: {
+        include: {
+          workRequest: {
+            select: { externalTicketId: true, id: true, ticketIsSynthetic: true },
+          },
+        },
+      },
+    },
+    where: {
+      headSha,
+      repository: repositoryWhere,
+      status: 'OPEN',
+    },
+  });
+
+  if (pullRequests.length === 0) {
+    return { data: { ignored: true, reason: 'No tracked PR for this commit' } };
+  }
+
+  // A failing run decides the outcome on its own — signal immediately so
+  // the CI-fix loop gets the failing logs without waiting for the rest.
+  //
+  // The verdict is per repository: the same SHA can be tracked on more than
+  // one (a fork, a mirror, the same name on two hosts), and each is asked
+  // about on its own host with its own credential, never one's answer for
+  // another.
+  type TrackedRow = (typeof pullRequests)[number];
+  const verdictOf = new Map<string, { passed: boolean; logsUrl: string }>();
+  const perRun = { logsUrl: event.logsUrl, passed: conclusion === 'success' };
+  let awaiting = pullRequests;
+  if (NON_FAILING_CONCLUSIONS.has(conclusion)) {
+    // A passing run says nothing about the other checks on the SHA.
+    // Aggregate and only signal once everything has completed.
+    const byRepository = new Map<string, TrackedRow[]>();
+    for (const pr of pullRequests) {
+      const key = pr.repository?.id ?? '';
+      byRepository.set(key, [...(byRepository.get(key) ?? []), pr]);
+    }
+    awaiting = [];
+    for (const group of byRepository.values()) {
+      const target = await checkRunTarget(group[0].repository, request.log);
+      const aggregated = target
+        ? await aggregateCheckRuns(target.apiUrl, target.token, org, repoName, headSha, request.log)
+        : null;
+      if (aggregated && !aggregated.complete) {
+        continue;
+      }
+      let verdict = perRun;
+      if (aggregated) {
+        verdict = {
+          logsUrl:
+            !aggregated.passed && aggregated.failingLogsUrl
+              ? aggregated.failingLogsUrl
+              : perRun.logsUrl,
+          passed: aggregated.passed,
+        };
+      } else {
+        request.log.warn(
+          { headSha, repoFullName: `${org}/${repoName}` },
+          'check-run aggregation unavailable (no PAT or API error); signaling per run'
+        );
+      }
+      for (const pr of group) {
+        verdictOf.set(pr.id, verdict);
+        awaiting.push(pr);
+      }
+    }
+    if (awaiting.length === 0) {
+      return {
+        data: { conclusion, deferred: true, reason: 'Other check runs still in progress' },
+      };
+    }
+  } else {
+    for (const pr of pullRequests) {
+      verdictOf.set(pr.id, perRun);
+    }
+  }
+  const statusOf = (pr: TrackedRow) => (verdictOf.get(pr.id)?.passed ? 'PASSED' : 'FAILED');
+
+  // Batch-update CI status in a single transaction to avoid N+1 queries.
+  //
+  // The guard is a FRESHNESS check, not a change detector. A row only
+  // transitions while it is still `PENDING` *at the head SHA this delivery
+  // describes*:
+  //
+  //   • `ciStatus: 'PENDING'` means no verdict has been delivered for the
+  //     current head yet. `createOrUpdatePullRequest` re-arms it to PENDING
+  //     every time the worker pushes a new head, so exactly one verdict is
+  //     signaled per CI wait.
+  //   • `headSha` pins the write to the commit this delivery is about,
+  //     closing the read-then-write race where the worker advances the PR
+  //     to a new head between the lookup above and this update.
+  //
+  // A `ciStatus: { not: <the new status> }` predicate would only detect *change*,
+  // which lets a stale delivery replay over a newer verdict: a `failure`
+  // whose signal failed, redelivered by hand after a later `success`
+  // already resolved the wait, would flip PASSED back to FAILED and
+  // re-signal `passed:false` (with stale logs) into a run that moved on.
+  const updateCounts = await fastify.prisma.$transaction(
+    awaiting.map((pr: TrackedRow) =>
+      fastify.prisma.pullRequest.updateMany({
+        data: { ciStatus: statusOf(pr) },
+        where: { ciStatus: 'PENDING', headSha, id: pr.id },
+      })
+    )
+  );
+  const transitioned = awaiting.filter((_, i) => updateCounts[i].count === 1);
+
+  if (transitioned.length === 0) {
+    // Nothing was waiting on this commit's CI: the verdict for this head
+    // was already delivered (or the PR has moved to a newer head). This
+    // covers both a redelivery of an event already handled and a genuinely
+    // new check-run event that concluded after the wait was resolved —
+    // neither may signal, so both are dropped, but they are logged rather
+    // than silently discarded.
+    request.log.info(
+      { conclusion, headSha, prRowIds: awaiting.map((pr) => pr.id) },
+      'CI check-run event dropped: no PR is awaiting a verdict at this commit'
+    );
+    return {
+      data: {
+        conclusion,
+        ignored: true,
+        reason: 'CI verdict already recorded for this commit',
+      },
+    };
+  }
+
+  // Signal all affected Temporal workflows in parallel.
+  //
+  // Partial-failure semantics (one check_run event can fan out to several
+  // workflows): recovery is decided PER PR, not per delivery. A PR whose
+  // signal failed TRANSIENTLY has its `ciStatus` rolled back to PENDING —
+  // the value the guard above proved it held — so a redelivery of this
+  // event transitions it again and re-signals. A PR whose signal succeeded
+  // keeps the new status, so the same redelivery finds count 0 for it and
+  // does NOT signal it a second time — the CI-wait step is not idempotent
+  // on the workflow side, and a duplicate `ciPipelineSignal` could resume a
+  // run that has already moved on. The handler then answers non-2xx, which
+  // marks the delivery failed in GitHub's webhook UI; GitHub does NOT retry
+  // it automatically, so recovery is a human pressing "Redeliver" — the
+  // rollback is what makes that redelivery work. Retrying inline would
+  // block the webhook.
+  //
+  // A PR whose signal failed TERMINALLY (execution gone: completed,
+  // terminated, or never started) is neither rolled back nor counted
+  // towards the non-2xx: no redelivery could ever land that signal, so
+  // inviting one would only produce a loop that repeatedly rewrites
+  // `ciStatus` for a run that no longer exists.
+  type TrackedPr = (typeof transitioned)[number];
+  const toSignal: Array<{ pr: TrackedPr; workflowId: string }> = [];
+  for (const pr of transitioned) {
+    if (pr.workflow) {
+      toSignal.push({ pr, workflowId: pr.workflow.temporalWorkflowId });
+    }
+  }
+  const results = await Promise.allSettled(
+    toSignal.map((t) => {
+      const { logsUrl, passed } = verdictOf.get(t.pr.id) ?? perRun;
+      return fastify.temporal.signalWorkflow(t.workflowId, 'ciPipelineSignal', [
+        { logsUrl, passed },
+      ]);
+    })
+  );
+
+  const signaled: string[] = [];
+  const succeeded: TrackedPr[] = [];
+  const failed: TrackedPr[] = [];
+  results.forEach((r, i) => {
+    const { pr, workflowId } = toSignal[i];
+    if (r.status === 'rejected') {
+      if (isTerminalSignalError(r.reason)) {
+        request.log.warn(
+          { err: r.reason, prRowId: pr.id, workflowId },
+          'CI signal target workflow no longer exists; keeping the recorded ciStatus'
+        );
+        return;
+      }
+      request.log.error(
+        { err: r.reason, prRowId: pr.id, workflowId },
+        'Failed to signal workflow; rolling ciStatus back for redelivery'
+      );
+      failed.push(pr);
+    } else {
+      succeeded.push(pr);
+      signaled.push(workflowId);
+    }
+  });
+
+  if (failed.length > 0) {
+    // Revert only the rows whose signal failed transiently, guarded on the
+    // status AND the head SHA this delivery wrote, so a concurrent CI event
+    // or a worker push to a new head is never clobbered. The restored value
+    // is PENDING rather than the row read at the top of the handler: the
+    // transition guard already proved the row was PENDING, while the read
+    // may be stale.
+    await Promise.all(
+      failed.map((pr) =>
+        fastify.prisma.pullRequest
+          .updateMany({
+            data: { ciStatus: 'PENDING' },
+            where: { ciStatus: statusOf(pr), headSha, id: pr.id },
+          })
+          .catch((rollbackErr: unknown) => {
+            request.log.error(
+              { err: rollbackErr, prRowId: pr.id },
+              'CI status rollback failed — PR stuck without a delivered signal'
+            );
+          })
+      )
+    );
+  }
+
+  // Best-effort tracker sync on CI result — only for PRs whose signal
+  // landed; a rolled-back PR syncs on its redelivery instead.
+  const trackerConfig = await resolveIssueTrackerConfig();
+  for (const pr of succeeded) {
+    const ticketId = pr.workflow?.workRequest?.externalTicketId;
+    if (ticketId && isTrackerTicket(pr.workflow?.workRequest)) {
+      await syncTrackerOnEvent(
+        verdictOf.get(pr.id)?.passed
+          ? { issueId: ticketId, type: 'ci_passed' }
+          : { issueId: ticketId, summary: `CI ${conclusion}`, type: 'ci_failed' },
+        trackerConfig,
+        {
+          runInputId: pr.workflow?.workRequest?.id,
+          warn: (message, meta) => request.log.warn(meta, message),
+        }
+      ).catch((err: unknown) => {
+        request.log.warn({ err }, 'tracker sync failed (non-fatal)');
+        return null;
+      });
+    }
+  }
+
+  if (failed.length > 0) {
+    return sendError(
+      reply,
+      503,
+      'SIGNAL_FAILED',
+      `Could not deliver the CI signal to ${failed.length} of ${toSignal.length} workflow(s) — retry the delivery`
+    );
+  }
+
+  return { data: { conclusion, signaled } };
+}
+
 /** An event source's occurrence, normalized from a verified delivery, handed to the engine. */
 async function handleSourceDelivery<F, X>(
   fastify: FastifyInstance,
@@ -823,6 +1119,10 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         if (eventType === 'workflow_run') {
           return handleWorkflowRunDelivery(fastify, request.body, reply, verified.host);
         }
+        // And so do check runs, which carry the CI verdict the CI wait is parked on.
+        if (eventType === 'check_run') {
+          return handleCheckRunDelivery(fastify, request, reply, verified.host);
+        }
         // Pull-request review feedback: a review requesting changes or the `/auto-swe fix`
         // command in a review body, an inline review comment, or a discussion comment.
         if (
@@ -1214,296 +1514,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return handleWorkflowRunDelivery(fastify, request.body, reply, verified.host);
       }
 
-      const event = normalizeGitHubCheckRunEvent(request.body);
-      if (event.type === 'unrecognized') {
-        return { data: { ignored: true, reason: 'Unrecognized payload shape' } };
-      }
-      if (event.type === 'ignored') {
-        return { data: { ignored: true } };
-      }
-      if (
-        !deliveryHostMatches(verified.host, event.repoHtmlUrl) ||
-        (await claimsHostWithOwnSecret(fastify.prisma, verified.host, event.repoHtmlUrl))
-      ) {
-        return HOST_MISMATCH;
-      }
-
-      const { conclusion, headSha, org, repoName } = event;
-      const repositoryWhere = await webhookRepositoryWhere(
-        fastify.prisma,
-        org,
-        repoName,
-        event.repoHtmlUrl,
-        verified.host
-      );
-
-      // Find tracked PRs by commit SHA
-      const pullRequests = await fastify.prisma.pullRequest.findMany({
-        include: {
-          // What the check-run lookup needs to decide whether the repository is
-          // on the instance's host, and which installation to mint for.
-          repository: {
-            select: {
-              githubApiUrl: true,
-              githubUrl: true,
-              id: true,
-              installation: { select: { host: true, installationId: true } },
-              organizationName: true,
-              repoName: true,
-            },
-          },
-          workflow: {
-            include: {
-              workRequest: {
-                select: { externalTicketId: true, id: true, ticketIsSynthetic: true },
-              },
-            },
-          },
-        },
-        where: {
-          headSha,
-          repository: repositoryWhere,
-          status: 'OPEN',
-        },
-      });
-
-      if (pullRequests.length === 0) {
-        return { data: { ignored: true, reason: 'No tracked PR for this commit' } };
-      }
-
-      // A failing run decides the outcome on its own — signal immediately so
-      // the CI-fix loop gets the failing logs without waiting for the rest.
-      //
-      // The verdict is per repository: the same SHA can be tracked on more than
-      // one (a fork, a mirror, the same name on two hosts), and each is asked
-      // about on its own host with its own credential, never one's answer for
-      // another.
-      type TrackedRow = (typeof pullRequests)[number];
-      const verdictOf = new Map<string, { passed: boolean; logsUrl: string }>();
-      const perRun = { logsUrl: event.logsUrl, passed: conclusion === 'success' };
-      let awaiting = pullRequests;
-      if (NON_FAILING_CONCLUSIONS.has(conclusion)) {
-        // A passing run says nothing about the other checks on the SHA.
-        // Aggregate and only signal once everything has completed.
-        const byRepository = new Map<string, TrackedRow[]>();
-        for (const pr of pullRequests) {
-          const key = pr.repository?.id ?? '';
-          byRepository.set(key, [...(byRepository.get(key) ?? []), pr]);
-        }
-        awaiting = [];
-        for (const group of byRepository.values()) {
-          const target = await checkRunTarget(group[0].repository, request.log);
-          const aggregated = target
-            ? await aggregateCheckRuns(
-                target.apiUrl,
-                target.token,
-                org,
-                repoName,
-                headSha,
-                request.log
-              )
-            : null;
-          if (aggregated && !aggregated.complete) {
-            continue;
-          }
-          let verdict = perRun;
-          if (aggregated) {
-            verdict = {
-              logsUrl:
-                !aggregated.passed && aggregated.failingLogsUrl
-                  ? aggregated.failingLogsUrl
-                  : perRun.logsUrl,
-              passed: aggregated.passed,
-            };
-          } else {
-            request.log.warn(
-              { headSha, repoFullName: `${org}/${repoName}` },
-              'check-run aggregation unavailable (no PAT or API error); signaling per run'
-            );
-          }
-          for (const pr of group) {
-            verdictOf.set(pr.id, verdict);
-            awaiting.push(pr);
-          }
-        }
-        if (awaiting.length === 0) {
-          return {
-            data: { conclusion, deferred: true, reason: 'Other check runs still in progress' },
-          };
-        }
-      } else {
-        for (const pr of pullRequests) {
-          verdictOf.set(pr.id, perRun);
-        }
-      }
-      const statusOf = (pr: TrackedRow) => (verdictOf.get(pr.id)?.passed ? 'PASSED' : 'FAILED');
-
-      // Batch-update CI status in a single transaction to avoid N+1 queries.
-      //
-      // The guard is a FRESHNESS check, not a change detector. A row only
-      // transitions while it is still `PENDING` *at the head SHA this delivery
-      // describes*:
-      //
-      //   • `ciStatus: 'PENDING'` means no verdict has been delivered for the
-      //     current head yet. `createOrUpdatePullRequest` re-arms it to PENDING
-      //     every time the worker pushes a new head, so exactly one verdict is
-      //     signaled per CI wait.
-      //   • `headSha` pins the write to the commit this delivery is about,
-      //     closing the read-then-write race where the worker advances the PR
-      //     to a new head between the lookup above and this update.
-      //
-      // A `ciStatus: { not: <the new status> }` predicate would only detect *change*,
-      // which lets a stale delivery replay over a newer verdict: a `failure`
-      // whose signal failed, redelivered by hand after a later `success`
-      // already resolved the wait, would flip PASSED back to FAILED and
-      // re-signal `passed:false` (with stale logs) into a run that moved on.
-      const updateCounts = await fastify.prisma.$transaction(
-        awaiting.map((pr: TrackedRow) =>
-          fastify.prisma.pullRequest.updateMany({
-            data: { ciStatus: statusOf(pr) },
-            where: { ciStatus: 'PENDING', headSha, id: pr.id },
-          })
-        )
-      );
-      const transitioned = awaiting.filter((_, i) => updateCounts[i].count === 1);
-
-      if (transitioned.length === 0) {
-        // Nothing was waiting on this commit's CI: the verdict for this head
-        // was already delivered (or the PR has moved to a newer head). This
-        // covers both a redelivery of an event already handled and a genuinely
-        // new check-run event that concluded after the wait was resolved —
-        // neither may signal, so both are dropped, but they are logged rather
-        // than silently discarded.
-        request.log.info(
-          { conclusion, headSha, prRowIds: awaiting.map((pr) => pr.id) },
-          'CI check-run event dropped: no PR is awaiting a verdict at this commit'
-        );
-        return {
-          data: {
-            conclusion,
-            ignored: true,
-            reason: 'CI verdict already recorded for this commit',
-          },
-        };
-      }
-
-      // Signal all affected Temporal workflows in parallel.
-      //
-      // Partial-failure semantics (one check_run event can fan out to several
-      // workflows): recovery is decided PER PR, not per delivery. A PR whose
-      // signal failed TRANSIENTLY has its `ciStatus` rolled back to PENDING —
-      // the value the guard above proved it held — so a redelivery of this
-      // event transitions it again and re-signals. A PR whose signal succeeded
-      // keeps the new status, so the same redelivery finds count 0 for it and
-      // does NOT signal it a second time — the CI-wait step is not idempotent
-      // on the workflow side, and a duplicate `ciPipelineSignal` could resume a
-      // run that has already moved on. The handler then answers non-2xx, which
-      // marks the delivery failed in GitHub's webhook UI; GitHub does NOT retry
-      // it automatically, so recovery is a human pressing "Redeliver" — the
-      // rollback is what makes that redelivery work. Retrying inline would
-      // block the webhook.
-      //
-      // A PR whose signal failed TERMINALLY (execution gone: completed,
-      // terminated, or never started) is neither rolled back nor counted
-      // towards the non-2xx: no redelivery could ever land that signal, so
-      // inviting one would only produce a loop that repeatedly rewrites
-      // `ciStatus` for a run that no longer exists.
-      type TrackedPr = (typeof transitioned)[number];
-      const toSignal: Array<{ pr: TrackedPr; workflowId: string }> = [];
-      for (const pr of transitioned) {
-        if (pr.workflow) {
-          toSignal.push({ pr, workflowId: pr.workflow.temporalWorkflowId });
-        }
-      }
-      const results = await Promise.allSettled(
-        toSignal.map((t) => {
-          const { logsUrl, passed } = verdictOf.get(t.pr.id) ?? perRun;
-          return fastify.temporal.signalWorkflow(t.workflowId, 'ciPipelineSignal', [
-            { logsUrl, passed },
-          ]);
-        })
-      );
-
-      const signaled: string[] = [];
-      const succeeded: TrackedPr[] = [];
-      const failed: TrackedPr[] = [];
-      results.forEach((r, i) => {
-        const { pr, workflowId } = toSignal[i];
-        if (r.status === 'rejected') {
-          if (isTerminalSignalError(r.reason)) {
-            request.log.warn(
-              { err: r.reason, prRowId: pr.id, workflowId },
-              'CI signal target workflow no longer exists; keeping the recorded ciStatus'
-            );
-            return;
-          }
-          request.log.error(
-            { err: r.reason, prRowId: pr.id, workflowId },
-            'Failed to signal workflow; rolling ciStatus back for redelivery'
-          );
-          failed.push(pr);
-        } else {
-          succeeded.push(pr);
-          signaled.push(workflowId);
-        }
-      });
-
-      if (failed.length > 0) {
-        // Revert only the rows whose signal failed transiently, guarded on the
-        // status AND the head SHA this delivery wrote, so a concurrent CI event
-        // or a worker push to a new head is never clobbered. The restored value
-        // is PENDING rather than the row read at the top of the handler: the
-        // transition guard already proved the row was PENDING, while the read
-        // may be stale.
-        await Promise.all(
-          failed.map((pr) =>
-            fastify.prisma.pullRequest
-              .updateMany({
-                data: { ciStatus: 'PENDING' },
-                where: { ciStatus: statusOf(pr), headSha, id: pr.id },
-              })
-              .catch((rollbackErr: unknown) => {
-                request.log.error(
-                  { err: rollbackErr, prRowId: pr.id },
-                  'CI status rollback failed — PR stuck without a delivered signal'
-                );
-              })
-          )
-        );
-      }
-
-      // Best-effort tracker sync on CI result — only for PRs whose signal
-      // landed; a rolled-back PR syncs on its redelivery instead.
-      const trackerConfig = await resolveIssueTrackerConfig();
-      for (const pr of succeeded) {
-        const ticketId = pr.workflow?.workRequest?.externalTicketId;
-        if (ticketId && isTrackerTicket(pr.workflow?.workRequest)) {
-          await syncTrackerOnEvent(
-            verdictOf.get(pr.id)?.passed
-              ? { issueId: ticketId, type: 'ci_passed' }
-              : { issueId: ticketId, summary: `CI ${conclusion}`, type: 'ci_failed' },
-            trackerConfig,
-            {
-              runInputId: pr.workflow?.workRequest?.id,
-              warn: (message, meta) => request.log.warn(meta, message),
-            }
-          ).catch((err: unknown) => {
-            request.log.warn({ err }, 'tracker sync failed (non-fatal)');
-            return null;
-          });
-        }
-      }
-
-      if (failed.length > 0) {
-        return sendError(
-          reply,
-          503,
-          'SIGNAL_FAILED',
-          `Could not deliver the CI signal to ${failed.length} of ${toSignal.length} workflow(s) — retry the delivery`
-        );
-      }
-
-      return { data: { conclusion, signaled } };
+      return handleCheckRunDelivery(fastify, request, reply, verified.host);
     }
   );
 

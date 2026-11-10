@@ -648,7 +648,7 @@ open https://app.example.com
 
 # Then verify webhooks both directions
 #  - GitHub merge of the test PR fires POST /api/v1/webhooks/git → workflow completes
-#  - If the repo has CI, POST /api/v1/webhooks/ci → ciFixLoop kicks in on failures
+#  - If the repo has CI, a check_run POST to /api/v1/webhooks/ci (or /git) → ciFixLoop kicks in on failures
 ```
 
 ---
