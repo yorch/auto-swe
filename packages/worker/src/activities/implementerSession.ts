@@ -15,10 +15,22 @@ import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
+import { recordGitPush } from '../lib/effectLedger.js';
 import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
+import {
+  checkSurfaceState,
+  cloneCredentialSecrets,
+  type NeedsInputResult,
+  type PauseOptions,
+  pauseForInput,
+  readResumeInput,
+  restoreForResume,
+  resumeCheckoutSha,
+  resumeMessage,
+} from '../lib/pauseResume.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
@@ -62,7 +74,7 @@ type Connection = Awaited<ReturnType<typeof prisma.connection.findUniqueOrThrow>
   installation: { installationId: string; host: string } | null;
 };
 
-export interface FixSessionInput {
+export interface FixSessionInput extends PauseOptions {
   mode: FixMode;
   previousCodeResult: CodeResult;
   /** Mode-specific fields merged into the user message JSON alongside `mode` and `previousDiff`. */
@@ -144,8 +156,25 @@ async function resolveSessionRepo(previousCodeResult: CodeResult): Promise<Conne
  * instead of drifting per copy (the fix paths used to skip the diff scanners
  * entirely).
  */
-export async function runImplementerFixSession(input: FixSessionInput): Promise<CodeResult> {
+export async function runImplementerFixSession(
+  input: FixSessionInput & { allowPause?: undefined; resumeInput?: undefined }
+): Promise<CodeResult>;
+export async function runImplementerFixSession(
+  input: FixSessionInput
+): Promise<CodeResult | NeedsInputResult>;
+export async function runImplementerFixSession(
+  input: FixSessionInput
+): Promise<CodeResult | NeedsInputResult> {
   const { mode, previousCodeResult } = input;
+  // The run after a pause: a state that is not this session's is refused before a clone.
+  const resume = input.resumeInput ? readResumeInput(input.resumeInput) : undefined;
+  if (resume) {
+    checkSurfaceState(resume.resume, {
+      agentKey: input.agentKey,
+      branch: previousCodeResult.branch,
+      kind: 'implementerSession',
+    });
+  }
   // First, before a clone or a container exists (see executeImplementation).
   await assertRolePricedForUsdCap(input.agentKey);
   const repo = await withRunDetection(await resolveSessionRepo(previousCodeResult));
@@ -167,7 +196,8 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     previousCodeResult.branch,
     baseBranch,
     executorImageFor(repo),
-    undefined,
+    // A resumed session is cut from the commit its saved tree was taken against, not the branch tip.
+    resumeCheckoutSha(resume),
     undefined,
     {
       detectedStack: repo.detectedStack,
@@ -194,14 +224,21 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     // the remote branch HEAD so the agent fixes the actual tree and the final
     // push fast-forwards. (Previously only the gate-fix path did this; the
     // CI/review fix paths operated on a stale tree.)
-    try {
-      await workspace.gitAuthed(fetchBranchesSubcommand([previousCodeResult.branch]));
-      await workspace.exec(`git reset --hard origin/${shellQuote(previousCodeResult.branch)}`);
-    } catch {
-      // Branch may not exist remotely yet; proceed against the local clone.
-      heartbeat(`${mode}: remote branch not found, using clone HEAD`);
+    // A resumed session skips the sync: its workspace is already at the commit its saved
+    // tree was taken against, and moving it would stop the patch applying.
+    if (!resumeCheckoutSha(resume)) {
+      try {
+        await workspace.gitAuthed(fetchBranchesSubcommand([previousCodeResult.branch]));
+        await workspace.exec(`git reset --hard origin/${shellQuote(previousCodeResult.branch)}`);
+      } catch {
+        // Branch may not exist remotely yet; proceed against the local clone.
+        heartbeat(`${mode}: remote branch not found, using clone HEAD`);
+      }
     }
     await workspace.runSetup?.();
+
+    // The commit the checkout is at before the agent runs (after the sync): what a pause saves the tree against.
+    const startSha = (await workspace.exec('git rev-parse HEAD')).trim();
 
     // After the sync to the work branch, before any agent turn: this session's change is
     // checked against the branch tip it started from, so an older branch base never matters.
@@ -219,11 +256,18 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
     const testSource = testCommandSource(packageJson, repo.gateCommands, repo.detectedStack);
 
+    // The paused session's tree goes back after the guard starts (its changes are this
+    // session's own and are guarded like the rest), before any turn.
+    if (resume) {
+      await restoreForResume({ resume, surface: 'implementerSession', tracer, workspace });
+    }
+
     // The session runs as its own persona (ciFixer / reviewFixer / gateFixer):
     // that Agent row's prompt, tools, skills and MCP binding, with the model
     // inherited from the implementer unless the persona overrides it.
     const activityCtx = await currentRequestContext();
     turns = await buildImplementerTurnRunner({
+      ...(input.allowPause ? { allowPause: true } : {}),
       agentKey: input.agentKey,
       ctx: activityCtx,
       repoId: repo.id,
@@ -255,7 +299,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     });
 
     await assertBudgetAvailable(input.usageEventName);
-    await runImplementerTurn({
+    const turn = await runImplementerTurn({
       agent: turns.agent,
       boundModelSpec: turns.boundModelSpec,
       context: { mode },
@@ -264,8 +308,23 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       system: fullSystemPrompt,
       tracer,
       usageEvent: input.usageEventName,
-      user: userMessage,
+      user: resume ? resumeMessage(resume, userMessage) : userMessage,
     });
+
+    // The agent asked a person: no gate re-run, tests, commit, push or scan. The tree is
+    // saved; the workspace is destroyed below as usual.
+    if (turn.needsInput) {
+      return await pauseForInput({
+        lastText: turn.text,
+        questions: turn.needsInput,
+        secrets: cloneCredentialSecrets(authedCloneUrl),
+        startSha,
+        state: { agentKey: input.agentKey, branch: previousCodeResult.branch },
+        surface: 'implementerSession',
+        tracer,
+        workspace,
+      });
+    }
 
     heartbeat(`${mode} agent completed`);
 
@@ -332,7 +391,9 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     const pushSha = await commitStaged(workspace, input.commitMessage, pathGuard);
     // Never push on behalf of a run that has already been cancelled.
     throwIfActivityCancelled();
-    await workspace.gitAuthed(`push origin ${pushRefspec(previousCodeResult.branch, pushSha)}`);
+    await recordGitPush(previousCodeResult.branch, pushSha, () =>
+      workspace.gitAuthed(`push origin ${pushRefspec(previousCodeResult.branch, pushSha)}`)
+    );
 
     // `diffForResult` quotes the base like every other interpolated ref so it cannot
     // smuggle shell syntax into the container.

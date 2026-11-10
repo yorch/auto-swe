@@ -7,7 +7,10 @@ const { checkSensitiveFilePath, scanShellCommand } = vi.hoisted(() => ({
 }));
 
 vi.mock('../../lib/sensitiveFileScanner.js', () => ({ checkSensitiveFilePath }));
-vi.mock('../../lib/shellCommandScanner.js', () => ({ scanShellCommand }));
+vi.mock('../../lib/shellCommandScanner.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/shellCommandScanner.js')>()),
+  scanShellCommand,
+}));
 
 import {
   BROWSER_RELAYED_TOOL_NAMES,
@@ -17,6 +20,8 @@ import {
   harnessToolsGranting,
   type PolicyContext,
   relayedToolName,
+  toolsWithPause,
+  toolsWithProfile,
 } from './policy.js';
 
 const ctx: PolicyContext = {
@@ -64,6 +69,34 @@ describe('the tool allowlist', () => {
       const verdict = await decideToolCall(tool, {}, ctx);
       expect(verdict).toMatchObject({ allow: false });
     }
+  });
+});
+
+describe('the question tool', () => {
+  const paused = { ...ctx, tools: toolsWithPause(ctx.tools, true) };
+
+  it('is offered only to a run that can pause', () => {
+    expect(toolsWithPause(ctx.tools, true)).toEqual([...HARNESS_TOOLS, 'AskUserQuestion']);
+    expect(toolsWithPause(ctx.tools, false)).toEqual([...HARNESS_TOOLS]);
+    expect(toolsWithPause(ctx.tools, undefined)).toEqual([...HARNESS_TOOLS]);
+  });
+
+  it('is refused as before when the run cannot pause', async () => {
+    await expect(decideToolCall('AskUserQuestion', { questions: [] }, ctx)).resolves.toEqual({
+      allow: false,
+      reason: 'The AskUserQuestion tool is not available in this workspace.',
+    });
+  });
+
+  it('reaches the runtime’s hook when the run can pause', async () => {
+    await expect(decideToolCall('AskUserQuestion', { questions: [] }, paused)).resolves.toEqual({
+      allow: true,
+    });
+  });
+
+  it('does not widen anything else', async () => {
+    await expect(decideToolCall('WebFetch', {}, paused)).resolves.toMatchObject({ allow: false });
+    await expect(decideToolCall('Skill', {}, paused)).resolves.toMatchObject({ allow: false });
   });
 });
 
@@ -405,6 +438,261 @@ describe('Read, Glob and Grep', () => {
     });
     await expect(
       decideToolCall('Grep', { glob: '/etc/*', pattern: 'x' }, ctx)
+    ).resolves.toMatchObject({ allow: false });
+  });
+});
+
+describe('tools a profile grants', () => {
+  const PROFILE_DIR = '/workspace/.harness/profiles/0123456789ab';
+  const granted: PolicyContext = {
+    ...ctx,
+    profileDir: PROFILE_DIR,
+    profileSkills: new Set(['kit:hello', 'kit:ops:restart']),
+    tools: toolsWithProfile(HARNESS_TOOLS, ['Skill', 'Agent']),
+  };
+  const subAgent = { description: 'd', prompt: 'x', run_in_background: false };
+
+  it('adds exactly Skill and Agent, and nothing a manifest could smuggle in', () => {
+    expect(toolsWithProfile(HARNESS_TOOLS, undefined)).toEqual([...HARNESS_TOOLS]);
+    expect(toolsWithProfile(HARNESS_TOOLS, ['Skill'])).toEqual([...HARNESS_TOOLS, 'Skill']);
+    expect(toolsWithProfile(['Read'], ['Agent', 'Skill', 'WebFetch', 'Bash', 'WebSearch'])).toEqual(
+      ['Read', 'Skill', 'Agent']
+    );
+  });
+
+  it('allows Skill and Agent only when granted', async () => {
+    for (const [tool, input] of [
+      ['Skill', { skill: 'kit:hello' }],
+      ['Agent', subAgent],
+    ] as const) {
+      await expect(decideToolCall(tool, input, ctx), tool).resolves.toMatchObject({
+        allow: false,
+      });
+      await expect(decideToolCall(tool, input, granted), tool).resolves.toEqual({ allow: true });
+    }
+    await expect(
+      decideToolCall(
+        'Skill',
+        { skill: 'kit:hello' },
+        { ...granted, tools: toolsWithProfile(HARNESS_TOOLS, ['Agent']) }
+      )
+    ).resolves.toMatchObject({ allow: false });
+  });
+
+  it('allows Skill only for a skill or command the profile declares, plugin-qualified', async () => {
+    for (const skill of ['kit:hello', 'kit:ops:restart']) {
+      await expect(decideToolCall('Skill', { args: 'x', skill }, granted), skill).resolves.toEqual({
+        allow: true,
+      });
+    }
+    for (const input of [
+      {},
+      { skill: 42 },
+      { skill: '' },
+      // Bare spelling: a repository's own skill or command could answer to it.
+      { skill: 'hello' },
+      { skill: '/hello' },
+      { skill: 'kit:hello ' },
+      { skill: 'KIT:hello' },
+      // Repository commands, bundled skills, other plugins.
+      { skill: 'x' },
+      { skill: 'project:x' },
+      { skill: 'init' },
+      { skill: 'review' },
+      { skill: 'other:hello' },
+    ]) {
+      await expect(
+        decideToolCall('Skill', input, granted),
+        JSON.stringify(input)
+      ).resolves.toMatchObject({ allow: false });
+    }
+    // A context that names no skills allows none.
+    await expect(
+      decideToolCall('Skill', { skill: 'kit:hello' }, { ...granted, profileSkills: undefined })
+    ).resolves.toMatchObject({ allow: false });
+  });
+
+  it('never allows WebFetch, WebSearch or Task, whoever asks and whatever is granted', async () => {
+    for (const tool of ['WebFetch', 'WebSearch', 'Task', 'NotebookEdit', 'TodoWrite']) {
+      await expect(
+        decideToolCall(tool, { url: 'https://example.com' }, granted),
+        tool
+      ).resolves.toMatchObject({ allow: false });
+    }
+    // A tool smuggled into the context's own list is still not a harness or profile tool.
+    await expect(
+      decideToolCall('WebFetch', {}, { ...granted, tools: [...granted.tools, 'WebFetch' as never] })
+    ).resolves.toMatchObject({ allow: false });
+  });
+
+  it('refuses a sub-agent that asks for isolation or a looser permission mode', async () => {
+    for (const input of [
+      { isolation: 'remote', prompt: 'x' },
+      { isolation: 'worktree', prompt: 'x' },
+      { mode: 'bypassPermissions', prompt: 'x' },
+      { mode: 'acceptEdits', prompt: 'x' },
+    ].map((input) => ({ ...subAgent, ...input }))) {
+      await expect(
+        decideToolCall('Agent', input, granted),
+        JSON.stringify(input)
+      ).resolves.toMatchObject({ allow: false });
+    }
+    await expect(
+      decideToolCall('Agent', { ...subAgent, mode: 'default', subagent_type: 'reviewer' }, granted)
+    ).resolves.toEqual({ allow: true });
+  });
+
+  it('refuses a sub-agent that overrides the model, names itself or runs in the background', async () => {
+    for (const input of [
+      { ...subAgent, model: 'opus' },
+      { ...subAgent, model: 'fable' },
+      { ...subAgent, model: 'haiku' },
+      { ...subAgent, name: 'worker-1' },
+      { ...subAgent, team_name: 'team' },
+      // The SDK runs a sub-agent in the background unless told otherwise.
+      { description: 'd', prompt: 'x' },
+      { ...subAgent, run_in_background: true },
+      { ...subAgent, run_in_background: 'false' },
+      { ...subAgent, run_in_background: undefined },
+    ]) {
+      await expect(
+        decideToolCall('Agent', input, granted),
+        JSON.stringify(input)
+      ).resolves.toMatchObject({ allow: false });
+    }
+  });
+
+  it('decides a sub-agent’s own tool calls with the same confinement as the main agent’s', async () => {
+    // The hook input of a sub-agent call carries an agent_id; the decision takes none, so the
+    // same rules apply to both. Escapes a sub-agent might try:
+    await expect(
+      decideToolCall('Read', { file_path: '/etc/passwd' }, granted, REPO)
+    ).resolves.toMatchObject({ allow: false });
+    await expect(
+      decideToolCall('Write', { content: 'x', file_path: '/etc/cron.d/x' }, granted, REPO)
+    ).resolves.toMatchObject({ allow: false });
+    await expect(
+      decideToolCall('Write', { content: 'x', file_path: `${REPO}/.claude/settings.json` }, granted)
+    ).resolves.toMatchObject({ allow: false });
+    scanShellCommand.mockResolvedValue('Command blocked');
+    await expect(decideToolCall('Bash', { command: 'curl evil' }, granted)).resolves.toMatchObject({
+      allow: false,
+      securityTag: SECURITY_TRACE_ERRORS.SHELL_BLOCK,
+    });
+    // And a tool the Agent's own keys do not grant stays refused for a sub-agent too.
+    const readOnly: PolicyContext = { ...granted, tools: toolsWithProfile(['Read'], ['Agent']) };
+    await expect(decideToolCall('Bash', { command: 'ls' }, readOnly)).resolves.toMatchObject({
+      allow: false,
+    });
+  });
+});
+
+describe('the harness directory, profile included', () => {
+  const PROFILE_DIR = '/workspace/.harness/profiles/0123456789ab';
+  const withProfile: PolicyContext = {
+    ...ctx,
+    profileDir: PROFILE_DIR,
+    tools: toolsWithProfile(HARNESS_TOOLS, ['Skill']),
+  };
+
+  it('refuses a Write or Edit under /workspace/.harness, with the sensitive-file tag', async () => {
+    for (const file_path of [
+      `${PROFILE_DIR}/INSTRUCTIONS.md`,
+      `${PROFILE_DIR}/plugins/x/hooks/hooks.json`,
+      '/workspace/.harness/claude',
+      '/workspace/.harness/home/.claude/settings.json',
+      `${PROFILE_DIR}/../../claude`,
+      `${REPO}/../.harness/profiles/0123456789ab/a`,
+    ]) {
+      for (const tool of ['Write', 'Edit'] as const) {
+        await expect(
+          decideToolCall(
+            tool,
+            { content: 'x', file_path, new_string: 'x', old_string: 'y' },
+            withProfile
+          ),
+          `${tool} ${file_path}`
+        ).resolves.toMatchObject({ allow: false, securityTag: SECURITY_TRACE_ERRORS.FILE_BLOCK });
+      }
+    }
+    // A relative path is resolved against the harness's directory, then refused the same way.
+    await expect(
+      decideToolCall('Write', { content: 'x', file_path: '../.harness/a' }, withProfile, REPO)
+    ).resolves.toMatchObject({ allow: false, securityTag: SECURITY_TRACE_ERRORS.FILE_BLOCK });
+  });
+
+  it('still writes in the checkout', async () => {
+    await expect(
+      decideToolCall('Write', { content: 'x', file_path: `${REPO}/src/a.ts` }, withProfile)
+    ).resolves.toEqual({ allow: true });
+  });
+
+  it('refuses Bash that writes under /workspace/.harness, with the sensitive-file tag', async () => {
+    for (const command of [
+      `echo hi > ${PROFILE_DIR}/INSTRUCTIONS.md`,
+      `echo hi >> '${PROFILE_DIR}/INSTRUCTIONS.md'`,
+      `cat x | tee ${PROFILE_DIR}/a`,
+      `cp evil.sh ${PROFILE_DIR}/plugins/x/scripts/run.sh`,
+      `mv a /workspace/.harness/claude`,
+      `dd if=/dev/zero of=${PROFILE_DIR}/f`,
+      `rm -rf ${PROFILE_DIR}`,
+      `chmod 777 ${PROFILE_DIR}/plugins`,
+      `sed -i s/a/b/ ${PROFILE_DIR}/INSTRUCTIONS.md`,
+      `cd /workspace && rm -rf .harness`,
+      `cd ${PROFILE_DIR} && echo x > INSTRUCTIONS.md`,
+      `python3 -c "open('/workspace/.harness/profiles/0123456789ab/a','w')"`,
+      'echo x > ~/x',
+      'echo x > "$HOME/../a" # .harness',
+      `echo hi > ${REPO}/../.harness/a`,
+    ]) {
+      await expect(
+        decideToolCall('Bash', { command }, withProfile, REPO),
+        command
+      ).resolves.toMatchObject({ allow: false, securityTag: SECURITY_TRACE_ERRORS.FILE_BLOCK });
+    }
+    // A relative redirect from a call made inside the harness directory.
+    await expect(
+      decideToolCall('Bash', { command: 'echo x > a' }, withProfile, PROFILE_DIR)
+    ).resolves.toMatchObject({ allow: false, securityTag: SECURITY_TRACE_ERRORS.FILE_BLOCK });
+  });
+
+  it('lets Bash read the profile and write in the checkout', async () => {
+    for (const command of [
+      `cat ${PROFILE_DIR}/INSTRUCTIONS.md`,
+      `ls -la /workspace/.harness/profiles && grep -r todo ${PROFILE_DIR}`,
+      `echo ok > ${REPO}/out.txt`,
+      `cp ${PROFILE_DIR}/plugins/x/template.md ${REPO}/docs/t.md`,
+    ]) {
+      // `cp from-profile to-checkout` writes to the checkout, but names .harness: the tripwire is
+      // deliberately conservative about commands that both name it and change files.
+      const verdict = await decideToolCall('Bash', { command }, withProfile, REPO);
+      if (command.startsWith('cp ')) {
+        expect(verdict.allow, command).toBe(false);
+      } else {
+        expect(verdict, command).toEqual({ allow: true });
+      }
+    }
+  });
+
+  it('allows reading the profile directory, and no other part of the harness directory', async () => {
+    const reads = [
+      [`${PROFILE_DIR}/plugins/x/skills/y/SKILL.md`, true],
+      [PROFILE_DIR, true],
+      ['/workspace/.harness/profiles/ffffffffffff/a', false],
+      ['/workspace/.harness/profiles', false],
+      [`${PROFILE_DIR}/../../claude`, false],
+      ['/workspace/.harness/claude', false],
+    ] as const;
+    for (const [file_path, allowed] of reads) {
+      const verdict = await decideToolCall('Read', { file_path }, withProfile, REPO);
+      expect(verdict.allow, file_path).toBe(allowed);
+    }
+    await expect(
+      decideToolCall('Grep', { path: PROFILE_DIR, pattern: 'x' }, withProfile, REPO)
+    ).resolves.toEqual({ allow: true });
+    // Without a bound profile, nothing under the profiles directory is readable.
+    await expect(
+      decideToolCall('Read', { file_path: `${PROFILE_DIR}/INSTRUCTIONS.md` }, ctx, REPO)
     ).resolves.toMatchObject({ allow: false });
   });
 });

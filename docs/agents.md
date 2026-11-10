@@ -613,6 +613,16 @@ Where the runtime applies:
 | `runAgentNode` without a workspace | resolved and pinned as above, but always run on Mastra: there is no workspace for the harness to run in. An Agent pinned to the harness gets an `agent.runtime_not_applicable` event on the trace, naming the runtime and where it came from |
 | other `runAgent` callers (channel turns, memory passes, workflow authoring) | always Mastra; the runtime is not resolved |
 
+An Agent bound to a harness profile ([harness-profiles.md](./harness-profiles.md)) gets it on
+`claude-code` only: the implementer family, agent runs and `agent` nodes with a workspace resolve the
+approved snapshot, write it into the container under `/workspace/.harness/profiles/`, load its plugins,
+append its instructions to the system prompt behind a provenance line, add its `Skill` and `Agent`
+tools (a `Skill` only for what the profile declares, an `Agent` only in the foreground on the
+session's model), and stop stray processes and rewrite the profile directory from the snapshot
+before every turn (defence in depth: the container's own report of its files is never trusted). On any other loop the run proceeds
+without the profile and an `agent.profile_not_applicable` event says so; a profile that cannot be
+resolved fails a Claude Code run closed.
+
 Both the setting and the `runtime` column are ADMIN-only because they decide what runs inside the
 trust boundary and which credential enters the workspace. A team admin's edit of a TEAM agent keeps
 the runtime an ADMIN chose and is refused (`403`) if it would change it. A new scoped override whose
@@ -1089,6 +1099,137 @@ a new value in `IMPLEMENTER_RUNTIMES` (and in the `agents.runtime` CHECK constra
 unit tests, and a `*.docker.test.ts` named on the `docker-tests` job in `ci.yml` — and the adapter
 must honestly declare `enforcesPerCallPolicyInWorker`. A harness whose loop can run in the worker
 omits `provisioning` and acts on the container through `turn.exec`.
+
+**Harness profiles.** On the `claude-code` runtime an Agent version can also name an approved
+harness profile (`Agent.harnessProfile`): ADMIN-only to set, not inherited along
+`inheritsModelFrom`, pinned per run in `WorkflowRun.harnessProfileVersions`, and fail-closed when it
+cannot be resolved. See [harness-profiles.md §8](./harness-profiles.md#8-binding-a-profile-to-an-agent).
+
+**Asking a human.** A Claude Code run can stop to ask a person. The question tool (`AskUserQuestion`)
+is offered to the harness, and allowed by the policy, only when the runtime is built with
+`allowPause`, which only the workflow's ask-and-resume loop sets; every other caller (channel turns,
+evals, direct calls) stays unattended and the call is refused as any tool outside the allowlist is.
+The main agent's first well-formed question batch (1 to 4 questions, each with a header of at most 12
+characters and 2 to 4 options) is recorded by the `PreToolUse` hook, which denies the call, aborts the
+turn and ends the process tree by its exec tag. The turn's outcome then carries `needsInput` (the
+questions) beside its usage, which is accounted as for any turn, and `runImplementerTurn` returns
+it and notes the pause in the trace as an `agent.needs_input` event naming only the headers. A
+malformed question is refused with a reason that tells the model to fix it, and the turn goes on. One
+batch ends a turn: later calls, a second question included, are refused. A sub-agent cannot ask; its
+`AskUserQuestion` stays refused. The answer arrives in a new session: `lib/pauseSnapshot.ts` saves
+the working tree as a binary patch in the artifact store (`snapshotWorkingTree`), against the
+commit the checkout started from before the agent ran, so local commits the agent made are part of
+the patch, and applies it to a fresh checkout of that commit (`restoreWorkingTree`, which checks the
+patch's digest and the checkout's commit first and deletes the stored patch once it applied), and builds the new session's prompt (`buildResumePrompt`):
+the original task, then a delimited section where the person's answers and the digest of the work so
+far are quoted line by line, so they read as information and never as instructions about tools or
+policy. The result and input shapes are in `@auto-swe/shared/lib/needsInput`.
+
+Four activities can pause and resume, each taking `allowPause` and `resumeInput` on its input (on
+`executeImplementation`, as an eighth argument holding both). They offer the question tool only when
+`allowPause` is set **and** the resolved runtime is Claude Code; on any other runtime the flag is
+ignored and the run is unattended. When a turn ends at a question, the activity does none of its
+delivery work. It saves the tree (`snapshotWorkingTree`), builds the digest from the agent's last
+message and the files touched, writes an `agent.paused` event (counts only, never the question text)
+and returns `{ needsInput: { questions, resume } }` in place of its result. Its workspaces, harness
+session and trace are released as usual, and the usage already recorded stays recorded.
+
+| Surface | A pause skips | A resume |
+|---|---|---|
+| Agent node with a workspace (`runAgentNode`) | Nothing else: the node commits and pushes nothing anyway | Restores the tree on a checkout cut at the saved commit, before the first turn |
+| Agent run (`runAgentTask`) | The trusted container, the import, the gate, the push and the draft pull request | Restores the tree into the agent's container; delivery then judges it from a fresh container as for any run |
+| TDD loop (`executeImplementation`) | The test run, commit, push, diff scan and security gate. The resume state also holds the iteration and the last test result | Restores the tree after the path guard starts, then continues at the iteration that paused with its previous test result |
+| Fix sessions (`executeCIFixImplementation`, `executeReviewFixImplementation`, `executeGateFixImplementation`) | The gate re-run, the test run, commit, push and scans | Restores the tree after the path guard starts, then runs the usual tests, commit, push and scans |
+
+A resume is a new harness session: the first turn's message is the one the surface would normally
+send, wrapped by `buildResumePrompt` with the questions asked, the answers and the digest. The input
+is validated before any clone. It must parse as a version 1 state, and its surface state must name
+the same surface, agent and branch as the activity that resumes it; anything else is refused with a
+non-retryable `NEEDS_INPUT_RESTORE_FAILED`, as is a tree that is not at the saved commit, a patch
+that fails its digest, or one that no longer applies. A tree over 20 MB fails with
+`NEEDS_INPUT_SNAPSHOT_TOO_LARGE`. A resume writes an `agent.resumed` event with the round and the
+patch size. Merge-conflict resolution (it runs inside `mergeBranches`), channel turns and evals
+never receive `allowPause`, so they stay unattended.
+
+A resumed activity creates its workspace at the commit the saved tree is a patch against
+(`ResumeSnapshot.baseSha`, passed to `createWorkspace` as its pinned checkout), not at the branch
+tip, so the patch applies however far the base branch moved while the person decided. The
+checkout is full-history for that, and the sync to the remote work branch that a first run does
+is skipped, because moving off the saved commit would stop the patch applying. A run whose tree
+is unchanged from the commit it started at (clean, with no local commit) has no patch and starts
+from the branch tip as usual. On `executeImplementation`, the retry sync to the pushed branch is
+skipped for the same reason. The final push and pull request
+logic is unchanged and judges the change from where the resumed run leaves it; the pull request's
+base may therefore be older than the default branch's tip at resume time, exactly as a run that
+took that long without pausing would be.
+
+**The workflow loop.** The dispatcher (`workflows/runnable.ts`, with `workflows/needsInputLoop.ts`)
+runs the steps that can pause inside a loop: an agent node with `workspace: true`, `runAgentTask`,
+`executeImplementation`, and the CI, review and gate fix steps. It calls the activity with
+`allowPause: true` (on `executeImplementation`, in the eighth argument, with the earlier optional
+ones spelled out as `undefined`). If the result is a pause, the loop
+
+1. opens an `INPUT` human step through `createHumanStep`: one required field per question (`q1` to
+   `q4`, a `select` of the option labels, or a comma-separated `text` for a multi-select) and an
+   optional `note`; the title is `<agent key> needs input`, the description holds the questions
+   and options in full, and the context is the work-so-far digest. Its recording id is the
+   step's dispatch key plus `:ask:<round>` (`impl:ask:1`, `fan[0]/impl#2:ask:2`) and its signal
+   `hitl_<recording id>`, derived from nothing but the dispatch, so a replay or a retried
+   dispatch names the step it already created and a round never opens two;
+2. waits on that signal for `workflow.needsInputTimeoutSeconds`;
+3. maps the submission back to answers (`mapAskAnswers`): every question must be answered, a
+   single choice must be one of its options, a multi-select is split on commas and newlines
+   (an option whose label holds a comma is matched whole), capped at 20 choices, text is cut to
+   2000 characters, a non-blank `note` becomes one more answer, and keys the step never offered
+   are ignored. The respond route refuses a required multi-select answer that holds no choice
+   after the same split (such as `" , "`), so a submission that would fail here is refused while
+   the person can still correct it. A submission that fits no question fails the step with `NEEDS_INPUT_INVALID_ANSWER`;
+4. runs the same activity again with `resumeInput: { resume, answers, round }`, and loops.
+
+The person answers in the inbox like any `humanInput` step (`POST /api/v1/human-steps/:id/respond`,
+action `submit`, the same role and run-control rules; Slack announces it with a link, as for every
+`INPUT` step). Two failures end the step non-retryably and fail the run: `NEEDS_INPUT_TIMEOUT`
+when nobody answered in time (the step is marked timed out; nothing answers on the person's
+behalf) and `NEEDS_INPUT_LIMIT` when the activity pauses again after
+`workflow.maxNeedsInputRounds` answered rounds. A cancellation, while waiting or in the activity,
+passes through as for any step and closes the open question with the rest of the run's pending
+human steps. A pause never reaches a downstream node as if it were the step's output.
+
+Both bounds are run-pinned settings (`workflow.needsInputTimeoutSeconds`, default 86400, 60 to
+1209600; `workflow.maxNeedsInputRounds`, default 5, 1 to 20), read in the workflow from
+`WorkflowRun.pinnedSettings` with the registry's defaults when absent, so a mid-run edit cannot
+change what a replay does.
+
+*Replay safety for operators.* The loop is gated by the Temporal patch `needs-input-v1`, taken
+at the first pausable step. An execution that started before the patch replays the plain dispatch
+and never offers the question tool, so a deployment that upgrades with runs in flight finishes
+them unattended as before; an execution that starts afterwards records the marker and runs the
+loop. Roll the worker fleet over as a whole: a worker without this change cannot be relied on to
+continue an execution that recorded the marker. Nothing in the workflow spec changes and no
+existing node gains a field.
+
+**Limitations.**
+
+- A paused agent run keeps its concurrency slot for the whole wait, and each resume goes through
+  admission again and restarts the wall-clock and `maxSteps` counters, so a step that pauses
+  `rounds` times may spend `(rounds + 1)` times the cap in total.
+- The work of the round that hits `NEEDS_INPUT_LIMIT` is discarded: the step fails with the tree it
+  last saved unused.
+- A fan-out sibling that is cancelled while its question is open leaves that question `PENDING`
+  until the run ends.
+- Nothing is pushed while a run waits. If someone else pushes to the pull request branch in the
+  meantime, the resumed run's final push is not a fast-forward and fails.
+- The digest of the work so far masks credential shapes and the clone credential by value, and
+  nothing else: it is a heuristic over the agent's last message, not a proof that no secret reached
+  the question text a person sees.
+- An answer that fails to map to the questions (an option that was never offered, for example) fails
+  the step with `NEEDS_INPUT_INVALID_ANSWER` rather than asking again. The respond route checks the
+  same constraints first, so this is reached only by a signal that bypassed it.
+- The saved working tree is kept after a resume applies it, so a Temporal retry of the resumed
+  activity can restore it again. The artifact (`kind` `needs_input.snapshot`) is removed by the
+  transcript retention sweep once it is older than the retention window; a pause that waits longer
+  than that cannot be resumed (`NEEDS_INPUT_RESTORE_FAILED`). Deleting a run removes the row but not
+  an S3 object.
 
 ---
 
@@ -1867,6 +2008,8 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
 | `Skill` | `skills` | Skill definitions (name, promptText, isBuiltIn, isVerified, isActive, scope, currentRevision) |
 | `SkillRevision` | `skill_revisions` | Immutable history of a skill's text and description; what a run's `skillRevisions` pin reads |
 | `SkillSource` | `skill_sources` | An external GitHub / GitHub Enterprise folder skills were imported from: location, ref, pinned commit, script mode, scope (§6.6) |
+| `HarnessProfile` | `harness_profiles` | An admin-approved Claude Code plugin profile read from a repository folder; global, never deleted ([harness-profiles.md](./harness-profiles.md)) |
+| `HarnessProfileVersion` | `harness_profile_versions` | One immutable, content-hashed snapshot of a profile at an exact commit |
 | `Agent` | `agents` | Single source of truth per key/scope: model spec, system prompt, credential pin, tool keys, skill refs, runtime, reasoning level (versioned) |
 | `AgentSkillRef` | `agent_skill_refs` | Join from an `Agent` to a `Skill` with `sortOrder` |
 | `ProviderCredential` | `provider_credentials` | AES-256-GCM encrypted API keys per provider per scope |
@@ -1960,6 +2103,31 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   prompt keeps its own text: only an untouched seeded prompt moves to the current one, as a new
   agent version. Only `ticket-to-merge` stops; the other built-in templates still continue past an
   ambiguity verdict, and a custom copy of `ticket-to-merge` keeps its old graph.
+- **A paused TDD iteration counts toward `maxTddIterations`.** The resumed session continues the
+  iteration that paused rather than starting a new one, so pausing never adds iterations, and a
+  pause in the last iteration leaves that one turn to finish the work.
+- **A pause keeps the whole working tree in the artifact store.** The patch holds every change the
+  run made, secrets it wrote into a file included, until the artifact is deleted. It is not pushed
+  and no delivery gate runs on it; the gates run on the final result after the run resumes and
+  completes.
+- **A resume works on the saved base commit, not the branch tip.** The checkout is cut at the
+  commit the patch was saved from, so the base branch moving while the person decides does not
+  stop the resume; the pull request's base may then be older than the default branch's tip. If
+  that commit can no longer be fetched, or the patch no longer applies to it, the resume fails
+  with `NEEDS_INPUT_RESTORE_FAILED` rather than merging.
+- **The answers are untrusted text.** A person's answer reaches the model quoted, as information
+  for the task; it cannot change tools or policy, and nothing checks that it is true or safe to
+  follow. A pause also hands the person a digest of the work so far (the agent's last message and
+  the files touched), masked for credential shapes by a heuristic, not a proof.
+- **One question batch per turn, and none from a sub-agent or on another runtime.** A second
+  question in the same turn is refused, a sub-agent cannot ask, and only Claude Code can pause.
+  A multi-select is answered as comma-separated text, not a picker.
+- **Merge-conflict resolution, channel turns and evals cannot pause.** They run unattended, as
+  does the pull-request feedback fixer (`executePrFeedbackImplementation`), which the loop does
+  not wrap.
+- **An unanswered question holds the run open.** The step waits up to
+  `workflow.needsInputTimeoutSeconds` (a day by default) with its Temporal workflow open, then
+  fails the run; there is no reminder and no auto-answer.
 - **The Claude Code harness's container-side checks are tripwires, not a boundary.** The binary's
   hash is taken with the container's own `sha256sum`, so code that controls the container (its
   `sha256sum`, or a process that outlives the turn's tag cleanup) can defeat the check; the harness's
@@ -2339,6 +2507,13 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
 - **Tool-output offload budgets characters, not tokens.** `workspace.maxToolOutputChars` bounds
   string length, which only approximates what a model actually spends on context; two outputs of
   the same character count can tokenize very differently.
+- **A paused run's working tree is persisted in the artifact store.** Ask-and-resume saves
+  everything in the checkout, untracked files included and ignored files excluded, as a patch against
+  the commit the run started from, and the patch holds whatever the agent wrote there, secrets
+  included. It is not pushed, is bounded at 20 MB (a larger tree fails the step with
+  `NEEDS_INPUT_SNAPSHOT_TOO_LARGE`), and a patch that no longer applies fails it with
+  `NEEDS_INPUT_RESTORE_FAILED`. Only the Claude Code harness can ask; the Mastra loop and Pi stay
+  unattended, and a sub-agent's question is refused.
 - **Offloaded files are ephemeral.** They live on the workspace container's filesystem, not in the
   repo and not in the database, so they do not outlive that container's teardown — nothing later in
   a run, or after it, can retrieve one once the workspace is gone.

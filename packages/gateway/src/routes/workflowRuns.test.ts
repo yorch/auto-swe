@@ -8,6 +8,7 @@ import { signEvidenceLink } from '../lib/evidenceDownloadLink.js';
 import { TemporalUnavailableError } from '../lib/temporalErrors.js';
 import {
   MAX_CONTEXT_ARTIFACT_BYTES,
+  MAX_EFFECTS_PER_READ,
   MAX_TRACES_PER_READ,
   workflowRunRoutes,
 } from './workflowRuns.js';
@@ -46,6 +47,9 @@ function newMockPrisma() {
     pullRequest: {
       findFirst: vi.fn().mockResolvedValue(null),
     },
+    runEffect: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     runEvidence: {
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
@@ -70,7 +74,7 @@ function newMockPrisma() {
   };
 }
 
-async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
+async function buildApp(role: 'ADMIN' | 'ENGINEER' | 'VIEWER' = 'ADMIN') {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -738,6 +742,122 @@ describe('workflowRunRoutes GET /:id/traces (live tail)', () => {
       url: `/api/v1/workflow-runs/${runId}/traces?since=yesterday`,
     });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('workflowRunRoutes GET /:id/effects', () => {
+  const runId = '6f9619ff-8b86-4a08-8b86-3e6f9619ffd1';
+  const effectRow = (id: string) => ({
+    action: 'create',
+    agentKey: null,
+    createdAt: new Date('2026-09-01T10:00:00.000Z'),
+    detail: { number: 7 },
+    error: null,
+    id,
+    inputDigest: null,
+    kind: 'PULL_REQUEST',
+    orgId: 'org-secret',
+    specNodeId: 'pr',
+    status: 'DONE',
+    target: 'https://github.com/acme/api/pull/7',
+    teamId: 'team-secret',
+    via: 'activity',
+    workflowId: 'wf-secret',
+  });
+
+  it('returns the run effects oldest first, behind the visibility filter, without tenant columns', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.workflowRun.findFirst.mockResolvedValue({ id: runId });
+    prisma.runEffect.findMany.mockResolvedValue([effectRow('e-1')]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/effects`,
+    });
+    expect(res.statusCode).toBe(200);
+    const runWhere = prisma.workflowRun.findFirst.mock.calls[0][0].where;
+    expect(runWhere.id).toBe(runId);
+    expect(JSON.stringify(runWhere.OR)).toContain('"requestedById":"u-1"');
+    expect(prisma.runEffect.findMany).toHaveBeenCalledWith({
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: MAX_EFFECTS_PER_READ + 1,
+      where: { runId },
+    });
+    expect(res.json()).toEqual({
+      data: [
+        {
+          action: 'create',
+          agentKey: null,
+          createdAt: '2026-09-01T10:00:00.000Z',
+          detail: { number: 7 },
+          error: null,
+          id: 'e-1',
+          inputDigest: null,
+          kind: 'PULL_REQUEST',
+          specNodeId: 'pr',
+          status: 'DONE',
+          target: 'https://github.com/acme/api/pull/7',
+          via: 'activity',
+        },
+      ],
+      truncated: false,
+    });
+  });
+
+  it('says when it cut the page', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({ id: runId });
+    prisma.runEffect.findMany.mockResolvedValue(
+      Array.from({ length: MAX_EFFECTS_PER_READ + 1 }, (_, i) => effectRow(`e-${i}`))
+    );
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/effects`,
+    });
+    expect(res.json().data).toHaveLength(MAX_EFFECTS_PER_READ);
+    expect(res.json().truncated).toBe(true);
+  });
+
+  it('keeps the newest rows when it cuts, and answers oldest first', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.findFirst.mockResolvedValue({ id: runId });
+    // The query is newest first: e-0 is the newest, and the extra row (the oldest) is dropped.
+    prisma.runEffect.findMany.mockResolvedValue(
+      Array.from({ length: MAX_EFFECTS_PER_READ + 1 }, (_, i) => effectRow(`e-${i}`))
+    );
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/effects`,
+    });
+    const ids = res.json().data.map((e: { id: string }) => e.id);
+    expect(ids[0]).toBe(`e-${MAX_EFFECTS_PER_READ - 1}`);
+    expect(ids.at(-1)).toBe('e-0');
+    expect(ids).not.toContain(`e-${MAX_EFFECTS_PER_READ}`);
+  });
+
+  it('404s without reading effects when the run is not visible to the caller', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.workflowRun.findFirst.mockResolvedValue(null);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/effects`,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(prisma.runEffect.findMany).not.toHaveBeenCalled();
+  });
+
+  it('requires at least the ENGINEER role', async () => {
+    const { app, prisma } = await buildApp('VIEWER');
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${runId}/effects`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(prisma.runEffect.findMany).not.toHaveBeenCalled();
   });
 });
 

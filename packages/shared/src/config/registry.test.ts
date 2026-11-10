@@ -35,6 +35,19 @@ describe('retention settings', () => {
     expect(SETTING_DEFINITIONS[key].requiredRole).toBe('ADMIN');
   });
 
+  it('audit.runEffectRetentionDays is 0 (forever) or between a month and ten years', () => {
+    const key = 'audit.runEffectRetentionDays';
+    for (const ok of [0, 30, 3650]) {
+      expect(accepts(key, ok), String(ok)).toBe(true);
+    }
+    for (const bad of [7, 29, 3651, -1, 40.5, '30', null]) {
+      expect(accepts(key, bad), String(bad)).toBe(false);
+    }
+    expect(SETTING_DEFINITIONS[key].defaultValue).toBe(0);
+    expect(SETTING_DEFINITIONS[key].overridableAt).toEqual([]);
+    expect(SETTING_DEFINITIONS[key].requiredRole).toBe('ADMIN');
+  });
+
   it('analytics.activityRetentionDays is at least a week', () => {
     const key = 'analytics.activityRetentionDays';
     for (const ok of [7, 90, 3650]) {

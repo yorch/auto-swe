@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   generate: vi.fn(async (..._args: unknown[]) => ({ text: 'mastra says hi', usage: undefined })),
   getBoundModel: vi.fn(),
   piRuntime: vi.fn((..._args: unknown[]) => ({ runTurn: vi.fn() })),
+  profileFor: vi.fn(async (_args: unknown): Promise<unknown> => undefined),
   resolveAgent: vi.fn(),
   resolveAgentRuntime: vi.fn(),
   resolveImplementerConfig: vi.fn(),
@@ -17,6 +18,7 @@ const h = vi.hoisted(() => ({
 vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: h.resolveSetting }));
 vi.mock('../lib/models.js', () => ({ getBoundModel: h.getBoundModel }));
 vi.mock('../lib/config/agentResolver.js', () => ({ resolveAgent: h.resolveAgent }));
+vi.mock('../lib/config/harnessProfile.js', () => ({ resolveProfileForRuntime: h.profileFor }));
 vi.mock('../lib/config/agentRuntime.js', () => ({ resolveAgentRuntime: h.resolveAgentRuntime }));
 vi.mock('./claudeCode/runtime.js', () => ({ claudeCodeRuntime: h.claudeCodeRuntime }));
 vi.mock('./pi/runtime.js', () => ({ piRuntime: h.piRuntime }));
@@ -50,6 +52,7 @@ function input(
 beforeEach(() => {
   vi.clearAllMocks();
   h.resolveSetting.mockResolvedValue('mastra');
+  h.profileFor.mockResolvedValue(undefined);
   // The real resolver's default branch, so these tests can drive the choice
   // through the setting; resolveAgentRuntime has its own tests.
   h.resolveAgentRuntime.mockImplementation(async (_key: string, ctx: unknown) => ({
@@ -121,6 +124,34 @@ describe('buildImplementerTurnRunner', () => {
       name: 'agent.runtime',
       outputJson: { agentKey: 'implementer', runtime: 'claude-code', source: 'agent' },
     });
+  });
+
+  it('hands the harness the approved profile for the agent, resolved with the runtime', async () => {
+    h.resolveAgentRuntime.mockResolvedValue({ runtime: 'claude-code', source: 'agent' });
+    const profile = { contentHash: 'b'.repeat(64), name: 'demo', version: 3 };
+    h.profileFor.mockResolvedValue(profile);
+    const given = input({ agentKey: 'ciFixer' });
+    await buildImplementerTurnRunner(given);
+    expect(h.profileFor).toHaveBeenCalledWith({
+      agentKey: 'ciFixer',
+      ctx: given.ctx,
+      runtime: 'claude-code',
+      tracer: given.tracer,
+    });
+    expect(h.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ profile });
+  });
+
+  it('lets a failed profile resolution stop the session before it builds anything', async () => {
+    h.resolveAgentRuntime.mockResolvedValue({ runtime: 'claude-code', source: 'agent' });
+    h.profileFor.mockRejectedValue(new Error('PROFILE_INTEGRITY'));
+    await expect(buildImplementerTurnRunner(input())).rejects.toThrow('PROFILE_INTEGRITY');
+    expect(h.claudeCodeRuntime).not.toHaveBeenCalled();
+  });
+
+  it('passes no profile to a Mastra session', async () => {
+    await buildImplementerTurnRunner(input());
+    expect(h.profileFor).toHaveBeenCalledWith(expect.objectContaining({ runtime: 'mastra' }));
+    expect(h.claudeCodeRuntime).not.toHaveBeenCalled();
   });
 
   it('keeps an agent on Mastra when it asks for it under a claude-code setting', async () => {
@@ -275,6 +306,19 @@ describe('buildImplementerTurnRunner', () => {
       tracer: given.tracer,
       workspace: given.workspace,
     });
+  });
+
+  it('lets only Claude Code pause to ask: it is told so, and Pi and Mastra are not', async () => {
+    h.resolveSetting.mockResolvedValue('claude-code');
+    await buildImplementerTurnRunner(input({ allowPause: true }));
+    expect(h.claudeCodeRuntime).toHaveBeenCalledWith(expect.objectContaining({ allowPause: true }));
+
+    h.resolveSetting.mockResolvedValue('pi');
+    await buildImplementerTurnRunner(input({ allowPause: true }));
+    expect(h.piRuntime.mock.calls[0]?.[0]).not.toHaveProperty('allowPause');
+
+    h.resolveSetting.mockResolvedValue('mastra');
+    await expect(buildImplementerTurnRunner(input({ allowPause: true }))).resolves.toBeDefined();
   });
 
   it('relays the MCP connection the Mastra loop would bind, unless the tool keys leave MCP out', async () => {

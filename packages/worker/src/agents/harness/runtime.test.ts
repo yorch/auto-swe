@@ -336,6 +336,26 @@ describe('harnessRuntime', () => {
     });
   });
 
+  it('passes the questions of a paused turn through', async () => {
+    const questions = [
+      {
+        header: 'H',
+        multiSelect: false,
+        options: [
+          { description: '', label: 'A' },
+          { description: '', label: 'B' },
+        ],
+        question: 'Q?',
+      },
+    ];
+    const { runtime } = setup(async () => ({ usage: {} }), {
+      runTurn: async () => ({ needsInput: questions, toolCallCount: 1, usage: {} }),
+    });
+    await expect(runtime.runTurn({ system: 'S', user: 'U' })).resolves.toMatchObject({
+      needsInput: questions,
+    });
+  });
+
   it('aborts the turn at the caller’s deadline, and tells the adapter it was the deadline', async () => {
     const deadline = new AbortController();
     const ws = workspace();

@@ -806,13 +806,16 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     currentSpec = specWith();
     await env.client.workflow.execute('RunnableWorkflow', startArgs('wf-no-allowed-paths'));
     // Set: (systemPrompt, crossRepo, allowedPaths). Unset: the four-argument call as before.
+    // A new execution also offers the ask-and-resume loop (`needs-input-v1`), whose fields
+    // ride in the last argument of each pausable step.
+    const pause = { allowPause: true };
     expect(calls.implementationExtraArgs).toEqual([
-      ['sp', {}, paths],
-      [undefined, {}],
+      ['sp', {}, paths, undefined, undefined, undefined, pause],
+      [undefined, {}, undefined, undefined, undefined, undefined, pause],
     ]);
     expect(calls.reviewFixArgs).toEqual([
-      ['fix it', { branch: 'auto/T-1' }, 'sp', paths],
-      ['fix it', { branch: 'auto/T-1' }, undefined],
+      ['fix it', { branch: 'auto/T-1' }, 'sp', paths, pause],
+      ['fix it', { branch: 'auto/T-1' }, undefined, undefined, pause],
     ]);
   }, 120_000);
 
@@ -903,9 +906,19 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
       startArgs('wf-ci-guard', { ...REQUEST, payload: { baseBranch: 'release/1.4' } })
     );
     // The guard reaches every implementer step.
-    expect(calls.implementationExtraArgs[0]).toEqual([undefined, {}, undefined, guard]);
-    expect(calls.reviewFixArgs[0]?.[4]).toEqual(guard);
-    expect(calls.ciFixArgs[0]?.[3]).toEqual({ ...guard, untrustedCiLogs: true });
+    // (plus the ask-and-resume fields a new execution adds to each pausable step)
+    const pause = { allowPause: true };
+    expect(calls.implementationExtraArgs[0]).toEqual([
+      undefined,
+      {},
+      undefined,
+      guard,
+      undefined,
+      undefined,
+      pause,
+    ]);
+    expect(calls.reviewFixArgs[0]?.[4]).toEqual({ ...guard, ...pause });
+    expect(calls.ciFixArgs[0]?.[3]).toEqual({ ...guard, ...pause, untrustedCiLogs: true });
     expect(calls.gateFixArgs[0]).toMatchObject({ refuseWorkflowChanges: true });
     // A fix session's previous result gets the run's base when it names none.
     expect(calls.ciFixArgs[0]?.[1]).toEqual({ baseBranch: 'release/1.4', branch: 'auto/T-1' });

@@ -396,6 +396,24 @@ describe('executeGateFixImplementation re-run', () => {
   });
 });
 
+describe('executeGateFixImplementation ask and resume', () => {
+  it('hands the pause fields to the fix session as the gate fixer', async () => {
+    fixSessionMock.mockResolvedValue({});
+    await executeGateFixImplementation({
+      allowPause: true,
+      gateName: 'runTests',
+      gateOutput: { exitCode: 1, passed: false, summary: 'boom' } as never,
+      previousCodeResult: { branch: 'auto/T-1' } as CodeResult,
+      resumeInput: { sentinel: 'resume' } as never,
+    });
+    expect(fixSessionMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      agentKey: 'gateFixer',
+      allowPause: true,
+      resumeInput: { sentinel: 'resume' },
+    });
+  });
+});
+
 describe('gate workspace provisioning', () => {
   beforeEach(() => {
     mockedFindUnique.mockResolvedValue({ defaultBranch: 'main', gateCommands: null } as never);

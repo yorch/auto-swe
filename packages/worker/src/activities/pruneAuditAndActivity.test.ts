@@ -4,22 +4,32 @@ interface Row {
   id: string;
   createdAt: Date;
   entityType?: string;
+  /** The row's run is under transcript legal hold. */
+  held?: boolean;
 }
 const db = vi.hoisted(() => ({
   activity: [] as Array<{ id: string; createdAt: Date }>,
   audit: [] as Array<{ id: string; createdAt: Date; entityType?: string }>,
   created: [] as Array<{ data: Record<string, unknown> }>,
+  effects: [] as Array<{ id: string; createdAt: Date; held?: boolean }>,
   failCreate: false,
   settings: {} as Record<string, unknown>,
   wheres: [] as Array<Record<string, unknown>>,
 }));
 
-type Where = { createdAt: { lt: Date }; entityType?: { notIn: string[] }; id?: { in: string[] } };
+type Where = {
+  createdAt: { lt: Date };
+  entityType?: { notIn: string[] };
+  id?: { in: string[] };
+  OR?: unknown[];
+};
 
-function table(key: 'audit' | 'activity') {
+function table(key: 'audit' | 'activity' | 'effects') {
   const matches = (r: Row, where: Where) =>
     r.createdAt < where.createdAt.lt &&
     !where.entityType?.notIn.includes(r.entityType ?? '') &&
+    // Only the legal-hold `OR` the sweep sends for run effects is modelled.
+    (!where.OR || !r.held) &&
     (!where.id || where.id.in.includes(r.id));
   return {
     deleteMany: vi.fn(async ({ where }: { where: Where }) => {
@@ -56,6 +66,7 @@ vi.mock('@auto-swe/shared/db', () => ({
         Object.entries(db.settings).map(([key, value]) => ({ key, scope: 'GLOBAL', value }))
       ),
     },
+    runEffect: table('effects'),
     userActivityEvent: table('activity'),
   },
 }));
@@ -73,6 +84,7 @@ beforeEach(() => {
   invalidateSettingsCache();
   db.audit = [];
   db.activity = [];
+  db.effects = [];
   db.created = [];
   db.wheres = [];
   db.failCreate = false;
@@ -172,5 +184,54 @@ describe('pruneAuditAndActivity', () => {
     db.audit = [{ createdAt: daysAgo(10), id: 'a-new' }];
     await pruneAuditAndActivity(NOW);
     expect(db.created).toEqual([]);
+  });
+
+  it('keeps run effects forever by default', async () => {
+    db.effects = [{ createdAt: daysAgo(4000), id: 'f-ancient' }];
+    const result = await pruneAuditAndActivity(NOW);
+    expect(result).toMatchObject({ runEffectRetentionDays: 0, runEffectsDeleted: 0 });
+    expect(db.effects).toHaveLength(1);
+  });
+
+  it('deletes run effects past a set retention, and only those', async () => {
+    db.settings['audit.runEffectRetentionDays'] = 30;
+    db.effects = [
+      { createdAt: daysAgo(31), id: 'f-old' },
+      { createdAt: daysAgo(5), id: 'f-new' },
+    ];
+    db.audit = [{ createdAt: daysAgo(900), id: 'a-old' }];
+    const result = await pruneAuditAndActivity(NOW);
+    expect(result).toMatchObject({ runEffectRetentionDays: 30, runEffectsDeleted: 1 });
+    expect(db.effects.map((r) => r.id)).toEqual(['f-new']);
+    expect(db.audit).toHaveLength(1);
+  });
+
+  it('keeps the effects of a run under legal hold, however old', async () => {
+    db.settings['audit.runEffectRetentionDays'] = 30;
+    db.effects = [
+      { createdAt: daysAgo(400), held: true, id: 'f-held' },
+      { createdAt: daysAgo(400), id: 'f-free' },
+    ];
+    const result = await pruneAuditAndActivity(NOW);
+    expect(result).toMatchObject({ runEffectsDeleted: 1 });
+    expect(db.effects.map((r) => r.id)).toEqual(['f-held']);
+  });
+
+  it('ignores a run-effect retention below the floor and keeps the rows', async () => {
+    db.settings['audit.runEffectRetentionDays'] = 3;
+    db.effects = [{ createdAt: daysAgo(100), id: 'f-old' }];
+    const result = await pruneAuditAndActivity(NOW);
+    expect(result).toMatchObject({ runEffectRetentionDays: 0, runEffectsDeleted: 0 });
+    expect(db.effects).toHaveLength(1);
+  });
+
+  it('reports more when the run-effect half stops at its batch limit', async () => {
+    db.settings['audit.runEffectRetentionDays'] = 30;
+    db.effects = Array.from({ length: 5 }, (_, i) => ({
+      createdAt: daysAgo(40 + i),
+      id: `f-${i}`,
+    }));
+    const first = await pruneAuditAndActivity(NOW);
+    expect(first).toMatchObject({ more: true, runEffectsDeleted: 4 });
   });
 });

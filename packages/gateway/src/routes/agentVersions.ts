@@ -9,6 +9,7 @@ import {
   type AgentScope,
   AgentVersionConflictError,
   modelRequiredError,
+  profileSaveError,
   updateAgent,
   validateCredentialRef,
   validateMcpConnectionRef,
@@ -397,6 +398,20 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
       if (modelError) {
         return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
       }
+      // The profile is restored with the runtime it was bound under, and must still be one the
+      // API would accept now (it may have been disabled since).
+      const profileError = await profileSaveError(
+        fastify.prisma,
+        {
+          harnessProfile: source.harnessProfile,
+          inheritsModelFrom: source.inheritsModelFrom,
+          runtime: toImplementerRuntime(source.runtime),
+        },
+        true
+      );
+      if (profileError) {
+        return sendError(reply, 400, profileError.code, profileError.message);
+      }
       // The same reference check an edit gets: the connection may have been deactivated or
       // belong to another team since that version was current.
       const mcpError = await validateMcpConnectionRef(fastify.prisma, source.mcpConnectionId, {
@@ -437,6 +452,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
           {
             credentialId: source.credentialId,
             description: source.description,
+            harnessProfile: source.harnessProfile,
             inheritsModelFrom: source.inheritsModelFrom,
             mcpConnectionId: source.mcpConnectionId,
             modelSpec: source.modelSpec,

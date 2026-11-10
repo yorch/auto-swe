@@ -11,6 +11,7 @@ import {
 } from '@auto-swe/shared/lib/agentRun';
 import { decideAdmission } from '@auto-swe/shared/lib/agentRunAdmission';
 import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
+import type { NeedsInputQuestion } from '@auto-swe/shared/lib/needsInput';
 import { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
 import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
@@ -40,12 +41,28 @@ import { type ResolvedAgent, resolveAgent } from '../lib/config/agentResolver.js
 import { resolveAgentRuntime } from '../lib/config/agentRuntime.js';
 import { type AgentTools, composeAgentPrompt, resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import {
+  type ResolvedHarnessProfile,
+  resolveProfileForRuntime,
+} from '../lib/config/harnessProfile.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { resolveRunEgressPolicy } from '../lib/egressWiring.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
+import {
+  checkSurfaceState,
+  cloneCredentialSecrets,
+  type NeedsInputResult,
+  type PauseOptions,
+  pausable,
+  pauseForInput,
+  readResumeInput,
+  restoreForResume,
+  resumeCheckoutSha,
+  resumeMessage,
+} from '../lib/pauseResume.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
@@ -67,7 +84,7 @@ import { runAgent } from './runAgent.js';
 import { parseDiffToFileChanges } from './utils.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
-export interface RunAgentTaskInput {
+export interface RunAgentTaskInput extends PauseOptions {
   knowledgeBases?: boolean;
   /** The run's request: `payload` carries the launch parameters, `description` the prompt. */
   request: RepoWorkRequest;
@@ -114,7 +131,15 @@ function refuse(message: string, type: string, details?: unknown): ApplicationFa
  * bundles), so nothing here assumes the gateway ran. Single attempt: a retry
  * would re-spend and could re-publish.
  */
-export async function runAgentTask(input: RunAgentTaskInput): Promise<RunAgentTaskResult> {
+export async function runAgentTask(
+  input: RunAgentTaskInput & { allowPause?: undefined; resumeInput?: undefined }
+): Promise<RunAgentTaskResult>;
+export async function runAgentTask(
+  input: RunAgentTaskInput
+): Promise<RunAgentTaskResult | NeedsInputResult>;
+export async function runAgentTask(
+  input: RunAgentTaskInput
+): Promise<RunAgentTaskResult | NeedsInputResult> {
   return withHeartbeat('runAgentTask', runAgentTaskImpl(input));
 }
 
@@ -123,7 +148,7 @@ export async function runAgentTask(input: RunAgentTaskInput): Promise<RunAgentTa
  * ORGANIZATION scope), on which repository, what the prompt and the branch pair are, which
  * ceilings were already decided, and whether the gated commit is pushed.
  */
-export interface AgentTaskCoreInput {
+export interface AgentTaskCoreInput extends PauseOptions {
   initialChange?: { baseSha: string; diff: string };
   knowledgeBases?: boolean;
   /** The `git_repo` connection row, with its installation. */
@@ -195,7 +220,15 @@ export interface AgentTaskCoreResult {
  * then commit and gate what it wrote in a FRESH container and push the gated commit.
  * Who may call it at all is each caller's own check.
  */
-export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<AgentTaskCoreResult> {
+export async function runAgentTaskCore(
+  input: AgentTaskCoreInput & { allowPause?: undefined; resumeInput?: undefined }
+): Promise<AgentTaskCoreResult>;
+export async function runAgentTaskCore(
+  input: AgentTaskCoreInput
+): Promise<AgentTaskCoreResult | NeedsInputResult>;
+export async function runAgentTaskCore(
+  input: AgentTaskCoreInput
+): Promise<AgentTaskCoreResult | NeedsInputResult> {
   const {
     key,
     version,
@@ -224,6 +257,11 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
     orgId: baseCtx.orgId,
     skillRevisions: baseCtx.skillRevisions,
   };
+  // The run after a pause: a state that is not this run's is refused before a clone.
+  const resume = input.resumeInput ? readResumeInput(input.resumeInput) : undefined;
+  if (resume) {
+    checkSurfaceState(resume.resume, { agentKey: key, branch, kind: 'runAgentTask' });
+  }
   const resolved = await resolveAgent(key, agentCtx);
   // Before any container exists: an unpriced model under a USD cap is refused
   // here rather than after a clone (runAgent checks again before the call).
@@ -255,6 +293,16 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
   const egressPolicy = await resolveRunEgressPolicy(repo.teamId);
 
   const tracer = new AgentTracer();
+  // Claude Code runs with the profile the Agent is bound to (or fails closed
+  // without it, before any container exists); any other loop notes that the
+  // profile was not applied.
+  const profile = await resolveProfileForRuntime({
+    agentKey: key,
+    ctx: agentCtx,
+    resolved,
+    runtime: loop.runtime,
+    tracer,
+  });
   let agentWs: Workspace | undefined;
   let trusted: Workspace | undefined;
   let closeMcp: (() => Promise<void>) | undefined;
@@ -273,7 +321,8 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       branch,
       baseBranch,
       executorImageFor(repo),
-      input.initialChange?.baseSha,
+      // A resumed run is cut from the commit its saved tree was taken against, not the branch tip.
+      resumeCheckoutSha(resume) ?? input.initialChange?.baseSha,
       undefined,
       {
         detectedStack: repo.detectedStack,
@@ -298,13 +347,25 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       name: 'agent.runtime',
       outputJson: { agentKey: key, runtime: loop.runtime, source: loop.source },
     });
+    // The paused run's tree goes back into the agent's container before its first turn;
+    // delivery still judges it from a fresh container, as for any run.
+    if (resume) {
+      await restoreForResume({
+        resume,
+        surface: 'runAgentTask',
+        tracer,
+        workspace: agentWs,
+      });
+    }
     const loopInput: AgentLoopInput = {
+      ...pausable(input.allowPause, loop.runtime),
       agentCtx,
       deadline: AbortSignal.timeout(effective.maxWallClockSeconds * 1000),
       key,
       maxSteps: effective.maxSteps,
       maxToolOutputChars: settings['workspace.maxToolOutputChars'],
-      prompt,
+      profile,
+      prompt: resume ? resumeMessage(resume, prompt) : prompt,
       repoId: input.repo.id,
       resolved,
       settingsCtx,
@@ -316,6 +377,20 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       : await runOnMastra(loopInput, (close) => {
           closeMcp = close;
         });
+    // The agent asked a person: nothing is delivered. The tree is saved from the agent's
+    // container, and both containers are removed below as for any run.
+    if (result.needsInput) {
+      return await pauseForInput({
+        lastText: result.text,
+        questions: result.needsInput,
+        secrets: cloneCredentialSecrets(authedCloneUrl),
+        startSha: baseSha,
+        state: { agentKey: key, branch },
+        surface: 'runAgentTask',
+        tracer,
+        workspace: agentWs,
+      });
+    }
     const text = redactString(result.text ?? '').slice(0, AGENT_RUN_MAX_TEXT_CHARS);
     const base: Omit<
       AgentTaskCoreResult,
@@ -415,9 +490,11 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
 }
 
 async function runAgentTaskImpl({
-  request,
+  allowPause,
   knowledgeBases,
-}: RunAgentTaskInput): Promise<RunAgentTaskResult> {
+  request,
+  resumeInput,
+}: RunAgentTaskInput): Promise<RunAgentTaskResult | NeedsInputResult> {
   const repoId = requireRepoId(request, 'runAgentTask');
   const workflowId = currentWorkflowId();
 
@@ -529,6 +606,7 @@ async function runAgentTaskImpl({
   const scm = getScmProvider(repoRef);
   const core = await runAgentTaskCore({
     agentVersions: baseCtx.agentVersions,
+    allowPause,
     allowWorkflowChanges: true,
     baseBranch,
     baseCtx,
@@ -541,6 +619,7 @@ async function runAgentTaskImpl({
     knowledgeBases,
     prompt: request.description,
     repo,
+    resumeInput,
     skillRevisions: baseCtx.skillRevisions,
     version,
     ...(payload.deliver !== 'draft_pr'
@@ -609,6 +688,10 @@ async function runAgentTaskImpl({
         }),
   });
 
+  // Paused for a person's answer: nothing was delivered, so there is no result to shape.
+  if ('needsInput' in core) {
+    return core;
+  }
   return {
     ...core,
     agent: payload.agentRef,
@@ -618,12 +701,16 @@ async function runAgentTaskImpl({
 }
 
 interface AgentLoopInput {
+  /** The agent may stop to ask a person (set only for a runtime that can). */
+  allowPause?: true;
   agentCtx: ResolveCtx;
   /** The run's wall clock: reaching it stops the loop, it does not fail it. */
   deadline: AbortSignal;
   key: string;
   maxSteps: number;
   maxToolOutputChars: number;
+  /** The approved harness profile, for a Claude Code run. */
+  profile?: ResolvedHarnessProfile;
   prompt: string;
   resolved: ResolvedAgent;
   settingsCtx: ResolveCtx;
@@ -634,6 +721,8 @@ interface AgentLoopInput {
 
 interface AgentLoopResult {
   costUsd?: number;
+  /** The questions the agent asked when the turn ended at one. */
+  needsInput?: NeedsInputQuestion[];
   steps?: number;
   stoppedReason?: 'max_steps' | 'wall_clock';
   text?: string;
@@ -785,6 +874,8 @@ async function runOnHarness(
     maxTurns: input.maxSteps,
     // The connection the Mastra loop would bind, relayed from the worker.
     mcp: await resolveAgentMcpUrl(key, agentCtx, { tenant: input.settingsCtx, tracer }),
+    ...(input.allowPause ? { allowPause: true } : {}),
+    ...(input.profile ? { profile: input.profile } : {}),
     tracer,
     workspace: input.workspace,
   });
@@ -806,6 +897,7 @@ async function runOnHarness(
     });
     return {
       costUsd: turn.attribution.costUsd,
+      ...(turn.needsInput ? { needsInput: turn.needsInput } : {}),
       steps: turn.steps,
       stoppedReason: turn.stoppedReason,
       text: turn.text,

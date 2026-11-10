@@ -6,7 +6,13 @@ import {
   KnowledgeBaseConnectionError,
   type KnowledgeBaseProvider,
 } from '../knowledgeBase.js';
-import type { CreatedPage, KnowledgePage, PageCreateFields, SearchOptions } from '../types.js';
+import type {
+  CreatedPage,
+  KnowledgePage,
+  KnowledgeWriteResult,
+  PageCreateFields,
+  SearchOptions,
+} from '../types.js';
 
 interface ConfluenceProviderConfig {
   maxPages?: number;
@@ -188,7 +194,11 @@ export class ConfluenceProvider implements KnowledgeBaseProvider {
     }
   }
 
-  async updatePageWithPrLink(pageId: string, prUrl: string, prTitle: string): Promise<void> {
+  async updatePageWithPrLink(
+    pageId: string,
+    prUrl: string,
+    prTitle: string
+  ): Promise<KnowledgeWriteResult> {
     try {
       // GET current page for version number
       const page = await this.client.get<ConfluencePageV2Response>(
@@ -210,6 +220,8 @@ export class ConfluenceProvider implements KnowledgeBaseProvider {
       });
     } catch (err) {
       this.log?.warn({ err, pageId, prTitle, prUrl }, 'Confluence updatePageWithPrLink failed');
+      return { error: err, ok: false };
     }
+    return { ok: true };
   }
 }

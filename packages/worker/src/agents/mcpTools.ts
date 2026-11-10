@@ -30,6 +30,7 @@ import { MCPClient } from '@mastra/mcp';
 import { auditLog } from '../lib/activityLog.js';
 import { type AgentTracer, redactString } from '../lib/agentTracer.js';
 import type { McpConnectionTarget } from '../lib/config/mcpConnection.js';
+import { mcpToolIsReadOnly, recordEffect } from '../lib/effectLedger.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { capturingFetch } from '../lib/httpCapture.js';
 import { screenMcpResult } from './mcpScreen.js';
@@ -226,7 +227,8 @@ function wrapMcpTool(
   serverUrl: string,
   callTimeoutMs: number,
   tracer?: McpTracer,
-  screenResults = false
+  screenResults = false,
+  bearerToken?: string
 ): void {
   const originalExecute = tool.execute?.bind(tool);
   if (!originalExecute) {
@@ -242,6 +244,7 @@ function wrapMcpTool(
       `[mcp:audit] server=${serverUrl} tool=${toolName} args=${redactString(safeJson(input))}`
     );
     const start = Date.now();
+    const readOnly = mcpToolIsReadOnly(tool);
     try {
       const raw = await withTimeout(
         originalExecute(...args),
@@ -260,6 +263,16 @@ function wrapMcpTool(
         outputJson: seen,
         toolName: tracedName,
       });
+      if (!readOnly) {
+        await recordEffect({
+          action: toolName,
+          input,
+          kind: 'MCP_TOOL',
+          status: 'DONE',
+          target: toolName,
+          via: 'mastra_mcp',
+        });
+      }
       return seen;
     } catch (err: unknown) {
       tracer?.addToolCall({
@@ -268,6 +281,18 @@ function wrapMcpTool(
         inputJson: input,
         toolName: tracedName,
       });
+      if (!readOnly) {
+        await recordEffect({
+          action: toolName,
+          // The token can ride in a transport error; the ledger stores it scrubbed.
+          error: scrubToken(getErrorMessage(err), bearerToken),
+          input,
+          kind: 'MCP_TOOL',
+          status: 'FAILED',
+          target: toolName,
+          via: 'mastra_mcp',
+        });
+      }
       throw err;
     }
   };
@@ -360,7 +385,15 @@ export async function loadMcpTools(
       if (!tool) {
         continue;
       }
-      wrapMcpTool(tool, name, url.toString(), callTimeoutMs, tracer, target.scanResults === true);
+      wrapMcpTool(
+        tool,
+        name,
+        url.toString(),
+        callTimeoutMs,
+        tracer,
+        target.scanResults === true,
+        target.bearerToken
+      );
       tools[`mcp_${sanitizeToolName(name)}`] = tool;
     }
     if (skipped.length > 0) {

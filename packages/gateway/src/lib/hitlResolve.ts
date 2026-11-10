@@ -1,5 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { Prisma } from '@auto-swe/shared';
+import { hasChoice, isMultiChoiceField } from '@auto-swe/shared/lib/needsInputAsk';
 import {
   approvalAllowsRequestChanges,
   HITL_VALID_ACTIONS,
@@ -243,6 +244,10 @@ function validateHitlValue(step: HitlStepShape, value: unknown): ValueValidation
         if (field.type === 'text') {
           if (typeof v !== 'string' || v.length > 10000) {
             errors.push(`Field '${field.label}' must be a string of at most 10000 characters.`);
+          } else if (field.required && isMultiChoiceField(field) && !hasChoice(v)) {
+            // The paused agent's workflow splits this into choices and fails the step on none:
+            // refuse here, while the person can still fix it.
+            errors.push(`Field '${field.label}' needs at least one choice.`);
           }
         } else if (field.type === 'number') {
           if (typeof v !== 'number' || !Number.isFinite(v)) {

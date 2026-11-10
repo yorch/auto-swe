@@ -23,6 +23,7 @@ import { Transcript } from '@/components/runs/layouts/Transcript';
 import type { RunLayoutProps } from '@/components/runs/layouts/types';
 import { RunActivity } from '@/components/runs/RunActivity';
 import { RunCallbackDeliveries } from '@/components/runs/RunCallbackDeliveries';
+import { RunEffects } from '@/components/runs/RunEffects';
 import { RunEvidence } from '@/components/runs/RunEvidence';
 import { RunLessons } from '@/components/runs/RunLessons';
 import { RunLiveIndicator } from '@/components/runs/RunLiveIndicator';
@@ -556,6 +557,8 @@ export default function RunDetailPage({ params }: PageProps) {
       />
 
       <RunLessons live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
+
+      <RunEffects live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
 
       {/* ── Layout body ───────────────────────────────────────────────────── */}
       <div

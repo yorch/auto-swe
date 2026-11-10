@@ -89,6 +89,9 @@ export interface TrackerSyncEvent {
   summary?: string; // for ci_failed / workflow_failed reason
 }
 
+/// What a knowledge-base write did. `updatePageWithPrLink` never throws; a failure comes back here.
+export type KnowledgeWriteResult = { ok: true } | { ok: false; error: unknown };
+
 export interface KnowledgePage {
   id: string;
   title: string;

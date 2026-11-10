@@ -990,6 +990,7 @@ async function migrateSeededDefaults(
         channelId: current.channelId,
         credentialId: current.credentialId,
         description: current.description,
+        harnessProfile: current.harnessProfile,
         inheritsModelFrom: current.inheritsModelFrom,
         isActive: true,
         isBuiltIn: current.isBuiltIn,

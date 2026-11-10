@@ -33,6 +33,14 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
+const pushEffect = vi.hoisted(() =>
+  vi.fn(async (_b: string, _s: unknown, push: () => unknown) => push())
+);
+vi.mock('../lib/effectLedger.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/effectLedger.js')>()),
+  recordGitPush: pushEffect,
+}));
+
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
   putArtifact: vi.fn().mockResolvedValue({ id: 'art-1' }),
 }));
@@ -152,6 +160,10 @@ vi.mock('../lib/llmOutputScan.js', () => ({
 vi.mock('../lib/config/agentRuntime.js', () => ({
   resolveAgentRuntime: vi.fn(async () => ({ runtime: 'mastra', source: 'default' })),
 }));
+// The approved-profile lookup reads the Agent row; these tests bind no profile.
+vi.mock('../lib/config/harnessProfile.js', () => ({
+  resolveProfileForRuntime: vi.fn(async () => undefined),
+}));
 vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({ teamId: 'team-1' })),
 }));
@@ -256,6 +268,7 @@ afterEach(() => {
   mockedFindUnique.mockReset();
   fakeWorkspace.exec.mockReset();
   fakeWorkspace.gitAuthed.mockClear();
+  pushEffect.mockClear();
   (fakeWorkspace.destroy as ReturnType<typeof vi.fn>).mockReset();
   fakeWorkspace.execCapture.mockReset();
   generateMock.mockReset();
@@ -330,6 +343,7 @@ describe('mergeBranches', () => {
     );
     expect(cmds.some((c) => c.includes('git merge --no-ff'))).toBe(true);
     expect(cmds.some((c) => c.includes('push origin'))).toBe(true);
+    expect(pushEffect).toHaveBeenCalledWith('auto/TICK-1', undefined, expect.any(Function));
   });
 
   it('adds the co-author trailer to each merge commit in co-author-trailer mode', async () => {

@@ -72,6 +72,7 @@ function agent(id = A) {
   return {
     channelId: null,
     credentialId: null as string | null,
+    harnessProfile: null as string | null,
     id,
     inheritsModelFrom: null as string | null,
     isActive: true,
@@ -196,6 +197,17 @@ describe('bulk agent model changes', () => {
       expect(p.agent.create).not.toHaveBeenCalled();
       expect(p.configAuditLog.create).not.toHaveBeenCalled();
     }
+    await app.close();
+  });
+  it('clears the harness profile together with the runtime it adapts away from', async () => {
+    const { app, p, post } = await setup([
+      { ...agent(), harnessProfile: 'review-kit', runtime: 'claude-code' },
+    ]);
+    const res = await post({ adaptRuntime: true });
+    expect(res.json().data.changes[0].status).toBe('OK');
+    const data = p.agent.create.mock.calls[0][0].data;
+    expect(data.runtime).toBe('mastra');
+    expect(data.harnessProfile).toBeNull();
     await app.close();
   });
   it.each([false, true])(

@@ -63,6 +63,42 @@ describe('HumanStepCard input fields', () => {
   });
 });
 
+describe('HumanStepCard for a paused agent', () => {
+  const asked = (): HumanStepSummary => ({
+    ...inputStep([
+      {
+        key: 'q1',
+        label: 'Which library?',
+        options: ['Alpha', 'Beta'],
+        required: true,
+        type: 'select',
+      },
+      { key: 'q2', label: 'Which targets? (comma-separated)', required: true, type: 'text' },
+      { key: 'note', label: 'Anything else the agent should know', type: 'text' },
+    ]),
+    context: 'Files changed: a.ts',
+    description: 'The agent stopped to ask before it goes on:\n1. [Library] Which library?',
+    nodeId: 'impl:ask:1',
+    title: 'implementer needs input',
+  });
+
+  it('shows the work so far and the questions, with a select and text fields to answer them', () => {
+    render(<HumanStepCard step={asked()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    expect(screen.getByText('Files changed: a.ts')).toBeTruthy();
+    expect(screen.getByText(/The agent stopped to ask/)).toBeTruthy();
+    expect(screen.getByLabelText(/Which library\?/)).toBeTruthy();
+    expect(screen.getByLabelText(/Which targets\?/)).toBeTruthy();
+  });
+
+  it('does not submit until the required select and text are answered', () => {
+    render(<HumanStepCard step={asked()} />);
+    submit();
+    expect(screen.getByRole('alert').textContent).toContain('Required:');
+    expect(mutate).not.toHaveBeenCalled();
+  });
+});
+
 function approvalStep(overrides: Partial<HumanStepSummary> = {}): HumanStepSummary {
   return {
     context: 'diff --git a/a.ts b/a.ts\n@@ -1,1 +1,1 @@\n-x\n+y\n',

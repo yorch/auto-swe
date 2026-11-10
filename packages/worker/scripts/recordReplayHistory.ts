@@ -499,6 +499,54 @@ const SCENARIOS: Scenario[] = [
     ),
   },
   {
+    // Ask-and-resume: the implementer pauses with a question, the dispatcher opens a human
+    // step (a `needs-input-v1` marker, then `createHumanStep`), parks on its signal, and runs
+    // the activity again with the answer. The pause comes back from the first call only.
+    activities: () => {
+      let calls = 0;
+      return {
+        executeImplementation: async () =>
+          ++calls === 1
+            ? {
+                needsInput: {
+                  questions: [
+                    {
+                      header: 'Library',
+                      multiSelect: false,
+                      options: [
+                        { description: '', label: 'Alpha' },
+                        { description: '', label: 'Beta' },
+                      ],
+                      question: 'Which library?',
+                    },
+                  ],
+                  resume: {
+                    asked: [{ header: 'Library', question: 'Which library?' }],
+                    digest: 'edited two files',
+                    snapshot: null,
+                    version: 1,
+                  },
+                },
+              }
+            : { branch: 'auto/REPLAY-1', headSha: 'sha-final' },
+      };
+    },
+    drive: async (handle) => {
+      // The wait for the answer starts the run's only timer.
+      await waitForEvent(handle, EventType.EVENT_TYPE_TIMER_STARTED);
+      await new Promise((r) => setTimeout(r, 750));
+      await handle.signal('hitl_impl:ask:1', { action: 'submit', value: { q1: 'Beta' } });
+    },
+    name: 'needs-input',
+    spec: spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        impl: { next: 'done', step: 'executeImplementation', type: 'step' },
+      },
+      'impl'
+    ),
+  },
+  {
     drive: async (handle, states) => {
       await waitForState(states, 'AWAITING_HUMAN');
       await handle.signal('hitl_look', { action: 'submit', annotations: [] });

@@ -67,6 +67,13 @@ export interface AgentBaseInput {
    */
   runtime?: ImplementerRuntimeKind | null;
   /**
+   * The approved harness profile (by name) this version runs with on the
+   * `claude-code` runtime. undefined = keep, null = none. Set on the version
+   * itself: never inherited along `inheritsModelFrom`. Platform-ADMIN only: the
+   * routes enforce it.
+   */
+  harnessProfile?: string | null;
+  /**
    * How hard the model reasons before it answers. null = no opinion: the
    * provider's default, or the parent's level for a persona that inherits its
    * model.
@@ -206,6 +213,107 @@ export async function defaultOverrideRuntime(
     return null;
   }
   return runtime;
+}
+
+/**
+ * The runtime a version effectively runs on: its own, else the first one found
+ * along the platform-wide `inheritsModelFrom` chain (as `resolveAgent` reads it).
+ */
+async function effectiveRuntime(
+  prisma: AgentReader,
+  version: { inheritsModelFrom: string | null; runtime: string | null }
+): Promise<string | null> {
+  if (version.runtime) {
+    return version.runtime;
+  }
+  const seen = new Set<string>();
+  let key = version.inheritsModelFrom;
+  while (key && !seen.has(key)) {
+    seen.add(key);
+    const row = await prisma.agent.findFirst({
+      orderBy: { version: 'desc' },
+      select: { inheritsModelFrom: true, runtime: true },
+      where: { isActive: true, key, scope: 'GLOBAL' },
+    });
+    if (!row) {
+      return null;
+    }
+    if (row.runtime) {
+      return row.runtime;
+    }
+    key = row.inheritsModelFrom;
+  }
+  return null;
+}
+
+export interface ProfileSaveError {
+  code: 'PROFILE_RUNTIME_MISMATCH' | 'PROFILE_NOT_FOUND' | 'PROFILE_DISABLED';
+  message: string;
+}
+
+/**
+ * Why a version may not be saved with this harness profile, or `null`. A profile
+ * is only applied by the `claude-code` runtime, so the version's effective runtime
+ * must be that one; and when the profile is being set or changed (`changed`) it
+ * must exist and be OK. A profile a version already carries is not re-litigated
+ * for its status when someone edits another field: a disabled profile fails the
+ * run closed, which is the signal, and must not lock the rest of the agent.
+ */
+export async function profileSaveError(
+  prisma: AgentReader & Pick<PrismaClient, 'harnessProfile'>,
+  version: {
+    harnessProfile: string | null;
+    inheritsModelFrom: string | null;
+    runtime: string | null;
+  },
+  changed: boolean
+): Promise<ProfileSaveError | null> {
+  const name = version.harnessProfile;
+  if (!name) {
+    return null;
+  }
+  const runtime = await effectiveRuntime(prisma, version);
+  if (runtime !== 'claude-code') {
+    return {
+      code: 'PROFILE_RUNTIME_MISMATCH',
+      message: `A harness profile applies only on the claude-code runtime, but this agent's runtime is '${runtime ?? 'the default'}'. Set the runtime to claude-code, or clear the profile.`,
+    };
+  }
+  if (!changed) {
+    return null;
+  }
+  const profile = await prisma.harnessProfile.findUnique({
+    select: { status: true },
+    where: { name },
+  });
+  if (!profile) {
+    return { code: 'PROFILE_NOT_FOUND', message: `No harness profile named '${name}'.` };
+  }
+  if (profile.status !== 'OK') {
+    return { code: 'PROFILE_DISABLED', message: `Harness profile '${name}' is disabled.` };
+  }
+  return null;
+}
+
+/**
+ * The profile a new scoped override starts with when its writer names none: the
+ * platform-wide row's, like the runtime — only while the override still resolves
+ * to the harness, since a profile is meaningless elsewhere.
+ */
+export async function defaultOverrideProfile(
+  prisma: AgentReader,
+  key: Pick<AgentScopeKey, 'key' | 'scope'>,
+  runtime: string | null
+): Promise<string | null> {
+  if (key.scope === 'GLOBAL' || runtime !== 'claude-code') {
+    return null;
+  }
+  const global = await prisma.agent.findFirst({
+    orderBy: { version: 'desc' },
+    select: { harnessProfile: true },
+    where: { isActive: true, key: key.key, scope: 'GLOBAL' },
+  });
+  return global?.harnessProfile ?? null;
 }
 
 /**
@@ -583,6 +691,7 @@ export async function createAgent(
           createdById: actorId,
           credentialId: base.credentialId ?? null,
           description: base.description ?? null,
+          harnessProfile: base.harnessProfile ?? null,
           inheritsModelFrom: base.inheritsModelFrom ?? null,
           isActive: true,
           isBuiltIn: false,
@@ -709,6 +818,7 @@ export async function updateAgent(
           createdById: actorId,
           credentialId: pick(base.credentialId, current.credentialId),
           description: pick(base.description, current.description),
+          harnessProfile: pick(base.harnessProfile, current.harnessProfile),
           inheritsModelFrom: pick(base.inheritsModelFrom, current.inheritsModelFrom),
           // Active, because the guard above admits only a lineage that is already active or a
           // deliberate reactivation: no version decides its lineage's activation.
@@ -1151,7 +1261,9 @@ export async function bulkUpdateAgentModels(
       try {
         const base: AgentBaseInput = {
           modelSpec: target,
-          ...(change.runtimeChange ? { runtime: 'mastra' as const } : {}),
+          // A profile only means something on the harness: leaving it behind would make the
+          // version unsavable (PROFILE_RUNTIME_MISMATCH) and fail its runs closed.
+          ...(change.runtimeChange ? { harnessProfile: null, runtime: 'mastra' as const } : {}),
           ...(change.credentialCleared ? { credentialId: null } : {}),
         };
         const saved = await updateAgent(prisma, head, base, actorId);

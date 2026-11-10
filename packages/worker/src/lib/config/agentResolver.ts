@@ -46,6 +46,13 @@ export interface ResolvedAgent {
    * `resolveAgentRuntime`).
    */
   runtime: ImplementerRuntimeKind | null;
+  /**
+   * The NAME of the harness profile this version is bound to (`Agent.harnessProfile`),
+   * or null. Read from the resolved version ITSELF: unlike the runtime it is not
+   * inherited along `inheritsModelFrom`, so a persona never silently picks up its
+   * parent's instructions and plugins. See `resolveHarnessProfile`.
+   */
+  harnessProfile: string | null;
 }
 
 export type AgentRow = NonNullable<Awaited<ReturnType<typeof fetchActiveAgent>>>;
@@ -395,6 +402,23 @@ export async function resolveAgentRuntimeChoice(
 }
 
 /**
+ * The harness profile name the resolved version of `key` is bound to, or null —
+ * the profile part of {@link resolveAgent}, through the same cascade and version
+ * pin, without binding a model or decrypting a credential. For the run-start
+ * snapshot. Throws `ConfigMissingError` when no active row exists.
+ */
+export async function resolveAgentProfileName(
+  key: string,
+  ctx?: ResolveCtx
+): Promise<string | null> {
+  const agent = await fetchActiveAgent(key, ctx);
+  if (!agent) {
+    throw new ConfigMissingError(`No active Agent found for key '${key}' at any scope.`);
+  }
+  return agent.harnessProfile ?? null;
+}
+
+/**
  * A row's runtime. The column is CHECK-constrained, so anything else is a row
  * written around the API; it reads as no opinion, loudly, rather than failing
  * every run that resolves the agent.
@@ -523,6 +547,7 @@ async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<Reso
   const { model, runtime } = await resolveModelForAgent(agent, ctx);
 
   return {
+    harnessProfile: agent.harnessProfile ?? null,
     id: agent.id,
     isVerified: agent.isVerified,
     key,

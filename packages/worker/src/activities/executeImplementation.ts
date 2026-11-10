@@ -16,6 +16,7 @@ import type {
   TestRunResult,
 } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
+import { z } from 'zod';
 import { resolveImplementerConfig } from '../agents/implementer.js';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import {
@@ -38,11 +39,24 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { splitSuccessCriteria } from '../lib/contextAmbiguity.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { formatCriteriaContext } from '../lib/criteriaContext.js';
+import { recordGitPush, recordTrackerSync } from '../lib/effectLedger.js';
 import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { parseOpenQuestionNotes } from '../lib/openQuestionNotes.js';
+import {
+  cloneCredentialSecrets,
+  MAX_PAUSED_TEST_OUTPUT_CHARS,
+  type NeedsInputResult,
+  type PauseOptions,
+  pauseForInput,
+  readResumeInput,
+  readSurfaceState,
+  restoreForResume,
+  resumeCheckoutSha,
+  resumeMessage,
+} from '../lib/pauseResume.js';
 import {
   type CrossRepoStepOptions,
   checkoutUpstreamRepos,
@@ -124,6 +138,21 @@ function formatDesignContext(rawDesign: unknown): string {
   return `\n\n## Referenced Figma Design\nMatch the implementation to this design — see the *design-fidelity* skill.\n${lines.join('\n')}`;
 }
 
+/** What a paused TDD iteration saves beyond the common fields: where the loop was. */
+const TddResumeStateSchema = z.object({
+  iteration: z.number().int().min(0).max(1000),
+  previousTestResult: z
+    .strictObject({
+      duration_ms: z.number(),
+      failing: z.number(),
+      passed: z.boolean(),
+      passing: z.number(),
+      stdout: z.string().max(MAX_PAUSED_TEST_OUTPUT_CHARS),
+      total: z.number(),
+    })
+    .optional(),
+});
+
 /**
  * Run the implementer agent for a work request.
  *
@@ -137,6 +166,28 @@ function formatDesignContext(rawDesign: unknown): string {
  */
 // Note: toolsOverride parameter was removed — tool selection is superseded by
 // DB-driven AgentSkillAssignment rows (WORKFLOW_TEMPLATE → TEAM → GLOBAL cascade).
+export async function executeImplementation(
+  request: RepoWorkRequest,
+  subtask?: Subtask,
+  systemPromptOverride?: string,
+  crossRepoOptions?: CrossRepoStepOptions,
+  allowedPaths?: string[],
+  guardOptions?: PathGuardOptions,
+  ticketFromStep?: string,
+  successCriteria?: readonly string[],
+  pause?: undefined
+): Promise<CodeResult>;
+export async function executeImplementation(
+  request: RepoWorkRequest,
+  subtask?: Subtask,
+  systemPromptOverride?: string,
+  crossRepoOptions?: CrossRepoStepOptions,
+  allowedPaths?: string[],
+  guardOptions?: PathGuardOptions,
+  ticketFromStep?: string,
+  successCriteria?: readonly string[],
+  pause?: PauseOptions
+): Promise<CodeResult | NeedsInputResult>;
 export async function executeImplementation(
   request: RepoWorkRequest,
   subtask?: Subtask,
@@ -156,8 +207,10 @@ export async function executeImplementation(
    * The success criteria `validateContext` extracted, ambiguity entries included. The prompt gets
    * the concrete ones as what to satisfy and the rest as open questions; unset adds nothing.
    */
-  successCriteria?: readonly string[]
-): Promise<CodeResult> {
+  successCriteria?: readonly string[],
+  /** The ask-and-resume loop's fields: whether the agent may stop to ask, and the state to continue from. */
+  pause?: PauseOptions
+): Promise<CodeResult | NeedsInputResult> {
   // First, before a clone or a container exists: an unpriced model under a USD
   // cap is refused here, not after the workspace has been built.
   await assertRolePricedForUsdCap('implementer');
@@ -193,12 +246,24 @@ export async function executeImplementation(
     repoId: repo.id,
     teamId: repo.teamId,
   });
+
+  // The run after a pause: a state that is not this step's is refused before a clone.
+  const resume = pause?.resumeInput ? readResumeInput(pause.resumeInput) : undefined;
+  const resumed = resume
+    ? readSurfaceState(
+        resume.resume,
+        { agentKey: 'implementer', branch, kind: 'executeImplementation' },
+        TddResumeStateSchema
+      )
+    : undefined;
+
   const workspace = await createWorkspace(
     authedCloneUrl,
     branch,
     baseBranch,
     executorImageFor(repo),
-    undefined,
+    // A resumed run is cut from the commit its saved tree was taken against, not the branch tip.
+    resumeCheckoutSha(resume),
     undefined,
     {
       detectedStack: repo.detectedStack,
@@ -238,7 +303,9 @@ export async function executeImplementation(
     // `branch` from defaultBranch HEAD — so a retry would rebuild the change
     // from scratch and then have its push rejected as non-fast-forward. Sync to
     // whatever a previous attempt pushed, exactly as the fix sessions do.
-    if (currentAttempt() > 1) {
+    // A resumed run is already at the commit its saved tree is a patch against; moving it
+    // would stop the patch applying.
+    if (currentAttempt() > 1 && !resumeCheckoutSha(resume)) {
       try {
         await workspace.gitAuthed(fetchBranchesSubcommand([branch]));
         await workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
@@ -254,6 +321,12 @@ export async function executeImplementation(
     // tip, read before the agent) is what the whole change is reported against.
     pathGuard = await startPathGuard(workspace, baseBranch, allowedPaths, baseSha, guardOptions);
 
+    // The paused run's tree goes back after the guard starts, so the restored changes are
+    // this session's own and are guarded like the rest, and before any turn.
+    if (resume) {
+      await restoreForResume({ resume, surface: 'executeImplementation', tracer, workspace });
+    }
+
     // Detect test framework
     const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
     const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
@@ -265,6 +338,7 @@ export async function executeImplementation(
     // to the workspace so the tracer captures every call. The runtime decides how
     // skills reach the prompt, so the suffix comes back from it.
     turns = await buildImplementerTurnRunner({
+      ...(pause?.allowPause ? { allowPause: true } : {}),
       ctx: activityCtx,
       repoId: requireRepoId(request, 'executeImplementation'),
       tracer,
@@ -347,16 +421,19 @@ export async function executeImplementation(
     requestHasTrackerTicket(request.workRequestId, request.externalTicketId)
       .then(async (isTicket) =>
         isTicket
-          ? syncTrackerOnEvent(
+          ? recordTrackerSync(
               { issueId: request.externalTicketId, type: 'workflow_started' },
-              await resolveIssueTrackerConfig(),
-              { runInputId: request.workRequestId, warn: logWarn }
+              await syncTrackerOnEvent(
+                { issueId: request.externalTicketId, type: 'workflow_started' },
+                await resolveIssueTrackerConfig(),
+                { runInputId: request.workRequestId, warn: logWarn }
+              )
             )
           : undefined
       )
       .catch(() => null);
 
-    let testResult: TestRunResult = {
+    let testResult: TestRunResult = resumed?.previousTestResult ?? {
       duration_ms: 0,
       failing: 0,
       passed: false,
@@ -405,7 +482,9 @@ export async function executeImplementation(
     // The open questions the prompt listed, in the order it numbered them.
     const openQuestions = splitSuccessCriteria(successCriteria ?? []).ambiguities;
     let openQuestionNotes: OpenQuestionNote[] = [];
-    for (let iteration = 0; iteration < maxTddIterations; iteration++) {
+    // A resumed run continues the iteration that paused: the counter is not reset, so a
+    // pause never adds iterations.
+    for (let iteration = resumed?.iteration ?? 0; iteration < maxTddIterations; iteration++) {
       heartbeat(`TDD iteration ${iteration + 1}/${maxTddIterations}`);
       // A cancelled run stops here rather than spending another iteration.
       throwIfActivityCancelled();
@@ -433,12 +512,42 @@ export async function executeImplementation(
         system: llmSystemPrompt,
         tracer,
         usageEvent: `llm.implementer.iteration_${iteration}`,
-        user: llmUserMessage,
+        user:
+          resume && iteration === resumed?.iteration
+            ? resumeMessage(resume, llmUserMessage)
+            : llmUserMessage,
       });
       // What it said about each open question; a later turn that says nothing leaves this standing.
       const noted = parseOpenQuestionNotes(turn.text, openQuestions);
       if (noted.length > 0) {
         openQuestionNotes = noted;
+      }
+
+      // The agent asked a person: no tests, commit, push or scan. The tree is saved and the
+      // iteration's state goes with it; the workspace is destroyed below as usual.
+      if (turn.needsInput) {
+        return await pauseForInput({
+          lastText: turn.text,
+          questions: turn.needsInput,
+          secrets: cloneCredentialSecrets(authedCloneUrl),
+          startSha: baseSha ?? (await workspace.exec('git rev-parse HEAD')).trim(),
+          state: {
+            agentKey: 'implementer',
+            branch,
+            iteration,
+            ...(iteration > 0
+              ? {
+                  previousTestResult: {
+                    ...testResult,
+                    stdout: testResult.stdout.slice(-MAX_PAUSED_TEST_OUTPUT_CHARS),
+                  },
+                }
+              : {}),
+          },
+          surface: 'executeImplementation',
+          tracer,
+          workspace,
+        });
       }
 
       // Run tests
@@ -521,7 +630,9 @@ export async function executeImplementation(
     const pushSha = await commitStaged(workspace, commitSummary, pathGuard);
     // Never push on behalf of a run that has already been cancelled.
     throwIfActivityCancelled();
-    await workspace.gitAuthed(`push origin ${pushRefspec(branch, pushSha)}`);
+    await recordGitPush(branch, pushSha, () =>
+      workspace.gitAuthed(`push origin ${pushRefspec(branch, pushSha)}`)
+    );
 
     // Collect results
     // `baseBranch` is an operator-editable column or a launch input — `diffForResult`

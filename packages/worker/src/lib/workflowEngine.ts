@@ -10,6 +10,12 @@
  */
 
 export { CHANNEL_TASK_STEER_SIGNAL } from '@auto-swe/shared/lib/channelTask';
+export {
+  buildAskStep,
+  isPauseResult,
+  mapAskAnswers,
+  readNeedsInputLimits,
+} from '@auto-swe/shared/lib/needsInputAsk';
 export { lookupPath } from '@auto-swe/shared/workflow/expr';
 export {
   BranchCancelledError,

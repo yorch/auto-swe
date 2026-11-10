@@ -23,6 +23,7 @@ import { githubApproverAppRoutes } from './githubApproverApp.js';
 import { githubHostCredentialRoutes } from './githubHostCredentials.js';
 import { githubInstallationRoutes } from './githubInstallations.js';
 import { githubWebhookSecretRoutes } from './githubWebhookSecrets.js';
+import { harnessProfileRoutes } from './harnessProfiles.js';
 import { humanErrorBaselineRoutes } from './humanErrorBaselines.js';
 import { humanStepRoutes } from './humanSteps.js';
 import { inboundEventRoutes } from './inboundEvents.js';
@@ -181,6 +182,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   // Deprecated alias — kept for one release.
   await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
   await app.register(skillSourceRoutes, { prefix: '/api/v1/platform' });
+  await app.register(harnessProfileRoutes, { prefix: '/api/v1/platform' });
   await app.register(agentLibraryRoutes, { prefix: '/api/v1/platform' });
   await app.register(agentVersionRoutes, { prefix: '/api/v1/platform' });
   await app.register(skillRevisionRoutes, { prefix: '/api/v1/platform' });

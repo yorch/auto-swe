@@ -43,6 +43,10 @@ vi.mock('../lib/config/agentRuntime.js', async (importOriginal) => {
         : actual.resolveAgentRuntime(...args),
   };
 });
+// The approved-profile lookup reads the Agent row; these tests bind no profile.
+vi.mock('../lib/config/harnessProfile.js', () => ({
+  resolveProfileForRuntime: vi.fn(async () => undefined),
+}));
 const persistActivityTrace = vi.fn(async () => {});
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn(() => 'eval-wf-1'),
@@ -79,7 +83,8 @@ const recordRunFinalized = vi.fn();
 vi.mock('../lib/metrics.js', () => ({
   recordRunFinalized: (...a: unknown[]) => recordRunFinalized(...(a as [])),
 }));
-vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/systemConfig')>()),
   resolveWorkflowDefaults: vi.fn(async () => ({ maxEvalIterations: 3 })),
 }));
 // The harness resolves the implementer's tool-output budget the same way it

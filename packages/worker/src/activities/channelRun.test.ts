@@ -7,6 +7,7 @@ vi.mock('@auto-swe/shared/db', () => {
     agent: { findFirst: vi.fn(), findMany: vi.fn() },
     agentTrace: { aggregate: vi.fn() },
     channelThreadSession: { deleteMany: vi.fn(), upsert: vi.fn() },
+    harnessProfile: { findMany: vi.fn() },
     skill: { findMany: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
     workflowRun: { create: vi.fn(), findUnique: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
@@ -65,6 +66,7 @@ beforeEach(() => {
   p.agent.findMany.mockResolvedValue([]);
   p.agent.findFirst.mockResolvedValue(null);
   p.skill.findMany.mockResolvedValue([]);
+  p.harnessProfile.findMany.mockResolvedValue([]);
 });
 
 describe('startChannelRun', () => {
@@ -133,6 +135,32 @@ describe('startChannelRun', () => {
     });
   });
 
+  it('pins the profile version behind each bound agent at the turn’s scope', async () => {
+    p.agent.findMany.mockResolvedValue([{ key: 'channelAssistant', version: 3 }]);
+    p.agent.findFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
+      where.scope === 'CHANNEL'
+        ? {
+            harnessProfile: 'kit',
+            inheritsModelFrom: null,
+            key: 'channelAssistant',
+            modelSpec: 'a/m',
+            runtime: 'claude-code',
+            version: 1,
+          }
+        : null
+    );
+    p.harnessProfile.findMany.mockResolvedValue([{ latestVersion: 3, name: 'kit' }]);
+
+    await startChannelRun({ channelId: 'chan-1', kind: 'mention', label: 'C1', workflowId: 'w' });
+
+    const data = p.workflowRun.create.mock.calls[0][0].data;
+    expect(data.harnessProfileVersions).toEqual({ kit: 3 });
+    expect(p.harnessProfile.findMany.mock.calls[0][0].where).toEqual({
+      name: { in: ['kit'] },
+      status: 'OK',
+    });
+  });
+
   it('pins each agent’s runtime at the turn’s scope, channel overrides included', async () => {
     p.agent.findMany.mockResolvedValue([{ key: 'channelAssistant', version: 3 }]);
     p.agent.findFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) =>
@@ -156,10 +184,11 @@ describe('startChannelRun', () => {
       args.distinct?.includes('key')
     )?.[0];
     expect(runtimeKeysQuery.where.OR).toContainEqual({ channelId: 'chan-1', scope: 'CHANNEL' });
-    // The lookup walks the same cascade the turn does: template first, then the channel.
+    // The lookup walks the same cascade the turn does: template first, then the channel —
+    // once for the runtime snapshot and once for the profile snapshot.
     expect(
       p.agent.findFirst.mock.calls.map(([a]: [{ where: { scope: string } }]) => a.where.scope)
-    ).toEqual(['WORKFLOW_TEMPLATE', 'CHANNEL']);
+    ).toEqual(['WORKFLOW_TEMPLATE', 'CHANNEL', 'WORKFLOW_TEMPLATE', 'CHANNEL']);
   });
 
   it('pins the run-pinned settings at the scope the turn reads them with', async () => {

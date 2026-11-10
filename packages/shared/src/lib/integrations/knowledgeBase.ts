@@ -1,4 +1,10 @@
-import type { CreatedPage, KnowledgePage, PageCreateFields, SearchOptions } from './types.js';
+import type {
+  CreatedPage,
+  KnowledgePage,
+  KnowledgeWriteResult,
+  PageCreateFields,
+  SearchOptions,
+} from './types.js';
 
 /// Why a connectivity check failed, by class. The message is a fixed string chosen from the class,
 /// never text copied from the remote service.
@@ -43,5 +49,10 @@ export interface KnowledgeBaseProvider {
   searchPages(query: string, spaces: string[], opts?: SearchOptions): Promise<KnowledgePage[]>;
   fetchLinkedPages(linkedPageIds: string[], opts?: SearchOptions): Promise<KnowledgePage[]>;
   createPage(fields: PageCreateFields, opts?: SearchOptions): Promise<CreatedPage | null>;
-  updatePageWithPrLink(pageId: string, prUrl: string, prTitle: string): Promise<void>;
+  /// Never throws; reports whether the write went through.
+  updatePageWithPrLink(
+    pageId: string,
+    prUrl: string,
+    prTitle: string
+  ): Promise<KnowledgeWriteResult>;
 }

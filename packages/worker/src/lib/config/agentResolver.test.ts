@@ -53,7 +53,11 @@ vi.mock('./resolver.js', () => ({
     .mockResolvedValue({ apiBase: undefined, apiKey: 'sk-cred', fellThrough: false }),
 }));
 
-import { resolveAgent, resolveAgentRuntimeChoice } from './agentResolver.js';
+import {
+  resolveAgent,
+  resolveAgentProfileName,
+  resolveAgentRuntimeChoice,
+} from './agentResolver.js';
 import {
   ConfigMissingError,
   resolvePinnedCredential,
@@ -609,6 +613,38 @@ describe('resolveAgent — scope cascade', () => {
     const r = await resolveAgent('reviewer', { orgId: 'o1', teamId: 't1' });
     expect(r.model.scope).toBe('GLOBAL');
     expect(r.version).toBe(1);
+  });
+});
+
+describe('resolveAgent — harness profile', () => {
+  it('reads the version’s own profile name, and null as none', async () => {
+    agentFindFirst.mockResolvedValueOnce(
+      agentRow({ harnessProfile: 'kit', runtime: 'claude-code' })
+    );
+    expect((await resolveAgent('reviewer')).harnessProfile).toBe('kit');
+    agentFindFirst.mockResolvedValueOnce(agentRow({ key: 'planner' }));
+    expect((await resolveAgent('planner')).harnessProfile).toBeNull();
+  });
+
+  it('does not inherit the profile along inheritsModelFrom, though the runtime is', async () => {
+    agentFindFirst.mockImplementation(async ({ where }: { where: { key: string } }) =>
+      where.key === 'ciFixer'
+        ? agentRow({ inheritsModelFrom: 'implementer', key: 'ciFixer', modelSpec: null })
+        : agentRow({ harnessProfile: 'kit', key: 'implementer', runtime: 'claude-code' })
+    );
+    const r = await resolveAgent('ciFixer');
+    expect(r.runtime).toBe('claude-code');
+    expect(r.harnessProfile).toBeNull();
+  });
+
+  it('resolveAgentProfileName reads the pinned version’s binding without binding a model', async () => {
+    agentFindFirst.mockResolvedValueOnce(agentRow({ harnessProfile: 'kit', key: 'implementer' }));
+    expect(
+      await resolveAgentProfileName('implementer', { agentVersions: { implementer: 3 } })
+    ).toBe('kit');
+    expect(agentFindFirst.mock.calls.at(-1)?.[0].where).toMatchObject({ version: 3 });
+    agentFindFirst.mockResolvedValue(null);
+    await expect(resolveAgentProfileName('nope')).rejects.toThrow(/No active Agent/);
   });
 });
 

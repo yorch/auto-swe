@@ -19,6 +19,11 @@
  */
 
 export type NeverReason =
+  /**
+   * Approves content that becomes agent instructions or runs commands in a run container (a
+   * harness profile). Who may bring that in is an administrator's decision, not a tool call's.
+   */
+  | 'trustDecision'
   /** A person answers it: a workflow's human step, or the user's own confirmation of an action. */
   | 'humanDecision'
   /** Reads, creates or rotates a credential, token or signing secret. */
@@ -146,6 +151,8 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/platform/github-host-credentials': { never: 'secret' },
   'GET /api/v1/platform/github-installations': 'read',
   'GET /api/v1/platform/github-webhook-secrets': { never: 'secret' },
+  'GET /api/v1/platform/harness-profiles': 'read',
+  'GET /api/v1/platform/harness-profiles/:name': 'read',
   'GET /api/v1/platform/mcp-connections': 'read',
   'GET /api/v1/platform/model-catalog': 'read',
   'GET /api/v1/platform/model-catalog/role-pricing': 'read',
@@ -243,6 +250,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/workflow-runs/:id/artifacts/:artifactId': 'read',
   'GET /api/v1/workflow-runs/:id/autonomy-decisions': 'read',
   'GET /api/v1/workflow-runs/:id/callback-deliveries': 'read',
+  'GET /api/v1/workflow-runs/:id/effects': 'read',
   'GET /api/v1/workflow-runs/:id/eval-results': 'read',
   'GET /api/v1/workflow-runs/:id/evidence': 'read',
   'GET /api/v1/workflow-runs/:id/evidence/:evidenceId/content': { never: 'secret' },
@@ -273,6 +281,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PATCH /api/v1/platform/github-host-credentials/:id': { never: 'secret' },
   'PATCH /api/v1/platform/github-installations/:id': 'confirm',
   'PATCH /api/v1/platform/github-webhook-secrets/:id': { never: 'secret' },
+  'PATCH /api/v1/platform/harness-profiles/:name': { never: 'trustDecision' },
   'PATCH /api/v1/platform/mcp-connections/:id': { never: 'secret' },
   'PATCH /api/v1/platform/organizations/:orgId': 'confirm',
   'PATCH /api/v1/platform/organizations/:orgId/budget': 'confirm',
@@ -359,6 +368,10 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/platform/github-host-credentials/:id/test': { never: 'secret' },
   'POST /api/v1/platform/github-installations': 'confirm',
   'POST /api/v1/platform/github-webhook-secrets': { never: 'secret' },
+  'POST /api/v1/platform/harness-profiles': { never: 'trustDecision' },
+  'POST /api/v1/platform/harness-profiles/:name/accept': { never: 'trustDecision' },
+  'POST /api/v1/platform/harness-profiles/:name/preview-update': { never: 'trustDecision' },
+  'POST /api/v1/platform/harness-profiles/preview': { never: 'trustDecision' },
   'POST /api/v1/platform/mcp-connections': { never: 'secret' },
   'POST /api/v1/platform/mcp-connections/:id/test': 'confirm',
   'POST /api/v1/platform/model-catalog': 'confirm',
