@@ -16,7 +16,11 @@ import {
   resolveKnowledgeBaseConfig,
 } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { loadRunTrackerScope, type TrackerRepoScope } from '@auto-swe/shared/lib/trackerSync';
+import {
+  isGitHubTicketInScope,
+  loadRunTrackerScope,
+  type TrackerRepoScope,
+} from '@auto-swe/shared/lib/trackerSync';
 import {
   type CreatedTrackerItem,
   createTrackerEpic,
@@ -31,6 +35,7 @@ import { logWarn } from '../lib/activityLog.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
+import { recordEffect } from '../lib/effectLedger.js';
 import { withHeartbeat } from '../lib/execUtils.js';
 import { recordWorkerLaunchAudit } from '../lib/launchAudit.js';
 import { currentRunLauncherId } from '../lib/runLauncher.js';
@@ -420,6 +425,49 @@ async function decomposePrdImpl(
 }
 
 /**
+ * Whether a tracker create would send a request: the provider is built only with its credentials,
+ * and GitHub needs an `owner/repo` key. Without them `createTracker*` returns null having sent
+ * nothing, which is not a failed write. A base URL the SSRF check refuses is not detected here.
+ */
+function trackerCreateAttempted(
+  config: Awaited<ReturnType<typeof resolveIssueTrackerConfig>>,
+  projectKey: string | null
+): boolean {
+  if (!config.apiToken) {
+    return false;
+  }
+  if (config.provider === 'jira') {
+    return !!config.baseUrl && !!config.email;
+  }
+  if (config.provider === 'github') {
+    const [owner, repo] = (projectKey ?? config.defaultProjectKey ?? 'BACKLOG').split('/');
+    return !!owner && !!repo;
+  }
+  return true;
+}
+
+/** Records one tracker create; a null item is the failure `createTracker*` swallowed. */
+function recordCreatedItem(
+  type: 'epic' | 'story',
+  title: string,
+  item: CreatedTrackerItem | null,
+  attempted: boolean
+): Promise<void> {
+  if (!attempted) {
+    return Promise.resolve();
+  }
+  return recordEffect({
+    action: `create:${type}`,
+    detail: { title },
+    error: item ? undefined : 'the tracker did not return a created item',
+    kind: 'TRACKER',
+    status: item ? 'DONE' : 'FAILED',
+    target: item?.url ?? item?.id ?? title,
+    via: 'activity',
+  });
+}
+
+/**
  * Best-effort creation of tracker items (epics + stories) for the given
  * decomposition. Uses `onFail: warn` at the workflow level so any failure here
  * is recorded but does not block the `submitPrdWorkRequests` step.
@@ -455,6 +503,12 @@ export async function createTrackerItems(
     scope,
     warn: (message: string) => logWarn(message, { runInputId: request.workRequestId }),
   };
+  // A project key the scope refuses is never sent to the tracker, so it is not an effect.
+  const createAttempted =
+    trackerCreateAttempted(trackerConfig, projectKey) &&
+    (trackerConfig.provider !== 'github' ||
+      !projectKey ||
+      (scope !== null && isGitHubTicketInScope(`${projectKey}#1`, trackerConfig.baseUrl, scope)));
   const createdItems: CreatedTrackerItem[] = [];
   let failedCount = 0;
 
@@ -466,6 +520,7 @@ export async function createTrackerItems(
       projectKey,
       writeOpts
     );
+    await recordCreatedItem('epic', epic.title, epicItem, createAttempted);
     if (epicItem) {
       createdItems.push(epicItem);
     } else {
@@ -487,6 +542,7 @@ export async function createTrackerItems(
         epicItem?.id ?? null,
         writeOpts
       );
+      await recordCreatedItem('story', story.title, storyItem, createAttempted);
       if (storyItem) {
         createdItems.push(storyItem);
       } else {
@@ -494,27 +550,47 @@ export async function createTrackerItems(
       }
     }
 
-    // Best-effort Confluence write-back — never blocks tracker item creation.
+    // Best-effort Confluence write-back — never blocks tracker item creation. The config
+    // lookup is not an effect; `createPage` is, and a null result is the failure it swallowed.
+    let kbProvider: ReturnType<typeof createKnowledgeBaseProvider> = null;
+    let kbConfig: Awaited<ReturnType<typeof resolveKnowledgeBaseConfig>> | null = null;
+    let spaceKey = 'PRD';
     try {
-      const kbConfig = await resolveKnowledgeBaseConfig();
-      const kbProvider = createKnowledgeBaseProvider(kbConfig);
-      if (kbProvider) {
-        const spaceKey = kbConfig.spaces[0] ?? 'PRD';
-        const bodyText = [
-          epic.description,
-          ...epic.stories.map((s) => `## ${s.title}\n${s.description}`),
-        ].join('\n\n');
-        const page = await kbProvider.createPage({
-          bodyText,
-          spaceKey,
-          title: `PRD: ${epic.title}`,
-        });
-        if (page) {
-          heartbeat(`KB page created: ${page.url}`);
-        }
-      }
+      kbConfig = await resolveKnowledgeBaseConfig();
+      kbProvider = createKnowledgeBaseProvider(kbConfig);
+      spaceKey = kbConfig.spaces[0] ?? 'PRD';
     } catch {
-      // KB write is best-effort — never fails the tracker items activity
+      // KB config is best-effort
+    }
+    if (kbProvider) {
+      const bodyText = [
+        epic.description,
+        ...epic.stories.map((s) => `## ${s.title}\n${s.description}`),
+      ].join('\n\n');
+      let page: Awaited<ReturnType<typeof kbProvider.createPage>> = null;
+      let failure: unknown = 'the knowledge base did not return a created page';
+      try {
+        page = await kbProvider.createPage({ bodyText, spaceKey, title: `PRD: ${epic.title}` });
+      } catch (err) {
+        failure = err;
+      }
+      if (page) {
+        heartbeat(`KB page created: ${page.url}`);
+      }
+      // Notion creates a page only under a configured space; without one it sends nothing,
+      // which is not a failed write.
+      const notAttempted = !page && kbConfig?.provider === 'notion' && !kbConfig.spaces[0];
+      if (!notAttempted) {
+        await recordEffect({
+          action: 'createPage',
+          detail: { spaceKey },
+          error: page ? undefined : failure,
+          kind: 'KNOWLEDGE_BASE',
+          status: page ? 'DONE' : 'FAILED',
+          target: page ? (page.url ?? page.id) : epic.title,
+          via: 'activity',
+        });
+      }
     }
   }
 

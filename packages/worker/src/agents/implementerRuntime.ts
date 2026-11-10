@@ -1,3 +1,4 @@
+import type { NeedsInputQuestion } from '@auto-swe/shared/lib/needsInput';
 import type { Agent } from '@mastra/core/agent';
 import { ApplicationFailure } from '@temporalio/activity';
 import { currentWorkflowId } from '../lib/activityContext.js';
@@ -34,6 +35,11 @@ export interface ImplementerTurnOutcome {
    * budget, or a caller's deadline stopped it. Neither is a failure.
    */
   stoppedReason?: 'max_steps' | 'wall_clock';
+  /**
+   * Set when the agent asked a person and the turn ended at the question (a
+   * runtime built with `allowPause`). Its usage is still reported as usual.
+   */
+  needsInput?: NeedsInputQuestion[];
 }
 
 type SpentByModel = NonNullable<ImplementerTurnOutcome['usageByModel']>;
@@ -454,6 +460,7 @@ export async function runImplementerTurn(turn: ImplementerTurn): Promise<{
   text?: string;
   steps?: number;
   stoppedReason?: ImplementerTurnOutcome['stoppedReason'];
+  needsInput?: NeedsInputQuestion[];
 }> {
   const start = Date.now();
   // Every turn is metered per call where the runtime can see its calls.
@@ -514,8 +521,17 @@ export async function runImplementerTurn(turn: ImplementerTurn): Promise<{
     role: turn.role,
   });
 
+  // Headers only: the questions themselves travel in the result, not the trace.
+  if (outcome.needsInput) {
+    turn.tracer.addActivityEvent({
+      name: 'agent.needs_input',
+      outputJson: { headers: outcome.needsInput.map((q) => q.header) },
+    });
+  }
+
   return {
     attribution,
+    ...(outcome.needsInput ? { needsInput: outcome.needsInput } : {}),
     steps: outcome.steps,
     stoppedReason: outcome.stoppedReason,
     text: outcome.text,

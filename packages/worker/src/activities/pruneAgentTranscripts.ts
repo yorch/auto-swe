@@ -322,6 +322,18 @@ export async function pruneAgentTranscripts(
     'orphan UI evidence artifact'
   );
 
+  // A paused run's saved working tree is read once, by the resume; an unanswered pause or a
+  // run that ended while waiting leaves it behind. It can hold anything the agent wrote, so it
+  // goes with the transcript retention window rather than waiting for the run row.
+  const snapshots = await prisma.workflowArtifact.findMany({
+    select: { id: true },
+    take: PRUNE_BATCH,
+    where: { createdAt: { lt: cutoff }, kind: 'needs_input.snapshot', status: 'ready' },
+  });
+  for (const snapshot of snapshots) {
+    await deleteArtifact(snapshot.id);
+  }
+
   if (more) {
     logWarn('agent transcript sweep stopped at its batch limit; the next sweep continues', {
       accessLogDeleted,

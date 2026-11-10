@@ -33,6 +33,22 @@ describe('AgentFormFields', () => {
     expect(screen.getByRole('combobox', { name: 'Model spec' })).toBeTruthy();
   });
 
+  it('shows a bound harness profile read-only beside the runtime', () => {
+    render(
+      <AgentFormFields
+        mcpConnections={[]}
+        mode="edit"
+        onChange={vi.fn()}
+        showRuntime
+        skills={[]}
+        value={{ ...VALUE, harnessProfile: 'review-kit', runtime: 'claude-code' }}
+      />
+    );
+
+    expect(screen.getByText('review-kit')).toBeTruthy();
+    expect(screen.queryByRole('textbox', { name: /profile/i })).toBeNull();
+  });
+
   it('edit mode has no key field and plain labels', () => {
     render(
       <AgentFormFields

@@ -12,6 +12,7 @@ import { ApplicationFailure, activityInfo } from '@temporalio/activity';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { recordEffect, recordTrackerSync } from '../lib/effectLedger.js';
 import { buildPrUiEvidence } from '../lib/prUiEvidence.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { requestedBaseBranch, resolveRunBaseBranch } from '../lib/runBaseBranch.js';
@@ -162,6 +163,8 @@ async function doCreateOrUpdatePullRequest(
       where: { id: existingPR.id },
     });
 
+    // No PR-host write happens here (the new head arrived with the push, which the ledger
+    // records as GIT_PUSH), so there is no PULL_REQUEST effect to record.
     const prUrl = await scm.prUrl(repoRef, existingPR.prNumber);
     tracer.addActivityEvent({
       name: 'pr.updated',
@@ -218,6 +221,15 @@ async function doCreateOrUpdatePullRequest(
       title,
     });
   } catch (err) {
+    await recordEffect({
+      action: 'create',
+      detail: { branch: codeResult.branch, headSha: codeResult.headSha },
+      error: err,
+      kind: 'PULL_REQUEST',
+      status: 'FAILED',
+      target: codeResult.branch,
+      via: 'activity',
+    });
     // "Draft" is a promise to the reviewer, so a repository that cannot hold
     // drafts fails the step rather than getting a ready-for-review PR. Retrying
     // cannot change the answer.
@@ -233,6 +245,37 @@ async function doCreateOrUpdatePullRequest(
     throw err;
   }
   const { prNumber, prUrl } = created;
+  // On a retry the host may hand back the PR an earlier attempt opened (and recorded): one PR is
+  // one row, so a URL already recorded as created for this workflow is not recorded again.
+  const alreadyRecorded =
+    activityInfo().attempt > 1 &&
+    (await prisma.runEffect
+      .findFirst({
+        select: { id: true },
+        where: {
+          action: 'create',
+          kind: 'PULL_REQUEST',
+          status: 'DONE',
+          target: prUrl,
+          workflowId: activityInfo().workflowExecution?.workflowId,
+        },
+      })
+      .catch(() => null));
+  if (!alreadyRecorded) {
+    await recordEffect({
+      action: 'create',
+      detail: {
+        branch: codeResult.branch,
+        draft: options.draft === true,
+        headSha: codeResult.headSha,
+        number: prNumber,
+      },
+      kind: 'PULL_REQUEST',
+      status: 'DONE',
+      target: prUrl,
+      via: 'activity',
+    });
+  }
 
   await prisma.pullRequest.create({
     data: {
@@ -265,36 +308,55 @@ async function doCreateOrUpdatePullRequest(
   // Best-effort tracker sync on PR opened.
   if (request.externalTicketId && synthetic !== true) {
     const trackerConfig = await resolveIssueTrackerConfig();
-    await syncTrackerOnEvent(
-      {
-        issueId: request.externalTicketId,
-        prTitle: `PR #${prNumber}`,
-        prUrl,
-        type: 'pr_opened',
-      },
-      trackerConfig,
-      { runInputId: request.workRequestId, warn: logWarn }
-    ).catch(() => null);
+    const trackerEvent = {
+      issueId: request.externalTicketId,
+      prTitle: `PR #${prNumber}`,
+      prUrl,
+      type: 'pr_opened',
+    } as const;
+    const synced = await syncTrackerOnEvent(trackerEvent, trackerConfig, {
+      runInputId: request.workRequestId,
+      warn: logWarn,
+    }).catch(() => undefined);
+    await recordTrackerSync(trackerEvent, synced);
   }
 
   // Best-effort Confluence PR link write-back — search for a page matching the
   // ticket ID and append the PR link. Never blocks the PR creation path.
   if (request.externalTicketId && synthetic === false) {
+    // The lookup (config, provider, search) is a read: a failure there is swallowed and is not
+    // an effect. Only the page update below is a write.
+    let kbProvider: ReturnType<typeof createKnowledgeBaseProvider> = null;
+    let page: { id: string; title: string } | undefined;
     try {
       const kbConfig = await resolveKnowledgeBaseConfig();
-      const kbProvider = createKnowledgeBaseProvider(kbConfig);
+      kbProvider = createKnowledgeBaseProvider(kbConfig);
       if (kbProvider) {
-        const pages = await kbProvider.searchPages(request.externalTicketId, kbConfig.spaces);
-        if (pages.length > 0 && pages[0]) {
-          await kbProvider.updatePageWithPrLink(pages[0].id, prUrl, `PR #${prNumber}`);
-          tracer.addActivityEvent({
-            name: 'kb.pr_link_updated',
-            outputJson: { pageId: pages[0].id, pageTitle: pages[0].title, prUrl },
-          });
-        }
+        page = (await kbProvider.searchPages(request.externalTicketId, kbConfig.spaces))[0];
       }
     } catch {
-      // KB write is best-effort — never fails the PR activity
+      // KB lookup is best-effort — never fails the PR activity
+    }
+    if (kbProvider && page) {
+      // The provider reports a failed write instead of throwing; the catch is a backstop.
+      const written = await kbProvider
+        .updatePageWithPrLink(page.id, prUrl, `PR #${prNumber}`)
+        .catch((error: unknown) => ({ error, ok: false as const }));
+      await recordEffect({
+        action: 'updatePageWithPrLink',
+        detail: { pageId: page.id, prUrl },
+        error: written.ok ? undefined : written.error,
+        kind: 'KNOWLEDGE_BASE',
+        status: written.ok ? 'DONE' : 'FAILED',
+        target: page.id,
+        via: 'activity',
+      });
+      if (written.ok) {
+        tracer.addActivityEvent({
+          name: 'kb.pr_link_updated',
+          outputJson: { pageId: page.id, pageTitle: page.title, prUrl },
+        });
+      }
     }
   }
 

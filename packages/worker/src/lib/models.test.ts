@@ -24,6 +24,7 @@ type ResolvedAgent = Awaited<ReturnType<typeof resolveAgent>>;
 
 function resolvedAgent(modelOverrides: Record<string, unknown> = {}): ResolvedAgent {
   return {
+    harnessProfile: null,
     id: 'agent-row-1',
     isVerified: true,
     key: 'implementer',

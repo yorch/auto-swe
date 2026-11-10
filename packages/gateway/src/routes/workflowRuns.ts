@@ -8,7 +8,7 @@ import {
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { reviewRunMetadata } from '@auto-swe/shared/lib/reviewLaunch';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import type { EvalResultDto, RunEvidenceDto } from '@auto-swe/shared/types/api';
+import type { EvalResultDto, RunEffectDto, RunEvidenceDto } from '@auto-swe/shared/types/api';
 import { WORKFLOW_RUN_STATUSES } from '@auto-swe/shared/types/api';
 import { listSteps } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
@@ -246,6 +246,12 @@ const RunTracesResponseSchema = z.object({
   truncated: z.boolean(),
 });
 
+const RunEffectsResponseSchema = z.object({
+  data: z.array(z.unknown()),
+  /** True when the run has more effects than one read returns; `data` is then the newest page. */
+  truncated: z.boolean(),
+});
+
 const CancelRunResponseSchema = z.object({
   data: z.object({ id: z.string().uuid(), status: z.string() }),
 });
@@ -263,6 +269,9 @@ const TRACE_FIELD_CAP = 4_000;
  * payload in memory at once. Generous on purpose: a typical run has hundreds.
  */
 export const MAX_TRACES_PER_READ = 5_000;
+
+/** The most effects one read returns; a run that changes more outside has a ledger worth querying directly. */
+export const MAX_EFFECTS_PER_READ = 1_000;
 
 const NEWEST_TRACES_FIRST = [
   { createdAt: 'desc' as const },
@@ -956,6 +965,63 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         total,
         truncated: traces.length > MAX_TRACES_PER_READ,
       };
+    }
+  );
+
+  // ── External effects: what the run changed outside the sandbox ──
+  // Same access as the run's traces: the run must be visible to the caller, and a
+  // service token never reaches the handler (no `serviceScopes`).
+  app.get(
+    '/:id/effects',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: {
+        params: RunIdParam,
+        response: { 200: RunEffectsResponseSchema, 404: ErrorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const run = await fastify.prisma.workflowRun.findFirst({
+        select: { id: true },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+        },
+      });
+      if (!run) {
+        return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
+      }
+      const rows = await runUnscoped(
+        'scoped by a run the caller was authorized to read',
+        ['RunEffect'],
+        () =>
+          fastify.prisma.runEffect.findMany({
+            // Newest first, so a cut page keeps the most recent effects; reversed below.
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            // One row past the cap, so a full page can be told from a cut one.
+            take: MAX_EFFECTS_PER_READ + 1,
+            where: { runId: run.id },
+          })
+      );
+      const data: RunEffectDto[] = rows
+        .slice(0, MAX_EFFECTS_PER_READ)
+        .reverse()
+        .map((e) => ({
+          action: e.action,
+          agentKey: e.agentKey,
+          createdAt: e.createdAt.toISOString(),
+          detail: e.detail,
+          error: e.error,
+          id: e.id,
+          inputDigest: e.inputDigest,
+          kind: e.kind,
+          specNodeId: e.specNodeId,
+          status: e.status,
+          target: e.target,
+          via: e.via,
+        }));
+      return { data, truncated: rows.length > MAX_EFFECTS_PER_READ };
     }
   );
 

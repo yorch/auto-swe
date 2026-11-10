@@ -2,7 +2,7 @@ import type { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
-import { resolveAgentRuntimeChoice } from './config/agentResolver.js';
+import { resolveAgentProfileName, resolveAgentRuntimeChoice } from './config/agentResolver.js';
 import type { ResolveCtx } from './config/types.js';
 
 /**
@@ -79,6 +79,22 @@ export async function snapshotSkillRevisions(scope: {
 export async function snapshotAgentRuntimes(
   ctx: ResolveCtx
 ): Promise<Record<string, ImplementerRuntimeKind | null>> {
+  const keys = await visibleAgentKeys(ctx);
+  const pins: Record<string, ImplementerRuntimeKind | null> = {};
+  await Promise.all(
+    keys.map(async (key) => {
+      try {
+        pins[key] = await resolveAgentRuntimeChoice(key, ctx);
+      } catch {
+        // Unresolvable now: it pins (or fails) where the run first uses it.
+      }
+    })
+  );
+  return pins;
+}
+
+/** Every agent key with an active row visible to the run's scope. */
+async function visibleAgentKeys(ctx: ResolveCtx): Promise<string[]> {
   const visible: Prisma.AgentWhereInput[] = [{ scope: 'GLOBAL' }];
   if (ctx.workflowTemplateId) {
     visible.push({ scope: 'WORKFLOW_TEMPLATE', workflowTemplateId: ctx.workflowTemplateId });
@@ -102,15 +118,43 @@ export async function snapshotAgentRuntimes(
         where: { isActive: true, OR: visible },
       })
   );
-  const pins: Record<string, ImplementerRuntimeKind | null> = {};
+  return rows.map((r) => r.key);
+}
+
+/**
+ * `{ profileName: version }` for every harness profile an agent the run can
+ * resolve is bound to: the profile's latest version at this moment, read for
+ * each key through the scope and agent-version pins the run's activities resolve
+ * with, and written to `WorkflowRun.harnessProfileVersions`. Approving a newer
+ * version, or disabling the profile, after the run starts cannot change what the
+ * run's agents are given. Only OK profiles are pinned: a bound-but-disabled one
+ * is left out so the run fails closed where the agent first uses it, rather than
+ * freezing a profile an admin has already withdrawn. A key whose resolution fails
+ * is left out too, and pins at first use.
+ */
+export async function snapshotHarnessProfileVersions(
+  ctx: ResolveCtx
+): Promise<Record<string, number>> {
+  const keys = await visibleAgentKeys(ctx);
+  const names = new Set<string>();
   await Promise.all(
-    rows.map(async ({ key }) => {
+    keys.map(async (key) => {
       try {
-        pins[key] = await resolveAgentRuntimeChoice(key, ctx);
+        const name = await resolveAgentProfileName(key, ctx);
+        if (name) {
+          names.add(name);
+        }
       } catch {
         // Unresolvable now: it pins (or fails) where the run first uses it.
       }
     })
   );
-  return pins;
+  if (names.size === 0) {
+    return {};
+  }
+  const profiles = await prisma.harnessProfile.findMany({
+    select: { latestVersion: true, name: true },
+    where: { name: { in: [...names] }, status: 'OK' },
+  });
+  return Object.fromEntries(profiles.map((p) => [p.name, p.latestVersion]));
 }

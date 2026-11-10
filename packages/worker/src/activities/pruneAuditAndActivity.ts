@@ -1,7 +1,8 @@
 /**
  * The audit and activity retention sweep (docs/audit-log.md §3, docs/user-activity.md §5): deletes
  * `config_audit_log` rows past `audit.configLogRetentionDays` and `user_activity_events` rows past
- * `analytics.activityRetentionDays`.
+ * `analytics.activityRetentionDays`, and `run_effects` rows past `audit.runEffectRetentionDays`
+ * (0, the default, keeps them forever; across tenants, so it runs unscoped).
  *
  * The audit log is kept forever unless an operator sets a retention (0, the default, disables its
  * half). When it does delete, the sweep writes one summary row of its own (system actor) naming the
@@ -13,6 +14,7 @@
  */
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { logWarn } from '../lib/activityLog.js';
 import { PRUNE_BATCH, PRUNE_MAX_BATCHES } from './pruneAutomationDecisions.js';
 
@@ -29,6 +31,9 @@ export interface PruneAuditAndActivityResult {
   auditRetentionDays: number;
   activityDeleted: number;
   activityRetentionDays: number;
+  runEffectsDeleted: number;
+  /** 0 when run-effect retention is off. */
+  runEffectRetentionDays: number;
   /** True when a half stopped at its batch limit with older rows left. */
   more: boolean;
 }
@@ -36,7 +41,7 @@ export interface PruneAuditAndActivityResult {
 /** Delete rows older than `cutoff` from one table in id batches; returns the count and `more`. */
 async function deleteOlderThan(
   cutoff: Date,
-  table: 'configAuditLog' | 'userActivityEvent',
+  table: 'configAuditLog' | 'runEffect' | 'userActivityEvent',
   extraWhere: Record<string, unknown> = {}
 ): Promise<{ deleted: number; more: boolean }> {
   const model = prisma[table] as unknown as {
@@ -71,6 +76,7 @@ export async function pruneAuditAndActivity(
 ): Promise<PruneAuditAndActivityResult> {
   const auditRetentionDays = await resolveSetting('audit.configLogRetentionDays', {});
   const activityRetentionDays = await resolveSetting('analytics.activityRetentionDays', {});
+  const runEffectRetentionDays = await resolveSetting('audit.runEffectRetentionDays', {});
 
   let auditDeleted = 0;
   let more = false;
@@ -113,10 +119,24 @@ export async function pruneAuditAndActivity(
   );
   more = more || activity.more;
 
+  let runEffectsDeleted = 0;
+  if (runEffectRetentionDays > 0) {
+    // Retention is deployment-wide, across every tenant's rows.
+    const effects = await runUnscoped('run-effect retention sweep', ['RunEffect'], () =>
+      deleteOlderThan(new Date(now.getTime() - runEffectRetentionDays * DAY_MS), 'runEffect', {
+        // A run under legal hold keeps its effects, as it keeps its transcripts.
+        OR: [{ runId: null }, { run: { transcriptLegalHold: false } }],
+      })
+    );
+    runEffectsDeleted = effects.deleted;
+    more = more || effects.more;
+  }
+
   if (more) {
     logWarn('audit and activity sweep stopped at its batch limit; the next sweep continues', {
       activityDeleted: activity.deleted,
       auditDeleted,
+      runEffectsDeleted,
     });
   }
   return {
@@ -125,5 +145,7 @@ export async function pruneAuditAndActivity(
     auditDeleted,
     auditRetentionDays,
     more,
+    runEffectRetentionDays,
+    runEffectsDeleted,
   };
 }

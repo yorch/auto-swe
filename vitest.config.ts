@@ -60,6 +60,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/workflowId.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/runEffects',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/runEffects.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/securityTraceTags',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/securityTraceTags.ts'),
       },
@@ -266,6 +270,18 @@ export default defineConfig({
       {
         find: '@auto-swe/shared/lib/skillSourceSync',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillSourceSync.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/needsInputAsk',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/needsInputAsk.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/needsInput',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/needsInput.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/harnessProfile',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/harnessProfile/index.ts'),
       },
       {
         find: '@auto-swe/shared/lib/skillSource',

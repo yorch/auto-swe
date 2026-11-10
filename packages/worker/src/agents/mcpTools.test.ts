@@ -16,6 +16,12 @@ const listToolsetsWithErrors = vi.fn();
 const disconnect = vi.fn(async () => {});
 const constructorArgs: unknown[] = [];
 
+const recordEffect = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock('../lib/effectLedger.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/effectLedger.js')>()),
+  recordEffect,
+}));
+
 vi.mock('@mastra/mcp', () => ({
   MCPClient: class {
     constructor(args: unknown) {
@@ -195,6 +201,73 @@ describe('loadMcpTools — tool surfacing', () => {
     expect(tracer.addToolCall).toHaveBeenCalledWith(
       expect.objectContaining({ error: 'boom', toolName: 'mcp:broken' })
     );
+    vi.mocked(console.log).mockRestore();
+  });
+
+  it('records a mutating tool call as an effect, and a read-only one as nothing', async () => {
+    listToolsetsWithErrors.mockResolvedValue({
+      errors: {},
+      toolsets: {
+        mcp: {
+          read: {
+            ...makeServerTool(async () => ({})),
+            mcp: { annotations: { readOnlyHint: true } },
+          },
+          write: makeServerTool(async () => ({ ok: true })),
+        },
+      },
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const { tools } = await load('http://mcp-server.example.com:9999/mcp');
+    await exec(tools.mcp_read, { q: 1 });
+    expect(recordEffect).not.toHaveBeenCalled();
+
+    await expect(exec(tools.mcp_write, { id: 7 })).resolves.toEqual({ ok: true });
+    expect(recordEffect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'write',
+        input: { id: 7 },
+        kind: 'MCP_TOOL',
+        status: 'DONE',
+        via: 'mastra_mcp',
+      })
+    );
+    vi.mocked(console.log).mockRestore();
+  });
+
+  it('records a failing mutating call as FAILED and still rethrows the original error', async () => {
+    const failure = new Error('boom');
+    listToolsetsWithErrors.mockResolvedValue({
+      errors: {},
+      toolsets: { mcp: { write: makeServerTool(async () => Promise.reject(failure)) } },
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const { tools } = await load('http://mcp-server.example.com:9999/mcp');
+    await expect(exec(tools.mcp_write, {})).rejects.toBe(failure);
+    expect(recordEffect).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'write', error: 'boom', status: 'FAILED' })
+    );
+    vi.mocked(console.log).mockRestore();
+  });
+
+  it('scrubs the bearer token from the error the ledger stores, and still rethrows it', async () => {
+    const token = 'sk-secret-mastra-token-456';
+    const failure = new Error(`fetch failed: Bearer ${token}`);
+    listToolsetsWithErrors.mockResolvedValue({
+      errors: {},
+      toolsets: { mcp: { write: makeServerTool(async () => Promise.reject(failure)) } },
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    const { tools } = await load('http://mcp-server.example.com:9999/mcp', undefined, {
+      bearerToken: token,
+    });
+    await expect(exec(tools.mcp_write, {})).rejects.toBe(failure);
+    const recorded = (recordEffect.mock.calls as unknown[][]).at(-1)?.[0] as { error: string };
+    expect(recorded.error).toContain('[redacted]');
+    expect(recorded.error).not.toContain(token);
     vi.mocked(console.log).mockRestore();
   });
 

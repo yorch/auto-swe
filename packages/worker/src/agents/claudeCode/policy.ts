@@ -1,4 +1,9 @@
-import type { HarnessCapabilities } from '../harness/adapter.js';
+import path from 'node:path';
+import type { ProfileTool } from '@auto-swe/shared/lib/harnessProfile';
+import { canonicalizeShellForScan } from '@auto-swe/shared/lib/regexSafety';
+import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/scannerCache';
+import { extractShellWriteTargets } from '../../lib/shellCommandScanner.js';
+import { HARNESS_DIR, HARNESS_HOME, type HarnessCapabilities } from '../harness/adapter.js';
 import {
   type CanonicalToolCall,
   canonicalToolsGranting,
@@ -21,6 +26,56 @@ export type { ToolDecision } from '../harness/policy.js';
 export const HARNESS_TOOLS = ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'] as const;
 
 export type HarnessTool = (typeof HARNESS_TOOLS)[number];
+
+/**
+ * A harness tool the worker allows: one of {@link HARNESS_TOOLS}, or a built-in
+ * an approved profile grants ({@link PROFILE_TOOLS}: `Skill` and `Agent`).
+ * Nothing else is ever grantable; `WebFetch` and `WebSearch` stay refused even
+ * when a plugin's sub-agent definition lists them.
+ */
+export type ClaudeCodeTool = HarnessTool | ProfileTool | typeof ASK_TOOL;
+
+/**
+ * The harness's question tool. Offered only to a run that can pause
+ * ({@link toolsWithPause}); otherwise it is refused like any tool outside the
+ * vocabulary. The call itself is answered by the runtime's hook, which records
+ * the questions and ends the turn; the policy only lets it reach the hook.
+ */
+export const ASK_TOOL = 'AskUserQuestion';
+
+/**
+ * The built-ins a profile may grant. Spelled here rather than imported so the
+ * policy stays light; the type check below fails if the manifest allows a tool
+ * this list lacks.
+ */
+const PROFILE_TOOLS = ['Skill', 'Agent'] as const satisfies readonly ProfileTool[];
+type EveryProfileToolListed = ProfileTool extends (typeof PROFILE_TOOLS)[number] ? true : never;
+const everyProfileToolListed: EveryProfileToolListed = true;
+void everyProfileToolListed;
+
+const isProfileTool = (tool: string): tool is ProfileTool =>
+  (PROFILE_TOOLS as readonly string[]).includes(tool);
+
+/**
+ * `tools` with the built-ins a profile grants added. Only {@link PROFILE_TOOLS}
+ * are ever added, whatever `granted` holds. The result is the SDK's `tools`
+ * list and the policy's allowlist, so the two cannot disagree.
+ */
+export function toolsWithProfile(
+  tools: readonly HarnessTool[],
+  granted: readonly string[] | undefined
+): ClaudeCodeTool[] {
+  const extra = PROFILE_TOOLS.filter((tool) => granted?.includes(tool));
+  return [...tools, ...extra];
+}
+
+/** `tools` with the question tool added when the run can pause. */
+export function toolsWithPause(
+  tools: readonly ClaudeCodeTool[],
+  allowPause: boolean | undefined
+): ClaudeCodeTool[] {
+  return allowPause ? [...tools, ASK_TOOL] : [...tools];
+}
 
 /**
  * The SDK's `PreToolUse` hook is a callback in the worker that the harness
@@ -96,8 +151,18 @@ export interface PolicyContext {
    * the agent may not rewrite them: what it wrote would govern the next turn.
    */
   projectConfigLoaded: boolean;
-  /** The harness tools the Agent's `toolKeys` grant ({@link harnessToolsFor}). */
-  tools: readonly HarnessTool[];
+  /**
+   * The harness tools the Agent's `toolKeys` grant ({@link harnessToolsFor}),
+   * plus the built-ins its profile grants ({@link toolsWithProfile}).
+   */
+  tools: readonly ClaudeCodeTool[];
+  /**
+   * Where the materialized profile lives in the container. Readable (plugins
+   * must be); like the rest of the harness directory it is never writable.
+   */
+  profileDir?: string;
+  /** The skills and commands the profile's plugins declare, plugin-qualified ({@link profileSkillNames}). */
+  profileSkills?: ReadonlySet<string>;
   /**
    * The relayed MCP tools, by the name the harness calls them
    * ({@link relayedToolName}). Each runs in the worker, against the Agent's MCP
@@ -124,8 +189,50 @@ function isHarnessConfig(rel: string): boolean {
   );
 }
 
-/** One Claude Code tool call in the canonical vocabulary. */
-function toCanonical(tool: HarnessTool, input: Record<string, unknown>): CanonicalToolCall {
+/**
+ * Whether `p` (absolute, or relative to the call's directory) is the harness
+ * directory (`/workspace/.harness`: the binary, its home, the materialized
+ * profile) or anything under it.
+ */
+function underHarnessDir(p: string, cwd: string): boolean {
+  const resolved = path.posix.resolve(cwd, p.replace(/^~(?=\/|$)/, HARNESS_HOME));
+  return resolved === HARNESS_DIR || resolved.startsWith(`${HARNESS_DIR}/`);
+}
+
+/** Commands that change files or run code that can; with `>`, the ways a command writes. */
+const MUTATING_COMMAND =
+  /(?:^|[^\w./-])(?:rm|mv|cp|chmod|chown|chgrp|ln|tee|dd|truncate|install|touch|mkdir|rmdir|sed|awk|perl|python3?|node|ruby|sh|bash|patch|rsync|tar|unzip|setfacl|shred|truncate)\b|>/;
+
+/**
+ * A tripwire over the text of a shell command: does it appear to write under
+ * the harness directory? Write targets the scanner can extract are resolved
+ * against the harness's directory; and a command that names `.harness` at all
+ * while using anything that changes files is refused (a variable or an
+ * interpreter can spell a path the extraction cannot see). It raises the
+ * floor; an agent with arbitrary shell can still change files in its own
+ * container, which is why the profile is written again at the start of every turn.
+ */
+export function shellWritesHarnessDir(command: string, cwd: string): boolean {
+  const targets = [
+    ...extractShellWriteTargets(command),
+    ...extractShellWriteTargets(canonicalizeShellForScan(command)),
+  ];
+  if (targets.some((target) => underHarnessDir(target, cwd))) {
+    return true;
+  }
+  return /\.harness(?![\w-])/.test(command) && MUTATING_COMMAND.test(command);
+}
+
+/**
+ * One Claude Code tool call in the canonical vocabulary, or null for a tool
+ * with no file or shell capability of its own: `Skill` loads a skill's text
+ * and `Agent` starts a sub-agent, whose own tool calls are decided one by one
+ * ({@link decideProfileTool}).
+ */
+function toCanonical(
+  tool: ClaudeCodeTool,
+  input: Record<string, unknown>
+): CanonicalToolCall | null {
   switch (tool) {
     case 'Bash':
       return { command: input.command, tool: 'shell' };
@@ -140,7 +247,63 @@ function toCanonical(tool: HarnessTool, input: Record<string, unknown>): Canonic
       return { path: input.path, pattern: input.pattern, tool: 'search' };
     case 'Grep':
       return { path: input.path, pattern: input.glob, tool: 'search' };
+    case 'Skill':
+    case 'Agent':
+    case 'AskUserQuestion':
+      return null;
   }
+}
+
+/**
+ * A profile-granted tool.
+ *
+ * `Agent` must run in the foreground, in the default mode, as the sub-agent
+ * the profile or the harness names, on the model the session already uses: an
+ * `isolation`, a looser `mode`, a `model` override (the model proxy meters only
+ * the model it is asked for), a `name` or `team_name` (they address or detach
+ * it), and a background run (`run_in_background` defaults to true in the SDK, so
+ * it must be stated false) are refused. The sub-agent's own tool calls reach
+ * the same `PreToolUse` hook (the hook input carries an `agent_id`) and are
+ * decided by {@link decideToolCall} like any other call.
+ *
+ * `Skill` runs only a skill or command the profile's own plugins declare, in its
+ * plugin-qualified spelling ({@link profileSkillNames}). Anything else (a bundled
+ * skill, a repository's `.claude/commands/*.md`, whose `!` lines run shell
+ * commands when the command is invoked, or a repository skill) is refused: it
+ * would run text the worker never reviewed outside the Bash policy.
+ */
+function decideProfileTool(
+  tool: ProfileTool,
+  input: Record<string, unknown>,
+  ctx: PolicyContext
+): ToolDecision {
+  if (tool === 'Skill') {
+    const skill = input.skill;
+    if (typeof skill !== 'string' || !ctx.profileSkills?.has(skill)) {
+      return deny(
+        'The Skill tool may run only a skill or command declared by this agent\u2019s profile, spelled <plugin>:<name>.'
+      );
+    }
+    return { allow: true };
+  }
+  if (input.isolation !== undefined) {
+    return deny('The Agent tool may not use isolation in this workspace.');
+  }
+  if (input.mode !== undefined && input.mode !== 'default') {
+    return deny('The Agent tool may not change the permission mode in this workspace.');
+  }
+  if (input.model !== undefined) {
+    return deny('The Agent tool may not override the model in this workspace.');
+  }
+  if (input.name !== undefined || input.team_name !== undefined) {
+    return deny('The Agent tool may not name or address a sub-agent in this workspace.');
+  }
+  if (input.run_in_background !== false) {
+    return deny(
+      'The Agent tool must run in the foreground in this workspace: set run_in_background to false.'
+    );
+  }
+  return { allow: true };
 }
 
 /**
@@ -168,20 +331,50 @@ export async function decideToolCall(
   if (ctx.browserTools?.includes(toolName)) {
     return { allow: true };
   }
-  if (!(HARNESS_TOOLS as readonly string[]).includes(toolName)) {
+  if (
+    !(HARNESS_TOOLS as readonly string[]).includes(toolName) &&
+    !isProfileTool(toolName) &&
+    toolName !== ASK_TOOL
+  ) {
     return deny(`The ${toolName} tool is not available in this workspace.`);
   }
-  const tool = toolName as HarnessTool;
+  const tool = toolName as ClaudeCodeTool;
+  if (toolName === ASK_TOOL && !ctx.tools.includes(ASK_TOOL)) {
+    return deny(`The ${toolName} tool is not available in this workspace.`);
+  }
   if (!ctx.tools.includes(tool)) {
     return deny(`The ${toolName} tool is not enabled for this agent.`);
   }
+  if (tool === ASK_TOOL) {
+    return { allow: true };
+  }
+  if (isProfileTool(tool)) {
+    return decideProfileTool(tool, input, ctx);
+  }
+  const callDir = harnessCwd ?? ctx.cwd;
+  const writesHarnessDir =
+    tool === 'Bash'
+      ? typeof input.command === 'string' && shellWritesHarnessDir(input.command, callDir)
+      : (tool === 'Write' || tool === 'Edit') &&
+        typeof input.file_path === 'string' &&
+        underHarnessDir(input.file_path, callDir);
+  if (writesHarnessDir) {
+    return deny(
+      `Path rejected: ${HARNESS_DIR} holds the harness and the approved profile, which this run may not change.`,
+      SECURITY_TRACE_ERRORS.FILE_BLOCK
+    );
+  }
+  const canonical = toCanonical(tool, input);
+  if (!canonical) {
+    return { allow: true };
+  }
   return decideCanonicalCall(
     toolName,
-    toCanonical(tool, input),
+    canonical,
     {
       containerId: ctx.containerId,
       cwd: ctx.cwd,
-      extraReadRoots: [`${ctx.home}/.claude`],
+      extraReadRoots: [`${ctx.home}/.claude`, ...(ctx.profileDir ? [ctx.profileDir] : [])],
       protectedConfig: ctx.projectConfigLoaded
         ? { label: 'Claude Code', matches: isHarnessConfig }
         : undefined,

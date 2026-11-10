@@ -54,6 +54,49 @@ beforeEach(() => {
 });
 
 describe('runImplementerTurn', () => {
+  it('passes a pause through, records the turn as usual, and notes only the question headers', async () => {
+    const addActivityEvent = vi.fn();
+    const questions = [
+      {
+        header: 'Library',
+        multiSelect: false,
+        options: [
+          { description: '', label: 'A' },
+          { description: '', label: 'B' },
+        ],
+        question: 'A secret-ish question?',
+      },
+    ];
+    const runtime: ImplementerRuntime = {
+      runTurn: vi.fn(async () => ({
+        needsInput: questions,
+        text: 'asking',
+        toolCallCount: 2,
+        usage: { inputTokens: 10, outputTokens: 4 },
+      })),
+    };
+
+    const result = await runImplementerTurn({
+      ...turn(runtime),
+      tracer: { addActivityEvent, addLlmResponse } as unknown as AgentTracer,
+    });
+
+    expect(result.needsInput).toEqual(questions);
+    expect(recordLlmUsage).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addActivityEvent).toHaveBeenCalledWith({
+      name: 'agent.needs_input',
+      outputJson: { headers: ['Library'] },
+    });
+  });
+
+  it('adds no needsInput key to an ordinary outcome', async () => {
+    const runtime: ImplementerRuntime = {
+      runTurn: vi.fn(async () => ({ text: 'done', toolCallCount: 0, usage: undefined })),
+    };
+    expect('needsInput' in (await runImplementerTurn(turn(runtime)))).toBe(false);
+  });
+
   it('accrues usage, scans the output and records the call with the caller context', async () => {
     const runtime: ImplementerRuntime = {
       runTurn: vi.fn(async () => ({

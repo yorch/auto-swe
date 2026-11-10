@@ -17,7 +17,14 @@ export {
   type SkillSourceErrorCode,
   safeSourceErrorMessage,
 } from './errors.js';
-export { hostPermitted, MAX_API_REQUESTS, type SkillSourceDeps } from './github.js';
+export {
+  defaultDeps,
+  hostPermitted,
+  MAX_API_REQUESTS,
+  resolveAccess,
+  type SkillSourceDeps,
+  type SourceAccess,
+} from './github.js';
 export { MAX_DESCRIPTION_LENGTH, normaliseSkillName, parseSkillMd } from './parse.js';
 
 export const MAX_SKILLS_PER_SOURCE = 100;
@@ -129,7 +136,7 @@ export interface FetchedSource {
 }
 
 const OWNER_REPO_RE = /^[A-Za-z0-9_.-]{1,100}$/;
-const SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+export const SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 
 /** Normalise and validate a location; throws INVALID_SOURCE. Lowercases host/owner/repo. */
 export function normaliseLocation(input: SourceLocation): SourceLocation {
@@ -187,11 +194,11 @@ function normaliseRelPath(raw: string): string | null {
 }
 
 const enc = (s: string) => s.split('/').map(encodeURIComponent).join('/');
-const repoApi = (loc: SourceLocation) =>
+export const repoApi = (loc: SourceLocation) =>
   `/repos/${encodeURIComponent(loc.owner)}/${encodeURIComponent(loc.repo)}`;
 
 /** Resolve the ref to a commit sha. */
-async function resolveSha(access: SourceAccess, loc: SourceLocation): Promise<string> {
+export async function resolveSha(access: SourceAccess, loc: SourceLocation): Promise<string> {
   const body = (await apiGet(access, `${repoApi(loc)}/commits/${enc(loc.ref)}`)) as {
     sha?: unknown;
   } | null;
@@ -210,7 +217,7 @@ export async function resolveSourceSha(
   return resolveSha(await resolveAccess(loc.host, deps), loc);
 }
 
-interface TreeEntry {
+export interface TreeEntry {
   path: string;
   mode: string;
   type: string;
@@ -218,7 +225,7 @@ interface TreeEntry {
   size: number;
 }
 
-async function listTree(access: SourceAccess, loc: SourceLocation, sha: string) {
+export async function listTree(access: SourceAccess, loc: SourceLocation, sha: string) {
   const body = (await apiGet(access, `${repoApi(loc)}/git/trees/${sha}?recursive=1`)) as {
     tree?: unknown;
     truncated?: unknown;
@@ -387,13 +394,12 @@ const isUnprintable = (p: string) => /[\u0000-\u001f\u007f-\u009f]/.test(p);
 
 const isRegular = (e: TreeEntry) => e.mode !== '120000' && e.mode !== '160000';
 
-/** Fetch one blob by sha and decode it as UTF-8; null when it cannot be read as text. */
-async function fetchText(
+/** Fetch one blob by sha as raw bytes. */
+export async function fetchBlobBytes(
   access: SourceAccess,
   loc: SourceLocation,
-  sha: string,
-  maxBytes: number
-): Promise<string | null> {
+  sha: string
+): Promise<Buffer> {
   if (!SHA_RE.test(sha)) {
     throw new SkillSourceError('BAD_RESPONSE');
   }
@@ -404,7 +410,17 @@ async function fetchText(
   if (typeof blob?.content !== 'string' || blob.encoding !== 'base64') {
     throw new SkillSourceError('BAD_RESPONSE');
   }
-  const bytes = Buffer.from(blob.content, 'base64');
+  return Buffer.from(blob.content, 'base64');
+}
+
+/** Fetch one blob by sha and decode it as UTF-8; null when it cannot be read as text. */
+async function fetchText(
+  access: SourceAccess,
+  loc: SourceLocation,
+  sha: string,
+  maxBytes: number
+): Promise<string | null> {
+  const bytes = await fetchBlobBytes(access, loc, sha);
   if (bytes.length > maxBytes) {
     return null;
   }
@@ -415,7 +431,7 @@ async function fetchText(
   }
 }
 
-async function mapLimited<T>(items: T[], fn: (item: T) => Promise<void>): Promise<void> {
+export async function mapLimited<T>(items: T[], fn: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
   const worker = async () => {
     while (next < items.length) {

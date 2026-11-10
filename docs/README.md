@@ -43,6 +43,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [knowledge.md](./knowledge.md) | Governed reusable knowledge — local capture, evidence, review/publication scopes, retrieval and trust boundaries |
 | [knowledge-bases.md](./knowledge-bases.md) | Repository-backed references — attachments, pinned snapshots, read-only files, indexing, search and trust boundaries |
 | [repo-dependency-graph.md](./repo-dependency-graph.md) | Directed dependency edges between git repos — the `RepoDependency` model, the cross-team edge API and management UI, and the neighbour resolver |
+| [harness-profiles.md](./harness-profiles.md) | Admin-approved Claude Code plugin profiles — the folder contract, the guarded fetch, validation and scanning at approval, the immutable snapshot, and the admin API |
 | [bundles.md](./bundles.md) | Signed, versioned distribution of reusable agents, skills, scanner patterns, and templates across deployments |
 | [qodo.md](./qodo.md) | Reading Qodo's review of a pull request through a team's read-only Qodo MCP connection — setup, output screening, the shared findings client and the `qodo.enabled` switch |
 | [transcripts.md](./transcripts.md) | Full-fidelity agent model-call capture: recording, normalized reads, integrity hashes, retention and legal holds |
@@ -68,7 +69,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [upgrade-notes.md](./upgrade-notes.md) | What an operator does on a deployment that ran earlier code — fixed defects that exposed a credential, keyed by the condition and the fixing commit: who is affected, what was exposed and for how long, what to rotate or purge, how to verify the fix |
 | [enterprise-readiness.md](./enterprise-readiness.md) | What an enterprise security review asks for and what the code does today — SAML and SCIM, SIEM audit export, retention, row-level security, default-deny egress — each with its gap and a scoped child issue, and a SOC 2 readiness path that separates platform controls from organisational ones |
 | [user-activity.md](./user-activity.md) | First-party activity events — authenticated denials, sensitive reads and exports, and opt-in page views; what is recorded, retention, and the privacy stance |
-| [audit-log.md](./audit-log.md) | The append-only audit log — what is recorded, the `context` that says how a request arrived (credential path, truncated address, assistant or MCP client), launch and sign-in rows, and privacy |
+| [audit-log.md](./audit-log.md) | The append-only audit log — what is recorded, the `context` that says how a request arrived (credential path, truncated address, assistant or MCP client), launch and sign-in rows, privacy, and the per-run ledger of effects outside the sandbox |
 | [model-configuration.md](./model-configuration.md) | DB-backed model selection and provider credentials — the scope cascade, encryption, day-2 operations |
 | [oauth-setup.md](./oauth-setup.md) | GitHub, Google, and Okta sign-in; magic-link email |
 | [mcp-server.md](./mcp-server.md) | The MCP endpoint — Streamable HTTP transport, how a bearer token is verified on every request, protected resource metadata, the `mcp.*` switches |

@@ -19,6 +19,7 @@ function row(version: number, over: Record<string, unknown> = {}) {
     createdById: 'u1',
     credentialId: null,
     description: null,
+    harnessProfile: null,
     id: version === 1 ? V1 : V2,
     inheritsModelFrom: null,
     isActive: true,
@@ -54,6 +55,7 @@ function newMockPrisma() {
     agentSkillRef: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: { findUnique: vi.fn() },
+    harnessProfile: { findUnique: vi.fn().mockResolvedValue({ status: 'OK' }) },
     modelCatalogEntry: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
@@ -166,6 +168,40 @@ describe('POST /agent-library/:id/restore', () => {
     });
     expect(res.statusCode).toBe(201);
     expect(prisma.agent.create.mock.calls[0][0].data.runtime).toBe('claude-code');
+  });
+
+  it('restores the harness profile the chosen version was bound to', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.agent.findFirst
+      .mockResolvedValueOnce(row(1, { harnessProfile: 'review-kit', runtime: 'claude-code' }))
+      .mockResolvedValueOnce(row(2))
+      .mockResolvedValueOnce({ isActive: true, version: 2 });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { versionId: V1 },
+      url: `/api/v1/platform/agent-library/${ID}/restore`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(prisma.agent.create.mock.calls[0][0].data.harnessProfile).toBe('review-kit');
+  });
+
+  it('refuses to restore a profile that has been disabled since', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.harnessProfile.findUnique.mockResolvedValue({ status: 'DISABLED' });
+    prisma.agent.findFirst
+      .mockResolvedValueOnce(row(1, { harnessProfile: 'review-kit', runtime: 'claude-code' }))
+      .mockResolvedValueOnce(row(2))
+      .mockResolvedValueOnce({ isActive: true, version: 2 });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { versionId: V1 },
+      url: `/api/v1/platform/agent-library/${ID}/restore`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('PROFILE_DISABLED');
+    expect(prisma.agent.create).not.toHaveBeenCalled();
   });
 
   it('keeps verification when the prompt is unchanged', async () => {

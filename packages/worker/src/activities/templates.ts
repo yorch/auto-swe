@@ -25,7 +25,11 @@ import type { KnowledgeBaseOverrides } from '@auto-swe/shared/lib/knowledgeBaseR
 import { loadReviewSource, reviewRunId } from '@auto-swe/shared/lib/reviewLaunch';
 import { resolveIssueTrackerConfig, resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { isTrackerTicket, syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
+import {
+  isTrackerTicket,
+  syncTrackerOnEvent,
+  type TrackerSyncEvent,
+} from '@auto-swe/shared/lib/trackerSync';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import {
@@ -43,6 +47,7 @@ import {
   runPullRequestUrl,
 } from '../lib/callbackOutbox.js';
 import { backfillPinnedSettings } from '../lib/config/pinnedSettings.js';
+import { recordTrackerSync } from '../lib/effectLedger.js';
 import { type EndRunOutcome, endWorkflowRun } from '../lib/endRun.js';
 import { recordWorkerLaunchAudit, type WorkerLaunchSource } from '../lib/launchAudit.js';
 import { recordRunFinalized } from '../lib/metrics.js';
@@ -50,6 +55,7 @@ import { pinDetectionsOnRun } from '../lib/runDetection.js';
 import {
   snapshotAgentRuntimes,
   snapshotAgentVersions,
+  snapshotHarnessProfileVersions,
   snapshotSkillRevisions,
 } from '../lib/runPins.js';
 import { escapeSlackText } from '../lib/slackEscape.js';
@@ -629,6 +635,14 @@ export async function createWorkflowRun(
       ? undefined
       : await snapshotAgentRuntimes({ ...settingsCtx, agentVersions });
 
+  // The harness profile version behind each bound agent, frozen the same way and for the
+  // same reason (an approval or a disable mid-run must not change what the run was
+  // given). An agent run pins at first use, like its runtime.
+  const harnessProfileVersions =
+    version.template?.origin === AGENT_RUN_TEMPLATE_ORIGIN
+      ? undefined
+      : await snapshotHarnessProfileVersions({ ...settingsCtx, agentVersions });
+
   // Upsert by workflowId — re-runs of a Temporal workflow execution with the
   // same workflowId should not create duplicate rows. `update: {}` preserves the
   // original spec, agentVersions and pinnedSettings snapshots across Temporal
@@ -700,6 +714,9 @@ export async function createWorkflowRun(
       attributedRepoId: attribution.attributedRepoId,
       attributedTeamId: attribution.attributedTeamId,
       ...(agentRuntimes ? { agentRuntimes: agentRuntimes as Prisma.InputJsonObject } : {}),
+      ...(harnessProfileVersions
+        ? { harnessProfileVersions: harnessProfileVersions as Prisma.InputJsonObject }
+        : {}),
       ...sourceSnapshot,
       authorizedConnectionIds: authorizedConnectionIds as Prisma.InputJsonValue,
       // An epic child's own repository. Its work request is the epic's and
@@ -1429,17 +1446,19 @@ export async function finalizeRun(
       const trackerConfig = await resolveIssueTrackerConfig();
       const event: TrackerWriteback['event'] =
         finalStatus === 'SUCCESS' ? 'workflow_completed' : 'workflow_failed';
-      const failure = await syncTrackerOnEvent(
+      const trackerEvent: TrackerSyncEvent =
         event === 'workflow_completed'
           ? { issueId: externalTicketId, type: event }
           : {
               issueId: externalTicketId,
               summary: `Workflow ended with status: ${finalStatus}`,
               type: event,
-            },
-        trackerConfig,
-        { runInputId: run?.workRequestId, warn: logWarn }
-      );
+            };
+      const failure = await syncTrackerOnEvent(trackerEvent, trackerConfig, {
+        runInputId: run?.workRequestId,
+        warn: logWarn,
+      });
+      await recordTrackerSync(trackerEvent, failure);
       // Either event writes to the ticket (a failed run comments, a finished one moves its status
       // and links its PR), and the sync resolves the first write the tracker refused: say so.
       if (failure) {

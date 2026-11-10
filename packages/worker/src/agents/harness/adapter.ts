@@ -1,7 +1,9 @@
 import type { ChildProcessByStdio } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
+import type { NeedsInputQuestion } from '@auto-swe/shared/lib/needsInput';
 import type { Workspace } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
+import type { ResolvedHarnessProfile } from '../../lib/config/harnessProfile.js';
 import type { McpConnectionTarget } from '../../lib/config/mcpConnection.js';
 import type { BrowserToolset } from '../browserTools.js';
 import type { ContainerPlatform } from './binary.js';
@@ -165,6 +167,11 @@ export interface HarnessTurnResult<Report> {
   steps?: number;
   /** The turn used its whole turn cap, or the caller's deadline stopped it. Neither is a failure. */
   stoppedReason?: 'max_steps' | 'wall_clock';
+  /**
+   * The agent asked a person and the turn ended there, with the questions it
+   * asked. Only a run built with `allowPause` can end this way.
+   */
+  needsInput?: NeedsInputQuestion[];
 }
 
 /**
@@ -262,6 +269,18 @@ export interface HarnessRuntimeOptions<Access> {
   mcp?: McpConnectionTarget | null;
   /** Available only for an explicit `browser` tool grant. */
   browserToolset?: BrowserToolset;
+  /**
+   * The approved harness profile the Agent is bound to (`resolveHarnessProfile`),
+   * for a harness that loads one (Claude Code); ignored by the rest.
+   */
+  profile?: ResolvedHarnessProfile;
+  /**
+   * The run can stop to ask a person (the workflow's ask-and-resume loop set it).
+   * A harness that supports it offers its question tool and ends the turn when
+   * the agent asks; absent, the question tool stays refused and the run is
+   * unattended. Ignored by a harness that cannot pause.
+   */
+  allowPause?: boolean;
   tracer: AgentTracer;
   workspace: Workspace;
 }

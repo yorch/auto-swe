@@ -9,6 +9,10 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { getSettingDefinition } from '@auto-swe/shared/config';
+import {
+  AskUserQuestionInputSchema,
+  type NeedsInputQuestion,
+} from '@auto-swe/shared/lib/needsInput';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { Workspace } from '../../activities/workspace.js';
@@ -43,6 +47,7 @@ import type { McpTracer } from '../mcpTools.js';
 import { binarySha256, resolveClaudeBinary } from './binary.js';
 import { type ModelProxy, workerModelProxy } from './modelProxy.js';
 import {
+  ASK_TOOL,
   BROWSER_MCP_SERVER,
   BROWSER_RELAYED_TOOL_NAMES,
   CLAUDE_CODE_CAPABILITIES,
@@ -52,7 +57,18 @@ import {
   MCP_RELAY_SERVER,
   type PolicyContext,
   relayedToolName,
+  toolsWithPause,
+  toolsWithProfile,
 } from './policy.js';
+import {
+  profileContainerDir,
+  profileMaterializer,
+  profilePluginDirs,
+  profileShortHash,
+  profileShortSha,
+  profileSkillNames,
+  withProfileInstructions,
+} from './profile.js';
 
 export { POLICY_DECISION_MS } from '../harness/policy.js';
 
@@ -343,7 +359,7 @@ interface StreamedUsage {
  * SDK's `@anthropic-ai/sdk` peer, which is not installed, so it is narrowed here.
  */
 interface AssistantReply {
-  content: { type: string }[];
+  content: { text?: string; type: string }[];
   id?: string;
   model?: string;
   usage?: StreamedUsage;
@@ -419,7 +435,17 @@ export function claudeCodeAdapter(
     return relay;
   };
   const baseUrl = normalizeAnthropicBaseUrl(access.apiBase);
-  const tools = options.tools ? [...options.tools] : harnessToolsFor(options.toolKeys);
+  // The approved profile, when the Agent is bound to one: its tools are added to
+  // the harness's list and the policy's allowlist together, and nothing else is.
+  const { profile } = options;
+  // The question tool is offered only to a run the workflow can pause.
+  const tools = toolsWithPause(
+    toolsWithProfile(
+      options.tools ? [...options.tools] : harnessToolsFor(options.toolKeys),
+      profile?.manifest.tools
+    ),
+    options.allowPause
+  );
   const knowledgeSearch = bindKnowledgeSearch(
     workspace.knowledgeBaseSnapshotIds ?? [],
     options.toolKeys?.includes('searchKnowledge') ?? false
@@ -429,9 +455,15 @@ export function claudeCodeAdapter(
     containerId: workspace.containerId,
     cwd: WORKSPACE_DIR,
     home: HARNESS_HOME,
+    ...(profile
+      ? { profileDir: profileContainerDir(profile), profileSkills: profileSkillNames(profile) }
+      : {}),
     projectConfigLoaded: loadProjectSettings,
     tools,
   };
+  const profilePlugins = profile ? profilePluginDirs(profile) : [];
+  let profileAnnounced = false;
+  const profileMaterialization = profile ? profileMaterializer(workspace, profile) : undefined;
   // The harness reports usage as running totals per model, and a resumed session
   // starts from its saved totals. What a turn spent is the change since the last.
   const totals = runningTotalsUsage('anthropic/');
@@ -485,6 +517,9 @@ export function claudeCodeAdapter(
   ): Promise<HarnessTurnResult<ClaudeUsageReport>> {
     let result: SDKResultMessage | undefined;
     let toolCalls = 0;
+    // The first question batch the main agent asked; set once, and it ends the turn.
+    let paused: NeedsInputQuestion[] | undefined;
+    let lastText: string | undefined;
     const streamed = new Map<string, { model: string; usage: StreamedUsage }>();
     const spent = (): ClaudeUsageReport =>
       result ? { modelUsage: result.modelUsage } : { streamed };
@@ -495,8 +530,46 @@ export function claudeCodeAdapter(
       usage: spent(),
     });
 
+    const refuse = (reason: string) => ({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse' as const,
+        permissionDecision: 'deny' as const,
+        permissionDecisionReason: reason,
+      },
+    });
+
+    // The turn ended at a question: what it asked, what it said last, what it spent.
+    const pausedOutcome = (questions: NeedsInputQuestion[]) => ({
+      needsInput: questions,
+      text: lastText,
+      toolCallCount: toolCalls,
+      usage: spent(),
+    });
+
     const preToolUse: HookCallback = async (input, toolUseId) => {
-      const { cwd, tool_name: toolName, tool_input: toolInput } = input as PreToolUseHookInput;
+      const {
+        agent_id: agentId,
+        cwd,
+        tool_name: toolName,
+        tool_input: toolInput,
+      } = input as PreToolUseHookInput;
+      // Once a question batch is recorded the turn is ending: nothing else runs,
+      // including calls made in the same assistant message.
+      if (paused) {
+        return refuse('Your question was recorded. Stop now; the answer arrives in a new session.');
+      }
+      if (toolName === ASK_TOOL && agentId !== undefined) {
+        // A sub-agent cannot reach the person: only the main agent's question pauses the run.
+        const reason = `The ${ASK_TOOL} tool is not available in this workspace.`;
+        options.tracer?.addToolCall({
+          durationMs: 0,
+          error: 'blocked by workspace policy',
+          inputJson: toolInput,
+          outputJson: { result: reason },
+          toolName,
+        });
+        return refuse(reason);
+      }
       // A hook the harness gives up on falls back to its own permission rules;
       // the worker answers first, and a decision it cannot reach is a deny.
       const verdict = await turn.decide(
@@ -506,13 +579,32 @@ export function claudeCodeAdapter(
         cwd
       );
       if (!verdict.allow) {
-        return {
-          hookSpecificOutput: {
-            hookEventName: 'PreToolUse' as const,
-            permissionDecision: 'deny' as const,
-            permissionDecisionReason: verdict.reason,
-          },
-        };
+        return refuse(verdict.reason);
+      }
+      if (toolName === ASK_TOOL) {
+        const parsed = AskUserQuestionInputSchema.safeParse(toolInput);
+        if (!parsed.success) {
+          const reason =
+            'The question was malformed and was not recorded. Ask again with 1 to 4 questions, each with a question (at most 500 characters), a header (at most 12 characters) and 2 to 4 options that each have a label (at most 100 characters) and a description.';
+          options.tracer?.addToolCall({
+            durationMs: 0,
+            error: 'blocked by workspace policy',
+            inputJson: toolInput,
+            outputJson: { result: reason },
+            toolName,
+          });
+          return refuse(reason);
+        }
+        paused = parsed.data.questions;
+        options.tracer?.addToolCall({
+          durationMs: 0,
+          inputJson: { headers: paused.map((q) => q.header) },
+          outputJson: { result: 'question recorded; turn ended' },
+          toolName,
+        });
+        // The answer arrives in a new session: end this one, however the harness would go on.
+        turn.abort.abort();
+        return refuse('Your question was recorded. Stop now; the answer arrives in a new session.');
       }
       return {
         hookSpecificOutput: {
@@ -584,6 +676,16 @@ export function claudeCodeAdapter(
           ...(knowledgeServer ? [KNOWLEDGE_MCP_SERVER] : []),
         ],
         model: access.modelId,
+        ...(profile
+          ? {
+              profile: {
+                commitSha: profileShortSha(profile),
+                contentHash: profileShortHash(profile),
+                name: profile.name,
+                version: profile.version,
+              },
+            }
+          : {}),
         proxied: endpoint.proxied,
         runtime: 'claude-code',
         systemPrompt: unchanged
@@ -663,6 +765,17 @@ export function claudeCodeAdapter(
         // Hook decisions grant each call; `bypassPermissions` would skip them,
         // and the harness refuses it as root anyway.
         permissionMode: 'default',
+        // The profile's plugins, loaded from the copy in the container (the path is
+        // read there). Their MCP servers stay off, as `strictMcpConfig` keeps them.
+        ...(profilePlugins.length > 0
+          ? {
+              plugins: profilePlugins.map((pluginPath) => ({
+                path: pluginPath,
+                skipMcpDiscovery: true,
+                type: 'local' as const,
+              })),
+            }
+          : {}),
         resume: sessionId,
         settingSources: loadProjectSettings ? ['project'] : [],
         // The highest-priority settings layer: a repository's own `.claude/settings.json`
@@ -724,6 +837,13 @@ export function claudeCodeAdapter(
         } else if (message.type === 'assistant') {
           const reply = message.message as AssistantReply;
           toolCalls += reply.content.filter((b) => b.type === 'tool_use').length;
+          const said = reply.content
+            .filter((b) => b.type === 'text' && b.text)
+            .map((b) => b.text)
+            .join('\n');
+          if (said) {
+            lastText = said;
+          }
           if (reply.id && reply.model && reply.usage) {
             streamed.set(reply.id, { model: reply.model, usage: reply.usage });
             // One API call streams a message per content block, each with the
@@ -739,6 +859,9 @@ export function claudeCodeAdapter(
       }
     } catch (err) {
       turn.throwIfCancelled();
+      if (paused) {
+        return pausedOutcome(paused);
+      }
       if (turn.deadlineReached()) {
         return stopped();
       }
@@ -760,6 +883,9 @@ export function claudeCodeAdapter(
       }
     }
 
+    if (paused) {
+      return pausedOutcome(paused);
+    }
     if (!result && turn.deadlineReached()) {
       return stopped();
     }
@@ -795,7 +921,29 @@ export function claudeCodeAdapter(
       resolveBinary: ({ arch, libc }) => resolveClaudeBinary(arch, libc),
       sha256: binarySha256,
     },
-    async runTurn(turn, input) {
+    async runTurn(turn, rawInput) {
+      // The profile is the approved snapshot before every turn: what is still running is
+      // stopped and the directory is written again, never checked in the container.
+      if (profileMaterialization) {
+        await profileMaterialization.ensure();
+      }
+      if (profile && !profileAnnounced) {
+        profileAnnounced = true;
+        options.tracer?.addActivityEvent({
+          name: 'agent.profile',
+          outputJson: {
+            commitSha: profileShortSha(profile),
+            contentHash: profileShortHash(profile),
+            plugins: profile.manifest.plugins ?? [],
+            profile: profile.name,
+            tools: profile.manifest.tools ?? [],
+            version: profile.version,
+          },
+        });
+      }
+      const input = profile
+        ? { ...rawInput, system: withProfileInstructions(rawInput.system, profile) }
+        : rawInput;
       const mcpRelay = await openRelay();
       policy.mcpTools = [
         ...(mcpRelay?.tools.map((tool) => relayedToolName(tool.name)) ?? []),

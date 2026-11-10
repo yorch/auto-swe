@@ -33,6 +33,14 @@ vi.mock('../lib/execUtils.js', () => ({
   throwIfActivityCancelled: vi.fn(),
 }));
 
+const pushEffect = vi.hoisted(() =>
+  vi.fn(async (_b: string, _s: unknown, push: () => unknown) => push())
+);
+vi.mock('../lib/effectLedger.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/effectLedger.js')>()),
+  recordGitPush: pushEffect,
+}));
+
 import { AgentTracer } from '../lib/agentTracer.js';
 import {
   commitTrustedTree,
@@ -128,6 +136,7 @@ async function failureOf(p: Promise<unknown>): Promise<ApplicationFailure> {
 beforeEach(() => {
   shell.commands = [];
   shell.archiveBytes = 100;
+  pushEffect.mockClear();
 });
 
 describe('gateTrustedCommit', () => {
@@ -253,6 +262,7 @@ describe('pushGatedCommit', () => {
     await pushGatedCommit(ws, gated, 'auto/agent-0a1b2c3d');
     expect(ws.gitAuthed).toHaveBeenCalledTimes(1);
     expect(log.at(-1)).toBe(`push origin '${SHA}:refs/heads/auto/agent-0a1b2c3d'`);
+    expect(pushEffect).toHaveBeenCalledWith('auto/agent-0a1b2c3d', SHA, expect.any(Function));
   });
 
   it('refuses a commit gated in a different container', async () => {
@@ -262,6 +272,8 @@ describe('pushGatedCommit', () => {
     const f = await failureOf(pushGatedCommit(b.ws, gated, 'auto/x'));
     expect(f.type).toBe('AGENT_RUN_PUSH_POLICY');
     expect(b.ws.gitAuthed).not.toHaveBeenCalled();
+    // A refusal before the push is a policy decision, not an effect.
+    expect(pushEffect).not.toHaveBeenCalled();
   });
 
   it.each(['-evil', 'a..b', 'a b', "a'b", ''])('refuses the branch name %j', async (branch) => {

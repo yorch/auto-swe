@@ -448,7 +448,19 @@ describe('NotionKnowledgeBaseProvider.updatePageWithPrLink', () => {
     const provider = new NotionKnowledgeBaseProvider(config);
     await expect(
       provider.updatePageWithPrLink('page-1', 'https://x', 'title')
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({ ok: false });
+  });
+
+  it('reports ok on success and a failure on an HTTP 500 instead of resolving as if written', async () => {
+    const provider = new NotionKnowledgeBaseProvider(config);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({})));
+    await expect(provider.updatePageWithPrLink('p', 'https://x', 't')).resolves.toEqual({
+      ok: true,
+    });
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('boom', { status: 500 })));
+    await expect(provider.updatePageWithPrLink('p', 'https://x', 't')).resolves.toMatchObject({
+      ok: false,
+    });
   });
 });
 

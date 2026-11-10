@@ -549,6 +549,23 @@ describe('notifySlackHumanStep (Block Kit resolve buttons)', () => {
     return buttons.filter((b) => b.action_id.startsWith('hitl_resolve'));
   }
 
+  it('escapes Slack control characters in the title and description of any step', async () => {
+    mockChannelResolution();
+    await notifySlackHumanStep({
+      description: 'see <https://evil.example|the docs> & <@U123>',
+      kind: 'INPUT',
+      runId: 'r1',
+      title: '<!channel> agent needs input',
+    });
+    const body = fetchCalls[0]?.body as { text: string };
+    expect(body.text).toContain('&lt;!channel&gt; agent needs input');
+    expect(body.text).toContain('see &lt;https://evil.example|the docs&gt; &amp; &lt;@U123&gt;');
+    expect(body.text).not.toContain('<!channel>');
+    expect(body.text).not.toContain('<https://evil.example');
+    // The inbox link the notifier adds itself is still a link.
+    expect(body.text).toMatch(/<https?:\/\/[^>|]*\/approvals\|Open approvals/);
+  });
+
   it('records where the step message landed so its resolution can edit it', async () => {
     mockChannelResolution();
     const update = vi.mocked(prisma.workflowHumanStep.update);

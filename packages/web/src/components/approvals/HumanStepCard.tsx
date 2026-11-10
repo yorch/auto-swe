@@ -518,13 +518,15 @@ export function HumanStepCard({
               </Alert>
             )}
 
-          {/* Context for APPROVAL / DECISION is what the decision rests on, so it is open. */}
-          {(step.kind === 'APPROVAL' || step.kind === 'DECISION') && hasContext && (
-            <div className="space-y-1.5">
-              <h4 className="text-xs font-medium text-paper-400">Context</h4>
-              <DiffRenderer content={contextStr} />
-            </div>
-          )}
+          {/* Context for APPROVAL / DECISION is what the decision rests on, so it is open. A paused
+              agent's INPUT step carries the work so far there, which the answer rests on too. */}
+          {(step.kind === 'APPROVAL' || step.kind === 'DECISION' || step.kind === 'INPUT') &&
+            hasContext && (
+              <div className="space-y-1.5">
+                <h4 className="text-xs font-medium text-paper-400">Context</h4>
+                <DiffRenderer content={contextStr} />
+              </div>
+            )}
 
           {step.kind === 'APPROVAL' && (
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-ink-500/50 bg-ink-900/50 px-3 py-2.5">

@@ -124,7 +124,7 @@ const PatchBody = z
   })
   .refine((b) => b.scriptMode !== undefined || b.status !== undefined, 'nothing to change');
 
-const STATUS_BY_CODE: Record<SkillSourceErrorCode, number> = {
+export const STATUS_BY_CODE: Record<SkillSourceErrorCode, number> = {
   BAD_PATH: 502,
   BAD_RESPONSE: 502,
   HOST_BLOCKED: 400,

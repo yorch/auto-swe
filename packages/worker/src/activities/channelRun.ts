@@ -15,6 +15,7 @@ import { recordRunFinalized } from '../lib/metrics.js';
 import {
   snapshotAgentRuntimes,
   snapshotAgentVersions,
+  snapshotHarnessProfileVersions,
   snapshotSkillRevisions,
 } from '../lib/runPins.js';
 import { sumRunTraceUsage } from '../lib/traceTotals.js';
@@ -258,6 +259,14 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
     teamId,
     workflowTemplateId: templateId,
   });
+  // The harness profile version behind each bound agent, at the same scope and pins.
+  const harnessProfileVersions = await snapshotHarnessProfileVersions({
+    agentVersions,
+    channelId: channel?.id,
+    orgId,
+    teamId,
+    workflowTemplateId: templateId,
+  });
 
   try {
     await prisma.workflowRun.create({
@@ -268,6 +277,7 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
         attributedRepoId: attribution.attributedRepoId,
         attributedTeamId: attribution.attributedTeamId,
         channelId: channel?.id ?? null,
+        harnessProfileVersions: harnessProfileVersions as Prisma.InputJsonObject,
         // Channel launches have no durable actor-bound source snapshot; fail closed.
         knowledgeSourceKind: 'UNKNOWN',
         knowledgeSourceOrgId: null,

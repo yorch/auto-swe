@@ -58,6 +58,11 @@ export interface ResolveCtx extends SettingResolveCtx {
   /// it from its run's per-side override. A production run's pin is read from
   /// the row, not carried here.
   agentRuntimes?: Record<string, string>;
+  /// Caller-supplied harness profile version pins (`{ profileName: version }`),
+  /// consulted by `resolveHarnessProfile` before the run's own
+  /// `WorkflowRun.harnessProfileVersions` pin and the profile's latest version.
+  /// Never written back; a production run's pin is read from the row, not carried here.
+  harnessProfileVersions?: Record<string, number>;
 }
 
 /// Resolved model + credential for a single role lookup. Returned by

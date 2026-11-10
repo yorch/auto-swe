@@ -33,6 +33,11 @@ describe('buildAgentUpdate', () => {
     });
   });
 
+  it('never sends the harness profile, which the form does not edit', () => {
+    const bound: AgentRow = { ...BASE, harnessProfile: 'review-kit', runtime: 'claude-code' };
+    expect(buildAgentUpdate(bound, { ...bound, name: 'R2' })).toEqual({ name: 'R2' });
+  });
+
   it('sends the runtime only when it changed, and clears it with null', () => {
     const onHarness: AgentRow = { ...BASE, runtime: 'claude-code' };
     expect(buildAgentUpdate(onHarness, { ...onHarness, name: 'R2' })).toEqual({ name: 'R2' });

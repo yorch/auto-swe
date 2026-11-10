@@ -1105,6 +1105,30 @@ export interface AgentTraceRecord {
   trimmed: boolean;
 }
 
+/**
+ * One change a run made outside the sandbox (`GET /api/v1/workflow-runs/:id/effects`). `detail` and
+ * `error` are already redacted and capped; the raw tool input is never stored, only its digest.
+ */
+export interface RunEffectDto {
+  id: string;
+  /** `MCP_TOOL` | `PULL_REQUEST` | `GIT_PUSH` | `TRACKER` | `KNOWLEDGE_BASE`. */
+  kind: string;
+  action: string;
+  /** External id, URL, branch or tool name. */
+  target: string | null;
+  /** `DONE` | `FAILED`. */
+  status: string;
+  /** `harness_relay` | `mastra_mcp` | `activity`. */
+  via: string;
+  /** Workflow-spec node the effect happened in; null when it ran outside a tagged step. */
+  specNodeId: string | null;
+  agentKey: string | null;
+  inputDigest: string | null;
+  detail: unknown;
+  error: string | null;
+  createdAt: string;
+}
+
 /** Shape returned by GET /api/v1/workflow-runs/:id (detail) */
 export interface WorkflowRunDetail extends WorkflowRunSummary {
   review?: {
@@ -2059,4 +2083,82 @@ export interface TicketGroup {
   pullRequests: TicketPullRequest[];
   costUsd: number;
   lastActivityAt: string;
+}
+
+// ── Harness profiles (`/api/v1/platform/harness-profiles`) ──
+
+export type HarnessProfileStatus = 'OK' | 'DISABLED';
+
+/** Where a profile folder lives; the host, owner and repository are lowercased. */
+export interface HarnessProfileSource {
+  host: string;
+  owner: string;
+  repo: string;
+  /** Folder holding `profile.json`; empty for the repository root. */
+  path: string;
+  ref: string;
+}
+
+export interface HarnessProfileFileEntry {
+  path: string;
+  size: number;
+  mode: '100644' | '100755';
+}
+
+export interface HarnessProfileManifestDto {
+  name: string;
+  description: string;
+  instructions?: string;
+  plugins?: string[];
+  tools?: Array<'Skill' | 'Agent'>;
+}
+
+/** One stored version. File content is never part of it. */
+export interface HarnessProfileVersionDto {
+  version: number;
+  commitSha: string;
+  contentHash: string;
+  manifest: HarnessProfileManifestDto;
+  files: HarnessProfileFileEntry[];
+  fileCount: number;
+  totalBytes: number;
+  /** Everything shown at approval, which the approver acknowledged. */
+  warnings: string[];
+  approvedById: string | null;
+  createdAt: string;
+}
+
+export interface HarnessProfileSummary extends HarnessProfileSource {
+  id: string;
+  name: string;
+  description: string;
+  status: HarnessProfileStatus;
+  latestVersion: number;
+  /** The latest version without its file list. */
+  latest: Omit<HarnessProfileVersionDto, 'files' | 'manifest'> | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HarnessProfileDetail extends HarnessProfileSummary {
+  versions: HarnessProfileVersionDto[];
+}
+
+/** `POST /harness-profiles/preview` and `/:name/preview-update`: nothing is written. */
+export interface HarnessProfilePreview {
+  source: HarnessProfileSource;
+  /** The exact commit the ref resolved to; create / accept must name it, with `contentHash` and `warningsHash`. */
+  sha: string;
+  manifest: HarnessProfileManifestDto;
+  files: HarnessProfileFileEntry[];
+  totalBytes: number;
+  contentHash: string;
+  /** Structure warnings, then scanner findings. Approval needs `acknowledgeWarnings` when any. */
+  warnings: string[];
+  /** sha256 over the sorted warnings; create / accept send it with `contentHash` and the 409 `PREVIEW_STALE` answer carries fresh values. */
+  warningsHash: string;
+  /** Profiles that would collide with this name (case-insensitive); empty for an update. */
+  conflicts: Array<{ name: string; status: HarnessProfileStatus }>;
+  /** For an update: the version the content already matches, if any. */
+  matchesVersion: number | null;
 }

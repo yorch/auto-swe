@@ -8,6 +8,7 @@ import {
   currentActivityId,
 } from '../lib/attemptTrace.js';
 import { ciLogIsUsable, fenceCiLogs, redactCiLog } from '../lib/ciLogGuard.js';
+import type { NeedsInputResult, PauseOptions } from '../lib/pauseResume.js';
 import { rejectionText } from '../lib/rejectionText.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
@@ -37,7 +38,7 @@ export async function fetchCILogs(logsUrl?: string, repoId?: string): Promise<st
 }
 
 /** What a template step asks of a fix session beyond the defaults. */
-export interface FixSessionOptions {
+export interface FixSessionOptions extends PauseOptions {
   knowledgeBases?: boolean;
   /** `config.refuseWorkflowChanges`: refuse a workflow or action change before the push. */
   refuseWorkflowChanges?: boolean;
@@ -60,7 +61,7 @@ export async function executeCIFixImplementation(
   previousCodeResult: CodeResult,
   systemPromptOverride?: string,
   options: FixSessionOptions = {}
-): Promise<CodeResult> {
+): Promise<CodeResult | NeedsInputResult> {
   if (options.untrustedCiLogs) {
     const redacted = redactCiLog(failureContext);
     if (!(await ciLogIsUsable(redacted))) {
@@ -78,6 +79,7 @@ export async function executeCIFixImplementation(
       : {}),
     ...(options.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
     agentKey: 'ciFixer',
+    allowPause: options.allowPause,
     commitMessage: `auto: fix CI for ${previousCodeResult.branch}`,
     defaultSystemPrompt: CI_FIX_SYSTEM_PROMPT,
     // The end of a CI log is where the failure is.
@@ -86,6 +88,7 @@ export async function executeCIFixImplementation(
     notes: (testResult) =>
       `CI fix iteration. Failure context analyzed: ${failureContext.length} chars. Tests ${testStatusWord(testResult)}.`,
     previousCodeResult,
+    resumeInput: options.resumeInput,
     // Each failure the loop fixes, kept for a lesson about the run (`lib/attemptTrace.ts`).
     startEvent: {
       name: CI_FAILURE_TRACE_EVENT,
@@ -120,7 +123,7 @@ export async function executeReviewFixImplementation(
   systemPromptOverride?: string,
   allowedPaths?: string[],
   options: FixSessionOptions = {}
-): Promise<CodeResult> {
+): Promise<CodeResult | NeedsInputResult> {
   const rejectionSummary = rejectionText(rejection);
   return runImplementerFixSession({
     ...(typeof options.knowledgeBases === 'boolean'
@@ -129,6 +132,7 @@ export async function executeReviewFixImplementation(
     ...(options.refuseWorkflowChanges ? { refuseWorkflowChanges: true } : {}),
     agentKey: 'reviewFixer',
     allowedPaths,
+    allowPause: options.allowPause,
     commitMessage: `auto: address review findings for ${previousCodeResult.branch}`,
     defaultSystemPrompt: REVIEW_FIX_SYSTEM_PROMPT,
     lessonQuery: rejectionSummary,
@@ -136,6 +140,7 @@ export async function executeReviewFixImplementation(
     notes: (testResult) =>
       `Review fix iteration. ${rejectionSummary.split('\n').length} findings addressed. Tests ${testStatusWord(testResult)}.`,
     previousCodeResult,
+    resumeInput: options.resumeInput,
     systemPromptOverride,
     usageEventName: 'llm.review_fix',
     userPayload: {

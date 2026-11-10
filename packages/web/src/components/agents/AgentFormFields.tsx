@@ -27,6 +27,8 @@ export interface AgentFormValue {
   mcpConnectionId?: string | null;
   credentialId?: string | null;
   runtime?: ImplementerRuntimeKind | null;
+  /** Shown read-only: bound through the API by a platform admin, never edited here. */
+  harnessProfile?: string | null;
   reasoning?: ReasoningLevel | null;
 }
 
@@ -333,6 +335,12 @@ export function AgentFormFields({
           options={RUNTIME_OPTIONS}
           value={value.runtime ?? ''}
         />
+      )}
+      {showRuntime && value.harnessProfile && (
+        <p className="text-xs text-paper-500">
+          Harness profile: <code>{value.harnessProfile}</code> (set through the API by a platform
+          admin)
+        </p>
       )}
       {credentials && (
         <Combobox

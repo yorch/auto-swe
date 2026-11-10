@@ -37,6 +37,7 @@ import { currentNodeTag } from '../lib/activityNodeTag.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { recordGateEval } from '../lib/evalCapture.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
+import type { NeedsInputResult, PauseOptions } from '../lib/pauseResume.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
@@ -659,7 +660,7 @@ export async function runPerfBench(input: GateInput): Promise<GateResult> {
  * by a cond node checking `nodes.<gate>.output.passed == false`) and bind
  * the failed gate's output via `inputs.gateOutput`.
  */
-export interface GateFixInput {
+export interface GateFixInput extends PauseOptions {
   knowledgeBases?: boolean;
   /** Name of the gate that failed (e.g. 'runTests'). */
   gateName: string;
@@ -673,7 +674,9 @@ export interface GateFixInput {
   refuseWorkflowChanges?: boolean;
 }
 
-export async function executeGateFixImplementation(input: GateFixInput): Promise<CodeResult> {
+export async function executeGateFixImplementation(
+  input: GateFixInput
+): Promise<CodeResult | NeedsInputResult> {
   const { gateName, gateOutput, previousCodeResult, systemPromptOverride } = input;
 
   // Load full gate logs from the artifact store, falling back to the inline
@@ -719,6 +722,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
       return `${gateName} ${passed ? 'passing' : 'still failing'}`;
     },
     agentKey: 'gateFixer',
+    allowPause: input.allowPause,
     commitMessage: `auto: fix ${gateName} for ${previousCodeResult.branch}`,
     defaultSystemPrompt: GATE_FIX_SYSTEM_PROMPT,
     // The gate's own output, end first: where a lint or build failure is named.
@@ -727,6 +731,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     notes: (testResult, extraNote) =>
       `Gate fix iteration for ${gateName}. ${extraNote ?? `${gateName} re-run skipped`}. Tests ${testStatusWord(testResult)}.`,
     previousCodeResult,
+    resumeInput: input.resumeInput,
     systemPromptOverride,
     usageEventName: 'llm.gate_fix',
     userPayload: {

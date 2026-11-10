@@ -53,7 +53,8 @@ vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
   scanSkillContent: vi.fn(async () => ({ safe: true, warnings: [] })),
 }));
 
-vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/systemConfig')>()),
   resolveIssueTrackerConfig: vi.fn(async () => ({})),
   resolveWorkflowDefaults: vi.fn(async () => ({
     branchPrefix: 'auto',
@@ -68,6 +69,14 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 vi.mock('@auto-swe/shared/lib/trackerSync', async (orig) => ({
   ...(await orig<typeof import('@auto-swe/shared/lib/trackerSync')>()),
   syncTrackerOnEvent: vi.fn(async () => {}),
+}));
+
+const pushEffect = vi.hoisted(() =>
+  vi.fn(async (_b: string, _s: unknown, push: () => unknown) => push())
+);
+vi.mock('../lib/effectLedger.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/effectLedger.js')>()),
+  recordGitPush: pushEffect,
 }));
 
 vi.mock('@temporalio/activity', () => ({
@@ -100,11 +109,31 @@ vi.mock('../agents/securityReviewProcessor.js', () => ({
 vi.mock('../lib/activityContext.js', () => ({
   currentAttempt: vi.fn(() => 1),
   currentWorkflowId: vi.fn(() => 'wf-1'),
+  currentWorkflowRunId: vi.fn(async () => 'run-1'),
   persistActivityTrace: vi.fn(async () => {}),
   startTraceFlushing: vi.fn(() => () => {}),
 }));
 
 vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
+
+vi.mock('../lib/pauseSnapshot.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/pauseSnapshot.js')>()),
+  restoreWorkingTree: vi.fn(async () => {}),
+  snapshotWorkingTree: vi.fn(async () => ({
+    snapshot: {
+      artifactId: 'art-9',
+      baseSha: 'a'.repeat(40),
+      bytes: 321,
+      sha256: 'c'.repeat(64),
+    },
+  })),
+}));
+
+// Passes through to the real runner builder; the ask-and-resume tests hand it a fake one.
+vi.mock('../agents/implementerRuntimeSelect.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../agents/implementerRuntimeSelect.js')>();
+  return { ...actual, buildImplementerTurnRunner: vi.fn(actual.buildImplementerTurnRunner) };
+});
 
 vi.mock('../lib/codeSecurityScanner.js', () => ({ scanDiffForCodeIssues: vi.fn(async () => []) }));
 
@@ -112,6 +141,10 @@ vi.mock('../lib/codeSecurityScanner.js', () => ({ scanDiffForCodeIssues: vi.fn(a
 // these drive the Mastra loop, the default.
 vi.mock('../lib/config/agentRuntime.js', () => ({
   resolveAgentRuntime: vi.fn(async () => ({ runtime: 'mastra', source: 'default' })),
+}));
+// The approved-profile lookup reads the Agent row; these tests bind no profile.
+vi.mock('../lib/config/harnessProfile.js', () => ({
+  resolveProfileForRuntime: vi.fn(async () => undefined),
 }));
 vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({ orgId: 'org-1', teamId: 'team-1' })),
@@ -171,6 +204,7 @@ vi.mock('./workspace.js', () => ({
 }));
 
 import { buildImplementerForActivity, resolveImplementerConfig } from '../agents/implementer.js';
+import { buildImplementerTurnRunner } from '../agents/implementerRuntimeSelect.js';
 import {
   currentAttempt,
   persistActivityTrace,
@@ -180,6 +214,8 @@ import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
+import { QUESTIONS, resumeInputFor } from '../lib/pauseResumeFixtures.js';
+import { restoreWorkingTree, snapshotWorkingTree } from '../lib/pauseSnapshot.js';
 import { executeImplementation } from './executeImplementation.js';
 import { TEST_RUN_TIMEOUT_MS } from './utils.js';
 import { createWorkspace } from './workspace.js';
@@ -528,6 +564,8 @@ describe('executeImplementation cross-repo context', () => {
     await executeImplementation(REQUEST);
     expect(vi.mocked(createWorkspace)).toHaveBeenCalled();
     expect(vi.mocked(createWorkspace).mock.calls[0]?.[3]).toBeUndefined();
+    // A first run is cut from the branch tip.
+    expect(vi.mocked(createWorkspace).mock.calls[0]?.[4]).toBeUndefined();
   });
 
   it('passes the connection executorImage through when one is pinned', async () => {
@@ -649,6 +687,14 @@ describe('executeImplementation allowedPaths', () => {
       `push origin ${BASE}:refs/heads/'auto/JIRA-1'`
     );
     expect(result.headSha).toBe(BASE);
+    expect(pushEffect).toHaveBeenCalledWith('auto/JIRA-1', BASE, expect.any(Function));
+  });
+
+  it('lets a failed push through unchanged, having handed it to the effect ledger', async () => {
+    const rejected = new Error('remote rejected');
+    workspaceMock.gitAuthed.mockRejectedValueOnce(rejected);
+    await expect(executeImplementation(REQUEST)).rejects.toBe(rejected);
+    expect(pushEffect).toHaveBeenCalledTimes(1);
   });
 
   it('reports a diff measured from the starting commit', async () => {
@@ -1019,6 +1065,259 @@ describe('executeImplementation test command that finds no tests', () => {
     testRun({ stdout: '' });
     const result = await executeImplementation(REQUEST);
     expect(result.implementationNotes).toContain('Tests not run.');
+  });
+});
+
+describe('executeImplementation ask and resume', () => {
+  const runTurn = vi.fn();
+  const closeRunner = vi.fn(async () => {});
+  const fakeRunner = {
+    agent: { id: 'agent-row-4', version: 4 },
+    boundModelSpec: 'anthropic/v4-model',
+    close: closeRunner,
+    kind: 'claude-code',
+    kindSource: 'default',
+    maxSteps: 50,
+    promptSuffix: '',
+    runtime: { runTurn },
+    skills: [],
+    systemPrompt: (base: string) => base,
+    toolKeys: null,
+  };
+  const surface = (extra: Record<string, unknown> = {}) => ({
+    agentKey: 'implementer',
+    branch: 'auto/JIRA-1',
+    iteration: 0,
+    kind: 'executeImplementation',
+    ...extra,
+  });
+  const isTestRun = (c: unknown[]) =>
+    (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === TEST_RUN_TIMEOUT_MS;
+  const failTests = () =>
+    workspaceMock.exec.mockImplementation(
+      async (_command: string, options?: { timeoutMs?: number }) => {
+        if (options?.timeoutMs === TEST_RUN_TIMEOUT_MS) {
+          throw Object.assign(new Error('Command failed'), {
+            code: 1,
+            stdout: 'Tests: 2 failed, 5 passed',
+          });
+        }
+        return '';
+      }
+    );
+  const answer = { text: 'turn done', toolCallCount: 0 };
+
+  beforeEach(() => {
+    tddSetting.maxIterations = 3;
+    runTurn.mockReset();
+    runTurn.mockResolvedValue(answer);
+    vi.mocked(buildImplementerTurnRunner).mockResolvedValue(fakeRunner as never);
+  });
+  afterEach(() => {
+    vi.mocked(buildImplementerTurnRunner).mockReset();
+  });
+
+  it('runs unattended by default: the runner is built without allowPause and the result is a code result', async () => {
+    const result = await executeImplementation(REQUEST);
+    expect(vi.mocked(buildImplementerTurnRunner).mock.calls[0]?.[0]).not.toHaveProperty(
+      'allowPause'
+    );
+    expect(result).toHaveProperty('diff');
+    expect(result).not.toHaveProperty('needsInput');
+    expect(snapshotWorkingTree).not.toHaveBeenCalled();
+    expect(restoreWorkingTree).not.toHaveBeenCalled();
+  });
+
+  it('asks the runner to allow pausing when the input says so', async () => {
+    await executeImplementation(
+      REQUEST,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      '',
+      undefined,
+      {
+        allowPause: true,
+      }
+    );
+    expect(vi.mocked(buildImplementerTurnRunner)).toHaveBeenCalledWith(
+      expect.objectContaining({ allowPause: true })
+    );
+  });
+
+  it('stops at a question: saves the tree and returns it, with no test run, commit, push or scan', async () => {
+    runTurn.mockResolvedValueOnce({ needsInput: QUESTIONS, text: 'which db?', toolCallCount: 0 });
+    // The first command is the read of the commit the checkout starts at.
+    workspaceMock.exec.mockResolvedValueOnce(`${'d'.repeat(40)}\n`);
+    const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+
+    const result = await executeImplementation(
+      REQUEST,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      '',
+      undefined,
+      { allowPause: true }
+    );
+
+    expect(result).toMatchObject({
+      needsInput: {
+        questions: QUESTIONS,
+        resume: {
+          snapshot: { artifactId: 'art-9' },
+          surface: { agentKey: 'implementer', branch: 'auto/JIRA-1', iteration: 0 },
+          version: 1,
+        },
+      },
+    });
+    expect(runTurn).toHaveBeenCalledTimes(1);
+    const commands = workspaceMock.exec.mock.calls.map((c) => c[0]);
+    expect(workspaceMock.exec.mock.calls.filter(isTestRun)).toHaveLength(0);
+    expect(commands).not.toContain('git add -A');
+    expect(commands.some((c) => c.includes('commit'))).toBe(false);
+    expect(workspaceMock.gitAuthed).not.toHaveBeenCalledWith(expect.stringContaining('push'));
+    expect(pushEffect).not.toHaveBeenCalled();
+    expect(scanDiffForCodeIssues).not.toHaveBeenCalled();
+    expect(snapshotWorkingTree).toHaveBeenCalledWith(workspaceMock, {
+      runId: 'run-1',
+      startSha: 'd'.repeat(40),
+    });
+    expect(events).toHaveBeenCalledWith({
+      name: 'agent.paused',
+      outputJson: { questions: 1, snapshotBytes: 321, surface: 'executeImplementation' },
+    });
+    expect(closeRunner).toHaveBeenCalledTimes(1);
+    expect(workspaceMock.destroy).toHaveBeenCalledTimes(1);
+    expect(persistActivityTrace).toHaveBeenCalledTimes(1);
+    events.mockRestore();
+  });
+
+  it('saves the iteration and the last test result when a later iteration pauses', async () => {
+    failTests();
+    runTurn
+      .mockResolvedValueOnce(answer)
+      .mockResolvedValueOnce({ needsInput: QUESTIONS, text: 'which db?', toolCallCount: 0 });
+
+    const result = await executeImplementation(
+      REQUEST,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      '',
+      undefined,
+      { allowPause: true }
+    );
+
+    expect(runTurn).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({
+      needsInput: {
+        resume: {
+          surface: { iteration: 1, previousTestResult: { failing: 1, passed: false } },
+        },
+      },
+    });
+    // Only the first iteration's tests ran.
+    expect(workspaceMock.exec.mock.calls.filter(isTestRun)).toHaveLength(1);
+  });
+
+  it('restores the tree before the first turn, continues at the saved iteration and keeps the total bound', async () => {
+    failTests();
+    const previous = {
+      duration_ms: 5,
+      failing: 2,
+      passed: false,
+      passing: 1,
+      stdout: 'earlier failure',
+      total: 3,
+    };
+
+    await executeImplementation(
+      REQUEST,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      '',
+      undefined,
+      {
+        allowPause: true,
+        resumeInput: resumeInputFor(surface({ iteration: 1, previousTestResult: previous })),
+      }
+    );
+
+    expect(restoreWorkingTree).toHaveBeenCalledWith(
+      workspaceMock,
+      expect.objectContaining({ artifactId: 'art-1' })
+    );
+    // The checkout is cut from the commit the tree was saved against, not the branch tip, so
+    // the patch applies however far the base branch has moved meanwhile.
+    expect(vi.mocked(createWorkspace).mock.calls[0]?.[4]).toBe('a'.repeat(40));
+    // Iterations 1 and 2 of 3: the paused iteration is not repeated from zero.
+    expect(runTurn).toHaveBeenCalledTimes(2);
+    const first = runTurn.mock.calls[0]?.[0].user as string;
+    const second = runTurn.mock.calls[1]?.[0].user as string;
+    expect(first).toContain('[answers: begin]');
+    expect(first).toContain('| Postgres');
+    expect(first).toContain('"iteration":1');
+    expect(first).toContain('earlier failure');
+    // Later turns of the same session are the plain message.
+    expect(second).not.toContain('[answers: begin]');
+    expect(JSON.parse(second)).toMatchObject({ iteration: 2 });
+  });
+
+  it('does not sync to the pushed branch on a retry of a resumed run', async () => {
+    vi.mocked(currentAttempt).mockReturnValue(2);
+    await executeImplementation(
+      REQUEST,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      '',
+      undefined,
+      { allowPause: true, resumeInput: resumeInputFor(surface({ iteration: 0 })) }
+    );
+    // Moving the checkout would stop the saved tree applying.
+    expect(workspaceMock.exec.mock.calls.map((c) => c[0])).not.toContain(
+      "git reset --hard origin/'auto/JIRA-1'"
+    );
+    expect(restoreWorkingTree).toHaveBeenCalled();
+  });
+
+  it('refuses a state from another surface or branch before cloning, without retrying', async () => {
+    for (const state of [
+      surface({ kind: 'runAgentNode' }),
+      surface({ branch: 'auto/OTHER-1' }),
+      surface({ agentKey: 'reviewer' }),
+      { agentKey: 'implementer', branch: 'auto/JIRA-1', kind: 'executeImplementation' },
+    ]) {
+      await expect(
+        executeImplementation(
+          REQUEST,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          '',
+          undefined,
+          {
+            resumeInput: resumeInputFor(state),
+          }
+        )
+      ).rejects.toThrow();
+    }
+    expect(vi.mocked(createWorkspace)).not.toHaveBeenCalled();
+    expect(runTurn).not.toHaveBeenCalled();
   });
 });
 

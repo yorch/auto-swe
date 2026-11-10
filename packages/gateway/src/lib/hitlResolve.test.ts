@@ -1,3 +1,4 @@
+import { buildAskStep, mapAskAnswers } from '@auto-swe/shared/lib/needsInputAsk';
 import { describe, expect, it, vi } from 'vitest';
 import {
   type HitlAuthMethod,
@@ -240,5 +241,113 @@ describe('resolveHitlStep — APPROVAL request_changes', () => {
     expect(signalWorkflow).toHaveBeenCalledWith('wf-1', 'hitl_gate', [
       { action: 'request_changes', comment: COMMENT, resolvedBy: 'user-1', value: undefined },
     ]);
+  });
+});
+
+/**
+ * Ask-and-resume opens an INPUT step for a paused agent, with no spec node behind it. The
+ * fields come from `buildAskStep` and the signal goes through `mapAskAnswers`, so these tests
+ * run the step the workflow creates through the same validation a person's answer meets.
+ */
+describe('resolveHitlStep — the INPUT step of a paused agent', () => {
+  const needsInput = {
+    questions: [
+      {
+        header: 'Library',
+        multiSelect: false,
+        options: [
+          { description: '', label: 'Alpha' },
+          { description: '', label: 'Beta' },
+        ],
+        question: 'Which library should it use? '.repeat(16),
+      },
+      {
+        header: 'Targets',
+        multiSelect: true,
+        options: [
+          { description: '', label: 'Linux' },
+          { description: '', label: 'Mac' },
+        ],
+        question: 'Which targets?',
+      },
+    ],
+    resume: { asked: [], digest: 'work', snapshot: null, version: 1 as const },
+  };
+  const ask = buildAskStep(needsInput);
+  const askStep = {
+    fields: ask.fields,
+    id: 'step-ask',
+    kind: 'INPUT',
+    options: null,
+    requiredApprovers: 1,
+    run: { id: 'run-1', status: 'RUNNING', workflowId: 'wf-1' },
+    signalName: 'hitl_impl:ask:1',
+    status: 'PENDING',
+    title: 'implementer needs input',
+  };
+
+  it('accepts a submission of a select option and a comma-separated list, and signals the workflow', async () => {
+    const { deps, signalWorkflow } = makeDeps(askStep);
+    const value = { note: 'use v2', q1: 'Beta', q2: 'Linux, Mac' };
+    const result = await resolveHitlStep(deps, 'step-ask', 'submit', value, ADMIN);
+    expect(result).toMatchObject({ ok: true, signalSent: true, status: 'RESOLVED' });
+    const payload = signalWorkflow.mock.calls[0]?.[2]?.[0];
+    expect(signalWorkflow).toHaveBeenCalledWith('wf-1', 'hitl_impl:ask:1', [payload]);
+    // What the gateway signals is what the workflow maps back into answers.
+    expect(mapAskAnswers(needsInput.questions, payload).ok).toBe(true);
+  });
+
+  it('keeps every field label within the limit the validator reads', () => {
+    for (const field of ask.fields) {
+      expect(field.label.length).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it('rejects a select value that is not one of the offered options', async () => {
+    const { deps, signalWorkflow } = makeDeps(askStep);
+    const result = await resolveHitlStep(
+      deps,
+      'step-ask',
+      'submit',
+      { q1: 'Gamma', q2: 'Linux' },
+      ADMIN
+    );
+    expect(result).toMatchObject({ code: 'INVALID_VALUE', ok: false });
+    expect(signalWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('rejects a submission that leaves a question unanswered or names an unknown field', async () => {
+    const { deps, signalWorkflow } = makeDeps(askStep);
+    expect(await resolveHitlStep(deps, 'step-ask', 'submit', { q1: 'Alpha' }, ADMIN)).toMatchObject(
+      { code: 'INVALID_VALUE', ok: false }
+    );
+    expect(
+      await resolveHitlStep(
+        deps,
+        'step-ask',
+        'submit',
+        { q1: 'Alpha', q2: 'Linux', q9: 'x' },
+        ADMIN
+      )
+    ).toMatchObject({ code: 'INVALID_VALUE', ok: false });
+    expect(signalWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('rejects a multi-select answer with no choice left after splitting', async () => {
+    const { deps, signalWorkflow } = makeDeps(askStep);
+    for (const q2 of [' , ', ',\n,', '   ']) {
+      expect(
+        await resolveHitlStep(deps, 'step-ask', 'submit', { q1: 'Alpha', q2 }, ADMIN)
+      ).toMatchObject({ code: 'INVALID_VALUE', ok: false });
+    }
+    expect(signalWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('refuses an approval action on an INPUT step', async () => {
+    const { deps } = makeDeps(askStep);
+    expect(await resolveHitlStep(deps, 'step-ask', 'approve', undefined, ADMIN)).toMatchObject({
+      code: 'INVALID_ACTION',
+      ok: false,
+    });
   });
 });
