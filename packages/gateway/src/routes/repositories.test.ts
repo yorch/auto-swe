@@ -116,6 +116,7 @@ async function buildApp() {
       upsert: vi.fn(),
     },
     team: {
+      findFirst: vi.fn(),
       findUnique: vi.fn(),
     },
     teamMembership: {
@@ -182,6 +183,7 @@ describe('repositoryRoutes', () => {
     ctx.mockPrisma.connection.findUnique.mockReset();
     ctx.mockPrisma.connection.update.mockReset();
     ctx.mockPrisma.team.findUnique.mockReset();
+    ctx.mockPrisma.team.findFirst.mockReset();
     ctx.mockPrisma.teamMembership.findUnique.mockReset();
     ctx.mockPrisma.configAuditLog.create.mockClear();
     ctx.mockPrisma.prEvaluation.findMany.mockReset().mockResolvedValue([]);
@@ -243,6 +245,62 @@ describe('repositoryRoutes', () => {
       expect(JSON.parse(res.payload).data[0].previewConfig).toMatchObject({
         baseUrl: 'http://localhost:3000',
         readyUrl: 'http://localhost:3000/health',
+      });
+    });
+
+    describe('teamId filter', () => {
+      const scope = { OR: [{ teamId: TEAM_ID }, { shares: { some: { teamId: TEAM_ID } } }] };
+      const list = () =>
+        ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'GET',
+          url: `/api/v1/repositories?teamId=${TEAM_ID}`,
+        });
+
+      it('puts the team scope in its own AND element beside reachability, so it only narrows', async () => {
+        ctx.authState.role = 'ENGINEER';
+        ctx.authState.sub = 'eng-1';
+        ctx.mockPrisma.team.findFirst.mockResolvedValue({ id: TEAM_ID });
+        ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([]);
+        ctx.mockPrisma.connection.count.mockResolvedValueOnce(0);
+
+        const res = await list();
+
+        expect(res.statusCode).toBe(200);
+        const { where } = ctx.mockPrisma.connection.findMany.mock.calls[0][0];
+        expect(where.AND).toHaveLength(2);
+        // The first element is the reachability/active term; the team term is the last, alone.
+        expect(where.AND[0].isActive).toBe(true);
+        expect(where.AND[0].AND).toHaveLength(2);
+        expect(where.AND[1]).toEqual(scope);
+        expect(ctx.mockPrisma.connection.count.mock.calls[0][0].where).toEqual(where);
+      });
+
+      it('answers 404 TEAM_NOT_FOUND for a non-member and reads no repositories', async () => {
+        ctx.authState.role = 'ENGINEER';
+        ctx.authState.sub = 'eng-1';
+        ctx.mockPrisma.team.findFirst.mockResolvedValue(null);
+
+        const res = await list();
+
+        expect(res.statusCode).toBe(404);
+        expect(JSON.parse(res.payload).code ?? JSON.parse(res.payload).error?.code).toBe(
+          'TEAM_NOT_FOUND'
+        );
+        expect(ctx.mockPrisma.connection.findMany).not.toHaveBeenCalled();
+      });
+
+      it('lets a platform ADMIN name any team without a membership lookup', async () => {
+        ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([]);
+        ctx.mockPrisma.connection.count.mockResolvedValueOnce(0);
+
+        const res = await list();
+
+        expect(res.statusCode).toBe(200);
+        expect(ctx.mockPrisma.team.findFirst).not.toHaveBeenCalled();
+        expect(ctx.mockPrisma.connection.findMany.mock.calls[0][0].where).toEqual({
+          AND: [{ isActive: true }, scope],
+        });
       });
     });
 

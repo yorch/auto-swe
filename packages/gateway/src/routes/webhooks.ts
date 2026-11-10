@@ -59,7 +59,7 @@ import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/id
 import { applyInstallationEvent, INSTALLATION_EVENT_TYPES } from '../lib/installationWebhook.js';
 import { triggerKnowledgeBasePush } from '../lib/knowledgeBasePush.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
-import { assertOrgBudget } from '../lib/orgAccess.js';
+import { assertOrgBudget, assertTeamBudget } from '../lib/orgAccess.js';
 import { handleBriefEngagementDelivery } from '../lib/prBriefEngagement.js';
 import { handlePrEvaluationDelivery } from '../lib/prEvaluationWebhook.js';
 import { parseRateLimitConfig } from '../lib/rateLimitConfig.js';
@@ -1729,6 +1729,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // Without a connection the run spends its template team's org: gated here, and stamped
       // on the request (`billingOrgId`) so it is billed and capped mid-run against that org.
       const billingOrgId = connectionId ? null : (template.team?.organization?.id ?? null);
+      // And its team, the one held to its own cap below and the last source of the run's team.
+      const billingTeamId = connectionId ? null : (template.team?.id ?? null);
       // The cap read is the gated org's own: a connection's org with no cap is not held to the
       // template team's.
       const budgetOrgId = connectionId ? connectionResult.budgetOrgId : billingOrgId;
@@ -1741,6 +1743,21 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           'SUPPRESSED_BUDGET',
           'BUDGET',
           'the organization is over its monthly budget',
+          connectionId
+        );
+        return;
+      }
+      // The team the run is attributed to: the connection's OWNER, else the template's team.
+      const budgetTeam = connectionId
+        ? connectionResult.budgetTeam
+        : template.team
+          ? { id: template.team.id, monthlyBudgetUsdCents: template.team.monthlyBudgetUsdCents }
+          : null;
+      if (budgetTeam && !(await assertTeamBudget(fastify.prisma, budgetTeam, reply))) {
+        await refused(
+          'SUPPRESSED_BUDGET',
+          'BUDGET',
+          'the team is over its monthly budget',
           connectionId
         );
         return;
@@ -1762,6 +1779,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           },
           runInput: {
             billingOrgId,
+            billingTeamId,
             connectionId,
             description,
             externalTicketId,
@@ -1903,7 +1921,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             include: {
               installation: { select: { isActive: true } },
               team: {
-                select: { organization: { select: { monthlyBudgetUsdCents: true } }, orgId: true },
+                select: {
+                  id: true,
+                  monthlyBudgetUsdCents: true,
+                  organization: { select: { monthlyBudgetUsdCents: true } },
+                  orgId: true,
+                },
               },
             },
             take: 2,
@@ -1953,6 +1976,9 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           reply
         ))
       ) {
+        return;
+      }
+      if (!(await assertTeamBudget(fastify.prisma, defaultRepo.team, reply))) {
         return;
       }
 

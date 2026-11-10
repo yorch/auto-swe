@@ -10,7 +10,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { humanStepListWhere } from '../lib/humanStepFilters.js';
 import { groupRequestExecutions } from '../lib/requestExecutions.js';
-import { runListTeamScope } from '../lib/runTeamScope.js';
+import { RUN_TEAM_SELECT, runListTeamScope, teamsOfRun } from '../lib/runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { assertTeamParam } from '../lib/teamParam.js';
 import { reachableConnections } from '../lib/tenantScope.js';
@@ -182,8 +182,28 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
         where: { AND: [where, { id: { in: ids } }] },
       });
       const byId = new Map(rows.map((run) => [run.id, run]));
+      // The teams behind each row, for its chip: one more query over every visible execution of
+      // the page's requests, attributed with the same helper the team lists scope by. A
+      // multi-repository request names each repository's owner once.
+      const page = matching.slice(offset, offset + limit);
+      const teamRuns = await fastify.prisma.workflowRun.findMany({
+        select: { ...RUN_TEAM_SELECT, id: true },
+        where: { AND: [visibility, { id: { in: page.flatMap((group) => group.runIds) } }] },
+      });
+      const teamRunById = new Map(teamRuns.map((run) => [run.id, run]));
+      const teamsOf = (runIds: string[]) => {
+        const teams = new Map<string, { id: string; name: string }>();
+        for (const id of runIds) {
+          const teamRun = teamRunById.get(id);
+          const owner = teamRun ? teamsOfRun(teamRun).owner : null;
+          if (owner) {
+            teams.set(owner.id, { id: owner.id, name: owner.name });
+          }
+        }
+        return [...teams.values()];
+      };
       return {
-        data: matching.slice(offset, offset + limit).flatMap((group) => {
+        data: page.flatMap((group) => {
           const run = byId.get(group.id);
           if (!run) {
             return [];
@@ -238,6 +258,7 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
             target: target?.repoName
               ? [target.organizationName, target.repoName].filter(Boolean).join('/')
               : (target?.name ?? null),
+            teams: teamsOf(group.runIds),
             visibleExecutionCount: group.visibleExecutionCount,
           };
         }),

@@ -43,15 +43,17 @@ export function FirstRunChecklist() {
 function FirstRunChecklistBody() {
   const isLead = useHasRole('LEAD');
   const { ready, dismissed, dismiss } = useDismissed(FIRST_RUN_DISMISS_KEY);
-  // Personal progress, so the shell's selected-team filter does not apply to the two lists.
+  // Personal progress across every team, so neither list is narrowed to one.
   // Connections of every type come back, so the repository step looks for a git repository.
   const repos = useRepositories({ limit: 500 });
-  const requests = useRequests({ limit: 1, scope: 'MINE', state: 'all' }, { ignoreTeam: true });
-  const merged = usePullRequests(
-    { draft: 'any', limit: 1, offset: 0, scope: 'MINE', state: 'MERGED' },
-    { ignoreTeam: true }
-  );
-  // Gates are not filtered by the selected team, so this needs no opt-out.
+  const requests = useRequests({ limit: 1, scope: 'MINE', state: 'all' });
+  const merged = usePullRequests({
+    draft: 'any',
+    limit: 1,
+    offset: 0,
+    scope: 'MINE',
+    state: 'MERGED',
+  });
   const answered = useAnsweredGate();
 
   const queries = [repos, requests, answered, merged];

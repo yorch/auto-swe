@@ -17,7 +17,7 @@ export interface ModeChoice {
  * (POST /epics requires LEAD); below that the row says so and offers no control, so nobody is
  * steered towards a mode they cannot launch.
  */
-export function modeChoices(canStartEpic: boolean): ModeChoice[] {
+export function modeChoices(canStartEpic: boolean, epicReason?: string): ModeChoice[] {
   return [
     {
       action: 'Pick a workflow',
@@ -37,7 +37,7 @@ export function modeChoices(canStartEpic: boolean): ModeChoice[] {
         }
       : {
           mode: 'epic',
-          note: 'Only team leads and administrators can start an epic. For several repositories, ask one, or start a workflow or an agent on each repository separately.',
+          note: `${epicReason ?? 'Only team leads and administrators can start an epic.'} For several repositories, ask one, or start a workflow or an agent on each repository separately.`,
           question: 'The change spans several repositories.',
         },
   ];
@@ -46,9 +46,12 @@ export function modeChoices(canStartEpic: boolean): ModeChoice[] {
 export function ModeChooser({
   canStartEpic,
   current,
+  epicReason,
   onChoose,
 }: {
   canStartEpic: boolean;
+  /** Why an epic is not offered, when it is not; replaces the generic role sentence. */
+  epicReason?: string;
   current: WorkMode;
   onChoose: (mode: WorkMode) => void;
 }) {
@@ -62,7 +65,7 @@ export function ModeChooser({
         Not sure? Pick the line that matches your task.
       </p>
       <ul className="mt-3 space-y-3">
-        {modeChoices(canStartEpic).map((choice) => (
+        {modeChoices(canStartEpic, epicReason).map((choice) => (
           <li
             className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
             key={choice.mode}

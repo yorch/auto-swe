@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { type AuditEntityType, writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { currentYearMonth } from '../lib/orgAccess.js';
+import { orgBudgetStatuses } from '../lib/orgBudgetStatus.js';
 import { PG_INT_MAX } from '../lib/pgInt.js';
 import type { JwtPayload } from '../plugins/auth.js';
 import { requireAuth } from '../plugins/auth.js';
@@ -46,6 +47,13 @@ const BudgetResponseSchema = z.object({
   monthlyBudgetUsdCents: z.number().int().min(0).nullable(),
   orgId: z.string().uuid(),
   orgName: z.string(),
+});
+
+const BudgetStatusSchema = z.object({
+  alertThresholdPercent: z.number().nullable(),
+  percentUsed: z.number().nullable(),
+  scope: z.enum(['org', 'team']),
+  state: z.enum(['no_cap', 'ok', 'alert', 'projected_over', 'over']),
 });
 
 const ErrorResponseSchema = z.object({
@@ -89,11 +97,44 @@ function projectBudget(
 const orgBudgetPlugin: FastifyPluginAsync = async (fastify) => {
   const f = fastify.withTypeProvider<ZodTypeProvider>();
 
-  // GET /api/v1/platform/organizations/:orgId/budget — any org member may read.
+  // GET /api/v1/platform/organizations/:orgId/budget/status — any org member may read. A state
+  // and a percentage, never an amount: the dollar figures are ORG_ADMIN's (the route below).
+  f.get(
+    '/:orgId/budget/status',
+    {
+      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }),
+      schema: {
+        params: OrgParamsSchema,
+        response: { 200: z.object({ data: BudgetStatusSchema }), 404: ErrorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { orgId } = request.params;
+      const org = await fastify.prisma.organization.findUnique({
+        select: { budgetAlertThresholdPercent: true, id: true },
+        where: { id: orgId },
+      });
+      if (!org) {
+        return sendError(reply, 404, 'NOT_FOUND', 'Organization not found');
+      }
+      const status = (await orgBudgetStatuses(fastify.prisma, [orgId])).get(orgId);
+      return {
+        data: status ?? {
+          alertThresholdPercent: org.budgetAlertThresholdPercent,
+          percentUsed: null,
+          scope: 'org' as const,
+          state: 'no_cap' as const,
+        },
+      };
+    }
+  );
+
+  // GET /api/v1/platform/organizations/:orgId/budget — ORG_ADMIN only: it carries the cap and the
+  // spend in dollars. Members read `…/budget/status` instead.
   f.get(
     '/:orgId/budget',
     {
-      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_MEMBER' }),
+      onRequest: requireAuth({ orgIdParam: 'orgId', requiredOrgRole: 'ORG_ADMIN' }),
       schema: {
         params: OrgParamsSchema,
         response: { 200: BudgetResponseSchema, 404: ErrorResponseSchema },

@@ -148,6 +148,18 @@ export function useSetRepoShares(repoId: string) {
   });
 }
 
+/** Allow or stop one sharee team launching work on a repository (`canLaunch`); the owner's call. */
+export function useSetRepoShareLaunch(repoId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ canLaunch, teamId }: { canLaunch: boolean; teamId: string }) =>
+      api.patch<{ data: unknown }>(`/api/v1/repositories/${repoId}/shares/${teamId}`, {
+        canLaunch,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['repositories'] }),
+  });
+}
+
 export interface MyCredential {
   connectionId: string;
   lastFour: string;

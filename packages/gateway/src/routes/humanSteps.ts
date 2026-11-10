@@ -1,3 +1,4 @@
+import type { Prisma } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -9,9 +10,14 @@ import {
 } from '../lib/hitlResolve.js';
 import { syncSlackHumanStepOutcome } from '../lib/hitlSlackSync.js';
 import { sendError } from '../lib/httpErrors.js';
-import { humanStepListWhere, humanStepMineScope } from '../lib/humanStepFilters.js';
+import {
+  humanStepListWhere,
+  humanStepMineScope,
+  humanStepTeamScope,
+} from '../lib/humanStepFilters.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { buildWorkflowHumanStepVisibilityFilter } from '../lib/runVisibility.js';
+import { assertTeamParam } from '../lib/teamParam.js';
 import { sendTemporalUnavailable } from '../lib/temporalErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -43,6 +49,12 @@ const ListQuery = z.object({
     .enum(['requestedAt:asc', 'requestedAt:desc', 'timeoutAt:asc', 'timeoutAt:desc'])
     .default('requestedAt:desc'),
   status: z.enum(['PENDING', 'ALL']).default('PENDING'),
+  /**
+   * Only steps on runs of this team's work: a repository it owns or that is shared to it, or a
+   * template it owns. The caller must be a member of the team (404 otherwise; a platform ADMIN
+   * passes). Only narrows the list.
+   */
+  teamId: z.string().uuid().optional(),
 });
 
 const RespondBody = z.object({
@@ -297,8 +309,22 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { actionable, answeredByMe, count, limit, mine, offset, overdue, sort, status, runId } =
-        request.query;
+      const {
+        actionable,
+        answeredByMe,
+        count,
+        limit,
+        mine,
+        offset,
+        overdue,
+        sort,
+        status,
+        runId,
+        teamId,
+      } = request.query;
+      if (teamId) {
+        await assertTeamParam(fastify.prisma, user, teamId);
+      }
       const pageSize = limit ?? (status === 'ALL' ? 200 : 100);
       const orderBy =
         sort === 'requestedAt:asc'
@@ -315,7 +341,13 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         runId,
         status,
       });
-      const where = mine ? { AND: [listWhere, humanStepMineScope(user)] } : listWhere;
+      // Each narrowing term is its own AND element: `listWhere` owns keys such as `OR` and `AND`.
+      const narrowing: Prisma.WorkflowHumanStepWhereInput[] = [
+        ...(mine ? [humanStepMineScope(user)] : []),
+        ...(teamId ? [humanStepTeamScope(teamId)] : []),
+      ];
+      const where: Prisma.WorkflowHumanStepWhereInput =
+        narrowing.length > 0 ? { AND: [listWhere, ...narrowing] } : listWhere;
       // The count is a second query on the hottest HITL read (the sidebar badge polls it), so it
       // runs only for a caller that asked for a total.
       const wantsTotal = answeredByMe || count || limit !== undefined || offset !== undefined;

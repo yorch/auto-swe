@@ -31,7 +31,7 @@ import {
   type RepoAccessGate,
   type RunIdentity,
 } from './repoAccessGate.js';
-import { isRepoMember } from './repoMembership.js';
+import { isRepoMember, mayLaunchOnRepo } from './repoMembership.js';
 
 /**
  * Everything a decision reads, with nothing optional.
@@ -62,10 +62,14 @@ export interface RepoAccessSubject {
    * select it would compile, and quietly refuse every shared-team member.
    * `repoMembersSelect` produces both.
    */
-  shares: Array<{ team: { memberships: Array<{ userId: string }> } }>;
+  shares: Array<{ canLaunch: boolean; team: { memberships: Array<{ userId: string }> } }>;
 }
 
-export type RepoAccessRefusal = 'not-a-team-member' | 'installation-retired' | LaunchRefusal;
+export type RepoAccessRefusal =
+  | 'not-a-team-member'
+  | 'share-view-only'
+  | 'installation-retired'
+  | LaunchRefusal;
 
 export type RepoAccessVerdict =
   | { allowed: true; reason: 'admin' | 'gate-off' | 'permitted' | 'advisory-would-refuse' }
@@ -77,6 +81,8 @@ export const REPO_ACCESS_REFUSAL_MESSAGE: Record<RepoAccessRefusal, string> = {
   'installation-retired':
     'The GitHub App installation this repository uses has been retired. An admin has to point it at a current installation before new work can start here.',
   'not-a-team-member': 'You do not have access to this repository.',
+  'share-view-only':
+    'This repository is shared with your team to view only. The team that owns it has not allowed your team to start work on it.',
 };
 
 /**
@@ -173,6 +179,11 @@ export async function decideRepoAccess(
   if (user.role !== 'ADMIN' && !isRepoMember(repo, user.sub)) {
     return { allowed: false, reason: 'not-a-team-member' };
   }
+  // A view-only share lets its team's members see the repository, not start work on it. Starting
+  // work only: steering a run that is already going is not new spend on the owner's budget.
+  if (action === 'start-new-work' && user.role !== 'ADMIN' && !mayLaunchOnRepo(repo, user.sub)) {
+    return { allowed: false, reason: 'share-view-only' };
+  }
   // Then the installation — when the caller is starting work, and then for
   // EVERYONE, admins included, and ahead of the no-coordinates exemption below.
   //
@@ -246,13 +257,16 @@ export function multiRepoRefusalBody(
   // other is a statement about this user. Membership still wins when both are
   // present, because that is the answer these routes gave before any of this.
   const anyRetired = refusals.some((r) => r.reason === 'installation-retired');
+  const anyViewOnly = refusals.some((r) => r.reason === 'share-view-only');
   return {
     error: {
       code: anyMembership
         ? 'FORBIDDEN'
         : anyRetired
           ? 'INSTALLATION_RETIRED'
-          : 'REPO_ACCESS_DENIED',
+          : anyViewOnly
+            ? 'REPOSITORY_VIEW_ONLY'
+            : 'REPO_ACCESS_DENIED',
       message: `You cannot start work on: ${refusals
         .map((r) => `${r.label}: ${REPO_ACCESS_REFUSAL_MESSAGE[r.reason]}`)
         .join('; ')}`,
@@ -278,7 +292,9 @@ export function repoAccessErrorBody(refusal: RepoAccessRefusal): {
           ? 'FORBIDDEN'
           : refusal === 'installation-retired'
             ? 'INSTALLATION_RETIRED'
-            : 'REPO_ACCESS_DENIED',
+            : refusal === 'share-view-only'
+              ? 'REPOSITORY_VIEW_ONLY'
+              : 'REPO_ACCESS_DENIED',
       message: REPO_ACCESS_REFUSAL_MESSAGE[refusal],
       reason: refusal,
     },

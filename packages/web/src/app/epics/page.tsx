@@ -2,6 +2,7 @@
 
 import { Suspense } from 'react';
 import { EpicList } from '@/components/epics/EpicList';
+import { TeamChip } from '@/components/teams/TeamChip';
 import { ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -15,7 +16,9 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Toolbar } from '@/components/ui/Toolbar';
 import { useEpics } from '@/hooks/useEpics';
 import { useHasRole } from '@/hooks/useHasRole';
+import { useTeamParam } from '@/hooks/useTeamParam';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
+import { teamGatedBoundary } from '@/lib/teamGate';
 import { WORK_SCOPE_OPTIONS } from '@/lib/workScope';
 
 const PAGE_SIZE = 30;
@@ -26,7 +29,11 @@ function Epics() {
   const { params, update } = useUrlFilters();
   const scope = params.get('scope') === 'MINE' ? 'MINE' : 'TEAM';
   const offset = parseOffset(params.get('offset'));
-  const epicsQuery = useEpics({ limit: PAGE_SIZE, offset, scope });
+  const teamFilter = useTeamParam();
+  const epicsQuery = useEpics(
+    { limit: PAGE_SIZE, offset, scope },
+    { enabled: !teamFilter.blocked, teamId: teamFilter.teamId }
+  );
   const epics = epicsQuery.data?.data ?? [];
   const total = epicsQuery.data?.meta.total ?? 0;
 
@@ -55,6 +62,7 @@ function Epics() {
         subtitle="Changes that span several repositories, split into per-repository work."
         title="Epics"
       />
+      <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
 
       <div className="space-y-4">
         <Toolbar
@@ -69,17 +77,13 @@ function Epics() {
           }
         />
         <QueryBoundary
-          error={epicsQuery.error}
-          isError={epicsQuery.isError}
-          isFetching={epicsQuery.isFetching}
-          isLoading={epicsQuery.isLoading}
+          {...teamGatedBoundary(teamFilter, epicsQuery)}
           label="epics"
           loading={
             <Card className="px-5 py-3">
               <SkeletonRows label="epics" rows={5} />
             </Card>
           }
-          onRetry={() => void epicsQuery.refetch()}
         >
           {epics.length === 0 ? (
             <EmptyState

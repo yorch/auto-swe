@@ -5,6 +5,7 @@ import { Suspense, useCallback } from 'react';
 import { EpicList } from '@/components/epics/EpicList';
 import { RequestList } from '@/components/requests/RequestList';
 import { RequestPanel } from '@/components/requests/RequestPanel';
+import { TeamChip } from '@/components/teams/TeamChip';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -20,7 +21,9 @@ import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useEpics } from '@/hooks/useEpics';
 import { type RequestState, useRequests } from '@/hooks/useRequests';
+import { useTeamParam } from '@/hooks/useTeamParam';
 import { parseOffset } from '@/hooks/useUrlFilters';
+import { teamGatedBoundary } from '@/lib/teamGate';
 import { WORK_SCOPE_OPTIONS } from '@/lib/workScope';
 
 const PAGE_SIZE = 30;
@@ -50,11 +53,15 @@ function RequestsWorkspace() {
   // Anything that moves the view off its default: the scope and the type count, so the reader
   // can see that a view is narrowed and clear it in one step.
   const filtered = (!showEpics && (!!search || state !== 'all')) || scope === 'TEAM' || showEpics;
+  const teamFilter = useTeamParam();
   const query = useRequests(
     { limit: PAGE_SIZE, offset, scope, search, state },
-    { enabled: !showEpics }
+    { enabled: !showEpics && !teamFilter.blocked, teamId: teamFilter.teamId }
   );
-  const epicsQuery = useEpics({ limit: PAGE_SIZE, offset, scope }, { enabled: showEpics });
+  const epicsQuery = useEpics(
+    { limit: PAGE_SIZE, offset, scope },
+    { enabled: showEpics && !teamFilter.blocked, teamId: teamFilter.teamId }
+  );
   const active = showEpics ? epicsQuery : query;
   const requests = query.data?.data ?? [];
   const epics = epicsQuery.data?.data ?? [];
@@ -108,6 +115,7 @@ function RequestsWorkspace() {
         subtitle="Every request you made, with retries kept together."
         title="Requests"
       />
+      <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
       <div>
         <Toolbar
           end={
@@ -159,17 +167,13 @@ function RequestsWorkspace() {
           )}
         </Toolbar>
         <QueryBoundary
-          error={active.error}
-          isError={active.isError}
-          isFetching={active.isFetching}
-          isLoading={active.isLoading}
+          {...teamGatedBoundary(teamFilter, active)}
           label={showEpics ? 'epics' : 'requests'}
           loading={
             <Card className="px-5 py-3">
               <SkeletonRows label="requests" rows={6} />
             </Card>
           }
-          onRetry={() => void active.refetch()}
         >
           <div className="space-y-4">
             {showEpics ? (

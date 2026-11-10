@@ -55,6 +55,7 @@ function summary(items: MeNeedsYouItem[] = [], total = items.length): MeSummary 
     needsYou: { items, total },
     teams: [
       {
+        budget: null,
         myRole: 'LEAD',
         name: 'Payments',
         needsYou: items.length,
@@ -112,7 +113,7 @@ describe('My desk', () => {
     expect(screen.getByText('Fix login')).toBeTruthy();
   });
 
-  it('asks for MINE requests that ignore the top-bar team filter', () => {
+  it('asks for MINE requests across every team, with no team option', () => {
     useRequests.mockReturnValue(bucket(0));
     withSummary(summary());
     render(<HomePage />);
@@ -120,7 +121,7 @@ describe('My desk', () => {
     expect(calls.length).toBeGreaterThan(0);
     for (const [filters, options] of calls) {
       expect(filters).toMatchObject({ scope: 'MINE' });
-      expect(options).toEqual({ ignoreTeam: true });
+      expect(options).toBeUndefined();
     }
     expect(calls.map(([f]) => (f as { state: string }).state)).toEqual(
       expect.arrayContaining(['active', 'success'])

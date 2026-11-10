@@ -1,5 +1,6 @@
 import type { PullRequestListItem } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
+import { TeamLabel } from '@/components/teams/TeamLabel';
 import { BUTTON_STYLE, buttonClassName } from '@/components/ui/Button';
 import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { Icon } from '@/components/ui/Icon';
@@ -20,102 +21,117 @@ function prLabel(pr: PullRequestListItem): string {
   return `${name}${pr.prNumber == null ? '' : ` #${pr.prNumber}`}`;
 }
 
-const COLUMNS: DataTableColumn<PullRequestListItem>[] = [
-  {
-    // A row with no repository or number has nothing to review here, so it stays plain text.
-    cell: (pr) =>
-      pr.repository && pr.prNumber !== null ? (
-        <Link className={LINK} href={`/pull-requests/${pr.id}`}>
-          {pr.title ?? 'Untitled pull request'}
-        </Link>
-      ) : (
-        (pr.title ?? 'Untitled pull request')
-      ),
-    header: 'Pull request',
-    id: 'pull-request',
-    primary: true,
-    secondary: (pr) => {
-      const url = safeHttpUrl(pr.url);
-      const label = prLabel(pr);
-      return url ? (
-        <a className={LINK} href={url} rel="noopener noreferrer" target="_blank">
-          {label}
-          <span className="sr-only"> (opens on the host, new tab)</span>
-          <Icon className="ml-1 inline align-[-1px]" name="external" size={11} />
-        </a>
-      ) : (
-        label
-      );
+function columnsFor(viewerTeamId?: string): DataTableColumn<PullRequestListItem>[] {
+  return [
+    {
+      // A row with no repository or number has nothing to review here, so it stays plain text.
+      cell: (pr) =>
+        pr.repository && pr.prNumber !== null ? (
+          <Link className={LINK} href={`/pull-requests/${pr.id}`}>
+            {pr.title ?? 'Untitled pull request'}
+          </Link>
+        ) : (
+          (pr.title ?? 'Untitled pull request')
+        ),
+      header: 'Pull request',
+      id: 'pull-request',
+      primary: true,
+      secondary: (pr) => {
+        const url = safeHttpUrl(pr.url);
+        const label = prLabel(pr);
+        const owner = pr.ownerTeam ? [pr.ownerTeam] : [];
+        return (
+          <span className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1">
+            <TeamLabel teams={owner} viewerTeamId={viewerTeamId} />
+            {url ? (
+              <a className={LINK} href={url} rel="noopener noreferrer" target="_blank">
+                {label}
+                <span className="sr-only"> (opens on the host, new tab)</span>
+                <Icon className="ml-1 inline align-[-1px]" name="external" size={11} />
+              </a>
+            ) : (
+              label
+            )}
+          </span>
+        );
+      },
     },
-  },
-  {
-    cell: (pr) => (
-      <div className="flex flex-wrap gap-1.5">
-        <PullRequestStateBadge isDraft={pr.isDraft} status={pr.status} />
-        {pr.status === 'OPEN' && <CiBadge status={pr.ciStatus} />}
-      </div>
-    ),
-    header: 'State',
-    id: 'state',
-  },
-  {
-    cell: (pr) =>
-      pr.ticketId ? (
-        <span className="break-all">
-          {pr.workRequestId ? (
-            <Link className={LINK} href={requestHref(pr.workRequestId)}>
-              {pr.ticketId}
-            </Link>
-          ) : (
-            pr.ticketId
-          )}
+    {
+      cell: (pr) => (
+        <div className="flex flex-wrap gap-1.5">
+          <PullRequestStateBadge isDraft={pr.isDraft} status={pr.status} />
+          {pr.status === 'OPEN' && <CiBadge status={pr.ciStatus} />}
+        </div>
+      ),
+      header: 'State',
+      id: 'state',
+    },
+    {
+      cell: (pr) =>
+        pr.ticketId ? (
+          <span className="break-all">
+            {pr.workRequestId ? (
+              <Link className={LINK} href={requestHref(pr.workRequestId)}>
+                {pr.ticketId}
+              </Link>
+            ) : (
+              pr.ticketId
+            )}
+          </span>
+        ) : (
+          <span className="text-paper-500">—</span>
+        ),
+      header: 'Ticket',
+      id: 'ticket',
+    },
+    {
+      cell: (pr) =>
+        pr.latestRun ? (
+          <Link
+            aria-label={`Open run, ${pr.latestRun.status.toLowerCase()}`}
+            className={cn('inline-flex items-center gap-1 hover:underline', FOCUS_RING)}
+            href={`/runs/${pr.latestRun.id}`}
+          >
+            <StatusBadge status={pr.latestRun.status} />
+            <Icon name="arrowRight" size={12} />
+          </Link>
+        ) : (
+          <span className="text-paper-500">—</span>
+        ),
+      header: 'Run',
+      id: 'run',
+    },
+    {
+      align: 'right',
+      cell: (pr) => <span className="tabular text-paper-200">{formatCost(pr.costUsd)}</span>,
+      header: 'Cost',
+      id: 'cost',
+    },
+    {
+      cell: (pr) => (
+        <span className="whitespace-nowrap text-paper-400">
+          <RelativeTime value={pr.openedAt} />
         </span>
-      ) : (
-        <span className="text-paper-500">—</span>
       ),
-    header: 'Ticket',
-    id: 'ticket',
-  },
-  {
-    cell: (pr) =>
-      pr.latestRun ? (
-        <Link
-          aria-label={`Open run, ${pr.latestRun.status.toLowerCase()}`}
-          className={cn('inline-flex items-center gap-1 hover:underline', FOCUS_RING)}
-          href={`/runs/${pr.latestRun.id}`}
-        >
-          <StatusBadge status={pr.latestRun.status} />
-          <Icon name="arrowRight" size={12} />
-        </Link>
-      ) : (
-        <span className="text-paper-500">—</span>
-      ),
-    header: 'Run',
-    id: 'run',
-  },
-  {
-    align: 'right',
-    cell: (pr) => <span className="tabular text-paper-200">{formatCost(pr.costUsd)}</span>,
-    header: 'Cost',
-    id: 'cost',
-  },
-  {
-    cell: (pr) => (
-      <span className="whitespace-nowrap text-paper-400">
-        <RelativeTime value={pr.openedAt} />
-      </span>
-    ),
-    header: 'Opened',
-    id: 'opened',
-  },
-];
+      header: 'Opened',
+      id: 'opened',
+    },
+  ];
+}
 
 /**
  * Title and ticket are host and tracker text: rendered as plain text, never as markup. The
  * title opens the review page; the pull request itself lives on its host, so the host link sits
  * under it.
  */
-export function PullRequestTable({ pullRequests }: { pullRequests: PullRequestListItem[] }) {
+export function PullRequestTable({
+  pullRequests,
+  viewerTeamId,
+}: {
+  pullRequests: PullRequestListItem[];
+  /** Inside a team's space: owners other than this team read "owned by …". */
+  viewerTeamId?: string;
+}) {
   return (
     <DataTable
       actions={(pr) => {
@@ -136,7 +152,7 @@ export function PullRequestTable({ pullRequests }: { pullRequests: PullRequestLi
       }}
       actionsLabel="Review"
       caption="Pull requests opened by the platform, newest first"
-      columns={COLUMNS}
+      columns={columnsFor(viewerTeamId)}
       getRowId={(pr) => pr.id}
       revealActions={false}
       rows={pullRequests}

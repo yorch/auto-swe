@@ -19,6 +19,7 @@ import { recordBudgetExceeded, recordLlmCallMetrics } from './metrics.js';
 import { getModelSpec, type ModelBackedAgentKey } from './models.js';
 import { assertOrgBudgetAvailable } from './orgBudgetGuard.js';
 import { assertRunlessBudgetAvailable, recordRunlessUsage } from './runlessBudget.js';
+import { assertTeamBudgetAvailable } from './teamBudgetGuard.js';
 
 const tracer = trace.getTracer('auto-swe-worker');
 
@@ -450,6 +451,8 @@ export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
   // The organization's monthly USD cap binds the next call of a run already
   // going, not only the launch of a new one.
   await assertOrgBudgetAvailable(temporalWorkflowId, label);
+  // So does the cap of the team that owns the run's repository, when it sets one.
+  await assertTeamBudgetAvailable(temporalWorkflowId, label);
   const workflow = await prisma.activeWorkflow.findFirst({
     select: {
       budgetTier: true,

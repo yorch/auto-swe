@@ -199,6 +199,14 @@ export interface LaunchErrorView {
   previousRunId?: string;
 }
 
+/** Fixed wording for a launch on a repository shared as view only; the server text is not shown. */
+const VIEW_ONLY_LAUNCH_ERROR: LaunchErrorView = {
+  hint: 'Ask a lead of the team that owns the repository to allow launching for your team.',
+  message: 'This repository is view only for your team.',
+  retryable: false,
+  title: 'View only',
+};
+
 /** Explains a failed launch (or re-run) by the gateway's error code. */
 export function describeLaunchError(err: unknown): LaunchErrorView {
   const message = err instanceof Error ? err.message : 'The launch failed';
@@ -289,13 +297,36 @@ export function describeLaunchError(err: unknown): LaunchErrorView {
         retryable: false,
         title: 'Agent runs are not set up',
       };
+    case 'ORG_BUDGET_EXCEEDED':
+    case 'TEAM_BUDGET_EXCEEDED': {
+      // Fixed wording from the code alone: the server message carries no amount to show, and
+      // none is parsed out of it.
+      const scope = code === 'TEAM_BUDGET_EXCEEDED' ? 'team' : 'organization';
+      // Only an organization admin can change the organization's cap.
+      const who =
+        code === 'TEAM_BUDGET_EXCEEDED' ? 'your team lead' : 'an organization administrator';
+      return {
+        hint: `Ask ${who} to raise the limit or review spend; work can start again once the budget allows it.`,
+        message: `This launch was refused because the ${scope} has reached its monthly budget.`,
+        retryable: false,
+        title: `The ${scope} budget is used up`,
+      };
+    }
     case 'AGENT_RUN_NOT_FOUND':
       return { message, retryable: false, title: 'Agent run not found' };
+    case 'REPOSITORY_VIEW_ONLY':
+      return VIEW_ONLY_LAUNCH_ERROR;
     default:
       break;
   }
   if (status === 402) {
-    return { message, retryable: false, title: 'Monthly budget reached' };
+    // Fixed wording: a 402 of unknown code may carry an amount in its message, and none is shown.
+    return {
+      hint: 'Ask an organization administrator to raise the limit or review spend.',
+      message: 'This launch was refused because a monthly budget has been reached.',
+      retryable: false,
+      title: 'Monthly budget reached',
+    };
   }
   if (status === 403) {
     return {

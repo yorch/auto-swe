@@ -11,6 +11,8 @@ export interface WorkflowRunAttributionSources {
   connection?: TeamRelation;
   workRequest?: {
     billingOrgId?: string | null;
+    /** The team a connection-less launch was held to: the last source of the run's team. */
+    billingTeam?: RunAttributionTeam | null;
     connection?: TeamRelation;
     requestedByService?: TeamRelation;
   } | null;
@@ -35,6 +37,7 @@ export const attributionTeamRelationSelect = {
 
 export const runInputAttributionSelect = {
   billingOrgId: true,
+  billingTeam: { select: attributionTeamSelect },
   connection: { select: attributionTeamRelationSelect },
   requestedByService: { select: attributionTeamRelationSelect },
 } as const;
@@ -48,6 +51,9 @@ export function resolveWorkflowRunAttribution(
     sources.channel?.team ??
     sources.workRequest?.requestedByService?.team ??
     sources.template?.team ??
+    // Last: a launch with no repository, channel, service principal or template team (a team
+    // automation on a global template) still spends the team whose cap gated it.
+    sources.workRequest?.billingTeam ??
     null;
 
   return {

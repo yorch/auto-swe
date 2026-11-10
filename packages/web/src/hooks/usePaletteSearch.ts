@@ -1,12 +1,14 @@
 'use client';
 
 import type {
+  TeamSummary,
   WorkflowRunSummary,
   WorkflowTemplateSummary,
   WorkspaceRequestSummary,
 } from '@auto-swe/shared/types/api';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { useTeams } from '@/hooks/useTeams';
 import { api } from '@/lib/api';
 
 export const PALETTE_SEARCH_DEBOUNCE_MS = 200;
@@ -34,6 +36,8 @@ export interface PaletteSearch {
   requests: WorkspaceRequestSummary[];
   runs: WorkflowRunSummary[];
   templates: WorkflowTemplateSummary[];
+  /** The caller's own teams whose name or slug matches, to open a team space. */
+  teams: TeamSummary[];
   /** A request is in flight, or the user is still typing past the last one answered. */
   loading: boolean;
 }
@@ -51,6 +55,21 @@ export function usePaletteSearch(rawQuery: string): PaletteSearch {
   const enabled = settled.length >= PALETTE_SEARCH_MIN_CHARS;
   const common = { enabled, retry: false, staleTime: 30_000 } as const;
   const q = encodeURIComponent(settled);
+
+  // Teams are matched here, against the caller's member teams (usually already cached by the
+  // chrome), once the query has settled like every other group.
+  const memberTeams = useTeams({ enabled, memberOnly: true });
+  const needle = trimmed.toLowerCase();
+  const teams =
+    enabled && settled === trimmed
+      ? (memberTeams.data ?? [])
+          .filter(
+            (t) =>
+              t.myRole != null &&
+              (t.name.toLowerCase().includes(needle) || t.slug.toLowerCase().includes(needle))
+          )
+          .slice(0, PALETTE_GROUP_LIMIT)
+      : [];
 
   const requests = useQuery({
     ...common,
@@ -83,6 +102,7 @@ export function usePaletteSearch(rawQuery: string): PaletteSearch {
     requests: current ? (requests.data?.data ?? []).slice(0, PALETTE_GROUP_LIMIT) : [],
     runs: current ? (runs.data?.data ?? []).slice(0, PALETTE_GROUP_LIMIT) : [],
     settledQuery: settled,
+    teams,
     templates: current ? (templates.data?.data ?? []).slice(0, PALETTE_GROUP_LIMIT) : [],
   };
 }

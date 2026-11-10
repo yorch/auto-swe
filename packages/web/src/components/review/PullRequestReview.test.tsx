@@ -68,6 +68,7 @@ function cockpit(over: Partial<PullRequestCockpit> = {}): PullRequestCockpit {
       latestRun: { id: 'run-1', status: 'SUCCESS' },
       mergedAt: null,
       openedAt: '2026-11-01T09:00:00.000Z',
+      ownerTeam: null,
       prNumber: 7,
       repository: { id: 'repo-1', name: 'api', org: 'acme' },
       status: 'OPEN',

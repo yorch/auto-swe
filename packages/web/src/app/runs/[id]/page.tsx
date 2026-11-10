@@ -32,6 +32,7 @@ import { RunSummaryBand } from '@/components/runs/RunSummaryBand';
 import { RunTranscripts } from '@/components/runs/RunTranscripts';
 import { RunVerdictBanner } from '@/components/runs/RunVerdictBanner';
 import { classifyTraceAsSecurityEvent } from '@/components/security/SecurityEventList';
+import { GuardedButton } from '@/components/teams/GuardedButton';
 import { PageTour } from '@/components/tour/PageTour';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -56,6 +57,7 @@ import { requestHref } from '@/lib/requestDisplay';
 import { validateRouteParam } from '@/lib/routeParams';
 import { findFailedStep } from '@/lib/runFailure';
 import { deriveRunVerdict } from '@/lib/runVerdict';
+import { runControlReason } from '@/lib/teamPermissions';
 import { buildTraceLinker } from '@/lib/traceLinkage';
 import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
 
@@ -320,6 +322,9 @@ export default function RunDetailPage({ params }: PageProps) {
   // Hidden from the failure card once a re-run is in flight or started; the
   // header shows its progress.
   const failureCardReRun = reRunLocked ? undefined : handleReRun;
+  // The server reports `canControl` only for runs it can judge; an absent value shows the controls
+  // and lets the gateway refuse, rather than blocking a user who may act.
+  const denied = run.review?.canControl === false;
   const canReRun =
     (WORKFLOW_RUN_FAILURE_STATUSES.has(run.status as WorkflowRunStatus) ||
       (isAgentRun && isTerminalWorkflowRunStatus(run.status))) &&
@@ -422,8 +427,9 @@ export default function RunDetailPage({ params }: PageProps) {
               </span>
             )}
             {!isTerminalWorkflowRunStatus(run.status) && (
-              <Button
+              <GuardedButton
                 aria-describedby="cancel-run-hint"
+                blockedReason={denied ? runControlReason(null, 'cancel') : null}
                 className={TOUCH_SM}
                 disabled={cancelRun.isPending}
                 onClick={() => setShowCancelConfirm(true)}
@@ -431,7 +437,7 @@ export default function RunDetailPage({ params }: PageProps) {
                 variant="danger"
               >
                 {cancelRun.isPending ? 'Cancelling…' : 'Cancel run'}
-              </Button>
+              </GuardedButton>
             )}
             {!isTerminalWorkflowRunStatus(run.status) && (
               <span className="sr-only" id="cancel-run-hint">
@@ -439,8 +445,9 @@ export default function RunDetailPage({ params }: PageProps) {
               </span>
             )}
             {canReRun && (
-              <Button
+              <GuardedButton
                 aria-describedby="re-run-hint"
+                blockedReason={denied ? runControlReason(null, 're-run') : null}
                 className={TOUCH_SM}
                 disabled={reRunLocked}
                 onClick={handleReRun}
@@ -449,7 +456,7 @@ export default function RunDetailPage({ params }: PageProps) {
               >
                 <Icon name="refresh" size={13} />
                 {retryRun.isPending ? 'Re-running…' : 'Re-run'}
-              </Button>
+              </GuardedButton>
             )}
             {canReRun && (
               <span className="sr-only" id="re-run-hint">

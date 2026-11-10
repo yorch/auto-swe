@@ -1,7 +1,21 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const teamParam = vi.hoisted(() => ({
+  value: {
+    blocked: false,
+    clear: vi.fn(),
+    isError: false,
+    pending: false,
+    retry: vi.fn(),
+    slug: '',
+    team: null as { name: string } | null,
+    teamId: undefined as string | undefined,
+  },
+}));
+vi.mock('@/hooks/useTeamParam', () => ({ useTeamParam: () => teamParam.value }));
 
 const nav = vi.hoisted(() => ({ search: '' }));
 vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
@@ -27,6 +41,16 @@ const settled = {
 };
 
 afterEach(() => {
+  teamParam.value = {
+    blocked: false,
+    clear: vi.fn(),
+    isError: false,
+    pending: false,
+    retry: vi.fn(),
+    slug: '',
+    team: null,
+    teamId: undefined,
+  };
   cleanup();
   useEpics.mockReset();
   nav.search = '';
@@ -46,13 +70,19 @@ describe('Epics page', () => {
     nav.search = 'scope=TEAM&offset=30';
     useEpics.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
     render(<EpicsPage />);
-    expect(useEpics).toHaveBeenCalledWith({ limit: 30, offset: 30, scope: 'TEAM' });
+    expect(useEpics).toHaveBeenCalledWith(
+      { limit: 30, offset: 30, scope: 'TEAM' },
+      expect.anything()
+    );
   });
 
   it('defaults to the team scope, as the gateway does', () => {
     useEpics.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
     render(<EpicsPage />);
-    expect(useEpics).toHaveBeenCalledWith({ limit: 30, offset: 0, scope: 'TEAM' });
+    expect(useEpics).toHaveBeenCalledWith(
+      { limit: 30, offset: 0, scope: 'TEAM' },
+      expect.anything()
+    );
   });
 
   it('points a Mine view with no epics at the team view', () => {
@@ -68,5 +98,31 @@ describe('Epics page', () => {
     render(<EpicsPage />);
     expect(screen.getByRole('button', { name: 'Mine' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'My team' })).toBeTruthy();
+  });
+});
+
+describe('Epics page team filter', () => {
+  it('narrows the list to the ?team= team and shows a removable chip', () => {
+    const clear = vi.fn();
+    teamParam.value = {
+      blocked: false,
+      clear,
+      isError: false,
+      pending: false,
+      retry: vi.fn(),
+      slug: 'payments',
+      team: { name: 'Payments' },
+      teamId: 'team-1',
+    };
+    nav.search = 'team=payments';
+    useEpics.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
+    render(<EpicsPage />);
+    expect(useEpics).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ teamId: 'team-1' })
+    );
+    expect(screen.getByTestId('team-chip').textContent).toContain('Payments');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove the Payments team filter' }));
+    expect(teamParam.value.clear).toHaveBeenCalledTimes(1);
   });
 });

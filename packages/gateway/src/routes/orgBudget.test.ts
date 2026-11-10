@@ -31,6 +31,7 @@ function buildApp(role: string, membershipRole: string | null = 'ORG_MEMBER') {
   const app = makeAuthedApp({
     prisma: {
       organization: {
+        findMany: vi.fn().mockResolvedValue([ORG_ROW]),
         findUnique: vi.fn().mockResolvedValue(ORG_ROW),
         update: vi.fn().mockResolvedValue({ ...ORG_ROW, monthlyBudgetUsdCents: 5000 }),
       },
@@ -52,8 +53,8 @@ function buildApp(role: string, membershipRole: string | null = 'ORG_MEMBER') {
 describe('GET /:orgId/budget', () => {
   afterEach(() => vi.clearAllMocks());
 
-  it('returns budget + usage for org member', async () => {
-    const app = buildApp('LEAD');
+  it('returns budget + usage for an ORG_ADMIN', async () => {
+    const app = buildApp('LEAD', 'ORG_ADMIN');
     await app.ready();
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget` });
     expect(res.statusCode).toBe(200);
@@ -76,6 +77,83 @@ describe('GET /:orgId/budget', () => {
     await app.ready();
     const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget` });
     expect(res.statusCode).toBe(403);
+  });
+
+  it("returns 403 for a plain ORG_MEMBER: the dollar figures are the admin's", async () => {
+    const app = buildApp('LEAD', 'ORG_MEMBER');
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget` });
+    expect(res.statusCode).toBe(403);
+    expect(res.body).not.toContain('10000');
+  });
+
+  it('lets a platform ADMIN read it', async () => {
+    const app = buildApp('ADMIN', null);
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget` });
+    expect(res.statusCode).toBe(200);
+  });
+});
+
+describe('GET /:orgId/budget/status', () => {
+  afterEach(() => vi.clearAllMocks());
+
+  it('gives an ORG_MEMBER the state and the percentage, with no dollar field', async () => {
+    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget/status` });
+    expect(res.statusCode).toBe(200);
+    const { data } = JSON.parse(res.body);
+    // $12.345 of a $100 cap.
+    expect(data).toEqual({
+      alertThresholdPercent: 80,
+      percentUsed: 12.4,
+      scope: 'org',
+      state: expect.stringMatching(/^(ok|alert|projected_over)$/),
+    });
+    expect(res.body).not.toMatch(/usd|cents|12\.345|10000/i);
+  });
+
+  it('reports no_cap when the org has none', async () => {
+    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+    (app.prisma.organization.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...ORG_ROW,
+      monthlyBudgetUsdCents: null,
+    });
+    (app.prisma.organization as unknown as { findMany: unknown }).findMany = vi
+      .fn()
+      .mockResolvedValue([{ ...ORG_ROW, monthlyBudgetUsdCents: null }]);
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget/status` });
+    expect(JSON.parse(res.body).data).toMatchObject({ percentUsed: null, state: 'no_cap' });
+  });
+
+  it('reports over when the spend has reached the cap', async () => {
+    const app = buildApp('ENGINEER', 'ORG_MEMBER');
+    (app.prisma.orgMonthlyUsage.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      costUsdAccrued: '120',
+    });
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget/status` });
+    expect(JSON.parse(res.body).data).toMatchObject({ percentUsed: 120, state: 'over' });
+  });
+
+  it('refuses someone outside the organization', async () => {
+    const app = buildApp('ENGINEER', null);
+    await app.ready();
+    const res = await app.inject({ method: 'GET', url: `${PREFIX}/${ORG_ID}/budget/status` });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('is also mounted under the platform prefix', async () => {
+    const app = buildApp('ADMIN', null);
+    app.register(orgBudgetRoutes, { prefix: '/api/v1/platform/organizations' });
+    await app.ready();
+    const res = await app.inject({
+      method: 'GET',
+      url: `/api/v1/platform/organizations/${ORG_ID}/budget/status`,
+    });
+    expect(res.statusCode).toBe(200);
   });
 });
 

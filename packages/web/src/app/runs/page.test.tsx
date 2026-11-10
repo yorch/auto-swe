@@ -3,6 +3,20 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+const teamParam = vi.hoisted(() => ({
+  value: {
+    blocked: false,
+    clear: vi.fn(),
+    isError: false,
+    pending: false,
+    retry: vi.fn(),
+    slug: '',
+    team: null as { name: string } | null,
+    teamId: undefined as string | undefined,
+  },
+}));
+vi.mock('@/hooks/useTeamParam', () => ({ useTeamParam: () => teamParam.value }));
+
 const nav = vi.hoisted(() => ({ replace: vi.fn(), search: '' }));
 const search = vi.hoisted(() => vi.fn());
 vi.mock('next/navigation', () => ({
@@ -30,6 +44,16 @@ const settled = {
 };
 
 afterEach(() => {
+  teamParam.value = {
+    blocked: false,
+    clear: vi.fn(),
+    isError: false,
+    pending: false,
+    retry: vi.fn(),
+    slug: '',
+    team: null,
+    teamId: undefined,
+  };
   cleanup();
   nav.search = '';
   nav.replace.mockClear();
@@ -75,5 +99,31 @@ describe('runs page filters', () => {
     });
     render(<WorkflowRunsPage />);
     expect(screen.getByText('1–50 of 120 runs')).toBeTruthy();
+  });
+});
+
+describe('runs page team filter', () => {
+  it('narrows the list to the ?team= team and shows a removable chip', () => {
+    const clear = vi.fn();
+    teamParam.value = {
+      blocked: false,
+      clear,
+      isError: false,
+      pending: false,
+      retry: vi.fn(),
+      slug: 'payments',
+      team: { name: 'Payments' },
+      teamId: 'team-1',
+    };
+    nav.search = 'team=payments';
+    search.mockReturnValue({
+      ...settled,
+      data: { data: [], meta: { limit: 50, offset: 0, total: 0 } },
+    });
+    render(<WorkflowRunsPage />);
+    expect(search.mock.calls[0][0]).toMatchObject({ teamId: 'team-1' });
+    expect(screen.getByTestId('team-chip').textContent).toContain('Payments');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove the Payments team filter' }));
+    expect(teamParam.value.clear).toHaveBeenCalledTimes(1);
   });
 });

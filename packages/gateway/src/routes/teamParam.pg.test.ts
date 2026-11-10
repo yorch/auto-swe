@@ -6,7 +6,9 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { humanStepRoutes } from './humanSteps.js';
 import { pullRequestRoutes } from './pullRequests.js';
-import { requestWorkspaceRoutes } from './requestWorkspace.js';
+import { repositoryRoutes } from './repositories.js';
+import { teamOverviewRoutes } from './teamOverview.js';
+import { workflowRunRoutes } from './workflowRuns.js';
 
 /**
  * The `teamId` filter, the human-step count and the control-only attention state against real
@@ -17,13 +19,14 @@ import { requestWorkspaceRoutes } from './requestWorkspace.js';
  * run against (it writes and deletes rows, so use a throwaway one).
  *
  * Teams A, B and C. Repository A belongs to team A and is shared to team C; repository B belongs
- * to team B. alice is on A, bob on B, carol on C. alice launched the runs on repository A, so she
- * controls their steps; carol sees them through the share and does not.
+ * to team B. alice is on A, bob on B, carol on C, lena leads A. alice launched the runs on
+ * repository A, so she controls their steps; carol sees them through the share and does not.
  */
 const enabled = process.env.TEAM_SCOPE_PG_TEST === '1';
 
 /** More pending steps than the list's default page, so a count that rode the page would be wrong. */
 const ACTIONABLE_STEPS = 105;
+const PEOPLE = ['alice', 'bob', 'carol', 'lena', 'admin'];
 
 describe.skipIf(!enabled)('team scope against Postgres', () => {
   let app: FastifyInstance;
@@ -111,7 +114,7 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
   }
 
   beforeAll(async () => {
-    for (const key of ['alice', 'bob', 'carol', 'admin']) {
+    for (const key of PEOPLE) {
       ids[key] = (
         await prisma.user.create({
           data: {
@@ -156,6 +159,9 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
       ).id;
     });
     await prisma.teamMembership.create({ data: { teamId: ids.teama, userId: ids.alice } });
+    await prisma.teamMembership.create({
+      data: { role: 'LEAD', teamId: ids.teama, userId: ids.lena },
+    });
     await prisma.teamMembership.create({ data: { teamId: ids.teamb, userId: ids.bob } });
     await prisma.teamMembership.create({ data: { teamId: ids.teamc, userId: ids.carol } });
     await prisma.connectionTeamShare.create({
@@ -195,14 +201,17 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
       }),
     } as unknown as never);
     app.decorate('prisma', prisma as unknown as never);
-    await app.register(requestWorkspaceRoutes, { prefix: '/api/v1/workflow-runs' });
+    // Registers the request workspace too.
+    await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
+    await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
+    await app.register(teamOverviewRoutes, { prefix: '/api/v1/teams' });
     await app.register(pullRequestRoutes, { prefix: '/api/v1/pull-requests' });
     await app.register(humanStepRoutes, { prefix: '/api/v1/human-steps' });
     await app.ready();
   });
 
   afterAll(async () => {
-    const people = ['alice', 'bob', 'carol', 'admin'].map((k) => ids[k]).filter(Boolean);
+    const people = PEOPLE.map((k) => ids[k]).filter(Boolean);
     const repos = [ids.repoa, ids.repob].filter(Boolean);
     await prisma.pullRequest.deleteMany({ where: { repoId: { in: repos } } });
     await prisma.workflowRun.deleteMany({ where: { templateId: ids.tpl } }); // cascades steps
@@ -306,5 +315,161 @@ describe.skipIf(!enabled)('team scope against Postgres', () => {
     const attention = (await requests('carol', `&teamId=${ids.teamc}&state=attention`)).data;
     expect(attention.map((r) => r.id)).not.toContain(ids.runa);
     expect((await requests('alice', '&state=attention')).data.map((r) => r.id)).toContain(ids.runa);
+  });
+
+  describe('the teamId filter on human steps, runs and repositories', () => {
+    const steps = (user: string, query: string) =>
+      get<{ id: string }>(user, `/api/v1/human-steps?count=true&limit=1${query}`);
+    const runs = async (user: string, query: string) =>
+      (await get<{ id: string }>(user, `/api/v1/workflow-runs?limit=100${query}`)).data.map(
+        (r) => r.id
+      );
+    const repos = async (user: string, query: string) =>
+      (await get<{ id: string }>(user, `/api/v1/repositories?limit=500${query}`)).data.map(
+        (r) => r.id
+      );
+
+    it('only narrows human steps: the filtered total is a subset of the unfiltered one', async () => {
+      const all = (await steps('alice', '&actionable=true')).meta?.total ?? 0;
+      const narrowed =
+        (await steps('alice', `&actionable=true&teamId=${ids.teama}`)).meta?.total ?? 0;
+      expect(narrowed).toBe(ACTIONABLE_STEPS);
+      expect(narrowed).toBeLessThanOrEqual(all);
+      // Composes with mine=true.
+      expect(
+        (await steps('alice', `&actionable=true&mine=true&teamId=${ids.teama}`)).meta?.total
+      ).toBe(ACTIONABLE_STEPS);
+      // A platform ADMIN controls everything; naming team B still leaves out team A's steps.
+      expect((await steps('admin', '&actionable=true')).meta?.total).toBeGreaterThanOrEqual(
+        ACTIONABLE_STEPS
+      );
+      expect((await steps('admin', `&actionable=true&teamId=${ids.teamb}`)).meta?.total).toBe(0);
+    });
+
+    it("shows the sharee team the owner's steps in a list, not as actionable", async () => {
+      expect((await steps('carol', `&teamId=${ids.teamc}`)).meta?.total).toBe(ACTIONABLE_STEPS);
+      expect((await steps('carol', `&actionable=true&teamId=${ids.teamc}`)).meta?.total).toBe(0);
+    });
+
+    it('answers 404 TEAM_NOT_FOUND for a non-member on all three lists', async () => {
+      for (const url of [
+        `/api/v1/human-steps?teamId=${ids.teama}`,
+        `/api/v1/workflow-runs?teamId=${ids.teama}`,
+        `/api/v1/repositories?teamId=${ids.teama}`,
+      ]) {
+        const res = await call('bob', url);
+        expect(res.statusCode, url).toBe(404);
+        expect(res.json().error?.code ?? res.json().code, url).toBe('TEAM_NOT_FOUND');
+      }
+    });
+
+    it('scopes runs to owned or shared work, and never past visibility', async () => {
+      const all = await runs('alice', '');
+      const narrowed = await runs('alice', `&teamId=${ids.teama}`);
+      expect(narrowed).toContain(ids.runa);
+      for (const id of narrowed) {
+        expect(all).toContain(id);
+      }
+      expect(narrowed).not.toContain(ids.runb);
+      // The sharee team lists the owner's run; team B's stays out of both.
+      expect(await runs('carol', `&teamId=${ids.teamc}`)).toContain(ids.runa);
+      expect(await runs('admin', `&teamId=${ids.teamb}`)).toEqual([ids.runb]);
+      // Composes with the text filter.
+      expect(await runs('alice', `&teamId=${ids.teama}&q=zz-no-such-${suffix}`)).toEqual([]);
+    });
+
+    it('scopes repositories to owned or shared ones', async () => {
+      expect(await repos('alice', `&teamId=${ids.teama}`)).toEqual([ids.repoa]);
+      expect(await repos('carol', `&teamId=${ids.teamc}`)).toEqual([ids.repoa]);
+      expect(await repos('admin', `&teamId=${ids.teamb}`)).toEqual([ids.repob]);
+    });
+  });
+
+  describe('GET /teams/:id/overview', () => {
+    interface Overview {
+      activity: { runId: string | null; state: string }[];
+      admin?: { monthCostUsdCents: number | null };
+      lead?: { openPullRequests: number; staleApprovals: number; unownedFailures: number };
+      needsYou: { total: number };
+      pullRequests: { opened: number };
+      repos: { id: string; ownerTeamName: string | null; relation: string }[];
+      running: number;
+      viewerLevel: string;
+    }
+    const overview = async (user: string, team: string) => {
+      const res = await call(user, `/api/v1/teams/${ids[team]}/overview`);
+      expect(res.statusCode, res.body).toBe(200);
+      return (res.json() as { data: Overview }).data;
+    };
+
+    it('counts needsYou exactly as the actionable list with the same teamId does', async () => {
+      for (const [user, team] of [
+        ['alice', 'teama'],
+        ['carol', 'teamc'],
+        ['bob', 'teamb'],
+        ['lena', 'teama'],
+      ] as const) {
+        const listed = await get<{ id: string }>(
+          user,
+          `/api/v1/human-steps?actionable=true&count=true&limit=1&teamId=${ids[team]}`
+        );
+        expect((await overview(user, team)).needsYou.total, `${user}/${team}`).toBe(
+          listed.meta?.total
+        );
+      }
+      expect((await overview('alice', 'teama')).needsYou.total).toBe(ACTIONABLE_STEPS);
+    });
+
+    it('builds the view from the team role and omits gated sections for an engineer', async () => {
+      const raw = await call('alice', `/api/v1/teams/${ids.teama}/overview`);
+      const alice = (raw.json() as { data: Overview }).data;
+      expect(alice.viewerLevel).toBe('engineer');
+      expect('lead' in alice).toBe(false);
+      expect('admin' in alice).toBe(false);
+      expect(raw.body).not.toContain('@example.test');
+      const lena = await overview('lena', 'teama');
+      expect(lena.viewerLevel).toBe('lead');
+      expect(lena.lead).toEqual({ openPullRequests: 1, staleApprovals: 0, unownedFailures: 0 });
+      expect('admin' in lena).toBe(false);
+      const admin = await overview('admin', 'teamb');
+      expect(admin.viewerLevel).toBe('admin');
+      expect(admin.admin?.monthCostUsdCents).toBe(0);
+    });
+
+    it('answers 404 for a non-member, a platform ADMIN excepted', async () => {
+      const res = await call('bob', `/api/v1/teams/${ids.teama}/overview`);
+      expect(res.statusCode).toBe(404);
+      expect((await overview('admin', 'teama')).viewerLevel).toBe('admin');
+    });
+
+    it('lists shared repositories for the sharee, and counts pull requests for the owner only', async () => {
+      const carol = await overview('carol', 'teamc');
+      expect(carol.repos).toEqual([
+        {
+          canLaunch: true,
+          id: ids.repoa,
+          name: expect.any(String),
+          ownerTeamName: `ts-a-${suffix}`,
+          relation: 'shared',
+        },
+      ]);
+      expect(carol.running).toBe(1);
+      expect(carol.pullRequests.opened).toBe(0);
+      const alice = await overview('alice', 'teama');
+      expect(alice.repos.map((r) => [r.id, r.relation])).toEqual([[ids.repoa, 'owned']]);
+      expect(alice.pullRequests.opened).toBe(1);
+      expect(alice.activity.map((a) => a.runId)).toContain(ids.runa);
+    });
+
+    it('marks activity as needing attention only where the caller can answer a step', async () => {
+      const stateOf = (o: Overview) => o.activity.find((a) => a.runId === ids.runa)?.state;
+      // alice controls the 105 pending steps on runa; carol (a sharee) only sees them.
+      expect(stateOf(await overview('alice', 'teama'))).toBe('attention');
+      expect(stateOf(await overview('carol', 'teamc'))).toBe('active');
+      // The same answer as the request list's attention filter.
+      expect(
+        (await requests('carol', `&teamId=${ids.teamc}&state=attention`)).data.map((r) => r.id)
+      ).not.toContain(ids.runa);
+    });
   });
 });

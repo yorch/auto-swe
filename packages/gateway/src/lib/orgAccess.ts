@@ -11,14 +11,19 @@
  * row for the org.
  */
 import type { PrismaClient } from '@auto-swe/shared';
-import { currentYearMonth, orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
+import {
+  currentYearMonth,
+  isTeamOverBudget,
+  orgMonthSpend,
+  usdToCents,
+} from '@auto-swe/shared/lib/billing';
 import type { FastifyReply } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
 
 // Re-exported so callers (workRequests, orgBudget) keep importing it from this
 // module; the implementation lives in @auto-swe/shared so the worker
 // (OrgMonthlyUsage writer) and gateway (reader) share one formula.
-export { currentYearMonth };
+export { currentYearMonth, isTeamOverBudget };
 
 /** Error bodies for the two org-level refusals, shared with `authorizeLaunch`. */
 export const ORG_ACCESS_REFUSAL = {
@@ -26,11 +31,47 @@ export const ORG_ACCESS_REFUSAL = {
   message: 'You are not a member of this organization',
 } as const;
 
-export function orgBudgetRefusal(budgetCap: number): { code: string; message: string } {
+/**
+ * The 402 body. It names the state and not the cap: the amount is an ORG_ADMIN's to read, and a
+ * refused engineer needs to know the budget is spent, not by how much.
+ */
+export function orgBudgetRefusal(): { code: string; message: string } {
   return {
     code: 'ORG_BUDGET_EXCEEDED',
-    message: `Organization has exceeded its monthly budget cap of ${budgetCap} USD cents`,
+    message: 'Organization has exceeded its monthly budget cap',
   };
+}
+
+/**
+ * The 402 body for a team's own cap. It carries no amount, and it names the team only when the
+ * caller is a member of it: a sharee launching on another team's repository is told that the
+ * owning team's budget is spent, not whose it is.
+ */
+export function teamBudgetRefusal(team: { memberName: string | null }): {
+  code: string;
+  message: string;
+} {
+  return {
+    code: 'TEAM_BUDGET_EXCEEDED',
+    message: team.memberName
+      ? `Team "${team.memberName}" has exceeded its monthly budget cap`
+      : 'The team that owns this repository has exceeded its monthly budget cap',
+  };
+}
+
+/** Is the user an ORG_ADMIN of `orgId`? Platform ADMINs always are. */
+export async function isOrgAdmin(
+  prisma: PrismaClient,
+  user: { role: string; sub: string },
+  orgId: string
+): Promise<boolean> {
+  if (user.role === 'ADMIN') {
+    return true;
+  }
+  const membership = await prisma.organizationMembership.findUnique({
+    where: { userId_orgId: { orgId, userId: user.sub } },
+  });
+  return membership?.role === 'ORG_ADMIN';
 }
 
 /** Is the user a member of `orgId`? Platform ADMINs always are. */
@@ -107,6 +148,27 @@ export async function assertOrgBudget(
   if (budgetCap == null || !(await isOrgOverBudget(prisma, orgId, budgetCap))) {
     return true;
   }
-  await reply.status(402).send({ error: orgBudgetRefusal(budgetCap) });
+  await reply.status(402).send({ error: orgBudgetRefusal() });
+  return false;
+}
+
+/**
+ * Assert that a team has not exhausted its own monthly cap (see `isTeamOverBudget`). Sends the 402
+ * reply and returns `false` when it has; `true` otherwise, including with no cap. For a launch
+ * with no authenticated caller (a webhook), where `authorizeLaunch` is not taken; `memberName` is
+ * null there because no caller can be a member.
+ */
+export async function assertTeamBudget(
+  prisma: PrismaClient,
+  team: { id: string; monthlyBudgetUsdCents: number | null | undefined },
+  reply: FastifyReply
+): Promise<boolean> {
+  if (team.monthlyBudgetUsdCents == null) {
+    return true;
+  }
+  if (!(await isTeamOverBudget(prisma, team.id, team.monthlyBudgetUsdCents))) {
+    return true;
+  }
+  await reply.status(402).send({ error: teamBudgetRefusal({ memberName: null }) });
   return false;
 }

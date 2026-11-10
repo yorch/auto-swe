@@ -281,9 +281,67 @@ describe('scheduledFireRefusal', () => {
     });
     db.connection.findUnique.mockResolvedValueOnce({
       ...repo(),
-      shares: [{ team: { memberships: [{ userId: OWNER }] }, teamId: 'team-sharer' }],
+      shares: [
+        { canLaunch: true, team: { memberships: [{ userId: OWNER }] }, teamId: 'team-sharer' },
+      ],
     });
     expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
+  });
+
+  it('refuses a schedule of a team the repository is shared with view-only, whoever acts', async () => {
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({
+      ...schedule(),
+      teamId: 'team-sharer',
+    });
+    // The acting user is ALSO a member of the owning team (repo() lists them there), which would
+    // let the user-level launch decision through: the schedule's own team is what is held.
+    db.connection.findUnique.mockResolvedValueOnce({
+      ...repo(),
+      shares: [
+        { canLaunch: false, team: { memberships: [{ userId: OWNER }] }, teamId: 'team-sharer' },
+      ],
+    });
+    expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({
+      reason: 'share-view-only',
+      scheduleId: SCHEDULE_ID,
+    });
+  });
+
+  it("does not hold the owning team's schedule to a view-only share of another team", async () => {
+    db.connection.findUnique.mockResolvedValueOnce({
+      ...repo(),
+      shares: [
+        { canLaunch: false, team: { memberships: [{ userId: OWNER }] }, teamId: 'team-sharer' },
+      ],
+    });
+    expect(await scheduledFireRefusal(db, FIRE)).toBeNull();
+  });
+
+  it('refuses a view-only sharee schedule again in the WorkflowRun creation transaction', async () => {
+    db.scheduledWorkRequest.findFirst.mockResolvedValueOnce({
+      ...schedule(),
+      teamId: 'team-sharer',
+    });
+    db.connection.findUnique
+      .mockResolvedValueOnce({
+        shares: [{ teamId: 'team-sharer' }],
+        team: { orgId: 'org-1' },
+        teamId: 'team-1',
+      })
+      .mockResolvedValueOnce({
+        ...repo(),
+        shares: [
+          {
+            canLaunch: false,
+            team: { isActive: true, memberships: [{ userId: OWNER }] },
+            teamId: 'team-sharer',
+          },
+        ],
+      });
+    await expect(assertScheduledFireSourceSnapshot(db, FIRE)).rejects.toMatchObject({
+      details: [expect.objectContaining({ reason: 'share-view-only' })],
+      type: SCHEDULED_FIRE_REFUSED,
+    });
   });
 
   it('refuses when the owner was deleted or deactivated', async () => {

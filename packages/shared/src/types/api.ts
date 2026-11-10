@@ -220,6 +220,40 @@ export interface TeamSummary {
   orgName: string;
 }
 
+/** Where a budget stands against its cap. `no_cap` means no limit is set. */
+export type BudgetState = 'no_cap' | 'ok' | 'alert' | 'projected_over' | 'over';
+
+/**
+ * A budget as an engineer may see it: a percentage and a state, never dollar amounts. `scope` says
+ * whose cap binds: the organization's, or the team's own when it sets one.
+ */
+export interface BudgetStatus {
+  scope: 'org' | 'team';
+  state: BudgetState;
+  /** Month-to-date as a share of the cap, 0 to 100 or more; null when there is no cap. */
+  percentUsed: number | null;
+  alertThresholdPercent: number | null;
+}
+
+/**
+ * A team's own monthly cap, as a team ADMIN (or an ORG_ADMIN, or a platform ADMIN) manages it.
+ * Dollar amounts appear only here and in the repo's other admin-only budget reads.
+ */
+export interface TeamBudgetSettings {
+  /** The cap in cents; null when the team sets none and only the organization's cap applies. */
+  monthlyBudgetUsdCents: number | null;
+  /** Alert threshold as a percentage of the cap, 1 to 100; null for the default. */
+  budgetAlertThresholdPercent: number | null;
+  /** Spend this calendar month (UTC) attributed to the team, in cents. */
+  monthSpendUsdCents: number;
+}
+
+/** Body of `PATCH /api/v1/teams/:id/budget`; an omitted key is left unchanged. */
+export interface UpdateTeamBudgetBody {
+  monthlyBudgetUsdCents?: number | null;
+  budgetAlertThresholdPercent?: number | null;
+}
+
 /** What kind of obligation a "Needs you" row is. */
 export type MeNeedsYouKind = 'approval' | 'approval_due_soon' | 'failed_run' | 'pr_merge';
 
@@ -255,9 +289,87 @@ export interface MeSummaryTeam {
   myRole: 'ADMIN' | 'LEAD' | 'ENGINEER';
   /** Items in `needsYou` that belong to this team. */
   needsYou: number;
+  /** The budget that binds work on this team's repositories; null when none is set. */
+  budget: BudgetStatus | null;
   /** Runs started by or visible to the caller that are running now, on this team's repositories. */
   running: number;
   queued: number;
+}
+
+/** A repository on a team's overview, with how the team relates to it. */
+export interface TeamOverviewRepo {
+  id: string;
+  /** `owner/name`. */
+  name: string;
+  relation: 'owned' | 'shared';
+  /** False when the repository is shared to the team view-only; always true for an owned one. */
+  canLaunch: boolean;
+  /** The owning team's name when `relation` is `shared`; null when owned. */
+  ownerTeamName: string | null;
+}
+
+/** One recent request in a team's activity feed. */
+export interface TeamOverviewActivityItem {
+  requestId: string | null;
+  runId: string | null;
+  title: string;
+  state: 'active' | 'attention' | 'success' | 'failed';
+  repoName: string | null;
+  launchedByName: string | null;
+  occurredAt: string;
+}
+
+/**
+ * `GET /api/v1/teams/:id/overview`. Fields a lower role may not see are absent from the
+ * response (`lead`, `admin`), never nulled.
+ */
+export interface TeamOverview {
+  team: {
+    id: string;
+    slug: string;
+    name: string;
+    orgId: string;
+    orgName: string;
+    /** The caller's own role in this team; null for a platform ADMIN who is not a member. */
+    myRole: 'ADMIN' | 'LEAD' | 'ENGINEER' | null;
+  };
+  /** Which view the server built: the team role decides it, never the platform role. */
+  viewerLevel: 'engineer' | 'lead' | 'admin';
+  /** The budget that binds work on this team's repositories; percentage only. Null when none is set. */
+  budget: BudgetStatus | null;
+  /** The caller's own actionable items on this team's repositories. */
+  needsYou: { total: number };
+  running: number;
+  queued: number;
+  /** Requests started in the last 7 days on this team's repositories (owned or shared). */
+  last7d: { started: number; succeeded: number; failed: number };
+  /** Last 30 days, counting only runs this team owns (owner-attributed). */
+  pullRequests: {
+    opened: number;
+    merged: number;
+    closedUnmerged: number;
+    mergeRate: number | null;
+    timeToMergeP50Hours: number | null;
+  };
+  activity: TeamOverviewActivityItem[];
+  repos: TeamOverviewRepo[];
+  /** Present for team LEAD and ADMIN. */
+  lead?: {
+    /** Failed latest attempts on the team's repositories whose launcher is no longer a member. */
+    unownedFailures: number;
+    /** Pending approvals whose deadline has passed. */
+    staleApprovals: number;
+    openPullRequests: number;
+  };
+  /** Present for team ADMIN (and a platform ADMIN). */
+  admin?: {
+    /**
+     * This calendar month's attributed spend in cents; null when it cannot be computed. Absent when
+     * the organization has a cap and the viewer is not an ORG_ADMIN of it (or a platform ADMIN):
+     * beside `budget.percentUsed` it would reveal the cap.
+     */
+    monthCostUsdCents?: number | null;
+  };
 }
 
 /** `GET /api/v1/me/summary`: the caller's cross-team desk in one response. */
@@ -283,6 +395,8 @@ export interface TeamDetail extends TeamSummary {
 
 /** A repository shared with a team, and the team that owns it. */
 export interface SharedRepoRef extends RepoRef {
+  /** False when this team may view the repository but not start work on it. */
+  canLaunch: boolean;
   team: { id: string; name: string; slug: string };
 }
 
@@ -449,7 +563,8 @@ export interface RepositorySummary {
    * Further teams whose members may see and launch on this repository. The
    * owning `team` keeps management. Present on the repository listing.
    */
-  shares?: Array<{ team: TeamRef }>;
+  /** `canLaunch` false means the sharing team may view the repository but not start work on it. */
+  shares?: Array<{ canLaunch: boolean; team: TeamRef }>;
   _count: { activeWorkflows: number };
 }
 
@@ -925,6 +1040,11 @@ export interface WorkspaceRequestSummary extends WorkflowRunSummary {
   stage: string | null;
   reviewUrl: string | null;
   target: string | null;
+  /**
+   * The teams that own the repositories and template the request ran on, for a row's team chip.
+   * Repositories shared into a team do not add one: the owner is named.
+   */
+  teams: { id: string; name: string }[];
 }
 
 export interface WorkflowStepRecord {
@@ -1614,6 +1734,8 @@ export interface PullRequestListItem {
   id: string;
   /** Null for a row whose repository was removed; only an ADMIN can see one. */
   repository: { id: string; org: string; name: string } | null;
+  /** The team that owns the repository; null when the repository is gone. */
+  ownerTeam: { id: string; name: string; slug: string } | null;
   prNumber: number | null;
   /** The PR on its host; null when it cannot be derived. */
   url: string | null;

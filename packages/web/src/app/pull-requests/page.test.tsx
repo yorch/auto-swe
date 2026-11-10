@@ -1,7 +1,21 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const teamParam = vi.hoisted(() => ({
+  value: {
+    blocked: false,
+    clear: vi.fn(),
+    isError: false,
+    pending: false,
+    retry: vi.fn(),
+    slug: '',
+    team: null as { name: string } | null,
+    teamId: undefined as string | undefined,
+  },
+}));
+vi.mock('@/hooks/useTeamParam', () => ({ useTeamParam: () => teamParam.value }));
 
 const nav = vi.hoisted(() => ({ replace: vi.fn(), search: '' }));
 vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
@@ -20,6 +34,16 @@ import PullRequestsPage from './page';
 
 const settled = { error: null, isError: false, isFetching: false, isLoading: false };
 afterEach(() => {
+  teamParam.value = {
+    blocked: false,
+    clear: vi.fn(),
+    isError: false,
+    pending: false,
+    retry: vi.fn(),
+    slug: '',
+    team: null,
+    teamId: undefined,
+  };
   cleanup();
   vi.clearAllMocks();
 });
@@ -30,7 +54,8 @@ describe('Pull requests page', () => {
     usePullRequests.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
     render(<PullRequestsPage />);
     expect(usePullRequests).toHaveBeenCalledWith(
-      expect.objectContaining({ draft: 'any', offset: 0, scope: 'MINE', state: 'OPEN' })
+      expect.objectContaining({ draft: 'any', offset: 0, scope: 'MINE', state: 'OPEN' }),
+      expect.anything()
     );
     expect(screen.getByText('No open pull requests')).toBeTruthy();
   });
@@ -48,14 +73,16 @@ describe('Pull requests page', () => {
         scope: 'TEAM',
         state: 'MERGED',
         ticket: 'JIRA-1',
-      })
+      }),
+      expect.anything()
     );
     expect(screen.getByText('No pull requests match these filters')).toBeTruthy();
 
     nav.search = 'state=bogus&draft=bogus';
     render(<PullRequestsPage />);
     expect(usePullRequests).toHaveBeenLastCalledWith(
-      expect.objectContaining({ draft: 'any', state: 'OPEN' })
+      expect.objectContaining({ draft: 'any', state: 'OPEN' }),
+      expect.anything()
     );
   });
 
@@ -70,14 +97,20 @@ describe('Pull requests page', () => {
     nav.search = 'repo=not-a-uuid';
     usePullRequests.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
     render(<PullRequestsPage />);
-    expect(usePullRequests).toHaveBeenCalledWith(expect.objectContaining({ repoId: undefined }));
+    expect(usePullRequests).toHaveBeenCalledWith(
+      expect.objectContaining({ repoId: undefined }),
+      expect.anything()
+    );
   });
 
   it('keeps "all states" distinct from the open default', () => {
     nav.search = 'state=all';
     usePullRequests.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
     render(<PullRequestsPage />);
-    expect(usePullRequests).toHaveBeenCalledWith(expect.objectContaining({ state: 'all' }));
+    expect(usePullRequests).toHaveBeenCalledWith(
+      expect.objectContaining({ state: 'all' }),
+      expect.anything()
+    );
   });
 
   it('always says no built-in step merges, with a link to the docs', () => {
@@ -118,5 +151,31 @@ describe('Pull requests page', () => {
     expect(screen.getByTestId('never-merges-note')).toBeTruthy();
     expect(screen.getByText(/State is the pull request’s state on the host/)).toBeTruthy();
     expect(screen.queryByText(/draft pull request/i)).toBeNull();
+  });
+});
+
+describe('Pull requests page team filter', () => {
+  it('narrows the list to the ?team= team and shows a removable chip', () => {
+    const clear = vi.fn();
+    teamParam.value = {
+      blocked: false,
+      clear,
+      isError: false,
+      pending: false,
+      retry: vi.fn(),
+      slug: 'payments',
+      team: { name: 'Payments' },
+      teamId: 'team-1',
+    };
+    nav.search = 'team=payments';
+    usePullRequests.mockReturnValue({ ...settled, data: [], meta: { total: 0 } });
+    render(<PullRequestsPage />);
+    expect(usePullRequests).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ teamId: 'team-1' })
+    );
+    expect(screen.getByTestId('team-chip').textContent).toContain('Payments');
+    fireEvent.click(screen.getByRole('button', { name: 'Remove the Payments team filter' }));
+    expect(teamParam.value.clear).toHaveBeenCalledTimes(1);
   });
 });

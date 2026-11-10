@@ -235,7 +235,24 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       log: request.log,
       ...(access.kind === 'repository'
         ? { repos: [access.repo] }
-        : { orgs: [access.team.organization], repos: target ? [target] : [] }),
+        : {
+            orgs: [access.team.organization],
+            repos: target ? [target] : [],
+            // With a repository, its OWNER's cap is the one `repos` carries; without one the run
+            // spends the automation's own team.
+            ...(target
+              ? {}
+              : {
+                  teams: [
+                    {
+                      id: access.team.id,
+                      isMember: true,
+                      monthlyBudgetUsdCents: access.team.monthlyBudgetUsdCents,
+                      name: access.team.name,
+                    },
+                  ],
+                }),
+          }),
       runIdentity: 'platform',
     });
     if (decision.ok) {
@@ -1250,7 +1267,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         if (!(await ownerActive(reply, access))) {
           return;
         }
-        const { id, organization, orgId } = access.team;
+        const { id, monthlyBudgetUsdCents, organization, orgId } = access.team;
         // A team automation that acts on a repository decides on it, if it is still the team's.
         const connection = automation.targetConnectionId
           ? await loadTargetConnection(fastify.prisma, automation.targetConnectionId, id)
@@ -1261,7 +1278,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         if (connection) {
           target = await findLaunchRepo(fastify.prisma, connection.id, user.sub);
         }
-        owner = { connection, team: { id, organization, orgId } };
+        owner = { connection, team: { id, monthlyBudgetUsdCents, organization, orgId } };
       }
       if (!(await mayLaunch(request, reply, user, access, target))) {
         return;

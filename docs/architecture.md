@@ -169,12 +169,13 @@ packages/
 | `src/app/page.tsx` | Dashboard home — KPIs, "needs attention" queue, recent activity |
 | `src/app/runs/[id]/` | Live run viewer — React Flow DAG with per-node status; bottom panel toggles between three layouts (split console, transcript, flight recorder), persisted per user via `/api/v1/me/preferences`; traces link to graph nodes and fan-out branches through `src/lib/traceLinkage.ts` |
 | `src/app/requests/`, `src/app/approvals/`, `src/app/pull-requests/`, `src/app/tickets/` | Work — requests with their attempts, pending human steps with respond forms, and the pull-request and ticket views |
+| `src/app/teams/[slug]/` | The team space — Overview, Work, Automations, Reports, Knowledge, Members and Settings tabs for one team, taken from the route slug; the team switcher and the sidebar Teams group link here ([teams.md](./teams.md#3-the-team-space)) |
 | `src/app/library/[id]/` | React Flow canvas editor — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
 | `src/app/{agents,skills,models,mcp,bundles,connections}/` | Build — agents and the agent library, skills, model configuration, MCP connections, bundles, repositories and other connections |
 | `src/app/admin/` | Admin — one area with its own sub-navigation (`layout.tsx` renders `components/layout/AdminNav.tsx`): users, teams, organizations, sessions, API tokens, scanner patterns, autonomy policies, security events, audit, analytics, LLM usage, platform settings, workflow defaults, config grants, automations and schedules, Slack channels, integrations, GitHub installations, lessons, knowledge, error baselines, evals |
 | `src/lib/navigation.ts` | The page map: sidebar groups, Admin sub-navigation, page titles and breadcrumbs. Old addresses redirect permanently through `LEGACY_REDIRECTS` in `next.config.ts` |
 | `src/hooks/` | TanStack Query hooks split by resource domain |
-| `src/stores/` | Zustand — `authStore` (identity), `teamStore` (active team), `themeStore` (theme and palette preference), `assistantStore` (assistant panel) |
+| `src/stores/` | Zustand — `authStore` (identity), `themeStore` (theme and palette preference), `assistantStore` (assistant panel) |
 | `src/components/ui/` | Design-system primitives — `Button`, `Input`, `Select`, `Textarea`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `PageHeader`, `QueryBoundary`, shaped skeleton placeholders (`LoadingState.tsx`), `FieldWrapper`, `Th`, `Stat`, `StatusBadge`, `ToggleSwitch`, `CopyButton` |
 | `src/lib/palette.ts` | Each palette and theme's colours as checked literals, for the SVG contexts that cannot resolve `var()` |
 | `src/lib/api.ts` | `ApiClient` — all fetches; no direct `fetch` in components |
@@ -290,7 +291,7 @@ A hand-authored template that pushes by some other route and then waits on `ciPi
 its first verdict and silently ignores every later one, failing at the wait's own timeout rather
 than at the point of the mistake.
 
-**Multi-repo epics.** `POST /api/v1/epics` starts `EpicOrchestratorWorkflow` instead: the planner
+**Multi-repo epics.** `POST /api/v1/epics` starts `EpicOrchestratorWorkflow` instead. It takes the platform LEAD role, and in addition team LEAD or team ADMIN membership of the team that **owns** every repository the epic names (`authorizeLaunch` with `requireOwningTeamLead`; a platform ADMIN passes, and a share does not count). A refusal is `403 FORBIDDEN` naming the repositories, in the `reasons` list as `team-lead-required`, and never the owning team. `POST /api/v1/prd-runs` takes the same requirement for the repositories a PRD run names. The epic route is the only path that starts an epic; schedules, automations and the Slack modal start other workflows. The workflow: the planner
 agent decomposes the brief into per-repo subtasks (every repository the epic names is in the plan;
 the planner only orders them), a dependency graph is built, and each repo's child
 `RunnableWorkflow` starts as soon as the repos it depends on have succeeded — it does not wait for
@@ -845,14 +846,17 @@ finalization; the cancel ends it directly, which costs the org cap nothing becau
 bill their channel, not an org. A cancel that finds no execution left to stop leaves a non-channel
 run for the run reaper (§8), which finalizes and bills it; a channel turn is ended by the cancel
 itself. `Organization.monthlyBudgetUsdCents` caps monthly spend —
-every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's spend meets the cap.
+every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's spend meets the cap. The
+refusal names the state, never the cap: the amount is an ORG_ADMIN's to read.
 The launch paths — work requests and their re-runs, epics, PRD runs, schedules, template runs and
 the Slack run modal — take one decision, `authorizeLaunch` (`gateway/src/lib/launchAuthorization.ts`):
 repository access, then membership of every org the launch spends against, then each org's cap.
 A launch with no connection that spends against an org — a template run or template webhook call
 (the template team's org), a service principal's template run (its own team's org), a team
 automation (the team's org) — records that org on the request as `RunInput.billingOrgId`, so the run
-is billed to, counted under and capped by the org its launch was gated against. A re-run reuses the
+is billed to, counted under and capped by the org its launch was gated against, and records the
+team the same decision held to its own cap as `RunInput.billingTeamId`, the last source of the run's
+attributed team. A re-run reuses the
 request, and so the org: a connection-less re-run is gated against the org the request is charged
 to — for a service principal's run, the principal's team's org, so the person re-running it must be
 a member of that org. A request charged to no org (its connection or org was deleted, or its
@@ -876,7 +880,11 @@ connection, else — only when the run has no connection — the ledger row's re
 reaches the cap. That read goes through a per-org cache of one config-cache window (30 s), holding
 the cap and the spend together, so a refusal clears within a window of the cap being raised.
 The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
-`/members`. `currentYearMonth()` in `@auto-swe/shared/lib/billing` is the shared month-bucket key,
+`/members`. Reading the cap and the spend in dollars (`GET …/budget`, and the budget fields of
+`GET /api/v1/platform/organizations` and `GET …/organizations/:orgId`) takes ORG_ADMIN, or platform
+ADMIN. Any org member reads `GET …/organizations/:orgId/budget/status`: a state (`no_cap`, `ok`,
+`alert`, `projected_over`, `over`), the percentage used and the alert threshold, with no amount
+([teams.md](./teams.md#the-budget-meter)). `currentYearMonth()` in `@auto-swe/shared/lib/billing` is the shared month-bucket key,
 so the worker writer and the gateway reader cannot disagree about which month a run lands in.
 
 ---

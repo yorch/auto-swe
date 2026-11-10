@@ -56,6 +56,37 @@ describe('declaredConnectionProblem', () => {
     ).resolves.toBeNull();
   });
 
+  it('refuses a git repository shared with the team to view only, and allows a launchable share', async () => {
+    // Seeing a repository is not starting work on it: a second connection a payload names is a
+    // credential the run is handed, so the view-only flag holds here as at the primary launch.
+    for (const [canLaunch, ok] of [
+      [false, false],
+      [true, true],
+    ] as const) {
+      rows([
+        {
+          id: SHARED,
+          isActive: true,
+          shares: [{ canLaunch, teamId: 'team-1' }],
+          teamId: 'team-9',
+          type: 'git_repo',
+        },
+      ]);
+      const problem = await declaredConnectionProblem({
+        inputSchema: schema,
+        payload: { docConnectionId: SHARED },
+        prisma,
+        teamId: 'team-1',
+      });
+      if (ok) {
+        expect(problem).toBeNull();
+      } else {
+        expect(problem).toMatch(/docConnectionId.*not one this team can use/);
+        expect(problem).not.toMatch(/view|share|team-9/i);
+      }
+    }
+  });
+
   it('refuses another team’s connection', async () => {
     rows([{ id: OTHER_TEAM, isActive: true, shares: [], teamId: 'team-9' }]);
 

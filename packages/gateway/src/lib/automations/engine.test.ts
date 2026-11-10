@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const m = vi.hoisted(() => ({
   enabled: true,
   overBudget: false,
+  overTeams: new Set<string>(),
+  shareCanLaunch: true,
 }));
 
 vi.mock('@auto-swe/shared/config', () => ({
@@ -14,7 +16,10 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 vi.mock('../repositoryHost.js', () => ({
   webhookRepositoryWhere: vi.fn(async () => ({ organizationName: 'acme', repoName: 'api' })),
 }));
-vi.mock('../orgAccess.js', () => ({ isOrgOverBudget: vi.fn(async () => m.overBudget) }));
+vi.mock('../orgAccess.js', () => ({
+  isOrgOverBudget: vi.fn(async () => m.overBudget),
+  isTeamOverBudget: vi.fn(async (_p: unknown, teamId: string) => m.overTeams.has(teamId)),
+}));
 
 import {
   INBOUND_EVENT,
@@ -389,6 +394,8 @@ function harness(
 beforeEach(() => {
   m.enabled = true;
   m.overBudget = false;
+  m.overTeams.clear();
+  m.shareCanLaunch = true;
 });
 
 const handle = (h: ReturnType<typeof harness>, event: Failed = failed) =>
@@ -417,7 +424,7 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
     expect(JSON.stringify(request.payload)).not.toContain('http');
     expect(h.runInputs[0]).toMatchObject({ requestedById: null, ticketIsSynthetic: true });
     // A repository run is billed through its connection, never a launch org.
-    expect(h.runInputs[0]).toMatchObject({ billingOrgId: null });
+    expect(h.runInputs[0]).toMatchObject({ billingOrgId: null, billingTeamId: null });
     expect(request).not.toHaveProperty('launchedById');
     expect(h.fires).toHaveLength(1);
     expect(h.fires[0]).toMatchObject({ outcome: 'STARTED' });
@@ -649,6 +656,14 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
     expect(h.started).toHaveLength(0);
   });
 
+  it("suppresses when the owning team is over its own budget, whatever the organization's", async () => {
+    const h = harness();
+    // The repository's owning team in the harness.
+    m.overTeams.add('team-1');
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'SUPPRESSED_BUDGET' });
+    expect(h.started).toHaveLength(0);
+  });
+
   it('records FAILED_TO_START when the template is missing', async () => {
     const h = harness({ template: null });
     await expect(handle(h)).resolves.toMatchObject({ outcome: 'FAILED_TO_START' });
@@ -808,6 +823,7 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
 describe('owners that are not a repository', () => {
   const TEAM = {
     id: 'team-1',
+    monthlyBudgetUsdCents: null,
     organization: { id: 'org-1', monthlyBudgetUsdCents: null },
     orgId: 'org-1',
   };
@@ -864,7 +880,11 @@ describe('owners that are not a repository', () => {
     });
     expect(h.db.$executeRaw.mock.calls[0]?.[1]).toBe('automation-owner:@team/team-1');
     // Charged to the team's org, the org the budget decision read, so it is billed there.
-    expect(h.runInputs[0]).toMatchObject({ billingOrgId: 'org-1', connectionId: null });
+    expect(h.runInputs[0]).toMatchObject({
+      billingOrgId: 'org-1',
+      billingTeamId: 'team-1',
+      connectionId: null,
+    });
     // A redelivery of the same occurrence is decided once, on its owner.
     await expect(decide(h)).resolves.toEqual({ duplicate: true });
   });
@@ -967,6 +987,7 @@ describe('inbound events (inbound.event)', () => {
   const ENDPOINT = 'eeeeeeee-0000-4000-8000-000000000001';
   const TEAM = {
     id: 'team-1',
+    monthlyBudgetUsdCents: null,
     organization: { id: 'org-1', monthlyBudgetUsdCents: null },
     orgId: 'org-1',
   };
@@ -1120,8 +1141,11 @@ describe('inbound events (inbound.event)', () => {
       async () => ({
         id: 'cccccccc-0000-4000-8000-000000000002',
         installation: null,
+        // The automation's team (team-1) may start work through its share unless a test says not.
+        shares: [{ canLaunch: m.shareCanLaunch, teamId: 'team-1' }],
         team: {
           id: 'team-2',
+          monthlyBudgetUsdCents: null,
           organization: { id: 'org-2', monthlyBudgetUsdCents: 100 },
           orgId: 'org-2',
         },
@@ -1168,6 +1192,35 @@ describe('inbound events (inbound.event)', () => {
     } finally {
       vi.mocked(isOrgOverBudget).mockImplementation(async () => m.overBudget);
     }
+  });
+
+  it("holds a run on a shared repository to the OWNER's cap, not the automation team's", async () => {
+    const h = withAutomations([
+      automation({ targetConnectionId: 'cccccccc-0000-4000-8000-000000000002' }),
+    ]);
+    sharedTarget(h);
+    m.overTeams.add('team-1'); // the sharee is over its own cap: irrelevant to this run
+    expect(await handleEvent(h, { env: 'prod', severity: 'low' })).toMatchObject({
+      outcome: 'STARTED',
+    });
+    m.overTeams.clear();
+    m.overTeams.add('team-2'); // the owner is over: the run is suppressed
+    expect(await handleEvent(h, { env: 'prod', severity: 'low' }, 'evt-2')).toMatchObject({
+      outcome: 'SUPPRESSED_BUDGET',
+    });
+  });
+
+  it('suppresses a run through a view-only share', async () => {
+    const h = withAutomations([
+      automation({ targetConnectionId: 'cccccccc-0000-4000-8000-000000000002' }),
+    ]);
+    sharedTarget(h);
+    m.shareCanLaunch = false;
+    expect(await handleEvent(h, { env: 'prod', severity: 'low' })).toMatchObject({
+      outcome: 'SUPPRESSED_PRECONDITION',
+      reason: 'the repository is shared with this team to view only',
+    });
+    expect(h.started).toHaveLength(0);
   });
 
   it('acts on a target repository with its id in the payload', async () => {

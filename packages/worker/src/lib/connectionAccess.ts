@@ -11,10 +11,11 @@
  * The authority is the run's template, read from the run rather than taken from the
  * caller, so every use site applies the same rule to the same values: a team's template
  * may use a connection that team owns or has had shared with it, and a global
- * (admin-authored) template may use any (`templateReachesConnection`).
+ * (admin-authored) template may use any (`templateMayUseConnection`; a git repository shared
+ * view-only does not count for a team).
  */
 import { prisma } from '@auto-swe/shared/db';
-import { isRepoTeam, templateReachesConnection } from '@auto-swe/shared/lib/repoMembership';
+import { isRepoTeam, templateMayUseConnection } from '@auto-swe/shared/lib/repoMembership';
 import { ApplicationFailure, Context } from '@temporalio/activity';
 import { logWarn } from './activityLog.js';
 import type { ResolveCtx } from './config/types.js';
@@ -102,7 +103,12 @@ export async function assertRunMayUseConnection(connectionId: string, step: stri
         })
       : null,
     prisma.connection.findUnique({
-      select: { isActive: true, shares: { select: { teamId: true } }, teamId: true },
+      select: {
+        isActive: true,
+        shares: { select: { canLaunch: true, teamId: true } },
+        teamId: true,
+        type: true,
+      },
       where: { id: connectionId },
     }),
   ]);
@@ -113,7 +119,7 @@ export async function assertRunMayUseConnection(connectionId: string, step: stri
       { connectionId, step }
     );
   }
-  if (!templateReachesConnection(connection, run.template.teamId)) {
+  if (!templateMayUseConnection(connection, run.template.teamId)) {
     throw ApplicationFailure.nonRetryable(
       `Step '${step}' may not use connection '${connectionId}': it is not reachable from this run.`,
       'CONNECTION_NOT_REACHABLE',

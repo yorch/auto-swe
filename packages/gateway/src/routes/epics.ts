@@ -124,9 +124,11 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
                 select: {
                   id: true,
                   memberships: {
-                    select: { userId: true },
+                    select: { role: true, userId: true },
                     where: { userId: user.sub },
                   },
+                  monthlyBudgetUsdCents: true,
+                  name: true,
                   organization: {
                     select: { id: true, monthlyBudgetUsdCents: true },
                   },
@@ -163,6 +165,8 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
         log: request.log,
         refusalShape: 'multi',
         repos,
+        // An epic writes to every repository it names: the platform LEAD role is not enough.
+        requireOwningTeamLead: true,
         // Every child run is launched as the caller (`launchedById`).
         runIdentity: 'caller',
       });

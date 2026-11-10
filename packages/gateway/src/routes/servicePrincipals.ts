@@ -198,7 +198,10 @@ export const servicePrincipalRoutes: FastifyPluginAsync = async (fastify) => {
           },
           team: {
             select: {
+              id: true,
               memberships: { select: { userId: true }, where: { userId: user.sub } },
+              monthlyBudgetUsdCents: true,
+              name: true,
               organization: { select: { monthlyBudgetUsdCents: true } },
               orgId: true,
             },

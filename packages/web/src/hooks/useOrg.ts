@@ -1,5 +1,6 @@
 'use client';
 
+import type { BudgetStatus } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
@@ -45,7 +46,8 @@ export interface OrgBudgetRow {
 export interface OrgRow {
   budgetAlertThresholdPercent: number | null;
   id: string;
-  monthlyBudgetUsdCents: number | null;
+  /** Absent for a caller who is not an ORG_ADMIN: the cap is theirs to read. */
+  monthlyBudgetUsdCents?: number | null;
   name: string;
   slug: string;
   trustedInvites?: boolean;
@@ -130,11 +132,27 @@ export function useInviteOrgMember(orgId: string) {
 
 // ── Org Budget ──
 
-export function useOrgBudget(orgId: string) {
+/**
+ * The dollar budget: ORG_ADMIN (or platform ADMIN) only, so a caller who is neither passes
+ * `enabled: false` rather than meeting a 403.
+ */
+export function useOrgBudget(orgId: string, enabled = true) {
   return useQuery({
-    enabled: !!orgId,
+    enabled: !!orgId && enabled,
     queryFn: () => api.get<OrgBudgetRow>(`/api/v1/platform/organizations/${orgId}/budget`),
     queryKey: ['org-budget', orgId],
+  });
+}
+
+/** The percentage-only budget any org member may read. */
+export function useOrgBudgetStatus(orgId: string, enabled = true) {
+  return useQuery({
+    enabled: !!orgId && enabled,
+    queryFn: () =>
+      api
+        .get<{ data: BudgetStatus }>(`/api/v1/platform/organizations/${orgId}/budget/status`)
+        .then((r) => r.data),
+    queryKey: ['org-budget-status', orgId],
   });
 }
 

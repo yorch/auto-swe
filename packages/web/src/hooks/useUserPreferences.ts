@@ -22,7 +22,7 @@ const DEFAULT_LAYOUT: RunDetailLayout = 'A';
 /**
  * Server-persisted per-user UI preferences, optimistically updated.
  *
- * `runDetailLayout` is the one key so far. The union lives in
+ * `runDetailLayout`, `lastTeamSlug` and `pinnedTeamSlugs` are the keys so far. The union lives in
  * `@auto-swe/shared` so the gateway's Zod schema, the toggle and this hook
  * cannot drift apart again (they once disagreed on the member names, so every
  * PATCH was a 400). The stored value is validated on read because the column
@@ -39,25 +39,34 @@ export function useUserPreferences() {
   });
 
   const mutation = useMutation({
-    mutationFn: (layout: RunDetailLayout) =>
-      api.patch<PreferencesResponse>('/api/v1/me/preferences', { runDetailLayout: layout }),
+    mutationFn: (patch: Partial<UserPreferences>) =>
+      api.patch<PreferencesResponse>('/api/v1/me/preferences', patch),
     onError: (_err, _vars, ctx) => {
       if (ctx) {
         qc.setQueryData(QUERY_KEY, ctx);
       }
     },
-    onMutate: async (layout) => {
+    onMutate: async (patch) => {
       await qc.cancelQueries({ queryKey: QUERY_KEY });
       const prev = qc.getQueryData<UserPreferences>(QUERY_KEY);
-      qc.setQueryData(QUERY_KEY, { ...prev, runDetailLayout: layout });
+      qc.setQueryData(QUERY_KEY, { ...prev, ...patch });
       return prev;
     },
     // Reconcile the optimistic value with what the server actually stored.
     onSettled: () => qc.invalidateQueries({ queryKey: QUERY_KEY }),
   });
 
+  const pinned = Array.isArray(data?.pinnedTeamSlugs)
+    ? data.pinnedTeamSlugs.filter((slug): slug is string => typeof slug === 'string')
+    : [];
   return {
+    /** The last team space visited; a hint, resolved through the member team list. */
+    lastTeamSlug: typeof data?.lastTeamSlug === 'string' ? data.lastTeamSlug : null,
     layout: isRunDetailLayout(data?.runDetailLayout) ? data.runDetailLayout : DEFAULT_LAYOUT,
-    setLayout: mutation.mutate,
+    /** False until the stored preferences have been read. */
+    loaded: data !== undefined,
+    pinnedTeamSlugs: pinned,
+    setLastTeamSlug: (slug: string) => mutation.mutate({ lastTeamSlug: slug }),
+    setLayout: (layout: RunDetailLayout) => mutation.mutate({ runDetailLayout: layout }),
   };
 }

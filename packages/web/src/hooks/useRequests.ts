@@ -3,7 +3,6 @@
 import type { WorkflowRunSummary, WorkspaceRequestSummary } from '@auto-swe/shared/types/api';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { useTeamStore } from '@/stores/teamStore';
 
 export type RequestScope = 'MINE' | 'TEAM';
 export type RequestState = 'all' | 'active' | 'attention' | 'finished' | 'failed' | 'success';
@@ -21,12 +20,10 @@ export function useRequests(
     offset?: number;
     limit?: number;
   },
-  /** `ignoreTeam` skips the shell's selected-team filter, for a list about the viewer themselves. */
-  options: { enabled?: boolean; ignoreTeam?: boolean } = {}
+  /** `teamId` narrows to one team's work (`?team=` or the team space's route); omit for all teams. */
+  options: { enabled?: boolean; teamId?: string } = {}
 ) {
-  const selectedTeamId = useTeamStore((state) => state.selectedTeamId);
-  const teamId = options.ignoreTeam ? null : selectedTeamId;
-  const scoped = { ...filters, ...(teamId ? { teamId } : {}) };
+  const scoped = { ...filters, ...(options.teamId ? { teamId: options.teamId } : {}) };
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(scoped)) {
     if (value !== undefined && value !== '') {

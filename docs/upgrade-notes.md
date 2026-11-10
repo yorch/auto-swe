@@ -916,6 +916,47 @@ the `mcp` node or another implemented connector, or remove it.
 
 ---
 
+### Epics and PRD runs need team LEAD on each owning team (`<fixing commit SHA>`)
+
+**Affected.** Deployments whose API or CLI callers start epics (`POST /api/v1/epics`) or PRD runs
+(`POST /api/v1/prd-runs`) as a platform LEAD who is only an ENGINEER on the team that owns one of
+the named repositories, or who reach a repository only through a share.
+
+**What changes.** The server now requires team LEAD or team ADMIN membership of the owning team of
+every repository the epic or PRD run names, beside the platform LEAD role. A caller without it gets
+`403 FORBIDDEN`, whose `message` and `error.reasons` (`team-lead-required`) name the repositories.
+The dashboard already offered the epic mode to leads only. A platform ADMIN is unaffected. No
+migration is involved.
+
+**Actions.** Grant the caller team LEAD on the owning team, or have a team lead launch the epic or
+PRD run. Check automation that starts either under a service account.
+
+---
+
+### Organization budget dollars are ORG_ADMIN's; members read a percentage (`<fixing commit SHA>`)
+
+**Affected.** Deployments whose API, CLI or script consumers read an organization's budget as a
+plain ORG_MEMBER, or parse the `402 ORG_BUDGET_EXCEEDED` body for the cap.
+
+**What changes.** `GET /api/v1/platform/organizations/:orgId/budget` now requires ORG_ADMIN (or
+platform ADMIN). For an ORG_MEMBER, `GET /api/v1/platform/organizations/:orgId` omits
+`monthlyBudgetUsdCents`, and `GET /api/v1/platform/organizations` omits `monthlyBudgetUsdCents` and
+`currentMonthUsage` from rows where the caller is not an ORG_ADMIN. The `402 ORG_BUDGET_EXCEEDED`
+body (and a schedule's refusal reason) no longer states the cap in cents; the code is unchanged.
+`GET /api/v1/platform/organizations/:orgId/budget/status` is new and open to any org member: it
+returns `state`, `percentUsed` and `alertThresholdPercent`, with no amount. The same `/api/v1/admin/organizations`
+aliases follow. A non-ORG_ADMIN's `alert.percent` is rounded to one decimal. In
+`GET /api/v1/teams/:teamId/overview`, `admin.monthCostUsdCents` is absent for a team ADMIN who is not
+an ORG_ADMIN of a capped organization. An organization-scope report digest carries the budget in
+dollars only when its creator is still an ORG_ADMIN (or platform ADMIN) and every target is an email
+to an ORG_ADMIN; otherwise its budget section is a state and a percentage. No migration is involved.
+
+**Actions.** Make consumers that need the cap or the spend act as an ORG_ADMIN, or move them to the
+status endpoint; stop parsing the cap out of the 402 message. For a digest that should carry
+dollars, make its creator an ORG_ADMIN and send it by email to ORG_ADMIN recipients only.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

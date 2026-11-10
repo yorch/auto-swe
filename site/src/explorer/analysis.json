@@ -2929,6 +2929,23 @@
       "refs": ["servingGate", "versionInputSchema"],
       "status": "Implemented",
       "title": "Saved version ≠ serving version"
+    },
+    {
+      "body": "A share lets a team see a repository and, unless it is view only, start work on it; the owning team’s budget and key still pay for the run.",
+      "category": "Identity",
+      "detail": "ConnectionTeamShare.canLaunch is read for new work only: a member of a sharee team with every reaching share set to view only can see the repository and its work but the repository decision refuses start-new-work (the dashboard hides it, and the server decides). Owning-team members and platform ADMINs are not held back. Epics and PRD runs need team LEAD or ADMIN on the team that owns each repository; membership through a share and a platform LEAD role do not count, and only a platform ADMIN bypasses the check. Cost lands on the owning team’s attribution and cap, not the sharee team’s.",
+      "id": "seeLaunchPay",
+      "refs": [
+        "shareLaunch",
+        "shareLaunchGate",
+        "webViewOnly",
+        "launchLead",
+        "epicLead",
+        "prdLead",
+        "teamLaunchGate"
+      ],
+      "status": "Implemented",
+      "title": "Seeing ≠ launching ≠ paying"
     }
   ],
   "features": [
@@ -3683,9 +3700,9 @@
       "title": "Experiments and canaries"
     },
     {
-      "body": "Track tokens and catalog-priced USD across runs, runless workflows, teams, organizations and Slack channels, and stop a capped organization’s spend at launch and before each model call.",
+      "body": "Track tokens and catalog-priced USD across runs, runless workflows, teams, organizations and Slack channels, and stop a capped organization’s or team’s spend at launch and before each model call.",
       "category": "Operations",
-      "detail": "Token tiers bind runs; a workflow with no run has a per-execution token cap. A run’s input cap counts each call’s input in dollar-equivalent tokens: uncached input at one, prompt-cache reads and writes at the model’s cache multipliers, fixed when the call is recorded, and the raw count when the model is unpriced or reports no cache breakdown; run pages and the per-execution cap still show and use raw tokens. The organization USD cap is checked at launch and again before every budgeted model call, which refuses with a non-retryable BUDGET_EXCEEDED whose message gives the spend and the cap (the organization id is only in the failure details); when that check cannot read the run’s organization or its budget it logs a warning and lets the call proceed uncapped. Both read finalized, in-flight and runless spend; the mid-run read goes through a per-organization cache of one config window. One rule, billedOrgId, places a run for the in-flight count, the mid-run guard, finalization billing and trace attribution: the work request’s connection, else the run’s own connection, else the repository of its own ledger row, else the organization a launch that named no connection was gated against (RunInput.billingOrgId, recorded by a template run on a team template, a service principal’s run, a template webhook call, and a team automation or inbound event), and the first source that exists decides. A connection-free run of a global template launched by a person or through its webhook has no organization and is billed to none. A scheduled fire gets its own ledger row and run connection from its schedule’s repository, and epic planning declares the first repository’s team as its spend owner, so neither sits outside the cap. A scheduled run reaper finalizes and bills runs whose workflow ended without finalizing them. Prompt-cache reads and writes are priced at cache rates: a model’s catalog row may set read, 5-minute-write and 1-hour-write multipliers, each falling back to the code table, where Anthropic 1-hour writes cost twice input. Each trace row records its owning team and organization, which drives per-team and per-org usage reports: ADMINs see everything, a team LEAD their team, an ORG_ADMIN their organization, and the usage page opens for anyone who holds at least one of those scopes rather than by platform role. A daily sweep (on unless an environment switch turns it off) rolls model-call traces up per UTC day, rewriting the most recent completed days each time; the report reads a day from that rollup only once it is older than those days and has rollup rows, and reads every other day from the trace rows, so a missing sweep changes speed, not numbers. The report also ranks spend by the person who launched the run: ADMINs see names and emails, a LEAD or ORG_ADMIN sees names only for launchers in the team or organization the report covers, and everyone else is folded into one unnamed row outside the scope. The usage page exports the report’s model, agent and node breakdowns as a file through the same scope check. A model with no catalog price is refused when the organization its run bills to has a monthly USD cap (resolved by the same billedOrgId rule as the cap, so a PRD run or a code-route channel task counts through its connection), when a runless workflow’s spend owner is a capped organization, and when the call belongs to a channel with a monthly cap; a repo-less channel task bills its channel, so only the channel cap refuses it. Anywhere else it is recorded at zero USD with token usage retained. The usage report and the workflow-template analytics accept a custom since/until range of whole UTC days (at most 366, not in the future) in place of the preset window; the usage series is bucketed by week above 90 days. The 7, 30 and 90 day presets on the usage report and the workflow-template analytics likewise cover whole UTC days ending with today, so a preset spans the days a custom range of that length would and its previous period is the equal-length span directly before it.",
+      "detail": "Token tiers bind runs; a workflow with no run has a per-execution token cap. A run’s input cap counts each call’s input in dollar-equivalent tokens: uncached input at one, prompt-cache reads and writes at the model’s cache multipliers, fixed when the call is recorded, and the raw count when the model is unpriced or reports no cache breakdown; run pages and the per-execution cap still show and use raw tokens. The organization USD cap is checked at launch and again before every budgeted model call, which refuses with a non-retryable BUDGET_EXCEEDED whose message gives the spend and the cap (the organization id is only in the failure details); when that check cannot read the run’s organization or its budget it logs a warning and lets the call proceed uncapped. Both read finalized, in-flight and runless spend; the mid-run read goes through a per-organization cache of one config window. One rule, billedOrgId, places a run for the in-flight count, the mid-run guard, finalization billing and trace attribution: the work request’s connection, else the run’s own connection, else the repository of its own ledger row, else the organization a launch that named no connection was gated against (RunInput.billingOrgId, recorded by a template run on a team template, a service principal’s run, a template webhook call, and a team automation or inbound event), and the first source that exists decides. A connection-free run of a global template launched by a person or through its webhook has no organization and is billed to none. A scheduled fire gets its own ledger row and run connection from its schedule’s repository, and epic planning declares the first repository’s team as its spend owner, so neither sits outside the cap. A scheduled run reaper finalizes and bills runs whose workflow ended without finalizing them. Prompt-cache reads and writes are priced at cache rates: a model’s catalog row may set read, 5-minute-write and 1-hour-write multipliers, each falling back to the code table, where Anthropic 1-hour writes cost twice input. Each trace row records its owning team and organization, which drives per-team and per-org usage reports: ADMINs see everything, a team LEAD their team, an ORG_ADMIN their organization, and the usage page opens for anyone who holds at least one of those scopes rather than by platform role. A daily sweep (on unless an environment switch turns it off) rolls model-call traces up per UTC day, rewriting the most recent completed days each time; the report reads a day from that rollup only once it is older than those days and has rollup rows, and reads every other day from the trace rows, so a missing sweep changes speed, not numbers. The report also ranks spend by the person who launched the run: ADMINs see names and emails, a LEAD or ORG_ADMIN sees names only for launchers in the team or organization the report covers, and everyone else is folded into one unnamed row outside the scope. The usage page exports the report’s model, agent and node breakdowns as a file through the same scope check. A model with no catalog price is refused when the organization its run bills to has a monthly USD cap (resolved by the same billedOrgId rule as the cap, so a PRD run or a code-route channel task counts through its connection), when a runless workflow’s spend owner is a capped organization, and when the call belongs to a channel with a monthly cap; a repo-less channel task bills its channel, so only the channel cap refuses it. Anywhere else it is recorded at zero USD with token usage retained. The usage report and the workflow-template analytics accept a custom since/until range of whole UTC days (at most 366, not in the future) in place of the preset window; the usage series is bucketed by week above 90 days. The 7, 30 and 90 day presets on the usage report and the workflow-template analytics likewise cover whole UTC days ending with today, so a preset spans the days a custom range of that length would and its previous period is the equal-length span directly before it. A team may also hold its own monthly USD cap, charged to the repository’s owning team and enforced at launch and before each call beside the organization’s (see per-team budgets). Members see budgets as a state and percentage and only an ORG_ADMIN or platform ADMIN (or the team’s ADMIN for its own cap) reads the cap and the budget figures in dollars; Organization report digests carry the organization budget in dollars only when no Slack channel is a target and the creator and every email recipient are ORG_ADMINs or platform ADMINs; otherwise they carry a percentage, and team digests carry no budget.",
       "id": "budget",
       "refs": [
         "trace",
@@ -3713,7 +3730,11 @@
         "usageByUser",
         "countedInput",
         "countedInputCheck",
-        "usageExport"
+        "usageExport",
+        "teamLaunchGate",
+        "teamGuard",
+        "orgStatusRoute",
+        "digestDollars"
       ],
       "status": "Implemented",
       "title": "Cost, budgets & usage"
@@ -3773,7 +3794,7 @@
     {
       "body": "Scope resources by organization/team, share repositories with teams and apply role-based permissions.",
       "category": "Governance",
-      "detail": "Repository reachability combines ownership/sharing with optional host-permission checks. Per-user credentials are bound to their verified origins and the current run launcher. Query guards supplement route-specific authorization; they detect missing tenant predicates on selected multi-row ORM calls, not whether a predicate names a team the caller may access. ReviewPreset and knowledge-base models participate in that guard. A repository on another approved GitHub host is reached only with that host’s own credentials or the launcher’s own token, never the instance’s; with neither, the run is refused (see per-host GitHub credentials). A team’s own page also lists the repositories shared with it (sharedRepositories on GET /teams/:id), read-only, active rows only, and under an enforcing repo-access gate only those the caller’s own GitHub permission reaches; a platform ADMIN is not gated. A non-admin onboarding a repository, or moving it to another host, must hold at least read access on GitHub through their own verified login, asked live and failing closed (no access and no such repository answer alike). Only a platform ADMIN may name a repository’s executor image, because it holds the run’s GitHub credential; and a connection whose destination (base URL, tracker provider, Zendesk subdomain) changes while its stored token is kept is refused with 409 TOKEN_ORIGIN_CHANGE. An organization admin’s invitee waits for platform approval unless a platform ADMIN has marked the organization’s invites trusted.",
+      "detail": "Repository reachability combines ownership/sharing with optional host-permission checks. Per-user credentials are bound to their verified origins and the current run launcher. Query guards supplement route-specific authorization; they detect missing tenant predicates on selected multi-row ORM calls, not whether a predicate names a team the caller may access. ReviewPreset and knowledge-base models participate in that guard. A repository on another approved GitHub host is reached only with that host’s own credentials or the launcher’s own token, never the instance’s; with neither, the run is refused (see per-host GitHub credentials). A team’s own page also lists the repositories shared with it (sharedRepositories on GET /teams/:id), read-only, active rows only, and under an enforcing repo-access gate only those the caller’s own GitHub permission reaches; a platform ADMIN is not gated. A non-admin onboarding a repository, or moving it to another host, must hold at least read access on GitHub through their own verified login, asked live and failing closed (no access and no such repository answer alike). Only a platform ADMIN may name a repository’s executor image, because it holds the run’s GitHub credential; and a connection whose destination (base URL, tracker provider, Zendesk subdomain) changes while its stored token is kept is refused with 409 TOKEN_ORIGIN_CHANGE. An organization admin’s invitee waits for platform approval unless a platform ADMIN has marked the organization’s invites trusted. A share may be view only (ConnectionTeamShare.canLaunch off): its members can see the repository but the launch decision refuses new work through that share. Epics and PRD runs require team LEAD or ADMIN on the team that owns each repository, a share does not count, and the refusal names repositories and never the owning team. A teamId filter on human steps, runs, repositories and pull-request views is checked against the caller’s membership (404 for a non-member) and only narrows.",
       "id": "tenancy",
       "refs": [
         "tenant",
@@ -3786,7 +3807,12 @@
         "executorImageAdmin",
         "credentialMoveRefused",
         "trustedInvites",
-        "tenantPredicateShape"
+        "tenantPredicateShape",
+        "shareLaunchGate",
+        "launchLead",
+        "epicLead",
+        "prdLead",
+        "teamParamCheck"
       ],
       "status": "Implemented",
       "title": "Organizations, teams & repository access"
@@ -4856,6 +4882,60 @@
       ],
       "status": "Implemented",
       "title": "Verify the app in a real browser"
+    },
+    {
+      "body": "The dashboard home reads GET /me/summary: the caller’s own teams, each with what is waiting on them, how much is running or queued, and the tighter of its budgets.",
+      "category": "Collaboration",
+      "detail": "The route needs the ENGINEER platform role and builds the summary from active team memberships only, so a platform ADMIN’s desk is member-scoped too; with no membership it returns empty. Needs-you items are pending approvals the caller can answer (the same filter as the human-step list with mine=true, so a badge and its list count the same steps), failed attempts the caller launched, and pull requests awaiting a human merge on requests they made. Items are ordered with due-soon approvals first by deadline and capped at 25, while the total counts every item. Attempts are read over a 30 day window, a running attempt whatever its age, and channel assistant and task runs and runs with no work request are left out so running and queued counts match the request list. Each team card carries its own running, queued and needs-you counts and a budget state with a percentage that is the tighter of the team’s cap and its organization’s. Sources are queried once and bucketed by team in memory. Preference slugs (pinned and last team) are hints that are not checked against membership; the web resolves them through the member team list, so a stale or foreign slug resolves to nothing.",
+      "id": "myDesk",
+      "refs": [
+        "deskBuild",
+        "deskRoute",
+        "deskScope",
+        "deskActionable",
+        "memberRunScope",
+        "tighterStatus"
+      ],
+      "status": "Implemented",
+      "title": "A personal desk across the teams you belong to"
+    },
+    {
+      "body": "Each team has a space at /teams/<slug> whose overview adds sections by the viewer’s team role, and the team switcher navigates between spaces instead of filtering global lists.",
+      "category": "Collaboration",
+      "detail": "GET /teams/:id/overview answers 404 to a non-member exactly as to an unknown team (a platform ADMIN passes). The viewer level comes from the caller’s team role (ENGINEER, LEAD, ADMIN); the platform role never raises it, except that a platform ADMIN outside the team is shown the admin level. An engineer gets counts, the needs-you total with a link to the actionable list, recent activity, the last 7 days, repositories, and 30 day pull-request outcomes; a lead adds open pull requests, overdue approvals and failures nobody owns; an admin adds month cost in dollars. Those sections are not queried for a lower role and their keys are absent. The dollar figure is attached to a team ADMIN when the binding cap is the team’s own; when it is the organization’s, only an ORG_ADMIN gets it, and anyone else receives the admin section without it. The space has Overview, Work, Automations, Reports, Knowledge, Members and Settings tabs; Settings is complete for a team ADMIN or LEAD and a platform ADMIN, budget only for an ORG_ADMIN who is below team LEAD, and absent for others. The switcher lists the caller’s member teams with role and needs-you count and opens the chosen space; the in-memory team filter store is gone. Global pages narrow with ?team=<slug>, resolved through the caller’s member teams (a platform ADMIN may also resolve any team); an unknown or foreign slug is ignored. On the server, the teamId filter on human steps, workflow runs, the request workspace, repositories and pull-request views is checked against membership and answers 404 TEAM_NOT_FOUND to a non-member, so an empty list cannot confirm that a team exists; it only narrows what the caller could already see.",
+      "id": "teamSpace",
+      "refs": [
+        "teamOverviewRoute",
+        "teamOverviewLevel",
+        "teamOverviewTiers",
+        "webSettingsScope",
+        "webTeamSwitcher",
+        "webTeamParam",
+        "teamParamCheck",
+        "deskActionable"
+      ],
+      "status": "Implemented",
+      "title": "A team space with a role-aware overview"
+    },
+    {
+      "body": "A team can hold a monthly USD cap of its own: launches on its repositories are refused once it is spent, and a running run stops at its next model call.",
+      "category": "Governance",
+      "detail": "The cap and an alert threshold are columns on the team row, set at PATCH /teams/:id/budget by a team ADMIN, an ORG_ADMIN of the team’s organization or a platform ADMIN; dollars are readable by the same roles, while any member reads only a status. The launch decision checks the organization’s cap and then each spending team’s, refusing with 402 TEAM_BUDGET_EXCEEDED; the refusal carries no amount, and names the team only to its members. The spending team is the OWNER of the repository, also when the caller launches through a share, so a sharing team’s members spend the owner’s cap and key. Spend is finalized runs this month and in-flight ledger cost by attributedTeamId, plus this month’s runless traces by trace team. The worker checks the same cap before each budgeted model call beside the organization’s and fails with the non-retryable BUDGET_EXCEEDED, through a cache of one config window; a run with no attributed team is counted in no team’s spend and capped by none. A connection-less launch that is gated against a team records it on the work request (RunInput.billingTeamId), which attributes the run to that team when no repository, channel, service principal or template team does. The percentage shown to members is the tighter of the team’s and the organization’s caps, with the scope named; it says over exactly when launches on the team’s own repositories would be refused; launches on a repository shared to it follow the owner’s cap.. In the first day of a month a pace projection is replaced by the threshold, as the pace is not reliable yet. Organization report digests carry the organization budget in dollars only when no Slack channel is a target and the creator and every email recipient are ORG_ADMINs or platform ADMINs; otherwise they carry a percentage, and team digests carry no budget.",
+      "id": "teamBudgets",
+      "refs": [
+        "teamSpend",
+        "teamLaunchGate",
+        "teamGuard",
+        "teamGuardCall",
+        "teamBudgetAccess",
+        "budgetStatusCore",
+        "tighterStatus",
+        "billingTeamStamp",
+        "orgStatusRoute",
+        "digestDollars"
+      ],
+      "status": "Implemented",
+      "title": "Per-team monthly budgets beside the organization’s"
     }
   ],
   "limits": [
@@ -5233,7 +5313,7 @@
     {
       "body": "Launches and each later model call are refused once cached spend has reached the cap, so spend can still land after it is crossed, and some spend is outside it.",
       "category": "Cost control",
-      "detail": "The guard runs before each budgeted model call and refuses only when the cached organization spend has already reached the cap. Up to one cache window of new calls from every run of the organization at once, plus the full cost of every call or harness turn already admitted, can land after the cap is crossed: an admitted call completes and bills in full, its cost accrues to the ledger only after it returns, and a Claude Code harness call accrues only once it ends. Concurrent launches see the same total. A spend or cap read that fails lets the call through. Spend with no derivable organization is outside the cap (a connection-free run of a global template launched by a person or through its webhook among it), and a repo-less channel task bills its channel, so the organization cap never refuses it. An epic’s planning is attributed to the first repository it names even when the epic spans organizations; each child is billed to its own repository’s. An unpriced model is refused when the run’s billed organization (the same billedOrgId rule as the cap, so a PRD run or a code-route channel task counts through its connection) has a cap, or when a runless workflow’s spend owner does, and under a channel cap; a repo-less channel task bills its channel, so it is not refused on the organization’s account.",
+      "detail": "The guard runs before each budgeted model call and refuses only when the cached organization spend has already reached the cap. Up to one cache window of new calls from every run of the organization at once, plus the full cost of every call or harness turn already admitted, can land after the cap is crossed: an admitted call completes and bills in full, its cost accrues to the ledger only after it returns, and a Claude Code harness call accrues only once it ends. Concurrent launches see the same total. A spend or cap read that fails lets the call through. Spend with no derivable organization is outside the cap (a connection-free run of a global template launched by a person or through its webhook among it), and a repo-less channel task bills its channel, so the organization cap never refuses it. An epic’s planning is attributed to the first repository it names even when the epic spans organizations; each child is billed to its own repository’s. An unpriced model is refused when the run’s billed organization (the same billedOrgId rule as the cap, so a PRD run or a code-route channel task counts through its connection) has a cap, or when a runless workflow’s spend owner does, and under a channel cap; a repo-less channel task bills its channel, so it is not refused on the organization’s account. A team’s own cap is a separate check with the same shape (see the team cap boundary).",
       "id": "orgCap",
       "refs": [
         "orgCap",
@@ -5243,7 +5323,8 @@
         "orgGuard",
         "orgGuardCall",
         "billedOrg",
-        "epicOwner"
+        "epicOwner",
+        "teamGuard"
       ],
       "status": "Confirmed boundary",
       "title": "The organization USD cap is checked before each call, so spend can overshoot it"
@@ -5997,6 +6078,46 @@
       ],
       "status": "Confirmed boundary",
       "title": "Browser verification is opt-in and bounded"
+    },
+    {
+      "body": "Launches and later model calls are refused once the team’s spend has reached its cap, so concurrent work can overshoot it.",
+      "category": "Cost control",
+      "detail": "The launch decision reads month-to-date spend without a lock, so concurrent launches see the same total. The mid-run guard reads through a cache of one config window and refuses only after the cached spend has reached the cap; a call already admitted completes and bills in full. A spend or cap read that fails lets the call through. A run is counted against the team its spend is attributed to, the repository’s OWNER; a team whose members launch on a repository shared with it neither spends nor is limited by its own cap there. A run with no attributed team is outside every team’s cap. The team cap does not change token tiers, and both USD caps are checked independently, so the lower one binds first.",
+      "id": "teamBudgetBounds",
+      "refs": ["teamSpend", "teamLaunchGate", "teamGuard", "teamGuardCall", "billingTeamStamp"],
+      "status": "Confirmed boundary",
+      "title": "A team’s USD cap is best-effort, and the owner pays on shared repositories"
+    },
+    {
+      "body": "Members see a state and a percentage of a cap; that is a summary and not a secrecy boundary.",
+      "category": "Governance",
+      "detail": "The organization’s dollar cap and spend are returned only to ORG_ADMIN, and a team’s only to its team ADMIN, ORG_ADMIN or platform ADMIN. The team overview withholds month cost in dollars from a viewer whose binding cap is the organization’s unless they are an ORG_ADMIN. Anyone who can read a spend figure for the same scope elsewhere (a team LEAD’s usage report of their team, for example) can divide it by the percentage and recover the cap. The refusal text also tells a refused launcher that the budget is spent. Report digests choose dollars or percentage once per message for all recipients.",
+      "id": "budgetPercentBounds",
+      "refs": [
+        "orgStatusRoute",
+        "budgetStatusCore",
+        "teamBudgetAccess",
+        "teamOverviewTiers",
+        "digestDollars"
+      ],
+      "status": "Confirmed boundary",
+      "title": "A budget percentage hides the amount only until a second number is known"
+    },
+    {
+      "body": "A team’s lists include work on repositories shared with it, while reported totals count only the owning team.",
+      "category": "Governance",
+      "detail": "List scopes (the team space, ?team=, the desk) include work on repositories the team owns or that are shared to it and runs of its templates; metrics scopes attribute a run to exactly one team, the owner, so a shared repository is not counted by both and a sharee’s totals do not include it. The team filter is checked for membership and narrows only: it grants nothing, and visibility and repository-access gates still apply. The personal desk is bounded to the caller’s own active teams even for a platform ADMIN, lists at most 25 items, and looks at attempts from the last 30 days plus any still running. Preference slugs are format-checked but not checked against membership, so a stale or foreign slug resolves to nothing. Deactivating a team does not remove repository access (see that boundary).",
+      "id": "teamScopeBounds",
+      "refs": [
+        "memberRunScope",
+        "metricsScope",
+        "teamParamCheck",
+        "deskBuild",
+        "deskScope",
+        "teamOverviewRoute"
+      ],
+      "status": "Confirmed boundary",
+      "title": "A team space and a team filter narrow lists; reports count owners only"
     }
   ],
   "modelDescriptions": {
@@ -6028,7 +6149,7 @@
     "ConfigSetting": "Validated registry value at a configuration scope.",
     "Connection": "Team-owned typed integration target; repo coordinates or generic config plus an encrypted token and, for mcp connections, an encrypted set of custom request headers. Git repositories can also store a workspace setup definition that overrides the checked-in setup file.",
     "ConnectionCredential": "Schema entity; inspect fields and relationship declarations below.",
-    "ConnectionTeamShare": "Schema entity; inspect fields and relationship declarations below.",
+    "ConnectionTeamShare": "Shares a repository with another team; canLaunch off makes the share view only, so its members see the repository but cannot start new work on it.",
     "ContextSnapshot": "Captured request context: ticket, knowledge, Figma design and success criteria.",
     "DeviceCode": "OAuth device-code exchange state: user and client identities, requested scope/resources, expiry, status and polling interval/timestamp.",
     "EmbeddingConfig": "Singleton embedding model and credential selection; the provider must be openai, google or compatible, and vectors are 1536 wide.",
@@ -6107,7 +6228,7 @@
     "SlackChannelMember": "One Slack user in a private channel as the last sync saw it; grants that channel’s content to a linked team member while fresh.",
     "SlackConfig": "Schema entity; inspect fields and relationship declarations below.",
     "SlackWorkspace": "Slack installation and organization binding.",
-    "Team": "Team-owned resources, configuration and workflow defaults.",
+    "Team": "Team-owned resources, configuration and workflow defaults; carries an optional monthly USD cap and alert threshold of its own.",
     "TeamMembership": "Schema entity; inspect fields and relationship declarations below.",
     "ToolCatalogEntry": "Admin-written allowlist of pinned tool downloads (per-architecture https URL and SHA-256, archive member, libc, status) that a workspace may install on demand; a revoked row blocks installs everywhere.",
     "TranscriptAccessLog": "One transcript content read, download link, verification, export, legal-hold change or identified refusal: actor and role, address, user agent, parameters and how a streamed read ended. No foreign keys, so a row outlives what it names; ADMIN-only and pruned after its own retention.",
@@ -13148,7 +13269,7 @@
       "before": 5,
       "id": "prOutcomeFilters",
       "lines": 36,
-      "path": "packages/gateway/src/routes/pullRequests.ts",
+      "path": "packages/gateway/src/lib/pullRequestOutcomesQuery.ts",
       "title": "Pull-request outcome reads and exports share one reach filter, including the stamped template column"
     },
     {
@@ -14990,6 +15111,238 @@
       "lines": 17,
       "path": "packages/web/src/app/library/[id]/_components/TriggersCard.tsx",
       "title": "The template page lists what starts the template, from what the caller may see"
+    },
+    {
+      "anchor": "export async function buildMeSummary({",
+      "before": 4,
+      "id": "deskBuild",
+      "lines": 60,
+      "path": "packages/gateway/src/lib/meSummary.ts",
+      "title": "Personal desk summary across the caller’s teams"
+    },
+    {
+      "anchor": "app.get('/summary'",
+      "before": 3,
+      "id": "deskRoute",
+      "lines": 12,
+      "path": "packages/gateway/src/routes/me.ts",
+      "title": "GET /me/summary route"
+    },
+    {
+      "anchor": "export function memberDeskScope(",
+      "before": 1,
+      "id": "deskScope",
+      "lines": 14,
+      "path": "packages/gateway/src/lib/meSummary.ts",
+      "title": "Desk scope: personal teams or one team"
+    },
+    {
+      "anchor": "humanStepListWhere(user, gate, {",
+      "before": 7,
+      "id": "deskActionable",
+      "lines": 17,
+      "path": "packages/gateway/src/lib/meSummary.ts",
+      "title": "Member and team scopes on human steps"
+    },
+    {
+      "anchor": "export function memberRunScope(",
+      "before": 0,
+      "id": "memberRunScope",
+      "lines": 26,
+      "path": "packages/gateway/src/lib/runTeamScope.ts",
+      "title": "Runs on the work of the caller’s own teams"
+    },
+    {
+      "anchor": "export function runMetricsTeamScope(",
+      "before": 0,
+      "id": "metricsScope",
+      "lines": 10,
+      "path": "packages/gateway/src/lib/runTeamScope.ts",
+      "title": "Owner-only team scope for reported metrics"
+    },
+    {
+      "anchor": "export async function assertTeamParam(",
+      "before": 12,
+      "id": "teamParamCheck",
+      "lines": 24,
+      "path": "packages/gateway/src/lib/teamParam.ts",
+      "title": "teamId filter checked against membership"
+    },
+    {
+      "anchor": "export function viewerLevelFor(",
+      "before": 1,
+      "id": "teamOverviewLevel",
+      "lines": 8,
+      "path": "packages/gateway/src/lib/teamOverview.ts",
+      "title": "Viewer level from team role"
+    },
+    {
+      "anchor": "if (viewerLevel === 'engineer') {",
+      "before": 0,
+      "id": "teamOverviewTiers",
+      "lines": 56,
+      "path": "packages/gateway/src/lib/teamOverview.ts",
+      "title": "Lead and admin sections attached only for their viewer"
+    },
+    {
+      "anchor": "'/:id/overview'",
+      "before": 3,
+      "id": "teamOverviewRoute",
+      "lines": 28,
+      "path": "packages/gateway/src/routes/teamOverview.ts",
+      "title": "GET /teams/:id/overview, 404 for non-members"
+    },
+    {
+      "anchor": "export function useTeamParam(",
+      "before": 8,
+      "id": "webTeamParam",
+      "lines": 36,
+      "path": "packages/web/src/hooks/useTeamParam.ts",
+      "title": "?team= resolved through member teams only"
+    },
+    {
+      "anchor": "export function TeamSwitcher(",
+      "before": 8,
+      "id": "webTeamSwitcher",
+      "lines": 34,
+      "path": "packages/web/src/components/teams/TeamSwitcher.tsx",
+      "title": "Team switcher opens the team space"
+    },
+    {
+      "anchor": "export function teamSettingsScope(",
+      "before": 5,
+      "id": "webSettingsScope",
+      "lines": 16,
+      "path": "packages/web/src/lib/teamSpace.ts",
+      "title": "Team settings scope by role"
+    },
+    {
+      "anchor": "export function isViewOnlyFor(",
+      "before": 10,
+      "id": "webViewOnly",
+      "lines": 24,
+      "path": "packages/web/src/lib/repoLaunch.ts",
+      "title": "Dashboard hides repositories that are view only"
+    },
+    {
+      "anchor": "export function mayLaunchOnRepo(",
+      "before": 8,
+      "id": "shareLaunch",
+      "lines": 24,
+      "path": "packages/shared/src/lib/repoMembership.ts",
+      "title": "Launch right through a share"
+    },
+    {
+      "anchor": "action === 'start-new-work' && user.role !== 'ADMIN' && !mayLaunchOnRepo(",
+      "before": 3,
+      "id": "shareLaunchGate",
+      "lines": 10,
+      "path": "packages/shared/src/lib/repoAccessDecision.ts",
+      "title": "Repository decision refuses new work on a view-only share"
+    },
+    {
+      "anchor": "'/:orgId/budget/status',",
+      "before": 5,
+      "id": "orgStatusRoute",
+      "lines": 32,
+      "path": "packages/gateway/src/routes/orgBudget.ts",
+      "title": "Organization budget status for members"
+    },
+    {
+      "anchor": "export function budgetStatusFor(",
+      "before": 5,
+      "id": "budgetStatusCore",
+      "lines": 50,
+      "path": "packages/gateway/src/lib/orgBudgetStatus.ts",
+      "title": "Budget state and percentage"
+    },
+    {
+      "anchor": "export function tighterBudgetStatus(",
+      "before": 9,
+      "id": "tighterStatus",
+      "lines": 24,
+      "path": "packages/gateway/src/lib/teamBudgetStatus.ts",
+      "title": "Tighter of the team’s and organization’s caps"
+    },
+    {
+      "anchor": "export async function teamMonthSpend(",
+      "before": 10,
+      "id": "teamSpend",
+      "lines": 40,
+      "path": "packages/shared/src/lib/billing.ts",
+      "title": "Team month-to-date spend"
+    },
+    {
+      "anchor": "async function decideTeamBudgets(",
+      "before": 8,
+      "id": "teamLaunchGate",
+      "lines": 26,
+      "path": "packages/gateway/src/lib/launchAuthorization.ts",
+      "title": "Launch refused at the owning team’s cap"
+    },
+    {
+      "anchor": "export async function assertTeamBudgetAvailable(",
+      "before": 10,
+      "id": "teamGuard",
+      "lines": 52,
+      "path": "packages/worker/src/lib/teamBudgetGuard.ts",
+      "title": "Mid-run owning-team USD cap guard"
+    },
+    {
+      "anchor": "await assertTeamBudgetAvailable(temporalWorkflowId, label);",
+      "before": 4,
+      "id": "teamGuardCall",
+      "lines": 8,
+      "path": "packages/worker/src/lib/costTracking.ts",
+      "title": "Team guard runs beside the organization guard"
+    },
+    {
+      "anchor": "export async function teamBudgetAccess(",
+      "before": 9,
+      "id": "teamBudgetAccess",
+      "lines": 36,
+      "path": "packages/gateway/src/lib/teamBudgetAccess.ts",
+      "title": "Who reads and manages a team’s budget"
+    },
+    {
+      "anchor": "let billingTeamId: string | null = null;",
+      "before": 3,
+      "id": "billingTeamStamp",
+      "lines": 18,
+      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "title": "Connection-less launch stamped with the team it was held to"
+    },
+    {
+      "anchor": "if (input.requireOwningTeamLead && actor.role !== 'ADMIN') {",
+      "before": 0,
+      "id": "launchLead",
+      "lines": 30,
+      "path": "packages/gateway/src/lib/launchAuthorization.ts",
+      "title": "Owning-team LEAD check"
+    },
+    {
+      "anchor": "requireOwningTeamLead: true,",
+      "before": 6,
+      "id": "epicLead",
+      "lines": 10,
+      "path": "packages/gateway/src/routes/epics.ts",
+      "title": "Epics require owning-team LEAD"
+    },
+    {
+      "anchor": "requireOwningTeamLead: true,",
+      "before": 6,
+      "id": "prdLead",
+      "lines": 10,
+      "path": "packages/gateway/src/routes/prdRuns.ts",
+      "title": "PRD runs require owning-team LEAD"
+    },
+    {
+      "anchor": "async function budgetDollarsAllowed(",
+      "before": 8,
+      "id": "digestDollars",
+      "lines": 48,
+      "path": "packages/worker/src/activities/sendReportDigests.ts",
+      "title": "Digest budget dollars only for ORG_ADMIN email recipients"
     }
   ],
   "usecases": [

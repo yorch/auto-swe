@@ -94,3 +94,33 @@ export function canAuthorTeamCode(
   }
   return adminTeamIds.has(teamId);
 }
+
+/**
+ * Whether the caller may manage a repository owned by `ownerTeamId` — edit, share, test access,
+ * deactivate. The gateway's `canManageTeamRepos`: the owning team's LEAD/ADMIN, or a platform
+ * ADMIN. A team the repository is only shared with confers nothing.
+ */
+export const canManageTeamRepos = canWriteTeamResource;
+
+/** Why a repository control is unavailable; names the owner, which is not the caller's team. */
+export function repoManageReason(ownerTeamName: string | null | undefined, action: string): string {
+  return `Only leads of ${ownerTeamName ?? 'the owning team'} or an administrator can ${action} this repository.`;
+}
+
+/** Why a run control is unavailable: the owning team's members and the launcher may use it. */
+export function runControlReason(ownerTeamName: string | null | undefined, action: string): string {
+  return `Only members of ${ownerTeamName ?? 'the owning team'} or the launcher can ${action} this run.`;
+}
+
+/**
+ * Whether the caller may read and set a team's own monthly budget: the team's ADMIN, an ORG_ADMIN
+ * of the team's organization, or a platform ADMIN. The platform LEAD role confers nothing here,
+ * and a team LEAD (below team ADMIN) is not enough: the dollar figures are an admin's to see.
+ */
+export function canManageTeamBudget(
+  platformRole: string | null | undefined,
+  teamRole: string | null | undefined,
+  isOrgAdmin: boolean
+): boolean {
+  return hasRole(platformRole, 'ADMIN') || hasRole(teamRole, 'ADMIN') || isOrgAdmin;
+}

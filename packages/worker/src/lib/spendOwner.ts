@@ -135,7 +135,9 @@ async function ownerOfWorkflow(workflowId: string): Promise<SpendOwner> {
         channel: { select: { team } },
         connection: { select: { team } },
         template: { select: { team } },
-        workRequest: { select: { billingOrgId: true, connection: { select: { team } } } },
+        workRequest: {
+          select: { billingOrgId: true, billingTeam: team, connection: { select: { team } } },
+        },
       },
       where: { workflowId },
     }),
@@ -150,11 +152,16 @@ async function ownerOfWorkflow(workflowId: string): Promise<SpendOwner> {
     return fromTeam(placed);
   }
   // A connection-less run charged to an org at launch is attributed to that org, the one billing
-  // names; its template's team is kept only when it belongs to that org.
+  // names; its template's team is kept only when it belongs to that org, and failing that the team
+  // the launch was held to (`billingTeamId`), the last source of the run's attributed team.
   const charged = run?.workRequest?.billingOrgId;
+  const billingTeam = run?.workRequest?.billingTeam;
   if (charged) {
     const team = run?.channel?.team ?? run?.template?.team;
-    return team?.orgId === charged ? fromTeam(team) : { orgId: charged };
+    if (team?.orgId === charged) {
+      return fromTeam(team);
+    }
+    return billingTeam?.orgId === charged ? fromTeam(billingTeam) : { orgId: charged };
   }
-  return fromTeam(run?.channel?.team ?? run?.template?.team);
+  return fromTeam(run?.channel?.team ?? run?.template?.team ?? billingTeam);
 }

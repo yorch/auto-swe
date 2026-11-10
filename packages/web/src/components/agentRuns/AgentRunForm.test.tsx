@@ -40,6 +40,8 @@ const LIMITS = {
 
 interface Stub {
   secondRepo?: boolean;
+  /** The caller's team may see `repo-2` but not launch on it. */
+  viewOnly?: boolean;
   limits?: unknown;
   launch?: () => Response;
 }
@@ -55,13 +57,23 @@ function stubGateway(stub: Stub = {}) {
     const url = input.toString();
     const path = url.replace(/^https?:\/\/[^/]+/, '').split('?')[0];
     const method = (init?.method ?? 'GET').toUpperCase();
+    if (method === 'GET' && path === '/api/v1/teams') {
+      return json({ data: [{ id: 'mine', myRole: 'ENGINEER', name: 'Mine', slug: 'mine' }] });
+    }
     if (method === 'GET' && path === '/api/v1/repositories') {
+      const other = {
+        ...REPO,
+        id: 'repo-2',
+        repoName: 'other',
+        ...(stub.viewOnly
+          ? {
+              shares: [{ canLaunch: false, team: { id: 'mine', name: 'Mine', slug: 'mine' } }],
+              team: { id: 'owner', name: 'Owner', slug: 'owner' },
+            }
+          : {}),
+      };
       return json({
-        data: [
-          REPO,
-          NOT_GIT,
-          ...(stub.secondRepo ? [{ ...REPO, id: 'repo-2', repoName: 'other' }] : []),
-        ],
+        data: [REPO, NOT_GIT, ...(stub.secondRepo || stub.viewOnly ? [other] : [])],
         meta: { limit: 500, offset: 0, total: stub.secondRepo ? 3 : 2 },
       });
     }
@@ -172,6 +184,29 @@ describe('AgentRunForm', { timeout: 30_000 }, () => {
       }
     }
   );
+  it('lists a repository that is view only for the caller’s team disabled, with the reason', async () => {
+    stubGateway({ viewOnly: true });
+    render(withQuery(<AgentRunForm />));
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('combobox', { name: /repository/i }) as HTMLInputElement).placeholder
+      ).not.toMatch(/loading/i)
+    );
+    const input = screen.getByRole('combobox', { name: /repository/i });
+    act(() => input.focus());
+    fireEvent.change(input, { target: { value: 'acme' } });
+    await waitFor(() => {
+      const option = screen.getByRole('option', { name: /acme\/other/ });
+      expect(option.getAttribute('aria-disabled')).toBe('true');
+      expect(option.textContent).toContain(
+        'Owner team set this repository to view only for your team'
+      );
+    });
+    expect(
+      screen.getByRole('option', { name: /acme\/api/ }).getAttribute('aria-disabled')
+    ).not.toBe('true');
+  });
+
   it('offers git repositories only, and shows the platform ceilings once a repository is chosen', async () => {
     stubGateway();
     render(withQuery(<AgentRunForm />));

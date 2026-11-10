@@ -3,6 +3,7 @@
 import { Suspense, useRef } from 'react';
 import { RunsTable } from '@/components/runs/RunsTable';
 import { useRunsSearch } from '@/components/runs/useRunsSearch';
+import { TeamChip } from '@/components/teams/TeamChip';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
@@ -15,9 +16,11 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
+import { useTeamParam } from '@/hooks/useTeamParam';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { isRunStatus, runStatusOptions } from '@/lib/runStatusOptions';
+import { teamGatedBoundary } from '@/lib/teamGate';
 import { plural } from '@/lib/utils';
 
 const PAGE_SIZE = 50;
@@ -36,15 +39,22 @@ function RunsList() {
   const [searchDraft, setSearchDraft] = useDebouncedUrlSearch(q, (value) =>
     update({ offset: null, q: value.trim() || null })
   );
-  const { data, error, isError, isFetching, isLoading, refetch } = useRunsSearch({
-    includeChannel,
-    limit: PAGE_SIZE,
-    offset,
-    q,
-    scope: scope === 'MINE' ? 'MINE' : undefined,
-    status: status || undefined,
-    templateId: templateId || undefined,
-  });
+  const teamFilter = useTeamParam();
+  const { data, error, isError, isFetching, isLoading, refetch } = useRunsSearch(
+    {
+      includeChannel,
+      limit: PAGE_SIZE,
+      offset,
+      q,
+      scope: scope === 'MINE' ? 'MINE' : undefined,
+      status: status || undefined,
+      teamId: teamFilter.teamId,
+      templateId: templateId || undefined,
+    },
+    { enabled: !teamFilter.blocked }
+  );
+  const listLoading = teamFilter.pending || isLoading;
+  const listError = teamFilter.isError || isError;
   const tableTop = useRef<HTMLDivElement>(null);
   const goToOffset = (next: number) => {
     update({ offset: next > 0 ? String(next) : null });
@@ -73,6 +83,7 @@ function RunsList() {
         subtitle="Every run across your teams."
         title="All runs"
       />
+      <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
 
       <div className="scroll-mt-4" ref={tableTop}>
         <Card className="overflow-hidden p-0">
@@ -85,7 +96,7 @@ function RunsList() {
                     Clear filters
                   </Button>
                 )}
-                {!isLoading && !isError && (
+                {!listLoading && !listError && (
                   <span className="tabular text-xs text-paper-500">
                     {total > 0 && total > runs.length
                       ? `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${plural(total, 'run')}`
@@ -142,17 +153,19 @@ function RunsList() {
             />
           </Toolbar>
 
-          {isLoading ? (
+          {listLoading ? (
             <RunsTable isLoading runs={[]} />
           ) : (
-            <div className={isError ? 'p-4 sm:p-5' : undefined}>
+            <div className={listError ? 'p-4 sm:p-5' : undefined}>
               <QueryBoundary
-                error={error}
-                isError={isError}
-                isFetching={isFetching}
-                isLoading={false}
+                {...teamGatedBoundary(teamFilter, {
+                  error,
+                  isError,
+                  isFetching,
+                  isLoading: false,
+                  refetch,
+                })}
                 label="runs"
-                onRetry={() => void refetch()}
               >
                 {runs.length === 0 ? (
                   hasFilters ? (

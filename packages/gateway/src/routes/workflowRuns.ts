@@ -25,10 +25,12 @@ import { assertMcpWriteAllowed, mcpWriteAuditHook, mcpWriteBegin } from '../lib/
 import { recordRunFinalized } from '../lib/metrics.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
+import { runListTeamScope } from '../lib/runTeamScope.js';
 import {
   buildWorkflowRunControlFilter,
   buildWorkflowRunVisibilityFilter,
 } from '../lib/runVisibility.js';
+import { assertTeamParam } from '../lib/teamParam.js';
 import {
   isTemporalUnavailable,
   isTerminalSignalError,
@@ -373,6 +375,12 @@ const ListRunsQuery = RunListPaginationQuery.extend({
   q: z.string().trim().max(200).optional(),
   scope: z.enum(['ALL', 'MINE', 'TEAM']).optional(),
   status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
+  /**
+   * Only runs on this team's work: a repository it owns or that is shared to it, or a template it
+   * owns. The caller must be a member of the team (404 otherwise; a platform ADMIN passes). Only
+   * narrows the list.
+   */
+  teamId: z.string().uuid().optional(),
   templateId: z.string().uuid().optional(),
   templateVersion: z.coerce.number().int().positive().optional(),
   workRequestId: z.string().uuid().optional(),
@@ -581,10 +589,14 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         q,
         scope,
         status,
+        teamId,
         templateId,
         templateVersion,
         workRequestId,
       } = request.query;
+      if (teamId && caller.kind === 'user') {
+        await assertTeamParam(fastify.prisma, caller.user, teamId);
+      }
       const teamFilter = runVisibilityFor(caller, request.repoAccessGate);
       // A service principal sees only its own runs whatever `scope` says.
       const user = caller.kind === 'user' ? caller.user : null;
@@ -612,7 +624,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       // The text filter is ANDed with everything above, visibility included, so a query can
       // only narrow the list. It sits in its own `AND` term because the visibility filter
       // already owns the `OR` and `AND` keys.
-      const where: Prisma.WorkflowRunWhereInput = q
+      const searched: Prisma.WorkflowRunWhereInput = q
         ? {
             AND: [
               filtered,
@@ -627,6 +639,11 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
             ],
           }
         : filtered;
+      // The team filter is its own `AND` term too, so it can only narrow, and cannot overwrite a
+      // key the visibility filter owns.
+      const where: Prisma.WorkflowRunWhereInput = teamId
+        ? { AND: [searched, runListTeamScope(teamId)] }
+        : searched;
       const [rows, total] = await Promise.all([
         fastify.prisma.workflowRun.findMany({
           include: {

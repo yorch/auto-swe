@@ -188,6 +188,12 @@ describe('epic routes', () => {
   // Mutable per-test state
   let currentRole = 'LEAD';
   let currentSub = 'user-1';
+  // The caller's role on every repository team they belong to.
+  let currentTeamRole = 'LEAD';
+  // Per-repository override of the caller's role on its owning team.
+  let teamRoleByRepo: Record<string, string> = {};
+  // Repositories the caller reaches only through a share (not a member of the owning team).
+  let sharedOnlyRepos = new Set<string>();
   let activeWorkflowFixtures: ActiveWorkflowFixture[] = [];
   let workRequestFixtures: Array<Record<string, unknown>> = [];
   let epicStartShouldConflict = false;
@@ -284,9 +290,14 @@ describe('epic routes', () => {
               id: r.id,
               organizationName: r.organizationName,
               repoName: r.repoName,
-              shares: [],
+              shares: sharedOnlyRepos.has(r.id)
+                ? [{ team: { memberships: [{ userId: currentSub }] } }]
+                : [],
               team: {
-                memberships: r.memberIds.includes(currentSub) ? [{ userId: currentSub }] : [],
+                memberships:
+                  r.memberIds.includes(currentSub) && !sharedOnlyRepos.has(r.id)
+                    ? [{ role: teamRoleByRepo[r.id] ?? currentTeamRole, userId: currentSub }]
+                    : [],
                 organization: { id: r.orgId, monthlyBudgetUsdCents: r.monthlyBudgetUsdCents },
                 orgId: r.orgId,
               },
@@ -365,6 +376,9 @@ describe('epic routes', () => {
   beforeEach(() => {
     currentRole = 'LEAD';
     currentSub = 'user-1';
+    currentTeamRole = 'LEAD';
+    teamRoleByRepo = {};
+    sharedOnlyRepos = new Set();
     activeWorkflowFixtures = [];
     workRequestFixtures = [];
     epicStartShouldConflict = false;
@@ -436,6 +450,99 @@ describe('epic routes', () => {
       });
       expect(res.statusCode).toBe(201);
       expect(startedEpicIds).toEqual(['epic-EPIC-1']);
+    });
+
+    it('refuses a platform LEAD who is only a team ENGINEER on the owning team', async () => {
+      currentTeamRole = 'ENGINEER';
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload: { ...payload, repoIds: [REPO_A] },
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.payload);
+      expect(body.error.code).toBe('FORBIDDEN');
+      expect(body.error.message).toContain('team LEAD or ADMIN');
+      expect(body.error.message).toContain('org/alpha');
+      expect(body.error.message).not.toContain(TEAM_1);
+      expect(body.error.reasons).toEqual([{ reason: 'team-lead-required', repo: 'org/alpha' }]);
+      expect(startedEpicIds).toHaveLength(0);
+      expect(createdWorkRequests).toHaveLength(0);
+    });
+
+    it('refuses a member who reaches the repository only through a share', async () => {
+      sharedOnlyRepos = new Set([REPO_A]);
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload: { ...payload, repoIds: [REPO_A] },
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error.reasons).toEqual([
+        { reason: 'team-lead-required', repo: 'org/alpha' },
+      ]);
+      expect(startedEpicIds).toHaveLength(0);
+    });
+
+    it('names only the repositories whose owning team the caller does not lead', async () => {
+      // REPO_B is reachable (a member of its team) but only as an ENGINEER; REPO_A is led.
+      repoFixtures[1]?.memberIds.push('user-1');
+      try {
+        teamRoleByRepo = { [REPO_B]: 'ENGINEER' };
+        const res = await app.inject({
+          headers: auth,
+          method: 'POST',
+          payload,
+          url: '/api/v1/epics',
+        });
+        expect(res.statusCode).toBe(403);
+        const body = JSON.parse(res.payload);
+        expect(body.error.reasons).toEqual([{ reason: 'team-lead-required', repo: 'org/beta' }]);
+        expect(body.error.message).not.toContain('org/alpha');
+        expect(startedEpicIds).toHaveLength(0);
+      } finally {
+        repoFixtures[1]?.memberIds.pop();
+      }
+    });
+
+    it('reports a repository the caller cannot reach before the lead requirement', async () => {
+      // REPO_B is not reachable at all, REPO_A is reachable but not led: access refuses first.
+      currentTeamRole = 'ENGINEER';
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload,
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(403);
+      const body = JSON.parse(res.payload);
+      expect(body.error.message).toContain('org/beta');
+      expect(JSON.stringify(body)).not.toContain('team-lead-required');
+    });
+
+    it('allows a team ADMIN who holds the platform LEAD role', async () => {
+      currentTeamRole = 'ADMIN';
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload: { ...payload, repoIds: [REPO_A] },
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(201);
+    });
+
+    it('lets a platform ADMIN through whatever the team role', async () => {
+      currentRole = 'ADMIN';
+      currentTeamRole = 'ENGINEER';
+      const res = await app.inject({
+        headers: auth,
+        method: 'POST',
+        payload: { ...payload, repoIds: [REPO_A] },
+        url: '/api/v1/epics',
+      });
+      expect(res.statusCode).toBe(201);
     });
 
     it('returns 404 when a repo does not exist or is inactive', async () => {

@@ -62,6 +62,8 @@ async function harness(
     },
     organizationMembership: { findUnique: vi.fn(async () => null) },
     runInput: { create: vi.fn(), updateMany: vi.fn(async (_q: unknown) => ({ count: 1 })) },
+    servicePrincipal: { findUnique: vi.fn(async (_q: unknown): Promise<unknown> => null) },
+    team: { findUnique: vi.fn(async (_q: unknown): Promise<unknown> => null) },
     teamMembership: { findUnique: vi.fn(async () => null) },
     user: { findUnique: vi.fn(async () => null) },
     workflowRun: {
@@ -104,9 +106,13 @@ async function harness(
 }
 const auth = { authorization: 'Bearer fake' };
 beforeEach(() => {
-  vi.mocked(validateRunConnection)
-    .mockReset()
-    .mockResolvedValue({ budgetCap: null, budgetOrgId: null, ok: true, source: null });
+  vi.mocked(validateRunConnection).mockReset().mockResolvedValue({
+    budgetCap: null,
+    budgetOrgId: null,
+    budgetTeam: null,
+    ok: true,
+    source: null,
+  });
   vi.mocked(authorizeLaunch)
     .mockReset()
     .mockResolvedValue({ ok: true } as never);
@@ -232,7 +238,13 @@ describe('generic workflow retry', () => {
     // The template's team now is not what decides: the request's charged org is.
     prisma.workflowTemplate.findFirst.mockResolvedValueOnce({
       id: 'template-1',
-      team: { organization: { id: 'org-elsewhere', monthlyBudgetUsdCents: 1 } },
+      team: {
+        id: 'team-t',
+        memberships: [],
+        monthlyBudgetUsdCents: null,
+        name: 'Team',
+        organization: { id: 'org-elsewhere', monthlyBudgetUsdCents: 1 },
+      },
       teamId: 'team-elsewhere',
       workspaceProvider: null,
     } as never);
@@ -271,7 +283,13 @@ describe('generic workflow retry', () => {
     const { app, prisma, start } = await harness(true, { ...input, billingOrgId: null });
     prisma.workflowTemplate.findFirst.mockResolvedValueOnce({
       id: 'template-1',
-      team: { organization: { id: 'org-t', monthlyBudgetUsdCents: 100 } },
+      team: {
+        id: 'team-t',
+        memberships: [],
+        monthlyBudgetUsdCents: null,
+        name: 'Team',
+        organization: { id: 'org-t', monthlyBudgetUsdCents: 100 },
+      },
       teamId: 'team-1',
       workspaceProvider: null,
     } as never);
@@ -286,10 +304,82 @@ describe('generic workflow retry', () => {
     );
     // Charged in the ledger transaction, only if the request is still uncharged.
     expect(prisma.runInput.updateMany).toHaveBeenCalledWith({
-      data: { billingOrgId: 'org-t' },
-      where: { billingOrgId: null, connectionId: null, id: input.id },
+      data: { billingOrgId: 'org-t', billingTeamId: 'team-t' },
+      where: { billingOrgId: null, billingTeamId: null, connectionId: null, id: input.id },
     });
     expect(start).toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('gates a retry of a global template against the team its request was charged to', async () => {
+    const stamped = {
+      id: 'team-launcher',
+      memberships: [{ userId: 'retry-caller' }],
+      monthlyBudgetUsdCents: 500,
+      name: 'Launcher',
+    };
+    const { app, prisma, start } = await harness(true, {
+      ...input,
+      billingOrgId: 'org-1',
+      billingTeamId: 'team-launcher',
+    });
+    prisma.team.findUnique.mockResolvedValueOnce(stamped);
+    expect((await app.inject({ headers: auth, method: 'POST', url: '/retry' })).statusCode).toBe(
+      201
+    );
+    expect(authorizeLaunch).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({ sub: 'retry-caller' }),
+      expect.objectContaining({
+        teams: [
+          { id: 'team-launcher', isMember: true, monthlyBudgetUsdCents: 500, name: 'Launcher' },
+        ],
+      })
+    );
+    // Already charged to that team: nothing is re-stamped.
+    expect(prisma.runInput.updateMany).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalled();
+    await app.close();
+  });
+
+  it("gates and charges a service principal's request to the principal's team, as attribution does", async () => {
+    const { app, prisma } = await harness(true, {
+      ...input,
+      billingOrgId: 'org-1',
+      billingTeamId: null,
+      requestedByServiceId: 'principal-1',
+    });
+    prisma.servicePrincipal.findUnique.mockResolvedValueOnce({
+      team: { id: 'team-p', memberships: [], monthlyBudgetUsdCents: 7, name: 'Principal team' },
+    });
+    prisma.workflowTemplate.findFirst.mockResolvedValueOnce({
+      id: 'template-1',
+      team: {
+        id: 'team-t',
+        memberships: [],
+        monthlyBudgetUsdCents: null,
+        name: 'Template team',
+        organization: { id: 'org-1', monthlyBudgetUsdCents: 100 },
+      },
+      teamId: 'team-t',
+      workspaceProvider: null,
+    } as never);
+    expect((await app.inject({ headers: auth, method: 'POST', url: '/retry' })).statusCode).toBe(
+      201
+    );
+    expect(authorizeLaunch).toHaveBeenCalledWith(
+      prisma,
+      expect.anything(),
+      expect.objectContaining({
+        teams: [
+          { id: 'team-p', isMember: false, monthlyBudgetUsdCents: 7, name: 'Principal team' },
+        ],
+      })
+    );
+    expect(prisma.runInput.updateMany).toHaveBeenCalledWith({
+      data: { billingTeamId: 'team-p' },
+      where: { billingOrgId: 'org-1', billingTeamId: null, connectionId: null, id: input.id },
+    });
     await app.close();
   });
 
@@ -297,7 +387,13 @@ describe('generic workflow retry', () => {
     const { app, prisma, start } = await harness(true, { ...input, billingOrgId: null });
     prisma.workflowTemplate.findFirst.mockResolvedValueOnce({
       id: 'template-1',
-      team: { organization: { id: 'org-t', monthlyBudgetUsdCents: 100 } },
+      team: {
+        id: 'team-t',
+        memberships: [],
+        monthlyBudgetUsdCents: null,
+        name: 'Team',
+        organization: { id: 'org-t', monthlyBudgetUsdCents: 100 },
+      },
       teamId: 'team-1',
       workspaceProvider: null,
     } as never);

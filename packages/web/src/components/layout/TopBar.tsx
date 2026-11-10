@@ -7,15 +7,13 @@ import { HelpButton } from '@/components/help/HelpPanel';
 import { CommandPalette, CommandPaletteButton } from '@/components/layout/CommandPalette';
 import { SIDEBAR_ID } from '@/components/layout/Sidebar';
 import { ThemeToggle } from '@/components/layout/ThemeToggle';
+import { TeamSwitcher } from '@/components/teams/TeamSwitcher';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { Icon } from '@/components/ui/Icon';
 import { IconButton } from '@/components/ui/IconButton';
-import { Select } from '@/components/ui/Select';
 import { type GatewayStatus, useGatewayStatus } from '@/hooks/useGatewayStatus';
-import { useTeams } from '@/hooks/useTeams';
 import { pageSection, pageTitle } from '@/lib/navigation';
-import { useTeamStore } from '@/stores/teamStore';
 
 const GATEWAY_TONE: Record<GatewayStatus, BadgeTone> = {
   offline: 'danger',
@@ -39,18 +37,11 @@ interface TopBarProps {
 
 export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
   const pathname = usePathname();
-  const { selectedTeamId, setSelectedTeamId } = useTeamStore();
-  const { data: teams } = useTeams();
 
   const gatewayStatus = useGatewayStatus();
   const title = pageTitle(pathname);
   const section = pageSection(pathname);
   const [paletteOpen, setPaletteOpen] = useState(false);
-
-  const teamOptions = [
-    { label: 'all teams', value: '' },
-    ...(teams ?? []).map((t) => ({ label: t.name, value: t.id })),
-  ];
 
   return (
     <header className="sticky top-0 z-20 min-w-0 border-b border-ink-500/70 bg-ink-950">
@@ -75,17 +66,11 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
           items={[...(section && section !== title ? [{ label: section }] : []), { label: title }]}
         />
 
-        {/* Team context selector. Below sm it moves to its own strip under the bar, so it
-          cannot crowd the breadcrumb out. */}
-        <Select
-          appearance="pill"
-          aria-label="Select team"
-          className="shrink max-sm:hidden sm:ml-2"
-          onChange={(v) => setSelectedTeamId(v || null)}
-          options={teamOptions}
-          prefix="team:"
-          value={selectedTeamId ?? ''}
-        />
+        {/* Team switcher: navigation between team spaces. Below sm it moves to its own strip
+          under the bar, so it cannot crowd the breadcrumb out. */}
+        <div className="max-sm:hidden sm:ml-2">
+          <TeamSwitcher />
+        </div>
 
         {/* Spacer */}
         <div className="flex-1" />
@@ -112,15 +97,7 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
         </div>
       </div>
       <div className="flex min-h-10 items-center gap-2 border-t border-ink-500/50 px-3 py-1 sm:hidden">
-        <span className="text-xs text-paper-500">Team</span>
-        <Select
-          aria-label="Select team"
-          className="min-w-0 flex-1"
-          compact
-          onChange={(v) => setSelectedTeamId(v || null)}
-          options={teamOptions}
-          value={selectedTeamId ?? ''}
-        />
+        <TeamSwitcher variant="strip" />
       </div>
       <CommandPalette onOpenChange={setPaletteOpen} open={paletteOpen} />
     </header>

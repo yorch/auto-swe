@@ -23,9 +23,16 @@ import {
   repoAccessErrorBody,
 } from '@auto-swe/shared/lib/repoAccessDecision';
 import type { RepoAccessGate, RunIdentity } from '@auto-swe/shared/lib/repoAccessGate';
-import { isRepoTeam, type RepoTeams } from '@auto-swe/shared/lib/repoMembership';
+import { canTeamLaunchOnRepo } from '@auto-swe/shared/lib/repoMembership';
 import type { FastifyReply } from 'fastify';
-import { isOrgMember, isOrgOverBudget, ORG_ACCESS_REFUSAL, orgBudgetRefusal } from './orgAccess.js';
+import {
+  isOrgMember,
+  isOrgOverBudget,
+  isTeamOverBudget,
+  ORG_ACCESS_REFUSAL,
+  orgBudgetRefusal,
+  teamBudgetRefusal,
+} from './orgAccess.js';
 
 /** The org a launch spends against. */
 export interface LaunchOrg {
@@ -40,13 +47,39 @@ export interface LaunchOrg {
  * org checks.
  */
 export interface LaunchRepo extends RepoAccessSubject {
-  team: RepoAccessSubject['team'] & {
+  team: {
+    /**
+     * The acting user's memberships of the owning team, with the role when
+     * {@link AuthorizeLaunchInput.requireOwningTeamLead} is set.
+     */
+    memberships: Array<{ userId: string; role?: string }>;
     orgId: string;
     organization: { monthlyBudgetUsdCents: number | null } | null;
+    /**
+     * The OWNING team, whose own monthly cap a launch on this repository spends against — also
+     * when the caller launches through a share, because the owner's key and budget pay for the
+     * run. Required, like the org fields, so a `select` that drops them fails to compile instead
+     * of skipping the team cap.
+     */
+    id: string;
+    name: string;
+    monthlyBudgetUsdCents: number | null;
   };
 }
 
-export type LaunchRefusalKind = 'repo-access' | 'org-access' | 'org-budget';
+/**
+ * A team a launch spends against that no repository names: a template run with no connection
+ * spends its template's team, the team `resolveWorkflowRunAttribution` attributes it to.
+ */
+export interface LaunchTeam {
+  id: string;
+  name: string;
+  monthlyBudgetUsdCents: number | null;
+  /** Whether the acting user belongs to it; only a member is told its name in a refusal. */
+  isMember: boolean;
+}
+
+export type LaunchRefusalKind = 'repo-access' | 'org-access' | 'org-budget' | 'team-budget';
 
 export interface LaunchRefusal {
   kind: LaunchRefusalKind;
@@ -64,6 +97,8 @@ export interface AuthorizeLaunchInput {
    * no connection spends its template team's org.
    */
   orgs?: LaunchOrg[];
+  /** Teams the run spends against that no repository names (see {@link LaunchTeam}). */
+  teams?: LaunchTeam[];
   /** Required-but-nullable, like every other gate argument: undefined means off. */
   gate: RepoAccessGate | undefined;
   log?: AccessLog;
@@ -83,7 +118,17 @@ export interface AuthorizeLaunchInput {
    * does not think about this keeps the login-based check it always had.
    */
   runIdentity?: RunIdentity;
+  /**
+   * Also require LEAD or ADMIN membership of each repository's OWNING team (platform ADMIN
+   * passes). Team membership via a share does not count. For a launch that fans out across
+   * repositories (an epic, a PRD run), where the platform role alone is not enough. The repository
+   * `select` must then include `role` on `team.memberships`; a missing role refuses.
+   */
+  requireOwningTeamLead?: boolean;
 }
+
+/** Roles that may lead work on a team. */
+const TEAM_LEAD_ROLES = new Set(['LEAD', 'ADMIN']);
 
 /**
  * May `actor` start this launch? Repository access (team membership, GitHub
@@ -133,6 +178,34 @@ export async function authorizeLaunch(
     };
   }
 
+  if (input.requireOwningTeamLead && actor.role !== 'ADMIN') {
+    // Every repository here already passed the membership check, so naming it reveals nothing the
+    // caller cannot see; the owning team is never named.
+    const notLed = input.repos.filter(
+      (repo) =>
+        !repo.team.memberships.some(
+          (m) => m.userId === actor.sub && m.role !== undefined && TEAM_LEAD_ROLES.has(m.role)
+        )
+    );
+    if (notLed.length > 0) {
+      const labels = notLed.map((r) => `${r.organizationName ?? '?'}/${r.repoName ?? r.id}`);
+      return {
+        ok: false,
+        refusal: {
+          body: {
+            error: {
+              code: 'FORBIDDEN',
+              message: `This launch requires team LEAD or ADMIN on the team that owns each repository: ${labels.join(', ')}`,
+              reasons: labels.map((repo) => ({ reason: 'team-lead-required', repo })),
+            },
+          },
+          kind: 'repo-access',
+          status: 403,
+        },
+      };
+    }
+  }
+
   const orgs = launchOrgs(input.repos, input.orgs);
 
   for (const orgId of orgs.keys()) {
@@ -143,7 +216,22 @@ export async function authorizeLaunch(
       };
     }
   }
-  return decideOrgBudgets(prisma, orgs);
+  const orgDecision = await decideOrgBudgets(prisma, orgs);
+  if (!orgDecision.ok) {
+    return orgDecision;
+  }
+  return decideTeamBudgets(
+    prisma,
+    launchTeams(
+      input.repos.map((repo) => ({
+        id: repo.team.id,
+        isMember: repo.team.memberships.some((m) => m.userId === actor.sub),
+        monthlyBudgetUsdCents: repo.team.monthlyBudgetUsdCents,
+        name: repo.team.name,
+      })),
+      input.teams
+    )
+  );
 }
 
 /** Every org a launch spends against, each with its cap, the repositories' orgs first. */
@@ -174,7 +262,52 @@ async function decideOrgBudgets(
     if (cap != null && (await isOrgOverBudget(prisma, orgId, cap))) {
       return {
         ok: false,
-        refusal: { body: { error: orgBudgetRefusal(cap) }, kind: 'org-budget', status: 402 },
+        refusal: { body: { error: orgBudgetRefusal() }, kind: 'org-budget', status: 402 },
+      };
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * Every team a launch spends against, each with its own cap: the repositories' OWNING teams
+ * first, then any the caller names. One entry per team, so a launch across several repositories of
+ * one team reads its spend once.
+ */
+function launchTeams(
+  fromRepos: LaunchTeam[],
+  extra: LaunchTeam[] | undefined
+): Map<string, LaunchTeam> {
+  const teams = new Map<string, LaunchTeam>();
+  for (const team of [...fromRepos, ...(extra ?? [])]) {
+    const known = teams.get(team.id);
+    teams.set(team.id, known ? { ...known, isMember: known.isMember || team.isMember } : team);
+  }
+  return teams;
+}
+
+/**
+ * The monthly cap of every team a launch spends against, after the org's: a team may hold itself
+ * to less than its organization. The team is the OWNER of the repository, never the launching
+ * sharee's, to match `WorkflowRun.attributedTeamId` — the team whose spend `teamMonthSpend` counts
+ * the run into. The refusal carries no amount and names the team only to its members.
+ */
+async function decideTeamBudgets(
+  prisma: PrismaClient,
+  teams: Map<string, LaunchTeam>
+): Promise<LaunchDecision> {
+  for (const team of teams.values()) {
+    if (
+      team.monthlyBudgetUsdCents != null &&
+      (await isTeamOverBudget(prisma, team.id, team.monthlyBudgetUsdCents))
+    ) {
+      return {
+        ok: false,
+        refusal: {
+          body: { error: teamBudgetRefusal({ memberName: team.isMember ? team.name : null }) },
+          kind: 'team-budget',
+          status: 402,
+        },
       };
     }
   }
@@ -182,9 +315,18 @@ async function decideOrgBudgets(
 }
 
 /** A repository as a service principal's launch decision reads it. */
-export interface ServiceLaunchRepo extends RepoTeams {
+export interface ServiceLaunchRepo {
   id: string;
-  team: { orgId: string; organization: { monthlyBudgetUsdCents: number | null } | null };
+  teamId: string;
+  /** `canLaunch` false makes the principal's team a view-only sharee, which cannot launch. */
+  shares: Array<{ teamId: string; canLaunch: boolean }>;
+  team: {
+    orgId: string;
+    organization: { monthlyBudgetUsdCents: number | null } | null;
+    id: string;
+    name: string;
+    monthlyBudgetUsdCents: number | null;
+  };
 }
 
 /** The principal half of a service launch decision. */
@@ -208,7 +350,7 @@ export interface ServiceLaunchActor {
 export async function authorizeServiceLaunch(
   prisma: PrismaClient,
   principal: ServiceLaunchActor,
-  input: { repos: ServiceLaunchRepo[]; orgs?: LaunchOrg[] }
+  input: { repos: ServiceLaunchRepo[]; orgs?: LaunchOrg[]; teams?: LaunchTeam[] }
 ): Promise<LaunchDecision> {
   for (const repo of input.repos) {
     if (!principal.connectionIds.includes(repo.id)) {
@@ -226,14 +368,15 @@ export async function authorizeServiceLaunch(
         },
       };
     }
-    if (!isRepoTeam(repo, principal.teamId)) {
+    if (!canTeamLaunchOnRepo(repo, principal.teamId)) {
       return {
         ok: false,
         refusal: {
           body: {
             error: {
               code: 'SERVICE_CONNECTION_NOT_ALLOWED',
-              message: "The service principal's team neither owns nor shares this connection",
+              message:
+                "The service principal's team neither owns this connection nor has it shared for launching",
             },
           },
           kind: 'repo-access',
@@ -242,7 +385,23 @@ export async function authorizeServiceLaunch(
       };
     }
   }
-  return decideOrgBudgets(prisma, launchOrgs(input.repos, input.orgs));
+  const orgDecision = await decideOrgBudgets(prisma, launchOrgs(input.repos, input.orgs));
+  if (!orgDecision.ok) {
+    return orgDecision;
+  }
+  // A principal is a machine and belongs to no team's membership list, so no refusal names a team.
+  return decideTeamBudgets(
+    prisma,
+    launchTeams(
+      input.repos.map((repo) => ({
+        id: repo.team.id,
+        isMember: false,
+        monthlyBudgetUsdCents: repo.team.monthlyBudgetUsdCents,
+        name: repo.team.name,
+      })),
+      input.teams
+    )
+  );
 }
 
 /** Send a refusal from {@link authorizeLaunch} as the HTTP response. */

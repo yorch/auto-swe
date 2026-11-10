@@ -59,7 +59,15 @@ export async function retryTemplateRequest(
       id: true,
       inputSchema: true,
       origin: true,
-      team: { select: { organization: { select: { id: true, monthlyBudgetUsdCents: true } } } },
+      team: {
+        select: {
+          id: true,
+          memberships: { select: { userId: true }, where: { userId: user.sub } },
+          monthlyBudgetUsdCents: true,
+          name: true,
+          organization: { select: { id: true, monthlyBudgetUsdCents: true } },
+        },
+      },
       teamId: true,
       workspaceProvider: true,
     },
@@ -125,12 +133,53 @@ export async function retryTemplateRequest(
     ? null
     : (stampedOrg ?? template.team?.organization ?? null);
   const stampOrg = billingOrg && billingOrg.id !== input.billingOrgId ? billingOrg.id : null;
-  if (billingOrg) {
+  // The team the retry is held to is the one `resolveWorkflowRunAttribution` will attribute it to
+  // for a request with no connection: a service principal's team (a machine's request), else the
+  // template's team, else the team the request was first charged to (`billingTeamId`). A retry
+  // stamps it when the request carries none, as the org is, so it is counted where it was gated.
+  const teamSelect = {
+    id: true,
+    memberships: { select: { userId: true }, where: { userId: user.sub } },
+    monthlyBudgetUsdCents: true,
+    name: true,
+  } as const;
+  const servicePrincipalTeam =
+    !input.connectionId && input.requestedByServiceId
+      ? ((
+          await app.prisma.servicePrincipal.findUnique({
+            select: { team: { select: teamSelect } },
+            where: { id: input.requestedByServiceId },
+          })
+        )?.team ?? null)
+      : null;
+  const stampedTeam =
+    !input.connectionId && input.billingTeamId
+      ? await app.prisma.team.findUnique({
+          select: teamSelect,
+          where: { id: input.billingTeamId },
+        })
+      : null;
+  const billingTeam = input.connectionId
+    ? null
+    : (servicePrincipalTeam ?? template.team ?? stampedTeam);
+  const stampTeam = billingTeam && billingTeam.id !== input.billingTeamId ? billingTeam.id : null;
+  if (billingOrg || billingTeam) {
     const authorization = await authorizeLaunch(app.prisma, user, {
       gate: request.repoAccessGate,
       log: request.log,
-      orgs: [billingOrg],
+      orgs: billingOrg ? [billingOrg] : [],
       repos: [],
+      // A connection-less run spends the team it is attributed to (see above).
+      teams: billingTeam
+        ? [
+            {
+              id: billingTeam.id,
+              isMember: billingTeam.memberships.length > 0,
+              monthlyBudgetUsdCents: billingTeam.monthlyBudgetUsdCents,
+              name: billingTeam.name,
+            },
+          ]
+        : [],
     });
     if (!authorization.ok) {
       return sendLaunchRefusal(reply, authorization.refusal);
@@ -227,16 +276,20 @@ export async function retryTemplateRequest(
         templateVersion: input.templateVersion as number,
       }),
     {
-      // In the ledger transaction, so the request is charged to the gated org exactly when the
-      // retry's row is written. Only a request still charged as it was read is changed: a
-      // concurrent retry that stamped first is left alone.
-      ...(stampOrg
+      // In the ledger transaction, so the request is charged to the gated org and team exactly
+      // when the retry's row is written. Only a request still charged as it was read is changed:
+      // a concurrent retry that stamped first is left alone.
+      ...(stampOrg || stampTeam
         ? {
             guard: async (tx: Prisma.TransactionClient) => {
               await tx.runInput.updateMany({
-                data: { billingOrgId: stampOrg },
+                data: {
+                  ...(stampOrg ? { billingOrgId: stampOrg } : {}),
+                  ...(stampTeam ? { billingTeamId: stampTeam } : {}),
+                },
                 where: {
                   billingOrgId: input.billingOrgId ?? null,
+                  billingTeamId: input.billingTeamId ?? null,
                   connectionId: null,
                   id: input.id,
                 },

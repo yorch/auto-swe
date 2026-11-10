@@ -268,6 +268,13 @@ reads. The Home desk reads the same predicate through `mine=true` ([teams.md](./
 `mine=true` keeps only steps on runs of the caller's own teams' work, which is what bounds a platform
 ADMIN's otherwise unrestricted list to the desk's ([teams.md](./teams.md)); it only narrows.
 
+`teamId=<team>` keeps only steps on runs of one team's work: a repository the team owns or that is
+shared to it, or a template it owns (list scope, [work-views.md](./work-views.md#teamid-semantics)).
+It is its own `AND` term beside the visibility or control filter, so it only narrows, and it composes
+with `actionable`, `count` and `mine`. The caller must be a member of the team (a platform ADMIN
+may name any); anyone else gets `404 TEAM_NOT_FOUND`, whether or not the team exists. A team's
+overview counts its Needs you steps with this same filter ([teams.md](./teams.md)).
+
 `answeredByMe=true` narrows the list to steps the caller answered, of any kind and outcome: the step's
 `resolvedBy` is the caller (an approval, reject, decision, input or review, including the response that
 completed a multi-approver step) or the caller has a recorded approval on it. A step resolved by a

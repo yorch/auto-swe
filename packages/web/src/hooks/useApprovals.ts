@@ -20,7 +20,9 @@ export function useApprovals(
   overdueOnly = false,
   runId?: string,
   /** Only steps the current user can answer and has not already answered. */
-  actionable = false
+  actionable = false,
+  /** `teamId` narrows to one team's steps; `enabled: false` waits for the team to resolve. */
+  options: { enabled?: boolean; teamId?: string } = {}
 ) {
   const params = new URLSearchParams();
   if (actionable) {
@@ -38,14 +40,18 @@ export function useApprovals(
   if (overdueOnly) {
     params.set('overdue', 'true');
   }
+  if (options.teamId) {
+    params.set('teamId', options.teamId);
+  }
   const qs = params.toString();
 
   return useQuery({
+    enabled: options.enabled ?? true,
     queryFn: () =>
       api
         .get<{ data: HumanStepSummary[] }>(`/api/v1/human-steps${qs ? `?${qs}` : ''}`)
         .then((r) => r.data),
-    queryKey: ['approvals', filter, sort, overdueOnly, runId, actionable],
+    queryKey: ['approvals', filter, sort, overdueOnly, runId, actionable, options.teamId ?? null],
     // Keep a fallback poll (30 s for pending, and for one run's steps, which show
     // live status; the unscoped history view does not poll).
     refetchInterval: filter === 'PENDING' || runId ? 30_000 : false,
@@ -94,6 +100,25 @@ export function useApprovalsCount(): number {
     refetchInterval: 30_000,
   });
   return data ?? 0;
+}
+
+/**
+ * Count of steps waiting on the current user within one team, for a tab label beside a list
+ * narrowed to that team. The chrome's badge stays `useApprovalsCount`, which is all teams.
+ */
+export function useTeamApprovalsCount(teamId: string | undefined, enabled = true): number | null {
+  const { data } = useQuery({
+    enabled: enabled && !!teamId,
+    queryFn: () =>
+      api
+        .get<{ data?: unknown; meta?: { total?: unknown } }>(
+          `/api/v1/human-steps?actionable=true&limit=1&count=true&teamId=${encodeURIComponent(teamId ?? '')}`
+        )
+        .then((r) => (typeof r.meta?.total === 'number' ? r.meta.total : 0)),
+    queryKey: ['approvals', 'count', teamId ?? null],
+    refetchInterval: 30_000,
+  });
+  return data ?? null;
 }
 
 export function useRespondToApproval() {

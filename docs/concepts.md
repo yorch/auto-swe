@@ -123,8 +123,8 @@ bookmark to `/workflows`, `/govern/…` or `/studio/…` still opens the page.
 
 **Home** is the personal desk described in [teams.md](./teams.md): the signed-in engineer's teams and what is waiting on them across all of them.
 Beneath it, Home lists the signed-in engineer's own requests in flight and their recent successful
-results. These lists are always the viewer's own work across every team: the top bar's team selector
-does not narrow them. A successful execution is an output to review, not an acceptance of that output.
+results. These lists are always the viewer's own work across every team: no team is selected on
+Home, and the team switcher only moves between team spaces. A successful execution is an output to review, not an acceptance of that output.
 
 **Requests** (`/requests`) groups execution attempts by their work request. It defaults to the
 requester's own work, with team scope, task/ticket search, and status filters. Status filters apply
@@ -152,7 +152,8 @@ or `INVALID_INPUT` (400), as a launch does.
 
 **Start work** (`/start`) offers three modes: **Run a workflow**, **Run an agent**, and **Run a
 multi-repo epic** (a planner splits one brief into a child run per repository; team leads and
-administrators only). Every mode collects inputs, shows a review screen, and opens the launched
+administrators only, enforced by the server as team LEAD or ADMIN on the team that owns each
+repository). Every mode collects inputs, shows a review screen, and opens the launched
 request. Workflow input drafts remain available when
 switching templates or paths within the page. **Approvals**, the **Workflow library**, and
 **Connections** remain directly available in the main navigation. **All runs** (`/runs`) is the
@@ -241,7 +242,7 @@ Guided paths build on those pieces:
   A tour started from the Help panel keeps running when a sidebar link is followed; one started
   from Home ends there, and counts as seen. Only the workflow editor and the run page have a page
   tour, and a step whose element is hidden (the palette below the lg breakpoint) is centered.
-- None of the "Your first run" steps follow the selected team. The merged-pull-request step ticks
+- None of the "Your first run" steps are narrowed to a team. The merged-pull-request step ticks
   only when the webhook that records a merge is configured, and it ticks when anyone merges a pull
   request from the viewer's request. The repository step looks at the
   first 500 connections the viewer can see.

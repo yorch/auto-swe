@@ -219,7 +219,11 @@ describe('POST /webhooks/:token', () => {
 
   it("charges a connection-less run to the template team's org, the org its cap gated", async () => {
     await fire(h);
-    expect(h.runInputs[0]).toMatchObject({ billingOrgId: 'org-1', connectionId: null });
+    expect(h.runInputs[0]).toMatchObject({
+      billingOrgId: 'org-1',
+      billingTeamId: 'team-1',
+      connectionId: null,
+    });
   });
 
   it("refuses a connection-less run when the template team's org is over its cap", async () => {
@@ -352,7 +356,7 @@ describe('POST /webhooks/:token', () => {
     expect(input.request.payload).toEqual(payload);
     expect(input.request.requestPayload).toBe(JSON.stringify(payload));
     // The connection decides billing, so the request is charged to no launch org.
-    expect(h.runInputs[0]).toMatchObject({ billingOrgId: null, connectionId });
+    expect(h.runInputs[0]).toMatchObject({ billingOrgId: null, billingTeamId: null, connectionId });
   });
 
   it("holds a connection's org to its own cap, never the template team's", async () => {

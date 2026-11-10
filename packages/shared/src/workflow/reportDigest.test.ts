@@ -56,6 +56,27 @@ function rows(input: {
   });
 }
 
+describe('buildReportDigest budget', () => {
+  it('renders a state and a percentage, and no dollars, when none are given', () => {
+    const digest = buildReportDigest({
+      budget: { percentUsed: 42.5, status: 'within_budget' },
+      currentPeriod,
+      currentRows: [],
+      oldestPendingApprovalRequestedAt: null,
+      pendingApprovalCount: 0,
+      previousPeriod,
+      previousRows: [],
+      scope: { name: 'Payments', type: 'ORGANIZATION' },
+    });
+    expect(digest.text).toContain('Budget: within_budget');
+    expect(digest.text).toContain('Budget used: 42.5%');
+    expect(digest.text).not.toContain('Month-to-date spend');
+    expect(digest.text).not.toContain('Projected monthly spend');
+    expect(digest.html).toContain('Budget used: 42.5%');
+    expect(digest.slackMrkdwn).not.toContain('Month-to-date');
+  });
+});
+
 describe('buildReportDigest', () => {
   it('renders metrics, prior-week deltas, gate, approval age, and organization budget', () => {
     const currentRows = rows({

@@ -1,7 +1,7 @@
 import type { Prisma } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import { orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
+import { isTeamOverBudget, orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
 import {
   prepareReviewLaunch,
   ReviewLaunchError,
@@ -119,6 +119,16 @@ async function dispatch(runId: string): Promise<void> {
           org.monthlyBudgetUsdCents
       ) {
         throw new ReviewLaunchError('REVIEW_BUDGET_EXCEEDED', 'Organization budget is exhausted');
+      }
+      // The owner of the reviewed repository pays, so its own cap holds the review too.
+      if (
+        await isTeamOverBudget(
+          prisma,
+          prepared.repo.teamId,
+          prepared.repo.team.monthlyBudgetUsdCents
+        )
+      ) {
+        throw new ReviewLaunchError('REVIEW_BUDGET_EXCEEDED', 'Team budget is exhausted');
       }
       const launch = await recordReviewLaunch(prisma, prepared);
       try {

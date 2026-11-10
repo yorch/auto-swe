@@ -14,6 +14,7 @@ import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useTeams } from '@/hooks/useTeams';
 import { navLabel } from '@/lib/navigation';
+import { teamHref } from '@/lib/teamSpace';
 import { cn, FOCUS_RING, plural } from '@/lib/utils';
 
 /** Above this many teams the page offers a search box. */
@@ -121,7 +122,7 @@ export default function TeamsPage() {
                     <Link
                       aria-label={t.name}
                       className={cn('group block h-full rounded-xl', FOCUS_RING)}
-                      href={`/admin/teams/${t.id}`}
+                      href={teamHref(t.slug)}
                     >
                       <Card className="flex h-full flex-col p-5 group-hover:border-ink-300">
                         <div className="flex items-start gap-3">

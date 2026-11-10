@@ -337,6 +337,11 @@ at its channel's scope, the same one `startChannelRun` uses.
 A CHECK constraint enforces that a row carries exactly the id for its own scope, so a TEAM row can
 never also name an organization.
 
+A team's monthly budget is **not** a registry setting. `Team.monthlyBudgetUsdCents` and
+`Team.budgetAlertThresholdPercent` are columns on the team's own row, like the organization's
+equivalents, read by the launch gate and the mid-run guard directly and managed at
+`/api/v1/teams/:id/budget` ([teams.md](./teams.md#5-team-budgets)).
+
 Both tables are registered with the tenant guard. The settings read is a deliberate exception — its
 GLOBAL branch selects rows that belong to no tenant by definition — so it is wrapped in
 `runUnscoped` with the reason attached.

@@ -26,7 +26,10 @@ function repo(over: Record<string, unknown> = {}) {
     installation: null,
     organizationName: 'acme',
     repoName: 'payments',
-    shares: [] as Array<{ team: { memberships: Array<{ userId: string }> } }>,
+    shares: [] as Array<{
+      canLaunch: boolean;
+      team: { memberships: Array<{ userId: string }> };
+    }>,
     team: { memberships: [{ userId: 'user-1' }] },
     type: 'git_repo',
     ...over,
@@ -39,7 +42,7 @@ describe('decideRepoAccess for a repository shared with another team', () => {
       prisma,
       engineer,
       repo({
-        shares: [{ team: { memberships: [{ userId: 'user-1' }] } }],
+        shares: [{ canLaunch: true, team: { memberships: [{ userId: 'user-1' }] } }],
         team: { memberships: [] },
       }),
       ENFORCE
@@ -55,12 +58,53 @@ describe('decideRepoAccess for a repository shared with another team', () => {
         prisma,
         engineer,
         repo({
-          shares: [{ team: { memberships: [{ userId: 'someone-else' }] } }],
+          shares: [{ canLaunch: true, team: { memberships: [{ userId: 'someone-else' }] } }],
           team: { memberships: [] },
         }),
         ENFORCE
       )
     ).resolves.toEqual({ allowed: false, reason: 'not-a-team-member' });
+  });
+
+  it('refuses a launch through a view-only share, for a member of the sharing team only', async () => {
+    const viewOnly = repo({
+      shares: [{ canLaunch: false, team: { memberships: [{ userId: 'user-1' }] } }],
+      team: { memberships: [] },
+    });
+    await expect(decideRepoAccess(prisma, engineer, viewOnly, ENFORCE)).resolves.toEqual({
+      allowed: false,
+      reason: 'share-view-only',
+    });
+    // Steering work already running is not a launch.
+    await expect(
+      decideRepoAccess(prisma, engineer, viewOnly, ENFORCE, undefined, 'steer-running-work')
+    ).resolves.toMatchObject({ allowed: true });
+    // The owning team's own member is never limited by a share, and a platform ADMIN is not either.
+    const both = repo({
+      shares: [{ canLaunch: false, team: { memberships: [{ userId: 'user-1' }] } }],
+    });
+    await expect(decideRepoAccess(prisma, engineer, both, ENFORCE)).resolves.toMatchObject({
+      allowed: true,
+    });
+    await expect(decideRepoAccess(prisma, admin, viewOnly, ENFORCE)).resolves.toMatchObject({
+      allowed: true,
+    });
+  });
+
+  it('admits a member of a second, launching share even when another share is view-only', async () => {
+    const decision = await decideRepoAccess(
+      prisma,
+      engineer,
+      repo({
+        shares: [
+          { canLaunch: false, team: { memberships: [{ userId: 'user-1' }] } },
+          { canLaunch: true, team: { memberships: [{ userId: 'user-1' }] } },
+        ],
+        team: { memberships: [] },
+      }),
+      ENFORCE
+    );
+    expect(decision).toMatchObject({ allowed: true });
   });
 });
 

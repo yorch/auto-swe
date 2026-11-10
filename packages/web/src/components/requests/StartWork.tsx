@@ -7,6 +7,7 @@ import { AgentRunForm } from '@/components/agentRuns/AgentRunForm';
 import { EpicLaunchForm } from '@/components/epics/EpicLaunchForm';
 import { HowItWorks } from '@/components/help/HowItWorks';
 import { ModeChooser } from '@/components/requests/ModeChooser';
+import { StartScopeProvider, type StartScopeValue } from '@/components/requests/StartScope';
 import { WorkflowLaunchForm } from '@/components/requests/WorkflowLaunchForm';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { Alert } from '@/components/ui/Alert';
@@ -17,12 +18,13 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon, type IconName } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { useHasRole } from '@/hooks/useHasRole';
+import { useTeams } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { requestHref } from '@/lib/requestDisplay';
+import { hasRole } from '@/lib/roles';
 import { cn } from '@/lib/utils';
-import { useTeamStore } from '@/stores/teamStore';
+import { useAuthStore } from '@/stores/authStore';
 
 type Mode = 'workflow' | 'agent' | 'epic';
 
@@ -172,22 +174,80 @@ function Step({
   );
 }
 
+const BASE_EPIC_REASON = 'Requires team lead or administrator.';
+
+/**
+ * Whether the caller may start an epic, and why not. POST /epics needs a platform LEAD, and on
+ * top of that the caller must lead the team that owns each repository the epic spans (their
+ * `myRole`). Under a team scope that is that team; without one, any team they lead — the form
+ * then lists only repositories of the teams they lead.
+ */
+function epicAccess(
+  platformRole: string | null | undefined,
+  memberTeams: { id: string; name: string; myRole: string | null }[] | undefined,
+  scopeTeam: { id: string; name: string } | null
+): { allowed: boolean; reason: string; epicTeamIds: StartScopeValue['epicTeamIds'] } {
+  const base = BASE_EPIC_REASON;
+  if (hasRole(platformRole, 'ADMIN')) {
+    return { allowed: true, epicTeamIds: 'all', reason: '' };
+  }
+  if (!hasRole(platformRole, 'LEAD')) {
+    return { allowed: false, epicTeamIds: new Set(), reason: base };
+  }
+  if (!memberTeams) {
+    return { allowed: false, epicTeamIds: null, reason: base };
+  }
+  const led = new Set(memberTeams.filter((t) => hasRole(t.myRole, 'LEAD')).map((t) => t.id));
+  if (scopeTeam) {
+    return led.has(scopeTeam.id)
+      ? { allowed: true, epicTeamIds: led, reason: '' }
+      : {
+          allowed: false,
+          epicTeamIds: led,
+          reason: `Requires lead of ${scopeTeam.name}, the team this work is for. You are not its lead.`,
+        };
+  }
+  return led.size > 0
+    ? { allowed: true, epicTeamIds: led, reason: '' }
+    : {
+        allowed: false,
+        epicTeamIds: led,
+        reason: 'Requires lead of the team that owns the repositories. You do not lead a team.',
+      };
+}
+
 export function StartWork({
   initialMode = 'workflow',
   initialTemplateId = '',
+  initialTeamSlug = '',
 }: {
   initialMode?: Mode;
   /** A workflow to preselect, from the library's Run button. */
   initialTemplateId?: string;
+  /** The team the work is for (`?team=`); resolved through the caller's own teams. */
+  initialTeamSlug?: string;
 }) {
   const router = useRouter();
-  // POST /epics requires LEAD, so the option is shown but disabled below that.
-  const canStartEpic = useHasRole('LEAD');
+  const platformRole = useAuthStore((state) => state.user?.role);
+  const memberTeams = useTeams({ memberOnly: true });
+  const scopeTeam =
+    (initialTeamSlug && memberTeams.data?.find((t) => t.slug === initialTeamSlug)) || null;
+  const epic = epicAccess(platformRole, memberTeams.data, scopeTeam);
+  const canStartEpic = epic.allowed;
+  const scope: StartScopeValue = {
+    epicTeamIds: epic.epicTeamIds,
+    team: scopeTeam ? { id: scopeTeam.id, name: scopeTeam.name } : null,
+  };
   const [mode, setMode] = useState<Mode>(initialMode);
   const [visited, setVisited] = useState<string[]>(initialTemplateId ? [initialTemplateId] : []);
   const [templateId, setTemplateId] = useState(initialTemplateId);
-  const teamId = useTeamStore((state) => state.selectedTeamId);
-  const templates = useWorkflowTemplates(teamId);
+  // With a `?team=` slug the templates wait for the team list, and stay unloaded when it failed,
+  // so neither a flash of "no workflows" nor the all-teams list stands in for the team's.
+  const teamsPending = !!initialTeamSlug && memberTeams.isLoading;
+  const teamsFailed = !!initialTeamSlug && memberTeams.isError;
+  const templates = useWorkflowTemplates(scopeTeam?.id ?? null, {
+    enabled: !teamsPending && !teamsFailed,
+  });
   const runnable = (templates.data ?? []).filter(
     (template) =>
       template.status === 'ACTIVE' &&
@@ -196,7 +256,12 @@ export function StartWork({
   );
   const template = runnable.find((item) => item.id === templateId);
   const unrunnableTemplate =
-    !!initialTemplateId && !templates.isLoading && !templates.isError && !template;
+    !!initialTemplateId &&
+    !teamsPending &&
+    !teamsFailed &&
+    !templates.isLoading &&
+    !templates.isError &&
+    !template;
   const onLaunched = (requestId: string) => router.push(requestHref(requestId));
   const options: ModeOption[] = [
     {
@@ -215,7 +280,7 @@ export function StartWork({
     {
       description: canStartEpic
         ? 'Change several repositories at once. A planner splits the brief into ordered per-repository work.'
-        : 'Requires team lead or administrator.',
+        : epic.reason,
       disabled: !canStartEpic,
       icon: 'epics',
       label: 'Run a multi-repo epic',
@@ -236,120 +301,133 @@ export function StartWork({
         subtitle="Choose how to work, enter the details, then review before launching."
         title="Start work"
       />
+      {scopeTeam && (
+        <p className="text-sm text-paper-400" data-testid="start-scope">
+          Starting work for <span className="font-medium text-paper-100">{scopeTeam.name}</span>.
+          Work on a repository runs under the team that owns it.
+        </p>
+      )}
       <HowItWorks />
-      <div className="grid gap-8 xl:grid-cols-[minmax(0,48rem)_18rem]">
-        <div className="min-w-0 space-y-8">
-          <SetupBanner items={['credentials', 'github', 'connections']} />
-          {unrunnableTemplate && (
-            <Alert variant="warning">
-              The workflow you picked is not available to run. It may be inactive, archived or not
-              visible to your team. Choose another workflow below.
-            </Alert>
-          )}
-          <Step number={1} title="How do you want to work?">
-            <WorkModePicker onChange={setMode} options={options} value={mode} />
-            <ModeChooser canStartEpic={canStartEpic} current={mode} onChoose={setMode} />
-          </Step>
-          <div className="space-y-8" hidden={mode !== 'workflow'}>
-            <Step
-              hint="Choose the process that matches the outcome you need."
-              number={2}
-              title="Pick a workflow"
-            >
-              <Card className="p-5">
-                <QueryBoundary
-                  error={templates.error}
-                  isError={templates.isError}
-                  isFetching={templates.isFetching}
-                  isLoading={templates.isLoading}
-                  label="workflows"
-                  onRetry={() => void templates.refetch()}
-                >
-                  {!runnable.length ? (
-                    <EmptyState
-                      action={
-                        <ButtonLink href="/library" size="sm">
-                          Open the library
-                        </ButtonLink>
-                      }
-                      hint="Ask a lead or administrator to activate a workflow in the library."
-                      icon="layers"
-                      title="No active workflows available"
-                    />
-                  ) : (
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                      <Combobox
-                        className="min-w-0 flex-1"
-                        label="Workflow"
-                        onChange={(id) => {
-                          setTemplateId(id);
-                          setVisited((prev) => (prev.includes(id) ? prev : [...prev, id]));
-                        }}
-                        options={runnable.map((item) => ({ label: item.name, value: item.id }))}
-                        placeholder="Find a workflow…"
-                        value={templateId}
-                      />
-                      {template && (
-                        <ButtonLink
-                          className="sm:mb-px"
-                          href={`/library/${template.id}`}
-                          variant="ghost"
-                        >
-                          View process
-                          <Icon name="arrowRight" size={14} />
-                        </ButtonLink>
-                      )}
-                    </div>
-                  )}
-                  {template?.description && (
-                    <p className="mt-3 text-sm leading-relaxed text-paper-400">
-                      {template.description}
-                    </p>
-                  )}
-                </QueryBoundary>
-              </Card>
+      <StartScopeProvider value={scope}>
+        <div className="grid gap-8 xl:grid-cols-[minmax(0,48rem)_18rem]">
+          <div className="min-w-0 space-y-8">
+            <SetupBanner items={['credentials', 'github', 'connections']} />
+            {unrunnableTemplate && (
+              <Alert variant="warning">
+                The workflow you picked is not available to run. It may be inactive, archived or not
+                visible to your team. Choose another workflow below.
+              </Alert>
+            )}
+            <Step number={1} title="How do you want to work?">
+              <WorkModePicker onChange={setMode} options={options} value={mode} />
+              <ModeChooser
+                canStartEpic={canStartEpic}
+                current={mode}
+                epicReason={epic.reason === BASE_EPIC_REASON ? undefined : epic.reason}
+                onChoose={setMode}
+              />
             </Step>
-            {/* Visited forms stay mounted (hidden) so switching workflows keeps what was typed. */}
-            <div hidden={!template}>
+            <div className="space-y-8" hidden={mode !== 'workflow'}>
+              <Step
+                hint="Choose the process that matches the outcome you need."
+                number={2}
+                title="Pick a workflow"
+              >
+                <Card className="p-5">
+                  <QueryBoundary
+                    error={teamsFailed ? memberTeams.error : templates.error}
+                    isError={teamsFailed || templates.isError}
+                    isFetching={teamsFailed ? memberTeams.isFetching : templates.isFetching}
+                    isLoading={teamsPending || templates.isLoading}
+                    label="workflows"
+                    onRetry={() => void (teamsFailed ? memberTeams.refetch() : templates.refetch())}
+                  >
+                    {!runnable.length ? (
+                      <EmptyState
+                        action={
+                          <ButtonLink href="/library" size="sm">
+                            Open the library
+                          </ButtonLink>
+                        }
+                        hint="Ask a lead or administrator to activate a workflow in the library."
+                        icon="layers"
+                        title="No active workflows available"
+                      />
+                    ) : (
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                        <Combobox
+                          className="min-w-0 flex-1"
+                          label="Workflow"
+                          onChange={(id) => {
+                            setTemplateId(id);
+                            setVisited((prev) => (prev.includes(id) ? prev : [...prev, id]));
+                          }}
+                          options={runnable.map((item) => ({ label: item.name, value: item.id }))}
+                          placeholder="Find a workflow…"
+                          value={templateId}
+                        />
+                        {template && (
+                          <ButtonLink
+                            className="sm:mb-px"
+                            href={`/library/${template.id}`}
+                            variant="ghost"
+                          >
+                            View process
+                            <Icon name="arrowRight" size={14} />
+                          </ButtonLink>
+                        )}
+                      </div>
+                    )}
+                    {template?.description && (
+                      <p className="mt-3 text-sm leading-relaxed text-paper-400">
+                        {template.description}
+                      </p>
+                    )}
+                  </QueryBoundary>
+                </Card>
+              </Step>
+              {/* Visited forms stay mounted (hidden) so switching workflows keeps what was typed. */}
+              <div hidden={!template}>
+                <Step number={detailsStep} title="Describe the task">
+                  {runnable
+                    .filter((item) => visited.includes(item.id))
+                    .map((item) => (
+                      <div hidden={templateId !== item.id} key={item.id}>
+                        <WorkflowLaunchForm onLaunched={onLaunched} template={item} />
+                      </div>
+                    ))}
+                </Step>
+              </div>
+            </div>
+            <div hidden={mode !== 'agent'}>
               <Step number={detailsStep} title="Describe the task">
-                {runnable
-                  .filter((item) => visited.includes(item.id))
-                  .map((item) => (
-                    <div hidden={templateId !== item.id} key={item.id}>
-                      <WorkflowLaunchForm onLaunched={onLaunched} template={item} />
-                    </div>
-                  ))}
+                <AgentRunForm onLaunched={onLaunched} reviewBeforeLaunch />
+              </Step>
+            </div>
+            <div hidden={mode !== 'epic'}>
+              <Step number={detailsStep} title="Describe the epic">
+                <EpicLaunchForm onLaunched={(path) => router.push(path)} reviewBeforeLaunch />
               </Step>
             </div>
           </div>
-          <div hidden={mode !== 'agent'}>
-            <Step number={detailsStep} title="Describe the task">
-              <AgentRunForm onLaunched={onLaunched} reviewBeforeLaunch />
-            </Step>
-          </div>
-          <div hidden={mode !== 'epic'}>
-            <Step number={detailsStep} title="Describe the epic">
-              <EpicLaunchForm onLaunched={(path) => router.push(path)} reviewBeforeLaunch />
-            </Step>
-          </div>
+          <aside aria-label="What happens next" className="space-y-4">
+            <Card className="p-5 xl:sticky xl:top-20" variant="inset">
+              <h2 className="text-sm font-semibold text-paper-100">{guide.title}</h2>
+              <ul className="mt-3 space-y-2.5">
+                {guide.points.map((point) => (
+                  <li className="flex gap-2 text-sm leading-relaxed text-paper-400" key={point}>
+                    <Icon className="mt-0.5 text-success-400" name="check" size={14} />
+                    {point}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-4 border-t border-ink-600 pt-3 text-xs text-paper-500">
+                No built-in step or template merges a pull request. Follow progress from Requests.
+              </p>
+            </Card>
+          </aside>
         </div>
-        <aside aria-label="What happens next" className="space-y-4">
-          <Card className="p-5 xl:sticky xl:top-20" variant="inset">
-            <h2 className="text-sm font-semibold text-paper-100">{guide.title}</h2>
-            <ul className="mt-3 space-y-2.5">
-              {guide.points.map((point) => (
-                <li className="flex gap-2 text-sm leading-relaxed text-paper-400" key={point}>
-                  <Icon className="mt-0.5 text-success-400" name="check" size={14} />
-                  {point}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-4 border-t border-ink-600 pt-3 text-xs text-paper-500">
-              No built-in step or template merges a pull request. Follow progress from Requests.
-            </p>
-          </Card>
-        </aside>
-      </div>
+      </StartScopeProvider>
     </div>
   );
 }

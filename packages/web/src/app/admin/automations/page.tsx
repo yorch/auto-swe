@@ -2,13 +2,14 @@
 
 import { eventSource } from '@auto-swe/shared/automation';
 import Link from 'next/link';
-import { useState } from 'react';
+import { Suspense, useState } from 'react';
 import { outcomeLabel, outcomeTone } from '@/components/automations/AutomationHistory';
 import { TeamAutomationsModal } from '@/components/automations/TeamAutomationsModal';
 import {
   type AutomationRepository,
   RepoAutomationsModal,
 } from '@/components/repositories/RepoAutomationsModal';
+import { TeamChip } from '@/components/teams/TeamChip';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
@@ -32,6 +33,8 @@ import {
 import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useSchedules } from '@/hooks/useSchedules';
+import { useTeamParam } from '@/hooks/useTeamParam';
+import { useTeam } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { cn, FOCUS_RING } from '@/lib/utils';
@@ -140,8 +143,10 @@ function PickRepository({
  * transition hook. Each row says when it fires, what it starts and what it last did, and opens
  * where that kind is edited.
  */
-export default function GovernAutomationsPage() {
+function Automations() {
   const all = useAllAutomations();
+  const teamFilter = useTeamParam();
+  const teamDetail = useTeam(teamFilter.teamId ?? '');
   const schedules = useSchedules();
   const [kind, setKind] = useState<'all' | AutomationKind>('all');
   const [query, setQuery] = useState('');
@@ -173,18 +178,42 @@ export default function GovernAutomationsPage() {
   }));
   const rows = [...(all.data ?? []), ...scheduleRows];
   const needle = query.trim().toLowerCase();
-  const shown = rows.filter(
-    (r) =>
-      (kind === 'all' || r.kind === kind) &&
-      (!needle ||
-        [
-          r.name,
-          r.when,
-          r.repository ? `${r.repository.organizationName}/${r.repository.repoName}` : '',
-          r.template?.name ?? '',
-          r.team?.name ?? '',
-        ].some((t) => t.toLowerCase().includes(needle)))
-  );
+  // `?team=<slug>` keeps the team's own automations: those it owns, those on a repository it
+  // owns and, read-only, those on a repository another team shared with it (the same list scope
+  // as every other `?team=` page). Which repositories those are comes from the team's detail, so
+  // the rows wait for it rather than showing the team-level ones alone.
+  const teamRepoIds = new Set((teamDetail.data?.repositories ?? []).map((r) => r.id));
+  const sharedRepoIds = new Set((teamDetail.data?.sharedRepositories ?? []).map((r) => r.id));
+  const teamDetailPending = !!teamFilter.team && teamDetail.isLoading;
+  const teamDetailFailed = !!teamFilter.team && teamDetail.isError;
+  const shown = rows
+    .filter(
+      (r) =>
+        (!teamFilter.team ||
+          r.team?.id === teamFilter.team.id ||
+          (!!r.repository &&
+            (teamRepoIds.has(r.repository.id) || sharedRepoIds.has(r.repository.id)))) &&
+        (kind === 'all' || r.kind === kind) &&
+        (!needle ||
+          [
+            r.name,
+            r.when,
+            r.repository ? `${r.repository.organizationName}/${r.repository.repoName}` : '',
+            r.template?.name ?? '',
+            r.team?.name ?? '',
+          ].some((t) => t.toLowerCase().includes(needle)))
+    )
+    // A repository shared into the team is the owner's to manage: the row opens read-only.
+    .map((r) =>
+      teamFilter.team &&
+      r.canManage &&
+      r.team?.id !== teamFilter.team.id &&
+      r.repository &&
+      !teamRepoIds.has(r.repository.id) &&
+      sharedRepoIds.has(r.repository.id)
+        ? { ...r, canManage: false }
+        : r
+    );
   // From the row itself: the repository list is active-only and capped, and an automation on a
   // deactivated or far-down repository must still open.
   const repoOf = (r: AutomationSummary): AutomationRepository | undefined =>
@@ -215,6 +244,7 @@ export default function GovernAutomationsPage() {
         subtitle="Everything that starts a run without a person pressing run."
         title="Automations"
       />
+      <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
       <p className="max-w-3xl text-sm leading-relaxed text-paper-400">
         Event automations are limited by a cooldown and a daily cap{' '}
         <HelpTip label="automations">
@@ -228,14 +258,22 @@ export default function GovernAutomationsPage() {
       </p>
       <Card>
         <QueryBoundary
-          error={all.error}
-          isError={all.isError}
-          isFetching={all.isFetching || schedules.isFetching}
-          isLoading={all.isLoading || schedules.isLoading}
+          error={
+            teamFilter.isError ? new Error('team lookup failed') : (all.error ?? teamDetail.error)
+          }
+          isError={teamFilter.isError || all.isError || teamDetailFailed}
+          isFetching={all.isFetching || schedules.isFetching || teamDetail.isFetching}
+          isLoading={
+            teamFilter.pending || all.isLoading || schedules.isLoading || teamDetailPending
+          }
           label="automations"
           onRetry={() => {
+            teamFilter.retry();
             void all.refetch();
             void schedules.refetch();
+            if (teamDetailFailed) {
+              void teamDetail.refetch();
+            }
           }}
         >
           {/* Schedules come from a separate list that some callers may not read. Without it the
@@ -446,5 +484,13 @@ export default function GovernAutomationsPage() {
       {openRepo && <RepoAutomationsModal onClose={() => setOpenRepo(null)} repo={openRepo} />}
       {openTeam && <TeamAutomationsModal onClose={() => setOpenTeam(null)} team={openTeam} />}
     </div>
+  );
+}
+
+export default function GovernAutomationsPage() {
+  return (
+    <Suspense>
+      <Automations />
+    </Suspense>
   );
 }

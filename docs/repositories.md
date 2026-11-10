@@ -717,7 +717,8 @@ the same organization (`ConnectionTeamShare`).
 | | Owning team | Shared team |
 |---|---|---|
 | See the repository, its runs, lessons and dependencies | yes | yes |
-| Start runs (work requests, template runs, epics, PRDs, Slack) | yes | yes |
+| Start runs (work requests, template runs, PRDs, Slack) | yes | yes, unless the share is view-only |
+| Start an epic that names the repository | lead | no |
 | Cancel a run, or answer a human step on it | yes | only runs they launched |
 | Save a personal GitHub token for it | yes | yes |
 | Be a channel-assistant code task's repository, by name | yes | yes, unless the team owns one by that name |
@@ -728,7 +729,11 @@ the same organization (`ConnectionTeamShare`).
 | Edit, fire or delete a schedule | any schedule on the repository (lead) | the team's own schedules only (lead) |
 | Add or confirm dependency edges | lead | no |
 
-Runs keep the owning team's budget, default template and settings, whoever launches them.
+Runs keep the owning team's budget, default template and settings, whoever launches them: the
+owner's cap refuses a sharee's launch ([teams.md](./teams.md#5-team-budgets)). A share is
+**view-only** when its `canLaunch` is `false`: the sharing team's members see the repository and its
+runs, and a launch is refused with `403 REPOSITORY_VIEW_ONLY`, whose message names no team. Members of
+the owning team and platform admins are never limited by a share.
 
 The team list (`GET /api/v1/teams`) tells the caller their own role in each team as `myRole`
 (`ADMIN`, `LEAD`, `ENGINEER`, or `null` for a team they do not belong to, which a platform admin
@@ -794,7 +799,12 @@ Sharing is managed from the repository card on the **Connections** page, or over
 | Route | Who | Does |
 |---|---|---|
 | `GET /api/v1/repositories/:id/share-candidates` | the owning team's leads, platform admins | Active teams in the owning team's organization, other than the owner |
-| `PUT /api/v1/repositories/:id/shares` | the owning team's leads, platform admins | Replace the set of teams it is shared with; audited |
+| `PUT /api/v1/repositories/:id/shares` | the owning team's leads, platform admins | Replace the set of teams it is shared with; audited. A team that stays keeps its `canLaunch`, a new team starts with `true`. Answers each share with its `canLaunch` |
+| `PATCH /api/v1/repositories/:id/shares/:teamId` | the owning team's leads, platform admins | Body `{ "canLaunch": boolean }`: make one share view-only or launching again; audited; `404 SHARE_NOT_FOUND` for a team the repository is not shared with |
+
+`GET /api/v1/repositories?teamId=<team>` lists only the repositories that team owns or that are
+shared to it. The filter is its own `AND` term beside reachability, so it only narrows; the caller
+must be a member of the team (a platform ADMIN may name any), otherwise `404 TEAM_NOT_FOUND`.
 
 Shares are limited to the owning team's organization, so a repository never crosses a tenant
 boundary this way. Moving a repository to a team in another organization drops the shares that no

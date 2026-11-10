@@ -6,7 +6,7 @@ import {
   agentRunTicketId,
 } from '@auto-swe/shared/lib/agentRun';
 import { loadAgentRunSlots, wouldAdmitNewRun } from '@auto-swe/shared/lib/agentRunAdmission';
-import { orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
+import { isTeamOverBudget, orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
 import type { ReviewRunPayload } from '@auto-swe/shared/lib/codeReview';
 import { reviewRunId } from '@auto-swe/shared/lib/reviewLaunch';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -100,6 +100,9 @@ export async function startStoredReviewFix(
     usdToCents((await orgMonthSpend(prisma, org.id)).totalUsd) >= org.monthlyBudgetUsdCents
   ) {
     return skip('the organization is over its monthly budget');
+  }
+  if (await isTeamOverBudget(prisma, repo.teamId, repo.team.monthlyBudgetUsdCents)) {
+    return skip('the team that owns the repository is over its monthly budget');
   }
   const template = await prisma.workflowTemplate.findFirst({
     where: {

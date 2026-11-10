@@ -573,16 +573,19 @@ interface OrgMonthUsage {
 export interface UserOrg {
   alert: { percent: number | null; triggered: boolean };
   budgetAlertThresholdPercent: number | null;
-  currentMonthUsage: OrgMonthUsage | null;
+  /** Absent on a row where the caller is not an ORG_ADMIN: the spend in dollars is theirs to read. */
+  currentMonthUsage?: OrgMonthUsage | null;
   id: string;
-  monthlyBudgetUsdCents: number | null;
+  /** Absent on a row where the caller is not an ORG_ADMIN. */
+  monthlyBudgetUsdCents?: number | null;
   name: string;
   role: string;
   slug: string;
 }
 
-export function useUserOrgs() {
+export function useUserOrgs(options: { enabled?: boolean } = {}) {
   return useQuery({
+    enabled: options.enabled ?? true,
     queryFn: () =>
       api.get<{ data: UserOrg[] }>('/api/v1/platform/organizations').then((r) => r.data),
     queryKey: ['user-orgs'],

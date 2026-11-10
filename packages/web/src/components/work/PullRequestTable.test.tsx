@@ -16,6 +16,7 @@ const pr = (over: Partial<PullRequestListItem> = {}): PullRequestListItem => ({
   latestRun: { id: 'run-1', status: 'SUCCESS' },
   mergedAt: null,
   openedAt: new Date().toISOString(),
+  ownerTeam: { id: 'team-1', name: 'Payments', slug: 'payments' },
   prNumber: 12,
   repository: { id: 'repo-1', name: 'api', org: 'acme' },
   status: 'OPEN',
@@ -41,6 +42,13 @@ describe('PullRequestTable', () => {
       '/requests?request=wr-1'
     );
     expect(screen.getByText('CI passed')).toBeTruthy();
+  });
+
+  it('names the team that owns the repository, and nothing when there is none', () => {
+    const { rerender } = render(<PullRequestTable pullRequests={[pr()]} />);
+    expect(screen.getByTestId('team-label').textContent).toBe('Payments');
+    rerender(<PullRequestTable pullRequests={[pr({ ownerTeam: null })]} />);
+    expect(screen.queryByTestId('team-label')).toBeNull();
   });
 
   it('opens the review page from the title', () => {

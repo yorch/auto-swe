@@ -3,6 +3,7 @@
 import type { InputSchema, InputSchemaProperty } from '@auto-swe/shared/lib/inputSchema';
 import Link from 'next/link';
 import { useId } from 'react';
+import { useStartScope } from '@/components/requests/StartScope';
 import { Alert } from '@/components/ui/Alert';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
@@ -10,7 +11,10 @@ import { RequiredMark } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { useRepositories } from '@/hooks/useRepositories';
+import { useIsViewOnly } from '@/hooks/useViewOnlyRepos';
 import { connectionLabel } from '@/lib/connectionDisplay';
+import { groupedRepoOptions } from '@/lib/repoGroups';
+import { VIEW_ONLY_REASON } from '@/lib/repoLaunch';
 
 export function ConnectionPicker({
   id,
@@ -35,6 +39,8 @@ export function ConnectionPicker({
   error?: string;
 }) {
   const { data: connections = [] } = useRepositories();
+  const isViewOnly = useIsViewOnly();
+  const scope = useStartScope();
   const accepted = connectionTypes?.length
     ? connectionTypes
     : connectionType
@@ -73,7 +79,9 @@ export function ConnectionPicker({
       id={id}
       label={label}
       onChange={onChange}
-      options={visible.map((c) => ({ label: connectionLabel(c), value: c.id }))}
+      options={groupedRepoOptions(visible, scope?.team ?? null, connectionLabel, (c) =>
+        isViewOnly(c) ? VIEW_ONLY_REASON : null
+      )}
       placeholder="Select a connection…"
       required={required}
       value={value}

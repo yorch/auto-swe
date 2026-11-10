@@ -75,6 +75,39 @@ describe('resolveWorkflowRunAttribution', () => {
     });
   });
 
+  it('attributes a connection-less run on a team-less template to the team that gated its launch', () => {
+    expect(
+      resolveWorkflowRunAttribution({
+        template: { team: null },
+        workRequest: {
+          billingOrgId: 'billing-org',
+          billingTeam: { id: 'billing-team', orgId: 'billing-org' },
+        },
+      })
+    ).toEqual({
+      attributedOrgId: 'billing-org',
+      attributedRepoId: null,
+      attributedTeamId: 'billing-team',
+    });
+  });
+
+  it('puts the stamped billing team after every other team source', () => {
+    expect(
+      resolveWorkflowRunAttribution({
+        template: team('template-team'),
+        workRequest: { billingTeam: { id: 'billing-team', orgId: 'billing-org' } },
+      }).attributedTeamId
+    ).toBe('template-team');
+    expect(
+      resolveWorkflowRunAttribution({
+        workRequest: {
+          billingTeam: { id: 'billing-team', orgId: 'billing-org' },
+          requestedByService: team('service-team'),
+        },
+      }).attributedTeamId
+    ).toBe('service-team');
+  });
+
   it('uses billingOrgId only when no team is available', () => {
     expect(
       resolveWorkflowRunAttribution({

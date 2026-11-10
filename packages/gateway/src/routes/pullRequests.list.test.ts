@@ -77,4 +77,42 @@ describe('GET /api/v1/pull-requests teamId', () => {
     expect(res.statusCode).toBe(200);
     expect(b.prisma.team.findFirst).not.toHaveBeenCalled();
   });
+
+  it('names the team that owns each row’s repository, for a team chip', async () => {
+    const b = await buildApp();
+    const row = (id: string, team: { id: string; name: string; slug: string } | null) => ({
+      ciStatus: 'PASSED',
+      closedAt: null,
+      id,
+      isDraft: false,
+      mergedAt: null,
+      openedAt: new Date('2026-06-01T00:00:00Z'),
+      prNumber: 7,
+      repoId: 'repo-1',
+      repository: {
+        githubUrl: null,
+        id: 'repo-1',
+        organizationName: 'acme',
+        repoName: 'api',
+        team,
+      },
+      status: 'OPEN',
+      title: 'Add endpoint',
+      workflow: null,
+    });
+    b.prisma.pullRequest.findMany.mockResolvedValue([
+      row('pr-1', { id: TEAM, name: 'Payments', slug: 'payments' }),
+      row('pr-2', null),
+    ]);
+    const res = await b.app.inject({ headers: AUTH, url: '/api/v1/pull-requests' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data.map((r: { ownerTeam: unknown }) => r.ownerTeam)).toEqual([
+      { id: TEAM, name: 'Payments', slug: 'payments' },
+      null,
+    ]);
+    const include = b.prisma.pullRequest.findMany.mock.calls[0]?.[0].include;
+    expect(include.repository.select.team).toEqual({
+      select: { id: true, name: true, slug: true },
+    });
+  });
 });

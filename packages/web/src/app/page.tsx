@@ -62,9 +62,9 @@ function listHref(state: RequestState) {
   return `/requests?scope=MINE&state=${state === 'success' ? 'finished' : state}`;
 }
 
-/** The viewer's own work, whatever team the top bar is filtered to. */
+/** The viewer's own work across every team: the desk is not scoped to one. */
 function useMine(state: RequestState) {
-  return useRequests({ limit: 5, scope: 'MINE', state }, { ignoreTeam: true });
+  return useRequests({ limit: 5, scope: 'MINE', state });
 }
 
 function WorkSection({ spec }: { spec: WorkSectionSpec }) {

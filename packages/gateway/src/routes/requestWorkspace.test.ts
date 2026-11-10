@@ -20,7 +20,7 @@ async function build(role = 'ENGINEER') {
   const prisma = {
     team: { findFirst: vi.fn().mockResolvedValue({ id: TEAM }) },
     workflowHumanStep: { findMany: vi.fn().mockResolvedValue([]) },
-    workflowRun: { findMany: vi.fn() },
+    workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
   };
   app.decorate('prisma', prisma as never);
   app.decorate('auth', {
@@ -105,6 +105,53 @@ describe('request workspace', () => {
     expect(projection.include.workRequest.select.activeWorkflows.where).toHaveProperty(
       'repository'
     );
+    await app.close();
+  });
+
+  it('names the owning team of each request, from one extra query over the page’s runs', async () => {
+    const { app, prisma } = await build();
+    const repo = (id: string, name: string, slug: string) => ({
+      name: null,
+      organizationName: 'acme',
+      repoName: slug,
+      shares: [{ teamId: 'sharee' }],
+      team: { id, name, slug },
+    });
+    prisma.workflowRun.findMany
+      .mockResolvedValueOnce([latest[0]])
+      .mockResolvedValueOnce([
+        {
+          ...latest[0],
+          endedAt: null,
+          startedAt: new Date(),
+          template: { name: 'Update deps', workspaceProvider: 'git_repo' },
+          workflowId: 'wf-success',
+          workRequest: {
+            _count: { workflowRuns: 1 },
+            activeWorkflows: [],
+            connection: null,
+            description: 'Update dependencies',
+            externalTicketId: 'DEP-1',
+            id: 'request',
+          },
+        },
+      ])
+      .mockResolvedValueOnce([
+        {
+          connection: repo('t-pay', 'Payments', 'payments'),
+          id: 'success',
+          template: { team: null },
+          workflowId: 'wf-success',
+          workRequest: { activeWorkflows: [], connection: null, isCrossRepo: true },
+        },
+      ]);
+    const response = await app.inject({ headers: auth, url: '/runs/requests' });
+    expect(response.statusCode).toBe(200);
+    // The owner is named; the team the repository is shared with is not.
+    expect(response.json().data[0].teams).toEqual([{ id: 't-pay', name: 'Payments' }]);
+    const query = prisma.workflowRun.findMany.mock.calls[2][0];
+    expect(query.where.AND[0]).toHaveProperty('OR');
+    expect(query.where.AND[1]).toEqual({ id: { in: ['success'] } });
     await app.close();
   });
 

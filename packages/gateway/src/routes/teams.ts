@@ -288,6 +288,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       // gated, as everywhere else.
       const shares = await fastify.prisma.connectionTeamShare.findMany({
         select: {
+          canLaunch: true,
           connection: {
             select: {
               id: true,
@@ -307,8 +308,9 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
           teamId: team.id,
         },
       });
+      // `canLaunch` is this team's own share: false means the team may view the repository only.
       const sharedRepositories = shares
-        .map((s) => s.connection)
+        .map((s) => ({ ...s.connection, canLaunch: s.canLaunch }))
         .sort((a, b) =>
           `${a.organizationName}/${a.repoName}`.localeCompare(`${b.organizationName}/${b.repoName}`)
         );

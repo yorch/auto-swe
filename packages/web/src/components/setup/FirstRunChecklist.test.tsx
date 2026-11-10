@@ -93,18 +93,19 @@ describe('FirstRunChecklist', () => {
     expect(screen.queryByText(/not tracked/)).toBeNull();
   });
 
-  it('asks for personal progress without the selected-team filter', () => {
+  it('asks for personal progress across every team', () => {
     render(<FirstRunChecklist />);
     expect(calls.repos).toHaveBeenCalledWith({ limit: 500 });
-    expect(calls.requests).toHaveBeenCalledWith(
-      { limit: 1, scope: 'MINE', state: 'all' },
-      { ignoreTeam: true }
-    );
+    // No team option: the checklist is the caller's progress across every team.
+    expect(calls.requests).toHaveBeenCalledWith({ limit: 1, scope: 'MINE', state: 'all' });
     expect(calls.answered).toHaveBeenCalled();
-    expect(calls.merged).toHaveBeenCalledWith(
-      { draft: 'any', limit: 1, offset: 0, scope: 'MINE', state: 'MERGED' },
-      { ignoreTeam: true }
-    );
+    expect(calls.merged).toHaveBeenCalledWith({
+      draft: 'any',
+      limit: 1,
+      offset: 0,
+      scope: 'MINE',
+      state: 'MERGED',
+    });
   });
 
   it('words the repository step for someone who may not be able to connect one', () => {

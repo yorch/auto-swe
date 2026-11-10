@@ -9,14 +9,13 @@ import type {
 import { useQuery } from '@tanstack/react-query';
 import { useListQuery } from '@/hooks/useListQuery';
 import { api } from '@/lib/api';
-import { useTeamStore } from '@/stores/teamStore';
 
 export type WorkScope = 'MINE' | 'TEAM';
 
-/** The query string for the set values; the shell's selected team narrows it, as for requests. */
+/** The query string for the set values; `teamId` narrows it to one team. */
 function queryString(
   filters: Record<string, string | number | boolean | undefined>,
-  teamId: string | null
+  teamId: string | null | undefined
 ) {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries({ ...filters, ...(teamId ? { teamId } : {}) })) {
@@ -37,11 +36,11 @@ export function usePullRequests(
     limit: number;
     offset: number;
   },
-  options: { ignoreTeam?: boolean } = {}
+  options: { enabled?: boolean; teamId?: string } = {}
 ) {
-  const selectedTeamId = useTeamStore((state) => state.selectedTeamId);
-  const qs = queryString(filters, options.ignoreTeam ? null : selectedTeamId);
+  const qs = queryString(filters, options.teamId);
   return useListQuery<PullRequestListItem>({
+    enabled: options.enabled ?? true,
     queryFn: () => api.get(`/api/v1/pull-requests?${qs}`),
     queryKey: ['pull-requests', qs],
     refetchInterval: 10_000,
@@ -68,16 +67,19 @@ export function usePrEngagement(days: number, repoId?: string) {
   });
 }
 
-export function useTickets(filters: {
-  scope: WorkScope;
-  includeAutomated: boolean;
-  search?: string;
-  limit: number;
-  offset: number;
-}) {
-  const teamId = useTeamStore((state) => state.selectedTeamId);
-  const qs = queryString(filters, teamId);
+export function useTickets(
+  filters: {
+    scope: WorkScope;
+    includeAutomated: boolean;
+    search?: string;
+    limit: number;
+    offset: number;
+  },
+  options: { enabled?: boolean; teamId?: string } = {}
+) {
+  const qs = queryString(filters, options.teamId);
   return useListQuery<TicketGroup>({
+    enabled: options.enabled ?? true,
     queryFn: () => api.get(`/api/v1/tickets?${qs}`),
     queryKey: ['tickets', qs],
     refetchInterval: 10_000,

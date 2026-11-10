@@ -55,7 +55,9 @@ import { REPOSITORY_SWEEP_CAP, sweepArmedPullRequests } from '../lib/prEvaluatio
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { insensitiveName } from '../lib/repositoryHost.js';
+import { repositoryTeamScope } from '../lib/runTeamScope.js';
 import { isShellAuthor } from '../lib/specCheck.js';
+import { assertTeamParam } from '../lib/teamParam.js';
 import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
 import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { deactivateSchedulesOutsideTeams } from './scheduledWorkRequests.js';
@@ -145,6 +147,11 @@ const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 }).ext
   includeInactive: booleanQueryParam(false),
   /** Case-insensitive match on a connection's repository, organization, name or description. */
   q: z.string().trim().max(100).optional(),
+  /**
+   * Only repositories this team owns or that are shared to it. The caller must be a member of the
+   * team (404 otherwise; a platform ADMIN passes). Only narrows the list.
+   */
+  teamId: z.string().uuid().optional(),
 });
 
 const RepoParamsSchema = z.object({ id: z.string().uuid() });
@@ -153,6 +160,8 @@ const setupFileRequestPrefix = (repoId: string) => `repo-setup-file-${repoId}-`;
 
 /** The full set of further teams to share a repository with; replaces the current set. */
 const SharesSchema = z.object({ teamIds: z.array(z.string().uuid()).max(50) });
+const ShareParamsSchema = z.object({ id: z.string().uuid(), teamId: z.string().uuid() });
+const ShareLaunchSchema = z.object({ canLaunch: z.boolean() });
 
 /** Tool keys the repository may never install; at most this many, repeats collapsed. */
 const MAX_TOOLS_DENY = 64;
@@ -815,7 +824,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { includeInactive, limit, offset, q } = request.query;
+      const { includeInactive, limit, offset, q, teamId } = request.query;
+      if (teamId) {
+        await assertTeamParam(fastify.prisma, user, teamId);
+      }
       const showInactive = includeInactive && hasRole(user.role, Role.LEAD);
       // A deactivated connection is listed only to someone who could reactivate
       // it: a platform ADMIN, or a LEAD/ADMIN of the owning team (the bar
@@ -855,6 +867,11 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         };
       }
 
+      if (teamId) {
+        // Its own AND term, so it can only narrow what reachability allows.
+        where = { AND: [where, repositoryTeamScope(teamId)] };
+      }
+
       const [repos, total] = await asPlatformAdmin(
         user,
         "admin lists every team's repos",
@@ -864,7 +881,12 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             fastify.prisma.connection.findMany({
               include: {
                 _count: { select: { activeWorkflows: true } },
-                shares: { select: { team: { select: { id: true, name: true, slug: true } } } },
+                shares: {
+                  select: {
+                    canLaunch: true,
+                    team: { select: { id: true, name: true, slug: true } },
+                  },
+                },
                 team: { select: { id: true, name: true, slug: true } },
               },
               orderBy: { repoName: 'asc' },
@@ -1801,10 +1823,77 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log, user.sub);
 
       const shares = await fastify.prisma.connection.findUnique({
-        select: { shares: { select: { team: { select: { id: true, name: true, slug: true } } } } },
+        select: {
+          shares: {
+            select: { canLaunch: true, team: { select: { id: true, name: true, slug: true } } },
+          },
+        },
         where: { id: repo.id },
       });
       return { data: shares?.shares ?? [] };
+    }
+  );
+
+  // PATCH /api/v1/repositories/:id/shares/:teamId — make one share view-only or launching again.
+  // A view-only share keeps the sharing team's members able to see the repository and its runs,
+  // and refuses their launches (REPOSITORY_VIEW_ONLY); the owning team's budget pays either way.
+  // Only someone who may manage the repository, like the share set itself.
+  app.patch(
+    '/:id/shares/:teamId',
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: { body: ShareLaunchSchema, params: ShareParamsSchema },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const repo = await fastify.prisma.connection.findUnique({
+        select: { id: true, teamId: true, type: true },
+        where: { id: request.params.id },
+      });
+      if (repo?.type !== 'git_repo') {
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+        return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
+      }
+      const share = await runUnscoped(
+        "a repository's shares are keyed by the repository, and span the teams it names",
+        ['ConnectionTeamShare'],
+        () =>
+          fastify.prisma.connectionTeamShare.findFirst({
+            select: { canLaunch: true, id: true },
+            where: { connectionId: repo.id, teamId: request.params.teamId },
+          })
+      );
+      if (!share) {
+        return sendError(
+          reply,
+          404,
+          'SHARE_NOT_FOUND',
+          'The repository is not shared with that team'
+        );
+      }
+      const { canLaunch } = request.body;
+      if (share.canLaunch !== canLaunch) {
+        await runUnscoped(
+          "a repository's shares are keyed by the repository, and span the teams it names",
+          ['ConnectionTeamShare'],
+          () =>
+            fastify.prisma.connectionTeamShare.update({
+              data: { canLaunch },
+              where: { id: share.id },
+            })
+        );
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: user,
+          after: { canLaunch, sharedWithTeamId: request.params.teamId },
+          before: { canLaunch: share.canLaunch, sharedWithTeamId: request.params.teamId },
+          entityId: repo.id,
+          entityType: 'Connection',
+        });
+      }
+      return { data: { canLaunch, teamId: request.params.teamId } };
     }
   );
 

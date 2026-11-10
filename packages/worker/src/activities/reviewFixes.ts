@@ -8,7 +8,7 @@ import {
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import { orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
+import { isTeamOverBudget, orgMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
 import { matchesPatterns } from '@auto-swe/shared/lib/ciTrigger';
 import type { ReviewRunPayload } from '@auto-swe/shared/lib/codeReview';
 import { repoHostFamily } from '@auto-swe/shared/lib/githubHostScope';
@@ -174,6 +174,9 @@ export async function startReviewFix(
     usdToCents((await orgMonthSpend(prisma, org.id)).totalUsd) >= org.monthlyBudgetUsdCents
   ) {
     return skip('the organization is over its monthly budget');
+  }
+  if (await isTeamOverBudget(prisma, repo.teamId, repo.team.monthlyBudgetUsdCents)) {
+    return skip('the team that owns the repository is over its monthly budget');
   }
   const template = await prisma.workflowTemplate.findFirst({
     where: { name: PR_FEEDBACK_TEMPLATE_NAME, status: 'ACTIVE', teamId: null },

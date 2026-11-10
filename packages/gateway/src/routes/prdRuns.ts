@@ -72,9 +72,11 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
                 select: {
                   id: true,
                   memberships: {
-                    select: { userId: true },
+                    select: { role: true, userId: true },
                     where: { userId: user.sub },
                   },
+                  monthlyBudgetUsdCents: true,
+                  name: true,
                   organization: { select: { id: true, monthlyBudgetUsdCents: true } },
                   orgId: true,
                 },
@@ -99,13 +101,16 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
 
       // A PRD run decomposes into work requests that push and open pull
       // requests on each repository it names, and spends against each of their
-      // orgs, so it takes the same launch decision as an epic. Every repository
-      // refusal is collected so the response names all of them.
+      // orgs, so it takes the same launch decision as an epic, owning-team LEAD
+      // requirement included. Every repository refusal is collected so the
+      // response names all of them.
       const authorization = await authorizeLaunch(fastify.prisma, user, {
         gate: request.repoAccessGate,
         log: request.log,
         refusalShape: 'multi',
         repos,
+        // A PRD run writes to every repository it names: the platform LEAD role is not enough.
+        requireOwningTeamLead: true,
         // Every story run is launched as the caller (`launchedById`).
         runIdentity: 'caller',
       });

@@ -3,8 +3,13 @@ import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
   CHANNEL_TASK_TEMPLATE_NAME,
 } from '@auto-swe/shared/lib/channelTask';
-import type { MeNeedsYouItem, MeSummary, MeSummaryTeam } from '@auto-swe/shared/types/api';
-import { humanStepListWhere, humanStepMineScope } from './humanStepFilters.js';
+import type {
+  MeNeedsYouItem,
+  MeSummary,
+  MeSummaryTeam,
+  WorkflowRunStatus,
+} from '@auto-swe/shared/types/api';
+import { humanStepListWhere, humanStepMineScope, humanStepTeamScope } from './humanStepFilters.js';
 import { groupRequestExecutions } from './requestExecutions.js';
 import {
   memberRunScope,
@@ -12,9 +17,11 @@ import {
   type RunTeamRow,
   repositoryLabel,
   repositoryOfRun,
+  runListTeamScope,
   teamsOfRun,
 } from './runTeamScope.js';
 import { buildWorkflowRunVisibilityFilter, type VisibilityActor } from './runVisibility.js';
+import { bindingBudgetStatuses } from './teamBudgetStatus.js';
 import type { MaybeGate } from './tenantScope.js';
 
 /** Items on the desk's list; `total` still counts every one. */
@@ -23,13 +30,34 @@ export const NEEDS_YOU_ITEM_CAP = 25;
 const TITLE_MAX = 200;
 
 /**
- * The actionable human steps of the caller's desk. The summary and
- * `GET /human-steps?actionable=true&mine=true` both read this, so a badge and the list behind it
- * cannot count different steps.
+ * The work a desk query is bounded to, beside the caller's visibility and control filters: a run
+ * term and the human-step term over the same runs. The personal desk reads every team the caller
+ * belongs to; a team's overview reads one named team. Each narrows only.
+ */
+export interface DeskScope {
+  run: Prisma.WorkflowRunWhereInput;
+  step: Prisma.WorkflowHumanStepWhereInput;
+}
+
+/** The caller's own teams' work: the personal desk. */
+export function memberDeskScope(user: VisibilityActor): DeskScope {
+  return { run: memberRunScope(user), step: humanStepMineScope(user) };
+}
+
+/** One team's list scope (owned or shared): a team's overview. */
+export function teamDeskScope(teamId: string): DeskScope {
+  return { run: runListTeamScope(teamId), step: humanStepTeamScope(teamId) };
+}
+
+/**
+ * The actionable human steps of a desk (the caller's by default, or one team's). The summary and
+ * `GET /human-steps?actionable=true&mine=true` (or `&teamId=`) both read this scope, so a badge
+ * and the list behind it cannot count different steps.
  */
 export function deskHumanStepWhere(
   user: VisibilityActor,
-  gate: MaybeGate
+  gate: MaybeGate,
+  scope: DeskScope = memberDeskScope(user)
 ): Prisma.WorkflowHumanStepWhereInput {
   return {
     AND: [
@@ -39,7 +67,7 @@ export function deskHumanStepWhere(
         overdue: false,
         status: 'PENDING',
       }),
-      humanStepMineScope(user),
+      scope.step,
     ],
   };
 }
@@ -52,10 +80,14 @@ export const ATTEMPT_WINDOW_DAYS = 30;
  * request (not a channel assistant or task run). The same exclusions as
  * `GET /workflow-runs/requests`, so the desk's running and queued counts agree with its list.
  */
-function deskRunTerms(user: VisibilityActor, gate: MaybeGate): Prisma.WorkflowRunWhereInput[] {
+export function deskRunTerms(
+  user: VisibilityActor,
+  gate: MaybeGate,
+  scope: DeskScope
+): Prisma.WorkflowRunWhereInput[] {
   return [
     buildWorkflowRunVisibilityFilter(user, gate),
-    memberRunScope(user),
+    scope.run,
     {
       template: { name: { notIn: [CHANNEL_ASSISTANT_TEMPLATE_NAME, CHANNEL_TASK_TEMPLATE_NAME] } },
     },
@@ -73,27 +105,37 @@ function deskRunTerms(user: VisibilityActor, gate: MaybeGate): Prisma.WorkflowRu
 function deskAttemptWhere(
   user: VisibilityActor,
   gate: MaybeGate,
-  now: number
+  now: number,
+  scope: DeskScope
 ): Prisma.WorkflowRunWhereInput {
-  const since = new Date(now - ATTEMPT_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   return {
     AND: [
-      ...deskRunTerms(user, gate),
+      ...deskRunTerms(user, gate, scope),
       {
         workRequest: {
           OR: [{ requestedById: user.sub }, { workflowRuns: { some: { launchedById: user.sub } } }],
         },
       },
-      { OR: [{ startedAt: { gte: since } }, { status: 'RUNNING' }] },
+      attemptWindowTerm(now),
     ],
   };
 }
 
+/** Attempts started inside the desk window, plus any still running whatever their age. */
+export function attemptWindowTerm(now: number): Prisma.WorkflowRunWhereInput {
+  const since = new Date(now - ATTEMPT_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  return { OR: [{ startedAt: { gte: since } }, { status: 'RUNNING' }] };
+}
+
 /** Requests with a running attempt, on the caller's teams' work: what the team cards count. */
-function deskRunningWhere(user: VisibilityActor, gate: MaybeGate): Prisma.WorkflowRunWhereInput {
+function deskRunningWhere(
+  user: VisibilityActor,
+  gate: MaybeGate,
+  scope: DeskScope
+): Prisma.WorkflowRunWhereInput {
   return {
     AND: [
-      ...deskRunTerms(user, gate),
+      ...deskRunTerms(user, gate, scope),
       { workRequest: { workflowRuns: { some: { status: 'RUNNING' } } } },
     ],
   };
@@ -104,7 +146,7 @@ function clip(text: string | null | undefined): string | null {
   return trimmed ? trimmed.slice(0, TITLE_MAX) : null;
 }
 
-function requestTitle(
+export function requestTitle(
   workRequest: {
     description: string | null;
     externalTicketId: string | null;
@@ -152,37 +194,24 @@ interface DeskDeps {
   user: VisibilityActor;
 }
 
+type DeskEntry = { item: MeNeedsYouItem; teamIds: Set<string> };
+
 /**
- * Builds the caller's desk: their teams, and everything across them that is waiting on them.
- * One query per source (memberships, steps, latest attempts, running runs), each bucketed by team
- * in memory, never one query per team.
+ * The caller's needs-you entries within a scope, de-duplicated by key, and the latest attempt of
+ * each request in scope that has one running. The personal desk reads it over every team the
+ * caller belongs to; a team's overview reads it over that one team, so the two cannot count
+ * different things.
  */
-export async function buildMeSummary({
+export async function loadDeskEntries({
   dueSoonHours,
   gate,
   prisma,
+  scope,
   user,
-}: DeskDeps): Promise<MeSummary> {
-  const memberships = await prisma.teamMembership.findMany({
-    orderBy: { team: { name: 'asc' } },
-    select: {
-      role: true,
-      team: {
-        select: {
-          id: true,
-          name: true,
-          organization: { select: { name: true } },
-          orgId: true,
-          slug: true,
-        },
-      },
-    },
-    where: { team: { isActive: true }, userId: user.sub },
-  });
-  if (memberships.length === 0) {
-    return { needsYou: { items: [], total: 0 }, teams: [] };
-  }
-  const memberTeamIds = new Set(memberships.map((m) => m.team.id));
+}: DeskDeps & { scope: DeskScope }): Promise<{
+  deduped: DeskEntry[];
+  running: (RunTeamRow & { id: string; status: string; workRequestId: string | null })[];
+}> {
   const now = Date.now();
   const dueSoonUntil = now + dueSoonHours * 60 * 60 * 1000;
 
@@ -204,7 +233,7 @@ export async function buildMeSummary({
         timeoutAt: true,
         title: true,
       },
-      where: deskHumanStepWhere(user, gate),
+      where: deskHumanStepWhere(user, gate, scope),
     }),
     prisma.workflowRun.findMany({
       distinct: ['workRequestId', 'connectionId'],
@@ -235,7 +264,7 @@ export async function buildMeSummary({
         },
         workRequestId: true,
       },
-      where: deskAttemptWhere(user, gate, now),
+      where: deskAttemptWhere(user, gate, now, scope),
     }),
     // The latest attempt of each request/repository, as the request list reads them; the groups
     // below keep the ones still running.
@@ -243,12 +272,12 @@ export async function buildMeSummary({
       distinct: ['workRequestId', 'connectionId'],
       orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
       select: { ...RUN_TEAM_SELECT, id: true, status: true, workRequestId: true },
-      where: deskRunningWhere(user, gate),
+      where: deskRunningWhere(user, gate, scope),
     }),
   ]);
 
-  // Each item with the member teams it counts toward.
-  const entries: { item: MeNeedsYouItem; teamIds: Set<string> }[] = [];
+  // Each item with the teams it counts toward.
+  const entries: DeskEntry[] = [];
 
   for (const step of steps) {
     const { teamIds } = teamsOfRun(step.run);
@@ -322,6 +351,90 @@ export async function buildMeSummary({
     }
   }
   const deduped = [...unique.values()];
+  return { deduped, running };
+}
+
+/**
+ * How many requests are running and how many of them are still queued, over the latest attempts
+ * of a set of requests: the grouping the request list applies under `state=active`, the group
+ * running when any of its executions is. Running plus queued is that list's total.
+ */
+export function countRunningRequests(
+  running: {
+    id: string;
+    status: string;
+    workflowId: string;
+    workRequest: {
+      activeWorkflows: { currentStatus: string; temporalWorkflowId: string }[];
+      isCrossRepo: boolean;
+    } | null;
+    workRequestId: string | null;
+  }[]
+): { queued: number; running: number } {
+  let runningCount = 0;
+  let queuedCount = 0;
+  const rows = new Map(running.map((run) => [run.id, run]));
+  const executions = running.map((run) => ({
+    ...run,
+    _count: { humanSteps: 0 },
+    status: run.status as WorkflowRunStatus,
+  }));
+  for (const group of groupRequestExecutions(executions)) {
+    if (group.status !== 'RUNNING') {
+      continue;
+    }
+    const run = rows.get(group.id);
+    const ledger = run?.workRequest?.activeWorkflows.find(
+      (row) => row.temporalWorkflowId === run?.workflowId
+    );
+    if (ledger?.currentStatus === 'STARTING') {
+      queuedCount++;
+    } else {
+      runningCount++;
+    }
+  }
+  return { queued: queuedCount, running: runningCount };
+}
+
+/**
+ * Builds the caller's desk: their teams, and everything across them that is waiting on them.
+ * One query per source (memberships, steps, latest attempts, running runs), each bucketed by team
+ * in memory, never one query per team.
+ */
+export async function buildMeSummary({
+  dueSoonHours,
+  gate,
+  prisma,
+  user,
+}: DeskDeps): Promise<MeSummary> {
+  const memberships = await prisma.teamMembership.findMany({
+    orderBy: { team: { name: 'asc' } },
+    select: {
+      role: true,
+      team: {
+        select: {
+          id: true,
+          name: true,
+          organization: { select: { name: true } },
+          orgId: true,
+          slug: true,
+        },
+      },
+    },
+    where: { team: { isActive: true }, userId: user.sub },
+  });
+  if (memberships.length === 0) {
+    return { needsYou: { items: [], total: 0 }, teams: [] };
+  }
+  const memberTeamIds = new Set(memberships.map((m) => m.team.id));
+  const { deduped, running } = await loadDeskEntries({
+    dueSoonHours,
+    gate,
+    prisma,
+    scope: memberDeskScope(user),
+    user,
+  });
+
   const items = deduped
     .map((entry) => entry.item)
     .sort(compareItems)
@@ -335,30 +448,26 @@ export async function buildMeSummary({
       }
     }
   }
-  // Per member team, the same grouping the request list applies under `state=active`: the team's
-  // runs, grouped by request, the group running when any of its executions is. Running plus
-  // queued is therefore that list's total.
+  // Per member team, the same grouping the request list applies under `state=active`.
   const runningCount = new Map<string, number>();
   const queuedCount = new Map<string, number>();
-  const runningRows = new Map(running.map((run) => [run.id, run]));
   for (const teamId of memberTeamIds) {
-    const teamRuns = running
-      .filter((run) => teamsOfRun(run).teamIds.has(teamId))
-      .map((run) => ({ ...run, _count: { humanSteps: 0 } }));
-    for (const group of groupRequestExecutions(teamRuns)) {
-      if (group.status !== 'RUNNING') {
-        continue;
-      }
-      const run = runningRows.get(group.id);
-      const ledger = run?.workRequest?.activeWorkflows.find(
-        (row) => row.temporalWorkflowId === run?.workflowId
-      );
-      const bucket = ledger?.currentStatus === 'STARTING' ? queuedCount : runningCount;
-      bucket.set(teamId, (bucket.get(teamId) ?? 0) + 1);
-    }
+    const counts = countRunningRequests(
+      running.filter((run) => teamsOfRun(run).teamIds.has(teamId))
+    );
+    runningCount.set(teamId, counts.running);
+    queuedCount.set(teamId, counts.queued);
   }
 
+  // One read for every org and team the caller belongs to, never one per team: each team shows
+  // the tighter of its own cap and its organization's.
+  const budgets = await bindingBudgetStatuses(
+    prisma,
+    memberships.map((m) => ({ id: m.team.id, orgId: m.team.orgId }))
+  );
+
   const teams: MeSummaryTeam[] = memberships.map(({ role, team }) => ({
+    budget: budgets.get(team.id) ?? null,
     myRole: role,
     name: team.name,
     needsYou: needsYou.get(team.id) ?? 0,

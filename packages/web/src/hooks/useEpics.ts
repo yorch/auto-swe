@@ -3,7 +3,6 @@
 import type { CreateEpicResponse, EpicDetail, EpicSummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { useTeamStore } from '@/stores/teamStore';
 
 export function useCreateEpic() {
   const qc = useQueryClient();
@@ -19,10 +18,9 @@ export function useCreateEpic() {
 
 export function useEpics(
   filters: { limit?: number; offset?: number; scope?: 'MINE' | 'TEAM' } = {},
-  options: { enabled?: boolean } = {}
+  options: { enabled?: boolean; teamId?: string } = {}
 ) {
-  // The shell's selected team narrows the list, as it does for requests.
-  const teamId = useTeamStore((state) => state.selectedTeamId);
+  const teamId = options.teamId ?? null;
   const params = new URLSearchParams();
   params.set('limit', String(filters.limit ?? 50));
   params.set('offset', String(filters.offset ?? 0));
