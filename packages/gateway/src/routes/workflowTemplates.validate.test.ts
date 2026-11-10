@@ -734,3 +734,104 @@ describe('validate / create parity', () => {
     });
   }
 });
+
+describe('macro uses on the write path', () => {
+  const CI_ARGS = { fix: false, passed: 'done' };
+  const withUses = (uses: unknown, nodes: Record<string, unknown> = { done }) => ({
+    description: '',
+    entry: 'waitForCI',
+    name: 'uses',
+    nodes,
+    schemaVersion: SPEC_SCHEMA_VERSION,
+    uses,
+  });
+  const USES_ONLY = withUses({ ci: { args: CI_ARGS, macro: 'ciLoop@1' } });
+  const create = (app: FastifyInstance, payload: unknown) =>
+    app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: payload as object,
+      url: '/api/v1/workflow-templates',
+    });
+  const storedSpec = (created: unknown[]) =>
+    (created[0] as { versions: { create: { spec: { nodes: Record<string, { use?: string }> } } } })
+      .versions.create.spec;
+
+  it('stores the expanded flat nodes for a spec authored as uses', async () => {
+    const { app, created } = buildApp({ role: 'ADMIN' });
+    const res = await create(app, { name: 'u', spec: USES_ONLY });
+    expect(res.statusCode).toBe(201);
+    const stored = storedSpec(created);
+    expect(stored.nodes.waitForCI).toBeDefined();
+    expect(stored.nodes.done).toBeDefined();
+    expect(stored.nodes.waitForCI?.use).toBe('ci');
+    await app.close();
+  });
+
+  it('is idempotent: re-saving the stored spec stores the same nodes', async () => {
+    const first = buildApp({ role: 'ADMIN' });
+    await create(first.app, { name: 'u', spec: USES_ONLY });
+    const stored = storedSpec(first.created);
+    const second = buildApp({ role: 'ADMIN' });
+    const res = await create(second.app, { name: 'u', spec: stored });
+    expect(res.statusCode).toBe(201);
+    expect(storedSpec(second.created).nodes).toEqual(stored.nodes);
+    await first.app.close();
+    await second.app.close();
+  });
+
+  it('answers 400 with the message for bad arguments, never a 500', async () => {
+    const { app, created } = buildApp({ role: 'ADMIN' });
+    const bad = withUses({ ci: { args: { fix: false }, macro: 'ciLoop@1' } });
+    const res = await create(app, { name: 'u', spec: bad });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('INVALID_SPEC');
+    expect(res.json().error.message).toMatch(/use 'ci'.*invalid arguments for 'ciLoop@1'/);
+    expect(created).toEqual([]);
+    await app.close();
+  });
+
+  it('answers 400 for an unknown macro', async () => {
+    const { app } = buildApp({ role: 'ADMIN' });
+    const res = await create(app, {
+      name: 'u',
+      spec: withUses({ ci: { args: {}, macro: 'nope@1' } }),
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/unknown macro 'nope@1'/);
+    await app.close();
+  });
+
+  it('refuses a hand-edit that drifted from its expansion, with the drift message', async () => {
+    const first = buildApp({ role: 'ADMIN' });
+    await create(first.app, { name: 'u', spec: USES_ONLY });
+    const stored = storedSpec(first.created);
+    const waitForCI = stored.nodes.waitForCI as Record<string, unknown>;
+    const drifted = {
+      ...USES_ONLY,
+      nodes: { ...stored.nodes, waitForCI: { ...waitForCI, timeout: '1h' } },
+    };
+    const { app, created } = buildApp({ role: 'ADMIN' });
+    const res = await create(app, { name: 'u', spec: drifted });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.message).toMatch(/use 'ci'.*waitForCI/);
+    expect(created).toEqual([]);
+    await first.app.close();
+    await app.close();
+  });
+
+  it('POST /validate reports the same refusal as a schema error', async () => {
+    const { app } = buildApp({ role: 'ADMIN' });
+    const bad = withUses({ ci: { args: { fix: false }, macro: 'ciLoop@1' } });
+    const { ok, issues } = (await validate(app, { spec: bad })).json().data as {
+      ok: boolean;
+      issues: Issue[];
+    };
+    expect(ok).toBe(false);
+    expect(issues[0]).toMatchObject({ severity: 'error', source: 'schema' });
+    expect(issues[0]?.message).toMatch(/invalid arguments/);
+    const good = (await validate(app, { spec: USES_ONLY })).json().data as { ok: boolean };
+    expect(good.ok).toBe(true);
+    await app.close();
+  });
+});

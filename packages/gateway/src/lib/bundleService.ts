@@ -13,6 +13,7 @@ import {
   bundleAgentRuntimeWarnings,
   bundleContainerImageWarnings,
   type InstalledBundleRow,
+  materializeBundleSpec,
   parseBundle,
   type TrustedKey,
   unsupportedBundleDependencies,
@@ -33,7 +34,7 @@ import {
 } from '@auto-swe/shared/lib/skillRevision';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { toImplementerRuntime, toReasoningLevel } from '@auto-swe/shared/types/api';
-import { collectAuthoredCode, type WorkflowSpec } from '@auto-swe/shared/workflow';
+import { collectAuthoredCode, materializeUses, type WorkflowSpec } from '@auto-swe/shared/workflow';
 
 import { scanSkillAdvisory } from './skillScan.js';
 
@@ -204,12 +205,14 @@ async function installBundleTemplate(
   origin: string,
   installedById: string | null
 ): Promise<void> {
-  const spec = t.spec as object;
+  // The stored form is the flat one; a bundle spec authored as `uses` is expanded here (the
+  // manifest keeps the authored spec for its hash). Install validated it, so this cannot throw.
+  const spec = materializeUses(t.spec) as object;
   // The install may make this version active, so its authored code is put on record with the
   // installer — a platform admin, the only role the install routes admit — as its author, the
   // same `WorkflowShellAudit` rows a canvas save writes. A bundle template is global, so there
   // is no team and no team egress allowlist to snapshot.
-  const { authoredNodes } = collectAuthoredCode(t.spec as WorkflowSpec);
+  const { authoredNodes } = collectAuthoredCode(spec as WorkflowSpec);
   const audit = (templateVersionId: string) =>
     recordShellAudit(tx, templateVersionId, null, installedById, authoredNodes, []);
   const inputSchema = t.inputSchema ? { inputSchema: t.inputSchema as object } : {};
@@ -333,7 +336,10 @@ function deriveDependencies(entities: BundleEntities): BundleDependency[] {
     }
   }
   for (const t of entities.templates) {
-    const nodes = (t.spec as { nodes?: Record<string, { type?: string }> } | null)?.nodes ?? {};
+    const flat = materializeBundleSpec(t.spec);
+    const nodes =
+      ((flat.ok ? flat.spec : t.spec) as { nodes?: Record<string, { type?: string }> } | null)
+        ?.nodes ?? {};
     for (const node of Object.values(nodes)) {
       if (node?.type === 'mcp') {
         types.add('mcp');

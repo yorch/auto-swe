@@ -24,6 +24,7 @@ import {
   findAuthoredCommandNodes,
   findContainerCodeNodes,
   formatValidationIssue,
+  materializeUses,
   parseWorkflowSpec,
   validateSpec,
   type WorkflowAuthorOutput,
@@ -251,7 +252,9 @@ async function generateWorkflowSpecImpl(
 
     let validated: WorkflowSpec;
     try {
-      validated = parseWorkflowSpec(parsedUnknown);
+      // The model may write `uses` instead of (or beside) nodes: expand to the flat form that
+      // is stored and run. A MacroUseError is a repairable finding like a schema error.
+      validated = parseWorkflowSpec(materializeUses(parsedUnknown));
     } catch (e) {
       lastErrors = formatErrors(e);
       message = buildRepairRequestMessage({

@@ -468,6 +468,43 @@ describe('installBundle', () => {
     expect(prisma.installedBundle.upsert).not.toHaveBeenCalled();
   });
 
+  it('installs a template authored as uses with its expanded flat nodes', async () => {
+    const authored = {
+      description: '',
+      entry: 'waitForCI',
+      name: 'std',
+      nodes: { done: { status: 'SUCCESS', type: 'terminate' } },
+      schemaVersion: 1,
+      uses: { ci: { args: { fix: false, passed: 'done' }, macro: 'ciLoop@1' } },
+    };
+    const m = manifestFor({
+      ...EMPTY,
+      templates: [{ name: 'std', spec: authored }],
+    } as unknown as BundleEntities);
+    await installBundle(asArg(), m, { allowUnverified: true });
+    const created = prisma.workflowTemplate.create.mock.calls[0]?.[0] as {
+      data: { versions: { create: { spec: { nodes: Record<string, { use?: string }> } } } };
+    };
+    const stored = created.data.versions.create.spec;
+    expect(stored.nodes.waitForCI?.use).toBe('ci');
+    expect(Object.keys(stored.nodes).length).toBeGreaterThan(1);
+  });
+
+  it('refuses a bundle template whose uses cannot expand, before any write', async () => {
+    const bad = {
+      ...RUNNABLE_SPEC,
+      uses: { ci: { args: { fix: false }, macro: 'ciLoop@1' } },
+    };
+    const m = manifestFor({
+      ...EMPTY,
+      templates: [{ name: 'std', spec: bad }],
+    } as unknown as BundleEntities);
+    await expect(installBundle(asArg(), m, { allowUnverified: true })).rejects.toThrow(
+      /invalid arguments for 'ciLoop@1'/
+    );
+    expect(prisma.workflowTemplate.create).not.toHaveBeenCalled();
+  });
+
   it('rejects a template whose spec does not parse, before any write', async () => {
     const m = manifestFor({
       ...EMPTY,
