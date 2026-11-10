@@ -25,10 +25,16 @@ step.
   environment-only and read once at gateway start ([oauth-setup.md](./oauth-setup.md)).
 - **SAML is not supported.** [oauth-setup.md](./oauth-setup.md) says so for Okta: only an
   OIDC web-application integration works. The gateway imports no SAML or SSO plugin.
-- **No multi-factor authentication of its own.** The auth plugin list holds `magicLink`,
-  `genericOAuth`, `jwt` and the OAuth provider for MCP clients. A deployment that needs MFA
-  obtains it from the identity provider (Okta, Google, GitHub) and does not offer email and
-  password to those users.
+- **No multi-factor authentication of its own, and no way to switch off local sign-in.** The auth
+  plugin list holds `magicLink`, `genericOAuth`, `jwt` and the OAuth provider for MCP clients. A
+  deployment that needs MFA obtains it from the identity provider (Okta, Google, GitHub), but the
+  gateway does not make the identity provider the only way in. `emailAndPassword` is enabled
+  unconditionally and `magicLink` is registered with sign-up allowed, both in
+  `packages/gateway/src/lib/betterAuth.ts`, whatever the identity provider enforces. A user an
+  ADMIN has already activated can therefore sign in with a password, or with a magic link sent to
+  their mailbox, and a password reset link does the same, without the identity provider's second
+  factor. New sign-ups start inactive, so the exposure is limited to people already admitted, but
+  nothing in configuration removes it.
 - **Admission is a queue, not a directory sync.** A new user is created inactive and waits at
   `/admin/users` for an ADMIN. The one automatic path is GitHub organisation membership
   (`github.signInAutoApproveOrgs`), which never revokes anyone. Okta group claims are not read.
@@ -80,6 +86,21 @@ attribute release)
 - Removing a user from the group removes the membership on the next sync.
 - Owner: unassigned
 
+**Disable local (password / magic-link) sign-in when SSO is enforced** (size M; depends on nothing)
+- A registry setting (ADMIN, GLOBAL, default off) turns on enforcement. While it is on, email and
+  password sign-in, sign-up, password reset, and magic-link sign-in are refused for every user,
+  and the dashboard shows only the identity-provider buttons.
+- The check runs per request, not only in `buildAuth()` at boot, so turning the setting on or off
+  takes effect without a gateway restart.
+- Sessions created by a local method before enforcement is turned on are revoked in the same
+  change, and the issue states whether a personal access token minted from such a session survives.
+- Each refused local attempt is recorded, with the account's email and the route, in the audit log.
+- A break-glass path that restores local sign-in is available without database access (an
+  environment value read at start), and it is documented in `docs/oauth-setup.md`.
+- Route tests cover each local sign-in route under enforcement, and under enforcement a user who
+  signs in through the identity provider keeps the same session and roles as before.
+- Owner: unassigned
+
 ## 2. SIEM-friendly audit export, including tool executions
 
 ### What exists
@@ -123,7 +144,11 @@ history and not in the audit log.
 - A collector that resumes from its last cursor sees no gaps and no duplicates, including across
   rows with equal timestamps.
 - Service-principal and personal tokens are refused unless an explicit export scope exists.
-- Each export is itself audited, as the CSV export is not today.
+- Each export is itself audited and the export writes its own `config_audit_log` row. Today the
+  CSV export (`/audit-log/export`, tagged `activity: 'export'` in `packages/gateway/src/routes/admin.ts`)
+  is recorded only as an `export` row in `user_activity_events`, which is queued in memory and can
+  be dropped under load ([user-activity.md](./user-activity.md)), so it is absent from the table
+  an auditor reads.
 - Owner: unassigned
 
 **Tool-execution events in the exportable stream** (size M; depends on the export API)
@@ -141,11 +166,14 @@ history and not in the audit log.
 - A destination that is down delays delivery and never blocks the request that wrote the row.
 - Owner: unassigned
 
-**Tamper evidence for the audit log** (size M; depends on nothing)
+**Tamper evidence for the audit log** (size M; the hash chain depends on nothing, and the role
+restriction depends on the application database role issue in section 4)
 - Each row stores a hash over its content and the previous row's hash, and a verification route
   reports the first break.
-- A database role used by the gateway and worker has no `UPDATE` or `DELETE` on the table
-  except through the retention sweep's path.
+- The application database role used by the gateway and worker has no `UPDATE` or `DELETE` on
+  `config_audit_log` except through the retention sweep's path. This needs the separate role that
+  section 4 proposes: today the gateway, the worker and the migrations share one `DATABASE_URL`
+  (section 4), so no grant can be withheld from the process that writes the log.
 - Owner: unassigned
 
 ## 3. Retention policy, including what a deleted run leaves behind
@@ -160,7 +188,8 @@ history and not in the audit log.
 | Transcript access log | 2555 days | `workflow.transcriptAccessLogRetentionDays` |
 | Worker HTTP rows | 90 days | `workflow.httpCaptureRetentionDays` |
 | UI evidence and its artifacts | 90 days | `uiValidation.evidenceRetentionDays` |
-| Automation decisions, callback deliveries | 90 days, bounded by setting | `workflow.automationDecisionRetentionDays`, `workflow.callbackDeliveryRetentionDays` |
+| Automation decisions that started no run | 90 days by default, at least 7; decisions that started a run are kept | `workflow.automationDecisionRetentionDays` |
+| Run callback deliveries that were delivered or dead | 30 days by default, at most 3650; pending deliveries are never deleted | `workflow.callbackDeliveryRetentionDays` |
 | Lessons in memory | Not pruned automatically; deleting forgets through every copy | [memory.md](./memory.md) |
 | Temporal history | The namespace retention the operator sets | [deployment.md](./deployment.md) |
 
@@ -194,7 +223,9 @@ deletion; the transcript sweep owns them.
 - A registry setting (ADMIN, GLOBAL, default off) sets a maximum age for terminal runs. The
   sweep deletes the run, its traces and steps, and deletes each artifact through `artifactStore`
   before its row, so the object goes too.
-- Runs under a legal hold, and runs that have not reached a terminal status, are skipped.
+- Runs whose transcripts carry a run-level legal hold (`AgentTranscript.runLegalHold`, set through
+  `packages/gateway/src/routes/transcripts.ts`), and runs that have not reached a terminal status,
+  are skipped. The run row itself has no hold today; the retention reference issue below adds one.
 - The sweep writes one audit summary row like the audit retention sweep does and reports
   progress as a metric.
 - Owner: unassigned
@@ -207,11 +238,14 @@ deletion; the transcript sweep owns them.
 - Owner: unassigned
 
 **Retention policy reference and per-organisation overrides** (size M; depends on the run-data
-sweep)
+sweep, whose skip rule it changes)
 - One table in the docs, generated from the registry, lists every retention setting and its
   default; `yarn docs:check` fails when a retention setting is missing from it.
 - Registry retention settings that are safe to scope gain an ORGANIZATION override.
-- Legal hold extends to the audit log and run data.
+- Legal hold extends to the audit log and to the run itself. The run-data sweep's skip rule
+  reads the transcript-level hold that exists today; this issue replaces that read with a hold on
+  the run row, so one hold covers the run, its transcripts and its artifacts, and the sweep skips
+  a run under it.
 - Owner: unassigned
 
 ## 4. Row-level security as defence in depth for the tenant guard
@@ -372,7 +406,7 @@ operations that the organisation running the platform must provide.
 
 | Criteria area | Control in the platform | Where it is described |
 |---|---|---|
-| CC6.1 logical access | Platform, team and organisation roles; repository membership via owning or shared teams; hashed personal access tokens; scoped service principals; admin approval queue; deactivation that takes effect on the next request; ADMIN-only grants for registry settings | [architecture.md](./architecture.md), [teams.md](./teams.md), [service-principals.md](./service-principals.md), [configuration.md](./configuration.md) |
+| CC6.1 logical access | Platform, team and organisation roles; repository membership via owning or shared teams; hashed personal access tokens; scoped service principals; admin approval queue; deactivation that takes effect on the next request; ADMIN-only grants for registry settings. Not a control yet: email and password and magic-link sign-in cannot be switched off when the identity provider enforces MFA, so the identity provider's second factor can be bypassed (section 1, "Disable local sign-in" issue) | [architecture.md](./architecture.md), [teams.md](./teams.md), [service-principals.md](./service-principals.md), [configuration.md](./configuration.md) |
 | CC6.1 data isolation | Application-layer tenant guard and its coverage test | [architecture.md](./architecture.md) |
 | CC6.1, CC6.7 protection of stored secrets | AES-256-GCM envelope for provider, connection and integration credentials, key rotation procedure, signed download links | [model-configuration.md](./model-configuration.md), [transcripts.md](./transcripts.md) |
 | CC6.6 boundaries | Docker socket proxy, hardened workspaces (capabilities dropped, resource caps, metadata blackhole), egress policies, SSRF guard on operator-supplied URLs, rate limits | [architecture.md](./architecture.md), [run-activity.md](./run-activity.md), [deployment.md](./deployment.md) |
@@ -435,7 +469,10 @@ None of these is implemented by the code, and an auditor will ask for each:
 - **No SAML and no SCIM.** Sign-in is OIDC, email and password, or magic link. Users are
   admitted through a queue and removed by an ADMIN. No identity-provider attribute sets a role or
   a team.
-- **No in-product MFA.** It is obtained from the identity provider.
+- **No in-product MFA, and local sign-in is not switched off by SSO.** MFA is obtained from the
+  identity provider, but email and password and magic-link sign-in stay available to every
+  activated user, so the identity provider's second factor can be bypassed. No setting disables
+  them (section 1, "Disable local sign-in" issue).
 - **No audit push and no cursor-based export.** The audit log is read by offset or exported as
   CSV of at most 50,000 rows. Tool executions are in run history and exportable one run at a time.
 - **The audit log is not tamper-evident.** It is append-only in the application, with no hash

@@ -1585,9 +1585,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   legitimately wrap a `Promise.all` of two or three queries on the same model, so a
   one-query-per-region rule would not fit them.
 - **The guard is enforced at run time but audited statically.** Route tests decorate a mocked
-  Prisma, so the extension never runs on them, and production defaults to `warn` — which means a
-  forgotten filter can reach a log line nobody reads. `tenantGuard.coverage.test.ts` closes that by
-  reading the source: every mass query on a tenant-scoped model must carry a tenant key in an inline
+  Prisma, so the extension never runs on them and a forgotten filter there is caught only by the
+  source check. The runtime guard throws by default; only `TENANT_GUARD_WARN=1` turns it into a log
+  line, and then a forgotten filter can reach a log line nobody reads.
+  `tenantGuard.coverage.test.ts` closes that by reading the source: every mass query on a tenant-scoped model must carry a tenant key in an inline
   `where`, or sit inside a `runUnscoped`/`asPlatformAdmin` that names *that* model. It also fails if
   any file outside a named allowlist constructs its own `PrismaClient`, since a second client is an
   unguarded one. It parses rather than pattern-matches, and hands each reconstructed `where` to the
