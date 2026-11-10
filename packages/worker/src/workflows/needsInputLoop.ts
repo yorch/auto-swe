@@ -15,12 +15,22 @@ import { buildAskStep, isPauseResult, mapAskAnswers } from '../lib/workflowEngin
 
 /** The fields the loop adds to a pausable activity's input. */
 export interface PauseArgs {
-  allowPause: true;
+  /** False only on the one last run at the round limit, which must finish without asking. */
+  allowPause: boolean;
   resumeInput?: ResumeInput;
 }
 
 /** The marker that gates all of the loop: executions that started before it replay without. */
 export const NEEDS_INPUT_PATCH = 'needs-input-v1';
+/** Gates re-asking after an answer that fits no question, instead of failing the step. */
+export const NEEDS_INPUT_REASK_PATCH = 'needs-input-reask-v1';
+/** Gates the one last unattended run at the round limit, instead of discarding that round's work. */
+export const NEEDS_INPUT_FINAL_PATCH = 'needs-input-final-round-v1';
+/** Gates closing the open question's human step when the wait for its answer is cancelled. */
+export const NEEDS_INPUT_CANCEL_PATCH = 'needs-input-cancel-v1';
+
+/** The most times one round is put to the person again after an answer that cannot be used. */
+export const MAX_REASKS_PER_ROUND = 3;
 
 export interface AskDeps {
   createHumanStep(args: {
@@ -39,7 +49,11 @@ export interface AskDeps {
     timeout: string;
     title: string;
   }): Promise<void>;
-  resolveHumanStep(args: { nodeId: string; status: 'TIMED_OUT' }): Promise<void>;
+  isCancellation(err: unknown): boolean;
+  patched(id: string): boolean;
+  resolveHumanStep(args: { nodeId: string; status: 'CANCELLED' | 'TIMED_OUT' }): Promise<void>;
+  /** Run `fn` in a scope that a cancellation of the surrounding one cannot interrupt. */
+  runNonCancellable(fn: () => Promise<void>): Promise<void>;
   /** The payload, or `undefined` once `timeout` has passed. */
   waitSignal(name: string, timeout: string): Promise<unknown | undefined>;
 }
@@ -47,6 +61,11 @@ export interface AskDeps {
 /** The human step's id and signal for the `round`-th question of the dispatch `key`. */
 export function askRecordingId(key: string, round: number): string {
   return `${key}:ask:${round}`;
+}
+
+/** The human step id of the `n`-th repeat (1-based) of round `round`'s question. */
+export function reaskRecordingId(key: string, round: number, n: number): string {
+  return `${askRecordingId(key, round)}.${n}`;
 }
 
 /**
@@ -72,6 +91,7 @@ export async function runWithNeedsInput(args: {
   const { deps, key, label, limits } = args;
   const timeout = `${limits.timeoutSeconds}s`;
   let pause: PauseArgs = { allowPause: true };
+  let finalResumed = false;
   for (let round = 1; ; round++) {
     const result = await args.invoke(pause);
     if (!isPauseResult(result)) {
@@ -86,6 +106,16 @@ export async function runWithNeedsInput(args: {
       return result;
     }
     if (round > limits.maxRounds) {
+      // The last round's work is kept: the activity runs once more, unable to ask, and
+      // told to finish on its own judgement. A second pause after that is the limit.
+      if (!finalResumed && deps.patched(NEEDS_INPUT_FINAL_PATCH)) {
+        finalResumed = true;
+        pause = {
+          allowPause: false,
+          resumeInput: { answers: [], final: true, resume: result.needsInput.resume, round },
+        };
+        continue;
+      }
       throw ApplicationFailure.nonRetryable(
         `${label} asked for input more than ${limits.maxRounds} times; giving up.`,
         'NEEDS_INPUT_LIMIT'
@@ -93,32 +123,57 @@ export async function runWithNeedsInput(args: {
     }
     const { needsInput } = result;
     const ask = buildAskStep(needsInput);
-    const nodeId = askRecordingId(key, round);
-    const signalName = `hitl_${nodeId}`;
-    await deps.createHumanStep({
-      context: ask.context,
-      description: ask.description,
-      fields: ask.fields,
-      kind: 'INPUT',
-      nodeId,
-      signalName,
-      timeout,
-      title: `${label} needs input`.slice(0, 200),
-    });
-    const payload = await deps.waitSignal(signalName, timeout);
-    if (payload === undefined) {
-      await deps.resolveHumanStep({ nodeId, status: 'TIMED_OUT' });
-      throw ApplicationFailure.nonRetryable(
-        `${label} waited ${limits.timeoutSeconds} seconds for an answer and got none.`,
-        'NEEDS_INPUT_TIMEOUT'
-      );
-    }
-    const mapped = mapAskAnswers(needsInput.questions, payload);
-    if (!mapped.ok) {
-      throw ApplicationFailure.nonRetryable(
-        `The answer to ${label}'s question was not usable: ${mapped.reason}.`,
-        'NEEDS_INPUT_INVALID_ANSWER'
-      );
+    let nodeId = askRecordingId(key, round);
+    let description = ask.description;
+    let reasks = 0;
+    let mapped: ReturnType<typeof mapAskAnswers>;
+    for (;;) {
+      const signalName = `hitl_${nodeId}`;
+      let payload: unknown;
+      try {
+        await deps.createHumanStep({
+          context: ask.context,
+          description,
+          fields: ask.fields,
+          kind: 'INPUT',
+          nodeId,
+          signalName,
+          timeout,
+          title: `${label} needs input`.slice(0, 200),
+        });
+        payload = await deps.waitSignal(signalName, timeout);
+      } catch (err) {
+        // The wait was cancelled (a fan-out sibling failed, or the run was): nobody is going
+        // to read this question, so it leaves the inbox now instead of when the run ends.
+        if (deps.isCancellation(err) && deps.patched(NEEDS_INPUT_CANCEL_PATCH)) {
+          await deps.runNonCancellable(() =>
+            deps.resolveHumanStep({ nodeId, status: 'CANCELLED' }).catch(() => {})
+          );
+        }
+        throw err;
+      }
+      if (payload === undefined) {
+        await deps.resolveHumanStep({ nodeId, status: 'TIMED_OUT' });
+        throw ApplicationFailure.nonRetryable(
+          `${label} waited ${limits.timeoutSeconds} seconds for an answer and got none.`,
+          'NEEDS_INPUT_TIMEOUT'
+        );
+      }
+      mapped = mapAskAnswers(needsInput.questions, payload);
+      if (mapped.ok) {
+        break;
+      }
+      if (reasks >= MAX_REASKS_PER_ROUND || !deps.patched(NEEDS_INPUT_REASK_PATCH)) {
+        throw ApplicationFailure.nonRetryable(
+          `The answer to ${label}'s question was not usable: ${mapped.reason}.`,
+          'NEEDS_INPUT_INVALID_ANSWER'
+        );
+      }
+      // The same round, the same questions, a step of its own: the round is not used up and
+      // the activity does not run again.
+      reasks += 1;
+      nodeId = reaskRecordingId(key, round, reasks);
+      description = `Your previous answer could not be used (${mapped.reason.slice(0, 200)}). Please answer again.\n\n${ask.description}`;
     }
     pause = {
       allowPause: true,

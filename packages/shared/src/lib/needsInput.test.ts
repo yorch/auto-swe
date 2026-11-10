@@ -141,6 +141,16 @@ describe('ResumeInputSchema', () => {
     expect(ResumeInputSchema.safeParse(input).success).toBe(true);
   });
 
+  it('takes the optional final flag, only as true, and parses an input without it', () => {
+    expect(
+      ResumeInputSchema.safeParse({ answers: [], final: true, resume, round: 4 }).success
+    ).toBe(true);
+    expect(
+      ResumeInputSchema.safeParse({ answers: [], final: false, resume, round: 4 }).success
+    ).toBe(false);
+    expect(ResumeInputSchema.safeParse({ answers: [], resume, round: 4 }).success).toBe(true);
+  });
+
   it('refuses round 0, a long answer and an unknown version', () => {
     expect(ResumeInputSchema.safeParse({ answers: [], resume, round: 0 }).success).toBe(false);
     expect(

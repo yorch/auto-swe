@@ -7,6 +7,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
+import type { WorkflowHandle } from '@temporalio/client';
+import { ApplicationFailure } from '@temporalio/common';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, type TestContext } from 'vitest';
@@ -194,6 +196,18 @@ async function waitForHumanSteps(count: number): Promise<void> {
   await new Promise((r) => setTimeout(r, 300));
 }
 
+/** The ids of the `patched()` markers a history recorded. */
+function markerIds(history: Awaited<ReturnType<WorkflowHandle['fetchHistory']>>): string[] {
+  const ids: string[] = [];
+  for (const e of history.events ?? []) {
+    const data = e.markerRecordedEventAttributes?.details?.['patch-data']?.payloads?.[0]?.data;
+    if (data) {
+      ids.push(JSON.parse(Buffer.from(data).toString()).id as string);
+    }
+  }
+  return ids;
+}
+
 const signalOf = (n: number) => String(calls.humanSteps[n]?.signalName);
 
 describe('ask and resume (TestWorkflowEnvironment)', () => {
@@ -342,9 +356,10 @@ describe('ask and resume (TestWorkflowEnvironment)', () => {
     expect(String(err.cause?.type ?? err.cause?.cause?.type ?? err.message)).toContain(
       'NEEDS_INPUT_LIMIT'
     );
-    // One question was put to the person; the second pause was refused.
+    // One question was put to the person; the second pause was refused, after the one
+    // last run at the limit that could not ask either.
     expect(calls.humanSteps).toHaveLength(1);
-    expect(calls.impl).toHaveLength(2);
+    expect(calls.impl).toHaveLength(3);
     expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
   }, 120_000);
 
@@ -361,16 +376,113 @@ describe('ask and resume (TestWorkflowEnvironment)', () => {
     expect(third?.resumeInput.round).toBe(2);
   }, 120_000);
 
-  it('fails NEEDS_INPUT_INVALID_ANSWER on a submission that fits no question', async () => {
-    const handle = await start('wf-ask-malformed');
+  it('asks the same round again on a submission that fits no question, without rerunning the activity', async () => {
+    const handle = await start('wf-ask-reask');
     await waitForHumanSteps(1);
     await handle.signal(signalOf(0), { action: 'submit', value: { q1: 'Gamma', q2: 'Linux' } });
-    const err = await handle.result().catch((e) => e);
+    await waitForHumanSteps(2);
+    expect(calls.humanSteps.map((s) => s.nodeId)).toEqual(['impl:ask:1', 'impl:ask:1.1']);
+    expect(String(calls.humanSteps[1]?.description)).toContain('previous answer could not be used');
+    expect(String(calls.humanSteps[1]?.description)).toContain('Which library?');
+    expect(calls.impl).toHaveLength(1);
+    await handle.signal(signalOf(1), ANSWER);
+    const result = (await handle.result()) as { status: string };
+    expect(result.status).toBe('SUCCESS');
+    expect(calls.impl).toHaveLength(2);
+    const resumed = calls.impl[1]?.args[8] as { resumeInput: { round: number } } | undefined;
+    expect(resumed?.resumeInput.round).toBe(1);
+    expect(markerIds(await handle.fetchHistory())).toContain('needs-input-reask-v1');
+  }, 120_000);
 
+  it('fails NEEDS_INPUT_INVALID_ANSWER once the re-asks of a round are used up', async () => {
+    const handle = await start('wf-ask-reask-limit');
+    const bad = { action: 'submit', value: { q1: 'Gamma', q2: 'Linux' } };
+    for (let i = 0; i < 4; i++) {
+      await waitForHumanSteps(i + 1);
+      await handle.signal(signalOf(i), bad);
+    }
+    const err = await handle.result().catch((e) => e);
     expect(String(err.cause?.type ?? err.cause?.cause?.type ?? err.message)).toContain(
       'NEEDS_INPUT_INVALID_ANSWER'
     );
+    expect(calls.humanSteps.map((s) => s.nodeId)).toEqual([
+      'impl:ask:1',
+      'impl:ask:1.1',
+      'impl:ask:1.2',
+      'impl:ask:1.3',
+    ]);
     expect(calls.impl).toHaveLength(1);
+  }, 120_000);
+
+  it('runs the step one last time, unable to ask, when it pauses at the round limit', async () => {
+    pinned = { 'workflow.maxNeedsInputRounds': 1 };
+    implResult = (n) => (n < 2 ? pause(`digest ${n}`) : FINAL);
+    const handle = await start('wf-ask-final');
+    await waitForHumanSteps(1);
+    await handle.signal(signalOf(0), ANSWER);
+    const result = (await handle.result()) as { branch?: string; status: string };
+    expect(result).toMatchObject({ branch: 'auto/T-1', status: 'SUCCESS' });
+    expect(calls.humanSteps).toHaveLength(1);
+    expect(calls.impl).toHaveLength(3);
+    expect(calls.impl[2]?.args[8]).toMatchObject({
+      allowPause: false,
+      resumeInput: { answers: [], final: true, resume: { digest: 'digest 1' }, round: 2 },
+    });
+    expect(markerIds(await handle.fetchHistory())).toContain('needs-input-final-round-v1');
+  }, 120_000);
+
+  it('closes the open question as cancelled when a fan-out sibling fails', async () => {
+    currentSpec = makeSpec(
+      {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          concurrency: 2,
+          itemKey: 'subtask',
+          join: 'done',
+          onBranchFail: 'block',
+          over: { literal: [{ id: 'a' }, { id: 'b' }] },
+          subgraph: 'impl',
+          type: 'fanOut',
+        },
+        impl: { next: 'branchDone', step: 'executeImplementation', type: 'step' },
+      },
+      'fan'
+    );
+    // One branch asks; the other fails only once that question is open.
+    implResult = async (n) => {
+      if (n === 0) {
+        return pause('sibling');
+      }
+      const deadline = Date.now() + 15_000;
+      while (calls.humanSteps.length < 1 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      throw ApplicationFailure.nonRetryable('sibling failed', 'SIBLING_FAILED');
+    };
+    const handle = await start('wf-ask-sibling');
+    await handle.result().catch(() => {});
+
+    const asked = String(calls.humanSteps[0]?.nodeId);
+    expect(asked).toMatch(/:ask:1$/);
+    expect(calls.resolved).toContainEqual({
+      nodeId: asked,
+      runId: 'run-test-1',
+      status: 'CANCELLED',
+    });
+    expect(markerIds(await handle.fetchHistory())).toContain('needs-input-cancel-v1');
+  }, 120_000);
+
+  it('records the cancel marker when the run is cancelled while waiting', async () => {
+    const handle = await start('wf-ask-cancel-marker');
+    await waitForHumanSteps(1);
+    await handle.cancel();
+    await handle.result().catch(() => {});
+    expect(calls.resolved).toContainEqual({
+      nodeId: 'impl:ask:1',
+      runId: 'run-test-1',
+      status: 'CANCELLED',
+    });
   }, 120_000);
 
   it('ends CANCELLED, and closes the open question, when the run is cancelled while waiting', async () => {

@@ -32,7 +32,7 @@ export async function updateDomainState(temporalWorkflowId: string, status: stri
 export async function resolveHumanStep(input: {
   runId: string;
   nodeId: string;
-  status: 'TIMED_OUT';
+  status: 'CANCELLED' | 'TIMED_OUT';
 }): Promise<void> {
   await prisma.workflowHumanStep.updateMany({
     data: { resolvedAt: new Date(), status: input.status },

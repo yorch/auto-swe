@@ -9,7 +9,7 @@ import {
   clampToCeiling,
   isLaunchableAgentKey,
 } from '@auto-swe/shared/lib/agentRun';
-import { decideAdmission } from '@auto-swe/shared/lib/agentRunAdmission';
+import { type AdmissionDecision, decideAdmission } from '@auto-swe/shared/lib/agentRunAdmission';
 import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import type { NeedsInputQuestion } from '@auto-swe/shared/lib/needsInput';
 import { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
@@ -52,6 +52,7 @@ import { resolveRunEgressPolicy } from '../lib/egressWiring.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import {
+  carriedUsage,
   checkSurfaceState,
   cloneCredentialSecrets,
   type NeedsInputResult,
@@ -357,12 +358,19 @@ export async function runAgentTaskCore(
         workspace: agentWs,
       });
     }
+    // The caps cover the whole run, not each round: what earlier rounds used is carried in
+    // the saved state and taken off here. Spent already, the loop still gets the smallest
+    // budget (one step, one second) and stops at once with its stopped reason.
+    const used = carriedUsage(resume);
+    const loopStartedAt = Date.now();
     const loopInput: AgentLoopInput = {
       ...pausable(input.allowPause, loop.runtime),
       agentCtx,
-      deadline: AbortSignal.timeout(effective.maxWallClockSeconds * 1000),
+      deadline: AbortSignal.timeout(
+        Math.max(1000, effective.maxWallClockSeconds * 1000 - used.elapsedMs)
+      ),
       key,
-      maxSteps: effective.maxSteps,
+      maxSteps: Math.max(1, effective.maxSteps - used.steps),
       maxToolOutputChars: settings['workspace.maxToolOutputChars'],
       profile,
       prompt: resume ? resumeMessage(resume, prompt) : prompt,
@@ -385,7 +393,12 @@ export async function runAgentTaskCore(
         questions: result.needsInput,
         secrets: cloneCredentialSecrets(authedCloneUrl),
         startSha: baseSha,
-        state: { agentKey: key, branch },
+        state: {
+          agentKey: key,
+          branch,
+          usedElapsedMs: used.elapsedMs + (Date.now() - loopStartedAt),
+          usedSteps: used.steps + (result.steps ?? 0),
+        },
         surface: 'runAgentTask',
         tracer,
         workspace: agentWs,
@@ -405,7 +418,7 @@ export async function runAgentTaskCore(
       baseSha,
       costUsd: result.costUsd,
       effective,
-      steps: result.steps,
+      steps: used.steps + (result.steps ?? 0),
       stoppedReason: result.stoppedReason,
       text,
     };
@@ -558,14 +571,23 @@ async function runAgentTaskImpl({
     ],
     settingsCtx
   );
-  const admission = decideAdmission(
-    await loadLiveAgentRunSlots(run.templateId, workflowId),
-    { teamId: baseCtx.teamId ?? null, workflowId },
-    {
-      global: settings['workspace.agentRunMaxConcurrentGlobal'],
-      perTeam: settings['workspace.agentRunMaxConcurrentPerTeam'],
-    }
-  );
+  const limits = {
+    global: settings['workspace.agentRunMaxConcurrentGlobal'],
+    perTeam: settings['workspace.agentRunMaxConcurrentPerTeam'],
+  };
+  // A resumed run was admitted when it first started, and while it waited it held no
+  // container (its slot is not counted, see `loadLiveAgentRunSlots`). A cap lowered
+  // meanwhile must not refuse it now; only the kill switch (a limit of 0) still does.
+  const admission: AdmissionDecision =
+    resumeInput !== undefined
+      ? limits.global <= 0 || limits.perTeam <= 0
+        ? { admitted: false, reason: 'disabled' }
+        : { admitted: true }
+      : decideAdmission(
+          await loadLiveAgentRunSlots(run.templateId, workflowId),
+          { teamId: baseCtx.teamId ?? null, workflowId },
+          limits
+        );
   if (!admission.admitted) {
     throw refuse(
       admission.reason === 'disabled'

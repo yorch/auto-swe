@@ -63,6 +63,7 @@ const m = vi.hoisted(() => ({
     destroy: vi.fn(async () => {}),
     gitAuthed: vi.fn(async () => ''),
   },
+  waiting: vi.fn(async (_args: unknown) => [] as Array<{ run: { workflowId: string } }>),
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
@@ -78,6 +79,7 @@ vi.mock('@auto-swe/shared/db', () => ({
       })),
     },
     pullRequest: { create: m.prCreate, update: m.prUpdate },
+    workflowHumanStep: { findMany: m.waiting },
     workflowRun: {
       findFirst: vi.fn(async () => ({
         id: 'run-1',
@@ -282,6 +284,7 @@ beforeEach(() => {
   m.prCreate.mockResolvedValue({});
   m.slots = [{ launchedAt: new Date(1), teamId: 'team-1', workflowId: 'wf-1' }];
   m.temporal = {};
+  m.waiting.mockResolvedValue([]);
   m.toolKeys = null;
   m.previewConfig = null;
   m.storedInput.mockResolvedValue({ baseSha: 'a'.repeat(40), diff: 'stored diff' });
@@ -463,6 +466,37 @@ describe('concurrency and kill switch', () => {
     expect(f.type).toBe('AGENT_RUN_CONCURRENCY_EXCEEDED');
     expect(m.closeRows).not.toHaveBeenCalled();
     expect(createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('does not count a run that is paused for input against the cap while it waits', async () => {
+    m.settings['workspace.agentRunMaxConcurrentPerTeam'] = 1;
+    m.slots = [
+      { launchedAt: new Date(1), teamId: 'team-1', workflowId: 'paused' },
+      { launchedAt: new Date(2), teamId: 'team-1', workflowId: 'wf-1' },
+    ];
+    m.waiting.mockResolvedValue([{ run: { workflowId: 'paused' } }]);
+    await runAgentTask({ request: request() });
+    expect(m.waiting.mock.calls[0]?.[0]).toMatchObject({
+      where: {
+        kind: 'INPUT',
+        nodeId: { contains: ':ask:' },
+        run: { workflowId: { in: ['paused', 'wf-1'] } },
+        status: 'PENDING',
+      },
+    });
+    expect(createWorkspace).toHaveBeenCalled();
+  });
+
+  it('still counts the older run when the waiting lookup fails', async () => {
+    m.settings['workspace.agentRunMaxConcurrentPerTeam'] = 1;
+    m.slots = [
+      { launchedAt: new Date(1), teamId: 'team-1', workflowId: 'paused' },
+      { launchedAt: new Date(2), teamId: 'team-1', workflowId: 'wf-1' },
+    ];
+    m.waiting.mockRejectedValue(new Error('db down'));
+    expect((await failureOf(runAgentTask({ request: request() }))).type).toBe(
+      'AGENT_RUN_CONCURRENCY_EXCEEDED'
+    );
   });
 
   it('refuses a run that is not among the oldest N in flight', async () => {
@@ -1299,6 +1333,73 @@ describe('ask and resume', () => {
     expect(m.gate).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ gate: 'passed' });
     expect(traceEvents().map((e) => e.toolName)).toContain('agent.resumed');
+  });
+
+  it('does not re-run admission on a resumed activity, so a cap lowered meanwhile cannot refuse it', async () => {
+    m.settings['workspace.agentRunMaxConcurrentPerTeam'] = 1;
+    m.slots = [
+      { launchedAt: new Date(1), teamId: 'team-1', workflowId: 'older' },
+      { launchedAt: new Date(2), teamId: 'team-1', workflowId: 'wf-1' },
+    ];
+    const result = await runAgentTask({ request: deliver, resumeInput: resumeInputFor(surface()) });
+    expect(result).toMatchObject({ gate: 'passed' });
+  });
+
+  it('still honours the kill switch on a resumed activity', async () => {
+    m.settings['workspace.agentRunMaxConcurrentPerTeam'] = 0;
+    const f = await failureOf(
+      runAgentTask({ request: deliver, resumeInput: resumeInputFor(surface()) })
+    );
+    expect(f.type).toBe('AGENT_RUNS_DISABLED');
+    expect(createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('carries steps and elapsed time out of a pause', async () => {
+    m.harnessTurn.mockResolvedValueOnce({
+      needsInput: QUESTIONS,
+      steps: 4,
+      text: 'which db?',
+      toolCallCount: 1,
+      usageByModel: [],
+    });
+    const result = (await runAgentTask({ allowPause: true, request: deliver })) as unknown as {
+      needsInput: { resume: { surface: Record<string, unknown> } };
+    };
+    expect(result.needsInput.resume.surface).toMatchObject({ usedSteps: 4 });
+    expect(result.needsInput.resume.surface.usedElapsedMs).toEqual(expect.any(Number));
+  });
+
+  it('enforces the step and wall-clock caps across rounds, and reports cumulative steps', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const result = await runAgentTask({
+      request: deliver,
+      resumeInput: resumeInputFor(surface({ usedElapsedMs: 600_000, usedSteps: 7 })),
+    });
+    expect(m.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ maxTurns: 50 - 7 });
+    expect(timeout).toHaveBeenCalledWith(1_800_000 - 600_000);
+    // The harness took 6 steps this round, after 7 in the first.
+    expect(result).toMatchObject({ steps: 13 });
+    timeout.mockRestore();
+  });
+
+  it('starts a state without usage at zero, and never hands the loop less than one step and one second', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    await runAgentTask({ request: deliver, resumeInput: resumeInputFor(surface()) });
+    expect(m.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ maxTurns: 50 });
+    expect(timeout).toHaveBeenCalledWith(1_800_000);
+
+    m.claudeCodeRuntime.mockClear();
+    vi.mocked(createWorkspace)
+      .mockReset()
+      .mockResolvedValueOnce(m.agentWs as never)
+      .mockResolvedValueOnce(m.trustedWs as never);
+    await runAgentTask({
+      request: deliver,
+      resumeInput: resumeInputFor(surface({ usedElapsedMs: 9_999_999, usedSteps: 500 })),
+    });
+    expect(m.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ maxTurns: 1 });
+    expect(timeout).toHaveBeenLastCalledWith(1000);
+    timeout.mockRestore();
   });
 
   it.each([

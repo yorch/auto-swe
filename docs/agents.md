@@ -1183,17 +1183,38 @@ ones spelled out as `undefined`). If the result is a pause, the loop
    2000 characters, a non-blank `note` becomes one more answer, and keys the step never offered
    are ignored. The respond route refuses a required multi-select answer that holds no choice
    after the same split (such as `" , "`), so a submission that would fail here is refused while
-   the person can still correct it. A submission that fits no question fails the step with `NEEDS_INPUT_INVALID_ANSWER`;
+   the person can still correct it. A submission that fits no question is put to the person again
+   (below);
 4. runs the same activity again with `resumeInput: { resume, answers, round }`, and loops.
+
+*An answer that cannot be used.* The same round opens a new `INPUT` human step with the original
+questions and a short note saying the previous answer could not be used and why. Its recording id
+is the round's id plus the repeat number (`impl:ask:1.1`, `impl:ask:1.2`), so a replay names the
+same step. The repeat does not use up a round and does not run the activity again. After
+three repeats in one round the step fails with `NEEDS_INPUT_INVALID_ANSWER`. A timeout on a repeat
+fails with `NEEDS_INPUT_TIMEOUT` as for the first step. The respond route checks the same
+constraints first, so a repeat is reached only by a signal that bypassed it.
+
+*The last round at the limit.* When the activity pauses after `workflow.maxNeedsInputRounds`
+answered rounds, nobody is asked. The activity runs one more time with `allowPause: false` and a
+`resumeInput` whose `final` flag is set, with the saved state of that last pause, no answers and
+the round number. `buildResumePrompt` then replaces "do not ask again unless you are still
+blocked" with an instruction that no more questions are allowed, that the unanswered questions
+have no answer, and that the agent finishes on its best judgement and states its assumptions. The
+tree the last round saved is restored and its work kept. Only if that run returns a pause as well
+does the step fail with `NEEDS_INPUT_LIMIT`.
 
 The person answers in the inbox like any `humanInput` step (`POST /api/v1/human-steps/:id/respond`,
 action `submit`, the same role and run-control rules; Slack announces it with a link, as for every
 `INPUT` step). Two failures end the step non-retryably and fail the run: `NEEDS_INPUT_TIMEOUT`
 when nobody answered in time (the step is marked timed out; nothing answers on the person's
-behalf) and `NEEDS_INPUT_LIMIT` when the activity pauses again after
-`workflow.maxNeedsInputRounds` answered rounds. A cancellation, while waiting or in the activity,
-passes through as for any step and closes the open question with the rest of the run's pending
-human steps. A pause never reaches a downstream node as if it were the step's output.
+behalf) and `NEEDS_INPUT_LIMIT` when the last unattended run at the limit pauses again. A
+cancellation, while waiting or in the activity, passes through as for any step. When the wait for
+an answer is cancelled (a fan-out sibling failed, or the run was cancelled), the loop first marks
+that question's human step `CANCELLED` through `resolveHumanStep`, in a non-cancellable scope, so
+it leaves the inbox at once rather than when the run ends; the run's final sweep
+(`cancelPendingHumanSteps`) still closes anything else pending. A pause never reaches a
+downstream node as if it were the step's output.
 
 Both bounds are run-pinned settings (`workflow.needsInputTimeoutSeconds`, default 86400, 60 to
 1209600; `workflow.maxNeedsInputRounds`, default 5, 1 to 20), read in the workflow from
@@ -1201,7 +1222,11 @@ Both bounds are run-pinned settings (`workflow.needsInputTimeoutSeconds`, defaul
 change what a replay does.
 
 *Replay safety for operators.* The loop is gated by the Temporal patch `needs-input-v1`, taken
-at the first pausable step. An execution that started before the patch replays the plain dispatch
+at the first pausable step. Three further markers gate the behaviours above, each taken only where
+the behaviour is first reached: `needs-input-reask-v1` (repeating a round after an unusable
+answer), `needs-input-final-round-v1` (the last unattended run at the limit) and
+`needs-input-cancel-v1` (closing the question of a cancelled wait). An execution whose history
+lacks one replays the earlier behaviour for it. An execution that started before the patch replays the plain dispatch
 and never offers the question tool, so a deployment that upgrades with runs in flight finishes
 them unattended as before; an execution that starts afterwards records the marker and runs the
 loop. Roll the worker fleet over as a whole: a worker without this change cannot be relied on to
@@ -1210,25 +1235,32 @@ existing node gains a field.
 
 **Limitations.**
 
-- A paused agent run keeps its concurrency slot for the whole wait, and each resume goes through
-  admission again and restarts the wall-clock and `maxSteps` counters, so a step that pauses
-  `rounds` times may spend `(rounds + 1)` times the cap in total.
-- The work of the round that hits `NEEDS_INPUT_LIMIT` is discarded: the step fails with the tree it
-  last saved unused.
-- A fan-out sibling that is cancelled while its question is open leaves that question `PENDING`
-  until the run ends.
-- Nothing is pushed while a run waits. If someone else pushes to the pull request branch in the
-  meantime, the resumed run's final push is not a fast-forward and fails.
+- An agent run waiting on an answer holds no container, so the worker's admission does not count it
+  against the concurrency caps while its `:ask:` input step is pending, and a resumed activity skips
+  the capacity check (the kill switch still applies), so a cap lowered meanwhile cannot refuse it.
+  The gateway's early refusal at launch still counts a waiting run (it is the friendly check; the
+  worker decides). The wall-clock and `maxSteps` caps cover the whole run: each pause saves the
+  steps and time used in the state (`usedSteps`, `usedElapsedMs`) and the resume takes them off its
+  budget, never below one step and one second, so a run already at its cap stops at once with its
+  stopped reason. A state saved without them starts counting from zero. Only the agent run
+  (`runAgentTask`) carries them; the other surfaces restart their step budget on each resume.
+- Nothing is pushed while a run waits. If someone else pushes to the work branch in the meantime,
+  the resumed `executeImplementation` and fix sessions fetch it before their push and replay their
+  commits on top (never a force-push). A conflict fails the step non-retryably with
+  `NEEDS_INPUT_PUSH_CONFLICT`, naming no file contents, and pushes nothing. The agent run
+  publishes a branch of its own, so it has nothing to rebase onto. The path guard checks the commit
+  before the replay, so a teammate's files do not count against `allowedPaths`.
 - The digest of the work so far masks credential shapes and the clone credential by value, and
   nothing else: it is a heuristic over the agent's last message, not a proof that no secret reached
   the question text a person sees.
-- An answer that fails to map to the questions (an option that was never offered, for example) fails
-  the step with `NEEDS_INPUT_INVALID_ANSWER` rather than asking again. The respond route checks the
-  same constraints first, so this is reached only by a signal that bypassed it.
+- The final unattended run at the limit sees the unanswered questions of the last pause but has no
+  one to ask; its result is judged like any run's, so a change made on assumptions reaches review
+  as it would from a run that never paused.
 - The saved working tree is kept after a resume applies it, so a Temporal retry of the resumed
   activity can restore it again. The artifact (`kind` `needs_input.snapshot`) is removed by the
-  transcript retention sweep once it is older than the retention window; a pause that waits longer
-  than that cannot be resumed (`NEEDS_INPUT_RESTORE_FAILED`). Deleting a run removes the row but not
+  transcript retention sweep once it is older than the retention window and its run has ended (or
+  it has no run); a run still waiting keeps its snapshot, so the wait is bounded by
+  `workflow.needsInputTimeoutSeconds`, not by retention. Deleting a run removes the row but not
   an S3 object.
 
 ---

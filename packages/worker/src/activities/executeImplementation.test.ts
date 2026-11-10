@@ -1293,6 +1293,40 @@ describe('executeImplementation ask and resume', () => {
     expect(restoreWorkingTree).toHaveBeenCalled();
   });
 
+  it('fails a resumed run non-retryably, pushing nothing, when the branch moved and conflicts', async () => {
+    // An earlier test may have left a refusing fetch behind; the branch is on the remote here.
+    workspaceMock.gitAuthed.mockReset();
+    workspaceMock.gitAuthed.mockResolvedValue('');
+    workspaceMock.exec.mockImplementation(async (command: string) => {
+      if (command.includes('merge-base --is-ancestor')) {
+        return 'no\n';
+      }
+      if (command.includes('rebase') && !command.includes('--abort')) {
+        throw new Error('CONFLICT');
+      }
+      return '';
+    });
+    // The activity module is stubbed here, so the failure is a plain Error with the message.
+    await expect(
+      executeImplementation(
+        REQUEST,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '',
+        undefined,
+        { allowPause: true, resumeInput: resumeInputFor(surface({ iteration: 0 })) }
+      )
+    ).rejects.toThrow(/changed while the run waited/);
+    const commands = workspaceMock.exec.mock.calls.map((c) => c[0] as string);
+    expect(commands.some((c) => c.includes('rebase --abort'))).toBe(true);
+    expect(
+      workspaceMock.gitAuthed.mock.calls.some((c) => String(c[0]).includes('push origin'))
+    ).toBe(false);
+  });
+
   it('refuses a state from another surface or branch before cloning, without retrying', async () => {
     for (const state of [
       surface({ kind: 'runAgentNode' }),

@@ -48,16 +48,50 @@ export async function workflowSettledStatus(
 }
 
 /**
+ * Which of `workflowIds` are stopped at a question and holding nothing: a run whose
+ * activity returned a pause has released its containers and is waiting on a
+ * PENDING input step the needs-input loop opened (`<key>:ask:<round>`).
+ * Empty on a read failure, so a run that cannot be shown to wait keeps its slot.
+ */
+async function workflowIdsWaitingForInput(workflowIds: string[]): Promise<Set<string>> {
+  if (workflowIds.length === 0) {
+    return new Set();
+  }
+  try {
+    const rows = await prisma.workflowHumanStep.findMany({
+      select: { run: { select: { workflowId: true } } },
+      where: {
+        kind: 'INPUT',
+        nodeId: { contains: ':ask:' },
+        run: { workflowId: { in: workflowIds } },
+        status: 'PENDING',
+      },
+    });
+    return new Set(rows.map((r) => r.run.workflowId));
+  } catch (err) {
+    logWarn('could not tell which agent runs are waiting for input; they keep their slot', {
+      err: err instanceof Error ? err.message : String(err),
+    });
+    return new Set();
+  }
+}
+
+/**
  * The agent runs genuinely in flight: every non-terminal ledger row, minus those
  * whose workflow Temporal reports finished or gone (which are closed as a side
- * effect). `self` is the caller and is never looked up. See
+ * effect), and minus those paused at a question (they hold no container). `self` is
+ * the caller and is never looked up or excluded. See
  * {@link reconcileAgentRunSlots} for the bounds and the fail-safe.
  */
 export async function loadLiveAgentRunSlots(
   templateId: string,
   self: string
 ): Promise<AgentRunSlot[]> {
-  return reconcileAgentRunSlots(await loadAgentRunSlots(prisma, templateId), {
+  const all = await loadAgentRunSlots(prisma, templateId);
+  const waiting = await workflowIdsWaitingForInput(all.map((s) => s.workflowId));
+  // `self` stays: the caller is the one being admitted.
+  const held = all.filter((s) => s.workflowId === self || !waiting.has(s.workflowId));
+  return reconcileAgentRunSlots(held, {
     close: closeAgentRunLedgerRows(prisma),
     isRunning: workflowIsRunning,
     onClosed: (ids) =>
