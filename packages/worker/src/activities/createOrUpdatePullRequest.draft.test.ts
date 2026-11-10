@@ -2,6 +2,7 @@ import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflo
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
+  attempt: 1,
   createPr: vi.fn(),
   isDraft: vi.fn(),
   kb: { searchPages: vi.fn(), updatePageWithPrLink: vi.fn() },
@@ -9,6 +10,10 @@ const m = vi.hoisted(() => ({
     activeWorkflow: { findFirst: vi.fn() },
     connection: { findUniqueOrThrow: vi.fn() },
     pullRequest: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
+    runEffect: {
+      create: vi.fn(async () => ({})),
+      findFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
+    },
     runEvidence: { findMany: vi.fn() },
     runInput: { findUnique: vi.fn() },
     workflowRun: { findUnique: vi.fn() },
@@ -34,10 +39,11 @@ vi.mock('@auto-swe/shared/lib/trackerSync', async (orig) => ({
 }));
 vi.mock('@temporalio/activity', async (orig) => ({
   ...(await orig<typeof import('@temporalio/activity')>()),
-  activityInfo: () => ({ attempt: 1 }),
+  activityInfo: () => ({ attempt: m.attempt, workflowExecution: { workflowId: 'wf-own' } }),
 }));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: () => 'wf-own',
+  currentWorkflowRunId: async () => 'run-1',
   persistActivityTrace: vi.fn(),
 }));
 vi.mock('../lib/scm/index.js', () => ({
@@ -75,12 +81,15 @@ const codeResult = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  m.attempt = 1;
+  m.prisma.runEffect.findFirst.mockResolvedValue(null);
   m.prisma.connection.findUniqueOrThrow.mockResolvedValue({ defaultBranch: 'main', id: 'repo-1' });
   m.prisma.pullRequest.findFirst.mockResolvedValue(null);
   m.prisma.activeWorkflow.findFirst.mockResolvedValue({ id: 'w1' });
   m.prisma.workflowRun.findUnique.mockResolvedValue(null);
   m.prisma.runEvidence.findMany.mockResolvedValue([]);
   m.createPr.mockResolvedValue({ prNumber: 7, prUrl: 'https://example.test/pull/7' });
+  m.kb.updatePageWithPrLink.mockResolvedValue({ ok: true });
 });
 
 describe('createOrUpdatePullRequest draft option', () => {
@@ -511,5 +520,127 @@ describe('createOrUpdatePullRequest when the host would reuse a ready PR', () =>
       createOrUpdatePullRequest(request, codeResult, { draft: true })
     ).rejects.toMatchObject({ nonRetryable: true, type: 'EXISTING_PR_NOT_DRAFT' });
     expect(m.prisma.pullRequest.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('the run effects a PR activity records', () => {
+  const effects = () =>
+    m.prisma.runEffect.create.mock.calls.map(
+      (c) => (c as unknown as [{ data: Record<string, unknown> }])[0].data
+    );
+
+  it('records the PR it created, with its URL and branch', async () => {
+    await createOrUpdatePullRequest(request, codeResult, { draft: true });
+    expect(effects()).toEqual([
+      expect.objectContaining({
+        action: 'create',
+        detail: { branch: 'auto/T-1', draft: true, headSha: 'abc', number: 7 },
+        kind: 'PULL_REQUEST',
+        runId: 'run-1',
+        status: 'DONE',
+        target: 'https://example.test/pull/7',
+        workflowId: 'wf-own',
+      }),
+    ]);
+  });
+
+  it('does not record the same PR twice when a retry gets back the one an earlier attempt opened', async () => {
+    m.attempt = 2;
+    m.prisma.runEffect.findFirst.mockResolvedValue({ id: 'eff-1' });
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.prisma.runEffect.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ target: 'https://example.test/pull/7' }),
+      })
+    );
+    expect(effects().filter((e) => e.kind === 'PULL_REQUEST')).toEqual([]);
+    expect(m.prisma.pullRequest.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('records the PR on a retry when no earlier attempt recorded it', async () => {
+    m.attempt = 2;
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(effects().filter((e) => e.kind === 'PULL_REQUEST')).toHaveLength(1);
+  });
+
+  it('records a failed create and still throws the host error', async () => {
+    const boom = new Error('boom');
+    m.createPr.mockRejectedValue(boom);
+    await expect(createOrUpdatePullRequest(request, codeResult)).rejects.toBe(boom);
+    expect(effects()).toEqual([
+      expect.objectContaining({
+        action: 'create',
+        error: 'boom',
+        kind: 'PULL_REQUEST',
+        status: 'FAILED',
+      }),
+    ]);
+  });
+
+  it('records nothing when the PR already open is only re-armed (no PR-host write happens)', async () => {
+    m.prisma.pullRequest.findFirst.mockResolvedValue({ id: 'pr-row', prNumber: 5, status: 'OPEN' });
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(m.createPr).not.toHaveBeenCalled();
+    expect(effects()).toEqual([]);
+  });
+
+  it('records the tracker sync that succeeded, and the one the tracker refused', async () => {
+    m.prisma.runInput.findUnique.mockResolvedValue({ ticketIsSynthetic: false });
+    m.kb.searchPages.mockResolvedValue([]);
+    vi.mocked(syncTrackerOnEvent).mockResolvedValueOnce(null);
+    await createOrUpdatePullRequest(request, codeResult);
+    vi.mocked(syncTrackerOnEvent).mockResolvedValueOnce('server_error');
+    await createOrUpdatePullRequest(request, codeResult);
+    const tracker = effects().filter((e) => e.kind === 'TRACKER');
+    expect(tracker).toEqual([
+      expect.objectContaining({ action: 'sync:pr_opened', status: 'DONE', target: 'T-1' }),
+      expect.objectContaining({ error: 'server_error', status: 'FAILED', target: 'T-1' }),
+    ]);
+  });
+
+  it('records the knowledge-base link write, and the failure the provider reports', async () => {
+    m.prisma.runInput.findUnique.mockResolvedValue({ ticketIsSynthetic: false });
+    m.kb.searchPages.mockResolvedValue([{ id: 'page-1', title: 'T-1 spec' }]);
+    await createOrUpdatePullRequest(request, codeResult);
+    // The real providers resolve with { ok: false } instead of rejecting.
+    m.kb.updatePageWithPrLink.mockResolvedValueOnce({
+      error: new Error('confluence 403'),
+      ok: false,
+    });
+    await expect(createOrUpdatePullRequest(request, codeResult)).resolves.toBeDefined();
+    const kb = effects().filter((e) => e.kind === 'KNOWLEDGE_BASE');
+    expect(kb).toEqual([
+      expect.objectContaining({ status: 'DONE', target: 'page-1' }),
+      expect.objectContaining({ error: 'confluence 403', status: 'FAILED' }),
+    ]);
+  });
+
+  it('records a rejecting provider as a failed write too (backstop)', async () => {
+    m.prisma.runInput.findUnique.mockResolvedValue({ ticketIsSynthetic: false });
+    m.kb.searchPages.mockResolvedValue([{ id: 'page-1', title: 'T-1 spec' }]);
+    m.kb.updatePageWithPrLink.mockRejectedValueOnce(new Error('boom'));
+    await expect(createOrUpdatePullRequest(request, codeResult)).resolves.toBeDefined();
+    expect(effects().filter((e) => e.kind === 'KNOWLEDGE_BASE')).toEqual([
+      expect.objectContaining({ error: 'boom', status: 'FAILED' }),
+    ]);
+  });
+
+  it('records nothing when the knowledge-base lookup or config fails (a read, not a write)', async () => {
+    m.prisma.runInput.findUnique.mockResolvedValue({ ticketIsSynthetic: false });
+    m.kb.searchPages.mockRejectedValueOnce(new Error('search 500'));
+    await expect(createOrUpdatePullRequest(request, codeResult)).resolves.toBeDefined();
+    const systemConfig = await import('@auto-swe/shared/lib/systemConfig');
+    vi.mocked(systemConfig.resolveKnowledgeBaseConfig).mockRejectedValueOnce(new Error('cfg'));
+    await expect(createOrUpdatePullRequest(request, codeResult)).resolves.toBeDefined();
+    expect(m.kb.updatePageWithPrLink).not.toHaveBeenCalled();
+    expect(effects().filter((e) => e.kind === 'KNOWLEDGE_BASE')).toEqual([]);
+  });
+
+  it('does not fail the activity when the ledger cannot be written', async () => {
+    m.prisma.runEffect.create.mockRejectedValue(new Error('db down'));
+    await expect(createOrUpdatePullRequest(request, codeResult)).resolves.toEqual({
+      prNumber: 7,
+      prUrl: 'https://example.test/pull/7',
+    });
   });
 });

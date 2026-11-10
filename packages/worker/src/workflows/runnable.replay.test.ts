@@ -107,6 +107,7 @@ describe('RunnableWorkflow — history replay', () => {
       'human-review',
       'linear',
       'mcp',
+      'needs-input',
       'nested-fan-out',
       'on-error-continue',
       'on-fail-retry',
@@ -246,6 +247,24 @@ describe('RunnableWorkflow — history replay', () => {
     );
     const names = scheduled.map((e) => e.activityTaskScheduledEventAttributes?.activityType?.name);
     expect(names.filter((n) => n === 'executeImplementation')).toHaveLength(2);
+  });
+
+  it('the needs-input fixture paused, asked a person and resumed the activity', () => {
+    // Replay guards the commands a pause walks: the patch marker, the human step, the wait
+    // on its signal and the second activity call. A fixture recorded without the marker, or
+    // that timed out instead of being answered, would leave that path unguarded.
+    const events = eventsOf('needs-input');
+    expect(patchIdsOf('needs-input')).toContain('needs-input-v1');
+    const scheduled = events
+      .map((e) => e.activityTaskScheduledEventAttributes?.activityType?.name)
+      .filter(Boolean);
+    expect(scheduled.filter((n) => n === 'executeImplementation')).toHaveLength(2);
+    expect(scheduled).toContain('createHumanStep');
+    const signals = events
+      .map((e) => e.workflowExecutionSignaledEventAttributes?.signalName)
+      .filter(Boolean);
+    expect(signals).toEqual(['hitl_impl:ask:1']);
+    expect(events.map((e) => e.eventType)).not.toContain(EventType.EVENT_TYPE_TIMER_FIRED);
   });
 
   it('the signal-timeout fixture timed out rather than resumed', () => {

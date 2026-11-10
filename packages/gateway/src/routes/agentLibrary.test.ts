@@ -26,6 +26,7 @@ function newMockPrisma() {
     },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: { findUnique: vi.fn() },
+    harnessProfile: { findUnique: vi.fn().mockResolvedValue({ status: 'OK' }) },
     // Empty: a saved spec is checked against the catalog plus the built-in table.
     modelCatalogEntry: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -998,6 +999,7 @@ function teamAgentRow(overrides: Record<string, unknown> = {}) {
     channelId: null,
     credentialId: null,
     description: null,
+    harnessProfile: null,
     id: AGENT_ID,
     inheritsModelFrom: null,
     isBuiltIn: false,
@@ -1746,6 +1748,252 @@ describe('concurrent agent edits', () => {
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('CONFLICT');
+    await app.close();
+  });
+});
+
+describe('agent harness profile', () => {
+  const PROFILE = 'review-kit';
+  const OPUS = 'anthropic/claude-opus-5-5';
+  const globalPost = (body: Record<string, unknown>) => ({
+    body: { key: 'myAgent', modelSpec: OPUS, name: 'My Agent', scope: 'GLOBAL', ...body },
+    headers: AUTH,
+    method: 'POST' as const,
+    url: '/api/v1/platform/agent-library',
+  });
+  const globalPut = (body: Record<string, unknown>) => ({
+    body,
+    headers: AUTH,
+    method: 'PUT' as const,
+    url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+  });
+  const teamPut = (body: Record<string, unknown>) => ({
+    body,
+    headers: AUTH,
+    method: 'PUT' as const,
+    url: `/api/v1/teams/${TEAM}/agent-library/${AGENT_ID}`,
+  });
+
+  it('lets an admin bind an OK profile on the claude-code runtime', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
+    const res = await app.inject(globalPost({ harnessProfile: PROFILE, runtime: 'claude-code' }));
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.harnessProfile).toBe(PROFILE);
+    await app.close();
+  });
+
+  it('stores none when the profile is left out', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
+    await app.inject(globalPost({ runtime: 'claude-code' }));
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.harnessProfile).toBeNull();
+    await app.close();
+  });
+
+  it('refuses a profile on a runtime that is not claude-code', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    for (const runtime of ['mastra', null]) {
+      const res = await app.inject(globalPost({ harnessProfile: PROFILE, runtime }));
+      expect(res.statusCode, String(runtime)).toBe(400);
+      expect(res.json().error.code).toBe('PROFILE_RUNTIME_MISMATCH');
+    }
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('takes the runtime from the platform-wide chain when the version names none', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockImplementation(async ({ where }: { where: { key?: string } }) =>
+      where.key === 'implementer' ? { inheritsModelFrom: null, runtime: 'claude-code' } : null
+    );
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
+    const res = await app.inject(
+      globalPost({
+        harnessProfile: PROFILE,
+        inheritsModelFrom: 'implementer',
+        modelSpec: undefined,
+      })
+    );
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.harnessProfile).toBe(PROFILE);
+    await app.close();
+  });
+
+  it('refuses a profile that does not exist or is disabled', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.harnessProfile.findUnique.mockResolvedValueOnce(null);
+    const missing = await app.inject(
+      globalPost({ harnessProfile: 'nope', runtime: 'claude-code' })
+    );
+    expect(missing.statusCode).toBe(400);
+    expect(missing.json().error.code).toBe('PROFILE_NOT_FOUND');
+    mockPrisma.harnessProfile.findUnique.mockResolvedValueOnce({ status: 'DISABLED' });
+    const disabled = await app.inject(
+      globalPost({ harnessProfile: PROFILE, runtime: 'claude-code' })
+    );
+    expect(disabled.statusCode).toBe(400);
+    expect(disabled.json().error.code).toBe('PROFILE_DISABLED');
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('carries the profile onto the next version, and clears it with null', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue(
+      teamAgentRow({
+        harnessProfile: PROFILE,
+        runtime: 'claude-code',
+        scope: 'GLOBAL',
+        teamId: null,
+      })
+    );
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+    expect((await app.inject(globalPut({ description: 'x' }))).statusCode).toBe(200);
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.harnessProfile).toBe(PROFILE);
+    mockPrisma.agent.create.mockClear();
+    expect((await app.inject(globalPut({ harnessProfile: null }))).statusCode).toBe(200);
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.harnessProfile).toBeNull();
+    await app.close();
+  });
+
+  it('refuses to move a bound version off the claude-code runtime', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue(
+      teamAgentRow({
+        harnessProfile: PROFILE,
+        runtime: 'claude-code',
+        scope: 'GLOBAL',
+        teamId: null,
+      })
+    );
+    const res = await app.inject(globalPut({ runtime: 'mastra' }));
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('PROFILE_RUNTIME_MISMATCH');
+    await app.close();
+  });
+
+  it('does not re-check the status of a profile a version already carries', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue(
+      teamAgentRow({
+        harnessProfile: PROFILE,
+        runtime: 'claude-code',
+        scope: 'GLOBAL',
+        teamId: null,
+      })
+    );
+    mockPrisma.harnessProfile.findUnique.mockResolvedValue({ status: 'DISABLED' });
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+    expect((await app.inject(globalPut({ description: 'x' }))).statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('refuses a team admin who sets or changes a profile, but lets them restate it', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue(
+      teamAgentRow({ harnessProfile: PROFILE, runtime: 'claude-code' })
+    );
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+    for (const harnessProfile of ['other-kit', null]) {
+      const res = await app.inject(teamPut({ harnessProfile }));
+      expect(res.statusCode, String(harnessProfile)).toBe(403);
+      expect(res.json().error.code).toBe('PROFILE_ADMIN_ONLY');
+    }
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    for (const body of [{ description: 'edited' }, { harnessProfile: PROFILE }]) {
+      mockPrisma.agent.create.mockClear();
+      const res = await app.inject(teamPut(body));
+      expect(res.statusCode, JSON.stringify(body)).toBe(200);
+      expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.harnessProfile).toBe(PROFILE);
+    }
+    await app.close();
+  });
+
+  it('refuses a team admin who binds a profile on create', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    const res = await app.inject({
+      body: { harnessProfile: PROFILE, key: 'teamAgent', name: 'Team Agent' },
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/teams/${TEAM}/agent-library`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe('PROFILE_ADMIN_ONLY');
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('starts a new TEAM override on the platform-wide profile, which a team admin may restate', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findFirst.mockImplementation(
+      async ({ where }: { where: { key?: string; scope?: string } }) =>
+        where.scope === 'GLOBAL' && where.key === 'implementer'
+          ? { harnessProfile: PROFILE, runtime: 'claude-code' }
+          : null
+    );
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
+    const create = (body: Record<string, unknown>) =>
+      app.inject({
+        body: { key: 'implementer', modelSpec: OPUS, name: 'Team implementer', ...body },
+        headers: AUTH,
+        method: 'POST',
+        url: `/api/v1/teams/${TEAM}/agent-library`,
+      });
+    expect((await create({})).statusCode).toBe(201);
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.harnessProfile).toBe(PROFILE);
+    expect((await create({ harnessProfile: PROFILE })).statusCode).toBe(201);
+    expect((await create({ harnessProfile: null })).statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('does not carry the profile into an override that is not on the harness', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findFirst.mockImplementation(
+      async ({ where }: { where: { key?: string; scope?: string } }) =>
+        where.scope === 'GLOBAL' && where.key === 'implementer'
+          ? { harnessProfile: PROFILE, runtime: 'claude-code' }
+          : null
+    );
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
+    // The override's own model is one the harness cannot drive, so it starts with no runtime.
+    const res = await app.inject({
+      body: { key: 'implementer', modelSpec: 'openai/gpt-6.1-sol', name: 'Team implementer' },
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/teams/${TEAM}/agent-library`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.harnessProfile).toBeNull();
+    await app.close();
+  });
+
+  it('exposes harnessProfile in the listing', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findMany.mockResolvedValue([
+      {
+        harnessProfile: PROFILE,
+        id: 'a1',
+        key: 'a',
+        scope: 'GLOBAL',
+        teamId: null,
+        version: 1,
+        workflowTemplateId: null,
+      },
+    ]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/agent-library',
+    });
+    expect(res.json().data[0].harnessProfile).toBe(PROFILE);
     await app.close();
   });
 });

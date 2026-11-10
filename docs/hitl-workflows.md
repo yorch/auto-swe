@@ -107,6 +107,10 @@ Field types: `text`, `number`, `boolean`, `select`. The `options` array is only 
 
 Valid API action: `submit` (with `value` set to an object keyed by field `key`).
 
+An agent that stops to ask a person opens an `INPUT` step of the same kind without any
+`humanInput` node in the spec; see [`agents.md` §3.7](./agents.md#37-runtimes-mastra-and-the-harnesses),
+*Asking a human*.
+
 ### `humanReview`
 
 Shows content (e.g. a diff or generated document) for the reviewer to read. The reviewer submits an optional free-text note (up to 2,000 characters) and the workflow continues; the content itself is not changed.

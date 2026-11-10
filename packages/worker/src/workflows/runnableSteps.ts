@@ -20,6 +20,7 @@ import { isCancellation, workflowInfo } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
 import { buildLessonEvidence } from '../lib/lessonEvidence.js';
 import { lookupPath } from '../lib/workflowEngine.js';
+import type { PauseArgs } from './needsInputLoop.js';
 import {
   agentActivities,
   agentNodeActivities,
@@ -66,6 +67,11 @@ interface StepExecutorArgs {
   request: RepoWorkRequest;
   config: Record<string, unknown>;
   inputs: Record<string, unknown>;
+  /**
+   * Set only by the ask-and-resume loop, and only for a step in {@link isPausableStep}:
+   * the activity may stop to ask a person, and the state to continue from after it did.
+   */
+  pause?: PauseArgs;
 }
 
 type StepExecutor = (args: StepExecutorArgs) => Promise<unknown>;
@@ -310,7 +316,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   [
     // P2 declarative agent node: run a library Agent by reference.
     'runAgentNode',
-    ({ request, ctx, config, inputs }) => {
+    ({ request, ctx, config, inputs, pause }) => {
       const input = {
         agentRef: config.agentRef as string,
         // Phase A: thread the run's originating channel (if any) so the agent
@@ -334,6 +340,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       // its code result names, else the run's own branch, on the longer proxy.
       return agentNodeWorkspaceActivities.runAgentNode({
         ...input,
+        ...pause,
         workspace: {
           ...(payloadBaseBranch(request) ? { baseBranch: payloadBaseBranch(request) } : {}),
           branch:
@@ -349,12 +356,13 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     // Internal step of the Agent Run system template. The activity re-checks that
     // it is running for that template; nothing here is trusted to have been checked.
     'runAgentTask',
-    ({ request, config }) =>
+    ({ request, config, pause }) =>
       agentTaskActivities.runAgentTask({
         request,
         ...(typeof config.knowledgeBases === 'boolean'
           ? { knowledgeBases: config.knowledgeBases }
           : {}),
+        ...pause,
       }),
   ],
   [
@@ -403,7 +411,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'executeImplementation',
-    ({ ctx, request, config, inputs }) => {
+    ({ ctx, request, config, inputs, pause }) => {
       const systemPromptOverride = config.systemPrompt as string | undefined;
       const crossRepo = crossRepoOptions(config);
       // Inside a fanOut, the per-branch element is bound at `ctx[itemKey]`; the
@@ -428,6 +436,21 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       const guardOptions = guardOptionsConfig(config);
       const ticket = ticketFromStep(inputs, ctx);
       const criteria = criteriaFromStep(inputs);
+      // The ninth argument is passed only by the ask-and-resume loop; the arguments before it
+      // are then all spelled out, as `undefined` where the step sets none of them.
+      if (pause) {
+        return agentActivities.executeImplementation(
+          effectiveRequest,
+          subtask,
+          systemPromptOverride,
+          crossRepo,
+          allowedPaths,
+          guardOptions,
+          ticket,
+          criteria,
+          pause
+        );
+      }
       // The eighth argument is passed only when a step handed criteria over.
       if (criteria !== undefined) {
         return agentActivities.executeImplementation(
@@ -499,7 +522,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'executeReviewFixImplementation',
-    ({ ctx, request, config, inputs }) => {
+    ({ ctx, request, config, inputs, pause }) => {
       const rejection =
         (inputs.rejectionSummary as string | undefined) ??
         (lookupPath(ctx, 'context.lastRejectionSummary') as string | undefined) ??
@@ -507,13 +530,15 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       const prev = withRunBase(pickCodeResult(inputs.previousCodeResult, ctx), request);
       const allowedPaths = allowedPathsConfig(config);
       const guardOptions = guardOptionsConfig(config);
-      if (guardOptions) {
+      // The options argument carries the ask-and-resume fields, so a paused step passes it
+      // (and `allowedPaths` before it) even when the step sets no guard.
+      if (guardOptions || pause) {
         return agentActivities.executeReviewFixImplementation(
           rejection,
           prev,
           config.systemPrompt as string | undefined,
           allowedPaths,
-          guardOptions
+          { ...guardOptions, ...pause }
         );
       }
       return allowedPaths
@@ -532,7 +557,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'executeCIFixImplementation',
-    ({ ctx, request, config, inputs }) => {
+    ({ ctx, request, config, inputs, pause }) => {
       const failureContext =
         (inputs.failureContext as string | undefined) ??
         (lookupPath(ctx, 'context.lastCILogs') as string | undefined) ??
@@ -540,12 +565,12 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       const prev = withRunBase(pickCodeResult(inputs.previousCodeResult, ctx), request);
       const guardOptions = guardOptionsConfig(config);
       // The fourth argument only when set, so other templates call it exactly as before.
-      return guardOptions
+      return guardOptions || pause
         ? agentActivities.executeCIFixImplementation(
             failureContext,
             prev,
             config.systemPrompt as string | undefined,
-            guardOptions
+            { ...guardOptions, ...pause }
           )
         : agentActivities.executeCIFixImplementation(
             failureContext,
@@ -996,7 +1021,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'executeGateFixImplementation',
-    ({ ctx, request, config, inputs }) => {
+    ({ ctx, request, config, inputs, pause }) => {
       const gateName =
         (inputs.gateName as string | undefined) ??
         (config.gateName as string | undefined) ??
@@ -1017,6 +1042,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         gateName,
         gateOutput,
         previousCodeResult: prev,
+        ...pause,
         ...(guardOptionsConfig(config)?.refuseWorkflowChanges
           ? { refuseWorkflowChanges: true }
           : {}),
@@ -1163,19 +1189,37 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
 ]);
 
+/**
+ * The steps whose activity can stop to ask a person: an agent node with a checkout, an agent
+ * run, the implementer and the three fix sessions. Everything else (resolveMergeConflict
+ * included) runs unattended.
+ */
+const PAUSABLE_STEPS: ReadonlySet<string> = new Set([
+  'executeCIFixImplementation',
+  'executeGateFixImplementation',
+  'executeImplementation',
+  'executeReviewFixImplementation',
+  'runAgentTask',
+]);
+
+export function isPausableStep(step: string, config: Record<string, unknown>): boolean {
+  return PAUSABLE_STEPS.has(step) || (step === 'runAgentNode' && config.workspace === true);
+}
+
 export async function dispatchStepImpl(
   step: string,
   ctx: Context,
   request: RepoWorkRequest,
   config: Record<string, unknown>,
   inputs: Record<string, unknown>,
-  dispatchKey: string
+  dispatchKey: string,
+  pause?: PauseArgs
 ): Promise<unknown> {
   const executor = STEP_EXECUTORS.get(step);
   if (!executor) {
     throw new Error(`unknown step: ${step}`);
   }
-  return executor({ config, ctx, dispatchKey, inputs, request, step });
+  return executor({ config, ctx, dispatchKey, inputs, ...(pause ? { pause } : {}), request, step });
 }
 
 // ── Helpers ──

@@ -32,6 +32,7 @@ vi.mock('../../lib/knowledgeBaseSearch.js', () => ({ searchRunKnowledge: knowled
 const h = vi.hoisted(() => ({
   activityCancellationSignal: vi.fn((): AbortSignal | undefined => undefined),
   decideToolCall: vi.fn(),
+  ensureProfile: vi.fn(async () => {}),
   heartbeat: vi.fn(),
   queryCalls: [] as { options: QueryOptions; prompt: string }[],
   script: [] as [unknown[], unknown?, Promise<unknown>?][],
@@ -65,6 +66,10 @@ vi.mock('./binary.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./binary.js')>()),
   binarySha256: vi.fn(async () => BINARY_SHA),
   resolveClaudeBinary: vi.fn(() => '/app/node_modules/sdk-linux-x64-musl/claude'),
+}));
+vi.mock('./profile.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./profile.js')>()),
+  profileMaterializer: () => ({ ensure: h.ensureProfile }),
 }));
 vi.mock('./policy.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./policy.js')>()),
@@ -1094,6 +1099,170 @@ describe('a deadline', () => {
   });
 });
 
+describe('asking a human', () => {
+  const QUESTION = {
+    header: 'Library',
+    multiSelect: false,
+    options: [
+      { description: 'popular', label: 'Alpha' },
+      { description: 'small', label: 'Beta' },
+    ],
+    question: 'Which library?',
+  };
+  const said = (text: string) => ({
+    message: {
+      content: [{ text, type: 'text' }, { type: 'tool_use' }],
+      id: 'msg_1',
+      model: 'claude-opus-5-5',
+      usage: streamed(100, 20),
+    },
+    type: 'assistant',
+  });
+  const askInput = (extra: object = {}) => ({
+    cwd: '/workspace/target-repo',
+    hook_event_name: 'PreToolUse',
+    tool_input: { questions: [QUESTION] },
+    tool_name: 'AskUserQuestion',
+    ...extra,
+  });
+
+  it('offers the question tool only when the run can pause', async () => {
+    for (const allowPause of [true, undefined, false]) {
+      h.queryCalls.length = 0;
+      const { runtime } = setup({ allowPause });
+      h.script.push([[init('s'), success('ok')]]);
+      await runtime.runTurn({ system: 'S', user: 'U' });
+      const sdkTools = (h.queryCalls[0]?.options.tools ?? []) as string[];
+      expect(sdkTools.includes('AskUserQuestion')).toBe(allowPause === true);
+      await h.queryCalls[0]?.options.hooks.PreToolUse[0]?.hooks[0]?.(askInput(), 'tu-1');
+      const policy = h.decideToolCall.mock.calls.at(-1)?.[2] as { tools: string[] } | undefined;
+      const offered = policy?.tools ?? [];
+      expect(offered.includes('AskUserQuestion')).toBe(allowPause === true);
+    }
+  });
+
+  it('records the first question batch, denies the call, aborts, and ends the turn with it', async () => {
+    const { runtime, toolCalls } = setup({ allowPause: true });
+    let release = () => {};
+    h.script.push([
+      [init('s'), said('Let me ask.')],
+      new Error('aborted'),
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+    ]);
+
+    const turn = runtime.runTurn({ system: 'S', user: 'U' });
+    await vi.waitFor(() => expect(h.queryCalls).toHaveLength(1));
+    const pre = h.queryCalls[0]?.options.hooks.PreToolUse[0]?.hooks[0] as HookFn;
+
+    await expect(pre(askInput(), 'tu-1')).resolves.toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason:
+          'Your question was recorded. Stop now; the answer arrives in a new session.',
+      },
+    });
+    expect(h.queryCalls[0]?.options.abortController.signal.aborted).toBe(true);
+
+    // Anything else the model does afterwards, a second question included, is refused unseen.
+    const later = await pre(
+      askInput({ tool_input: { questions: [{ ...QUESTION, question: 'Another?' }] } }),
+      'tu-2'
+    );
+    expect(later.hookSpecificOutput?.permissionDecision).toBe('deny');
+    const bash = await pre(
+      { ...askInput(), tool_input: { command: 'ls' }, tool_name: 'Bash' },
+      't3'
+    );
+    expect(bash.hookSpecificOutput?.permissionDecision).toBe('deny');
+    expect(h.decideToolCall).toHaveBeenCalledTimes(1);
+    release();
+
+    const outcome = await turn;
+    expect(outcome.needsInput).toEqual([QUESTION]);
+    expect(outcome.text).toBe('Let me ask.');
+    expect(outcome.toolCallCount).toBe(1);
+    expect(outcome.stoppedReason).toBeUndefined();
+    // The turn that paused was billed for what it streamed.
+    expect(outcome.usageByModel).toEqual([
+      {
+        modelSpec: 'anthropic/claude-opus-5-5',
+        usage: {
+          cacheCreationInputTokens: 0,
+          cachedInputTokens: 0,
+          inputTokens: 100,
+          outputTokens: 20,
+        },
+      },
+    ]);
+    // Traced by header only.
+    expect(toolCalls).toContainEqual(
+      expect.objectContaining({ inputJson: { headers: ['Library'] }, toolName: 'AskUserQuestion' })
+    );
+  });
+
+  it('refuses a malformed question, tells the model to fix it, and keeps the turn going', async () => {
+    const { runtime, toolCalls } = setup({ allowPause: true });
+    h.script.push([[init('s'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    const pre = h.queryCalls[0]?.options.hooks.PreToolUse[0]?.hooks[0] as HookFn;
+
+    for (const tool_input of [
+      { questions: [{ ...QUESTION, options: [QUESTION.options[0]] }] },
+      { questions: [] },
+      { questions: [{ ...QUESTION, header: 'a header that is far too long' }] },
+      {},
+    ]) {
+      const out = await pre(askInput({ tool_input }), 'tu-1');
+      expect(out.hookSpecificOutput).toMatchObject({
+        permissionDecision: 'deny',
+        permissionDecisionReason: expect.stringContaining('malformed'),
+      });
+    }
+    expect(h.queryCalls[0]?.options.abortController.signal.aborted).toBe(false);
+    expect(toolCalls.every((c) => c.error === 'blocked by workspace policy')).toBe(true);
+    // A good question is still accepted afterwards.
+    const good = await pre(askInput(), 'tu-2');
+    expect(good.hookSpecificOutput?.permissionDecision).toBe('deny');
+    expect(h.queryCalls[0]?.options.abortController.signal.aborted).toBe(true);
+  });
+
+  it('keeps a sub-agent’s question refused, with the policy never consulted', async () => {
+    const { runtime, toolCalls } = setup({ allowPause: true });
+    h.script.push([[init('s'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    const pre = h.queryCalls[0]?.options.hooks.PreToolUse[0]?.hooks[0] as HookFn;
+
+    const out = await pre(askInput({ agent_id: 'sub-1' }), 'tu-1');
+
+    expect(out.hookSpecificOutput).toEqual({
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: 'The AskUserQuestion tool is not available in this workspace.',
+    });
+    expect(h.queryCalls[0]?.options.abortController.signal.aborted).toBe(false);
+    expect(h.decideToolCall).not.toHaveBeenCalled();
+    expect(toolCalls).toContainEqual(
+      expect.objectContaining({ error: 'blocked by workspace policy', toolName: 'AskUserQuestion' })
+    );
+  });
+
+  it('does not pause when the policy refuses the question tool', async () => {
+    const { runtime } = setup();
+    h.script.push([[init('s'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    h.decideToolCall.mockResolvedValue({ allow: false, reason: 'not available' });
+    const pre = h.queryCalls[0]?.options.hooks.PreToolUse[0]?.hooks[0] as HookFn;
+
+    const out = await pre(askInput(), 'tu-1');
+
+    expect(out.hookSpecificOutput?.permissionDecision).toBe('deny');
+    expect(h.queryCalls[0]?.options.abortController.signal.aborted).toBe(false);
+  });
+});
+
 describe('an exact tool grant', () => {
   it('offers and allows only the tools it names, in place of the toolKeys rule', async () => {
     const { runtime } = setup({ toolKeys: null, tools: ['Read', 'Glob', 'Grep'] });
@@ -1983,5 +2152,217 @@ describe('the Agent’s MCP connection', () => {
     expect(options.mcpServers).toBeUndefined();
     expect(options.strictMcpConfig).toBe(true);
     expect(relay.open).not.toHaveBeenCalled();
+  });
+});
+
+describe('a harness profile', () => {
+  const PROFILE = {
+    commitSha: 'c0ffee'.padEnd(40, '1'),
+    contentHash: 'ab12cd34ef56'.padEnd(64, '0'),
+    files: [
+      { bytes: Buffer.from('Be careful.\n'), mode: '100644', path: 'INSTRUCTIONS.md' },
+      { bytes: Buffer.from('{}'), mode: '100644', path: 'profile.json' },
+    ],
+    manifest: {
+      description: 'd',
+      instructions: 'INSTRUCTIONS.md',
+      name: 'demo',
+      plugins: ['plugins/foo', 'plugins/bar'],
+      tools: ['Skill', 'Agent'],
+    },
+    name: 'demo',
+    version: 4,
+  };
+  const MARK = '[profile: demo@4 sha ab12cd34ef56]';
+  const DIR = '/workspace/.harness/profiles/ab12cd34ef56';
+
+  const profiled = (overrides: Record<string, unknown> = {}) => {
+    const events: { name: string; outputJson: unknown }[] = [];
+    const tracer = {
+      addActivityEvent: (e: { name: string; outputJson: unknown }) => events.push(e),
+      addToolCall: vi.fn(),
+    };
+    const ctx = setup({ modelProxy: null, profile: PROFILE, tracer, ...overrides });
+    return { ...ctx, events };
+  };
+
+  it('loads each plugin from the container’s copy, with plugin MCP off', async () => {
+    const { runtime } = profiled();
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    const options = h.queryCalls[0]?.options as Record<string, unknown>;
+    expect(options.plugins).toEqual([
+      { path: `${DIR}/plugins/foo`, skipMcpDiscovery: true, type: 'local' },
+      { path: `${DIR}/plugins/bar`, skipMcpDiscovery: true, type: 'local' },
+    ]);
+    // Everything else the worker controls is as without a profile.
+    expect(options.strictMcpConfig).toBe(true);
+    expect(options.permissionMode).toBe('default');
+    expect(options.managedSettings).toMatchObject({ allowManagedPermissionRulesOnly: true });
+    expect(options.settings).toMatchObject({ env: { ANTHROPIC_BASE_URL: expect.any(String) } });
+    expect(await (options.canUseTool as () => Promise<unknown>)()).toMatchObject({
+      behavior: 'deny',
+    });
+  });
+
+  it('delivers the plugin directories to the binary on the command line', async () => {
+    const { runtime } = profiled();
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    // The SDK builds the argv (`--plugin-dir-no-mcp <path>` per plugin); the custom spawn
+    // hands it, unchanged, to the process started in the container.
+    const args = [
+      '--plugin-dir-no-mcp',
+      `${DIR}/plugins/foo`,
+      '--plugin-dir-no-mcp',
+      `${DIR}/plugins/bar`,
+    ];
+    h.queryCalls[0]?.options.spawnClaudeCodeProcess({ args, env: {} });
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+    expect(h.spawn.mock.calls[0]?.[1]).toEqual(expect.arrayContaining(args));
+  });
+
+  it('adds Skill and Agent to the offered tools and to the policy’s allowlist, and only those', async () => {
+    const { runtime } = profiled({ toolKeys: ['readFile'] });
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    const options = h.queryCalls[0]?.options as QueryOptions;
+    expect(options.tools).toEqual(['Read', 'Glob', 'Grep', 'Skill', 'Agent']);
+    await options.hooks.PreToolUse[0]?.hooks[0]?.(
+      { cwd: '/workspace/target-repo', tool_input: {}, tool_name: 'Skill' },
+      't'
+    );
+    expect(h.decideToolCall).toHaveBeenCalledWith(
+      'Skill',
+      {},
+      expect.objectContaining({
+        profileDir: DIR,
+        tools: ['Read', 'Glob', 'Grep', 'Skill', 'Agent'],
+      }),
+      '/workspace/target-repo'
+    );
+  });
+
+  it('sends a sub-agent’s tool call through the worker’s policy like any other', async () => {
+    const { runtime } = profiled();
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    const options = h.queryCalls[0]?.options as QueryOptions;
+    const pre = options.hooks.PreToolUse[0]?.hooks[0];
+    h.decideToolCall.mockResolvedValue({ allow: false, reason: 'not here' });
+    const out = await pre?.(
+      {
+        agent_id: 'sub-1',
+        agent_type: 'reviewer',
+        cwd: '/workspace/target-repo',
+        tool_input: { url: 'https://example.com' },
+        tool_name: 'WebFetch',
+      },
+      't9'
+    );
+    expect(h.decideToolCall).toHaveBeenCalledWith(
+      'WebFetch',
+      { url: 'https://example.com' },
+      expect.anything(),
+      '/workspace/target-repo'
+    );
+    expect(out).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'not here',
+      },
+    });
+  });
+
+  it('appends the instructions behind a provenance line, and the profile counts toward staging', async () => {
+    const { runtime } = profiled();
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'Base prompt.', user: 'U' });
+    expect(h.queryCalls[0]?.options.systemPrompt.append).toBe(
+      `Base prompt.\n\n${MARK}\nBe careful.`
+    );
+
+    const staged = profiled();
+    h.script.push([[init('s2'), success('ok')]]);
+    const nearlyFull = 'x'.repeat(100_000 - 20);
+    await staged.runtime.runTurn({ system: nearlyFull, user: 'U' });
+    // The base prompt alone fits; with the profile’s text it does not, so it is staged.
+    expect(staged.workspace.execStdin).toHaveBeenCalledWith(
+      'cat > /workspace/.harness/home/.claude/system-prompt.md',
+      `${nearlyFull}\n\n${MARK}\nBe careful.`
+    );
+    expect(h.queryCalls[1]?.options.systemPrompt.append).toContain('system-prompt.md');
+  });
+
+  it('makes the container’s copy the approved one before every turn', async () => {
+    const { runtime } = profiled();
+    h.script.push([[init('s1'), success('a')]], [[init('s1'), success('b')]]);
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+    await runtime.runTurn({ system: 'S', user: 'U2' });
+    expect(h.ensureProfile).toHaveBeenCalledTimes(2);
+    // Before the harness is started, so a plugin never loads from an unchecked copy.
+    expect(h.ensureProfile.mock.invocationCallOrder[0]).toBeLessThan(
+      h.spawn.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY
+    );
+  });
+
+  it('does not start a turn on a profile it cannot make match', async () => {
+    const { runtime } = profiled();
+    const failure = Object.assign(new Error('integrity'), { type: 'PROFILE_INTEGRITY' });
+    h.ensureProfile.mockRejectedValueOnce(failure);
+    await expect(runtime.runTurn({ system: 'S', user: 'U' })).rejects.toBe(failure);
+    expect(h.queryCalls).toHaveLength(0);
+  });
+
+  it('records the profile once per runtime, however many turns it makes', async () => {
+    const { events, runtime } = profiled();
+    h.script.push([[init('s1'), success('a')]], [[init('s1'), success('b')]]);
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+    await runtime.runTurn({ system: 'S', user: 'U2' });
+    expect(events).toEqual([
+      {
+        name: 'agent.profile',
+        outputJson: {
+          commitSha: 'c0ffee111111',
+          contentHash: 'ab12cd34ef56',
+          plugins: ['plugins/foo', 'plugins/bar'],
+          profile: 'demo',
+          tools: ['Skill', 'Agent'],
+          version: 4,
+        },
+      },
+    ]);
+  });
+
+  it('puts the profile’s name, version and hashes in the transcript turn, with no file content', async () => {
+    const rec = {
+      acceptsRecords: vi.fn(() => true),
+      addHarnessMessage: vi.fn(),
+      addHarnessSessionFile: vi.fn(() => true),
+      addHarnessTurn: vi.fn(),
+      addHttpCall: vi.fn(),
+      setRuntime: vi.fn(),
+      trackCapture: vi.fn(),
+    };
+    h.transcriptRecorder = rec;
+    const { runtime } = profiled();
+    h.script.push([[init('s1'), success('a')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    expect(rec.addHarnessTurn.mock.calls[0]?.[0]).toMatchObject({
+      profile: { commitSha: 'c0ffee111111', contentHash: 'ab12cd34ef56', name: 'demo', version: 4 },
+      tools: expect.arrayContaining(['Skill', 'Agent']),
+    });
+  });
+
+  it('changes nothing for an Agent with no profile', async () => {
+    const { runtime } = setup({ modelProxy: null });
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'Base.', user: 'U' });
+    const options = h.queryCalls[0]?.options as Record<string, unknown> & QueryOptions;
+    expect(options.plugins).toBeUndefined();
+    expect(options.tools).toEqual(['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep']);
+    expect(options.systemPrompt.append).toBe('Base.');
+    expect(h.ensureProfile).not.toHaveBeenCalled();
   });
 });

@@ -3,6 +3,7 @@ import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { mcpUrlForConnection } from '../lib/config/mcpConnection.js';
 import { assertRunMayUseConnection } from '../lib/connectionAccess.js';
+import { mcpToolIsReadOnly } from '../lib/effectLedger.js';
 import {
   raceActivityCancellation,
   throwIfActivityCancelled,
@@ -50,22 +51,6 @@ export async function mcpCallTool(input: McpCallToolInput): Promise<McpCallToolR
   // Heartbeats while the whole activity runs: its LLM call can outlast the
   // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
   return withHeartbeat('mcpCallTool', mcpCallToolImpl(input));
-}
-
-/**
- * Whether the remote server declared this tool as read-only (the MCP
- * `readOnlyHint` annotation). Mastra copies the server's annotations onto the
- * tool it builds (`@mastra/mcp`), so this is the protocol's own signal rather
- * than a guess from the name.
- *
- * Absent or false means unknown, and an unknown tool is governed as a mutation:
- * the annotation is the only thing that can tell us a call has no effect, and
- * `readOnlyHint` defaults to false in the protocol.
- */
-function mcpToolIsReadOnly(tool: unknown): boolean {
-  const annotations = (tool as { mcp?: { annotations?: { readOnlyHint?: boolean } } } | undefined)
-    ?.mcp?.annotations;
-  return annotations?.readOnlyHint === true;
 }
 
 async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResult> {

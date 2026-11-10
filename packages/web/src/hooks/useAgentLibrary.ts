@@ -30,6 +30,8 @@ export interface AgentRow {
   credentialId: string | null;
   /** The loop that drives the agent in a workspace; null = no opinion. */
   runtime?: ImplementerRuntimeKind | null;
+  /** The approved harness profile (by name) the version runs with; null = none. */
+  harnessProfile?: string | null;
   /** How hard the model reasons; null = no opinion (provider default, or the parent's). */
   reasoning?: ReasoningLevel | null;
   origin: string | null;

@@ -11,6 +11,7 @@ import {
 import { auditLog } from '../../lib/activityLog.js';
 import { redactString } from '../../lib/agentTracer.js';
 import type { McpConnectionTarget } from '../../lib/config/mcpConnection.js';
+import { mcpToolIsReadOnly, recordEffect } from '../../lib/effectLedger.js';
 import { getErrorMessage } from '../../lib/errors.js';
 import { screenMcpResult } from '../mcpScreen.js';
 import {
@@ -161,9 +162,23 @@ export async function openMcpRelay(
     name: string,
     args: Record<string, unknown> | undefined
   ): Promise<CallToolResult> => {
-    if (!tools.some((t) => t.name === name)) {
+    const offered = tools.find((t) => t.name === name);
+    if (!offered) {
       return failure(`The MCP tool '${name}' is not offered by this connection.`);
     }
+    // Reads are not effects: only a call the server did not declare read-only is recorded.
+    const record = (status: 'DONE' | 'FAILED', error?: unknown) =>
+      mcpToolIsReadOnly(offered)
+        ? Promise.resolve()
+        : recordEffect({
+            action: name,
+            error,
+            input: args,
+            kind: 'MCP_TOOL',
+            status,
+            target: name,
+            via: 'harness_relay',
+          });
     auditLog(
       `[mcp:audit] server=${url} tool=${name} args=${redactString(JSON.stringify(args ?? {}).slice(0, 2_000))} via=harness`
     );
@@ -173,13 +188,19 @@ export async function openMcpRelay(
         callTimeoutMs,
         `MCP tool call '${name}'`
       )) as CallToolResult;
+      await record(
+        result.isError ? 'FAILED' : 'DONE',
+        result.isError ? 'tool reported an error' : undefined
+      );
       if (target.scanResults !== true) {
         return result;
       }
       const screened = await screenMcpResult(result, name, tracer);
       return screened.blocked ? failure(screened.message) : (screened.result as CallToolResult);
     } catch (err) {
-      return failure(scrubToken(getErrorMessage(err), target.bearerToken));
+      const message = scrubToken(getErrorMessage(err), target.bearerToken);
+      await record('FAILED', message);
+      return failure(message);
     }
   };
   const createServer = () => {

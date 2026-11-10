@@ -16,11 +16,13 @@ import {
   bulkUpdateAgentModels,
   createAgent,
   deactivateAgentLineage,
+  defaultOverrideProfile,
   defaultOverrideRuntime,
   inheritingHarnessWarnings,
   listAgents,
   mergedRuntimeAndModel,
   modelRequiredError,
+  profileSaveError,
   runtimeSaveError,
   updateAgent,
   validateAgentScopeRefs,
@@ -84,6 +86,8 @@ const ListQuery = z.object({
 const AgentBaseFields = {
   credentialId: z.string().uuid().nullable().optional(),
   description: z.string().max(2_000).nullable().optional(),
+  // The NAME of an approved harness profile; ADMIN-only, claude-code runtime only.
+  harnessProfile: z.string().min(1).max(64).nullable().optional(),
   inheritsModelFrom: z.string().max(100).nullable().optional(),
   /**
    * Reactivates a deactivated lineage. `false` is not accepted: deactivating is the DELETE route,
@@ -126,6 +130,15 @@ function runtimeChangeForbidden(
   return actorRole !== 'ADMIN' && requested !== undefined && requested !== current;
 }
 
+/** Same floor and same restate-is-not-a-change rule as {@link runtimeChangeForbidden}. */
+function profileChangeForbidden(
+  actorRole: string,
+  requested: string | null | undefined,
+  current: string | null
+): boolean {
+  return actorRole !== 'ADMIN' && requested !== undefined && requested !== current;
+}
+
 /** A stale edit, or one that lost a race to another: the editor must reload first. */
 function agentChanged(err: AgentVersionConflictError) {
   return { error: { code: 'AGENT_CHANGED', message: err.message } };
@@ -140,6 +153,13 @@ const RUNTIME_ADMIN_ONLY = {
   error: {
     code: 'FORBIDDEN',
     message: "Only a platform admin can change an agent's runtime.",
+  },
+} as const;
+
+const PROFILE_ADMIN_ONLY = {
+  error: {
+    code: 'PROFILE_ADMIN_ONLY',
+    message: "Only a platform admin can change an agent's harness profile.",
   },
 } as const;
 
@@ -373,6 +393,18 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
       }
+      const harnessProfile =
+        body.harnessProfile !== undefined
+          ? body.harnessProfile
+          : await defaultOverrideProfile(fastify.prisma, body, runtime);
+      const profileError = await profileSaveError(
+        fastify.prisma,
+        { ...named, harnessProfile, runtime },
+        body.harnessProfile !== undefined
+      );
+      if (profileError) {
+        return sendError(reply, 400, profileError.code, profileError.message);
+      }
       const key: AgentScopeKey = {
         channelId: body.channelId,
         key: body.key,
@@ -385,7 +417,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await createAgent(
           fastify.prisma,
           key,
-          { ...body, runtime },
+          { ...body, harnessProfile, runtime },
           actor.sub
         );
         await writeAuditLog(fastify, {
@@ -439,6 +471,21 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
       }
+      const profileError = await profileSaveError(
+        fastify.prisma,
+        {
+          ...merged,
+          harnessProfile:
+            request.body.harnessProfile === undefined
+              ? current.harnessProfile
+              : request.body.harnessProfile,
+        },
+        request.body.harnessProfile !== undefined &&
+          request.body.harnessProfile !== current.harnessProfile
+      );
+      if (profileError) {
+        return sendError(reply, 400, profileError.code, profileError.message);
+      }
       const credentialError = await pinnedCredentialError(
         fastify.prisma,
         current,
@@ -474,6 +521,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         action: 'UPDATE',
         actor,
         after: {
+          harnessProfile: agent.harnessProfile ?? null,
           isActive: agent.isActive,
           modelSpec: agent.modelSpec,
           reasoning: agent.reasoning ?? null,
@@ -481,6 +529,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           version: agent.version,
         },
         before: {
+          harnessProfile: current.harnessProfile ?? null,
           isActive: wasActive,
           modelSpec: current.modelSpec,
           reasoning: current.reasoning ?? null,
@@ -623,6 +672,15 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (runtimeChangeForbidden(actor.role, request.body.runtime, inherited)) {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
       }
+      // Likewise the profile: a new override starts on the platform-wide row's.
+      const inheritedProfile = await defaultOverrideProfile(
+        fastify.prisma,
+        { key: request.body.key, scope: 'TEAM' },
+        inherited
+      );
+      if (profileChangeForbidden(actor.role, request.body.harnessProfile, inheritedProfile)) {
+        return reply.status(403).send(PROFILE_ADMIN_ONLY);
+      }
       const modelError = modelRequiredError(named, true);
       if (modelError) {
         return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
@@ -631,6 +689,22 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       const runtimeError = await runtimeSaveError(fastify.prisma, { ...named, runtime });
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
+      }
+      const harnessProfile =
+        request.body.harnessProfile !== undefined
+          ? request.body.harnessProfile
+          : await defaultOverrideProfile(
+              fastify.prisma,
+              { key: request.body.key, scope: 'TEAM' },
+              runtime
+            );
+      const profileError = await profileSaveError(
+        fastify.prisma,
+        { ...named, harnessProfile, runtime },
+        request.body.harnessProfile !== undefined
+      );
+      if (profileError) {
+        return sendError(reply, 400, profileError.code, profileError.message);
       }
       const mcpError = await validateMcpConnectionRef(
         fastify.prisma,
@@ -661,7 +735,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await createAgent(
           fastify.prisma,
           key,
-          { ...request.body, runtime },
+          { ...request.body, harnessProfile, runtime },
           actor.sub
         );
         await writeAuditLog(fastify, {
@@ -710,6 +784,9 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (runtimeChangeForbidden(actor.role, request.body.runtime, current.runtime)) {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
       }
+      if (profileChangeForbidden(actor.role, request.body.harnessProfile, current.harnessProfile)) {
+        return reply.status(403).send(PROFILE_ADMIN_ONLY);
+      }
       const merged = mergedRuntimeAndModel(current, request.body);
       const modelError = modelRequiredError(merged, writesModel(request.body));
       if (modelError) {
@@ -718,6 +795,21 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       const runtimeError = await runtimeSaveError(fastify.prisma, merged);
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
+      }
+      const profileError = await profileSaveError(
+        fastify.prisma,
+        {
+          ...merged,
+          harnessProfile:
+            request.body.harnessProfile === undefined
+              ? current.harnessProfile
+              : request.body.harnessProfile,
+        },
+        request.body.harnessProfile !== undefined &&
+          request.body.harnessProfile !== current.harnessProfile
+      );
+      if (profileError) {
+        return sendError(reply, 400, profileError.code, profileError.message);
       }
       const credentialError = await pinnedCredentialError(
         fastify.prisma,
@@ -772,6 +864,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         action: 'UPDATE',
         actor,
         after: {
+          harnessProfile: agent.harnessProfile ?? null,
           isActive: agent.isActive,
           modelSpec: agent.modelSpec,
           reasoning: agent.reasoning ?? null,
@@ -779,6 +872,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           version: agent.version,
         },
         before: {
+          harnessProfile: current.harnessProfile ?? null,
           isActive: wasActive,
           key: current.key,
           modelSpec: current.modelSpec,

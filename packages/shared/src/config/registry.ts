@@ -243,6 +243,26 @@ export const SETTING_DEFINITIONS = {
     unit: 'days (0 = forever)',
   }),
 
+  // Read by the same daily sweep. Effect rows are a run-scoped record of what the run changed
+  // outside the sandbox and outlive their run; `0` keeps them forever, otherwise at least a month.
+  'audit.runEffectRetentionDays': defineSetting({
+    defaultValue: 0,
+    description:
+      'How long run-effect rows (what a run changed outside the sandbox: MCP writes, pull requests, pushes, tracker and knowledge-base writes) are kept before the daily retention sweep deletes them. 0 keeps them forever; otherwise at least 30 days.',
+    group: 'audit',
+    label: 'Run effect retention',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z
+      .number()
+      .int()
+      .max(3650)
+      .refine((days) => days === 0 || days >= 30, 'must be 0 (keep forever) or at least 30'),
+    unit: 'days (0 = forever)',
+  }),
+
   // ── Channel assistant ──────────────────────────────────────────────────────
   // The assistant's proactivity and context budgets. Every one of these was a
   // module-scope constant in `worker/src/activities/channel*.ts`, which made
@@ -1452,6 +1472,19 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_]{1,49}$/)).max(100),
   }),
+  'workflow.maxNeedsInputRounds': defineSetting({
+    defaultValue: 5,
+    description:
+      'Most times one agent step may stop to ask a person a question and be resumed. A step that asks again after the last allowed round fails with NEEDS_INPUT_LIMIT instead of waiting on a person indefinitely.',
+    group: 'workflow',
+    label: 'Max needs-input rounds per step',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: true,
+    schema: z.number().int().min(1).max(20),
+    unit: 'rounds',
+  }),
   'workflow.maxTransitions': defineSetting({
     defaultValue: 500,
     description:
@@ -1464,6 +1497,19 @@ export const SETTING_DEFINITIONS = {
     runPinned: true,
     schema: positiveInt.max(100_000),
     unit: 'transitions',
+  }),
+  'workflow.needsInputTimeoutSeconds': defineSetting({
+    defaultValue: 86_400,
+    description:
+      "How long an agent step that stopped to ask a person a question waits for the answer. When it passes the step fails with NEEDS_INPUT_TIMEOUT; nothing answers on the person's behalf.",
+    group: 'workflow',
+    label: 'Needs-input answer timeout',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: true,
+    schema: z.number().int().min(60).max(1_209_600),
+    unit: 'seconds',
   }),
   'workflow.prTitleFormat': defineSetting({
     defaultValue: 'template',

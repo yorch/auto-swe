@@ -149,6 +149,13 @@ export interface Workspace {
    * and `execStdin` has the tools directory first on `PATH`; `gitAuthed` never does.
    */
   installTools?: (requests: ToolRequest[]) => Promise<InstalledTool[]>;
+  /**
+   * Kill every process in the container except PID 1 and the keeper
+   * ({@link killStrayProcessesScript}): what an earlier turn left running,
+   * whatever environment it was started with. Absent on a workspace that cannot
+   * say which process the keeper is.
+   */
+  killStrays?: () => Promise<void>;
   destroy: () => Promise<void>;
 }
 
@@ -1631,5 +1638,14 @@ export async function createWorkspace(
           },
         }
       : {}),
+    killStrays: async () => {
+      const tag = newExecTag();
+      await backend.execShell(handle, ['sh', '-c', killStrayProcessesScript(handle.keeperPid)], {
+        env: [tag.env],
+        heartbeatLabel: 'workspace: stopping stray processes',
+        onTimeout: tag.onTimeout,
+        timeoutMs: 60_000,
+      });
+    },
   };
 }

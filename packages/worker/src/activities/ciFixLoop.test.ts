@@ -80,6 +80,28 @@ describe('executeCIFixImplementation', () => {
   });
 });
 
+describe('ask and resume fields', () => {
+  beforeEach(() => sessionMock.mockClear());
+  const pause = { allowPause: true, resumeInput: { sentinel: 'resume' } as never };
+
+  it('hands them to the fix session from the CI fix and the review fix', async () => {
+    await executeCIFixImplementation('logs', previous, undefined, pause);
+    await executeReviewFixImplementation('findings', previous, undefined, undefined, pause);
+    for (const call of sessionMock.mock.calls) {
+      expect(call[0]).toMatchObject({ allowPause: true, resumeInput: { sentinel: 'resume' } });
+    }
+    expect(sessionMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves them unset by default', async () => {
+    await executeCIFixImplementation('logs', previous);
+    expect(sessionMock.mock.calls[0]?.[0]).toMatchObject({
+      allowPause: undefined,
+      resumeInput: undefined,
+    });
+  });
+});
+
 describe('executeCIFixImplementation with untrusted CI logs', () => {
   const prev = { branch: 'auto/ci-1-1', testResults: {} } as unknown as CodeResult;
 

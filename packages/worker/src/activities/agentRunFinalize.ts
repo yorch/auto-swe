@@ -16,6 +16,7 @@ import {
 } from '../lib/agentRunPolicy.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
+import { recordGitPush } from '../lib/effectLedger.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
 import { withCoAuthorTrailer } from '../lib/gitIdentity.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
@@ -392,5 +393,7 @@ export async function pushGatedCommit(
   }
   // Never publish on behalf of a run that has been cancelled.
   throwIfActivityCancelled();
-  await trusted.gitAuthed(`push origin ${shellQuote(`${commit.sha}:refs/heads/${branch}`)}`);
+  await recordGitPush(branch, commit.sha, () =>
+    trusted.gitAuthed(`push origin ${shellQuote(`${commit.sha}:refs/heads/${branch}`)}`)
+  );
 }

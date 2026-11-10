@@ -1726,6 +1726,7 @@ model User {
   scheduledWorkRequests ScheduledWorkRequest[]   @relation("ScheduleCreator")
   skillRevisions        SkillRevision[]          @relation("SkillRevisionCreator")
   skillSources          SkillSource[]            @relation("SkillSourceCreator")
+  harnessProfileVersions HarnessProfileVersion[] @relation("HarnessProfileApprover")
   schedulesActingAs     ScheduledWorkRequest[]   @relation("ScheduleActsAs")
   automations           Automation[]             @relation("AutomationCreator")
   servicePrincipals     ServicePrincipal[]       @relation("ServicePrincipalCreator")
@@ -2326,6 +2327,10 @@ model WorkflowRun {
   /// pinned the first time the run resolved it, so a later edit of the agent,
   /// its scoped overrides or the setting cannot switch it mid-run.
   agentRuntimes     Json?             @map("agent_runtimes")
+  /// `{ profileName: version }`: the harness profile version each profile-bound agent
+  /// ran with, pinned like `agentRuntimes`, so approving or disabling a profile
+  /// mid-run cannot change what the run's agents were given.
+  harnessProfileVersions Json? @map("harness_profile_versions")
   /// The connections this run may use, resolved and authorized when it was created:
   /// the workspace connection, every `connection`-typed input its template version
   /// declares with a value in the payload, and the literal ids its spec names (an
@@ -2441,6 +2446,7 @@ model WorkflowRun {
   outboundDeliveries OutboundDelivery[]
   transcripts       AgentTranscript[]
   attributedPullRequests PullRequest[] @relation("PullRequestAttributionRun")
+  effects           RunEffect[]
 
   @@index([templateId])
   @@index([workRequestId])
@@ -2652,6 +2658,42 @@ model ReportDigestDelivery {
   @@unique([subscriptionId, periodStart, target])
   @@index([subscriptionId, periodStart, status])
   @@map("report_digest_deliveries")
+}
+
+/// What an agent run changed outside the sandbox: a non-read-only MCP tool call, a pull request, a
+/// git push, a tracker or knowledge-base write. Record only, best effort. `runId` is SetNull and
+/// `workflowId` is kept, so a row outlives a deleted run; the ledger has its own retention
+/// (`audit.runEffectRetentionDays`). `inputDigest` is a hash of the redacted input, `detail` a small
+/// redacted summary, `error` redacted and capped; the raw input is never stored. See
+/// docs/audit-log.md §5.
+model RunEffect {
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId       String?      @map("run_id") @db.Uuid
+  workflowId  String       @map("workflow_id")
+  specNodeId  String?      @map("spec_node_id")
+  agentKey    String?      @map("agent_key")
+  /// MCP_TOOL | PULL_REQUEST | GIT_PUSH | TRACKER | KNOWLEDGE_BASE (`RUN_EFFECT_KINDS`).
+  kind        String
+  action      String
+  /// External id, URL, branch or tool name.
+  target      String?
+  /// DONE | FAILED.
+  status      String
+  /// harness_relay | mastra_mcp | activity.
+  via         String
+  inputDigest String?      @map("input_digest")
+  detail      Json?
+  error       String?
+  teamId      String?      @map("team_id") @db.Uuid
+  orgId       String?      @map("org_id") @db.Uuid
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  run WorkflowRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@index([runId, createdAt])
+  @@index([workflowId, createdAt])
+  @@index([createdAt])
+  @@map("run_effects")
 }
 
 /// Audit trail of autonomous governance decisions and human approvals for a run.
@@ -4253,6 +4295,65 @@ model SkillSource {
   @@map("skill_sources")
 }
 
+enum HarnessProfileStatus {
+  OK
+  DISABLED
+}
+
+/// An admin-approved Claude Code harness profile: a folder of a GitHub / GitHub Enterprise
+/// repository, read once at approval and stored as immutable versions. GLOBAL only. Never
+/// deleted: an Agent may reference it by name.
+model HarnessProfile {
+  id            String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// The manifest's name; unique, and what an Agent version references.
+  name          String               @unique
+  description   String
+  /// Lowercased `host[:port]`, owner and repository, as for a SkillSource.
+  host          String
+  owner         String
+  repo          String
+  /// Folder holding profile.json; empty for the repository root.
+  path          String               @default("")
+  /// The branch or tag as the admin gave it.
+  ref           String
+  status        HarnessProfileStatus @default(OK)
+  /// Highest `HarnessProfileVersion.version`.
+  latestVersion Int                  @default(1) @map("latest_version")
+  createdAt     DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime             @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  versions HarnessProfileVersion[]
+
+  @@map("harness_profiles")
+}
+
+/// One immutable, content-addressed snapshot of a profile folder at an exact commit.
+model HarnessProfileVersion {
+  id           String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  profileId    String         @map("profile_id") @db.Uuid
+  profile      HarnessProfile @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  version      Int
+  commitSha    String         @map("commit_sha")
+  /// sha256 over the sorted (path, mode, sha256(content)) list plus the parsed manifest.
+  contentHash  String         @map("content_hash")
+  manifest     Json
+  /// `[{ path, size, mode }]`, so listing a version never loads the blob.
+  fileIndex    Json           @map("file_index")
+  fileCount    Int            @map("file_count")
+  totalBytes   Int            @map("total_bytes")
+  /// gzip of the packed files (see `lib/harnessProfile/snapshot.ts`). Never returned by the API.
+  files        Bytes
+  /// Every warning shown at approval (structure and scanners); approval acknowledged them.
+  scanWarnings Json           @default("[]") @map("scan_warnings")
+  approvedById String?        @map("approved_by_id") @db.Uuid
+  approvedBy   User?          @relation("HarnessProfileApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime       @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([profileId, version])
+  @@index([approvedById])
+  @@map("harness_profile_versions")
+}
+
 enum ScannerPatternType {
   INJECTION
   EXFILTRATION
@@ -4328,6 +4429,11 @@ model Agent {
   // follows the run-pinned `workspace.implementerRuntime` setting and agent runs
   // use Mastra. A persona that inherits its model inherits this too.
   runtime            String?
+  // The NAME of the approved harness profile (`HarnessProfile.name`) this version runs
+  // with; only meaningful on the 'claude-code' runtime. Not inherited along
+  // `inheritsModelFrom`. No foreign key: profiles are never deleted and names are
+  // stable, and a name that stops resolving fails the run closed. ADMIN-only to set.
+  harnessProfile     String?     @map("harness_profile")
   // How hard the model reasons before it answers: 'off', 'low', 'medium' or 'high'
   // (CHECK constraint). null = no opinion: the model's own default. Mapped onto each provider's
   // own option (Anthropic extended thinking, OpenAI reasoning effort, Google thinking

@@ -7,7 +7,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
-const h = vi.hoisted(() => ({ audit: vi.fn(), scan: vi.fn() }));
+const h = vi.hoisted(() => ({ audit: vi.fn(), record: vi.fn(), scan: vi.fn() }));
 
 // The relay reaches a server on loopback here, which the SSRF guard (rightly)
 // refuses in production: only the URL check and the guarded fetches are stubbed.
@@ -27,12 +27,16 @@ vi.mock('../mcpTools.js', async (importOriginal) => ({
 }));
 vi.mock('../../lib/activityLog.js', () => ({ auditLog: h.audit }));
 vi.mock('../../lib/memoryGuard.js', () => ({ memoryInjectionMatches: h.scan }));
+vi.mock('../../lib/effectLedger.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../lib/effectLedger.js')>()),
+  recordEffect: h.record,
+}));
 
 import { relayedToolName } from '../claudeCode/policy.js';
 import { openMcpRelay } from './mcpRelay.js';
 
 /** A real MCP server over streamable HTTP, with one tool, recording the auth it saw. */
-async function remoteServer(options: { withWipe?: boolean } = {}) {
+async function remoteServer(options: { withEffectTools?: boolean; withWipe?: boolean } = {}) {
   const authorizations: (string | undefined)[] = [];
   const server = http.createServer(async (req, res) => {
     authorizations.push(req.headers.authorization);
@@ -46,6 +50,16 @@ async function remoteServer(options: { withWipe?: boolean } = {}) {
       mcp.registerTool('wipe', { description: 'A write tool' }, async () => ({
         content: [{ text: 'wiped', type: 'text' }],
       }));
+    }
+    if (options.withEffectTools) {
+      mcp.registerTool(
+        'lookup',
+        { annotations: { readOnlyHint: true }, description: 'Read something' },
+        async () => ({ content: [{ text: 'found', type: 'text' }] })
+      );
+      mcp.registerTool('explode', { description: 'Always fails' }, async () => {
+        throw new Error('remote failure');
+      });
     }
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     res.on('close', () => {
@@ -88,11 +102,12 @@ afterEach(async () => {
   h.audit.mockClear();
   h.scan.mockReset();
   h.scan.mockResolvedValue({ incomplete: false, loadFailed: false, matches: [] });
+  h.record.mockClear();
 });
 
 describe('openMcpRelay', () => {
   it('offers the remote tools with their own schemas and runs each call in the worker', async () => {
-    remote = await remoteServer();
+    remote = await remoteServer({ withEffectTools: true });
     const tracer = { addActivityEvent: vi.fn(), addToolCall: vi.fn() };
     const target = Object.defineProperty({ url: remote.url }, 'bearerToken', {
       enumerable: false,
@@ -100,7 +115,7 @@ describe('openMcpRelay', () => {
     });
 
     const relay = await openMcpRelay(target, tracer as never);
-    expect(relay?.tools.map((t) => t.name)).toEqual(['echo']);
+    expect(relay?.tools.map((t) => t.name)).toEqual(['echo', 'lookup', 'explode']);
     expect(relay?.tools[0]?.inputSchema).toMatchObject({
       properties: { text: { type: 'string' } },
       type: 'object',
@@ -110,7 +125,11 @@ describe('openMcpRelay', () => {
     );
 
     const client = await harnessClient(relay?.createServer() as McpServer);
-    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['echo']);
+    expect((await client.listTools()).tools.map((t) => t.name)).toEqual([
+      'echo',
+      'lookup',
+      'explode',
+    ]);
     const result = await client.callTool({ arguments: { text: 'hi' }, name: 'echo' });
     expect(result.content).toEqual([{ text: 'echo: hi', type: 'text' }]);
     // The credential went to the remote server from the worker, and each call is audited.
@@ -149,6 +168,56 @@ describe('openMcpRelay', () => {
     await expect(relay?.callTool('rm_rf', {})).resolves.toMatchObject({ isError: true });
     expect(h.audit).toHaveBeenCalledTimes(1);
 
+    await relay?.close();
+  });
+
+  it('records a non-read-only call as an effect, failures included, and a read as nothing', async () => {
+    remote = await remoteServer({ withEffectTools: true });
+    const relay = await openMcpRelay({ url: remote.url });
+
+    await relay?.callTool('echo', { text: 'direct' });
+    expect(h.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'echo',
+        input: { text: 'direct' },
+        kind: 'MCP_TOOL',
+        status: 'DONE',
+        via: 'harness_relay',
+      })
+    );
+
+    h.record.mockClear();
+    await relay?.callTool('lookup', {});
+    expect(h.record).not.toHaveBeenCalled();
+
+    // A tool that reports an error is a failed effect, and its result still comes back unchanged.
+    const failed = await relay?.callTool('explode', {});
+    expect(failed?.isError).toBe(true);
+    expect(h.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'explode', status: 'FAILED', via: 'harness_relay' })
+    );
+
+    // A tool the connection did not offer never reached the server: not an effect.
+    h.record.mockClear();
+    await relay?.callTool('rm_rf', {});
+    expect(h.record).not.toHaveBeenCalled();
+    await relay?.close();
+  });
+
+  it('never puts the bearer token in the ledger, even when a transport error carries it', async () => {
+    remote = await remoteServer();
+    const token = 'sk-secret-relay-token-123';
+    const relay = await openMcpRelay({ bearerToken: token, url: remote.url });
+    vi.spyOn(Client.prototype, 'callTool').mockRejectedValueOnce(
+      new Error(`request failed: Authorization: ${token}`)
+    );
+    const result = await relay?.callTool('echo', { text: 'x' });
+    expect(JSON.stringify(result)).not.toContain(token);
+    const recorded = h.record.mock.calls.at(-1)?.[0] as { error: unknown; status: string };
+    expect(recorded.status).toBe('FAILED');
+    expect(String(recorded.error)).toContain('[redacted]');
+    expect(String(recorded.error)).not.toContain(token);
+    vi.restoreAllMocks();
     await relay?.close();
   });
 

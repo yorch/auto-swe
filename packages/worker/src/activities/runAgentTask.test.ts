@@ -33,6 +33,7 @@ const m = vi.hoisted(() => ({
   persist: vi.fn(async (_tracer: unknown, _key: string) => {}),
   prCreate: vi.fn(async (_args: unknown) => ({})),
   previewConfig: null as unknown,
+  profileFor: vi.fn(async (_args: unknown): Promise<unknown> => undefined),
   prUpdate: vi.fn(async (_args: unknown) => ({})),
   push: vi.fn(),
   recordUsage: vi.fn(),
@@ -124,6 +125,7 @@ vi.mock('../lib/egressWiring.js', async (importOriginal) => ({
 }));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn(() => 'wf-1'),
+  currentWorkflowRunId: vi.fn(async () => 'run-1'),
   persistActivityTrace: m.persist,
 }));
 vi.mock('../lib/config/contextLookup.js', () => ({
@@ -147,6 +149,7 @@ const { defaultResolveAgent } = vi.hoisted(() => ({
     version: 3,
   }),
 }));
+vi.mock('../lib/config/harnessProfile.js', () => ({ resolveProfileForRuntime: m.profileFor }));
 vi.mock('../lib/config/agentResolver.js', () => ({
   resolveAgent: vi.fn(defaultResolveAgent),
 }));
@@ -204,12 +207,27 @@ vi.mock('./agentRunFinalize.js', () => ({
   pushGatedCommit: m.push,
 }));
 
+vi.mock('../lib/pauseSnapshot.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/pauseSnapshot.js')>()),
+  restoreWorkingTree: vi.fn(async () => {}),
+  snapshotWorkingTree: vi.fn(async () => ({
+    snapshot: {
+      artifactId: 'art-9',
+      baseSha: 'a'.repeat(40),
+      bytes: 321,
+      sha256: 'c'.repeat(64),
+    },
+  })),
+}));
+
 import { prisma } from '@auto-swe/shared/db';
 import { __resetReconcileCacheForTests } from '@auto-swe/shared/lib/agentRunAdmission';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
+import { QUESTIONS, resumeInputFor } from '../lib/pauseResumeFixtures.js';
+import { restoreWorkingTree, snapshotWorkingTree } from '../lib/pauseSnapshot.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
 import { runAgentTask } from './runAgentTask.js';
 import { createWorkspace } from './workspace.js';
@@ -273,6 +291,7 @@ beforeEach(() => {
   m.mcpConnectionId = null;
   m.modelSpec = 'anthropic/x';
   m.claudeCodeRuntime.mockImplementation(() => ({ runTurn: m.harnessTurn }));
+  m.profileFor.mockResolvedValue(undefined);
   m.harnessTurn.mockResolvedValue({
     steps: 6,
     text: 'harness done',
@@ -979,6 +998,27 @@ describe('the Claude Code harness, for an agent that asks for it', () => {
     );
   });
 
+  it('gives the harness the approved profile the agent is bound to', async () => {
+    const profile = { contentHash: 'a'.repeat(64), name: 'demo', version: 2 };
+    m.profileFor.mockResolvedValue(profile);
+    await runAgentTask({ request: request() });
+    expect(m.profileFor).toHaveBeenCalledWith(
+      expect.objectContaining({ agentKey: 'contentWriter', runtime: 'claude-code' })
+    );
+    expect(m.claudeCodeRuntime.mock.calls[0]?.[0].profile).toBe(profile);
+  });
+
+  it('fails closed, before any container, when the profile cannot be resolved', async () => {
+    m.profileFor.mockRejectedValue(
+      ApplicationFailure.nonRetryable('profile gone', 'PROFILE_UNAVAILABLE')
+    );
+    await expect(runAgentTask({ request: request() })).rejects.toMatchObject({
+      type: 'PROFILE_UNAVAILABLE',
+    });
+    expect(vi.mocked(createWorkspace)).not.toHaveBeenCalled();
+    expect(m.claudeCodeRuntime).not.toHaveBeenCalled();
+  });
+
   it('runs one bounded harness turn in the agent container instead of the Mastra loop', async () => {
     const result = await runAgentTask({ request: request() });
 
@@ -1161,4 +1201,116 @@ describe('the Claude Code harness, for an agent that asks for it', () => {
 // A failing assertion must not leak a spy on AgentTracer into the next test.
 afterEach(() => {
   vi.restoreAllMocks();
+});
+
+describe('ask and resume', () => {
+  const BRANCH = 'auto/agent-0a1b2c3d111122223333444455556666';
+  const deliver = request({ payload: { agentRef: 'contentWriter', deliver: 'draft_pr' } });
+  const surface = (extra: Record<string, unknown> = {}) => ({
+    agentKey: 'contentWriter',
+    branch: BRANCH,
+    kind: 'runAgentTask',
+    ...extra,
+  });
+
+  beforeEach(() => {
+    m.runtime = 'claude-code';
+  });
+
+  it('does not offer the question tool unless the input allows pausing', async () => {
+    await runAgentTask({ request: request() });
+    expect(m.claudeCodeRuntime.mock.calls[0]?.[0]).not.toHaveProperty('allowPause');
+  });
+
+  it('offers it to a Claude Code run that may pause, and not to the Mastra loop', async () => {
+    await runAgentTask({ allowPause: true, request: request() });
+    expect(m.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ allowPause: true });
+
+    // Other runtimes cannot ask: the run goes on unattended and returns a result.
+    m.runtime = null;
+    vi.mocked(createWorkspace)
+      .mockReset()
+      .mockResolvedValueOnce(m.agentWs as never);
+    const result = await runAgentTask({ allowPause: true, request: request() });
+    expect(m.runAgent).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ text: 'done' });
+  });
+
+  it('stops at a question: nothing is delivered, and both containers follow their lifecycle', async () => {
+    m.harnessTurn.mockResolvedValueOnce({
+      needsInput: QUESTIONS,
+      steps: 2,
+      text: 'which db?',
+      toolCallCount: 1,
+      usageByModel: [{ modelSpec: 'anthropic/x', usage: { inputTokens: 10, outputTokens: 5 } }],
+    });
+
+    const result = await runAgentTask({ allowPause: true, request: deliver });
+
+    expect(result).toMatchObject({
+      needsInput: {
+        questions: QUESTIONS,
+        resume: {
+          snapshot: { artifactId: 'art-9' },
+          surface: { agentKey: 'contentWriter', branch: BRANCH, kind: 'runAgentTask' },
+        },
+      },
+    });
+    expect(snapshotWorkingTree).toHaveBeenCalledWith(m.agentWs, {
+      runId: 'run-1',
+      startSha: 'base-sha',
+    });
+    // No trusted container, no import, gate, push or pull request.
+    expect(createWorkspace).toHaveBeenCalledTimes(1);
+    expect(m.importTree).not.toHaveBeenCalled();
+    expect(m.gate).not.toHaveBeenCalled();
+    expect(m.push).not.toHaveBeenCalled();
+    expect(m.createPr).not.toHaveBeenCalled();
+    // Usage already recorded stays recorded; the trace persists; the agent container goes.
+    expect(m.recordUsage).toHaveBeenCalledTimes(1);
+    expect(m.persist).toHaveBeenCalledTimes(1);
+    expect(m.agentWs.destroy).toHaveBeenCalledTimes(1);
+    expect(traceEvents().map((e) => e.toolName)).toContain('agent.paused');
+  });
+
+  it('restores the tree before the first turn, puts the answers in its prompt, then delivers as usual', async () => {
+    const result = await runAgentTask({
+      allowPause: true,
+      request: deliver,
+      resumeInput: resumeInputFor(surface()),
+    });
+
+    expect(restoreWorkingTree).toHaveBeenCalledWith(
+      m.agentWs,
+      expect.objectContaining({ artifactId: 'art-1' })
+    );
+    // The agent's container is cut from the commit the tree was saved against, not the
+    // branch tip; delivery's fresh container is cut from the run's base as for any run.
+    expect(vi.mocked(createWorkspace).mock.calls[0]?.[4]).toBe('a'.repeat(40));
+    expect(vi.mocked(restoreWorkingTree).mock.invocationCallOrder[0]).toBeLessThan(
+      m.harnessTurn.mock.invocationCallOrder[0] ?? 0
+    );
+    const user = m.harnessTurn.mock.calls[0]?.[0].user as string;
+    expect(user).toContain('fix the typo');
+    expect(user).toContain('[answers: begin]');
+    expect(user).toContain('| Postgres');
+    // The restored work is judged from a fresh container like any other run's.
+    expect(m.importTree).toHaveBeenCalledWith(m.agentWs, m.trustedWs);
+    expect(m.gate).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ gate: 'passed' });
+    expect(traceEvents().map((e) => e.toolName)).toContain('agent.resumed');
+  });
+
+  it.each([
+    ['another surface', surface({ kind: 'runAgentNode' })],
+    ['another agent', surface({ agentKey: 'planner' })],
+    ['another branch', surface({ branch: 'auto/agent-other' })],
+  ])('refuses a state from %s before cloning, without retrying', async (_name, state) => {
+    const f = await failureOf(
+      runAgentTask({ request: deliver, resumeInput: resumeInputFor(state) })
+    );
+    expect(f).toMatchObject({ nonRetryable: true, type: 'NEEDS_INPUT_RESTORE_FAILED' });
+    expect(createWorkspace).not.toHaveBeenCalled();
+    expect(m.harnessTurn).not.toHaveBeenCalled();
+  });
 });

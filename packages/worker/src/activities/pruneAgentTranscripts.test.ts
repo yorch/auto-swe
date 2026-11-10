@@ -35,6 +35,7 @@ const h = vi.hoisted(() => ({
   orphanArtifacts: [] as { id: string }[],
   orphanEvidence: [] as { id: string }[],
   pendingArtifacts: [] as { createdAt: Date; id: string }[],
+  snapshotArtifacts: [] as { id: string }[],
   transcripts: [] as {
     createdAt: Date;
     id: string;
@@ -116,22 +117,26 @@ vi.mock('@auto-swe/shared/db', () => ({
         }: {
           take: number;
           where: {
-            status?: string;
+            status?: string | { in: string[] };
+            kind?: string;
             createdAt: { lt: Date };
             id?: { gt: string };
             runEvidence?: unknown;
           };
         }) =>
-          where.status === 'pending' || (typeof where.status === 'object' && 'in' in where.status)
-            ? h.pendingArtifacts
-                .filter((a) => a.createdAt < where.createdAt.lt)
-                .filter((a) => !where.id || a.id > where.id.gt)
-                .sort((a, b) => a.id.localeCompare(b.id))
-                .slice(0, take)
-                .map((a) => ({ id: a.id }))
-            : where.runEvidence
-              ? h.orphanEvidence
-              : h.orphanArtifacts
+          where.kind === 'needs_input.snapshot'
+            ? h.snapshotArtifacts
+            : where.status === 'pending' ||
+                (typeof where.status === 'object' && 'in' in where.status)
+              ? h.pendingArtifacts
+                  .filter((a) => a.createdAt < where.createdAt.lt)
+                  .filter((a) => !where.id || a.id > where.id.gt)
+                  .sort((a, b) => a.id.localeCompare(b.id))
+                  .slice(0, take)
+                  .map((a) => ({ id: a.id }))
+              : where.runEvidence
+                ? h.orphanEvidence
+                : h.orphanArtifacts
       ),
     },
     workflowHttpCall: {
@@ -195,6 +200,7 @@ beforeEach(() => {
   h.deletedTranscripts.length = 0;
   h.orphanArtifacts.length = 0;
   h.orphanEvidence.length = 0;
+  h.snapshotArtifacts.length = 0;
   h.transcripts.length = 0;
   h.unscopedCalls.length = 0;
   h.updates.length = 0;
@@ -424,6 +430,17 @@ describe('pruneAgentTranscripts', () => {
     const result = await pruneAgentTranscripts(NOW);
     expect(result.pendingArtifacts).toBe(total);
     expect(result.more).toBe(false);
+  });
+
+  it('deletes expired needs-input snapshots by kind and retention cutoff', async () => {
+    h.snapshotArtifacts.push({ id: 'snap-1' });
+    await pruneAgentTranscripts(NOW);
+    expect(h.deletedArtifacts).toEqual(['snap-1']);
+    const query = vi
+      .mocked(prisma.workflowArtifact.findMany)
+      .mock.calls.map((c) => c[0] as { where: Record<string, unknown> })
+      .find((a) => a.where.kind === 'needs_input.snapshot');
+    expect(query?.where.status).toBe('ready');
   });
 
   it('leaves pending parts to the pending pass, not the orphan pass', async () => {

@@ -38,6 +38,7 @@ import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
+import { recordGitPush } from '../lib/effectLedger.js';
 import { getErrorMessage, getExecErrorOutput } from '../lib/errors.js';
 import { withCoAuthorTrailer } from '../lib/gitIdentity.js';
 import { knowledgeBasePlannerContext } from '../lib/knowledgeBasePlanner.js';
@@ -492,7 +493,9 @@ async function pushAndCapture(
 ): Promise<string> {
   // Never push on behalf of a run that has already been cancelled.
   throwIfActivityCancelled();
-  await workspace.gitAuthed(`push origin ${shellQuote(targetBranch)}`);
+  await recordGitPush(targetBranch, undefined, () =>
+    workspace.gitAuthed(`push origin ${shellQuote(targetBranch)}`)
+  );
   const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
   log.push(`pushed ${targetBranch} (head ${headSha})`);
   return headSha;

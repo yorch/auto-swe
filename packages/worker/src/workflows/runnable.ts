@@ -20,15 +20,17 @@ import {
   BranchCancelledError,
   CHANNEL_TASK_STEER_SIGNAL,
   readInterpreterLimits,
+  readNeedsInputLimits,
   runSpec,
   SignalSlots,
   waitForSignal,
 } from '../lib/workflowEngine.js';
+import { NEEDS_INPUT_PATCH, runWithNeedsInput } from './needsInputLoop.js';
 import type { NodeTag } from './nodeTag.js';
 import { runWithNodeTag } from './nodeTagScope.js';
 import { reviewLaunchActivities, shellActivities, stateActivities } from './runnableActivities.js';
 import { boundForRecord, boundString, snapshotContext } from './runnableContext.js';
-import { dispatchStepImpl } from './runnableSteps.js';
+import { dispatchStepImpl, isPausableStep } from './runnableSteps.js';
 
 /**
  * RunnableWorkflow — generic interpreter that executes any WorkflowSpec.
@@ -108,6 +110,9 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   // row was created. Reading them here rather than resolving them live is what
   // keeps a mid-run edit from changing the ceiling a replay was recorded under.
   const interpreterLimits = readInterpreterLimits(runInfo.pinnedSettings);
+  // The same snapshot bounds the ask-and-resume loop: how long a person has to answer and how
+  // many times one step may ask.
+  const needsInputLimits = readNeedsInputLimits(runInfo.pinnedSettings);
 
   // Generic runs carry their workspace provider and target connection on the
   // request; SWE runs fall back to the git_repo provider and the repoId.
@@ -223,9 +228,27 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
       dispatchVisits.set(nodeId, visit);
       const dispatchKey = visit === 1 ? nodeId : `${nodeId}#${visit}`;
       return runWithNodeTag(nodeTagOf(nodeId, specNodeId, stepAttempt), () =>
-        runWithCancellation(cancellation, () =>
-          dispatchStepImpl(step, ctx, input.request, config, inputs, dispatchKey)
-        )
+        runWithCancellation(cancellation, () => {
+          // A step whose activity can stop to ask a person runs inside the ask-and-resume loop.
+          // Patched: an execution that started before the loop replays the plain dispatch, which
+          // never offers a question and so never meets a pause.
+          if (!isPausableStep(step, config) || !patched(NEEDS_INPUT_PATCH)) {
+            return dispatchStepImpl(step, ctx, input.request, config, inputs, dispatchKey);
+          }
+          return runWithNeedsInput({
+            deps: {
+              createHumanStep: (args) => stateActivities.createHumanStep({ ...args, runId }),
+              resolveHumanStep: (args) => stateActivities.resolveHumanStep({ ...args, runId }),
+              waitSignal: (name, timeout) => dispatcher.waitSignal(name, timeout),
+            },
+            invoke: (pause) =>
+              dispatchStepImpl(step, ctx, input.request, config, inputs, dispatchKey, pause),
+            // A re-dispatch under `onFail.retry` keeps the visit, so its attempt is part of the key.
+            key: (stepAttempt ?? 1) > 1 ? `${dispatchKey}@${stepAttempt}` : dispatchKey,
+            label: askerLabel(step, config),
+            limits: needsInputLimits,
+          });
+        })
       );
     },
     drainSteering() {
@@ -387,6 +410,20 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
   // cannot overwrite the workflow's actual outcome status.
   const result = outcome?.result ?? {};
   return { ...result, status: finalStatus as WorkflowResult['status'] };
+}
+
+/** The agent each pausable step runs, for the title of the human step it opens. */
+const STEP_ASKER: Record<string, string> = {
+  executeCIFixImplementation: 'ciFixer',
+  executeGateFixImplementation: 'gateFixer',
+  executeImplementation: 'implementer',
+  executeReviewFixImplementation: 'reviewFixer',
+};
+
+/** Who is asking: the agent node's agent, else the agent the step runs. */
+function askerLabel(step: string, config: Record<string, unknown>): string {
+  const ref = typeof config.agentRef === 'string' ? config.agentRef.split('@')[0] : undefined;
+  return ref || STEP_ASKER[step] || 'The agent run';
 }
 
 /** The attribution for one dispatch; undefined for a dispatcher caller that supplies no spec node. */

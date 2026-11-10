@@ -54,6 +54,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ReportDigestSubscription',
   'ReviewPreset',
   'ReviewVerdictDailyRollup',
+  'RunEffect',
   'ScheduledWorkRequest',
   'ServicePrincipal',
   'Skill',

@@ -10,7 +10,7 @@ vi.mock('../lib/knowledgeBaseSearch.js', () => ({
   searchRunKnowledge: vi.fn(async () => ({ injectionDropped: 0, mode: 'text', results: [] })),
 }));
 
-const { browser, findChannel, findRepo, harness } = vi.hoisted(() => ({
+const { browser, findChannel, findRepo, harness, profileFor } = vi.hoisted(() => ({
   browser: {
     close: vi.fn(async () => {}),
     construct: vi.fn(),
@@ -24,6 +24,7 @@ const { browser, findChannel, findRepo, harness } = vi.hoisted(() => ({
     close: vi.fn(),
     select: vi.fn(),
   },
+  profileFor: vi.fn(async (_args: unknown): Promise<unknown> => undefined),
 }));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
@@ -34,6 +35,7 @@ vi.mock('@auto-swe/shared/db', () => ({
 vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async (key: string) => (key === 'workspace.agentMaxSteps' ? 40 : 20_000)),
 }));
+vi.mock('../lib/config/harnessProfile.js', () => ({ resolveProfileForRuntime: profileFor }));
 vi.mock('../lib/config/agentRuntime.js', () => ({
   resolveAgentRuntime: vi.fn().mockResolvedValue({ runtime: 'mastra', source: 'default' }),
 }));
@@ -101,7 +103,20 @@ vi.mock('../lib/config/mcpConnection.js', () => ({
 vi.mock('../agents/mcpTools.js', () => ({ loadMcpTools: vi.fn() }));
 
 vi.mock('../lib/activityContext.js', () => ({
+  currentWorkflowRunId: vi.fn(async () => 'run-1'),
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock('../lib/pauseSnapshot.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/pauseSnapshot.js')>()),
+  restoreWorkingTree: vi.fn(async () => {}),
+  snapshotWorkingTree: vi.fn(async () => ({
+    snapshot: {
+      artifactId: 'art-9',
+      baseSha: 'a'.repeat(40),
+      bytes: 321,
+      sha256: 'c'.repeat(64),
+    },
+  })),
 }));
 vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
 
@@ -117,6 +132,8 @@ import { resolveAgentRuntime } from '../lib/config/agentRuntime.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
+import { QUESTIONS, resumeInputFor } from '../lib/pauseResumeFixtures.js';
+import { restoreWorkingTree, snapshotWorkingTree } from '../lib/pauseSnapshot.js';
 import { runAgent } from './runAgent.js';
 import { runAgentNode } from './runAgentNode.js';
 import { createWorkspace } from './workspace.js';
@@ -221,6 +238,15 @@ describe('runAgentNode', () => {
       },
     });
     expect(vi.mocked(createWorkspace)).not.toHaveBeenCalled();
+    // A profile bound to the agent cannot be loaded without a workspace: the helper is told so.
+    expect(profileFor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentKey: 'reviewer',
+        appliesToRun: false,
+        ranOn: 'mastra',
+        runtime: 'claude-code',
+      })
+    );
     events.mockRestore();
   });
 
@@ -832,6 +858,13 @@ describe('runAgentNode', () => {
         tracer: expect.any(AgentTracer),
         workspace,
       });
+      // The profile is resolved with the runtime, before the clone, and none is passed on.
+      expect(profileFor).toHaveBeenCalledWith(
+        expect.objectContaining({ agentKey: 'reviewer', runtime: 'claude-code' })
+      );
+      expect(profileFor.mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(createWorkspace).mock.invocationCallOrder[0] ?? 0
+      );
       expect(vi.mocked(runImplementerTurn)).toHaveBeenCalledWith({
         agent: { id: 'row-3', version: 3 },
         boundModelSpec: 'anthropic/claude-sonnet-5-5',
@@ -907,6 +940,137 @@ describe('runAgentNode', () => {
       expect(vi.mocked(logWarn)).toHaveBeenCalledWith('runAgentNode: releasing a resource failed', {
         agentKey: 'reviewer',
         error: 'relay hung up',
+      });
+    });
+
+    describe('ask and resume', () => {
+      const where = { branch: 'auto/JIRA-1', repoId: 'repo-1', ticketId: 'JIRA-1' };
+      const surface = { agentKey: 'reviewer', branch: 'auto/JIRA-1', kind: 'runAgentNode' };
+
+      beforeEach(() => {
+        vi.mocked(resolveAgentRuntime).mockResolvedValueOnce({
+          runtime: 'claude-code',
+          source: 'run',
+        });
+      });
+
+      it('does not offer the question tool unless the input allows pausing', async () => {
+        await runAgentNode({ agentRef: 'reviewer', workspace: where });
+        expect(harness.build.mock.calls[0]?.[0]).not.toHaveProperty('allowPause');
+      });
+
+      it('offers it to a Claude Code run that may pause, and ignores it on any other runtime', async () => {
+        await runAgentNode({ agentRef: 'reviewer', allowPause: true, workspace: where });
+        expect(harness.build).toHaveBeenCalledWith(expect.objectContaining({ allowPause: true }));
+
+        harness.build.mockClear();
+        vi.mocked(resolveAgentRuntime).mockReset();
+        vi.mocked(resolveAgentRuntime).mockResolvedValue({ runtime: 'pi', source: 'run' });
+        harness.bind.mockReturnValue({ build: harness.build, kind: 'pi' });
+        await runAgentNode({ agentRef: 'reviewer', allowPause: true, workspace: where });
+        expect(harness.build.mock.calls[0]?.[0]).not.toHaveProperty('allowPause');
+        vi.mocked(resolveAgentRuntime).mockResolvedValue({ runtime: 'mastra', source: 'default' });
+      });
+
+      it('returns the questions and a saved tree instead of a result, and delivers nothing', async () => {
+        vi.mocked(runImplementerTurn).mockResolvedValueOnce({
+          needsInput: QUESTIONS,
+          text: 'I need to know which database.',
+        } as never);
+        // The reset onto the pushed branch, then the read of the commit the checkout is at.
+        workspace.exec.mockResolvedValueOnce('').mockResolvedValueOnce(`${'d'.repeat(40)}\n`);
+        const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+
+        const result = await runAgentNode({
+          agentRef: 'reviewer',
+          allowPause: true,
+          workspace: where,
+        });
+
+        expect(result).toMatchObject({
+          needsInput: {
+            questions: QUESTIONS,
+            resume: {
+              asked: [{ header: 'DB', question: 'Which database?' }],
+              snapshot: { artifactId: 'art-9', bytes: 321 },
+              surface: { agentKey: 'reviewer', branch: 'auto/JIRA-1', kind: 'runAgentNode' },
+              version: 1,
+            },
+          },
+        });
+        expect(snapshotWorkingTree).toHaveBeenCalledWith(workspace, {
+          runId: 'run-1',
+          startSha: 'd'.repeat(40),
+        });
+        // The event carries counts only, never the question text.
+        expect(events).toHaveBeenCalledWith({
+          name: 'agent.paused',
+          outputJson: { questions: 1, snapshotBytes: 321, surface: 'runAgentNode' },
+        });
+        expect(workspace.destroy).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledTimes(1);
+        events.mockRestore();
+      });
+
+      it('restores the tree before the first turn and puts the answers in its message', async () => {
+        const events = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+
+        await runAgentNode({
+          agentRef: 'reviewer',
+          resumeInput: resumeInputFor(surface),
+          userMessage: 'audit the auth module',
+          workspace: where,
+        });
+
+        expect(restoreWorkingTree).toHaveBeenCalledWith(
+          workspace,
+          expect.objectContaining({ artifactId: 'art-1' })
+        );
+        // Cut from the commit the tree was saved against, and left there: the sync to the
+        // branch tip would stop the patch applying.
+        expect(vi.mocked(createWorkspace).mock.calls[0]?.[4]).toBe('a'.repeat(40));
+        expect(workspace.gitAuthed).not.toHaveBeenCalled();
+        expect(workspace.exec).not.toHaveBeenCalledWith(
+          expect.stringContaining('reset --hard origin/')
+        );
+        expect(vi.mocked(restoreWorkingTree).mock.invocationCallOrder[0]).toBeLessThan(
+          vi.mocked(runImplementerTurn).mock.invocationCallOrder[0] ?? 0
+        );
+        const user = vi.mocked(runImplementerTurn).mock.calls[0]?.[0].user ?? '';
+        expect(user).toContain('audit the auth module');
+        expect(user).toContain('[answers: begin]');
+        expect(user).toContain('| Postgres');
+        expect(events).toHaveBeenCalledWith({
+          name: 'agent.resumed',
+          outputJson: { round: 2, snapshotBytes: 10, surface: 'runAgentNode' },
+        });
+        events.mockRestore();
+      });
+
+      it.each([
+        ['another surface', { ...surface, kind: 'runAgentTask' }],
+        ['another agent', { ...surface, agentKey: 'planner' }],
+        ['another branch', { ...surface, branch: 'auto/OTHER-1' }],
+        ['no surface state', undefined],
+      ])('refuses, without retrying or cloning, a state from %s', async (_name, state) => {
+        const failure = await runAgentNode({
+          agentRef: 'reviewer',
+          resumeInput: resumeInputFor(state),
+          workspace: where,
+        }).catch((err: unknown) => err);
+
+        expect(failure).toMatchObject({ nonRetryable: true, type: 'NEEDS_INPUT_RESTORE_FAILED' });
+        expect(vi.mocked(createWorkspace)).not.toHaveBeenCalled();
+        expect(vi.mocked(runImplementerTurn)).not.toHaveBeenCalled();
+      });
+
+      it('refuses a malformed resume input without retrying', async () => {
+        const failure = await runAgentNode({
+          agentRef: 'reviewer',
+          resumeInput: { answers: [], resume: { version: 2 }, round: 1 } as never,
+          workspace: where,
+        }).catch((err: unknown) => err);
+        expect(failure).toMatchObject({ nonRetryable: true, type: 'NEEDS_INPUT_RESTORE_FAILED' });
       });
     });
   });

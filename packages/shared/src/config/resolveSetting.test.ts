@@ -147,7 +147,9 @@ describe('run pinning', () => {
     const snapshot = await snapshotPinnedSettings(TEAM_CTX);
     expect(snapshot).toEqual({
       'workflow.fanoutConcurrency': 8,
+      'workflow.maxNeedsInputRounds': 5,
       'workflow.maxTransitions': 500,
+      'workflow.needsInputTimeoutSeconds': 86_400,
       'workspace.egressPolicy': 'open',
       'workspace.implementerRuntime': 'mastra',
     });

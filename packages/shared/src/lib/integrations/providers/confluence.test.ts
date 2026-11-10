@@ -34,3 +34,33 @@ describe('ConfluenceProvider — testConnection', () => {
     await expect(provider.searchPages('q', [])).resolves.toEqual([]);
   });
 });
+
+describe('ConfluenceProvider — updatePageWithPrLink', () => {
+  const client = (get: () => Promise<unknown>, put: () => Promise<unknown>) =>
+    new ConfluenceProvider(
+      { baseUrl: 'https://acme.atlassian.net', get, put } as unknown as AtlassianClient,
+      {}
+    );
+
+  it('reports ok when the page is updated', async () => {
+    const provider = client(
+      vi.fn().mockResolvedValue({ title: 'T', version: { number: 1 } }),
+      vi.fn().mockResolvedValue({})
+    );
+    await expect(provider.updatePageWithPrLink('1', 'https://x', 't')).resolves.toEqual({
+      ok: true,
+    });
+  });
+
+  it('does not throw on a 500 and reports the failure', async () => {
+    const error = new AtlassianError(500, 'server', 'boom');
+    const provider = client(
+      vi.fn().mockResolvedValue({ title: 'T' }),
+      vi.fn().mockRejectedValue(error)
+    );
+    await expect(provider.updatePageWithPrLink('1', 'https://x', 't')).resolves.toEqual({
+      error,
+      ok: false,
+    });
+  });
+});

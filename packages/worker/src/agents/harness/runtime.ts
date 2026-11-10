@@ -335,6 +335,7 @@ export function harnessRuntime<Report>(
         throw withSpentUsage(debitError.error, owed(spent));
       }
       return {
+        ...(result.needsInput ? { needsInput: result.needsInput } : {}),
         steps: result.steps,
         stoppedReason: result.stoppedReason,
         text: result.text,

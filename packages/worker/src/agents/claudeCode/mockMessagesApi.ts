@@ -30,6 +30,34 @@ type Block =
 /** A task with this word asks for the relayed MCP tool instead of a shell command. */
 const MCP_TOOL = 'mcp__connection__echo';
 
+/**
+ * A task can also carry its own command as `RUN[[command]]` (no double quotes
+ * or backslashes), a file to write as `WRITE[[/absolute/path]]` (through the
+ * Write tool), or ask for a sub-agent with `SUBAGENT` (the Agent tool, whose own
+ * task is `SUBTASK` and which runs `SUBCOMMAND[[command]]`), or ask for a skill
+ * with `SKILL[[name]]` (the Skill tool). The word `ASK` makes the model call
+ * `AskUserQuestion` (after the `RUN[[...]]` command, when there is one), whether
+ * or not the request offers the tool; `MALFORMED` makes that question invalid.
+ * `SUBASK` in a sub-agent's task makes the sub-agent ask instead (and with
+ * `SUBAGENT`, the main agent's prompt to its sub-agent carries it). Once a
+ * question has been asked and answered or refused, the next reply is text.
+ */
+const RUN = /RUN\[\[([^\]]+)\]\]/;
+const WRITE = /WRITE\[\[([^\]]+)\]\]/;
+const SKILL = /SKILL\[\[([^\]]+)\]\]/;
+const SUBCOMMAND = /SUBCOMMAND\[\[([^\]]+)\]\]/;
+const ASK = /(?<![A-Za-z])ASK(?![A-Za-z])/;
+
+const QUESTION = {
+  header: 'Library',
+  multiSelect: false,
+  options: [
+    { description: 'The popular one', label: 'Alpha' },
+    { description: 'The small one', label: 'Beta' },
+  ],
+  question: 'Which library should be used?',
+};
+
 const COMMANDS = [
   ['HANG', 'sleep 300'],
   ['DENY', 'echo forbidden'],
@@ -85,21 +113,87 @@ export function startMockMessagesApi(): Promise<MockMessagesApi> {
       const asksForMcp = task.includes('MCPCALL') && tools.includes(MCP_TOOL) && !hasToolResult;
       const asksForTool = asksForMcp || (tools.includes('Bash') && !hasToolResult);
       const command =
+        SUBCOMMAND.exec(task)?.[1] ??
+        RUN.exec(task)?.[1] ??
         COMMANDS.find(([word]) => task.includes(word))?.[1] ??
         'echo hello > out.txt && cat out.txt';
-      const content: Block[] = asksForMcp
-        ? [{ id: 'toolu_1', input: { text: 'from the harness' }, name: MCP_TOOL, type: 'tool_use' }]
-        : asksForTool
-          ? [
-              {
-                id: 'toolu_1',
-                input: { command, description: 'mock' },
-                name: 'Bash',
-                type: 'tool_use',
-              },
-            ]
-          : [{ text: hasToolResult ? 'all done' : 'ok', type: 'text' }];
-      const stop = asksForTool ? 'tool_use' : 'end_turn';
+      const writePath = WRITE.exec(task)?.[1];
+      const asksForWrite = writePath !== undefined && tools.includes('Write') && !hasToolResult;
+      const skillName = SKILL.exec(task)?.[1];
+      const asksForSkill = skillName !== undefined && tools.includes('Skill') && !hasToolResult;
+      const asksForAgent =
+        task.includes('SUBAGENT') &&
+        tools.includes('Agent') &&
+        !hasToolResult &&
+        !asksForMcp &&
+        !asksForSkill;
+      const asked = messages.some(
+        (m) =>
+          Array.isArray(m.content) &&
+          m.content.some((b) => b?.type === 'tool_use' && b.name === 'AskUserQuestion')
+      );
+      const asksToAsk = task.includes('SUBTASK')
+        ? task.includes('SUBASK') && !asked && !hasToolResult
+        : ASK.test(task) &&
+          !asked &&
+          (hasToolResult || (!RUN.test(task) && !task.includes('SUBAGENT')));
+      const askBlock: Block = {
+        id: 'toolu_ask',
+        input: {
+          questions: [
+            task.includes('MALFORMED') ? { ...QUESTION, question: 'Q'.repeat(600) } : QUESTION,
+          ],
+        },
+        name: 'AskUserQuestion',
+        type: 'tool_use',
+      };
+      const content: Block[] = asksToAsk
+        ? [askBlock]
+        : asksForSkill
+          ? [{ id: 'toolu_1', input: { skill: skillName }, name: 'Skill', type: 'tool_use' }]
+          : asksForAgent
+            ? [
+                {
+                  id: 'toolu_1',
+                  input: {
+                    description: 'sub task',
+                    prompt: `SUBTASK ${task.includes('SUBASK') ? 'SUBASK ' : ''}${SUBCOMMAND.exec(task)?.[0] ?? ''}`,
+                    // The SDK runs a sub-agent in the background unless told not to.
+                    run_in_background: false,
+                  },
+                  name: 'Agent',
+                  type: 'tool_use',
+                },
+              ]
+            : asksForWrite
+              ? [
+                  {
+                    id: 'toolu_1',
+                    input: { content: 'written', file_path: writePath },
+                    name: 'Write',
+                    type: 'tool_use',
+                  },
+                ]
+              : asksForMcp
+                ? [
+                    {
+                      id: 'toolu_1',
+                      input: { text: 'from the harness' },
+                      name: MCP_TOOL,
+                      type: 'tool_use',
+                    },
+                  ]
+                : asksForTool
+                  ? [
+                      {
+                        id: 'toolu_1',
+                        input: { command, description: 'mock' },
+                        name: 'Bash',
+                        type: 'tool_use',
+                      },
+                    ]
+                  : [{ text: hasToolResult ? 'all done' : 'ok', type: 'text' }];
+      const stop = content.some((b) => b.type === 'tool_use') ? 'tool_use' : 'end_turn';
       const message = {
         content,
         id: 'msg_1',

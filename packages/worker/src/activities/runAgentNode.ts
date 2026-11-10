@@ -27,12 +27,25 @@ import type { AgentTools } from '../lib/config/agentSpec.js';
 import { composeAgentPrompt, resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { withChannelScope } from '../lib/config/channelContext.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { resolveProfileForRuntime } from '../lib/config/harnessProfile.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
+import {
+  checkSurfaceState,
+  cloneCredentialSecrets,
+  type NeedsInputResult,
+  type PauseOptions,
+  pausable,
+  pauseForInput,
+  readResumeInput,
+  restoreForResume,
+  resumeCheckoutSha,
+  resumeMessage,
+} from '../lib/pauseResume.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
@@ -41,7 +54,7 @@ import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
 import { runAgent } from './runAgent.js';
 import { createWorkspace, fetchBranchesSubcommand, shellQuote } from './workspace.js';
 
-export interface RunAgentNodeInput {
+export interface RunAgentNodeInput extends PauseOptions {
   /** Library agent reference: `<key>` (float) or `<key>@<version>` (pin). */
   agentRef: string;
   /** Literal user message; when omitted, the resolved node inputs become the message (see {@link inputsToMessage}). */
@@ -101,13 +114,17 @@ export interface RunAgentNodeResult {
  * event on the trace saying so. A node that asks for a workspace runs in a
  * checkout instead (see {@link runInCheckout}), on whichever runtime was pinned.
  */
-export async function runAgentNode(input: RunAgentNodeInput): Promise<RunAgentNodeResult> {
+export async function runAgentNode(
+  input: RunAgentNodeInput
+): Promise<RunAgentNodeResult | NeedsInputResult> {
   // Heartbeats while the whole activity runs: its LLM call can outlast the
   // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
   return withHeartbeat('runAgentNode', runAgentNodeImpl(input));
 }
 
-async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeResult> {
+async function runAgentNodeImpl(
+  input: RunAgentNodeInput
+): Promise<RunAgentNodeResult | NeedsInputResult> {
   const baseCtx = await currentRequestContext();
   // Phase A: a channel-task run carries its originating channelId on the request
   // (not derivable from `currentRequestContext`, which keys on ActiveWorkflow).
@@ -150,6 +167,15 @@ async function runAgentNodeImpl(input: RunAgentNodeInput): Promise<RunAgentNodeR
         workspace: input.workspace,
       });
     }
+    // No workspace, so no Claude Code runtime to load a profile into: say so.
+    await resolveProfileForRuntime({
+      agentKey: key,
+      appliesToRun: false,
+      ctx: resolveCtx,
+      ranOn: 'mastra',
+      runtime: loop.runtime,
+      tracer,
+    });
     if (loop.runtime !== 'mastra') {
       tracer.addActivityEvent({
         name: 'agent.runtime_not_applicable',
@@ -265,7 +291,7 @@ async function runInCheckout(args: {
   tracer: AgentTracer;
   userMessage: string;
   workspace: NonNullable<RunAgentNodeInput['workspace']>;
-}): Promise<RunAgentNodeResult> {
+}): Promise<RunAgentNodeResult | NeedsInputResult> {
   const { input, key, loop, onOpen, resolveCtx, tracer } = args;
   if (!args.workspace.repoId) {
     throw ApplicationFailure.nonRetryable(
@@ -273,12 +299,23 @@ async function runInCheckout(args: {
       'AGENT_NODE_NO_REPOSITORY'
     );
   }
+  // Before any container exists: a state that is not this node's is refused without a clone.
+  const resume = input.resumeInput ? readResumeInput(input.resumeInput) : undefined;
   const resolved = await resolveAgent(key, resolveCtx);
   await assertModelPricedForUsdCap(resolved.model.spec, { channelId: resolveCtx.channelId });
   const harness =
     loop.runtime === 'mastra'
       ? undefined
       : HARNESSES.select(loop.runtime).bind(key, resolved.model);
+  // Claude Code gets the Agent's approved profile (or fails closed without it); Mastra and
+  // Pi note that it was not applied. Before the container exists.
+  const profile = await resolveProfileForRuntime({
+    agentKey: key,
+    ctx: resolveCtx,
+    resolved,
+    runtime: loop.runtime,
+    tracer,
+  });
 
   const repo = await withRunDetection(
     await prisma.connection.findUniqueOrThrow({
@@ -297,6 +334,9 @@ async function runInCheckout(args: {
     args.workspace.branch ??
     `${(await resolveWorkflowDefaults()).branchPrefix}/${args.workspace.ticketId}`;
   const baseBranch = await resolveRunBaseBranch(args.workspace.baseBranch, repo);
+  if (resume) {
+    checkSurfaceState(resume.resume, { agentKey: key, branch, kind: 'runAgentNode' });
+  }
   // The clone credential is never written into the container: only `gitAuthed`
   // injects it, and only here, before the agent has started.
   const references = await loadRunKnowledgeBases({
@@ -313,7 +353,8 @@ async function runInCheckout(args: {
     branch,
     baseBranch,
     executorImageFor(repo),
-    undefined,
+    // A resumed node is cut from the commit its saved tree was taken against, not the branch tip.
+    resumeCheckoutSha(resume),
     undefined,
     {
       detectedStack: repo.detectedStack,
@@ -327,13 +368,23 @@ async function runInCheckout(args: {
   );
   onOpen(workspace.destroy);
   let checkedOut = branch;
-  try {
-    await workspace.gitAuthed(fetchBranchesSubcommand([branch]));
-    await workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
-  } catch {
-    checkedOut = baseBranch;
+  const pinnedSha = resumeCheckoutSha(resume);
+  if (pinnedSha) {
+    // Already at the commit the saved tree is a patch against; moving it would stop the
+    // patch applying.
+    checkedOut = pinnedSha.slice(0, 12);
+  } else {
+    try {
+      await workspace.gitAuthed(fetchBranchesSubcommand([branch]));
+      await workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
+    } catch {
+      checkedOut = baseBranch;
+    }
   }
   await workspace.runSetup?.();
+  // Where the checkout is before the agent runs: what a pause saves the tree against.
+  // Read only for a node that may pause, so a read-only node runs no extra command.
+  const startSha = input.allowPause ? (await workspace.exec('git rev-parse HEAD')).trim() : '';
   tracer.addActivityEvent({
     name: 'agent.runtime',
     outputJson: {
@@ -343,6 +394,14 @@ async function runInCheckout(args: {
       source: loop.source,
     },
   });
+
+  // The run after a pause: the paused run's tree goes back before any turn, and the first
+  // message carries the person's answers.
+  let userMessage = args.userMessage;
+  if (resume) {
+    await restoreForResume({ resume, surface: 'runAgentNode', tracer, workspace });
+    userMessage = resumeMessage(resume, userMessage);
+  }
 
   const spanName = input.spanName ?? 'llm.agent_node';
   if (harness) {
@@ -368,6 +427,8 @@ async function runInCheckout(args: {
       // The connection the Mastra loop would bind, relayed from the worker.
       mcp: await resolveAgentMcpUrl(key, resolveCtx, { tracer }),
       toolKeys: resolved.toolKeys,
+      ...pausable(input.allowPause, loop.runtime),
+      ...(profile ? { profile } : {}),
       tracer,
       workspace,
     });
@@ -386,8 +447,21 @@ async function runInCheckout(args: {
         `${systemPrompt}\n\n${CHECKOUT_PREAMBLE}${await knowledgeBasePromptBlock(workspace)}`.trim(),
       tracer,
       usageEvent: spanName,
-      user: args.userMessage,
+      user: userMessage,
     });
+    // The agent asked a person: nothing else this node does is skipped, it just ends here.
+    if (turn.needsInput) {
+      return pauseForInput({
+        lastText: turn.text,
+        questions: turn.needsInput,
+        secrets: cloneCredentialSecrets(authedCloneUrl),
+        startSha,
+        state: { agentKey: key, branch },
+        surface: 'runAgentNode',
+        tracer,
+        workspace,
+      });
+    }
     return { text: turn.text };
   }
 
@@ -454,7 +528,7 @@ async function runInCheckout(args: {
     spec.tools = { ...mcpTools, ...spec.tools } as AgentTools;
   }
   throwIfActivityCancelled();
-  const result = await runAgent(spec, args.userMessage, {
+  const result = await runAgent(spec, userMessage, {
     ctx: resolveCtx,
     // The workspace and MCP tools record their own calls on this tracer; any
     // other tool's calls are recorded from the loop's steps.

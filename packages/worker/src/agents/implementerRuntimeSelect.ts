@@ -4,8 +4,10 @@ import type { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import { type AgentRuntimeSource, resolveAgentRuntime } from '../lib/config/agentRuntime.js';
 import { type ResolvedSkill, skillsToPromptSuffix } from '../lib/config/agentSkills.js';
+import { resolveProfileForRuntime } from '../lib/config/harnessProfile.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { getBoundModel } from '../lib/models.js';
+import { pausable } from '../lib/pauseResume.js';
 import { BrowserToolset } from './browserTools.js';
 import { HARNESSES } from './harnessRegistry.js';
 import {
@@ -80,6 +82,11 @@ export interface ImplementerTurnRunner {
  * runner is reused.
  */
 export async function buildImplementerTurnRunner(input: {
+  /**
+   * The session can stop to ask a person (the ask-and-resume loop set it). Only a runtime
+   * that can pause acts on it; any other stays unattended.
+   */
+  allowPause?: boolean;
   agentKey?: string;
   ctx?: ResolveCtx;
   tracer: AgentTracer;
@@ -100,6 +107,13 @@ export async function buildImplementerTurnRunner(input: {
   input.tracer.addActivityEvent({
     name: 'agent.runtime',
     outputJson: { agentKey, runtime: kind, source: kindSource },
+  });
+
+  const profile = await resolveProfileForRuntime({
+    agentKey,
+    ctx: input.ctx,
+    runtime: kind,
+    tracer: input.tracer,
   });
 
   if (kind === 'mastra') {
@@ -154,6 +168,7 @@ export async function buildImplementerTurnRunner(input: {
     // `.claude` settings) applies, so a flow ported from a developer machine
     // behaves as it did there. Its hooks run in the container; the worker-side
     // policy still decides every tool call.
+    ...pausable(input.allowPause, harness.kind),
     harnessApiRetries: config.harnessApiRetries,
     harnessContextTokens: config.harnessContextTokens,
     loadProjectSettings: true,
@@ -162,6 +177,8 @@ export async function buildImplementerTurnRunner(input: {
     // The same MCP connection the Mastra loop would bind, relayed from the worker.
     mcp: isMcpToolEnabled(config.toolKeys) ? mcpTarget : null,
     ...(browserToolset ? { browserToolset } : {}),
+    // The approved profile the Agent is bound to (Claude Code only; see above).
+    ...(profile ? { profile } : {}),
     // The Agent row's tools bound the harness as they bound the Mastra loop.
     toolKeys: config.toolKeys,
     tracer: input.tracer,

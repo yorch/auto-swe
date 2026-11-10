@@ -4,7 +4,13 @@ import {
   type KnowledgeBaseProvider,
 } from '../knowledgeBase.js';
 import type { ResolvedKnowledgeBaseConfig } from '../registry.js';
-import type { CreatedPage, KnowledgePage, PageCreateFields, SearchOptions } from '../types.js';
+import type {
+  CreatedPage,
+  KnowledgePage,
+  KnowledgeWriteResult,
+  PageCreateFields,
+  SearchOptions,
+} from '../types.js';
 
 // ---- Notion API response shapes ----
 
@@ -253,7 +259,11 @@ export class NotionKnowledgeBaseProvider implements KnowledgeBaseProvider {
     }
   }
 
-  async updatePageWithPrLink(pageId: string, prUrl: string, prTitle: string): Promise<void> {
+  async updatePageWithPrLink(
+    pageId: string,
+    prUrl: string,
+    prTitle: string
+  ): Promise<KnowledgeWriteResult> {
     try {
       await this.request('PATCH', `/blocks/${encodeURIComponent(pageId)}/children`, {
         children: [
@@ -276,8 +286,10 @@ export class NotionKnowledgeBaseProvider implements KnowledgeBaseProvider {
           },
         ],
       });
-    } catch {
-      // Advisory — do not throw to callers
+    } catch (err) {
+      // Advisory — do not throw to callers; the result says it failed
+      return { error: err, ok: false };
     }
+    return { ok: true };
   }
 }
