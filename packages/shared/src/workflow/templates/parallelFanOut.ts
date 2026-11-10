@@ -1,11 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  terminate,
-  validatePhase,
-} from './authoring/index.js';
+import { prResult, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Splits the ticket into parallel sub-task branches using fanOut, integrates
@@ -36,8 +31,8 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
     'resolving any conflicts, and a single pull request is opened.',
   entry: 'validate',
   name: 'parallel-fan-out',
-  nodes: mergeNodes(
-    validatePhase({ next: 'buildSubtasks' }),
+  ...authored(
+    macro('validate', 'validatePhase@1', { next: 'buildSubtasks' }),
     {
       branchDone: {
         group: 'fan-out',
@@ -198,7 +193,7 @@ export const PARALLEL_FAN_OUT_SPEC: WorkflowSpec = {
         type: 'terminate',
       },
     },
-    openPullRequest({ next: 'done' }),
+    macro('pr', 'openPullRequest@1', { next: 'done' }),
     {
       done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
     }

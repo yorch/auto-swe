@@ -2,6 +2,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { collectUseProblems } from '../macros.js';
 import { type Node, parseWorkflowSpec, type WorkflowSpec } from '../spec.js';
 import { BUILTIN_TEMPLATES } from './index.js';
 
@@ -38,11 +39,15 @@ function sugarGolden(name: string): WorkflowSpec {
   return JSON.parse(readFileSync(path.join(SUGAR_DIR, `${name}.json`), 'utf8')) as WorkflowSpec;
 }
 
-/** Drop `group`, and `title` on every node type that did not already have one. */
+/**
+ * Drop `group`, and `title` on every node type that did not already have one, and the macro
+ * metadata: each node's `use` tag and the spec's `uses` map. What is left is the flat contract.
+ */
 function stripPresentation(spec: WorkflowSpec): WorkflowSpec {
   const nodes: Record<string, Node> = {};
+  const { uses: _uses, ...flat } = spec;
   for (const [id, node] of Object.entries(spec.nodes)) {
-    const { group: _group, ...rest } = node as Node & { group?: string };
+    const { group: _group, use: _use, ...rest } = node as Node & { group?: string; use?: string };
     if (node.type.startsWith('human')) {
       nodes[id] = rest as Node;
     } else {
@@ -50,7 +55,7 @@ function stripPresentation(spec: WorkflowSpec): WorkflowSpec {
       nodes[id] = noTitle as Node;
     }
   }
-  return { ...spec, nodes };
+  return { ...flat, nodes };
 }
 
 /** Remove a pass-through node, pointing everything that targeted it at its `next`. */
@@ -271,6 +276,30 @@ describe('built-in templates match their pre-helper golden specs', () => {
       }
     }
   );
+
+  it.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const))(
+    '%s: its uses agree with its flat nodes',
+    (_name, spec) => {
+      expect(collectUseProblems(spec)).toEqual([]);
+      const tags = new Set<string>();
+      for (const node of Object.values(spec.nodes)) {
+        if (node.use !== undefined) {
+          tags.add(node.use);
+        }
+      }
+      // Every use has nodes, and every tag is declared.
+      expect([...tags].sort()).toEqual(Object.keys(spec.uses ?? {}).sort());
+    }
+  );
+
+  it('records the authored form of every template that calls a macro helper', () => {
+    const withUses = BUILTIN_TEMPLATES.filter((t) => t.spec.uses !== undefined).map((t) => t.name);
+    expect(withUses.length).toBeGreaterThan(0);
+    for (const t of BUILTIN_TEMPLATES) {
+      const body = JSON.stringify(t.spec);
+      expect(t.spec.uses !== undefined, t.name).toBe(body.includes('"use":'));
+    }
+  });
 
   it('keeps removePassThrough honest: it retargets every edge and the entry', () => {
     const spec = parseWorkflowSpec({

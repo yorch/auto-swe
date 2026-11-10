@@ -8863,7 +8863,7 @@
       "title": "Draft pull request refusals"
     },
     {
-      "anchor": "ciLoop({",
+      "anchor": "macro('ci', 'ciLoop@1', {",
       "before": 6,
       "id": "fourEyes",
       "lines": 45,
@@ -8879,7 +8879,7 @@
       "title": "four-eyes: request-changes note, retry limit and no-op fix"
     },
     {
-      "anchor": "ciLoop({",
+      "anchor": "macro('ci', 'ciLoop@1', {",
       "before": 6,
       "id": "consensus",
       "lines": 12,
@@ -11383,7 +11383,7 @@
       "title": "ci-triage-and-fix is an ordinary spec the interpreter runs"
     },
     {
-      "anchor": "openPullRequest({ draft: true, next: 'reportFix', resetCiRetries: true }),",
+      "anchor": "macro('pr', 'openPullRequest@1', { draft: true, next: 'reportFix', resetCiRetries: true }),",
       "before": 2,
       "id": "ciTriageDraft",
       "lines": 40,
@@ -12367,7 +12367,7 @@
       "title": "The ticketContextGatherer persona inherits the planner model and has no tools"
     },
     {
-      "anchor": "const { authoredNodes } = collectAuthoredCode(t.spec as WorkflowSpec);",
+      "anchor": "const { authoredNodes } = collectAuthoredCode(spec as WorkflowSpec);",
       "before": 4,
       "id": "bundleShellAudit",
       "lines": 7,

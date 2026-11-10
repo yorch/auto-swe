@@ -83,4 +83,10 @@ describe('diffSpecs and presentation-only fields', () => {
     expect(d.changedNodes).toEqual([]);
     expect(specsEqual(s(), s())).toBe(true);
   });
+
+  it('reports a use-tag-only change as presentation, not as a changed node', () => {
+    const d = diffSpecs(spec(), spec({ done: DONE, start: { ...START, use: 'ci' } }));
+    expect(d.presentationOnlyNodes).toEqual(['start']);
+    expect(d.changedNodes).toEqual([]);
+  });
 });

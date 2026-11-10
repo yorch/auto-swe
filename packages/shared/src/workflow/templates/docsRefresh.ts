@@ -1,6 +1,7 @@
 import { DOCS_MAINTAINER_PROMPT } from '../../lib/agentPrompts.js';
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { mergeNodes, openPullRequest, prResult, terminate } from './authoring/index.js';
+import { prResult, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * What the documentation step may change: markdown anywhere, and anything under `docs/`. The
@@ -27,7 +28,7 @@ export const DOCS_REFRESH_SPEC: WorkflowSpec = {
     'to change opens none, so it suits a schedule.',
   entry: 'implement',
   name: 'docs-refresh',
-  nodes: mergeNodes(
+  ...authored(
     {
       implement: {
         config: {
@@ -51,7 +52,7 @@ export const DOCS_REFRESH_SPEC: WorkflowSpec = {
         type: 'cond',
       },
     },
-    openPullRequest({ draft: true, next: 'done' }),
+    macro('pr', 'openPullRequest@1', { draft: true, next: 'done' }),
     {
       done: terminate('SUCCESS', { group: 'finish', result: prResult(), title: 'Draft PR opened' }),
       // No group on the extra terminal: a second terminal in `finish` would split it in two.

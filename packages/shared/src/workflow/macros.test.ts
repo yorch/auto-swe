@@ -286,12 +286,16 @@ describe('the use field and the uses map in the schema', () => {
     expect(canonical(parsed)).toBe(canonical(plain));
   });
 
-  it('adds neither field to any built-in template', () => {
+  it('carries the fields on a built-in template only where it was written with a macro', () => {
     for (const tmpl of BUILTIN_TEMPLATES) {
       const stored = JSON.parse(JSON.stringify(tmpl.spec));
-      expect(Object.hasOwn(tmpl.spec, 'uses'), tmpl.name).toBe(false);
-      expect(JSON.stringify(tmpl.spec), tmpl.name).not.toMatch(/"uses?"/);
-      expect(JSON.stringify(WorkflowSpecSchema.parse(stored)), tmpl.name).not.toMatch(/"uses?"/);
+      const tagged = Object.values(tmpl.spec.nodes).some((n) => n.use !== undefined);
+      expect(Object.hasOwn(tmpl.spec, 'uses'), tmpl.name).toBe(tagged);
+      // Both fields survive the schema, so a stored built-in keeps its authored form.
+      expect(JSON.stringify(WorkflowSpecSchema.parse(stored)), tmpl.name).toBe(
+        JSON.stringify(WorkflowSpecSchema.parse(JSON.parse(JSON.stringify(stored))))
+      );
+      expect(WorkflowSpecSchema.parse(stored).uses, tmpl.name).toEqual(tmpl.spec.uses);
     }
   });
 
@@ -683,13 +687,22 @@ describe('the built-in templates', () => {
         macro: 'validatePhase@1',
       },
     };
-    const nodes: Record<string, Node> = { ...ticketToMerge.nodes };
+    // The built-in records exactly these uses; the rest of the test starts from its plain form.
+    expect(ticketToMerge.uses).toEqual(uses);
+    const { uses: _recorded, ...plainTicketToMerge } = ticketToMerge;
+    const flat: Record<string, Node> = Object.fromEntries(
+      Object.entries(plainTicketToMerge.nodes).map(([id, node]) => {
+        const { use: _tag, ...rest } = node as Node & { use?: string };
+        return [id, rest as Node];
+      })
+    );
+    const nodes: Record<string, Node> = { ...flat };
     for (const [useId, use] of Object.entries(uses)) {
       for (const id of Object.keys(expandUse(useId, use))) {
         nodes[id] = { ...(nodes[id] as Node), use: useId };
       }
     }
-    const authored = parseWorkflowSpec({ ...ticketToMerge, nodes, uses });
+    const authored = parseWorkflowSpec({ ...plainTicketToMerge, nodes, uses });
     expect(findUseProblems(authored)).toEqual([]);
     expect(validateSpec(authored).errors).toEqual([]);
     // Every use's entry is a node the template routes to.
@@ -699,6 +712,8 @@ describe('the built-in templates', () => {
     for (const useId of Object.keys(uses)) {
       plain = detachUse(plain, useId);
     }
-    expect(canonical(plain)).toBe(canonical(parseWorkflowSpec(ticketToMerge)));
+    expect(canonical(plain)).toBe(
+      canonical(parseWorkflowSpec({ ...plainTicketToMerge, nodes: flat }))
+    );
   });
 });

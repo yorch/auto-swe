@@ -1,12 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  qualityGate,
-  terminate,
-  validatePhase,
-} from './authoring/index.js';
+import { prResult, qualityGate, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Show the diff to a human reviewer; optionally apply their feedback before PR.
@@ -18,8 +12,8 @@ export const HUMAN_CODE_REVIEW_SPEC: WorkflowSpec = {
     'approve the diff as it is.',
   entry: 'validate',
   name: 'human-code-review',
-  nodes: mergeNodes(
-    validatePhase({ next: 'implement', successCriteria: false }),
+  ...authored(
+    macro('validate', 'validatePhase@1', { next: 'implement', successCriteria: false }),
     {
       implement: {
         group: 'implement',
@@ -74,7 +68,7 @@ export const HUMAN_CODE_REVIEW_SPEC: WorkflowSpec = {
         type: 'step',
       },
     },
-    openPullRequest({ next: 'done' }),
+    macro('pr', 'openPullRequest@1', { next: 'done' }),
     {
       done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
     }

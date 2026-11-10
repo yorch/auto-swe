@@ -1,11 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  mergeNodes,
-  prResult,
-  qodoReview,
-  terminate,
-  validatePhaseEntry,
-} from './authoring/index.js';
+import { prResult, qodoReview, terminate, validatePhaseEntry } from './authoring/index.js';
+import { authored } from './authoring/macro.js';
 import { ticketToMergeNodes } from './ticketToMerge.js';
 
 /**
@@ -32,7 +27,7 @@ export const TICKET_TO_MERGE_QODO_SPEC: WorkflowSpec = {
     'without the Qodo pull request bot waits the configured Qodo review wait on every run.',
   entry: validatePhaseEntry({ ticketContext: true }),
   name: 'ticket-to-merge-qodo',
-  nodes: mergeNodes(
+  ...authored(
     ticketToMergeNodes('qodoReview', { uiVerify: true }),
     qodoReview({ next: 'waitForHumanMerge', onBlocked: 'qodoDecision' }),
     {

@@ -1,12 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  qualityGate,
-  terminate,
-  validatePhase,
-} from './authoring/index.js';
+import { prResult, qualityGate, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Expedited P0 path: implement → lint → typecheck → open PR immediately.
@@ -20,8 +14,8 @@ export const HOTFIX_SPEC: WorkflowSpec = {
     'wait, no human approval. Intended for urgent production incidents only.',
   entry: 'validate',
   name: 'hotfix',
-  nodes: mergeNodes(
-    validatePhase({ next: 'implement', successCriteria: false }),
+  ...authored(
+    macro('validate', 'validatePhase@1', { next: 'implement', successCriteria: false }),
     {
       implement: {
         group: 'implement',
@@ -35,7 +29,7 @@ export const HOTFIX_SPEC: WorkflowSpec = {
       runLint: qualityGate('runLint', 'runTypecheck', { group: 'verify' }),
       runTypecheck: qualityGate('runTypecheck', 'openPR', { group: 'verify' }),
     },
-    openPullRequest({ next: 'done' }),
+    macro('pr', 'openPullRequest@1', { next: 'done' }),
     {
       done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
     }

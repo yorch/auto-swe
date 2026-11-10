@@ -1,5 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { mergeNodes, prResult, reviewLoop, terminate, validatePhase } from './authoring/index.js';
+import { prResult, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Collects human guidance before implementation starts.
@@ -11,7 +12,7 @@ export const SCOPE_CLARIFICATION_SPEC: WorkflowSpec = {
     'that are vague or too high-level for the agent to act on without guidance.',
   entry: 'clarify',
   name: 'scope-clarification',
-  nodes: mergeNodes(
+  ...authored(
     {
       clarify: {
         description:
@@ -54,7 +55,7 @@ export const SCOPE_CLARIFICATION_SPEC: WorkflowSpec = {
     },
     // No status stamp here: the run starts at `clarify`, and this template's
     // validate node is entered from it.
-    validatePhase({
+    macro('validate', 'validatePhase@1', {
       next: 'implement',
       stamp: false,
       successCriteriaId: 'successCriteria',
@@ -72,7 +73,7 @@ export const SCOPE_CLARIFICATION_SPEC: WorkflowSpec = {
         type: 'step',
       },
     },
-    reviewLoop({ approved: 'openPR' }),
+    macro('review', 'reviewLoop@1', { approved: 'openPR' }),
     {
       openPR: {
         group: 'finish',

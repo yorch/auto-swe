@@ -7,12 +7,19 @@
  * those plain nodes, under the same ids the templates have always used. That is
  * the whole contract:
  *
- *   - the engine, the worker, replay, run snapshots, template analytics (keyed
- *     by node id) and bundle hashes see a flat spec and nothing else;
- *   - a helper is not a new node type and never appears in a stored spec;
- *   - `golden.test.ts` holds every built-in to the flat spec it was seeded as.
+ *   - the flat nodes are the canonical form: the engine, the worker, replay,
+ *     run snapshots and template analytics (keyed by node id) read nothing
+ *     else;
+ *   - a helper is not a new node type. Where a template calls `ciLoop`,
+ *     `reviewLoop`, `validatePhase` or `openPullRequest` through `macro()`
+ *     (`./macro.ts`), the stored spec also carries the authored form as
+ *     metadata: a top-level `uses` entry naming the versioned macro and its
+ *     arguments, and a `use` tag on each node it produced (`workflow/macros.ts`);
+ *   - `golden.test.ts` holds every built-in to the flat spec it was seeded as:
+ *     with the `use` tags and the `uses` key removed, each built-in equals its
+ *     golden.
  *
- * Helpers return a node map to be spread into a template's `nodes`. Where a
+ * Helpers return a node map to be merged into a template's `nodes`. Where a
  * helper wires into the rest of a template it takes the target node id as a
  * plain string, so the template still names every join point itself.
  */

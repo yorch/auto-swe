@@ -1,15 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  ciLoop,
-  ciWaitEntry,
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  reviewLoop,
-  signalGate,
-  terminate,
-  validatePhase,
-} from './authoring/index.js';
+import { ciWaitEntry, prResult, signalGate, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * Standard review + CI loop, then waits for an explicit deployment-gate signal
@@ -24,8 +15,8 @@ export const EXTERNAL_APPROVAL_GATE_SPEC: WorkflowSpec = {
     'its decision. An approval lets the run finish; a rejection or a timeout ends it.',
   entry: 'validate',
   name: 'external-approval-gate',
-  nodes: mergeNodes(
-    validatePhase({ next: 'implement' }),
+  ...authored(
+    macro('validate', 'validatePhase@1', { next: 'implement' }),
     {
       implement: {
         group: 'implement',
@@ -37,9 +28,9 @@ export const EXTERNAL_APPROVAL_GATE_SPEC: WorkflowSpec = {
         type: 'step',
       },
     },
-    reviewLoop({ approved: 'openPR' }),
-    openPullRequest({ next: ciWaitEntry(), status: 'AWAITING_CI' }),
-    ciLoop({
+    macro('review', 'reviewLoop@1', { approved: 'openPR' }),
+    macro('pr', 'openPullRequest@1', { next: ciWaitEntry(), status: 'AWAITING_CI' }),
+    macro('ci', 'ciLoop@1', {
       fix: { handoff: { repush: 'repushAfterCIFix' } },
       passed: 'waitForDeployGate',
     }),

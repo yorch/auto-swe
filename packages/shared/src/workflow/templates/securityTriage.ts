@@ -1,12 +1,6 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import {
-  mergeNodes,
-  openPullRequest,
-  prResult,
-  qualityGate,
-  terminate,
-  validatePhase,
-} from './authoring/index.js';
+import { prResult, qualityGate, terminate } from './authoring/index.js';
+import { authored, macro } from './authoring/macro.js';
 
 /**
  * After a vuln scan, a human decides: fix now, accept risk, or abandon.
@@ -18,8 +12,8 @@ export const SECURITY_TRIAGE_SPEC: WorkflowSpec = {
     'change.',
   entry: 'validate',
   name: 'security-triage',
-  nodes: mergeNodes(
-    validatePhase({ next: 'implement', successCriteria: false }),
+  ...authored(
+    macro('validate', 'validatePhase@1', { next: 'implement', successCriteria: false }),
     {
       implement: {
         group: 'implement',
@@ -60,7 +54,7 @@ export const SECURITY_TRIAGE_SPEC: WorkflowSpec = {
       },
       terminateAbandoned: terminate('FAILED', { group: 'security triage', title: 'Abandoned' }),
     },
-    openPullRequest({ next: 'done' }),
+    macro('pr', 'openPullRequest@1', { next: 'done' }),
     {
       done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
     }
