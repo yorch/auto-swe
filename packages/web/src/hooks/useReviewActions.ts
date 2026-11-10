@@ -1,6 +1,10 @@
 'use client';
 
-import type { PullRequestCockpit, PullRequestCockpitDraft } from '@auto-swe/shared/types/api';
+import type {
+  PullRequestCockpit,
+  PullRequestCockpitDraft,
+  PullRequestReviewCheckResponse,
+} from '@auto-swe/shared/types/api';
 import { type QueryClient, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ApiError, api } from '@/lib/api';
 import { cockpitKey } from './usePullRequestCockpit';
@@ -55,6 +59,9 @@ export function useCreateDraft(id: string) {
       line: number;
       patchDigest: string;
       path: string;
+      side: PullRequestCockpitDraft['side'];
+      /** Omitted for a single line. */
+      startLine?: number;
     }) => api.post<{ data: StoredDraft }>(`${base(id)}/drafts`, input).then((r) => r.data),
     onSettled: () => replaceStaleRead(qc, id),
     onSuccess: (draft) =>
@@ -112,6 +119,30 @@ export function useSubmitReview(id: string) {
       headSha: string;
     }) => api.post<{ data: ReviewSent }>(`${base(id)}/review`, input).then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: cockpitKey(id) }),
+  });
+}
+
+/**
+ * Ask whether a send whose outcome was unknown reached the host. `attemptedAt` is when the send was
+ * attempted, and the rest is exactly what was sent. A `found` answer is a successful send (the
+ * gateway has cleared the drafts), so it is followed by the same fresh read; a `not-found` answer
+ * proves nothing and changes nothing.
+ */
+export function useCheckReview(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      attemptedAt: string;
+      body: string;
+      draftIds: string[];
+      event: ReviewEvent;
+      headSha: string;
+    }) =>
+      api
+        .post<{ data: PullRequestReviewCheckResponse }>(`${base(id)}/review/check`, input)
+        .then((r) => r.data),
+    onSuccess: (result) =>
+      result.status === 'found' ? qc.invalidateQueries({ queryKey: cockpitKey(id) }) : undefined,
   });
 }
 

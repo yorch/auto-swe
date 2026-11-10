@@ -23,7 +23,7 @@ const authOf = (hit: Hit | undefined): string | undefined =>
   (hit?.init.headers as Record<string, string> | undefined)?.Authorization;
 const input = (over: Partial<Parameters<typeof postReview>[3]> = {}) => ({
   body: 'Looks good',
-  comments: [{ body: 'use <=', line: 2, path: 'src/a.ts' }],
+  comments: [{ body: 'use <=', line: 2, path: 'src/a.ts', side: 'RIGHT' as const }],
   commitId: SHA,
   event: 'COMMENT' as const,
   ...over,
@@ -49,6 +49,40 @@ describe('postReview', () => {
       commit_id: SHA,
       event: 'COMMENT',
     });
+  });
+
+  it('sends a comment on a deleted line as LEFT, with no range keys', async () => {
+    const { fetchImpl, hits } = host(json({ id: 9 }));
+    await postReview(
+      TARGET,
+      REPO,
+      7,
+      input({ comments: [{ body: 'why', line: 5, path: 'a.ts', side: 'LEFT', startLine: null }] }),
+      { fetchImpl }
+    );
+    expect(bodyOf(hits[0]).comments).toEqual([
+      { body: 'why', line: 5, path: 'a.ts', side: 'LEFT' },
+    ]);
+  });
+
+  it('sends a range with start_line and a start_side equal to its side', async () => {
+    const { fetchImpl, hits } = host(json({ id: 9 }));
+    await postReview(
+      TARGET,
+      REPO,
+      7,
+      input({
+        comments: [
+          { body: 'a', line: 8, path: 'a.ts', side: 'RIGHT', startLine: 3 },
+          { body: 'b', line: 9, path: 'a.ts', side: 'LEFT', startLine: 4 },
+        ],
+      }),
+      { fetchImpl }
+    );
+    expect(bodyOf(hits[0]).comments).toEqual([
+      { body: 'a', line: 8, path: 'a.ts', side: 'RIGHT', start_line: 3, start_side: 'RIGHT' },
+      { body: 'b', line: 9, path: 'a.ts', side: 'LEFT', start_line: 4, start_side: 'LEFT' },
+    ]);
   });
 
   it('sends the token only as a bearer header, and refuses redirects', async () => {

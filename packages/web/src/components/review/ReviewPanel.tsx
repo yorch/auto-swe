@@ -2,7 +2,7 @@
 
 import type { PullRequestCockpit } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -13,9 +13,12 @@ import {
   type ReviewEvent,
   type ReviewSent,
   type SentBack,
+  useCheckReview,
   useSendBack,
   useSubmitReview,
 } from '@/hooks/useReviewActions';
+import { ApiError } from '@/lib/api';
+import { errMsg } from '@/lib/errors';
 import { safeHttpUrl } from '@/lib/safeUrl';
 import { cn, FOCUS_RING, plural } from '@/lib/utils';
 import { visibleText } from '@/lib/visibleText';
@@ -49,6 +52,13 @@ const WHY_NOT: Record<NonNullable<PullRequestCockpit['write']['reason']>, string
     'Your saved token for this repository cannot be used now, because the repository moved or you left its team. Save it again to send from here.',
 };
 
+/** What was sent when its outcome came back unknown, and when the send was attempted. */
+type UnknownAttempt = {
+  attemptedAt: Date;
+  message: string;
+  payload: { body: string; draftIds: string[]; event: ReviewEvent; headSha: string };
+};
+
 function HostLink({ url, children }: { url: string | null; children: string }) {
   const href = safeHttpUrl(url);
   return href ? (
@@ -78,8 +88,20 @@ export function ReviewPanel({ data }: { data: PullRequestCockpit }) {
   const [note, setNote] = useState('');
   const [confirmingBack, setConfirmingBack] = useState(false);
   const [sentBack, setSentBack] = useState<SentBack | null>(null);
+  const [unknown, setUnknown] = useState<UnknownAttempt | null>(null);
+  const [confirmed, setConfirmed] = useState(false);
+  const [checkNote, setCheckNote] = useState<string | null>(null);
   const submit = useSubmitReview(pull.id);
+  const check = useCheckReview(pull.id);
   const sendBack = useSendBack(pull.id);
+  // The native dialog hands focus back to Send, which is disabled by then; it goes to the check
+  // button instead once the dialog has closed on an unknown outcome.
+  const attemptBox = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (unknown !== null && !confirming) {
+      attemptBox.current?.querySelector('button')?.focus();
+    }
+  }, [unknown, confirming]);
 
   if (files.type !== 'ok') {
     return null;
@@ -118,8 +140,18 @@ export function ReviewPanel({ data }: { data: PullRequestCockpit }) {
     (event === 'COMMENT' && text === '' && current.length === 0);
   const blocked = outdated.length > 0 || nothingToSend;
   const headSha = files.headSha;
+  // The attempt is checked with exactly what was sent, whatever the form holds now, so editing it
+  // neither hides the attempt nor frees Send: only dismissing it, a found review or a new send
+  // ends it.
+  const attempt = unknown;
+  const busy = submit.isPending || check.isPending;
+  // While a send's outcome is unknown a second send could post the review twice.
+  const held = attempt !== null;
 
   const reason = (() => {
+    if (held) {
+      return 'Check whether it was sent, or dismiss it, before sending again.';
+    }
     if (outdated.length > 0) {
       return 'Delete or redo the outdated draft comments first.';
     }
@@ -183,6 +215,7 @@ export function ReviewPanel({ data }: { data: PullRequestCockpit }) {
         ) : null}
         <Textarea
           aria-label="Review summary"
+          disabled={check.isPending}
           hint={
             event === 'REQUEST_CHANGES'
               ? 'Required when you request changes.'
@@ -197,7 +230,7 @@ export function ReviewPanel({ data }: { data: PullRequestCockpit }) {
         />
         <div className="flex flex-wrap items-center gap-3">
           <Button
-            disabled={blocked || submit.isPending}
+            disabled={blocked || busy || held}
             onClick={() => setConfirming(true)}
             variant="primary"
           >
@@ -205,6 +238,59 @@ export function ReviewPanel({ data }: { data: PullRequestCockpit }) {
           </Button>
           {reason ? <span className="text-xs text-paper-400">{reason}</span> : null}
         </div>
+        {attempt ? (
+          // A live region: it appears after the send, and what a check finds is added to it.
+          <div ref={attemptBox}>
+            <Alert title="It is not known whether the review was sent" variant="warning">
+              <p>{attempt.message}</p>
+              <Button
+                className="mt-2"
+                disabled={busy}
+                onClick={() => {
+                  setCheckNote(null);
+                  check
+                    .mutateAsync({
+                      ...attempt.payload,
+                      attemptedAt: attempt.attemptedAt.toISOString(),
+                    })
+                    .then((result) => {
+                      if (result.status === 'found') {
+                        setSent(result);
+                        setConfirmed(true);
+                        setUnknown(null);
+                        setBody('');
+                      } else {
+                        setCheckNote(result.message);
+                      }
+                    })
+                    .catch((err: unknown) => {
+                      setCheckNote(
+                        err instanceof ApiError &&
+                          (err.code === 'ATTEMPT_TIME_INVALID' || err.code === 'DRAFTS_CHANGED')
+                          ? 'This send cannot be checked from here. Look at the pull request on the host before sending again.'
+                          : errMsg(err, 'Request failed')
+                      );
+                    });
+                }}
+                variant="secondary"
+              >
+                Check whether it was sent
+              </Button>
+              <Button
+                className="ml-2 mt-2"
+                disabled={busy}
+                onClick={() => {
+                  setUnknown(null);
+                  setCheckNote(null);
+                }}
+                variant="secondary"
+              >
+                It was not sent — dismiss
+              </Button>
+              {checkNote ? <p className="mt-2">{checkNote}</p> : null}
+            </Alert>
+          </div>
+        ) : null}
         {sent ? (
           <Alert title="Review sent" variant="success">
             {sent.comments > 0 ? `${plural(sent.comments, 'line comment')} went with it. ` : ''}
@@ -212,6 +298,7 @@ export function ReviewPanel({ data }: { data: PullRequestCockpit }) {
             {sent.draftsKept
               ? ' Your draft comments were sent but could not be cleared here. Delete them before you send another review, or they will go twice.'
               : ''}
+            {confirmed ? ' It was confirmed on GitHub.' : ''}
           </Alert>
         ) : null}
       </section>
@@ -272,14 +359,27 @@ export function ReviewPanel({ data }: { data: PullRequestCockpit }) {
         }
         onClose={() => setConfirming(false)}
         onConfirm={async () => {
-          const result = await submit.mutateAsync({
-            body: text,
-            draftIds: current.map((d) => d.id),
-            event,
-            headSha,
-          });
-          setSent(result);
-          setBody('');
+          const payload = { body: text, draftIds: current.map((d) => d.id), event, headSha };
+          const attemptedAt = new Date();
+          setUnknown(null);
+          setCheckNote(null);
+          setSent(null);
+          try {
+            const result = await submit.mutateAsync(payload);
+            setSent(result);
+            setConfirmed(false);
+            setBody('');
+          } catch (err) {
+            if (err instanceof ApiError && err.code === 'OUTCOME_UNKNOWN') {
+              setUnknown({
+                attemptedAt,
+                message: errMsg(err, 'Request failed'),
+                payload,
+              });
+              return;
+            }
+            throw err;
+          }
         }}
         open={confirming}
         pendingLabel="Sending…"

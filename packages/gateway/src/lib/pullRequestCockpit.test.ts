@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { PullFilesResult, ReviewFile } from './githubPullFiles.js';
 import {
   assembleCockpit,
+  draftIsCurrent,
+  draftsFor,
   type EvaluationRow,
   MAX_TOTAL_PATCH_CHARS,
   viewedPaths,
@@ -380,5 +382,51 @@ describe('viewedPaths', () => {
     expect(
       viewedPaths({ reason: 'failed', type: 'unavailable' }, [{ patchDigest: 'd', path: 'a' }])
     ).toEqual([]);
+  });
+});
+
+describe('draft anchors', () => {
+  const PATCH_TWO = [
+    '@@ -1,3 +1,3 @@',
+    ' keep',
+    '-gone',
+    '+added',
+    ' tail',
+    '@@ -20,2 +20,2 @@',
+    ' x',
+    ' y',
+  ].join('\n');
+  const files = new Map([['a.ts', { patch: PATCH_TWO, patchDigest: 'd' }]]);
+  const row = (over: Partial<Parameters<typeof draftIsCurrent>[0]> = {}) => ({
+    line: 2,
+    patchDigest: 'd',
+    path: 'a.ts',
+    side: 'RIGHT',
+    startLine: null,
+    ...over,
+  });
+
+  it('is current on a deleted line only on the old side', () => {
+    expect(draftIsCurrent(row({ side: 'LEFT' }), files)).toBe(true);
+    expect(draftIsCurrent(row({ line: 3, side: 'LEFT' }), files)).toBe(true);
+    expect(draftIsCurrent(row({ line: 4, side: 'LEFT' }), files)).toBe(false);
+  });
+
+  it('is current for a range inside a hunk and outdated across hunks', () => {
+    expect(draftIsCurrent(row({ line: 3, startLine: 1 }), files)).toBe(true);
+    expect(draftIsCurrent(row({ line: 20, startLine: 1 }), files)).toBe(false);
+  });
+
+  it('carries side and startLine to the page, with outdated set from the anchor', () => {
+    const out = draftsFor(ok([file({ patch: PATCH_TWO, patchDigest: 'd', path: 'a.ts' })]), [
+      {
+        body: 'b',
+        createdAt: new Date('2026-11-04T10:00:00.000Z'),
+        headSha: HEAD,
+        id: 'd1',
+        ...row({ line: 20, startLine: 1 }),
+      },
+    ]);
+    expect(out[0]).toMatchObject({ outdated: true, side: 'RIGHT', startLine: 1 });
   });
 });

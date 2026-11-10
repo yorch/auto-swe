@@ -6,11 +6,12 @@
 
 import { resolveSetting } from '@auto-swe/shared/config';
 import type { UsableCredential } from '@auto-swe/shared/lib/connectionCredential';
-import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { COMMIT_SHA, type PullFilesResult, readPullFiles } from '../lib/githubPullFiles.js';
+import { findSentReview } from '../lib/githubReviewRead.js';
 import {
   postIssueComment,
   postReview,
@@ -30,14 +31,24 @@ export const MAX_DRAFTS_PER_PULL_REQUEST = 100;
 const PullParams = z.object({ id: z.string().uuid() });
 const DraftParams = PullParams.extend({ draftId: z.string().uuid() });
 
-const NewDraftBody = z.object({
-  body: z.string(),
-  headSha: z.string().regex(COMMIT_SHA),
-  line: z.number().int().min(1).max(10_000_000),
-  patchDigest: z.string().regex(/^[0-9a-f]{64}$/),
-  // Short enough for an index key, as a viewed mark's path is.
-  path: z.string().min(1).max(500),
-});
+const NewDraftBody = z
+  .object({
+    body: z.string(),
+    headSha: z.string().regex(COMMIT_SHA),
+    /** The last line of the comment; for a range, the line it ends on. */
+    line: z.number().int().min(1).max(10_000_000),
+    patchDigest: z.string().regex(/^[0-9a-f]{64}$/),
+    // Short enough for an index key, as a viewed mark's path is.
+    path: z.string().min(1).max(500),
+    /** RIGHT is the file's new side; LEFT is its old side, where a deleted line is. */
+    side: z.enum(['LEFT', 'RIGHT']).default('RIGHT'),
+    /** The first line of a multi-line comment, on the same side as `line`. */
+    startLine: z.number().int().min(1).max(10_000_000).optional(),
+  })
+  .refine((d) => d.startLine === undefined || d.startLine < d.line, {
+    message: 'startLine must be before line',
+    path: ['startLine'],
+  });
 
 const EditDraftBody = z.object({ body: z.string() });
 
@@ -48,6 +59,19 @@ const ReviewBody = z.object({
   /** The head the page showed; a review is sent only while the host still has it. */
   headSha: z.string().regex(COMMIT_SHA),
 });
+
+/**
+ * How old the time a send was attempted may be. The page's clock supplies it, so a value in the
+ * future is a fast clock and is clamped to the server's now, never refused.
+ */
+const ATTEMPT_MAX_AGE_MS = 60 * 60 * 1000;
+
+/** The submit body, plus when the page sent it: that bounds where the host can have stamped it. */
+const ReviewCheckBody = ReviewBody.extend({ attemptedAt: z.iso.datetime() });
+
+/** Said whenever a check finds nothing: the host's list is evidence, and absence proves nothing. */
+const NOT_FOUND_MESSAGE =
+  'That review could not be found on the host yet. This does not prove it was not sent, so check the pull request on the host before sending it again.';
 
 const SendBackBody = z.object({
   headSha: z.string().regex(COMMIT_SHA),
@@ -90,7 +114,38 @@ type DraftRow = {
   id: string;
   line: number;
   path: string;
+  side: string;
+  startLine: number | null;
 };
+
+/** What a send refuses before it looks at a draft or the host; a check applies the same rules. */
+function sendPreconditionError(
+  reply: FastifyReply,
+  event: 'APPROVE' | 'COMMENT' | 'REQUEST_CHANGES',
+  text: string,
+  draftCount: number
+) {
+  const problem = text === '' ? null : reviewTextProblem(text);
+  if (problem) {
+    return sendError(reply, 400, 'REVIEW_TEXT_REFUSED', REVIEW_TEXT_MESSAGES[problem], {
+      problem,
+    });
+  }
+  if (event === 'REQUEST_CHANGES' && text === '') {
+    return sendError(
+      reply,
+      400,
+      'REVIEW_BODY_REQUIRED',
+      'Say what needs to change when you request changes.'
+    );
+  }
+  if (event === 'COMMENT' && text === '' && draftCount === 0) {
+    return sendError(reply, 400, 'NOTHING_TO_SEND', 'Write a comment or add a line comment.');
+  }
+  return null;
+}
+
+const sideOf = (side: string): 'LEFT' | 'RIGHT' => (side === 'LEFT' ? 'LEFT' : 'RIGHT');
 
 const draftOf = (row: DraftRow) => ({
   body: row.body,
@@ -99,6 +154,8 @@ const draftOf = (row: DraftRow) => ({
   id: row.id,
   line: row.line,
   path: row.path,
+  side: sideOf(row.side),
+  startLine: row.startLine,
 });
 
 export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
@@ -193,6 +250,8 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
           line: request.body.line,
           patchDigest: request.body.patchDigest,
           path: request.body.path,
+          side: request.body.side,
+          startLine: request.body.startLine ?? null,
         },
       });
       return reply.code(201).send({ data: draftOf(row) });
@@ -324,30 +383,25 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
       const { prNumber, repository } = pull;
       const { event, headSha } = request.body;
       const text = (request.body.body ?? '').trim();
-      const problem = text === '' ? null : reviewTextProblem(text);
-      if (problem) {
-        return sendError(reply, 400, 'REVIEW_TEXT_REFUSED', REVIEW_TEXT_MESSAGES[problem], {
-          problem,
-        });
-      }
-      if (event === 'REQUEST_CHANGES' && text === '') {
-        return sendError(
-          reply,
-          400,
-          'REVIEW_BODY_REQUIRED',
-          'Say what needs to change when you request changes.'
-        );
-      }
       const draftIds = [...new Set(request.body.draftIds)];
-      if (event === 'COMMENT' && text === '' && draftIds.length === 0) {
-        return sendError(reply, 400, 'NOTHING_TO_SEND', 'Write a comment or add a line comment.');
+      const refused = sendPreconditionError(reply, event, text, draftIds.length);
+      if (refused) {
+        return refused;
       }
       const drafts =
         draftIds.length === 0
           ? []
           : await fastify.prisma.prReviewDraft.findMany({
               orderBy: [{ path: 'asc' }, { line: 'asc' }, { id: 'asc' }],
-              select: { body: true, id: true, line: true, patchDigest: true, path: true },
+              select: {
+                body: true,
+                id: true,
+                line: true,
+                patchDigest: true,
+                path: true,
+                side: true,
+                startLine: true,
+              },
               where: { id: { in: draftIds }, pullRequestId: pull.id, userId: user.sub },
             });
       if (drafts.length !== draftIds.length) {
@@ -387,7 +441,13 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
         prNumber,
         {
           body: text,
-          comments: drafts.map((d) => ({ body: d.body, line: d.line, path: d.path })),
+          comments: drafts.map((d) => ({
+            body: d.body,
+            line: d.line,
+            path: d.path,
+            side: sideOf(d.side),
+            startLine: d.startLine,
+          })),
           commitId: live.headSha,
           event,
         }
@@ -434,6 +494,156 @@ export const pullRequestReviewRoutes: FastifyPluginAsync = async (fastify) => {
       }
       return {
         data: { comments: drafts.length, draftsKept, event, reviewId: result.id, url: result.url },
+      };
+    }
+  );
+
+  // POST /api/v1/pull-requests/:id/review/check — after a send whose outcome is unknown, ask
+  // whether that review is on the host. Read-only against the host, as the caller with their own
+  // saved token, and it needs neither an open pull request nor the head the page now shows: the
+  // review was sent against `headSha`. A match clears the drafts that review carried and writes the
+  // same audit row a send writes, marked `confirmed`. No match changes nothing and says it proves
+  // nothing; the drafts stay.
+  app.post(
+    '/:id/review/check',
+    { onRequest: engineerOnly, schema: { body: ReviewCheckBody, params: PullParams } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const pull = locate(await reachablePull(request, request.params.id));
+      if (!pull) {
+        return sendError(reply, 404, 'PULL_REQUEST_NOT_FOUND', 'Pull request not found');
+      }
+      const { prNumber, repository } = pull;
+      const { event, headSha } = request.body;
+      const now = Date.now();
+      const claimedAt = new Date(request.body.attemptedAt);
+      if (now - claimedAt.getTime() > ATTEMPT_MAX_AGE_MS) {
+        return sendError(
+          reply,
+          400,
+          'ATTEMPT_TIME_INVALID',
+          'That send was too long ago to be looked for.'
+        );
+      }
+      const attemptedAt = new Date(Math.min(claimedAt.getTime(), now));
+      const text = (request.body.body ?? '').trim();
+      const draftIds = [...new Set(request.body.draftIds)];
+      const refused = sendPreconditionError(reply, event, text, draftIds.length);
+      if (refused) {
+        return refused;
+      }
+      const drafts =
+        draftIds.length === 0
+          ? []
+          : await fastify.prisma.prReviewDraft.findMany({
+              select: { body: true, id: true, line: true, path: true, side: true, startLine: true },
+              where: { id: { in: draftIds }, pullRequestId: pull.id, userId: user.sub },
+            });
+      if (drafts.length !== draftIds.length) {
+        return sendError(
+          reply,
+          409,
+          'DRAFTS_CHANGED',
+          'Some of those draft comments no longer exist. Reload the page.'
+        );
+      }
+      const write = await resolveReviewerWrite(fastify.prisma, {
+        connectionId: repository.id,
+        userId: user.sub,
+      });
+      if (!write.available) {
+        return sendError(reply, 409, 'NO_USER_CREDENTIAL', NO_CREDENTIAL_MESSAGES[write.reason], {
+          reason: write.reason,
+        });
+      }
+
+      const result = await findSentReview(
+        { apiUrl: write.credential.apiUrl, token: write.credential.token },
+        { organizationName: pull.organizationName, repoName: pull.repoName },
+        prNumber,
+        {
+          attemptedAt,
+          body: text,
+          comments: drafts.map((d) => ({
+            body: d.body,
+            line: d.line,
+            path: d.path,
+            side: sideOf(d.side),
+            startLine: d.startLine,
+          })),
+          event,
+          headSha,
+        }
+      );
+      if (result.type === 'failed') {
+        return sendError(
+          reply,
+          502,
+          HOST_ERROR_CODES[result.reason],
+          WRITE_FAILURE_MESSAGES[result.reason],
+          { reason: result.reason }
+        );
+      }
+      if (result.type === 'not-found') {
+        return { data: { message: NOT_FOUND_MESSAGE, status: 'not-found' } };
+      }
+
+      // As in a send: the review is on the host, so a failure to record it must not read as one.
+      let draftsKept = false;
+      try {
+        await fastify.prisma.$transaction(async (tx) => {
+          // CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock. Two
+          // checks of one pull request would both miss the audit row below and both write it.
+          await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`pr-review-check|${pull.id}`}, 0))`;
+          await tx.prReviewDraft.deleteMany({
+            where: { id: { in: draftIds }, pullRequestId: pull.id, userId: user.sub },
+          });
+          // A review already recorded, by a send or by an earlier check, is not recorded again:
+          // otherwise any review of the caller's own could be re-confirmed into the log at will.
+          const recorded = await tx.configAuditLog.findFirst({
+            select: { id: true },
+            where: {
+              afterJson: { equals: result.id, path: ['githubReviewId'] },
+              entityId: pull.id,
+              entityType: 'PullRequestReview',
+            },
+          });
+          if (recorded) {
+            return;
+          }
+          await writeAuditLog(fastify, {
+            action: 'CREATE',
+            actor: user,
+            after: {
+              comments: drafts.length,
+              confirmed: true,
+              event,
+              githubReviewId: result.id,
+              hasBody: text !== '',
+              headSha,
+              kind: 'review',
+              prNumber,
+              repositoryId: repository.id,
+            },
+            client: tx,
+            entityId: pull.id,
+            entityType: 'PullRequestReview',
+          });
+        });
+      } catch (err) {
+        draftsKept = true;
+        request.log.error({ err }, 'review found on the host, but recording it failed');
+      }
+      return {
+        data: {
+          comments: drafts.length,
+          confirmed: true,
+          draftsKept,
+          event,
+          reviewId: result.id,
+          status: 'found',
+          url: result.url,
+        },
       };
     }
   );

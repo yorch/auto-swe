@@ -26,6 +26,8 @@ const draft = (over: Partial<PullRequestCockpitDraft> = {}): PullRequestCockpitD
   line: 2,
   outdated: false,
   path: 'src/a.ts',
+  side: 'RIGHT',
+  startLine: null,
   ...over,
 });
 
@@ -98,7 +100,14 @@ const cached = (qc: QueryClient) => qc.getQueryData<PullRequestCockpit>(cockpitK
 afterEach(() => vi.unstubAllGlobals());
 
 describe('useCreateDraft', () => {
-  const input = { body: 'use <=', headSha: HEAD, line: 2, patchDigest: DIGEST, path: 'src/a.ts' };
+  const input = {
+    body: 'use <=',
+    headSha: HEAD,
+    line: 2,
+    patchDigest: DIGEST,
+    path: 'src/a.ts',
+    side: 'RIGHT' as const,
+  };
   const stored = { ...draft(), outdated: undefined };
 
   it('sends the comment and adds what the gateway kept to the page, without a read', async () => {

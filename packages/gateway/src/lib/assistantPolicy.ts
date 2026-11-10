@@ -441,6 +441,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/prd-runs': 'confirm',
   'POST /api/v1/pull-requests/:id/drafts': { never: 'humanDecision' },
   'POST /api/v1/pull-requests/:id/review': { never: 'humanDecision' },
+  'POST /api/v1/pull-requests/:id/review/check': { never: 'humanDecision' },
   'POST /api/v1/pull-requests/:id/send-back': { never: 'humanDecision' },
   'POST /api/v1/pull-requests/:id/visit': { never: 'humanDecision' },
   'POST /api/v1/report-digests': 'confirm',

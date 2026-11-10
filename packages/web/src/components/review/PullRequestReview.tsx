@@ -2,7 +2,7 @@
 
 import type { PullRequestCockpit, PullRequestCockpitFile } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseFilePatch } from '@/components/approvals/diffParse';
 import type { DiffMode } from '@/components/diff/DiffFile';
 import { Alert } from '@/components/ui/Alert';
@@ -29,6 +29,7 @@ import {
 import { safeHttpUrl } from '@/lib/safeUrl';
 import { cn, FOCUS_RING, plural } from '@/lib/utils';
 import { visibleText } from '@/lib/visibleText';
+import { anchorForClick, type CommentAnchor, type CommentSide } from './commentRange';
 import { DraftNote, NewDraft } from './DraftComments';
 import { FindingNote } from './FindingNote';
 import { ReviewBrief } from './ReviewBrief';
@@ -161,16 +162,45 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
   // A comment can be written only where the reviewer may send one: with a token of their own, on a
   // pull request that is still open.
   const canComment = data.write.available && files.type === 'ok' && files.state === 'open';
-  const [composing, setComposing] = useState<{ line: number; path: string } | null>(null);
+  // The open editor's place. Its text is not here: the annotation maps depend on this, and a
+  // keystroke must not rebuild them for every file. The text lives in a ref that the editor reads
+  // when it mounts and tells on each change, so extending a range, which remounts the editor under
+  // another line, keeps it.
+  const [composing, setComposing] = useState<(CommentAnchor & { path: string }) | null>(null);
+  const composingNow = useRef(composing);
+  composingNow.current = composing;
+  const composeText = useRef('');
   const startComment = useCallback(
-    (path: string, line: number) => setComposing({ line, path }),
-    []
+    (path: string, line: number, side: CommentSide = 'RIGHT', shift = false) => {
+      const open = composingNow.current;
+      const anchor = anchorForClick(
+        parsed.get(path)?.lines,
+        open?.path === path ? open : null,
+        side,
+        line,
+        shift
+      );
+      const sameEditor = open !== null && open.path === path && open.side === anchor.side;
+      const sameAnchor =
+        sameEditor && open.line === anchor.line && open.startLine === anchor.startLine;
+      // A Shift-click that re-anchors the open editor, even back to its first line, and a click on
+      // the line already open are the same comment; any other click starts a new, empty one.
+      if (!(sameEditor && shift) && !sameAnchor) {
+        composeText.current = '';
+      }
+      if (!sameAnchor) {
+        setComposing({ ...anchor, path });
+      }
+    },
+    [parsed]
   );
   const headSha = files.type === 'ok' ? files.headSha : null;
   // Findings and the reviewer's drafts share a line's note. A file with neither keeps the stable map
-  // it already had, so writing on one file does not redraw the rest.
-  const fileAnnotations = useMemo(() => {
+  // it already had, so writing on one file does not redraw the rest. A comment on a deleted line is
+  // numbered by the old file, so it sits in its own map beside the new-side one.
+  const { fileAnnotations, fileLeftAnnotations } = useMemo(() => {
     const merged = new Map(annotations);
+    const mergedLeft = new Map<string, Map<number, ReactNode>>();
     // An outdated draft may name a line the patch no longer has; those are listed in the review
     // panel instead, where they can be deleted.
     const here = data.drafts.filter((d) => !d.outdated);
@@ -181,38 +211,55 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
         continue;
       }
       const lines = new Map(annotations.get(path));
-      const added = new Map<number, ReactNode[]>();
-      const add = (line: number, node: ReactNode) =>
-        added.set(line, [...(added.get(line) ?? []), node]);
+      const leftLines = new Map<number, ReactNode>();
+      const added = { LEFT: new Map<number, ReactNode[]>(), RIGHT: new Map<number, ReactNode[]>() };
+      const add = (side: CommentSide, line: number, node: ReactNode) =>
+        added[side].set(line, [...(added[side].get(line) ?? []), node]);
       for (const draft of here.filter((d) => d.path === path)) {
-        add(draft.line, <DraftNote draft={draft} key={draft.id} pullId={pull.id} />);
+        add(draft.side, draft.line, <DraftNote draft={draft} key={draft.id} pullId={pull.id} />);
       }
       if (composing?.path === path && headSha !== null && file.patchDigest !== null) {
         add(
+          composing.side,
           composing.line,
           <NewDraft
+            anchor={composing}
             headSha={headSha}
-            key="new-draft"
-            line={composing.line}
-            onDone={() => setComposing(null)}
+            initialText={composeText.current}
+            key={`new-draft-${composing.side}-${composing.startLine ?? composing.line}-${composing.line}`}
+            onDone={() => {
+              composeText.current = '';
+              setComposing(null);
+            }}
+            onTextChange={(text) => {
+              composeText.current = text;
+            }}
             patchDigest={file.patchDigest}
             path={path}
             pullId={pull.id}
           />
         );
       }
-      for (const [line, nodes] of added) {
-        lines.set(
-          line,
-          <div className="space-y-2" key={`line-${line}`}>
-            {lines.get(line) ?? null}
-            {nodes}
-          </div>
-        );
+      for (const [side, target] of [
+        ['RIGHT', lines],
+        ['LEFT', leftLines],
+      ] as const) {
+        for (const [line, nodes] of added[side]) {
+          target.set(
+            line,
+            <div className="space-y-2" key={`line-${side}-${line}`}>
+              {target.get(line) ?? null}
+              {nodes}
+            </div>
+          );
+        }
       }
       merged.set(path, lines);
+      if (leftLines.size > 0) {
+        mergedLeft.set(path, leftLines);
+      }
     }
-    return merged;
+    return { fileAnnotations: merged, fileLeftAnnotations: mergedLeft };
   }, [annotations, composing, data.drafts, headSha, items, pull.id]);
   const counts = useMemo(() => findingCounts(findings), [findings]);
   const unplaced = useMemo(() => unanchoredFindings(findings), [findings]);
@@ -511,6 +558,7 @@ export function PullRequestReview({ data }: { data: PullRequestCockpit }) {
                           </label>
                         </span>
                       }
+                      leftAnnotations={fileLeftAnnotations.get(file.path)}
                       lines={lines.lines}
                       mode={layout}
                       moved={moved.get(file.path)}

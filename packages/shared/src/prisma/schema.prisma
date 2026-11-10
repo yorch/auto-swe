@@ -512,7 +512,7 @@ model PrReviewVisit {
 
 /// A line comment a person has written on a pull request's review page and not yet sent. Per
 /// person: nobody else sees it, and it never leaves the platform until the person submits a review.
-/// It is anchored to a line of the file's new side at `headSha`, and counts as current only while
+/// It is anchored to a line (or a range of lines) of one side of the file's diff at `headSha`, and counts as current only while
 /// `patchDigest` still equals the digest of that file's patch. `path` and `body` are untrusted text,
 /// capped on write.
 model PrReviewDraft {
@@ -523,6 +523,10 @@ model PrReviewDraft {
   pullRequest   PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
   path          String
   line          Int
+  /// RIGHT numbers `line` by the file's new side, LEFT by its old side (a deleted line).
+  side          String      @default("RIGHT")
+  /// First line of a multi-line comment, on the same side; null for a single line.
+  startLine     Int?        @map("start_line")
   body          String
   headSha       String      @map("head_sha")
   patchDigest   String      @map("patch_digest")
