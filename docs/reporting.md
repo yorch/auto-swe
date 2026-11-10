@@ -93,6 +93,38 @@ resolving user with interactive (`web`, `slack`) and automated (`api_token`, `mc
 counts. Resolved steps are also split by `resolvedVia`; null or unrecognized historical values are
 reported as `unknown`. Autonomy decisions are counted by event and risk class.
 
+## Reviewer time
+
+Reviewer time answers how long pull requests wait for a person and how many review rounds they take.
+`GET /api/v1/pull-requests/review-time` takes `window` (1 to 365 days, default 30) or a custom
+range, `scope` (`TEAM` by default, or `MINE`), `teamId` and `repoId`. Its cohort is the pull requests
+opened in the window that are not drafts now, in the caller's repository scope. It reports an overall
+summary, a summary per repository (the ten with most pull requests), a summary per team and the open
+queue at the time of the read. It is a live read of at most 10,000 pull requests and 50,000
+evaluations, with `isTruncated` set when either cut the cohort, and it does not use the rollups.
+
+Every figure is built from timestamps the platform stores, in `packages/shared/src/lib/prEvaluation/reviewerTime.ts`:
+
+| Figure | Definition |
+|---|---|
+| Ready | The creation time of the pull request's `pull_request.ready_for_review` evaluation, else of its earliest evaluation. A pull request with no evaluation has no ready time and is counted in `unmeasured`. |
+| First human review | The earliest first review by a person other than the author, a bot or the platform, over the pull request's evaluations ([pr-evaluation.md](./pr-evaluation.md#whether-reviewers-act-on-the-brief)). |
+| `timeToFirstReview` | Ready to first human review, over reviewed pull requests. |
+| `timeToFirstView` | Ready to the earliest first visit to the platform's review page by anyone. It says when a reviewer began, not that they reviewed. |
+| `reviewToMerge` | First human review to the merge, over merged pull requests with a recorded review. It includes CI, the author's fixes and any wait after the last review. |
+| `reviewRounds` | Distinct heads a person reviewed: mean, median and maximum over reviewed pull requests. |
+| `changeRequestRate` | The share of reviewed pull requests with at least one review asking for changes. |
+
+Each duration reports `count`, `p50` and `p90` in milliseconds. A span whose end precedes its start
+reads as no wait. A summary with fewer than 30 reviewed pull requests is marked `lowSample`; treat its
+percentiles as anecdote. Team attribution is the run's persisted `attributedTeamId`, owner-only like
+the other metrics; a team the caller does not belong to is `Other team` and a pull request with no
+attribution is `Unattributed`.
+
+The queue figures count the open pull requests in scope now, whatever the window: the open count,
+how many need a person under each repository's [review routing](./pr-evaluation.md#121-review-routing-and-the-attention-queue),
+the batch counts, and the oldest and median wait of those that need one.
+
 ## Data bounds
 
 Report live reads are capped at 10,000 rows and responses include a `truncated` flag when any
@@ -220,3 +252,12 @@ otherwise the configured Resend transport.
 - Historical human-step and approval records do not have a resolution source and remain null.
 - Historical runs whose workspace connection (`runConnectionId`) differs from their repository
   may be attributed differently by the backfill than by runtime attribution.
+- Reviewer time is not measured where no timestamp exists. The platform does not store when a person
+  approved, so there is no review-to-approve span; `reviewToMerge` is the nearest figure and includes
+  everything between the first review and the merge. It stores no time spent reading, and no instant
+  the host marked a pull request ready, so the ready time is the evaluation that followed it and lags
+  the host by the evaluation's latency. A pull request opened as a draft whose conversion to ready was
+  not evaluated measures from its first evaluation. A review is credited by the platform on receipt of
+  the host's delivery, so a missed delivery reads as unreviewed. Reviewer time covers pull requests the
+  platform opened and evaluated; it has no view for a pull request it did not open.
+- Reviewer time is a live read, not a rollup, and has no CSV export or web view.
