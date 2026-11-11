@@ -249,7 +249,6 @@ export async function runImplementerFixSession(
         heartbeat(`${mode}: remote branch not found, using clone HEAD`);
       }
     }
-    await workspace.runSetup?.();
 
     // The commit the fixer starts from, so the test-integrity gate reads exactly what the session
     // changed — staged or committed by the agent itself. Fails closed here in block mode.
@@ -268,6 +267,11 @@ export async function runImplementerFixSession(
       previousCodeResult.baseSha,
       { refuseWorkflowChanges: input.refuseWorkflowChanges }
     );
+
+    // Only now: the repository's setup command runs its own code, which includes whatever an
+    // earlier agent pushed to this branch. Every fact above is recorded, so that code cannot pick
+    // the base the change is measured from or the tree the integrity gate compares.
+    await workspace.runSetup?.();
 
     const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
     const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);

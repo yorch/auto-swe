@@ -675,6 +675,22 @@ describe('executeImplementation allowedPaths', () => {
       return withEndMarker(cmd, cmd.includes('diff-tree') ? names : '');
     });
 
+  it('records the guard base before the setup command runs the repository code', async () => {
+    withRange('docs/a.md\0');
+    const runSetup = vi.fn(async () => {});
+    Object.assign(workspaceMock, { runSetup });
+    try {
+      await executeImplementation(REQUEST, undefined, undefined, undefined, ['docs/a.md']);
+    } finally {
+      delete (workspaceMock as { runSetup?: unknown }).runSetup;
+    }
+    const guardRead = commands().findIndex((c) => c.includes('rev-parse --verify'));
+    expect(runSetup).toHaveBeenCalledTimes(1);
+    expect(workspaceMock.exec.mock.invocationCallOrder[guardRead]).toBeLessThan(
+      runSetup.mock.invocationCallOrder[0] as number
+    );
+  });
+
   it('reads the starting commit before the agent runs, and checks the committed tree before the push', async () => {
     withRange('docs/a.md\0');
     await executeImplementation(REQUEST, undefined, undefined, undefined, ['docs/a.md']);

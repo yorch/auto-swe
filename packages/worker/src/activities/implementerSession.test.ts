@@ -91,6 +91,7 @@ const gitAuthedMock = vi.fn((subcommand: string) =>
   execMock(`git -c http.extraheader='AUTHORIZATION: basic redacted' ${subcommand}`)
 );
 const destroyMock = vi.fn(async () => {});
+const runSetupMock = vi.fn(async () => {});
 vi.mock('./workspace.js', () => ({
   createWorkspace: vi.fn(async () => ({
     containerId: 'workspace-test',
@@ -98,6 +99,7 @@ vi.mock('./workspace.js', () => ({
     exec: execMock,
     execCapture: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
     gitAuthed: gitAuthedMock,
+    runSetup: runSetupMock,
   })),
   fetchBranchesSubcommand: (branches: string[]) =>
     `fetch origin ${branches.map((b) => `'+refs/heads/${b}:refs/remotes/origin/${b}'`).join(' ')}`,
@@ -324,6 +326,27 @@ describe('runImplementerFixSession allowedPaths', () => {
       );
       expect(cmds().some((c) => c.includes(`${BASE} ${BASE}`))).toBe(true);
       expect(pushEffect).toHaveBeenCalledWith('auto/T-1', BASE, expect.any(Function));
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
+  });
+
+  it('records the starting commit and the guard base before the setup command runs repository code', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    runSetupMock.mockClear();
+    const base = stage('a.ts\0');
+    try {
+      await runImplementerFixSession(input({ allowedPaths: ['a.ts'] }));
+      expect(runSetupMock).toHaveBeenCalledTimes(1);
+      const setupAt = runSetupMock.mock.invocationCallOrder[0] as number;
+      const reads = cmds()
+        .map((c, i) => ({ at: execMock.mock.invocationCallOrder[i] as number, c }))
+        .filter(({ c }) => (c as string).includes('rev-parse --verify'));
+      // Both of the guard's reads (HEAD, origin/<default>) precede the setup command.
+      expect(reads.filter(({ at }) => at < setupAt).length).toBeGreaterThanOrEqual(2);
+      expect(
+        reads.filter(({ at }) => at > setupAt).every(({ c }) => !(c as string).includes('origin/'))
+      ).toBe(true);
     } finally {
       execMock.mockImplementation(base as never);
     }

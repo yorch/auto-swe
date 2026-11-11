@@ -323,7 +323,6 @@ export async function executeImplementation(
         heartbeat('retry: remote branch not found, starting from clone HEAD');
       }
     }
-    await workspace.runSetup?.();
 
     // After any sync to a previous attempt's pushed branch, and before any agent turn:
     // this session answers for its own changes from here. `baseSha` (the base branch's
@@ -331,6 +330,11 @@ export async function executeImplementation(
     pathGuard = await startPathGuard(workspace, baseBranch, allowedPaths, baseSha, guardOptions);
     // The commit this attempt's change is measured from, for the test-integrity guard.
     const integrity = await startTestIntegritySession(workspace, guardMode, tracer);
+
+    // Only now: the repository's setup command runs its own code, which on a retry includes the
+    // previous attempt's pushed tree. Every fact above is recorded, so that code cannot pick the
+    // base the change is measured from or the tree the integrity gate compares.
+    await workspace.runSetup?.();
 
     // The paused run's tree goes back after the guard starts, so the restored changes are
     // this session's own and are guarded like the rest, and before any turn.
