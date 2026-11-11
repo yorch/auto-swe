@@ -8,7 +8,8 @@
  *   - Workspace is bind-mounted at `/workspace` as the only writable path.
  *     `/tmp` is a small tmpfs so the command can scratch without persisting.
  *   - `--network=none` by default. `'egress'` lets the command reach outbound
- *     (e.g. SBOM upload, dependency lookup) but still has no inbound exposure.
+ *     (e.g. SBOM upload, dependency lookup), with the Docker private/metadata
+ *     baseline verified in a network holder before the command starts.
  *   - No Docker socket mount, no privileged flags, no capabilities added,
  *     CPU + memory + PID caps. Container is `--rm`'d immediately on exit.
  *
@@ -309,10 +310,11 @@ export async function runEphemeralContainer(input: EphemeralRunInput): Promise<E
       timeoutMs,
     });
   } finally {
-    await egress?.registration.release();
-    // `docker run --rm` removes the container on exit; this only covers a
-    // host-process kill mid-run. remove() is a no-op when already gone.
-    await backend.remove(containerName);
+    try {
+      await egress?.registration.release();
+    } finally {
+      await backend.remove(containerName);
+    }
   }
 }
 
@@ -454,8 +456,11 @@ export async function runSidecarContainer(input: SidecarRunInput): Promise<Sidec
     }
     throw err;
   } finally {
-    await egress?.registration.release();
-    await backend.remove(containerName);
+    try {
+      await egress?.registration.release();
+    } finally {
+      await backend.remove(containerName);
+    }
   }
 }
 

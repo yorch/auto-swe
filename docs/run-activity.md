@@ -91,7 +91,7 @@ A launch may choose a stricter level for one run, never a looser one (see
 
 | Level | Agent workspace | `shell` / `containerStep` with `network: "egress"` |
 |---|---|---|
-| `open` | Public internet stays open; Docker workspaces cannot reach private/non-public ranges except configured DNS, worker proxies, the git host and operator CIDRs. With the egress proxy configured, `HTTP_PROXY` holds cooperating clients to the team allowlist. | The team allowlist via the DNS filter (and the egress proxy when configured); an empty allowlist permits any host. |
+| `open` | Public internet stays open; Docker workspaces cannot reach private/non-public ranges except configured DNS, worker proxies, the git host and operator CIDRs. With the egress proxy configured, `HTTP_PROXY` holds cooperating clients to the team allowlist. | The Docker baseline blocks private/non-public ranges and metadata before author code starts; DNS, wired registry/egress proxies and operator CIDRs are exceptions, but metadata remains blocked. The team allowlist applies via the DNS filter (and the egress proxy when configured); an empty allowlist permits public hosts. |
 | `restricted` | The team allowlist is mandatory: an empty list leaves only what `blocked` allows, and a non-empty allowlist with no egress proxy configured refuses the workspace with `EGRESS_POLICY_UNENFORCEABLE`. Enforced by the egress proxy plus a network lock that confines the workspace to the model proxy, the registry proxy when wired, the repository's git host and, for a non-empty allowlist, the egress proxy. A raw socket or `--noproxy` reaches nothing else. | An empty allowlist forces `network` to `none`. With an allowlist the step is held to it by the egress proxy and the DNS filter only; it is not network-locked. The step is refused when the worker's egress proxy is not configured. |
 | `blocked` | Only the model proxy, the registry proxy when wired, and the repository's git host (plus cluster DNS on Kubernetes). There is no forwarding proxy. | `network` is forced to `none`. |
 
@@ -100,7 +100,14 @@ event. A `containerStep` sidecar needs network access, so it is refused where th
 it. When a lock cannot be established or proved, the workspace is destroyed and the activity fails
 with a non-retryable `EGRESS_POLICY_UNENFORCEABLE`.
 
-The lock is applied after provisioning (clone and registry wiring) and before any agent code runs.
+Docker egress steps use a network holder whose baseline is installed and verified before author
+code starts. The step joins its namespace, retaining DNS allowlist host pins and filtering.
+Detached container-step sidecars publish from and share the locked holder. Cleanup removes the
+holder, and its labels cover orphan reaping. `network: none` steps remain offline without a holder.
+The baseline is not the stricter workspace lock: raw public-IP connections remain possible even
+under `restricted` when a step ignores the proxy.
+
+The strict lock is applied after provisioning (clone and registry wiring) and before any agent code runs.
 It covers the agent workspace only:
 
 - **Docker.** A short-lived helper container with `NET_ADMIN` shares the workspace's network
@@ -230,7 +237,8 @@ hints reduce rendering work; the section does not use a dedicated virtualization
   connectors, MCP) is not affected.
 - Under `restricted` with an allowlist, `shell` and `containerStep` steps are enforced by the
   egress proxy and the DNS filter, not by a network lock, so a client that ignores proxy variables
-  can still reach a literal IP address.
+  can still reach a public literal IP address. The Docker baseline still blocks private ranges
+  and metadata, except configured DNS, wired proxies and operator CIDRs; metadata is not reopened.
 - Under `blocked`, and `restricted` with an empty allowlist, steps run with no network and no
   registry proxy, so a step that needs package installs fails.
 - On Kubernetes, DNS to the cluster DNS service stays reachable under both locking levels. It is a

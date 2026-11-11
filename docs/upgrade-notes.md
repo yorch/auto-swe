@@ -1161,6 +1161,28 @@ An unsupported `overlayfs` driver produces a `WORKSPACE_DISK_LIMIT cannot be enf
 
 ---
 
+### UN-23. Docker egress shell and container steps receive the private-network baseline
+
+**Affected.** Docker deployments with shell or container steps using `network: egress` that reach
+internal hosts, including detached container-step sidecars. Kubernetes deployments need no action:
+ephemeral steps and detached container-step sidecars are unsupported there.
+
+**Fix commit.** Identified before its SHA is assigned by `ephemeralNetworkHolderArgs` and
+`prepareEphemeralNetwork` in `packages/worker/src/lib/workspaceBackend/docker.ts`; compare the source
+when commit ancestry is unavailable.
+
+**Actions.** Set `WORKSPACE_PRIVATE_EGRESS_ALLOW` to the narrow IPs/CIDRs needed by internal
+destinations other than configured DNS and wired worker proxies. A DNS hostname allowlist entry
+alone does not permit a private address. Ensure `WORKSPACE_METADATA_BLOCK_IMAGE` can run `sleep`
+and that the baseline helper can install or run iptables/ip6tables. Baseline installation or
+verification failure prevents author code from starting. Keep private and metadata blocking enabled.
+
+**Verify.** An egress step reaches public hosts and intended exceptions, rejects private peers and
+metadata, preserves its output and exit code, and leaves no network holder after teardown. A detached
+sidecar remains reachable through its loopback-published holder port until teardown.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,
