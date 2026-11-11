@@ -581,6 +581,28 @@ describe('tool grants and agent scope', () => {
     });
   });
 
+  it('records the base sha before the repository setup command runs its own code', async () => {
+    const order: string[] = [];
+    (m.agentWs.exec as ReturnType<typeof vi.fn>).mockImplementation(async (cmd: string) => {
+      order.push(cmd);
+      return 'base-sha\n';
+    });
+    (m.agentWs as unknown as { runSetup: unknown }).runSetup = vi.fn(async () => {
+      order.push('runSetup');
+      return null;
+    });
+    try {
+      await runAgentTask({ request: request() });
+    } finally {
+      delete (m.agentWs as unknown as { runSetup?: unknown }).runSetup;
+    }
+    expect(vi.mocked(createWorkspace).mock.calls[0]?.[6]).toMatchObject({
+      repoSetup: { defer: true },
+    });
+    expect(order.indexOf('git rev-parse HEAD')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('git rev-parse HEAD')).toBeLessThan(order.indexOf('runSetup'));
+  });
+
   it('grants the browser tools when the Agent names the browser key', async () => {
     m.toolKeys = ['browser', 'readFile'];
 

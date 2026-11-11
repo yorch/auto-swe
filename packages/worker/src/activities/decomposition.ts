@@ -144,17 +144,35 @@ export async function mergeBranches(input: MergeBranchesInput): Promise<MergeBra
   }
 
   const messagePrefix = input.mergeMessagePrefix ?? 'auto-merge';
-  const { workspace, log } = await provisionMergeWorkspace(
+  // No agent turn and no test run happens here, so no repository code is needed: the setup
+  // command is skipped (`runSetup` false), and it is the only thing in this activity that would
+  // run the repository's own code, whose output (a committed workflow file, a file holding the
+  // setup secrets) a later `git push` of the branch by name would carry to the remote unscanned.
+  // The merges therefore take in the shas recorded straight after the reset and are made by the
+  // same hooks-off, config-scrubbed git as the resolver's (`startMerge`/`runMerge`/`settleMerge`),
+  // and the push names the tracked sha, which `pushAndCapture` first checks is still HEAD. What
+  // a clean merge takes in is the source branches' own commits, scanned when each was pushed; a
+  // merge that conflicts is aborted here and handed to `resolveMergeConflict`, which scans
+  // whatever its resolver wrote.
+  const { workspace, log, inputs } = await provisionMergeWorkspace(
     request,
     targetBranch,
     sourceBranches,
-    'mergeBranches'
+    'mergeBranches',
+    false,
+    true,
+    false
   );
   const merged: string[] = [];
   const unmerged: string[] = [];
   const conflicts: Array<{ branch: string; output: string }> = [];
 
   try {
+    if (!inputs) {
+      throw new Error('the merge inputs were not recorded');
+    }
+    const recorded = inputs;
+    const tracked = { head: recorded.start };
     for (let idx = 0; idx < sourceBranches.length; idx++) {
       const source = sourceBranches[idx] as string;
       heartbeat(`mergeBranches: merging ${source}`);
@@ -163,12 +181,23 @@ export async function mergeBranches(input: MergeBranchesInput): Promise<MergeBra
         workspace.gitIdentity
       );
       try {
-        await workspace.exec(
-          `git merge --no-ff --no-edit -m ${shellQuote(message)} origin/${shellQuote(source)}`
+        const step = await startMerge(
+          workspace,
+          source,
+          recorded.sourceTips[source] ?? '',
+          tracked.head
         );
+        if ('error' in step) {
+          throw new Error(step.error);
+        }
+        await runMerge(workspace, message, step);
+        tracked.head = await settleMerge(workspace, step);
         merged.push(source);
         log.push(`merged ${source}`);
       } catch (err: unknown) {
+        if (err instanceof ApplicationFailure) {
+          throw err;
+        }
         const output = getExecErrorOutput(err, 4000);
         await tryMergeAbort(workspace);
         conflicts.push({ branch: source, output });
@@ -180,7 +209,9 @@ export async function mergeBranches(input: MergeBranchesInput): Promise<MergeBra
 
     const passed = conflicts.length === 0;
     const headSha =
-      passed && merged.length > 0 ? await pushAndCapture(workspace, targetBranch, log) : undefined;
+      passed && merged.length > 0
+        ? await pushAndCapture(workspace, targetBranch, log, tracked.head)
+        : undefined;
 
     const artifact = await putArtifact({
       body: log.join('\n'),
@@ -448,7 +479,9 @@ async function provisionMergeWorkspace(
   sourceBranches: string[],
   label: string,
   knowledgeBases = false,
-  recordInputs = false
+  recordInputs = false,
+  /** False for an activity that runs no tests and no agent: the repository's code never runs. */
+  runSetup = true
 ): Promise<{
   workspace: Workspace;
   log: string[];
@@ -523,7 +556,9 @@ async function provisionMergeWorkspace(
   let inputs: MergeInputs | undefined;
   try {
     inputs = recordInputs ? await recordMergeInputs(workspace, sourceBranches) : undefined;
-    await workspace.runSetup?.();
+    if (runSetup) {
+      await workspace.runSetup?.();
+    }
   } catch (err) {
     await workspace.destroy();
     throw err;

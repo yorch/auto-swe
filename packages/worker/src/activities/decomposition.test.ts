@@ -384,7 +384,8 @@ describe('mergeBranches', () => {
     expect(result.passed).toBe(true);
     expect(result.mergedBranches).toEqual(['auto/TICK-1/auth', 'auto/TICK-1/db']);
     expect(result.conflicts).toEqual([]);
-    expect(result.headSha).toBe('abc123');
+    // The sha the tracked merges ended at, not whatever a branch name resolves to afterwards.
+    expect(result.headSha).toBe('merged-sha');
 
     const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
     // fetch + push now go through gitAuthed (credential injected per-call
@@ -395,7 +396,31 @@ describe('mergeBranches', () => {
     );
     expect(cmds.some((c) => c.includes('git merge --no-ff'))).toBe(true);
     expect(cmds.some((c) => c.includes('push origin'))).toBe(true);
-    expect(pushEffect).toHaveBeenCalledWith('auto/TICK-1', undefined, expect.any(Function));
+    expect(pushEffect).toHaveBeenCalledWith('auto/TICK-1', 'merged-sha', expect.any(Function));
+    expect(cmds.some((c) => c.includes('push origin merged-sha:refs/heads/'))).toBe(true);
+  });
+
+  it('merges the recorded shas and never runs the repository setup command', async () => {
+    primeRepo();
+    fakeWorkspace.exec.mockImplementation(() => '');
+    const runSetup = vi.fn(async () => null);
+    (fakeWorkspace as unknown as { runSetup: unknown }).runSetup = runSetup;
+    vi.mocked(startMerge).mockClear();
+    try {
+      await mergeBranches({
+        request: baseRequest,
+        sourceBranches: ['auto/TICK-1/auth', 'auto/TICK-1/db'],
+        targetBranch: 'auto/TICK-1',
+      });
+    } finally {
+      delete (fakeWorkspace as unknown as { runSetup?: unknown }).runSetup;
+    }
+    expect(recordMergeInputs).toHaveBeenCalled();
+    expect(vi.mocked(startMerge).mock.calls.map((c) => c.slice(1))).toEqual([
+      ['auto/TICK-1/auth', 'tip-of-auto/TICK-1/auth', 'start-sha'],
+      ['auto/TICK-1/db', 'tip-of-auto/TICK-1/db', 'merged-sha'],
+    ]);
+    expect(runSetup).not.toHaveBeenCalled();
   });
 
   it('adds the co-author trailer to each merge commit in co-author-trailer mode', async () => {
