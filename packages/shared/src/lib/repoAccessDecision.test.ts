@@ -26,6 +26,7 @@ function repo(over: Record<string, unknown> = {}) {
     installation: null,
     organizationName: 'acme',
     repoName: 'payments',
+    scmProvider: 'github',
     shares: [] as Array<{
       canLaunch: boolean;
       team: { memberships: Array<{ userId: string }> };

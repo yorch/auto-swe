@@ -21,7 +21,12 @@ const { privateKey: PRIVATE_KEY, publicKey: PUBLIC_KEY } = generateKeyPairSync('
 });
 const INSTALL_TOKEN = 'ghs_installation_token_secret';
 
-const repo: RepoRef = { installationHost: null, organizationName: 'acme', repoName: 'payments' };
+const repo: RepoRef = {
+  installationHost: null,
+  organizationName: 'acme',
+  repoName: 'payments',
+  scmProvider: 'github',
+};
 const approverConfig = { appId: '222', appSlug: 'Auto-SWE-Approver', privateKey: PRIVATE_KEY };
 const instance = { apiUrl: 'https://api.github.com', appId: '111', baseUrl: 'https://github.com' };
 

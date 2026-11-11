@@ -126,6 +126,7 @@ function repo(
     isActive: overrides.isActive ?? true,
     organizationName: 'acme',
     repoName: 'payments',
+    scmProvider: 'github',
     shares: [],
     team: {
       isActive: true,
@@ -524,6 +525,24 @@ describe('scheduledFireRefusal', () => {
   it('fails closed when the access policy has never been readable', async () => {
     gate.value = null;
     expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'gate-unreadable' });
+  });
+
+  it('refuses a fire at a repository served by another provider before any GitHub question is asked', async () => {
+    // Under enforcement the gate asks GitHub (login, then permission, with a GitHub credential).
+    // For a row on another provider that question is unanswerable, and must not be sent.
+    gate.value = { mode: 'enforce', staleAfterHours: 72 };
+    db.connection.findUnique.mockResolvedValue({ ...repo(), scmProvider: 'gitlab' });
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    try {
+      expect(await scheduledFireRefusal(db, FIRE)).toMatchObject({ reason: 'host-mismatch' });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(db.user.findUnique).not.toHaveBeenCalledWith(
+        expect.objectContaining({ select: expect.objectContaining({ githubLogin: true }) })
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

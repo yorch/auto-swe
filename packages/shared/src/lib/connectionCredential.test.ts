@@ -24,6 +24,7 @@ const {
   resolveUserCredential,
 } = await import('./connectionCredential.js');
 const { _resetKeyCacheForTests } = await import('./crypto.js');
+const { ScmProviderMismatchError } = await import('./githubHostScope.js');
 
 function policy(enabled: boolean, hosts: string[] = ['github.com']) {
   resolveSettings.mockResolvedValue({
@@ -95,6 +96,7 @@ describe('resolveUserCredential', () => {
       connection: {
         githubApiUrl: null,
         githubUrl: null,
+        scmProvider: 'github',
         shares: [],
         team: { memberships: [{ userId: 'user-1' }] },
       },
@@ -138,6 +140,33 @@ describe('resolveUserCredential', () => {
     );
   });
 
+  it('refuses a token saved for a repository that is no longer a GitHub repository', async () => {
+    policy(true);
+    findUnique.mockResolvedValue(
+      row({
+        connection: {
+          githubApiUrl: null,
+          githubUrl: null,
+          scmProvider: 'gitlab',
+          shares: [],
+          team: { memberships: [{ userId: 'user-1' }] },
+        },
+      })
+    );
+    // Not null: null is the caller's cue to fall back to the platform credential.
+    await expect(resolveUserCredential(prisma, ARGS)).rejects.toBeInstanceOf(
+      ScmProviderMismatchError
+    );
+    // The provider is read in the same query, so a stale caller-side ref cannot override it.
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          connection: { select: expect.objectContaining({ scmProvider: true }) },
+        }),
+      })
+    );
+  });
+
   it('reads nothing while the feature is off', async () => {
     policy(false);
     await expect(resolveUserCredential(prisma, ARGS)).resolves.toBeNull();
@@ -175,6 +204,7 @@ describe('resolveUserCredential', () => {
         connection: {
           githubApiUrl: 'https://ghe.corp/api/v3',
           githubUrl: 'https://ghe.corp',
+          scmProvider: 'github',
           shares: [],
           team: { memberships: [{ userId: 'user-1' }] },
         },

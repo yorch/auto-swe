@@ -27,6 +27,7 @@ import {
   defaultApiUrlForHost,
   hostFamily,
   installationTargetFor,
+  isGitHubRepository,
 } from '@auto-swe/shared/lib/githubHostScope';
 import {
   createGitHubAppJwt,
@@ -439,6 +440,14 @@ export async function probeRepositoryAccess(
   if (!(repo.organizationName && repo.repoName)) {
     return failed('Repository', 'This connection has no GitHub repository to check.');
   }
+  // Both credentials below are GitHub credentials: another provider's repository is never probed
+  // with them, whatever its URLs say.
+  if (!isGitHubRepository(repo)) {
+    return failed(
+      'Repository',
+      `This repository is served by "${repo.scmProvider}", which this check does not support; no GitHub credential is used for it.`
+    );
+  }
   const target = {
     defaultBranch: repo.defaultBranch,
     organizationName: repo.organizationName,
@@ -486,12 +495,16 @@ async function platformChecks(
     installationId: repo.installation?.installationId ?? null,
     organizationName: target.organizationName,
     repoName: target.repoName,
+    scmProvider: repo.scmProvider,
   };
   let credential: Awaited<ReturnType<typeof resolvePlatformCredential>>;
   try {
     credential = await resolvePlatformCredential(scoped, ghConfig);
   } catch {
     return [fail(name, "The host's stored credentials could not be read.")];
+  }
+  if (credential.scope === 'scm-provider') {
+    return [fail(name, `No GitHub credential applies to a "${credential.provider}" repository.`)];
   }
   if (credential.scope === 'mismatch') {
     return [

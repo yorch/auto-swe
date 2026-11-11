@@ -30,6 +30,7 @@ const REPO = {
   installation: null,
   organizationName: 'acme',
   repoName: 'payments',
+  scmProvider: 'github',
 };
 const engineer = { exp: 0, iat: 0, role: 'ENGINEER' as const, sub: 'user-1' };
 const admin = { ...engineer, role: 'ADMIN' as const, sub: 'user-admin' };
@@ -245,6 +246,27 @@ describe('decideRepoLaunch', () => {
       userId: 'user-1',
     });
   });
+
+  it.each(['caller', 'platform'] as const)(
+    'refuses a gitlab repository before any login or token is consulted (%s identity)',
+    async (identity) => {
+      lookupRepoPermission.mockResolvedValue({ ok: true, permission: 'write' });
+      lookupPermissionViaUserCredential.mockResolvedValue({ ok: true, permission: 'write' });
+      await expect(
+        decideRepoLaunch(
+          prisma,
+          engineer,
+          { ...REPO, scmProvider: 'gitlab' },
+          ENFORCE,
+          log,
+          identity
+        )
+      ).resolves.toEqual({ allowed: false, reason: 'host-mismatch' });
+      expect(githubLoginFor).not.toHaveBeenCalled();
+      expect(lookupRepoPermission).not.toHaveBeenCalled();
+      expect(lookupPermissionViaUserCredential).not.toHaveBeenCalled();
+    }
+  );
 
   it('logs nothing in advisory mode when the launch would be permitted', async () => {
     lookupRepoPermission.mockResolvedValue({ ok: true, permission: 'write' });

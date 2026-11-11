@@ -62,6 +62,7 @@ const REPO = {
   installation: null,
   organizationName: 'acme',
   repoName: 'payments',
+  scmProvider: 'github',
 };
 
 beforeEach(() => {
@@ -146,6 +147,7 @@ describe('lookupRepoPermission and the platform credential', () => {
     installation: null,
     organizationName: 'acme',
     repoName: 'payments',
+    scmProvider: 'github',
     ...over,
   });
   const GHE = { githubApiUrl: 'https://ghe.corp/api/v3', githubUrl: 'https://ghe.corp' };
@@ -212,6 +214,31 @@ describe('lookupRepoPermission and the platform credential', () => {
       )
     ).resolves.toEqual({ failure: 'repo-not-found', ok: false });
     expect(fetchRepoPermission).not.toHaveBeenCalled();
+  });
+
+  it.each(['gitlab', 'bitbucket', ''])(
+    'asks nothing and sends no credential for a %j repository, even on the instance host',
+    async (scmProvider) => {
+      resolveGitHubConfig.mockResolvedValue(instance({ authMode: 'pat' }));
+      // Null URLs: the instance's own host, which is where the instance PAT would go.
+      await expect(lookupRepoPermission(repo({ scmProvider }), 'octocat')).resolves.toEqual(
+        HOST_MISMATCH
+      );
+      await expect(lookupRepoPermission(repo({ ...GHE, scmProvider }), 'octocat')).resolves.toEqual(
+        HOST_MISMATCH
+      );
+      expect(fetchRepoPermission).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(hostCredentialFindUnique).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not use a saved user token for a gitlab repository', async () => {
+    await expect(
+      lookupPermissionViaUserCredential(prisma, { ...REPO, scmProvider: 'gitlab' }, 'user-1')
+    ).resolves.toEqual(HOST_MISMATCH);
+    expect(resolveUserCredential).not.toHaveBeenCalled();
+    expect(fetchOwnRepoPermission).not.toHaveBeenCalled();
   });
 
   it('sends no instance PAT to a foreign host (PAT mode)', async () => {

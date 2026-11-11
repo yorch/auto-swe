@@ -4,7 +4,7 @@ const m = vi.hoisted(() => ({
   automationFindMany: vi.fn(async () => [] as unknown[]),
   connectionFindMany: vi.fn(async () => [] as unknown[]),
   fetch: vi.fn(),
-  platformCredential: vi.fn(async () => ({ config: {}, scope: 'instance' })),
+  platformCredential: vi.fn(async (): Promise<unknown> => ({ config: {}, scope: 'instance' })),
   pullRequestFindFirst: vi.fn(async () => null as unknown),
   runFindFirst: vi.fn(async () => null as unknown),
   settings: { 'github.prFeedbackAutomationsEnabled': true } as Record<string, unknown>,
@@ -19,6 +19,7 @@ vi.mock('@auto-swe/shared/lib/githubHostCredential', () => ({
   resolvePlatformCredential: m.platformCredential,
 }));
 vi.mock('@auto-swe/shared/lib/githubHostScope', () => ({
+  GITHUB_SCM_PROVIDER: 'github',
   installationTargetFor: vi.fn(() => ({ apiUrl: 'https://api.github.com' })),
 }));
 vi.mock('@auto-swe/shared/lib/githubInstallation', () => ({
@@ -54,6 +55,7 @@ const CONN = {
   installation: { host: null, installationId: 'i1' },
   organizationName: 'acme',
   repoName: 'api',
+  scmProvider: 'github',
   team: { orgId: 'org-1' },
   teamId: 'team-1',
 };
@@ -133,6 +135,23 @@ describe('enrichPrFeedbackFacts — the host read for `other` origins is gated',
     r = await enrichPrFeedbackFacts(prisma, event() as never, 'github.com');
     expect(r).toMatchObject({ facts: { headRef: 'feature/x' }, type: 'ok' });
   });
+  it('reads the host with no credential, and no token, for a non-GitHub connection', async () => {
+    m.connectionFindMany.mockResolvedValue([{ ...CONN, scmProvider: 'gitlab' }]);
+    m.automationFindMany.mockResolvedValue([
+      { filters: { pullRequests: ['others'], triggers: ['command'] } },
+    ]);
+    // What the real choke point answers for it.
+    m.platformCredential.mockResolvedValue({ provider: 'gitlab', scope: 'scm-provider' });
+    const r = await enrichPrFeedbackFacts(prisma, event() as never, 'github.com');
+    expect(r).toMatchObject({ type: 'ok' });
+    expect(m.platformCredential).toHaveBeenCalledWith(
+      expect.objectContaining({ scmProvider: 'gitlab' }),
+      expect.anything()
+    );
+    expect(m.token).not.toHaveBeenCalled();
+    expect(m.fetch).not.toHaveBeenCalled();
+  });
+
   it("reads the host with a token restricted to the connection's repository", async () => {
     m.automationFindMany.mockResolvedValue([
       { filters: { pullRequests: ['others'], triggers: ['command'] } },

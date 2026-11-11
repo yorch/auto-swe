@@ -389,6 +389,7 @@ type FeedbackConnection = {
   installation: { host: string; installationId: string } | null;
   organizationName: string | null;
   repoName: string | null;
+  scmProvider: string;
 };
 
 /**
@@ -416,9 +417,11 @@ async function feedbackReadTarget(
     installationId: repo.installation?.installationId ?? null,
     organizationName: repo.organizationName,
     repoName: repo.repoName,
+    scmProvider: repo.scmProvider,
   };
   try {
     const credential = await resolvePlatformCredential(scoped, ghConfig);
+    // Includes `scm-provider`: a repository that is not GitHub's is sent no credential.
     if (credential.scope !== 'instance' && credential.scope !== 'host') {
       return null;
     }
@@ -534,6 +537,7 @@ export async function enrichPrFeedbackFacts(
         installation: { select: { host: true, installationId: true } },
         organizationName: true,
         repoName: true,
+        scmProvider: true,
         team: { select: { orgId: true } },
         teamId: true,
       },

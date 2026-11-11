@@ -21,7 +21,11 @@ import {
   type PlatformCredential,
   resolvePlatformCredential,
 } from '@auto-swe/shared/lib/githubHostCredential';
-import { repoHostFamily } from '@auto-swe/shared/lib/githubHostScope';
+import {
+  GITHUB_SCM_PROVIDER,
+  isGitHubRepository,
+  repoHostFamily,
+} from '@auto-swe/shared/lib/githubHostScope';
 import { permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import {
   type ApprovalState,
@@ -88,12 +92,13 @@ import {
   submitApprovingReview,
 } from '../lib/scm/approverApp.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
-import type {
-  BranchRules,
-  PullRequestDetails,
-  PullRequestReviewSummary,
-  RepoRef,
-  ScmProvider,
+import {
+  type BranchRules,
+  type PullRequestDetails,
+  type PullRequestReviewSummary,
+  type RepoRef,
+  type ScmProvider,
+  scmProviderUnsupported,
 } from '../lib/scm/types.js';
 
 export const PR_POLICY_PATH = '.auto-swe/pr-policy.yml';
@@ -172,7 +177,18 @@ export type EvaluatorApproverDeps = {
 export type EvaluatePullRequestDeps = {
   /** See `EvaluatorApproverDeps`. */
   approver?: EvaluatorApproverDeps;
+  /**
+   * The GitHub provider the evaluation runs through. It serves a GitHub repository only: a
+   * repository whose `scmProvider` is anything else is refused (and, to stand down an arming it
+   * once had, reached as GitHub only by the skip-and-disarm path).
+   */
   scm: ScmProvider;
+  /**
+   * Resolves the provider for a GitHub repository from the registry. When present it replaces
+   * `scm` for the evaluation, so the activity never runs through a provider other than the one
+   * the repository's `scmProvider` dispatches to.
+   */
+  scmFor?: (repo: RepoRef) => ScmProvider;
   /**
    * The id of the platform's own GitHub App for this repository's host, or null when its
    * credential is not an App. A requirement pinned to any other App is not ours.
@@ -424,6 +440,7 @@ export async function expectedAppIdFor(
           baseUrl: target.baseUrl,
           installationHost: target.installationHost,
           installationId: target.installationId,
+          scmProvider: target.scmProvider,
         },
         config
       ),
@@ -462,8 +479,10 @@ export async function evaluatePullRequest(
       repoHostFamily({ apiUrl: repo.apiUrl, baseUrl: repo.baseUrl }, await resolveGitHubConfig()),
     scan: scanDiffForCodeIssuesDetailed,
     // The evaluation is GitHub-only (App approver, host family, branch rules); the gate in
-    // evaluatePullRequestWith refuses a repository whose provider is anything else.
-    scm: getScmProvider({ scmProvider: 'github' }),
+    // evaluatePullRequestWith refuses a repository whose provider is anything else, and for a
+    // GitHub one `scmFor` dispatches through the registry rather than trusting this entry.
+    scm: getScmProvider({ scmProvider: GITHUB_SCM_PROVIDER }),
+    scmFor: getScmProvider,
   });
 }
 
@@ -859,6 +878,47 @@ async function postPending(
 }
 
 /**
+ * The standing-down path for a repository whose `scmProvider` is no longer GitHub (the column was
+ * changed after the platform armed or approved a pull request there).
+ *
+ * The evaluation never runs for such a row, but an arming that is still standing on GitHub must be
+ * undoable, so when the platform recorded one (an armed row, or a bot approval) the skip path runs
+ * with the repository read as the GitHub repository it was when that was recorded. With nothing
+ * recorded it makes no call at all, and no approver-App sweep of the reviews is attempted. It is
+ * best effort: the row may now point at a host the GitHub credentials do not serve, and a failure
+ * is logged and swallowed rather than retried forever against a repository that cannot be reached.
+ */
+async function standDownForeign(
+  connection: { id: string; teamId?: string | null; team?: { orgId: string | null } | null },
+  input: PrEvaluationInput,
+  deps: EvaluatePullRequestDeps,
+  repo: RepoRef,
+  reason: string
+): Promise<EvaluatePullRequestResult> {
+  const skipped: EvaluatePullRequestResult = { outcome: 'skipped', reason };
+  const armedRow = await latestArmedRow(connection.id, input.prNumber);
+  const foundBot = await latestBotRow(connection.id, input.prNumber);
+  if (!armedRow && foundBot?.botApproved !== true) {
+    return skipped;
+  }
+  try {
+    return await skipAndDisarm(
+      connection,
+      input,
+      deps,
+      { ...repo, scmProvider: GITHUB_SCM_PROVIDER },
+      reason
+    );
+  } catch (err) {
+    logWarn(
+      'pr evaluation: an arming could not be stood down for a repository that is no longer GitHub',
+      safeErrorMeta(err)
+    );
+    return skipped;
+  }
+}
+
+/**
  * Evaluation is off for this pull request (the feature, or this repository). A pull request the
  * platform armed earlier must not stay armed, and one the approver App approved must not keep a
  * `success` status the approval alone earned, nor the approval itself. Armed rows and bot rows are
@@ -1141,7 +1201,7 @@ type StatusPublished = { ok: boolean; reason?: 'refused' | 'error' };
 /** The activity body with its collaborators passed in, so a test can supply fakes. */
 export async function evaluatePullRequestWith(
   input: PrEvaluationInput,
-  deps: EvaluatePullRequestDeps
+  baseDeps: EvaluatePullRequestDeps
 ): Promise<EvaluatePullRequestResult> {
   const connection = await prisma.connection.findFirst({
     include: {
@@ -1154,16 +1214,29 @@ export async function evaluatePullRequestWith(
     return { outcome: 'skipped', reason: 'repository not found or inactive' };
   }
   const repo = toRepoRef(connection);
-  // `deps.scm` is the one GitHub provider for the whole evaluation; resolving the repository's own
-  // provider first refuses (non-retryably) a repository served by anything else, rather than
-  // evaluating it through the GitHub client.
-  getScmProvider(repo);
+  // The evaluation is GitHub-only: the App approver, the host family, the branch rules and the
+  // GitHub client are all GitHub's. A repository served by another provider is never evaluated
+  // (refused below with a non-retryable SCM_PROVIDER_UNSUPPORTED), whether or not that provider
+  // has a registry entry — only the standing-down paths may run for it, as GitHub's, so an arming
+  // made while the row was a GitHub repository can still be undone.
+  const foreign = !isGitHubRepository(repo);
+  // A GitHub repository runs through the provider the registry dispatches to, not through a
+  // provider fixed by the caller.
+  const deps: EvaluatePullRequestDeps =
+    foreign || !baseDeps.scmFor ? baseDeps : { ...baseDeps, scm: baseDeps.scmFor(repo) };
+  const stand = (reason: string) =>
+    foreign
+      ? standDownForeign(connection, input, deps, repo, reason)
+      : skipAndDisarm(connection, input, deps, repo, reason);
   if (input.trigger === MERGED_TRIGGER) {
+    if (foreign) {
+      throw scmProviderUnsupported(repo.scmProvider, 'Pull request evaluation serves GitHub only.');
+    }
     return recountMergedApprovals(connection, input, deps, repo);
   }
   if (!connection.isActive) {
     // A deactivated repository is treated as `off`: an arming it still carries is cancelled.
-    return skipAndDisarm(connection, input, deps, repo, 'repository is inactive');
+    return stand('repository is inactive');
   }
   if (input.trigger === 'disarm-sweep') {
     // The gateway started this sweep right after a GLOBAL write of a kill switch; this process's
@@ -1177,12 +1250,21 @@ export async function evaluatePullRequestWith(
     teamId: connection.teamId ?? undefined,
   });
   if (!settings['prEvaluation.enabled']) {
-    return skipAndDisarm(connection, input, deps, repo, 'pull request evaluation is switched off');
+    return stand('pull request evaluation is switched off');
   }
   const chosen = (connection.prEvaluationMode ??
     settings['prEvaluation.defaultMode']) as PrEvaluationMode;
   if (chosen === 'off') {
-    return skipAndDisarm(connection, input, deps, repo, 'evaluation is off for this repository');
+    return stand('evaluation is off for this repository');
+  }
+  if (foreign) {
+    // A sweep exists to stand arming down, so it still does for a row whose provider changed.
+    if (input.trigger === 'disarm-sweep') {
+      return stand('repository is not served by GitHub');
+    }
+    // Everything past this point evaluates, publishes a status, approves or arms through the
+    // GitHub client and the approver App: refused, without a single call to either.
+    throw scmProviderUnsupported(repo.scmProvider, 'Pull request evaluation serves GitHub only.');
   }
   // What the status says follows the chosen mode. Whether auto-merge may be armed is a separate
   // question: a deployment that forbids it still holds an `auto` repository to auto's status

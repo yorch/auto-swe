@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { GITHUB_SCM_PROVIDER } from '@auto-swe/shared/lib/githubHostScope';
 import type { CodeResult } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import { CI_FIX_SYSTEM_PROMPT, REVIEW_FIX_SYSTEM_PROMPT } from '../agents/prompts.js';
@@ -35,7 +36,10 @@ export async function fetchCILogs(logsUrl?: string, repoId?: string): Promise<st
     : null;
   const repoRef = repo?.organizationName && repo.repoName ? toRepoRef(repo) : undefined;
   // With no repository there is no provider to read; a bare logs URL is a GitHub one.
-  return getScmProvider(repoRef ?? {}).fetchCiLogs(logsUrl, repoRef);
+  return getScmProvider(repoRef ?? { scmProvider: GITHUB_SCM_PROVIDER }).fetchCiLogs(
+    logsUrl,
+    repoRef
+  );
 }
 
 /** What a template step asks of a fix session beyond the defaults. */

@@ -23,6 +23,7 @@
 import { resolveSettings } from '../config/index.js';
 import type { PrismaClient } from '../index.js';
 import type { AccessActor, AccessLog } from './accessActor.js';
+import { isGitHubRepository } from './githubHostScope.js';
 import { permissionMeets } from './githubPermission.js';
 import { recordRepoPermission } from './repoAccessProjection.js';
 import {
@@ -262,6 +263,12 @@ async function launchRefusal(
   repo: PermissionRepo & { id: string },
   runIdentity: RunIdentity
 ): Promise<LaunchRefusal | null> {
+  // The permission question is asked of GitHub with a GitHub credential, so a repository served by
+  // another provider cannot be answered: refused here, before a stored login or a saved token is
+  // consulted (both lookups below refuse it too).
+  if (!isGitHubRepository(repo)) {
+    return 'host-mismatch';
+  }
   // When the run will act as the caller, a caller who saved their own token for
   // this repository runs as that token, so that is the identity whose access
   // decides — asked with the token itself, which needs no stored login.
@@ -285,7 +292,9 @@ async function launchRefusal(
       return viaCredential.failure === 'credential-rejected' ||
         viaCredential.failure === 'repo-not-found'
         ? 'user-credential-rejected'
-        : 'lookup-unavailable';
+        : viaCredential.failure === 'host-mismatch'
+          ? 'host-mismatch'
+          : 'lookup-unavailable';
     }
     return permissionMeets(viaCredential.permission, 'write') ? null : 'insufficient-permission';
   }

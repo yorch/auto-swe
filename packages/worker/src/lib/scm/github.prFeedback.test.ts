@@ -66,6 +66,7 @@ const repo: RepoRef = {
   installationHost: null,
   organizationName: 'acme',
   repoName: 'api',
+  scmProvider: 'github',
 };
 const gheRepo: RepoRef = {
   ...repo,

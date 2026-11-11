@@ -1,7 +1,12 @@
 import { ApplicationFailure } from '@temporalio/activity';
 import { describe, expect, it } from 'vitest';
 import { GitHubScmProvider } from './github.js';
-import { getScmProvider, SCM_PROVIDER_UNSUPPORTED, toRepoRef } from './index.js';
+import {
+  getScmProvider,
+  registerScmProviderForTest,
+  SCM_PROVIDER_UNSUPPORTED,
+  toRepoRef,
+} from './index.js';
 
 const ROW = {
   githubApiUrl: null,
@@ -18,12 +23,33 @@ describe('getScmProvider', () => {
     expect(getScmProvider({ scmProvider: 'github' })).toBeInstanceOf(GitHubScmProvider);
   });
 
-  it('treats a hand-built ref with no provider as github', () => {
-    expect(getScmProvider({})).toBeInstanceOf(GitHubScmProvider);
+  it('does not treat a ref with no provider as github', () => {
+    // Types forbid it; a value that slips through (a stale cast) must not mean GitHub.
+    expect(() => getScmProvider({} as never)).toThrow(/is not supported/);
   });
 
   it('returns the same instance for every call', () => {
-    expect(getScmProvider({ scmProvider: 'github' })).toBe(getScmProvider({}));
+    expect(getScmProvider({ scmProvider: 'github' })).toBe(
+      getScmProvider({ scmProvider: 'github' })
+    );
+  });
+
+  describe('the registry test seam', () => {
+    const second = { name: 'second' } as never;
+
+    it('dispatches a registered name, then forgets it', () => {
+      const unregister = registerScmProviderForTest('gitlab', second);
+      expect(getScmProvider({ scmProvider: 'gitlab' })).toBe(second);
+      unregister();
+      expect(() => getScmProvider({ scmProvider: 'gitlab' })).toThrow(/"gitlab" is not supported/);
+    });
+
+    it('cannot replace the real github entry or register one name twice', () => {
+      expect(() => registerScmProviderForTest('github', second)).toThrow(/already registered/);
+      const unregister = registerScmProviderForTest('bitbucket', second);
+      expect(() => registerScmProviderForTest('bitbucket', second)).toThrow(/already registered/);
+      unregister();
+    });
   });
 
   it.each(['gitlab', 'bitbucket', 'GitHub', '', 'constructor', '__proto__', 'toString'])(

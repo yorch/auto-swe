@@ -315,6 +315,7 @@ function buildApp(state: FakeState): FastifyInstance {
           id: 'conn-1',
           organizationName: 'acme',
           repoName: 'payments',
+          scmProvider: 'github',
           team: { memberships: [{ userId: 'u1' }] },
         },
       ],
@@ -1686,6 +1687,7 @@ describe('POST /api/v1/auth/slack/events — thread-reply signal-steering (Phase
       installation: null,
       organizationName: 'acme',
       repoName: 'payments',
+      scmProvider: 'github',
       shares: [],
       team: { memberships: [] },
       type: 'git_repo',
@@ -2618,6 +2620,7 @@ describe('POST /api/v1/auth/slack/interactive — run modal submission', () => {
     isActive: true,
     organizationName: 'acme',
     repoName: 'payments',
+    scmProvider: 'github',
     shares: [],
     team: {
       id: 'team-a',

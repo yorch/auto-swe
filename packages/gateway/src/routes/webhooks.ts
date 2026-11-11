@@ -16,7 +16,7 @@ import {
 } from '@auto-swe/shared/lib/automationLedger';
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { resolvePlatformCredential } from '@auto-swe/shared/lib/githubHostCredential';
-import { installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
+import { GITHUB_SCM_PROVIDER, installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
@@ -349,6 +349,7 @@ async function handleCheckRunDelivery(
           installation: { select: { host: true, installationId: true } },
           organizationName: true,
           repoName: true,
+          scmProvider: true,
         },
       },
       workflow: {
@@ -880,6 +881,7 @@ async function checkRunTarget(
         installation: { installationId: string; host: string } | null;
         organizationName: string | null;
         repoName: string | null;
+        scmProvider: string;
       }
     | null
     | undefined,
@@ -907,6 +909,9 @@ async function checkRunTarget(
     installationId: repo?.installation?.installationId ?? null,
     organizationName: repo?.organizationName ?? null,
     repoName: repo?.repoName ?? null,
+    // No row means the instance's own GitHub; a row carries its provider, and a non-GitHub one
+    // gets `scm-provider` back and no credential.
+    scmProvider: repo?.scmProvider ?? GITHUB_SCM_PROVIDER,
   };
   try {
     const credential = await resolvePlatformCredential(scoped, ghConfig);

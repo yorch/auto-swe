@@ -1,5 +1,5 @@
 /**
- * SCM provider seam (EVOL-1).
+ * SCM provider seam.
  *
  * Everything the execution path needs from a source-control host is expressed
  * through `ScmProvider`. `getScmProvider` (`index.ts`) picks the implementation from
@@ -14,6 +14,7 @@
 
 import type { PermissionLookup } from '@auto-swe/shared/lib/githubPermission';
 import type { ChangedFile } from '@auto-swe/shared/lib/prEvaluation';
+import { ApplicationFailure } from '@temporalio/activity';
 
 export type { PermissionLookup, RepoPermission } from '@auto-swe/shared/lib/githubPermission';
 
@@ -45,9 +46,11 @@ export interface RepoRef {
   installationHost: string | null;
   /**
    * The `Connection.scmProvider` this ref was built from, which `getScmProvider` dispatches on.
-   * Absent only on a hand-built fixture, which means GitHub.
+   * Required: a hand-built ref says `'github'` explicitly, so an omission is a type error and
+   * never silently means GitHub. The GitHub client refuses any other value before it touches a
+   * credential.
    */
-  scmProvider?: string;
+  scmProvider: string;
 }
 
 /** Result of resolving clone credentials for a repository. */
@@ -90,6 +93,22 @@ export interface CreatePullRequestInput {
    * ready-for-review PR, because "draft" is a promise to the reviewer.
    */
   draft?: boolean;
+}
+
+/** `ApplicationFailure` type of the non-retryable failure for a provider the code cannot serve. */
+export const SCM_PROVIDER_UNSUPPORTED = 'SCM_PROVIDER_UNSUPPORTED';
+
+/**
+ * The non-retryable failure for a repository whose `scmProvider` the code that is running cannot
+ * serve: no registry entry (`getScmProvider`), or a GitHub-only path (the GitHub client, the
+ * pull-request evaluation) reached with another provider's repository. A standing condition, so it
+ * is never retried.
+ */
+export function scmProviderUnsupported(name: string, detail?: string): ApplicationFailure {
+  return ApplicationFailure.nonRetryable(
+    `The source-control provider "${name}" is not supported.${detail ? ` ${detail}` : ''}`,
+    SCM_PROVIDER_UNSUPPORTED
+  );
 }
 
 /** The host rejected a draft pull request (the repository cannot have drafts). */

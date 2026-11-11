@@ -25,6 +25,7 @@ function launchRepoSelect(userId: string) {
     isActive: true,
     organizationName: true,
     repoName: true,
+    scmProvider: true,
     shares: repoMembersSelect({ userId: true }, { userId }).shares,
     team: {
       select: {

@@ -21,6 +21,7 @@ import {
   hostFamily,
   type InstallationScopedRepo,
   installationHostMismatch,
+  isGitHubRepository,
   platformCredentialScope,
 } from './githubHostScope.js';
 import type { ResolvedGitHubConfig } from './systemConfig.js';
@@ -128,11 +129,20 @@ export type PlatformCredential =
    * The repository's installation is recorded for another host: minting it
    * would ask this host's API for a different host's installation.
    */
-  | { scope: 'installation-mismatch'; host: string };
+  | { scope: 'installation-mismatch'; host: string }
+  /**
+   * The repository is not served by GitHub (`Connection.scmProvider` is not `github`): no
+   * GitHub credential of any kind applies, whatever its URLs say. Carries no `config`, so a
+   * caller that forgets to handle it does not compile where it reads one.
+   */
+  | { scope: 'scm-provider'; provider: string };
 
 /**
  * The credential set for `repo`: the instance's when it is on the instance's
  * host, its host's own when one is configured, otherwise none.
+ *
+ * A repository that is not a GitHub repository (`scmProvider`) gets `scm-provider`
+ * before anything else is looked at: no GitHub credential is used for it.
  *
  * Reads the database only when the repository is off the instance's host, so
  * the common case costs nothing.
@@ -150,6 +160,9 @@ export async function platformCredentialFor(
   config: ResolvedGitHubConfig,
   lookup: (host: string) => Promise<HostCredential | null>
 ): Promise<PlatformCredential> {
+  if (!isGitHubRepository(repo)) {
+    return { provider: repo.scmProvider, scope: 'scm-provider' };
+  }
   const scoped: HostScopedConfig = config;
   const first = platformCredentialScope(repo, scoped);
   if (first === 'instance') {

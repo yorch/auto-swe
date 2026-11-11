@@ -164,6 +164,16 @@ describe('refreshInvalidatedAccess binds the delivery to the host its secret pro
     expect(where.id).toEqual({ notIn: ['conn-ghe'] });
   });
 
+  it('refreshes GitHub repositories only: a user-wide and a repository event both say so', async () => {
+    database();
+    await refreshInvalidatedAccess(prisma, { kind: 'user', login: 'hubot' }, null);
+    const userWhere = findMany.mock.calls.at(-1)?.[0].where;
+    expect(JSON.stringify(userWhere.AND[0])).toContain('"scmProvider":"github"');
+    await refreshInvalidatedAccess(prisma, REPO_EVENT, null);
+    const repoWhere = findMany.mock.calls.at(-1)?.[0].where;
+    expect(repoWhere.scmProvider).toBe('github');
+  });
+
   it('confines a user-wide event to the verified host as well', async () => {
     database();
     await refreshInvalidatedAccess(prisma, { kind: 'user', login: 'hubot' }, 'ghe.corp');

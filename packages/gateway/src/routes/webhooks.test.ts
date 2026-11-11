@@ -1561,7 +1561,13 @@ describe('webhook routes', () => {
     beforeEach(() => {
       vi.mocked(handleOccurrence).mockClear();
       connectionHosts.rows = [
-        { githubApiUrl: null, githubUrl: null, id: 'repo-1', installation: null } as never,
+        {
+          githubApiUrl: null,
+          githubUrl: null,
+          id: 'repo-1',
+          installation: null,
+          scmProvider: 'github',
+        } as never,
       ];
       trackedPr = feedbackPr();
       workflowRunRow = {
@@ -1740,7 +1746,13 @@ describe('webhook routes', () => {
       qodo.botIds = [424242];
       qodo.enabled = true;
       connectionHosts.rows = [
-        { githubApiUrl: null, githubUrl: null, id: 'repo-1', installation: null } as never,
+        {
+          githubApiUrl: null,
+          githubUrl: null,
+          id: 'repo-1',
+          installation: null,
+          scmProvider: 'github',
+        } as never,
       ];
       trackedPr = {
         id: 'pr-row-9',
@@ -3130,6 +3142,25 @@ describe('webhook routes', () => {
       expect(resolveGitHubToken).not.toHaveBeenCalled();
       expect(fetchMock).not.toHaveBeenCalled();
       expect(signalCalls).toHaveLength(1);
+    });
+
+    it('sends no credential for a repository served by another provider, even on the instance host', async () => {
+      state.github = { ...state.github, authMode: 'pat', token: 'instance-pat' };
+      trackRepo({
+        githubApiUrl: null,
+        githubUrl: null,
+        installation: null,
+        organizationName: 'acme',
+        repoName: 'payments-api',
+        scmProvider: 'gitlab',
+      });
+
+      const res = await inject('/api/v1/webhooks/ci', body, sign(body));
+
+      expect(res.statusCode).toBe(200);
+      expect(resolveGitHubToken).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(JSON.stringify(fetchMock.mock.calls)).not.toContain('instance-pat');
     });
 
     it('asks for the singleton installation on the singleton host when the repository has none and is on it', async () => {

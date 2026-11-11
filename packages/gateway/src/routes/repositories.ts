@@ -11,7 +11,11 @@ import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectio
 // mocks the barrel to avoid instantiating the Prisma client still gets the real one.
 import { isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import { credentialDestinationChanged } from '@auto-swe/shared/lib/credentialDestination';
-import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
+import {
+  GITHUB_SCM_PROVIDER,
+  installationHostFor,
+  sameHostFamily,
+} from '@auto-swe/shared/lib/githubHostScope';
 import { type PermissionLookup, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import {
   PREVIEW_ENV_LOOKS_SECRET,
@@ -1068,6 +1072,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           installation: null,
           organizationName,
           repoName,
+          // The create path takes no provider: a new row is the column's default, GitHub.
+          scmProvider: GITHUB_SCM_PROVIDER,
         });
         if (accessProblem) {
           return sendError(reply, accessProblem.status, accessProblem.code, accessProblem.message);
@@ -1214,6 +1220,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           organizationName: true,
           previewConfig: true,
           repoName: true,
+          scmProvider: true,
           setup: true,
           teamId: true,
           tools: true,
@@ -1452,6 +1459,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           installation: repo.installation ?? null,
           organizationName: repo.organizationName,
           repoName: repo.repoName,
+          scmProvider: repo.scmProvider,
         });
         if (accessProblem) {
           return sendError(reply, accessProblem.status, accessProblem.code, accessProblem.message);

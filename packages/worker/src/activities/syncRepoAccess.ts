@@ -229,7 +229,24 @@ export async function syncRepoAccess(
         continue;
       }
       const repoRef = toRepoRef(repo);
-      const provider = getScmProvider(repoRef);
+      // One repository this process cannot serve (a provider with no registry entry) must not
+      // abort the sweep: the repositories after it would never be refreshed, and revoked access
+      // on them would stay recorded as granted. Counted as skipped, logged, and the sweep moves on.
+      let provider: ReturnType<typeof getScmProvider>;
+      try {
+        provider = getScmProvider(repoRef);
+      } catch (err) {
+        result.skippedRepos++;
+        log.warn(
+          'repo access sync: repository skipped, its source-control provider is unsupported',
+          {
+            connectionId: repo.id,
+            error: err instanceof Error ? err.message : String(err),
+            scmProvider: repo.scmProvider,
+          }
+        );
+        continue;
+      }
       const credentialHolders = new Set(credentialsOn ? repo.credentials.map((c) => c.userId) : []);
 
       for (const membership of repoMembers(repo)) {

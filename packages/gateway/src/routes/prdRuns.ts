@@ -67,6 +67,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
               installation: { select: { host: true, installationId: true, isActive: true } },
               organizationName: true,
               repoName: true,
+              scmProvider: true,
               shares: repoMembersSelect({ userId: true }, { userId: user.sub }).shares,
               team: {
                 select: {

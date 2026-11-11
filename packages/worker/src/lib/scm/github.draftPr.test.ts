@@ -44,7 +44,11 @@ import {
   type RepoRef,
 } from './types.js';
 
-const repo = { organizationName: 'acme', repoName: 'api' } as unknown as RepoRef;
+const repo = {
+  organizationName: 'acme',
+  repoName: 'api',
+  scmProvider: 'github',
+} as unknown as RepoRef;
 const base = { baseBranch: 'main', body: 'b', headBranch: 'auto/agent-1', repo, title: 't' };
 
 beforeEach(() => {

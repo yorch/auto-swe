@@ -22,7 +22,12 @@ import {
   type PlatformCredential,
   resolvePlatformCredential,
 } from '@auto-swe/shared/lib/githubHostCredential';
-import { hostKey, installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
+import {
+  hostKey,
+  installationTargetFor,
+  isGitHubRepository,
+  ScmProviderMismatchError,
+} from '@auto-swe/shared/lib/githubHostScope';
 import {
   PlatformCredentialHostError,
   RepositoryNotVisibleError,
@@ -68,6 +73,7 @@ import {
   type ReviewThread,
   type ScmActionResult,
   type ScmProvider,
+  scmProviderUnsupported,
   type WorkflowRunFailedJob,
   type WorkflowRunFailure,
 } from './types.js';
@@ -98,14 +104,20 @@ type PlatformConfig = Awaited<ReturnType<typeof resolveGitHubConfig>>;
 async function platformCredential(
   repo: RepoRef,
   ghConfig: PlatformConfig
-): Promise<PlatformCredential> {
+): Promise<Exclude<PlatformCredential, { scope: 'scm-provider' }>> {
+  // The GitHub client serves GitHub repositories only. Refused before a credential is chosen, with
+  // a non-retryable failure: a repository on another provider would otherwise be reached through
+  // the GitHub API with a GitHub credential aimed at its URLs.
+  assertGitHubRef(repo);
+  let credential: PlatformCredential;
   try {
-    return await resolvePlatformCredential(
+    credential = await resolvePlatformCredential(
       {
         apiUrl: repo.apiUrl,
         baseUrl: repo.baseUrl,
         installationHost: repo.installationHost,
         installationId: repo.installationId,
+        scmProvider: repo.scmProvider,
       },
       ghConfig
     );
@@ -116,6 +128,17 @@ async function platformCredential(
       `Could not load the platform GitHub credentials for ${hostKey(repo.baseUrl ?? ghConfig.baseUrl)}: ${err instanceof Error ? err.message : String(err)}`,
       { cause: err }
     );
+  }
+  if (credential.scope === 'scm-provider') {
+    throw scmProviderUnsupported(credential.provider, 'The GitHub client serves GitHub only.');
+  }
+  return credential;
+}
+
+/** Refuse (non-retryable) a ref that is not a GitHub repository; the GitHub client is GitHub-only. */
+function assertGitHubRef(repo: Pick<RepoRef, 'scmProvider'>): void {
+  if (!isGitHubRepository(repo)) {
+    throw scmProviderUnsupported(repo.scmProvider, 'The GitHub client serves GitHub only.');
   }
 }
 
@@ -178,6 +201,7 @@ async function launcherToken(
   if (!repo.connectionId) {
     return null;
   }
+  assertGitHubRef(repo);
   if (!(await resolveUserCredentialPolicy()).enabled) {
     return null;
   }
@@ -197,6 +221,10 @@ async function launcherToken(
     // error (the database) stays retryable.
     if (err instanceof CredentialUnreadableError) {
       throw ApplicationFailure.nonRetryable(err.message, 'CREDENTIAL_UNREADABLE');
+    }
+    // The stored row is not a GitHub repository (the ref predates a change of provider).
+    if (err instanceof ScmProviderMismatchError) {
+      throw scmProviderUnsupported(err.provider, 'The GitHub client serves GitHub only.');
     }
     throw err;
   }
@@ -220,6 +248,8 @@ async function runToken(
   repo: RepoRef,
   ghConfig: Awaited<ReturnType<typeof resolveGitHubConfig>>
 ): Promise<string> {
+  // First of all, before the allowlist read or any token (the user's included).
+  assertGitHubRef(repo);
   // Before any credential goes anywhere: the repository's own URL overrides
   // must be on an approved host, or a team lead could point a repository at a
   // host they control and collect the token. Standing configuration, so it
@@ -576,6 +606,12 @@ export class GitHubScmProvider implements ScmProvider {
     logsUrl: string,
     repo?: RepoRef
   ): Promise<{ ok: true; text: string } | { ok: false; error: string }> {
+    if (repo && !isGitHubRepository(repo)) {
+      return {
+        error: `Cannot fetch CI logs — the GitHub client does not serve a "${repo.scmProvider}" repository`,
+        ok: false,
+      };
+    }
     const ghConfig = await resolveGitHubConfig();
     // The platform credential — an App JWT, when minting an installation token
     // — goes to this repository's own API host. Every other route to a token
@@ -1133,6 +1169,11 @@ export class GitHubScmProvider implements ScmProvider {
   }
 
   async repoPermission(repo: RepoRef, username: string): Promise<PermissionLookup> {
+    // A GitHub question about a repository served by another provider: "could not ask", before
+    // any credential is chosen.
+    if (!isGitHubRepository(repo)) {
+      return { failure: 'host-mismatch', ok: false };
+    }
     // An unapproved or non-canonical API override gets no credential: "could
     // not ask", never a denial — and a standing condition, not a transient one.
     if (!(await repositoryHostsAllowed({ githubApiUrl: repo.apiUrl })).ok) {

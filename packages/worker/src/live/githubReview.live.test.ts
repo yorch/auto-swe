@@ -59,7 +59,7 @@ describe.skipIf(!gate.enabled)(liveTitle('live GitHub inline review comments', g
     ).toBe(liveEnv('LIVE_E2E_DATABASE_URL'));
     slug = liveEnv('LIVE_E2E_FIXTURE_REPO');
     const [organizationName, repoName] = slug.split('/') as [string, string];
-    repo = { installationHost: null, organizationName, repoName };
+    repo = { installationHost: null, organizationName, repoName, scmProvider: 'github' };
   });
 
   afterAll(async () => {

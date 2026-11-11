@@ -90,6 +90,7 @@ describe('warnIfReposOnUnusableHosts', () => {
     installation,
     organizationName: 'acme',
     repoName: id,
+    scmProvider: 'github',
   });
 
   it('lists repositories on a foreign host, naming the error their runs hit and the remedy', async () => {
@@ -101,7 +102,9 @@ describe('warnIfReposOnUnusableHosts', () => {
     ]);
     expect(warned).toBe(true);
     expect(findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { isActive: true, type: 'git_repo' } })
+      expect.objectContaining({
+        where: { isActive: true, scmProvider: 'github', type: 'git_repo' },
+      })
     );
     const [fields, message] = warn.mock.calls[0];
     expect(fields.total).toBe(2);

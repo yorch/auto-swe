@@ -111,6 +111,7 @@ export async function decideSlackRepoAccessWithGate(
       installation: { select: { host: true, installationId: true, isActive: true } },
       organizationName: true,
       repoName: true,
+      scmProvider: true,
       ...repoMembersSelect({ userId: true }, { userId: user.id }),
       type: true,
     },

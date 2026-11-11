@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { prisma } from '@auto-swe/shared/db';
 import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
+import { GITHUB_SCM_PROVIDER } from '@auto-swe/shared/lib/githubHostScope';
 import { MAX_DEPENDENCY_CHECKOUTS } from '@auto-swe/shared/lib/knowledgeBaseResolution';
 import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
@@ -274,6 +275,42 @@ const HARDENED_GIT_ENV = 'GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_
 
 /** Name of the environment variable that carries the `http.extraheader` value into a git script. */
 export const GIT_AUTH_ENV = 'ASW_GIT_AUTH';
+
+/**
+ * The authenticated clone URL for another repository, found by owner/name alone (a setup step
+ * clones the repositories it depends on).
+ *
+ * The lookup spans hosts and teams, so it names the provider it mints for: a same-named repository
+ * served by another provider is never the row picked (the pick would otherwise be arbitrary, and
+ * the GitHub client would refuse it). With no matching row the repository is the instance's own
+ * GitHub one.
+ */
+export async function mintGitHubCloneUrl(
+  organizationName: string,
+  repoName: string
+): Promise<string> {
+  const row = await prisma.connection.findFirst({
+    include: { installation: { select: { host: true, installationId: true } } },
+    where: {
+      isActive: true,
+      organizationName: { equals: organizationName, mode: 'insensitive' },
+      repoName: { equals: repoName, mode: 'insensitive' },
+      scmProvider: GITHUB_SCM_PROVIDER,
+      type: 'git_repo',
+    },
+  });
+  const ref: RepoRef = row
+    ? toRepoRef(row)
+    : {
+        installationHost: null,
+        installationId: null,
+        organizationName,
+        repoName,
+        scmProvider: GITHUB_SCM_PROVIDER,
+      };
+  const { authedCloneUrl } = await getScmProvider(ref).cloneCredentials(ref);
+  return authedCloneUrl;
+}
 
 /**
  * Build a hardened `git` invocation, with the clone credential (when there is
@@ -1029,19 +1066,7 @@ export async function createWorkspace(
       );
     },
     mintCredential: async (organizationName, repoName) => {
-      const row = await prisma.connection.findFirst({
-        include: { installation: { select: { host: true, installationId: true } } },
-        where: {
-          isActive: true,
-          organizationName: { equals: organizationName, mode: 'insensitive' },
-          repoName: { equals: repoName, mode: 'insensitive' },
-          type: 'git_repo',
-        },
-      });
-      const ref: RepoRef = row
-        ? toRepoRef(row)
-        : { installationHost: null, installationId: null, organizationName, repoName };
-      const { authedCloneUrl } = await getScmProvider(ref).cloneCredentials(ref);
+      const authedCloneUrl = await mintGitHubCloneUrl(organizationName, repoName);
       const split = splitCloneCredential(authedCloneUrl);
       setupSecrets.push(
         ...[
