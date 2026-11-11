@@ -76,6 +76,7 @@ import { requestHasTrackerTicket } from '../lib/trackerTicket.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import {
   diffForResult,
+  type PathGuard,
   type PathGuardOptions,
   pushRefspec,
   startPathGuard,
@@ -292,7 +293,7 @@ export async function executeImplementation(
 
   // Before anything the agent can touch: the commit the guarded change is measured from.
   // Inside the try so a failure still destroys the workspace.
-  let pathGuard: Awaited<ReturnType<typeof startPathGuard>>;
+  let pathGuard: PathGuard;
 
   // Capture the base commit SHA (defaultBranch HEAD at workspace creation time)
   // for the optional historical-replay tier — stored best-effort on WorkflowRun.
@@ -635,8 +636,8 @@ export async function executeImplementation(
     await workspace.exec('git add -A');
     // Skip the commit when there is nothing staged: on a retry that resumed from
     // the pushed branch the agent may have had nothing left to change, and an
-    // empty `git commit` exits non-zero. A guarded step also checks the committed
-    // range here, before the push.
+    // empty `git commit` exits non-zero. The commit is made with hooks off and its sha
+    // is pinned once; a guarded step also checks the committed range here, before the push.
     const pushSha = await commitWithTestIntegrity(
       workspace,
       commitSummary,
@@ -650,13 +651,11 @@ export async function executeImplementation(
       workspace.gitAuthed(`push origin ${pushRefspec(branch, pushSha)}`)
     );
 
-    // Collect results
-    // `baseBranch` is an operator-editable column or a launch input — `diffForResult`
-    // quotes it like every other interpolated ref so it cannot smuggle shell syntax
-    // into the container.
-    const diff = await diffForResult(workspace, baseBranch, pathGuard, pushSha);
-    // A guarded step reports the commit it pushed, not whatever HEAD has become.
-    const headSha = pushSha ?? (await workspace.exec('git rev-parse HEAD')).trim();
+    // Collect results: the pushed commit against the base recorded before the agent ran —
+    // no ref is resolved now, because the agent can move any ref in its checkout.
+    const diff = await diffForResult(workspace, pathGuard, pushSha);
+    // The step reports the commit it pushed, not whatever HEAD has become.
+    const headSha = pushSha;
 
     tracer.addActivityEvent({
       name: 'git.commit_push',

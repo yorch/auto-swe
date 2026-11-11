@@ -4,8 +4,8 @@
  * BEFORE its push. Prompt text alone cannot enforce that — an agent that reads
  * untrusted content can be talked into editing anything — and a push can start work
  * on the host (a new workflow file runs on `push`), so the check has to sit ahead
- * of it. Unset, nothing changes for any template: the helpers below run the exact
- * commands the steps always ran.
+ * of it. Unset, the step still records the commit it started from and commits, pushes
+ * and reports the same pinned way (below); only the path check itself is skipped.
  *
  * The repository is writable by the agent, so the check cannot trust anything in it:
  *  - it measures what is actually pushed, not the index (which a hook can change
@@ -27,11 +27,16 @@
  *    hardening `gitAuthed` uses (`gitWithAuthHeader`: no hooks, no system or global
  *    config) plus `GIT_NO_REPLACE_OBJECTS`, so `git replace` cannot hide a file;
  *  - no ref is read after the agent starts, so `update-ref` moves nothing the check
- *    looks at.
+ *    looks at: every step, with or without `allowedPaths`, records the base commit before the
+ *    agent runs and the diff the scanners read is exactly that base against the commit that
+ *    was pushed;
+ *  - grafts and the commit-graph are switched off for every call (`GIT_GRAFT_FILE`,
+ *    `core.commitGraph`), so a `.git/info/grafts` entry cannot rewrite a parent.
  * What remains is outside the agent's reach in this model: replacing the `git`
  * binary itself, which needs root in the container and is the limit the workspace
  * hardening already documents.
  */
+import { randomBytes } from 'node:crypto';
 import { ApplicationFailure } from '@temporalio/activity';
 import {
   GITLINK_MODE,
@@ -46,6 +51,7 @@ import {
   gitIdentityFlags,
   withCoAuthorTrailer,
 } from '../lib/gitIdentity.js';
+import { standInBinarySections } from './scanDiffText.js';
 import { gitWithAuthHeader, shellQuote, type Workspace } from './workspace.js';
 
 /** `gitIdentity` is optional so a fake workspace need not carry one. */
@@ -62,8 +68,11 @@ type Exec = Pick<Workspace, 'exec'> & { gitIdentity?: GitIdentity };
 const PIN_REPOSITORY = 'GIT_DIR="$(pwd -P)/.git" GIT_WORK_TREE="$(pwd -P)"';
 
 /** A hardened, replace-proof git call, pinned to this checkout (see {@link PIN_REPOSITORY}). */
-const guardedGit = (subcommand: string): string =>
-  `GIT_NO_REPLACE_OBJECTS=1 ${PIN_REPOSITORY} ${gitWithAuthHeader(subcommand)}`;
+export const guardedGit = (subcommand: string): string =>
+  // `GIT_GRAFT_FILE` and `core.commitGraph`: `GIT_NO_REPLACE_OBJECTS` does not disable grafts, and
+  // a `.git/info/grafts` line rewrites a commit's parents, so every ancestry read would lie.
+  `GIT_NO_REPLACE_OBJECTS=1 GIT_GRAFT_FILE=/dev/null ${PIN_REPOSITORY} ` +
+  gitWithAuthHeader(`-c core.commitGraph=false -c advice.graftFileDeprecated=false ${subcommand}`);
 
 /**
  * Whether `changedPath` (repo-relative, as git lists it) is covered by an `allowedPaths` entry.
@@ -107,12 +116,13 @@ export interface PathGuard {
   refuseWorkflowChanges: boolean;
   /**
    * What `CodeResult.diff` and `filesChanged` (read by the template's `checkScope`) are
-   * measured against, as a sha read before the agent ran, never a ref. `twoTree` diffs the
-   * trees directly; otherwise it is the change since the merge base, for a session that
-   * started on an existing branch with nothing better recorded. That one is informational:
-   * the per-session check above is what confines the change.
+   * measured against: a commit sha recorded before the agent ran, never a ref and never
+   * a merge base computed afterwards. It is the previous result's base when one is carried,
+   * the default branch's tip for a session that starts on it, and otherwise the fork point
+   * of the starting branch from the default branch, computed at start. The diff is a
+   * two-tree comparison of this sha with the pushed commit.
    */
-  report: { sha: string; twoTree: boolean };
+  report: { sha: string };
 }
 
 const SHA = /^[0-9a-f]{40,64}$/;
@@ -129,15 +139,18 @@ async function readSha(workspace: Exec, rev: string): Promise<string> {
 }
 
 /**
- * Read, before the agent runs, the shas the guard measures from. Call it once the
+ * Read, before the agent runs, the shas the step measures from. Call it once the
  * workspace is on the tree the session starts from (after any sync to a pushed branch)
- * and before any agent turn. Returns undefined, running nothing, when the step sets no
- * `allowedPaths`. Fails closed (non-retryably) when a sha cannot be read: a guarded
- * step with no base would be an unguarded one.
+ * and before any agent turn. Every implementer step gets one, with or without
+ * `allowedPaths`: without it the guard only pins the base the scanned diff is read
+ * against, because a base resolved after the agent ran is a base the agent chose.
+ * Fails closed (non-retryably) when a sha cannot be read: a step with no recorded base
+ * would be one whose diff the agent could empty.
  *
  * `reportBase` is the sha the whole change should be reported against when it is known
- * (the commit a fix session's branch was originally cut from, carried on the previous
- * result). Otherwise the default branch's tip is used.
+ * (the commit the work was originally cut from, carried on the previous result, or the
+ * `baseSha` the activity read at workspace creation). Otherwise the default branch's tip
+ * is used, or, for a session that starts on a branch ahead of it, the fork point read now.
  */
 export async function startPathGuard(
   workspace: Exec,
@@ -145,48 +158,60 @@ export async function startPathGuard(
   allowedPaths: readonly string[] | undefined,
   reportBase?: string,
   options: PathGuardOptions = {}
-): Promise<PathGuard | undefined> {
+): Promise<PathGuard> {
   const refuseWorkflowChanges = options.refuseWorkflowChanges === true;
-  if (!allowedPaths && !refuseWorkflowChanges) {
-    return undefined;
-  }
   const [sessionBase, defaultSha] = [
     await readSha(workspace, 'HEAD'),
     await readSha(workspace, `origin/${defaultBranch}`),
   ];
-  if (!sessionBase || !defaultSha) {
+  if (!sessionBase || (!defaultSha && !(reportBase && SHA.test(reportBase)))) {
     throw ApplicationFailure.nonRetryable(
-      'Could not read the commit the workspace started from, so the change cannot be confined to ' +
-        `${allowedPaths ? allowedPaths.join(', ') : 'the paths it may touch'}. Nothing was committed or pushed.`,
+      'Could not read the commit the workspace started from, so the change cannot be read back ' +
+        `for the security scan${allowedPaths ? ` or confined to ${allowedPaths.join(', ')}` : ''}. ` +
+        'Nothing was committed or pushed.',
       'DIFF_BASE_UNREADABLE'
     );
   }
-  const report =
-    reportBase && SHA.test(reportBase)
-      ? { sha: reportBase, twoTree: true }
-      : { sha: defaultSha, twoTree: sessionBase === defaultSha };
-  return { allowedPaths, refuseWorkflowChanges, report, sessionBase };
+  let sha: string;
+  if (reportBase && SHA.test(reportBase)) {
+    sha = reportBase;
+  } else if (sessionBase === defaultSha) {
+    sha = defaultSha;
+  } else {
+    // A branch ahead of the default tip: its fork point, read now, before the agent can write
+    // a graft or a ref. When it cannot be read (history shallower than the branch), the default
+    // tip itself: a larger diff than the change, never a smaller one.
+    sha = (await readForkPoint(workspace, defaultSha, sessionBase)) || defaultSha;
+  }
+  return { allowedPaths, refuseWorkflowChanges, report: { sha }, sessionBase };
+}
+
+async function readForkPoint(workspace: Exec, a: string, b: string): Promise<string> {
+  try {
+    const sha = (
+      await workspace.exec(guardedGit(`merge-base ${shellQuote(a)} ${shellQuote(b)}`))
+    ).trim();
+    return SHA.test(sha) ? sha : '';
+  } catch {
+    return '';
+  }
 }
 
 /**
- * Commit what is staged (a no-op when nothing is). Unguarded: the original command, and
- * undefined is returned. Guarded, or `hardened` (a session whose committed result is analysed
- * afterwards, such as the test-integrity gate): hooks off, then pin the committed sha once and
- * return it; a guard also checks that commit's tree before returning. The caller pushes exactly
- * that commit.
+ * Commit what is staged (a no-op when nothing is), with hooks off and the git identity passed
+ * explicitly, then pin the committed sha once and return it. The caller pushes exactly that
+ * commit (`pushRefspec`) and reports exactly that commit: a hook the agent planted in `.git/hooks`
+ * (a `post-commit` that repoints a ref, a `pre-commit` that stages another file) never runs, and
+ * `HEAD` is read once, here, so nothing the agent does afterwards moves what is pushed. A guard,
+ * when given, also checks that commit's tree against its `allowedPaths` before returning.
  */
 export async function commitStaged(
   workspace: Exec,
   message: string,
-  guard: PathGuard | undefined,
-  options: { hardened?: boolean } = {}
-): Promise<string | undefined> {
+  guard: PathGuard | undefined
+): Promise<string> {
   const identity = workspace.gitIdentity ?? DEFAULT_GIT_IDENTITY;
   const text = shellQuote(withCoAuthorTrailer(message, identity));
-  if (!guard && !options.hardened) {
-    await workspace.exec(`git diff --cached --quiet || git commit -m ${text}`);
-    return undefined;
-  }
   // Hooks off (the hardening sets `core.hooksPath=/dev/null`; `--no-verify` as well), so a
   // `pre-commit` hook cannot add or remove a file after the staged tree was looked at.
   await workspace.exec(
@@ -214,13 +239,36 @@ export async function readHeadSha(workspace: Exec): Promise<string | undefined> 
   return (await readSha(workspace, 'HEAD')) || undefined;
 }
 
-export function testIntegrityDiffCommand(
+/** The test-integrity gate's read of what a session changed (see {@link execPinned}). */
+export function readTestIntegrityDiff(
+  workspace: Exec,
   from: string,
   to: string,
   kind: 'patch' | 'name-status',
   excludes: readonly string[]
-): string {
-  return pinnedDiffTreeCommand(from, to, { context: 1, excludes, kind });
+): Promise<string> {
+  return execPinned(workspace, pinnedDiffTreeCommand(from, to, { context: 1, excludes, kind }));
+}
+
+/**
+ * Runs a pinned read and returns its stdout only if the command demonstrably ran to its end.
+ * A backend can cut stdout short without an error (the Kubernetes exec capture stops reading at
+ * its cap and reports exit 0), and a padded diff would then come back as a complete, shorter one.
+ * The command therefore ends, after git has exited, with a line carrying a nonce that exists only
+ * in this call; its absence from the end of stdout throws. The git exit status is kept, so a
+ * failing git still fails the call.
+ */
+export async function execPinned(workspace: Exec, command: string): Promise<string> {
+  const nonce = randomBytes(16).toString('hex');
+  const out = await workspace.exec(`{ ${command}; }; rc=$?; printf '\\n%s\\n' ${nonce}; exit $rc`);
+  const marker = `\n${nonce}`;
+  const end = out.trimEnd();
+  if (!end.endsWith(marker)) {
+    throw new Error(
+      'the output of a git read was cut short (its end marker is missing), so it may be incomplete'
+    );
+  }
+  return end.slice(0, end.length - marker.length);
 }
 
 /**
@@ -277,7 +325,8 @@ export async function readTreeChange(
   if (trees.length !== 2 || !trees.every((t) => SHA.test(t))) {
     throw new Error('could not read the trees of the two commits');
   }
-  const names = await workspace.exec(
+  const names = await execPinned(
+    workspace,
     guardedGit(
       `diff-tree -r --name-only --no-renames --ignore-submodules=none -z ${shellQuote(from)} ${shellQuote(to)}`
     )
@@ -289,12 +338,12 @@ export async function readTreeChange(
 }
 
 /**
- * What follows `push origin`. Guarded: exactly the checked commit, to the work branch's
- * ref, so a branch the agent moved or switched cannot ride along. Unguarded: the
- * original `<branch>`.
+ * What follows `push origin`: exactly the committed sha, to the work branch's ref, so a branch the
+ * agent moved or switched cannot ride along and the branch NAME is never resolved after the
+ * agent ran.
  */
-export function pushRefspec(branch: string, pushSha: string | undefined): string {
-  return pushSha ? `${pushSha}:refs/heads/${shellQuote(branch)}` : shellQuote(branch);
+export function pushRefspec(branch: string, pushSha: string): string {
+  return `${pushSha}:refs/heads/${shellQuote(branch)}`;
 }
 
 /**
@@ -318,7 +367,8 @@ export async function assertCommittedTreeWithinAllowedPaths(
   }
   let out: string;
   try {
-    out = await workspace.exec(
+    out = await execPinned(
+      workspace,
       guardedGit(
         `diff-tree -r --name-only --no-renames --ignore-submodules=none -z ${guard.sessionBase} ${sha}`
       )
@@ -356,7 +406,8 @@ async function assertNoWorkflowChanges(
   let changes: RawChange[];
   try {
     changes = parseRawDiffZ(
-      await workspace.exec(
+      await execPinned(
+        workspace,
         guardedGit(
           `diff-tree -r --raw -z --no-abbrev --no-renames --ignore-submodules=none ${sessionBase} ${sha}`
         )
@@ -388,22 +439,23 @@ async function assertNoWorkflowChanges(
  * The diff the step reports (`CodeResult.diff`, and from it `filesChanged`, which the
  * template's `checkScope` reads) and the exact text the security gate and the code scanner read.
  *
- * Both branches compare two COMMITS' trees through {@link pinnedDiffTreeCommand}: the committed
- * head (the pushed sha, or `HEAD` for an unguarded step) against a recorded base (the guard's
- * report sha, or the default branch's tip). Neither the work tree, the index, nor any
- * repository setting the agent controls (external diff driver, textconv, `-diff` attributes,
- * `core.worktree`) takes part, so the agent cannot blind what the scanners see. Nothing is
- * excluded here — not lockfiles, not minified files: a secret can sit in a file named like one.
+ * It compares two COMMITS' trees through {@link pinnedDiffTreeCommand}: the committed sha that
+ * was pushed against the base sha recorded before the agent ran (`guard.report.sha`). No ref is
+ * resolved here, and neither the work tree, the index, nor any repository setting the agent
+ * controls (external diff driver, textconv, `-diff` attributes, `core.worktree`, grafts) takes
+ * part, so the agent can neither move the base nor blind what the scanners see. Nothing is
+ * excluded — not lockfiles, not minified files: a secret can sit in a file named like one. A
+ * binary file is reduced to its printable strings ({@link standInBinarySections}); text is whole.
  *
- * Fails closed, non-retryably (`SECURITY_GATE_UNAVAILABLE`), when the change cannot be read, or
- * when the diff is empty although the two trees differ: an empty answer for a different tree
+ * Fails closed, non-retryably (`SECURITY_GATE_UNAVAILABLE`), when the change cannot be read (or
+ * its output was cut short, or is too large to read), when a binary's strings exceed their cap,
+ * or when the diff is empty although the two trees differ: an empty answer for a different tree
  * means something hid the change, and "nothing found" must never read as "clean".
  */
 export async function diffForResult(
   workspace: Exec,
-  defaultBranch: string,
-  guard: PathGuard | undefined,
-  pushSha?: string
+  guard: PathGuard,
+  pushSha: string
 ): Promise<string> {
   const unreadable = (why: string) =>
     ApplicationFailure.nonRetryable(
@@ -418,30 +470,18 @@ export async function diffForResult(
       throw unreadable(err instanceof Error ? err.message : String(err));
     }
   };
-  const head = pushSha ?? (await read(() => readHeadSha(workspace)));
-  if (!head) {
-    throw unreadable('the committed head could not be read');
+  const base = guard.report.sha;
+  if (!SHA.test(base) || !SHA.test(pushSha)) {
+    throw unreadable('the base or the committed head is not a commit');
   }
-  let base: string;
-  if (guard && !guard.report.twoTree) {
-    const mergeBase = guardedGit(`merge-base ${shellQuote(guard.report.sha)} ${shellQuote(head)}`);
-    base = (await read(() => workspace.exec(mergeBase))).trim();
-  } else if (guard) {
-    base = guard.report.sha;
-  } else {
-    base = await read(() => readSha(workspace, `origin/${defaultBranch}`));
-  }
-  if (!SHA.test(base)) {
-    throw unreadable('the base commit could not be read');
-  }
-  const diff = await read(() =>
-    workspace.exec(pinnedDiffTreeCommand(base, head, { context: 3, kind: 'patch' }))
+  const patch = await read(() =>
+    execPinned(workspace, pinnedDiffTreeCommand(base, pushSha, { context: 3, kind: 'patch' }))
   );
-  if (diff.trim() === '') {
-    const change = await read(() => readTreeChange(workspace, base, head));
+  if (patch.trim() === '') {
+    const change = await read(() => readTreeChange(workspace, base, pushSha));
     if (change.treesDiffer) {
       throw unreadable('the diff read as empty although the committed tree differs from the base');
     }
   }
-  return diff;
+  return standInBinarySections(patch);
 }

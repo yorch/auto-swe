@@ -12,7 +12,7 @@ import path from 'node:path';
 import { ApplicationFailure } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { commitStaged, diffForResult, type PathGuard, startPathGuard } from './allowedPaths.js';
-import { shellQuote } from './workspace.js';
+import { withEndMarker } from './pinnedGitTestSupport.js';
 
 let parent: string;
 let dir: string;
@@ -34,19 +34,12 @@ const write = (file: string, text: string) => {
 const PAYLOAD = 'eval(userInput); const key = "AKIAIOSFODNN7EXAMPLE";\n';
 
 /** The logic before the fix: the work-tree porcelain diff (unguarded) / the committed range. */
-async function oldDiffForResult(
-  defaultBranch: string,
-  guard: PathGuard | undefined,
-  pushSha?: string
-): Promise<string> {
-  if (!guard || !pushSha) {
-    return workspace.exec(`git diff origin/${shellQuote(defaultBranch)}`);
+async function oldDiffForResult(mode: Mode, guard: PathGuard, pushSha: string): Promise<string> {
+  if (mode === 'unguarded') {
+    return workspace.exec('git diff origin/main');
   }
-  const range = guard.report.twoTree
-    ? `${guard.report.sha} ${pushSha}`
-    : `${guard.report.sha}...${pushSha}`;
   return workspace.exec(
-    `git -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --ignore-submodules=none ${range}`
+    `git -c core.attributesFile=/dev/null diff --no-ext-diff --no-textconv --ignore-submodules=none ${guard.report.sha} ${pushSha}`
   );
 }
 
@@ -60,22 +53,19 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(parent, { force: true, recursive: true }));
 
+/** Whether the step set `allowedPaths`; either way it records its base and commits the same way. */
 type Mode = 'unguarded' | 'guarded';
 
 /** Commit the payload the way a step would, then let `blind` tamper with the checkout. */
 async function run(mode: Mode, blind: () => void) {
-  const guard =
-    mode === 'guarded'
-      ? await startPathGuard(workspace, 'main', ['evil.js', '.gitattributes'])
-      : undefined;
+  const guard = await startPathGuard(
+    workspace,
+    'main',
+    mode === 'guarded' ? ['evil.js', '.gitattributes'] : undefined
+  );
   write('evil.js', PAYLOAD);
   sh('git add -A');
-  let pushSha: string | undefined;
-  if (guard) {
-    pushSha = await commitStaged(workspace, 'auto: implement', guard);
-  } else {
-    sh('git commit -q -m implement');
-  }
+  const pushSha = await commitStaged(workspace, 'auto: implement', guard);
   blind();
   return { guard, pushSha };
 }
@@ -127,7 +117,7 @@ describe.each(routes)('$name', ({ blind, oldBlinded }) => {
   describe.each(['unguarded', 'guarded'] as const)('%s step', (mode) => {
     it('control: the previous logic is blinded where it was', async () => {
       const { guard, pushSha } = await run(mode, blind);
-      const old = await oldDiffForResult('main', guard, pushSha);
+      const old = await oldDiffForResult(mode, guard, pushSha);
       if (oldBlinded[mode]) {
         expect(old).not.toContain('eval(');
       }
@@ -135,7 +125,7 @@ describe.each(routes)('$name', ({ blind, oldBlinded }) => {
 
     it('the scanner input still holds the eval( call and the key', async () => {
       const { guard, pushSha } = await run(mode, blind);
-      const diff = await diffForResult(workspace, 'main', guard, pushSha);
+      const diff = await diffForResult(workspace, guard, pushSha);
       expect(diff).toContain('diff --git a/evil.js b/evil.js');
       expect(diff).toContain('+eval(userInput)');
       expect(diff).toContain('AKIAIOSFODNN7EXAMPLE');
@@ -149,25 +139,26 @@ describe('what stays in the scan input', () => {
     write('yarn.lock', 'token = "AKIAIOSFODNN7EXAMPLE"\n');
     sh('git add -A && git commit -q -m lock');
     const sha = sh('git rev-parse HEAD').trim();
-    const diff = await diffForResult(workspace, 'main', guard, sha);
+    const diff = await diffForResult(workspace, guard, sha);
     expect(diff).toContain('diff --git a/yarn.lock b/yarn.lock');
     expect(diff).toContain('AKIAIOSFODNN7EXAMPLE');
   });
 
   it('is empty when nothing changed', async () => {
-    expect(await diffForResult(workspace, 'main', undefined)).toBe('');
+    const guard = await startPathGuard(workspace, 'main', undefined);
+    expect(await diffForResult(workspace, guard, sh('git rev-parse HEAD').trim())).toBe('');
   });
 });
 
 describe('an empty diff for a different tree', () => {
   /** Something below the analyser hides the patch but not the tree listing. */
   const blinded = {
-    exec: async (cmd: string) => (cmd.includes(' -p --text') ? '' : sh(cmd)),
+    exec: async (cmd: string) => (cmd.includes(' -p --text') ? withEndMarker(cmd, '') : sh(cmd)),
   };
 
   it.each(['unguarded', 'guarded'] as const)('fails closed, non-retryably (%s)', async (mode) => {
     const { guard, pushSha } = await run(mode, () => {});
-    const failure = await diffForResult(blinded, 'main', guard, pushSha).then(
+    const failure = await diffForResult(blinded, guard, pushSha).then(
       () => undefined,
       (err: unknown) => err
     );
@@ -176,10 +167,10 @@ describe('an empty diff for a different tree', () => {
     expect((failure as ApplicationFailure).nonRetryable).toBe(true);
   });
 
-  it('fails closed when the base cannot be read', async () => {
+  it('fails closed, before the agent runs, when the base cannot be read', async () => {
     sh('git update-ref -d refs/remotes/origin/main');
-    await expect(diffForResult(workspace, 'main', undefined)).rejects.toMatchObject({
-      type: 'SECURITY_GATE_UNAVAILABLE',
+    await expect(startPathGuard(workspace, 'main', undefined)).rejects.toMatchObject({
+      type: 'DIFF_BASE_UNREADABLE',
     });
   });
 });

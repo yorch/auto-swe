@@ -420,11 +420,10 @@ export async function runImplementerFixSession(
       workspace.gitAuthed(`push origin ${pushRefspec(previousCodeResult.branch, pushSha)}`)
     );
 
-    // `diffForResult` quotes the base like every other interpolated ref so it cannot
-    // smuggle shell syntax into the container.
-    const diff = await diffForResult(workspace, baseBranch, pathGuard, pushSha);
-    // A guarded step reports the commit it pushed, not whatever HEAD has become.
-    const headSha = pushSha ?? (await workspace.exec('git rev-parse HEAD')).trim();
+    // The pushed commit against the base recorded before the agent ran: no ref is resolved now.
+    const diff = await diffForResult(workspace, pathGuard, pushSha);
+    // The step reports the commit it pushed, not whatever HEAD has become.
+    const headSha = pushSha;
 
     tracer.addActivityEvent({
       name: 'git.commit_push',
@@ -442,9 +441,8 @@ export async function runImplementerFixSession(
     });
 
     return {
-      // Carried forward for a guarded step only, so the next session can report the whole
-      // change against the same base; an unguarded step returns exactly what it always did.
-      ...(pathGuard && previousCodeResult.baseSha ? { baseSha: previousCodeResult.baseSha } : {}),
+      // Carried forward so the next session reports the whole change against the same base.
+      ...(previousCodeResult.baseSha ? { baseSha: previousCodeResult.baseSha } : {}),
       // Carried only when the previous result had it, so a result from before the field
       // existed stays exactly as it was (the default branch).
       ...(previousCodeResult.baseBranch ? { baseBranch } : {}),

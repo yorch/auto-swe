@@ -391,13 +391,18 @@ describe('commitWithTestIntegrity', () => {
     });
   });
 
-  it('without a session it is the original commit', async () => {
+  it('without a session it is still the hooks-off commit, and returns its sha', async () => {
     const t = tracer();
     write('src/a.ts', 'export const add = 1;\n');
     sh('git add -A');
-    await expect(
-      commitWithTestIntegrity(workspace, 'auto: fix', undefined, undefined, t.tracer)
-    ).resolves.toBeUndefined();
+    const sha = await commitWithTestIntegrity(
+      workspace,
+      'auto: fix',
+      undefined,
+      undefined,
+      t.tracer
+    );
+    expect(sha).toBe(sh('git rev-parse HEAD').trim());
     expect(sh('git log --format=%s -1').trim()).toBe('auto: fix');
   });
 });

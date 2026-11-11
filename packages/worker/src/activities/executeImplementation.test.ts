@@ -1,5 +1,6 @@
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { withEndMarker } from './pinnedGitTestSupport.js';
 
 vi.mock('../lib/runKnowledgeBases.js', () => ({
   loadRunKnowledgeBases: vi.fn(async () => ({ checkouts: [], snapshotIds: [] })),
@@ -32,15 +33,25 @@ const { checkoutMock, generateMock, loadMock, prismaMock, ticketMock, workspaceM
   })
 );
 
+/** The default branch's tip and the commit the workspace is at: distinct, so a base is not a head. */
+const DEFAULT_TIP = 'd'.repeat(40);
+const WORK_HEAD = 'f'.repeat(40);
+
 /**
- * What the workspace answers by default: a readable commit for every pinned `rev-parse --verify`
- * and a one-file patch for the pinned `diff-tree`, so the diff the scanners read is non-empty.
+ * What the workspace answers by default: the default branch's tip for `origin/<default>`, another
+ * commit for `HEAD`, and a one-file patch for the pinned `diff-tree`, so the diff the scanners
+ * read is non-empty and base and head differ. Pinned reads echo their end marker like a shell.
  */
 async function defaultExec(cmd: string): Promise<string> {
+  let out = '';
   if (cmd.includes('rev-parse --verify')) {
-    return `${'f'.repeat(40)}\n`;
+    out = cmd.includes('origin/') ? `${DEFAULT_TIP}\n` : `${WORK_HEAD}\n`;
+  } else if (cmd.includes('merge-base')) {
+    out = `${DEFAULT_TIP}\n`;
+  } else if (cmd.includes('diff-tree') && cmd.includes(' --text ')) {
+    out = 'diff --git a/x b/x\n';
   }
-  return cmd.includes('diff-tree') && cmd.includes(' --text ') ? 'diff --git a/x b/x\n' : '';
+  return withEndMarker(cmd, out);
 }
 
 const fallbackSetting = vi.hoisted(() => ({ on: false }));
@@ -648,16 +659,20 @@ describe('executeImplementation shell hygiene', () => {
 
 describe('executeImplementation allowedPaths', () => {
   const BASE = 'a'.repeat(40);
+  const HEAD = 'c'.repeat(40);
   const commands = () => workspaceMock.exec.mock.calls.map((c) => c[0]);
   const pushed = () =>
     workspaceMock.gitAuthed.mock.calls.some((c) => (c[0] as string).includes('push origin'));
-  /** The guarded step's git calls: the starting commit, the merge base, the committed range. */
+  /** The guarded step's git calls: the starting commit, the default tip, the committed range. */
   const withRange = (names: string) =>
     workspaceMock.exec.mockImplementation(async (cmd: string) => {
       if (cmd.includes('rev-parse --verify')) {
+        return `${cmd.includes('origin/') ? BASE : HEAD}\n`;
+      }
+      if (cmd.includes('merge-base')) {
         return `${BASE}\n`;
       }
-      return cmd.includes('diff-tree') ? names : '';
+      return withEndMarker(cmd, cmd.includes('diff-tree') ? names : '');
     });
 
   it('reads the starting commit before the agent runs, and checks the committed tree before the push', async () => {
@@ -668,7 +683,7 @@ describe('executeImplementation allowedPaths', () => {
     const commit = cmds.findIndex((c) => c.includes('commit --no-verify'));
     const range = cmds.findIndex((c) =>
       c.includes(
-        `diff-tree -r --name-only --no-renames --ignore-submodules=none -z ${BASE} ${BASE}`
+        `diff-tree -r --name-only --no-renames --ignore-submodules=none -z ${HEAD} ${HEAD}`
       )
     );
     expect(start).toBeGreaterThanOrEqual(0);
@@ -697,10 +712,10 @@ describe('executeImplementation allowedPaths', () => {
       'docs/a.md',
     ]);
     expect(workspaceMock.gitAuthed).toHaveBeenCalledWith(
-      `push origin ${BASE}:refs/heads/'auto/JIRA-1'`
+      `push origin ${HEAD}:refs/heads/'auto/JIRA-1'`
     );
-    expect(result.headSha).toBe(BASE);
-    expect(pushEffect).toHaveBeenCalledWith('auto/JIRA-1', BASE, expect.any(Function));
+    expect(result.headSha).toBe(HEAD);
+    expect(pushEffect).toHaveBeenCalledWith('auto/JIRA-1', HEAD, expect.any(Function));
   });
 
   it('lets a failed push through unchanged, having handed it to the effect ledger', async () => {
@@ -710,23 +725,77 @@ describe('executeImplementation allowedPaths', () => {
     expect(pushEffect).toHaveBeenCalledTimes(1);
   });
 
-  it('reports a diff measured from the starting commit', async () => {
+  it('reports a diff of the pushed commit against the base read before the agent ran', async () => {
     withRange('docs/a.md\0');
     await executeImplementation(REQUEST, undefined, undefined, undefined, ['docs/a.md']);
     expect(
-      commands().some((c) => c.includes(' --text ') && c.includes(`'${BASE}' '${BASE}'`))
+      commands().some((c) => c.includes(' --text ') && c.includes(`'${BASE}' '${HEAD}'`))
     ).toBe(true);
   });
 
-  it('changes nothing for a step that sets no list', async () => {
-    await executeImplementation(REQUEST);
-    expect(commands().some((c) => c.includes('--no-verify'))).toBe(false);
-    expect(commands()).toContain(
+  it('pins the same way for a step that sets no list: hooks off, one sha, base before the agent', async () => {
+    withRange('diff --git a/x b/x\n');
+    const result = await executeImplementation(REQUEST);
+    const cmds = commands();
+    // The commit is the hardened one, never the hook-enabled `git commit`.
+    expect(cmds.some((c) => c.includes('commit --no-verify'))).toBe(true);
+    expect(cmds).not.toContain(
       "git diff --cached --quiet || git commit -m 'auto: implement JIRA-1'"
     );
-    expect(commands().some((c) => c.includes("'origin/main^{commit}'"))).toBe(true);
-    expect(workspaceMock.gitAuthed).toHaveBeenCalledWith("push origin 'auto/JIRA-1'");
+    // The push names the commit, the report names the same commit, and the scanned diff is the
+    // recorded base against it.
+    expect(workspaceMock.gitAuthed).toHaveBeenCalledWith(
+      `push origin ${HEAD}:refs/heads/'auto/JIRA-1'`
+    );
+    expect(result.headSha).toBe(HEAD);
+    expect(cmds.some((c) => c.includes(' --text ') && c.includes(`'${BASE}' '${HEAD}'`))).toBe(
+      true
+    );
+    // The base is read before the agent; nothing resolves `origin/<default>` afterwards.
+    const lastAgentTurn = generateMock.mock.invocationCallOrder.at(-1) as number;
+    const afterAgent = workspaceMock.exec.mock.calls
+      .map((c, i) => ({
+        cmd: c[0] as string,
+        order: workspaceMock.exec.mock.invocationCallOrder[i] as number,
+      }))
+      .filter((e) => e.order > lastAgentTurn);
+    expect(afterAgent.some((e) => e.cmd.includes("'origin/main^{commit}'"))).toBe(false);
     expect(pushed()).toBe(true);
+  });
+
+  it('fails closed, before the paid session, when the starting commit cannot be read', async () => {
+    workspaceMock.exec.mockImplementation(async (cmd: string) => {
+      if (cmd.includes('rev-parse --verify')) {
+        throw new Error('fatal: bad revision');
+      }
+      return withEndMarker(cmd, '');
+    });
+    await expect(executeImplementation(REQUEST)).rejects.toThrow(
+      /Could not read the commit the workspace started from/
+    );
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(pushed()).toBe(false);
+  });
+
+  it('fails closed when the diff reads empty although the trees differ', async () => {
+    workspaceMock.exec.mockImplementation(async (cmd: string) => {
+      if (cmd.includes('rev-parse --verify')) {
+        return `${cmd.includes('origin/') ? BASE : HEAD}\n`;
+      }
+      if (cmd.includes('merge-base')) {
+        return `${BASE}\n`;
+      }
+      if (cmd.includes('^{tree}')) {
+        return `${BASE}\n${HEAD}\n`;
+      }
+      if (cmd.includes('diff-tree') && cmd.includes('--name-only')) {
+        return withEndMarker(cmd, 'x.ts\0');
+      }
+      return withEndMarker(cmd, '');
+    });
+    await expect(executeImplementation(REQUEST)).rejects.toThrow(
+      /diff read as empty although the committed tree differs/
+    );
   });
 });
 
@@ -749,13 +818,17 @@ describe('executeImplementation retry safety', () => {
     );
     expect(execCommands()).toContain("git reset --hard origin/'auto/JIRA-1'");
     // The push still happens after the agent's work.
-    expect(workspaceMock.gitAuthed).toHaveBeenLastCalledWith("push origin 'auto/JIRA-1'");
+    expect(workspaceMock.gitAuthed).toHaveBeenLastCalledWith(
+      `push origin ${WORK_HEAD}:refs/heads/'auto/JIRA-1'`
+    );
   });
 
   it('works on the branch the request carries, not the ticket’s, and a retry resumes that one', async () => {
     const request = { ...REQUEST, branchName: 'auto/JIRA-1-ab12cd34' };
     await executeImplementation(request);
-    expect(workspaceMock.gitAuthed).toHaveBeenLastCalledWith("push origin 'auto/JIRA-1-ab12cd34'");
+    expect(workspaceMock.gitAuthed).toHaveBeenLastCalledWith(
+      `push origin ${WORK_HEAD}:refs/heads/'auto/JIRA-1-ab12cd34'`
+    );
     vi.mocked(currentAttempt).mockReturnValue(2);
     await executeImplementation(request);
     expect(execCommands()).toContain("git reset --hard origin/'auto/JIRA-1-ab12cd34'");
@@ -775,9 +848,14 @@ describe('executeImplementation retry safety', () => {
 
   it('skips the commit when nothing is staged so a no-op retry still pushes', async () => {
     await executeImplementation(REQUEST);
-    expect(execCommands()).toContain(
-      "git diff --cached --quiet || git commit -m 'auto: implement JIRA-1'"
-    );
+    expect(
+      execCommands().some(
+        (c) =>
+          c.includes('diff --cached --quiet') &&
+          c.includes('|| ') &&
+          c.includes('commit --no-verify')
+      )
+    ).toBe(true);
   });
 
   it('degrades the advisory code-security scan instead of failing the run', async () => {
@@ -1189,7 +1267,7 @@ describe('executeImplementation ask and resume', () => {
     const commands = workspaceMock.exec.mock.calls.map((c) => c[0]);
     expect(workspaceMock.exec.mock.calls.filter(isTestRun)).toHaveLength(0);
     expect(commands).not.toContain('git add -A');
-    expect(commands.some((c) => c.includes('commit'))).toBe(false);
+    expect(commands.some((c) => c.includes('commit -') || c.includes('git commit'))).toBe(false);
     expect(workspaceMock.gitAuthed).not.toHaveBeenCalledWith(expect.stringContaining('push'));
     expect(pushEffect).not.toHaveBeenCalled();
     expect(scanDiffForCodeIssues).not.toHaveBeenCalled();

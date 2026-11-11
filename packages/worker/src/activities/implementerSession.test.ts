@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { withEndMarker } from './pinnedGitTestSupport.js';
 
 vi.mock('../lib/runKnowledgeBases.js', () => ({
   loadRunKnowledgeBases: vi.fn(async () => ({ checkouts: [], snapshotIds: [] })),
@@ -57,16 +58,22 @@ vi.mock('../lib/scm/index.js', () => ({
   toRepoRef: (repo: Record<string, unknown>) => repo,
 }));
 
+// The default branch's tip and the commit the checkout is at are different commits, so the diff
+// is between two distinct shas and an empty read for a different tree is reachable.
+const DEFAULT_TIP = 'd'.repeat(40);
 const execMock = vi.fn(async (cmd: string, _options?: { timeoutMs?: number }) => {
   if (cmd.includes('rev-parse --verify')) {
     // A readable commit, for the pinned reads the diff is built from.
-    return `${'e'.repeat(40)}\n`;
+    return `${cmd.includes('origin/') ? DEFAULT_TIP : 'e'.repeat(40)}\n`;
+  }
+  if (cmd.includes('merge-base')) {
+    return `${DEFAULT_TIP}\n`;
   }
   if (cmd.includes('rev-parse')) {
     return 'abc123\n';
   }
   if (cmd.includes('diff-tree') && cmd.includes(' --text ')) {
-    return 'diff --git a/x b/x';
+    return withEndMarker(cmd, 'diff --git a/x b/x');
   }
   if (cmd.includes('cat package.json')) {
     return '{}';
@@ -284,9 +291,11 @@ describe('runImplementerFixSession allowedPaths', () => {
     const base = execMock.getMockImplementation();
     execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) => {
       if (cmd.includes('rev-parse --verify')) {
-        return `${BASE}\n`;
+        return `${cmd.includes('origin/') ? DEFAULT_TIP : BASE}\n`;
       }
-      return cmd.includes('diff-tree') ? names : base?.(cmd, options);
+      return cmd.includes('diff-tree') && !cmd.includes(' --text ')
+        ? withEndMarker(cmd, names)
+        : base?.(cmd, options);
     }) as never);
     return base;
   };
@@ -345,17 +354,28 @@ describe('runImplementerFixSession allowedPaths', () => {
     }
   });
 
-  it('runs the original commit and diff when the step sets no list', async () => {
+  it('commits, pushes and reports the same pinned way when the step sets no list', async () => {
     findRepo.mockResolvedValue(REPO as never);
-    // The test-integrity guard has its own describe below; off, the commit is the original one.
+    // The test-integrity guard has its own describe below; off, only the path guard's pinning applies.
     vi.mocked(resolveSetting).mockImplementation((async (key: string) =>
       key === 'github.ciFixTestIntegrityGuard' ? 'off' : 'mastra') as never);
-    await runImplementerFixSession(input());
+    const result = await runImplementerFixSession(input());
     vi.mocked(resolveSetting).mockImplementation((async () => 'mastra') as never);
-    expect(cmds().some((c) => c.includes('--no-verify'))).toBe(false);
-    expect(cmds()).toContain(
-      "git diff --cached --quiet || git commit -m 'auto: fix CI for auto/T-1'"
-    );
+    // Hooks off, never the plain `git commit`.
+    expect(cmds().some((c) => c.includes('commit --no-verify'))).toBe(true);
+    expect(cmds().some((c) => c.includes('git commit -m'))).toBe(false);
+    // The pushed commit is the one reported, and the diff is the fork point read before the
+    // agent ran (the default tip here) against it: two distinct shas.
+    const head = 'e'.repeat(40);
+    expect(
+      gitAuthedMock.mock.calls.some((c) =>
+        (c[0] as string).includes(`push origin ${head}:refs/heads/'auto/T-1'`)
+      )
+    ).toBe(true);
+    expect(result.headSha).toBe(head);
+    expect(
+      cmds().some((c) => c.includes(' --text ') && c.includes(`'${DEFAULT_TIP}' '${head}'`))
+    ).toBe(true);
   });
 });
 
@@ -697,9 +717,9 @@ describe('runImplementerFixSession test-integrity guard', () => {
     const base = execMock.getMockImplementation();
     execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) => {
       if (cmd.includes('rev-parse --verify')) {
-        return `${head}\n`;
+        return `${cmd.includes('origin/') ? DEFAULT_TIP : head}\n`;
       }
-      return cmd.includes(GUARD_DIFF) ? diff : base?.(cmd, options);
+      return cmd.includes(GUARD_DIFF) ? withEndMarker(cmd, diff) : base?.(cmd, options);
     }) as never);
     return base;
   }
@@ -766,14 +786,14 @@ describe('runImplementerFixSession test-integrity guard', () => {
     }
   });
 
-  it('runs the original commit and does not read a diff when off', async () => {
+  it('commits without hooks but reads no test-integrity diff when off', async () => {
     findRepo.mockResolvedValue(REPO as never);
     guardSetting('off');
     const base = stageCommittedDiff(DELETES_TEST);
     try {
       await runImplementerFixSession(input());
       expect(cmds().some((c) => c.includes(GUARD_DIFF))).toBe(false);
-      expect(cmds().some((c) => c.includes('commit --no-verify'))).toBe(false);
+      expect(cmds().some((c) => c.includes('commit --no-verify'))).toBe(true);
     } finally {
       execMock.mockImplementation(base as never);
     }
