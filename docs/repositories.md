@@ -824,8 +824,15 @@ A repository's `scmProvider` column names the source-control host family that se
 worker picks its `ScmProvider` implementation from it. `github` is the column's default and the only
 provider with an implementation; a value without one fails the activity with a non-retryable
 `SCM_PROVIDER_UNSUPPORTED`, never a fallback to GitHub. The column is not part of the repository
-create or update API, so no client can set it. How dispatch works, and what a new provider has to
-satisfy, is in [architecture.md](./architecture.md#source-control-provider-seam).
+create or update API, so no client can set it.
+
+A GitHub credential is never used for a row whose column is anything but `github`, whatever its
+URLs say. The platform credential lookup, a user's saved token, the permission lookups behind the
+launch gate, the worker's GitHub client, the pull-request evaluation and the GitHub webhook
+matching each refuse such a row; the list, and the one stand-down path that stays open, is in
+[architecture.md](./architecture.md#source-control-provider-seam), together with what a new
+provider has to satisfy, including that a non-GitHub row must carry a `githubUrl`: the identity
+index does not include the provider, and a missing URL means the instance's GitHub host.
 
 The `githubUrl` and `githubApiUrl` columns keep their names: they are the per-repository base URLs
 for whichever provider serves the repository.
@@ -836,7 +843,9 @@ for whichever provider serves the repository.
 
 - **GitHub is the only source-control provider.** GitLab and Bitbucket are not implemented: there is
   no provider class for either, the API accepts no `scmProvider` value, and a row carrying any value
-  but `github` is refused by every activity that reaches the host.
+  but `github` is refused wherever a GitHub credential is chosen and by the worker's activities.
+  The repository identity index does not include the provider, so a row of another provider that
+  shared its owner, name and URL (or lack of one) with a GitHub row would collide with it.
 - **Workspace setup files that git tracks become part of the change.** Setup runs on the tree the
   agent then edits, so a step that rewrites a tracked file puts that rewrite in the diff. Keep setup
   output in ignored paths.

@@ -179,27 +179,87 @@ interface in `packages/worker/src/lib/scm/types.ts`. Activities never construct 
   class standing in for a provider that is not implemented.
 - **Who writes the column.** Only the database default does. The gateway's repository create and
   update bodies do not carry it, so a client cannot choose a provider.
-- **GitHub-only paths.** The pull-request evaluation resolves the repository's provider first and
-  fails the same way for anything but `github`, because the rest of that activity (the approver
-  App, host family, branch rules) is GitHub-specific.
+- **GitHub-only paths.** The pull-request evaluation refuses any repository whose `scmProvider` is
+  not `github` with the same non-retryable failure, whether or not that provider is registered,
+  because the rest of that activity (the approver App, host family, branch rules) is
+  GitHub-specific. For a GitHub repository it runs through the provider the registry dispatches to.
+  One path stays open for a repository whose column changed after the platform armed auto-merge or
+  recorded a bot approval there: the skip-and-disarm path (a deactivated or switched-off
+  repository, and the `disarm-sweep` trigger) reads the repository as the GitHub repository it was
+  and undoes the arming. It makes no call when nothing was recorded, and it is best effort: a
+  failure is logged and not retried.
+
+**No GitHub credential reaches a non-GitHub repository.** The column is read where the credential
+is chosen, not only where the provider is dispatched, because the gateway and the shared lookups
+reach GitHub without going through `getScmProvider`. A row whose `scmProvider` is not `github` is
+refused at:
+
+- `resolvePlatformCredential` (`shared/lib/githubHostCredential.ts`): `InstallationScopedRepo`
+  requires `scmProvider`, and any other value answers scope `scm-provider`, which carries no
+  `config`. Every caller (the worker's GitHub client, the gateway's access probe, pull-request file
+  reads, PR-feedback reads, the check-run lookup, the startup host check, the shared permission
+  lookup) must handle it before it can read a credential. A skill source is not a repository row
+  and passes `github`.
+- `resolveUserCredential` (`shared/lib/connectionCredential.ts`): selects the column with the row
+  and throws `ScmProviderMismatchError`. It does not answer null, because null means "fall back to
+  the platform credential".
+- `lookupRepoPermission` and `lookupPermissionViaUserCredential` (`shared/lib/repoPermission.ts`):
+  answer `host-mismatch` ("could not ask") before any credential is chosen. The launch gate
+  (`decideRepoLaunch`, reached by the gateway, the Slack paths and the worker's
+  `scheduledFireAuthorization`) refuses with `host-mismatch` before consulting a stored login or a
+  saved token.
+- The worker's GitHub client (`scm/github.ts`): `runToken`, `platformCredential` and
+  `launcherToken` throw `SCM_PROVIDER_UNSUPPORTED`, `repoPermission` answers `host-mismatch` and
+  `fetchCiLogs` returns an error text.
+- GitHub webhook matching: `webhookRepositoryWhere` and the user-event query of the access refresh
+  select GitHub rows only, so a same-named repository on another provider is never acted on.
+- `mintGitHubCloneUrl` (a setup step cloning a dependency by owner and name) selects GitHub rows
+  only.
+
+The repository sweep that refreshes recorded permissions (`syncRepoAccess`) counts a repository its
+registry cannot dispatch as skipped, logs it and carries on, so one such row does not stop the
+refresh for the repositories after it.
 
 A new provider is a registry entry plus a class that implements the whole interface, and must also:
 
 1. Keep every source invariant (`yarn invariants:check`) true for its file. The SCM directory is
-   covered by directory, so a new file there is subject to the no-bare-`fetch`, redirect-policy and
-   no-immediate-merge rules from its first commit. Humans merge: the only merge-capable call is an
-   opt-in auto-merge that the host completes once its own protection holds, and a provider that adds
-   one adds its single file to the merge rule's allowlist deliberately.
-2. Send a platform credential only to its own host family. That needs a host-family analogue of
+   covered by directory at any depth, so a new file there is subject to the no-bare-`fetch`,
+   redirect-policy and no-immediate-merge rules from its first commit, and provider network code
+   written outside that directory fails a separate tripwire. Humans merge: the only merge-capable
+   call is an opt-in auto-merge that the host completes once its own protection holds, and a
+   provider that adds one adds its single file to `IMMEDIATE_MERGE_PROVIDER_ALLOWLIST` in
+   `scripts/check-invariants.mjs` deliberately (the allowlist is empty).
+2. Keep all of its code in `packages/worker/src/lib/scm/`, including what the gateway needs from
+   the host (permission lookups, pull-request reads, CI reads). The gateway and shared code that
+   exist today are GitHub's and refuse other providers as above; a provider's gateway-side reads
+   belong behind the same guards (`createGuardedFetch`, `redirect` policy), and `yarn
+   invariants:check` fails another provider's API paths and SDK imports found elsewhere.
+3. Send a platform credential only to its own host family. That needs a host-family analogue of
    `resolvePlatformCredential` and `resolveGitHubToken`'s host guard, so a credential minted for one
-   host is refused on another, and a per-user token path bound to the origins it was verified on.
-3. Take repository URLs only through `normaliseRepositoryUrls` and check `repositoryHostsAllowed`
+   host is refused on another. A per-user token path must keep what `resolveUserCredential` does:
+   the `github.userCredentialHosts` allowlist, and the binding to the web and API origins the token
+   was verified against, so a repointed repository needs the token saved again.
+4. Take repository URLs only through `normaliseRepositoryUrls` and check `repositoryHostsAllowed`
    before any credential is sent to them ([repositories.md](./repositories.md#2-url-overrides-and-approved-hosts)),
    and make every request to an operator-supplied URL through `createGuardedFetch`.
-4. Verify inbound webhooks with a secret stored through the encrypted system-config envelope and
-   compared in constant time; webhook parsing stays in the gateway and maps to the shared
-   domain events.
-5. Add the provider's name to the gateway's accepted values for repository create and update, with
+5. Require a non-null `githubUrl` on every non-GitHub row. The repository identity unique index
+   (`connections_git_repo_host_org_repo_ci_uidx`, over `COALESCE(github_url, '')` and the
+   lower-cased owner and name) does not include the provider, and a NULL URL means the instance's
+   GitHub host, so a GitLab row with no URL would collide with, and be read as, a GitHub repository
+   of the same name.
+6. Settle what `organizationName` and `repoName` hold. A GitLab nested group (`group/subgroup`)
+   does not fit the single owner segment that the workflow ID (`eng-<org>-<repo>-<ticket>`), the
+   branch name and the clone URL are built from, and the workflow ID is already not unique on its
+   own (see `chooseWorkflowId`).
+7. Settle what `prNumber` means. The code stores one integer per pull request and builds URLs and
+   workflow IDs from it; GitLab's per-project `iid` and its global `id` are different numbers and
+   only one can be it.
+8. Verify inbound webhooks with a secret stored through the encrypted system-config envelope and
+   compared in constant time, bound to the host the secret proves; each provider has its own
+   trust model (GitHub signs the body with an HMAC; GitLab sends the secret as a token header), and
+   webhook parsing stays in the gateway and maps to the shared domain events. GitHub deliveries
+   only ever match GitHub rows.
+9. Add the provider's name to the gateway's accepted values for repository create and update, with
    its own host allowlist, in the same change that registers it; until then the API accepts none.
 
 ### `packages/web`
@@ -1478,7 +1538,19 @@ Current constraints of the system as built. Deliberate product boundaries are in
   covers whatever a conflicting merge changed against the target, including the source's side of it.
 - **GitHub is the only source-control provider.** GitLab and Bitbucket are not implemented; the
   provider registry has no entry for either, and a repository whose `scmProvider` is anything but
-  `github` fails non-retryably ([Source-control provider seam](#source-control-provider-seam)).
+  `github` is refused where a GitHub credential is chosen and by the worker's activities
+  ([Source-control provider seam](#source-control-provider-seam)).
+- **The refusal of a GitHub credential for another provider's repository is a convention at its
+  choke points, not a property the compiler or a check proves.** It holds where a repository row's
+  `scmProvider` is passed to `resolvePlatformCredential`, `resolveUserCredential` or the permission
+  lookups. Code that builds a GitHub client from `resolveGitHubConfig()` directly and aims it at a
+  repository's URLs bypasses it, and `yarn invariants:check` does not see that. The GitHub
+  credentials that are not tied to a repository row are unaffected by design: the sign-in
+  organization check, the repository listing, the account-ownership check for stored logins, and
+  the approver App and host-credential probes.
+- **Standing an arming down for a repository that left GitHub is best effort.** The skip-and-disarm
+  path reads the row as the GitHub repository it was; if its URLs now point at a host the GitHub
+  credentials do not serve, the failure is logged and the arming is left for a person to cancel.
 - **A node's `status` field writes the live domain status only**, as a free-form string; it does not
   update the pinned run record. The `onFailure` / `onExhausted` terminal shorthand cannot end a run
   `CANCELLED`.

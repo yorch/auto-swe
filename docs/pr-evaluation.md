@@ -1104,6 +1104,11 @@ documentation change as a platform pull request and read the evaluation's reason
 
 ## Limitations
 
+- **The evaluation serves GitHub repositories only.** A repository whose `scmProvider` is not
+  `github` is refused with a non-retryable `SCM_PROVIDER_UNSUPPORTED`, never evaluated through the
+  GitHub client. The exception is standing down: a deactivated or switched-off repository, and the
+  `disarm-sweep` trigger, still cancel an auto-merge or bot approval the platform recorded while the
+  row was a GitHub repository, as best effort ([architecture.md](./architecture.md#source-control-provider-seam)).
 - **What the run says about an open question is a request the model may not honour, and is not
   checked.** The implementer is asked for closing lines but may omit them, answer a question it did
   not understand, or say it left something unchanged that it changed; nothing compares the claim
