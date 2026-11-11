@@ -91,6 +91,11 @@ const execMock = vi.fn(async (cmd: string, _options?: { timeoutMs?: number }) =>
   }
   return '';
 });
+// The default answers, for a test that overrides only the commands it cares about.
+const defaultExec = execMock.getMockImplementation() as (
+  cmd: string,
+  options?: { timeoutMs?: number }
+) => Promise<string>;
 // Mirrors the real gitAuthed: injects a (fake) credential header per-call and
 // forwards to the same underlying exec recording/return-value logic above,
 // so existing `execMock`-based command matchers still apply to these calls.
@@ -1026,7 +1031,9 @@ describe('runImplementerFixSession ask and resume', () => {
       if (cmd.includes('merge-base --is-ancestor')) {
         return 'rc=1\n';
       }
-      return cmd.includes('rev-parse') ? '1234567890123456789012345678901234567890\n' : '';
+      return cmd.includes('rev-parse')
+        ? '1234567890123456789012345678901234567890\n'
+        : defaultExec(cmd);
     }) as never);
     await runImplementerFixSession({
       ...input(),
@@ -1054,7 +1061,9 @@ describe('runImplementerFixSession ask and resume', () => {
       if (cmd.includes('rebase') && !cmd.includes('--abort')) {
         throw new Error('CONFLICT');
       }
-      return cmd.includes('rev-parse') ? '1234567890123456789012345678901234567890\n' : '';
+      return cmd.includes('rev-parse')
+        ? '1234567890123456789012345678901234567890\n'
+        : defaultExec(cmd);
     }) as never);
     const failure = await runImplementerFixSession({
       ...input(),
