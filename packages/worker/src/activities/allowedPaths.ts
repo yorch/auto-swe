@@ -51,7 +51,7 @@ import {
   gitIdentityFlags,
   withCoAuthorTrailer,
 } from '../lib/gitIdentity.js';
-import { standInBinarySections } from './scanDiffText.js';
+import { type StandInOptions, standInBinarySections } from './scanDiffText.js';
 import { gitWithAuthHeader, shellQuote, type Workspace } from './workspace.js';
 
 /** `gitIdentity` is optional so a fake workspace need not carry one. */
@@ -455,7 +455,23 @@ async function assertNoWorkflowChanges(
 export async function diffForResult(
   workspace: Exec,
   guard: PathGuard,
-  pushSha: string
+  pushSha: string,
+  options: StandInOptions = {}
+): Promise<string> {
+  return diffBetweenCommits(workspace, guard.report.sha, pushSha, options);
+}
+
+/**
+ * {@link diffForResult} for a caller that holds the two commits itself (the delivery gate of an
+ * agent run, which judges a commit in a container the agent never touched): the same pinned read,
+ * the same empty-diff check and the same stand-ins, so the text it returns is what every other
+ * path hands the security gate.
+ */
+export async function diffBetweenCommits(
+  workspace: Exec,
+  base: string,
+  pushSha: string,
+  options: StandInOptions = {}
 ): Promise<string> {
   const unreadable = (why: string) =>
     ApplicationFailure.nonRetryable(
@@ -470,7 +486,6 @@ export async function diffForResult(
       throw unreadable(err instanceof Error ? err.message : String(err));
     }
   };
-  const base = guard.report.sha;
   if (!SHA.test(base) || !SHA.test(pushSha)) {
     throw unreadable('the base or the committed head is not a commit');
   }
@@ -483,5 +498,5 @@ export async function diffForResult(
       throw unreadable('the diff read as empty although the committed tree differs from the base');
     }
   }
-  return standInBinarySections(patch);
+  return standInBinarySections(patch, options);
 }

@@ -1141,16 +1141,23 @@ step whose starting commit cannot be read now fails non-retryably before the pai
 (`DIFF_BASE_UNREADABLE`). The hooks that no longer run on a workspace commit are the repository's
 own; files a hook would have reformatted at commit time are committed as the agent left them.
 `CodeResult.diff` carries a file that is binary by name (an extension such as `png`, `jar`, `so`,
-`pdf`, `sqlite`) as its header and its printable strings (ASCII and UTF-16), not its bytes. Any
-other file is carried whole, and one that contains a NUL byte is refused by the security gate
-(`SECURITY_GATE_FAILURE`, category `hidden-content`); a compiled artifact or data file with an
-unusual or missing extension is refused the same way until it is renamed. `headSha` is the pushed
-commit.
+`pdf`, `sqlite`, `onnx`, `pkl`, `keystore`) or, for a name that does not claim to be text, by an
+executable or archive header (ELF, Mach-O, PE, WebAssembly, ZIP, gzip) as its header and its
+printable strings (ASCII and UTF-16), not its bytes. A file that is UTF-16 text is carried decoded
+as UTF-8. Any other file is carried whole, and one that contains a NUL byte is refused by the
+security gate (`SECURITY_GATE_FAILURE`, category `hidden-content`); add the path of a file that
+must hold a NUL byte (a test fixture, a data file with a tool-fixed name) to the setting
+`workspace.nulAllowedPaths`, or store UTF-16 text as UTF-8 with `working-tree-encoding` in
+`.gitattributes`. `mergeBranches` no longer runs the repository's setup command, and an agent run
+reads its base before it. `headSha` is the pushed commit.
 
 **Actions.** Move any formatting or validation a hook performed into the repository's test or gate
 command (`gateCommands`), where it runs before the commit. If a host requires signed commits, use
 its own signing mechanism (a bot App) rather than the workspace's git config. Name a committed
-binary for what it is. No migration, no credential rotation.
+binary for what it is, or list its path in `workspace.nulAllowedPaths` at `/admin/platform-settings`
+(a path listed there is no longer read line by line). Committed executables (`.so`, `.dll`, `.jar`,
+`.wasm`) are not reviewed by the gate: send them to a reviewer with CODEOWNERS. No migration, no
+credential rotation.
 
 **Verify the fix is running.** A commit the platform made in a workspace did not run the repository's
 `pre-commit` hook, and a pushed branch tip equals the run's reported `headSha`.

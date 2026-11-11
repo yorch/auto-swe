@@ -1494,14 +1494,23 @@ and gate fix sessions, with or without `allowedPaths`) therefore treats the chec
   backend that cut the output at its cap) fails the read closed instead of passing a shortened diff.
   The single-value reads (a commit sha, the two tree ids) carry no marker and are checked by shape
   instead: a value that is not a full sha is unreadable. A file that is binary BY NAME (`png`, `jar`,
-  `so`, `pdf`, `sqlite` and similar, `scanDiffText.ts`) and holds a NUL is replaced by its header and
-  the printable strings (8 or more characters, ASCII and UTF-16LE/BE) of its added lines, so a key
-  embedded in a binary is still scanned. The first 64 KiB of the strings go to the model, marked
+  `so`, `pdf`, `sqlite`, `lockb`, `onnx`, `pkl`, `keystore` and similar, and `.DS_Store`;
+  `scanDiffText.ts`) and holds a NUL is replaced by its header and the printable strings (8 or more
+  characters, ASCII and UTF-16LE/BE) of its added lines, so a key embedded in a binary is still
+  scanned; so is a file whose first bytes are an ELF, Mach-O, PE, WebAssembly, ZIP or gzip header
+  when its name does not claim to be text (an extension-less `tools/protoc`), and one whose path
+  matches `workspace.nulAllowedPaths`. The first 64 KiB of the strings go to the model, marked
   `strings truncated` when there are more; every string past that is checked locally for the shape
-  of a credential and a match is kept; more than 8 MiB of strings fails closed. Every other file is
-  kept whole with control characters made visible, never cut, and a NUL byte on one of its added
-  lines puts a `[NUL byte in text file <path>]` line ahead of its section, which
-  `runPostDiffSecurityGate` turns into a CRITICAL `hidden-content` finding before any model call.
+  of a credential and a match is kept; more than 8 MiB of strings fails closed. A file whose every
+  line is UTF-16 text of the Latin-1 range (every character's other byte a NUL) is decoded and
+  kept whole as UTF-8. Every other file is kept whole with control characters made visible, never
+  cut, and a NUL byte on one of its added lines puts a `[NUL byte in text file <path>]` line ahead
+  of its section, which `runPostDiffSecurityGate` turns into a CRITICAL `hidden-content` finding
+  before any model call. A path is read from the `diff --git` line as git wrote it, so a name git
+  quotes (a quote, a backslash, a tab) is unquoted first. An agent run's delivery gate reads its
+  diff through the same function (`diffBetweenCommits`) from the trusted container, and
+  `mergeBranches` runs no setup command, merges the shas it recorded with the resolver's hooks-off
+  merge and pushes the tracked sha.
 - The merge-conflict resolver commits its merges the same way. Right after the checkout is reset to
   the target, and before the setup command or any agent turn, it records the start commit and every
   source tip (`recordMergeInputs`), and each merge takes in that sha, never the ref name. Before each
@@ -1558,8 +1567,19 @@ Current constraints of the system as built. Deliberate product boundaries are in
   that is not printable text (compressed or encoded inside the file) is not seen. Only the first
   64 KiB of a larger binary's strings reach the model; past that only strings with the shape of a
   credential are kept, so a secret without such a shape beyond the cap is not reviewed. Binary is
-  decided by file name: a compiled artifact or data file with an unusual or missing extension that
-  holds a NUL byte is refused as `hidden-content` until it is renamed.
+  decided by file name and, for a name that does not claim to be text, by an executable or archive
+  header at the start of the file, which the diff shows only when its first hunk starts at line 1;
+  UTF-16 text is decoded. Any other file that adds a NUL byte is refused as `hidden-content`; the
+  `workspace.nulAllowedPaths` setting is the override for a file whose name cannot change (a
+  fixture, a tool-fixed name, an unlisted extension, an extension-less binary changed mid-file,
+  UTF-16 text outside the Latin-1 range). A repository can instead store UTF-16 text as UTF-8 with
+  `working-tree-encoding` in `.gitattributes`.
+- **The gate does not review executable artifacts.** A committed `.so`, `.dll`, `.dylib`, `.exe`,
+  `.jar`, `.class`, `.wasm`, `.node`, `.pyc` or `.dex` (a modified `gradle-wrapper.jar`, say) is
+  reduced to its printable strings and passes if those look benign. Such a change reaches a draft
+  pull request that a human merges, but CI runs on the pushed branch first, and the test and build
+  code an agent writes executes in CI too. Treat executable artifacts as code: CODEOWNERS or a
+  branch rule should send them to a reviewer.
 - **The recorded base is what the unguarded steps now depend on.** A step reports the change against
   a sha read before the agent ran. That read happens in the same container the agent later controls
   and trusts the checkout's object database at that moment; a clone that was already tampered with
@@ -1572,7 +1592,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   changes it was scanned for when it was pushed. Every merge from the first resolver session on is
   scanned whole, clean or not, which costs a read of the source branches' own changes again. The
   config rewrite before each merge shares the limit of authenticated git calls: a process an agent
-  left running can race it.
+  left running can race it. That re-read also applies the NUL rule to a file a person pushed to a
+  source branch: one that adds a NUL byte and is neither named like a binary, UTF-16 text nor on
+  `workspace.nulAllowedPaths` is refused there although it was accepted when pushed.
 - **GitHub is the only source-control provider.** GitLab and Bitbucket are not implemented; the
   provider registry has no entry for either, and a repository whose `scmProvider` is anything but
   `github` is refused where a GitHub credential is chosen and by the worker's activities

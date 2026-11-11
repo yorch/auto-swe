@@ -77,8 +77,10 @@ function fakeWorkspace(id: string, opts: FakeOpts = {}) {
       if (cmd.includes('diff --raw')) {
         return opts.raw ?? `:000000 100644 ${'0'.repeat(40)} ${BLOB} A\0src/a.ts\0`;
       }
-      if (cmd.includes('diff --text')) {
-        return opts.diff ?? 'diff --git a/src/a.ts b/src/a.ts\nnew file mode 100644\n+hello\n';
+      if (cmd.includes('diff-tree')) {
+        // The pinned read ends with a line carrying a nonce; a read without it is cut short.
+        const nonce = /printf '\\n%s\\n' ([0-9a-f]+)/.exec(cmd)?.[1] ?? '';
+        return `${opts.diff ?? 'diff --git a/src/a.ts b/src/a.ts\nnew file mode 100644\n@@ -0,0 +1 @@\n+hello\n'}\n${nonce}\n`;
       }
       if (cmd.endsWith('rev-parse HEAD')) {
         return `${opts.head ?? BASE}\n`;
@@ -145,10 +147,12 @@ describe('gateTrustedCommit', () => {
     const deps = passDeps();
     const gated = await gateTrustedCommit(ws, args(), deps);
 
-    const diffCmd = log.find((c) => c.includes('diff --text')) as string;
-    expect(diffCmd).toContain('--text --no-textconv --no-ext-diff');
+    const diffCmd = log.find((c) => c.includes('diff-tree')) as string;
+    expect(diffCmd).toContain('-p --text');
+    expect(diffCmd).toContain('--no-textconv');
+    expect(diffCmd).toContain('--no-ext-diff');
     expect(diffCmd).toContain('GIT_NO_REPLACE_OBJECTS=1');
-    expect(diffCmd).toContain(`${BASE} ${SHA}`);
+    expect(diffCmd).toContain(`'${BASE}' '${SHA}'`);
     expect(deps.scanDiffForSecurityIssues).toHaveBeenCalledWith(expect.stringContaining('+hello'));
     expect(gated.sha).toBe(SHA);
     expect(gated.workspaceId).toBe('trusted-1');
@@ -232,6 +236,31 @@ describe('gateTrustedCommit', () => {
     expect(f.message).toBe(
       'Security scan failed with critical findings:\n[CRITICAL] src/a.ts:3 — secrets: hardcoded key'
     );
+  });
+
+  it('refuses a NUL byte in a file that is not binary by name, before any scanner reads it', async () => {
+    const { ws } = fakeWorkspace('t', {
+      diff: 'diff --git a/src/a.ts b/src/a.ts\nnew file mode 100644\n@@ -0,0 +1 @@\n+a\0b\n',
+    });
+    const deps = passDeps();
+    const f = await failureOf(gateTrustedCommit(ws, args(), deps));
+    expect(f.type).toBe('SECURITY_GATE_FAILURE');
+    expect(f.message).toContain('hidden-content');
+    expect(deps.scanDiffForSecurityIssues).not.toHaveBeenCalled();
+  });
+
+  it('hands the scanners a binary file as its strings, never as raw bytes', async () => {
+    const { ws } = fakeWorkspace('t', {
+      diff:
+        'diff --git a/assets/logo.png b/assets/logo.png\nnew file mode 100644\n@@ -0,0 +1 @@\n' +
+        '+\x89PNG\0\0\0 the-embedded-string \0\0\n',
+    });
+    const deps = passDeps();
+    await gateTrustedCommit(ws, args(), deps);
+    const seen = deps.scanDiffForSecurityIssues.mock.calls[0]?.[0] as string;
+    expect(seen).toContain('Binary content of assets/logo.png');
+    expect(seen).toContain('the-embedded-string');
+    expect(seen).not.toContain('\0');
   });
 
   it('refuses a diff too large to scan instead of scanning a truncation', async () => {

@@ -27,7 +27,7 @@
 import { ApplicationFailure } from '@temporalio/activity';
 import { DEFAULT_GIT_IDENTITY, gitIdentityFlags } from '../lib/gitIdentity.js';
 import { execPinned, guardedGit, pinnedDiffTreeCommand, readTreeChange } from './allowedPaths.js';
-import { standInBinarySections } from './scanDiffText.js';
+import { type StandInOptions, standInBinarySections } from './scanDiffText.js';
 import { sanitizeGitRepoConfigScript, shellQuote, type Workspace } from './workspace.js';
 
 type Exec = Pick<Workspace, 'exec'> & { gitIdentity?: Workspace['gitIdentity'] };
@@ -335,7 +335,8 @@ async function assertCommittedTreeMatchesSnapshot(
 export async function diffResolution(
   workspace: Exec,
   parent: string,
-  sha: string
+  sha: string,
+  options: StandInOptions = {}
 ): Promise<string> {
   const patch = await execPinned(
     workspace,
@@ -347,7 +348,7 @@ export async function diffResolution(
       'SECURITY_GATE_UNAVAILABLE'
     );
   }
-  return standInBinarySections(patch);
+  return standInBinarySections(patch, options);
 }
 
 /** Refuse unless HEAD is still the commit the activity tracked: that is what gets pushed. */

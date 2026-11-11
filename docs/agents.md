@@ -79,21 +79,27 @@ runs on a cheaper, different model from the agents it scores, to avoid self-pref
 > implementer step does this, with or without `allowedPaths`. An agent that controls its checkout can
 > therefore not hide content with `diff.external`, a `textconv` driver, a `-diff` attribute, a moved
 > or shadowed `origin/<default>`, a rewritten `packed-refs`, a hook or a graft. Nothing is excluded from it,
-> lockfiles and minified files included, because a secret can sit in a file named like one. Whether a
-> file is a binary is decided by its name (`png`, `jar`, `so`, `pdf`, `sqlite` and similar): such a
-> file is reduced to its header and the printable strings of its added lines (ASCII and UTF-16), with
-> the first 64 KiB of them shown whole and every credential-shaped string beyond that kept as well.
-> Any other file is read in full, control characters made visible, and a NUL byte on an added line of
-> one is a deterministic CRITICAL finding of its own (`hidden-content`, raised by
-> `runPostDiffSecurityGate` before any model is asked), because a NUL is how a source file is made to
-> look binary. A diff that reads as empty although the committed tree differs from the base, a read
+> lockfiles and minified files included, because a secret can sit in a file named like one. A file is
+> a binary when its name says so (`png`, `jar`, `so`, `pdf`, `sqlite`, `lockb`, `onnx`, `pkl`,
+> `keystore` and similar, and `.DS_Store`), or, for a name that does not claim to be text, when its
+> first bytes are an ELF, Mach-O, PE, WebAssembly, ZIP or gzip header; such a file is reduced to
+> its header and the printable strings of its added lines (ASCII and UTF-16), with the first 64 KiB
+> of them shown whole and every credential-shaped string beyond that kept as well. UTF-16 text (a
+> `.strings`, `.ps1` or `.reg` file whose lines are all UTF-16 characters of the Latin-1 range) is
+> decoded and read in full as UTF-8. Any other file is read in full, control characters made
+> visible, and a NUL byte on an added line of one is a deterministic CRITICAL finding of its own
+> (`hidden-content`, raised by `runPostDiffSecurityGate` before any model is asked), because a NUL is
+> how a source file is made to look binary. A path that matches the platform-wide setting
+> `workspace.nulAllowedPaths` (ADMIN, GLOBAL scope only, empty by default) is reduced to its strings
+> like a binary instead of being refused. A diff that reads as empty although the committed tree differs from the base, a read
 > cut short, and a binary with more than 8 MiB of strings are unreadable and fail
 > `SECURITY_GATE_UNAVAILABLE`. The merge-conflict resolver reads every commit it makes the same way,
 > against the target-side parent it recorded, with no pathspec: its own resolutions and every clean
 > merge after its first session. Every merge takes in a source sha read once, before the setup command
 > and before any agent turn, and a resolution is refused when the index or the committed tree
 > differs from the pre-agent snapshot outside the conflicted files. What this does not cover is in the
-> Limitations (§11): a replaced `git` binary, and the depth of what is reduced to strings.
+> Limitations (§11): a replaced `git` binary, the depth of what is reduced to strings, and the
+> executable artifacts the gate does not review.
 > It complements the review network rather than being replaced by it: the network gives three
 > personas an opinion and routes on their verdicts, this one fails the activity outright.
 
@@ -2064,10 +2070,26 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   printable strings (ASCII and UTF-16), so content that is compressed or encoded inside it is not
   seen. Only the first 64 KiB of a larger binary's strings reach the model; the rest is checked
   locally for the shape of a credential and a match is kept, so a secret beyond the cap that has no
-  such shape is not reviewed. Binary is decided by file name, so a compiled artifact or data file
-  with an unusual or missing extension that holds a NUL byte is refused as `hidden-content` until it
-  is renamed. A NUL byte is the only control character announced; the others are made visible and
-  left to the model.
+  such shape is not reviewed. Binary is decided by file name, and for a name that does not claim to
+  be text by an executable or archive header at the start of the file; UTF-16 text is decoded. Any
+  other file that adds a NUL byte is refused as `hidden-content`; the setting
+  `workspace.nulAllowedPaths` is the override for a file whose name cannot change: a compiled artifact or data file whose name is not
+  listed and has no such header (an extension-less file whose changed hunk does not include its
+  first bytes, an unlisted extension), a test fixture that holds a NUL on purpose, and UTF-16 text
+  with a character outside the Latin-1 range or a NUL character fail the step until their path is
+  listed there. A repository can instead keep UTF-16 text out of the blob with
+  `working-tree-encoding` in `.gitattributes` (`*.strings text working-tree-encoding=UTF-16LE-BOM`
+  stores UTF-8 in the repository, so no NUL is committed). A path on the list is not read line by
+  line, so list only content you accept unread. The decoding reads what git's output carries as
+  UTF-8, so a UTF-16 character outside ASCII shows as U+FFFD. A NUL byte is the only control
+  character announced; the others are made visible and left to the model.
+- **The gate does not review executable artifacts.** A committed `.so`, `.dll`, `.dylib`, `.exe`,
+  `.jar`, `.class`, `.wasm`, `.node`, `.pyc` or `.dex` (a modified `gradle-wrapper.jar`, say) is
+  reduced to its printable strings and passes if those look benign; its behaviour is not examined.
+  Such a change reaches a draft pull request that a human merges, but CI runs on the pushed branch
+  before anyone reads it, and the test and build code an agent writes executes in CI as well. Treat
+  executable artifacts as code: route them to reviewers with CODEOWNERS or a branch rule, and do not
+  rely on a clean gate for them.
 - **Workspace commits skip the repository's commit hooks and the global git config.** The
   implementer steps and the merge-conflict resolver commit with hooks off, the global and system
   config ignored and `commit.gpgsign=false`, so a formatter or commit-message check wired in as a
@@ -2077,7 +2099,10 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   with the changes their branch was scanned for when it was pushed, and no agent had run in the
   checkout; the sha they take in was read before the setup command. A background process an agent
   leaves running can still race the config rewrite that precedes each merge, as for authenticated
-  git calls.
+  git calls. From the first resolver session on, a merge re-reads the source branches' own changes,
+  so a file a person pushed to a source branch that adds a NUL byte and is neither named like a
+  binary nor UTF-16 text nor on `workspace.nulAllowedPaths` is refused there as `hidden-content`
+  although it was accepted when pushed.
 - **The reviewer notes an ambiguity; it never resolves one.** An open question reaches the
   domain-logic reviewer as context only. Nothing in the review loop answers it, so an assumption the
   implementation made stays unconfirmed until a human reads the pull request.

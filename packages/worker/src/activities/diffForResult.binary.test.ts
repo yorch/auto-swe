@@ -151,10 +151,12 @@ describe('a binary in the diff', () => {
     expect(nulNoticePaths(diff)).toEqual(['evil.js']);
   });
 
-  it('announces a UTF-16 text file as a NUL in a text file', async () => {
+  it('decodes a UTF-16 text file instead of announcing it, and keeps its secret in view', async () => {
     write('notes.txt', Buffer.from(`${KEY}\n`, 'utf16le'));
     const diff = await scanned();
-    expect(nulNoticePaths(diff)).toEqual(['notes.txt']);
+    expect(nulNoticePaths(diff)).toEqual([]);
+    expect(diff).not.toContain('\0');
+    expect(diff).toContain(`+${KEY}\n`);
   });
 
   it('announces nothing for a binary by name', async () => {

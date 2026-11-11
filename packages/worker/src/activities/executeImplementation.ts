@@ -44,6 +44,7 @@ import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
+import { resolveStandInOptions } from '../lib/nulAllowedPaths.js';
 import { parseOpenQuestionNotes } from '../lib/openQuestionNotes.js';
 import {
   cloneCredentialSecrets,
@@ -657,7 +658,12 @@ export async function executeImplementation(
 
     // Collect results: the pushed commit against the base recorded before the agent ran —
     // no ref is resolved now, because the agent can move any ref in its checkout.
-    const diff = await diffForResult(workspace, pathGuard, pushSha);
+    const diff = await diffForResult(
+      workspace,
+      pathGuard,
+      pushSha,
+      await resolveStandInOptions(activityCtx)
+    );
     // The step reports the commit it pushed, not whatever HEAD has become.
     const headSha = pushSha;
 

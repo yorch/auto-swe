@@ -194,7 +194,7 @@ Run in this order, all failing closed and all non-retryable:
 
 1. **Deterministic policy, no model** (`AGENT_RUN_PUSH_POLICY`). Refuses any changed path matching a
    `SENSITIVE_FILE` pattern (deletions included), symlinks, gitlinks and submodules, binary files
-   (detected by a NUL byte in the content, which `.gitattributes` cannot argue with), files over 1 MB,
+   (detected by a NUL byte in the content, which `.gitattributes` cannot argue with, so UTF-16 text counts as binary here), files over 1 MB,
    more than 500 changed files, paths it cannot classify, and anything under `.github/workflows` or
    `.github/actions` unless `workspace.agentRunAllowWorkflowChanges` allows it. This keeps an agent from
    adding or editing a workflow; it does not stop a pushed branch running the repository's existing

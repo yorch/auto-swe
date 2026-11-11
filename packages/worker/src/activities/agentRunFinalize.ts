@@ -19,9 +19,11 @@ import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { recordGitPush } from '../lib/effectLedger.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
 import { withCoAuthorTrailer } from '../lib/gitIdentity.js';
+import { resolveStandInOptions } from '../lib/nulAllowedPaths.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { checkSensitiveFilePath } from '../lib/sensitiveFileScanner.js';
 import { workspaceBackend } from '../lib/workspaceBackend/index.js';
+import { diffBetweenCommits } from './allowedPaths.js';
 import { parseDiffToFileChanges } from './utils.js';
 import { shellQuote, type Workspace } from './workspace.js';
 
@@ -327,17 +329,12 @@ export async function gateTrustedCommit(
     throw policyFailure(`Push policy refused this change:\n${formatViolations(violations)}`);
   }
 
-  let diff: string;
-  try {
-    diff = await trusted.exec(
-      `${GIT} diff --text --no-textconv --no-ext-diff --no-color --no-renames ${baseSha} ${sha}`
-    );
-  } catch (err) {
-    throw ApplicationFailure.nonRetryable(
-      `The diff could not be read for scanning: ${err instanceof Error ? err.message : String(err)}`,
-      'AGENT_RUN_DIFF_TOO_LARGE'
-    );
-  }
+  // The same pinned read of the two commits as every other path hands the gate: binaries reduced
+  // to their strings, UTF-16 text decoded, and a NUL byte in a file that is not binary refused by
+  // the gate. A raw `git diff --text` here would put NUL and binary bytes in front of the model
+  // and never trip the NUL check.
+  // An unreadable change fails closed there (`SECURITY_GATE_UNAVAILABLE`, non-retryable).
+  const diff = await diffBetweenCommits(trusted, baseSha, sha, await resolveStandInOptions());
   if (diff.length > AGENT_RUN_MAX_GATED_DIFF_CHARS) {
     // The gate reads the whole diff in one model call; a truncated scan would be
     // a bypass (put the payload past the cut), so an unscannable change is refused.

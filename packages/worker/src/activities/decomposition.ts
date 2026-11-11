@@ -45,6 +45,7 @@ import { knowledgeBasePlannerContext } from '../lib/knowledgeBasePlanner.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { resolveSystemPrompt } from '../lib/models.js';
+import { resolveStandInOptions } from '../lib/nulAllowedPaths.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
@@ -454,8 +455,9 @@ async function scanResolvedMerge(
   tracer: AgentTracer
 ): Promise<void> {
   const parts: string[] = [];
+  const standIn = await resolveStandInOptions(await currentRequestContext());
   for (const { sha, parent } of resolutions) {
-    parts.push(await diffResolution(workspace, parent, sha));
+    parts.push(await diffResolution(workspace, parent, sha, standIn));
   }
   const diff = parts.filter((p) => p.trim().length > 0).join('\n');
   if (diff.length === 0) {
