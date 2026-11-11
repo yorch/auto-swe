@@ -6253,6 +6253,8 @@
     "AutonomyDecision": "Audit record of publish and human approval/rejection decisions.",
     "AutonomyPolicy": "Risk-class rules selected by template/team/global fallback.",
     "CallbackEndpoint": "A team’s registered run-callback receiver: origin, path prefix, events, sealed signing secrets and an ADMIN-only private-network opt-in.",
+    "Campaign": "A set of repositories in one organisation worked by one pinned template, with an optional code-owned recipe, a parallelism limit frozen at launch and a state that settles once every target does.",
+    "CampaignTarget": "One repository of a campaign: its state, the path taken (recipe, agent or both), the verification result, the draft pull request it opened and a bounded failure reason.",
     "ChannelBudgetHold": "Schema entity; inspect fields and relationship declarations below.",
     "ChannelMonthlyUsage": "Schema entity; inspect fields and relationship declarations below.",
     "ChannelOpenItem": "Schema entity; inspect fields and relationship declarations below.",
@@ -6439,6 +6441,8 @@
       "WorkflowOutcomeReference",
       "WorkflowStep",
       "CallbackEndpoint",
+      "Campaign",
+      "CampaignTarget",
       "RunCallback",
       "OutboundDelivery",
       "ToolCatalogEntry"

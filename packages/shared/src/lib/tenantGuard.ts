@@ -30,6 +30,8 @@ export const TENANT_SCOPED_MODELS = new Set([
   'Automation',
   'AutonomyPolicy',
   'CallbackEndpoint',
+  'Campaign',
+  'CampaignTarget',
   'ConfigPermission',
   'ConfigSetting',
   'Connection',

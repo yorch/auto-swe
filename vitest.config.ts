@@ -316,6 +316,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ciLogScreen.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/campaignRecipes',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/campaignRecipes.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/campaignOutcome',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/campaignOutcome.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/testIntegrity',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/testIntegrity.ts'),
       },

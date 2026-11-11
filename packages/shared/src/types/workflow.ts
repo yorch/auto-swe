@@ -325,6 +325,45 @@ export interface EpicResult {
   childResults: Record<string, WorkflowResult>;
 }
 
+// ── Campaigns ──
+
+/** One repository of a campaign, frozen at launch. */
+export interface CampaignTargetInput {
+  connectionId: string;
+  /** The repository's owning team at launch: the tenant key on its `CampaignTarget` row. */
+  teamId: string;
+  /** `org/repo`, a snapshot for display. */
+  repoLabel: string;
+}
+
+/**
+ * Everything the campaign workflow needs, resolved by the gateway at launch. The workflow isolate
+ * reads no settings and no database rows, so the limits, the pinned template and the target order
+ * are all frozen in here.
+ */
+export interface CampaignWorkflowInput {
+  campaignId: string;
+  /** `campaign-<campaignId>`; the prefix of every child's workflow ID. */
+  campaignWorkflowId: string;
+  workRequestId: string;
+  externalTicketId: string;
+  description: string;
+  requestPayload: string;
+  launchedById: string;
+  templateId: string;
+  templateVersion: number;
+  /** The recipe, its parameters and the budget; `connectionId` is added per child. */
+  childPayload: Record<string, unknown>;
+  maxParallel: number;
+  /** In launch order; children start in this order. */
+  targets: CampaignTargetInput[];
+}
+
+export interface CampaignResult {
+  status: 'COMPLETED' | 'COMPLETED_WITH_FAILURES' | 'CANCELLED';
+  childResults: Record<string, WorkflowResult>;
+}
+
 // ── Epic Planning Types (Phase 3) ──
 
 export interface EpicPlanRequest {

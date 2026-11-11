@@ -326,7 +326,7 @@ const TEST_CONFIG_PATTERNS: RegExp[] = [
 ];
 
 /** A configuration file that configures only a test runner, so any exclusion in it is about tests. */
-function isPureTestConfig(path: string): boolean {
+export function isPureTestConfig(path: string): boolean {
   return (
     /(^|\/)(jest|vitest|playwright|cypress|karma|mocha|ava)[\w.-]*\.(config|workspace)(\.[\w-]+)*\.[cm]?[jt]s(on)?$/.test(
       path
