@@ -13,30 +13,33 @@ import { buildTraceLinker, traceMatchesSelection } from '@/lib/traceLinkage';
 import { RunWorkspace } from './RunWorkspace';
 
 const traceOptions = vi.hoisted(() => ({ real: false }));
+const graphOptions = vi.hoisted(() => ({ real: false }));
 
-vi.mock('@/components/workflow/WorkflowDag', () => ({
-  WorkflowDag: ({
-    onSelect,
-    selectedNodeId,
-    toggleSelection = true,
-  }: {
-    onSelect: (id: string | null) => void;
-    selectedNodeId: string | null;
-    toggleSelection?: boolean;
-  }) => (
-    <>
-      <button
-        onClick={() => onSelect(toggleSelection && selectedNodeId === 'impl' ? null : 'impl')}
-        type="button"
-      >
-        graph:{selectedNodeId}
-      </button>
-      <button onClick={() => onSelect(null)} type="button">
-        Clear graph selection
-      </button>
-    </>
-  ),
-}));
+vi.mock('@/components/workflow/WorkflowDag', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/workflow/WorkflowDag')>();
+  return {
+    WorkflowDag: (props: Parameters<typeof actual.WorkflowDag>[0]) =>
+      graphOptions.real ? (
+        <actual.WorkflowDag {...props} />
+      ) : (
+        <>
+          <button
+            onClick={() =>
+              props.onSelect?.(
+                props.toggleSelection !== false && props.selectedNodeId === 'impl' ? null : 'impl'
+              )
+            }
+            type="button"
+          >
+            graph:{props.selectedNodeId}
+          </button>
+          <button onClick={() => props.onSelect?.(null)} type="button">
+            Clear graph selection
+          </button>
+        </>
+      ),
+  };
+});
 vi.mock('@/components/ui/Select', () => ({
   Select: ({
     options,
@@ -80,6 +83,8 @@ vi.mock('./TracesTab', async (importOriginal) => {
 afterEach(() => {
   cleanup();
   traceOptions.real = false;
+  graphOptions.real = false;
+  vi.unstubAllGlobals();
 });
 const spec = parseWorkflowSpec({
   entry: 'fan',
@@ -166,10 +171,12 @@ const run = {
 function Harness({
   jumpNonce = 0,
   currentRun = run,
+  currentSpec = spec,
   monitoringPaused = false,
 }: {
   jumpNonce?: number;
   currentRun?: WorkflowRunDetail;
+  currentSpec?: typeof spec;
   monitoringPaused?: boolean;
 }) {
   const [selected, setSelected] = useState<string | null>('impl');
@@ -187,12 +194,47 @@ function Harness({
       run={currentRun}
       selectedNodeId={selected}
       setSelectedNodeId={setSelected}
-      spec={spec}
+      spec={currentSpec}
       traces={currentRun.traces}
     />
   );
 }
 describe('linked run workspace', () => {
+  it('retains real graph folds without replaying initialization effects on tab changes', () => {
+    graphOptions.real = true;
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    );
+    render(
+      <Harness
+        currentSpec={parseWorkflowSpec({
+          ...spec,
+          entry: 'prepare',
+          nodes: {
+            ...spec.nodes,
+            prepare: { group: 'Prepare', next: 'prepare2', step: 'validateContext', type: 'step' },
+            prepare2: { group: 'Prepare', next: 'fan', step: 'validateContext', type: 'step' },
+          },
+        })}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Graph' }));
+    fireEvent.click(screen.getByRole('button', { name: /Collapse \d+ groups?/ }));
+    const collapsed = screen.getByRole('button', { name: /Expand.*groups?/ });
+    expect(collapsed.getAttribute('aria-pressed')).toBe('true');
+    for (const view of ['Timing', 'Details', 'Transcript', 'Events']) {
+      fireEvent.click(screen.getByRole('button', { name: view }));
+      expect(screen.queryByRole('button', { name: /Expand.*groups?/ })).toBeNull();
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Graph' }));
+    expect(screen.getByRole('button', { name: /Expand.*groups?/ })).toBe(collapsed);
+    expect(collapsed.getAttribute('aria-pressed')).toBe('true');
+  });
   it('retains the graph instance and real event filters and expansion across workspace tabs', () => {
     traceOptions.real = true;
     render(

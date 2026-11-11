@@ -374,22 +374,23 @@ export function RunWorkspace({
               This panel shows latest/final information, not historical playback.
             </p>
           )}
+          {/* Activity replays effects and resets React Flow's viewport and group defaults. */}
+          <div hidden={view !== 'Graph'}>
+            {spec && (
+              <div className="h-[clamp(280px,48dvh,480px)]">
+                <WorkflowDag
+                  height="100%"
+                  narrowScrollSafe
+                  onSelect={(id) => select(id)}
+                  selectedNodeId={selectedSpecId}
+                  spec={spec}
+                  statuses={overlay}
+                  toggleSelection={false}
+                />
+              </div>
+            )}
+          </div>
           <Activity mode={view === 'Events' || view === 'Graph' ? 'visible' : 'hidden'}>
-            <Activity mode={view === 'Graph' ? 'visible' : 'hidden'}>
-              {spec && (
-                <div className="h-[clamp(280px,48dvh,480px)]">
-                  <WorkflowDag
-                    height="100%"
-                    narrowScrollSafe
-                    onSelect={(id) => select(id)}
-                    selectedNodeId={selectedSpecId}
-                    spec={spec}
-                    statuses={overlay}
-                    toggleSelection={false}
-                  />
-                </div>
-              )}
-            </Activity>
             <div hidden={view !== 'Events'}>
               {selectedStep && (
                 <div className="space-y-3 border-b border-ink-600 p-4">
