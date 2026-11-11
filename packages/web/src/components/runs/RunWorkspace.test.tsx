@@ -16,13 +16,23 @@ vi.mock('@/components/workflow/WorkflowDag', () => ({
   WorkflowDag: ({
     onSelect,
     selectedNodeId,
+    toggleSelection = true,
   }: {
-    onSelect: (id: string) => void;
+    onSelect: (id: string | null) => void;
     selectedNodeId: string | null;
+    toggleSelection?: boolean;
   }) => (
-    <button onClick={() => onSelect('impl')} type="button">
-      graph:{selectedNodeId}
-    </button>
+    <>
+      <button
+        onClick={() => onSelect(toggleSelection && selectedNodeId === 'impl' ? null : 'impl')}
+        type="button"
+      >
+        graph:{selectedNodeId}
+      </button>
+      <button onClick={() => onSelect(null)} type="button">
+        Clear graph selection
+      </button>
+    </>
   ),
 }));
 vi.mock('@/components/ui/Select', () => ({
@@ -125,6 +135,7 @@ const traces = [
   trace('t0', 'fan[0]/impl', 1),
   trace('t1', 'fan[1]/impl', 1),
   trace('t2', 'fan[0]/impl', 2),
+  { ...trace('outside', 'fan', 1), specNodeId: 'fan' },
 ];
 const run = {
   endedAt: at(30),
@@ -183,6 +194,12 @@ describe('linked run workspace', () => {
         .getAllByRole('button')
         .filter((b) => b.getAttribute('aria-pressed') === 'true')
     ).toHaveLength(3);
+    fireEvent.click(screen.getByRole('button', { name: 'Graph' }));
+    fireEvent.click(screen.getByRole('button', { name: 'graph:impl' }));
+    expect(screen.getByTestId('events').textContent).toBe('t0,t1,t2');
+    fireEvent.click(screen.getByRole('button', { name: 'Graph' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear graph selection' }));
+    expect(screen.getByTestId('events').textContent).toBe('t0,t1,t2,outside');
   });
   it('filters historical traces and shows metadata as latest rather than rewinding it', () => {
     render(<Harness />);

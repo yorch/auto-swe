@@ -349,6 +349,7 @@ export function RunWorkspace({
                   selectedNodeId={selectedSpecId}
                   spec={spec}
                   statuses={overlay}
+                  toggleSelection={false}
                 />
               </div>
               <div className="border-t border-ink-600">{events}</div>

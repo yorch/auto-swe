@@ -65,6 +65,8 @@ interface Props {
   diffMarkers?: Record<string, import('@/lib/workflowLayout').DiffKind>;
   selectedNodeId?: string | null;
   onSelect?: (id: string | null) => void;
+  /** Clicking the selected node clears it. Disable when selection has a finer execution scope. */
+  toggleSelection?: boolean;
   /** Kept for API compatibility — React Flow is always responsive. */
   responsive?: boolean;
   /** Container height. Defaults to 480px so the diagram has room to breathe. */
@@ -117,6 +119,7 @@ function InnerDag({
   diffMarkers,
   selectedNodeId,
   onSelect,
+  toggleSelection = true,
   height,
   foldBookkeeping: foldDefault,
   foldGroups: foldGroupsDefault,
@@ -489,7 +492,7 @@ function InnerDag({
             onNodeClick={(_, n) =>
               n.id in groupFold.folded
                 ? expandGroup(n.id)
-                : onSelect?.(n.id === selectedNodeId ? null : n.id)
+                : onSelect?.(toggleSelection && n.id === selectedNodeId ? null : n.id)
             }
             onNodesChange={onNodesChange}
             onPaneClick={() => onSelect?.(null)}

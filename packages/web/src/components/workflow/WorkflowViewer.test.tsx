@@ -29,6 +29,18 @@ function Harness() {
 }
 afterEach(cleanup);
 describe('read-only workflow inspection', () => {
+  it('returns desktop focus to the most recently selected outline node', () => {
+    window.matchMedia = vi.fn().mockReturnValue({ matches: true });
+    const { container } = render(<Harness />);
+    for (const id of ['start', 'done']) {
+      const trigger = container.querySelector<HTMLButtonElement>(`[data-outline-id="${id}"]`);
+      expect(trigger).not.toBeNull();
+      trigger?.focus();
+      fireEvent.click(trigger as HTMLButtonElement);
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(document.activeElement).toBe(container.querySelector('[data-outline-id="done"]'));
+  });
   it('reveals configuration without edit controls and closes without changing the definition', () => {
     window.matchMedia = vi.fn().mockReturnValue({ matches: true });
     render(<Harness />);
@@ -41,15 +53,22 @@ describe('read-only workflow inspection', () => {
     expect(screen.queryByRole('complementary', { name: 'Node details' })).toBeNull();
     expect(spec.nodes.start.type).toBe('shell');
   });
-  it('returns mobile focus to the node trigger after Escape', () => {
-    window.matchMedia = vi.fn().mockReturnValue({ matches: false });
+  it.each([true, false])('restores focus after Close and Escape (desktop=%s)', (desktop) => {
+    window.matchMedia = vi.fn().mockReturnValue({ matches: desktop });
     render(<Harness />);
     const trigger = screen.getByRole('button', { name: 'Select graph node' });
     trigger.focus();
     fireEvent.click(trigger);
     const details = screen.getByRole('complementary', { name: 'Node details' });
-    expect(document.activeElement).toBe(details);
-    fireEvent.keyDown(details, { key: 'Escape' });
+    expect(document.activeElement).toBe(desktop ? trigger : details);
+    const close = screen.getByRole('button', { name: 'Close' });
+    close.focus();
+    fireEvent.click(close);
+    expect(document.activeElement).toBe(trigger);
+    fireEvent.click(trigger);
+    const reopened = screen.getByRole('complementary', { name: 'Node details' });
+    reopened.focus();
+    fireEvent.keyDown(reopened, { key: 'Escape' });
     expect(document.activeElement).toBe(trigger);
   });
 });

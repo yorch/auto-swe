@@ -26,12 +26,18 @@ export function WorkflowViewer({
   const inspectorTrigger = useRef<HTMLElement | null>(null);
   const node = selectedNodeId ? spec.nodes[selectedNodeId] : undefined;
   useEffect(() => {
-    if (selectedNodeId && !window.matchMedia('(min-width: 1024px)').matches) {
-      inspectorTrigger.current ??=
-        document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      inspector.current?.focus();
-    } else if (!selectedNodeId && inspectorTrigger.current?.isConnected) {
-      inspectorTrigger.current.focus({ preventScroll: true });
+    if (selectedNodeId) {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && !inspector.current?.contains(active)) {
+        inspectorTrigger.current = active;
+      }
+      if (!window.matchMedia('(min-width: 1024px)').matches) {
+        inspector.current?.focus();
+      }
+    } else {
+      if (inspectorTrigger.current?.isConnected) {
+        inspectorTrigger.current.focus({ preventScroll: true });
+      }
       inspectorTrigger.current = null;
     }
   }, [selectedNodeId]);
