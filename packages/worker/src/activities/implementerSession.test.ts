@@ -58,6 +58,13 @@ vi.mock('../lib/scm/index.js', () => ({
 }));
 
 const execMock = vi.fn(async (cmd: string, _options?: { timeoutMs?: number }) => {
+  if (cmd.includes('merge-base --is-ancestor')) {
+    return 'rc=0\n';
+  }
+  if (cmd.includes('refs/remotes/origin/')) {
+    // The resume rebase reads the fetched remote ref fully qualified and wants a full id.
+    return `${'a'.repeat(40)}\n`;
+  }
   if (cmd.includes('rev-parse')) {
     return 'abc123\n';
   }
@@ -948,13 +955,65 @@ describe('runImplementerFixSession ask and resume', () => {
     const { createWorkspace } = await import('./workspace.js');
     expect(vi.mocked(createWorkspace).mock.calls.at(-1)?.[4]).toBe('a'.repeat(40));
     expect(commands().some((c) => c.includes('reset --hard origin/'))).toBe(false);
-    expect(gitAuthedMock).not.toHaveBeenCalledWith(expect.stringContaining('fetch origin'));
+    // The only fetch is the one before the push (the branch may have moved while it waited),
+    // never a sync before the turn.
+    const fetches = gitAuthedMock.mock.calls.filter(([c]) => c.includes('fetch origin'));
+    expect(fetches).toHaveLength(1);
+    const fetchOrder = gitAuthedMock.mock.invocationCallOrder[
+      gitAuthedMock.mock.calls.findIndex(([c]) => c.includes('fetch origin'))
+    ] as number;
+    expect(fetchOrder).toBeGreaterThan(runTurn.mock.invocationCallOrder[0] ?? Infinity);
     const user = runTurn.mock.calls[0]?.[0].user as string;
     expect(user).toContain('"mode":"CI_FIX"');
     expect(user).toContain('[answers: begin]');
     expect(user).toContain('| Postgres');
     // The fix still ends in the normal commit and push.
     expect(commands()).toContain('git add -A');
+  });
+
+  it('replays a resumed session on top of a branch that moved while it waited, before the push', async () => {
+    execMock.mockImplementation((async (cmd: string) => {
+      if (cmd.includes('merge-base --is-ancestor')) {
+        return 'rc=1\n';
+      }
+      return cmd.includes('rev-parse') ? '1234567890123456789012345678901234567890\n' : '';
+    }) as never);
+    await runImplementerFixSession({
+      ...input(),
+      allowPause: true,
+      resumeInput: resumeInputFor(surface()),
+    });
+    const all = commands();
+    // Rebased onto the commit id of the fetched ref, never onto a name the agent could shadow.
+    const rebase = all.findIndex(
+      (c) => c.includes('rebase') && c.includes('1234567890123456789012345678901234567890')
+    );
+    const push = all.findIndex((c) => c.includes('push origin'));
+    expect(rebase).toBeGreaterThan(-1);
+    expect(push).toBeGreaterThan(rebase);
+  });
+
+  it('fails a resumed session non-retryably, pushing nothing, when the moved branch conflicts', async () => {
+    execMock.mockImplementation((async (cmd: string) => {
+      if (cmd.includes('merge-base --is-ancestor')) {
+        return 'rc=1\n';
+      }
+      if (cmd.includes('ls-files -u')) {
+        return 'U\n';
+      }
+      if (cmd.includes('rebase') && !cmd.includes('--abort')) {
+        throw new Error('CONFLICT');
+      }
+      return cmd.includes('rev-parse') ? '1234567890123456789012345678901234567890\n' : '';
+    }) as never);
+    const failure = await runImplementerFixSession({
+      ...input(),
+      allowPause: true,
+      resumeInput: resumeInputFor(surface()),
+    }).catch((e) => e);
+    expect(failure).toMatchObject({ nonRetryable: true, type: 'NEEDS_INPUT_PUSH_CONFLICT' });
+    expect(commands().some((c) => c.includes('rebase --abort'))).toBe(true);
+    expect(commands().some((c) => c.includes('push origin'))).toBe(false);
   });
 
   it.each([

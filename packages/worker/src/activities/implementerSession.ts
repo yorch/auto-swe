@@ -20,6 +20,7 @@ import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
+import { rebaseOntoMovedBranch } from '../lib/pauseRebase.js';
 import {
   checkSurfaceState,
   cloneCredentialSecrets,
@@ -407,13 +408,24 @@ export async function runImplementerFixSession(
     // Fixes made from a failure (CI, gate, pull-request feedback): a fix that goes green by
     // deleting, skipping or weakening the tests is not a fix. The commit is made with hooks off and
     // its own diff analysed before anything is pushed (docs/ci-failure-triggers.md).
-    const pushSha = await commitWithTestIntegrity(
+    let pushSha = await commitWithTestIntegrity(
       workspace,
       input.commitMessage,
       pathGuard,
       integrity,
       tracer
     );
+    // A resumed session waited on a person while the branch could move: replay its commits on
+    // top of the remote so the push fast-forwards. The path guard ran on the commit above.
+    if (resume) {
+      const rebased = await rebaseOntoMovedBranch(workspace, previousCodeResult.branch, {
+        guard: pathGuard,
+        replayBase: resumeCheckoutSha(resume),
+      });
+      if (rebased && pushSha) {
+        pushSha = rebased;
+      }
+    }
     // Never push on behalf of a run that has already been cancelled.
     throwIfActivityCancelled();
     await recordGitPush(previousCodeResult.branch, pushSha, () =>

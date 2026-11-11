@@ -9,6 +9,7 @@ import type {
   SearchIssuesOptions,
   SearchIssuesResult,
   TrackerSyncEvent,
+  TrackerSyncOutcome,
 } from './types.js';
 
 export interface IssueTrackerProvider {
@@ -35,4 +36,9 @@ export interface IssueTrackerProvider {
    * not reported either.
    */
   syncOnEvent(event: TrackerSyncEvent): Promise<TicketFailureClass | null>;
+  /**
+   * {@link syncOnEvent} that also says whether any write reached the ticket. Optional: a provider
+   * without it is treated as having written (it cannot say otherwise).
+   */
+  syncOnEventOutcome?(event: TrackerSyncEvent): Promise<TrackerSyncOutcome>;
 }

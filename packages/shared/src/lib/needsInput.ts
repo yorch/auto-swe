@@ -91,6 +91,8 @@ export type ResumeAnswer = z.infer<typeof ResumeAnswerSchema>;
 export const ResumeInputSchema = z.strictObject({
   // One answer per question, plus the person's optional free-text note.
   answers: z.array(ResumeAnswerSchema).max(MAX_QUESTIONS + 1),
+  // The last run at the round limit: the agent cannot ask again and must finish on its own judgement.
+  final: z.literal(true).optional(),
   resume: ResumeStateSchema,
   round: z.number().int().min(1),
 });

@@ -107,6 +107,9 @@ describe('RunnableWorkflow — history replay', () => {
       'human-review',
       'linear',
       'mcp',
+      'needs-input-cancel',
+      'needs-input-final',
+      'needs-input-reask',
       'needs-input',
       'nested-fan-out',
       'on-error-continue',
@@ -265,6 +268,44 @@ describe('RunnableWorkflow — history replay', () => {
       .filter(Boolean);
     expect(signals).toEqual(['hitl_impl:ask:1']);
     expect(events.map((e) => e.eventType)).not.toContain(EventType.EVENT_TYPE_TIMER_FIRED);
+  });
+
+  it('the needs-input-reask fixture repeated the round under its own step', () => {
+    const events = eventsOf('needs-input-reask');
+    expect(patchIdsOf('needs-input-reask')).toContain('needs-input-reask-v1');
+    const signals = events
+      .map((e) => e.workflowExecutionSignaledEventAttributes?.signalName)
+      .filter(Boolean);
+    expect(signals).toEqual(['hitl_impl:ask:1', 'hitl_impl:ask:1.1']);
+    const scheduled = events
+      .map((e) => e.activityTaskScheduledEventAttributes?.activityType?.name)
+      .filter(Boolean);
+    // The re-ask does not run the activity again: one pause, one resume.
+    expect(scheduled.filter((n) => n === 'executeImplementation')).toHaveLength(2);
+  });
+
+  it('the needs-input-final fixture ran the activity once more at the round limit', () => {
+    const events = eventsOf('needs-input-final');
+    expect(patchIdsOf('needs-input-final')).toContain('needs-input-final-round-v1');
+    const scheduled = events
+      .map((e) => e.activityTaskScheduledEventAttributes?.activityType?.name)
+      .filter(Boolean);
+    // First run, the resume with the answer, and the final unattended run.
+    expect(scheduled.filter((n) => n === 'executeImplementation')).toHaveLength(3);
+    const failed = events.some(
+      (e) => e.eventType === EventType.EVENT_TYPE_WORKFLOW_EXECUTION_FAILED
+    );
+    expect(failed).toBe(false);
+  });
+
+  it('the needs-input-cancel fixture was cancelled while waiting and closed its question', () => {
+    const types = eventsOf('needs-input-cancel').map((e) => e.eventType);
+    expect(patchIdsOf('needs-input-cancel')).toContain('needs-input-cancel-v1');
+    expect(types).toContain(EventType.EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED);
+    const scheduled = eventsOf('needs-input-cancel')
+      .map((e) => e.activityTaskScheduledEventAttributes?.activityType?.name)
+      .filter(Boolean);
+    expect(scheduled).toContain('resolveHumanStep');
   });
 
   it('the signal-timeout fixture timed out rather than resumed', () => {

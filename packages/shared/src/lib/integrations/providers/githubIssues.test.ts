@@ -84,6 +84,31 @@ describe('GitHubIssuesProvider.addComment', () => {
       await expect(provider.syncOnEvent(failed)).resolves.toBe('rate_limited');
     });
 
+    describe('syncOnEventOutcome reports whether anything was written', () => {
+      it('wrote: false for workflow_started, which has no GitHub transition', async () => {
+        const { fetchImpl, provider } = make(200);
+        await expect(
+          provider.syncOnEventOutcome({ issueId: 'acme/api#7', type: 'workflow_started' })
+        ).resolves.toEqual({ failure: null, wrote: false });
+        expect(fetchImpl).not.toHaveBeenCalled();
+      });
+
+      it('wrote: true when the issue is closed', async () => {
+        await expect(
+          make(200).provider.syncOnEventOutcome({
+            issueId: 'acme/api#7',
+            type: 'workflow_completed',
+          })
+        ).resolves.toEqual({ failure: null, wrote: true });
+      });
+
+      it('wrote: false with the class when the write is refused', async () => {
+        await expect(
+          make(403).provider.syncOnEventOutcome({ issueId: 'acme/api#7', type: 'workflow_failed' })
+        ).resolves.toMatchObject({ failure: 'forbidden', wrote: false });
+      });
+    });
+
     describe('workflow_completed (closes the issue, may post a PR link comment)', () => {
       const completed = { issueId: 'acme/api#7', type: 'workflow_completed' } as const;
       const withPr = { ...completed, prTitle: 'Fix', prUrl: 'https://gh/pr/1' } as const;

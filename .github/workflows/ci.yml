@@ -631,3 +631,35 @@ jobs:
         env:
           USER_SIGNIN_PG_TEST: '1'
         run: yarn test packages/gateway/src/routes/users.signin.pg.test.ts
+
+      # Harness profiles: the name is unique ignoring case through a hand-written
+      # lower(name) index Prisma cannot express, a version number is unique per
+      # profile, and a profile with versions cannot be deleted (Restrict).
+      - name: Harness profiles (database-backed tests)
+        env:
+          HARNESS_PROFILE_PG_TEST: '1'
+        run: yarn test packages/shared/src/lib/harnessProfile/harnessProfile.pg.test.ts
+
+      # The run-effect ledger: a recorded row lands, and the retention sweep
+      # deletes by age while keeping a run under legal hold, which a mocked
+      # Prisma does not evaluate.
+      - name: Run effect retention (database-backed tests)
+        env:
+          RUN_EFFECT_PRUNE_PG_TEST: '1'
+        run: yarn test packages/worker/src/activities/pruneAuditAndActivity.pg.test.ts
+
+      # The paused-run snapshot: a run still RUNNING keeps its snapshot however
+      # old (the resume reads it), a finished or ownerless one expires, which is
+      # a relation filter on the run's status.
+      - name: Needs-input snapshot retention (database-backed tests)
+        env:
+          NEEDS_INPUT_SNAPSHOT_PG_TEST: '1'
+        run: yarn test packages/worker/src/activities/pruneNeedsInputSnapshot.pg.test.ts
+
+      # Agent run concurrency slots: a run stopped at a pending ask step still
+      # holds its slot, and the live-run query is a relation filter that a mocked
+      # Prisma does not evaluate.
+      - name: Agent run slots (database-backed tests)
+        env:
+          AGENT_RUN_SLOTS_PG_TEST: '1'
+        run: yarn test packages/worker/src/lib/agentRunSlots.pg.test.ts

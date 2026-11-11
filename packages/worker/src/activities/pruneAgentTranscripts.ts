@@ -323,12 +323,19 @@ export async function pruneAgentTranscripts(
   );
 
   // A paused run's saved working tree is read once, by the resume; an unanswered pause or a
-  // run that ended while waiting leaves it behind. It can hold anything the agent wrote, so it
-  // goes with the transcript retention window rather than waiting for the run row.
+  // run that ended while waiting leaves it behind. It can hold anything the agent wrote, so once
+  // its run is over it goes with the transcript retention window rather than waiting for the run row.
   const snapshots = await prisma.workflowArtifact.findMany({
     select: { id: true },
     take: PRUNE_BATCH,
-    where: { createdAt: { lt: cutoff }, kind: 'needs_input.snapshot', status: 'ready' },
+    where: {
+      createdAt: { lt: cutoff },
+      kind: 'needs_input.snapshot',
+      // A run still waiting on its answer reads the snapshot when it resumes, however long
+      // the person takes: only a finished run's (or an ownerless) snapshot is expired.
+      OR: [{ runId: null }, { run: { status: { not: 'RUNNING' } } }],
+      status: 'ready',
+    },
   });
   for (const snapshot of snapshots) {
     await deleteArtifact(snapshot.id);

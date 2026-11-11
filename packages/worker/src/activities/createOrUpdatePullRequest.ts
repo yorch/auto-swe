@@ -325,11 +325,15 @@ async function doCreateOrUpdatePullRequest(
       prUrl,
       type: 'pr_opened',
     } as const;
+    let wrote: boolean | undefined;
     const synced = await syncTrackerOnEvent(trackerEvent, trackerConfig, {
+      onOutcome: (outcome) => {
+        wrote = outcome.wrote;
+      },
       runInputId: request.workRequestId,
       warn: logWarn,
     }).catch(() => undefined);
-    await recordTrackerSync(trackerEvent, synced);
+    await recordTrackerSync(trackerEvent, synced, wrote);
   }
 
   // Best-effort Confluence PR link write-back — search for a page matching the

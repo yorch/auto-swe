@@ -75,6 +75,13 @@ export interface CreatedIssue {
   title: string;
 }
 
+/** What a tracker sync did: the first refusal, and whether anything was written to the ticket. */
+export interface TrackerSyncOutcome {
+  failure: TicketFailureClass | null;
+  /** True when a comment, link or status change reached the ticket; false for a no-op sync. */
+  wrote: boolean;
+}
+
 export interface TrackerSyncEvent {
   type:
     | 'workflow_started'

@@ -584,6 +584,23 @@ describe('the run effects a PR activity records', () => {
     expect(effects()).toEqual([]);
   });
 
+  it('records a tracker sync that wrote nothing as SKIPPED', async () => {
+    m.prisma.runInput.findUnique.mockResolvedValue({ ticketIsSynthetic: false });
+    m.kb.searchPages.mockResolvedValue([]);
+    vi.mocked(syncTrackerOnEvent).mockImplementationOnce((async (
+      _e: unknown,
+      _c: unknown,
+      opts: { onOutcome: (o: unknown) => void }
+    ) => {
+      opts.onOutcome({ failure: null, wrote: false });
+      return null;
+    }) as never);
+    await createOrUpdatePullRequest(request, codeResult);
+    expect(effects().filter((e) => e.kind === 'TRACKER')).toEqual([
+      expect.objectContaining({ action: 'sync:pr_opened', status: 'SKIPPED', target: 'T-1' }),
+    ]);
+  });
+
   it('records the tracker sync that succeeded, and the one the tracker refused', async () => {
     m.prisma.runInput.findUnique.mockResolvedValue({ ticketIsSynthetic: false });
     m.kb.searchPages.mockResolvedValue([]);
