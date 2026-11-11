@@ -70,14 +70,22 @@ runs on a cheaper, different model from the agents it scores, to avoid self-pref
 > `BUDGET_EXCEEDED` type. Every caller runs the same `runPostDiffSecurityGate`
 > (`worker/src/lib/securityGate.ts`).
 > The text it scans, the advisory code scan reads, and the reviewers receive as `CodeResult.diff`
-> is read from the committed head, not the work tree: pinned `diff-tree` plumbing with `--text`, no
-> external diff driver or text conversion, no attribute file, from a recorded base commit to the
-> commit that was pushed (`diffForResult` in `worker/src/activities/allowedPaths.ts`). An agent
-> that controls its checkout can therefore not hide content with `diff.external`, a `textconv`
-> driver or a `-diff` attribute. Nothing is excluded from it, lockfiles and minified files
-> included, because a secret can sit in a file named like one. A diff that reads as empty although
-> the committed tree differs from the base is unreadable and fails `SECURITY_GATE_UNAVAILABLE`. The
-> merge-conflict resolver's scan reads each resolution commit the same way.
+> is read from the commit that was pushed, not the work tree: pinned `diff-tree` plumbing with
+> `--text`, no external diff driver or text conversion, no attribute file, no grafts, from a base
+> commit sha recorded before the agent ran to the sha the activity committed with hooks off and pushed
+> by sha (`diffForResult` in `worker/src/activities/allowedPaths.ts`; see
+> [architecture.md](./architecture.md#workspace-hardening) for the whole sequence). Every
+> implementer step does this, with or without `allowedPaths`. An agent that controls its checkout can
+> therefore not hide content with `diff.external`, a `textconv` driver, a `-diff` attribute, a moved
+> or shadowed `origin/<default>`, a rewritten `packed-refs`, a hook or a graft. Nothing is excluded from it,
+> lockfiles and minified files included, because a secret can sit in a file named like one; a binary
+> file is reduced to its header and the printable strings of its added lines. A diff that reads as
+> empty although the committed tree differs from the base, a read cut short, and a binary with more
+> than 64 KiB of such strings are unreadable and fail `SECURITY_GATE_UNAVAILABLE`. The merge-conflict
+> resolver's scan reads each resolution commit the same way, against the target-side parent it
+> recorded before the merge and with no pathspec; it refuses a resolution whose index differs from
+> the pre-agent snapshot outside the conflicted files. What this does not cover is in the Limitations
+> (§11): a replaced `git` binary, and the depth of what is reduced to strings.
 > It complements the review network rather than being replaced by it: the network gives three
 > personas an opinion and routes on their verdicts, this one fails the activity outright.
 
@@ -2039,6 +2047,16 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   is stopped one round early. A template that
   hand-rolls its review (`consensus-review`, `fully-supervised`, `human-code-review`,
   `approve-before-pr`) is not covered, nor is a rejection whose only findings are reviewer crashes.
+- **The scan trusts the recorded base and the `git` binary.** The diff is the sha read before the
+  first agent turn against the sha the activity committed; everything the agent can do to refs,
+  hooks, config, attributes and grafts in its checkout is bypassed, but a replaced `git` or `sh`
+  binary in the container (root there) or a checkout tampered with before the base was read is not.
+  The text sections of a diff are scanned whole, so a very large diff fails closed
+  (`SECURITY_GATE_UNAVAILABLE`) instead of being truncated; a binary is scanned through its
+  printable strings, so content that is compressed or encoded inside it is not seen.
+- **Workspace commits skip the repository's commit hooks.** The implementer steps and the
+  merge-conflict resolver commit with hooks off, so a formatter or commit-message check wired in
+  as a hook does not run on them. Run such checks as test or gate commands instead.
 - **The reviewer notes an ambiguity; it never resolves one.** An open question reaches the
   domain-logic reviewer as context only. Nothing in the review loop answers it, so an assumption the
   implementation made stays unconfirmed until a human reads the pull request.

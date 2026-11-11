@@ -1398,6 +1398,32 @@ would defeat it.
 > `pull`, or `push` against a private repo — it holds no credential. Leave changes in the working
 > tree instead; the step commits and pushes them to the run's branch after the command exits.
 
+**What is committed, pushed and scanned after an agent ran.** The agent edits a checkout it can also
+run commands in, so it can move any ref, plant a hook, edit `.git/packed-refs`, write
+`.git/info/grafts` or set a config key. Every implementer step (the TDD implementation, the CI, review
+and gate fix sessions, with or without `allowedPaths`) therefore treats the checkout as untrusted:
+
+- The base is a commit sha recorded **before the first agent turn** (`startPathGuard`): the previous
+  result's base when one is carried, the default branch's tip, or for a session that starts on a
+  branch ahead of it the fork point, read at that moment. No ref or merge base is resolved afterwards.
+- The commit is made with hooks off, the identity passed explicitly and the same hardened, pinned,
+  graft-free git call as every read (`commitStaged`). Repository hooks (a `pre-commit` or `commit-msg`
+  hook, including ones a package manager installed through `core.hooksPath`) do not run for these
+  commits. `HEAD` is read once, right after the commit; that sha is what is pushed
+  (`<sha>:refs/heads/<branch>`), what is scanned and what the result reports as `headSha`.
+- The diff the security gate, the code scan and the reviewers read is the recorded base against that sha, as a
+  two-tree comparison through pinned `diff-tree` plumbing (`diffForResult`). Every pinned read ends with a
+  per-call nonce line printed after git exits; stdout without it (a backend that cut the output at its cap)
+  fails the read closed instead of passing a shortened diff. A section of the patch that contains a NUL
+  is a binary: it is replaced by its header and the printable strings (8 or more characters) of its added
+  lines, so a key embedded in a binary is still scanned, and a binary with more than 64 KiB of such
+  strings fails closed. Text sections are never cut.
+- The merge-conflict resolver commits its merges the same way. Before the agent runs it records the
+  target-side parent and the source tip and snapshots the index; afterwards it stages the conflicted
+  files, refuses any other change to the index, commits with hooks off, accepts the commit only if its
+  parents are exactly the two recorded tips (read from the commit object), scans everything that
+  changed against the recorded parent with no pathspec, and pushes the sha it tracked.
+
 **Security scanners.** Seven run during agent execution at distinct stages: sensitive file, pre-write content, shell
 command, code security, skill content, LLM output, and memory content. All but the pre-write content
 check match DB regex patterns. Table and rules in
@@ -1431,12 +1457,25 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
-- **The post-diff security scan has no size bound of its own.** The diff it reads is whole (no
-  lockfile or minified-file exclusion, no truncation), because a cut or an exclusion is a place to
-  hide a payload. A change too large for the `securityReview` model's context makes the gate call
-  fail, which fails the step as `SECURITY_GATE_UNAVAILABLE` (non-retryable) rather than passing it
-  unscanned. The read is pinned plumbing between two commits, so it is not defeated by anything the
-  agent can set in its checkout; replacing the `git` binary in the container is outside that model.
+- **The post-diff security scan has no size bound of its own.** The text sections of the diff it
+  reads are whole (no lockfile or minified-file exclusion, no truncation), because a cut or an
+  exclusion is a place to hide a payload. A change too large for the `securityReview` model's
+  context makes the gate call fail, which fails the step as `SECURITY_GATE_UNAVAILABLE`
+  (non-retryable) rather than passing it unscanned; so does a diff too large to read from the
+  workspace, one whose output was cut short, and a binary with more than 64 KiB of printable strings.
+  A binary is scanned through those strings only, so a secret stored in a way that is not printable
+  ASCII (compressed or encoded inside the file) is not seen.
+- **The recorded base is what the unguarded steps now depend on.** A step reports the change against
+  a sha read before the agent ran. That read happens in the same container the agent later controls
+  and trusts the checkout's object database at that moment; a clone that was already tampered with
+  before the first turn (a poisoned custom image) is outside this. The read, the commit and the
+  push are pinned against the configuration, refs, hooks and grafts the agent can reach. Replacing the
+  `git` binary (or `sh`) in the container, which needs root there, is outside that model and defeats
+  every git-based check.
+- **Clean merges in the conflict resolver are not scanned as resolver output.** A source branch merged
+  without conflict arrives with the changes it was scanned for when it was pushed; a merge driver the
+  resolver configured for a later branch of the same activity is not seen. The resolver's own scan
+  covers whatever a conflicting merge changed against the target, including the source's side of it.
 - **GitHub is the only source-control provider.** GitLab and Bitbucket are not implemented; the
   provider registry has no entry for either, and a repository whose `scmProvider` is anything but
   `github` fails non-retryably ([Source-control provider seam](#source-control-provider-seam)).

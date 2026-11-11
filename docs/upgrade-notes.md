@@ -1006,6 +1006,30 @@ change the setting at its team or organization scope: the override cannot do it.
 
 ---
 
+### Workspace commits skip repository hooks; steps record their base first (`<fixing commit SHA>`)
+
+**Affected.** Deployments whose repositories rely on a commit hook running inside the agent
+workspace (a `pre-commit` formatter or `lint-staged`, a `commit-msg` check, anything wired through
+husky or `core.hooksPath`) for the commits the platform makes, and deployments that read the scanned
+diff of a pushed change for binary files.
+
+**What changes.** Every implementer step (`executeImplementation`, the CI, review and gate fix
+sessions) and the merge-conflict resolver now commit with hooks off and push the committed sha
+(`<sha>:refs/heads/<branch>`), as the steps with `allowedPaths` or the test-integrity guard already
+did. The base the diff is read against is recorded before the agent runs, so a step whose starting
+commit cannot be read now fails non-retryably before the paid session (`DIFF_BASE_UNREADABLE`). The
+hooks that no longer run on a workspace commit are the repository's own; files a hook would have
+reformatted at commit time are committed as the agent left them. `CodeResult.diff` carries a binary
+file as its header and its printable strings, not its bytes, and `headSha` is the pushed commit.
+
+**Actions.** Move any formatting or validation a hook performed into the repository's test or gate
+command (`gateCommands`), where it runs before the commit. No migration, no credential rotation.
+
+**Verify the fix is running.** A commit the platform made in a workspace did not run the repository's
+`pre-commit` hook, and a pushed branch tip equals the run's reported `headSha`.
+
+---
+
 ### UN-19. `vulnerability-remediation` declares an input schema
 
 **Affected.** A deployment whose global `vulnerability-remediation` template was seeded by a build
