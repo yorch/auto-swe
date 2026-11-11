@@ -3,11 +3,19 @@
  *
  * The resolver edits files in a workspace it can also run commands in, so what it leaves behind
  * is untrusted: a staged extra file, a hook, a moved ref, a `.git/info/grafts` line. The scan of
- * a resolved merge reads exactly one thing it can trust: two commit shas the WORKER recorded, the
+ * a resolved merge reads exactly one thing it can trust: commit shas the WORKER recorded, the
  * target-side parent (HEAD before `git merge`) and the commit this module made, compared as trees
  * with no pathspec. To make that the whole story:
+ *  - every commit the merges start from or take in is read ONCE, by {@link recordMergeInputs},
+ *    right after the checkout is reset and before any repository code runs (the setup command, an
+ *    agent turn), and each merge takes in that sha, never the ref name: a ref is a file the
+ *    resolver for an earlier branch can repoint;
  *  - every merge and commit runs through {@link guardedGit} (hooks off, pinned repository, no
- *    system or global config, no grafts, no commit-graph) with `--no-verify`;
+ *    system or global config, no grafts, no commit-graph) with `--no-verify`, and each merge runs
+ *    after the repository config was rewritten from an allow-list and `.git/info/attributes`
+ *    removed, so a merge driver, filter or attribute the agent planted cannot run in it;
+ *  - the committed tree, not only the index, is compared with the snapshot outside the conflicted
+ *    paths, so a merge the agent committed itself and then unstaged from is refused too;
  *  - the index is snapshotted before the agent runs and compared after, so only the conflicted
  *    paths may differ (an `evil.py` the agent staged, or a file it changed outside the set, is
  *    refused rather than committed);
@@ -20,18 +28,28 @@ import { ApplicationFailure } from '@temporalio/activity';
 import { DEFAULT_GIT_IDENTITY, gitIdentityFlags } from '../lib/gitIdentity.js';
 import { execPinned, guardedGit, pinnedDiffTreeCommand, readTreeChange } from './allowedPaths.js';
 import { standInBinarySections } from './scanDiffText.js';
-import { shellQuote, type Workspace } from './workspace.js';
+import { sanitizeGitRepoConfigScript, shellQuote, type Workspace } from './workspace.js';
 
 type Exec = Pick<Workspace, 'exec'> & { gitIdentity?: Workspace['gitIdentity'] };
 
 const SHA = /^[0-9a-f]{40,64}$/;
 
-/** What a merge is measured from: the two tips read by the worker before `git merge` ran. */
+/** What a merge is measured from: the two tips the worker recorded before `git merge` ran. */
 export interface MergeStep {
+  /** The source branch's name, for messages only; the merge takes in {@link sourceSha}. */
+  source: string;
   /** The target-side parent: HEAD before the merge. */
   parent: string;
-  /** The source branch's tip, read before the merge. */
+  /** The source branch's tip, recorded before any repository code or agent ran. */
   sourceSha: string;
+}
+
+/** What a resolver activity records before any repository code or agent runs. */
+export interface MergeInputs {
+  /** The commit HEAD is at (the reset target): the first merge's parent. */
+  start: string;
+  /** `origin/<source>` for each source; `''` when it cannot be read. */
+  sourceTips: Record<string, string>;
 }
 
 const refused = (message: string) =>
@@ -50,13 +68,33 @@ async function readCommit(workspace: Exec, rev: string): Promise<string> {
 }
 
 /**
- * Record the two tips a merge starts from, before it runs. `expectedHead` is the commit this
- * activity itself left HEAD at (the reset target, then each earlier result): a HEAD that is
- * anywhere else was moved by something other than the activity.
+ * Read every commit the merges depend on, ONCE: HEAD and each `origin/<source>`. Call it right
+ * after the checkout is reset to the target and before anything runs repository code (the setup
+ * command) or an agent: a ref read later is a ref the resolver for an earlier branch, or setup
+ * code from earlier agent work, could have repointed at a commit of its own. The merges then take
+ * in these shas, not the ref names.
+ */
+export async function recordMergeInputs(
+  workspace: Exec,
+  sources: readonly string[]
+): Promise<MergeInputs> {
+  const start = await readCommit(workspace, 'HEAD');
+  const sourceTips: Record<string, string> = {};
+  for (const source of sources) {
+    sourceTips[source] = await readCommit(workspace, `origin/${source}`);
+  }
+  return { sourceTips, start };
+}
+
+/**
+ * Begin a merge of the recorded `sourceSha`. `expectedHead` is the commit this activity itself
+ * left HEAD at (the recorded start, then each earlier result): a HEAD that is anywhere else was
+ * moved by something other than the activity.
  */
 export async function startMerge(
   workspace: Exec,
   source: string,
+  sourceSha: string,
   expectedHead: string
 ): Promise<MergeStep | { error: string }> {
   const parent = await readCommit(workspace, 'HEAD');
@@ -65,21 +103,47 @@ export async function startMerge(
       'The checkout was moved away from the commit the merges build on, so the merge cannot be checked.'
     );
   }
-  const sourceSha = await readCommit(workspace, `origin/${source}`);
-  if (!sourceSha) {
+  if (!sourceSha || (await readCommit(workspace, sourceSha)) !== sourceSha) {
     return { error: `could not read the tip of origin/${source}` };
   }
-  return { parent, sourceSha };
+  return { parent, source, sourceSha };
 }
 
-/** `git merge --no-ff` with hooks off. Throws on a conflict, with git's output on the error. */
-export async function runMerge(workspace: Exec, message: string, source: string): Promise<void> {
+/**
+ * The script that rewrites the repository config from an allow-list and removes
+ * `.git/info/attributes`, for the same shell as the merge that follows. Setup code and the
+ * resolver run as the same user in the repository, so `merge.<name>.driver`, `filter.<name>.*`
+ * and an attribute line pointing at them are theirs to plant, and a driver runs inside the next
+ * merge, whose result is committed without a second look.
+ */
+async function scrubForMergeScript(workspace: Exec): Promise<string> {
+  let url = '';
+  try {
+    url = (
+      await workspace.exec(
+        `${guardedGit('config --file .git/config --get remote.origin.url')} || true`
+      )
+    ).trim();
+  } catch {
+    url = '';
+  }
+  try {
+    return `${sanitizeGitRepoConfigScript(url)}\nrm -f .git/info/attributes\n`;
+  } catch {
+    throw refused('The repository config could not be checked before the merge.');
+  }
+}
+
+/** `git merge --no-ff` of the recorded source sha, hooks and drivers off. Throws on a conflict. */
+export async function runMerge(workspace: Exec, message: string, step: MergeStep): Promise<void> {
   const identity = workspace.gitIdentity ?? DEFAULT_GIT_IDENTITY;
+  const scrub = await scrubForMergeScript(workspace);
   await workspace.exec(
-    guardedGit(
-      `${gitIdentityFlags(identity)} -c commit.gpgsign=false merge --no-ff --no-edit --no-verify ` +
-        `-m ${shellQuote(message)} ${shellQuote(`origin/${source}`)}`
-    )
+    `set -e\n${scrub}${guardedGit(
+      `${gitIdentityFlags(identity)} -c commit.gpgsign=false -c core.attributesFile=/dev/null ` +
+        '-c rerere.enabled=false -c rerere.autoUpdate=false -c merge.renormalize=false ' +
+        `merge --no-ff --no-edit --no-verify -m ${shellQuote(message)} ${shellQuote(step.sourceSha)}`
+    )}`
   );
 }
 
@@ -196,7 +260,9 @@ export async function stageResolved(
 export async function commitResolvedMerge(
   workspace: Exec,
   message: string,
-  step: MergeStep
+  step: MergeStep,
+  snapshot: IndexSnapshot,
+  files: readonly string[]
 ): Promise<string> {
   const identity = workspace.gitIdentity ?? DEFAULT_GIT_IDENTITY;
   if ((await readCommit(workspace, 'HEAD')) === step.parent) {
@@ -210,7 +276,54 @@ export async function commitResolvedMerge(
   if (sha === step.parent) {
     throw refused('The resolution produced no merge commit.');
   }
+  await assertCommittedTreeMatchesSnapshot(workspace, sha, snapshot, files);
   return sha;
+}
+
+/**
+ * The committed tree must hold, outside the conflicted paths, exactly the entries the merge
+ * left staged at stage 0 before the agent ran. {@link stageResolved} compares the index, which is
+ * not what gets pushed: an agent that commits the merge itself and then unstages a file leaves an
+ * index that looks right under a commit that carries it.
+ */
+async function assertCommittedTreeMatchesSnapshot(
+  workspace: Exec,
+  sha: string,
+  snapshot: IndexSnapshot,
+  files: readonly string[]
+): Promise<void> {
+  const conflicted = new Set(files);
+  const raw = await execPinned(
+    workspace,
+    guardedGit(`ls-tree -r -z --full-tree ${shellQuote(sha)}`)
+  );
+  const committed = raw
+    .split('\0')
+    .filter((record) => record !== '')
+    .map((record) => {
+      const tab = record.indexOf('\t');
+      const [mode = '', , object = ''] = record.slice(0, tab).split(' ');
+      return { key: `${mode} ${object}\t${record.slice(tab + 1)}`, path: record.slice(tab + 1) };
+    })
+    .filter((e) => !conflicted.has(e.path))
+    .map((e) => e.key)
+    .sort();
+  const expected = snapshot.entries
+    .filter((e) => e.stage === '0' && !conflicted.has(e.path))
+    .map((e) => `${e.mode} ${e.sha}\t${e.path}`)
+    .sort();
+  if (committed.length !== expected.length || committed.some((k, i) => k !== expected[i])) {
+    const was = new Set(expected);
+    const now = new Set(committed);
+    const changed = [
+      ...committed.filter((k) => !was.has(k)),
+      ...expected.filter((k) => !now.has(k)),
+    ].map((k) => k.slice(k.indexOf('\t') + 1));
+    throw refused(
+      'The merge commit differs from the merge outside the conflicted files ' +
+        `(${[...new Set(changed)].slice(0, 10).join(', ')}), which the resolution may not do.`
+    );
+  }
 }
 
 /**

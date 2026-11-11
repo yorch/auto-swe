@@ -131,9 +131,17 @@ vi.mock('./mergeResolution.js', () => {
       async (ws: { exec: (c: string) => Promise<string> }, parent: string, sha: string) =>
         ws.exec(`git diff ${q(parent)} ${q(sha)}`)
     ),
+    recordMergeInputs: vi.fn(async (_ws: unknown, sources: string[]) => ({
+      sourceTips: Object.fromEntries(sources.map((s) => [s, `tip-of-${s}`])),
+      start: 'start-sha',
+    })),
     runMerge: vi.fn(
-      async (ws: { exec: (c: string) => Promise<string> }, message: string, source: string) => {
-        await ws.exec(`git merge --no-ff --no-edit -m ${q(message)} origin/${q(source)}`);
+      async (
+        ws: { exec: (c: string) => Promise<string> },
+        message: string,
+        step: { source: string }
+      ) => {
+        await ws.exec(`git merge --no-ff --no-edit -m ${q(message)} origin/${q(step.source)}`);
       }
     ),
     settleMerge: vi.fn(async () => 'merged-sha'),
@@ -145,7 +153,11 @@ vi.mock('./mergeResolution.js', () => {
         return left.split('\0').some((f) => f.length > 0) ? 'unmerged' : 'staged';
       }
     ),
-    startMerge: vi.fn(async () => ({ parent: 'parent-sha', sourceSha: 'source-sha' })),
+    startMerge: vi.fn(async (_ws: unknown, source: string, sourceSha: string) => ({
+      parent: 'parent-sha',
+      source,
+      sourceSha,
+    })),
   };
 });
 
@@ -270,6 +282,7 @@ import {
   resolveMergeConflict,
   subtaskBranchName,
 } from './decomposition.js';
+import { recordMergeInputs, startMerge } from './mergeResolution.js';
 
 const baseRequest = {
   description: 'test',
@@ -931,6 +944,87 @@ describe('resolveMergeConflict', () => {
     // Both branches resolve in the one workspace, through the one resolver session.
     expect(buildImplementerMock).toHaveBeenCalledTimes(1);
     expect(closeMcpMock).toHaveBeenCalledTimes(1);
+  });
+
+  describe('what is recorded before an agent or repository code runs', () => {
+    const DB = 'auto/TICK-1/db';
+    const CACHE = 'auto/TICK-1/cache';
+    const withDiffs = (git: FakeGit) => {
+      installFakeGit(git);
+      const base = fakeWorkspace.exec.getMockImplementation() as (cmd: string) => unknown;
+      fakeWorkspace.exec.mockImplementation((cmd: string) =>
+        cmd.startsWith("git diff 'parent-sha' 'merged-sha'") ? 'diff of a merge' : base(cmd)
+      );
+    };
+
+    it('merges the sha recorded at provisioning, not the ref as it stands later', async () => {
+      primeRepo();
+      const git = conflictingGit();
+      withDiffs(git);
+      resolverThatFixes(git);
+      await resolveMergeConflict({
+        request: baseRequest,
+        sourceBranches: [DB, CACHE],
+        targetBranch: 'auto/TICK-1',
+      });
+      const starts = vi.mocked(startMerge).mock.calls;
+      expect(starts.map((c) => [c[1], c[2], c[3]])).toEqual([
+        [DB, `tip-of-${DB}`, 'start-sha'],
+        [CACHE, `tip-of-${CACHE}`, 'resolved-sha'],
+      ]);
+    });
+
+    it('records the tips before the setup command runs repository code', async () => {
+      primeRepo();
+      const order: string[] = [];
+      vi.mocked(recordMergeInputs).mockImplementationOnce(async (_ws, sources) => {
+        order.push('record');
+        return { sourceTips: Object.fromEntries(sources.map((s) => [s, 'x'])), start: 'start-sha' };
+      });
+      (fakeWorkspace as unknown as { runSetup: () => void }).runSetup = () => {
+        order.push('setup');
+      };
+      try {
+        installFakeGit({ conflictOn: () => false, files: {} });
+        await resolveMergeConflict({
+          request: baseRequest,
+          sourceBranches: [DB],
+          targetBranch: 'auto/TICK-1',
+        });
+      } finally {
+        delete (fakeWorkspace as unknown as { runSetup?: () => void }).runSetup;
+      }
+      expect(order).toEqual(['record', 'setup']);
+    });
+
+    it('scans a clean merge made after the resolver ran', async () => {
+      primeRepo();
+      const git = conflictingGit();
+      withDiffs(git);
+      resolverThatFixes(git);
+      await resolveMergeConflict({
+        request: baseRequest,
+        sourceBranches: [DB, CACHE],
+        targetBranch: 'auto/TICK-1',
+      });
+      expect(scanSecurityMock).toHaveBeenCalledTimes(1);
+      const scanned = scanSecurityMock.mock.calls[0]?.[0] as string;
+      expect(scanned).toContain('diff of a merge');
+    });
+
+    it('does not scan a clean merge made before any resolver ran', async () => {
+      primeRepo();
+      const git = conflictingGit();
+      withDiffs(git);
+      resolverThatFixes(git);
+      await resolveMergeConflict({
+        request: baseRequest,
+        sourceBranches: [CACHE, DB],
+        targetBranch: 'auto/TICK-1',
+      });
+      const scanned = scanSecurityMock.mock.calls[0]?.[0] as string;
+      expect(scanned).not.toContain('diff of a merge');
+    });
   });
 
   it('treats a README whose setext heading is "=======" as resolved', async () => {

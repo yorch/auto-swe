@@ -52,12 +52,13 @@ import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
-import { readHeadSha } from './allowedPaths.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import {
   assertHeadIs,
   commitResolvedMerge,
   diffResolution,
+  type MergeInputs,
+  recordMergeInputs,
   runMerge,
   settleMerge,
   snapshotIndex,
@@ -264,12 +265,13 @@ export async function resolveMergeConflict(
       : 1;
   const messagePrefix = input.mergeMessagePrefix ?? 'auto-merge';
 
-  const { workspace, log } = await provisionMergeWorkspace(
+  const { workspace, log, inputs } = await provisionMergeWorkspace(
     request,
     targetBranch,
     sourceBranches,
     'resolveMergeConflict',
-    input.knowledgeBases !== false
+    input.knowledgeBases !== false,
+    true
   );
   const merged: string[] = [];
   const unmerged: string[] = [];
@@ -294,8 +296,8 @@ export async function resolveMergeConflict(
   };
 
   try {
-    const start = await readHeadSha(workspace);
-    if (!start) {
+    const start = inputs?.start;
+    if (!start || !inputs) {
       throw ApplicationFailure.nonRetryable(
         'Could not read the commit the merges start from, so the resolution cannot be checked. ' +
           'Nothing was pushed.',
@@ -306,16 +308,22 @@ export async function resolveMergeConflict(
     for (let idx = 0; idx < sourceBranches.length; idx++) {
       const source = sourceBranches[idx] as string;
       heartbeat(`resolveMergeConflict: merging ${source}`);
+      // Every merge from the first resolver session on is scanned, clean or not: that session
+      // ran an agent in this checkout, and a merge after it is made from a checkout the agent
+      // could have touched. A merge before it ran no agent code, so what it took in was scanned
+      // when the source branch was pushed.
+      const resolverStarted = turns !== undefined;
       const resolved = await mergeOneWithResolver(workspace, source, targetBranch, {
         log,
         maxAttempts: maxAttemptsPerBranch,
         messagePrefix,
+        sourceSha: inputs.sourceTips[source] ?? '',
         tracer,
         tracked,
         turns: resolverTurns,
       });
-      if (resolved.resolution) {
-        resolutions.push(resolved.resolution);
+      if (resolved.commit && (resolved.resolved || resolverStarted)) {
+        resolutions.push(resolved.commit);
       }
       if (resolved.passed) {
         merged.push(source);
@@ -387,7 +395,7 @@ export async function resolveMergeConflict(
   }
 }
 
-/** A merge commit the resolver produced, and the conflicted paths it wrote. */
+/** A merge commit to scan, and the conflicted paths the resolver wrote (none for a clean merge). */
 interface ResolverCommit {
   sha: string;
   /** The target-side parent, recorded by this activity before `git merge` ran. */
@@ -401,12 +409,13 @@ interface ResolverCommit {
  * trace, and the security gate, which fails the activity on a CRITICAL
  * finding.
  *
- * The scan covers each merge commit the resolver produced, as everything that changed between
- * the target-side parent this activity recorded before `git merge` and the committed resolution
- * (see `mergeResolution.ts`): no pathspec, so a file the resolver added outside the conflict set
- * is in it. Not the working tree, and not the default branch, which would re-scan every subtask
- * already merged into the epic. The merge brings the source branch's own changes with it, and
- * those were scanned when that branch was pushed.
+ * The scan covers every merge commit from the first resolver session on, as everything that
+ * changed between the target-side parent this activity recorded before `git merge` and the
+ * committed merge (see `mergeResolution.ts`): the resolver's own merges and the clean merges
+ * after it, which are made in a checkout that agent could have touched. No pathspec, so a file
+ * the resolver added outside the conflict set is in it. Not the working tree, and not the default
+ * branch, which would re-scan every subtask already merged into the epic. Merges made before any
+ * agent ran are not re-read: what they take in was scanned when the source branch was pushed.
  */
 async function scanResolvedMerge(
   workspace: Workspace,
@@ -438,8 +447,15 @@ async function provisionMergeWorkspace(
   targetBranch: string,
   sourceBranches: string[],
   label: string,
-  knowledgeBases = false
-): Promise<{ workspace: Workspace; log: string[]; baseBranch: string }> {
+  knowledgeBases = false,
+  recordInputs = false
+): Promise<{
+  workspace: Workspace;
+  log: string[];
+  baseBranch: string;
+  /** The commits the merges start from and take in, when `recordInputs` was asked for. */
+  inputs: MergeInputs | undefined;
+}> {
   const repo = await withRunDetection(
     await prisma.connection.findUniqueOrThrow({
       include: { installation: { select: { host: true, installationId: true } } },
@@ -501,14 +517,19 @@ async function provisionMergeWorkspace(
   } catch {
     log.push(`origin/${targetBranch} not found; starting from ${baseBranch}`);
   }
+  // The commits the merges build on and take in are read here, before the setup command runs the
+  // repository's own code (which includes whatever an earlier agent pushed) and before any
+  // resolver turn: a ref read later is a ref that code could have repointed.
+  let inputs: MergeInputs | undefined;
   try {
+    inputs = recordInputs ? await recordMergeInputs(workspace, sourceBranches) : undefined;
     await workspace.runSetup?.();
   } catch (err) {
     await workspace.destroy();
     throw err;
   }
 
-  return { baseBranch, log, workspace };
+  return { baseBranch, inputs, log, workspace };
 }
 
 async function pushAndCapture(
@@ -543,27 +564,42 @@ async function mergeOneWithResolver(
     log: string[];
     maxAttempts: number;
     messagePrefix: string;
+    /** The source's tip, recorded before any repository code or agent ran. */
+    sourceSha: string;
     /** The commit HEAD is expected at; advanced to each merge result this function settles. */
     tracked: { head: string };
     tracer: AgentTracer;
     /** The activity's one resolver session, built on first use. */
     turns: () => Promise<ImplementerTurnRunner>;
   }
-): Promise<{ passed: boolean; output: string; resolution?: ResolverCommit }> {
+): Promise<{
+  passed: boolean;
+  output: string;
+  /** The merge commit this made, when it made one. */
+  commit?: ResolverCommit;
+  /** True when the resolver agent wrote the merge (false for a clean merge). */
+  resolved?: boolean;
+}> {
   const commitMessage = withCoAuthorTrailer(
     `${opts.messagePrefix}: merge ${source} into ${targetBranch}`,
     workspace.gitIdentity
   );
 
-  const step = await startMerge(workspace, source, opts.tracked.head);
+  const step = await startMerge(workspace, source, opts.sourceSha, opts.tracked.head);
   if ('error' in step) {
     return { output: step.error, passed: false };
   }
   try {
-    await runMerge(workspace, commitMessage, source);
-    opts.tracked.head = await settleMerge(workspace, step);
+    await runMerge(workspace, commitMessage, step);
+    const sha = await settleMerge(workspace, step);
+    opts.tracked.head = sha;
     opts.log.push(`merged ${source} cleanly`);
-    return { output: '', passed: true };
+    return {
+      ...(sha === step.parent ? {} : { commit: { files: [], parent: step.parent, sha } }),
+      output: '',
+      passed: true,
+      resolved: false,
+    };
   } catch (err) {
     if (err instanceof ApplicationFailure) {
       throw err;
@@ -672,13 +708,20 @@ async function mergeOneWithResolver(
         );
         continue;
       }
-      const sha = await commitResolvedMerge(workspace, commitMessage, step);
+      const sha = await commitResolvedMerge(
+        workspace,
+        commitMessage,
+        step,
+        snapshot,
+        conflictedFiles
+      );
       opts.tracked.head = sha;
       opts.log.push(`resolved ${source} on attempt ${attempt} (${sha})`);
       return {
+        commit: { files: conflictedFiles, parent: step.parent, sha },
         output: '',
         passed: true,
-        resolution: { files: conflictedFiles, parent: step.parent, sha },
+        resolved: true,
       };
     } catch (commitErr) {
       if (commitErr instanceof ApplicationFailure) {
