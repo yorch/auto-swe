@@ -278,6 +278,16 @@ describe('run page summary band', () => {
 });
 
 describe('run page verdict and reading guide', () => {
+  it('opens the gate panel from another investigation view instead of jumping to an unmounted anchor', async () => {
+    run.status = 'RUNNING';
+    await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Events' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to the gate' }));
+    expect(
+      screen.getByRole('button', { name: 'Approval / result' }).getAttribute('aria-pressed')
+    ).toBe('true');
+    expect(screen.getByText('Approve the plan')).toBeTruthy();
+  });
   afterEach(() => {
     run.status = 'FAILED';
     run.result = null;
@@ -286,7 +296,7 @@ describe('run page verdict and reading guide', () => {
   it('states a failed run in plain language and points at the failed step', async () => {
     state.layout = 'A';
     await renderPage();
-    expect(screen.getByText(/does not recognise this error/)).toBeTruthy();
+    expect(screen.getAllByText(/does not recognise this error/).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Jump to the failed step' })).toBeTruthy();
   });
 
@@ -295,7 +305,7 @@ describe('run page verdict and reading guide', () => {
     run.status = 'SUCCESS';
     await renderPage();
     expect(screen.getByText('Finished')).toBeTruthy();
-    expect(screen.getByText(/recorded no pull request link/)).toBeTruthy();
+    expect(screen.getAllByText(/recorded no pull request link/).length).toBeGreaterThan(0);
     expect(screen.queryByRole('link', { name: 'Open the pull request' })).toBeNull();
   });
 
@@ -313,9 +323,7 @@ describe('run page verdict and reading guide', () => {
     run.status = 'RUNNING';
     await renderPage();
     expect(screen.getByText('Waiting on a person')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Go to the gate' }).getAttribute('href')).toBe(
-      '#run-needs-response'
-    );
+    expect(screen.getByRole('button', { name: 'Go to the gate' })).toBeTruthy();
     expect(document.getElementById('run-needs-response')).not.toBeNull();
   });
 

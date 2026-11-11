@@ -55,6 +55,7 @@ export function RunWorkspace({
   details,
   needsDecision,
   monitoringPaused = false,
+  overviewNonce = 0,
 }: TranscriptProps & {
   overview: ReactNode;
   evidence: ReactNode;
@@ -62,6 +63,7 @@ export function RunWorkspace({
   details: ReactNode;
   needsDecision: boolean;
   monitoringPaused?: boolean;
+  overviewNonce?: number;
 }) {
   const [view, setView] = useState<View>(needsDecision ? 'Overview' : 'Events');
   const userViewed = useRef(false);
@@ -157,6 +159,18 @@ export function RunWorkspace({
       pane.current.scrollTop = 0;
     }
   }, [jumpNonce]);
+  useEffect(() => {
+    if (!overviewNonce) {
+      return;
+    }
+    setView('Overview');
+    setReplayMs(null);
+    setPlaying(false);
+    setMobileSteps(false);
+    if (pane.current) {
+      pane.current.scrollTop = 0;
+    }
+  }, [overviewNonce]);
   function select(id: string | null, execution: string | null = null) {
     setSelectedNodeId(id);
     setStepId(execution);
@@ -257,14 +271,17 @@ export function RunWorkspace({
             <Icon name="list" size={13} />
             Steps
           </Button>
-          <h2 className="min-w-0 break-words text-sm font-semibold text-paper-100">
+          <h2
+            className="min-w-0 flex-1 truncate text-sm font-semibold text-paper-100"
+            title={selectedNodeId ?? 'All executions'}
+          >
             {selectedNode && selectedNodeId
               ? nodeDisplayName(selectedNode, selectedNodeId)
               : (selectedNodeId ?? 'All executions')}
           </h2>
           {selectedStep && <StatusBadge status={selectedStep.status} />}
           {matching.length > 0 && (
-            <div className="ml-auto max-w-full">
+            <div className="w-full max-w-full lg:ml-auto lg:w-auto">
               <Select
                 aria-label="Execution attempt"
                 compact
@@ -514,7 +531,7 @@ export function RunWorkspace({
                   value={speed}
                 />
               </div>
-              <p className="text-xs text-paper-500">
+              <p className="hidden text-xs text-paper-500 sm:block">
                 Events and execution states follow the playhead. Outcome, approval actions, cost and
                 supporting panels remain latest/final.
               </p>

@@ -240,6 +240,7 @@ export default function RunDetailPage({ params }: PageProps) {
   // scrolling the anchor alone did nothing inside the overflow-hidden main.
   const failedNodeId = run ? findFailedStep(run.status, run.steps)?.nodeId : undefined;
   const [jumpNonce, setJumpNonce] = useState(0);
+  const [overviewNonce, setOverviewNonce] = useState(0);
   const handleJumpToFailure = useCallback(() => {
     if (failedNodeId) {
       setSelectedNodeId(failedNodeId);
@@ -316,7 +317,7 @@ export default function RunDetailPage({ params }: PageProps) {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-ink-800">
       {/* ── Page header band ──────────────────────────────────────────────── */}
-      <header className="shrink-0 border-b border-ink-600/40 bg-ink-900 px-4 pt-3 pb-4 md:px-6">
+      <header className="shrink-0 border-b border-ink-600/40 bg-ink-900 px-4 py-2 md:px-6 md:pt-3 md:pb-4">
         <nav
           aria-label="Breadcrumb"
           className="mb-1.5 flex flex-wrap items-center gap-x-1.5 text-sm text-paper-500"
@@ -334,11 +335,14 @@ export default function RunDetailPage({ params }: PageProps) {
           )}
         </nav>
 
-        <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+        <div className="flex flex-wrap items-start gap-x-6 gap-y-2">
           {/* Title: the request this run belongs to, not the template's name */}
           <div className="min-w-0 flex-1 basis-[20rem]">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-              <h1 className="min-w-0 break-words text-xl font-semibold leading-tight tracking-[-0.01em] text-paper-50">
+              <h1
+                className="min-w-0 basis-full truncate text-lg font-semibold leading-tight tracking-[-0.01em] text-paper-50 sm:basis-auto sm:break-words sm:whitespace-normal sm:text-xl"
+                title={runTitle}
+              >
                 {runTitle}
               </h1>
               <StatusBadge status={run.status} />
@@ -354,23 +358,25 @@ export default function RunDetailPage({ params }: PageProps) {
                 </Badge>
               )}
             </div>
-            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-sm text-paper-500">
+            <p className="mt-1 flex min-w-0 items-center gap-x-1.5 text-xs text-paper-500 sm:flex-wrap sm:text-sm">
               {/* The Agent Run template is hidden: its detail route answers 404 for everyone. */}
               {run.templateName &&
                 (isAgentRun ? (
                   <span className="text-paper-400">{run.templateName}</span>
                 ) : (
                   <Link
-                    className="rounded-sm text-paper-300 transition-colors hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
+                    className="min-w-0 truncate rounded-sm text-paper-300 transition-colors hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
                     href={`/library/${run.templateId}`}
                     title="Open the workflow template"
                   >
                     {run.templateName}
                   </Link>
                 ))}
-              <span className="tabular">v{run.templateVersion}</span>
-              <span aria-hidden="true">·</span>
-              <span title={formatDate(run.startedAt)}>
+              <span className="tabular shrink-0">v{run.templateVersion}</span>
+              <span aria-hidden="true" className="hidden sm:inline">
+                ·
+              </span>
+              <span className="hidden sm:inline" title={formatDate(run.startedAt)}>
                 Started {formatRelativeTime(run.startedAt)}
               </span>
             </p>
@@ -386,7 +392,7 @@ export default function RunDetailPage({ params }: PageProps) {
             )}
           </div>
 
-          {/* Right side: actions + layout switcher */}
+          {/* Run controls stay reachable above the evidence. */}
           <div className="flex flex-wrap items-center gap-2 max-lg:w-full max-lg:min-w-0 lg:justify-end">
             {(tracesTrimmed || fullTraces) && (
               <Button
@@ -517,7 +523,11 @@ export default function RunDetailPage({ params }: PageProps) {
 
       <HowItWorks />
       <RunReadingGuide />
-      <RunVerdictBanner onJumpToFailure={handleJumpToFailure} verdict={verdict} />
+      <RunVerdictBanner
+        onGoToGate={() => setOverviewNonce((n) => n + 1)}
+        onJumpToFailure={handleJumpToFailure}
+        verdict={verdict}
+      />
       <RunWorkspace
         activity={
           <>
@@ -563,6 +573,7 @@ export default function RunDetailPage({ params }: PageProps) {
             <RunReviews key={run.id} run={run} />
           </>
         }
+        overviewNonce={overviewNonce}
         run={run}
         selectedNodeId={selectedNodeId}
         setSelectedNodeId={setSelectedNodeId}
