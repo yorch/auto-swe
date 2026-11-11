@@ -1,10 +1,14 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { DOCKER_HOST_ALIAS } from '@auto-swe/shared/lib/systemConfig';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  assertBaselineEgress,
   assertEgressLocked,
+  baselineRules,
+  buildBaselineEgressScript,
   buildEgressHelperCommand,
   buildEgressLockScript,
   buildServiceContainerArgs,
@@ -12,6 +16,210 @@ import {
   ephemeralArgs,
   resolveEgressTargets,
 } from './docker.js';
+
+function baselineReport(
+  allow: Parameters<typeof baselineRules>[0] = [],
+  cidrs: string[] = [],
+  privateBlock = true,
+  metadataBlock = true
+): string {
+  const rules = baselineRules(allow, cidrs, privateBlock, metadataBlock);
+  return [
+    'v4:',
+    '-P OUTPUT ACCEPT',
+    '-A OUTPUT -j ASW_BASELINE',
+    ...rules.v4.map((r) => `-A ASW_BASELINE ${r}`),
+    'v6:',
+    '-P OUTPUT ACCEPT',
+    '-A OUTPUT -j ASW_BASELINE',
+    ...rules.v6.map((r) => `-A ASW_BASELINE ${r}`),
+    'v6disabled=0',
+  ].join('\n');
+}
+
+describe('baseline egress', () => {
+  it.each([0, 1])('restores filtered DNS when package installation exits %i', async (exitCode) => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'baseline-dns-'));
+    const resolver = path.join(dir, 'resolv.conf');
+    const original = 'nameserver 127.0.0.2\nsearch test\n';
+    try {
+      await fs.writeFile(resolver, original);
+      const script = buildBaselineEgressScript([], [], true, true, ['1.1.1.1'])
+        .split('\nv6=1')[0]
+        .replaceAll('/etc/resolv.conf', '"$TEST_RESOLV"');
+      const run = () =>
+        execFileSync(
+          'sh',
+          [
+            '-c',
+            `
+command() { return 1; }
+apk() {
+  [ "$(cat "$TEST_RESOLV")" = 'nameserver 1.1.1.1' ] || exit 2
+  return ${exitCode}
+}
+${script}
+`,
+          ],
+          { env: { ...process.env, TEST_RESOLV: resolver }, stdio: 'pipe' }
+        );
+      if (exitCode === 0) {
+        expect(run).not.toThrow();
+      } else {
+        expect(run).toThrow('helper image has no iptables');
+      }
+      expect(await fs.readFile(resolver, 'utf8')).toBe(original);
+    } finally {
+      await fs.rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it('bootstraps filtered DNS only for helper packages and restores it before installing rules', () => {
+    const script = buildBaselineEgressScript([], [], true, true, [
+      '1.1.1.1',
+      '2606:4700:4700::1111',
+    ]);
+    expect(script).toContain('asw_dns=$(cat /etc/resolv.conf)');
+    expect(script).toContain(`trap 'printf "%s\\n" "$asw_dns" > /etc/resolv.conf' EXIT`);
+    expect(script).toContain('nameserver 1.1.1.1\nnameserver 2606:4700:4700::1111');
+    expect(script.indexOf('asw_dns=')).toBeLessThan(script.indexOf('apk add'));
+    expect(script.indexOf('apk add')).toBeLessThan(script.indexOf('trap - EXIT'));
+    expect(script.indexOf('trap - EXIT')).toBeLessThan(script.indexOf('iptables -N ASW_BASELINE'));
+    expect(buildBaselineEgressScript([], [])).not.toContain('asw_dns=');
+    expect(() => buildBaselineEgressScript([], [], true, true, ['bad; server'])).toThrow(
+      'bootstrap DNS server must be an IP'
+    );
+  });
+
+  it('puts loopback and replies first, metadata before allow, and private REJECTs last', () => {
+    const script = buildBaselineEgressScript([{ ip: '10.1.2.3', port: 443 }], ['10.0.0.0/8']);
+    expect(script.indexOf('-o lo')).toBeLessThan(script.indexOf('--ctstate'));
+    expect(script.indexOf('169.254.169.254')).toBeLessThan(script.indexOf('10.1.2.3'));
+    expect(script.indexOf('10.1.2.3')).toBeLessThan(script.indexOf('10.0.0.0/8 -j REJECT'));
+    expect(script).toContain('ip6tables unusable and IPv6 enabled');
+    expect(script).toContain('ip6tables -S ASW_BASELINE');
+    expect(script).not.toContain('-P OUTPUT DROP');
+    const metadata = [
+      '169.254.169.254',
+      '169.254.170.2',
+      '100.100.100.200',
+      '192.0.0.192',
+      '168.63.129.16',
+      'fd00:ec2::254',
+    ];
+    const rules = baselineRules(
+      metadata.map((ip) => ({ ip })),
+      ['0.0.0.0/0', '::/0']
+    );
+    for (const ip of metadata) {
+      const family = ip.includes(':') ? rules.v6 : rules.v4;
+      expect(family.indexOf(`-d ${ip} -j REJECT`)).toBeLessThan(
+        family.indexOf(`-d ${ip} -j ACCEPT`)
+      );
+      expect(family.indexOf(`-d ${ip} -j REJECT`)).toBeGreaterThan(0);
+      expect(() =>
+        assertBaselineEgress(
+          baselineReport().replace(`-d ${ip} -j REJECT`, `-d ${ip} -j ACCEPT`),
+          [],
+          []
+        )
+      ).toThrow();
+    }
+  });
+
+  it('verifies ordered kernel rules and tolerates IPv6 unavailable only when disabled', () => {
+    const report = baselineReport();
+    expect(() => assertBaselineEgress(report, [], [])).not.toThrow();
+    expect(() => assertBaselineEgress('', [], [])).toThrow();
+    const canonical = baselineReport([], ['10.12.34.56/8', 'fd00:12::123/64'])
+      .replace('10.12.34.56/8', '10.0.0.0/8')
+      .replace('fd00:12::123/64', 'fd00:12::/64')
+      .replace('::ffff:0:0/96', '::ffff:0.0.0.0/96')
+      .replace('-d 169.254.169.254 ', '-d 169.254.169.254/32 ');
+    expect(() =>
+      assertBaselineEgress(canonical, [], ['10.12.34.56/8', 'fd00:12::123/64'])
+    ).not.toThrow();
+    expect(() => buildBaselineEgressScript([], ['10.0.0.0/8;true'])).toThrow('invalid CIDR');
+    expect(() =>
+      assertBaselineEgress(
+        report.replace('-d 10.0.0.0/8 -j REJECT', '-d 10.0.0.0/8 -j ACCEPT'),
+        [],
+        []
+      )
+    ).toThrow();
+    expect(() =>
+      assertBaselineEgress(
+        report.replace('-A OUTPUT -j ASW_BASELINE', '-A OUTPUT -j ACCEPT'),
+        [],
+        []
+      )
+    ).toThrow();
+    const v4 = report.split('v6:')[0];
+    expect(() =>
+      assertBaselineEgress(`${v4}v6:\nv6-unavailable\nv6disabled=1\n`, [], [])
+    ).not.toThrow();
+    expect(() =>
+      assertBaselineEgress(`${v4}v6:\nv6-unavailable\nv6disabled=0\n`, [], [])
+    ).toThrow();
+    expect(() =>
+      assertBaselineEgress(baselineReport([], [], false, true), [], [], false, true)
+    ).not.toThrow();
+  });
+
+  it('strict locking detaches the baseline and installs DROP without an established OUTPUT bypass', () => {
+    const script = buildEgressLockScript([]);
+    expect(script).toContain('iptables -F OUTPUT');
+    expect(script).toContain('ip6tables -F OUTPUT');
+    expect(script).toContain('iptables -P OUTPUT DROP');
+    expect(script).not.toContain('ASW_BASELINE');
+    expect(script).not.toContain('-A OUTPUT -m conntrack --ctstate');
+  });
+
+  it('executes baseline then strict scripts against the same simulated kernel tables', () => {
+    const tables = `
+rules4_OUTPUT=''; rules4_INPUT=''; rules4_ASW_BASELINE=''
+rules6_OUTPUT=''; rules6_INPUT=''; rules6_ASW_BASELINE=''
+policy4_OUTPUT=ACCEPT; policy4_INPUT=ACCEPT
+policy6_OUTPUT=ACCEPT; policy6_INPUT=ACCEPT
+fake_table() {
+  family=$1; action=$2; chain=$3; shift 3
+  key="rules"$family"_$chain"
+  eval "previous=\\"\\$$key\\""
+  case "$action" in
+    -N|-F) eval "$key=''" ;;
+    -P) eval "policy"$family"_$chain=$1" ;;
+    -A) eval "$key=\\"$previous
+-A $chain $*\\"" ;;
+    -I) shift; eval "$key=\\"-A $chain $*
+$previous\\"" ;;
+    -S)
+      case "$chain" in
+        INPUT|OUTPUT) policykey="policy"$family"_$chain"; eval "policy=\\"\\$$policykey\\""; echo "-P $chain $policy" ;;
+        *) echo "-N $chain" ;;
+      esac
+      printf '%s\\n' "$previous" ;;
+    *) return 1 ;;
+  esac
+}
+iptables() { fake_table 4 "$@"; }
+ip6tables() { fake_table 6 "$@"; }
+conntrack() { :; }
+`;
+    const output = execFileSync(
+      'sh',
+      [
+        '-c',
+        `${tables}\n${buildBaselineEgressScript([], [])}\necho strict:\n${buildEgressLockScript([])}`,
+      ],
+      { encoding: 'utf8' }
+    );
+    const [baseline = '', strict = ''] = output.split('strict:\n');
+    expect(() => assertBaselineEgress(baseline, [], [])).not.toThrow();
+    expect(() => assertEgressLocked(strict)).not.toThrow();
+    expect(strict).not.toContain('-A OUTPUT -j ASW_BASELINE');
+    expect(strict).not.toContain('-A OUTPUT -m conntrack --ctstate');
+  });
+});
 
 describe('buildServiceContainerArgs', () => {
   it('hardens service sidecars in the workspace network namespace', () => {
@@ -353,6 +561,7 @@ require('node:fs').appendFileSync(
   JSON.stringify({ args, token: process.env.YARN_NPM_AUTH_TOKEN ?? null }) + '\\n'
 );
 if (args[0] === 'exec') process.stdout.write('42\\n');
+if (args[0] === 'run' && args.includes('--rm')) process.stdout.write(process.env.FAKE_BASELINE ?? '');
 `;
   const TOKEN = 'proxy-tok-s3cret';
   let dir: string;
@@ -363,6 +572,7 @@ if (args[0] === 'exec') process.stdout.write('42\\n');
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-create-'));
     await fs.writeFile(path.join(dir, 'docker'), FAKE, { mode: 0o755 });
     process.env.FAKE_LOG = path.join(dir, 'log.jsonl');
+    process.env.FAKE_BASELINE = baselineReport();
     oldPath = process.env.PATH;
     process.env.PATH = `${dir}${path.delimiter}${oldPath ?? ''}`;
     oldToken = process.env.YARN_NPM_AUTH_TOKEN;
@@ -376,6 +586,7 @@ if (args[0] === 'exec') process.stdout.write('42\\n');
       process.env.YARN_NPM_AUTH_TOKEN = oldToken;
     }
     delete process.env.FAKE_LOG;
+    delete process.env.FAKE_BASELINE;
     await fs.rm(dir, { force: true, recursive: true });
   });
 

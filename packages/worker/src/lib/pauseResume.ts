@@ -70,6 +70,28 @@ export function resumeCheckoutSha(resume: ResumeInput | undefined): string | und
   return resume?.resume.snapshot?.baseSha;
 }
 
+/** What the rounds before a resume already used of a run's step and wall-clock caps. */
+export interface CarriedUsage {
+  elapsedMs: number;
+  steps: number;
+}
+
+const nonNegative = z.number().finite().nonnegative().optional().catch(undefined);
+const CarriedUsageSchema = z.looseObject({ usedElapsedMs: nonNegative, usedSteps: nonNegative });
+
+/**
+ * The step and wall-clock usage a surface saved in its state (`usedSteps`, `usedElapsedMs`).
+ * Zero for a first run and for a state without them (written before they existed, or a
+ * foreign one), so an old state keeps working and merely starts counting afresh.
+ */
+export function carriedUsage(resume: ResumeInput | undefined): CarriedUsage {
+  const parsed = CarriedUsageSchema.safeParse(resume?.resume.surface);
+  return {
+    elapsedMs: parsed.success ? (parsed.data.usedElapsedMs ?? 0) : 0,
+    steps: parsed.success ? Math.floor(parsed.data.usedSteps ?? 0) : 0,
+  };
+}
+
 /** `raw` as a {@link ResumeInput}, or a non-retryable `NEEDS_INPUT_RESTORE_FAILED`. */
 export function readResumeInput(raw: unknown): ResumeInput {
   const parsed = ResumeInputSchema.safeParse(raw);
@@ -227,6 +249,7 @@ export function resumeMessage(resume: ResumeInput, task: string): string {
     answers: resume.answers,
     asked: resume.resume.asked,
     digest: resume.resume.digest,
+    ...(resume.final ? { final: true } : {}),
     task,
   });
 }

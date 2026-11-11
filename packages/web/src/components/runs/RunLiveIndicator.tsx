@@ -31,7 +31,7 @@ export function RunLiveIndicator({
         <Badge dot tone="warning" variant="outline">
           Paused
         </Badge>
-        <span className="text-xs text-paper-400">
+        <span className="sr-only text-xs text-paper-400 sm:not-sr-only">
           Full payloads are loaded, so this page is not refreshing.
         </span>
         <Button

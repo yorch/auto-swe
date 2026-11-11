@@ -98,6 +98,38 @@ const marker = (status: string, next: string) => ({
   type: 'step',
 });
 
+/** A pause from the implementer asking one multiple-choice question, for the ask-and-resume scenarios. */
+const askPause = () => ({
+  needsInput: {
+    questions: [
+      {
+        header: 'Library',
+        multiSelect: false,
+        options: [
+          { description: '', label: 'Alpha' },
+          { description: '', label: 'Beta' },
+        ],
+        question: 'Which library?',
+      },
+    ],
+    resume: {
+      asked: [{ header: 'Library', question: 'Which library?' }],
+      digest: 'edited two files',
+      snapshot: null,
+      version: 1,
+    },
+  },
+});
+
+const askSpec = () =>
+  spec(
+    {
+      done: { status: 'SUCCESS', type: 'terminate' },
+      impl: { next: 'done', step: 'executeImplementation', type: 'step' },
+    },
+    'impl'
+  );
+
 async function waitForState(states: string[], want: string): Promise<void> {
   const deadline = Date.now() + 20_000;
   while (!states.includes(want) && Date.now() < deadline) {
@@ -545,6 +577,63 @@ const SCENARIOS: Scenario[] = [
       },
       'impl'
     ),
+  },
+  {
+    // Re-ask: the first answer fits no question, so the dispatcher closes that step, opens
+    // `impl:ask:1.1` for the same round (a `needs-input-reask-v1` marker) without running the
+    // activity again, and the second answer resumes it.
+    activities: () => {
+      let calls = 0;
+      return {
+        executeImplementation: async () =>
+          ++calls === 1 ? askPause() : { branch: 'auto/REPLAY-1', headSha: 'sha-final' },
+      };
+    },
+    drive: async (handle) => {
+      await waitForEventCount(handle, EventType.EVENT_TYPE_TIMER_STARTED, 1);
+      await new Promise((r) => setTimeout(r, 750));
+      await handle.signal('hitl_impl:ask:1', { action: 'submit', value: { q1: 'Gamma' } });
+      await waitForEventCount(handle, EventType.EVENT_TYPE_TIMER_STARTED, 2);
+      await new Promise((r) => setTimeout(r, 750));
+      await handle.signal('hitl_impl:ask:1.1', { action: 'submit', value: { q1: 'Beta' } });
+    },
+    name: 'needs-input-reask',
+    spec: askSpec(),
+  },
+  {
+    // The round limit (1): the second pause is not put to anyone; the activity runs once more,
+    // unable to ask (`needs-input-final-round-v1`), and its result is the step's.
+    activities: () => ({
+      createWorkflowRun: async () => ({
+        pinnedSettings: { 'workflow.maxNeedsInputRounds': 1 },
+        runId: 'replay-needs-input-final',
+        spec: askSpec(),
+      }),
+      // The pause arguments are the ninth positional argument.
+      executeImplementation: async (...args: unknown[]) =>
+        (args[8] as { resumeInput?: { final?: boolean } } | undefined)?.resumeInput?.final
+          ? { branch: 'auto/REPLAY-1', headSha: 'sha-final' }
+          : askPause(),
+    }),
+    drive: async (handle) => {
+      await waitForEventCount(handle, EventType.EVENT_TYPE_TIMER_STARTED, 1);
+      await new Promise((r) => setTimeout(r, 750));
+      await handle.signal('hitl_impl:ask:1', { action: 'submit', value: { q1: 'Beta' } });
+    },
+    name: 'needs-input-final',
+    spec: askSpec(),
+  },
+  {
+    // The run is cancelled while parked on the answer: the open question is closed as
+    // cancelled in a non-cancellable scope (`needs-input-cancel-v1`) and the run is CANCELLED.
+    activities: () => ({ executeImplementation: async () => askPause() }),
+    drive: async (handle) => {
+      await waitForEventCount(handle, EventType.EVENT_TYPE_TIMER_STARTED, 1);
+      await new Promise((r) => setTimeout(r, 750));
+      await handle.cancel();
+    },
+    name: 'needs-input-cancel',
+    spec: askSpec(),
   },
   {
     drive: async (handle, states) => {

@@ -41,7 +41,9 @@ const run = {
 
 describe('Transcript jump to failure', () => {
   it('scrolls again when the same step is jumped to a second time', () => {
+    const scrollTo = vi.fn();
     const scrollIntoView = vi.fn();
+    Element.prototype.scrollTo = scrollTo;
     Element.prototype.scrollIntoView = scrollIntoView;
     const props = {
       dagOverlay: undefined,
@@ -53,8 +55,9 @@ describe('Transcript jump to failure', () => {
       traces: [],
     };
     const { rerender } = render(<Transcript {...props} jumpNonce={1} />);
-    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(scrollTo).toHaveBeenCalledTimes(1);
     rerender(<Transcript {...props} jumpNonce={2} />);
-    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    expect(scrollTo).toHaveBeenCalledTimes(2);
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 });

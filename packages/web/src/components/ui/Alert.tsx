@@ -35,6 +35,7 @@ export function Alert({
   children,
   className,
   title,
+  stackActionOnNarrow = false,
   variant = 'error',
 }: {
   /** A trailing control — a "Fix this" link or a retry button. */
@@ -50,6 +51,7 @@ export function Alert({
   className?: string;
   /** A heading line; the body then renders in body text rather than the tone colour. */
   title?: string;
+  stackActionOnNarrow?: boolean;
   variant?: AlertVariant;
 }) {
   let role: 'alert' | 'status' | 'note';
@@ -61,7 +63,8 @@ export function Alert({
   return (
     <div
       className={cn(
-        'flex items-start gap-3 rounded-lg border px-3.5 py-3 text-sm',
+        'items-start gap-3 rounded-lg border px-3.5 py-3 text-sm',
+        stackActionOnNarrow ? 'grid grid-cols-[auto_minmax(0,1fr)] sm:flex' : 'flex',
         VARIANT_CLASSES[variant],
         className
       )}
@@ -78,7 +81,13 @@ export function Alert({
           <div className={cn('leading-snug', VARIANT_ACCENT[variant])}>{children}</div>
         )}
       </div>
-      {action && <div className="shrink-0 self-center">{action}</div>}
+      {action && (
+        <div
+          className={cn('shrink-0 self-center', stackActionOnNarrow && 'col-span-2 sm:col-auto')}
+        >
+          {action}
+        </div>
+      )}
     </div>
   );
 }

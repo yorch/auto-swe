@@ -35,7 +35,7 @@ const h = vi.hoisted(() => ({
   orphanArtifacts: [] as { id: string }[],
   orphanEvidence: [] as { id: string }[],
   pendingArtifacts: [] as { createdAt: Date; id: string }[],
-  snapshotArtifacts: [] as { id: string }[],
+  snapshotArtifacts: [] as { id: string; runStatus?: string | null }[],
   transcripts: [] as {
     createdAt: Date;
     id: string;
@@ -122,10 +122,20 @@ vi.mock('@auto-swe/shared/db', () => ({
             createdAt: { lt: Date };
             id?: { gt: string };
             runEvidence?: unknown;
+            OR?: Array<{ runId?: null; run?: { status: { not: string } } }>;
           };
         }) =>
           where.kind === 'needs_input.snapshot'
-            ? h.snapshotArtifacts
+            ? // Evaluates the owner condition the way the database would.
+              h.snapshotArtifacts
+                .filter(
+                  (a) =>
+                    !where.OR ||
+                    (a.runStatus == null
+                      ? where.OR.some((c) => c.runId === null)
+                      : where.OR.some((c) => c.run && c.run.status.not !== a.runStatus))
+                )
+                .map((a) => ({ id: a.id }))
             : where.status === 'pending' ||
                 (typeof where.status === 'object' && 'in' in where.status)
               ? h.pendingArtifacts
@@ -441,6 +451,16 @@ describe('pruneAgentTranscripts', () => {
       .mock.calls.map((c) => c[0] as { where: Record<string, unknown> })
       .find((a) => a.where.kind === 'needs_input.snapshot');
     expect(query?.where.status).toBe('ready');
+  });
+
+  it('keeps the snapshot of a run that is still waiting, and expires those of finished or ownerless runs', async () => {
+    h.snapshotArtifacts.push(
+      { id: 'live', runStatus: 'RUNNING' },
+      { id: 'done', runStatus: 'FAILED' },
+      { id: 'ownerless', runStatus: null }
+    );
+    await pruneAgentTranscripts(NOW);
+    expect(h.deletedArtifacts.sort()).toEqual(['done', 'ownerless']);
   });
 
   it('leaves pending parts to the pending pass, not the orphan pass', async () => {

@@ -197,4 +197,18 @@ describe('recordTrackerSync', () => {
     await recordTrackerSync(event, 'unauthorized');
     expect(data()).toMatchObject({ error: 'unauthorized', status: 'FAILED' });
   });
+
+  it('records DONE only when something was written, SKIPPED when nothing was', async () => {
+    await recordTrackerSync(event, null, true);
+    expect(data()).toMatchObject({ status: 'DONE' });
+    h.create.mockClear();
+    await recordTrackerSync(event, null, false);
+    expect(data()).toMatchObject({ kind: 'TRACKER', status: 'SKIPPED', target: 'JIRA-1' });
+    expect(data().error).toBeNull();
+  });
+
+  it('records FAILED with the class even when nothing was written', async () => {
+    await recordTrackerSync(event, 'no_transition', false);
+    expect(data()).toMatchObject({ error: 'no_transition', status: 'FAILED' });
+  });
 });

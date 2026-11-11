@@ -8,7 +8,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const store = vi.hoisted(() => ({
   artifacts: new Map<string, Buffer>(),
   deleted: [] as string[],
+  heartbeat: vi.fn(),
   put: [] as { contentType?: string; kind: string; runId?: string }[],
+  putDelayMs: 0,
+}));
+
+vi.mock('@temporalio/activity', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@temporalio/activity')>()),
+  heartbeat: store.heartbeat,
 }));
 
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
@@ -21,6 +28,9 @@ vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
   }),
   putArtifact: vi.fn(
     async (input: { body: Buffer; contentType?: string; kind: string; runId?: string }) => {
+      if (store.putDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, store.putDelayMs));
+      }
       store.put.push({ contentType: input.contentType, kind: input.kind, runId: input.runId });
       const id = `art-${store.artifacts.size + 1}`;
       store.artifacts.set(id, input.body);
@@ -98,6 +108,8 @@ beforeEach(() => {
   store.artifacts.clear();
   store.put.length = 0;
   store.deleted.length = 0;
+  store.putDelayMs = 0;
+  store.heartbeat.mockClear();
 });
 
 describe('snapshotWorkingTree', () => {
@@ -140,6 +152,27 @@ describe('snapshotWorkingTree', () => {
     // Saved against the commit a fresh checkout can be cut from, never the container-only HEAD.
     expect(snapshot?.baseSha).toBe(HEAD);
     expect(commands.find((c) => c.includes('git diff --cached --binary'))).toContain(`'${HEAD}'`);
+  });
+
+  it('keeps heartbeating while the patch is being stored', async () => {
+    vi.useFakeTimers();
+    try {
+      store.putDelayMs = 100_000;
+      const { workspace } = fakeWorkspace({
+        patch: Buffer.from('diff --git a/x b/x\n+x\n'),
+        porcelain: ' M x\n',
+      });
+      const pending = snapshotWorkingTree(workspace, OPTS);
+      await vi.advanceTimersByTimeAsync(95_000);
+      expect(store.heartbeat.mock.calls.length).toBeGreaterThanOrEqual(3);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(pending).resolves.toMatchObject({ snapshot: { artifactId: 'art-1' } });
+      const beats = store.heartbeat.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(store.heartbeat.mock.calls.length).toBe(beats);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('refuses, non-retryably, to keep a tree for a run it cannot name', async () => {
@@ -436,6 +469,16 @@ describe('buildResumePrompt', () => {
       '[work so far: end]',
       '[resume: end]',
     ]);
+  });
+
+  it('tells the agent it may not ask again on the final run, and otherwise allows it if blocked', () => {
+    const final = buildResumePrompt({ ...base, answers: [], final: true });
+    expect(final).toContain('You may not ask any more questions');
+    expect(final).not.toContain('Do not ask again unless you are still blocked.');
+    expect(buildResumePrompt({ ...base, answers: [] })).toContain(
+      'Do not ask again unless you are still blocked.'
+    );
+    expect(markerLines(final)).toEqual(markerLines(buildResumePrompt({ ...base, answers: [] })));
   });
 
   it('renders multi-select answers as a list and a missing answer as such', () => {

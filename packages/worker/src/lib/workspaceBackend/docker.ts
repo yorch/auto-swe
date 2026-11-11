@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import dns from 'node:dns/promises';
-import { isIP } from 'node:net';
+import { BlockList, isIP } from 'node:net';
 import os from 'node:os';
 import { DOCKER_HOST_ALIAS, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import {
@@ -13,7 +14,11 @@ import {
 } from '../execUtils.js';
 import { shellQuote } from '../shellQuote.js';
 import { assertNoCredentialEnvPairs } from './credentialEnv.js';
-import { isForbiddenAllowAddress, type ResolvedAllow } from './kubernetes/egressLock.js';
+import {
+  isForbiddenAllowAddress,
+  METADATA_V4,
+  type ResolvedAllow,
+} from './kubernetes/egressLock.js';
 import {
   dockerListArgs,
   MAX_REAPED_PER_SWEEP,
@@ -36,48 +41,6 @@ import type {
   WorkspaceServiceSpec,
   WorkspaceSpawnOptions,
 } from './types.js';
-
-/**
- * Build the `docker run` invocation for the short-lived metadata-block sidecar.
- *
- * Why a sidecar rather than doing this in the workspace container itself: the
- * workspace runs with `--cap-drop=ALL` so it has no `NET_ADMIN` and cannot
- * install routes on its own network stack. Instead, a *separate*, throwaway
- * container joins the workspace's network namespace via `--network
- * container:<containerName>` with `NET_ADMIN` added just long enough to
- * install blackhole routes for the cloud metadata IPs, then exits (`--rm`).
- * The routes live in the shared netns and persist after the sidecar is gone,
- * so the long-lived agent-controlled workspace container never holds
- * `NET_ADMIN` itself.
- *
- * Blocked addresses: `169.254.169.254` (AWS/GCP/Azure IMDS), `169.254.170.2`
- * (ECS task metadata endpoint), `fd00:ec2::254` (IPv6 IMDS). Each `ip route
- * add` is `|| true`'d so a route that already exists (or an `ip -6` on a
- * netns without IPv6) doesn't fail the whole sidecar.
- *
- * Pure and side-effect-free — returns the command string for the caller to
- * exec, so it's unit-testable without a Docker daemon. The route-install
- * behavior itself (does the workspace actually lose IMDS reachability
- * afterward?) still requires a real-Docker smoke test; there is no Docker
- * daemon available in CI or this sandbox to exercise it end-to-end.
- */
-export function buildMetadataBlockArgs(containerName: string, image: string): string {
-  // Install the IPv4 IMDS blackholes, then VERIFY at least one landed: if the
-  // runtime's `ip` applet doesn't support `blackhole` routes, the adds fail
-  // silently and this control would otherwise be a no-op with no signal. The
-  // final `grep`/`exit 1` makes that case surface as a non-zero exit, which the
-  // caller's try/catch logs as a warning instead of a false success. The IPv6
-  // add stays soft (a netns without IPv6 legitimately can't add it, and IMDS is
-  // IPv4), so it isn't part of the success check.
-  const routeCmd = [
-    'ip route add blackhole 169.254.169.254/32 2>/dev/null',
-    'ip route add blackhole 169.254.170.2/32 2>/dev/null',
-    'ip -6 route add blackhole fd00:ec2::254/128 2>/dev/null || true',
-    'ip route show 2>/dev/null | grep -q blackhole || ' +
-      '{ echo "metadata block: no blackhole route installed (ip may lack blackhole support)" >&2; exit 1; }',
-  ].join('; ');
-  return `docker run --rm --network container:${containerName} --cap-add=NET_ADMIN -- ${shellQuote(image)} sh -c ${shellQuote(routeCmd)}`;
-}
 
 const WORKSPACE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const HOSTNAME_RE =
@@ -122,6 +85,193 @@ const EGRESS_REPORT = [
 
 /** Docker's embedded resolver, reached over loopback on a user-defined network. */
 const EMBEDDED_RESOLVER = '127.0.0.11';
+
+const BASELINE_CHAIN = 'ASW_BASELINE';
+const PRIVATE_V4 = [
+  '0.0.0.0/8',
+  '10.0.0.0/8',
+  '100.64.0.0/10',
+  '127.0.0.0/8',
+  '169.254.0.0/16',
+  '172.16.0.0/12',
+  '192.0.0.0/24',
+  '192.168.0.0/16',
+  '198.18.0.0/15',
+  '224.0.0.0/4',
+  '240.0.0.0/4',
+];
+const PRIVATE_V6 = [
+  'fc00::/7',
+  'fe80::/10',
+  'ff00::/8',
+  '::ffff:0:0/96',
+  '64:ff9b::/96',
+  '64:ff9b:1::/48',
+  '2002::/16',
+];
+
+export function baselineRules(
+  allow: BaselineAllow[],
+  cidrs: string[],
+  blockPrivate = true,
+  blockMetadata = true
+): { v4: string[]; v6: string[] } {
+  for (const entry of allow) {
+    checkEgressEntry({ host: entry.ip, ...(entry.port === undefined ? {} : { port: entry.port }) });
+    if (
+      !isIP(entry.ip) ||
+      (entry.protocol !== undefined && entry.protocol !== 'tcp' && entry.protocol !== 'udp')
+    ) {
+      throw new Error('baseline: invalid allow rule');
+    }
+  }
+  for (const cidr of cidrs) {
+    const [ip = '', prefix] = cidr.split('/');
+    const family = isIP(ip);
+    if (
+      !family ||
+      cidr.split('/').length > 2 ||
+      (prefix !== undefined &&
+        (!/^\d+$/.test(prefix) || Number(prefix) > (family === 4 ? 32 : 128)))
+    ) {
+      throw new Error('baseline: invalid CIDR');
+    }
+  }
+  const rules = (family: number) => [
+    '-o lo -j ACCEPT',
+    '-m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT',
+    ...(blockMetadata
+      ? (family === 4
+          ? ['169.254.169.254', '169.254.170.2', ...METADATA_V4]
+          : ['fd00:ec2::254']
+        ).map((ip) => `-d ${ip} -j REJECT`)
+      : []),
+    ...(blockPrivate
+      ? [
+          ...allow
+            .filter((e) => isIP(e.ip) === family)
+            .map(
+              (e) =>
+                `-d ${e.ip}${e.port === undefined ? '' : ` -p ${e.protocol ?? 'tcp'} -m ${e.protocol ?? 'tcp'} --dport ${e.port}`} -j ACCEPT`
+            ),
+          ...cidrs
+            .filter((c) => isIP(c.split('/')[0] ?? '') === family)
+            .map((c) => `-d ${c} -j ACCEPT`),
+          ...(family === 4 ? PRIVATE_V4 : PRIVATE_V6).map((c) => `-d ${c} -j REJECT`),
+        ]
+      : []),
+  ];
+  return { v4: rules(4), v6: rules(6) };
+}
+
+export function buildBaselineEgressScript(
+  allow: BaselineAllow[],
+  cidrs: string[],
+  blockPrivate = true,
+  blockMetadata = true,
+  bootstrapDns: string[] = []
+): string {
+  if (bootstrapDns.some((server) => isIP(server) === 0)) {
+    throw new Error('baseline: bootstrap DNS server must be an IP');
+  }
+  const { v4, v6 } = baselineRules(allow, cidrs, blockPrivate, blockMetadata);
+  const install = (tool: string, rules: string[]) => [
+    `${tool} -N ${BASELINE_CHAIN}`,
+    ...rules.map((r) => `${tool} -A ${BASELINE_CHAIN} ${r}`),
+    `${tool} -I OUTPUT 1 -j ${BASELINE_CHAIN}`,
+  ];
+  return [
+    ...(bootstrapDns.length > 0
+      ? [
+          'set -eu',
+          'if ! command -v iptables >/dev/null 2>&1 || ! command -v ip6tables >/dev/null 2>&1; then',
+          'asw_dns=$(cat /etc/resolv.conf)',
+          `trap 'printf "%s\\n" "$asw_dns" > /etc/resolv.conf' EXIT`,
+          `printf '%s\\n' ${shellQuote(bootstrapDns.map((server) => `nameserver ${server}`).join('\n'))} > /etc/resolv.conf`,
+          ...IPTABLES_PRELUDE,
+          'printf "%s\\n" "$asw_dns" > /etc/resolv.conf',
+          'trap - EXIT',
+          'fi',
+        ]
+      : IPTABLES_PRELUDE),
+    'v6=1',
+    'if ! ip6tables -S OUTPUT >/dev/null 2>&1; then',
+    'v6=0',
+    '[ "$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo 0)" = 1 ] || { echo "baseline: ip6tables unusable and IPv6 enabled" >&2; exit 1; }',
+    'fi',
+    ...install('iptables', v4),
+    'if [ "$v6" = 1 ]; then',
+    ...install('ip6tables', v6),
+    'fi',
+    `echo "v4:"; iptables -S OUTPUT; iptables -S ${BASELINE_CHAIN}`,
+    `echo "v6:"; if [ "$v6" = 1 ]; then ip6tables -S OUTPUT; ip6tables -S ${BASELINE_CHAIN}; else echo "v6-unavailable"; fi`,
+    'echo "v6disabled=$(cat /proc/sys/net/ipv6/conf/all/disable_ipv6 2>/dev/null || echo 0)"',
+  ].join('\n');
+}
+
+type BaselineAllow = ResolvedAllow & { protocol?: 'tcp' | 'udp' };
+
+function normalizeBaselineRule(rule: string): string {
+  return rule
+    .replace(/ -d (?:0\.0\.0\.0|::)\/0(?= |$)/g, '')
+    .replace(/ --reject-with \S+/g, '')
+    .replace(/RELATED,ESTABLISHED|ESTABLISHED,RELATED/g, 'ESTABLISHED,RELATED')
+    .replace(/-d (\S+)/g, (_, address: string) => {
+      const [ip, prefix] = address.split('/');
+      const family = isIP(ip ?? '');
+      const bits = family === 6 ? 128 : 32;
+      const length = prefix === undefined ? bits : Number(prefix);
+      let value: bigint;
+      if (family === 6) {
+        const canonical = new URL(`http://[${ip}]`).hostname.slice(1, -1);
+        const [head = '', tail = ''] = canonical.split('::');
+        const left = head ? head.split(':') : [];
+        const right = tail ? tail.split(':') : [];
+        const groups = canonical.includes('::')
+          ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right]
+          : left;
+        value = BigInt(`0x${groups.map((g) => g.padStart(4, '0')).join('')}`);
+      } else {
+        value = (ip ?? '').split('.').reduce((n, byte) => (n << 8n) | BigInt(byte), 0n);
+      }
+      const shift = BigInt(bits - length);
+      return `-d ${family}:${((value >> shift) << shift).toString(16)}/${length}`;
+    });
+}
+
+export function assertBaselineEgress(
+  output: string,
+  allow: BaselineAllow[],
+  cidrs: string[],
+  blockPrivate = true,
+  blockMetadata = true
+): void {
+  const expected = baselineRules(allow, cidrs, blockPrivate, blockMetadata);
+  for (const family of ['v4', 'v6'] as const) {
+    const section =
+      new RegExp(`${family}:\\n([\\s\\S]*?)(?:v6:|v6disabled=|$)`).exec(output)?.[1] ?? '';
+    if (
+      family === 'v6' &&
+      section.includes('v6-unavailable') &&
+      /v6disabled=1(?:\n|$)/.test(output)
+    ) {
+      continue;
+    }
+    const lines = section.trim().split('\n');
+    const outputRules = lines.filter((l) => l.startsWith('-A OUTPUT '));
+    const actual = lines
+      .filter((l) => l.startsWith(`-A ${BASELINE_CHAIN} `))
+      .map(normalizeBaselineRule);
+    const wanted = expected[family].map((r) => normalizeBaselineRule(`-A ${BASELINE_CHAIN} ${r}`));
+    if (
+      !lines.includes('-P OUTPUT ACCEPT') ||
+      outputRules[0] !== `-A OUTPUT -j ${BASELINE_CHAIN}` ||
+      JSON.stringify(actual) !== JSON.stringify(wanted)
+    ) {
+      throw new Error(`baseline egress: ${family} kernel rules do not match the required baseline`);
+    }
+  }
+}
 
 /** An address the lock may name in a rule: an IP literal that is not on the forbidden list. */
 function checkRuleAddress(rule: ResolvedAllow): void {
@@ -413,6 +563,152 @@ export function buildEgressHelperCommand(
 /** The `--add-host` entry that makes the Docker host alias resolve to the host gateway. */
 const workerHostEntry = () => `--add-host=${DOCKER_HOST_ALIAS}:host-gateway`;
 
+async function workspaceResolutionContext(containerId: string) {
+  const current = await spawnCaptureAsync('docker', ['exec', containerId, 'cat', '/etc/hosts'], {
+    heartbeatLabel: 'workspace: reading hosts',
+    timeoutMs: 30_000,
+  });
+  if (current.exitCode !== 0) {
+    throw new Error('egress lock: cannot read the workspace /etc/hosts');
+  }
+  const mapped = parseHostsFile(current.stdout);
+  // The file is trusted for ONE name: the worker alias, and only when the container spec says the
+  // worker added it (`--add-host` is recorded in HostConfig.ExtraHosts). Docker writes it at
+  // creation, so its FIRST line is the worker's; a later line for the same name is not.
+  const trusted = new Map<string, string[]>();
+  const inspected = await spawnCaptureAsync(
+    'docker',
+    ['inspect', '--format', '{{json .HostConfig.ExtraHosts}}', containerId],
+    { heartbeatLabel: 'workspace: reading extra hosts', timeoutMs: 30_000 }
+  );
+  if (inspected.exitCode !== 0) {
+    throw new Error('egress lock: cannot inspect the workspace extra hosts');
+  }
+  const alias = DOCKER_HOST_ALIAS.toLowerCase();
+  const addedByWorker = (JSON.parse(inspected.stdout.trim() || 'null') as string[] | null)?.some(
+    (h) => h.toLowerCase() === `${alias}:host-gateway`
+  );
+  const aliasAddress = mapped.get(alias)?.[0];
+  if (addedByWorker && aliasAddress) {
+    trusted.set(alias, [aliasAddress]);
+    mapped.delete(alias);
+  }
+  return { mapped, trusted };
+}
+
+export async function installBaselineEgress(
+  spec: Pick<WorkspaceContainerSpec, 'name' | 'dns' | 'baselineAllow'>,
+  proxyUrls?: string[],
+  bootstrapDns?: string[]
+): Promise<void> {
+  const infra = resolveWorkspaceInfra();
+  if (!infra.blockPrivateEgress && !infra.blockMetadata) {
+    return;
+  }
+  const allow: BaselineAllow[] = [];
+  if (infra.blockPrivateEgress) {
+    const { mapped, trusted } = await workspaceResolutionContext(spec.name);
+    const resolve = (host: string) => resolveInWorkspace(spec.name, host, mapped);
+    const proxies =
+      proxyUrls ??
+      [infra.harnessModelProxy, infra.registryProxy, infra.egressProxy].flatMap((proxy) =>
+        proxy ? [proxy.url] : []
+      );
+    for (const proxy of proxies) {
+      const url = new URL(proxy);
+      const entry = {
+        host: url.hostname.replace(/^\[|\]$/g, ''),
+        port: Number(url.port || (url.protocol === 'https:' ? 443 : 80)),
+      };
+      allow.push(...(await resolveEgressTargets([entry], resolve, trusted)).rules);
+    }
+    for (const entry of spec.baselineAllow ?? []) {
+      checkEgressEntry(entry);
+      try {
+        allow.push(...(await resolveEgressTargets([entry], resolve, trusted)).rules);
+      } catch (error) {
+        console.warn(
+          `workspace ${spec.name}: skipping baseline host ${entry.host}: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
+    for (const server of spec.dns) {
+      if (isIP(server) === 0) {
+        throw new Error('baseline: DNS server must be an IP');
+      }
+      for (const protocol of ['udp', 'tcp'] as const) {
+        allow.push({ ip: server, port: 53, protocol });
+      }
+    }
+  }
+  const cidrs = infra.privateEgressAllow ?? [];
+  const ranges = { ipv4: new BlockList(), ipv6: new BlockList() };
+  for (const cidr of [...PRIVATE_V4, ...PRIVATE_V6]) {
+    const [ip = '', prefix = '0'] = cidr.split('/');
+    const family = isIP(ip) === 4 ? 'ipv4' : 'ipv6';
+    ranges[family].addSubnet(ip, Number(prefix), family);
+  }
+  const needed = allow.filter((e) => {
+    const family = isIP(e.ip) === 4 ? 'ipv4' : 'ipv6';
+    return ranges[family].check(e.ip, family);
+  });
+  const script = buildBaselineEgressScript(
+    needed,
+    cidrs,
+    infra.blockPrivateEgress,
+    infra.blockMetadata,
+    bootstrapDns
+  );
+  const report = await execShellAsync(
+    buildEgressHelperCommand(spec.name, infra.metadataBlockImage, script),
+    { heartbeatLabel: 'workspace: installing baseline egress' }
+  );
+  assertBaselineEgress(report, needed, cidrs, infra.blockPrivateEgress, infra.blockMetadata);
+}
+
+export async function assertDockerDiskLimit(): Promise<void> {
+  const infra = resolveWorkspaceInfra();
+  if (infra.backend !== 'docker' || !infra.diskLimit) {
+    return;
+  }
+  try {
+    await execShellAsync(
+      `docker run --rm --storage-opt ${shellQuote(`size=${infra.diskLimit}`)} -- ${shellQuote(infra.metadataBlockImage)} true`,
+      { heartbeatLabel: 'workspace: probing Docker disk quota' }
+    );
+    const name = `workspace-disk-probe-${randomUUID()}`;
+    let created = false;
+    try {
+      await execShellAsync(
+        `docker create --name ${name} ${workspaceLabelArgs().join(' ')} --storage-opt ${shellQuote(`size=${infra.diskLimit}`)} -- ${shellQuote(infra.metadataBlockImage)} true`,
+        { heartbeatLabel: 'workspace: identifying Docker quota driver' }
+      );
+      created = true;
+      const driver = (
+        await execShellAsync(`docker inspect --format '{{.Driver}}' ${name}`, {
+          heartbeatLabel: 'workspace: checking Docker quota driver',
+        })
+      ).trim();
+      if (!['overlay2', 'devicemapper', 'btrfs', 'zfs'].includes(driver)) {
+        throw new Error(
+          `Unsupported Docker storage driver ${JSON.stringify(driver)}: size may be silently ignored`
+        );
+      }
+    } finally {
+      if (created) {
+        await execShellAsync(`docker rm -f ${name}`, {
+          heartbeatLabel: 'workspace: removing Docker quota probe',
+        });
+      }
+    }
+  } catch (cause) {
+    throw new Error(
+      `WORKSPACE_DISK_LIMIT cannot be enforced by Docker: overlay2 requires XFS with pquota; use a supported devicemapper, btrfs or zfs driver, or unset the limit. ${cause instanceof Error ? cause.message : String(cause)}`,
+      { cause }
+    );
+  }
+}
+
 export function buildServiceContainerArgs(
   workspaceName: string,
   service: WorkspaceServiceSpec
@@ -546,6 +842,10 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   readonly kind = 'docker' as const;
 
   async create(spec: WorkspaceContainerSpec): Promise<WorkspaceHandle> {
+    const infra = resolveWorkspaceInfra();
+    const storage = infra.diskLimit
+      ? ` --storage-opt ${shellQuote(`size=${infra.diskLimit}`)}`
+      : '';
     // Hardening notes (unlike the locked-down `ephemeralContainer` runner, this
     // workspace intentionally keeps default bridge networking and omits
     // `--read-only`/`--tmpfs`: the implementer agent needs outbound git
@@ -555,15 +855,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     //    or test process instead of letting it exhaust the host.
     //  - `--cap-drop=ALL` + `--security-opt=no-new-privileges` remove Linux
     //    capabilities and privilege-escalation the workspace never needs.
-    //  - `--add-host` blackholes the *hostname* form of the GCP metadata
-    //    endpoint (`metadata.google.internal`/`metadata.gke.internal`) so an
-    //    agent can't trivially exfiltrate the host's cloud credentials through
-    //    it. This does NOT block the metadata service's link-local IP
-    //    (169.254.169.254) directly — an agent could still reach it by IP.
-    //    That gap is closed below via a short-lived privileged sidecar (see
-    //    `buildMetadataBlockArgs`) run right after this container starts, since
-    //    installing the route here would need `NET_ADMIN`, which conflicts
-    //    with `--cap-drop=ALL`.
+    // A separate NET_ADMIN helper verifies the baseline before services start.
     const dns = spec.dns.map((server) => `--dns=${shellQuote(server)}`).join(' ');
     const addHosts = [
       '--add-host=metadata.google.internal:0.0.0.0',
@@ -582,7 +874,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     // `memory` is a config string, so shell-quote it (the numeric caps can't
     // carry shell metacharacters); '--' separates docker flags from the image.
     await execShellAsync(
-      `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
+      `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
       {
         heartbeatLabel: 'workspace: starting container',
         ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
@@ -612,28 +904,13 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const keeperPid = candidates[0] ?? 0;
     const handle: WorkspaceHandle = { id: spec.name, keeperPid };
 
-    // Cloud metadata-IP egress block: run a throwaway sidecar that shares this
-    // container's network namespace to install blackhole routes for the
-    // metadata IPs — see `buildMetadataBlockArgs` for the full rationale.
-    // Best-effort and non-fatal: a failure here (e.g. an unsupported
-    // `--network container:` mode on some Docker runtime) must not break every
-    // workspace run, especially since the primary IMDS credential-exfil
-    // vector — leaking the *host's* cloud credentials pulled from the metadata
-    // service — is already mitigated by the credential scrubbing elsewhere.
-    const infra = resolveWorkspaceInfra();
-    if (infra.blockMetadata) {
-      try {
-        await execShellAsync(buildMetadataBlockArgs(spec.name, infra.metadataBlockImage), {
-          heartbeatLabel: 'workspace: blocking metadata-IP egress',
-        });
-      } catch (err) {
-        console.warn(
-          `workspace ${spec.name}: metadata-IP egress block failed, continuing without it — ` +
-            `agent may be able to reach cloud metadata endpoints by IP: ${
-              err instanceof Error ? err.message : String(err)
-            }`
-        );
-      }
+    try {
+      await installBaselineEgress(spec);
+    } catch (error) {
+      await execShellAsync(`docker rm -f ${shellQuote(spec.name)}`, {
+        heartbeatLabel: 'workspace: removing unsafe container',
+      });
+      throw error;
     }
 
     for (const service of spec.services ?? []) {
@@ -777,9 +1054,21 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   async remove(idOrHandle: string | WorkspaceHandle): Promise<void> {
     const id = typeof idOrHandle === 'string' ? idOrHandle : idOrHandle.id;
     try {
+      let owner = id;
+      if (/^[a-f0-9]{64}$/i.test(id)) {
+        const inspected = await spawnCaptureAsync(
+          'docker',
+          ['inspect', '--format', '{{.Name}}', id],
+          { heartbeatLabel: 'workspace: resolving container name', timeoutMs: 30_000 }
+        );
+        const name = inspected.stdout.trim().replace(/^\//, '');
+        if (inspected.exitCode === 0 && /^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/.test(name)) {
+          owner = name;
+        }
+      }
       const sidecars = await spawnCaptureAsync(
         'docker',
-        ['ps', '-aq', '--filter', `label=asw.workspace=${id}`],
+        ['ps', '-aq', '--filter', `label=asw.workspace=${owner}`],
         { heartbeatLabel: 'workspace: finding service containers', timeoutMs: 30_000 }
       );
       const ids = sidecars.stdout.split(/\s+/).filter((value) => /^[a-f0-9]+$/i.test(value));
@@ -870,23 +1159,93 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     spec: EphemeralContainerSpec,
     opts: EphemeralRunOptions
   ): Promise<CapturedResult> {
-    return spawnCaptureAsync('docker', ephemeralArgs(spec, false), {
+    if (spec.network !== 'egress') {
+      return this.spawnEphemeral(spec, opts, false);
+    }
+    const named = { ...spec, name: spec.name ?? `shellstep-${randomUUID()}` };
+    try {
+      const holder = await this.prepareEphemeralNetwork(named);
+      return await this.spawnEphemeral(named, opts, false, holder);
+    } finally {
+      await this.remove(named.name);
+    }
+  }
+
+  private spawnEphemeral(
+    spec: EphemeralContainerSpec,
+    opts: EphemeralRunOptions,
+    detached: boolean,
+    holder?: string
+  ): Promise<CapturedResult> {
+    return spawnCaptureAsync('docker', ephemeralArgs(spec, detached, holder), {
       heartbeatLabel: opts.heartbeatLabel,
       ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
-      ...(opts.onStdoutLine ? { onStdoutLine: opts.onStdoutLine } : {}),
-      timeoutMs: opts.timeoutMs,
+      ...(!detached && opts.onStdoutLine ? { onStdoutLine: opts.onStdoutLine } : {}),
+      timeoutMs: opts.timeoutMs ?? (detached ? 60_000 : undefined),
     });
+  }
+
+  private async prepareEphemeralNetwork(
+    spec: EphemeralContainerSpec & { name: string }
+  ): Promise<string> {
+    const infra = resolveWorkspaceInfra();
+    const holder = `ephemeral-net-${randomUUID()}`;
+    const dnsServers = spec.dns?.length ? spec.dns : infra.dns;
+    const started = await spawnCaptureAsync(
+      'docker',
+      ephemeralNetworkHolderArgs({ ...spec, dns: dnsServers }, holder),
+      {
+        heartbeatLabel: 'step: starting network holder',
+        timeoutMs: 60_000,
+      }
+    );
+    if (started.exitCode !== 0) {
+      throw new Error(`step network holder failed to start: ${started.stderr || started.stdout}`);
+    }
+    const origins = new Set(
+      [
+        ...(spec.env?.map((pair) => pair.slice(pair.indexOf('=') + 1)) ?? []),
+        ...Object.values(spec.secretEnv ?? {}),
+      ].flatMap((value) => {
+        try {
+          return [new URL(value).origin];
+        } catch {
+          return [];
+        }
+      })
+    );
+    const proxies = spec.reachWorker
+      ? [infra.registryProxy, infra.egressProxy].flatMap((proxy) =>
+          proxy && origins.has(new URL(proxy.url).origin) ? [proxy.url] : []
+        )
+      : [];
+    await installBaselineEgress(
+      { dns: dnsServers, name: holder },
+      proxies,
+      dnsServers.includes('127.0.0.2') ? infra.dns : undefined
+    );
+    return holder;
   }
 
   async startDetached(
     spec: EphemeralContainerSpec,
     opts: EphemeralRunOptions
   ): Promise<CapturedResult> {
-    return spawnCaptureAsync('docker', ephemeralArgs(spec, true), {
-      heartbeatLabel: opts.heartbeatLabel,
-      ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
-      timeoutMs: opts.timeoutMs ?? 60_000,
-    });
+    if (spec.network !== 'egress') {
+      return this.spawnEphemeral(spec, opts, true);
+    }
+    const named = { ...spec, name: spec.name ?? `sidecar-${randomUUID()}` };
+    try {
+      const holder = await this.prepareEphemeralNetwork(named);
+      const result = await this.spawnEphemeral(named, opts, true, holder);
+      if (result.exitCode !== 0) {
+        await this.remove(named.name);
+      }
+      return result;
+    } catch (error) {
+      await this.remove(named.name);
+      throw error;
+    }
   }
 
   async runHelper(spec: HelperContainerSpec, opts: EphemeralRunOptions): Promise<CapturedResult> {
@@ -920,35 +1279,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     // /etc/hosts belongs to the workspace container, not to its network namespace, so the helper
     // cannot write it. Names are resolved from inside the workspace and pinned by a root
     // `docker exec` into it, BEFORE the lock, while nothing is blocked yet.
-    const current = await spawnCaptureAsync('docker', ['exec', handle.id, 'cat', '/etc/hosts'], {
-      heartbeatLabel: 'workspace: reading hosts',
-      timeoutMs: 30_000,
-    });
-    if (current.exitCode !== 0) {
-      throw new Error('egress lock: cannot read the workspace /etc/hosts');
-    }
-    const mapped = parseHostsFile(current.stdout);
-    // The file is trusted for ONE name: the worker alias, and only when the container spec says the
-    // worker added it (`--add-host` is recorded in HostConfig.ExtraHosts). Docker writes it at
-    // creation, so its FIRST line is the worker's; a later line for the same name is not.
-    const trusted = new Map<string, string[]>();
-    const inspected = await spawnCaptureAsync(
-      'docker',
-      ['inspect', '--format', '{{json .HostConfig.ExtraHosts}}', handle.id],
-      { heartbeatLabel: 'workspace: reading extra hosts', timeoutMs: 30_000 }
-    );
-    if (inspected.exitCode !== 0) {
-      throw new Error('egress lock: cannot inspect the workspace extra hosts');
-    }
-    const alias = DOCKER_HOST_ALIAS.toLowerCase();
-    const addedByWorker = (JSON.parse(inspected.stdout.trim() || 'null') as string[] | null)?.some(
-      (h) => h.toLowerCase() === `${alias}:host-gateway`
-    );
-    const aliasAddress = mapped.get(alias)?.[0];
-    if (addedByWorker && aliasAddress) {
-      trusted.set(alias, [aliasAddress]);
-      mapped.delete(alias);
-    }
+    const { mapped, trusted } = await workspaceResolutionContext(handle.id);
     const { rules, hosts } = await resolveEgressTargets(
       allow,
       (host) => resolveInWorkspace(handle.id, host, mapped),
@@ -975,7 +1306,16 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   }
 
   async sidecarBaseUrl(name: string, containerPort: number): Promise<string> {
-    const out = await execShellAsync(`docker port ${shellQuote(name)} ${containerPort}/tcp`, {
+    const network = (
+      await execShellAsync(
+        `docker inspect --format '{{.HostConfig.NetworkMode}}' ${shellQuote(name)}`,
+        {
+          heartbeatLabel: 'workspace: resolving sidecar network',
+        }
+      )
+    ).trim();
+    const owner = network.startsWith('container:') ? network.slice('container:'.length) : name;
+    const out = await execShellAsync(`docker port ${shellQuote(owner)} ${containerPort}/tcp`, {
       heartbeatLabel: 'workspace: resolving published port',
     });
     const m = /:(\d{1,5})\s*$/m.exec(out.trim());
@@ -1010,7 +1350,11 @@ function helperArgs(spec: HelperContainerSpec): string[] {
   ];
 }
 
-export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): string[] {
+export function ephemeralArgs(
+  spec: EphemeralContainerSpec,
+  detached: boolean,
+  holder?: string
+): string[] {
   // Its callers pass the shell step's non-secret registry env; a registry token and the
   // container step's `CONTAINER_STEP_INPUT` travel as `secretEnv`, and this refuses a
   // credential if it comes back as a pair.
@@ -1020,8 +1364,8 @@ export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): 
     `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,
   ]);
   const flags = [
-    `--network=${spec.network === 'egress' ? 'bridge' : 'none'}`,
-    ...(spec.dns ?? []).map((d) => `--dns=${d}`),
+    `--network=${holder ? `container:${holder}` : spec.network === 'egress' ? 'bridge' : 'none'}`,
+    ...(!holder ? (spec.dns ?? []).map((d) => `--dns=${d}`) : []),
     `--memory=${spec.memory ?? '512m'}`,
     `--cpus=${spec.cpus ?? 1}`,
     `--pids-limit=${spec.pidsLimit ?? 256}`,
@@ -1029,8 +1373,8 @@ export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): 
     '--tmpfs=/tmp:size=64m,mode=1777',
     '--security-opt=no-new-privileges',
     '--cap-drop=ALL',
-    ...(spec.addHosts ?? []).map((h) => `--add-host=${h}`),
-    ...(spec.reachWorker ? [workerHostEntry()] : []),
+    ...(!holder ? (spec.addHosts ?? []).map((h) => `--add-host=${h}`) : []),
+    ...(!holder && spec.reachWorker ? [workerHostEntry()] : []),
     ...(spec.env ?? []).flatMap((pair) => ['-e', pair]),
     // Named without a value: docker resolves it from the client's environment.
     ...secretEnvFlags(spec.secretEnv),
@@ -1044,11 +1388,32 @@ export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): 
     ...(spec.name ? ['--name', spec.name] : []),
     ...workspaceLabelArgs(),
     ...flags,
-    ...(spec.publishPort ? ['-p', `127.0.0.1::${spec.publishPort}/tcp`] : []),
+    ...(!holder && spec.publishPort ? ['-p', `127.0.0.1::${spec.publishPort}/tcp`] : []),
     '--',
     spec.image,
     ...(spec.argv ?? []),
   ];
+}
+
+export function ephemeralNetworkHolderArgs(
+  spec: EphemeralContainerSpec & { name: string },
+  holder: string
+): string[] {
+  const args = ephemeralArgs(
+    {
+      ...spec,
+      argv: ['infinity'],
+      env: [],
+      image: resolveWorkspaceInfra().metadataBlockImage,
+      name: holder,
+      secretEnv: undefined,
+      volumes: [],
+      workdir: undefined,
+    },
+    true
+  );
+  args.splice(args.indexOf('--'), 0, '--entrypoint=sleep', '--label', `asw.workspace=${spec.name}`);
+  return args;
 }
 
 const driver = new DockerWorkspaceBackend();

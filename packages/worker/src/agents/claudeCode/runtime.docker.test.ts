@@ -79,6 +79,8 @@ vi.mock('../../lib/execUtils.js', () => ({
       return { exitCode: e.code ?? 1, stderr: e.stderr ?? '', stdout: e.stdout ?? '' };
     }
   },
+  // The snapshot's artifact transfer heartbeats while it runs; there is no activity here.
+  withHeartbeat: async <T>(_label: string, work: Promise<T>) => work,
 }));
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';

@@ -174,14 +174,17 @@ export async function recordEffect(effect: EffectInput): Promise<void> {
 
 /**
  * Records the outcome of a best-effort tracker sync. `failure` is what `syncTrackerOnEvent`
- * resolves: the class of the first write the tracker refused, or null when it refused none. A
- * result a caller did not get (a mocked or absent one, `undefined`) records nothing. A sync that
- * wrote nothing (a status move with no target state, a GitHub `workflow_started`) is
- * indistinguishable from one that went through and records as done.
+ * resolves: the class of the first write the tracker refused, or null when it refused none.
+ * `wrote` is whether anything reached the ticket (`SyncTrackerOptions.onOutcome`). A failure
+ * records `FAILED`; no failure and a write records `DONE`; no failure and no write (a GitHub
+ * `workflow_started`, a Jira or Linear issue already in the target status) records `SKIPPED`. A caller that could not learn `wrote` (undefined) is taken to
+ * have written. A result a caller did not get (a mocked or absent one, `undefined`) records
+ * nothing.
  */
 export function recordTrackerSync(
   event: { issueId: string; type: string },
-  failure: TicketFailureClass | null | undefined
+  failure: TicketFailureClass | null | undefined,
+  wrote?: boolean
 ): Promise<void> {
   if (failure === undefined) {
     return Promise.resolve();
@@ -191,7 +194,7 @@ export function recordTrackerSync(
     error: failure ?? undefined,
     input: event,
     kind: 'TRACKER',
-    status: failure ? 'FAILED' : 'DONE',
+    status: failure ? 'FAILED' : wrote === false ? 'SKIPPED' : 'DONE',
     target: event.issueId,
     via: 'activity',
   });

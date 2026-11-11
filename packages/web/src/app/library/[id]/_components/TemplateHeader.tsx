@@ -19,6 +19,7 @@ interface TemplateHeaderProps {
   refineBlockedReason?: string | null;
   onEditDetails: () => void;
   onEditInputs: () => void;
+  compact?: boolean;
 }
 
 /** Back link, title bar with its actions, and the status badges. */
@@ -30,11 +31,12 @@ export function TemplateHeader({
   refineBlockedReason = null,
   onEditDetails,
   onEditInputs,
+  compact = false,
 }: TemplateHeaderProps) {
   const runnable = template.status === 'ACTIVE' && template.activeVersion !== null;
   return (
     <div>
-      <TemplateBackLink href="/library" label="Workflow library" />
+      {!compact && <TemplateBackLink href="/library" label="Workflow library" />}
       <PageHeader
         actions={
           <>
@@ -69,7 +71,7 @@ export function TemplateHeader({
                 size="sm"
                 variant="primary"
               >
-                Run
+                Run v{template.activeVersion}
                 <Icon name="arrowRight" size={13} />
               </ButtonLink>
             )}
@@ -94,15 +96,17 @@ export function TemplateHeader({
             )}
           </>
         }
-        className="mt-3 mb-0"
+        className={compact ? 'mb-0 gap-2 md:gap-3 [&_h1]:text-xl' : 'mt-3 mb-0'}
         learnMore={{ ...HELP_LINKS.architectureNodeTypes, label: 'About node types' }}
         subtitle={
-          template.description ||
-          'A workflow: its versions, launch inputs, experiment and triggers.'
+          compact
+            ? undefined
+            : template.description ||
+              'A workflow: its versions, launch inputs, experiment and triggers.'
         }
         title={template.name}
       />
-      <div className="mt-4 flex flex-wrap items-center gap-2">
+      <div className="mt-2 flex flex-wrap items-center gap-2">
         <StatusBadge status={template.status} />
         <Badge tone="neutral" variant="outline">
           {template.team?.name ?? 'Platform-wide'}

@@ -50,14 +50,17 @@ export async function workflowSettledStatus(
 /**
  * The agent runs genuinely in flight: every non-terminal ledger row, minus those
  * whose workflow Temporal reports finished or gone (which are closed as a side
- * effect). `self` is the caller and is never looked up. See
+ * effect). A run paused at a question still counts: it holds its slot for the wait,
+ * and its resume skips the capacity check instead (see `runAgentTask`). `self` is
+ * the caller and is never looked up or excluded. See
  * {@link reconcileAgentRunSlots} for the bounds and the fail-safe.
  */
 export async function loadLiveAgentRunSlots(
   templateId: string,
   self: string
 ): Promise<AgentRunSlot[]> {
-  return reconcileAgentRunSlots(await loadAgentRunSlots(prisma, templateId), {
+  const all = await loadAgentRunSlots(prisma, templateId);
+  return reconcileAgentRunSlots(all, {
     close: closeAgentRunLedgerRows(prisma),
     isRunning: workflowIsRunning,
     onClosed: (ids) =>

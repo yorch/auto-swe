@@ -22,6 +22,8 @@ import { ReactFlow, ReactFlowProvider } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { PageTour } from '@/components/tour/PageTour';
 import { Alert } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EDITOR_TOUR } from '@/lib/pageTours';
 import { DagNode } from './dagNode';
 import { FlowChrome } from './flowChrome';
@@ -61,6 +63,11 @@ function EditorInner({
   actions,
 }: Props) {
   const {
+    pendingDelete,
+    setPendingDelete,
+    confirmDelete,
+    canUndoDelete,
+    undoDelete,
     canvasRef,
     checkResult,
     edges,
@@ -108,7 +115,7 @@ function EditorInner({
   });
 
   return (
-    <div className="flex flex-1 min-h-[560px] flex-col overflow-hidden md:min-h-0 border-y border-ink-600 bg-ink-900">
+    <div className="flex flex-1 min-h-0 flex-col overflow-hidden border-y border-ink-600 bg-ink-900">
       <PageTour steps={EDITOR_TOUR} />
       <EditorActionBar
         actions={actions}
@@ -119,6 +126,23 @@ function EditorInner({
         setShowOutline={setOutlineVisible}
         showOutline={outlineVisible}
       />
+      <ConfirmModal
+        confirmLabel="Remove node"
+        dangerous
+        message="This removes the node and repairs its incoming connections in the local draft. Review the affected paths before saving. You can undo removal until the next edit."
+        onClose={() => setPendingDelete(null)}
+        onConfirm={confirmDelete}
+        open={pendingDelete !== null}
+        title={`Remove node ${pendingDelete ?? ''}?`}
+      />
+      {canUndoDelete && (
+        <div className="flex items-center justify-between border-b border-ink-600 px-4 py-2 text-xs text-paper-300">
+          Node removed from the draft.
+          <Button onClick={undoDelete} size="sm" variant="ghost">
+            Undo removal
+          </Button>
+        </div>
+      )}
 
       <CheckStatus
         checkResult={checkResult}
@@ -148,13 +172,15 @@ function EditorInner({
         onKeyDown={handleOverlayKeyDown}
         ref={wrapperRef}
       >
-        <PaletteRail
-          onAdd={handlePaletteAdd}
-          onClose={() => setPaletteOpen(false)}
-          open={paletteOpen}
-          paletteRef={paletteRef}
-          steps={stepRegistry}
-        />
+        {paletteOpen && (
+          <PaletteRail
+            onAdd={handlePaletteAdd}
+            onClose={() => setPaletteOpen(false)}
+            open={paletteOpen}
+            paletteRef={paletteRef}
+            steps={stepRegistry}
+          />
+        )}
 
         {outlineVisible && (
           <OutlineRail
@@ -169,7 +195,7 @@ function EditorInner({
             canvas inside it is the interactive surface. */}
         <div
           aria-label="Workflow editor canvas. Left and right arrows follow the flow, up and down arrows switch between branches, Enter opens a node, Home jumps to the start, Delete removes the selected node."
-          className={`relative min-w-0 flex-1 bg-ink-900 ${framed ? '' : 'opacity-0'}`}
+          className={`relative min-w-0 flex-1 bg-ink-900 ${outlineVisible || paletteOpen ? 'max-lg:hidden' : ''} ${framed ? '' : 'opacity-0'}`}
           data-tour="editor:canvas"
           onDragOver={handleDragOver}
           onDrop={handleDrop}
@@ -178,7 +204,7 @@ function EditorInner({
         >
           <ReactFlow
             connectionLineStyle={{ stroke: 'var(--color-accent-400)', strokeWidth: 2 }}
-            deleteKeyCode="Delete"
+            deleteKeyCode={null}
             edges={edges}
             maxZoom={2.5}
             minZoom={0.15}

@@ -32,6 +32,9 @@
  *    was pushed;
  *  - grafts and the commit-graph are switched off for every call (`GIT_GRAFT_FILE`,
  *    `core.commitGraph`), so a `.git/info/grafts` entry cannot rewrite a parent.
+ *    The one exception is `refs/remotes/origin/<branch>` on a resumed run (`lib/pauseRebase.ts`):
+ *    the worker fetches it with a forced refspec itself, reads it fully qualified, and passes only
+ *    the resulting sha on.
  * What remains is outside the agent's reach in this model: replacing the `git`
  * binary itself, which needs root in the container and is the limit the workspace
  * hardening already documents.

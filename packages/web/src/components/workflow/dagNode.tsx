@@ -209,7 +209,9 @@ export function DagNode({ id, data, selected }: NodeProps) {
   const name = folded ? folded.title : nodeDisplayName(d.node, id);
   const group = folded ? undefined : nodeGroupOf(d.node);
   const notes = folded ? null : nodeFlowNotes(d.node);
-  const noteLine = notes ? [notes.status, notes.maxVisits, ...notes.chips] : [];
+  const noteLine = notes
+    ? [notes.status, notes.maxVisits, ...notes.chips].filter((note) => note !== undefined)
+    : [];
   const stripeClass = d.status ? STATUS_STRIPE[d.status.status] : null;
   const diffBorder = d.diff ? DIFF_BORDER[d.diff] : null;
   const isLive = d.status?.status === 'RUNNING' || d.status?.status === 'PENDING';

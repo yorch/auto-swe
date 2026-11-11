@@ -80,6 +80,11 @@ vi.mock('@auto-swe/shared/lib/trackerSync', async (orig) => ({
   syncTrackerOnEvent: vi.fn(),
 }));
 
+vi.mock('../lib/effectLedger.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/effectLedger.js')>()),
+  recordTrackerSync: vi.fn(async () => {}),
+}));
+
 // The per-agent runtime lookup has its own suite; here, what the snapshot pins.
 const { resolveAgentRuntimeChoice } = vi.hoisted(() => ({
   resolveAgentRuntimeChoice: vi.fn(async (key: string) =>
@@ -211,6 +216,7 @@ vi.mock('@auto-swe/shared/db', () => {
 import { prisma } from '@auto-swe/shared/db';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import { logError, logWarn } from '../lib/activityLog.js';
+import { recordTrackerSync } from '../lib/effectLedger.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import {
   notifySlackRunComplete,
@@ -1973,6 +1979,36 @@ describe('finalizeWorkflowRun', () => {
       expect(tracker).toHaveBeenCalledTimes(expected);
     }
     findRun.mockReset();
+  });
+
+  it('hands the ledger whether the finish sync wrote anything', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const tracker = vi.mocked(syncTrackerOnEvent);
+    const ledger = vi.mocked(recordTrackerSync);
+    tracker.mockReset();
+    ledger.mockClear();
+    tracker.mockImplementationOnce((async (_e: unknown, _c: unknown, opts: never) => {
+      (opts as { onOutcome: (o: unknown) => void }).onOutcome({ failure: null, wrote: false });
+      return null;
+    }) as never);
+    updateManyRuns.mockReset();
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    findRun.mockResolvedValue({
+      endedAt: null,
+      workflowId: 'eng-x',
+      workRequest: {
+        activeWorkflows: [],
+        connection: { team: { orgId: 'org-1' } },
+        externalTicketId: 'T-1',
+        payload: null,
+      },
+    } as never);
+    await finalizeRun('run-w', 'SUCCESS', undefined, 'worker');
+    expect(ledger).toHaveBeenCalledWith(
+      expect.objectContaining({ issueId: 'T-1', type: 'workflow_completed' }),
+      null,
+      false
+    );
   });
 
   it('still reports the run finalized when the tracker sync throws after the commit', async () => {

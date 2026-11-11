@@ -13,6 +13,7 @@ import type {
   SearchIssuesOptions,
   SearchIssuesResult,
   TrackerSyncEvent,
+  TrackerSyncOutcome,
 } from '../types.js';
 
 const LINEAR_GRAPHQL_URL = 'https://api.linear.app/graphql';
@@ -265,11 +266,13 @@ export class LinearProvider implements IssueTrackerProvider {
 
   /**
    * Moves the issue to a workflow state; resolves why Linear refused (the lookup or the update),
-   * or null when it moved or there is no state to move it to (a silent no-op).
+   * or null when it moved or there is no state to move it to (a silent no-op). `tally.wrote` is
+   * set only when the state was updated.
    */
   private async moveIssue(
     issueId: string,
-    targetStatusName: string
+    targetStatusName: string,
+    tally?: { wrote: boolean }
   ): Promise<TicketFailureClass | null> {
     try {
       type StatesResponse = {
@@ -308,6 +311,9 @@ export class LinearProvider implements IssueTrackerProvider {
       if (update.data?.issueUpdate?.success === false) {
         this.log?.warn({ issueId, targetStatusName }, 'Linear transitionIssue was not accepted');
         return 'rejected';
+      }
+      if (tally) {
+        tally.wrote = true;
       }
       return null;
     } catch (err) {
@@ -354,26 +360,38 @@ export class LinearProvider implements IssueTrackerProvider {
    * of the first one the tracker refused (comment, status move or link), or null.
    */
   async syncOnEvent(event: TrackerSyncEvent): Promise<TicketFailureClass | null> {
+    return (await this.syncOnEventOutcome(event)).failure;
+  }
+
+  /** {@link syncOnEvent} that also says whether any write reached the ticket. */
+  async syncOnEventOutcome(event: TrackerSyncEvent): Promise<TrackerSyncOutcome> {
     let failure: TicketFailureClass | null = null;
+    let wrote = false;
+    const tally = { wrote: false };
     const note = (refused: TicketFailureClass | null) => {
       failure ??= refused;
+    };
+    // A comment or link that resolves null was written; a status move reports through `tally`.
+    const noteWrite = (refused: TicketFailureClass | null) => {
+      note(refused);
+      wrote ||= refused === null;
     };
     try {
       switch (event.type) {
         case 'workflow_started':
-          note(await this.moveIssue(event.issueId, 'In Progress'));
+          note(await this.moveIssue(event.issueId, 'In Progress', tally));
           break;
         case 'pr_opened':
           if (event.prUrl) {
-            note(await this.postRemoteLink(event.issueId, event.prUrl));
+            noteWrite(await this.postRemoteLink(event.issueId, event.prUrl));
           }
-          note(await this.moveIssue(event.issueId, 'In Review'));
+          note(await this.moveIssue(event.issueId, 'In Review', tally));
           break;
         case 'ci_passed':
-          note(await this.postComment(event.issueId, '✅ CI passed'));
+          noteWrite(await this.postComment(event.issueId, '✅ CI passed'));
           break;
         case 'ci_failed':
-          note(
+          noteWrite(
             await this.postComment(
               event.issueId,
               `❌ CI failed${event.summary ? `: ${event.summary}` : ''}`
@@ -382,12 +400,12 @@ export class LinearProvider implements IssueTrackerProvider {
           break;
         case 'workflow_completed':
           if (event.prUrl) {
-            note(await this.postRemoteLink(event.issueId, event.prUrl));
+            noteWrite(await this.postRemoteLink(event.issueId, event.prUrl));
           }
-          note(await this.moveIssue(event.issueId, 'Done'));
+          note(await this.moveIssue(event.issueId, 'Done', tally));
           break;
         case 'workflow_failed':
-          note(
+          noteWrite(
             await this.postComment(
               event.issueId,
               `⚠️ Workflow failed${event.summary ? `: ${event.summary}` : ''}`
@@ -398,6 +416,6 @@ export class LinearProvider implements IssueTrackerProvider {
     } catch (err) {
       this.log?.warn({ err, event }, 'Linear syncOnEvent failed');
     }
-    return failure;
+    return { failure, wrote: wrote || tally.wrote };
   }
 }

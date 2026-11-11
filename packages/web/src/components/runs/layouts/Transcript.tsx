@@ -103,6 +103,7 @@ export function Transcript({
   traces,
 }: TranscriptProps) {
   const stepRefs = useRef<Record<string, HTMLElement | null>>({});
+  const readingRef = useRef<HTMLDivElement>(null);
   // Stacked below the breakpoint: the step spine becomes a strip across the top and the
   // details rail a collapsible section between it and the narrative.
   const narrow = useIsNarrow();
@@ -113,8 +114,18 @@ export function Transcript({
   // re-fires it when the same failed step is jumped to again after scrolling away.
   // biome-ignore lint/correctness/useExhaustiveDependencies: jumpNonce is a re-fire trigger, not a value the effect reads
   useEffect(() => {
-    if (selectedId) {
-      stepRefs.current[selectedId]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const target = selectedId ? stepRefs.current[selectedId] : null;
+    const reading = readingRef.current;
+    if (target && reading) {
+      reading.scrollTo({
+        behavior: 'smooth',
+        top: Math.max(
+          0,
+          reading.scrollTop +
+            target.getBoundingClientRect().top -
+            reading.getBoundingClientRect().top
+        ),
+      });
     }
   }, [selectedId, jumpNonce]);
 
@@ -134,7 +145,10 @@ export function Transcript({
       {narrow && rail}
 
       {/* Reading column: 1fr */}
-      <div className="flex-1 px-4 py-5 max-lg:min-w-0 lg:overflow-y-auto lg:px-8 lg:py-7">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto px-4 py-5 max-lg:min-w-0 lg:px-8 lg:py-7"
+        ref={readingRef}
+      >
         {/* Editorial intro */}
         <div className="mb-8 max-w-2xl">
           <h2 className="mb-2 text-xl font-semibold tracking-[-0.01em] text-paper-50">

@@ -1,10 +1,5 @@
 import { PageHelp } from '@/components/help/PageHelp';
 
-/**
- * The run page's panels, explained in the Help panel. It names the controls as the page labels them
- * (the layout switcher reads Split, Transcript and Timeline), and says which panels only some
- * layouts carry. The request-to-merge lifecycle is `HowItWorks`; this is about reading this page.
- */
 export function RunReadingGuide() {
   return (
     <PageHelp>
@@ -13,44 +8,28 @@ export function RunReadingGuide() {
           How to read this page
         </h3>
         <p>
-          <span className="font-semibold text-paper-100">Status and summary.</span> The badge by the
-          title and the notice under the header give the run's state in plain words. The cards
-          beneath it show what needs a person (open gates), the answers already given, the result,
-          or the failed step.
-        </p>
-        <div>
-          <p className="font-semibold text-paper-100">Three layouts</p>
-          <ul className="mt-1 list-disc space-y-1 pl-5">
-            <li>
-              <span className="text-paper-200">Split</span>: the execution graph above a console of
-              events. The console shows steps beside the events of the selected one (By step) or
-              every event in one stream (Stream). Selecting a graph node filters the console.
-            </li>
-            <li>
-              <span className="text-paper-200">Transcript</span>: every step in order, as a reading
-              column with a step list beside it.
-            </li>
-            <li>
-              <span className="text-paper-200">Timeline</span>: step timing along the run's
-              duration, an event feed, and a play control and scrubber that replay the events in the
-              order they were recorded.
-            </li>
-          </ul>
-        </div>
-        <p>
-          <span className="font-semibold text-paper-100">Traces.</span> The events are what the
-          agents did: tool calls, model responses, and activity events. Payloads are trimmed to
-          4,000 characters per field while the page polls; when any are, a Load full payloads button
-          appears in the header.
+          The outcome stays above one linked investigation workspace. Select a recorded execution in
+          the left outline, including its branch and attempt, then switch between Events, Graph,
+          Timing and Transcript without losing that selection.
         </p>
         <p>
-          <span className="font-semibold text-paper-100">Run details rail.</span> In Split and
-          Transcript, the rail carries times, cost, tokens, the template and the request. It also
-          lists <span className="text-paper-200">Eval signals</span> (recorded quality signals:
-          gate, review and merge outcomes, and the scorers of any eval node) and{' '}
-          <span className="text-paper-200">Autonomy decisions</span> (the publish and approval
-          decisions recorded for this run), each only when the run has some. Timeline has no rail.
-          On a narrow screen the rail sits behind a Run details toggle.
+          Events shows the selected execution’s trace and inputs/outputs. Graph selects all
+          executions of a node; use the execution selector to narrow to a branch and attempt. Timing
+          shows recorded duration and open live bars.
+        </p>
+        <p>
+          Review history rewinds trace events and execution states. Return to live follows current
+          execution again. Outcome, cost, approval controls, and supporting panels always show
+          latest/final information.
+        </p>
+        <p>
+          Overview contains approvals, results and reviews. Evidence contains artifacts and model
+          transcripts. Activity contains recorded actions and effects. Details contains times, cost,
+          tokens, callbacks and lessons.
+        </p>
+        <p>
+          Trace payloads are trimmed while polling. Load full payloads fetches a non-refreshing
+          snapshot; trim them again to resume live updates.
         </p>
       </section>
     </PageHelp>

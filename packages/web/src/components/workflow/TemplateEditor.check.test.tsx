@@ -2,10 +2,12 @@
 
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ValidateWorkflowResult } from '@/hooks/useValidateWorkflow';
 import { ApiError } from '@/lib/api';
 import { schemaIssues } from '@/lib/specSchemaIssues';
+import { stubDialogPrototype } from '@/test/rtl-helpers';
 import { TemplateEditor } from './TemplateEditor';
 
 // React Flow measures its container; jsdom has no layout engine.
@@ -42,6 +44,7 @@ vi.mock('@/hooks/useValidateWorkflow', () => ({
 
 const CLEAN: ValidateWorkflowResult = { issues: [], ok: true };
 beforeEach(() => {
+  stubDialogPrototype();
   validate.mockReset();
   validate.mockResolvedValue(CLEAN);
 });
@@ -505,5 +508,58 @@ describe('Check workflow', () => {
     expect(first).not.toBeNull();
     await check();
     expect(screen.getByRole('status').firstElementChild).not.toBe(first);
+  });
+});
+
+const removable: WorkflowSpec = {
+  ...GOOD,
+  entry: 'start',
+  nodes: {
+    end: { status: 'SUCCESS', type: 'terminate' },
+    start: { next: 'end', type: 'set', values: {} },
+  },
+};
+function Harness() {
+  const [spec, setSpec] = useState(removable);
+  const [selected, setSelected] = useState<string | null>('end');
+  return (
+    <TemplateEditor
+      onChange={setSpec}
+      onSelect={setSelected}
+      selectedNodeId={selected}
+      spec={spec}
+      stepRegistry={[]}
+    />
+  );
+}
+describe('safe node removal', () => {
+  it('ignores Delete and Backspace on toolbar controls', () => {
+    render(<Harness />);
+    const toolbar = screen.getByRole('button', { name: 'Check workflow' });
+    fireEvent.keyDown(toolbar, { key: 'Delete' });
+    fireEvent.keyDown(toolbar, { key: 'Backspace' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('complementary', { name: 'Node inspector' })).toBeTruthy();
+  });
+  it('asks for confirmation on the canvas and can undo the removal', async () => {
+    render(<Harness />);
+    fireEvent.keyDown(screen.getByRole('application', { name: /Workflow editor canvas/ }), {
+      key: 'Delete',
+    });
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Remove node' })));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Undo removal' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Undo removal' }));
+    expect(screen.queryByRole('button', { name: 'Undo removal' })).toBeNull();
+  });
+  it('does not modify the draft when removal is cancelled', () => {
+    render(<Harness />);
+    fireEvent.keyDown(screen.getByRole('application', { name: /Workflow editor canvas/ }), {
+      key: 'Backspace',
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('button', { name: 'Undo removal' })).toBeNull();
+    expect(screen.getByRole('complementary', { name: 'Node inspector' })).toBeTruthy();
   });
 });

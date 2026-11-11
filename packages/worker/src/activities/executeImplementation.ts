@@ -46,6 +46,7 @@ import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { resolveStandInOptions } from '../lib/nulAllowedPaths.js';
 import { parseOpenQuestionNotes } from '../lib/openQuestionNotes.js';
+import { rebaseOntoMovedBranch } from '../lib/pauseRebase.js';
 import {
   cloneCredentialSecrets,
   MAX_PAUSED_TEST_OUTPUT_CHARS,
@@ -437,14 +438,25 @@ export async function executeImplementation(
     requestHasTrackerTicket(request.workRequestId, request.externalTicketId)
       .then(async (isTicket) =>
         isTicket
-          ? recordTrackerSync(
-              { issueId: request.externalTicketId, type: 'workflow_started' },
-              await syncTrackerOnEvent(
-                { issueId: request.externalTicketId, type: 'workflow_started' },
+          ? (async () => {
+              const startedEvent = {
+                issueId: request.externalTicketId,
+                type: 'workflow_started',
+              } as const;
+              let wrote: boolean | undefined;
+              const failure = await syncTrackerOnEvent(
+                startedEvent,
                 await resolveIssueTrackerConfig(),
-                { runInputId: request.workRequestId, warn: logWarn }
-              )
-            )
+                {
+                  onOutcome: (outcome) => {
+                    wrote = outcome.wrote;
+                  },
+                  runInputId: request.workRequestId,
+                  warn: logWarn,
+                }
+              );
+              await recordTrackerSync(startedEvent, failure, wrote);
+            })()
           : undefined
       )
       .catch(() => null);
@@ -643,13 +655,24 @@ export async function executeImplementation(
     // the pushed branch the agent may have had nothing left to change, and an
     // empty `git commit` exits non-zero. The commit is made with hooks off and its sha
     // is pinned once; a guarded step also checks the committed range here, before the push.
-    const pushSha = await commitWithTestIntegrity(
+    let pushSha = await commitWithTestIntegrity(
       workspace,
       commitSummary,
       pathGuard,
       integrity,
       tracer
     );
+    // A resumed run waited on a person while the branch could move: replay its commits on
+    // top of the remote so the push fast-forwards. The path guard ran on the commit above.
+    if (resume) {
+      const rebased = await rebaseOntoMovedBranch(workspace, branch, {
+        guard: pathGuard,
+        replayBase: resumeCheckoutSha(resume),
+      });
+      if (rebased && pushSha) {
+        pushSha = rebased;
+      }
+    }
     // Never push on behalf of a run that has already been cancelled.
     throwIfActivityCancelled();
     await recordGitPush(branch, pushSha, () =>

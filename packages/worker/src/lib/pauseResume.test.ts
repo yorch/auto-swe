@@ -11,6 +11,7 @@ import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 import { AgentTracer } from './agentTracer.js';
 import {
+  carriedUsage,
   checkSurfaceState,
   cloneCredentialSecrets,
   pausable,
@@ -205,11 +206,37 @@ describe('restoreForResume and resumeMessage', () => {
     });
   });
 
+  it('carries the final flag into the prompt', () => {
+    const resume = { ...resumeInputFor(good), final: true as const };
+    expect(resumeMessage(resume, 'the task')).toContain('You may not ask any more questions');
+    expect(resumeMessage(resumeInputFor(good), 'the task')).not.toContain(
+      'You may not ask any more questions'
+    );
+  });
+
   it('delimits the answers after the task', () => {
     const message = resumeMessage(resumeInputFor(good), 'the task');
     expect(message.startsWith('the task\n')).toBe(true);
     expect(message).toContain(
       '[answers: begin]\nQuestion 1 [DB]:\n| Which database?\nAnswer:\n| Postgres'
     );
+  });
+});
+
+describe('carriedUsage', () => {
+  it('reads what earlier rounds used from the saved surface state', () => {
+    expect(carriedUsage(resumeInputFor({ ...good, usedElapsedMs: 1500, usedSteps: 7 }))).toEqual({
+      elapsedMs: 1500,
+      steps: 7,
+    });
+  });
+
+  it.each([
+    ['a first run', undefined],
+    ['a state saved without usage', resumeInputFor(good)],
+    ['a state with unusable usage', resumeInputFor({ ...good, usedElapsedMs: 'x', usedSteps: -3 })],
+    ['a foreign state', resumeInputFor({ something: 'else' })],
+  ])('starts at zero for %s', (_name, resume) => {
+    expect(carriedUsage(resume)).toEqual({ elapsedMs: 0, steps: 0 });
   });
 });

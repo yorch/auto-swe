@@ -17,6 +17,7 @@ import type {
   SearchIssuesOptions,
   SearchIssuesResult,
   TrackerSyncEvent,
+  TrackerSyncOutcome,
 } from '../types.js';
 
 interface JiraProviderConfig {
@@ -349,11 +350,13 @@ export class JiraProvider implements IssueTrackerProvider {
   /**
    * Moves the issue to a status; resolves why the tracker refused (the read of its transitions or
    * the move), `no_transition` when no transition to a status named like it was found and the issue is not
-   * already there, or null when it moved or is already in the status.
+   * already there, or null when it moved or is already in the status. `tally.wrote` is set only
+   * when a transition was posted.
    */
   private async moveIssue(
     issueId: string,
-    targetStatusName: string
+    targetStatusName: string,
+    tally?: { wrote: boolean }
   ): Promise<TicketFailureClass | null> {
     try {
       const result = await this.client.get<JiraTransitionResponse>(
@@ -386,6 +389,9 @@ export class JiraProvider implements IssueTrackerProvider {
       await this.client.post(`/rest/api/3/issue/${encodeURIComponent(issueId)}/transitions`, {
         transition: { id: transition.id },
       });
+      if (tally) {
+        tally.wrote = true;
+      }
       return null;
     } catch (err) {
       this.log?.warn({ err, issueId, targetStatusName }, 'Jira transitionIssue failed');
@@ -455,26 +461,38 @@ export class JiraProvider implements IssueTrackerProvider {
    * of the first one the tracker refused (comment, status move or link), or null.
    */
   async syncOnEvent(event: TrackerSyncEvent): Promise<TicketFailureClass | null> {
+    return (await this.syncOnEventOutcome(event)).failure;
+  }
+
+  /** {@link syncOnEvent} that also says whether any write reached the ticket. */
+  async syncOnEventOutcome(event: TrackerSyncEvent): Promise<TrackerSyncOutcome> {
     let failure: TicketFailureClass | null = null;
+    let wrote = false;
+    const tally = { wrote: false };
     const note = (refused: TicketFailureClass | null) => {
       failure ??= refused;
+    };
+    // A comment or link that resolves null was written; a status move reports through `tally`.
+    const noteWrite = (refused: TicketFailureClass | null) => {
+      note(refused);
+      wrote ||= refused === null;
     };
     try {
       switch (event.type) {
         case 'workflow_started':
-          note(await this.moveIssue(event.issueId, JIRA_SYNC_STATUSES.started));
+          note(await this.moveIssue(event.issueId, JIRA_SYNC_STATUSES.started, tally));
           break;
         case 'pr_opened':
           if (event.prUrl && event.prTitle) {
-            note(await this.postRemoteLink(event.issueId, event.prUrl, event.prTitle));
+            noteWrite(await this.postRemoteLink(event.issueId, event.prUrl, event.prTitle));
           }
-          note(await this.moveIssue(event.issueId, JIRA_SYNC_STATUSES.prOpened));
+          note(await this.moveIssue(event.issueId, JIRA_SYNC_STATUSES.prOpened, tally));
           break;
         case 'ci_passed':
-          note(await this.postComment(event.issueId, '✅ CI passed'));
+          noteWrite(await this.postComment(event.issueId, '✅ CI passed'));
           break;
         case 'ci_failed':
-          note(
+          noteWrite(
             await this.postComment(
               event.issueId,
               `❌ CI failed${event.summary ? `: ${event.summary}` : ''}`
@@ -483,12 +501,12 @@ export class JiraProvider implements IssueTrackerProvider {
           break;
         case 'workflow_completed':
           if (event.prUrl && event.prTitle) {
-            note(await this.postRemoteLink(event.issueId, event.prUrl, event.prTitle));
+            noteWrite(await this.postRemoteLink(event.issueId, event.prUrl, event.prTitle));
           }
-          note(await this.moveIssue(event.issueId, JIRA_SYNC_STATUSES.completed));
+          note(await this.moveIssue(event.issueId, JIRA_SYNC_STATUSES.completed, tally));
           break;
         case 'workflow_failed':
-          note(
+          noteWrite(
             await this.postComment(
               event.issueId,
               `⚠️ Workflow failed${event.summary ? `: ${event.summary}` : ''}`
@@ -499,6 +517,6 @@ export class JiraProvider implements IssueTrackerProvider {
     } catch (err) {
       this.log?.warn({ err, event }, 'Jira syncOnEvent failed');
     }
-    return failure;
+    return { failure, wrote: wrote || tally.wrote };
   }
 }

@@ -19,6 +19,7 @@ function isHttpUrl(value: string): boolean {
 
 function EffectLine({ effect }: { effect: RunEffectDto }) {
   const failed = effect.status === 'FAILED';
+  const skipped = effect.status === 'SKIPPED';
   return (
     <li className="py-2">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -26,8 +27,8 @@ function EffectLine({ effect }: { effect: RunEffectDto }) {
           {KIND_LABELS[effect.kind] ?? effect.kind}
         </Badge>
         <span className="font-medium text-paper-100">{effect.action}</span>
-        <Badge tone={failed ? 'danger' : 'success'} variant="outline">
-          {failed ? 'Failed' : 'Done'}
+        <Badge tone={failed ? 'danger' : skipped ? 'muted' : 'success'} variant="outline">
+          {failed ? 'Failed' : skipped ? 'Skipped' : 'Done'}
         </Badge>
         <span className="text-xs text-paper-500">{formatDate(effect.createdAt)}</span>
       </div>

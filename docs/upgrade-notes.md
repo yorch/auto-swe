@@ -1118,6 +1118,71 @@ answering `cannot be checked`.
 
 ---
 
+### UN-21. Docker workspace private-network baseline and optional disk quota
+
+**Affected.** Docker deployments whose workspaces reach internal hosts other than the repository
+git host, configured DNS or worker proxies. Also affected: deployments whose metadata helper
+image cannot install or run iptables/ip6tables. Kubernetes deployments need no action.
+
+**Fix commit.** Identified before its SHA is assigned by `buildBaselineEgressScript` and
+`assertBaselineEgress` in `packages/worker/src/lib/workspaceBackend/docker.ts`; compare the source
+when commit ancestry is unavailable.
+
+**Actions.** Set `WORKSPACE_PRIVATE_EGRESS_ALLOW` to the narrow IPv4/IPv6 addresses or CIDRs
+needed by other internal services. Leave `WORKSPACE_BLOCK_PRIVATE_EGRESS` and
+`WORKSPACE_BLOCK_METADATA` enabled. Ensure `WORKSPACE_METADATA_BLOCK_IMAGE` is available and
+contains iptables and ip6tables; preinstallation avoids package-mirror access per workspace.
+The helper must succeed: failure no longer permits an unprotected workspace to run.
+If setting `WORKSPACE_DISK_LIMIT`, provision a quota-capable Docker storage driver (overlay2
+requires XFS with pquota); the worker refuses to start if its probe cannot enforce the limit.
+
+**Verify.** A workspace starts, reaches its git host and intended internal exceptions, and cannot
+reach an unlisted private host or a cloud metadata address. With a disk limit configured, worker
+startup completes the storage-opt probe.
+
+---
+
+### UN-22. Docker disk limits reject drivers that silently ignore storage-opt
+
+**Affected.** Docker deployments setting `WORKSPACE_DISK_LIMIT` with the containerd `overlayfs`
+driver or another driver outside overlay2, devicemapper, btrfs and zfs. A successful
+`docker run --storage-opt size=...` alone does not establish enforcement on those drivers.
+
+**Fix commit.** Identified before its SHA is assigned by the supported-driver check in
+`assertDockerDiskLimit` in `packages/worker/src/lib/workspaceBackend/docker.ts`; compare the
+source when commit ancestry is unavailable.
+
+**Actions.** Provision a supported storage driver (overlay2 needs XFS with pquota), or unset
+`WORKSPACE_DISK_LIMIT` and accept that writable layers have no application-configured cap.
+The worker refuses startup when the probe container's driver is unsupported or cannot be read.
+
+**Verify.** Worker startup with the limit configured succeeds only on a supported driver.
+An unsupported `overlayfs` driver produces a `WORKSPACE_DISK_LIMIT cannot be enforced` error.
+
+---
+
+### UN-23. Docker egress shell and container steps receive the private-network baseline
+
+**Affected.** Docker deployments with shell or container steps using `network: egress` that reach
+internal hosts, including detached container-step sidecars. Kubernetes deployments need no action:
+ephemeral steps and detached container-step sidecars are unsupported there.
+
+**Fix commit.** Identified before its SHA is assigned by `ephemeralNetworkHolderArgs` and
+`prepareEphemeralNetwork` in `packages/worker/src/lib/workspaceBackend/docker.ts`; compare the source
+when commit ancestry is unavailable.
+
+**Actions.** Set `WORKSPACE_PRIVATE_EGRESS_ALLOW` to the narrow IPs/CIDRs needed by internal
+destinations other than configured DNS and wired worker proxies. A DNS hostname allowlist entry
+alone does not permit a private address. Ensure `WORKSPACE_METADATA_BLOCK_IMAGE` can run `sleep`
+and that the baseline helper can install or run iptables/ip6tables. Baseline installation or
+verification failure prevents author code from starting. Keep private and metadata blocking enabled.
+
+**Verify.** An egress step reaches public hosts and intended exceptions, rejects private peers and
+metadata, preserves its output and exit code, and leaves no network holder after teardown. A detached
+sidecar remains reachable through its loopback-published holder port until teardown.
+
+---
+
 ### Workspace commits skip repository hooks and global git config; steps record their base first (`<fixing commit SHA>`)
 
 **Affected.** Deployments whose repositories rely on a commit hook running inside the agent

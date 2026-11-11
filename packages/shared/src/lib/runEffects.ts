@@ -11,7 +11,7 @@ export const RUN_EFFECT_KINDS = [
 export const runEffectKindSchema = z.enum(RUN_EFFECT_KINDS);
 export type RunEffectKind = z.infer<typeof runEffectKindSchema>;
 
-export const RUN_EFFECT_STATUSES = ['DONE', 'FAILED'] as const;
+export const RUN_EFFECT_STATUSES = ['DONE', 'FAILED', 'SKIPPED'] as const;
 export const runEffectStatusSchema = z.enum(RUN_EFFECT_STATUSES);
 export type RunEffectStatus = z.infer<typeof runEffectStatusSchema>;
 

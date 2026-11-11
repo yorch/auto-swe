@@ -479,6 +479,22 @@ describe('TracesTab time, truncation and filters', () => {
     expect(document.getElementById(toggle.getAttribute('aria-controls') ?? '')).not.toBeNull();
   });
 
+  it('gives duplicate trace records in separate panes unique disclosure targets', () => {
+    const traces = [at('same', '2026-01-01T00:00:00Z')];
+    renderTab(traces);
+    renderTab(traces);
+    const toggles = screen.getAllByRole('button', { expanded: false });
+    expect(toggles).toHaveLength(2);
+    const ids = toggles.map((toggle) => toggle.getAttribute('aria-controls') ?? '');
+    expect(new Set(ids).size).toBe(2);
+    for (const id of ids) {
+      expect(document.getElementById(id)).not.toBeNull();
+    }
+    fireEvent.click(toggles[0]);
+    expect(document.getElementById(ids[0])?.hidden).toBe(false);
+    expect(document.getElementById(ids[1])?.hidden).toBe(true);
+  });
+
   it('previews an errored event`s message on its collapsed row', () => {
     renderTab([at('a', '2026-01-01T00:00:00Z', { error: 'ENOENT: no such file\nstack...' })]);
     expect(screen.getByText('ENOENT: no such file')).toBeTruthy();

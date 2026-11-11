@@ -182,13 +182,17 @@ describe('run page summary band', () => {
     }
   );
 
-  it('Jump to failure selects the failed step in the transcript layout', async () => {
+  it('Jump to failure selects failure evidence without scrolling the app shell', async () => {
     state.layout = 'B';
     await renderPage();
     const scrolled = vi.fn();
     Element.prototype.scrollIntoView = scrolled;
     fireEvent.click(screen.getByRole('button', { name: /jump to failure/i }));
-    expect(scrolled).toHaveBeenCalled();
+    expect(scrolled).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Events' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    expect(screen.getByLabelText('Execution attempt')).toBeTruthy();
   });
 
   it('describes Cancel and Re-run to assistive tech as well as on hover', async () => {
@@ -274,6 +278,16 @@ describe('run page summary band', () => {
 });
 
 describe('run page verdict and reading guide', () => {
+  it('opens the gate panel from another investigation view instead of jumping to an unmounted anchor', async () => {
+    run.status = 'RUNNING';
+    await renderPage();
+    fireEvent.click(screen.getByRole('button', { name: 'Events' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Go to the gate' }));
+    expect(
+      screen.getByRole('button', { name: 'Approval / result' }).getAttribute('aria-pressed')
+    ).toBe('true');
+    expect(screen.getByText('Approve the plan')).toBeTruthy();
+  });
   afterEach(() => {
     run.status = 'FAILED';
     run.result = null;
@@ -282,7 +296,7 @@ describe('run page verdict and reading guide', () => {
   it('states a failed run in plain language and points at the failed step', async () => {
     state.layout = 'A';
     await renderPage();
-    expect(screen.getByText(/does not recognise this error/)).toBeTruthy();
+    expect(screen.getAllByText(/does not recognise this error/).length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: 'Jump to the failed step' })).toBeTruthy();
   });
 
@@ -291,7 +305,7 @@ describe('run page verdict and reading guide', () => {
     run.status = 'SUCCESS';
     await renderPage();
     expect(screen.getByText('Finished')).toBeTruthy();
-    expect(screen.getByText(/recorded no pull request link/)).toBeTruthy();
+    expect(screen.getAllByText(/recorded no pull request link/).length).toBeGreaterThan(0);
     expect(screen.queryByRole('link', { name: 'Open the pull request' })).toBeNull();
   });
 
@@ -309,9 +323,7 @@ describe('run page verdict and reading guide', () => {
     run.status = 'RUNNING';
     await renderPage();
     expect(screen.getByText('Waiting on a person')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'Go to the gate' }).getAttribute('href')).toBe(
-      '#run-needs-response'
-    );
+    expect(screen.getByRole('button', { name: 'Go to the gate' })).toBeTruthy();
     expect(document.getElementById('run-needs-response')).not.toBeNull();
   });
 
@@ -321,7 +333,7 @@ describe('run page verdict and reading guide', () => {
     const guide = screen.getByText('How to read this page').closest('section');
     expect(guide).not.toBeNull();
     expect(guide?.closest('[data-testid="page-help"]')).not.toBeNull();
-    for (const name of ['Split', 'Transcript', 'Timeline']) {
+    for (const name of ['Events', 'Graph', 'Timing', 'Transcript']) {
       expect(guide?.textContent).toContain(name);
     }
     expect(guide).not.toBe(screen.getByText('How auto-swe works').closest('section'));
@@ -353,6 +365,8 @@ describe('run page live state, load errors and unreadable specs', () => {
     state.fullTraces = true;
     await renderPage();
     expect(screen.getByText('Paused')).toBeTruthy();
+    expect(screen.getByText('Paused snapshot')).toBeTruthy();
+    expect(screen.queryByText('Live edge')).toBeNull();
     expect(screen.getByRole('button', { name: 'Resume live updates' })).toBeTruthy();
   });
 
@@ -371,7 +385,7 @@ describe('run page live state, load errors and unreadable specs', () => {
     expect(screen.getAllByText(/Tests would not pass/).length).toBeGreaterThan(0);
   });
 
-  it('lets the page scroll and keeps the layout a minimum height so it cannot be squeezed away', async () => {
+  it('anchors evidence scrolling with a usable page-scroll fallback for short viewports', async () => {
     state.layout = 'A';
     const { container } = render(
       withQuery(
@@ -382,8 +396,14 @@ describe('run page live state, load errors and unreadable specs', () => {
     );
     await act(async () => {});
     const root = container.firstElementChild as HTMLElement;
-    expect(root.className).toContain('overflow-y-auto');
-    expect(root.className).not.toContain('max-lg:overflow-y-auto');
-    expect(container.querySelector('[class*="lg:min-h-[480px]"]')).not.toBeNull();
+    expect(root.className).toContain('overflow-hidden');
+    expect(root.classList.contains('overflow-y-auto')).toBe(false);
+    expect(root.classList.contains('[@media(max-height:500px)]:overflow-y-auto')).toBe(true);
+    const workspace = container.querySelector('[data-tour="run:trace"]') as HTMLElement;
+    expect(workspace.classList.contains('[@media(max-height:500px)]:min-h-[480px]')).toBe(true);
+    expect(workspace.classList.contains('[@media(max-height:500px)]:shrink-0')).toBe(true);
+    expect(container.querySelector('[class*="overscroll-contain"]')?.className).toContain(
+      'overflow-y-auto'
+    );
   });
 });

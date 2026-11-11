@@ -3464,7 +3464,7 @@
     {
       "body": "Approval, decision, input form and review nodes pause a run until response or timeout.",
       "category": "Governance",
-      "detail": "WorkflowHumanStep stores context, deadlines and response data. A review node’s response is a note; it does not edit the content it shows. Creating a step also queues a run.waiting_for_human callback when the launch asked for one. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the Approvals page and other API clients) or Slack edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently. In Slack, a button for a decision option resolves the step in one click, while Approve and Reject open a modal for a note first. Opening it looks the step up among the steps the clicker may act on, tells a user whose Slack id is not linked to an account to link it, and tells the clicker to use the inbox if Slack cannot open the form. The submission is what resolves the step, through the same resolve core as the REST route, which checks access again. The modal’s private metadata round-trips through the client, so it carries the step, action and Slack user under an HMAC made with the Slack signing secret, and a submission whose signature fails or whose Slack user differs is refused, with the error shown in the form. For an approval step a rejection needs a reason of at least five characters after trimming, enforced in that shared core for the Approvals page, the API and Slack alike: the REST route answers 400 REASON_REQUIRED and the Slack modal shows the error in the form. An approver’s comment is optional, recorded with the response and shown, but never sent to the workflow in the signal. The REST list of steps shows pending steps by default, so resolved answers need status=ALL; actionable narrows it to pending, unexpired steps the caller may answer and has not yet answered, and answeredByMe (with status=ALL, or it finds only pending steps the caller has approved) to steps the caller resolved or approved. limit and offset page the list, and a total is counted and returned in meta only when one of those three is asked for, or when count=true asks for the total alone (the sidebar badge sends it with limit=1). myResponse is the caller’s own answer: their approval row, else the stored action when they resolved the step, and null for a step resolved by a timeout or by someone else.",
+      "detail": "WorkflowHumanStep stores context, deadlines and response data. A review node’s response is a note; it does not edit the content it shows. Creating a step also queues a run.waiting_for_human callback when the launch asked for one. HumanApproval supports distinct-approver counting. Workflow status remains RUNNING while it waits. When a step was announced in Slack, fully resolving it through the REST route (the Approvals page and other API clients) or Slack edits that message to show the decision and any note and drops its buttons. The edit is best effort and never undoes the recorded answer: a Slack error is logged, while a missing bot token or an unreadable stored message skips the edit silently. In Slack, a button for a decision option resolves the step in one click, while Approve and Reject open a modal for a note first. Opening it looks the step up among the steps the clicker may act on, tells a user whose Slack id is not linked to an account to link it, and tells the clicker to use the inbox if Slack cannot open the form. The submission is what resolves the step, through the same resolve core as the REST route, which checks access again. The modal’s private metadata round-trips through the client, so it carries the step, action and Slack user under an HMAC made with the Slack signing secret, and a submission whose signature fails or whose Slack user differs is refused, with the error shown in the form. For an approval step a rejection needs a reason of at least five characters after trimming, enforced in that shared core for the Approvals page, the API and Slack alike: the REST route answers 400 REASON_REQUIRED and the Slack modal shows the error in the form. An approver’s comment is optional, recorded with the response and shown, but never sent to the workflow in the signal. The REST list of steps shows pending steps by default, so resolved answers need status=ALL; actionable narrows it to pending, unexpired steps the caller may answer and has not yet answered, and answeredByMe (with status=ALL, or it finds only pending steps the caller has approved) to steps the caller resolved or approved. limit and offset page the list, and a total is counted and returned in meta only when one of those three is asked for, or when count=true asks for the total alone (the sidebar badge sends it with limit=1). myResponse is the caller’s own answer: their approval row, else the stored action when they resolved the step, and null for a step resolved by a timeout or by someone else. An agent can also open an INPUT step: when a Claude Code agent asks a question, the workflow loop creates an INPUT step titled for the asking agent, and the answer resumes the same activity (see the ask-and-resume card).",
       "id": "hitl",
       "refs": [
         "spec",
@@ -3478,7 +3478,8 @@
         "hitlReasonRequired",
         "humanStepList",
         "humanStepTotal",
-        "humanStepMyResponse"
+        "humanStepMyResponse",
+        "askLoop"
       ],
       "status": "Implemented",
       "title": "Four human interaction types"
@@ -4936,6 +4937,81 @@
       ],
       "status": "Implemented",
       "title": "Per-team monthly budgets beside the organization’s"
+    },
+    {
+      "body": "When a Claude Code agent calls AskUserQuestion, the step saves its working tree, the workflow opens an INPUT human step, and a fresh container restores the tree and continues with the answers.",
+      "category": "Governance",
+      "detail": "Four surfaces can pause: an agent node with a checkout, an agent run, the implementer’s TDD loop and the fix sessions. The activity validates the question (at most four, each with two to four options), stores the tree as one binary patch against the commit the checkout began from (nothing is committed, pushed or scanned, and a tree over 20 MiB fails the step), and returns the questions with a digest of the work so far instead of a result. The workflow loop turns that into an INPUT human step, waits for the signal, maps the answers onto the questions and runs the same activity again with allowPause set and the saved state. Each round has a recording id derived from the dispatch key and round number, so a replayed dispatch names the same step. An answer that fits no question re-asks the same round up to three times, cancelling the superseded step. After the round limit (workflow.maxNeedsInputRounds, default 5) the activity runs once more with the ability to ask removed and a note to finish on its own judgement; a further pause fails NEEDS_INPUT_LIMIT. No answer within workflow.needsInputTimeoutSeconds (default 24 hours) fails NEEDS_INPUT_TIMEOUT. A cancelled wait closes the open step. Both settings are pinned to the run. A resumed agent run carries the steps and wall-clock time it already used, so the caps apply across rounds. Before the implementer or a fix session pushes, a resumed branch that moved while the person decided is fetched and the run’s commits are replayed onto it (never force-pushed), a conflict fails with NEEDS_INPUT_PUSH_CONFLICT, and the result is checked against the step’s path guard again. The loop is behind Temporal patch markers, so executions that began earlier replay without it.",
+      "id": "askAndResume",
+      "refs": [
+        "askLoop",
+        "askDispatch",
+        "askLimits",
+        "askTool",
+        "askPausable",
+        "askSnapshot",
+        "askCarried",
+        "askRebase",
+        "askRebaseCall",
+        "askSettings"
+      ],
+      "status": "Implemented",
+      "title": "An agent can stop to ask a person and be resumed"
+    },
+    {
+      "body": "Git pushes, pull-request creation, tracker syncs and PRD ticket creation, knowledge-base page writes and non-read-only MCP tool calls each write a RunEffect row with a status of DONE, FAILED or SKIPPED.",
+      "category": "Governance",
+      "detail": "A row holds the kind (MCP_TOOL, PULL_REQUEST, GIT_PUSH, TRACKER, KNOWLEDGE_BASE), the action, a target (id, URL, branch or tool name), the path it took (harness relay, Mastra MCP binding or an activity), the node and agent, and a failure message. The call’s input is stored only as a SHA-256 of its redacted canonical form; detail and error are redacted and capped. An MCP tool counts as a read only when its server declared readOnlyHint, so an undeclared tool is recorded. Recording is best effort: it never throws, is raced against a five-second timeout and, outside an activity, writes nothing. A git push is recorded after it ran, failures included, and the original result or error is returned unchanged. A tracker sync is FAILED when the tracker refused a write, SKIPPED when it had nothing to write, otherwise DONE. A retried pull-request step does not record a second create for the same URL. GET /runs/:id/effects returns the newest page of a run’s rows to a caller who can see the run, and rows outlive their run. audit.runEffectRetentionDays (ADMIN, default 0 = forever, otherwise at least 30) lets the daily sweep delete old rows.",
+      "id": "runEffects",
+      "refs": [
+        "runEffectModel",
+        "effectRecord",
+        "effectReadOnly",
+        "effectGitPush",
+        "effectTrackerSync",
+        "effectMcpRelay",
+        "effectPrdTickets",
+        "effectPullRequest",
+        "effectsRoute",
+        "effectRetention"
+      ],
+      "status": "Implemented",
+      "title": "An effects ledger records what a run changed outside the sandbox"
+    },
+    {
+      "body": "An ADMIN reads a folder of a GitHub repository at an exact commit, reviews and approves it into an immutable, hash-pinned profile version, binds the profile to an Agent version, and each run pins the version it started with.",
+      "category": "Agents",
+      "detail": "The folder must contain a strict profile.json: a description, an optional instructions file, up to 20 plugin directories and optionally the extra built-in tools Skill and Agent. Reading reuses the skill-source machinery (host policy, outbound guard, scoped token), downloads nothing when there is a symlink, submodule, unsafe path or over-limit folder, and shows structure and scanner warnings that approval acknowledges. A version stores the commit, a content hash over the sorted file hashes plus the parsed manifest, and the gzip archive. A profile is disabled, never deleted. Which profile applies comes from the resolved Agent version, not from inheritsModelFrom; which version comes from a caller pin, then the run’s pin (taken at run start for every bound agent and otherwise at first use), then the latest. Resolution fails closed: a missing or disabled-and-unpinned profile, a missing version row or an archive that no longer reproduces its hash raises a non-retryable failure rather than running without it. The Claude Code harness rewrites the approved snapshot into the container outside the checkout before every turn, loads the plugins from that copy, adds the profile’s tools, and appends the instructions behind a provenance line; instructions that spell the provenance marker are refused.",
+      "id": "harnessProfiles",
+      "refs": [
+        "profileModel",
+        "profileAdmin",
+        "profileHash",
+        "profileResolve",
+        "profileManifest",
+        "profileInstructions",
+        "profileMaterialize"
+      ],
+      "status": "Implemented",
+      "title": "Admin-approved harness profiles give Claude Code plugins and instructions"
+    },
+    {
+      "body": "A request can only name a catalog row; a row pins an https download per architecture with a SHA-256, so a workspace installs a checksummed binary instead of an arbitrary one.",
+      "category": "Execution",
+      "detail": "Rows carry a key, version, per-architecture download, the member path in the archive, a libc and a status of ACTIVE, DEPRECATED or REVOKED. Requests come from a list on the connection and from a tools file in the repository, read from the base ref with git show and never from the agent’s branch or working tree, capped by workspace.toolInstall.maxTools. Nothing is requested unless workspace.toolInstall.enabled resolves true. An agent may ask for more tools in a running workspace when the connection allows it; a denied key, a different version of one already installed, a catalog that cannot be read and a locked network all refuse. Any signed-in user can read the catalog; every write is ADMIN-only, and built-in rows are seeded and kept in step with code until edited.",
+      "id": "toolCatalog",
+      "refs": ["toolCatalogEntry", "toolPlan", "toolLate", "toolRoutes"],
+      "status": "Implemented",
+      "title": "A tool catalog lets a workspace install pinned binaries on demand"
+    },
+    {
+      "body": "Optional node fields replace flat plumbing nodes: storeAs copies an output into context, onFailure routes a finally failed node, status stamps domain status on entry, and maxVisits with onExhausted bounds a loop.",
+      "category": "Orchestration",
+      "detail": "Absent, a node behaves as before, so stored specs parse and run unchanged. onFailure takes a node id or a terminal status with a message; it applies after retries are exhausted and wins over onFail block, warn and continue, while cancellation bypasses it. maxVisits counts entries to the node, and the entry after the limit routes to onExhausted or fails the run. The authoring helpers and the built-in templates use these fields, so a template’s graph has fewer set, cond and updateDomainState nodes than its behavior implies.",
+      "id": "flowFields",
+      "refs": ["flowFields", "flowOnFailure", "flowMaxVisits"],
+      "status": "Implemented",
+      "title": "Nodes can store output, route on failure and bound their own loops"
     }
   ],
   "limits": [
@@ -5146,7 +5222,7 @@
     {
       "body": "The approval guard lives in lib/externalWrite.ts and covers the three generic connector-writing steps (writeOutcome, a mutating runTool and a non-read-only mcp node), conditional on a recorded publish decision.",
       "category": "Governance",
-      "detail": "A run with no recorded decision that required approval is not gated by assertApprovalSatisfied, so a template that writes without a publishOutcome step writes ungated, and the requirement is run-wide rather than tied to the write it was recorded for. The risk class is a declaration the author writes, not derived from the effect. Built-in steps that write elsewhere — pull-request creation and update (createOrUpdatePullRequest), CI triage comments (reportCiTriage), CI-fix pushes (pushCiFixToPullRequest), tracker item creation (createTrackerItems), ticket comments (postTicketComment, one best-effort attempt on the run’s own ticket through the instance’s tracker configuration; no built-in template uses it), the tracker sync (status transitions, pull-request links and CI and failure comments on the run’s ticket, from the implementation, pull-request and run-end steps and the merge and CI webhooks) and run callbacks — are covered neither by assertApprovalSatisfied nor by the outcome ledger. On the GitHub Issues tracker the ticket comment, the sync and tracker item creation write only to a repository the run targets (see the GitHub tracker scope card); that bounds where they write, not whether anyone approved it, and Jira and Linear writes have no such check. An agent’s own MCP tool calls, and arbitrary shell or container egress, are outside that helper too. Validation warns WRITE_WITHOUT_POLICY on a writeOutcome step or mcp node that no publishOutcome step reaches (the shipped Notion draft records an internal_write decision first, which the default policy publishes without approval), but the warning never blocks a save, promotion or activation, it checks reachability, so a write that a path skipping the decision also reaches passes, and it ignores runTool, whose tool is usually bound at run time. Template design and tool permissions remain important.",
+      "detail": "A run with no recorded decision that required approval is not gated by assertApprovalSatisfied, so a template that writes without a publishOutcome step writes ungated, and the requirement is run-wide rather than tied to the write it was recorded for. The risk class is a declaration the author writes, not derived from the effect. Built-in steps that write elsewhere — pull-request creation and update (createOrUpdatePullRequest), CI triage comments (reportCiTriage), CI-fix pushes (pushCiFixToPullRequest), tracker item creation (createTrackerItems), ticket comments (postTicketComment, one best-effort attempt on the run’s own ticket through the instance’s tracker configuration; no built-in template uses it), the tracker sync (status transitions, pull-request links and CI and failure comments on the run’s ticket, from the implementation, pull-request and run-end steps and the merge and CI webhooks) and run callbacks — are covered neither by assertApprovalSatisfied nor by the outcome ledger. On the GitHub Issues tracker the ticket comment, the sync and tracker item creation write only to a repository the run targets (see the GitHub tracker scope card); that bounds where they write, not whether anyone approved it, and Jira and Linear writes have no such check. An agent’s own MCP tool calls, and arbitrary shell or container egress, are outside that helper too. Validation warns WRITE_WITHOUT_POLICY on a writeOutcome step or mcp node that no publishOutcome step reaches (the shipped Notion draft records an internal_write decision first, which the default policy publishes without approval), but the warning never blocks a save, promotion or activation, it checks reachability, so a write that a path skipping the decision also reaches passes, and it ignores runTool, whose tool is usually bound at run time. Template design and tool permissions remain important. Several of those writes (git pushes, pull-request creation, the tracker syncs, PRD ticket creation, knowledge-base page writes and non-read-only MCP calls) are additionally recorded afterwards as RunEffect rows; the record gates nothing (see the effects ledger cards).",
       "id": "governanceCoverage",
       "refs": [
         "write",
@@ -5162,7 +5238,8 @@
         "ticketCommentRetry",
         "ticketCommentStep",
         "trackerSyncGate",
-        "trackerProjectKey"
+        "trackerProjectKey",
+        "effectRecord"
       ],
       "status": "Confirmed boundary",
       "title": "Outcome policy covers the writing steps, not every outbound path"
@@ -5699,14 +5776,15 @@
     {
       "body": "A harness is admitted only if the worker answers each of its tool calls before the call runs.",
       "category": "Isolation",
-      "detail": "A harness must ask the worker before every tool call over a channel the worker owns, wait for the answer, not run a refused call, and offer no repository or container file that can grant a call without that answer. The registry refuses any harness that does not declare this, with HARNESS_POLICY_UNENFORCEABLE. Pi meets it by running its loop in the worker, not as a CLI in the container, where a repository setting could prefix every approved shell command. A harness supplies only provisioning (none for Pi), a mapping of its tools onto the canonical vocabulary, usage normalisation and the turn protocol; binary verification, process cleanup, cancellation, the decision deadline and trace bounding are shared.",
+      "detail": "A harness must ask the worker before every tool call over a channel the worker owns, wait for the answer, not run a refused call, and offer no repository or container file that can grant a call without that answer. The registry refuses any harness that does not declare this, with HARNESS_POLICY_UNENFORCEABLE. Pi meets it by running its loop in the worker, not as a CLI in the container, where a repository setting could prefix every approved shell command. A harness supplies only provisioning (none for Pi), a mapping of its tools onto the canonical vocabulary, usage normalisation and the turn protocol; binary verification, process cleanup, cancellation, the decision deadline and trace bounding are shared. Harness profiles are consumed only by the Claude Code runtime.",
       "id": "harnessAdmission",
       "refs": [
         "harnessCapability",
         "harnessRegistry",
         "harnessVocabulary",
         "harnessesRegistered",
-        "piCapabilities"
+        "piCapabilities",
+        "profileMaterialize"
       ],
       "status": "Confirmed boundary",
       "title": "Claude Code and Pi are the only harnesses the worker admits"
@@ -6118,6 +6196,39 @@
       ],
       "status": "Confirmed boundary",
       "title": "A team space and a team filter narrow lists; reports count owners only"
+    },
+    {
+      "body": "Only the Claude Code runtime offers the question tool; Mastra and Pi never pause, and a resumed run is a new container, not the old session.",
+      "category": "Governance",
+      "detail": "pausable() grants allowPause only when the resolved runtime is claude-code. The resumed agent sees the questions, the answers and a truncated, credential-masked digest, not its earlier conversation, and only the working tree (including its own local commits, folded into the patch) survives; processes, installed packages outside the tree and anything outside the checkout are gone. Nothing answers on a person’s behalf: a timeout fails the step non-retryably. A tree over 20 MiB, state over the size cap, an answer that stays unusable after three re-asks, and a rebase conflict each fail non-retryably instead of continuing. The human step is an ordinary INPUT step, so who may answer follows the human-step rules, not the agent’s credentials.",
+      "id": "askAndResumeBounds",
+      "refs": ["askPausable", "askSnapshot", "askLoop", "askRebase"],
+      "status": "Confirmed boundary",
+      "title": "Ask-and-resume is Claude Code only and keeps a patch, not a live session"
+    },
+    {
+      "body": "A RunEffect row is written after the change and gates nothing; a failed or timed-out write loses the row, and several outbound writes never call it.",
+      "category": "Governance",
+      "detail": "It does not replace the outcome ledger that makes writeOutcome and runTool retries refuse, and it takes no part in approvals. The call sites are the git pushes in the implementer, the decomposition push and agent-run finalization, pull-request creation, the tracker syncs from the run steps, the PRD ticket and page creation, the pull-request link written to a knowledge-base page and MCP tools. A CI-fix push, a ticket comment, a run callback, a Slack post, the generic connector writes and shell or container egress are not recorded. The digest cannot recover the input, and MCP tool classification trusts the remote server’s annotation. The ledger is read through one route that cuts at a fixed page size, with a truncated flag.",
+      "id": "runEffectBounds",
+      "refs": [
+        "effectRecord",
+        "effectReadOnly",
+        "effectGitPush",
+        "effectsRoute",
+        "effectRetention"
+      ],
+      "status": "Confirmed boundary",
+      "title": "The effects ledger is a record, not a control or a complete list"
+    },
+    {
+      "body": "Approval pins what an administrator read, not what it does: plugin scripts and hooks execute inside the run container, and profiles reach only the Claude Code runtime.",
+      "category": "Isolation",
+      "detail": "The scanners and structure checks produce warnings an admin acknowledges; they do not block, and a script can behave differently from how it reads. Instructions and skills are appended as data to the agent’s prompt, and anything a plugin does inside the container is subject to the same confinement as the harness itself, not a stronger one. A profile is global, so every team’s agent bound to it gets the same version unless the run pinned another. A pin keeps a disabled profile working for runs that already have it.",
+      "id": "harnessProfileBounds",
+      "refs": ["profileHash", "profileResolve", "profileMaterialize", "profileAdmin"],
+      "status": "Confirmed boundary",
+      "title": "An approved profile is trusted content that runs in the workspace"
     }
   ],
   "modelDescriptions": {
@@ -15349,6 +15460,260 @@
       "lines": 48,
       "path": "packages/worker/src/activities/sendReportDigests.ts",
       "title": "Digest budget dollars only for ORG_ADMIN email recipients"
+    },
+    {
+      "anchor": "model RunEffect {",
+      "id": "runEffectModel",
+      "lines": 30,
+      "path": "packages/shared/src/prisma/schema.prisma",
+      "title": "RunEffect row: kind, action, target, status, via, input digest, redacted detail"
+    },
+    {
+      "anchor": "export async function recordEffect(",
+      "id": "effectRecord",
+      "lines": 28,
+      "path": "packages/worker/src/lib/effectLedger.ts",
+      "title": "Best-effort write that never throws and is raced against a 5 s timeout"
+    },
+    {
+      "anchor": "export function mcpToolIsReadOnly(",
+      "id": "effectReadOnly",
+      "lines": 18,
+      "path": "packages/worker/src/lib/effectLedger.ts",
+      "title": "An MCP tool is a read only when the server declared readOnlyHint; unknown counts as a mutation"
+    },
+    {
+      "anchor": "export async function recordGitPush<T>(",
+      "id": "effectGitPush",
+      "lines": 26,
+      "path": "packages/worker/src/lib/effectLedger.ts",
+      "title": "A git push is recorded as DONE or FAILED and the result is returned or rethrown unchanged"
+    },
+    {
+      "anchor": "export function recordTrackerSync(",
+      "before": 12,
+      "id": "effectTrackerSync",
+      "lines": 24,
+      "path": "packages/worker/src/lib/effectLedger.ts",
+      "title": "Tracker sync: FAILED on a refused write, SKIPPED when nothing was written, else DONE"
+    },
+    {
+      "anchor": "Reads are not effects: only a call the server did not declare read-only is recorded.",
+      "id": "effectMcpRelay",
+      "lines": 14,
+      "path": "packages/worker/src/agents/harness/mcpRelay.ts",
+      "title": "Harness-relayed MCP calls record an effect unless the tool is declared read-only"
+    },
+    {
+      "anchor": "function recordCreatedItem(",
+      "id": "effectPrdTickets",
+      "lines": 18,
+      "path": "packages/worker/src/activities/prdWorkflow.ts",
+      "title": "PRD-created epics and stories are recorded as TRACKER effects"
+    },
+    {
+      "anchor": "const alreadyRecorded =",
+      "before": 2,
+      "id": "effectPullRequest",
+      "lines": 30,
+      "path": "packages/worker/src/activities/createOrUpdatePullRequest.ts",
+      "title": "A retried PR step does not record a second create for the same URL"
+    },
+    {
+      "anchor": "'/:id/effects',",
+      "before": 3,
+      "id": "effectsRoute",
+      "lines": 30,
+      "path": "packages/gateway/src/routes/workflowRuns.ts",
+      "title": "GET /runs/:id/effects returns the newest page at most, behind the run-visibility filter"
+    },
+    {
+      "anchor": "'audit.runEffectRetentionDays': defineSetting({",
+      "before": 4,
+      "id": "effectRetention",
+      "lines": 22,
+      "path": "packages/shared/src/config/registry.ts",
+      "title": "Effect rows are kept forever by default; a sweep deletes older ones when a retention is set"
+    },
+    {
+      "anchor": "export async function runWithNeedsInput(",
+      "id": "askLoop",
+      "lines": 110,
+      "path": "packages/worker/src/workflows/needsInputLoop.ts",
+      "title": "The workflow loop: invoke, turn a pause into an INPUT human step, wait, resume with the answers"
+    },
+    {
+      "anchor": "if (!isPausableStep(step, config) || !patched(NEEDS_INPUT_PATCH)) {",
+      "before": 2,
+      "id": "askDispatch",
+      "lines": 28,
+      "path": "packages/worker/src/workflows/runnable.ts",
+      "title": "Only pausable steps run inside the loop, and only on executions that started with the patch"
+    },
+    {
+      "anchor": "export function readNeedsInputLimits(",
+      "id": "askLimits",
+      "lines": 18,
+      "path": "packages/shared/src/lib/needsInputAsk.ts",
+      "title": "Round limit and answer timeout come from the run-pinned settings, with defaults"
+    },
+    {
+      "anchor": "AskUserQuestionInputSchema.safeParse(toolInput)",
+      "before": 8,
+      "id": "askTool",
+      "lines": 25,
+      "path": "packages/worker/src/agents/claudeCode/runtime.ts",
+      "title": "Claude Code AskUserQuestion is validated and ends the turn as a pause"
+    },
+    {
+      "anchor": "export function pausable(",
+      "id": "askPausable",
+      "lines": 6,
+      "path": "packages/worker/src/lib/pauseResume.ts",
+      "title": "Only the Claude Code runtime can pause; any other runtime stays unattended"
+    },
+    {
+      "anchor": "export async function snapshotWorkingTree(",
+      "before": 14,
+      "id": "askSnapshot",
+      "lines": 50,
+      "path": "packages/worker/src/lib/pauseSnapshot.ts",
+      "title": "The working tree is saved as one binary patch against the starting commit, capped at 20 MiB"
+    },
+    {
+      "anchor": "export function carriedUsage(",
+      "before": 6,
+      "id": "askCarried",
+      "lines": 10,
+      "path": "packages/worker/src/lib/pauseResume.ts",
+      "title": "Steps and wall-clock time used before a pause are carried into the resumed run"
+    },
+    {
+      "anchor": "export async function rebaseOntoMovedBranch(",
+      "before": 2,
+      "id": "askRebase",
+      "lines": 60,
+      "path": "packages/worker/src/lib/pauseRebase.ts",
+      "title": "Before the push, a resumed run is rebased onto a moved branch and re-checked by the path guard"
+    },
+    {
+      "anchor": "const rebased = await rebaseOntoMovedBranch(workspace, branch, {",
+      "before": 3,
+      "id": "askRebaseCall",
+      "lines": 25,
+      "path": "packages/worker/src/activities/executeImplementation.ts",
+      "title": "The implementer rebases before it pushes"
+    },
+    {
+      "anchor": "'workflow.needsInputTimeoutSeconds': defineSetting({",
+      "id": "askSettings",
+      "lines": 16,
+      "path": "packages/shared/src/config/registry.ts",
+      "title": "Answer timeout setting"
+    },
+    {
+      "anchor": "model HarnessProfileVersion {",
+      "before": 2,
+      "id": "profileModel",
+      "lines": 30,
+      "path": "packages/shared/src/prisma/schema.prisma",
+      "title": "Immutable, content-hashed profile versions with the stored archive and approval warnings"
+    },
+    {
+      "anchor": "app.get('/harness-profiles', { onRequest: adminOnly }",
+      "id": "profileAdmin",
+      "lines": 20,
+      "path": "packages/gateway/src/routes/harnessProfiles.ts",
+      "title": "Profile routes are ADMIN-only; a profile is disabled, never deleted"
+    },
+    {
+      "anchor": "export function computeContentHash(",
+      "id": "profileHash",
+      "lines": 14,
+      "path": "packages/shared/src/lib/harnessProfile/validate.ts",
+      "title": "Content hash over sorted file hashes plus the parsed manifest"
+    },
+    {
+      "anchor": "export async function resolveHarnessProfile(",
+      "id": "profileResolve",
+      "lines": 60,
+      "path": "packages/worker/src/lib/config/harnessProfile.ts",
+      "title": "Profile resolution is pinned per run and fails closed"
+    },
+    {
+      "anchor": "export const ProfileManifestSchema = z.strictObject({",
+      "id": "profileManifest",
+      "lines": 8,
+      "path": "packages/shared/src/lib/harnessProfile/manifest.ts",
+      "title": "Strict profile.json: description, instructions, plugins, and only Skill and Agent as extra tools"
+    },
+    {
+      "anchor": "export function withProfileInstructions(",
+      "id": "profileInstructions",
+      "lines": 6,
+      "path": "packages/worker/src/agents/claudeCode/profile.ts",
+      "title": "Instructions are appended to the system prompt behind a provenance line"
+    },
+    {
+      "anchor": "await profileMaterialization.ensure();",
+      "before": 3,
+      "id": "profileMaterialize",
+      "lines": 8,
+      "path": "packages/worker/src/agents/claudeCode/runtime.ts",
+      "title": "The approved snapshot is rewritten into the container before every turn"
+    },
+    {
+      "anchor": "export interface ToolCatalogEntry {",
+      "id": "toolCatalogEntry",
+      "lines": 14,
+      "path": "packages/shared/src/lib/toolCatalog.ts",
+      "title": "A catalog row pins a download per architecture with a SHA-256, a member path, a libc and a status"
+    },
+    {
+      "anchor": "export async function planWorkspaceTools(",
+      "before": 6,
+      "id": "toolPlan",
+      "lines": 60,
+      "path": "packages/worker/src/lib/workspaceTools.ts",
+      "title": "Tool requests come from the connection’s list and the base-ref tools file and are resolved against the catalog"
+    },
+    {
+      "anchor": "export async function installLateTools(",
+      "before": 8,
+      "id": "toolLate",
+      "lines": 40,
+      "path": "packages/worker/src/lib/workspaceTools.ts",
+      "title": "An agent may install more catalog tools into a running workspace within the connection’s limits"
+    },
+    {
+      "anchor": " * The tool catalog: the allowlist of pinned, checksummed downloads",
+      "id": "toolRoutes",
+      "lines": 12,
+      "path": "packages/gateway/src/routes/toolCatalog.ts",
+      "title": "Reading the catalog is open to any signed-in user; every write is ADMIN-only"
+    },
+    {
+      "anchor": "const NodeFlowFields = {",
+      "before": 8,
+      "id": "flowFields",
+      "lines": 8,
+      "path": "packages/shared/src/workflow/spec.ts",
+      "title": "Optional per-node fields: maxVisits, onExhausted and status"
+    },
+    {
+      "anchor": "// All attempts exhausted. An `onFailure` route wins over every onFail / onError mode:",
+      "before": 2,
+      "id": "flowOnFailure",
+      "lines": 16,
+      "path": "packages/shared/src/workflow/interpreter.ts",
+      "title": "onFailure routes after retries are exhausted and beats onFail block and warn"
+    },
+    {
+      "anchor": "if (node.maxVisits !== undefined) {",
+      "id": "flowMaxVisits",
+      "lines": 14,
+      "path": "packages/shared/src/workflow/interpreter.ts",
+      "title": "The (maxVisits+1)th entry routes to onExhausted or fails"
     }
   ],
   "usecases": [

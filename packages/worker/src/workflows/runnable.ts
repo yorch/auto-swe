@@ -238,7 +238,10 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
           return runWithNeedsInput({
             deps: {
               createHumanStep: (args) => stateActivities.createHumanStep({ ...args, runId }),
+              isCancellation: (err) => isCancellation(err),
+              patched: (id) => patched(id),
               resolveHumanStep: (args) => stateActivities.resolveHumanStep({ ...args, runId }),
+              runNonCancellable: (fn) => CancellationScope.nonCancellable(fn),
               waitSignal: (name, timeout) => dispatcher.waitSignal(name, timeout),
             },
             invoke: (pause) =>
