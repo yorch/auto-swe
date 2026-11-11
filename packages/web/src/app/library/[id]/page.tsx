@@ -361,6 +361,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
               </div>
             ) : (
               <>
+                <Card variant="inset">
+                  <h2 className="mb-2 text-sm font-semibold text-paper-100">Description</h2>
+                  <p className="whitespace-pre-wrap break-words text-sm text-paper-400">
+                    {template.description || 'No description provided.'}
+                  </p>
+                </Card>
                 <KnowledgeBaseLinksPanel
                   canManage={canManage}
                   global={!template.team}

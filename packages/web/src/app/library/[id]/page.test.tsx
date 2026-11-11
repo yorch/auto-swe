@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Suspense } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubDialogPrototype } from '@/test/rtl-helpers';
@@ -16,6 +16,7 @@ const hooks = vi.hoisted(() => ({
   refineProps: null as { onSaved?: (v: number) => void } | null,
   template: {
     activeVersion: 1,
+    description: 'Review and implement a work request.',
     id: '11111111-1111-4111-8111-111111111111',
     name: 'Broken',
     status: 'DRAFT',
@@ -136,6 +137,17 @@ async function renderPage() {
 }
 
 describe('workflow editor with lint errors', () => {
+  it('makes the description readable in Settings without management permissions', async () => {
+    useAuthStore.setState({ user: { role: 'ENGINEER' } } as never);
+    await renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+    expect(
+      within(screen.getByRole('region', { name: 'Workflow settings' })).getByText(
+        hooks.template.description
+      )
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /More actions for/ })).toBeNull();
+  });
   it('lists the errors and blocks Activate with a visible reason', async () => {
     await renderPage();
     const activate = await screen.findByRole('button', { name: 'Activate' });

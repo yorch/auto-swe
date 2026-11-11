@@ -1,23 +1,25 @@
 'use client';
 
 import { isTerminalWorkflowRunStatus } from '@auto-swe/shared/types/api';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { Activity, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Select } from '@/components/ui/Select';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { nodeDisplayName } from '@/components/workflow/nodeDisplay';
+import { nodeDisplayName, nodeGroupOf } from '@/components/workflow/nodeDisplay';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
+import { phasesOf } from '@/components/workflow/workflowPhases';
 import { buildDagOverlay } from '@/lib/dagOverlay';
 import { findFailedStep } from '@/lib/runFailure';
 import { runTimeWindow, stepsAtTime } from '@/lib/runPlayback';
+import { stepBand } from '@/lib/runTimeline';
 import {
   recordingMatchesSelection,
   specNodeIdOfRecording,
   traceBelongsToStep,
 } from '@/lib/traceLinkage';
-import { cn, FOCUS_RING, formatClock, formatDuration } from '@/lib/utils';
+import { cn, FOCUS_RING, formatClock, formatDate, formatDuration } from '@/lib/utils';
 import type { TranscriptProps } from './layouts/Transcript';
 import { TracesTab } from './TracesTab';
 
@@ -73,6 +75,7 @@ export function RunWorkspace({
     }
   }, [needsDecision]);
   const [stepId, setStepId] = useState<string | null>(null);
+  const [transcriptVisited, setTranscriptVisited] = useState(false);
   const [mobileSteps, setMobileSteps] = useState(false);
   const [replayMs, setReplayMs] = useState<number | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -116,6 +119,13 @@ export function RunWorkspace({
   const eventTraces = selectedStep
     ? visibleTraces.filter((t) => traceBelongsToStep(t, selectedStep, linker))
     : visibleTraces;
+  const phases = useMemo(() => (spec ? phasesOf(spec) : []), [spec]);
+  const activeSteps =
+    cutoff === null
+      ? []
+      : steps.filter(
+          (step) => step.startedAt && (!step.endedAt || Date.parse(step.endedAt) > cutoff)
+        );
 
   useEffect(() => {
     if (!time.live) {
@@ -343,6 +353,9 @@ export function RunWorkspace({
               key={v}
               onClick={() => {
                 userViewed.current = true;
+                if (v === 'Transcript') {
+                  setTranscriptVisited(true);
+                }
                 setView(v);
                 if (pane.current) {
                   pane.current.scrollTop = 0;
@@ -361,13 +374,54 @@ export function RunWorkspace({
               This panel shows latest/final information, not historical playback.
             </p>
           )}
-          {view === 'Events' && (
-            <>
+          <Activity mode={view === 'Events' || view === 'Graph' ? 'visible' : 'hidden'}>
+            <Activity mode={view === 'Graph' ? 'visible' : 'hidden'}>
+              {spec && (
+                <div className="h-[clamp(280px,48dvh,480px)]">
+                  <WorkflowDag
+                    height="100%"
+                    narrowScrollSafe
+                    onSelect={(id) => select(id)}
+                    selectedNodeId={selectedSpecId}
+                    spec={spec}
+                    statuses={overlay}
+                    toggleSelection={false}
+                  />
+                </div>
+              )}
+            </Activity>
+            <div hidden={view !== 'Events'}>
               {selectedStep && (
                 <div className="space-y-3 border-b border-ink-600 p-4">
                   <div className="font-mono text-xs text-paper-400">
                     {selectedStep.nodeId} · attempt {selectedStep.attempt}
                   </div>
+                  <dl className="flex flex-wrap gap-x-6 gap-y-2 text-xs text-paper-400">
+                    <div>
+                      <dt>Started</dt>
+                      <dd>
+                        {selectedStep.startedAt ? (
+                          <time dateTime={selectedStep.startedAt} title={selectedStep.startedAt}>
+                            {formatDate(selectedStep.startedAt, { showSeconds: true })}
+                          </time>
+                        ) : (
+                          'Not started'
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Ended</dt>
+                      <dd>
+                        {selectedStep.endedAt ? (
+                          <time dateTime={selectedStep.endedAt} title={selectedStep.endedAt}>
+                            {formatDate(selectedStep.endedAt, { showSeconds: true })}
+                          </time>
+                        ) : (
+                          'Not ended'
+                        )}
+                      </dd>
+                    </div>
+                  </dl>
                   {selectedStep.error && (
                     <pre className="whitespace-pre-wrap break-words text-xs text-danger-400">
                       {selectedStep.error}
@@ -387,25 +441,9 @@ export function RunWorkspace({
                   </details>
                 </div>
               )}
-              {events}
-            </>
-          )}
-          {view === 'Graph' && spec && (
-            <>
-              <div className="h-[clamp(280px,48dvh,480px)]">
-                <WorkflowDag
-                  height="100%"
-                  narrowScrollSafe
-                  onSelect={(id) => select(id)}
-                  selectedNodeId={selectedSpecId}
-                  spec={spec}
-                  statuses={overlay}
-                  toggleSelection={false}
-                />
-              </div>
-              <div className="border-t border-ink-600">{events}</div>
-            </>
-          )}
+            </div>
+            <div className={cn(view === 'Graph' && 'border-t border-ink-600')}>{events}</div>
+          </Activity>
           {view === 'Timing' && (
             <div className="p-4">
               <h3 className="mb-2 text-sm font-semibold text-paper-100">Step timing</h3>
@@ -471,30 +509,36 @@ export function RunWorkspace({
               })}
             </div>
           )}
-          {view === 'Transcript' && (
-            <div className="space-y-5 p-4">
-              {(selectedStep ? [selectedStep] : selectedNodeId ? matching : steps)
-                .filter((s) => s.startedAt || replayMs === null)
-                .map((step) => (
-                  <section className="border-b border-ink-600 pb-4" key={step.id}>
-                    <Button onClick={() => select(step.nodeId, step.id)} size="sm" variant="ghost">
-                      {step.nodeId} · attempt {step.attempt}
-                    </Button>
-                    <div className="my-2">
-                      <StatusBadge status={step.status} />
-                    </div>
-                    {step.error && <p className="mb-3 text-xs text-danger-400">{step.error}</p>}
-                    <TracesTab
-                      filterNodeId={step.nodeId}
-                      linker={linker}
-                      onClearFilter={() => select(null)}
-                      runStartedAt={run.startedAt}
-                      traces={visibleTraces.filter((t) => traceBelongsToStep(t, step, linker))}
-                      windowed={run.tracesTruncated === true}
-                    />
-                  </section>
-                ))}
-            </div>
+          {transcriptVisited && (
+            <Activity mode={view === 'Transcript' ? 'visible' : 'hidden'}>
+              <div className="space-y-5 p-4">
+                {(selectedStep ? [selectedStep] : selectedNodeId ? matching : steps)
+                  .filter((s) => s.startedAt || replayMs === null)
+                  .map((step) => (
+                    <section className="border-b border-ink-600 pb-4" key={step.id}>
+                      <Button
+                        onClick={() => select(step.nodeId, step.id)}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        {step.nodeId} · attempt {step.attempt}
+                      </Button>
+                      <div className="my-2">
+                        <StatusBadge status={step.status} />
+                      </div>
+                      {step.error && <p className="mb-3 text-xs text-danger-400">{step.error}</p>}
+                      <TracesTab
+                        filterNodeId={step.nodeId}
+                        linker={linker}
+                        onClearFilter={() => select(null)}
+                        runStartedAt={run.startedAt}
+                        traces={visibleTraces.filter((t) => traceBelongsToStep(t, step, linker))}
+                        windowed={run.tracesTruncated === true}
+                      />
+                    </section>
+                  ))}
+              </div>
+            </Activity>
           )}
           {view === 'Overview' && overview}
           {view === 'Evidence' && evidence}
@@ -535,6 +579,27 @@ export function RunWorkspace({
           </div>
           {replayMs !== null && (
             <>
+              <section
+                aria-label="Replay context"
+                className="max-h-12 overflow-y-auto break-words text-xs text-paper-400"
+              >
+                {activeSteps.length === 0 ? (
+                  <p>No step active at this point</p>
+                ) : (
+                  activeSteps.map((step) => {
+                    const node = spec?.nodes[specNodeIdOfRecording(step.nodeId, linker)];
+                    const phase = nodeGroupOf(node);
+                    return (
+                      <p key={step.id}>
+                        {nodeDisplayName(node, specNodeIdOfRecording(step.nodeId, linker))} ·{' '}
+                        {step.nodeId} · attempt {step.attempt}
+                        {phase &&
+                          ` · ${phase} · phase ${phases.indexOf(phase) + 1} of ${phases.length}`}
+                      </p>
+                    );
+                  })
+                )}
+              </section>
               <div className="flex items-center gap-3">
                 <Button
                   aria-label={playing ? 'Pause replay' : 'Play replay'}
@@ -549,18 +614,53 @@ export function RunWorkspace({
                 >
                   <Icon name={playing ? 'pause' : 'play'} size={13} />
                 </Button>
-                <input
-                  aria-label="Replay position"
-                  className="min-w-0 flex-1 accent-accent-400"
-                  max={time.duration}
-                  min={0}
-                  onChange={(e) => {
-                    setReplayMs(Number(e.target.value));
-                    setPlaying(false);
-                  }}
-                  type="range"
-                  value={currentMs}
-                />
+                <div className="min-w-0 flex-1">
+                  <input
+                    aria-label="Replay position"
+                    className="block w-full accent-accent-400"
+                    max={time.duration}
+                    min={0}
+                    onChange={(e) => {
+                      setReplayMs(Number(e.target.value));
+                      setPlaying(false);
+                    }}
+                    type="range"
+                    value={currentMs}
+                  />
+                  <div
+                    aria-label="Recorded step bands"
+                    className="relative mt-1 h-1 overflow-hidden rounded bg-ink-600"
+                    role="img"
+                  >
+                    {steps.map((step) => {
+                      if (!step.startedAt) {
+                        return null;
+                      }
+                      const { leftPct, widthPct } = stepBand(
+                        {
+                          endedAt: step.endedAt ?? new Date(time.start + currentMs).toISOString(),
+                          startedAt: step.startedAt,
+                        },
+                        time.start,
+                        Math.max(1, time.duration)
+                      );
+                      return (
+                        <span
+                          className={cn(
+                            'absolute h-full',
+                            step.status === 'FAILED' ? 'bg-danger-400' : 'bg-info-400'
+                          )}
+                          key={step.id}
+                          style={{
+                            left: `${leftPct}%`,
+                            width: `${widthPct}%`,
+                          }}
+                          title={`${step.nodeId} · attempt ${step.attempt}`}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
                 <Select
                   aria-label="Replay speed"
                   compact
