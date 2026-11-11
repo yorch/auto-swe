@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   autoMergeNamingViolations,
+  bareFetchViolations,
+  connectorFetchRedirectViolations,
   envCredentialViolations,
   immediateMergeViolations,
   liveSuiteViolations,
   optInSuiteViolations,
+  scmProviderFiles,
   slackWriterViolations,
   workflowTriggers,
 } from './check-invariants.mjs';
@@ -335,6 +338,111 @@ describe('immediateMergeViolations', () => {
     expect(immediateMergeViolations('a;\nawait c.pulls.merge({});\n')[0]?.line).toBe(2);
     expect(immediateMergeViolations('// never call pulls.merge( here\n')).toEqual([]);
     expect(immediateMergeViolations('/* mergePullRequest */\n')).toEqual([]);
+  });
+});
+
+/** Spell a template interpolation without tripping a lint rule: <<id>> becomes dollar-brace id. */
+const tpl = (s) => s.replace(/<<([^>]*)>>/g, (_, e) => ['$', '{', e, '}'].join(''));
+
+describe('immediateMergeViolations: GitLab and Bitbucket', () => {
+  it('reports the REST merge routes in literal, placeholder and interpolated forms', () => {
+    for (const src of [
+      "put('/projects/1/merge_requests/2/merge');",
+      "await gl.request(`/projects/<<id>>/merge_requests/<<iid>>/merge`, { method: 'PUT' });",
+      'await gl.request(`/projects/<<id>>/merge_requests/<<a + b>>/merge`, {});',
+      "await http.put('/projects/{id}/merge_requests/{merge_request_iid}/merge');",
+      'await bb.post(`/repositories/<<w>>/<<r>>/pullrequests/<<id>>/merge`);',
+      "await bb.post('/repositories/acme/api/pullrequests/{pull_request_id}/merge');",
+      "await bb.post('/projects/P/repos/r/pull-requests/4/merge');",
+    ]) {
+      expect(immediateMergeViolations(tpl(src)), src).toHaveLength(1);
+    }
+  });
+
+  it('reports auto-merge-on-pipeline options, accept/merge names and clients', () => {
+    for (const src of [
+      'body: { merge_when_pipeline_succeeds: true },',
+      'const opts = { mergeWhenPipelineSucceeds: true };',
+      'await gl.acceptMergeRequest(1, 2);',
+      'await gl.accept_merge_request(1, 2)',
+      'await gl.mergeMergeRequest(1, 2);',
+      "await q('mutation { mergeRequestAccept(input: {}) { x } }');",
+      'await gl.MergeRequests.accept(1, 2);',
+      'await gl.MergeRequests.merge(1, 2);',
+      'await client.merge_requests.merge(1);',
+      "await client.mergeRequests['accept'](1);",
+      'await bitbucket.pullrequests.merge({});',
+    ]) {
+      expect(immediateMergeViolations(tpl(src)), src).toHaveLength(1);
+    }
+  });
+
+  it('does not flag cancelling a merge, unrelated routes, or lookalike names', () => {
+    for (const src of [
+      "put('/projects/1/merge_requests/2/cancel_merge_when_pipeline_succeeds');",
+      'get(`/projects/<<id>>/merge_requests/<<iid>>/changes`);',
+      "get('/projects/1/merge_requests/2/merge_ref');",
+      "get('/repositories/a/b/pullrequests/3/commits');",
+      "post('/repositories/a/b/pullrequests/3/approve');",
+      'await gl.cancelMergeWhenPipelineSucceeds(1, 2);',
+      'const mergeRequests = list.filter(Boolean);',
+      'await gl.MergeRequests.show(1, 2);',
+      'await client.merge_requests.create({});',
+    ]) {
+      expect(immediateMergeViolations(tpl(src)), src).toEqual([]);
+    }
+  });
+
+  it('ignores comments', () => {
+    expect(immediateMergeViolations('// PUT /merge_requests/1/merge is forbidden\n')).toEqual([]);
+    expect(immediateMergeViolations('/* merge_when_pipeline_succeeds */\n')).toEqual([]);
+  });
+});
+
+describe('bareFetchViolations', () => {
+  it('reports a call, a default parameter and a passed value, with the line', () => {
+    expect(bareFetchViolations("a;\nawait fetch('https://x');\n")).toEqual([{ line: 2 }]);
+    expect(bareFetchViolations('function f(impl = fetch) {}\n')).toHaveLength(1);
+    expect(bareFetchViolations('run(globalThis.fetch);\n')).toHaveLength(1);
+    expect(bareFetchViolations('use(fetch);\n')).toHaveLength(1);
+  });
+
+  it('passes a guarded fetch, a type, a property key, comments and prose', () => {
+    for (const src of [
+      'const f = createGuardedFetch(); await f(url);\n',
+      'type F = typeof fetch;\n',
+      'const o = { fetch: impl };\n',
+      '// fetch( is banned here\n',
+      "throw new Error('Cannot fetch CI logs');\n",
+      'await fetchGuarded(url, {});\n',
+    ]) {
+      expect(bareFetchViolations(src), src).toEqual([]);
+    }
+  });
+});
+
+describe('connectorFetchRedirectViolations', () => {
+  it('reports a fetch call that states no redirect policy', () => {
+    expect(connectorFetchRedirectViolations("a;\nawait fetch(url, { method: 'GET' });\n")).toEqual([
+      { line: 2 },
+    ]);
+    expect(connectorFetchRedirectViolations('await globalThis.fetch(url);\n')).toHaveLength(1);
+  });
+
+  it('passes a call that states one, and a commented-out call', () => {
+    expect(connectorFetchRedirectViolations("await fetch(url, { redirect: 'error' });\n")).toEqual(
+      []
+    );
+    expect(connectorFetchRedirectViolations('// await fetch(url);\n')).toEqual([]);
+  });
+});
+
+describe('scmProviderFiles', () => {
+  it('globs the SCM seam directory, without the interface, the dispatcher or tests', () => {
+    const files = scmProviderFiles();
+    expect(files).toContain('packages/worker/src/lib/scm/github.ts');
+    expect(files.some((f) => /[\\/](?:types|index)\.ts$/.test(f))).toBe(false);
+    expect(files.some((f) => f.endsWith('.test.ts'))).toBe(false);
   });
 });
 
