@@ -122,6 +122,13 @@ describe('repository URL overrides', () => {
     });
   }
 
+  it('does not let a client choose the source-control provider', async () => {
+    const res = await onboard({ scmProvider: 'gitlab' });
+    expect(res.statusCode).toBe(201);
+    // The body schema strips an unknown key, so the column keeps its default ('github').
+    expect(ctx.prisma.connection.create.mock.calls[0][0].data).not.toHaveProperty('scmProvider');
+  });
+
   it('stores a web base as its origin and the API base without a trailing slash', async () => {
     const res = await onboard({
       githubApiUrl: 'https://ghe.corp/api/v3/',

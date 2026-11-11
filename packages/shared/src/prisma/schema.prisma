@@ -677,6 +677,12 @@ model Connection {
   description          String?             @map("description")
   githubUrl            String?             @map("github_url")
   githubApiUrl         String?             @map("github_api_url")
+  /// Which source-control host family serves this repository; the worker's `getScmProvider`
+  /// dispatches on it. Only `github` has an implementation, so the gateway never writes any
+  /// other value, and a value with no registered provider fails the activity non-retryably
+  /// rather than falling back to GitHub (that would send a foreign URL a GitHub credential).
+  /// No CHECK: the registry is the list, and adding a provider must not need a migration.
+  scmProvider          String              @default("github") @map("scm_provider")
   teamId               String              @map("team_id") @db.Uuid
   team                 Team                @relation(fields: [teamId], references: [id], onDelete: Restrict)
   /// Which GitHub App installation reaches this repository. Null means "the

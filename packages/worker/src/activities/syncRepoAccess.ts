@@ -123,6 +123,7 @@ export async function syncRepoAccess(
             installation: { select: { host: true, installationId: true } },
             organizationName: true,
             repoName: true,
+            scmProvider: true,
             // The owning team's members and those of every team the repository
             // is shared with: both reach it, so both need answers here, or a
             // shared-team member would be filtered out of every listing under

@@ -461,7 +461,9 @@ export async function evaluatePullRequest(
     repoHost: async (repo) =>
       repoHostFamily({ apiUrl: repo.apiUrl, baseUrl: repo.baseUrl }, await resolveGitHubConfig()),
     scan: scanDiffForCodeIssuesDetailed,
-    scm: getScmProvider(),
+    // The evaluation is GitHub-only (App approver, host family, branch rules); the gate in
+    // evaluatePullRequestWith refuses a repository whose provider is anything else.
+    scm: getScmProvider({ scmProvider: 'github' }),
   });
 }
 
@@ -1152,6 +1154,10 @@ export async function evaluatePullRequestWith(
     return { outcome: 'skipped', reason: 'repository not found or inactive' };
   }
   const repo = toRepoRef(connection);
+  // `deps.scm` is the one GitHub provider for the whole evaluation; resolving the repository's own
+  // provider first refuses (non-retryably) a repository served by anything else, rather than
+  // evaluating it through the GitHub client.
+  getScmProvider(repo);
   if (input.trigger === MERGED_TRIGGER) {
     return recountMergedApprovals(connection, input, deps, repo);
   }

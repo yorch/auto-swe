@@ -321,6 +321,16 @@ describe('evaluatePullRequest: skipped paths', () => {
     expect(scm.calls).toEqual([]);
   });
 
+  it('refuses a repository served by a provider with no implementation, touching nothing', async () => {
+    m.connection.mockResolvedValue({ ...(await m.connection()), scmProvider: 'gitlab' });
+    const scm = fakeScm();
+    await expect(evaluatePullRequestWith(INPUT, depsWith(scm))).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'SCM_PROVIDER_UNSUPPORTED',
+    });
+    expect(scm.calls).toEqual([]);
+  });
+
   it('disarms an armed pull request of a deactivated repository, like an off repository', async () => {
     m.connection.mockResolvedValue({ ...(await m.connection()), isActive: false });
     m.previous.mockResolvedValue({

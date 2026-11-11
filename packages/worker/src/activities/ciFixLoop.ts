@@ -34,7 +34,8 @@ export async function fetchCILogs(logsUrl?: string, repoId?: string): Promise<st
       })
     : null;
   const repoRef = repo?.organizationName && repo.repoName ? toRepoRef(repo) : undefined;
-  return getScmProvider(repoRef).fetchCiLogs(logsUrl, repoRef);
+  // With no repository there is no provider to read; a bare logs URL is a GitHub one.
+  return getScmProvider(repoRef ?? {}).fetchCiLogs(logsUrl, repoRef);
 }
 
 /** What a template step asks of a fix session beyond the defaults. */

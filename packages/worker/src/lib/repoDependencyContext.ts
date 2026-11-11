@@ -206,6 +206,7 @@ export async function checkoutUpstreamRepos(
         installation: { select: { host: true, installationId: true } },
         organizationName: true,
         repoName: true,
+        scmProvider: true,
       },
       where: {
         id: { in: neighborIds },

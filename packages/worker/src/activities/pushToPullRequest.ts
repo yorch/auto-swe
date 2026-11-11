@@ -47,6 +47,7 @@ export async function fastForwardPullRequestBranch(args: {
     installation: { installationId: string; host: string } | null;
     organizationName: string | null;
     repoName: string | null;
+    scmProvider: string;
     team: { orgId: string | null } | null;
     teamId: string;
   };

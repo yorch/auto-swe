@@ -153,6 +153,7 @@ export async function detectRepoDependencies(
       isActive: true,
       organizationName: true,
       repoName: true,
+      scmProvider: true,
       team: { select: { orgId: true } },
       type: true,
     },

@@ -44,7 +44,7 @@ async function github<T>(method: string, path: string, body?: unknown): Promise<
 }
 
 describe.skipIf(!gate.enabled)(liveTitle('live GitHub inline review comments', gate), () => {
-  const provider = getScmProvider();
+  const provider = getScmProvider({ scmProvider: 'github' });
   const branch = `live-review-${Date.now().toString(36)}`;
   const file = 'src/live-review-target.js';
   let repo: RepoRef;

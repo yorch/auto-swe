@@ -2,13 +2,14 @@
  * SCM provider seam (EVOL-1).
  *
  * Everything the execution path needs from a source-control host is expressed
- * through `ScmProvider`. GitHub is the first (and currently only)
- * implementation — see `github.ts`. The interface is intentionally tight:
+ * through `ScmProvider`. `getScmProvider` (`index.ts`) picks the implementation from
+ * `Connection.scmProvider` through an explicit registry; GitHub (`github.ts`) is the only entry,
+ * and a name with no entry fails non-retryably instead of falling back. The interface is intentionally tight:
  * clone credentials, idempotent PR create-or-reuse, PR URL construction, CI log
  * fetching, and one user's permission on a repository. Webhook payload parsing
  * stays provider-specific in the gateway
  * (`packages/gateway/src/routes/webhooks.ts`); only its payload→domain-event
- * mapping is factored out there for reuse by a future GitLab route.
+ * mapping is factored out there so another provider's route can reuse it.
  */
 
 import type { PermissionLookup } from '@auto-swe/shared/lib/githubPermission';
@@ -42,6 +43,11 @@ export interface RepoRef {
   installationId?: string | null;
   /** The `GitHubInstallation.host` of that installation: empty for the instance's. */
   installationHost: string | null;
+  /**
+   * The `Connection.scmProvider` this ref was built from, which `getScmProvider` dispatches on.
+   * Absent only on a hand-built fixture, which means GitHub.
+   */
+  scmProvider?: string;
 }
 
 /** Result of resolving clone credentials for a repository. */
