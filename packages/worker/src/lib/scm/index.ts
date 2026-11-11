@@ -20,26 +20,34 @@ export { SCM_PROVIDER_UNSUPPORTED, scmProviderUnsupported };
  * exists only if it has an entry here, and an entry is added only with a class that implements the
  * whole `ScmProvider` interface — there is deliberately no stub for a host that is not implemented.
  */
-const PROVIDERS: Record<string, ScmProvider> = {
+const PROVIDERS: Readonly<Record<string, ScmProvider>> = Object.freeze({
   github: new GitHubScmProvider(),
-};
+});
+
+/**
+ * Providers a test stood in, kept apart from `PROVIDERS` so the real registry is never mutated:
+ * `github` and every other real entry stay non-replaceable whatever a test registers.
+ */
+const TEST_PROVIDERS = new Map<string, ScmProvider>();
+
+const isTestProcess = () => process.env.NODE_ENV === 'test' && Boolean(process.env.VITEST);
 
 /**
  * Test seam: register `provider` under `name` until the returned function is called. It exists so
  * a test can stand a second provider in the registry and prove that GitHub-only paths still refuse
- * a repository served by it. It refuses to run outside a test process, and it cannot replace a
- * real entry.
+ * a repository served by it. It refuses to run unless `NODE_ENV` is `test` and `VITEST` is set, and
+ * it cannot replace a real entry (those live in a frozen table this never touches).
  */
 export function registerScmProviderForTest(name: string, provider: ScmProvider): () => void {
-  if (!process.env.VITEST) {
+  if (!isTestProcess()) {
     throw new Error('registerScmProviderForTest is for tests only');
   }
-  if (Object.hasOwn(PROVIDERS, name)) {
+  if (Object.hasOwn(PROVIDERS, name) || TEST_PROVIDERS.has(name)) {
     throw new Error(`The SCM provider "${name}" is already registered`);
   }
-  PROVIDERS[name] = provider;
+  TEST_PROVIDERS.set(name, provider);
   return () => {
-    delete PROVIDERS[name];
+    TEST_PROVIDERS.delete(name);
   };
 }
 
@@ -54,9 +62,12 @@ export function registerScmProviderForTest(name: string, provider: ScmProvider):
  */
 export function getScmProvider(repo: Pick<RepoRef, 'scmProvider'>): ScmProvider {
   const name = repo.scmProvider;
-  const provider = Object.hasOwn(PROVIDERS, name) ? PROVIDERS[name] : undefined;
+  const provider = Object.hasOwn(PROVIDERS, name) ? PROVIDERS[name] : TEST_PROVIDERS.get(name);
   if (!provider) {
-    throw scmProviderUnsupported(name, `Supported: ${Object.keys(PROVIDERS).join(', ')}.`);
+    throw scmProviderUnsupported(
+      name,
+      `Supported: ${[...Object.keys(PROVIDERS), ...TEST_PROVIDERS.keys()].join(', ')}.`
+    );
   }
   return provider;
 }

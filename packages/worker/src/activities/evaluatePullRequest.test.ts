@@ -456,6 +456,50 @@ describe('evaluatePullRequest: skipped paths', () => {
         evaluatePullRequestWith({ ...INPUT, trigger: 'disarm-sweep' }, withRegistry(github))
       ).resolves.toMatchObject({ outcome: 'skipped' });
     });
+
+    it('rethrows a retryable failure of the stand-down so Temporal retries it', async () => {
+      await asGitlab();
+      m.previous.mockResolvedValue({
+        autoMergeEnabled: true,
+        headSha: HEAD,
+        id: 'row-old',
+        reasons: [],
+      });
+      for (const failure of [
+        ApplicationFailure.retryable(
+          'auto-merge could not be disabled',
+          'AUTO_MERGE_DISABLE_FAILED'
+        ),
+        Object.assign(new Error('bad gateway'), { status: 502 }),
+        Object.assign(new Error('API rate limit exceeded'), { status: 403 }),
+      ]) {
+        const github = fakeScm({
+          getPullRequest: async () => {
+            throw failure;
+          },
+        });
+        await expect(
+          evaluatePullRequestWith({ ...INPUT, trigger: 'disarm-sweep' }, withRegistry(github))
+        ).rejects.toBe(failure);
+      }
+    });
+
+    it('rethrows when the host refuses the disarm and the pull request is still armed', async () => {
+      await asGitlab();
+      m.previous.mockResolvedValue({
+        autoMergeEnabled: true,
+        headSha: HEAD,
+        id: 'row-old',
+        reasons: [],
+      });
+      const github = fakeScm({
+        disableAutoMerge: async () => ({ ok: false, reason: 'refused' }),
+        getPullRequest: async () => ARMED,
+      });
+      await expect(
+        evaluatePullRequestWith({ ...INPUT, trigger: 'disarm-sweep' }, withRegistry(github))
+      ).rejects.toMatchObject({ nonRetryable: false, type: 'AUTO_MERGE_DISABLE_FAILED' });
+    });
   });
 
   it('runs a GitHub repository through the provider the registry dispatches to, not the fixed one', async () => {

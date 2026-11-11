@@ -829,7 +829,9 @@ create or update API, so no client can set it.
 A GitHub credential is never used for a row whose column is anything but `github`, whatever its
 URLs say. The platform credential lookup, a user's saved token, the permission lookups behind the
 launch gate, the worker's GitHub client, the pull-request evaluation and the GitHub webhook
-matching each refuse such a row; the list, and the one stand-down path that stays open, is in
+matching each refuse such a row, as do saving a personal token (`409` `SCM_PROVIDER_UNSUPPORTED`,
+before the token is sent anywhere or stored) and choosing `auto` mode or bot approval for it; the
+list, and the one stand-down path that stays open, is in
 [architecture.md](./architecture.md#source-control-provider-seam), together with what a new
 provider has to satisfy, including that a non-GitHub row must carry a `githubUrl`: the identity
 index does not include the provider, and a missing URL means the instance's GitHub host.

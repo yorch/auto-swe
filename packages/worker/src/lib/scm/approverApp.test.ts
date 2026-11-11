@@ -125,6 +125,23 @@ describe('getApproverClient', () => {
     expect(h.calls).toHaveLength(0);
   });
 
+  it('refuses, non-retryably and before any request, a repository another provider serves', async () => {
+    const h = harness();
+    for (const scmProvider of ['gitlab', 'bitbucket', '']) {
+      // Default URLs: the host check alone would pass this row as the instance's own.
+      const err = await getApproverClient({ ...repo, scmProvider }, h.deps).then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(err, scmProvider).toMatchObject({
+        nonRetryable: true,
+        type: 'SCM_PROVIDER_UNSUPPORTED',
+      });
+    }
+    expect(h.created).toHaveLength(0);
+    expect(h.calls).toHaveLength(0);
+  });
+
   it('refuses a half-overridden repository (web and API on different hosts)', async () => {
     const h = harness();
     const half = { ...repo, apiUrl: 'https://ghe.example.com/api/v3' };

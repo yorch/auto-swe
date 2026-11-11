@@ -172,7 +172,9 @@ interface in `packages/worker/src/lib/scm/types.ts`. Activities never construct 
   `toRepoRef` copies it onto the `RepoRef`, and it is a required input, so a query that selects a
   repository without it fails to compile instead of silently resolving to GitHub. `getScmProvider`
   looks the name up in an explicit registry; `github` maps to `GitHubScmProvider` and is the only
-  entry.
+  entry. The registry table is frozen. A test may stand a second provider in beside it
+  (`registerScmProviderForTest`, which runs only when `NODE_ENV` is `test` and `VITEST` is set, and
+  never replaces a real entry), but the real table is never mutated.
 - **No fallback.** A name with no registry entry throws a non-retryable `ApplicationFailure` of type
   `SCM_PROVIDER_UNSUPPORTED` that names it. It never routes to GitHub: that would send another
   host's URL a GitHub credential, and a platform credential never leaves its host. There is no stub
@@ -186,8 +188,10 @@ interface in `packages/worker/src/lib/scm/types.ts`. Activities never construct 
   One path stays open for a repository whose column changed after the platform armed auto-merge or
   recorded a bot approval there: the skip-and-disarm path (a deactivated or switched-off
   repository, and the `disarm-sweep` trigger) reads the repository as the GitHub repository it was
-  and undoes the arming. It makes no call when nothing was recorded, and it is best effort: a
-  failure is logged and not retried.
+  and undoes the arming. It makes no call when nothing was recorded. A transient failure (the
+  retryable `AUTO_MERGE_DISABLE_FAILED`, a 5xx, a rate limit) is rethrown so Temporal retries it;
+  only a standing refusal (a non-retryable error, or a disarm whose read of the pull request was
+  refused for good) is logged and swallowed.
 
 **No GitHub credential reaches a non-GitHub repository.** The column is read where the credential
 is chosen, not only where the provider is dispatched, because the gateway and the shared lookups
@@ -208,6 +212,17 @@ refused at:
   (`decideRepoLaunch`, reached by the gateway, the Slack paths and the worker's
   `scheduledFireAuthorization`) refuses with `host-mismatch` before consulting a stored login or a
   saved token.
+- The reviewer's write credential (`resolveReviewerWrite`, gateway): reads the mismatch as
+  `unusable`, so the pull-request cockpit and the review writes answer that a saved token cannot be
+  used instead of failing with a server error.
+- Saving a token (`PUT /api/v1/repositories/:id/credential`): selects the column and answers `409`
+  `SCM_PROVIDER_UNSUPPORTED` before the token is sent anywhere or stored. Removing a token stays
+  open for every row.
+- The pull-request evaluation policy route (`PUT /api/v1/repositories/:id/pr-evaluation`): refuses
+  `auto` mode and bot approval for such a row with the same `409`, since the worker refuses it at
+  run time; turning either off stays open.
+- The approver App (`getApproverClient`): throws the non-retryable `SCM_PROVIDER_UNSUPPORTED`
+  before reading its configuration, because its host check reads URLs only.
 - The worker's GitHub client (`scm/github.ts`): `runToken`, `platformCredential` and
   `launcherToken` throw `SCM_PROVIDER_UNSUPPORTED`, `repoPermission` answers `host-mismatch` and
   `fetchCiLogs` returns an error text.
@@ -1571,8 +1586,17 @@ Current constraints of the system as built. Deliberate product boundaries are in
   organization check, the repository listing, the account-ownership check for stored logins, and
   the approver App and host-credential probes.
 - **Standing an arming down for a repository that left GitHub is best effort.** The skip-and-disarm
-  path reads the row as the GitHub repository it was; if its URLs now point at a host the GitHub
-  credentials do not serve, the failure is logged and the arming is left for a person to cancel.
+  path reads the row as the GitHub repository it was; a transient failure is retried, but if its
+  URLs now point at a host the GitHub credentials do not serve, the standing refusal is logged and
+  the arming is left for a person to cancel. The path runs only for a stand-down trigger (a
+  repository or feature switched off, a `disarm-sweep`), because a row of another provider receives
+  no webhooks.
+- **A repository that left GitHub keeps its recorded permission rows** until
+  `repoAccess.viewStaleAfterHours` stops counting them; nothing deletes them when the column
+  changes.
+- **The tests for the credential refusal pin outcomes, not layers.** A suite asserts that a request
+  is refused or that no call is made, not which of the several choke points did it, so a refusal
+  moved from one layer to another keeps the suite green.
 - **A node's `status` field writes the live domain status only**, as a free-form string; it does not
   update the pinned run record. The `onFailure` / `onExhausted` terminal shorthand cannot end a run
   `CANCELLED`.

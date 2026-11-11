@@ -1,5 +1,5 @@
 import { ApplicationFailure } from '@temporalio/activity';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GitHubScmProvider } from './github.js';
 import {
   getScmProvider,
@@ -42,6 +42,26 @@ describe('getScmProvider', () => {
       expect(getScmProvider({ scmProvider: 'gitlab' })).toBe(second);
       unregister();
       expect(() => getScmProvider({ scmProvider: 'gitlab' })).toThrow(/"gitlab" is not supported/);
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it('refuses to register unless NODE_ENV is test and VITEST is set', () => {
+      vi.stubEnv('NODE_ENV', 'production');
+      expect(() => registerScmProviderForTest('gitlab', second)).toThrow(/for tests only/);
+      vi.stubEnv('NODE_ENV', 'test');
+      vi.stubEnv('VITEST', '');
+      expect(() => registerScmProviderForTest('gitlab', second)).toThrow(/for tests only/);
+      expect(() => getScmProvider({ scmProvider: 'gitlab' })).toThrow(/"gitlab" is not supported/);
+    });
+
+    it('leaves the real github entry in place for every other name a test registers', () => {
+      const unregister = registerScmProviderForTest('gitlab', second);
+      expect(getScmProvider({ scmProvider: 'github' })).toBeInstanceOf(GitHubScmProvider);
+      unregister();
+      expect(getScmProvider({ scmProvider: 'github' })).toBeInstanceOf(GitHubScmProvider);
     });
 
     it('cannot replace the real github entry or register one name twice', () => {

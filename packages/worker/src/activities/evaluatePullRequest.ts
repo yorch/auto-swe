@@ -548,10 +548,29 @@ async function latestArmedRow(connectionId: string, prNumber: number): Promise<A
   });
 }
 
-function retryableDisarmFailure(): ApplicationFailure {
-  return ApplicationFailure.retryable(
-    'auto-merge could not be disabled',
-    'AUTO_MERGE_DISABLE_FAILED'
+const DISARM_FAILED = 'AUTO_MERGE_DISABLE_FAILED';
+
+/**
+ * Retried until auto-merge is proved off. `cause` is the error that stopped the proof (the failed
+ * read of the pull request), kept so a caller that stands a pull request down on a repository it
+ * can no longer reach can tell a standing refusal from a transient one.
+ */
+function retryableDisarmFailure(cause?: unknown): ApplicationFailure {
+  return ApplicationFailure.create({
+    cause: cause instanceof Error ? cause : undefined,
+    message: 'auto-merge could not be disabled',
+    nonRetryable: false,
+    type: DISARM_FAILED,
+  });
+}
+
+/** Is `err` a disarm failure whose underlying cause is a standing refusal, not a transient error? */
+function isStandingDisarmRefusal(err: unknown): boolean {
+  return (
+    err instanceof ApplicationFailure &&
+    err.type === DISARM_FAILED &&
+    err.cause !== undefined &&
+    !isRetryableEvaluationError(err.cause)
   );
 }
 
@@ -586,7 +605,7 @@ async function disarm(scm: ScmProvider, repo: RepoRef, prNumber: number): Promis
     if (isRetryableEvaluationError(err)) {
       throw err;
     }
-    throw retryableDisarmFailure();
+    throw retryableDisarmFailure(err);
   }
   if (current && current.state === 'open' && current.autoMerge.enabled) {
     throw retryableDisarmFailure();
@@ -884,9 +903,11 @@ async function postPending(
  * The evaluation never runs for such a row, but an arming that is still standing on GitHub must be
  * undoable, so when the platform recorded one (an armed row, or a bot approval) the skip path runs
  * with the repository read as the GitHub repository it was when that was recorded. With nothing
- * recorded it makes no call at all, and no approver-App sweep of the reviews is attempted. It is
- * best effort: the row may now point at a host the GitHub credentials do not serve, and a failure
- * is logged and swallowed rather than retried forever against a repository that cannot be reached.
+ * recorded it makes no call at all, and no approver-App sweep of the reviews is attempted. A
+ * transient failure (a retryable disarm failure, a 5xx, a rate limit) is rethrown so Temporal
+ * retries it; only a standing, non-retryable refusal (including a disarm that could not read the
+ * pull request because the host or credential is refused) is logged and swallowed, because the row may
+ * now point at a host the GitHub credentials do not serve and retrying would never succeed.
  */
 async function standDownForeign(
   connection: { id: string; teamId?: string | null; team?: { orgId: string | null } | null },
@@ -910,6 +931,12 @@ async function standDownForeign(
       reason
     );
   } catch (err) {
+    // A transient failure (a retryable disarm failure, a 5xx, a rate limit) must be retried: the
+    // path runs once per `disarm-sweep`, a foreign row receives no webhooks, and swallowing the
+    // error would leave GitHub auto-merge armed with nothing left to disarm it.
+    if (isRetryableEvaluationError(err) && !isStandingDisarmRefusal(err)) {
+      throw err;
+    }
     logWarn(
       'pr evaluation: an arming could not be stood down for a repository that is no longer GitHub',
       safeErrorMeta(err)
@@ -952,7 +979,7 @@ async function skipAndDisarm(
     if (isRetryableEvaluationError(err)) {
       throw err;
     }
-    throw retryableDisarmFailure();
+    throw retryableDisarmFailure(err);
   }
   // The status goes back and the approvals are dismissed BEFORE the arming is cancelled: a disarm
   // that cannot be proven throws, and the pending status is what then still holds the merge.

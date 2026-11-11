@@ -46,6 +46,7 @@ function repoRow(over: Record<string, unknown> = {}) {
     isActive: true,
     organizationName: 'acme',
     repoName: 'payments',
+    scmProvider: 'github',
     shares: [],
     team: { isActive: true, memberships: [{ userId: 'user-1' }] },
     type: 'git_repo',
@@ -171,6 +172,45 @@ describe('connectionCredentialRoutes', () => {
     const res = await save();
     expect(res.statusCode).toBe(404);
     expect(fetchOwnRepoPermission).not.toHaveBeenCalled();
+  });
+
+  it('refuses a repository another provider serves before any request or write', async () => {
+    for (const scmProvider of ['gitlab', 'bitbucket', '']) {
+      ctx.prisma.connection.findUnique.mockResolvedValue(
+        repoRow({
+          githubApiUrl: 'https://gitlab.example.com/api/v4',
+          githubUrl: 'https://gitlab.example.com',
+          scmProvider,
+        })
+      );
+      resolveUserCredentialPolicy.mockResolvedValue({
+        enabled: true,
+        hosts: ['gitlab.example.com'],
+      });
+      const res = await save();
+      expect(res.statusCode, scmProvider).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('SCM_PROVIDER_UNSUPPORTED');
+      expect(res.payload).not.toContain('ghp_secretabcd');
+      expect(fetchOwnRepoPermission).not.toHaveBeenCalled();
+      expect(ctx.prisma.connectionCredential.upsert).not.toHaveBeenCalled();
+      expect(recordRepoPermission).not.toHaveBeenCalled();
+      expect(ctx.prisma.configAuditLog.create).not.toHaveBeenCalled();
+    }
+  });
+
+  it('still lets a user remove a token saved against a row that is no longer GitHub', async () => {
+    ctx.prisma.connection.findUnique.mockResolvedValue(repoRow({ scmProvider: 'gitlab' }));
+    ctx.prisma.connectionCredential.findUnique.mockResolvedValue({
+      id: 'cred-1',
+      tokenLastFour: 'abcd',
+    });
+    ctx.prisma.connectionCredential.delete.mockResolvedValue({});
+    const res = await ctx.app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/repositories/${CONN}/credential`,
+    });
+    expect(res.statusCode).toBe(204);
   });
 
   it('refuses a non-git connection', async () => {
