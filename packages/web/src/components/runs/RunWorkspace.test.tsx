@@ -145,7 +145,15 @@ const run = {
   steps,
   traces,
 } as unknown as WorkflowRunDetail;
-function Harness({ jumpNonce = 0 }: { jumpNonce?: number }) {
+function Harness({
+  jumpNonce = 0,
+  currentRun = run,
+  monitoringPaused = false,
+}: {
+  jumpNonce?: number;
+  currentRun?: WorkflowRunDetail;
+  monitoringPaused?: boolean;
+}) {
   const [selected, setSelected] = useState<string | null>('impl');
   return (
     <RunWorkspace
@@ -155,17 +163,60 @@ function Harness({ jumpNonce = 0 }: { jumpNonce?: number }) {
       evidence={<p>artifacts</p>}
       jumpNonce={jumpNonce}
       linker={linker}
+      monitoringPaused={monitoringPaused}
       needsDecision={false}
       overview={<p>approval context</p>}
-      run={run}
+      run={currentRun}
       selectedNodeId={selected}
       setSelectedNodeId={setSelected}
       spec={spec}
-      traces={traces}
+      traces={currentRun.traces}
     />
   );
 }
 describe('linked run workspace', () => {
+  it('focuses the phone execution chooser and restores Steps after selection, Back, or Escape', () => {
+    render(<Harness />);
+    const trigger = screen.getByRole('button', { name: 'Steps' });
+    const chooser = screen.getByRole('complementary', { name: 'Execution steps' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(document.activeElement).toBe(chooser);
+    const row = within(chooser)
+      .getAllByRole('button')
+      .find((b) => b.textContent?.includes('fan[0]/impl · attempt 2')) as HTMLElement;
+    row.focus();
+    fireEvent.click(row);
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.getByTestId('events').textContent).toBe('t2');
+    fireEvent.click(trigger);
+    fireEvent.keyDown(chooser, { key: 'Escape' });
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.getByTestId('events').textContent).toBe('t2');
+    fireEvent.click(trigger);
+    fireEvent.click(screen.getByRole('button', { name: 'Back to evidence' }));
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.getByTestId('events').textContent).toBe('t2');
+  });
+  it('renders running timing at a zero-duration paused boundary without marking it not started', () => {
+    const currentRun = {
+      ...run,
+      endedAt: null,
+      status: 'RUNNING' as const,
+      steps: [{ ...steps[0], endedAt: null, startedAt: at(0), status: 'RUNNING' as const }],
+      traces: [],
+    };
+    render(<Harness currentRun={currentRun} monitoringPaused />);
+    fireEvent.click(screen.getByRole('button', { name: 'Timing' }));
+    expect(screen.getByText('Paused snapshot')).toBeTruthy();
+    expect(screen.getByText('0:00 / 0:00')).toBeTruthy();
+    expect(screen.queryByText(/not started at this point/)).toBeNull();
+    expect(screen.getByText(/0s · running/)).toBeTruthy();
+    expect(screen.getByText(/Open steps may still be running/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Review history' }));
+    expect(screen.queryByText(/not started at this point/)).toBeNull();
+    expect(screen.getByText(/0s · running/)).toBeTruthy();
+  });
   it('selects a branch and attempt and preserves it across investigation views', () => {
     render(<Harness />);
     const execution = screen.getByRole('complementary', { name: 'Execution steps' });

@@ -79,6 +79,17 @@ export function RunWorkspace({
   const [speed, setSpeed] = useState('4');
   const [now, setNow] = useState(() => Date.now());
   const pane = useRef<HTMLDivElement>(null);
+  const executionChooser = useRef<HTMLElement>(null);
+  const stepsTrigger = useRef<HTMLButtonElement>(null);
+  const wasChoosingSteps = useRef(false);
+  useEffect(() => {
+    if (mobileSteps) {
+      executionChooser.current?.focus({ preventScroll: true });
+    } else if (wasChoosingSteps.current) {
+      stepsTrigger.current?.focus({ preventScroll: true });
+    }
+    wasChoosingSteps.current = mobileSteps;
+  }, [mobileSteps]);
   const initialized = useRef(false);
   const latestRun = useRef(run);
   latestRun.current = run;
@@ -197,9 +208,27 @@ export function RunWorkspace({
           'min-h-0 w-full shrink-0 overflow-y-auto border-r border-ink-600 bg-ink-900 lg:w-56',
           mobileSteps ? 'block' : 'hidden lg:block'
         )}
+        id={`run-${run.id}-steps`}
+        onKeyDown={(event) => {
+          if (mobileSteps && event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            setMobileSteps(false);
+          }
+        }}
+        ref={executionChooser}
+        tabIndex={-1}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-ink-600 bg-ink-950 px-4 py-3">
           <h2 className="text-sm font-semibold text-paper-100">Execution</h2>
+          <Button
+            className="lg:hidden"
+            onClick={() => setMobileSteps(false)}
+            size="sm"
+            variant="ghost"
+          >
+            Back to evidence
+          </Button>
           <Button onClick={() => select(null)} size="sm" variant="ghost">
             All events
           </Button>
@@ -263,8 +292,13 @@ export function RunWorkspace({
       >
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-ink-600 bg-ink-900 px-4 py-2">
           <Button
+            aria-controls={`run-${run.id}-steps`}
+            aria-expanded={mobileSteps}
             className="lg:hidden"
-            onClick={() => setMobileSteps(true)}
+            onClick={(event) => {
+              stepsTrigger.current = event.currentTarget;
+              setMobileSteps(true);
+            }}
             size="sm"
             variant="ghost"
           >
@@ -380,10 +414,12 @@ export function RunWorkspace({
                   ? `As of ${formatClock(currentMs)}`
                   : time.live
                     ? 'Open bars extend to the current elapsed time.'
-                    : 'Final recorded durations.'}
+                    : snapshot
+                      ? 'Recorded timing in this paused snapshot. Open steps may still be running.'
+                      : 'Final recorded durations.'}
               </p>
               {steps.map((step) => {
-                if (!step.startedAt || time.duration === 0) {
+                if (!step.startedAt) {
                   return (
                     <p className="py-2 font-mono text-xs text-paper-500" key={step.id}>
                       {step.nodeId} · not started at this point
@@ -395,7 +431,8 @@ export function RunWorkspace({
                   currentMs,
                   step.endedAt ? Date.parse(step.endedAt) - time.start : currentMs
                 );
-                const left = Math.min(100, (start / time.duration) * 100);
+                const scale = Math.max(1, time.duration);
+                const left = Math.min(100, (start / scale) * 100);
                 return (
                   <div
                     className="grid grid-cols-[minmax(100px,180px)_minmax(40px,1fr)_56px] items-center gap-3 border-b border-ink-600/40 py-3"
@@ -421,12 +458,13 @@ export function RunWorkspace({
                         )}
                         style={{
                           left: `${left}%`,
-                          width: `${Math.min(100 - left, Math.max(1, ((end - start) / time.duration) * 100))}%`,
+                          width: `${Math.min(100 - left, Math.max(1, ((end - start) / scale) * 100))}%`,
                         }}
                       />
                     </div>
                     <span className="text-right text-xs text-paper-400">
                       {formatDuration(Math.max(0, end - start))}
+                      {step.status === 'RUNNING' && ' · running'}
                     </span>
                   </div>
                 );
