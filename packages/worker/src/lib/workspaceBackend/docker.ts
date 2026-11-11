@@ -168,8 +168,12 @@ export function buildBaselineEgressScript(
   allow: BaselineAllow[],
   cidrs: string[],
   blockPrivate = true,
-  blockMetadata = true
+  blockMetadata = true,
+  bootstrapDns: string[] = []
 ): string {
+  if (bootstrapDns.some((server) => isIP(server) === 0)) {
+    throw new Error('baseline: bootstrap DNS server must be an IP');
+  }
   const { v4, v6 } = baselineRules(allow, cidrs, blockPrivate, blockMetadata);
   const install = (tool: string, rules: string[]) => [
     `${tool} -N ${BASELINE_CHAIN}`,
@@ -177,7 +181,19 @@ export function buildBaselineEgressScript(
     `${tool} -I OUTPUT 1 -j ${BASELINE_CHAIN}`,
   ];
   return [
-    ...IPTABLES_PRELUDE,
+    ...(bootstrapDns.length > 0
+      ? [
+          'set -eu',
+          'if ! command -v iptables >/dev/null 2>&1 || ! command -v ip6tables >/dev/null 2>&1; then',
+          'asw_dns=$(cat /etc/resolv.conf)',
+          `trap 'printf "%s\\n" "$asw_dns" > /etc/resolv.conf' EXIT`,
+          `printf '%s\\n' ${shellQuote(bootstrapDns.map((server) => `nameserver ${server}`).join('\n'))} > /etc/resolv.conf`,
+          ...IPTABLES_PRELUDE,
+          'printf "%s\\n" "$asw_dns" > /etc/resolv.conf',
+          'trap - EXIT',
+          'fi',
+        ]
+      : IPTABLES_PRELUDE),
     'v6=1',
     'if ! ip6tables -S OUTPUT >/dev/null 2>&1; then',
     'v6=0',
@@ -581,7 +597,9 @@ async function workspaceResolutionContext(containerId: string) {
 }
 
 export async function installBaselineEgress(
-  spec: Pick<WorkspaceContainerSpec, 'name' | 'dns' | 'baselineAllow'>
+  spec: Pick<WorkspaceContainerSpec, 'name' | 'dns' | 'baselineAllow'>,
+  proxyUrls?: string[],
+  bootstrapDns?: string[]
 ): Promise<void> {
   const infra = resolveWorkspaceInfra();
   if (!infra.blockPrivateEgress && !infra.blockMetadata) {
@@ -591,11 +609,13 @@ export async function installBaselineEgress(
   if (infra.blockPrivateEgress) {
     const { mapped, trusted } = await workspaceResolutionContext(spec.name);
     const resolve = (host: string) => resolveInWorkspace(spec.name, host, mapped);
-    for (const proxy of [infra.harnessModelProxy, infra.registryProxy, infra.egressProxy]) {
-      if (!proxy) {
-        continue;
-      }
-      const url = new URL(proxy.url);
+    const proxies =
+      proxyUrls ??
+      [infra.harnessModelProxy, infra.registryProxy, infra.egressProxy].flatMap((proxy) =>
+        proxy ? [proxy.url] : []
+      );
+    for (const proxy of proxies) {
+      const url = new URL(proxy);
       const entry = {
         host: url.hostname.replace(/^\[|\]$/g, ''),
         port: Number(url.port || (url.protocol === 'https:' ? 443 : 80)),
@@ -636,7 +656,8 @@ export async function installBaselineEgress(
     needed,
     cidrs,
     infra.blockPrivateEgress,
-    infra.blockMetadata
+    infra.blockMetadata,
+    bootstrapDns
   );
   const report = await execShellAsync(
     buildEgressHelperCommand(spec.name, infra.metadataBlockImage, script),
@@ -1033,9 +1054,21 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   async remove(idOrHandle: string | WorkspaceHandle): Promise<void> {
     const id = typeof idOrHandle === 'string' ? idOrHandle : idOrHandle.id;
     try {
+      let owner = id;
+      if (/^[a-f0-9]{64}$/i.test(id)) {
+        const inspected = await spawnCaptureAsync(
+          'docker',
+          ['inspect', '--format', '{{.Name}}', id],
+          { heartbeatLabel: 'workspace: resolving container name', timeoutMs: 30_000 }
+        );
+        const name = inspected.stdout.trim().replace(/^\//, '');
+        if (inspected.exitCode === 0 && /^[a-zA-Z0-9][a-zA-Z0-9_.-]+$/.test(name)) {
+          owner = name;
+        }
+      }
       const sidecars = await spawnCaptureAsync(
         'docker',
-        ['ps', '-aq', '--filter', `label=asw.workspace=${id}`],
+        ['ps', '-aq', '--filter', `label=asw.workspace=${owner}`],
         { heartbeatLabel: 'workspace: finding service containers', timeoutMs: 30_000 }
       );
       const ids = sidecars.stdout.split(/\s+/).filter((value) => /^[a-f0-9]+$/i.test(value));
@@ -1126,23 +1159,93 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     spec: EphemeralContainerSpec,
     opts: EphemeralRunOptions
   ): Promise<CapturedResult> {
-    return spawnCaptureAsync('docker', ephemeralArgs(spec, false), {
+    if (spec.network !== 'egress') {
+      return this.spawnEphemeral(spec, opts, false);
+    }
+    const named = { ...spec, name: spec.name ?? `shellstep-${randomUUID()}` };
+    try {
+      const holder = await this.prepareEphemeralNetwork(named);
+      return await this.spawnEphemeral(named, opts, false, holder);
+    } finally {
+      await this.remove(named.name);
+    }
+  }
+
+  private spawnEphemeral(
+    spec: EphemeralContainerSpec,
+    opts: EphemeralRunOptions,
+    detached: boolean,
+    holder?: string
+  ): Promise<CapturedResult> {
+    return spawnCaptureAsync('docker', ephemeralArgs(spec, detached, holder), {
       heartbeatLabel: opts.heartbeatLabel,
       ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
-      ...(opts.onStdoutLine ? { onStdoutLine: opts.onStdoutLine } : {}),
-      timeoutMs: opts.timeoutMs,
+      ...(!detached && opts.onStdoutLine ? { onStdoutLine: opts.onStdoutLine } : {}),
+      timeoutMs: opts.timeoutMs ?? (detached ? 60_000 : undefined),
     });
+  }
+
+  private async prepareEphemeralNetwork(
+    spec: EphemeralContainerSpec & { name: string }
+  ): Promise<string> {
+    const infra = resolveWorkspaceInfra();
+    const holder = `ephemeral-net-${randomUUID()}`;
+    const dnsServers = spec.dns?.length ? spec.dns : infra.dns;
+    const started = await spawnCaptureAsync(
+      'docker',
+      ephemeralNetworkHolderArgs({ ...spec, dns: dnsServers }, holder),
+      {
+        heartbeatLabel: 'step: starting network holder',
+        timeoutMs: 60_000,
+      }
+    );
+    if (started.exitCode !== 0) {
+      throw new Error(`step network holder failed to start: ${started.stderr || started.stdout}`);
+    }
+    const origins = new Set(
+      [
+        ...(spec.env?.map((pair) => pair.slice(pair.indexOf('=') + 1)) ?? []),
+        ...Object.values(spec.secretEnv ?? {}),
+      ].flatMap((value) => {
+        try {
+          return [new URL(value).origin];
+        } catch {
+          return [];
+        }
+      })
+    );
+    const proxies = spec.reachWorker
+      ? [infra.registryProxy, infra.egressProxy].flatMap((proxy) =>
+          proxy && origins.has(new URL(proxy.url).origin) ? [proxy.url] : []
+        )
+      : [];
+    await installBaselineEgress(
+      { dns: dnsServers, name: holder },
+      proxies,
+      dnsServers.includes('127.0.0.2') ? infra.dns : undefined
+    );
+    return holder;
   }
 
   async startDetached(
     spec: EphemeralContainerSpec,
     opts: EphemeralRunOptions
   ): Promise<CapturedResult> {
-    return spawnCaptureAsync('docker', ephemeralArgs(spec, true), {
-      heartbeatLabel: opts.heartbeatLabel,
-      ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
-      timeoutMs: opts.timeoutMs ?? 60_000,
-    });
+    if (spec.network !== 'egress') {
+      return this.spawnEphemeral(spec, opts, true);
+    }
+    const named = { ...spec, name: spec.name ?? `sidecar-${randomUUID()}` };
+    try {
+      const holder = await this.prepareEphemeralNetwork(named);
+      const result = await this.spawnEphemeral(named, opts, true, holder);
+      if (result.exitCode !== 0) {
+        await this.remove(named.name);
+      }
+      return result;
+    } catch (error) {
+      await this.remove(named.name);
+      throw error;
+    }
   }
 
   async runHelper(spec: HelperContainerSpec, opts: EphemeralRunOptions): Promise<CapturedResult> {
@@ -1203,7 +1306,16 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   }
 
   async sidecarBaseUrl(name: string, containerPort: number): Promise<string> {
-    const out = await execShellAsync(`docker port ${shellQuote(name)} ${containerPort}/tcp`, {
+    const network = (
+      await execShellAsync(
+        `docker inspect --format '{{.HostConfig.NetworkMode}}' ${shellQuote(name)}`,
+        {
+          heartbeatLabel: 'workspace: resolving sidecar network',
+        }
+      )
+    ).trim();
+    const owner = network.startsWith('container:') ? network.slice('container:'.length) : name;
+    const out = await execShellAsync(`docker port ${shellQuote(owner)} ${containerPort}/tcp`, {
       heartbeatLabel: 'workspace: resolving published port',
     });
     const m = /:(\d{1,5})\s*$/m.exec(out.trim());
@@ -1238,7 +1350,11 @@ function helperArgs(spec: HelperContainerSpec): string[] {
   ];
 }
 
-export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): string[] {
+export function ephemeralArgs(
+  spec: EphemeralContainerSpec,
+  detached: boolean,
+  holder?: string
+): string[] {
   // Its callers pass the shell step's non-secret registry env; a registry token and the
   // container step's `CONTAINER_STEP_INPUT` travel as `secretEnv`, and this refuses a
   // credential if it comes back as a pair.
@@ -1248,8 +1364,8 @@ export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): 
     `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,
   ]);
   const flags = [
-    `--network=${spec.network === 'egress' ? 'bridge' : 'none'}`,
-    ...(spec.dns ?? []).map((d) => `--dns=${d}`),
+    `--network=${holder ? `container:${holder}` : spec.network === 'egress' ? 'bridge' : 'none'}`,
+    ...(!holder ? (spec.dns ?? []).map((d) => `--dns=${d}`) : []),
     `--memory=${spec.memory ?? '512m'}`,
     `--cpus=${spec.cpus ?? 1}`,
     `--pids-limit=${spec.pidsLimit ?? 256}`,
@@ -1257,8 +1373,8 @@ export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): 
     '--tmpfs=/tmp:size=64m,mode=1777',
     '--security-opt=no-new-privileges',
     '--cap-drop=ALL',
-    ...(spec.addHosts ?? []).map((h) => `--add-host=${h}`),
-    ...(spec.reachWorker ? [workerHostEntry()] : []),
+    ...(!holder ? (spec.addHosts ?? []).map((h) => `--add-host=${h}`) : []),
+    ...(!holder && spec.reachWorker ? [workerHostEntry()] : []),
     ...(spec.env ?? []).flatMap((pair) => ['-e', pair]),
     // Named without a value: docker resolves it from the client's environment.
     ...secretEnvFlags(spec.secretEnv),
@@ -1272,11 +1388,32 @@ export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): 
     ...(spec.name ? ['--name', spec.name] : []),
     ...workspaceLabelArgs(),
     ...flags,
-    ...(spec.publishPort ? ['-p', `127.0.0.1::${spec.publishPort}/tcp`] : []),
+    ...(!holder && spec.publishPort ? ['-p', `127.0.0.1::${spec.publishPort}/tcp`] : []),
     '--',
     spec.image,
     ...(spec.argv ?? []),
   ];
+}
+
+export function ephemeralNetworkHolderArgs(
+  spec: EphemeralContainerSpec & { name: string },
+  holder: string
+): string[] {
+  const args = ephemeralArgs(
+    {
+      ...spec,
+      argv: ['infinity'],
+      env: [],
+      image: resolveWorkspaceInfra().metadataBlockImage,
+      name: holder,
+      secretEnv: undefined,
+      volumes: [],
+      workdir: undefined,
+    },
+    true
+  );
+  args.splice(args.indexOf('--'), 0, '--entrypoint=sleep', '--label', `asw.workspace=${spec.name}`);
+  return args;
 }
 
 const driver = new DockerWorkspaceBackend();

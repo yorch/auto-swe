@@ -690,12 +690,19 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 
 ---
 
-The Docker baseline helper runs on every workspace by default, before services start. Use a
+The Docker baseline helper runs on every workspace and every `network: egress` shell/container
+step by default, before author code starts. Steps start a locked-down network holder on the bridge
+and verify its baseline before joining that namespace. Detached container-step sidecars share
+the holder's baseline and publish their loopback port there. The holder receives the step's DNS
+and host pins (including the DNS allowlist filter); otherwise it uses `WORKSPACE_DNS`. Foreground
+completion and detached sidecar teardown remove the holder, and workspace labels cover orphan
+reaping after worker loss. `network: none` steps need no holder. Use a
 `WORKSPACE_METADATA_BLOCK_IMAGE` with iptables and ip6tables preinstalled to avoid an `apk add`
-per workspace and a dependency on the Alpine mirror. Installation and kernel read-back must
-succeed; an unavailable ip6tables is accepted only if IPv6 is disabled in the namespace.
-Private git hosts, configured DNS and worker proxy ports are admitted automatically. Other
-internal destinations require `WORKSPACE_PRIVATE_EGRESS_ALLOW` (comma-separated IPv4/IPv6
+per workspace or egress step and a dependency on the Alpine mirror. Installation and kernel read-back
+must succeed; an unavailable ip6tables is accepted only if IPv6 is disabled in the namespace.
+Workspaces admit private git hosts, configured DNS and worker proxy ports automatically. Egress
+steps admit their configured DNS and the registry/egress proxy ports they use, not the git host.
+Other internal destinations require `WORKSPACE_PRIVATE_EGRESS_ALLOW` (comma-separated IPv4/IPv6
 addresses or CIDRs, validated at worker boot). Metadata REJECTs precede all such exceptions.
 Disabling private blocking retains metadata protection unless both controls are off.
 

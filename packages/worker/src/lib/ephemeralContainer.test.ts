@@ -10,10 +10,39 @@ vi.mock('./execUtils.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./execUtils.js')>();
   return {
     ...actual,
-    execShellAsync: vi.fn(async (cmd: string) =>
-      cmd.startsWith('docker port') ? '127.0.0.1:49162\n' : ''
-    ),
-    spawnCaptureAsync: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'cid\n' })),
+    execShellAsync: vi.fn(async (cmd: string) => {
+      if (cmd.startsWith('docker port')) {
+        return '127.0.0.1:49162\n';
+      }
+      if (cmd.includes('--cap-add=NET_ADMIN')) {
+        const rules = baselineRules(
+          cmd.includes('127.0.0.2')
+            ? [
+                { ip: '127.0.0.2', port: 53, protocol: 'udp' },
+                { ip: '127.0.0.2', port: 53, protocol: 'tcp' },
+              ]
+            : [],
+          []
+        );
+        return [
+          'v4:',
+          '-P OUTPUT ACCEPT',
+          '-A OUTPUT -j ASW_BASELINE',
+          ...rules.v4.map((r) => `-A ASW_BASELINE ${r}`),
+          'v6:',
+          '-P OUTPUT ACCEPT',
+          '-A OUTPUT -j ASW_BASELINE',
+          ...rules.v6.map((r) => `-A ASW_BASELINE ${r}`),
+          'v6disabled=0',
+        ].join('\n');
+      }
+      return '';
+    }),
+    spawnCaptureAsync: vi.fn(async (_bin: string, args: string[]) => ({
+      exitCode: 0,
+      stderr: '',
+      stdout: args[0] === 'inspect' ? '[]' : args[0] === 'exec' ? '127.0.0.1 localhost\n' : 'cid\n',
+    })),
   };
 });
 const activityContext = vi.hoisted(() => ({ signal: undefined as AbortSignal | undefined }));
@@ -39,6 +68,7 @@ import {
   sandboxCommandTimeoutMs,
 } from './ephemeralContainer.js';
 import { spawnCaptureAsync } from './execUtils.js';
+import { baselineRules } from './workspaceBackend/docker.js';
 
 type SpawnCall = [string, string[], { env?: Record<string, string> }];
 
@@ -63,8 +93,12 @@ describe('buildDockerArgs', () => {
     });
     vi.mocked(spawnCaptureAsync).mockClear();
     await runEphemeralContainer({ ...BASE, egressAllowlist: ['example.com'], network: 'egress' });
-    const [, args, opts] = vi.mocked(spawnCaptureAsync).mock.calls[0] as unknown as SpawnCall;
-    expect(args).toContain('--add-host=host.docker.internal:host-gateway');
+    const calls = vi.mocked(spawnCaptureAsync).mock.calls as unknown as SpawnCall[];
+    const [, args, opts] = calls.filter(
+      ([, argv]) => argv[0] === 'run' && !argv.includes('--entrypoint=sleep')
+    )[0];
+    expect(calls[0][1]).toContain('--add-host=host.docker.internal:host-gateway');
+    expect(args.some((arg) => arg.startsWith('--network=container:ephemeral-net-'))).toBe(true);
     expect(args).toContain('HTTP_PROXY');
     expect(args).not.toContain('secret');
     expect(opts.env?.HTTP_PROXY).toContain('egress:secret@');
@@ -389,9 +423,12 @@ describe('runSidecarContainer request timeouts (docker + fetch mocked)', () => {
       port: 8080,
       workspaceMount: 'shellvol-abc',
     });
-    const [, args, opts] = vi.mocked(spawnCaptureAsync).mock.calls[0] as unknown as SpawnCall;
+    const calls = vi.mocked(spawnCaptureAsync).mock.calls as unknown as SpawnCall[];
+    const [, args, opts] = calls.filter(
+      ([, argv]) => argv[0] === 'run' && !argv.includes('--entrypoint=sleep')
+    )[0];
     expect(args).toContain('HTTP_PROXY');
-    expect(args).toContain('--add-host=host.docker.internal:host-gateway');
+    expect(calls[0][1]).toContain('--add-host=host.docker.internal:host-gateway');
     expect(opts.env?.HTTP_PROXY).toBe('proxy-secret');
     expect(release).toHaveBeenCalledOnce();
   });

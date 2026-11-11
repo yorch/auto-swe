@@ -38,6 +38,59 @@ function baselineReport(
 }
 
 describe('baseline egress', () => {
+  it.each([0, 1])('restores filtered DNS when package installation exits %i', async (exitCode) => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'baseline-dns-'));
+    const resolver = path.join(dir, 'resolv.conf');
+    const original = 'nameserver 127.0.0.2\nsearch test\n';
+    try {
+      await fs.writeFile(resolver, original);
+      const script = buildBaselineEgressScript([], [], true, true, ['1.1.1.1'])
+        .split('\nv6=1')[0]
+        .replaceAll('/etc/resolv.conf', '"$TEST_RESOLV"');
+      const run = () =>
+        execFileSync(
+          'sh',
+          [
+            '-c',
+            `
+command() { return 1; }
+apk() {
+  [ "$(cat "$TEST_RESOLV")" = 'nameserver 1.1.1.1' ] || exit 2
+  return ${exitCode}
+}
+${script}
+`,
+          ],
+          { env: { ...process.env, TEST_RESOLV: resolver }, stdio: 'pipe' }
+        );
+      if (exitCode === 0) {
+        expect(run).not.toThrow();
+      } else {
+        expect(run).toThrow('helper image has no iptables');
+      }
+      expect(await fs.readFile(resolver, 'utf8')).toBe(original);
+    } finally {
+      await fs.rm(dir, { force: true, recursive: true });
+    }
+  });
+
+  it('bootstraps filtered DNS only for helper packages and restores it before installing rules', () => {
+    const script = buildBaselineEgressScript([], [], true, true, [
+      '1.1.1.1',
+      '2606:4700:4700::1111',
+    ]);
+    expect(script).toContain('asw_dns=$(cat /etc/resolv.conf)');
+    expect(script).toContain(`trap 'printf "%s\\n" "$asw_dns" > /etc/resolv.conf' EXIT`);
+    expect(script).toContain('nameserver 1.1.1.1\nnameserver 2606:4700:4700::1111');
+    expect(script.indexOf('asw_dns=')).toBeLessThan(script.indexOf('apk add'));
+    expect(script.indexOf('apk add')).toBeLessThan(script.indexOf('trap - EXIT'));
+    expect(script.indexOf('trap - EXIT')).toBeLessThan(script.indexOf('iptables -N ASW_BASELINE'));
+    expect(buildBaselineEgressScript([], [])).not.toContain('asw_dns=');
+    expect(() => buildBaselineEgressScript([], [], true, true, ['bad; server'])).toThrow(
+      'bootstrap DNS server must be an IP'
+    );
+  });
+
   it('puts loopback and replies first, metadata before allow, and private REJECTs last', () => {
     const script = buildBaselineEgressScript([{ ip: '10.1.2.3', port: 443 }], ['10.0.0.0/8']);
     expect(script.indexOf('-o lo')).toBeLessThan(script.indexOf('--ctstate'));

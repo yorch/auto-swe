@@ -1266,6 +1266,15 @@ sit on this seam, and so does the ephemeral shell/container-step sandbox:
   only chooses the mount, env, resource caps, network mode and resolved egress hosts. A credential
   (the registry-proxy token) goes in the spec's `secretEnv`, which travels by name like the
   other secret env.
+- Docker `egress` steps first start a locked-down network holder on the bridge, install and
+  verify the workspace private-range/metadata baseline, then start author code in that namespace.
+  DNS and host pins belong to the holder; the DNS allowlist filter remains in effect.
+  If the helper needs to install iptables under filtered DNS, it temporarily uses `WORKSPACE_DNS`
+  and restores the filter before installing rules or starting author code.
+  Detached container-step sidecars publish their loopback port from the holder and share its baseline.
+  Foreground completion and sidecar teardown remove the holder; its workspace labels also make
+  it eligible for orphan reaping. `network: none` does not create a holder. Kubernetes does not
+  support ephemeral steps or detached container-step sidecars.
 - `runHelper` runs the shell step's own git clone and finalize containers. Both
   clone from the credential-free URL and read the git credential from `$ASW_GIT_AUTH`, supplied as
   `secretEnv`. These are platform-authored scripts, kept on a separate method so that no flag on a shared spec can drop
@@ -1281,7 +1290,7 @@ most 25 containers per sweep on Docker or 25 pods on Kubernetes (the rest wait f
 Docker a workspace and each of its sidecar and service containers count separately. It judges from the
 workspace itself, never from the worker's memory, so a workspace belonging to another worker on the
 same Docker host or namespace is safe while it is within its lifetime:
-- Docker: every workspace container, ephemeral step container, detached sidecar and repo-preview
+- Docker: every workspace container, ephemeral step container, network holder, detached sidecar and repo-preview
   service container (`<workspace>-svc-<name>`) is created with the labels `auto-swe.workspace=true`
   and `auto-swe.created-at=<epoch seconds>`. The baseline helper carries these labels too,
   runs `--rm` and exits once it has installed and reported its rules. The sweep lists
@@ -1634,9 +1643,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   or proxy there must set it through the environment (`GIT_SSL_CAINFO`, `HTTPS_PROXY`) instead.
 - **The agent workspace keeps public internet access** under `open`; the Docker baseline is not
   default-deny. DNS remains available and names are not pinned, so a git host whose addresses change
-  may need operator CIDRs. Shell/container steps through `ephemeralContainer.ts` do not get this
-  baseline. Live Docker enforcement depends on the helper image and runtime; creation fails closed
-  if rule installation or kernel read-back fails.
+  may need operator CIDRs. Docker shell/container steps with `network: egress` receive the same
+  baseline before author code runs. Live Docker enforcement depends on the helper image and runtime;
+  creation fails closed if rule installation or kernel read-back fails.
 - **Scanner pattern edits propagate by TTL, not invalidation.** Gateway and worker are separate
   processes with independent 60 s caches, so a pattern change can take up to a minute to reach the
   worker and the two can briefly disagree.
