@@ -46,7 +46,7 @@ const SCM_DIR = 'packages/worker/src/lib/scm';
 
 /** The only two seam files that make no request, named by full path (never by basename). */
 const SCM_NON_PROVIDER_FILES = new Set([`${SCM_DIR}/types.ts`, `${SCM_DIR}/index.ts`]);
-const SOURCE_EXTENSION = /\.(?:ts|tsx|mts|cts|js|mjs)$/;
+const SOURCE_EXTENSION = /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
 /** A repo-relative path with forward slashes, whatever the platform. */
@@ -379,10 +379,145 @@ const DATABASE_WORDS = [
   [/\$queryRaw|\$executeRaw/, 'runs raw SQL'],
 ];
 
-function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
-    .replace(/^\s*\/\/.*$/gm, '');
+/**
+ * `src` with every comment blanked to spaces (newlines kept, so offsets and line numbers hold).
+ * A lexer, not a regex: it skips single- and double-quoted strings, template literals (with `${…}`
+ * nesting) and regular-expression literals, so a glob string such as 'packages/*' + '/src' no
+ * longer opens a "comment" that hides everything up to the next star-slash, and a trailing `// …`
+ * comment is removed without touching the code before it. Regular-expression detection is the
+ * usual previous-token heuristic and is bounded to one line, so a wrong guess costs at most that
+ * line. JSX text containing a quote is bounded the same way (a string ends at its line).
+ */
+export function stripComments(src) {
+  const out = src.split('');
+  const n = src.length;
+  const blank = (from, to) => {
+    for (let k = from; k < to; k++) {
+      if (out[k] !== '\n' && out[k] !== '\r') {
+        out[k] = ' ';
+      }
+    }
+  };
+  const regexAfterWord = new Set([
+    'return',
+    'typeof',
+    'case',
+    'do',
+    'else',
+    'in',
+    'of',
+    'void',
+    'delete',
+    'throw',
+    'new',
+    'await',
+    'yield',
+  ]);
+  const skipString = (from) => {
+    const quote = src[from];
+    let i = from + 1;
+    while (i < n && src[i] !== '\n') {
+      if (src[i] === '\\') {
+        i += 2;
+      } else if (src[i] === quote) {
+        return i + 1;
+      } else {
+        i++;
+      }
+    }
+    return Math.min(i, n);
+  };
+  const skipRegex = (from) => {
+    let inClass = false;
+    for (let i = from + 1; i < n && src[i] !== '\n'; i++) {
+      if (src[i] === '\\') {
+        i++;
+      } else if (src[i] === '[') {
+        inClass = true;
+      } else if (src[i] === ']') {
+        inClass = false;
+      } else if (src[i] === '/' && !inClass) {
+        return i + 1;
+      }
+    }
+    return from + 1; // no closing slash on this line: it was a division
+  };
+  let template;
+  const code = (from, inInterpolation) => {
+    let i = from;
+    let depth = 0;
+    let prev = '';
+    let prevWord = '';
+    while (i < n) {
+      const c = src[i];
+      const d = src[i + 1];
+      if (c === '/' && d === '/') {
+        let j = src.indexOf('\n', i);
+        j = j < 0 ? n : j;
+        blank(i, j);
+        i = j;
+      } else if (c === '/' && d === '*') {
+        const j = src.indexOf('*/', i + 2);
+        const end = j < 0 ? n : j + 2;
+        blank(i, end);
+        i = end;
+      } else if (c === "'" || c === '"') {
+        i = skipString(i);
+        prev = '"';
+        prevWord = '';
+      } else if (c === '`') {
+        i = template(i + 1);
+        prev = '`';
+        prevWord = '';
+      } else if (c === '/') {
+        const regexAllowed =
+          prev === '' || '(,=:[!&|?{};+-*%<>~^}'.includes(prev) || regexAfterWord.has(prevWord);
+        i = regexAllowed ? skipRegex(i) : i + 1;
+        prev = '/';
+        prevWord = '';
+      } else if (/[\w$]/.test(c)) {
+        let j = i;
+        while (j < n && /[\w$]/.test(src[j])) {
+          j++;
+        }
+        prevWord = src.slice(i, j);
+        prev = 'a';
+        i = j;
+      } else {
+        if (c === '{') {
+          depth++;
+        } else if (c === '}') {
+          if (inInterpolation && depth === 0) {
+            return i + 1;
+          }
+          depth--;
+        }
+        if (!/\s/.test(c)) {
+          prev = c;
+          prevWord = '';
+        }
+        i++;
+      }
+    }
+    return i;
+  };
+  template = (from) => {
+    let i = from;
+    while (i < n) {
+      if (src[i] === '\\') {
+        i += 2;
+      } else if (src[i] === '`') {
+        return i + 1;
+      } else if (src[i] === '$' && src[i + 1] === '{') {
+        i = code(i + 2, true);
+      } else {
+        i++;
+      }
+    }
+    return i;
+  };
+  code(0, false);
+  return out.join('');
 }
 
 function checkMcpCodeHasNoDatabaseAccess() {
@@ -956,6 +1091,8 @@ const PATH_RUN = String.raw`(?:\$\{[^}\n]*\}|[^'"\x60\s$]|\$(?!\{))*`;
 const MR_CLIENT = `(?:merge_requests|mergeRequests|MergeRequests|mergeRequest|MergeRequest|pullrequests|pullRequests|PullRequests|pullrequest|pullRequest|PullRequest)`;
 // A default-branch name, or an interpolated/variable default branch, as a push destination.
 const DEFAULT_BRANCH_NAME = String.raw`(?:refs\/heads\/)?(?:(?:main|master|trunk|develop|development)(?![\w/.-])|\$\{[^}\n]*(?:[dD]efault|[bB]ase)_?[bB]ranch[^}\n]*\}|\$\{?[A-Z_]*DEFAULT_BRANCH\b\}?)`;
+// One character of a shell command: anything but a command separator.
+const SHELL_ARG = String.raw`[^\n;&|]`;
 const DEFAULT_BRANCH_ARGV = String.raw`(?:[^'"\x60\s:]*:)?${DEFAULT_BRANCH_NAME}`;
 
 /**
@@ -967,15 +1104,23 @@ const MERGE_RULES = [
   { re: String.raw`\b(?:pulls|repos)\s*\.\s*merge\s*\(` },
   { re: String.raw`\b(?:pulls|repos)\s*\[\s*['"\x60]merge['"\x60]\s*\]\s*\(` },
   { re: String.raw`\b(?:mergePullRequest|mergeBranch|enqueuePullRequest)\b` },
-  { re: String.raw`\/pulls\/${PATH_RUN}\/merge(?![\w-])`, route: true },
-  { re: String.raw`\/repos\/${PATH_RUN}\/merges(?![\w-])`, route: true },
+  // The GitHub REST spellings are never exempt, not even for a visible GET: nothing in the tree
+  // reads them, and a read-looking context is exactly what a disguised PUT would borrow.
+  { re: String.raw`\/pulls\/${PATH_RUN}\/merge(?![\w-])` },
+  { re: String.raw`\/repos\/${PATH_RUN}\/merges(?![\w-])` },
   // A literal push of a default branch: `HEAD:main`, `+x:refs/heads/master`, a bare `main`
-  // destination, or an interpolated default branch.
+  // destination, or an interpolated default branch. `shell` rules run on the source with every
+  // quote and backtick removed, so `'HEAD':'main'`, a `git -c … push`, a `git -C dir push` and a
+  // bare `gitAuthed(\`push origin HEAD:main\`)` all read as one command. A command ends at a shell
+  // separator (`;`, `&`, `|`) or the line end, so `git push origin x && git checkout main` is clean.
+  // `push` is not preceded by `.` or a word character, so `list.push(a, main)` is not a push.
   {
-    re: String.raw`\bgit\s+push\b[^\n]*?[\s+][^\s:]*:${DEFAULT_BRANCH_NAME}`,
+    re: String.raw`(?<![.\w$-])push\s+${SHELL_ARG}*?[\s+][^\s:;&|]*:${DEFAULT_BRANCH_NAME}`,
+    shell: true,
   },
   {
-    re: String.raw`\bgit\s+push\b[^\n]*?\s${DEFAULT_BRANCH_NAME}`,
+    re: String.raw`(?<![.\w$-])push(?=\s)${SHELL_ARG}*?\s${DEFAULT_BRANCH_NAME}`,
+    shell: true,
   },
   // The same push as an argv array. Newlines are allowed up to the closing bracket.
   {
@@ -1014,7 +1159,17 @@ const MERGE_RULES = [
   },
   // Azure DevOps: completing a pull request is a PATCH of `pullrequests/<id>` with
   // `status: 'completed'`, or the client's `updatePullRequest`.
-  { provider: true, re: String.raw`\bupdatePullRequest\b` },
+  // `updatePullRequest` is also GitHub's non-merging GraphQL mutation, so the name counts only
+  // beside Azure's completing shape (`status: completed` or the enum's `3`, `PullRequestStatus.Completed`,
+  // `completionOptions`) within 400 characters either side.
+  {
+    provider: true,
+    re: String.raw`\bupdatePullRequest\b[\s\S]{0,400}?(?:\bcompletionOptions\b|\bPullRequestStatus\s*\.\s*Completed\b|\bstatus['"\x60]?\s*[:=]\s*(?:['"\x60]?completed\b|3\b))`,
+  },
+  {
+    provider: true,
+    re: String.raw`(?:\bcompletionOptions\b|\bPullRequestStatus\s*\.\s*Completed\b|\bstatus['"\x60]?\s*[:=]\s*(?:['"\x60]?completed\b|3\b))[\s\S]{0,400}?\bupdatePullRequest\b`,
+  },
   { provider: true, re: String.raw`\bPullRequestStatus\s*\.\s*Completed\b` },
   {
     provider: true,
@@ -1032,15 +1187,98 @@ const MERGE_RULES = [
  */
 export const IMMEDIATE_MERGE_PROVIDER_ALLOWLIST = new Set([]);
 
-/** Does the text around a route show that the request is a GET (a read, not a merge)? */
-function looksLikeGet(flat, start, end) {
+/** The index of the `(` that opens the innermost call enclosing `pos`, or -1. */
+function enclosingCallOpen(flat, pos) {
+  let depth = 0;
+  for (let i = pos - 1; i >= Math.max(0, pos - 2000); i--) {
+    const c = flat[i];
+    if (c === ')') {
+      depth++;
+    } else if (c === '(') {
+      if (depth === 0) {
+        return i;
+      }
+      depth--;
+    }
+  }
+  return -1;
+}
+
+/** The `method` values written as direct keys of an object-literal argument (`{ … }`). */
+function topLevelMethods(arg) {
+  const found = [];
+  const text = arg.trim();
+  if (!text.startsWith('{')) {
+    return found;
+  }
+  let depth = 0;
+  let prev = '';
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "'" || c === '"' || c === '`') {
+      const m = depth === 1 && (prev === '{' || prev === ',') ? text.slice(i) : '';
+      const key = /^(['"\x60])method\1\s*:\s*(['"\x60])(\w+)\2/.exec(m);
+      if (key) {
+        found.push(key[3].toUpperCase());
+      } else if (/^(['"\x60])method\1\s*:/.test(m)) {
+        found.push('?');
+      }
+      for (i++; i < text.length && text[i] !== c; i++) {
+        if (text[i] === '\\') {
+          i++;
+        }
+      }
+      prev = 'a';
+      continue;
+    }
+    if (depth === 1 && (prev === '{' || prev === ',') && /[\w$]/.test(c)) {
+      const m = /^method\s*:\s*(?:(['"\x60])(\w+)\1)?/.exec(text.slice(i));
+      if (m) {
+        found.push(m[2] ? m[2].toUpperCase() : '?');
+      }
+    }
+    if (c === '{' || c === '[' || c === '(') {
+      depth++;
+    } else if (c === '}' || c === ']' || c === ')') {
+      depth--;
+    }
+    if (!/\s/.test(c)) {
+      prev = /[\w$]/.test(c) ? 'a' : c;
+    }
+  }
+  return found;
+}
+
+/**
+ * Does the text around a non-GitHub route show that the request is a GET (a read, not a merge)?
+ * Three spellings, each tied to the call that carries the route:
+ *  - the route literal itself opens with the verb: `request('GET /…')`;
+ *  - the enclosing call has exactly ONE `method` key among the direct keys of its object
+ *    arguments, and it is a literal GET (`headers: { 'x-orig-method': 'GET' }` and
+ *    `meta: { method: 'GET' }` are nested, so they count for nothing, and a second `method` key
+ *    makes the call undecidable, so it is not exempt);
+ *  - the enclosing call IS `….get(…)` and no write verb literal ('PUT', 'POST', …) precedes it in
+ *    the call that wraps it.
+ */
+function looksLikeGet(flat, start) {
   const before = flat.slice(Math.max(0, start - 160), start);
-  const after = flat.slice(end, end + 200);
-  return (
-    /['"\x60]\s*GET\s+[^'"\x60\s]*$/i.test(before) ||
-    /\.get\s*\(\s*[^;()]*$/i.test(before) ||
-    /^[^;)]{0,200}?\bmethod['"]?\s*:\s*['"\x60]GET['"\x60]/i.test(after)
-  );
+  if (/['"\x60]\s*GET\s+[^'"\x60\s]*$/i.test(before)) {
+    return true;
+  }
+  const open = enclosingCallOpen(flat, start);
+  if (open < 0) {
+    return false;
+  }
+  const methods = callArgs(flat, open).flatMap(topLevelMethods);
+  if (methods.length > 0) {
+    return methods.length === 1 && methods[0] === 'GET';
+  }
+  if (/\.\s*get\s*$/.test(flat.slice(Math.max(0, open - 20), open))) {
+    const outer = enclosingCallOpen(flat, open);
+    const wrapper = outer < 0 ? '' : flat.slice(outer, open);
+    return !/['"\x60]\s*(?:PUT|POST|PATCH|DELETE)\b/i.test(wrapper);
+  }
+  return false;
 }
 
 /**
@@ -1056,6 +1294,8 @@ export function immediateMergeViolations(
   // Newlines inside a `${…}` become spaces (same length), so a template literal that wraps inside
   // its interpolation is one route again and offsets still map to the same lines.
   const flat = stripped.replace(/\$\{[^}]*\}/g, (m) => m.replace(/\n/g, ' '));
+  // The same text with quotes and backticks removed, for the rules that read a shell command.
+  const shell = flat.replace(/['"\x60]/g, '');
   const lines = stripped.split('\n');
   const providerAllowed = file !== '' && allowlist.has(posixPath(file)) && isScmProviderFile(file);
   const hits = new Set();
@@ -1064,11 +1304,12 @@ export function immediateMergeViolations(
       continue;
     }
     rule.re.lastIndex = 0;
-    for (const m of flat.matchAll(rule.re)) {
-      if (rule.route && looksLikeGet(flat, m.index, m.index + m[0].length)) {
+    const text = rule.shell ? shell : flat;
+    for (const m of text.matchAll(rule.re)) {
+      if (rule.route && looksLikeGet(flat, m.index)) {
         continue;
       }
-      hits.add(flat.slice(0, m.index).split('\n').length);
+      hits.add(text.slice(0, m.index).split('\n').length);
     }
   }
   return [...hits]
@@ -1109,10 +1350,7 @@ function checkNoImmediateMerge() {
   for (const pkg of readdirSync(join(ROOT, 'packages'))) {
     if (existsSync(join(ROOT, 'packages', pkg, 'src'))) {
       files.push(
-        ...walk(
-          join('packages', pkg, 'src'),
-          (f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f)
-        )
+        ...walk(join('packages', pkg, 'src'), (f) => SOURCE_EXTENSION.test(f) && !TEST_FILE.test(f))
       );
     }
   }
@@ -1208,7 +1446,7 @@ function checkSlackMessageWriters() {
       files.push(
         ...walk(
           join('packages', pkg, 'src'),
-          (f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f) && !f.includes('generated')
+          (f) => SOURCE_EXTENSION.test(f) && !TEST_FILE.test(f) && !f.includes('generated')
         )
       );
     }
@@ -1292,7 +1530,7 @@ function checkProviderCodeLivesInScm() {
     }
     const files = walk(
       join('packages', pkg, 'src'),
-      (f) => /\.(?:ts|tsx|mts|cts|js|mjs)$/.test(f) && !/\.(?:test|spec)\./.test(f)
+      (f) => SOURCE_EXTENSION.test(f) && !/\.(?:test|spec)\./.test(f)
     ).filter((f) => !posixPath(f).includes('/generated/'));
     for (const file of files) {
       for (const v of providerCodeOutsideScmViolations(file, read(file))) {

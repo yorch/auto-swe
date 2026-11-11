@@ -12,6 +12,7 @@ import {
   providerCodeOutsideScmViolations,
   scmProviderFiles,
   slackWriterViolations,
+  stripComments,
   workflowTriggers,
 } from './check-invariants.mjs';
 
@@ -463,6 +464,8 @@ describe('isScmProviderFile', () => {
       `${D}/gitlab.cts`,
       `${D}/gitlab.js`,
       `${D}/gitlab.mjs`,
+      `${D}/gitlab.cjs`,
+      `${D}/gitlab.jsx`,
       `${D}/gitlab.tsx`,
       `${D}/deep/er/bitbucket/types.ts`,
     ]) {
@@ -543,6 +546,7 @@ describe('immediateMergeViolations: other providers and pushes', () => {
       'const s = PullRequestStatus.Completed;',
       'await gl.mergeRequest.merge(pid, iid);',
       'await gl.MergeRequest.accept(pid, iid);',
+      'await gitApi.updatePullRequest({ completionOptions: { mergeStrategy: 1 } }, repoId, prId);',
     ]) {
       expect(immediateMergeViolations(tpl(src)), src).toHaveLength(1);
     }
@@ -576,8 +580,6 @@ describe('immediateMergeViolations: other providers and pushes', () => {
       'get(`/projects/<<id>>/merge_requests/<<iid>>/merge-base`);',
       "get('/projects/1/merge_requests/2/merge_ref');",
       'get(`<<base>>/pullrequests/<<id>>/merge/task-status/<<task>>`);',
-      "await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}/merge');",
-      "await octokit.request('get /repos/{owner}/{repo}/pulls/{pull_number}/merge');",
       'await http.get(`<<base>>/pull-requests/<<id>>/merge`);',
       "await fetch(`<<b>>/pullrequests/<<id>>/merge`, { method: 'GET', redirect: 'error' });",
     ]) {
@@ -619,6 +621,202 @@ describe('immediateMergeViolations: other providers and pushes', () => {
     // An allowlist entry outside the seam is ignored.
     const outside = 'packages/gateway/src/lib/x.ts';
     expect(immediateMergeViolations(gl, outside, new Set([outside]))).toHaveLength(1);
+  });
+});
+
+// Spell the pieces a test source needs without tripping a lint rule on the literals.
+const BT = '`';
+const DOLLAR_BRACE = ['$', '{'].join('');
+
+describe('immediateMergeViolations: pushes in every spelling', () => {
+  it('reports a default-branch push through gitAuthed, git -C / -c, quotes and interpolation', () => {
+    for (const src of [
+      'await ws.gitAuthed(`push origin HEAD:main`);',
+      'await ws.gitAuthed(`push origin <<sha>>:refs/heads/<<defaultBranch>>`);',
+      'await ws.gitAuthed(`push origin <<shellQuote(`<<sha>>:refs/heads/<<repo.defaultBranch>>`)>>`);',
+      'await exec(`git -C /workspace/target-repo push origin HEAD:main`);',
+      'await exec(`git -c http.extraheader=x push origin HEAD:main`);',
+      'await exec(`git -c http.extraheader=x -C dir push --force origin HEAD:master`);',
+      "await exec(`git push origin 'HEAD':'main'`);",
+      'await exec(\'git push origin "HEAD":"refs/heads/main"\');',
+      "await exec(`git -c 'http.extraheader=Authorization: x' push origin HEAD:main`);",
+      'await ws.gitAuthed(`push origin main`);',
+      "await ws.gitAuthed('push -u origin main');",
+      "await run('echo ok; git push origin HEAD:main');",
+      'await run(`git fetch origin && git push origin HEAD:main`);',
+    ]) {
+      expect(immediateMergeViolations(tpl(src)), src).toHaveLength(1);
+    }
+  });
+
+  it('keeps the work-branch and sha-pinned pushes clean', () => {
+    for (const src of [
+      'await ws.gitAuthed(`push origin HEAD:refs/heads/<<branch>>`);',
+      'await ws.gitAuthed(`push origin <<shellQuote(`<<commit.sha>>:refs/heads/<<branch>>`)>>`);',
+      'await exec(`git push origin <<branch>> --force-with-lease=<<branch>>:<<baseSha>>`);',
+      'await exec(`git -C dir push origin HEAD:refs/heads/<<workBranch>>`);',
+      'await exec(`git merge-base origin/<<defaultBranch>> HEAD`);',
+      'await exec(`git fetch origin main && git push origin <<branch>>`);',
+      'await exec(`git push origin <<branch>> && git checkout main`);',
+      'await exec(`git push origin <<branch>>; git checkout main`);',
+      'await exec(`git push origin <<branch>> | tee log; echo main`);',
+      "log('git push failed; will retry from main loop');",
+      'items.push(a, main);',
+      'items.push(`x`, <<defaultBranch>>);',
+    ]) {
+      expect(immediateMergeViolations(tpl(src)), src).toEqual([]);
+    }
+  });
+
+  it('is not hidden or faked by a trailing comment', () => {
+    expect(
+      immediateMergeViolations("await exec('git push origin HEAD:main'); // fine\n")
+    ).toHaveLength(1);
+    expect(
+      immediateMergeViolations("await exec('git push origin x'); // git push origin main\n")
+    ).toEqual([]);
+    expect(
+      immediateMergeViolations(
+        tpl("await fetch(`<<api>>/repos/o/r/pulls/1/merge`, { method: 'PUT' }); // GET\n")
+      )
+    ).toHaveLength(1);
+  });
+});
+
+describe('immediateMergeViolations: the GET exemption', () => {
+  const ghCall = (opts) =>
+    tpl(`await fetch(\`<<api>>/repos/<<o>>/<<r>>/pulls/<<n>>/merge\`, ${opts});`);
+
+  it('never exempts the GitHub REST merge spellings', () => {
+    for (const src of [
+      ghCall("{ method: 'GET' }"),
+      ghCall("{ method: 'PUT', headers: { 'x-orig-method': 'GET' } }"),
+      ghCall("{ method: 'PUT', meta: { method: 'GET' } }"),
+      "await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}/merge');",
+      tpl(
+        "await octokit.request('PUT ' + cache.get('k', `/repos/<<o>>/<<r>>/pulls/<<n>>/merge`));"
+      ),
+      "await octokit.request('GET /repos/{owner}/{repo}/merges');",
+    ]) {
+      expect(immediateMergeViolations(src), src).toHaveLength(1);
+    }
+  });
+
+  const glCall = (opts) =>
+    tpl(`await fetch(\`<<b>>/projects/<<id>>/merge_requests/<<iid>>/merge\`, ${opts});`);
+
+  it('exempts a non-GitHub route only for one top-level GET method key', () => {
+    for (const src of [
+      glCall("{ method: 'GET', redirect: 'error' }"),
+      glCall("{ redirect: 'error', 'method': 'get' }"),
+      glCall("{ headers: { 'x-orig-method': 'PUT' }, method: 'GET' }"),
+      "await octokit.request('GET /projects/1/merge_requests/2/merge');",
+      tpl('await http.get(`<<b>>/projects/<<id>>/merge_requests/<<iid>>/merge`);'),
+      tpl(
+        'const r = await client.get(`<<b>>/projects/<<id>>/merge_requests/<<iid>>/merge`, { a: 1 });'
+      ),
+    ]) {
+      expect(immediateMergeViolations(src), src).toEqual([]);
+    }
+  });
+
+  it('does not let a nested, header-named, repeated or absent method key pose as a GET', () => {
+    for (const src of [
+      glCall("{ method: 'PUT', headers: { 'x-orig-method': 'GET' } }"),
+      glCall("{ method: 'PUT', meta: { method: 'GET' } }"),
+      glCall("{ method: 'PUT', method: 'GET' }"),
+      glCall("{ method: 'GET', method: 'PUT' }"),
+      glCall('{ method: verb }'),
+      glCall("{ 'x-method': 'GET', method: 'PUT' }"),
+      glCall("{ method: 'PUT' }"),
+      tpl(
+        "await octokit.request('PUT ' + cache.get('k', `<<b>>/projects/<<id>>/merge_requests/<<iid>>/merge`));"
+      ),
+      tpl(
+        "await call({ method: 'POST', url: `<<b>>/projects/<<id>>/merge_requests/<<iid>>/merge` });"
+      ),
+    ]) {
+      expect(immediateMergeViolations(src), src).toHaveLength(1);
+    }
+  });
+});
+
+describe('immediateMergeViolations: Azure updatePullRequest', () => {
+  it('does not flag GitHub non-merging updatePullRequest or a bare updatePullRequest', () => {
+    for (const src of [
+      tpl(
+        'const q = `mutation { updatePullRequest(input: {pullRequestId: $id, title: $t}) { pullRequest { id } } }`;'
+      ),
+      'await api.updatePullRequest({ title: t }, repoId, prId);',
+      "await octokit.rest.pulls.update({ state: 'closed' }); // updatePullRequest",
+    ]) {
+      expect(immediateMergeViolations(src), src).toEqual([]);
+    }
+  });
+
+  it('flags updatePullRequest beside a completing shape, in either order', () => {
+    for (const src of [
+      'await gitApi.updatePullRequest({ status: 3 }, repoId, prId);',
+      "await gitApi.updatePullRequest({ status: 'completed' }, repoId, prId);",
+      'await gitApi.updatePullRequest({ completionOptions: { deleteSourceBranch: true } }, r, p);',
+      'const body = { status: PullRequestStatus.Completed };\nawait gitApi.updatePullRequest(body, r, p);',
+    ]) {
+      expect(immediateMergeViolations(src), src.slice(0, 60)).toHaveLength(1);
+    }
+  });
+});
+
+describe('stripComments', () => {
+  it('keeps length and newlines, blanking only comments', () => {
+    const src = 'a; // x\n/* y\nz */ b;\n';
+    expect(stripComments(src)).toHaveLength(src.length);
+    expect(stripComments(src).split('\n')).toHaveLength(src.split('\n').length);
+    expect(stripComments(src).replace(/\s+/g, ' ').trim()).toBe('a; b;');
+  });
+
+  it('does not treat a slash-star inside a string, template or regex as a comment', () => {
+    for (const src of [
+      "const g = 'packages/*/src'; keep();",
+      'const g = "src/*"; keep();',
+      'const g = `src/*`; keep();',
+      `const g = ${BT}a/${DOLLAR_BRACE}x}/*${BT}; keep();`,
+      `const g = ${BT}${DOLLAR_BRACE}${BT}inner/*${BT}}${BT}; keep();`,
+      'const re = /src\\/*/; keep();',
+      "const g = ['a/*', 'b/*']; keep();",
+    ]) {
+      const out = stripComments(`${src}\nconst h = '*/';`);
+      expect(out, src).toContain('keep();');
+      expect(out, src).toContain("'*/'");
+    }
+  });
+
+  it('removes real comments after strings, and keeps URLs inside strings', () => {
+    expect(stripComments("a('x'); // drop me")).not.toContain('drop');
+    expect(stripComments("a('x'); /* drop */ b();")).toContain('b();');
+    expect(stripComments("a('x'); /* drop */ b();")).not.toContain('drop');
+    expect(stripComments("const u = 'https://example.com/a'; // c")).toContain(
+      'https://example.com/a'
+    );
+    expect(stripComments(`const u = ${BT}http://x/${DOLLAR_BRACE}a}${BT}; // c`)).toContain(
+      'http://x/'
+    );
+  });
+
+  it('keeps an apostrophe in a comment from opening a string', () => {
+    expect(stripComments("// don't\nfetch('/pulls/1/merge');")).toContain(
+      "fetch('/pulls/1/merge');"
+    );
+  });
+
+  it('lets the rules see a call that follows a glob string and precedes a closing star-slash', () => {
+    const merge = `const g = 'src/*'; await fetch(${BT}${DOLLAR_BRACE}api}/repos/o/r/pulls/1/merge${BT}, {method:'PUT'}); const h = '*/';`;
+    expect(immediateMergeViolations(merge)).toHaveLength(1);
+    expect(
+      providerCodeOutsideScmViolations(
+        'packages/gateway/src/lib/x.ts',
+        `const g = 'a/*'; const u = ${BT}${DOLLAR_BRACE}b}/api/v4/projects${BT}; const z = '*/';`
+      )
+    ).toHaveLength(1);
   });
 });
 
