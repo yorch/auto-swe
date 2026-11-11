@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resetNavigation } from '@/test/mockNavigation';
 
@@ -43,6 +43,12 @@ function openDrawer() {
 }
 
 describe('AppShell mobile drawer focus trap', () => {
+  it('moves focus to Close navigation after the drawer opens', async () => {
+    openDrawer();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'close' }))
+    );
+  });
   it('uses compact navigation on workspace routes and makes it inert while the drawer is open', () => {
     resetNavigation('', '/runs/run-1');
     render(

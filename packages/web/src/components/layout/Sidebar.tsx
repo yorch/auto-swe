@@ -297,8 +297,8 @@ export function Sidebar({ open, onClose, closeButtonRef, drawerOnly = false }: S
         // after the slide-out on close.
         drawerOnly
           ? open
-            ? 'visible translate-x-0'
-            : 'invisible -translate-x-full'
+            ? 'visible translate-x-0 transition-transform'
+            : 'invisible -translate-x-full transition-[transform,visibility]'
           : open
             ? 'max-md:visible max-md:translate-x-0 max-md:transition-transform'
             : 'max-md:invisible max-md:-translate-x-full max-md:transition-[transform,visibility]'

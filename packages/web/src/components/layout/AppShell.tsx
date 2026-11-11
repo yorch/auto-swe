@@ -112,7 +112,7 @@ function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscree
             onClick={closeNav}
           />
         )}
-        {/* While the drawer is open (only possible below md) the page behind it is
+        {/* While the drawer is open the page behind it is
           inert: screen readers cannot wander into it and nothing in it takes
           focus or clicks — the Tab trap below is only the keyboard half. */}
         <div className="flex min-w-0 flex-col overflow-hidden" inert={navOpen}>
@@ -154,7 +154,7 @@ function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscree
 const MD_QUERY = '(min-width: 768px)';
 
 /**
- * The mobile navigation drawer: open/close state plus the keyboard and focus
+ * The navigation drawer: open/close state plus the keyboard and focus
  * behaviour a modal drawer owes its users. It closes on navigation, on Escape
  * and when the viewport grows past `md` (where the sidebar is always shown);
  * opening moves focus into the drawer, closing returns it to the menu button,
