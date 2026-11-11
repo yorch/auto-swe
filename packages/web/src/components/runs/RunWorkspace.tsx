@@ -293,9 +293,7 @@ export function RunWorkspace({
                 type="button"
               >
                 <span className="text-sm text-paper-400">{nodeDisplayName(node, id)}</span>
-                <span className="text-xs text-paper-500">
-                  {time.live || replayMs !== null ? 'Not started' : 'Not reached'}
-                </span>
+                <span className="text-xs text-paper-500">No step recording</span>
               </button>
             ))}
       </aside>
