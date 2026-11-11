@@ -455,6 +455,7 @@ function EventRow({
   /** What the time column counts from. */
   runStartedAt: string | null;
 }) {
+  const outputId = useId();
   const offset = formatTraceOffset(trace.createdAt, runStartedAt);
   const { label, detail } = traceSummary(trace);
   const durationLabel = trace.durationMs != null ? formatDuration(trace.durationMs) : '';
@@ -474,7 +475,7 @@ function EventRow({
           {/* The toggle covers the summary only: the OTel link on the right and
               the expanded body's own collapse buttons cannot live inside a <button>. */}
           <button
-            aria-controls={`trace-output-${trace.id}`}
+            aria-controls={outputId}
             aria-expanded={isExpanded}
             className={cn(
               'flex min-h-[40px] min-w-0 flex-1 basis-[12rem] cursor-pointer items-center gap-2 rounded-sm py-0.5 text-left lg:min-h-0 lg:basis-[0%]',
@@ -548,7 +549,7 @@ function EventRow({
         )}
 
         {/* Always in the tree so the toggle's aria-controls never points at a missing id. */}
-        <div hidden={!isExpanded} id={`trace-output-${trace.id}`}>
+        <div hidden={!isExpanded} id={outputId}>
           {isExpanded && <TraceOutput trace={trace} />}
         </div>
       </div>

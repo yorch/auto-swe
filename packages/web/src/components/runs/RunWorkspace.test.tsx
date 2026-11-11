@@ -211,9 +211,8 @@ describe('linked run workspace', () => {
     fireEvent.change(search, { target: { value: 'persisted' } });
     fireEvent.click(screen.getByRole('button', { name: 'Errors only' }));
     fireEvent.click(screen.getByRole('button', { name: 'Event' }));
-    const row = screen
-      .getAllByRole('button')
-      .find((button) => button.getAttribute('aria-controls') === 'trace-output-t2') as HTMLElement;
+    const row = screen.getByRole('button', { name: /\+00:22/ });
+    const outputId = row.getAttribute('aria-controls') ?? '';
     fireEvent.click(row);
     expect(row.getAttribute('aria-expanded')).toBe('true');
     fireEvent.click(screen.getByRole('button', { name: 'Graph' }));
@@ -235,7 +234,25 @@ describe('linked run workspace', () => {
     );
     expect(screen.getByRole('button', { name: 'Event' }).getAttribute('aria-pressed')).toBe('true');
     expect(row.getAttribute('aria-expanded')).toBe('true');
-    expect(document.getElementById('trace-output-t2')?.hidden).toBe(false);
+    expect(document.getElementById(outputId)?.hidden).toBe(false);
+    fireEvent.change(screen.getByLabelText('Execution attempt'), { target: { value: 's2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Transcript' }));
+    expect(screen.getAllByRole('searchbox')).toHaveLength(1);
+    const transcriptSearch = screen.getByRole('searchbox', { name: 'Search trace events' });
+    fireEvent.change(transcriptSearch, { target: { value: 'persisted' } });
+    const transcriptRow = screen.getByRole('button', { name: /\+00:22/ });
+    const transcriptOutputId = transcriptRow.getAttribute('aria-controls') ?? '';
+    expect(transcriptOutputId).not.toBe(outputId);
+    fireEvent.click(transcriptRow);
+    fireEvent.click(screen.getByRole('button', { name: 'Timing' }));
+    expect(screen.queryByRole('searchbox')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Transcript' }));
+    expect(screen.getByRole('searchbox')).toBe(transcriptSearch);
+    expect(transcriptSearch).toHaveProperty('value', 'persisted');
+    expect(transcriptRow.getAttribute('aria-expanded')).toBe('true');
+    expect(document.getElementById(transcriptOutputId)?.hidden).toBe(false);
+    const ids = [...document.querySelectorAll('[id]')].map((element) => element.id);
+    expect(new Set(ids).size).toBe(ids.length);
   });
   it('shows concurrent replay executions, phases and only historically reached step bands', () => {
     render(<Harness />);
