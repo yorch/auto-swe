@@ -14,6 +14,7 @@ import { Icon } from '@/components/ui/Icon';
 import { IconButton } from '@/components/ui/IconButton';
 import { type GatewayStatus, useGatewayStatus } from '@/hooks/useGatewayStatus';
 import { pageSection, pageTitle } from '@/lib/navigation';
+import { cn } from '@/lib/utils';
 
 const GATEWAY_TONE: Record<GatewayStatus, BadgeTone> = {
   offline: 'danger',
@@ -33,9 +34,10 @@ interface TopBarProps {
   navOpen: boolean;
   onOpenNav: () => void;
   menuButtonRef: RefObject<HTMLButtonElement | null>;
+  focused?: boolean;
 }
 
-export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
+export function TopBar({ navOpen, onOpenNav, menuButtonRef, focused = false }: TopBarProps) {
   const pathname = usePathname();
 
   const gatewayStatus = useGatewayStatus();
@@ -51,7 +53,7 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
           aria-controls={SIDEBAR_ID}
           aria-expanded={navOpen}
           aria-label="Open navigation"
-          className="-ml-1 text-paper-300 md:hidden"
+          className={cn('-ml-1 text-paper-300', !focused && 'md:hidden')}
           onClick={onOpenNav}
           ref={menuButtonRef}
           size="md"

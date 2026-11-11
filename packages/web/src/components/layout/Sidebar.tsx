@@ -265,9 +265,10 @@ interface SidebarProps {
   onClose: () => void;
   /** First focus target when the drawer opens. */
   closeButtonRef?: RefObject<HTMLButtonElement | null>;
+  drawerOnly?: boolean;
 }
 
-export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
+export function Sidebar({ open, onClose, closeButtonRef, drawerOnly = false }: SidebarProps) {
   const pathname = usePathname();
   const inboxCount = useApprovalsCount();
 
@@ -289,12 +290,18 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
         'flex w-[234px] flex-col border-r border-ink-500/70 bg-ink-900',
         // Below md the sidebar is an off-canvas drawer; `invisible` when closed
         // takes its links out of the tab order and the accessibility tree.
-        'max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-2xl max-md:duration-200',
+        drawerOnly
+          ? 'fixed inset-y-0 left-0 z-40 shadow-2xl duration-200'
+          : 'max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:z-40 max-md:shadow-2xl max-md:duration-200',
         // Visibility flips immediately on open (so focus can move in) and only
         // after the slide-out on close.
-        open
-          ? 'max-md:visible max-md:translate-x-0 max-md:transition-transform'
-          : 'max-md:invisible max-md:-translate-x-full max-md:transition-[transform,visibility]'
+        drawerOnly
+          ? open
+            ? 'visible translate-x-0 transition-transform'
+            : 'invisible -translate-x-full transition-[transform,visibility]'
+          : open
+            ? 'max-md:visible max-md:translate-x-0 max-md:transition-transform'
+            : 'max-md:invisible max-md:-translate-x-full max-md:transition-[transform,visibility]'
       )}
       data-tour="sidebar"
       id={SIDEBAR_ID}
@@ -309,7 +316,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
         </Link>
         <IconButton
           aria-label="Close navigation"
-          className="mr-3 md:hidden"
+          className={cn('mr-3', !drawerOnly && 'md:hidden')}
           onClick={onClose}
           ref={closeButtonRef}
           size="md"

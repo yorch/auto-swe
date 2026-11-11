@@ -46,14 +46,14 @@ export function EditorInspectorPanel({
   return (
     <div
       className={cn(
-        'z-20 h-full max-w-full flex-col shadow-xl lg:static lg:flex lg:shadow-none [&>aside]:min-h-0 [&>aside]:max-w-full [&>aside]:flex-1',
+        'z-20 h-full w-full lg:w-72 max-w-full flex-col shadow-xl lg:static lg:shadow-none [&>aside]:min-h-0 [&>aside]:w-full [&>aside]:max-w-full [&>aside]:flex-1',
         selectedNode ? 'absolute inset-y-0 right-0 flex' : 'hidden'
       )}
       data-tour="editor:inspector"
       ref={inspectorRef}
     >
       {selectedNode && (
-        <div className="flex justify-end border-b border-ink-600 border-l bg-ink-950 px-3 py-1.5 lg:hidden">
+        <div className="flex justify-end border-b border-ink-600 border-l bg-ink-950 px-3 py-1.5">
           <Button onClick={() => onSelect(null)} size="sm" variant="ghost">
             <Icon name="close" size={13} />
             Close inspector

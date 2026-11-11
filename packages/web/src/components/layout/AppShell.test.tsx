@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resetNavigation } from '@/test/mockNavigation';
 
@@ -43,6 +43,26 @@ function openDrawer() {
 }
 
 describe('AppShell mobile drawer focus trap', () => {
+  it('moves focus to Close navigation after the drawer opens', async () => {
+    openDrawer();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'close' }))
+    );
+  });
+  it('uses compact navigation on workspace routes and makes it inert while the drawer is open', () => {
+    resetNavigation('', '/runs/run-1');
+    render(
+      <AppShell>
+        <p>workspace</p>
+      </AppShell>
+    );
+    const rail = screen.getByRole('navigation', { name: 'Focused navigation' });
+    expect(rail.hasAttribute('inert')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'menu' }));
+    expect(rail.hasAttribute('inert')).toBe(true);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(rail.hasAttribute('inert')).toBe(false);
+  });
   it('pulls Tab from outside the drawer back into it', () => {
     openDrawer();
     const outside = document.createElement('button');

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AssistantPanel } from '@/components/assistant/AssistantPanel';
@@ -8,8 +9,10 @@ import { PageContainer } from '@/components/layout/PageContainer';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { TourHost } from '@/components/tour/TourHost';
+import { Icon } from '@/components/ui/Icon';
 import { useApprovalsStream } from '@/hooks/useApprovals';
 import { usePageViewEvents } from '@/hooks/usePageViewEvents';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 // Public routes (mirrors the page entries in proxy.ts PUBLIC_PATHS). They render
 // without the app chrome, whose queries would 401 for a signed-out visitor.
@@ -61,21 +64,64 @@ function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscree
       >
         Skip to content
       </a>
-      <div className="grid h-dvh grid-cols-1 overflow-hidden text-paper-200 [grid-auto-rows:minmax(0,1fr)] md:grid-cols-[234px_minmax(0,1fr)]">
-        <Sidebar closeButtonRef={closeButtonRef} onClose={closeNav} open={navOpen} />
+      <div
+        className={cn(
+          'grid h-dvh grid-cols-1 overflow-hidden text-paper-200 [grid-auto-rows:minmax(0,1fr)]',
+          fullscreen ? 'md:grid-cols-[56px_minmax(0,1fr)]' : 'md:grid-cols-[234px_minmax(0,1fr)]'
+        )}
+      >
+        {fullscreen && (
+          <nav
+            aria-label="Focused navigation"
+            className="hidden flex-col items-center gap-3 border-r border-ink-600 bg-ink-950 py-4 md:flex"
+            inert={navOpen}
+          >
+            {(
+              [
+                { href: '/', icon: 'dashboard', label: 'Dashboard' },
+                { href: '/library', icon: 'workflows', label: 'Workflows' },
+                { href: '/runs', icon: 'runs', label: 'Runs' },
+              ] as const
+            ).map((item) => (
+              <Link
+                aria-label={item.label}
+                className={cn(
+                  'rounded-lg p-2.5 text-paper-400 hover:bg-ink-700 hover:text-paper-100',
+                  FOCUS_RING
+                )}
+                href={item.href}
+                key={item.href}
+                title={item.label}
+              >
+                <Icon name={item.icon} size={18} />
+              </Link>
+            ))}
+          </nav>
+        )}
+        <Sidebar
+          closeButtonRef={closeButtonRef}
+          drawerOnly={fullscreen}
+          onClose={closeNav}
+          open={navOpen}
+        />
         {navOpen && (
           // Backdrop for the mobile drawer; a click outside the drawer closes it.
           <div
             aria-hidden="true"
-            className="fixed inset-0 z-30 bg-scrim md:hidden"
+            className={cn('fixed inset-0 z-30 bg-scrim', !fullscreen && 'md:hidden')}
             onClick={closeNav}
           />
         )}
-        {/* While the drawer is open (only possible below md) the page behind it is
+        {/* While the drawer is open the page behind it is
           inert: screen readers cannot wander into it and nothing in it takes
           focus or clicks — the Tab trap below is only the keyboard half. */}
         <div className="flex min-w-0 flex-col overflow-hidden" inert={navOpen}>
-          <TopBar menuButtonRef={menuButtonRef} navOpen={navOpen} onOpenNav={openNav} />
+          <TopBar
+            focused={fullscreen}
+            menuButtonRef={menuButtonRef}
+            navOpen={navOpen}
+            onOpenNav={openNav}
+          />
           {/* The boundary sits inside <main>, keyed by route: a page crash leaves the
             shell standing, and navigating away clears it. */}
           {fullscreen ? (
@@ -108,7 +154,7 @@ function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscree
 const MD_QUERY = '(min-width: 768px)';
 
 /**
- * The mobile navigation drawer: open/close state plus the keyboard and focus
+ * The navigation drawer: open/close state plus the keyboard and focus
  * behaviour a modal drawer owes its users. It closes on navigation, on Escape
  * and when the viewport grows past `md` (where the sidebar is always shown);
  * opening moves focus into the drawer, closing returns it to the menu button,

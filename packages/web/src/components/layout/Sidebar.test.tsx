@@ -33,6 +33,17 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Sidebar structure', () => {
+  it('makes the drawer immediately visible on open before the initial focus frame', () => {
+    resetNavigation('', '/library/tpl-1');
+    const props = { drawerOnly: true, onClose: () => undefined };
+    const { container, rerender } = render(<Sidebar {...props} open={false} />);
+    const drawer = container.querySelector('aside') as HTMLElement;
+    expect(drawer.classList.contains('transition-[transform,visibility]')).toBe(true);
+    rerender(<Sidebar {...props} open />);
+    expect(drawer.classList.contains('visible')).toBe(true);
+    expect(drawer.classList.contains('transition-transform')).toBe(true);
+    expect(drawer.classList.contains('transition-[transform,visibility]')).toBe(false);
+  });
   it('shows the Work and Build groups and one Admin entry, not the Admin pages', () => {
     resetNavigation('', '/');
     const { container } = render(<Sidebar onClose={() => undefined} open />);

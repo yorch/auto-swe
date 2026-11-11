@@ -17,7 +17,7 @@ export function PaletteRail({ steps, open, paletteRef, onAdd, onClose }: Palette
   return (
     <div
       className={cn(
-        'z-20 h-full shadow-xl lg:static lg:block lg:shadow-none',
+        'z-20 h-full w-full lg:w-56 [&>aside]:w-full shadow-xl lg:static lg:block lg:shadow-none',
         open ? 'absolute inset-y-0 left-0 block' : 'hidden'
       )}
       data-tour="editor:palette"
@@ -46,7 +46,7 @@ export function OutlineRail({ spec, selectedNodeId, outlineRef, onSelect }: Outl
   return (
     <aside
       aria-label="Outline"
-      className="absolute inset-y-0 left-0 z-10 flex w-72 max-w-full shrink-0 flex-col border-r border-ink-600 bg-ink-900 shadow-xl lg:static lg:shadow-none"
+      className="absolute inset-y-0 left-0 z-10 flex w-full max-w-full shrink-0 flex-col border-r border-ink-600 bg-ink-900 lg:static lg:w-52"
       ref={outlineRef}
       tabIndex={-1}
     >

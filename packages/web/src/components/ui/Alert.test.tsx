@@ -78,6 +78,25 @@ describe('Alert announce={false}', () => {
 });
 
 describe('Alert content and classes', () => {
+  it('can stack its action on narrow screens without shrinking the explanation column', () => {
+    render(
+      <Alert
+        action={<button type="button">Investigate</button>}
+        stackActionOnNarrow
+        title="Stopped"
+      >
+        Explanation
+      </Alert>
+    );
+    expect(screen.getByRole('alert').classList.contains('grid-cols-[auto_minmax(0,1fr)]')).toBe(
+      true
+    );
+    expect(
+      screen
+        .getByRole('button', { name: 'Investigate' })
+        .parentElement?.classList.contains('col-span-2')
+    ).toBe(true);
+  });
   it('renders the title as a heading line and the body beneath it', () => {
     render(<Alert title="Scanner findings">Two patterns matched</Alert>);
     expect(screen.getByText('Scanner findings')).toBeTruthy();

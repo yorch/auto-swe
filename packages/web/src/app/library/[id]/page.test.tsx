@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Suspense } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubDialogPrototype } from '@/test/rtl-helpers';
@@ -16,6 +16,7 @@ const hooks = vi.hoisted(() => ({
   refineProps: null as { onSaved?: (v: number) => void } | null,
   template: {
     activeVersion: 1,
+    description: 'Review and implement a work request.',
     id: '11111111-1111-4111-8111-111111111111',
     name: 'Broken',
     status: 'DRAFT',
@@ -72,6 +73,9 @@ vi.mock('@/hooks/useTeams', () => ({
 }));
 vi.mock('@/hooks/useTransientFlag', () => ({ useTransientFlag: () => [false, vi.fn()] }));
 vi.mock('@/components/workflow/WorkflowDag', () => ({ WorkflowDag: () => null }));
+vi.mock('@/components/help/PageHelp', () => ({
+  PageHelp: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 vi.mock('@/components/workflow/TemplateEditor', () => ({
   TemplateEditor: (props: {
     actions?: React.ReactNode;
@@ -133,6 +137,17 @@ async function renderPage() {
 }
 
 describe('workflow editor with lint errors', () => {
+  it('makes the description readable in Settings without management permissions', async () => {
+    useAuthStore.setState({ user: { role: 'ENGINEER' } } as never);
+    await renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Settings' }));
+    expect(
+      within(screen.getByRole('region', { name: 'Workflow settings' })).getByText(
+        hooks.template.description
+      )
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /More actions for/ })).toBeNull();
+  });
   it('lists the errors and blocks Activate with a visible reason', async () => {
     await renderPage();
     const activate = await screen.findByRole('button', { name: 'Activate' });
@@ -142,13 +157,12 @@ describe('workflow editor with lint errors', () => {
     expect(screen.getByTestId('spec-errors').children.length).toBeGreaterThan(0);
   });
 
-  it('says saving makes an immutable version and defines Draft, Active and Promote', async () => {
+  it('explains immutable versions, promotion, and draft launching in page help', async () => {
     await renderPage();
     const note = await screen.findByText(/Saving creates a new immutable version/);
-    expect(note.textContent).toMatch(/in flight stay on the version they started with/);
-    expect(note.textContent).toMatch(/Draft\s*means the template cannot be launched yet/);
-    expect(note.textContent).toMatch(/Promote\s*makes a version the active one/);
-    expect(screen.getByRole('button', { name: 'What is a version?' })).toBeTruthy();
+    expect(note.textContent).toMatch(/in-flight runs keep their launch version/);
+    expect(note.textContent).toMatch(/Draft workflows cannot be launched/);
+    expect(note.textContent).toMatch(/Promote changes the active version used by new runs/);
   });
 
   it('keeps Save enabled in JSON mode, asks first, then saves the draft', async () => {

@@ -10,19 +10,19 @@ import type { PageTourStep } from '@/lib/tourSteps';
 export const EDITOR_TOUR: PageTourStep[] = [
   {
     anchor: 'editor:palette',
-    body: 'The node types you can add. Hover or focus an item to read what it does, then click it or drag it onto the canvas. On a narrow screen it opens from Add node.',
+    body: 'Open Add node for the palette. Hover or focus an item for help, then click or drag it onto the canvas. Palette and Outline share the left panel.',
     id: 'editor-palette',
     title: 'Palette',
   },
   {
     anchor: 'editor:canvas',
-    body: 'The workflow as a graph. Click a node to edit it, drag between nodes to connect them, and press Delete to remove the selected one. Arrow keys follow the flow.',
+    body: 'The workflow as a graph. Click a node to edit it and drag between nodes to connect them. Delete asks before removing a selected node, only while the canvas has focus. Undo removal is available until the next edit.',
     id: 'editor-canvas',
     title: 'Canvas',
   },
   {
     anchor: 'editor:inspector',
-    body: 'Settings for the selected node. With nothing selected it asks you to pick one.',
+    body: 'Settings for the selected node. Close it to recover canvas space. On narrow screens, node details fill the workspace.',
     id: 'editor-inspector',
     title: 'Node inspector',
   },
@@ -49,13 +49,13 @@ export const RUN_TOUR: PageTourStep[] = [
   },
   {
     anchor: 'run:layout',
-    body: 'Switch how the trace is shown: Split, Transcript or Timeline. The choice changes the view only, not the run.',
+    body: 'Events, Graph, Timing and Transcript share execution selection. Overview holds approvals and results; Evidence, Activity and Details hold supporting information.',
     id: 'run-layout',
     title: 'Layout',
   },
   {
     anchor: 'run:trace',
-    body: 'Every step and agent action of the run, and any gate where it is waiting on a person. In the Split layout, selecting a graph node filters the console beside it.',
+    body: 'Select a recorded branch and attempt, or select a graph node to see every matching execution. Review history rewinds events and step states; outcome, cost and approval controls remain latest/final.',
     id: 'run-trace',
     title: 'Trace',
   },

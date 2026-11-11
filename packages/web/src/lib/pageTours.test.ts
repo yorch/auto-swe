@@ -21,7 +21,15 @@ const OWNERS: Array<[string, typeof EDITOR_TOUR, string[]]> = [
       'components/workflow/templateEditor/EditorStatusBar.tsx',
     ],
   ],
-  ['run page', RUN_TOUR, ['app/runs/[id]/page.tsx', 'components/runs/RunVerdictBanner.tsx']],
+  [
+    'run page',
+    RUN_TOUR,
+    [
+      'app/runs/[id]/page.tsx',
+      'components/runs/RunVerdictBanner.tsx',
+      'components/runs/RunWorkspace.tsx',
+    ],
+  ],
 ];
 
 describe.each(OWNERS)('%s tour', (_name, steps, files) => {
