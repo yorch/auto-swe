@@ -52,8 +52,18 @@ import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
-import { pinnedDiffTreeCommand } from './allowedPaths.js';
+import { readHeadSha } from './allowedPaths.js';
 import { recordLessonBackground } from './commitToMemory.js';
+import {
+  assertHeadIs,
+  commitResolvedMerge,
+  diffResolution,
+  runMerge,
+  settleMerge,
+  snapshotIndex,
+  stageResolved,
+  startMerge,
+} from './mergeResolution.js';
 import {
   createWorkspace,
   fetchBranchesSubcommand,
@@ -266,6 +276,9 @@ export async function resolveMergeConflict(
   const conflicts: Array<{ branch: string; output: string }> = [];
   const tracer = new AgentTracer();
   const resolutions: ResolverCommit[] = [];
+  // The commit the target is at, tracked by this activity: every merge must start from it and
+  // leave HEAD at the commit it made, and that sha (not the branch name) is what gets pushed.
+  const tracked: { head: string } = { head: '' };
   // One resolver session for the whole activity, built at the first conflict: every
   // branch and attempt runs in this one workspace, and a runtime that resumes its
   // session (the harness) must not be rebuilt — and re-installed — per attempt.
@@ -281,6 +294,15 @@ export async function resolveMergeConflict(
   };
 
   try {
+    const start = await readHeadSha(workspace);
+    if (!start) {
+      throw ApplicationFailure.nonRetryable(
+        'Could not read the commit the merges start from, so the resolution cannot be checked. ' +
+          'Nothing was pushed.',
+        'MERGE_RESOLUTION_REFUSED'
+      );
+    }
+    tracked.head = start;
     for (let idx = 0; idx < sourceBranches.length; idx++) {
       const source = sourceBranches[idx] as string;
       heartbeat(`resolveMergeConflict: merging ${source}`);
@@ -289,6 +311,7 @@ export async function resolveMergeConflict(
         maxAttempts: maxAttemptsPerBranch,
         messagePrefix,
         tracer,
+        tracked,
         turns: resolverTurns,
       });
       if (resolved.resolution) {
@@ -312,7 +335,9 @@ export async function resolveMergeConflict(
       await scanResolvedMerge(workspace, resolutions, tracer);
     }
     const headSha =
-      passed && merged.length > 0 ? await pushAndCapture(workspace, targetBranch, log) : undefined;
+      passed && merged.length > 0
+        ? await pushAndCapture(workspace, targetBranch, log, tracked.head)
+        : undefined;
 
     const artifact = await putArtifact({
       body: log.join('\n'),
@@ -365,6 +390,8 @@ export async function resolveMergeConflict(
 /** A merge commit the resolver produced, and the conflicted paths it wrote. */
 interface ResolverCommit {
   sha: string;
+  /** The target-side parent, recorded by this activity before `git merge` ran. */
+  parent: string;
   files: string[];
 }
 
@@ -374,12 +401,12 @@ interface ResolverCommit {
  * trace, and the security gate, which fails the activity on a CRITICAL
  * finding.
  *
- * The scan covers only what the resolver wrote: for each merge commit it
- * produced, the conflicted paths diffed from the target side (`<sha>^1`) to the
- * committed resolution. Not the working tree — an edit the agent made outside
- * the conflict set is never staged or pushed — and not the default branch,
- * which would re-scan every subtask already merged into the epic and fail the
- * resolver for a finding it did not write.
+ * The scan covers each merge commit the resolver produced, as everything that changed between
+ * the target-side parent this activity recorded before `git merge` and the committed resolution
+ * (see `mergeResolution.ts`): no pathspec, so a file the resolver added outside the conflict set
+ * is in it. Not the working tree, and not the default branch, which would re-scan every subtask
+ * already merged into the epic. The merge brings the source branch's own changes with it, and
+ * those were scanned when that branch was pushed.
  */
 async function scanResolvedMerge(
   workspace: Workspace,
@@ -387,24 +414,8 @@ async function scanResolvedMerge(
   tracer: AgentTracer
 ): Promise<void> {
   const parts: string[] = [];
-  for (const { sha, files } of resolutions) {
-    // Pinned plumbing between two commits (see `pinnedDiffTreeCommand`): a config key, an
-    // attribute or a rewritten work tree cannot blank what the resolver wrote.
-    const patch = await workspace.exec(
-      pinnedDiffTreeCommand(`${sha}^1`, sha, { kind: 'patch', pathspecs: files })
-    );
-    if (patch.trim() === '') {
-      const names = await workspace.exec(
-        pinnedDiffTreeCommand(`${sha}^1`, sha, { kind: 'name-status', pathspecs: files })
-      );
-      if (names.trim() !== '') {
-        throw ApplicationFailure.nonRetryable(
-          'The resolved merge changed files but its diff read as empty, so it cannot be scanned.',
-          'SECURITY_GATE_UNAVAILABLE'
-        );
-      }
-    }
-    parts.push(patch);
+  for (const { sha, parent } of resolutions) {
+    parts.push(await diffResolution(workspace, parent, sha));
   }
   const diff = parts.filter((p) => p.trim().length > 0).join('\n');
   if (diff.length === 0) {
@@ -503,14 +514,23 @@ async function provisionMergeWorkspace(
 async function pushAndCapture(
   workspace: Workspace,
   targetBranch: string,
-  log: string[]
+  log: string[],
+  /** The commit to push, when the caller tracked it; otherwise the branch name is pushed. */
+  pushSha?: string
 ): Promise<string> {
   // Never push on behalf of a run that has already been cancelled.
   throwIfActivityCancelled();
-  await recordGitPush(targetBranch, undefined, () =>
-    workspace.gitAuthed(`push origin ${shellQuote(targetBranch)}`)
+  if (pushSha) {
+    await assertHeadIs(workspace, pushSha);
+  }
+  await recordGitPush(targetBranch, pushSha, () =>
+    workspace.gitAuthed(
+      pushSha
+        ? `push origin ${pushSha}:refs/heads/${shellQuote(targetBranch)}`
+        : `push origin ${shellQuote(targetBranch)}`
+    )
   );
-  const headSha = (await workspace.exec('git rev-parse HEAD')).trim();
+  const headSha = pushSha ?? (await workspace.exec('git rev-parse HEAD')).trim();
   log.push(`pushed ${targetBranch} (head ${headSha})`);
   return headSha;
 }
@@ -523,6 +543,8 @@ async function mergeOneWithResolver(
     log: string[];
     maxAttempts: number;
     messagePrefix: string;
+    /** The commit HEAD is expected at; advanced to each merge result this function settles. */
+    tracked: { head: string };
     tracer: AgentTracer;
     /** The activity's one resolver session, built on first use. */
     turns: () => Promise<ImplementerTurnRunner>;
@@ -533,13 +555,19 @@ async function mergeOneWithResolver(
     workspace.gitIdentity
   );
 
+  const step = await startMerge(workspace, source, opts.tracked.head);
+  if ('error' in step) {
+    return { output: step.error, passed: false };
+  }
   try {
-    await workspace.exec(
-      `git merge --no-ff --no-edit -m ${shellQuote(commitMessage)} origin/${shellQuote(source)}`
-    );
+    await runMerge(workspace, commitMessage, source);
+    opts.tracked.head = await settleMerge(workspace, step);
     opts.log.push(`merged ${source} cleanly`);
     return { output: '', passed: true };
   } catch (err) {
+    if (err instanceof ApplicationFailure) {
+      throw err;
+    }
     opts.log.push(
       `conflict on ${source}: ${getExecErrorOutput(err, 800).slice(-400)}; invoking resolver`
     );
@@ -564,6 +592,10 @@ async function mergeOneWithResolver(
     await tryMergeAbort(workspace);
     return { output: 'merge failed without conflicted files', passed: false };
   }
+
+  // The index as the conflicting merge left it, before the agent runs: the resolution may differ
+  // from it only at the conflicted paths.
+  const snapshot = await snapshotIndex(workspace);
 
   const systemPrompt = await resolveSystemPrompt(
     'mergeConflictResolver',
@@ -632,20 +664,26 @@ async function mergeOneWithResolver(
     try {
       // Stage exactly the conflicted paths: `git add` is what clears an
       // unmerged index entry, and a path the resolver deleted is staged as a
-      // removal. Anything else the agent touched stays out of the commit.
-      await workspace.exec(`git add -- ${conflictedFiles.map((f) => shellQuote(f)).join(' ')}`);
-      const stillUnmerged = await listConflictedFiles(workspace);
-      if (stillUnmerged.length > 0) {
+      // removal. Anything else the agent touched or staged is refused, not committed.
+      const staged = await stageResolved(workspace, snapshot, conflictedFiles);
+      if (staged === 'unmerged') {
         opts.log.push(
-          `resolver attempt ${attempt} for ${source}: ${stillUnmerged.length} path(s) still unmerged after staging`
+          `resolver attempt ${attempt} for ${source}: path(s) still unmerged after staging`
         );
         continue;
       }
-      await workspace.exec(`git commit -m ${shellQuote(commitMessage)}`);
-      const sha = (await workspace.exec('git rev-parse HEAD')).trim();
+      const sha = await commitResolvedMerge(workspace, commitMessage, step);
+      opts.tracked.head = sha;
       opts.log.push(`resolved ${source} on attempt ${attempt} (${sha})`);
-      return { output: '', passed: true, resolution: { files: conflictedFiles, sha } };
+      return {
+        output: '',
+        passed: true,
+        resolution: { files: conflictedFiles, parent: step.parent, sha },
+      };
     } catch (commitErr) {
+      if (commitErr instanceof ApplicationFailure) {
+        throw commitErr;
+      }
       opts.log.push(
         `staging/commit after resolver failed on ${source} attempt ${attempt}: ${getExecErrorOutput(commitErr, 1000)}`
       );
