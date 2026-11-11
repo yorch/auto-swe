@@ -1142,6 +1142,25 @@ startup completes the storage-opt probe.
 
 ---
 
+### UN-22. Docker disk limits reject drivers that silently ignore storage-opt
+
+**Affected.** Docker deployments setting `WORKSPACE_DISK_LIMIT` with the containerd `overlayfs`
+driver or another driver outside overlay2, devicemapper, btrfs and zfs. A successful
+`docker run --storage-opt size=...` alone does not establish enforcement on those drivers.
+
+**Fix commit.** Identified before its SHA is assigned by the supported-driver check in
+`assertDockerDiskLimit` in `packages/worker/src/lib/workspaceBackend/docker.ts`; compare the
+source when commit ancestry is unavailable.
+
+**Actions.** Provision a supported storage driver (overlay2 needs XFS with pquota), or unset
+`WORKSPACE_DISK_LIMIT` and accept that writable layers have no application-configured cap.
+The worker refuses startup when the probe container's driver is unsupported or cannot be read.
+
+**Verify.** Worker startup with the limit configured succeeds only on a supported driver.
+An unsupported `overlayfs` driver produces a `WORKSPACE_DISK_LIMIT cannot be enforced` error.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import dns from 'node:dns/promises';
 import { BlockList, isIP } from 'node:net';
 import os from 'node:os';
@@ -13,7 +14,11 @@ import {
 } from '../execUtils.js';
 import { shellQuote } from '../shellQuote.js';
 import { assertNoCredentialEnvPairs } from './credentialEnv.js';
-import { isForbiddenAllowAddress, type ResolvedAllow } from './kubernetes/egressLock.js';
+import {
+  isForbiddenAllowAddress,
+  METADATA_V4,
+  type ResolvedAllow,
+} from './kubernetes/egressLock.js';
 import {
   dockerListArgs,
   MAX_REAPED_PER_SWEEP,
@@ -136,9 +141,10 @@ export function baselineRules(
     '-o lo -j ACCEPT',
     '-m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT',
     ...(blockMetadata
-      ? (family === 4 ? ['169.254.169.254', '169.254.170.2'] : ['fd00:ec2::254']).map(
-          (ip) => `-d ${ip} -j REJECT`
-        )
+      ? (family === 4
+          ? ['169.254.169.254', '169.254.170.2', ...METADATA_V4]
+          : ['fd00:ec2::254']
+        ).map((ip) => `-d ${ip} -j REJECT`)
       : []),
     ...(blockPrivate
       ? [
@@ -649,9 +655,34 @@ export async function assertDockerDiskLimit(): Promise<void> {
       `docker run --rm --storage-opt ${shellQuote(`size=${infra.diskLimit}`)} -- ${shellQuote(infra.metadataBlockImage)} true`,
       { heartbeatLabel: 'workspace: probing Docker disk quota' }
     );
+    const name = `workspace-disk-probe-${randomUUID()}`;
+    let created = false;
+    try {
+      await execShellAsync(
+        `docker create --name ${name} ${workspaceLabelArgs().join(' ')} --storage-opt ${shellQuote(`size=${infra.diskLimit}`)} -- ${shellQuote(infra.metadataBlockImage)} true`,
+        { heartbeatLabel: 'workspace: identifying Docker quota driver' }
+      );
+      created = true;
+      const driver = (
+        await execShellAsync(`docker inspect --format '{{.Driver}}' ${name}`, {
+          heartbeatLabel: 'workspace: checking Docker quota driver',
+        })
+      ).trim();
+      if (!['overlay2', 'devicemapper', 'btrfs', 'zfs'].includes(driver)) {
+        throw new Error(
+          `Unsupported Docker storage driver ${JSON.stringify(driver)}: size may be silently ignored`
+        );
+      }
+    } finally {
+      if (created) {
+        await execShellAsync(`docker rm -f ${name}`, {
+          heartbeatLabel: 'workspace: removing Docker quota probe',
+        });
+      }
+    }
   } catch (cause) {
     throw new Error(
-      'WORKSPACE_DISK_LIMIT cannot be enforced by Docker: overlay2 requires XFS with pquota; use a supported devicemapper, btrfs or zfs driver, or unset the limit.',
+      `WORKSPACE_DISK_LIMIT cannot be enforced by Docker: overlay2 requires XFS with pquota; use a supported devicemapper, btrfs or zfs driver, or unset the limit. ${cause instanceof Error ? cause.message : String(cause)}`,
       { cause }
     );
   }

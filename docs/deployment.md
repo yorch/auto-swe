@@ -702,7 +702,10 @@ Disabling private blocking retains metadata protection unless both controls are 
 `WORKSPACE_DISK_LIMIT` caps each Docker workspace's writable layer, not volumes or logs.
 When set, worker boot probes `docker run --rm --storage-opt size=<limit> <helper-image> true`
 and refuses to start if unsupported. Overlay2 needs XFS with pquota; devicemapper, btrfs and zfs
-are other supported driver options. The worker does not need `docker info` access.
+are other supported driver options. A second, unstarted probe container identifies the driver
+through `docker inspect` and is then removed. Only those supported drivers are accepted:
+Docker's containerd `overlayfs` driver can accept the size option without enforcing it and is
+refused. The worker does not need `docker info` access.
 
 ## 10. Hardening checklist
 

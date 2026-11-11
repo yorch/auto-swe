@@ -199,14 +199,48 @@ describe('Docker quota startup probe', () => {
     expect(execShellAsync).not.toHaveBeenCalled();
   });
 
-  it('probes storage-opt with the helper image and refuses unsupported storage', async () => {
-    vi.stubEnv('WORKSPACE_DISK_LIMIT', '20g');
-    await assertDockerDiskLimit();
-    expect(execShellAsync).toHaveBeenCalledWith(
-      `docker run --rm --storage-opt 'size=20g' -- '${resolveWorkspaceInfra().metadataBlockImage}' true`,
-      expect.anything()
+  it.each(['overlay2', 'devicemapper', 'btrfs', 'zfs'])(
+    'probes storage-opt with the helper image on %s and refuses probe failures',
+    async (driver) => {
+      vi.stubEnv('WORKSPACE_DISK_LIMIT', '20g');
+      vi.mocked(execShellAsync).mockImplementation(async (cmd) =>
+        cmd.startsWith('docker inspect') ? `${driver}\n` : ''
+      );
+      await assertDockerDiskLimit();
+      expect(execShellAsync).toHaveBeenCalledWith(
+        `docker run --rm --storage-opt 'size=20g' -- '${resolveWorkspaceInfra().metadataBlockImage}' true`,
+        expect.anything()
+      );
+      vi.mocked(execShellAsync).mockRejectedValue(new Error('unsupported storage'));
+      await expect(assertDockerDiskLimit()).rejects.toThrow('overlay2 requires XFS with pquota');
+    }
+  );
+
+  it('fails closed on inspection errors and removes the probe', async () => {
+    vi.stubEnv('WORKSPACE_DISK_LIMIT', '1g');
+    vi.mocked(execShellAsync).mockImplementation(async (cmd) => {
+      if (cmd.startsWith('docker inspect')) {
+        throw new Error('inspect failed');
+      }
+      return '';
+    });
+    await expect(assertDockerDiskLimit()).rejects.toThrow('inspect failed');
+    expect(vi.mocked(execShellAsync).mock.calls.at(-1)?.[0]).toMatch(
+      /^docker rm -f workspace-disk-probe-/
     );
-    vi.mocked(execShellAsync).mockRejectedValue(new Error('unsupported storage'));
-    await expect(assertDockerDiskLimit()).rejects.toThrow('overlay2 requires XFS with pquota');
   });
+
+  it.each(['overlayfs', ''])(
+    'rejects driver %j even when Docker accepts storage-opt, and removes the probe',
+    async (driver) => {
+      vi.stubEnv('WORKSPACE_DISK_LIMIT', '1g');
+      vi.mocked(execShellAsync).mockImplementation(async (cmd) =>
+        cmd.startsWith('docker inspect') ? driver : ''
+      );
+      await expect(assertDockerDiskLimit()).rejects.toThrow('size may be silently ignored');
+      expect(vi.mocked(execShellAsync).mock.calls.at(-1)?.[0]).toMatch(
+        /^docker rm -f workspace-disk-probe-/
+      );
+    }
+  );
 });

@@ -46,6 +46,32 @@ describe('baseline egress', () => {
     expect(script).toContain('ip6tables unusable and IPv6 enabled');
     expect(script).toContain('ip6tables -S ASW_BASELINE');
     expect(script).not.toContain('-P OUTPUT DROP');
+    const metadata = [
+      '169.254.169.254',
+      '169.254.170.2',
+      '100.100.100.200',
+      '192.0.0.192',
+      '168.63.129.16',
+      'fd00:ec2::254',
+    ];
+    const rules = baselineRules(
+      metadata.map((ip) => ({ ip })),
+      ['0.0.0.0/0', '::/0']
+    );
+    for (const ip of metadata) {
+      const family = ip.includes(':') ? rules.v6 : rules.v4;
+      expect(family.indexOf(`-d ${ip} -j REJECT`)).toBeLessThan(
+        family.indexOf(`-d ${ip} -j ACCEPT`)
+      );
+      expect(family.indexOf(`-d ${ip} -j REJECT`)).toBeGreaterThan(0);
+      expect(() =>
+        assertBaselineEgress(
+          baselineReport().replace(`-d ${ip} -j REJECT`, `-d ${ip} -j ACCEPT`),
+          [],
+          []
+        )
+      ).toThrow();
+    }
   });
 
   it('verifies ordered kernel rules and tolerates IPv6 unavailable only when disabled', () => {
