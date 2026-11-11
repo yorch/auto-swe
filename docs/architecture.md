@@ -145,7 +145,7 @@ packages/
 | `src/activities/gatherTicketContext.ts` | Context gatherer: the run's tracker ticket (with comments and parent) → a typed digest for `validate` and `implement` |
 | `src/activities/commitToMemory.ts` | Memory summarization → `MemoryItem` + embedding |
 | `src/activities/createOrUpdatePullRequest.ts` | PR create/update through the SCM provider; idempotent on branch |
-| `src/lib/scm/` | `ScmProvider` abstraction; `github.ts` builds the authenticated Octokit client (the only Octokit in the codebase) and `ciStatus.ts` reads check runs |
+| `src/lib/scm/` | `ScmProvider` abstraction and the provider registry (`index.ts`, [below](#source-control-provider-seam)); `github.ts` builds the authenticated Octokit client (the only Octokit in the codebase) and `ciStatus.ts` reads check runs |
 || `src/activities/resolveWorkspace.ts` | Materialise workspace context for a declared `workspaceProvider` |
 || `src/activities/genericActions.ts` | Generic `readSource`/`writeOutcome`/`runTool` activities dispatched by `Connection.type` |
 | `src/activities/templates.ts` | Resolves the run's `WorkflowSpec` (cascade + A/B routing); `createWorkflowRun`, `recordWorkflowStep`, `finalizeWorkflowRun` |
@@ -161,6 +161,46 @@ packages/
 | `src/lib/scannerPatternLoader.ts` | `makePatternLoader(type)` — 60 s TTL cache factory shared by three scanners |
 | `src/lib/shellCommandScanner.ts`, `sensitiveFileScanner.ts`, `codeSecurityScanner.ts` | Runtime scanners (see [AGENTS.md §6](../AGENTS.md#runtime-security-scanners)) |
 | `src/agents/` | Mastra agents — implementer, review network, planner, decomposer, pre-write security check, MCP tool loading |
+
+### Source-control provider seam
+
+Everything the execution path needs from a source-control host goes through the `ScmProvider`
+interface in `packages/worker/src/lib/scm/types.ts`. Activities never construct a client: they call
+`getScmProvider(repoRef)` and `toRepoRef(connection)` from `scm/index.ts`.
+
+- **Dispatch.** `Connection.scmProvider` (default `github`, never null) names the provider.
+  `toRepoRef` copies it onto the `RepoRef`, and it is a required input, so a query that selects a
+  repository without it fails to compile instead of silently resolving to GitHub. `getScmProvider`
+  looks the name up in an explicit registry; `github` maps to `GitHubScmProvider` and is the only
+  entry.
+- **No fallback.** A name with no registry entry throws a non-retryable `ApplicationFailure` of type
+  `SCM_PROVIDER_UNSUPPORTED` that names it. It never routes to GitHub: that would send another
+  host's URL a GitHub credential, and a platform credential never leaves its host. There is no stub
+  class standing in for a provider that is not implemented.
+- **Who writes the column.** Only the database default does. The gateway's repository create and
+  update bodies do not carry it, so a client cannot choose a provider.
+- **GitHub-only paths.** The pull-request evaluation resolves the repository's provider first and
+  fails the same way for anything but `github`, because the rest of that activity (the approver
+  App, host family, branch rules) is GitHub-specific.
+
+A new provider is a registry entry plus a class that implements the whole interface, and must also:
+
+1. Keep every source invariant (`yarn invariants:check`) true for its file. The SCM directory is
+   covered by directory, so a new file there is subject to the no-bare-`fetch`, redirect-policy and
+   no-immediate-merge rules from its first commit. Humans merge: the only merge-capable call is an
+   opt-in auto-merge that the host completes once its own protection holds, and a provider that adds
+   one adds its single file to the merge rule's allowlist deliberately.
+2. Send a platform credential only to its own host family. That needs a host-family analogue of
+   `resolvePlatformCredential` and `resolveGitHubToken`'s host guard, so a credential minted for one
+   host is refused on another, and a per-user token path bound to the origins it was verified on.
+3. Take repository URLs only through `normaliseRepositoryUrls` and check `repositoryHostsAllowed`
+   before any credential is sent to them ([repositories.md](./repositories.md#2-url-overrides-and-approved-hosts)),
+   and make every request to an operator-supplied URL through `createGuardedFetch`.
+4. Verify inbound webhooks with a secret stored through the encrypted system-config envelope and
+   compared in constant time; webhook parsing stays in the gateway and maps to the shared
+   domain events.
+5. Add the provider's name to the gateway's accepted values for repository create and update, with
+   its own host allowlist, in the same change that registers it; until then the API accepts none.
 
 ### `packages/web`
 
@@ -1397,6 +1437,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   fail, which fails the step as `SECURITY_GATE_UNAVAILABLE` (non-retryable) rather than passing it
   unscanned. The read is pinned plumbing between two commits, so it is not defeated by anything the
   agent can set in its checkout; replacing the `git` binary in the container is outside that model.
+- **GitHub is the only source-control provider.** GitLab and Bitbucket are not implemented; the
+  provider registry has no entry for either, and a repository whose `scmProvider` is anything but
+  `github` fails non-retryably ([Source-control provider seam](#source-control-provider-seam)).
 - **A node's `status` field writes the live domain status only**, as a free-form string; it does not
   update the pinned run record. The `onFailure` / `onExhausted` terminal shorthand cannot end a run
   `CANCELLED`.
