@@ -69,6 +69,15 @@ runs on a cheaper, different model from the agents it scores, to avoid self-pref
 > `SECURITY_GATE_UNAVAILABLE` instead of retrying the whole paid session; a budget stop keeps its
 > `BUDGET_EXCEEDED` type. Every caller runs the same `runPostDiffSecurityGate`
 > (`worker/src/lib/securityGate.ts`).
+> The text it scans, the advisory code scan reads, and the reviewers receive as `CodeResult.diff`
+> is read from the committed head, not the work tree: pinned `diff-tree` plumbing with `--text`, no
+> external diff driver or text conversion, no attribute file, from a recorded base commit to the
+> commit that was pushed (`diffForResult` in `worker/src/activities/allowedPaths.ts`). An agent
+> that controls its checkout can therefore not hide content with `diff.external`, a `textconv`
+> driver or a `-diff` attribute. Nothing is excluded from it, lockfiles and minified files
+> included, because a secret can sit in a file named like one. A diff that reads as empty although
+> the committed tree differs from the base is unreadable and fails `SECURITY_GATE_UNAVAILABLE`. The
+> merge-conflict resolver's scan reads each resolution commit the same way.
 > It complements the review network rather than being replaced by it: the network gives three
 > personas an opinion and routes on their verdicts, this one fails the activity outright.
 

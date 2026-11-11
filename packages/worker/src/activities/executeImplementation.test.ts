@@ -32,6 +32,17 @@ const { checkoutMock, generateMock, loadMock, prismaMock, ticketMock, workspaceM
   })
 );
 
+/**
+ * What the workspace answers by default: a readable commit for every pinned `rev-parse --verify`
+ * and a one-file patch for the pinned `diff-tree`, so the diff the scanners read is non-empty.
+ */
+async function defaultExec(cmd: string): Promise<string> {
+  if (cmd.includes('rev-parse --verify')) {
+    return `${'f'.repeat(40)}\n`;
+  }
+  return cmd.includes('diff-tree') && cmd.includes(' --text ') ? 'diff --git a/x b/x\n' : '';
+}
+
 const fallbackSetting = vi.hoisted(() => ({ on: false }));
 const tddSetting = vi.hoisted(() => ({ maxIterations: 1 }));
 
@@ -251,7 +262,7 @@ beforeEach(() => {
   });
   prismaMock.contextSnapshot.findUnique.mockResolvedValue(null);
   prismaMock.workflowRun.update.mockResolvedValue({});
-  workspaceMock.exec.mockResolvedValue('');
+  workspaceMock.exec.mockImplementation(defaultExec);
 });
 
 describe('USD-cap guard', () => {
@@ -360,10 +371,10 @@ describe('executeImplementation base branch', () => {
       payload: { baseBranch: 'release/1.4' },
     });
     expect(vi.mocked(createWorkspace).mock.calls[0]?.[2]).toBe('release/1.4');
-    const diff = workspaceMock.exec.mock.calls.find((c: unknown[]) =>
-      String(c[0]).startsWith('git diff origin/')
+    const base = workspaceMock.exec.mock.calls.find((c: unknown[]) =>
+      String(c[0]).includes("'origin/release/1.4^{commit}'")
     );
-    expect(diff?.[0]).toBe("git diff origin/'release/1.4'");
+    expect(base).toBeDefined();
     expect(result.baseBranch).toBe('release/1.4');
   });
 
@@ -628,8 +639,10 @@ describe('executeImplementation shell hygiene', () => {
     });
     await executeImplementation(REQUEST);
     const commands = workspaceMock.exec.mock.calls.map((c) => c[0]);
-    expect(commands).toContain("git diff origin/'main; touch /pwned'");
-    expect(commands).not.toContain('git diff origin/main; touch /pwned');
+    expect(commands.some((c) => String(c).includes("'origin/main; touch /pwned^{commit}'"))).toBe(
+      true
+    );
+    expect(commands.some((c) => String(c).includes(' origin/main; touch /pwned'))).toBe(false);
   });
 });
 
@@ -701,22 +714,17 @@ describe('executeImplementation allowedPaths', () => {
     withRange('docs/a.md\0');
     await executeImplementation(REQUEST, undefined, undefined, undefined, ['docs/a.md']);
     expect(
-      commands().some((c) =>
-        c.includes(`diff --no-ext-diff --no-textconv --ignore-submodules=none ${BASE} ${BASE}`)
-      )
+      commands().some((c) => c.includes(' --text ') && c.includes(`'${BASE}' '${BASE}'`))
     ).toBe(true);
-    expect(commands()).not.toContain("git diff origin/'main'");
   });
 
   it('changes nothing for a step that sets no list', async () => {
     await executeImplementation(REQUEST);
-    expect(
-      commands().some((c) => c.includes('rev-parse --verify') || c.includes('--no-verify'))
-    ).toBe(false);
+    expect(commands().some((c) => c.includes('--no-verify'))).toBe(false);
     expect(commands()).toContain(
       "git diff --cached --quiet || git commit -m 'auto: implement JIRA-1'"
     );
-    expect(commands()).toContain("git diff origin/'main'");
+    expect(commands().some((c) => c.includes("'origin/main^{commit}'"))).toBe(true);
     expect(workspaceMock.gitAuthed).toHaveBeenCalledWith("push origin 'auto/JIRA-1'");
     expect(pushed()).toBe(true);
   });
@@ -814,11 +822,11 @@ describe('executeImplementation unrunnable test command', () => {
   /** Make the test run (and only it) reject like a failed `docker exec`. */
   function failTestRun(fields: Record<string, unknown>) {
     workspaceMock.exec.mockImplementation(
-      async (_command: string, options?: { timeoutMs?: number }) => {
+      async (command: string, options?: { timeoutMs?: number }) => {
         if (options?.timeoutMs === TEST_RUN_TIMEOUT_MS) {
           throw Object.assign(new Error('Command failed'), fields);
         }
-        return '';
+        return defaultExec(command);
       }
     );
   }
@@ -918,7 +926,9 @@ describe('executeImplementation unrunnable test command', () => {
   });
 
   it('stops as soon as the tests pass', async () => {
-    workspaceMock.exec.mockResolvedValue('Tests  4 passed (4)');
+    workspaceMock.exec.mockImplementation(
+      async (cmd: string) => (await defaultExec(cmd)) || 'Tests  4 passed (4)'
+    );
     const result = await executeImplementation(REQUEST);
     expect(generateMock).toHaveBeenCalledTimes(1);
     expect(result.implementationNotes).toContain('Tests passing');
@@ -945,9 +955,9 @@ describe('executeImplementation test command that finds no tests', () => {
   /** Make the test run answer: reject with `fields`, or resolve with `stdout`. */
   function testRun(outcome: { reject: Record<string, unknown> } | { stdout: string }) {
     workspaceMock.exec.mockImplementation(
-      async (_command: string, options?: { timeoutMs?: number }) => {
+      async (command: string, options?: { timeoutMs?: number }) => {
         if (options?.timeoutMs !== TEST_RUN_TIMEOUT_MS) {
-          return '';
+          return defaultExec(command);
         }
         if ('reject' in outcome) {
           throw Object.assign(new Error('Command failed'), outcome.reject);
@@ -1019,9 +1029,9 @@ describe('executeImplementation test command that finds no tests', () => {
   it('names the run that stopped the loop when it is not the first', async () => {
     let runs = 0;
     workspaceMock.exec.mockImplementation(
-      async (_command: string, options?: { timeoutMs?: number }) => {
+      async (command: string, options?: { timeoutMs?: number }) => {
         if (options?.timeoutMs !== TEST_RUN_TIMEOUT_MS) {
-          return '';
+          return defaultExec(command);
         }
         runs += 1;
         if (runs === 1) {
@@ -1095,14 +1105,14 @@ describe('executeImplementation ask and resume', () => {
     (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === TEST_RUN_TIMEOUT_MS;
   const failTests = () =>
     workspaceMock.exec.mockImplementation(
-      async (_command: string, options?: { timeoutMs?: number }) => {
+      async (command: string, options?: { timeoutMs?: number }) => {
         if (options?.timeoutMs === TEST_RUN_TIMEOUT_MS) {
           throw Object.assign(new Error('Command failed'), {
             code: 1,
             stdout: 'Tests: 2 failed, 5 passed',
           });
         }
-        return '';
+        return defaultExec(command);
       }
     );
   const answer = { text: 'turn done', toolCallCount: 0 };

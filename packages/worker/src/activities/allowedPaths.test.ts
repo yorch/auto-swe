@@ -322,11 +322,7 @@ describe('with no allowedPaths', () => {
     };
     expect(await startPathGuard(ws, 'main', undefined)).toBeUndefined();
     await commitStaged(ws, "it's", undefined);
-    await diffForResult(ws, 'main', undefined);
-    expect(seen).toEqual([
-      "git diff --cached --quiet || git commit -m 'it'\\''s'",
-      "git diff origin/'main'",
-    ]);
+    expect(seen).toEqual(["git diff --cached --quiet || git commit -m 'it'\\''s'"]);
   });
 });
 

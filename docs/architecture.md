@@ -1391,6 +1391,12 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
+- **The post-diff security scan has no size bound of its own.** The diff it reads is whole (no
+  lockfile or minified-file exclusion, no truncation), because a cut or an exclusion is a place to
+  hide a payload. A change too large for the `securityReview` model's context makes the gate call
+  fail, which fails the step as `SECURITY_GATE_UNAVAILABLE` (non-retryable) rather than passing it
+  unscanned. The read is pinned plumbing between two commits, so it is not defeated by anything the
+  agent can set in its checkout; replacing the `git` binary in the container is outside that model.
 - **A node's `status` field writes the live domain status only**, as a free-form string; it does not
   update the pinned run record. The `onFailure` / `onExhausted` terminal shorthand cannot end a run
   `CANCELLED`.

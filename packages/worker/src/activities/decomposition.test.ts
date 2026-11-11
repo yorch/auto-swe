@@ -110,6 +110,20 @@ vi.mock('./workspace.js', () => ({
   shellQuote: (s: string) => `'${s.replace(/'/g, "'\\''")}'`,
 }));
 
+// The pinned plumbing command is covered against real git in diffForResult.blinding.test.ts; here
+// it is a readable stand-in so the test can see which commits and paths are scanned.
+vi.mock('./allowedPaths.js', () => ({
+  pinnedDiffTreeCommand: (
+    from: string,
+    to: string,
+    opts: { kind: string; pathspecs?: string[] }
+  ) => {
+    const q = (v: string) => `'${v}'`;
+    const paths = (opts.pathspecs ?? []).map(q).join(' ');
+    return `${opts.kind === 'patch' ? 'git diff' : 'git diff-names'} ${q(from)} ${q(to)} -- ${paths}`;
+  },
+}));
+
 // Clone URL + token resolution moved from env-var/githubAuth call sites into
 // the ScmProvider seam (lib/scm).
 vi.mock('../lib/scm/index.js', () => ({

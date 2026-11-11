@@ -17,7 +17,7 @@ import type {
   RepoWorkRequest,
   Subtask,
 } from '@auto-swe/shared/types/workflow';
-import { heartbeat } from '@temporalio/activity';
+import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import { planDecomposition as decomposerPlan } from '../agents/decomposer.js';
 import { runImplementerTurn, wasTurnTraced } from '../agents/implementerRuntime.js';
 import {
@@ -52,6 +52,7 @@ import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
+import { pinnedDiffTreeCommand } from './allowedPaths.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import {
   createWorkspace,
@@ -387,10 +388,23 @@ async function scanResolvedMerge(
 ): Promise<void> {
   const parts: string[] = [];
   for (const { sha, files } of resolutions) {
-    const paths = files.map((f) => shellQuote(f)).join(' ');
-    parts.push(
-      await workspace.exec(`git diff ${shellQuote(`${sha}^1`)} ${shellQuote(sha)} -- ${paths}`)
+    // Pinned plumbing between two commits (see `pinnedDiffTreeCommand`): a config key, an
+    // attribute or a rewritten work tree cannot blank what the resolver wrote.
+    const patch = await workspace.exec(
+      pinnedDiffTreeCommand(`${sha}^1`, sha, { kind: 'patch', pathspecs: files })
     );
+    if (patch.trim() === '') {
+      const names = await workspace.exec(
+        pinnedDiffTreeCommand(`${sha}^1`, sha, { kind: 'name-status', pathspecs: files })
+      );
+      if (names.trim() !== '') {
+        throw ApplicationFailure.nonRetryable(
+          'The resolved merge changed files but its diff read as empty, so it cannot be scanned.',
+          'SECURITY_GATE_UNAVAILABLE'
+        );
+      }
+    }
+    parts.push(patch);
   }
   const diff = parts.filter((p) => p.trim().length > 0).join('\n');
   if (diff.length === 0) {

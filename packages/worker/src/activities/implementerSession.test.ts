@@ -58,10 +58,14 @@ vi.mock('../lib/scm/index.js', () => ({
 }));
 
 const execMock = vi.fn(async (cmd: string, _options?: { timeoutMs?: number }) => {
+  if (cmd.includes('rev-parse --verify')) {
+    // A readable commit, for the pinned reads the diff is built from.
+    return `${'e'.repeat(40)}\n`;
+  }
   if (cmd.includes('rev-parse')) {
     return 'abc123\n';
   }
-  if (cmd.startsWith('git diff origin/')) {
+  if (cmd.includes('diff-tree') && cmd.includes(' --text ')) {
     return 'diff --git a/x b/x';
   }
   if (cmd.includes('cat package.json')) {
@@ -333,11 +337,7 @@ describe('runImplementerFixSession allowedPaths', () => {
       expect(startHead).toBeGreaterThan(reset);
       // The whole change is reported against the original run's base, as two trees.
       expect(
-        all.some((c) =>
-          c.includes(
-            `diff --no-ext-diff --no-textconv --ignore-submodules=none ${'c'.repeat(40)} ${BASE}`
-          )
-        )
+        all.some((c) => c.includes(' --text ') && c.includes(`'${'c'.repeat(40)}' '${BASE}'`))
       ).toBe(true);
       expect(result.baseSha).toBe('c'.repeat(40));
     } finally {
@@ -352,9 +352,7 @@ describe('runImplementerFixSession allowedPaths', () => {
       key === 'github.ciFixTestIntegrityGuard' ? 'off' : 'mastra') as never);
     await runImplementerFixSession(input());
     vi.mocked(resolveSetting).mockImplementation((async () => 'mastra') as never);
-    expect(cmds().some((c) => c.includes('rev-parse --verify') || c.includes('--no-verify'))).toBe(
-      false
-    );
+    expect(cmds().some((c) => c.includes('--no-verify'))).toBe(false);
     expect(cmds()).toContain(
       "git diff --cached --quiet || git commit -m 'auto: fix CI for auto/T-1'"
     );
@@ -384,7 +382,7 @@ describe('runImplementerFixSession', () => {
     });
     expect(findWorkflow).not.toHaveBeenCalled();
     expect(out.repoId).toBe('repo-1');
-    expect(out.headSha).toBe('abc123');
+    expect(out.headSha).toBe('e'.repeat(40));
   });
 
   it('falls back to the legacy branch lookup for old context snapshots', async () => {
@@ -479,7 +477,7 @@ describe('runImplementerFixSession', () => {
     scanDiffForCodeIssuesMock.mockRejectedValueOnce(new Error('pattern db down'));
     const out = await runImplementerFixSession(input());
     expect(out.codeSecurityFindings).toBeUndefined();
-    expect(out.headSha).toBe('abc123');
+    expect(out.headSha).toBe('e'.repeat(40));
   });
 
   it('gives the test run the long timeout instead of the 2-minute exec default', async () => {
@@ -493,8 +491,8 @@ describe('runImplementerFixSession', () => {
     findRepo.mockResolvedValue({ ...REPO, defaultBranch: 'main; touch /pwned' } as never);
     await runImplementerFixSession(input());
     const commands = execMock.mock.calls.map((c) => c[0]);
-    expect(commands).toContain("git diff origin/'main; touch /pwned'");
-    expect(commands).not.toContain('git diff origin/main; touch /pwned');
+    expect(commands.some((c) => c.includes("'origin/main; touch /pwned^{commit}'"))).toBe(true);
+    expect(commands.some((c) => c.includes(' origin/main; touch /pwned'))).toBe(false);
   });
 
   it('clones and diffs against the branch the change was cut from, and carries it forward', async () => {
@@ -504,7 +502,9 @@ describe('runImplementerFixSession', () => {
       input({ previousCodeResult: codeResult({ baseBranch: 'release/1.4', repoId: 'repo-1' }) })
     );
     expect(vi.mocked(createWorkspace).mock.calls.at(-1)?.[2]).toBe('release/1.4');
-    expect(execMock.mock.calls.map((c) => c[0])).toContain("git diff origin/'release/1.4'");
+    expect(
+      execMock.mock.calls.some((c) => String(c[0]).includes("'origin/release/1.4^{commit}'"))
+    ).toBe(true);
     expect(out.baseBranch).toBe('release/1.4');
   });
 
@@ -811,11 +811,18 @@ describe('runImplementerFixSession test-integrity guard', () => {
   it('fails closed before the paid session when the starting commit is unreadable in block mode', async () => {
     findRepo.mockResolvedValue(REPO as never);
     guardSetting('block');
-    // The default exec answers rev-parse with a value that is not a sha.
-    await expect(runImplementerFixSession(input())).rejects.toMatchObject({
-      nonRetryable: true,
-      type: 'TEST_INTEGRITY_GUARD_UNAVAILABLE',
-    });
+    // An exec that answers rev-parse with a value that is not a sha.
+    const base = execMock.getMockImplementation();
+    execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) =>
+      cmd.includes('rev-parse --verify') ? 'abc123\n' : base?.(cmd, options)) as never);
+    try {
+      await expect(runImplementerFixSession(input())).rejects.toMatchObject({
+        nonRetryable: true,
+        type: 'TEST_INTEGRITY_GUARD_UNAVAILABLE',
+      });
+    } finally {
+      execMock.mockImplementation(base as never);
+    }
     expect(generateMock).not.toHaveBeenCalled();
     expect(cmds().some((c) => c.includes('push origin'))).toBe(false);
   });

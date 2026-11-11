@@ -214,21 +214,33 @@ export async function readHeadSha(workspace: Exec): Promise<string | undefined> 
   return (await readSha(workspace, 'HEAD')) || undefined;
 }
 
-/**
- * The hardened command the test-integrity gate reads the change with: `git diff-tree`, the
- * plumbing that compares two commits' trees and so depends on neither the work tree, the index nor
- * a relative path. (The porcelain `git diff -- .` it replaces read nothing when the agent set
- * `core.worktree` to an ancestor, with exit 0.) Pinned to the checkout's own `.git`, no attribute,
- * driver, textconv, prefix or relative-path setting of the repository can change what is read:
- * `--text` shows a file marked `-diff` or `binary` as text, the prefixes are explicit, renames are
- * detected, and generated files (lockfiles) are left out by top-anchored pathspecs. The analyser
- * also drops generated paths itself, so the exclusion only bounds the size.
- */
 export function testIntegrityDiffCommand(
   from: string,
   to: string,
   kind: 'patch' | 'name-status',
   excludes: readonly string[]
+): string {
+  return pinnedDiffTreeCommand(from, to, { context: 1, excludes, kind });
+}
+
+/**
+ * The one pinned way to read what changed between two commits, for every consumer that must see
+ * the whole change whatever the repository's config, attributes or work tree say: the
+ * test-integrity gate, the security scan and the reviewers' diff. `--text` is what defeats a
+ * `-diff` / `binary` attribute (in a committed `.gitattributes` or in `.git/info/attributes`),
+ * `--no-ext-diff` / `--no-textconv` an external driver or text conversion, `diff-tree` a
+ * rewritten work tree, and the pinned environment a moved `GIT_DIR`. `pathspecs` narrows the read
+ * to literal repo-relative paths; `excludes` removes top-anchored globs.
+ */
+export function pinnedDiffTreeCommand(
+  from: string,
+  to: string,
+  opts: {
+    kind: 'patch' | 'name-status';
+    context?: number;
+    excludes?: readonly string[];
+    pathspecs?: readonly string[];
+  }
 ): string {
   const config =
     '-c core.attributesFile=/dev/null -c core.quotepath=false -c diff.mnemonicPrefix=false ' +
@@ -236,9 +248,12 @@ export function testIntegrityDiffCommand(
   const flags =
     'diff-tree -r --no-commit-id --no-ext-diff --no-textconv --no-color --find-renames ' +
     '--ignore-submodules=none --src-prefix=a/ --dst-prefix=b/ ';
-  const specs = [':(top)', ...excludes].map((p) => shellQuote(p)).join(' ');
+  const include = opts.pathspecs?.length
+    ? opts.pathspecs.map((p) => `:(top,literal)${p}`)
+    : [':(top)'];
+  const specs = [...include, ...(opts.excludes ?? [])].map((p) => shellQuote(p)).join(' ');
   return guardedGit(
-    `${config}${flags}${kind === 'patch' ? '-p --text -U1' : '--name-status'} ${shellQuote(from)} ${shellQuote(to)} -- ${specs}`
+    `${config}${flags}${opts.kind === 'patch' ? `-p --text -U${opts.context ?? 3}` : '--name-status'} ${shellQuote(from)} ${shellQuote(to)} -- ${specs}`
   );
 }
 
@@ -371,10 +386,18 @@ async function assertNoWorkflowChanges(
 
 /**
  * The diff the step reports (`CodeResult.diff`, and from it `filesChanged`, which the
- * template's `checkScope` reads). Unguarded: the original `git diff origin/<default>`.
- * Guarded: the pushed commit, measured from a recorded sha with the same hardening, no external diff driver
- * and no text conversion, so neither a rewritten ref nor a config key changes what is
- * reported or what the security scan sees.
+ * template's `checkScope` reads) and the exact text the security gate and the code scanner read.
+ *
+ * Both branches compare two COMMITS' trees through {@link pinnedDiffTreeCommand}: the committed
+ * head (the pushed sha, or `HEAD` for an unguarded step) against a recorded base (the guard's
+ * report sha, or the default branch's tip). Neither the work tree, the index, nor any
+ * repository setting the agent controls (external diff driver, textconv, `-diff` attributes,
+ * `core.worktree`) takes part, so the agent cannot blind what the scanners see. Nothing is
+ * excluded here — not lockfiles, not minified files: a secret can sit in a file named like one.
+ *
+ * Fails closed, non-retryably (`SECURITY_GATE_UNAVAILABLE`), when the change cannot be read, or
+ * when the diff is empty although the two trees differ: an empty answer for a different tree
+ * means something hid the change, and "nothing found" must never read as "clean".
  */
 export async function diffForResult(
   workspace: Exec,
@@ -382,13 +405,43 @@ export async function diffForResult(
   guard: PathGuard | undefined,
   pushSha?: string
 ): Promise<string> {
-  if (!guard || !pushSha) {
-    return workspace.exec(`git diff origin/${shellQuote(defaultBranch)}`);
+  const unreadable = (why: string) =>
+    ApplicationFailure.nonRetryable(
+      `The change could not be read for the security scan (${why}). Nothing further was run.`,
+      'SECURITY_GATE_UNAVAILABLE'
+    );
+  /** Any read that throws means the change cannot be shown to the scanners: fail closed. */
+  const read = async <T>(fn: () => Promise<T>): Promise<T> => {
+    try {
+      return await fn();
+    } catch (err) {
+      throw unreadable(err instanceof Error ? err.message : String(err));
+    }
+  };
+  const head = pushSha ?? (await read(() => readHeadSha(workspace)));
+  if (!head) {
+    throw unreadable('the committed head could not be read');
   }
-  const range = guard.report.twoTree
-    ? `${guard.report.sha} ${pushSha}`
-    : `${guard.report.sha}...${pushSha}`;
-  return workspace.exec(
-    guardedGit(`diff --no-ext-diff --no-textconv --ignore-submodules=none ${range}`)
+  let base: string;
+  if (guard && !guard.report.twoTree) {
+    const mergeBase = guardedGit(`merge-base ${shellQuote(guard.report.sha)} ${shellQuote(head)}`);
+    base = (await read(() => workspace.exec(mergeBase))).trim();
+  } else if (guard) {
+    base = guard.report.sha;
+  } else {
+    base = await read(() => readSha(workspace, `origin/${defaultBranch}`));
+  }
+  if (!SHA.test(base)) {
+    throw unreadable('the base commit could not be read');
+  }
+  const diff = await read(() =>
+    workspace.exec(pinnedDiffTreeCommand(base, head, { context: 3, kind: 'patch' }))
   );
+  if (diff.trim() === '') {
+    const change = await read(() => readTreeChange(workspace, base, head));
+    if (change.treesDiffer) {
+      throw unreadable('the diff read as empty although the committed tree differs from the base');
+    }
+  }
+  return diff;
 }
