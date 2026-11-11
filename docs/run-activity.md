@@ -91,7 +91,7 @@ A launch may choose a stricter level for one run, never a looser one (see
 
 | Level | Agent workspace | `shell` / `containerStep` with `network: "egress"` |
 |---|---|---|
-| `open` | Unfiltered; with the worker's egress proxy configured, `HTTP_PROXY` holds cooperating clients to the team allowlist. | The team allowlist via the DNS filter (and the egress proxy when configured); an empty allowlist permits any host. |
+| `open` | Public internet stays open; Docker workspaces cannot reach private/non-public ranges except configured DNS, worker proxies, the git host and operator CIDRs. With the egress proxy configured, `HTTP_PROXY` holds cooperating clients to the team allowlist. | The team allowlist via the DNS filter (and the egress proxy when configured); an empty allowlist permits any host. |
 | `restricted` | The team allowlist is mandatory: an empty list leaves only what `blocked` allows, and a non-empty allowlist with no egress proxy configured refuses the workspace with `EGRESS_POLICY_UNENFORCEABLE`. Enforced by the egress proxy plus a network lock that confines the workspace to the model proxy, the registry proxy when wired, the repository's git host and, for a non-empty allowlist, the egress proxy. A raw socket or `--noproxy` reaches nothing else. | An empty allowlist forces `network` to `none`. With an allowlist the step is held to it by the egress proxy and the DNS filter only; it is not network-locked. The step is refused when the worker's egress proxy is not configured. |
 | `blocked` | Only the model proxy, the registry proxy when wired, and the repository's git host (plus cluster DNS on Kubernetes). There is no forwarding proxy. | `network` is forced to `none`. |
 

@@ -66,7 +66,11 @@ function ipv6Bytes(ip: string): number[] | null {
 }
 
 /** Cloud metadata addresses outside 169.254.0.0/16 (Alibaba, Oracle, Azure wire server). */
-const METADATA_V4 = new Set(['100.100.100.200', '192.0.0.192', '168.63.129.16']);
+export const METADATA_V4: ReadonlySet<string> = new Set([
+  '100.100.100.200',
+  '192.0.0.192',
+  '168.63.129.16',
+]);
 
 function isForbiddenV4(octets: number[]): boolean {
   const [a = 0, b = 0] = octets;

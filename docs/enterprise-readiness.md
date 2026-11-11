@@ -341,9 +341,13 @@ authenticated principal, and tenant keys on the tables joined through runs.
   Docker; labelled pods and `NetworkPolicy` objects on Kubernetes), proven after it is applied.
   An unprovable lock fails the workspace with a non-retryable `EGRESS_POLICY_UNENFORCEABLE`.
   `blocked` forces shell and container steps to no network.
-- **Related controls:** the cloud metadata addresses are blackholed by default, the model
-  provider key never enters a workspace (model proxy), and registry credentials stay in the
-  worker's registry proxy.
+- **Related controls:** Docker workspaces reject private/non-public destinations even under
+  `open`, with explicit exceptions for DNS, worker proxy ports, the git host and operator CIDRs.
+  A NET_ADMIN helper installs the baseline before services start; kernel read-back is mandatory
+  and failure removes the workspace. Cloud metadata REJECTs precede exceptions. The opt-in
+  `WORKSPACE_DISK_LIMIT` caps writable layers, with a fail-closed Docker quota probe at worker boot.
+  The model provider key never enters a workspace (model proxy), and registry credentials stay
+  in the worker's registry proxy.
 
 ### What flipping the default would break
 

@@ -74,7 +74,10 @@ import {
 
 export type CapturedExec = CapturedResult;
 
-export { buildMetadataBlockArgs } from '../lib/workspaceBackend/docker.js';
+export {
+  buildBaselineEgressScript,
+  buildEgressHelperCommand,
+} from '../lib/workspaceBackend/docker.js';
 export { shellQuote };
 
 export interface Workspace {
@@ -524,14 +527,7 @@ export function killTaggedProcessesScript(execId: string): string {
 // come from the environment — see `resolveWorkspaceInfra` and `createWorkspace`
 // (defaults: 4g / 2 CPU / 512 pids / node:24-alpine).
 
-// Cloud metadata-IP egress block (deferred follow-up to the `--add-host`
-// hardening below): can be disabled per-deployment if it misbehaves on a given
-// Docker runtime (e.g. `--network container:` unsupported). Default ON.
-// `WORKSPACE_BLOCK_METADATA=false` is the only value that turns it off, and the
-// sidecar image is `WORKSPACE_METADATA_BLOCK_IMAGE`. Both are deploy-time
-// settings: nothing a run, a team, or an admin session can change. The driver
-// runs the sidecar in create() — see `buildMetadataBlockArgs`, re-exported
-// above.
+// The Docker driver installs and verifies the baseline before services or agent commands run.
 
 /**
  * `sh` script that leaves a working `git` on PATH, run as the first exec in a
@@ -1137,6 +1133,7 @@ export async function createWorkspace(
   try {
     const spec = agentWorkspaceSpec(containerName, effectiveImage, infra, options?.services);
     const gitHost = gitHostOf(cleanUrl);
+    spec.baselineAllow = gitHost ? [{ host: gitHost }] : [];
     egress = await beginWorkspaceEgress(
       options?.teamId ?? null,
       gitHost ? [gitHost] : [],

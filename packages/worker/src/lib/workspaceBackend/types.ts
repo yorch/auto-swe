@@ -27,6 +27,8 @@ export interface WorkspaceContainerSpec {
    * driver's business (Docker maps the host alias to the host gateway).
    */
   reachWorker: boolean;
+  /** Git hosts that may need private-network access under the Docker baseline. */
+  baselineAllow?: EgressAllowEntry[];
   /** Non-secret `NAME=value` pairs, passed to the container as `docker run -e`. */
   env?: string[];
   /**
@@ -225,7 +227,7 @@ export interface WorkspaceBackend {
    * Cuts a running workspace off from the network (egress policy `blocked`): from here on it
    * reaches only `allow`. Called after provisioning (clone, registry wiring) and before any agent
    * code runs. It MUST fail closed — it throws when the restriction is not in place, and the caller
-   * destroys the workspace — unlike the best-effort metadata blackhole. Enforcement is the
+   * destroys the workspace, as with the baseline egress control. Enforcement is the
    * network's, not a cooperative client's: default-deny rules in the container's namespace on
    * Docker, a NetworkPolicy selecting the pod on Kubernetes.
    */

@@ -907,11 +907,14 @@ export interface WorkspaceInfraConfig {
   /// outranks all of these. Environment-only: an executor image runs next to the clone
   /// credential, so only the deployer may map a stack to one.
   stackImages: Partial<Record<'python' | 'jvm' | 'go', string>>;
-  /// Privileged sidecar that installs the cloud-metadata blackhole routes.
+  /// NET_ADMIN helper image for baseline and strict Docker egress rules.
   metadataBlockImage: string;
-  /// Blackhole cloud metadata IPs inside every workspace. Only the literal
+  /// Reject cloud metadata IPs inside every workspace. Only the literal
   /// string `false` turns it off, so a typo cannot disable a security control.
   blockMetadata: boolean;
+  blockPrivateEgress: boolean;
+  privateEgressAllow: string[];
+  diskLimit: string | null;
   /// Cap on Temporal activity tasks one worker runs at once (read at boot).
   maxConcurrentActivities: number;
   /// Per-target wall-clock budget for a scanner pattern, in milliseconds.
@@ -931,10 +934,8 @@ export interface WorkspaceInfraConfig {
   /// without the proxy being published on the host.
   network: string | null;
   /// Resolver IPs handed to every workspace container (`WORKSPACE_DNS`). Public
-  /// by default, which only means workspaces are not handed the host's resolver:
-  /// egress is not IP-filtered, so agent code can still query any resolver it can
-  /// reach. Set an internal one when the repositories live on a host only that
-  /// resolver answers correctly (a split-horizon GitHub Enterprise name).
+  /// by default; the Docker baseline admits private resolvers on TCP/UDP 53.
+  /// Set an internal one for split-horizon GitHub Enterprise names.
   dns: string[];
   /// Which substrate runs agent workspaces (`WORKSPACE_BACKEND`). Only the
   /// literal `kubernetes` selects pods; anything else is Docker.
@@ -1219,6 +1220,7 @@ export function resolveGatewayInternalUrl(): string {
 
 const IMAGE_HINT = 'a valid Docker image reference';
 const DOCKER_MEMORY_RE = /^\d+[bkmg]?$/i;
+const DOCKER_DISK_RE = /^(?=[0-9]*[1-9])[0-9]+[bkmg]?$/i;
 
 /// Deploy-time sizing and sidecar images for agent workspaces, plus the worker
 /// and scanner bounds. These were admin-editable; they are infrastructure
@@ -1228,12 +1230,28 @@ const DOCKER_MEMORY_RE = /^\d+[bkmg]?$/i;
 /// a bad value falls back to its default. `assertWorkspaceInfraEnv()` is the
 /// strict counterpart and runs at worker boot, so a bad value is a failed
 /// deploy rather than a silently different one.
+function isWorkspaceCidr(value: string): boolean {
+  const parts = value.split('/');
+  const family = isIP(parts[0] ?? '');
+  return (
+    family !== 0 &&
+    !value.includes('%') &&
+    (parts.length === 1 ||
+      (parts.length === 2 &&
+        /^\d+$/.test(parts[1] ?? '') &&
+        Number(parts[1]) <= (family === 4 ? 32 : 128)))
+  );
+}
+
 export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
   const cpus = Number(process.env.WORKSPACE_CPUS);
   return {
     backend: process.env.WORKSPACE_BACKEND === 'kubernetes' ? 'kubernetes' : 'docker',
     blockMetadata: process.env.WORKSPACE_BLOCK_METADATA !== 'false',
+    blockPrivateEgress: process.env.WORKSPACE_BLOCK_PRIVATE_EGRESS !== 'false',
     cpus: Number.isFinite(cpus) && cpus > 0 ? cpus : 2,
+    diskLimit:
+      validatedEnv('WORKSPACE_DISK_LIMIT', '', DOCKER_DISK_RE, 'a Docker size such as 20g') || null,
     dns: workspaceDnsFromEnv(),
     egressProxy: resolveEgressProxy(),
     harnessModelProxy: resolveHarnessModelProxy(),
@@ -1278,6 +1296,10 @@ export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
     network:
       validatedEnv('WORKSPACE_NETWORK', '', DOCKER_NETWORK_RE, 'a Docker network name') || null,
     pidsLimit: boundedEnvInt('WORKSPACE_PIDS_LIMIT', 512, 1, Number.MAX_SAFE_INTEGER),
+    privateEgressAllow: (process.env.WORKSPACE_PRIVATE_EGRESS_ALLOW ?? '')
+      .split(',')
+      .map((v) => v.trim())
+      .filter(isWorkspaceCidr),
     regexScanBudgetMs: boundedEnvInt('SCANNER_REGEX_BUDGET_MS', 250, 10, 60_000),
     registryProxy: resolveRegistryProxy(),
     stackImages: Object.fromEntries(
@@ -1312,6 +1334,21 @@ export function validateWorkspaceInfraEnv(): string[] {
     }
   };
   const positiveInt = (raw: string) => Number.isInteger(Number(raw)) && Number(raw) > 0;
+  check(
+    'WORKSPACE_DISK_LIMIT',
+    (raw) => DOCKER_DISK_RE.test(raw),
+    'a positive Docker size such as 20g'
+  );
+  check(
+    'WORKSPACE_BLOCK_PRIVATE_EGRESS',
+    (raw) => raw === 'true' || raw === 'false',
+    "'true' or 'false'"
+  );
+  check(
+    'WORKSPACE_PRIVATE_EGRESS_ALLOW',
+    (raw) => raw.split(',').every((v) => isWorkspaceCidr(v.trim())),
+    'comma-separated IPv4/IPv6 addresses or CIDRs'
+  );
 
   check(
     'WORKSPACE_MEMORY',

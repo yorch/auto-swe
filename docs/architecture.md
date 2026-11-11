@@ -1229,10 +1229,10 @@ anything else in the system. `createWorkspace()` (`activities/workspace.ts`) app
 |---|---|
 | Capabilities | `--cap-drop=ALL`, `--security-opt=no-new-privileges` |
 | Resources | Memory, CPU, and PID caps from `WORKSPACE_MEMORY` / `WORKSPACE_CPUS` / `WORKSPACE_PIDS_LIMIT` |
-| Network | Kept — git and package installs need it. Under the default `open` egress policy, egress is **not** IP-filtered (see [run egress policy](./run-activity.md#run-egress-policy)). Names resolve through `WORKSPACE_DNS` (default public `1.1.1.1` / `8.8.8.8`: workspaces are not handed the host's resolver, but this is not a boundary, since egress is unfiltered and agent code can query any resolver it can reach). Setting an internal resolver lets agent-run code resolve every name that resolver knows. Container steps with `network: 'egress'` and no allowlist do not use it |
+| Network | Docker workspaces keep public internet access under `open`, but a verified OUTPUT baseline rejects private, link-local, multicast, reserved and IPv4-embedding IPv6 ranges. Loopback and established replies are accepted first, then cloud metadata is rejected before exceptions for worker proxy ports, configured DNS, the repository git host and operator CIDRs (`WORKSPACE_PRIVATE_EGRESS_ALLOW`). `WORKSPACE_BLOCK_PRIVATE_EGRESS=false` disables private-range blocking. The later restricted/blocked lock detaches this baseline and defaults INPUT and OUTPUT to DROP |
 | Clone credential | Scrubbed from `.git/config` immediately after clone, then re-injected per-call by `gitAuthed` via `http.extraheader` for push and fetch only, so it never sits at rest in the workspace. The header value is never in the script: the script reads it from `$ASW_GIT_AUTH`, which the caller supplies as `secretEnv` (Docker `-e NAME` from the client's environment; Kubernetes a stdin preamble), because a Kubernetes exec's argv is an apiserver URL kept in audit logs. The script names it as `${ASW_GIT_AUTH:?…}`, so a variable that was not delivered aborts the script instead of sending the request unauthenticated. Dependency checkouts (`cloneDependencyRepos`) clone the same way: from the clean URL, hardened, with the header as `secretEnv` |
 | Authenticated git calls | Each one (`authedGitScript`) first rewrites `.git/config` from an allow-list — repository format, `origin` pinned to the scrubbed URL, plain `origin` fetch refspecs — so a planted `url.*.insteadOf`, `http.<url>.proxy`, `include.path`, `credential.helper` or rewritten remote cannot redirect the header; refuses a `.git` that is a gitfile or symlink; pins `GIT_DIR` / `GIT_WORK_TREE` to the repository and refuses unless `git rev-parse --absolute-git-dir` names exactly that `.git`, so a `.git` broken on purpose is an error rather than a fallback to a parent `/workspace/.git` or `/.git` whose config was never rewritten; in the agent workspace, first SIGKILLs every process except PID 1, the container's keeper and the call's own process tree, so nothing the agent left running can read the header from `/proc/<pid>/cmdline` or rewrite the config between the rewrite and the call; runs with hooks off (`core.hooksPath=/dev/null`), system and global config ignored, `core.fsmonitor`/`ext::`/submodule recursion disabled, automatic `gc` and `maintenance` off (`gc.auto=0`, `maintenance.auto=false`: either can detach a background process that keeps the call's environment, header included, after the call returns); and pushes to the scrubbed URL explicitly with `--no-verify`. A built-in `SENSITIVE_FILE` pattern also hard-blocks `writeFile` and shell redirects into `.git/` |
-| Cloud metadata | `169.254.169.254`, the ECS endpoint, and the IPv6 IMDS address are blackholed by a short-lived `--cap-add=NET_ADMIN` sidecar sharing the workspace netns (`buildMetadataBlockArgs`). Best-effort, gated by `WORKSPACE_BLOCK_METADATA` (default on) |
+| Cloud metadata | A short-lived `NET_ADMIN` helper installs IPv4 and IPv6 iptables REJECTs in the workspace netns, before any allow entry. The worker verifies kernel read-back and removes the workspace on failure. `WORKSPACE_BLOCK_METADATA` defaults on; when private blocking is off, the verified metadata-only baseline still applies |
 | Docker socket | **Not** mounted into the workspace — there is no daemon-level escape path |
 | Timed-out commands | Every `docker exec` carries a per-call `AUTO_SWE_EXEC_ID` tag; when a command overruns its timeout, its whole in-container process tree (found by that tag in `/proc/*/environ`) is stopped and killed, not just the local `docker exec` client. The container runs under `--init`, so the killed processes are reaped rather than left holding PIDs |
 | Provisioning failure | The container is named before `docker run`, and any failure from `docker run` onward removes it by that name |
@@ -1251,7 +1251,8 @@ Everything the worker does to a workspace goes through `WorkspaceBackend`
 out/in, pause, remove. `WORKSPACE_BACKEND` picks the driver for the whole worker process: Docker
 (the default) or Kubernetes (`kubernetes`, any other value is Docker). Both meet the same
 obligations: `create()` applies the hardening itself (Docker: `--init`, `--cap-drop=ALL`,
-`no-new-privileges`, the metadata add-hosts, `sleep infinity`; Kubernetes: the pod spec below) and
+`no-new-privileges`, the metadata add-hosts, `sleep infinity`, the verified baseline before services,
+and the optional `WORKSPACE_DISK_LIMIT` storage cap; Kubernetes: the pod spec below) and
 records the keeper's in-container PID once, right after start ("the only child of PID 1" cannot
 be found reliably later); secret env (`secretEnv` on `exec`, `execShell`, `spawn` and `runHelper`)
 travels by *name* only, never as a value on a command line (`docker exec -e NAME` resolves the
@@ -1282,8 +1283,8 @@ workspace itself, never from the worker's memory, so a workspace belonging to an
 same Docker host or namespace is safe while it is within its lifetime:
 - Docker: every workspace container, ephemeral step container, detached sidecar and repo-preview
   service container (`<workspace>-svc-<name>`) is created with the labels `auto-swe.workspace=true`
-  and `auto-swe.created-at=<epoch seconds>`. The metadata-block sidecar is the exception: it carries
-  no labels, and it runs `--rm` and exits once it has installed its routes. The sweep lists
+  and `auto-swe.created-at=<epoch seconds>`. The baseline helper carries these labels too,
+  runs `--rm` and exits once it has installed and reported its rules. The sweep lists
   (`docker ps --all`) only containers with the marker label and `docker rm -f`s those older than
   seven hours. That bound is the longest activity that holds a workspace, plus an hour for clock
   skew between workers. The six-hour activities (`T_AGENT_RUN_ACTIVITY`, the four-hour wall-clock
@@ -1337,8 +1338,8 @@ gets a per-workspace token, the real upstream credential never enters the contai
 injection boundary for agent-generated commands; treat any change to it, or any caller that
 bypasses it, as security-critical.
 
-> The metadata blackhole needs a real-Docker smoke test — it is exercised by unit tests against
-> argument construction, not against a live daemon.
+> The Docker baseline is covered by script and driver unit tests. A real-Docker smoke test is
+> necessary to verify the deployment runtime and helper image.
 
 **Shell and container steps get the same credential treatment.** `runShellStep`
 (`activities/shellStep.ts`) clones the branch into a Docker volume that is then bind-mounted into
@@ -1631,9 +1632,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   ([agent-runs.md §4](./agent-runs.md#4-delivery-and-the-trust-boundary)). The
   hardening also ignores `/etc/gitconfig`, so a custom workspace image that configures a private CA
   or proxy there must set it through the environment (`GIT_SSL_CAINFO`, `HTTPS_PROXY`) instead.
-- **The agent workspace keeps network access** — git and package installs need it — so under the default `open` egress policy its egress is
-  not default-deny (see [run egress policy](./run-activity.md#run-egress-policy)). The metadata blackhole (§8) is best-effort, env-gated, and exercised only
-  against argument construction, not a live Docker daemon.
+- **The agent workspace keeps public internet access** under `open`; the Docker baseline is not
+  default-deny. DNS remains available and names are not pinned, so a git host whose addresses change
+  may need operator CIDRs. Shell/container steps through `ephemeralContainer.ts` do not get this
+  baseline. Live Docker enforcement depends on the helper image and runtime; creation fails closed
+  if rule installation or kernel read-back fails.
 - **Scanner pattern edits propagate by TTL, not invalidation.** Gateway and worker are separate
   processes with independent 60 s caches, so a pattern change can take up to a minute to reach the
   worker and the two can briefly disagree.

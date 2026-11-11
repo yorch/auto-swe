@@ -1118,6 +1118,49 @@ answering `cannot be checked`.
 
 ---
 
+### UN-21. Docker workspace private-network baseline and optional disk quota
+
+**Affected.** Docker deployments whose workspaces reach internal hosts other than the repository
+git host, configured DNS or worker proxies. Also affected: deployments whose metadata helper
+image cannot install or run iptables/ip6tables. Kubernetes deployments need no action.
+
+**Fix commit.** Identified before its SHA is assigned by `buildBaselineEgressScript` and
+`assertBaselineEgress` in `packages/worker/src/lib/workspaceBackend/docker.ts`; compare the source
+when commit ancestry is unavailable.
+
+**Actions.** Set `WORKSPACE_PRIVATE_EGRESS_ALLOW` to the narrow IPv4/IPv6 addresses or CIDRs
+needed by other internal services. Leave `WORKSPACE_BLOCK_PRIVATE_EGRESS` and
+`WORKSPACE_BLOCK_METADATA` enabled. Ensure `WORKSPACE_METADATA_BLOCK_IMAGE` is available and
+contains iptables and ip6tables; preinstallation avoids package-mirror access per workspace.
+The helper must succeed: failure no longer permits an unprotected workspace to run.
+If setting `WORKSPACE_DISK_LIMIT`, provision a quota-capable Docker storage driver (overlay2
+requires XFS with pquota); the worker refuses to start if its probe cannot enforce the limit.
+
+**Verify.** A workspace starts, reaches its git host and intended internal exceptions, and cannot
+reach an unlisted private host or a cloud metadata address. With a disk limit configured, worker
+startup completes the storage-opt probe.
+
+---
+
+### UN-22. Docker disk limits reject drivers that silently ignore storage-opt
+
+**Affected.** Docker deployments setting `WORKSPACE_DISK_LIMIT` with the containerd `overlayfs`
+driver or another driver outside overlay2, devicemapper, btrfs and zfs. A successful
+`docker run --storage-opt size=...` alone does not establish enforcement on those drivers.
+
+**Fix commit.** Identified before its SHA is assigned by the supported-driver check in
+`assertDockerDiskLimit` in `packages/worker/src/lib/workspaceBackend/docker.ts`; compare the
+source when commit ancestry is unavailable.
+
+**Actions.** Provision a supported storage driver (overlay2 needs XFS with pquota), or unset
+`WORKSPACE_DISK_LIMIT` and accept that writable layers have no application-configured cap.
+The worker refuses startup when the probe container's driver is unsupported or cannot be read.
+
+**Verify.** Worker startup with the limit configured succeeds only on a supported driver.
+An unsupported `overlayfs` driver produces a `WORKSPACE_DISK_LIMIT cannot be enforced` error.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,
