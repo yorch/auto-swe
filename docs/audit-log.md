@@ -19,7 +19,7 @@ when the system acted, such as a webhook or a sweep), `beforeJson`, `afterJson`,
   the `ActiveWorkflow` spend-ledger row when the launch has no work request. `afterJson` sets
   `workRequestId` when it is known and `afterJson` carries `source` (the door it came
   through: `work-request`, `work-request-retry`, `template-run`, `template-retry`, `agent-run`,
-  `epic`, `prd-run`, `slack`, `webhook`, `automation`, `service-token`), `templateId`,
+  `epic`, `campaign`, `prd-run`, `slack`, `webhook`, `automation`, `service-token`), `templateId`,
   `temporalWorkflowId` and `workRequestId`. The actor is the launching user, or null for a system
   launch. A launch that is refused, found to be a duplicate, or compensated after a failed start
   leaves no row. A failed audit write is logged and never fails the launch.
@@ -44,6 +44,12 @@ when the system acted, such as a webhook or a sweep), `beforeJson`, `afterJson`,
 - **Scheduled fires** write no audit row. A fire that starts is recorded in the schedule's decision
   ledger ([automations.md](./automations.md)), once per workflow id; a refused fire writes a
   `ScheduledWorkRequest` `UPDATE` row, at most one per reason per hour.
+- **Campaigns.** `POST /api/v1/campaigns` writes one `CREATE` row of entity type `Campaign` (the campaign
+  id as `entityId`, the launching user as actor) after the workflow has started, beside the launch's
+  own `WorkRequest` row. `afterJson` holds the name, recipe reference and parameters, owning team,
+  target count, parallelism and the pinned template and version. `POST …/cancel` writes one `UPDATE`
+  row with the state before and `CANCELLING` after, and the person who cancelled. A launch that is
+  refused or compensated leaves none. See [campaigns.md](./campaigns.md).
 - **Eval runs.** `POST /api/v1/platform/evals/runs` writes one `CREATE` row of entity type `EvalRun` after
   the workflow has started, with `afterJson` `{ source: "eval-run", baselineRef, candidateRef,
   datasetId, temporalWorkflowId }`. A refused or failed start leaves no row, and a failed audit write

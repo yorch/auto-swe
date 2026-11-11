@@ -327,6 +327,15 @@ export interface EpicResult {
 
 // ── Campaigns ──
 
+/** The workflow type name the gateway starts for a campaign. */
+export const CAMPAIGN_WORKFLOW_TYPE = 'CampaignWorkflow';
+
+/**
+ * The name of the signal that cancels a campaign. The gateway sends it and the campaign workflow
+ * defines its handler under this exact name, so both import this one constant.
+ */
+export const CAMPAIGN_CANCEL_SIGNAL = 'campaignCancelSignal';
+
 /** One repository of a campaign, frozen at launch. */
 export interface CampaignTargetInput {
   connectionId: string;

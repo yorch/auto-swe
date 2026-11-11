@@ -166,6 +166,14 @@ describe('assistantAccess', () => {
     expect(assistantAccess('GET', undefined)).toBe('never');
   });
 
+  it('keeps campaign launch out of the assistant, and lets it read and stop one', () => {
+    // One call opens a draft pull request in up to 200 repositories; a person launches it.
+    expect(assistantAccess('POST', '/api/v1/campaigns')).toBe('never');
+    expect(assistantAccess('POST', '/api/v1/campaigns/:id/cancel')).toBe('confirm');
+    expect(assistantAccess('GET', '/api/v1/campaigns')).toBe('read');
+    expect(assistantAccess('GET', '/api/v1/campaigns/:id')).toBe('read');
+  });
+
   it('keeps the pull request evaluation mode out of the assistant, and its reads open', () => {
     // The body picks the mode, including `auto`, so a confirmation cannot audit it per mode.
     expect(assistantAccess('PUT', '/api/v1/repositories/:id/pr-evaluation')).toBe('never');

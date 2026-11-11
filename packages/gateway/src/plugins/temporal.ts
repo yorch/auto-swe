@@ -32,15 +32,18 @@ import type {
   RepoSetupFileProposal,
   RepoSetupFileProposalStatus,
 } from '@auto-swe/shared/types/api';
-import type {
-  ChannelAssistantTurnInput,
-  ConsolidateLessonsInput,
-  EpicRequest,
-  EvalScreenInput,
-  RepoWorkRequest,
-  ScheduledConsolidationInput,
-  ScheduledEvalInput,
-  ScheduledRevalidationInput,
+import {
+  CAMPAIGN_CANCEL_SIGNAL,
+  CAMPAIGN_WORKFLOW_TYPE,
+  type CampaignWorkflowInput,
+  type ChannelAssistantTurnInput,
+  type ConsolidateLessonsInput,
+  type EpicRequest,
+  type EvalScreenInput,
+  type RepoWorkRequest,
+  type ScheduledConsolidationInput,
+  type ScheduledEvalInput,
+  type ScheduledRevalidationInput,
 } from '@auto-swe/shared/types/workflow';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import {
@@ -370,6 +373,13 @@ declare module 'fastify' {
         input: { templateId: string; templateVersion: number; request: RepoWorkRequest }
       ) => Promise<void>;
       startEpicWorkflow: (workflowId: string, request: EpicRequest) => Promise<void>;
+      /** Start a campaign's fan-out workflow. Its id is `campaign-<campaignId>`. */
+      startCampaignWorkflow: (workflowId: string, input: CampaignWorkflowInput) => Promise<void>;
+      /**
+       * Ask a running campaign to stop. A campaign that has already closed (or is unknown to
+       * Temporal) counts as success: its finalizer has written the terminal state.
+       */
+      signalCampaignCancel: (workflowId: string) => Promise<void>;
       /**
        * Generate a WorkflowSpec from a natural-language description. Unlike the
        * other helpers this is request/response: it starts WorkflowAuthorWorkflow
@@ -1286,6 +1296,18 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       });
     },
 
+    async signalCampaignCancel(workflowId: string): Promise<void> {
+      try {
+        await client.workflow.getHandle(workflowId).signal(CAMPAIGN_CANCEL_SIGNAL);
+      } catch (err) {
+        // A closed or forgotten execution cannot receive the signal; its finalizer already
+        // wrote the terminal state, so there is nothing left to stop.
+        if (getErrorName(err) !== 'WorkflowNotFoundError') {
+          throw err;
+        }
+      }
+    },
+
     async signalWorkflow(
       workflowId: string,
       signalName: string,
@@ -1293,6 +1315,15 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     ): Promise<void> {
       const handle = client.workflow.getHandle(workflowId);
       await handle.signal(signalName, ...args);
+    },
+
+    async startCampaignWorkflow(workflowId: string, input: CampaignWorkflowInput): Promise<void> {
+      await client.workflow.start(CAMPAIGN_WORKFLOW_TYPE, {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: '30d',
+        workflowId,
+      });
     },
 
     async startChannelAssistant(

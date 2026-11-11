@@ -85,6 +85,8 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/automations/events': 'read',
   'GET /api/v1/automations/events/:id/fires': 'read',
   'GET /api/v1/automations/events/templates': 'read',
+  'GET /api/v1/campaigns': 'read',
+  'GET /api/v1/campaigns/:id': 'read',
   'GET /api/v1/epics': 'read',
   'GET /api/v1/epics/:workflowId': 'read',
   'GET /api/v1/human-error-baselines': 'read',
@@ -333,6 +335,11 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/auth/tokens': { never: 'secret' },
   'POST /api/v1/automations/events': 'confirm',
   'POST /api/v1/automations/events/:id/fires/:fireId/retry': 'confirm',
+  // One call opens up to `workflow.campaignMaxTargets` draft pull requests across other teams'
+  // repositories, which is more than the epics' `confirm` is meant to cover: a person launches it.
+  'POST /api/v1/campaigns': { never: 'runsWorkload' },
+  // Only stops work: opened drafts are left alone.
+  'POST /api/v1/campaigns/:id/cancel': 'confirm',
   'POST /api/v1/epics': 'confirm',
   'POST /api/v1/human-error-baselines': 'confirm',
   'POST /api/v1/human-steps/:id/respond': { never: 'humanDecision' },
