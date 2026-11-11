@@ -1,8 +1,10 @@
 'use client';
 
 import Link from 'next/link';
+import { useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
+import { Modal } from '@/components/ui/Modal';
 import { NEEDS_RESPONSE_ANCHOR, type RunVerdict } from '@/lib/runVerdict';
 
 /**
@@ -19,6 +21,9 @@ export function RunVerdictBanner({
   onJumpToFailure?: () => void;
   onGoToGate?: () => void;
 }) {
+  const [outcomeOpen, setOutcomeOpen] = useState(false);
+  const outcomeTrigger = useRef<HTMLButtonElement>(null);
+  const outcomeContent = useRef<HTMLElement>(null);
   const action = verdict.nextAction;
   let control: React.ReactNode;
   if (action?.kind === 'jump-to-failure' && onJumpToFailure) {
@@ -69,11 +74,40 @@ export function RunVerdictBanner({
         variant={verdict.tone}
       >
         <p className="hidden sm:block">{verdict.detail}</p>
-        <details className="sm:hidden">
-          <summary className="cursor-pointer">Outcome details</summary>
-          <p className="mt-2 max-h-28 overflow-y-auto overscroll-contain">{verdict.detail}</p>
-        </details>
+        <Button
+          aria-haspopup="dialog"
+          className="-my-2 -ml-2 h-[40px] sm:hidden"
+          onClick={(event) => {
+            outcomeTrigger.current = event.currentTarget;
+            setOutcomeOpen(true);
+          }}
+          size="sm"
+          variant="ghost"
+        >
+          Outcome details
+        </Button>
       </Alert>
+      {outcomeOpen && (
+        <Modal
+          initialFocusRef={outcomeContent}
+          onClose={() => {
+            setOutcomeOpen(false);
+            outcomeTrigger.current?.focus();
+          }}
+          open
+          subtitle={verdict.headline}
+          title="Outcome details"
+        >
+          <section
+            aria-label="Outcome explanation"
+            className="max-h-[50dvh] overflow-y-auto overscroll-contain whitespace-pre-wrap break-words text-sm text-paper-300"
+            ref={outcomeContent}
+            tabIndex={-1}
+          >
+            {verdict.detail}
+          </section>
+        </Modal>
+      )}
     </div>
   );
 }

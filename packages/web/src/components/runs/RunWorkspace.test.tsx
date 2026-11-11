@@ -200,6 +200,36 @@ function Harness({
   );
 }
 describe('linked run workspace', () => {
+  it.each(['RUNNING', 'SUCCESS'] as const)(
+    'does not infer reachability from missing step recordings in a %s run',
+    (status) => {
+      render(
+        <Harness
+          currentRun={{ ...run, status }}
+          currentSpec={parseWorkflowSpec({
+            ...spec,
+            entry: 'prepare',
+            nodes: {
+              ...spec.nodes,
+              prepare: { next: 'fan', type: 'set', values: { revision: { literal: 'v2' } } },
+              unrecordedActivity: { next: 'done', step: 'validateContext', type: 'step' },
+            },
+          })}
+        />
+      );
+      fireEvent.click(screen.getByRole('button', { name: 'Steps' }));
+      const execution = screen.getByRole('complementary', { name: 'Execution steps' });
+      for (const id of ['prepare', 'fan', 'done', 'unrecordedActivity']) {
+        expect(
+          within(execution).getByRole('button', { name: `${id}No step recording` })
+        ).toBeTruthy();
+      }
+      expect(within(execution).queryByText('Not reached')).toBeNull();
+      expect(within(execution).queryByText('Not started')).toBeNull();
+      expect(within(execution).getAllByText('passed')).toHaveLength(3);
+    }
+  );
+
   it('retains real graph folds without replaying initialization effects on tab changes', () => {
     graphOptions.real = true;
     vi.stubGlobal(

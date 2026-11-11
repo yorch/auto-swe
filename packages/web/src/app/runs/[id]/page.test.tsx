@@ -385,7 +385,7 @@ describe('run page live state, load errors and unreadable specs', () => {
     expect(screen.getAllByText(/Tests would not pass/).length).toBeGreaterThan(0);
   });
 
-  it('anchors the shell and lets only the investigation evidence pane scroll', async () => {
+  it('anchors evidence scrolling with a usable page-scroll fallback for short viewports', async () => {
     state.layout = 'A';
     const { container } = render(
       withQuery(
@@ -397,7 +397,11 @@ describe('run page live state, load errors and unreadable specs', () => {
     await act(async () => {});
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain('overflow-hidden');
-    expect(root.className).not.toContain('overflow-y-auto');
+    expect(root.classList.contains('overflow-y-auto')).toBe(false);
+    expect(root.classList.contains('[@media(max-height:500px)]:overflow-y-auto')).toBe(true);
+    const workspace = container.querySelector('[data-tour="run:trace"]') as HTMLElement;
+    expect(workspace.classList.contains('[@media(max-height:500px)]:min-h-[480px]')).toBe(true);
+    expect(workspace.classList.contains('[@media(max-height:500px)]:shrink-0')).toBe(true);
     expect(container.querySelector('[class*="overscroll-contain"]')?.className).toContain(
       'overflow-y-auto'
     );

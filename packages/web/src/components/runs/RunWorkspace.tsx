@@ -211,7 +211,10 @@ export function RunWorkspace({
     />
   );
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-tour="run:trace">
+    <div
+      className="flex min-h-0 min-w-0 flex-1 overflow-hidden [@media(max-height:500px)]:min-h-[480px] [@media(max-height:500px)]:shrink-0"
+      data-tour="run:trace"
+    >
       <aside
         aria-label="Execution steps"
         className={cn(
@@ -290,9 +293,7 @@ export function RunWorkspace({
                 type="button"
               >
                 <span className="text-sm text-paper-400">{nodeDisplayName(node, id)}</span>
-                <span className="text-xs text-paper-500">
-                  {time.live || replayMs !== null ? 'Not started' : 'Not reached'}
-                </span>
+                <span className="text-xs text-paper-500">No step recording</span>
               </button>
             ))}
       </aside>
@@ -582,7 +583,7 @@ export function RunWorkspace({
             <>
               <section
                 aria-label="Replay context"
-                className="max-h-12 overflow-y-auto break-words text-xs text-paper-400"
+                className="max-h-10 overflow-y-auto break-words text-xs text-paper-400 sm:max-h-12"
               >
                 {activeSteps.length === 0 ? (
                   <p>No step active at this point</p>
