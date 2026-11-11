@@ -10,12 +10,12 @@ import {
   builtinModelSpec,
   cacheMultipliers,
 } from '@auto-swe/shared/lib/builtinModels';
-import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
+import { DOCKER_HOST_ALIAS, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { BUILTIN_SCANNER_PATTERNS } from '@auto-swe/shared/scannerPatterns';
 import { MockActivityEnvironment } from '@temporalio/testing';
 import { MockLanguageModelV4 } from 'ai/test';
-import { buildMetadataBlockArgs } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
+import { installBaselineEgress } from '../../lib/workspaceBackend/docker.js';
 import { secretEnvFlags } from '../../lib/workspaceBackend/secretEnvName.js';
 import { WORKSPACE_DIR } from '../harness/adapter.js';
 import { piRuntime } from './runtime.js';
@@ -475,17 +475,12 @@ async function diffAgainstBaseline(
 /**
  * A container hardened as `createWorkspace`'s is: the same limits and DNS from
  * `resolveWorkspaceInfra()`, `--cap-drop=ALL`, `no-new-privileges`, the
- * metadata hostnames blackholed and the metadata-IP sidecar (best effort, as
- * there). The harness model proxy's host alias is not added: the model is called
+ * metadata hostnames blackholed and a verified baseline egress helper.
+ * The worker host alias resolves configured proxies. The model is called
  * from this process. The name is chosen by the caller before this runs, so a
  * container created but never started is still removed by name.
  */
-async function startWorkspace(
-  name: string,
-  image: string,
-  command: string[],
-  log: (line: string) => void
-) {
+async function startWorkspace(name: string, image: string, command: string[]) {
   const infra = resolveWorkspaceInfra();
   await run(
     'docker',
@@ -503,6 +498,7 @@ async function startWorkspace(
       '--security-opt=no-new-privileges',
       '--add-host=metadata.google.internal:0.0.0.0',
       '--add-host=metadata.gke.internal:0.0.0.0',
+      `--add-host=${DOCKER_HOST_ALIAS}:host-gateway`,
       ...(infra.network ? [`--network=${infra.network}`] : []),
       '--',
       image,
@@ -510,20 +506,7 @@ async function startWorkspace(
     ],
     { env: dockerEnv() }
   );
-  if (infra.blockMetadata) {
-    try {
-      await run('sh', ['-c', buildMetadataBlockArgs(name, infra.metadataBlockImage)], {
-        env: dockerEnv(),
-        timeout: 60_000,
-      });
-    } catch (err) {
-      log(
-        `warning: metadata-IP egress block failed, continuing without it: ${
-          err instanceof Error ? err.message.split('\n')[0]?.slice(0, 160) : String(err)
-        }`
-      );
-    }
-  }
+  await installBaselineEgress({ dns: infra.dns, name });
   // A secret is named with `-e NAME` and resolved from docker's own environment,
   // so its value is never on the command line.
   const shell = async (
@@ -679,8 +662,7 @@ export async function runSmoke(options: SmokeOptions): Promise<{
     starting = startWorkspace(
       containerName,
       options.image,
-      options.containerCommand ?? ['sleep', 'infinity'],
-      log
+      options.containerCommand ?? ['sleep', 'infinity']
     );
     const workspace = await starting;
     interrupt.signal.throwIfAborted();

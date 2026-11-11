@@ -74,7 +74,19 @@ vi.mock('../lib/execUtils.js', async (importOriginal) => {
  * after `docker run`), which must report exactly one child of PID 1 or
  * creation fails.
  */
-const okExec = async (cmd: string) => (cmd.includes('PPid:') ? '7\n' : '');
+const metadataReport = [
+  'v4:',
+  '-P OUTPUT ACCEPT',
+  '-A OUTPUT -j ASW_BASELINE',
+  ...baselineRules([], [], false, true).v4.map((r) => `-A ASW_BASELINE ${r}`),
+  'v6:',
+  '-P OUTPUT ACCEPT',
+  '-A OUTPUT -j ASW_BASELINE',
+  ...baselineRules([], [], false, true).v6.map((r) => `-A ASW_BASELINE ${r}`),
+  'v6disabled=0',
+].join('\n');
+const okExec = async (cmd: string) =>
+  cmd.includes('PPid:') ? '7\n' : cmd.includes('--network container:') ? metadataReport : '';
 
 // `createWorkspace` reads container caps, the default base image and the
 // metadata-blocking policy from the environment-backed infra resolver.
@@ -82,6 +94,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   DOCKER_HOST_ALIAS: 'host.docker.internal',
   resolveWorkspaceInfra: vi.fn(() => ({
     blockMetadata: true,
+    blockPrivateEgress: false,
     cpus: 2,
     dns: ['1.1.1.1', '8.8.8.8'],
     image: 'node:24-alpine',
@@ -114,11 +127,12 @@ import {
 } from '../lib/gitIdentity.js';
 import { beginWorkspaceRegistries } from '../lib/registryProxy/workspaceWiring.js';
 import { resetToolCatalogCache } from '../lib/toolCatalogLoader.js';
-import { dockerWorkspaceBackend } from '../lib/workspaceBackend/docker.js';
+import { baselineRules, dockerWorkspaceBackend } from '../lib/workspaceBackend/docker.js';
 import { ToolRefusal } from '../lib/workspaceTools.js';
 import {
   authedGitScript,
-  buildMetadataBlockArgs,
+  buildBaselineEgressScript,
+  buildEgressHelperCommand,
   cloneDependencyRepos,
   createWorkspace,
   fetchBranchesSubcommand,
@@ -173,40 +187,34 @@ describe('shellQuote', () => {
   });
 });
 
-describe('buildMetadataBlockArgs', () => {
+const metadataCommand = (name: string, image: string) =>
+  buildEgressHelperCommand(name, image, buildBaselineEgressScript([], [], false, true));
+
+describe('metadata-only baseline helper', () => {
   it('targets the workspace container network namespace, adds NET_ADMIN, and is self-removing', () => {
-    const cmd = buildMetadataBlockArgs('workspace-abc123', 'alpine:3.20');
+    const cmd = metadataCommand('workspace-abc123', 'alpine:3.20');
     expect(cmd).toContain('--rm');
     expect(cmd).toContain('--network container:workspace-abc123');
     expect(cmd).toContain('--cap-add=NET_ADMIN');
   });
 
-  it('installs blackhole routes for all three cloud metadata addresses', () => {
-    const cmd = buildMetadataBlockArgs('workspace-abc123', 'alpine:3.20');
-    expect(cmd).toContain('blackhole 169.254.169.254/32'); // AWS/GCP/Azure IMDS
-    expect(cmd).toContain('blackhole 169.254.170.2/32'); // ECS task metadata
-    expect(cmd).toContain('blackhole fd00:ec2::254/128'); // IPv6 IMDS
-  });
-
-  it('verifies a blackhole route actually landed and exits non-zero otherwise', () => {
-    // Guards against a silent no-op: if the runtime's `ip` lacks blackhole
-    // support the adds fail quietly, so the sidecar must fail loudly (non-zero
-    // exit → caller logs a warning) rather than report false success.
-    const cmd = buildMetadataBlockArgs('workspace-abc123', 'alpine:3.20');
-    expect(cmd).toContain('grep -q blackhole');
-    expect(cmd).toContain('exit 1');
-    // The IPv4 IMDS adds must NOT be individually `|| true`'d (that would mask
-    // the failure the verify step is meant to catch).
-    expect(cmd).not.toContain('169.254.169.254/32 2>/dev/null || true');
+  it('installs verified metadata REJECTs with IPv6 fail-closed handling', () => {
+    const cmd = metadataCommand('workspace-abc123', 'alpine:3.20');
+    for (const ip of ['169.254.169.254', '169.254.170.2', 'fd00:ec2::254']) {
+      expect(cmd).toContain(ip);
+    }
+    expect(cmd).toContain('-j REJECT');
+    expect(cmd).toContain('ip6tables unusable and IPv6 enabled');
+    expect(cmd).toContain('iptables -S ASW_BASELINE');
   });
 
   it('shell-quotes the sidecar image argument', () => {
-    const cmd = buildMetadataBlockArgs('workspace-abc123', 'alpine:3.20');
+    const cmd = metadataCommand('workspace-abc123', 'alpine:3.20');
     expect(cmd).toContain(shellQuote('alpine:3.20'));
   });
 
   it('does not grant the sidecar capabilities beyond NET_ADMIN', () => {
-    const cmd = buildMetadataBlockArgs('workspace-abc123', 'alpine:3.20');
+    const cmd = metadataCommand('workspace-abc123', 'alpine:3.20');
     expect(cmd).not.toContain('--cap-drop');
   });
 });
@@ -250,6 +258,7 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     };
     vi.mocked(resolveWorkspaceInfra).mockReturnValueOnce({
       blockMetadata: true,
+      blockPrivateEgress: false,
       cpus: 2,
       dns: ['100.64.0.10'],
       image: 'node:24-alpine',
@@ -271,6 +280,7 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
   it('applies the workspace caps + default image from the environment', async () => {
     vi.mocked(resolveWorkspaceInfra).mockReturnValueOnce({
       blockMetadata: true,
+      blockPrivateEgress: false,
       cpus: 6,
       dns: ['1.1.1.1', '8.8.8.8'],
       image: 'custom/base:1.2',
@@ -296,6 +306,7 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
   it('maps the Docker host alias to the host gateway only when the model proxy is advertised there', async () => {
     const infra = {
       blockMetadata: true,
+      blockPrivateEgress: false,
       cpus: 2,
       dns: ['1.1.1.1', '8.8.8.8'],
       image: 'node:24-alpine',
@@ -596,24 +607,19 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     });
   });
 
-  it('is best-effort: a failed metadata-block sidecar does not fail workspace creation', async () => {
+  it('fails closed and removes the workspace when the baseline helper fails', async () => {
     vi.mocked(execShellAsync).mockImplementation(async (cmd: string) => {
       if (cmd.includes('--network container:')) {
         throw new Error('sidecar boom');
       }
       return okExec(cmd);
     });
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-
-    const ws = await createWorkspace('https://github.com/acme/repo.git', 'auto/TICKET-1', 'main');
-
-    expect(ws.containerId).toMatch(/^workspace-/);
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('metadata-IP egress block failed')
-    );
-
-    warnSpy.mockRestore();
-    await ws.destroy();
+    await expect(
+      createWorkspace('https://github.com/acme/repo.git', 'auto/TICKET-1', 'main')
+    ).rejects.toThrow('sidecar boom');
+    expect(
+      vi.mocked(execShellAsync).mock.calls.some(([cmd]) => cmd.startsWith('docker rm -f'))
+    ).toBe(true);
   });
 });
 

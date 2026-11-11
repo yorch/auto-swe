@@ -236,8 +236,11 @@ WEB_URL=https://app.example.com      # base URL for the "Open approvals" link (t
 # WORKSPACE_IMAGE_PYTHON=registry.example/executor-python:1   # per-stack executor images (optional)
 # WORKSPACE_IMAGE_JVM=registry.example/executor-jvm:1
 # WORKSPACE_IMAGE_GO=registry.example/executor-go:1
-# WORKSPACE_METADATA_BLOCK_IMAGE=alpine:3.20   # metadata image; also the egress-lock helper image (needs iptables and ip6tables)
-# WORKSPACE_BLOCK_METADATA=true        # only the literal `false` disables the metadata blackhole
+# WORKSPACE_METADATA_BLOCK_IMAGE=alpine:3.20   # baseline/strict egress helper (needs iptables and ip6tables)
+# WORKSPACE_BLOCK_METADATA=true        # only literal false disables metadata REJECTs
+# WORKSPACE_BLOCK_PRIVATE_EGRESS=true  # only literal false disables the Docker private-range baseline
+# WORKSPACE_PRIVATE_EGRESS_ALLOW=10.20.0.0/16,fd00:1234::/48  # additional private IPs/CIDRs
+# WORKSPACE_DISK_LIMIT=20g             # optional Docker writable-layer quota; unset means no cap
 # SCANNER_REGEX_BUDGET_MS=250          # per-pattern scanner wall-clock budget
 # The Claude Code harness's model proxy (the compose files turn it on): the worker holds the model
 # key and meters every call; a workspace gets a per-turn token. Unset the port to turn it off on the Docker backend;
@@ -687,7 +690,25 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 
 ---
 
+The Docker baseline helper runs on every workspace by default, before services start. Use a
+`WORKSPACE_METADATA_BLOCK_IMAGE` with iptables and ip6tables preinstalled to avoid an `apk add`
+per workspace and a dependency on the Alpine mirror. Installation and kernel read-back must
+succeed; an unavailable ip6tables is accepted only if IPv6 is disabled in the namespace.
+Private git hosts, configured DNS and worker proxy ports are admitted automatically. Other
+internal destinations require `WORKSPACE_PRIVATE_EGRESS_ALLOW` (comma-separated IPv4/IPv6
+addresses or CIDRs, validated at worker boot). Metadata REJECTs precede all such exceptions.
+Disabling private blocking retains metadata protection unless both controls are off.
+
+`WORKSPACE_DISK_LIMIT` caps each Docker workspace's writable layer, not volumes or logs.
+When set, worker boot probes `docker run --rm --storage-opt size=<limit> <helper-image> true`
+and refuses to start if unsupported. Overlay2 needs XFS with pquota; devicemapper, btrfs and zfs
+are other supported driver options. The worker does not need `docker info` access.
+
 ## 10. Hardening checklist
+
+- [ ] Docker private-range and metadata blocking remain on; internal exceptions are narrow and deliberate.
+- [ ] The baseline helper image has iptables/ip6tables preinstalled and is available to the daemon.
+- [ ] `WORKSPACE_DISK_LIMIT` is set where writable-layer growth needs a cap, and the startup quota probe succeeds.
 
 - [ ] `BETTER_AUTH_URL` and `CORS_ORIGIN` point at your real HTTPS domain (gateway refuses to issue secure cookies otherwise). `BETTER_AUTH_URL` is also the issuer and audience of the OAuth tokens MCP clients receive (see [`oauth-setup.md`](./oauth-setup.md#the-platform-as-an-oauth-server-for-mcp-clients)), so it must be the public URL clients reach and must not change once clients are connected.
 - [ ] `BETTER_AUTH_SECRET` is ≥32 chars and matches across all gateway replicas.

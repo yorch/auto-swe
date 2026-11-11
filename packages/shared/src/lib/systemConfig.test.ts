@@ -556,6 +556,9 @@ describe('systemConfig resolvers', () => {
       'WORKSPACE_IMAGE_GO',
       'WORKSPACE_METADATA_BLOCK_IMAGE',
       'WORKSPACE_BLOCK_METADATA',
+      'WORKSPACE_BLOCK_PRIVATE_EGRESS',
+      'WORKSPACE_PRIVATE_EGRESS_ALLOW',
+      'WORKSPACE_DISK_LIMIT',
       'WORKER_MAX_CONCURRENT_ACTIVITIES',
       'SCANNER_REGEX_BUDGET_MS',
       'HARNESS_MODEL_PROXY_PORT',
@@ -626,7 +629,9 @@ describe('systemConfig resolvers', () => {
       expect(resolveWorkspaceInfra()).toEqual({
         backend: 'docker',
         blockMetadata: true,
+        blockPrivateEgress: true,
         cpus: 2,
+        diskLimit: null,
         dns: ['1.1.1.1', '8.8.8.8'],
         egressProxy: null,
         harnessModelProxy: null,
@@ -646,6 +651,7 @@ describe('systemConfig resolvers', () => {
         metadataBlockImage: 'alpine:3.20',
         network: null,
         pidsLimit: 512,
+        privateEgressAllow: [],
         regexScanBudgetMs: 250,
         registryProxy: null,
         stackImages: {},
@@ -741,6 +747,44 @@ describe('systemConfig resolvers', () => {
       expect(resolveWorkspaceInfra().harnessModelProxy?.url).toBe(
         'http://host.docker.internal:8790'
       );
+    });
+
+    it('parses Docker baseline CIDRs and optional quota, with strict boot validation', () => {
+      expect(resolveWorkspaceInfra()).toMatchObject({
+        blockPrivateEgress: true,
+        diskLimit: null,
+        privateEgressAllow: [],
+      });
+      vi.stubEnv('WORKSPACE_PRIVATE_EGRESS_ALLOW', '10.1.0.0/16, fd00::/64,192.168.1.2');
+      vi.stubEnv('WORKSPACE_DISK_LIMIT', '20g');
+      expect(resolveWorkspaceInfra()).toMatchObject({
+        diskLimit: '20g',
+        privateEgressAllow: ['10.1.0.0/16', 'fd00::/64', '192.168.1.2'],
+      });
+      expect(validateWorkspaceInfraEnv()).toEqual([]);
+      for (const invalid of [
+        '10.0.0.1/33',
+        'fd00::/129',
+        '10.0.0.1/-1',
+        'host',
+        '10.0.0.1,',
+        '10.0.0.1/24/2',
+      ]) {
+        vi.stubEnv('WORKSPACE_PRIVATE_EGRESS_ALLOW', invalid);
+        expect(validateWorkspaceInfraEnv().join()).toContain('WORKSPACE_PRIVATE_EGRESS_ALLOW');
+      }
+      vi.stubEnv('WORKSPACE_PRIVATE_EGRESS_ALLOW', '10.0.0.0/8,bad');
+      expect(resolveWorkspaceInfra().privateEgressAllow).toEqual(['10.0.0.0/8']);
+      for (const invalid of ['0', '0g', '00g', '20;true', '-1g']) {
+        vi.stubEnv('WORKSPACE_DISK_LIMIT', invalid);
+        expect(resolveWorkspaceInfra().diskLimit).toBeNull();
+        expect(validateWorkspaceInfraEnv().join()).toContain('WORKSPACE_DISK_LIMIT');
+      }
+      vi.stubEnv('WORKSPACE_BLOCK_PRIVATE_EGRESS', 'false');
+      expect(resolveWorkspaceInfra().blockPrivateEgress).toBe(false);
+      vi.stubEnv('WORKSPACE_BLOCK_PRIVATE_EGRESS', 'no');
+      expect(resolveWorkspaceInfra().blockPrivateEgress).toBe(true);
+      expect(validateWorkspaceInfraEnv().join()).toContain('WORKSPACE_BLOCK_PRIVATE_EGRESS');
     });
 
     it('reads each variable', () => {

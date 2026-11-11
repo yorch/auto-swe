@@ -19,6 +19,7 @@ import { OtelForwardingLogger } from './lib/otelLogger.js';
 import { initTemporalClient } from './lib/temporalClient.js';
 import { activityTranscriptInterceptor } from './lib/transcriptRecorder.js';
 import { createWorkflowSpanSinks } from './lib/workflowSpanSink.js';
+import { assertDockerDiskLimit } from './lib/workspaceBackend/docker.js';
 import { workspaceBackend } from './lib/workspaceBackend/index.js';
 import { assertKubernetesReady } from './lib/workspaceBackend/kubernetes/ready.js';
 
@@ -64,6 +65,7 @@ async function run() {
   // must not throw), so a typo in the deploy environment would otherwise run
   // with different limits than the operator wrote. Fail the boot instead.
   assertWorkspaceInfraEnv();
+  await assertDockerDiskLimit();
 
   // A Kubernetes worker proves its cluster can hold the line before it takes
   // work: the RBAC it needs, and that NetworkPolicy is actually enforced (the
