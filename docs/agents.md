@@ -72,20 +72,28 @@ runs on a cheaper, different model from the agents it scores, to avoid self-pref
 > The text it scans, the advisory code scan reads, and the reviewers receive as `CodeResult.diff`
 > is read from the commit that was pushed, not the work tree: pinned `diff-tree` plumbing with
 > `--text`, no external diff driver or text conversion, no attribute file, no grafts, from a base
-> commit sha recorded before the agent ran to the sha the activity committed with hooks off and pushed
+> commit sha recorded before the agent ran, and before the repository's setup command, to the sha the
+> activity committed with hooks off and pushed
 > by sha (`diffForResult` in `worker/src/activities/allowedPaths.ts`; see
 > [architecture.md](./architecture.md#workspace-hardening) for the whole sequence). Every
 > implementer step does this, with or without `allowedPaths`. An agent that controls its checkout can
 > therefore not hide content with `diff.external`, a `textconv` driver, a `-diff` attribute, a moved
 > or shadowed `origin/<default>`, a rewritten `packed-refs`, a hook or a graft. Nothing is excluded from it,
-> lockfiles and minified files included, because a secret can sit in a file named like one; a binary
-> file is reduced to its header and the printable strings of its added lines. A diff that reads as
-> empty although the committed tree differs from the base, a read cut short, and a binary with more
-> than 64 KiB of such strings are unreadable and fail `SECURITY_GATE_UNAVAILABLE`. The merge-conflict
-> resolver's scan reads each resolution commit the same way, against the target-side parent it
-> recorded before the merge and with no pathspec; it refuses a resolution whose index differs from
-> the pre-agent snapshot outside the conflicted files. What this does not cover is in the Limitations
-> (§11): a replaced `git` binary, and the depth of what is reduced to strings.
+> lockfiles and minified files included, because a secret can sit in a file named like one. Whether a
+> file is a binary is decided by its name (`png`, `jar`, `so`, `pdf`, `sqlite` and similar): such a
+> file is reduced to its header and the printable strings of its added lines (ASCII and UTF-16), with
+> the first 64 KiB of them shown whole and every credential-shaped string beyond that kept as well.
+> Any other file is read in full, control characters made visible, and a NUL byte on an added line of
+> one is a deterministic CRITICAL finding of its own (`hidden-content`, raised by
+> `runPostDiffSecurityGate` before any model is asked), because a NUL is how a source file is made to
+> look binary. A diff that reads as empty although the committed tree differs from the base, a read
+> cut short, and a binary with more than 8 MiB of strings are unreadable and fail
+> `SECURITY_GATE_UNAVAILABLE`. The merge-conflict resolver reads every commit it makes the same way,
+> against the target-side parent it recorded, with no pathspec: its own resolutions and every clean
+> merge after its first session. Every merge takes in a source sha read once, before the setup command
+> and before any agent turn, and a resolution is refused when the index or the committed tree
+> differs from the pre-agent snapshot outside the conflicted files. What this does not cover is in the
+> Limitations (§11): a replaced `git` binary, and the depth of what is reduced to strings.
 > It complements the review network rather than being replaced by it: the network gives three
 > personas an opinion and routes on their verdicts, this one fails the activity outright.
 
@@ -2053,10 +2061,23 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   binary in the container (root there) or a checkout tampered with before the base was read is not.
   The text sections of a diff are scanned whole, so a very large diff fails closed
   (`SECURITY_GATE_UNAVAILABLE`) instead of being truncated; a binary is scanned through its
-  printable strings, so content that is compressed or encoded inside it is not seen.
-- **Workspace commits skip the repository's commit hooks.** The implementer steps and the
-  merge-conflict resolver commit with hooks off, so a formatter or commit-message check wired in
-  as a hook does not run on them. Run such checks as test or gate commands instead.
+  printable strings (ASCII and UTF-16), so content that is compressed or encoded inside it is not
+  seen. Only the first 64 KiB of a larger binary's strings reach the model; the rest is checked
+  locally for the shape of a credential and a match is kept, so a secret beyond the cap that has no
+  such shape is not reviewed. Binary is decided by file name, so a compiled artifact or data file
+  with an unusual or missing extension that holds a NUL byte is refused as `hidden-content` until it
+  is renamed. A NUL byte is the only control character announced; the others are made visible and
+  left to the model.
+- **Workspace commits skip the repository's commit hooks and the global git config.** The
+  implementer steps and the merge-conflict resolver commit with hooks off, the global and system
+  config ignored and `commit.gpgsign=false`, so a formatter or commit-message check wired in as a
+  hook does not run on them, a commit is never signed, and an image-level `core.autocrlf` or commit
+  template does not apply. Run such checks as test or gate commands instead.
+- **Clean merges before the first resolver session are not scanned as resolver output.** They arrive
+  with the changes their branch was scanned for when it was pushed, and no agent had run in the
+  checkout; the sha they take in was read before the setup command. A background process an agent
+  leaves running can still race the config rewrite that precedes each merge, as for authenticated
+  git calls.
 - **The reviewer notes an ambiguity; it never resolves one.** An open question reaches the
   domain-logic reviewer as context only. Nothing in the review loop answers it, so an assumption the
   implementation made stays unconfirmed until a human reads the pull request.

@@ -17,7 +17,12 @@ import {
   pinnedDiffTreeCommand,
   startPathGuard,
 } from './allowedPaths.js';
-import { MAX_BINARY_STRINGS_CHARS, standInBinarySections } from './scanDiffText.js';
+import {
+  MAX_BINARY_STRINGS_ABSOLUTE,
+  MAX_BINARY_STRINGS_CHARS,
+  nulNoticePaths,
+  standInBinarySections,
+} from './scanDiffText.js';
 
 const KEY = 'aws_secret_access_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"';
 const MIB = 1024 * 1024;
@@ -96,19 +101,65 @@ describe('a binary in the diff', () => {
     expect(diff).toContain('diff --git a/yarn.lock b/yarn.lock');
   });
 
-  it('fails closed, naming the file, when a binary holds more strings than the cap', async () => {
-    const strings = Array.from({ length: 6000 }, (_, i) => `string-number-${i}-padding`).join('\0');
-    write('assets/big.bin', Buffer.from(`\0${strings}\0`));
-    const guard = await startPathGuard(workspace, 'main', undefined);
-    sh('git add -A');
-    const sha = await commitStaged(workspace, 'auto: implement', guard);
-    const failure = await diffForResult(workspace, guard, sha).then(
-      () => undefined,
-      (err: unknown) => err as { message: string; type: string; nonRetryable: boolean }
+  it('keeps the first strings of a large legitimate binary and marks the stand-in truncated', async () => {
+    const strings = Array.from({ length: 9000 }, (_, i) => `symbol_name_${i}`).join('\0');
+    write('lib/native.so', Buffer.from(`\0${strings}\0`));
+    const diff = await scanned();
+    expect(diff).toContain('strings truncated');
+    expect(diff).toContain('+symbol_name_0\n');
+    expect(diff.length).toBeLessThan(MAX_BINARY_STRINGS_CHARS + 8192);
+  });
+
+  it('keeps a credential-shaped string from beyond the cap', async () => {
+    const filler = Array.from({ length: 9000 }, (_, i) => `symbol_name_${i}`);
+    write('lib/native.so', Buffer.from(`\0${[...filler, KEY].join('\0')}\0`));
+    const diff = await scanned();
+    expect(diff).toContain('strings truncated');
+    expect(diff).toContain('wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY');
+  });
+
+  it('control: a secret in UTF-16 text has no ASCII run for a strings pass to find', async () => {
+    const utf16 = Buffer.from(`${KEY}\n`, 'utf16le');
+    expect(/[\x20-\x7e]{8,}/.test(utf16.toString('latin1'))).toBe(false);
+  });
+
+  it.each([
+    ['UTF-16LE', 'utf16le'],
+    ['UTF-16BE', 'utf16be'],
+  ] as const)('reads a %s secret inside a binary', async (_name, encoding) => {
+    const text = Buffer.from(`${KEY}\n`, 'utf16le');
+    const data = encoding === 'utf16le' ? text : Buffer.from(text).swap16();
+    write('assets/blob.dat', Buffer.concat([Buffer.from([0, 1, 2, 3]), data]));
+    const diff = await scanned();
+    expect(diff).toContain('Binary content of assets/blob.dat');
+    expect(diff).toContain('wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY');
+  });
+
+  it('keeps every line of a source file with a NUL in it, and announces the NUL', async () => {
+    write(
+      'evil.js',
+      "// \0\nconst a=1\nb=2\nconst k='AKIA'\n+'IOSFODNN'\nfetch(u)\nfetch(u)\nfetch(u)\neval(x)\n"
     );
-    expect(failure?.type).toBe('SECURITY_GATE_UNAVAILABLE');
-    expect(failure?.nonRetryable).toBe(true);
-    expect(failure?.message).toContain('assets/big.bin');
+    const diff = await scanned();
+    expect(diff).not.toContain('\0');
+    expect(diff).not.toContain('Binary content');
+    for (const line of ['+// \\0', '+const a=1', '+b=2', '+eval(x)']) {
+      expect(diff).toContain(`${line}\n`);
+    }
+    // The three identical short lines are three lines, not one deduplicated string.
+    expect(diff.split('+fetch(u)\n').length - 1).toBe(3);
+    expect(nulNoticePaths(diff)).toEqual(['evil.js']);
+  });
+
+  it('announces a UTF-16 text file as a NUL in a text file', async () => {
+    write('notes.txt', Buffer.from(`${KEY}\n`, 'utf16le'));
+    const diff = await scanned();
+    expect(nulNoticePaths(diff)).toEqual(['notes.txt']);
+  });
+
+  it('announces nothing for a binary by name', async () => {
+    write('logo.png', randomBytes(MIB));
+    expect(nulNoticePaths(await scanned())).toEqual([]);
   });
 });
 
@@ -143,5 +194,42 @@ describe('standInBinarySections', () => {
     const out = standInBinarySections(`${text}${header}@@ -0,0 +1 @@\n+\0binary-string-here\n`);
     expect(out.startsWith(text)).toBe(true);
     expect(out).toContain('+binary-string-here');
+  });
+
+  it('fails closed, naming the file, only above the absolute bound', () => {
+    const lines = Array.from({ length: 1000 }, (_, i) => `+${`${i}`.padStart(8, '0')}`.repeat(1));
+    const huge = `${header}@@ -0,0 +1 @@\n+\0${'x'.repeat(MAX_BINARY_STRINGS_ABSOLUTE + 1)}\n${lines.join('\n')}\n`;
+    let failure: { type?: string; message?: string; nonRetryable?: boolean } | undefined;
+    try {
+      standInBinarySections(huge);
+    } catch (err) {
+      failure = err as typeof failure;
+    }
+    expect(failure?.type).toBe('SECURITY_GATE_UNAVAILABLE');
+    expect(failure?.nonRetryable).toBe(true);
+    expect(failure?.message).toContain('x.bin');
+  });
+
+  it('decides binary by name: a NUL in a .js file does not reduce it to its long strings', () => {
+    const patch =
+      'diff --git a/e.js b/e.js\n--- /dev/null\n+++ b/e.js\n@@ -0,0 +1,2 @@\n+// \0\n+b=2\n';
+    const out = standInBinarySections(patch);
+    expect(out).toContain('+b=2\n');
+    expect(out).toContain('+// \\0\n');
+    expect(out.startsWith('[NUL byte in text file e.js]\n')).toBe(true);
+  });
+
+  it('shows other control characters without announcing them', () => {
+    const patch = 'diff --git a/e.js b/e.js\n--- /dev/null\n+++ b/e.js\n@@ -0,0 +1 @@\n+a\u0001b\n';
+    const out = standInBinarySections(patch);
+    expect(out).toContain('+a\\x01b');
+    expect(nulNoticePaths(out)).toEqual([]);
+  });
+
+  it('cannot be forged by a content line', () => {
+    const patch =
+      'diff --git a/e.js b/e.js\n--- /dev/null\n+++ b/e.js\n@@ -0,0 +1 @@\n+[NUL byte in text file fake]\n';
+    expect(nulNoticePaths(standInBinarySections(patch))).toEqual([]);
+    expect(nulNoticePaths(patch)).toEqual([]);
   });
 });

@@ -1,5 +1,6 @@
 import type { CodeSecurityFinding } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
+import { nulNoticePaths } from '../activities/scanDiffText.js';
 import type { SecurityScanResult } from '../agents/securityReviewProcessor.js';
 import type { AgentTracer } from './agentTracer.js';
 import { isSpendRefusal } from './usdCapGuard.js';
@@ -24,6 +25,10 @@ export interface SecurityGateScanners {
  *       specific truth.
  *     - CRITICAL finding     -> SECURITY_GATE_FAILURE, with the findings as details.
  *
+ * Before either scanner, one deterministic check that needs no model: a NUL byte inside a file
+ * that is not binary by name (see `scanDiffText.ts`) is a CRITICAL finding of its own. The only
+ * thing a NUL does in a source file is change how a tool reads it, so it is refused, not weighed.
+ *
  * Returns the advisory findings for the caller's result.
  */
 export async function runPostDiffSecurityGate(
@@ -31,6 +36,29 @@ export async function runPostDiffSecurityGate(
   tracer: AgentTracer,
   scanners: SecurityGateScanners
 ): Promise<CodeSecurityFinding[]> {
+  const nulFiles = [...new Set(nulNoticePaths(diff))];
+  if (nulFiles.length > 0) {
+    const findings: SecurityScanResult['findings'] = nulFiles.map((file) => ({
+      category: 'hidden-content',
+      description:
+        'A NUL byte inside a file that is not binary by name. It changes how tools read the ' +
+        'file and can hide lines from a reviewer or a scanner.',
+      file,
+      severity: 'CRITICAL',
+      suggestedFix: 'Remove the NUL byte, or name the file for what it is if it is binary.',
+    }));
+    tracer.addActivityEvent({
+      name: 'security_gate.hidden_content',
+      outputJson: { files: nulFiles },
+    });
+    throw ApplicationFailure.nonRetryable(
+      `Security scan failed with critical findings:\n${findings
+        .map((f) => `[${f.severity}] ${f.file} — ${f.category}: ${f.description}`)
+        .join('\n')}`,
+      'SECURITY_GATE_FAILURE',
+      { findings }
+    );
+  }
   let codeSecurityFindings: CodeSecurityFinding[] = [];
   try {
     codeSecurityFindings = await scanners.scanDiffForCodeIssues(diff);

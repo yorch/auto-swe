@@ -1006,30 +1006,6 @@ change the setting at its team or organization scope: the override cannot do it.
 
 ---
 
-### Workspace commits skip repository hooks; steps record their base first (`<fixing commit SHA>`)
-
-**Affected.** Deployments whose repositories rely on a commit hook running inside the agent
-workspace (a `pre-commit` formatter or `lint-staged`, a `commit-msg` check, anything wired through
-husky or `core.hooksPath`) for the commits the platform makes, and deployments that read the scanned
-diff of a pushed change for binary files.
-
-**What changes.** Every implementer step (`executeImplementation`, the CI, review and gate fix
-sessions) and the merge-conflict resolver now commit with hooks off and push the committed sha
-(`<sha>:refs/heads/<branch>`), as the steps with `allowedPaths` or the test-integrity guard already
-did. The base the diff is read against is recorded before the agent runs, so a step whose starting
-commit cannot be read now fails non-retryably before the paid session (`DIFF_BASE_UNREADABLE`). The
-hooks that no longer run on a workspace commit are the repository's own; files a hook would have
-reformatted at commit time are committed as the agent left them. `CodeResult.diff` carries a binary
-file as its header and its printable strings, not its bytes, and `headSha` is the pushed commit.
-
-**Actions.** Move any formatting or validation a hook performed into the repository's test or gate
-command (`gateCommands`), where it runs before the commit. No migration, no credential rotation.
-
-**Verify the fix is running.** A commit the platform made in a workspace did not run the repository's
-`pre-commit` hook, and a pushed branch tip equals the run's reported `headSha`.
-
----
-
 ### UN-19. `vulnerability-remediation` declares an input schema
 
 **Affected.** A deployment whose global `vulnerability-remediation` template was seeded by a build
@@ -1139,6 +1115,45 @@ reinstall it. Then fix any launcher that sends a value the corrected schema refu
 
 **Verify.** The `PATCH` succeeds, and a launch with a conforming value starts a run instead of
 answering `cannot be checked`.
+
+---
+
+### Workspace commits skip repository hooks and global git config; steps record their base first (`<fixing commit SHA>`)
+
+**Affected.** Deployments whose repositories rely on a commit hook running inside the agent
+workspace (a `pre-commit` formatter or `lint-staged`, a `commit-msg` check, anything wired through
+husky or `core.hooksPath`) for the commits the platform makes; deployments whose workspace image or
+repository requires signed commits (`commit.gpgsign=true`) or sets `core.autocrlf`, a commit
+template or another commit-time default in the global or system git config; and deployments that
+read the scanned diff of a pushed change for binary files.
+
+**What changes.** Every implementer step (`executeImplementation`, the CI, review and gate fix
+sessions) and the merge-conflict resolver now commit with hooks off and push the committed sha
+(`<sha>:refs/heads/<branch>`), as the steps with `allowedPaths` or the test-integrity guard already
+did. These commits also ignore the global and system git config (the commit identity is passed
+explicitly) and force `commit.gpgsign=false`, so a commit is never signed and no image-level
+`core.autocrlf`, `commit.template` or similar default applies to it; a repository or host that
+rejects unsigned commits rejects these. The merge-conflict resolver additionally rewrites the
+repository config from an allow-list and deletes `.git/info/attributes` before each merge, so a
+`merge.<name>.driver`, filter or attribute left in a workspace does not run. The base the diff is
+read against is recorded before the agent runs and before the repository's setup command, so a
+step whose starting commit cannot be read now fails non-retryably before the paid session
+(`DIFF_BASE_UNREADABLE`). The hooks that no longer run on a workspace commit are the repository's
+own; files a hook would have reformatted at commit time are committed as the agent left them.
+`CodeResult.diff` carries a file that is binary by name (an extension such as `png`, `jar`, `so`,
+`pdf`, `sqlite`) as its header and its printable strings (ASCII and UTF-16), not its bytes. Any
+other file is carried whole, and one that contains a NUL byte is refused by the security gate
+(`SECURITY_GATE_FAILURE`, category `hidden-content`); a compiled artifact or data file with an
+unusual or missing extension is refused the same way until it is renamed. `headSha` is the pushed
+commit.
+
+**Actions.** Move any formatting or validation a hook performed into the repository's test or gate
+command (`gateCommands`), where it runs before the commit. If a host requires signed commits, use
+its own signing mechanism (a bot App) rather than the workspace's git config. Name a committed
+binary for what it is. No migration, no credential rotation.
+
+**Verify the fix is running.** A commit the platform made in a workspace did not run the repository's
+`pre-commit` hook, and a pushed branch tip equals the run's reported `headSha`.
 
 ---
 

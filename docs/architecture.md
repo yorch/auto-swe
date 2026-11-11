@@ -1463,26 +1463,42 @@ run commands in, so it can move any ref, plant a hook, edit `.git/packed-refs`, 
 `.git/info/grafts` or set a config key. Every implementer step (the TDD implementation, the CI, review
 and gate fix sessions, with or without `allowedPaths`) therefore treats the checkout as untrusted:
 
-- The base is a commit sha recorded **before the first agent turn** (`startPathGuard`): the previous
-  result's base when one is carried, the default branch's tip, or for a session that starts on a
-  branch ahead of it the fork point, read at that moment. No ref or merge base is resolved afterwards.
+- The base is a commit sha recorded **before the first agent turn** and before the repository's setup
+  command runs its own code (`startPathGuard`, called right after the sync to the work branch, with
+  the test-integrity start commit and a pause's start sha): the previous result's base when one is
+  carried, the default branch's tip, or for a session that starts on a branch ahead of it the fork
+  point, read at that moment. No ref or merge base is resolved afterwards.
 - The commit is made with hooks off, the identity passed explicitly and the same hardened, pinned,
   graft-free git call as every read (`commitStaged`). Repository hooks (a `pre-commit` or `commit-msg`
   hook, including ones a package manager installed through `core.hooksPath`) do not run for these
   commits. `HEAD` is read once, right after the commit; that sha is what is pushed
   (`<sha>:refs/heads/<branch>`), what is scanned and what the result reports as `headSha`.
 - The diff the security gate, the code scan and the reviewers read is the recorded base against that sha, as a
-  two-tree comparison through pinned `diff-tree` plumbing (`diffForResult`). Every pinned read ends with a
-  per-call nonce line printed after git exits; stdout without it (a backend that cut the output at its cap)
-  fails the read closed instead of passing a shortened diff. A section of the patch that contains a NUL
-  is a binary: it is replaced by its header and the printable strings (8 or more characters) of its added
-  lines, so a key embedded in a binary is still scanned, and a binary with more than 64 KiB of such
-  strings fails closed. Text sections are never cut.
-- The merge-conflict resolver commits its merges the same way. Before the agent runs it records the
-  target-side parent and the source tip and snapshots the index; afterwards it stages the conflicted
-  files, refuses any other change to the index, commits with hooks off, accepts the commit only if its
-  parents are exactly the two recorded tips (read from the commit object), scans everything that
-  changed against the recorded parent with no pathspec, and pushes the sha it tracked.
+  two-tree comparison through pinned `diff-tree` plumbing (`diffForResult`). Every pinned read of a
+  diff or a name list ends with a per-call nonce line printed after git exits; stdout without it (a
+  backend that cut the output at its cap) fails the read closed instead of passing a shortened diff.
+  The single-value reads (a commit sha, the two tree ids) carry no marker and are checked by shape
+  instead: a value that is not a full sha is unreadable. A file that is binary BY NAME (`png`, `jar`,
+  `so`, `pdf`, `sqlite` and similar, `scanDiffText.ts`) and holds a NUL is replaced by its header and
+  the printable strings (8 or more characters, ASCII and UTF-16LE/BE) of its added lines, so a key
+  embedded in a binary is still scanned. The first 64 KiB of the strings go to the model, marked
+  `strings truncated` when there are more; every string past that is checked locally for the shape
+  of a credential and a match is kept; more than 8 MiB of strings fails closed. Every other file is
+  kept whole with control characters made visible, never cut, and a NUL byte on one of its added
+  lines puts a `[NUL byte in text file <path>]` line ahead of its section, which
+  `runPostDiffSecurityGate` turns into a CRITICAL `hidden-content` finding before any model call.
+- The merge-conflict resolver commits its merges the same way. Right after the checkout is reset to
+  the target, and before the setup command or any agent turn, it records the start commit and every
+  source tip (`recordMergeInputs`), and each merge takes in that sha, never the ref name. Before each
+  merge it rewrites the repository config from the same allow-list as authenticated git calls and
+  deletes `.git/info/attributes`, so a merge driver, filter or attribute the agent planted does not
+  run. For a conflict it snapshots the index; afterwards it stages the conflicted files, refuses any
+  other change to the index, commits with hooks off, accepts the commit only if its parents are
+  exactly the two recorded tips (read from the commit object) and its committed tree, outside the
+  conflicted files, equals the snapshot's stage-0 entries (so a merge the agent committed itself and
+  then unstaged from is refused). It scans everything that changed against the recorded parent with
+  no pathspec, for its own resolutions and for every clean merge made after its first resolver
+  session, and pushes the sha it tracked.
 
 **Security scanners.** Seven run during agent execution at distinct stages: sensitive file, pre-write content, shell
 command, code security, skill content, LLM output, and memory content. All but the pre-write content
@@ -1522,9 +1538,13 @@ Current constraints of the system as built. Deliberate product boundaries are in
   exclusion is a place to hide a payload. A change too large for the `securityReview` model's
   context makes the gate call fail, which fails the step as `SECURITY_GATE_UNAVAILABLE`
   (non-retryable) rather than passing it unscanned; so does a diff too large to read from the
-  workspace, one whose output was cut short, and a binary with more than 64 KiB of printable strings.
-  A binary is scanned through those strings only, so a secret stored in a way that is not printable
-  ASCII (compressed or encoded inside the file) is not seen.
+  workspace, one whose output was cut short, and a binary with more than 8 MiB of printable strings.
+  A binary is scanned through those strings only (ASCII and UTF-16), so a secret stored in a way
+  that is not printable text (compressed or encoded inside the file) is not seen. Only the first
+  64 KiB of a larger binary's strings reach the model; past that only strings with the shape of a
+  credential are kept, so a secret without such a shape beyond the cap is not reviewed. Binary is
+  decided by file name: a compiled artifact or data file with an unusual or missing extension that
+  holds a NUL byte is refused as `hidden-content` until it is renamed.
 - **The recorded base is what the unguarded steps now depend on.** A step reports the change against
   a sha read before the agent ran. That read happens in the same container the agent later controls
   and trusts the checkout's object database at that moment; a clone that was already tampered with
@@ -1532,10 +1552,12 @@ Current constraints of the system as built. Deliberate product boundaries are in
   push are pinned against the configuration, refs, hooks and grafts the agent can reach. Replacing the
   `git` binary (or `sh`) in the container, which needs root there, is outside that model and defeats
   every git-based check.
-- **Clean merges in the conflict resolver are not scanned as resolver output.** A source branch merged
-  without conflict arrives with the changes it was scanned for when it was pushed; a merge driver the
-  resolver configured for a later branch of the same activity is not seen. The resolver's own scan
-  covers whatever a conflicting merge changed against the target, including the source's side of it.
+- **Clean merges before the conflict resolver's first session are not scanned as resolver output.**
+  A source branch merged without conflict, before any agent ran in the checkout, arrives with the
+  changes it was scanned for when it was pushed. Every merge from the first resolver session on is
+  scanned whole, clean or not, which costs a read of the source branches' own changes again. The
+  config rewrite before each merge shares the limit of authenticated git calls: a process an agent
+  left running can race it.
 - **GitHub is the only source-control provider.** GitLab and Bitbucket are not implemented; the
   provider registry has no entry for either, and a repository whose `scmProvider` is anything but
   `github` is refused where a GitHub credential is chosen and by the worker's activities
