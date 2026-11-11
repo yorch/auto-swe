@@ -48,6 +48,7 @@ const config = (kubectl: string): KubernetesWorkspaceConfig => ({
   maxLifetimeSec: 600,
   namespace: 'ns',
   requireNetworkPolicy: true,
+  requireRuntimeClass: false,
   runAsUser: 1000,
   runtimeClassName: null,
   storageLimit: '1Gi',

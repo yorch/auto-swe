@@ -22,6 +22,18 @@ const spec: EphemeralContainerSpec & { name: string } = {
   secretEnv: { HTTP_PROXY: 'http://token@host.docker.internal:8792' },
   volumes: [{ source: 'step-volume', target: '/workspace' }],
 };
+
+describe('ephemeral runtime arguments', () => {
+  it('selects the runtime for foreground/detached authors, sidecars and network holders', () => {
+    vi.stubEnv('WORKSPACE_RUNTIME', 'runsc-host');
+    expect(ephemeralArgs(spec, false, 'holder')).toContain('--runtime=runsc-host');
+    expect(ephemeralArgs(spec, true, 'holder')).toContain('--runtime=runsc-host');
+    expect(ephemeralNetworkHolderArgs(spec, 'holder')).toContain('--runtime=runsc-host');
+    expect(ephemeralArgs({ image: 'img', network: 'none' }, false)).toContain(
+      '--runtime=runsc-host'
+    );
+  });
+});
 const result = { exitCode: 7, stderr: 'author-error\n', stdout: 'author-output\n' };
 const events: string[] = [];
 let holder = '';

@@ -76,6 +76,7 @@ export async function assertNetworkPolicyEnforced(deps: ReadyDeps): Promise<void
     }
   })();
   try {
+    await assertPodRuntimeClass(handle.id);
     const reached: string[] = [];
     for (const target of targets) {
       const result = await deps.backend.exec(
@@ -100,6 +101,44 @@ export async function assertNetworkPolicyEnforced(deps: ReadyDeps): Promise<void
     }
   } finally {
     await deps.backend.remove(handle);
+  }
+}
+
+async function assertRuntimeClassAvailable(): Promise<void> {
+  const config = resolveWorkspaceInfra().kubernetes;
+  if (!config.requireRuntimeClass) {
+    return;
+  }
+  if (!config.runtimeClassName) {
+    throw new Error('K8S_REQUIRE_RUNTIME_CLASS=true requires K8S_WORKSPACE_RUNTIME_CLASS');
+  }
+  const result = await spawnCaptureAsync(
+    config.kubectl,
+    ['get', 'runtimeclass', config.runtimeClassName, '-o', 'name'],
+    { heartbeatLabel: 'workspace: checking RuntimeClass', timeoutMs: 30_000 }
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `RuntimeClass ${config.runtimeClassName} is unavailable: ${result.stderr.trim()}`
+    );
+  }
+}
+
+async function assertPodRuntimeClass(name: string): Promise<void> {
+  const config = resolveWorkspaceInfra().kubernetes;
+  if (!config.requireRuntimeClass) {
+    return;
+  }
+  const result = await spawnCaptureAsync(
+    config.kubectl,
+    ['get', 'pod', name, '-n', config.namespace, '-o', 'jsonpath={.spec.runtimeClassName}'],
+    { heartbeatLabel: 'workspace: verifying pod RuntimeClass', timeoutMs: 30_000 }
+  );
+  if (result.exitCode !== 0 || result.stdout.trim() !== config.runtimeClassName) {
+    throw new Error(
+      `RuntimeClass probe pod ${name} did not return runtimeClassName=${config.runtimeClassName}: ` +
+        (result.stderr.trim() || JSON.stringify(result.stdout.trim()))
+    );
   }
 }
 
@@ -139,6 +178,7 @@ export async function assertWorkspaceRbac(): Promise<void> {
 /** Everything a worker with `WORKSPACE_BACKEND=kubernetes` checks before it takes work. */
 export async function assertKubernetesReady(backend: WorkspaceBackend): Promise<void> {
   await assertWorkspaceRbac();
+  await assertRuntimeClassAvailable();
   if (resolveWorkspaceInfra().kubernetes.requireNetworkPolicy) {
     await assertNetworkPolicyEnforced({ backend });
   } else {
@@ -146,5 +186,17 @@ export async function assertKubernetesReady(backend: WorkspaceBackend): Promise<
       '[workspace] K8S_REQUIRE_NETWORK_POLICY=false: not verifying NetworkPolicy enforcement. ' +
         'Without it workspaces may reach the cloud metadata endpoint and internal addresses.'
     );
+    const infra = resolveWorkspaceInfra();
+    if (infra.kubernetes.requireRuntimeClass) {
+      const name = `workspace-runtimecheck-${crypto.randomBytes(4).toString('hex')}`;
+      try {
+        const handle = await backend.create(
+          agentWorkspaceSpec(name, infra.metadataBlockImage, infra)
+        );
+        await assertPodRuntimeClass(handle.id);
+      } finally {
+        await backend.remove(name);
+      }
+    }
   }
 }

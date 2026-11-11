@@ -448,6 +448,7 @@ export async function runAgentTaskCore(
         detectedStack: repo.detectedStack,
         egressPolicy: egressPolicy === 'open' ? 'open' : 'blocked',
         teamId: repo.teamId,
+        trusted: true,
       }
     );
     await importAgentTree(agentWs, trusted);

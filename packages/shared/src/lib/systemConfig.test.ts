@@ -578,6 +578,8 @@ describe('systemConfig resolvers', () => {
       'K8S_WORKSPACE_MAX_LIFETIME_SEC',
       'K8S_WORKSPACE_IMAGE_PULL_SECRETS',
       'K8S_REQUIRE_NETWORK_POLICY',
+      'K8S_REQUIRE_RUNTIME_CLASS',
+      'WORKSPACE_RUNTIME',
     ];
     beforeEach(() => {
       for (const key of KEYS) {
@@ -642,6 +644,7 @@ describe('systemConfig resolvers', () => {
           maxLifetimeSec: 86_400,
           namespace: 'auto-swe-workspaces',
           requireNetworkPolicy: true,
+          requireRuntimeClass: false,
           runAsUser: 1000,
           runtimeClassName: null,
           storageLimit: '10Gi',
@@ -654,6 +657,7 @@ describe('systemConfig resolvers', () => {
         privateEgressAllow: [],
         regexScanBudgetMs: 250,
         registryProxy: null,
+        runtime: null,
         stackImages: {},
       });
     });
@@ -682,6 +686,7 @@ describe('systemConfig resolvers', () => {
           maxLifetimeSec: 7200,
           namespace: 'agents',
           requireNetworkPolicy: true,
+          requireRuntimeClass: false,
           runAsUser: 2000,
           runtimeClassName: 'gvisor',
           storageLimit: '20Gi',
@@ -858,6 +863,30 @@ describe('systemConfig resolvers', () => {
     });
 
     describe('validateWorkspaceInfraEnv — the strict check the worker runs at boot', () => {
+      it.each(['runsc', 'runsc-host', 'io.containerd.runsc.v1', 'runc'])(
+        'accepts runtime %s',
+        (value) => {
+          process.env.WORKSPACE_RUNTIME = value;
+          expect(resolveWorkspaceInfra().runtime).toBe(value);
+          expect(validateWorkspaceInfraEnv()).toEqual([]);
+        }
+      );
+      it.each([' runsc', 'runsc ', '../runsc', '--privileged', 'runsc;true', 'a'.repeat(129)])(
+        'rejects runtime %j',
+        (value) => {
+          process.env.WORKSPACE_RUNTIME = value;
+          expect(validateWorkspaceInfraEnv().join()).toContain('WORKSPACE_RUNTIME');
+          expect(() => assertWorkspaceInfraEnv()).toThrow('WORKSPACE_RUNTIME');
+        }
+      );
+      it('requires an explicit boolean for the opt-in RuntimeClass gate', () => {
+        process.env.K8S_REQUIRE_RUNTIME_CLASS = 'true';
+        expect(resolveWorkspaceInfra().kubernetes.requireRuntimeClass).toBe(true);
+        process.env.K8S_REQUIRE_RUNTIME_CLASS = 'false';
+        expect(resolveWorkspaceInfra().kubernetes.requireRuntimeClass).toBe(false);
+        process.env.K8S_REQUIRE_RUNTIME_CLASS = 'yes';
+        expect(validateWorkspaceInfraEnv().join()).toContain('K8S_REQUIRE_RUNTIME_CLASS');
+      });
       it('is clean when nothing is set, and when everything is valid', () => {
         expect(validateWorkspaceInfraEnv()).toEqual([]);
         vi.stubEnv('WORKSPACE_MEMORY', '512m');

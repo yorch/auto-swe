@@ -241,6 +241,7 @@ WEB_URL=https://app.example.com      # base URL for the "Open approvals" link (t
 # WORKSPACE_BLOCK_PRIVATE_EGRESS=true  # only literal false disables the Docker private-range baseline
 # WORKSPACE_PRIVATE_EGRESS_ALLOW=10.20.0.0/16,fd00:1234::/48  # additional private IPs/CIDRs
 # WORKSPACE_DISK_LIMIT=20g             # optional Docker writable-layer quota; unset means no cap
+# WORKSPACE_RUNTIME=runsc-host        # optional Docker runtime; unset uses the daemon default; startup proves traffic isolation and copy
 # SCANNER_REGEX_BUDGET_MS=250          # per-pattern scanner wall-clock budget
 # The Claude Code harness's model proxy (the compose files turn it on): the worker holds the model
 # key and meters every call; a workspace gets a per-turn token. Unset the port to turn it off on the Docker backend;
@@ -266,6 +267,7 @@ WEB_URL=https://app.example.com      # base URL for the "Open approvals" link (t
 # K8S_WORKSPACE_NAMESPACE=auto-swe-workspaces      # the one namespace workspace pods live in
 # K8S_WORKSPACE_RUN_AS_UID=1000                    # uid/gid of the workspace process; must be non-root and match the image
 # K8S_WORKSPACE_RUNTIME_CLASS=                     # optional RuntimeClass (gVisor/Kata); empty = the cluster default
+# K8S_REQUIRE_RUNTIME_CLASS=false                  # true requires a readable RuntimeClass and a matching startup probe pod
 # K8S_WORKSPACE_STORAGE_LIMIT=10Gi                 # ephemeral-storage request/limit and the size of the /workspace volume
 # K8S_WORKSPACE_MAX_LIFETIME_SEC=86400             # hard pod lifetime the kubelet enforces (activeDeadlineSeconds)
 # K8S_WORKSPACE_IMAGE_PULL_SECRETS=                # comma-separated Secret names in the workspace namespace
@@ -724,10 +726,64 @@ through `docker inspect` and is then removed. Only those supported drivers are a
 Docker's containerd `overlayfs` driver can accept the size option without enforcing it and is
 refused. The worker does not need `docker info` access.
 
+### Optional Docker sandbox runtime
+
+`WORKSPACE_RUNTIME` selects a registered Docker runtime for agent workspaces, workflow shell and
+container-step authors, their sidecars and egress network holders. Trusted iptables helpers and
+fresh delivery containers keep the daemon default runtime. Runtime names are validated at boot;
+unset means no runtime override and no runtime gate. Keep the daemon default as runc for trusted
+helpers. Install the sandbox runtime on the Docker host, not inside the worker.
+
+For gVisor, register a host-stack runtime in the Docker daemon configuration (merge with existing
+settings, then reload Docker):
+
+```json
+{
+  "runtimes": {
+    "runsc-host": {
+      "path": "/usr/local/bin/runsc",
+      "runtimeArgs": ["--network=host", "--overlay2=none", "--file-access=shared"]
+    }
+  }
+}
+```
+
+Set `WORKSPACE_RUNTIME=runsc-host`. `--network=host` here selects gVisor's **host Linux netstack
+inside the container's Docker network namespace**, not Docker's host network mode. It preserves
+the namespace OUTPUT filtering but exposes more of the host kernel's network implementation than
+gVisor's sandbox netstack. Default runsc's sandbox netstack can pass iptables read-back while
+fresh private and public connections bypass the rules; it is refused by the traffic gate.
+
+gVisor's default `root:self` overlay separates guest-created directories from Docker's rootfs
+view: a `/workspace` created via exec can be missing to `docker cp`.
+`--overlay2=none` removes that overlay; `--file-access=shared` revalidates external writes instead
+of assuming exclusive rootfs access. The gate checks a copy into `/workspace` through exec and
+a copy back out. Internal or separately mounted filesystems, including gVisor's `/tmp` tmpfs,
+are not Docker rootfs copy destinations; use `/workspace` for copied files.
+
+When a runtime is configured, worker boot requires: a running container whose inspected runtime
+matches; a real backend workspace with its verified baseline; a live HTTP peer on that workspace's
+network that the workspace cannot reach; public TCP to `1.1.1.1:443` before the blocked lock and
+failure after it; and a visible `docker cp` round trip. Failed public TCP before the lock is
+**inconclusive and refuses startup**, not proof of enforcement. The helper image needs `wget`,
+`nc` and BusyBox `httpd` as well as iptables/ip6tables. Missing tools, intentionally disabled
+private blocking, or a CIDR exception covering the probe peer can also refuse the gate. All probe
+containers and temporary files are removed in `finally`.
+
+For Kubernetes, `K8S_REQUIRE_RUNTIME_CLASS=true` requires `K8S_WORKSPACE_RUNTIME_CLASS`, a successful
+`kubectl get runtimeclass <name>`, and a probe pod that returns the same `spec.runtimeClassName`.
+The NetworkPolicy startup pod is reused when available; disabling that gate still creates a
+RuntimeClass probe. The reference workspace manifest grants `get` on cluster-scoped `runtimeclasses`
+in API group `node.k8s.io` through a ClusterRole/ClusterRoleBinding for the worker ServiceAccount.
+Adjust the binding's ServiceAccount namespace/name along with the namespaced RoleBinding; narrow
+the ClusterRole with `resourceNames` to the configured class if required.
+
 ## 10. Hardening checklist
 
 - [ ] Docker private-range and metadata blocking remain on; internal exceptions are narrow and deliberate.
 - [ ] The baseline helper image has iptables/ip6tables preinstalled and is available to the daemon.
+- [ ] An optional Docker runtime passes the boot traffic/copy gate; runsc-host uses host netstack, no root overlay and shared rootfs validation. The daemon default remains runc for trusted helpers.
+- [ ] Kubernetes deployments that require a sandbox set `K8S_REQUIRE_RUNTIME_CLASS=true`, configure the RuntimeClass and grant the worker cluster-scoped `get` permission.
 - [ ] `WORKSPACE_DISK_LIMIT` is set where writable-layer growth needs a cap, and the startup quota probe succeeds.
 
 - [ ] `BETTER_AUTH_URL` and `CORS_ORIGIN` point at your real HTTPS domain (gateway refuses to issue secure cookies otherwise). `BETTER_AUTH_URL` is also the issuer and audience of the OAuth tokens MCP clients receive (see [`oauth-setup.md`](./oauth-setup.md#the-platform-as-an-oauth-server-for-mcp-clients)), so it must be the public URL clients reach and must not change once clients are connected.
@@ -756,6 +812,9 @@ refused. The worker does not need `docker info` access.
 - Egress readiness uses self-declared, freshness-based worker reports, not a gateway-side probe.
   A dead worker may influence the result for thirty minutes; a running worker is not re-probed
   until restart. Reports describe configured proxies, not proxy reachability or health.
+
+- **Runtime enforcement is checked only at worker boot.** It does not monitor daemon/runtime, network or admission changes afterwards. Restart workers after changing those controls. A runtime name or RuntimeClass match alone does not prove a particular sandbox implementation; Kubernetes relies on the cluster's RuntimeClass handler configuration.
+- **The Docker runtime gate samples IPv4 HTTP and one public TCP target.** It is not an exhaustive isolation audit. An unreachable public pre-check refuses startup as inconclusive. Default runsc is incompatible with the namespace OUTPUT lock; runsc-host exposes the host kernel netstack. gVisor's internal `/tmp` tmpfs does not support Docker rootfs copy visibility, even with the required rootfs settings; copied workspace files belong under `/workspace`.
 
 - **The prebuilt executor images are amd64 only and rebuild only when `main` moves.** `docker.yml` builds for the platforms in `BUILD_PLATFORMS`, and has no schedule, so a base-image fix reaches `executor-*` at the next push to `main` rather than weekly; pin by digest and rebuild on your own cadence if you need one.
 - **Only `docker-compose.prod.yml` runs the production Temporal dynamic config.** It points Temporal at `infra/dynamicconfig/production-sql.yaml`, which omits the development-only `system.forceSearchAttributesCacheRefreshOnRead` (a search-attribute cache refresh on every read). A deployment built on `docker-compose.app.yml` instead keeps `development-sql.yaml`. The two files are kept identical otherwise by hand; nothing checks it.

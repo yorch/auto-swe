@@ -224,6 +224,29 @@ subjects:
   - kind: ServiceAccount
     name: auto-swe-worker
     namespace: auto-swe
+---
+# RuntimeClasses are cluster-scoped; a namespaced Role cannot grant this check.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: auto-swe-worker-runtimeclass
+rules:
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: auto-swe-worker-runtimeclass
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: auto-swe-worker-runtimeclass
+subjects:
+  - kind: ServiceAccount
+    name: auto-swe-worker
+    namespace: auto-swe
 # ---
 # OPTIONAL, NOT ENABLED: bounds what the worker's ServiceAccount can create as a NetworkPolicy, so
 # that a stolen worker token cannot admit all egress. A create must select a single workspace pod
