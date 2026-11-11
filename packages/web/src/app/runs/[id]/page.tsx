@@ -315,7 +315,7 @@ export default function RunDetailPage({ params }: PageProps) {
     Boolean(run.workRequest);
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-ink-800">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-ink-800 [@media(max-height:500px)]:overflow-y-auto">
       {/* ── Page header band ──────────────────────────────────────────────── */}
       <header className="shrink-0 border-b border-ink-600/40 bg-ink-900 px-4 py-2 md:px-6 md:pt-3 md:pb-4">
         <nav

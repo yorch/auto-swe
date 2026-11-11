@@ -211,7 +211,10 @@ export function RunWorkspace({
     />
   );
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-tour="run:trace">
+    <div
+      className="flex min-h-0 min-w-0 flex-1 overflow-hidden [@media(max-height:500px)]:min-h-[480px] [@media(max-height:500px)]:shrink-0"
+      data-tour="run:trace"
+    >
       <aside
         aria-label="Execution steps"
         className={cn(
