@@ -1,3 +1,5 @@
+import { CONNECTION_TYPES } from '@auto-swe/shared';
+import { GENERIC_STEP_CONNECTION_TYPES } from '@auto-swe/shared/lib/connectionTypes';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createConfluenceFooterComment,
@@ -6,14 +8,23 @@ import {
   readConfluencePage,
   updateConfluencePage,
 } from '../connectors/confluence.js';
+import { httpApiRequest } from '../connectors/httpApi.js';
+import {
+  createHubSpotRecord,
+  fetchHubSpotRecord,
+  searchHubSpotRecords,
+  updateHubSpotRecord,
+} from '../connectors/hubspot.js';
 import { createIssue, fetchIssue } from '../connectors/issueTracker.js';
 import { appendNotionBlocks, createNotionPage, readNotionPage } from '../connectors/notion.js';
 import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
 import { readSource, runTool, writeOutcome } from './genericActions.js';
+import { callMcpConnectionTool } from './mcpCallTool.js';
 
 vi.mock('@temporalio/activity', () => ({
   ApplicationFailure: {
-    nonRetryable: (message: string, type?: string) => Object.assign(new Error(message), { type }),
+    nonRetryable: (message: string, type?: string) =>
+      Object.assign(new Error(message), { nonRetryable: true, type }),
   },
   // `connectionAccess` logs through `activityLog`, which imports this to decide between
   // the Temporal logger and the console.
@@ -55,6 +66,17 @@ vi.mock('../connectors/notion.js', () => ({
   createNotionPage: vi.fn(),
   readNotionPage: vi.fn(),
 }));
+
+vi.mock('../connectors/httpApi.js', () => ({ httpApiRequest: vi.fn() }));
+
+vi.mock('../connectors/hubspot.js', () => ({
+  createHubSpotRecord: vi.fn(),
+  fetchHubSpotRecord: vi.fn(),
+  searchHubSpotRecords: vi.fn(),
+  updateHubSpotRecord: vi.fn(),
+}));
+
+vi.mock('./mcpCallTool.js', () => ({ callMcpConnectionTool: vi.fn() }));
 
 vi.mock('../connectors/zendesk.js', () => ({
   fetchZendeskTicket: vi.fn(),
@@ -129,18 +151,28 @@ describe('readSource', () => {
     );
     (readNotionPage as ReturnType<typeof vi.fn>).mockResolvedValue({
       blocks: [{ type: 'paragraph' }],
-      page: { id: 'page-1', object: 'page', properties: {}, url: 'https://notion.so/page-1' },
+      page: {
+        id: '0123456789abcdef0123456789abcdef',
+        object: 'page',
+        properties: {},
+        url: 'https://notion.so/0123456789abcdef0123456789abcdef',
+      },
     });
 
     const result = await readSource({
       connectionId: '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5',
-      query: { pageId: 'page-1' },
+      query: { pageId: '0123456789abcdef0123456789abcdef' },
     });
     expect(result.ok).toBe(true);
     expect(result.connectionType).toBe('notion');
     expect(result.data).toEqual({
       blocks: [{ type: 'paragraph' }],
-      page: { id: 'page-1', object: 'page', properties: {}, url: 'https://notion.so/page-1' },
+      page: {
+        id: '0123456789abcdef0123456789abcdef',
+        object: 'page',
+        properties: {},
+        url: 'https://notion.so/0123456789abcdef0123456789abcdef',
+      },
     });
   });
 
@@ -169,7 +201,7 @@ describe('readSource', () => {
 describe('writeOutcome approval guard', () => {
   const args = {
     connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
-    data: { blocks: [{ type: 'paragraph' }], pageId: 'page-1' },
+    data: { blocks: [{ type: 'paragraph' }], pageId: '0123456789abcdef0123456789abcdef' },
   };
   const publishedAt = new Date('2026-01-01T00:00:00Z');
 
@@ -180,7 +212,7 @@ describe('writeOutcome approval guard', () => {
     );
     (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
       appended: 1,
-      pageId: 'page-1',
+      pageId: '0123456789abcdef0123456789abcdef',
     });
   });
 
@@ -425,19 +457,19 @@ describe('writeOutcome', () => {
     );
     (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
       appended: 1,
-      pageId: 'page-1',
+      pageId: '0123456789abcdef0123456789abcdef',
     });
 
     const result = await writeOutcome({
       connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
       data: {
         blocks: [{ type: 'paragraph' }],
-        pageId: 'page-1',
+        pageId: '0123456789abcdef0123456789abcdef',
       },
     });
     expect(result.ok).toBe(true);
     expect(result.connectionType).toBe('notion');
-    expect(result.reference).toBe('page-1');
+    expect(result.reference).toBe('0123456789abcdef0123456789abcdef');
   });
 
   it('creates a new notion page', async () => {
@@ -445,14 +477,14 @@ describe('writeOutcome', () => {
       makeConnection('notion', { token: true })
     );
     (createNotionPage as ReturnType<typeof vi.fn>).mockResolvedValue({
-      pageId: 'new-page',
+      pageId: 'fedcba9876543210fedcba9876543210',
       url: 'https://notion.so/new-page',
     });
 
     const result = await writeOutcome({
       connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
       data: {
-        pageId: 'parent-1',
+        pageId: '0123456789abcdef0123456789abcdef',
         title: 'Draft',
       },
     });
@@ -467,26 +499,30 @@ describe('writeOutcome', () => {
     );
     (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
       appended: 2,
-      pageId: 'page-1',
+      pageId: '0123456789abcdef0123456789abcdef',
     });
 
     const result = await writeOutcome({
       connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
-      data: { pageId: 'page-1', text: 'Line one\nLine two' },
+      data: { pageId: '0123456789abcdef0123456789abcdef', text: 'Line one\nLine two' },
     });
     expect(result.ok).toBe(true);
     expect(result.connectionType).toBe('notion');
-    expect(result.reference).toBe('page-1');
-    expect(appendNotionBlocks).toHaveBeenCalledWith({ apiToken: expect.any(String) }, 'page-1', [
-      {
-        paragraph: { rich_text: [{ text: { content: 'Line one' }, type: 'text' }] },
-        type: 'paragraph',
-      },
-      {
-        paragraph: { rich_text: [{ text: { content: 'Line two' }, type: 'text' }] },
-        type: 'paragraph',
-      },
-    ]);
+    expect(result.reference).toBe('0123456789abcdef0123456789abcdef');
+    expect(appendNotionBlocks).toHaveBeenCalledWith(
+      { apiToken: expect.any(String) },
+      '0123456789abcdef0123456789abcdef',
+      [
+        {
+          paragraph: { rich_text: [{ text: { content: 'Line one' }, type: 'text' }] },
+          type: 'paragraph',
+        },
+        {
+          paragraph: { rich_text: [{ text: { content: 'Line two' }, type: 'text' }] },
+          type: 'paragraph',
+        },
+      ]
+    );
   });
 
   it('throws when the notion payload has no text, blocks, or create fields', async () => {
@@ -513,12 +549,12 @@ describe('writeOutcome', () => {
     });
     (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
       appended: 1,
-      pageId: 'page-1',
+      pageId: '0123456789abcdef0123456789abcdef',
     });
 
     await writeOutcome({
       connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
-      data: { blocks: [{ type: 'paragraph' }], pageId: 'page-1' },
+      data: { blocks: [{ type: 'paragraph' }], pageId: '0123456789abcdef0123456789abcdef' },
       nodeId: 'node-1',
     });
 
@@ -549,12 +585,12 @@ describe('writeOutcome', () => {
     });
     (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
       appended: 1,
-      pageId: 'page-1',
+      pageId: '0123456789abcdef0123456789abcdef',
     });
 
     const result = await writeOutcome({
       connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
-      data: { blocks: [{ type: 'paragraph' }], pageId: 'page-1' },
+      data: { blocks: [{ type: 'paragraph' }], pageId: '0123456789abcdef0123456789abcdef' },
       nodeId: 'node-1',
     });
 
@@ -585,25 +621,29 @@ describe('writeOutcome', () => {
         result: {
           connectionType: 'notion',
           ok: true,
-          reference: 'page-1',
+          reference: '0123456789abcdef0123456789abcdef',
         },
         state: 'DONE',
       });
     (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
       appended: 1,
-      pageId: 'page-1',
+      pageId: '0123456789abcdef0123456789abcdef',
     });
 
     const args = {
       connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
-      data: { blocks: [{ type: 'paragraph' }], pageId: 'page-1' },
+      data: { blocks: [{ type: 'paragraph' }], pageId: '0123456789abcdef0123456789abcdef' },
       nodeId: 'node-1',
     };
 
     const first = await writeOutcome(args);
     const second = await writeOutcome(args);
 
-    expect(first).toEqual({ connectionType: 'notion', ok: true, reference: 'page-1' });
+    expect(first).toEqual({
+      connectionType: 'notion',
+      ok: true,
+      reference: '0123456789abcdef0123456789abcdef',
+    });
     expect(second).toEqual(first);
     expect(appendNotionBlocks).toHaveBeenCalledTimes(1);
     expect(prisma.workflowOutcomeReference.create).toHaveBeenCalledTimes(1);
@@ -1452,46 +1492,539 @@ describe('issue_tracker writeOutcome: ticket plan', () => {
   });
 });
 
-describe('steps with no connector implementation fail loudly', () => {
-  const connectionId = '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5';
+// ── http_api / hubspot / mcp / notion tools ─────────────────────────────────
 
-  const cases: Array<[string, string, () => Promise<unknown>]> = [
-    ...['http_api', 'hubspot', 'mcp', 'git_repo', 'slack_workspace'].map(
-      (type): [string, string, () => Promise<unknown>] => [
-        'readSource',
-        type,
-        () => readSource({ connectionId }),
-      ]
-    ),
-    ...['http_api', 'hubspot', 'mcp', 'git_repo'].map(
-      (type): [string, string, () => Promise<unknown>] => [
-        'writeOutcome',
-        type,
-        () => writeOutcome({ connectionId, data: { a: 1 } }),
-      ]
-    ),
-    ...['http_api', 'hubspot', 'mcp', 'git_repo', 'notion'].map(
-      (type): [string, string, () => Promise<unknown>] => [
-        'runTool',
-        type,
-        () => runTool({ connectionId, inputs: {}, tool: 'anything' }),
-      ]
-    ),
-  ];
+const GENERIC = '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5';
+const connectionMock = () => prisma.connection.findUnique as ReturnType<typeof vi.fn>;
+const claimMock = () => prisma.workflowOutcomeReference.create as ReturnType<typeof vi.fn>;
+const httpMock = () => httpApiRequest as ReturnType<typeof vi.fn>;
+const mcpMock = () => callMcpConnectionTool as ReturnType<typeof vi.fn>;
 
-  it.each(cases)('%s on a %s connection fails non-retryably', async (step, type, call) => {
-    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
-      makeConnection(type)
+/** A refusal may claim and release; what matters is that no PENDING row stays behind. */
+function expectNoClaimRemains() {
+  expect(prisma.workflowOutcomeReference.deleteMany).toHaveBeenCalledTimes(
+    claimMock().mock.calls.length
+  );
+}
+
+function useConnection(type: string, options?: { config?: unknown; token?: boolean }) {
+  connectionMock().mockResolvedValue(makeConnection(type, options));
+}
+
+describe('http_api steps', () => {
+  beforeEach(() => {
+    useConnection('http_api', { token: true });
+    httpMock().mockResolvedValue({ body: { a: 1 }, headers: {}, status: 200 });
+  });
+
+  it('readSource sends a GET and returns status and body', async () => {
+    const result = await readSource({
+      connectionId: GENERIC,
+      query: { path: '/v1/items', query: { limit: 5 } },
+    });
+    expect(httpMock()).toHaveBeenCalledWith(
+      expect.objectContaining({ apiToken: 'test-token' }),
+      { method: 'GET', path: '/v1/items', query: { limit: 5 } },
+      { signal: undefined }
     );
+    expect(result).toEqual({
+      connectionType: 'http_api',
+      data: { body: { a: 1 }, status: 200 },
+      ok: true,
+    });
+  });
 
-    const failure = await call().then(
+  it('readSource reports a truncated body', async () => {
+    httpMock().mockResolvedValue({ body: 'xx', headers: {}, status: 200, truncated: true });
+    const result = await readSource({ connectionId: GENERIC, query: { path: '/x' } });
+    expect(result.data).toEqual({ body: 'xx', status: 200, truncated: true });
+  });
+
+  it('readSource refuses a query without a path before any request', async () => {
+    await expect(readSource({ connectionId: GENERIC, query: {} })).rejects.toThrow(
+      'http_api readSource query'
+    );
+    expect(httpMock()).not.toHaveBeenCalled();
+  });
+
+  it('readSource refuses per-request headers: a read is ungoverned', async () => {
+    await expect(
+      readSource({
+        connectionId: GENERIC,
+        query: { headers: { 'x-a': 'b' }, path: '/v1/items' },
+      })
+    ).rejects.toThrow('http_api readSource query');
+    expect(httpMock()).not.toHaveBeenCalled();
+  });
+
+  it('writeOutcome defaults to POST and references the status', async () => {
+    const result = await writeOutcome({
+      connectionId: GENERIC,
+      data: { body: { n: 1 }, path: '/v1/items' },
+    });
+    expect(httpMock()).toHaveBeenCalledWith(
+      expect.anything(),
+      { body: { n: 1 }, method: 'POST', path: '/v1/items' },
+      { signal: undefined }
+    );
+    expect(result).toEqual({
+      connectionType: 'http_api',
+      ok: true,
+      reference: '200',
+      response: { body: { a: 1 }, status: 200 },
+    });
+  });
+
+  it('writeOutcome prefers the Location header as the reference', async () => {
+    httpMock().mockResolvedValue({
+      body: null,
+      headers: { location: 'https://api.example.com/v1/items/9' },
+      status: 201,
+    });
+    const result = await writeOutcome({
+      connectionId: GENERIC,
+      data: { method: 'PUT', path: '/v1/items' },
+    });
+    expect(result.reference).toBe('https://api.example.com/v1/items/9');
+  });
+
+  it('writeOutcome refuses GET, leaving no ledger claim', async () => {
+    await expect(
+      writeOutcome({
+        connectionId: GENERIC,
+        data: { method: 'GET', path: '/v1/items' },
+        nodeId: 'n1',
+      })
+    ).rejects.toThrow('http_api writeOutcome data');
+    expect(httpMock()).not.toHaveBeenCalled();
+    expectNoClaimRemains();
+  });
+
+  it('writeOutcome claims the ledger for a valid write', async () => {
+    await writeOutcome({ connectionId: GENERIC, data: { path: '/v1/items' }, nodeId: 'n1' });
+    expect(claimMock()).toHaveBeenCalledTimes(1);
+  });
+
+  it('runTool request allows GET and returns the shaped response', async () => {
+    const result = await runTool({
+      connectionId: GENERIC,
+      inputs: { method: 'GET', path: '/v1/items' },
+      tool: 'request',
+    });
+    expect(result).toEqual({
+      connectionType: 'http_api',
+      ok: true,
+      output: { body: { a: 1 }, status: 200 },
+    });
+  });
+
+  it('runTool request is governed as a mutation even for GET', async () => {
+    await runTool({
+      connectionId: GENERIC,
+      inputs: { method: 'GET', path: '/v1/items' },
+      nodeId: 'n1',
+      tool: 'request',
+    });
+    expect(claimMock()).toHaveBeenCalledTimes(1);
+  });
+
+  it('runTool refuses another tool name and a bad method, leaving no claim', async () => {
+    await expect(
+      runTool({ connectionId: GENERIC, inputs: {}, nodeId: 'n1', tool: 'delete' })
+    ).rejects.toThrow('Unsupported http_api tool: delete');
+    await expect(
+      runTool({
+        connectionId: GENERIC,
+        inputs: { method: 'TRACE', path: '/x' },
+        nodeId: 'n1',
+        tool: 'request',
+      })
+    ).rejects.toThrow('http_api request inputs');
+    expect(httpMock()).not.toHaveBeenCalled();
+    expectNoClaimRemains();
+  });
+});
+
+describe('hubspot steps', () => {
+  const record = { id: '77', properties: { email: 'a@b.c' } };
+
+  beforeEach(() => {
+    useConnection('hubspot', { token: true });
+    (fetchHubSpotRecord as ReturnType<typeof vi.fn>).mockResolvedValue(record);
+    (createHubSpotRecord as ReturnType<typeof vi.fn>).mockResolvedValue(record);
+    (updateHubSpotRecord as ReturnType<typeof vi.fn>).mockResolvedValue(record);
+    (searchHubSpotRecords as ReturnType<typeof vi.fn>).mockResolvedValue({
+      results: [record],
+      total: 1,
+    });
+  });
+
+  it('readSource fetches a record by id', async () => {
+    const result = await readSource({
+      connectionId: GENERIC,
+      query: { objectId: '77', objectType: 'contacts', properties: ['email'] },
+    });
+    expect(fetchHubSpotRecord).toHaveBeenCalledWith(
+      { apiToken: 'test-token' },
+      { objectId: '77', objectType: 'contacts', properties: ['email'] },
+      {}
+    );
+    expect(result).toEqual({ connectionType: 'hubspot', data: record, ok: true });
+  });
+
+  it('readSource searches', async () => {
+    const result = await readSource({
+      connectionId: GENERIC,
+      query: { objectType: 'contacts', search: { query: 'ann' } },
+    });
+    expect(searchHubSpotRecords).toHaveBeenCalledWith(
+      { apiToken: 'test-token' },
+      { objectType: 'contacts', query: 'ann' },
+      {}
+    );
+    expect(result.data).toEqual({ results: [record], total: 1 });
+  });
+
+  it('readSource refuses a query with neither objectId nor search', async () => {
+    await expect(
+      readSource({ connectionId: GENERIC, query: { objectType: 'contacts' } })
+    ).rejects.toThrow('hubspot readSource query');
+    expect(fetchHubSpotRecord).not.toHaveBeenCalled();
+  });
+
+  it('writeOutcome creates without an objectId and references the record id', async () => {
+    const result = await writeOutcome({
+      connectionId: GENERIC,
+      data: { objectType: 'contacts', properties: { email: 'a@b.c' } },
+    });
+    expect(createHubSpotRecord).toHaveBeenCalled();
+    expect(updateHubSpotRecord).not.toHaveBeenCalled();
+    expect(result).toEqual({ connectionType: 'hubspot', ok: true, reference: '77' });
+  });
+
+  it('writeOutcome updates with an objectId', async () => {
+    await writeOutcome({
+      connectionId: GENERIC,
+      data: { objectId: '77', objectType: 'contacts', properties: { phone: '1' } },
+    });
+    expect(updateHubSpotRecord).toHaveBeenCalledWith(
+      { apiToken: 'test-token' },
+      { objectId: '77', objectType: 'contacts', properties: { phone: '1' } },
+      {}
+    );
+  });
+
+  it('writeOutcome refuses missing properties, leaving no claim', async () => {
+    await expect(
+      writeOutcome({ connectionId: GENERIC, data: { objectType: 'contacts' }, nodeId: 'n1' })
+    ).rejects.toThrow('hubspot writeOutcome data');
+    expectNoClaimRemains();
+  });
+
+  it('runTool: fetchRecord and searchRecords are reads and take no claim', async () => {
+    await runTool({
+      connectionId: GENERIC,
+      inputs: { objectId: '77', objectType: 'contacts' },
+      nodeId: 'n1',
+      tool: 'fetchRecord',
+    });
+    await runTool({
+      connectionId: GENERIC,
+      inputs: { objectType: 'contacts', query: 'ann' },
+      nodeId: 'n2',
+      tool: 'searchRecords',
+    });
+    expectNoClaimRemains();
+  });
+
+  it('runTool: createRecord and updateRecord are governed writes', async () => {
+    await runTool({
+      connectionId: GENERIC,
+      inputs: { objectType: 'contacts', properties: { a: 'b' } },
+      nodeId: 'n1',
+      tool: 'createRecord',
+    });
+    await runTool({
+      connectionId: GENERIC,
+      inputs: { objectId: '77', objectType: 'contacts', properties: { a: 'b' } },
+      nodeId: 'n2',
+      tool: 'updateRecord',
+    });
+    expect(createHubSpotRecord).toHaveBeenCalledTimes(1);
+    expect(updateHubSpotRecord).toHaveBeenCalledTimes(1);
+    expect(claimMock()).toHaveBeenCalledTimes(2);
+  });
+
+  it('runTool: an unknown tool is refused naming it, with no claim', async () => {
+    await expect(
+      runTool({ connectionId: GENERIC, inputs: {}, nodeId: 'n1', tool: 'deleteRecord' })
+    ).rejects.toThrow('Unsupported hubspot tool: deleteRecord');
+    expectNoClaimRemains();
+  });
+});
+
+describe('mcp steps', () => {
+  beforeEach(() => {
+    useConnection('mcp');
+    mcpMock().mockResolvedValue({ readOnly: true, result: { content: [{ text: 'ok' }] } });
+  });
+
+  it('readSource calls the core read-only', async () => {
+    const result = await readSource({
+      connectionId: GENERIC,
+      query: { inputs: { id: 1 }, tool: 'get_thing' },
+    });
+    expect(mcpMock()).toHaveBeenCalledWith({
+      connectionId: GENERIC,
+      inputs: { id: 1 },
+      mode: 'readOnly',
+      step: 'readSource',
+      tool: 'get_thing',
+    });
+    expect(result).toEqual({
+      connectionType: 'mcp',
+      data: { content: [{ text: 'ok' }] },
+      ok: true,
+    });
+  });
+
+  it('readSource fails on isError without echoing the result text', async () => {
+    mcpMock().mockResolvedValue({
+      readOnly: true,
+      result: { content: [{ text: 'SECRET-DETAIL' }], isError: true },
+    });
+    const err = await readSource({ connectionId: GENERIC, query: { tool: 'get_thing' } }).catch(
+      (e) => e
+    );
+    expect(err.message).toBe('MCP tool get_thing reported an error');
+  });
+
+  it('readSource refuses a query without a tool', async () => {
+    await expect(readSource({ connectionId: GENERIC, query: {} })).rejects.toThrow(
+      'mcp readSource query'
+    );
+    expect(mcpMock()).not.toHaveBeenCalled();
+  });
+
+  it('writeOutcome calls the core as mutating and never claims the ledger itself', async () => {
+    const result = await writeOutcome({
+      connectionId: GENERIC,
+      data: { inputs: { a: 1 }, tool: 'create_thing' },
+      nodeId: 'n1',
+    });
+    expect(mcpMock()).toHaveBeenCalledWith({
+      connectionId: GENERIC,
+      inputs: { a: 1 },
+      mode: 'mutating',
+      nodeId: 'n1',
+      step: 'writeOutcome',
+      tool: 'create_thing',
+    });
+    expectNoClaimRemains();
+    expect(prisma.workflowOutcomeReference.findFirst).not.toHaveBeenCalled();
+    expect(result.reference).toBe('create_thing');
+    expect(result.response).toEqual({ content: [{ text: 'ok' }] });
+  });
+
+  it('writeOutcome still applies the run pin check', async () => {
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      authorizedConnectionIds: [],
+      id: 'run-1',
+    });
+    await expect(
+      writeOutcome({ connectionId: GENERIC, data: { tool: 't' }, nodeId: 'n1' })
+    ).rejects.toThrow();
+    expect(mcpMock()).not.toHaveBeenCalled();
+  });
+
+  it('writeOutcome fails on isError, including when the core replays a recorded result', async () => {
+    mcpMock().mockResolvedValue({ readOnly: false, result: { isError: true } });
+    await expect(
+      writeOutcome({ connectionId: GENERIC, data: { tool: 'create_thing' }, nodeId: 'n1' })
+    ).rejects.toThrow('MCP tool create_thing reported an error');
+  });
+
+  it('runTool delegates in auto mode and never claims the ledger itself', async () => {
+    const result = await runTool({
+      connectionId: GENERIC,
+      inputs: { a: 1 },
+      nodeId: 'n1',
+      tool: 'create_thing',
+    });
+    expect(mcpMock()).toHaveBeenCalledWith({
+      connectionId: GENERIC,
+      inputs: { a: 1 },
+      mode: 'auto',
+      nodeId: 'n1',
+      step: 'runTool',
+      tool: 'create_thing',
+    });
+    expectNoClaimRemains();
+    expect(result).toEqual({
+      connectionType: 'mcp',
+      ok: true,
+      output: { content: [{ text: 'ok' }] },
+    });
+  });
+
+  it('runTool: a tool named fetchPage is classified by the core, not by its name', async () => {
+    await runTool({ connectionId: GENERIC, inputs: {}, nodeId: 'n1', tool: 'fetchPage' });
+    expect(mcpMock()).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: 'auto', nodeId: 'n1', tool: 'fetchPage' })
+    );
+    // The name-based read-only set is not consulted: no approval lookup runs here either,
+    // because the core owns it.
+    expect(prisma.autonomyDecision.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('refuses non-object inputs before calling the core, in all three steps', async () => {
+    await expect(
+      runTool({ connectionId: GENERIC, inputs: [1], nodeId: 'n1', tool: 't' })
+    ).rejects.toMatchObject({ type: 'NOT_SENT' });
+    await expect(
+      runTool({ connectionId: GENERIC, inputs: 'x', nodeId: 'n1', tool: 't' })
+    ).rejects.toMatchObject({ type: 'NOT_SENT' });
+    await expect(
+      readSource({ connectionId: GENERIC, query: { inputs: [1], tool: 't' } })
+    ).rejects.toMatchObject({ type: 'NOT_SENT' });
+    await expect(
+      writeOutcome({ connectionId: GENERIC, data: { inputs: 'x', tool: 't' }, nodeId: 'n1' })
+    ).rejects.toMatchObject({ type: 'NOT_SENT' });
+    expect(mcpMock()).not.toHaveBeenCalled();
+  });
+
+  it('runTool fails on isError', async () => {
+    mcpMock().mockResolvedValue({ readOnly: false, result: { isError: true } });
+    await expect(
+      runTool({ connectionId: GENERIC, inputs: {}, nodeId: 'n1', tool: 'create_thing' })
+    ).rejects.toThrow('MCP tool create_thing reported an error');
+  });
+});
+
+describe('notion runTool', () => {
+  beforeEach(() => {
+    useConnection('notion', {
+      config: { sourcePageId: '0123456789abcdef0123456789abcdef' },
+      token: true,
+    });
+    (readNotionPage as ReturnType<typeof vi.fn>).mockResolvedValue({ blocks: [], page: {} });
+    (createNotionPage as ReturnType<typeof vi.fn>).mockResolvedValue({ pageId: 'p', url: 'u' });
+    (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
+      appended: 1,
+      pageId: '0123456789abcdef0123456789abcdef',
+    });
+  });
+
+  it('fetchPage reads without a claim', async () => {
+    const result = await runTool({
+      connectionId: GENERIC,
+      inputs: { pageId: '0123456789abcdef0123456789abcdef' },
+      nodeId: 'n1',
+      tool: 'fetchPage',
+    });
+    expect(readNotionPage).toHaveBeenCalledWith(
+      { apiToken: 'test-token' },
+      '0123456789abcdef0123456789abcdef'
+    );
+    expect(result.connectionType).toBe('notion');
+    expectNoClaimRemains();
+  });
+
+  it('createPage is a governed write', async () => {
+    const result = await runTool({
+      connectionId: GENERIC,
+      inputs: { title: 'T' },
+      nodeId: 'n1',
+      tool: 'createPage',
+    });
+    expect(createNotionPage).toHaveBeenCalledWith(
+      { apiToken: 'test-token' },
+      { pageId: '0123456789abcdef0123456789abcdef', title: 'T' }
+    );
+    expect(result.output).toEqual({ pageId: 'p', url: 'u' });
+    expect(claimMock()).toHaveBeenCalledTimes(1);
+  });
+
+  it('appendBlocks falls back to the default page', async () => {
+    await runTool({
+      connectionId: GENERIC,
+      inputs: { blocks: [{ type: 'paragraph' }] },
+      nodeId: 'n1',
+      tool: 'appendBlocks',
+    });
+    expect(appendNotionBlocks).toHaveBeenCalledWith(
+      { apiToken: 'test-token' },
+      '0123456789abcdef0123456789abcdef',
+      [{ type: 'paragraph' }]
+    );
+  });
+
+  it('refuses bad inputs and unknown tools with no claim', async () => {
+    await expect(
+      runTool({ connectionId: GENERIC, inputs: { blocks: [] }, nodeId: 'n1', tool: 'appendBlocks' })
+    ).rejects.toThrow('appendBlocks inputs');
+    await expect(
+      runTool({ connectionId: GENERIC, inputs: {}, nodeId: 'n1', tool: 'deletePage' })
+    ).rejects.toThrow('Unsupported Notion tool: deletePage');
+    expectNoClaimRemains();
+  });
+});
+
+describe('GENERIC_STEP_CONNECTION_TYPES is the one source of which pairs act', () => {
+  type StepName = 'readSource' | 'writeOutcome' | 'runTool';
+  const calls: Record<StepName, () => Promise<unknown>> = {
+    readSource: () => readSource({ connectionId: GENERIC, query: {} }),
+    runTool: () => runTool({ connectionId: GENERIC, inputs: {}, nodeId: 'n1', tool: 'anything' }),
+    writeOutcome: () => writeOutcome({ connectionId: GENERIC, data: { a: 1 }, nodeId: 'n1' }),
+  };
+  const steps = Object.keys(GENERIC_STEP_CONNECTION_TYPES) as StepName[];
+  const failureOf = (call: () => Promise<unknown>) =>
+    call().then(
       () => null,
       (e: Error & { type?: string }) => e
     );
-    expect(failure).not.toBeNull();
-    expect(failure?.type).toBe('CONNECTOR_NOT_IMPLEMENTED');
-    expect(failure?.message).toContain(`${step} has no implementation for ${type}`);
-    // Nothing was claimed, so a retry-ambiguity row cannot be left behind.
-    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+
+  const pairs = steps.flatMap((step) =>
+    [...CONNECTION_TYPES, 'not_a_type'].map((type): [StepName, string, boolean] => [
+      step,
+      type,
+      (GENERIC_STEP_CONNECTION_TYPES[step] as readonly string[]).includes(type),
+    ])
+  );
+
+  it.each(pairs.filter(([, , listed]) => !listed))(
+    '%s on a %s connection fails non-retryably with CONNECTOR_NOT_IMPLEMENTED',
+    async (step, type) => {
+      useConnection(type, { token: true });
+      // With a nodeId, a run in scope and no approval required, a claim would be possible.
+      (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+        id: 'run-1',
+      });
+      (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+      const failure = await failureOf(calls[step]);
+      expect(failure).not.toBeNull();
+      expect((failure as { nonRetryable?: boolean }).nonRetryable).toBe(true);
+      expect(failure?.type).toBe('CONNECTOR_NOT_IMPLEMENTED');
+      expect(failure?.message).toContain(`${step} has no implementation for ${type}`);
+      // Nothing was claimed, so a retry-ambiguity row cannot be left behind.
+      expect(claimMock()).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(pairs.filter(([, , listed]) => listed))(
+    '%s on a %s connection has a handler',
+    async (step, type) => {
+      useConnection(type, { token: true });
+      // The connectors are mocked and return nothing, so a handler may fail on that; what it
+      // must not do is report the pair as having no implementation.
+      const failure = await failureOf(calls[step]);
+      expect(failure?.type).not.toBe('CONNECTOR_NOT_IMPLEMENTED');
+    }
+  );
+
+  it('names the engineering activities for git_repo', async () => {
+    useConnection('git_repo');
+    const failure = await failureOf(calls.readSource);
+    expect(failure?.message).toContain('engineering activities');
   });
 });

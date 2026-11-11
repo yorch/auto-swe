@@ -29,6 +29,7 @@ export type CredentialDestination = string | null;
 
 /** Origins the platform reaches on a host nothing in the row can move. */
 const NOTION_ORIGIN = 'https://api.notion.com';
+const HUBSPOT_ORIGIN = 'https://api.hubapi.com';
 const SLACK_ORIGIN = 'https://slack.com';
 const LINEAR_ORIGIN = 'https://api.linear.app';
 
@@ -56,11 +57,9 @@ const DESTINATIONS: Record<ConnectionType, (config: unknown) => CredentialDestin
   // columns on a `git_repo` row are inert — nothing reads them — so there is no
   // destination to bind.
   git_repo: () => null,
-  // Neither has a connector: `genericActions.ts` fails every step over them with
-  // `CONNECTOR_NOT_IMPLEMENTED` and never sends a token. Whoever gives one a
-  // real sender must give it a destination here.
-  http_api: () => null,
-  hubspot: () => null,
+  // The row's `baseUrl` is the destination, so repointing it with a token stored is a move.
+  http_api: (config) => originOf(stringField(config, 'baseUrl') ?? ''),
+  hubspot: () => HUBSPOT_ORIGIN,
   issue_tracker: (config) => {
     const provider = stringField(config, 'provider');
     // Linear's endpoint is fixed, so switching to it *moves* the destination even

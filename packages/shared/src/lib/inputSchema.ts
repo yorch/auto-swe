@@ -13,7 +13,6 @@
  * allowed (additive — like JSON Schema's default `additionalProperties: true`).
  */
 
-import { UNIMPLEMENTED_CONNECTION_TYPES } from './connectionTypes.js';
 import { checkRegexSafety } from './regexSafety.js';
 
 export type InputFieldType = 'string' | 'number' | 'boolean' | 'array' | 'connection';
@@ -542,15 +541,6 @@ export function inputSchemaProblems(value: unknown): string[] {
     // run uses — chosen by whoever supplies the ticket — and the run's authorized set is derived
     // from the payload, so no launch path would notice. `connectionId` is deliberately not here:
     // it *is* a connection, the run's own, which every launch authorizes.
-    if (
-      p.type === 'connection' &&
-      typeof p.connectionType === 'string' &&
-      (UNIMPLEMENTED_CONNECTION_TYPES as readonly string[]).includes(p.connectionType)
-    ) {
-      at(
-        `connectionType '${p.connectionType}' has no connector yet: no step can act on it, so a template cannot declare it`
-      );
-    }
     if (p.type === 'connection' && (key === 'ticketId' || key === 'description')) {
       at('may not be a connection: the platform fills this key from text, not from a picker');
     }

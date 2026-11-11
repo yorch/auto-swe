@@ -244,13 +244,13 @@ describe('inputSchemaProblems', () => {
     }
   });
 
-  it.each(['http_api', 'hubspot'])('refuses a connection input typed %s', (connectionType) => {
+  it.each(['http_api', 'hubspot'])('allows a connection input typed %s', (connectionType) => {
     expect(
       inputSchemaProblems({
         properties: { target: { connectionType, type: 'connection' } },
         type: 'object',
-      }).join('\n')
-    ).toMatch(new RegExp(`'target'.*${connectionType}.*no connector yet`));
+      })
+    ).toEqual([]);
   });
 
   it('still allows connectionId as a connection, which is the run’s own', () => {

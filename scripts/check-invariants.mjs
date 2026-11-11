@@ -466,6 +466,7 @@ const GUARDED_FETCH_MODULES = [
   'packages/worker/src/agents/mcpTools.ts',
   'packages/worker/src/lib/callbackSender.ts',
   'packages/worker/src/lib/scm/github.ts',
+  'packages/worker/src/connectors/httpApi.ts',
 ];
 
 function checkOperatorUrlFetchesAreGuarded() {

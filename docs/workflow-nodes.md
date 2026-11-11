@@ -1672,13 +1672,14 @@ deleted or renamed one at a time, and a node a use routes to cannot be deleted.
 
 ## Limitations
 
-- **`readSource`, `writeOutcome` and `runTool` act on a subset of connection types.** `readSource`
-  reads Notion, Zendesk, issue-tracker and Confluence connections; `writeOutcome` writes those and
-  Slack; `runTool` runs tools on Zendesk, Slack, issue-tracker and Confluence connections. Over any
-  other connection (`http_api`, `hubspot`, `mcp`, `git_repo`) the step fails with a non-retryable
-  `CONNECTOR_NOT_IMPLEMENTED` error. Spec validation cannot see a connection's type, so only a
-  run reveals the mismatch; a template's `inputSchema` is refused if it declares an `http_api` or
-  `hubspot` connection field.
+- **`readSource`, `writeOutcome` and `runTool` act on a subset of connection types.**
+  `GENERIC_STEP_CONNECTION_TYPES` (`shared/lib/connectionTypes.ts`) is the matrix. `readSource`
+  reads Notion, Zendesk, issue-tracker, Confluence, `http_api`, `hubspot` and `mcp` connections;
+  `writeOutcome` writes those and Slack; `runTool` runs tools on Zendesk, Slack, issue-tracker,
+  Confluence, `http_api`, `hubspot`, `mcp` and Notion connections. Over any other pairing (every
+  step over `git_repo`, `readSource` over `slack_workspace`) the step fails with a non-retryable
+  `CONNECTOR_NOT_IMPLEMENTED` error. Spec validation cannot see a connection's type, so only a run
+  reveals the mismatch.
 - **No per-node activity timeouts or retry policy.** The worker fixes them per kind of step; the node
   fields that look like they set them are ignored (§4).
 - **The expression language is deliberately small.** No function calls, no string building, and a

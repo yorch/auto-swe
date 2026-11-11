@@ -3956,9 +3956,9 @@
       "title": "Request-centred work list and retry"
     },
     {
-      "body": "Read and write Notion pages, Confluence pages, Zendesk comments, tracker issues and Slack messages.",
+      "body": "Read and write Notion pages, Confluence pages, Zendesk comments, tracker issues, Slack messages, HubSpot CRM objects and generic HTTP API endpoints.",
       "category": "Integrations",
-      "detail": "These have concrete worker connectors. HubSpot and generic http_api branches in genericActions currently return placeholders. MCP has its own executor instead. A confluence connection is a team’s own, with its own credential; its connector reads, creates and updates pages through the guarded fetch with the connection’s private-network opt-in, escapes agent text into storage format, honours a supplied page version so a stale update is refused, and stops non-retryably on a response that is ambiguous or names a different page. A readSource node can name an issue with issueId. Requests either refuse redirects (Notion, Confluence, Zendesk, Slack and Linear; Jira treats a 3xx as a failure) or, for GitHub Issues, re-check every hop through a guarded fetch, so a credential cannot leave the configured origin.",
+      "detail": "These have concrete worker connectors, and a step over a pair outside GENERIC_STEP_CONNECTION_TYPES fails with CONNECTOR_NOT_IMPLEMENTED. The HubSpot and http_api branches in genericActions call their own connectors (HubSpot CRM v3 objects through a private-app token; http_api through a guarded, https-only fetch confined to the connection’s base path) and, for writes, go through the approval check and outcome ledger. An mcp connection is executed through the MCP core, with approval checked after the server is contacted. A confluence connection is a team’s own, with its own credential; its connector reads, creates and updates pages through the guarded fetch with the connection’s private-network opt-in, escapes agent text into storage format, honours a supplied page version so a stale update is refused, and stops non-retryably on a response that is ambiguous or names a different page. A readSource node can name an issue with issueId. Requests either refuse redirects (Notion, Confluence, Zendesk, Slack and Linear; Jira treats a 3xx as a failure) or, for GitHub Issues, re-check every hop through a guarded fetch, so a credential cannot leave the configured origin.",
       "id": "connectors",
       "refs": ["generic", "write", "connectorRedirectError", "confluenceConnector"],
       "status": "Implemented",
@@ -5126,13 +5126,13 @@
       "title": "KB snapshots are bounded reference context, not revocable instructions"
     },
     {
-      "body": "HubSpot and generic HTTP API lack concrete genericActions handlers.",
+      "body": "HubSpot and generic HTTP API handlers are deliberately narrow.",
       "category": "Coverage",
-      "detail": "readSource/writeOutcome/runTool return ok:true with placeholder:true for several types. Notion, Zendesk, tracker and Slack have specific real handlers; MCP is executed separately.",
-      "id": "placeholder",
+      "detail": "Every pair in GENERIC_STEP_CONNECTION_TYPES (shared/lib/connectionTypes.ts) has a concrete handler, and any other pair (every step over git_repo, readSource over slack_workspace, a type the build does not know) fails non-retryably with CONNECTOR_NOT_IMPLEMENTED before a claim; none returns a stub success. The http_api connector is https-only with no private-network opt-in, caps responses at 256 KiB, omits non-text bodies, and its base path is a request-construction boundary rather than an authorization one; readSource on it is an ungoverned credentialed GET. HubSpot covers CRM v3 objects through a private-app token only, with no OAuth flow, associations or batch calls. An MCP tool-level error fails the generic steps and is not retried.",
+      "id": "narrowConnectors",
       "refs": ["generic", "write"],
       "status": "Confirmed boundary",
-      "title": "Some integration labels are placeholders"
+      "title": "HubSpot and generic HTTP API connectors are narrow"
     },
     {
       "body": "A failed post-diff security gate can leave code on a remote branch.",
@@ -8223,7 +8223,7 @@
       "title": "Review network"
     },
     {
-      "anchor": "export async function readSource(",
+      "anchor": "async function readSourceInner(",
       "before": 0,
       "id": "generic",
       "lines": 90,
@@ -8231,7 +8231,7 @@
       "title": "Read-source handler dispatch"
     },
     {
-      "anchor": "export async function writeOutcome(",
+      "anchor": "async function writeOutcomeInner(",
       "before": 30,
       "id": "write",
       "lines": 90,
@@ -15449,7 +15449,7 @@
     {
       "body": "Read a ticket, generate a response, request approval when required and post a public/private comment.",
       "category": "Support",
-      "detail": "record is a workspace provider abstraction. The concrete seeded support path is Zendesk; a HubSpot type label alone does not supply CRM automation.",
+      "detail": "record is a workspace provider abstraction. The concrete seeded support path is Zendesk. A hubspot connection can read, search, create and update CRM v3 objects through the generic steps, but no seeded template does.",
       "id": "support",
       "refs": ["generic", "write", "templates"],
       "status": "Seeded + executable",

@@ -1,6 +1,8 @@
 import {
+  CONNECTION_TYPES,
   type ConnectionType,
   decryptConnectionApiToken,
+  type HttpApiConnectionConfig,
   parseConfluenceConnectionConfig,
   parseIssueTrackerConnectionConfig,
   parseNotionConnectionConfig,
@@ -13,7 +15,7 @@ import {
   type GenericConnectionStep,
   genericStepRefusal,
 } from '@auto-swe/shared/lib/connectionTypes';
-import { ApplicationFailure } from '@temporalio/activity';
+import { ApplicationFailure, Context } from '@temporalio/activity';
 import { z } from 'zod';
 import {
   createConfluenceFooterComment,
@@ -22,6 +24,13 @@ import {
   readConfluencePage,
   updateConfluencePage,
 } from '../connectors/confluence.js';
+import { type HttpApiMethod, httpApiRequest } from '../connectors/httpApi.js';
+import {
+  createHubSpotRecord,
+  fetchHubSpotRecord,
+  searchHubSpotRecords,
+  updateHubSpotRecord,
+} from '../connectors/hubspot.js';
 import { createIssue, fetchIssue, type IssueResult } from '../connectors/issueTracker.js';
 import {
   appendNotionBlocks,
@@ -33,6 +42,7 @@ import { postSlackMessage } from '../connectors/slack.js';
 import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
 import { assertConnectionAuthorized } from '../lib/connectionAccess.js';
 import { countOccurrences, MAX_REVIEW_FINDINGS, TicketPlanSchema } from '../lib/documentReview.js';
+import { withHeartbeat } from '../lib/execUtils.js';
 import {
   assertApprovalSatisfied,
   findRecordedOutcome,
@@ -42,8 +52,19 @@ import {
   type OutcomeKey,
   performOnce,
 } from '../lib/externalWrite.js';
+import { callMcpConnectionTool } from './mcpCallTool.js';
 
 const ConnectionIdSchema = z.string().uuid();
+
+/** The activity's cancellation signal, or undefined outside an activity (unit tests). */
+function activitySignal(): AbortSignal | undefined {
+  try {
+    return Context.current().cancellationSignal;
+  } catch {
+    return undefined;
+  }
+}
+
 const ToolNameSchema = z.string().min(1);
 
 function validateInput<T>(schema: z.ZodType<T>, value: unknown): T {
@@ -92,6 +113,11 @@ export interface WriteOutcomeResult {
   references?: string[];
   /** What a comment write left: how many were anchored to a passage and how many sit at the foot. */
   comments?: { footer: number; inline: number };
+  /**
+   * What the far end answered, for the types that return a body: `{ status, body, truncated? }`
+   * for `http_api`, the tool's result for `mcp`.
+   */
+  response?: unknown;
 }
 
 export interface RunToolInput {
@@ -251,18 +277,197 @@ function refuseUnimplemented(step: GenericConnectionStep, connectionType: string
   );
 }
 
+/** Parse a step's input against `schema`, refusing before any request when it does not match. */
+function parseOrNotSent<T>(schema: z.ZodType<T>, value: unknown, what: string): T {
+  const parsed = schema.safeParse(value);
+  if (!parsed.success) {
+    throw notSent(
+      `${what}: ${parsed.error.issues.map((issue) => `${issue.path.join('.') || 'input'}: ${issue.message}`).join(', ')}`
+    );
+  }
+  return parsed.data;
+}
+
+const HttpQuerySchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
+const HttpHeadersSchema = z.record(z.string(), z.string());
+
+// No per-request `headers`: a read is ungoverned, so it is not given the knob a write has.
+// The connection's own `defaultHeaders` still apply. `.strict()` refuses `headers` outright
+// instead of dropping it, so the author sees why.
+const HttpReadQuerySchema = z
+  .object({
+    path: z.string().min(1),
+    query: HttpQuerySchema.optional(),
+  })
+  .strict();
+
+const HttpWriteDataSchema = z.object({
+  body: z.unknown().optional(),
+  headers: HttpHeadersSchema.optional(),
+  method: z.enum(['POST', 'PUT', 'PATCH', 'DELETE']).default('POST'),
+  path: z.string().min(1),
+  query: HttpQuerySchema.optional(),
+});
+
+const HttpRequestToolSchema = z.object({
+  body: z.unknown().optional(),
+  headers: HttpHeadersSchema.optional(),
+  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+  path: z.string().min(1),
+  query: HttpQuerySchema.optional(),
+});
+
+async function sendHttpApiRequest(
+  connection: { config: unknown },
+  token: string | null,
+  req: {
+    body?: unknown;
+    headers?: Record<string, string>;
+    method: HttpApiMethod;
+    path: string;
+    query?: Record<string, string | number | boolean>;
+  }
+) {
+  // The connector re-validates the config; the cast only gives it the type it checks.
+  const response = await httpApiRequest(
+    { apiToken: token, config: connection.config as HttpApiConnectionConfig },
+    req,
+    { signal: activitySignal() }
+  );
+  return {
+    headers: response.headers,
+    shaped: {
+      body: response.body,
+      status: response.status,
+      ...(response.truncated ? { truncated: true } : {}),
+    },
+  };
+}
+
+async function httpApiReadSource(
+  connection: { config: unknown },
+  token: string | null,
+  query: unknown
+): Promise<ReadSourceResult> {
+  const q = parseOrNotSent(HttpReadQuerySchema, query, 'http_api readSource query');
+  const { shaped } = await sendHttpApiRequest(connection, token, { ...q, method: 'GET' });
+  return { connectionType: 'http_api', data: shaped, ok: true };
+}
+
+const HubSpotSearchSchema = z.object({
+  after: z.string().optional(),
+  filterGroups: z
+    .array(
+      z.object({
+        filters: z.array(
+          z.object({
+            highValue: z.union([z.string(), z.number()]).optional(),
+            operator: z.string(),
+            propertyName: z.string(),
+            value: z.union([z.string(), z.number(), z.boolean()]).optional(),
+            values: z.array(z.union([z.string(), z.number()])).optional(),
+          })
+        ),
+      })
+    )
+    .optional(),
+  limit: z.number().optional(),
+  properties: z.array(z.string()).optional(),
+  query: z.string().optional(),
+});
+
+const HubSpotReadQuerySchema = z.union([
+  z.object({
+    objectId: z.string().min(1),
+    objectType: z.string().min(1),
+    properties: z.array(z.string()).optional(),
+  }),
+  z.object({ objectType: z.string().min(1), search: HubSpotSearchSchema }),
+]);
+
+const HubSpotPropertiesSchema = z.record(
+  z.string(),
+  z.union([z.string(), z.number(), z.boolean(), z.null()])
+);
+
+function hubspotOpts(): { signal?: AbortSignal } {
+  const signal = activitySignal();
+  return signal ? { signal } : {};
+}
+
+async function hubspotReadSource(token: string | null, query: unknown): Promise<ReadSourceResult> {
+  const q = parseOrNotSent(
+    HubSpotReadQuerySchema,
+    query,
+    'hubspot readSource query needs objectType and either objectId or search'
+  );
+  const conn = { apiToken: token };
+  if ('search' in q) {
+    const data = await searchHubSpotRecords(
+      conn,
+      { ...q.search, objectType: q.objectType },
+      hubspotOpts()
+    );
+    return { connectionType: 'hubspot', data, ok: true };
+  }
+  const data = await fetchHubSpotRecord(conn, q, hubspotOpts());
+  return { connectionType: 'hubspot', data, ok: true };
+}
+
+const McpCallSchema = z.object({
+  inputs: z.record(z.string(), z.unknown()).optional(),
+  tool: z.string().min(1),
+});
+
+/**
+ * Fail a call whose MCP server reported a tool-level error (`isError: true`). The message names the
+ * tool and never the result text, which the server wrote and which becomes durable failure
+ * evidence. Checked on every return of the core, a recorded replay included, so a call the
+ * ledger stored as done still fails the same way when it is replayed.
+ */
+function failOnMcpError(tool: string, result: unknown): void {
+  if (
+    typeof result === 'object' &&
+    result !== null &&
+    (result as { isError?: unknown }).isError === true
+  ) {
+    throw ApplicationFailure.nonRetryable(`MCP tool ${tool} reported an error`);
+  }
+}
+
+async function mcpReadSource(connectionId: string, query: unknown): Promise<ReadSourceResult> {
+  const q = parseOrNotSent(McpCallSchema, query, 'mcp readSource query needs a tool name');
+  const { result } = await callMcpConnectionTool({
+    connectionId,
+    mode: 'readOnly',
+    step: 'readSource',
+    tool: q.tool,
+    ...(q.inputs !== undefined ? { inputs: q.inputs } : {}),
+  });
+  failOnMcpError(q.tool, result);
+  return { connectionType: 'mcp', data: result, ok: true };
+}
+
 /**
  * Read a source object from the target connection. Types with no read
- * implementation fail with `CONNECTOR_NOT_IMPLEMENTED`.
+ * implementation (`git_repo`, `slack_workspace`) fail with `CONNECTOR_NOT_IMPLEMENTED`.
  */
-export async function readSource(input: ReadSourceInput): Promise<ReadSourceResult> {
+export function readSource(input: ReadSourceInput): Promise<ReadSourceResult> {
+  return withHeartbeat('readSource', readSourceInner(input));
+}
+
+async function readSourceInner(input: ReadSourceInput): Promise<ReadSourceResult> {
   const { connectionId, query } = validateInput(
     z.object({ connectionId: ConnectionIdSchema, query: z.unknown().optional() }),
     input
   );
   const connection = await loadConnection(connectionId, 'readSource');
   const token = getApiToken(connection);
-  switch (connection.type) {
+  const type = knownType('readSource', connection.type);
+  if (genericStepRefusal('readSource', type)) {
+    refuseUnimplemented('readSource', type);
+  }
+  switch (type) {
     case 'notion':
       return notionReadSource(connection, token, query);
     case 'zendesk':
@@ -271,11 +476,35 @@ export async function readSource(input: ReadSourceInput): Promise<ReadSourceResu
       return issueTrackerReadSource(connection, token, query);
     case 'confluence':
       return confluenceReadSource(connection, token, query);
+    case 'http_api':
+      return httpApiReadSource(connection, token, query);
+    case 'hubspot':
+      return hubspotReadSource(token, query);
+    case 'mcp':
+      return mcpReadSource(connectionId, query);
+    case 'git_repo':
+    case 'slack_workspace':
+      return refuseUnimplemented('readSource', type);
     default:
-      // Every other type (`git_repo`, `http_api`, `hubspot`, `mcp`, `slack_workspace`, or one
-      // this build does not know) has no read implementation: fail rather than report success.
-      return refuseUnimplemented('readSource', connection.type);
+      return unsupportedType('readSource', type);
   }
+}
+
+/**
+ * The row's `type` column is a plain string; narrow it to the registry's union so each step's
+ * `switch` is exhaustive, and a type added to `CONNECTION_TYPES` fails to compile until every
+ * step handles it. A value outside the registry is refused here, before any claim.
+ */
+function knownType(step: GenericConnectionStep, type: string): ConnectionType {
+  if (!(CONNECTION_TYPES as readonly string[]).includes(type)) {
+    return refuseUnimplemented(step, type);
+  }
+  return type as ConnectionType;
+}
+
+/** A connection type no switch handled; unreachable while the switch is exhaustive. */
+function unsupportedType(step: GenericConnectionStep, type: never): never {
+  throw ApplicationFailure.nonRetryable(`Unsupported connection type for ${step}: ${String(type)}`);
 }
 
 function textToNotionBlocks(text: string): NotionBlock[] {
@@ -700,11 +929,85 @@ function isCreatePageData(d: Record<string, unknown>): boolean {
   );
 }
 
+async function httpApiWriteOutcome(
+  connection: { config: unknown },
+  token: string | null,
+  data: unknown
+): Promise<WriteOutcomeResult> {
+  const d = parseOrNotSent(HttpWriteDataSchema, data, 'http_api writeOutcome data');
+  const { headers, shaped } = await sendHttpApiRequest(connection, token, d);
+  return {
+    connectionType: 'http_api',
+    ok: true,
+    reference: headers.location ?? String(shaped.status),
+    response: shaped,
+  };
+}
+
+const HubSpotWriteDataSchema = z.object({
+  objectId: z.string().min(1).optional(),
+  objectType: z.string().min(1),
+  properties: HubSpotPropertiesSchema,
+});
+
+async function hubspotWriteOutcome(
+  token: string | null,
+  data: unknown
+): Promise<WriteOutcomeResult> {
+  const d = parseOrNotSent(
+    HubSpotWriteDataSchema,
+    data,
+    'hubspot writeOutcome data needs objectType and properties'
+  );
+  const conn = { apiToken: token };
+  const record = d.objectId
+    ? await updateHubSpotRecord(conn, { ...d, objectId: d.objectId }, hubspotOpts())
+    : await createHubSpotRecord(conn, d, hubspotOpts());
+  return { connectionType: 'hubspot', ok: true, reference: record.id };
+}
+
 /**
- * Write a validated outcome to the target connection. Types with no write
- * implementation fail with `CONNECTOR_NOT_IMPLEMENTED`.
+ * Write through an MCP tool. Dispatched before `writeOutcome`'s own ledger logic: the core owns
+ * the ledger and approval for the call, keyed `{connectionId, nodeId, runId}`, and a second claim
+ * on that key would collide (`OUTCOME_AMBIGUOUS`). The pin check (`loadConnection`) still runs
+ * here; the core adds the template-reach check.
  */
-export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutcomeResult> {
+async function mcpWriteOutcome(
+  connectionId: string,
+  nodeId: string | undefined,
+  data: unknown
+): Promise<WriteOutcomeResult> {
+  const d = parseOrNotSent(McpCallSchema, data, 'mcp writeOutcome data needs a tool name');
+  const { result } = await callMcpConnectionTool({
+    connectionId,
+    mode: 'mutating',
+    step: 'writeOutcome',
+    tool: d.tool,
+    ...(d.inputs !== undefined ? { inputs: d.inputs } : {}),
+    ...(nodeId !== undefined ? { nodeId } : {}),
+  });
+  failOnMcpError(d.tool, result);
+  return { connectionType: 'mcp', ok: true, reference: d.tool, response: result };
+}
+
+/** The type of a connection, read before its authorization check so the step can pick its path. */
+async function peekConnectionType(connectionId: string): Promise<ConnectionType | null> {
+  const row = await prisma.connection.findUnique({
+    select: { type: true },
+    where: { id: connectionId },
+  });
+  return row ? (row.type as ConnectionType) : null;
+}
+
+/**
+ * Write a validated outcome to the target connection. Always governed: the recorded approval
+ * policy and the outcome ledger apply to every type (for `mcp` the core applies them itself).
+ */
+export function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutcomeResult> {
+  return withHeartbeat('writeOutcome', writeOutcomeInner(input));
+}
+
+async function writeOutcomeInner(input: WriteOutcomeInput): Promise<WriteOutcomeResult> {
   const { connectionId, data, nodeId } = validateInput(
     z.object({
       connectionId: ConnectionIdSchema,
@@ -713,6 +1016,14 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
     }),
     input
   );
+
+  if ((await peekConnectionType(connectionId)) === 'mcp') {
+    if (genericStepRefusal('writeOutcome', 'mcp')) {
+      refuseUnimplemented('writeOutcome', 'mcp');
+    }
+    await loadConnection(connectionId, 'writeOutcome');
+    return mcpWriteOutcome(connectionId, nodeId, data);
+  }
 
   // Governance + idempotency for an external effect (see lib/externalWrite.ts):
   // a write is refused when the recorded policy requires an approval that never
@@ -728,18 +1039,18 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
   // nothing was sent.
   async function prepare() {
     const connection = await loadConnection(connectionId, 'writeOutcome');
-    const token = getApiToken(connection);
-    if (genericStepRefusal('writeOutcome', connection.type)) {
-      refuseUnimplemented('writeOutcome', connection.type);
+    const type = knownType('writeOutcome', connection.type);
+    if (genericStepRefusal('writeOutcome', type)) {
+      refuseUnimplemented('writeOutcome', type);
     }
-    return { connection, token };
+    return { connection, token: getApiToken(connection), type };
   }
 
   async function perform(
     prepared: Awaited<ReturnType<typeof prepare>>
   ): Promise<WriteOutcomeResult> {
-    const { connection, token } = prepared;
-    switch (connection.type) {
+    const { connection, token, type } = prepared;
+    switch (type) {
       case 'notion':
         return notionWriteOutcome(connection, token, data);
       case 'zendesk':
@@ -750,11 +1061,17 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
         return issueTrackerWriteOutcome(connection, token, data);
       case 'confluence':
         return confluenceWriteOutcome(connection, token, data);
+      case 'http_api':
+        return httpApiWriteOutcome(connection, token, data);
+      case 'hubspot':
+        return hubspotWriteOutcome(token, data);
+      case 'mcp':
+        // Handled before the ledger above; reaching here would claim the ledger twice.
+        throw ApplicationFailure.nonRetryable('mcp writeOutcome is dispatched before the ledger');
+      case 'git_repo':
+        return refuseUnimplemented('writeOutcome', type);
       default:
-        // Unreachable: `prepare()` refuses any type outside `GENERIC_STEP_CONNECTION_TYPES.writeOutcome`.
-        throw ApplicationFailure.nonRetryable(
-          `Unsupported connection type for writeOutcome: ${connection.type}`
-        );
+        return unsupportedType('writeOutcome', type);
     }
   }
 
@@ -938,17 +1255,158 @@ async function confluenceRunTool(
   throw notSent(`Unsupported Confluence tool: ${tool}`);
 }
 
+async function httpApiRunTool(
+  connection: { config: unknown },
+  token: string | null,
+  tool: string,
+  inputs: unknown
+): Promise<RunToolResult> {
+  if (tool !== 'request') {
+    throw notSent(`Unsupported http_api tool: ${tool}`);
+  }
+  const req = parseOrNotSent(HttpRequestToolSchema, inputs, 'http_api request inputs');
+  const { shaped } = await sendHttpApiRequest(connection, token, req);
+  return { connectionType: 'http_api', ok: true, output: shaped };
+}
+
+async function hubspotRunTool(
+  token: string | null,
+  tool: string,
+  inputs: unknown
+): Promise<RunToolResult> {
+  const conn = { apiToken: token };
+  const ObjectType = z.object({ objectType: z.string().min(1) });
+  if (tool === 'fetchRecord') {
+    const i = parseOrNotSent(
+      ObjectType.extend({
+        objectId: z.string().min(1),
+        properties: z.array(z.string()).optional(),
+      }),
+      inputs,
+      'fetchRecord inputs'
+    );
+    return {
+      connectionType: 'hubspot',
+      ok: true,
+      output: await fetchHubSpotRecord(conn, i, hubspotOpts()),
+    };
+  }
+  if (tool === 'searchRecords') {
+    const i = parseOrNotSent(ObjectType.merge(HubSpotSearchSchema), inputs, 'searchRecords inputs');
+    return {
+      connectionType: 'hubspot',
+      ok: true,
+      output: await searchHubSpotRecords(conn, i, hubspotOpts()),
+    };
+  }
+  if (tool === 'createRecord') {
+    const i = parseOrNotSent(
+      ObjectType.extend({ properties: HubSpotPropertiesSchema }),
+      inputs,
+      'createRecord inputs'
+    );
+    return {
+      connectionType: 'hubspot',
+      ok: true,
+      output: await createHubSpotRecord(conn, i, hubspotOpts()),
+    };
+  }
+  if (tool === 'updateRecord') {
+    const i = parseOrNotSent(
+      ObjectType.extend({ objectId: z.string().min(1), properties: HubSpotPropertiesSchema }),
+      inputs,
+      'updateRecord inputs'
+    );
+    return {
+      connectionType: 'hubspot',
+      ok: true,
+      output: await updateHubSpotRecord(conn, i, hubspotOpts()),
+    };
+  }
+  throw notSent(`Unsupported hubspot tool: ${tool}`);
+}
+
+async function notionRunTool(
+  connection: { config: unknown },
+  token: string | null,
+  tool: string,
+  inputs: unknown
+): Promise<RunToolResult> {
+  const apiToken = requireToken(token);
+  const config = parseNotionConnectionConfig(connection.config);
+  const data =
+    typeof inputs === 'object' && inputs != null ? (inputs as Record<string, unknown>) : {};
+  if (tool === 'fetchPage') {
+    const pageId = text(data.pageId) ?? config.sourcePageId;
+    if (!pageId) {
+      throw notSent(
+        'fetchPage requires a pageId input or a default sourcePageId on the connection'
+      );
+    }
+    return {
+      connectionType: 'notion',
+      ok: true,
+      output: await readNotionPage({ apiToken }, pageId),
+    };
+  }
+  if (tool === 'createPage') {
+    const i = parseOrNotSent(
+      z.object({
+        databaseId: z.string().min(1).optional(),
+        pageId: z.string().min(1).optional(),
+        properties: z.record(z.string(), z.unknown()).optional(),
+        title: z.string().optional(),
+      }),
+      inputs ?? {},
+      'createPage inputs'
+    );
+    const pageId = i.pageId ?? config.sourcePageId;
+    if (!i.databaseId && !pageId) {
+      throw notSent('createPage requires a databaseId or pageId (or a default sourcePageId)');
+    }
+    const created = await createNotionPage({ apiToken }, { ...i, ...(pageId ? { pageId } : {}) });
+    return { connectionType: 'notion', ok: true, output: created };
+  }
+  if (tool === 'appendBlocks') {
+    const i = parseOrNotSent(
+      z.object({
+        blocks: z.array(z.object({ type: z.string() }).passthrough()).min(1),
+        pageId: z.string().min(1).optional(),
+      }),
+      inputs ?? {},
+      'appendBlocks inputs'
+    );
+    const pageId = i.pageId ?? config.sourcePageId;
+    if (!pageId) {
+      throw notSent('appendBlocks requires a pageId or a default sourcePageId on the connection');
+    }
+    const appended = await appendNotionBlocks({ apiToken }, pageId, i.blocks as NotionBlock[]);
+    return { connectionType: 'notion', ok: true, output: appended };
+  }
+  throw notSent(`Unsupported Notion tool: ${tool}`);
+}
+
 /**
  * Run an arbitrary tool against the target connection. Only the connection types in
- * `GENERIC_STEP_CONNECTION_TYPES` are supported; any other type fails non-retryably.
+ * `GENERIC_STEP_CONNECTION_TYPES.runTool` are supported; any other type fails non-retryably
+ * with `CONNECTOR_NOT_IMPLEMENTED`.
  *
  * Governed exactly like `writeOutcome`: `postComment`, `postMessage` and
  * `createIssue` change state outside the platform, so they are recorded against
  * the same outcome ledger and refused when the recorded policy requires an
- * approval that was never given. Reads (`fetchTicket`, `fetchIssue`) skip both —
- * they change nothing and a retry should observe current state.
+ * approval that was never given. Reads (`fetchTicket`, `fetchIssue`, `fetchPage`,
+ * `fetchRecord`, `searchRecords`) skip both — they change nothing and a retry
+ * should observe current state. The split is by tool name alone, so `http_api`'s
+ * `request` is governed as a mutation even for a GET.
+ *
+ * `mcp` is the exception to the name rule: a server's tool names are its own, so the
+ * core classifies by the tool's `readOnlyHint` and applies the ledger and approval itself.
  */
-export async function runTool(input: RunToolInput): Promise<RunToolResult> {
+export function runTool(input: RunToolInput): Promise<RunToolResult> {
+  return withHeartbeat('runTool', runToolInner(input));
+}
+
+async function runToolInner(input: RunToolInput): Promise<RunToolResult> {
   const { connectionId, nodeId, tool, inputs } = validateInput(
     z.object({
       connectionId: ConnectionIdSchema,
@@ -958,6 +1416,27 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
     }),
     input
   );
+  if ((await peekConnectionType(connectionId)) === 'mcp') {
+    if (genericStepRefusal('runTool', 'mcp')) {
+      refuseUnimplemented('runTool', 'mcp');
+    }
+    await loadConnection(connectionId, 'runTool');
+    const mcpInputs = parseOrNotSent(
+      z.record(z.string(), z.unknown()).optional(),
+      inputs,
+      'mcp runTool inputs must be an object'
+    );
+    const { result } = await callMcpConnectionTool({
+      connectionId,
+      mode: 'auto',
+      step: 'runTool',
+      tool,
+      ...(mcpInputs !== undefined ? { inputs: mcpInputs } : {}),
+      ...(nodeId !== undefined ? { nodeId } : {}),
+    });
+    failOnMcpError(tool, result);
+    return { connectionType: 'mcp', ok: true, output: result };
+  }
   const mutating = isMutatingToolCall(tool);
   const scope = await mutationScope();
   const ledgerKey: OutcomeKey | null =
@@ -966,16 +1445,16 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
   // See `writeOutcome`: refusals that precede the provider call run before the claim.
   async function prepare() {
     const connection = await loadConnection(connectionId, 'runTool');
-    const token = getApiToken(connection);
-    if (genericStepRefusal('runTool', connection.type)) {
-      refuseUnimplemented('runTool', connection.type);
+    const type = knownType('runTool', connection.type);
+    if (genericStepRefusal('runTool', type)) {
+      refuseUnimplemented('runTool', type);
     }
-    return { connection, token };
+    return { connection, token: getApiToken(connection), type };
   }
 
   async function perform(prepared: Awaited<ReturnType<typeof prepare>>): Promise<RunToolResult> {
-    const { connection, token } = prepared;
-    switch (connection.type) {
+    const { connection, token, type } = prepared;
+    switch (type) {
       case 'zendesk':
         return zendeskRunTool(connection, token, tool, inputs);
       case 'slack_workspace':
@@ -984,11 +1463,19 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
         return issueTrackerRunTool(connection, token, tool, inputs);
       case 'confluence':
         return confluenceRunTool(connection, token, tool, inputs);
+      case 'http_api':
+        return httpApiRunTool(connection, token, tool, inputs);
+      case 'hubspot':
+        return hubspotRunTool(token, tool, inputs);
+      case 'notion':
+        return notionRunTool(connection, token, tool, inputs);
+      case 'mcp':
+        // Handled before the ledger above; reaching here would claim the ledger twice.
+        throw ApplicationFailure.nonRetryable('mcp runTool is dispatched before the ledger');
+      case 'git_repo':
+        return refuseUnimplemented('runTool', type);
       default:
-        // Unreachable: `prepare()` refuses any type outside `GENERIC_STEP_CONNECTION_TYPES.runTool`.
-        throw ApplicationFailure.nonRetryable(
-          `Unsupported connection type for runTool: ${connection.type}`
-        );
+        return unsupportedType('runTool', type);
     }
   }
   if (!ledgerKey) {

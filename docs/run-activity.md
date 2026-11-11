@@ -158,7 +158,9 @@ available. Shell output uses a `shell.step` artifact; container-step stdout/stde
 `container.step` artifact, separate from its parsed JSON result.
 
 Governed external writes emit `external_write` activity events with connection/provider, node,
-and outcome (`done`, `replayed`, `refused`, or `ambiguous`), without the write's secret payload.
+and outcome (`done`, `replayed`, `refused`, `deferred` or `ambiguous`), without the write's secret
+payload. `deferred` is a refusal before anything was sent that Temporal retries (a 429 or an
+unresolved host), as opposed to the final `refused`.
 These events supplement, rather than replace, the external-write ledger and governance checks.
 
 ## UI evidence

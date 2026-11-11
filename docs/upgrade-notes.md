@@ -1118,6 +1118,36 @@ answering `cannot be checked`.
 
 ---
 
+### UN-21. Generic steps on `http_api`, `hubspot` and `mcp` connections, and `runTool` on `notion`, make real requests
+
+**Affected.** Deployments with a template that runs `readSource`, `writeOutcome` or `runTool` on an
+`http_api`, `hubspot` or `mcp` connection, or `runTool` on a `notion` connection, and deployments
+with an `http_api` connection.
+
+**What changes.** Those pairs failed with `CONNECTOR_NOT_IMPLEMENTED` (UN-17), and before that
+reported success without acting. They now send the request with the connection's stored token: an
+`http_api` token goes to the origin of `config.baseUrl`, a `hubspot` token to HubSpot's CRM API.
+A step whose input does not match its contract fails before any request, and an `mcp` result with
+`isError: true` fails the step. An `mcp` `readSource` refuses tools the server did not annotate
+read-only. Generic-step MCP writes appear as `MCP_TOOL` run effects. A template's input schema may declare an `http_api` or `hubspot`
+connection field again. An `http_api` connection whose `config` does not satisfy the schema (an
+https `baseUrl`, a valid `authType`, no unknown keys) fails its steps, and saving one that does
+not is refused. An `http_api` row that has a stored token and no `baseUrl` must have its token
+entered again when the `baseUrl` is added: a destination going from none to an origin counts as
+moving the token, and the save answers `TOKEN_ORIGIN_CHANGE` otherwise. No migration is needed.
+
+**Actions.** Before rolling out, review every template that uses those pairs: each now reads or
+writes the external system, and a write is governed by the run's approval policy. Correct each
+`http_api` connection's `config` (https `baseUrl`; `authType`, `authHeaderName`, `basicUsername`
+and `defaultHeaders` only as documented in
+[architecture.md](./architecture.md#10-limitations)) and confirm the stored token belongs to that
+origin; for a row with a token and no `baseUrl`, send the token again with the `baseUrl`.
+
+**Verify.** A run of each such template makes the expected call, and the run's HTTP capture shows
+the request to the `baseUrl` origin.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

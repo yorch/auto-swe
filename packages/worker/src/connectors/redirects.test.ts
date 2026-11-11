@@ -37,8 +37,8 @@ describe('worker connectors refuse redirects', () => {
 
   it('Notion', async () => {
     const fetchMock = stubFetch({ id: 'p', object: 'page', properties: {}, results: [] });
-    await readNotionPage({ apiToken: 'k' }, 'p');
-    await appendNotionBlocks({ apiToken: 'k' }, 'p', []);
+    await readNotionPage({ apiToken: 'k' }, '0123456789abcdef0123456789abcdef');
+    await appendNotionBlocks({ apiToken: 'k' }, '0123456789abcdef0123456789abcdef', []);
     expectRedirectError(fetchMock);
   });
 

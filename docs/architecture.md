@@ -1394,6 +1394,46 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **A node's `status` field writes the live domain status only**, as a free-form string; it does not
   update the pinned run record. The `onFailure` / `onExhausted` terminal shorthand cannot end a run
   `CANCELLED`.
+- **The generic `http_api` connector is narrow.** The base URL must be https, at most 2048
+  characters, without encoded dots, slashes or percent signs, `.`/`..` segments or port 0, and
+  there is no private-network opt-in. A response is read to at most 256 KiB and the serialised
+  result is held to the same figure: capped text comes back with `truncated: true`, and a body
+  whose content type is not JSON, NDJSON, XML, YAML, `text/*`, form data or a `+json`/`+xml` type
+  is not returned at all (`body: null`, `bodyOmitted: 'binary'`, with the content type and length
+  in `headers`); a response with no `Content-Type` is treated the same way, even when it is JSON.
+  A bearer or header token must be printable ASCII without spaces, so a value such as
+  `Token abc` cannot be stored for `header` auth. HubSpot responses over the same cap fail. There is no pagination helper, so a
+  caller walks pages with repeated steps. `runTool` `request` is governed as a mutation even for a
+  GET, because governance keys on the tool name and `request` is not on the read-only list.
+- **`http_api` `readSource` is an ungoverned, credentialed GET.** It takes no approval and writes
+  no ledger row, and its path, query and the connection's token are the only inputs that decide
+  what is read. An API whose GET has side effects therefore bypasses approval through `readSource`;
+  point a template at such an endpoint with `writeOutcome` or `runTool` instead. A read takes no
+  per-request `headers` (the connection's `defaultHeaders` still apply).
+- **The `http_api` base path is a request-construction boundary, not an authorization boundary.**
+  The connector refuses paths that would leave the prefix as written (`..`, `;`, encoded dots,
+  slashes or percent signs, backslashes) and headers that rewrite the path or method
+  (`X-Original-URL`, `X-HTTP-Method-Override` and kin, `Forwarded`, `X-Forwarded-*`), but the
+  server decides what a path means, and the token is bound to the origin, not the path, so a team
+  lead can change the prefix without re-entering it.
+- **A 429 or a failed name resolution is retried, a refused destination is not.** For `http_api`
+  both leave nothing sent, so a governed write releases its ledger claim and Temporal retries it;
+  a destination the SSRF guard refuses fails permanently. `hubspot` treats a 429 the same way, and
+  a name-resolution failure (`ENOTFOUND` or `EAI_AGAIN` on the transport error or its cause chain)
+  too; any other transport failure may have reached the provider, so a governed write stays
+  pending and its retry is refused as ambiguous.
+- **For an `mcp` `writeOutcome` or `runTool`, approval is checked after the server is contacted.**
+  The core connects and lists the server's tools before it can classify the tool and check the
+  approval gate, as the `mcp` node does, so a call that is then refused for want of approval has
+  already opened a connection with the credential.
+- **`hubspot` covers CRM v3 objects through a private-app token only.** There is no OAuth app flow,
+  and no associations, batch or other API families.
+- **An MCP tool-level error fails the generic steps, and is never retried, even for a read-only
+  tool.** A result with `isError: true` fails `readSource`, `writeOutcome` and `runTool` with a
+  non-retryable error naming the tool, not the result text, so a transient server error is not
+  retried by Temporal. For a governed call the core has already recorded that result as done, so a retry of
+  the same step replays it and fails again instead of calling the server twice; the `mcp` node
+  itself returns such a result as ordinary output.
 - **Historical PRs without a repository-matched active workflow and run remain unattributed.**
   Historical human-step and approval rows do not have a resolution source and remain null.
 - **The input cap bounds dollar-equivalent input tokens, not dollars.** Output tokens have their own
@@ -1771,14 +1811,44 @@ Current constraints of the system as built. Deliberate product boundaries are in
   *second visit* is a different node id, so it acts. That is completed-result caching, not
   exactly-once delivery: the remote call and the ledger row are not one transaction (see
   [autonomy-policies.md §4.1](./autonomy-policies.md#41-the-mutation-boundary)).
-  A write node that names no explicit payload writes its own inputs, less `connectionId`. The steps are concrete for these connection types: `readSource` for Notion, Zendesk, issue
-  trackers and Confluence; `writeOutcome` for those and Slack; `runTool` for Zendesk, Slack, issue
-  trackers and Confluence. Any other pairing, including every step over `http_api`, `hubspot`,
-  `mcp` or `git_repo`, fails with a non-retryable `CONNECTOR_NOT_IMPLEMENTED` before the provider
-  is contacted or a ledger row is claimed, so no step reports success without acting
-  (`GENERIC_STEP_CONNECTION_TYPES` in `shared/lib/connectionTypes.ts` is the matrix). A template's
-  `inputSchema` cannot declare a `connection` field of type `http_api` or `hubspot`; saving one is
-  refused. The `record` workspace provider metadata currently targets `zendesk` only.
+  A write node that names no explicit payload writes its own inputs, less `connectionId`. The
+  steps are concrete for the connection types in `GENERIC_STEP_CONNECTION_TYPES`
+  (`shared/lib/connectionTypes.ts`, the one matrix): `readSource` for Notion, Zendesk, issue
+  trackers, Confluence, `http_api`, `hubspot` and `mcp`; `writeOutcome` for those and Slack;
+  `runTool` for Zendesk, Slack, issue trackers, Confluence, `http_api`, `hubspot`, `mcp` and
+  Notion. Any other pairing, including every step over `git_repo` and `readSource` over
+  `slack_workspace`, fails with a non-retryable `CONNECTOR_NOT_IMPLEMENTED` before the provider is
+  contacted or a ledger row is claimed, so no step reports success without acting. An input that
+  does not match a handler's shape is refused before any request. The `http_api`, `hubspot` and
+  `mcp` shapes:
+  - **`http_api`** takes its destination from the connection's `config`: `baseUrl` (https, no
+    private-network opt-in), `authType` (`bearer` by default, `basic`, `header` or an explicit
+    `none`; a connection that stores no token must say `none`, or its steps are refused),
+    `authHeaderName`, `basicUsername` and `defaultHeaders`. The stored token goes
+    only to the `baseUrl` origin, redirects are refused, and the response body is capped at 256 KiB.
+    `readSource` takes `query: { path, query? }` and sends a GET, returning
+    `{ status, body, truncated?, bodyOmitted? }`; per-request `headers` are refused.
+    `writeOutcome` takes `data: { method?, path, query?, headers?,
+    body? }` with `method` one of `POST` (the default), `PUT`, `PATCH` or `DELETE`; its `reference`
+    is the response's `Location` header (returned, never followed), else the status, and the
+    answer is in `response`. `runTool` has one
+    tool, `request`, with `{ method, path, query?, headers?, body? }` (GET allowed) and returns the
+    same shape as `output`.
+  - **`hubspot`** reads and writes CRM v3 objects with the connection's private-app token.
+    `readSource` takes `{ objectType, objectId, properties? }` or `{ objectType, search }`.
+    `writeOutcome` takes `{ objectType, objectId?, properties }`, updating when `objectId` is
+    present and creating otherwise; its `reference` is the record id. `runTool` tools are
+    `fetchRecord` and `searchRecords` (reads) and `createRecord` and `updateRecord` (writes).
+  - **`mcp`** takes `{ tool, inputs? }` in all three steps and runs through the same core as the
+    `mcp` node (template-team reach check, the connection's tool allowlist, result screening, its
+    own ledger and approval). `readSource` refuses a tool the server did not annotate
+    `readOnlyHint: true`; `writeOutcome` always governs; `runTool` governs by the tool's
+    `readOnlyHint`, never by its name, so a server tool called `fetchPage` is not exempt. The
+    steps check the run's connection pin and then hand the call to the core without claiming the
+    ledger themselves.
+  - **`notion`** `runTool` tools are `fetchPage` (read), `createPage` and `appendBlocks`.
+
+  The `record` workspace provider metadata currently targets `zendesk` only.
 - **A template's declared connections are authorized at launch, and mutating tools obey the
   approval gate.** The launch takes the same decision for each `connection`-typed field the
   template's `inputSchema` declares, not only for `payload.connectionId`: a node may name its own
