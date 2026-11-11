@@ -44,21 +44,42 @@ function walk(dir, test, acc = []) {
 
 const SCM_DIR = 'packages/worker/src/lib/scm';
 
+/** The only two seam files that make no request, named by full path (never by basename). */
+const SCM_NON_PROVIDER_FILES = new Set([`${SCM_DIR}/types.ts`, `${SCM_DIR}/index.ts`]);
+const SOURCE_EXTENSION = /\.(?:ts|tsx|mts|cts|js|mjs)$/;
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+
+/** A repo-relative path with forward slashes, whatever the platform. */
+const posixPath = (file) => file.split(sep).join('/').split('\\').join('/');
+
 /**
- * Every source file of the SCM seam except the interface (`types.ts`) and the dispatcher
- * (`index.ts`), which make no request. Globbed by directory, not named, so a provider file added
- * later (`gitlab.ts`, `bitbucket.ts`) is covered by the rules that use it without anyone having to
- * remember to list it.
+ * Is `file` (a repo-relative path) a provider file of the SCM seam? Every source file under
+ * `packages/worker/src/lib/scm/`, at any depth and in any JS/TS extension, except the interface
+ * (`scm/types.ts`) and the dispatcher (`scm/index.ts`) NAMED BY FULL PATH, and tests. A provider
+ * that grows a directory (`scm/gitlab/index.ts`, `scm/gitlab/types.ts`) is therefore covered; only
+ * the seam's own two top-level files, which make no request, are exempt.
  */
-export function scmProviderFiles() {
-  return walk(
-    SCM_DIR,
-    (f) => f.endsWith('.ts') && !/\.test\.ts$/.test(f) && !/[\\/](?:types|index)\.ts$/.test(f)
+export function isScmProviderFile(file) {
+  const f = posixPath(file);
+  return (
+    f.startsWith(`${SCM_DIR}/`) &&
+    SOURCE_EXTENSION.test(f) &&
+    !TEST_FILE.test(f) &&
+    !SCM_NON_PROVIDER_FILES.has(f)
   );
 }
 
+/**
+ * Every provider file of the SCM seam (see `isScmProviderFile`). Globbed by directory, not named,
+ * so a provider file added later (`gitlab.ts`, `bitbucket/client.ts`) is covered by the rules that
+ * use it without anyone having to remember to list it.
+ */
+export function scmProviderFiles() {
+  return walk(SCM_DIR, isScmProviderFile);
+}
+
 // ---------------------------------------------------------------------------
-// INVARIANT 1— a workspace image is inherited, never written inline.
+// INVARIANT 1 — a workspace image is inherited, never written inline.
 //
 // `createWorkspace` resolves `image ?? infra.image`. A string literal in
 // that argument position is therefore not a default, it is a value: it wins the
@@ -898,54 +919,161 @@ function checkCredentialsAreNotInEnv() {
 // the GraphQL `mergeRequestAccept`, and a `mergeRequests` / `pullrequests` client's `.merge(` or
 // `.accept(`. Each type-checks and works, so nothing else fails when one is added.
 //
-// There is NO allowlist for the GitLab and Bitbucket spellings. A future provider that implements
-// opt-in auto-merge must add its single file to an allowlist deliberately, mirroring
-// `enableAutoMerge` in `scm/github.ts` (and, with it, the `enableAutoMerge` naming rule below).
-// Reading GitLab's `merge_when_pipeline_succeeds` response field also trips the rule; that is
+// Covered beyond GitHub and the first GitLab/Bitbucket spellings: `git push … main|master|trunk|
+// develop|development` and `git push … <src>:<those>` (also `+`/`--force`, and an interpolated
+// default branch such as the template spelling of `HEAD:` followed by `defaultBranch`), the same
+// pushes written as an argv array (`['push', 'origin', 'HEAD:main']`), Gerrit's
+// `…/changes/<id>/submit` and `…/revisions/<rev>/submit`, Azure DevOps
+// `…/pullrequests/<id>` bodies that set `status` to `completed` (and `PullRequestStatus.Completed`,
+// `updatePullRequest`), and a singular `mergeRequest.merge(`. Adjacent lines are joined where a
+// `${…}` interpolation breaks across them, so a template literal wrapped inside its braces is
+// still read as one route.
+//
+// Read-only lookalikes are not flagged: `…/merge_requests/<id>/merge-base` and `…/merge_ref`, the
+// Bitbucket `…/pullrequests/<id>/merge/task-status/<id>`, and a route that the call text shows is a
+// GET (`'GET /repos/…/pulls/N/merge'`, `.get(…/merge)`, `{ method: 'GET' }` — GitHub's is-merged
+// check and Bitbucket Server's can-merge check). The GET test reads the characters around the route
+// only; a method held in a variable is not seen, so such a read is flagged and the author names
+// the provider file in the allowlist below or rewrites the call.
+//
+// The allowlist below is empty. A future provider that implements opt-in auto-merge adds its single
+// file (under `scm/`) to `IMMEDIATE_MERGE_PROVIDER_ALLOWLIST` deliberately, mirroring
+// `enableAutoMerge` in `scm/github.ts` (and, with it, the `enableAutoMerge` naming rule below). It
+// exempts that file from the non-GitHub spellings only (GitLab, Bitbucket, Gerrit, Azure, Gitea);
+// the GitHub spellings and the `git push` refspec rules are never exempt. Reading GitLab's
+// `merge_when_pipeline_succeeds` response field also trips the rule for any other file; that is
 // accepted until such a provider exists.
 //
 // A tripwire over source text with comments removed: it matches those spellings only. An aliased
-// client, a route or refspec built from pieces, an argv-array `git push` and any other merge
-// mechanism are not seen, so it is a floor, not proof that nothing merges. Like the MCP rule, a
-// standing constraint rather than a past incident.
+// client, a route or refspec built from pieces (`base + '/merge'`, `.join('/')`), a method or path
+// held in a variable and any other merge mechanism are not seen, so it is a floor, not proof that
+// nothing merges. Like the MCP rule, a standing constraint rather than a past incident.
 // ---------------------------------------------------------------------------
 
 // A run of path characters: anything but whitespace and quotes, or a `${…}` interpolation (which
 // may itself contain spaces: `${a + b}`).
 const PATH_RUN = String.raw`(?:\$\{[^}\n]*\}|[^'"\x60\s$]|\$(?!\{))*`;
-const MR_CLIENT = `(?:merge_requests|mergeRequests|MergeRequests|pullrequests|pullRequests|PullRequests)`;
+const MR_CLIENT = `(?:merge_requests|mergeRequests|MergeRequests|mergeRequest|MergeRequest|pullrequests|pullRequests|PullRequests|pullrequest|pullRequest|PullRequest)`;
+// A default-branch name, or an interpolated/variable default branch, as a push destination.
+const DEFAULT_BRANCH_NAME = String.raw`(?:refs\/heads\/)?(?:(?:main|master|trunk|develop|development)(?![\w/.-])|\$\{[^}\n]*(?:[dD]efault|[bB]ase)_?[bB]ranch[^}\n]*\}|\$\{?[A-Z_]*DEFAULT_BRANCH\b\}?)`;
+const DEFAULT_BRANCH_ARGV = String.raw`(?:[^'"\x60\s:]*:)?${DEFAULT_BRANCH_NAME}`;
 
-const IMMEDIATE_MERGE = new RegExp(
-  [
-    // GitHub
-    String.raw`\b(?:pulls|repos)\s*\.\s*merge\s*\(`,
-    String.raw`\b(?:pulls|repos)\s*\[\s*['"\x60]merge['"\x60]\s*\]\s*\(`,
-    String.raw`\b(?:mergePullRequest|mergeBranch|enqueuePullRequest)\b`,
-    String.raw`\/pulls\/${PATH_RUN}\/merge\b`,
-    String.raw`\/repos\/${PATH_RUN}\/merges(?![\w-])`,
-    // GitLab and Bitbucket. A `…/merge_requests/<id>/cancel_merge_when_pipeline_succeeds` route is
-    // not matched: the segment must be exactly `/merge`, and the option name starts at a word edge.
-    String.raw`\/(?:merge_requests|pullrequests|pull-requests)\/${PATH_RUN}\/merge\b`,
-    String.raw`\b(?:merge_when_pipeline_succeeds|mergeWhenPipelineSucceeds)\b`,
-    String.raw`\b(?:accept_merge_request|acceptMergeRequest|merge_merge_request|mergeMergeRequest|mergeRequestAccept)\b`,
-    String.raw`\b${MR_CLIENT}\s*\.\s*(?:merge|accept)\s*\(`,
-    String.raw`\b${MR_CLIENT}\s*\[\s*['"\x60](?:merge|accept)['"\x60]\s*\]\s*\(`,
-    // A literal push of the default branch.
-    String.raw`\bgit\s+push\b[^\n]*?[\s+][^\s:]*:(?:refs\/heads\/)?(?:main|master)(?![\w/.-])`,
-  ].join('|')
-);
+/**
+ * Rules as `{ re, route, provider }`. `route` rules read a URL, so a visible GET exempts them;
+ * `provider` rules are the non-GitHub spellings an allowlisted provider file may use.
+ */
+const MERGE_RULES = [
+  // GitHub
+  { re: String.raw`\b(?:pulls|repos)\s*\.\s*merge\s*\(` },
+  { re: String.raw`\b(?:pulls|repos)\s*\[\s*['"\x60]merge['"\x60]\s*\]\s*\(` },
+  { re: String.raw`\b(?:mergePullRequest|mergeBranch|enqueuePullRequest)\b` },
+  { re: String.raw`\/pulls\/${PATH_RUN}\/merge(?![\w-])`, route: true },
+  { re: String.raw`\/repos\/${PATH_RUN}\/merges(?![\w-])`, route: true },
+  // A literal push of a default branch: `HEAD:main`, `+x:refs/heads/master`, a bare `main`
+  // destination, or an interpolated default branch.
+  {
+    re: String.raw`\bgit\s+push\b[^\n]*?[\s+][^\s:]*:${DEFAULT_BRANCH_NAME}`,
+  },
+  {
+    re: String.raw`\bgit\s+push\b[^\n]*?\s${DEFAULT_BRANCH_NAME}`,
+  },
+  // The same push as an argv array. Newlines are allowed up to the closing bracket.
+  {
+    re: String.raw`['"\x60]push['"\x60]\s*,[^\]]*?['"\x60]${DEFAULT_BRANCH_ARGV}['"\x60]`,
+  },
+  {
+    re: String.raw`['"\x60]push['"\x60]\s*,[^\]]*?['"\x60]\s*,\s*(?:[\w.]*\.)?(?:default|base)Branch\s*[,\]]`,
+  },
+  // GitLab and Bitbucket. A `…/merge_requests/<id>/cancel_merge_when_pipeline_succeeds` route is
+  // not matched: the segment must be exactly `/merge`, and the option name starts at a word edge.
+  // `/merge-base`, `/merge_ref` and Bitbucket's `/merge/task-status/…` are reads.
+  {
+    provider: true,
+    re: String.raw`\/(?:merge_requests|pullrequests|pull-requests)\/${PATH_RUN}\/merge(?![\w-])(?!\/task-status)`,
+    route: true,
+  },
+  {
+    provider: true,
+    re: String.raw`\b(?:merge_when_pipeline_succeeds|mergeWhenPipelineSucceeds)\b`,
+  },
+  {
+    provider: true,
+    re: String.raw`\b(?:accept_merge_request|acceptMergeRequest|merge_merge_request|mergeMergeRequest|mergeRequestAccept)\b`,
+  },
+  { provider: true, re: String.raw`\b${MR_CLIENT}\s*\.\s*(?:merge|accept)\s*\(` },
+  {
+    provider: true,
+    re: String.raw`\b${MR_CLIENT}\s*\[\s*['"\x60](?:merge|accept)['"\x60]\s*\]\s*\(`,
+  },
+  // Gerrit: `POST /changes/<id>/submit` and `/revisions/<rev>/submit` (`submit_preview` and
+  // `submitted_together` are reads and do not match).
+  {
+    provider: true,
+    re: String.raw`\/(?:changes|revisions)\/${PATH_RUN}\/submit(?![\w-])`,
+    route: true,
+  },
+  // Azure DevOps: completing a pull request is a PATCH of `pullrequests/<id>` with
+  // `status: 'completed'`, or the client's `updatePullRequest`.
+  { provider: true, re: String.raw`\bupdatePullRequest\b` },
+  { provider: true, re: String.raw`\bPullRequestStatus\s*\.\s*Completed\b` },
+  {
+    provider: true,
+    re: String.raw`pullrequests\/[\s\S]{0,400}?\bstatus['"\x60]?\s*[:=]\s*['"\x60]?completed\b`,
+  },
+  {
+    provider: true,
+    re: String.raw`\bstatus['"\x60]?\s*[:=]\s*['"\x60]?completed\b[\s\S]{0,400}?pullrequests\/`,
+  },
+].map((r) => ({ ...r, re: new RegExp(r.re, 'g') }));
 
-/** Violations in one file's source: `{ line, text }` per immediate-merge call. */
-export function immediateMergeViolations(src) {
-  const found = [];
-  stripComments(src)
-    .split('\n')
-    .forEach((text, i) => {
-      if (IMMEDIATE_MERGE.test(text)) {
-        found.push({ line: i + 1, text: text.trim() });
+/**
+ * Provider files allowed to name the non-GitHub merge spellings, as repo-relative paths under
+ * `packages/worker/src/lib/scm/`. Empty: no provider implements opt-in auto-merge yet.
+ */
+export const IMMEDIATE_MERGE_PROVIDER_ALLOWLIST = new Set([]);
+
+/** Does the text around a route show that the request is a GET (a read, not a merge)? */
+function looksLikeGet(flat, start, end) {
+  const before = flat.slice(Math.max(0, start - 160), start);
+  const after = flat.slice(end, end + 200);
+  return (
+    /['"\x60]\s*GET\s+[^'"\x60\s]*$/i.test(before) ||
+    /\.get\s*\(\s*[^;()]*$/i.test(before) ||
+    /^[^;)]{0,200}?\bmethod['"]?\s*:\s*['"\x60]GET['"\x60]/i.test(after)
+  );
+}
+
+/**
+ * Violations in one file's source: `{ line, text }` per immediate-merge call. Pass the file's
+ * repo-relative path to honour `IMMEDIATE_MERGE_PROVIDER_ALLOWLIST` (or an `allowlist` of your own).
+ */
+export function immediateMergeViolations(
+  src,
+  file = '',
+  allowlist = IMMEDIATE_MERGE_PROVIDER_ALLOWLIST
+) {
+  const stripped = stripComments(src);
+  // Newlines inside a `${…}` become spaces (same length), so a template literal that wraps inside
+  // its interpolation is one route again and offsets still map to the same lines.
+  const flat = stripped.replace(/\$\{[^}]*\}/g, (m) => m.replace(/\n/g, ' '));
+  const lines = stripped.split('\n');
+  const providerAllowed = file !== '' && allowlist.has(posixPath(file)) && isScmProviderFile(file);
+  const hits = new Set();
+  for (const rule of MERGE_RULES) {
+    if (rule.provider && providerAllowed) {
+      continue;
+    }
+    rule.re.lastIndex = 0;
+    for (const m of flat.matchAll(rule.re)) {
+      if (rule.route && looksLikeGet(flat, m.index, m.index + m[0].length)) {
+        continue;
       }
-    });
-  return found;
+      hits.add(flat.slice(0, m.index).split('\n').length);
+    }
+  }
+  return [...hits]
+    .sort((a, b) => a - b)
+    .map((line) => ({ line, text: (lines[line - 1] ?? '').trim() }));
 }
 
 // The one merge-capable call, `enableAutoMerge` (GraphQL `enablePullRequestAutoMerge`), is named
@@ -1002,7 +1130,7 @@ function checkNoImmediateMerge() {
           "evaluation's gates. If a new caller is genuinely needed, route it through the activity."
       );
     }
-    for (const v of immediateMergeViolations(src)) {
+    for (const v of immediateMergeViolations(src, file)) {
       fail(
         file,
         v.line,
@@ -1104,6 +1232,85 @@ function checkSlackMessageWriters() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// INVARIANT 12 — another SCM provider's network code lives in `worker/src/lib/scm/`.
+//
+// The SCM seam's rules (bare-fetch, redirect policy, merge spellings, file globbing) are scoped to
+// `packages/worker/src/lib/scm/`. A GitLab, Bitbucket, Gitea, Azure DevOps or Gerrit client written
+// anywhere else — a gateway route, a shared helper — type-checks, authenticates and works, and
+// escapes every one of them: it can use a bare `fetch`, follow redirects with a credential and
+// merge. This is a tripwire for the common spellings: a REST path or SDK import that only a
+// non-GitHub provider client has (`/api/v4/`, `/2.0/repositories`, `/rest/api/1.0`, `gitbeaker`,
+// a `bitbucket` package import, `merge_requests` paths, `api.bitbucket.org`, `dev.azure.com`,
+// `_apis/git`, the Gitea `/api/v1/repos/` and Gerrit `/a/changes/` routes).
+//
+// A tripwire over source text with comments removed (tests excluded): a base path assembled from
+// pieces, a client reached through a name that avoids these tokens and any other HTTP client are
+// not seen. Files in `PROVIDER_CODE_ALLOWLIST` may name the tokens; it is empty, and a file belongs
+// on it only with a stated reason. A standing constraint on a new surface, not a past incident.
+// ---------------------------------------------------------------------------
+
+const PROVIDER_API_TOKENS = [
+  /\/api\/v4\//,
+  /\/2\.0\/repositories/,
+  /\/rest\/api\/1\.0/,
+  /gitbeaker/i,
+  /(?:from\s+|import\s*\(\s*|require\s*\(\s*)['"](?:bitbucket|bitbucket\/[^'"]*)['"]/,
+  /\bmerge_requests\b/,
+  /api\.bitbucket\.org/,
+  /dev\.azure\.com/,
+  /_apis\/git/,
+  /azure-devops-node-api/,
+  /\/api\/v1\/repos\//,
+  /\/a\/changes\//,
+];
+
+/** Files outside `scm/` allowed to name a provider API token, each with a reason. Empty. */
+export const PROVIDER_CODE_ALLOWLIST = new Set([]);
+
+/** Violations in one file (repo-relative path) and its source: `{ line, text }` per hit. */
+export function providerCodeOutsideScmViolations(file, src, allowlist = PROVIDER_CODE_ALLOWLIST) {
+  const f = posixPath(file);
+  if (f.startsWith(`${SCM_DIR}/`) || allowlist.has(f) || /\.(?:test|spec)\./.test(f)) {
+    return [];
+  }
+  const found = [];
+  stripComments(src)
+    .split('\n')
+    .forEach((text, i) => {
+      if (PROVIDER_API_TOKENS.some((re) => re.test(text))) {
+        found.push({ line: i + 1, text: text.trim() });
+      }
+    });
+  return found;
+}
+
+function checkProviderCodeLivesInScm() {
+  for (const pkg of readdirSync(join(ROOT, 'packages'))) {
+    if (!existsSync(join(ROOT, 'packages', pkg, 'src'))) {
+      continue;
+    }
+    const files = walk(
+      join('packages', pkg, 'src'),
+      (f) => /\.(?:ts|tsx|mts|cts|js|mjs)$/.test(f) && !/\.(?:test|spec)\./.test(f)
+    ).filter((f) => !posixPath(f).includes('/generated/'));
+    for (const file of files) {
+      for (const v of providerCodeOutsideScmViolations(file, read(file))) {
+        fail(
+          file,
+          v.line,
+          'provider-code-lives-in-scm',
+          `names another SCM provider's API outside lib/scm/: ${v.text.slice(0, 120)}`,
+          'Provider network code must live in packages/worker/src/lib/scm/, where the bare-fetch, ' +
+            'redirect and merge rules apply, and must call the SSRF guards (createGuardedFetch). ' +
+            'A gateway or shared file must not carry its own GitLab, Bitbucket, Gitea, Azure ' +
+            'DevOps or Gerrit client.'
+        );
+      }
+    }
+  }
+}
+
 function main() {
   checkWorkspaceImageLiterals();
   checkDockerfileYarnProvisioning();
@@ -1117,6 +1324,7 @@ function main() {
   checkCredentialsAreNotInEnv();
   checkNoImmediateMerge();
   checkSlackMessageWriters();
+  checkProviderCodeLivesInScm();
   report();
 }
 
@@ -1134,7 +1342,7 @@ function report() {
     process.exit(1);
   }
 
-  console.log('Invariant check passed — 11 invariants, no violations.');
+  console.log('Invariant check passed — 12 invariants, no violations.');
   console.log('  workspace image is inherited, never written inline at a call site');
   console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
   console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
@@ -1155,6 +1363,7 @@ function report() {
   console.log(
     '  Slack messages are sent only through known writers, and the worker defuses broadcasts'
   );
+  console.log("  another SCM provider's API client lives in worker/src/lib/scm/, nowhere else");
 }
 
 const invokedDirectly =

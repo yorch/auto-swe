@@ -4,9 +4,12 @@ import {
   bareFetchViolations,
   connectorFetchRedirectViolations,
   envCredentialViolations,
+  IMMEDIATE_MERGE_PROVIDER_ALLOWLIST,
   immediateMergeViolations,
+  isScmProviderFile,
   liveSuiteViolations,
   optInSuiteViolations,
+  providerCodeOutsideScmViolations,
   scmProviderFiles,
   slackWriterViolations,
   workflowTriggers,
@@ -441,8 +444,221 @@ describe('scmProviderFiles', () => {
   it('globs the SCM seam directory, without the interface, the dispatcher or tests', () => {
     const files = scmProviderFiles();
     expect(files).toContain('packages/worker/src/lib/scm/github.ts');
-    expect(files.some((f) => /[\\/](?:types|index)\.ts$/.test(f))).toBe(false);
+    expect(files).not.toContain('packages/worker/src/lib/scm/types.ts');
+    expect(files).not.toContain('packages/worker/src/lib/scm/index.ts');
     expect(files.some((f) => f.endsWith('.test.ts'))).toBe(false);
+    expect(files.every(isScmProviderFile)).toBe(true);
+  });
+});
+
+describe('isScmProviderFile', () => {
+  const D = 'packages/worker/src/lib/scm';
+  it('covers nested directories, their index/types files and every JS/TS extension', () => {
+    for (const f of [
+      `${D}/github.ts`,
+      `${D}/gitlab/index.ts`,
+      `${D}/gitlab/types.ts`,
+      `${D}/gitlab/client.ts`,
+      `${D}/gitlab.mts`,
+      `${D}/gitlab.cts`,
+      `${D}/gitlab.js`,
+      `${D}/gitlab.mjs`,
+      `${D}/gitlab.tsx`,
+      `${D}/deep/er/bitbucket/types.ts`,
+    ]) {
+      expect(isScmProviderFile(f), f).toBe(true);
+    }
+  });
+
+  it('exempts exactly the seam interface and dispatcher, by full path', () => {
+    expect(isScmProviderFile(`${D}/types.ts`)).toBe(false);
+    expect(isScmProviderFile(`${D}/index.ts`)).toBe(false);
+    // The same basenames elsewhere are NOT exempt — the old rule dropped them at any depth.
+    expect(isScmProviderFile(`${D}/gitlab/index.ts`)).toBe(true);
+    expect(isScmProviderFile(`${D}/gitlab/types.ts`)).toBe(true);
+  });
+
+  it('excludes tests, other file types and files outside the seam', () => {
+    for (const f of [
+      `${D}/gitlab.test.ts`,
+      `${D}/gitlab.spec.ts`,
+      `${D}/gitlab.test.mjs`,
+      `${D}/gitlab/client.test.ts`,
+      `${D}/README.md`,
+      `${D}/schema.json`,
+      'packages/worker/src/lib/other/gitlab.ts',
+      'packages/gateway/src/lib/scm/gitlab.ts',
+    ]) {
+      expect(isScmProviderFile(f), f).toBe(false);
+    }
+  });
+});
+
+describe('immediateMergeViolations: other providers and pushes', () => {
+  it('reports pushes of any default-branch name, bare, interpolated or in an argv array', () => {
+    for (const src of [
+      "await exec('git push origin main');",
+      "await exec('git push -u origin master');",
+      "await exec('git push origin HEAD:trunk');",
+      "await exec('git push origin HEAD:develop');",
+      "await exec('git push --force origin HEAD:development');",
+      'await exec(`git push origin HEAD:<<defaultBranch>>`);',
+      'await exec(`git push origin <<repo.defaultBranch>>`);',
+      'await exec(`git push origin HEAD:<<baseBranch>>`);',
+      "spawn('git', ['push', 'origin', 'HEAD:main']);",
+      "spawn('git', ['push', '--force', 'origin', 'HEAD:refs/heads/master']);",
+      "spawn('git', ['push', 'origin', 'main']);",
+      "spawn('git', ['push', 'origin', 'HEAD:trunk']);",
+      'spawn(`git`, [`push`, `origin`, `HEAD:<<defaultBranch>>`]);',
+      "spawn('git', ['push', 'origin', defaultBranch]);",
+      "spawn('git', [\n  'push',\n  'origin',\n  'HEAD:main',\n]);",
+    ]) {
+      expect(immediateMergeViolations(tpl(src)), src).toHaveLength(1);
+    }
+  });
+
+  it('does not flag pushing a feature branch', () => {
+    for (const src of [
+      "await exec('git push origin HEAD:auto/JIRA-1');",
+      "await exec('git push -u origin auto/main-fix');",
+      'await exec(`git push origin HEAD:<<branch>>`);',
+      "spawn('git', ['push', 'origin', 'HEAD:auto/x']);",
+      "spawn('git', ['push', 'origin', branch]);",
+      "spawn('git', ['fetch', 'origin', 'main']);",
+      "await exec('git fetch origin main');",
+    ]) {
+      expect(immediateMergeViolations(tpl(src)), src).toEqual([]);
+    }
+  });
+
+  it('reports Gerrit submit, Azure completion and a singular mergeRequest client', () => {
+    for (const src of [
+      'await post(`<<base>>/a/changes/<<id>>/submit`);',
+      'await post(`<<base>>/a/changes/<<id>>/revisions/current/submit`);',
+      "await post('/changes/1/revisions/2/submit');",
+      "await fetch(`<<b>>/_apis/git/repositories/<<r>>/pullrequests/<<id>>`, { method: 'PATCH', body: JSON.stringify({ status: 'completed' }) });",
+      "await patch('/pullrequests/4', { status: 'completed', lastMergeSourceCommit });",
+      "const body = { status: 'completed' }; await patch(`<<u>>/pullrequests/<<id>>`, body);",
+      'await gitApi.updatePullRequest({ status: 3 }, repoId, prId);',
+      'const s = PullRequestStatus.Completed;',
+      'await gl.mergeRequest.merge(pid, iid);',
+      'await gl.MergeRequest.accept(pid, iid);',
+    ]) {
+      expect(immediateMergeViolations(tpl(src)), src).toHaveLength(1);
+    }
+  });
+
+  it('does not flag Gerrit reads, Azure non-completion or lookalikes', () => {
+    for (const src of [
+      'await get(`<<base>>/a/changes/<<id>>/revisions/current/submit_preview`);',
+      'await get(`<<base>>/a/changes/<<id>>/submitted_together`);',
+      "await patch('/pullrequests/4', { status: 'abandoned' });",
+      "await octokit.checks.update({ status: 'completed' });",
+      "await patch('/pullrequests/4', { autoCompleteSetBy: { id } });",
+      'await gl.mergeRequest.show(pid, iid);',
+    ]) {
+      expect(immediateMergeViolations(tpl(src)), src).toEqual([]);
+    }
+  });
+
+  it('reads a template literal that wraps inside its interpolation as one route', () => {
+    const wrapped = 'await gl.put(`/projects/<<id>>/merge_requests/<<\n  iid\n>>/merge`);';
+    expect(immediateMergeViolations(tpl(wrapped))).toEqual([
+      {
+        line: 1,
+        text: `${tpl('await gl.put(`/projects/<<id>>/merge_requests/')}${['$', '{'].join('')}`,
+      },
+    ]);
+  });
+
+  it('does not flag merge-base, merge_ref, Bitbucket task-status or GET reads', () => {
+    for (const src of [
+      'get(`/projects/<<id>>/merge_requests/<<iid>>/merge-base`);',
+      "get('/projects/1/merge_requests/2/merge_ref');",
+      'get(`<<base>>/pullrequests/<<id>>/merge/task-status/<<task>>`);',
+      "await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}/merge');",
+      "await octokit.request('get /repos/{owner}/{repo}/pulls/{pull_number}/merge');",
+      'await http.get(`<<base>>/pull-requests/<<id>>/merge`);',
+      "await fetch(`<<b>>/pullrequests/<<id>>/merge`, { method: 'GET', redirect: 'error' });",
+    ]) {
+      expect(immediateMergeViolations(tpl(src)), src).toEqual([]);
+    }
+  });
+
+  it('still flags the merge itself next to a read', () => {
+    expect(
+      immediateMergeViolations(
+        tpl("await octokit.request('PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge');")
+      )
+    ).toHaveLength(1);
+    expect(
+      immediateMergeViolations(tpl('await bb.post(`<<base>>/pullrequests/<<id>>/merge`);'))
+    ).toHaveLength(1);
+    expect(
+      immediateMergeViolations(
+        tpl("get('/x/merge_requests/1/merge-base');\nput('/p/merge_requests/1/merge');")
+      )
+    ).toEqual([{ line: 2, text: "put('/p/merge_requests/1/merge');" }]);
+  });
+
+  it('honours the provider allowlist for provider spellings only, and only for scm files', () => {
+    const file = 'packages/worker/src/lib/scm/gitlab.ts';
+    const gl = "put('/projects/1/merge_requests/2/merge');";
+    const gh = "await octokit.request('PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge');";
+    const push = "await exec('git push origin HEAD:main');";
+    expect(IMMEDIATE_MERGE_PROVIDER_ALLOWLIST.size).toBe(0);
+    expect(immediateMergeViolations(gl, file)).toHaveLength(1);
+    const allow = new Set([file]);
+    expect(immediateMergeViolations(gl, file, allow)).toEqual([]);
+    // GitHub spellings and pushes are never exempt, nor is another file.
+    expect(immediateMergeViolations(gh, file, allow)).toHaveLength(1);
+    expect(immediateMergeViolations(push, file, allow)).toHaveLength(1);
+    expect(
+      immediateMergeViolations(gl, 'packages/worker/src/lib/scm/other.ts', allow)
+    ).toHaveLength(1);
+    // An allowlist entry outside the seam is ignored.
+    const outside = 'packages/gateway/src/lib/x.ts';
+    expect(immediateMergeViolations(gl, outside, new Set([outside]))).toHaveLength(1);
+  });
+});
+
+describe('providerCodeOutsideScmViolations', () => {
+  const OUT = 'packages/gateway/src/lib/gitlabThing.ts';
+  it('reports provider API tokens outside lib/scm', () => {
+    for (const src of [
+      'const u = `<<base>>/api/v4/projects/<<id>>`;',
+      "fetch('https://api.bitbucket.org/2.0/repositories/a/b');",
+      "const u = base + '/2.0/repositories/' + slug;",
+      "get('/rest/api/1.0/projects/P/repos');",
+      "import { Gitlab } from '@gitbeaker/rest';",
+      "import Bitbucket from 'bitbucket';",
+      "const { Bitbucket } = require('bitbucket');",
+      "get('/projects/1/merge_requests?state=opened');",
+      "get('https://dev.azure.com/org/_apis/git/repositories');",
+      "get('/api/v1/repos/o/r/pulls');",
+      "get('/a/changes/?q=status:open');",
+    ]) {
+      expect(providerCodeOutsideScmViolations(OUT, tpl(src)), src).toHaveLength(1);
+    }
+  });
+
+  it('allows the SCM seam, tests, allowlisted files, comments and unrelated code', () => {
+    const src = "get('/api/v4/projects/1');";
+    expect(providerCodeOutsideScmViolations('packages/worker/src/lib/scm/gitlab.ts', src)).toEqual(
+      []
+    );
+    expect(
+      providerCodeOutsideScmViolations('packages/worker/src/lib/scm/gitlab/x.ts', src)
+    ).toEqual([]);
+    expect(providerCodeOutsideScmViolations('packages/gateway/src/lib/x.test.ts', src)).toEqual([]);
+    expect(providerCodeOutsideScmViolations(OUT, src, new Set([OUT]))).toEqual([]);
+    expect(providerCodeOutsideScmViolations(OUT, '// GitLab /api/v4/ lives in scm\n')).toEqual([]);
+    expect(providerCodeOutsideScmViolations(OUT, "get('/api/v1/repositories');")).toEqual([]);
+    expect(providerCodeOutsideScmViolations(OUT, "import x from 'bitbucketish';")).toEqual([]);
+  });
+
+  it('reports the line', () => {
+    expect(providerCodeOutsideScmViolations(OUT, "a;\nget('/api/v4/x');\n")[0]?.line).toBe(2);
   });
 });
 
