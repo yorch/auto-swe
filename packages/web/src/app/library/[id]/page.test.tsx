@@ -72,6 +72,9 @@ vi.mock('@/hooks/useTeams', () => ({
 }));
 vi.mock('@/hooks/useTransientFlag', () => ({ useTransientFlag: () => [false, vi.fn()] }));
 vi.mock('@/components/workflow/WorkflowDag', () => ({ WorkflowDag: () => null }));
+vi.mock('@/components/help/PageHelp', () => ({
+  PageHelp: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+}));
 vi.mock('@/components/workflow/TemplateEditor', () => ({
   TemplateEditor: (props: {
     actions?: React.ReactNode;
@@ -142,13 +145,12 @@ describe('workflow editor with lint errors', () => {
     expect(screen.getByTestId('spec-errors').children.length).toBeGreaterThan(0);
   });
 
-  it('says saving makes an immutable version and defines Draft, Active and Promote', async () => {
+  it('explains immutable versions, promotion, and draft launching in page help', async () => {
     await renderPage();
     const note = await screen.findByText(/Saving creates a new immutable version/);
-    expect(note.textContent).toMatch(/in flight stay on the version they started with/);
-    expect(note.textContent).toMatch(/Draft\s*means the template cannot be launched yet/);
-    expect(note.textContent).toMatch(/Promote\s*makes a version the active one/);
-    expect(screen.getByRole('button', { name: 'What is a version?' })).toBeTruthy();
+    expect(note.textContent).toMatch(/in-flight runs keep their launch version/);
+    expect(note.textContent).toMatch(/Draft workflows cannot be launched/);
+    expect(note.textContent).toMatch(/Promote changes the active version used by new runs/);
   });
 
   it('keeps Save enabled in JSON mode, asks first, then saves the draft', async () => {

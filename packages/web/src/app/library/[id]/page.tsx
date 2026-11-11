@@ -1,13 +1,17 @@
 'use client';
 
 import type { StepMetadata } from '@auto-swe/shared/workflow';
+import { useState } from 'react';
+import { PageHelp } from '@/components/help/PageHelp';
 import { KnowledgeBaseLinksPanel } from '@/components/knowledgeBases/KnowledgeBaseLinksSection';
 import { Alert } from '@/components/ui/Alert';
+import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonDetail } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import {
   CONTAINER_AUTHORING_RULE,
@@ -17,7 +21,7 @@ import { PromoteVersionModal } from '@/components/workflow/PromoteVersionModal';
 import { RefineChatPanel } from '@/components/workflow/RefineChatPanel';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
 import { TemplateNotFound, TemplateSubNav } from '@/components/workflow/templateNav';
-import { WorkflowDag } from '@/components/workflow/WorkflowDag';
+import { WorkflowViewer } from '@/components/workflow/WorkflowViewer';
 import { cn } from '@/lib/utils';
 import { EditMetadataModal } from './_components/EditMetadataModal';
 import { EditorActions } from './_components/EditorActions';
@@ -47,6 +51,7 @@ function PagePad({ children }: { children: React.ReactNode }) {
 }
 
 export default function TemplateDetailPage({ params }: PageProps) {
+  const [section, setSection] = useState('definition');
   const {
     analytics,
     baseVersion,
@@ -166,21 +171,8 @@ export default function TemplateDetailPage({ params }: PageProps) {
   );
 
   return (
-    // Full-screen route (see `isFullscreenRoute`): this root owns the scrolling. In edit mode the
-    // editor takes the height left under the header from `md` up; below `md` the whole page scrolls
-    // and the editor keeps a 560px canvas, because a phone cannot fit canvas, rails and header at once.
-    <div
-      className={cn(
-        'flex h-full flex-col overflow-y-auto overflow-x-hidden',
-        mode === 'edit' && 'md:overflow-hidden'
-      )}
-    >
-      <div
-        className={cn(
-          'mx-auto w-full max-w-[1280px] shrink-0 space-y-6 px-4 pt-6 md:px-10 md:pt-10',
-          mode === 'edit' ? 'pb-4' : 'pb-6'
-        )}
-      >
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="shrink-0 space-y-2 border-b border-ink-600 px-4 py-3 md:px-6">
         <ExplainModal
           activeVersion={template.activeVersion}
           onClose={() => setExplainOpen(false)}
@@ -201,6 +193,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
         <TemplateHeader
           canManage={canManage}
+          compact
           onEditDetails={() => setEditMetaOpen(true)}
           onEditInputs={() => setEditSchemaOpen(true)}
           onExplain={() => setExplainOpen(true)}
@@ -213,23 +206,48 @@ export default function TemplateDetailPage({ params }: PageProps) {
           template={template}
         />
 
-        <TemplateSubNav active="editor" templateId={id} />
-        <KnowledgeBaseLinksPanel
-          canManage={canManage}
-          global={!template.team}
-          target={{ scope: 'TEMPLATE', templateId: id }}
-          teamId={template.team?.id}
-        />
-
-        <p className="max-w-3xl text-sm leading-relaxed text-paper-400" id="versioning-note">
-          Saving creates a new immutable version; it never edits an old one, and runs already in
-          flight stay on the version they started with.{' '}
-          <strong className="text-paper-200">Draft</strong> means the template cannot be launched
-          yet. <strong className="text-paper-200">Active</strong> means it can be launched, using
-          its active version. <strong className="text-paper-200">Promote</strong> makes a version
-          the active one, so new runs use it.
-        </p>
-
+        <nav aria-label="Workflow workspace" className="flex flex-wrap items-center gap-2">
+          {['definition', 'settings', 'versions'].map((tab) => (
+            <Button
+              aria-pressed={section === tab}
+              key={tab}
+              onClick={() => setSection(tab)}
+              size="sm"
+              variant={section === tab ? 'secondary' : 'ghost'}
+            >
+              {tab === 'definition' ? 'Definition' : tab === 'settings' ? 'Settings' : 'Versions'}
+            </Button>
+          ))}
+          <div className="ml-auto min-w-0 max-w-[180px]">
+            <Select
+              aria-label="Viewed version"
+              compact
+              onChange={(v) => {
+                if (isDirty) {
+                  setPendingVersion(Number(v));
+                } else {
+                  setMode('view');
+                  setSelectedVersion(Number(v));
+                }
+              }}
+              options={template.versions.map((v) => ({
+                label: `v${v.version}${v.version === template.activeVersion ? ' · active' : ' · saved'}`,
+                value: String(v.version),
+              }))}
+              value={String(effectiveVersion ?? '')}
+            />
+          </div>
+          <span className="text-xs text-paper-500">
+            {isDirty ? 'Unsaved changes' : mode === 'edit' ? 'Editing draft' : 'Read only'}
+          </span>
+        </nav>
+        <PageHelp>
+          <p>
+            Saving creates a new immutable version. Promote changes the active version used by new
+            runs; in-flight runs keep their launch version. Draft workflows cannot be launched. Node
+            selection is available in read-only mode.
+          </p>
+        </PageHelp>
         {saveError && mode !== 'edit' && (
           <Alert className="whitespace-pre-line" title="Could not save">
             {saveError}
@@ -242,7 +260,9 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       {/* Edit mode: full-bleed canvas */}
       {mode === 'edit' && editorSpec && stepRegistry && (
-        <div className="flex min-h-0 flex-col md:flex-1">
+        <div
+          className={cn('min-h-0 flex-1 flex-col', section === 'definition' ? 'flex' : 'hidden')}
+        >
           <TemplateEditor
             actions={editorActions}
             baseVersion={baseVersion}
@@ -262,135 +282,135 @@ export default function TemplateDetailPage({ params }: PageProps) {
         </div>
       )}
 
-      {/* View / JSON mode with versions + analytics rail */}
       {mode !== 'edit' && (
-        <div className="mx-auto grid w-full max-w-[1280px] grid-cols-1 gap-6 px-4 pb-16 md:px-10 lg:grid-cols-[minmax(0,1fr)_300px]">
-          <section className="min-w-0 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-              <div className="flex min-w-0 items-baseline gap-2">
-                {mode === 'json' ? (
-                  <label
-                    className="text-sm font-semibold text-paper-100"
-                    htmlFor="spec-json"
-                    id="definition-heading"
-                  >
-                    Raw JSON
-                  </label>
-                ) : (
-                  <h2 className="text-sm font-semibold text-paper-100" id="definition-heading">
-                    Definition
-                  </h2>
-                )}
-                {effectiveVersion !== null && (
-                  <span className="text-sm text-paper-500 tabular-nums">
-                    v{effectiveVersion}
-                    {isActiveVersion ? ' · active' : ' · not active'}
-                    {mode === 'view' || !canManage ? ' · read only' : ''}
-                  </span>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">{editorActions}</div>
-            </div>
-
-            {mode === 'view' && visualSpec && (
-              <WorkflowDag
-                height="max(420px, calc(100dvh - 360px))"
-                onSelect={setSelectedNodeId}
-                outline
-                selectedNodeId={selectedNodeId}
-                spec={visualSpec}
-              />
-            )}
-            {mode === 'view' && !visualSpec && (
-              <Card variant="inset">
-                {versionDetail ? (
-                  <EmptyState
-                    hint="Switch to JSON to see and fix the stored definition."
-                    icon="warning"
-                    title="This version cannot be drawn"
-                  />
-                ) : (
-                  <SkeletonDetail label="the definition" />
-                )}
-              </Card>
-            )}
-
-            {mode === 'json' && (
-              <>
-                {jsonParsed?.ok === false && (
-                  <div id="spec-json-error">
-                    <Alert className="whitespace-pre-line" title="The JSON does not parse">
-                      {jsonParsed.error}
-                    </Alert>
-                  </div>
-                )}
-                <Textarea
-                  aria-describedby={jsonParsed?.ok === false ? 'spec-json-error' : undefined}
-                  aria-invalid={jsonParsed?.ok === false ? true : undefined}
-                  className="h-[60vh] p-4 font-mono text-xs leading-relaxed"
-                  compact
-                  id="spec-json"
-                  onChange={(e) => handleJsonChange(e.target.value)}
-                  readOnly={!canManage}
-                  spellCheck={false}
-                  value={editorJson}
+        <section
+          className={cn('min-h-0 flex-1 flex-col', section === 'definition' ? 'flex' : 'hidden')}
+        >
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 px-4 py-2">
+            <h2 className="text-sm font-semibold text-paper-100">
+              {mode === 'json' ? 'Raw JSON' : 'Definition'}{' '}
+              <span className="ml-2 font-normal text-paper-500">
+                v{effectiveVersion}
+                {isActiveVersion ? ' · active' : ' · not active'}
+              </span>
+            </h2>
+            <div className="flex flex-wrap items-center gap-2">{editorActions}</div>
+          </div>
+          {mode === 'view' && visualSpec && (
+            <WorkflowViewer
+              onSelect={setSelectedNodeId}
+              selectedNodeId={selectedNodeId}
+              spec={visualSpec}
+            />
+          )}
+          {mode === 'view' && !visualSpec && (
+            <Card variant="inset">
+              {versionDetail ? (
+                <EmptyState
+                  hint="Switch to JSON to inspect the stored definition."
+                  icon="warning"
+                  title="This version cannot be drawn"
                 />
+              ) : (
+                <SkeletonDetail label="the definition" />
+              )}
+            </Card>
+          )}
+          {mode === 'json' && (
+            <div className="min-h-0 flex-1 overflow-auto px-4 pb-4">
+              {jsonParsed?.ok === false && (
+                <div id="spec-json-error">
+                  <Alert title="The JSON does not parse">{jsonParsed.error}</Alert>
+                </div>
+              )}
+              <Textarea
+                aria-describedby={jsonParsed?.ok === false ? 'spec-json-error' : undefined}
+                aria-invalid={jsonParsed?.ok === false ? true : undefined}
+                aria-label="Raw JSON"
+                className="h-full min-h-64 p-4 font-mono text-xs leading-relaxed"
+                compact
+                id="spec-json"
+                onChange={(e) => handleJsonChange(e.target.value)}
+                readOnly={!canManage}
+                spellCheck={false}
+                value={editorJson}
+              />
+            </div>
+          )}
+        </section>
+      )}
+      {section !== 'definition' && (
+        <section
+          aria-label={section === 'settings' ? 'Workflow settings' : 'Workflow versions'}
+          className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6"
+        >
+          <div className="mb-5">
+            <TemplateSubNav active="editor" templateId={id} />
+          </div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {section === 'versions' ? (
+              <div>
+                {' '}
+                <VersionsCard
+                  effectiveVersion={effectiveVersion}
+                  isDirty={isDirty}
+                  onAskDiscard={setPendingVersion}
+                  onSelectVersion={setSelectedVersion}
+                  template={template}
+                />
+              </div>
+            ) : (
+              <>
+                <KnowledgeBaseLinksPanel
+                  canManage={canManage}
+                  global={!template.team}
+                  target={{ scope: 'TEMPLATE', templateId: id }}
+                  teamId={template.team?.id}
+                />
+                {/* Observed analytics summary */}
+                {analytics && analytics.totalRuns > 0 && (
+                  <ObservedCard
+                    analytics={analytics}
+                    estimatedHumanTimeSavedMinutes={template.estimatedHumanTimeSavedMinutes}
+                    templateId={id}
+                  />
+                )}
+
+                {/* Run schema */}
+                <LaunchInputsCard
+                  canManage={canManage}
+                  inputSchema={inputSchema}
+                  onEdit={() => setEditSchemaOpen(true)}
+                />
+
+                {/* A/B experiment config */}
+                {template.versions.length > 1 && (
+                  <ExperimentCard
+                    activeVersion={template.activeVersion}
+                    experimentSplit={template.experimentSplit ?? null}
+                    experimentVersion={template.experimentVersion ?? null}
+                    templateId={id}
+                    versions={template.versions}
+                  />
+                )}
+
+                {/* What starts this template */}
+                <TriggersCard
+                  template={{
+                    id: template.id,
+                    name: template.name,
+                    status: template.status,
+                    team: template.team,
+                  }}
+                  webhookConfigured={template.webhookConfigured}
+                />
+
+                {/* Webhook trigger */}
+                <WebhookCard canManage={canManage} template={template} />
               </>
             )}
-          </section>
-
-          {/* Right rail */}
-          <aside aria-label="Workflow settings" className="space-y-4">
-            <VersionsCard
-              effectiveVersion={effectiveVersion}
-              isDirty={isDirty}
-              onAskDiscard={setPendingVersion}
-              onSelectVersion={setSelectedVersion}
-              template={template}
-            />
-
-            {/* Observed analytics summary */}
-            {analytics && analytics.totalRuns > 0 && (
-              <ObservedCard
-                analytics={analytics}
-                estimatedHumanTimeSavedMinutes={template.estimatedHumanTimeSavedMinutes}
-                templateId={id}
-              />
-            )}
-
-            {/* Run schema */}
-            <LaunchInputsCard
-              canManage={canManage}
-              inputSchema={inputSchema}
-              onEdit={() => setEditSchemaOpen(true)}
-            />
-
-            {/* A/B experiment config */}
-            {template.versions.length > 1 && (
-              <ExperimentCard
-                activeVersion={template.activeVersion}
-                experimentSplit={template.experimentSplit ?? null}
-                experimentVersion={template.experimentVersion ?? null}
-                templateId={id}
-                versions={template.versions}
-              />
-            )}
-
-            {/* What starts this template */}
-            <TriggersCard
-              template={{
-                id: template.id,
-                name: template.name,
-                status: template.status,
-                team: template.team,
-              }}
-              webhookConfigured={template.webhookConfigured}
-            />
-
-            {/* Webhook trigger */}
-            <WebhookCard canManage={canManage} template={template} />
-          </aside>
-        </div>
+          </div>
+        </section>
       )}
 
       <EditMetadataModal

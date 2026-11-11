@@ -43,6 +43,20 @@ function openDrawer() {
 }
 
 describe('AppShell mobile drawer focus trap', () => {
+  it('uses compact navigation on workspace routes and makes it inert while the drawer is open', () => {
+    resetNavigation('', '/runs/run-1');
+    render(
+      <AppShell>
+        <p>workspace</p>
+      </AppShell>
+    );
+    const rail = screen.getByRole('navigation', { name: 'Focused navigation' });
+    expect(rail.hasAttribute('inert')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'menu' }));
+    expect(rail.hasAttribute('inert')).toBe(true);
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(rail.hasAttribute('inert')).toBe(false);
+  });
   it('pulls Tab from outside the drawer back into it', () => {
     openDrawer();
     const outside = document.createElement('button');

@@ -44,7 +44,7 @@ export function useTemplateEditorState({
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   // The outline is a rail beside the canvas, not a replacement for it, so the
   // canvas (and where the author has dragged things) stays mounted.
-  const [showOutline, setShowOutline] = useState(false);
+  const [showOutline, setShowOutline] = useState(true);
   // Below lg the palette is a drawer over the canvas rather than a fixed column.
   const [paletteOpen, setPaletteOpen] = useState(false);
   const paletteRef = useRef<HTMLDivElement>(null);
@@ -79,6 +79,10 @@ export function useTemplateEditorState({
   const initial = useMemo(() => specToFlow(spec, { editable: true, tokens }), [spec, tokens]);
   const [nodes, setNodes, onNodesChange] = useNodesState<RFNode<DagNodeData>>(initial.nodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges);
+  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [removed, setRemoved] = useState<{ before: WorkflowSpec; after: WorkflowSpec } | null>(
+    null
+  );
 
   // Edge colours are literal hex (SVG markers cannot read `var()`), so a theme
   // switch repaints each existing edge in place — positions and selection stay.
@@ -392,12 +396,27 @@ export function useTemplateEditorState({
     if (!selectedNodeId || selectedNodeId === spec.entry) {
       return;
     }
-    // Reference repair lives in `specEdits`, driven by the spec's own edge
-    // grammar — see that module for why a required edge is retargeted to a
-    // placeholder instead of being dropped.
-    onChange(deleteNodeFromSpec(spec, selectedNodeId));
-    onSelect(null);
-  }, [selectedNodeId, spec, onChange, onSelect]);
+    setPendingDelete(selectedNodeId);
+  }, [selectedNodeId, spec.entry]);
+
+  const confirmDelete = () => {
+    if (!pendingDelete || pendingDelete === spec.entry) {
+      return;
+    }
+    const after = deleteNodeFromSpec(spec, pendingDelete);
+    if (after !== spec) {
+      setRemoved({ after, before: spec });
+      onChange(after);
+      onSelect(null);
+    }
+    setPendingDelete(null);
+  };
+  const undoDelete = () => {
+    if (removed && spec === removed.after) {
+      onChange(removed.before);
+      setRemoved(null);
+    }
+  };
 
   // Delete the selected node when Delete/Backspace is pressed while a canvas
   // element (not an input/textarea) holds focus.
@@ -406,14 +425,27 @@ export function useTemplateEditorState({
       if (e.key !== 'Delete' && e.key !== 'Backspace') {
         return;
       }
-      const tag = (e.target as HTMLElement).tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+      const target = e.target;
+      if (
+        !(target instanceof HTMLElement) ||
+        !canvasRef.current?.contains(target) ||
+        target.closest(
+          'input, textarea, select, button, [contenteditable]:not([contenteditable="false"])'
+        ) ||
+        e.isComposing ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.altKey
+      ) {
         return;
       }
+      e.preventDefault();
+      e.stopPropagation();
       handleDeleteNode();
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    const canvas = canvasRef.current;
+    canvas?.addEventListener('keydown', onKey, true);
+    return () => canvas?.removeEventListener('keydown', onKey, true);
   }, [handleDeleteNode]);
 
   // Move DOM focus onto a node's React Flow wrapper so focus follows keyboard
@@ -430,6 +462,7 @@ export function useTemplateEditorState({
   const paletteTriggerRef = useRef<HTMLElement | null>(null);
   const outlineTriggerRef = useRef<HTMLElement | null>(null);
   const inspectorTriggerRef = useRef<HTMLElement | null>(null);
+  const wasOutlineVisible = useRef(showOutline);
   useEffect(() => {
     if (paletteOpen) {
       paletteTriggerRef.current = rememberTrigger();
@@ -439,12 +472,13 @@ export function useTemplateEditorState({
     }
   }, [paletteOpen]);
   useEffect(() => {
-    if (showOutline) {
+    if (showOutline && !wasOutlineVisible.current) {
       outlineTriggerRef.current = rememberTrigger();
       focusFirst(outlineRef.current);
-    } else {
+    } else if (!showOutline) {
       restoreTrigger(outlineTriggerRef);
     }
+    wasOutlineVisible.current = showOutline;
   }, [showOutline]);
   useEffect(() => {
     if (selectedNodeId && overlayMode()) {
@@ -554,8 +588,10 @@ export function useTemplateEditorState({
     selectedNode && selectedNode.type === 'step' ? stepRegistryByName.get(selectedNode.step) : null;
 
   return {
+    canUndoDelete: removed !== null && spec === removed.after,
     canvasRef,
     checkResult,
+    confirmDelete,
     edges,
     fit,
     framed,
@@ -578,6 +614,7 @@ export function useTemplateEditorState({
     outlineVisible: showOutline,
     paletteOpen,
     paletteRef,
+    pendingDelete,
     runCheck,
     selectedNode,
     selectedStepMeta,
@@ -585,8 +622,10 @@ export function useTemplateEditorState({
     serverIssues,
     setOutlineVisible: setShowOutline,
     setPaletteOpen,
+    setPendingDelete,
     shownErrors,
     shownWarnings,
+    undoDelete,
     wrapperRef,
   };
 }

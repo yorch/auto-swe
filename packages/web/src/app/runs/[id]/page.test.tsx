@@ -182,13 +182,17 @@ describe('run page summary band', () => {
     }
   );
 
-  it('Jump to failure selects the failed step in the transcript layout', async () => {
+  it('Jump to failure selects failure evidence without scrolling the app shell', async () => {
     state.layout = 'B';
     await renderPage();
     const scrolled = vi.fn();
     Element.prototype.scrollIntoView = scrolled;
     fireEvent.click(screen.getByRole('button', { name: /jump to failure/i }));
-    expect(scrolled).toHaveBeenCalled();
+    expect(scrolled).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Events' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    );
+    expect(screen.getByLabelText('Execution attempt')).toBeTruthy();
   });
 
   it('describes Cancel and Re-run to assistive tech as well as on hover', async () => {
@@ -321,7 +325,7 @@ describe('run page verdict and reading guide', () => {
     const guide = screen.getByText('How to read this page').closest('section');
     expect(guide).not.toBeNull();
     expect(guide?.closest('[data-testid="page-help"]')).not.toBeNull();
-    for (const name of ['Split', 'Transcript', 'Timeline']) {
+    for (const name of ['Events', 'Graph', 'Timing', 'Transcript']) {
       expect(guide?.textContent).toContain(name);
     }
     expect(guide).not.toBe(screen.getByText('How auto-swe works').closest('section'));
@@ -353,6 +357,8 @@ describe('run page live state, load errors and unreadable specs', () => {
     state.fullTraces = true;
     await renderPage();
     expect(screen.getByText('Paused')).toBeTruthy();
+    expect(screen.getByText('Paused snapshot')).toBeTruthy();
+    expect(screen.queryByText('Live edge')).toBeNull();
     expect(screen.getByRole('button', { name: 'Resume live updates' })).toBeTruthy();
   });
 
@@ -371,7 +377,7 @@ describe('run page live state, load errors and unreadable specs', () => {
     expect(screen.getAllByText(/Tests would not pass/).length).toBeGreaterThan(0);
   });
 
-  it('lets the page scroll and keeps the layout a minimum height so it cannot be squeezed away', async () => {
+  it('anchors the shell and lets only the investigation evidence pane scroll', async () => {
     state.layout = 'A';
     const { container } = render(
       withQuery(
@@ -382,8 +388,10 @@ describe('run page live state, load errors and unreadable specs', () => {
     );
     await act(async () => {});
     const root = container.firstElementChild as HTMLElement;
-    expect(root.className).toContain('overflow-y-auto');
-    expect(root.className).not.toContain('max-lg:overflow-y-auto');
-    expect(container.querySelector('[class*="lg:min-h-[480px]"]')).not.toBeNull();
+    expect(root.className).toContain('overflow-hidden');
+    expect(root.className).not.toContain('overflow-y-auto');
+    expect(container.querySelector('[class*="overscroll-contain"]')?.className).toContain(
+      'overflow-y-auto'
+    );
   });
 });

@@ -1,10 +1,6 @@
 'use client';
 
-import type {
-  AgentTraceRecord,
-  RunDetailLayout,
-  WorkflowRunStatus,
-} from '@auto-swe/shared/types/api';
+import type { AgentTraceRecord, WorkflowRunStatus } from '@auto-swe/shared/types/api';
 import {
   isTerminalWorkflowRunStatus,
   WORKFLOW_RUN_FAILURE_STATUSES,
@@ -13,25 +9,22 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
-import { use, useCallback, useMemo, useRef, useState } from 'react';
+import { use, useCallback, useMemo, useState } from 'react';
 import { HowItWorks } from '@/components/help/HowItWorks';
 import { PageHelp } from '@/components/help/PageHelp';
-import { LayoutToggle } from '@/components/LayoutToggle';
-import { FlightRecorder } from '@/components/runs/layouts/FlightRecorder';
-import { SplitConsole } from '@/components/runs/layouts/SplitConsole';
-import { Transcript } from '@/components/runs/layouts/Transcript';
-import type { RunLayoutProps } from '@/components/runs/layouts/types';
 import { RunActivity } from '@/components/runs/RunActivity';
 import { RunCallbackDeliveries } from '@/components/runs/RunCallbackDeliveries';
 import { RunEffects } from '@/components/runs/RunEffects';
 import { RunEvidence } from '@/components/runs/RunEvidence';
 import { RunLessons } from '@/components/runs/RunLessons';
 import { RunLiveIndicator } from '@/components/runs/RunLiveIndicator';
+import { RunMetaRail } from '@/components/runs/RunMetaRail';
 import { RunReadingGuide } from '@/components/runs/RunReadingGuide';
 import { RunReviews } from '@/components/runs/RunReviews';
 import { RunSummaryBand } from '@/components/runs/RunSummaryBand';
 import { RunTranscripts } from '@/components/runs/RunTranscripts';
 import { RunVerdictBanner } from '@/components/runs/RunVerdictBanner';
+import { RunWorkspace } from '@/components/runs/RunWorkspace';
 import { classifyTraceAsSecurityEvent } from '@/components/security/SecurityEventList';
 import { GuardedButton } from '@/components/teams/GuardedButton';
 import { PageTour } from '@/components/tour/PageTour';
@@ -49,7 +42,6 @@ import { useApprovals } from '@/hooks/useApprovals';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
 import { useRunReRun } from '@/hooks/useRunReRun';
 import { useCancelWorkflowRun, useRetriedRun, useRunDetail } from '@/hooks/useRuns';
-import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { buildDagOverlay } from '@/lib/dagOverlay';
 import { errMsg } from '@/lib/errors';
 import { IMPLEMENTER_RUNTIME_LABELS } from '@/lib/evalRuntime';
@@ -61,12 +53,6 @@ import { deriveRunVerdict } from '@/lib/runVerdict';
 import { runControlReason } from '@/lib/teamPermissions';
 import { buildTraceLinker } from '@/lib/traceLinkage';
 import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
-
-const LAYOUTS: Record<RunDetailLayout, (props: RunLayoutProps) => React.ReactNode> = {
-  A: SplitConsole,
-  B: Transcript,
-  C: FlightRecorder,
-};
 
 /**
  * The header's runtime badge. The runtimes the run pinned for agents that have
@@ -180,7 +166,6 @@ export default function RunDetailPage({ params }: PageProps) {
     retryRun.data?.temporalWorkflowId ?? null
   );
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const { layout, setLayout } = useUserPreferences();
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   // Both open and answered steps for this run: the open ones need a person, the answered ones
   // show who decided and what they said.
@@ -251,7 +236,6 @@ export default function RunDetailPage({ params }: PageProps) {
     [run?.traces, run?.id, run?.workflowId, run?.workRequest, run?.startedAt]
   );
 
-  const traceAnchorRef = useRef<HTMLDivElement>(null);
   // Selecting the failed step is what the layouts react to (filter, scroll, playhead);
   // scrolling the anchor alone did nothing inside the overflow-hidden main.
   const failedNodeId = run ? findFailedStep(run.status, run.steps)?.nodeId : undefined;
@@ -261,7 +245,6 @@ export default function RunDetailPage({ params }: PageProps) {
       setSelectedNodeId(failedNodeId);
       setJumpNonce((n) => n + 1);
     }
-    traceAnchorRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [failedNodeId]);
   const reRunLocked = retryRun.locked;
   const handleReRun = retryRun.request;
@@ -316,7 +299,6 @@ export default function RunDetailPage({ params }: PageProps) {
     return notFound;
   }
   const traces = run.traces ?? [];
-  const Layout = LAYOUTS[layout];
   const failedStep = findFailedStep(run.status, run.steps);
   const verdict = deriveRunVerdict(run, pendingSteps);
   const tracesTrimmed = traces.some((t) => t.trimmed);
@@ -332,7 +314,7 @@ export default function RunDetailPage({ params }: PageProps) {
     Boolean(run.workRequest);
 
   return (
-    <div className="flex h-full min-w-0 flex-col overflow-y-auto overflow-x-hidden bg-ink-800">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-ink-800">
       {/* ── Page header band ──────────────────────────────────────────────── */}
       <header className="shrink-0 border-b border-ink-600/40 bg-ink-900 px-4 pt-3 pb-4 md:px-6">
         <nav
@@ -464,9 +446,6 @@ export default function RunDetailPage({ params }: PageProps) {
                 {RE_RUN_HINT}
               </span>
             )}
-            <div data-tour="run:layout">
-              <LayoutToggle onChange={setLayout} value={layout} />
-            </div>
           </div>
         </div>
 
@@ -478,8 +457,6 @@ export default function RunDetailPage({ params }: PageProps) {
             on a person.
           </p>
         </PageHelp>
-        <HowItWorks />
-        <RunReadingGuide />
 
         {(!spec || fullTracesFailed || retryRun.isSuccess || retryRun.errorView) && (
           <div className="mt-3 space-y-2">
@@ -538,64 +515,60 @@ export default function RunDetailPage({ params }: PageProps) {
         )}
       </header>
 
+      <HowItWorks />
+      <RunReadingGuide />
       <RunVerdictBanner onJumpToFailure={handleJumpToFailure} verdict={verdict} />
-      <RunReviews key={run.id} run={run} />
-
-      {/* ── Pending approvals + result or failure, whichever layout is chosen ── */}
-      <RunSummaryBand
-        answeredSteps={answeredSteps}
-        failedStep={failedStep}
-        onJumpToFailure={handleJumpToFailure}
-        onReRun={failureCardReRun}
-        pendingSteps={pendingSteps}
-        run={run}
-      />
-
-      <RunCallbackDeliveries runId={run.id} />
-
-      <RunTranscripts runId={run.id} />
-      <RunEvidence live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
-      <RunActivity
-        fanOutNodeIds={fanOutNodeIds}
+      <RunWorkspace
+        activity={
+          <>
+            <RunActivity
+              fanOutNodeIds={fanOutNodeIds}
+              linker={linker}
+              live={!isTerminalWorkflowRunStatus(run.status)}
+              runId={run.id}
+              selection={selectedNodeId}
+            />
+            <RunEffects live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
+          </>
+        }
+        dagOverlay={dagOverlay}
+        details={
+          <>
+            <RunMetaRail collapsible run={run} />
+            <RunCallbackDeliveries runId={run.id} />
+            <RunLessons live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
+          </>
+        }
+        evidence={
+          <>
+            <RunEvidence live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
+            <RunTranscripts runId={run.id} />
+          </>
+        }
+        jumpNonce={jumpNonce}
+        key={run.id}
         linker={linker}
-        live={!isTerminalWorkflowRunStatus(run.status)}
-        runId={run.id}
-        selection={selectedNodeId}
+        monitoringPaused={fullTraces}
+        needsDecision={pendingSteps.length > 0}
+        overview={
+          <>
+            <RunSummaryBand
+              answeredSteps={answeredSteps}
+              failedStep={failedStep}
+              onJumpToFailure={handleJumpToFailure}
+              onReRun={failureCardReRun}
+              pendingSteps={pendingSteps}
+              run={run}
+            />
+            <RunReviews key={run.id} run={run} />
+          </>
+        }
+        run={run}
+        selectedNodeId={selectedNodeId}
+        setSelectedNodeId={setSelectedNodeId}
+        spec={spec}
+        traces={traces}
       />
-
-      <RunLessons live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
-
-      <RunEffects live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
-
-      {/* ── Layout body ───────────────────────────────────────────────────── */}
-      <div
-        className="flex flex-1 max-lg:min-w-0 lg:min-h-[480px] lg:overflow-hidden"
-        data-tour="run:trace"
-        ref={traceAnchorRef}
-      >
-        {spec ? (
-          <Layout
-            dagOverlay={dagOverlay}
-            jumpNonce={jumpNonce}
-            linker={linker}
-            run={run}
-            selectedNodeId={selectedNodeId}
-            setSelectedNodeId={setSelectedNodeId}
-            spec={spec}
-            traces={traces}
-          />
-        ) : (
-          <Transcript
-            dagOverlay={dagOverlay}
-            jumpNonce={jumpNonce}
-            linker={linker}
-            run={run}
-            selectedNodeId={selectedNodeId}
-            setSelectedNodeId={setSelectedNodeId}
-            traces={traces}
-          />
-        )}
-      </div>
 
       <ConfirmModal
         confirmLabel="Re-run"
