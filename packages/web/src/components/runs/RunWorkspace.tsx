@@ -582,7 +582,7 @@ export function RunWorkspace({
             <>
               <section
                 aria-label="Replay context"
-                className="max-h-12 overflow-y-auto break-words text-xs text-paper-400"
+                className="max-h-10 overflow-y-auto break-words text-xs text-paper-400 sm:max-h-12"
               >
                 {activeSteps.length === 0 ? (
                   <p>No step active at this point</p>
