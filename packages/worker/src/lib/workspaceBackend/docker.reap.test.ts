@@ -11,7 +11,7 @@ vi.mock('../execUtils.js', () => ({
   spawnWithStdinAsync: vi.fn(),
 }));
 
-import { dockerWorkspaceBackend, ephemeralArgs } from './docker.js';
+import { baselineRules, dockerWorkspaceBackend, ephemeralArgs } from './docker.js';
 import {
   DOCKER_WORKSPACE_CREATED_LABEL,
   DOCKER_WORKSPACE_MARKER_LABEL,
@@ -28,7 +28,26 @@ beforeEach(() => {
 
 describe('workspace labels', () => {
   it('labels the workspace container at creation', async () => {
-    execShellAsync.mockResolvedValue('7\n');
+    const rules = baselineRules([], []);
+    const report = [
+      'v4:',
+      '-P OUTPUT ACCEPT',
+      '-A OUTPUT -j ASW_BASELINE',
+      ...rules.v4.map((rule) => `-A ASW_BASELINE ${rule}`),
+      'v6:',
+      '-P OUTPUT ACCEPT',
+      '-A OUTPUT -j ASW_BASELINE',
+      ...rules.v6.map((rule) => `-A ASW_BASELINE ${rule}`),
+      'v6disabled=0',
+    ].join('\n');
+    execShellAsync.mockImplementation(async (cmd: string) =>
+      cmd.includes('--network container:') ? report : '7\n'
+    );
+    spawnCaptureAsync.mockImplementation(async (_bin: string, args: string[]) => ({
+      exitCode: 0,
+      stderr: '',
+      stdout: args[0] === 'inspect' ? '[]' : '127.0.0.1 localhost\n',
+    }));
     await dockerWorkspaceBackend().create({
       cpus: 1,
       dns: [],
