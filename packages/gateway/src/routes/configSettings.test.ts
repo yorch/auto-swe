@@ -21,8 +21,9 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     organizationMembership: { findUnique: vi.fn(async () => null) },
     slackChannel: { findUnique: vi.fn(async () => ({ orgId: 'org-1', teamId: 'team-1' })) },
-    team: { findUnique: vi.fn(async () => ({ orgId: 'org-1' })) },
+    team: { findMany: vi.fn(async () => []), findUnique: vi.fn(async () => ({ orgId: 'org-1' })) },
     teamMembership: { findUnique: vi.fn(async () => null) },
+    workerEgressCapability: { findMany: vi.fn(async () => []) },
     workflowTemplate: {
       findUnique: vi.fn(async () => ({ team: { orgId: 'org-1' }, teamId: 'team-1' })),
     },
@@ -90,9 +91,36 @@ beforeEach(() => {
   team.findUnique.mockResolvedValue({ orgId: ORG_ID } as never);
   teamMembership.findUnique.mockResolvedValue(null as never);
   orgMembership.findUnique.mockResolvedValue(null as never);
+  vi.mocked(prisma.workerEgressCapability.findMany).mockResolvedValue([]);
 });
 
 describe('GET /config/settings — sensitive values', () => {
+  it('returns advisory warnings when a blocked policy is saved', async () => {
+    vi.mocked(prisma.workerEgressCapability.findMany).mockResolvedValue([
+      {
+        backend: 'docker',
+        detail: 'no iptables',
+        egressProxy: false,
+        id: 'worker',
+        networkLock: false,
+        registryProxy: false,
+        reportedAt: new Date(),
+      },
+    ]);
+    const app = await buildApp();
+    const response = await app.inject({
+      headers: auth('ADMIN'),
+      method: 'PUT',
+      payload: { value: 'blocked' },
+      url: '/api/v1/platform/config/settings/workspace.egressPolicy',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: { value: 'blocked' },
+      warnings: [expect.stringContaining('no iptables')],
+    });
+    await app.close();
+  });
   it('withholds a host allowlist from anyone below its required role', async () => {
     // It can name internal GitHub Enterprise servers on a private network.
     configSetting.findMany.mockResolvedValue([

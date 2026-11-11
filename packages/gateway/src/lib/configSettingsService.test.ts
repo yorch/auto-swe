@@ -53,12 +53,17 @@ function makePrisma() {
       create: vi.fn().mockResolvedValue({}),
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     organizationMembership: { findUnique: vi.fn().mockResolvedValue(null) },
     slackChannel: { findUnique: vi.fn().mockResolvedValue(null) },
-    team: { findUnique: vi.fn().mockResolvedValue({ orgId: ORG_ID }) },
+    team: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue({ orgId: ORG_ID }),
+    },
     teamMembership: { findUnique: vi.fn().mockResolvedValue(null) },
+    workerEgressCapability: { findMany: vi.fn().mockResolvedValue([]) },
     workflowTemplate: { findUnique: vi.fn().mockResolvedValue(null) },
   };
 }
@@ -309,6 +314,31 @@ describe('setSetting validation', () => {
 });
 
 describe('setSetting write path', () => {
+  it('saves an unenforceable policy with a warning instead of refusing it', async () => {
+    prisma.workerEgressCapability.findMany.mockResolvedValue([
+      {
+        backend: 'docker',
+        detail: 'no iptables',
+        egressProxy: false,
+        id: 'broken',
+        networkLock: false,
+        registryProxy: false,
+        reportedAt: new Date(),
+      },
+    ]);
+    const result = await setSetting(
+      asPrisma(prisma),
+      ADMIN,
+      'workspace.egressPolicy',
+      { scope: 'GLOBAL' },
+      'blocked'
+    );
+    expect(result).toMatchObject({
+      after: 'blocked',
+      warnings: [expect.stringContaining('no iptables')],
+    });
+    expect(prisma.configSetting.create).toHaveBeenCalled();
+  });
   it('creates the row when nothing is stored at the scope', async () => {
     const result = await setSetting(asPrisma(prisma), ADMIN, LEAD_KEY, TEAM, 50);
     expect(prisma.configSetting.create).toHaveBeenCalledWith({

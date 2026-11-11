@@ -23,6 +23,7 @@ export function EgressAllowlistEditor({ teamId }: { teamId: string }) {
       placeholder="registry.npmjs.org"
       saving={update.isPending}
       title="Egress hostname allowlist"
+      warnings={update.data?.warnings}
     />
   );
 }

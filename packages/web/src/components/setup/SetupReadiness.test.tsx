@@ -39,6 +39,30 @@ afterEach(() => {
 });
 
 describe('SetupReadiness', () => {
+  it('renders the egress item and links to its settings group', async () => {
+    setupFetchMock({
+      'GET /api/v1/platform/readiness': () => ({
+        data: {
+          items: [
+            {
+              detail: 'No egress proxy',
+              href: '/admin/platform-settings#group-workspace',
+              id: 'egress',
+              label: 'Workspace egress enforcement',
+              ok: false,
+            },
+          ],
+          providers: [],
+          ready: false,
+        },
+      }),
+    });
+    render(withQuery(<SetupReadiness />));
+    expect(await screen.findByText('No egress proxy')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Fix this/ }).getAttribute('href')).toBe(
+      '/admin/platform-settings#group-workspace'
+    );
+  });
   it('renders nothing while loading, so a set-up admin never sees a placeholder flash', () => {
     gateway();
     const { container } = render(withQuery(<SetupReadiness />));

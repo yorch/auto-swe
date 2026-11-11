@@ -22,6 +22,7 @@ export function AllowlistEditor({
   placeholder,
   saving,
   title,
+  warnings,
 }: {
   description: ReactNode;
   isLoading: boolean;
@@ -31,6 +32,7 @@ export function AllowlistEditor({
   placeholder: string;
   saving: boolean;
   title: string;
+  warnings?: string[];
 }) {
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +92,11 @@ export function AllowlistEditor({
             value={text}
           />
           <p className="mt-1.5 text-xs text-paper-500">One entry per line.</p>
+          {warnings?.map((warning) => (
+            <Alert key={warning} variant="warning">
+              {warning}
+            </Alert>
+          ))}
           <div className="mt-auto flex flex-wrap items-center justify-end gap-3 pt-4">
             {error ? (
               <Alert className="flex-1">{error}</Alert>

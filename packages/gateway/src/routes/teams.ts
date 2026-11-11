@@ -6,6 +6,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendConflict } from '../lib/conflict.js';
+import { loadEgressReadiness } from '../lib/egressReadiness.js';
 import { sendError } from '../lib/httpErrors.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
@@ -508,7 +509,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: exists.id,
         entityType: 'Team',
       });
-      return { data: { egressAllowlist: updated.egressAllowlist } };
+      const { warnings } = await loadEgressReadiness(fastify.prisma, undefined, {
+        allowlist: updated.egressAllowlist,
+        id: request.params.id,
+      });
+      return {
+        data: { egressAllowlist: updated.egressAllowlist },
+        ...(warnings.length ? { warnings } : {}),
+      };
     }
   );
 

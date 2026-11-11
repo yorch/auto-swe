@@ -392,6 +392,12 @@ quick: the implementer runs it after each turn.
 
 ### Setup readiness
 
+The egress item checks every configured `workspace.egressPolicy` against fresh worker reports and
+links to Platform settings, Workspace. The response includes `egress.reports` and the enforceable
+levels: `open`, `blocked`, `restricted` with an empty allowlist, and `restrictedAllowlist` for a
+non-empty team allowlist. Every fresh worker needs a verified network lock for either strict level;
+the non-empty allowlist also needs an egress proxy. No fresh report does not fail readiness.
+
 `GET /api/v1/platform/readiness` (ADMIN) reports whether a first run has what it needs: every agent
 the worker's boot gate resolves — the agents the installed templates' steps use, plus
 `channelAssistant` when Slack channels exist (`deploymentAgentRequirements` in
@@ -701,6 +707,9 @@ forced delete.
 ---
 
 ## Limitations
+
+- Egress capability reports are self-declared and freshness-based: worker timestamps refresh
+  every ten minutes, expire after thirty minutes, and do not re-probe runtime enforcement.
 
 - **Bulk model preview and apply are separate operations, not an atomic transaction.** Each agent
   is handled independently during apply: a version conflict or unexpected write failure is

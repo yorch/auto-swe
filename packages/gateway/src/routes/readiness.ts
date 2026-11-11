@@ -8,6 +8,7 @@ import { SEED_PLACEHOLDER_REPO } from '@auto-swe/shared/lib/seedPlaceholder';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
+import { loadEgressReadiness } from '../lib/egressReadiness.js';
 import { requireAuth } from '../plugins/auth.js';
 
 /**
@@ -33,7 +34,7 @@ export interface ReadinessProvider {
 }
 
 export interface ReadinessItem {
-  id: 'credentials' | 'embeddings' | 'github' | 'connections';
+  id: 'credentials' | 'embeddings' | 'github' | 'connections' | 'egress';
   label: string;
   ok: boolean;
   detail: string;
@@ -49,7 +50,8 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
 
   fastify.get('/readiness', { onRequest: adminOnly }, async () => {
-    const [coverage, required, connectionCount] = await Promise.all([
+    const [egress, coverage, required, connectionCount] = await Promise.all([
+      loadEgressReadiness(fastify.prisma),
       loadCoverageInput(fastify.prisma),
       deploymentAgentRequirements(fastify.prisma),
       runUnscoped('setup readiness spans every team', ['Connection'], () =>
@@ -125,6 +127,13 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
 
     const items: ReadinessItem[] = [
       {
+        detail: [egress.detail, ...egress.warnings].join(' '),
+        href: '/admin/platform-settings#group-workspace',
+        id: 'egress',
+        label: 'Workspace egress enforcement',
+        ok: egress.ok,
+      },
+      {
         detail: credentialsOk
           ? 'Every agent this deployment runs has a credential it can use.'
           : [
@@ -176,6 +185,7 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
 
     return {
       data: {
+        egress,
         // Every gap, the ones that fail readiness flagged, so a page can show what is advisory.
         gaps: gaps.map((gap) => ({
           ...gap,

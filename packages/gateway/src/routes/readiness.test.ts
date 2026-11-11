@@ -47,6 +47,7 @@ function newMockPrisma() {
           agentRow({ key: 'evalJudge', modelSpec: 'google/gemini-3.8-flash' }),
         ]),
     },
+    configSetting: { findMany: vi.fn().mockResolvedValue([]) },
     connection: { count: vi.fn().mockResolvedValue(1) },
     embeddingConfig: {
       findUnique: vi
@@ -63,6 +64,7 @@ function newMockPrisma() {
         ]),
     },
     team: { findMany: vi.fn().mockResolvedValue([]) },
+    workerEgressCapability: { findMany: vi.fn().mockResolvedValue([]) },
   };
 }
 
@@ -97,6 +99,58 @@ interface Item {
 const item = (data: { items: Item[] }, id: string) => data.items.find((i) => i.id === id) as Item;
 
 describe('GET /readiness', () => {
+  it.each(['none', 'ok', 'broken', 'mixed', 'stale', 'proxy'])(
+    'reports egress readiness from %s workers',
+    async (mode) => {
+      const { app, prisma } = await buildApp();
+      const good = {
+        backend: 'docker',
+        detail: '',
+        egressProxy: true,
+        id: 'worker',
+        networkLock: true,
+        registryProxy: true,
+        reportedAt: new Date(),
+      };
+      const broken = {
+        ...good,
+        detail: 'no NET_ADMIN',
+        id: 'broken',
+        networkLock: false,
+        reportedAt: mode === 'stale' ? new Date(Date.now() - 31 * 60_000) : new Date(),
+      };
+      prisma.workerEgressCapability.findMany.mockResolvedValue(
+        mode === 'none'
+          ? []
+          : mode === 'ok'
+            ? [good]
+            : mode === 'proxy'
+              ? [{ ...good, egressProxy: false }]
+              : mode === 'broken'
+                ? [broken]
+                : [good, broken]
+      );
+      prisma.configSetting.findMany.mockResolvedValue([
+        { scope: 'GLOBAL', value: mode === 'proxy' ? 'restricted' : 'blocked' },
+      ]);
+      prisma.team.findMany.mockResolvedValue([
+        { egressAllowlist: ['example.com'], id: 'team', orgId: 'org' },
+      ]);
+      const response = await app.inject({ headers: AUTH, method: 'GET', url: URL });
+      expect(response.statusCode).toBe(200);
+      const { data } = response.json();
+      expect(item(data, 'egress').ok).toBe(['none', 'ok', 'stale'].includes(mode));
+      expect(item(data, 'egress').href).toBe('/admin/platform-settings#group-workspace');
+      if (mode === 'none') {
+        expect(item(data, 'egress').detail).toContain('No worker has reported');
+      }
+      if (mode === 'proxy') {
+        expect(item(data, 'egress').detail).toContain('no egress proxy');
+      }
+      expect(data.egress.enforceable.open).toBe(true);
+      await app.close();
+    }
+  );
   it('is ADMIN-only', async () => {
     const { app } = await buildApp('LEAD');
     const res = await app.inject({ headers: AUTH, method: 'GET', url: URL });
@@ -343,7 +397,13 @@ describe('GET /readiness', () => {
     const res = await app.inject({ headers: AUTH, method: 'GET', url: URL });
     const { data } = res.json();
     const ok = Object.fromEntries(data.items.map((i: { id: string; ok: boolean }) => [i.id, i.ok]));
-    expect(ok).toEqual({ connections: false, credentials: true, embeddings: false, github: false });
+    expect(ok).toEqual({
+      connections: false,
+      credentials: true,
+      egress: true,
+      embeddings: false,
+      github: false,
+    });
     expect(data.ready).toBe(false);
   });
 

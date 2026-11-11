@@ -214,6 +214,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
 
       return reply.send({
         data: { key: req.params.key, scope: selector.scope, value: result.after },
+        ...(result.warnings?.length ? { warnings: result.warnings } : {}),
       });
     }
   );
