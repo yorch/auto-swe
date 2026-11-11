@@ -108,7 +108,7 @@ describe('rebaseOntoMovedBranch', () => {
   const guardFor = (allowedPaths: string[]): PathGuard => ({
     allowedPaths,
     refuseWorkflowChanges: false,
-    report: { sha: git(work, 'rev-parse', 'HEAD'), twoTree: true },
+    report: { sha: git(work, 'rev-parse', 'HEAD') },
     sessionBase: git(work, 'rev-parse', 'HEAD~1'),
   });
 
