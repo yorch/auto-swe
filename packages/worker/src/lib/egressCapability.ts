@@ -6,6 +6,18 @@ import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { workspaceBackend } from './workspaceBackend/index.js';
 import type { WorkspaceBackend } from './workspaceBackend/types.js';
 
+function probeFailureReason(error: unknown): string {
+  const stderr = error && typeof error === 'object' && 'stderr' in error ? error.stderr : '';
+  const message = error instanceof Error ? error.message : String(error);
+  const diagnostic = typeof stderr === 'string' ? stderr.trim() : '';
+  const reason =
+    diagnostic ||
+    (message.startsWith('Command failed:')
+      ? 'Probe command failed without diagnostic output.'
+      : message);
+  return reason.replace(/\s+/g, ' ').trim().slice(0, 300);
+}
+
 export async function probeEgressCapability(
   backend: WorkspaceBackend = workspaceBackend()
 ): Promise<Omit<WorkerEgressReport, 'id' | 'reportedAt'>> {
@@ -41,15 +53,15 @@ export async function probeEgressCapability(
     await backend.lockEgress(handle, [], { mode: 'blocked' });
     result.networkLock = true;
   } catch (error) {
-    result.detail = error instanceof Error ? error.message : String(error);
-    console.warn('Worker cannot enforce egress network locks:', result.detail);
+    result.detail = probeFailureReason(error);
+    console.warn('Worker cannot enforce egress network locks:', error);
   } finally {
     try {
       await backend.remove(name);
     } catch (error) {
       result.networkLock = false;
-      result.detail = `Probe cleanup failed: ${error instanceof Error ? error.message : String(error)}`;
-      console.warn(result.detail);
+      result.detail = `Probe cleanup failed: ${probeFailureReason(error)}`.slice(0, 300);
+      console.warn('Probe cleanup failed:', error);
     }
   }
   return result;

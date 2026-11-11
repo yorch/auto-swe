@@ -4,11 +4,48 @@ import { probeEgressCapability, startEgressReporting } from './egressCapability.
 import type { WorkspaceBackend } from './workspaceBackend/types.js';
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   vi.useRealTimers();
 });
 
 describe('worker egress reporting', () => {
+  it.each(['stderr', 'empty', 'long', 'cleanup'])(
+    'stores a bounded reason, retaining full logs: %s',
+    async (mode) => {
+      vi.stubEnv('WORKSPACE_BACKEND', 'docker');
+      const diagnostic =
+        mode === 'long'
+          ? 'failed '.repeat(100)
+          : 'sh: apk: not found\negress lock: helper image has no iptables';
+      const error = Object.assign(
+        new Error(`Command failed: docker run sh -c '${'iptables script;'.repeat(100)}'`),
+        { stderr: mode === 'empty' ? '' : diagnostic }
+      );
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const backend = {
+        create: vi.fn().mockRejectedValue(error),
+        remove:
+          mode === 'cleanup'
+            ? vi.fn().mockRejectedValue(error)
+            : vi.fn().mockResolvedValue(undefined),
+      } as unknown as WorkspaceBackend;
+      const result = await probeEgressCapability(backend);
+      expect(result.networkLock).toBe(false);
+      expect(result.detail.length).toBeLessThanOrEqual(300);
+      expect(result.detail).not.toContain('iptables script');
+      expect(warn).toHaveBeenCalledWith('Worker cannot enforce egress network locks:', error);
+      if (mode === 'stderr') {
+        expect(result.detail).toBe('sh: apk: not found egress lock: helper image has no iptables');
+      }
+      if (mode === 'empty') {
+        expect(result.detail).toBe('Probe command failed without diagnostic output.');
+      }
+      if (mode === 'cleanup') {
+        expect(result.detail).toContain('Probe cleanup failed: sh: apk: not found');
+      }
+    }
+  );
   it.each(['ok', 'create', 'lock'])(
     'probes through real backend operations and cleans up: %s',
     async (failure) => {

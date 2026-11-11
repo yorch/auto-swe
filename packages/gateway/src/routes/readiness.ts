@@ -34,6 +34,7 @@ export interface ReadinessProvider {
 }
 
 export interface ReadinessItem {
+  informational?: boolean;
   id: 'credentials' | 'embeddings' | 'github' | 'connections' | 'egress';
   label: string;
   ok: boolean;
@@ -127,9 +128,10 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
 
     const items: ReadinessItem[] = [
       {
-        detail: [egress.detail, ...egress.warnings].join(' '),
+        detail: egress.detail,
         href: '/admin/platform-settings#group-workspace',
         id: 'egress',
+        informational: egress.reports.length === 0,
         label: 'Workspace egress enforcement',
         ok: egress.ok,
       },

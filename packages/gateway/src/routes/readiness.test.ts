@@ -91,6 +91,7 @@ beforeEach(() => {
 });
 
 interface Item {
+  informational?: boolean;
   id: string;
   ok: boolean;
   detail: string;
@@ -141,6 +142,10 @@ describe('GET /readiness', () => {
       const { data } = response.json();
       expect(item(data, 'egress').ok).toBe(['none', 'ok', 'stale'].includes(mode));
       expect(item(data, 'egress').href).toBe('/admin/platform-settings#group-workspace');
+      expect(item(data, 'egress').informational).toBe(mode === 'none');
+      if (mode === 'broken' || mode === 'mixed') {
+        expect(item(data, 'egress').detail.split('no NET_ADMIN')).toHaveLength(2);
+      }
       if (mode === 'none') {
         expect(item(data, 'egress').detail).toContain('No worker has reported');
       }
