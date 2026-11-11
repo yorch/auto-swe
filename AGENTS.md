@@ -145,6 +145,7 @@ Top-level files that matter:
 | CI-failure automation workflow ID / branch | `ci-<automation8>-<runId12>-<attempt>` / `<BRANCH_PREFIX>/ci-<runId>-<attempt>` | `ci-1a2b3c4d-123456789012-1` / `auto/ci-123456789012-1` |
 | PR-feedback automation workflow ID / branch | `prfb-<automation8>-<pr>-<eventId>` / `<BRANCH_PREFIX>/prfb-<pr>-<eventId>` | `prfb-1a2b3c4d-9-777` / `auto/prfb-9-777` |
 | Jira status-change automation workflow ID / branch | `jirapoll-<automation8>-<ticket>-<status8>` / `<BRANCH_PREFIX>/<ticketId>-<status8>` (`<status8>`: 8 hex digits of the lower-cased status) | `jirapoll-1a2b3c4d-pay-12-3fa2c1d9` / `auto/PAY-12-3fa2c1d9` |
+| Campaign workflow ID / child workflow ID / branch | `campaign-<campaignId>` / `campaign-<campaignId>-<connectionId>` / `<BRANCH_PREFIX>/CAMPAIGN-<id12>` (`<id12>`: the first 12 hex digits of the campaign id; the children's ticket id is `CAMPAIGN-<id12>` and no child sets a `branchName`, so each pushes that one branch in its own repository) | `campaign-0b1c2d3e-…` / `campaign-0b1c2d3e-…-9f8e7d6c-…` / `auto/CAMPAIGN-0b1c2d3e4f5a` |
 | Docker workspace container    | `workspace-<random-hex>`          | `workspace-a1b2c3d4`                      |
 | Prisma table mapping          | `snake_case` via `@@map`          | `active_workflows`                        |
 | Team slug                     | `lowercase-kebab-case`            | `payments`, `platform-eng`                |

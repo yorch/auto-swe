@@ -14,6 +14,17 @@ export type { AssistantTurnInput, AssistantTurnResult } from './assistantTurn.js
 export { failAssistantReply, runAssistantTurn } from './assistantTurn.js';
 export type { AwaitQodoReviewInput, QodoReviewResult } from './awaitQodoReview.js';
 export { awaitQodoReview } from './awaitQodoReview.js';
+export type {
+  FinalizeCampaignInput,
+  RecordCampaignTargetResultInput,
+  RecordCampaignTargetStartedInput,
+} from './campaign.js';
+export {
+  finalizeCampaign,
+  recordCampaignState,
+  recordCampaignTargetResult,
+  recordCampaignTargetStarted,
+} from './campaign.js';
 // Channel assistant (Phase 3) — ambient digest
 export { runChannelAmbientDigest } from './channelAmbient.js';
 // Channel assistant (Phase 0) — channel-resident Slack assistant
