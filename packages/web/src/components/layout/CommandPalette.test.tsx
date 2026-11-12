@@ -19,11 +19,15 @@ import { CommandPalette } from './CommandPalette';
 const push = vi.hoisted(() => vi.fn());
 
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
-vi.mock('@/hooks/useVisibleNav', () => ({
-  useVisibleNavGroups: () => [
-    { items: [{ href: '/runs', icon: 'runs', label: 'Runs' }], label: 'Work' },
-  ],
-}));
+vi.mock('@/hooks/useVisibleNav', async () => {
+  const { NAV_GROUPS } = await import('@/lib/navigation');
+  return {
+    useVisibleNavGroups: () => [
+      { items: [{ href: '/runs', icon: 'runs', label: 'Runs' }], label: 'Work' },
+      ...NAV_GROUPS.filter((group) => group.label === 'Knowledge'),
+    ],
+  };
+});
 
 type Handler = (url: URL) => unknown | Promise<unknown>;
 
@@ -87,6 +91,17 @@ const type = (value: string) =>
   fireEvent.change(screen.getByRole('combobox'), { target: { value } });
 
 describe('CommandPalette', () => {
+  it.each([
+    ['Knowledge', '/knowledge'],
+    ['Knowledge bases', '/knowledge-bases'],
+    ['Lessons', '/lessons'],
+  ])('opens the %s tab directly', async (label, href) => {
+    stubApi({});
+    await openPalette();
+    type(label);
+    fireEvent.click(screen.getByRole('option', { name: `${label}Knowledge` }));
+    expect(push).toHaveBeenCalledWith(href);
+  });
   it.each([
     ['Docs', '/docs'],
     ['Settings', '/settings'],

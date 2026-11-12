@@ -234,6 +234,12 @@ const ADMIN_PAGES: NavItem[] = [
   },
 ];
 
+export const KNOWLEDGE_PAGES: NavItem[] = [
+  { href: '/knowledge', icon: 'repository', label: 'Knowledge', minRole: 'ENGINEER' },
+  { href: '/knowledge-bases', icon: 'memory', label: 'Knowledge bases', minRole: 'ENGINEER' },
+  { href: '/lessons', icon: 'edit', label: 'Lessons', minRole: 'ENGINEER' },
+];
+
 export const NAV_GROUPS: NavGroup[] = [
   {
     items: [
@@ -285,14 +291,11 @@ export const NAV_GROUPS: NavGroup[] = [
     // What the agents carry from one run to the next. Every role reads it, scoped to what
     // they can reach; each page keeps its own management controls for those who hold them.
     items: [
-      { href: '/knowledge', icon: 'layers', label: 'Knowledge', minRole: 'ENGINEER' },
       {
-        href: '/knowledge-bases',
-        icon: 'repositories',
-        label: 'Knowledge bases',
-        minRole: 'ENGINEER',
+        ...KNOWLEDGE_PAGES[0],
+        alsoActiveFor: ['/knowledge-bases', '/lessons'],
+        children: KNOWLEDGE_PAGES.slice(1),
       },
-      { href: '/lessons', icon: 'memory', label: 'Lessons', minRole: 'ENGINEER' },
     ],
     label: 'Knowledge',
   },
@@ -386,14 +389,17 @@ export function activeNavHref(pathname: string, items: NavItem[]): string {
   }
   const owns = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
   const match = items
-    .flatMap((item) =>
-      item.href === '/'
-        ? []
-        : [item.href, ...(item.alsoActiveFor ?? [])]
-            .filter(owns)
-            .map((prefix) => ({ href: item.href, length: prefix.length }))
-    )
-    .sort((a, b) => b.length - a.length)[0];
+    .flatMap((item) => {
+      if (item.href === '/') {
+        return [];
+      }
+      return [item.href, ...(item.alsoActiveFor ?? [])].filter(owns).map((prefix) => ({
+        direct: prefix === item.href,
+        href: item.href,
+        length: prefix.length,
+      }));
+    })
+    .sort((a, b) => b.length - a.length || Number(b.direct) - Number(a.direct))[0];
   return match?.href ?? '';
 }
 

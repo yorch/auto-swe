@@ -33,6 +33,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Sidebar structure', () => {
+  it.each(['/knowledge/item', '/knowledge-bases/item', '/lessons/item'])(
+    'keeps Knowledge active on %s without separate sidebar links',
+    (pathname) => {
+      resetNavigation('', pathname);
+      render(<Sidebar collapsed onClose={() => undefined} open />);
+      expect(screen.getByRole('link', { name: 'Knowledge' }).getAttribute('aria-current')).toBe(
+        'page'
+      );
+      expect(screen.queryByRole('link', { name: 'Knowledge bases' })).toBeNull();
+      expect(screen.queryByRole('link', { name: 'Lessons' })).toBeNull();
+    }
+  );
   it('keeps every visible destination and team in the rail with accessible labels and hover/focus tips', () => {
     teamNav.entries = [
       { needsYou: 2, team: { id: 't', myRole: 'ADMIN', name: 'Platform Team', slug: 'platform' } },

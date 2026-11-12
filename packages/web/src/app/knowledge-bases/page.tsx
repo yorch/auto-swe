@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { PageHelp } from '@/components/help/PageHelp';
 import {
   KnowledgeBaseDetail,
   KnowledgeBaseForm,
@@ -13,7 +14,6 @@ import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import {
@@ -58,17 +58,18 @@ export default function KnowledgeBasesPage() {
   const currentPage = Math.min(page, Math.max(0, Math.ceil(rows.length / 20) - 1));
   return (
     <div className="space-y-6">
-      <PageHeader
-        actions={
-          eligible.length > 0 ? (
-            <Button onClick={() => setDialog({ kind: 'create' })} variant="primary">
-              Create knowledge base
-            </Button>
-          ) : undefined
-        }
-        subtitle="Repository-backed reference material. Read-only, pinned for each run and always untrusted."
-        title="Knowledge bases"
-      />
+      <PageHelp>
+        <p>
+          Repository-backed reference material. Read-only, pinned for each run and always untrusted.
+        </p>
+      </PageHelp>
+      {eligible.length > 0 && (
+        <div className="flex justify-end">
+          <Button onClick={() => setDialog({ kind: 'create' })} variant="primary">
+            Create knowledge base
+          </Button>
+        </div>
+      )}
       {notice && <Alert variant="success">{notice}</Alert>}
       {action.isError && (
         <Alert>{errMsg(action.error, 'Could not update the knowledge base.')}</Alert>

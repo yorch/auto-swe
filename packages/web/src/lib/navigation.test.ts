@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Role } from '@auto-swe/shared';
 import { describe, expect, it } from 'vitest';
+import { ICON_PATHS, isIconName } from '@/components/ui/Icon';
 import { hasRole } from '@/lib/roles';
 import {
   ADMIN_HREF,
@@ -49,6 +50,29 @@ function layoutFloor(href: string): Role {
 }
 
 describe('NAV_GROUPS', () => {
+  it('uses visually distinct glyphs for every sidebar destination', () => {
+    const glyphs = NAV_GROUPS.flatMap((group) =>
+      group.items.map((item) => {
+        if (!isIconName(item.icon)) {
+          throw new Error(`Unknown sidebar icon: ${item.icon}`);
+        }
+        return ICON_PATHS[item.icon];
+      })
+    );
+    expect(new Set(glyphs).size).toBe(glyphs.length);
+  });
+  it('has one Knowledge destination while keeping each tab discoverable', () => {
+    const items = NAV_GROUPS.find((group) => group.label === 'Knowledge')?.items ?? [];
+    expect(items.map((item) => item.href)).toEqual(['/knowledge']);
+    for (const href of ['/knowledge', '/knowledge-bases', '/lessons']) {
+      expect(activeNavHref(`${href}/detail`, items)).toBe('/knowledge');
+      expect(pageSection(`${href}/detail`)).toBe('Knowledge');
+      expect(NAV_ITEMS.some((item) => item.href === href)).toBe(true);
+    }
+    expect(activeNavHref('/lessons-other', items)).toBe('');
+    expect(pageTitle('/lessons')).toBe('Lessons');
+    expect(pageTitle('/knowledge-bases/detail')).toBe('Knowledge bases');
+  });
   it('separates authoring from connections and keeps account pages in the user menu', () => {
     expect(NAV_GROUPS.find((g) => g.label === 'Build')?.items.map((i) => i.href)).toEqual([
       '/library',
