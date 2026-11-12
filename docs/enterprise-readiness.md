@@ -333,6 +333,13 @@ authenticated principal, and tenant keys on the tables joined through runs.
   and package installs need it). With the worker's egress proxy configured, `HTTP_PROXY` holds
   cooperating clients to the team allowlist, and a client that ignores proxy variables is not
   held.
+- **Setup can be looser than the agent.** The ADMIN-only, run-pinned `workspace.setupEgressPolicy`
+  defaults to `inherit`. `open` or `restricted` can temporarily loosen agent-workspace setup, with
+  verified process termination and replacement of the final network rules before agent execution.
+  Attached services intentionally remain running under the final policy. Shell/containerStep steps
+  do not use this setting. Treat setup as repository-controlled code with access to its declared
+  secrets and wired workspace/proxy credentials, not as a trusted package-install boundary; see
+  [setup network phases](./run-activity.md#setup-and-agent-network-phases).
 - **Shell and container steps** default to `network: "none"` in the node. A step that sets
   `network: "egress"` is held to the team's `egressAllowlist` by a DNS filter (and the egress
   proxy when configured); under `open`, an empty allowlist permits any host. Under `restricted`
@@ -459,6 +466,10 @@ None of these is implemented by the code, and an auditor will ask for each:
 - Owner: unassigned
 
 ## Limitations
+
+- A looser setup policy can expose setup secrets and workspace/proxy credentials to repository code
+  with broader network access. Final process termination and agent locking cannot undo exfiltration
+  or file changes; intentionally long-lived attached services remain outside that cleanup guarantee.
 
 - Egress readiness is based on workers' self-declared reports. Reports expire after thirty
   minutes and refresh every ten minutes without re-probing; they are not continuous attestation.

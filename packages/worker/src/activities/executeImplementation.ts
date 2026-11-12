@@ -304,6 +304,26 @@ export async function executeImplementation(
     // non-fatal — omit if workspace exec fails
   }
 
+  let crossRepoContext = '';
+  const prepareCrossRepoContext = async () => {
+    if (!wantsCrossRepoContext(crossRepoOptions)) {
+      return;
+    }
+    try {
+      crossRepoContext = await loadRepoDependencyContext(repo.id, activityCtx.orgId);
+      if (crossRepoContext && wantsCrossRepoCheckout(crossRepoOptions)) {
+        crossRepoContext += await checkoutUpstreamRepos(workspace, repo.id, activityCtx.orgId);
+      }
+      if (crossRepoContext) {
+        tracer.addActivityEvent({
+          name: 'crossRepo.context_loaded',
+          outputJson: { chars: crossRepoContext.length },
+        });
+      }
+    } catch {
+      crossRepoContext = '';
+    }
+  };
   try {
     heartbeat('workspace provisioned');
 
@@ -324,6 +344,10 @@ export async function executeImplementation(
       }
     }
     await workspace.runSetup?.();
+    if (workspace.finishSetup) {
+      await prepareCrossRepoContext();
+      await workspace.finishSetup();
+    }
 
     // After any sync to a previous attempt's pushed branch, and before any agent turn:
     // this session answers for its own changes from here. `baseSha` (the base branch's
@@ -408,24 +432,8 @@ export async function executeImplementation(
     // loader swallows its own failures. The optional `full_checkout` tier
     // additionally clones the upstream repos into /workspace/deps (opt-in, off
     // by default) and appends the paths to the same block.
-    let crossRepoContext = '';
-    if (wantsCrossRepoContext(crossRepoOptions)) {
-      try {
-        crossRepoContext = await loadRepoDependencyContext(repo.id, activityCtx.orgId);
-        if (crossRepoContext && wantsCrossRepoCheckout(crossRepoOptions)) {
-          crossRepoContext += await checkoutUpstreamRepos(workspace, repo.id, activityCtx.orgId);
-        }
-        if (crossRepoContext) {
-          tracer.addActivityEvent({
-            name: 'crossRepo.context_loaded',
-            outputJson: { chars: crossRepoContext.length },
-          });
-        }
-      } catch {
-        // Both helpers already swallow their own failures; this is the outer
-        // belt — cross-repo context must never block implementation.
-        crossRepoContext = '';
-      }
+    if (!workspace.finishSetup) {
+      await prepareCrossRepoContext();
     }
 
     // Fire-and-forget tracker sync — never blocks implementation

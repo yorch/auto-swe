@@ -100,6 +100,7 @@ async function checkoutWorkspace(
     await workspace.gitAuthed(fetchBranchesSubcommand([branch]));
     await workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
     await workspace.runSetup?.();
+    await workspace.finishSetup?.();
   } catch (error) {
     await workspace.destroy();
     throw error;

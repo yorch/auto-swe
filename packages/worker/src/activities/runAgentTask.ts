@@ -336,6 +336,7 @@ export async function runAgentTaskCore(
         toolsFor: { connectionId: repo.id },
       }
     );
+    await agentWs.finishSetup?.();
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
     if (input.initialChange) {
       if (deliver !== 'none') {
@@ -346,7 +347,13 @@ export async function runAgentTaskCore(
 
     tracer.addActivityEvent({
       name: 'agent.runtime',
-      outputJson: { agentKey: key, runtime: loop.runtime, source: loop.source },
+      outputJson: {
+        agentKey: key,
+        egressPolicy: agentWs.egressPolicy,
+        runtime: loop.runtime,
+        setupEgressPolicy: agentWs.setupEgressPolicy,
+        source: loop.source,
+      },
     });
     // The paused run's tree goes back into the agent's container before its first turn;
     // delivery still judges it from a fresh container, as for any run.

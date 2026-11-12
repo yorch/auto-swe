@@ -41,6 +41,20 @@ afterEach(() => {
 });
 
 describe('Docker workspace user', () => {
+  it('clears root-opt-out setup processes in a trusted PID-namespace helper, never by root exec', async () => {
+    await backend.clearSetupProcesses(handle, 'echo cleanup', 'mnt:[1234]');
+    const command = vi.mocked(execShellAsync).mock.calls[0]?.[0] ?? '';
+    expect(command).toContain("'--pid=container:workspace-nonroot'");
+    expect(command).toContain("'--network=none'");
+    expect(command).toContain("'--cap-add=KILL'");
+    expect(command).toContain("'--cap-add=SYS_PTRACE'");
+    expect(command).toContain('mnt:[1234]');
+    expect(command).not.toContain('docker exec');
+    expect(command).not.toContain('--runtime');
+    await expect(backend.clearSetupProcesses(handle, 'echo cleanup', 'invalid')).rejects.toThrow(
+      'invalid recorded mount namespace'
+    );
+  });
   it.each([undefined, 'runsc-host'])(
     'installs tools as root with a clean system PATH before returning runtime %j',
     async (runtime) => {

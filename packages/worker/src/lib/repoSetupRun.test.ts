@@ -399,6 +399,16 @@ describe('runSetupStepsPhase', () => {
     expect(new Set(keys).size).toBe(3);
   });
 
+  it('isolates looser setup cache entries while preserving the inherited key', async () => {
+    const keys: unknown[] = [];
+    for (const setupEgressPolicy of [undefined, 'open', 'restricted', undefined] as const) {
+      await runSetupStepsPhase(fakeHost(), setup, { ...inputs, setupEgressPolicy });
+      keys.push(JSON.stringify(cache.findUnique.mock.calls.at(-1)));
+    }
+    expect(new Set(keys).size).toBe(3);
+    expect(keys[0]).toBe(keys[3]);
+  });
+
   it('keys on every tracked file a key file glob matches, by path and content', async () => {
     const globbed: RepoSetup = { ...setup, cache: { keyFiles: ['**/build.gradle'], paths: ['x'] } };
     const listing = (files: string[]) =>

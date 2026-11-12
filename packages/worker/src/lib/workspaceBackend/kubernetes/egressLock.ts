@@ -268,6 +268,8 @@ function probeState(result: CapturedResult): ProbeState {
 }
 
 export interface EgressLockDeps {
+  allowedBefore?: ResolvedAllow[];
+  onVerifiedAllow?: (allow: ResolvedAllow[]) => void;
   /** Runs `kubectl` with the manifest (if any) on stdin; never throws on a non-zero exit. */
   kubectl: (args: string[], stdin?: string) => Promise<CapturedResult>;
   /** Runs a shell command in the pod. */
@@ -316,6 +318,29 @@ async function pickReachableTarget(
   );
 }
 
+async function pickTighteningTarget(
+  podName: string,
+  deps: EgressLockDeps,
+  resolved: ResolvedAllow[]
+): Promise<ProbeTarget> {
+  const removed = (deps.allowedBefore ?? []).filter(
+    (r) =>
+      r.port !== undefined &&
+      !resolved.some(
+        (next) => next.ip === r.ip && (next.port === undefined || next.port === r.port)
+      )
+  );
+  for (const entry of removed) {
+    const target = { host: entry.ip, port: entry.port ?? 0 };
+    if (probeState(await deps.probe(probeScript(target))) === 'open') {
+      return target;
+    }
+  }
+  throw new Error(
+    `workspace ${podName}: cannot verify setup egress tightening — no formerly allowed destination was reachable before tightening`
+  );
+}
+
 /**
  * Cuts one pod off the network, and fails unless it provably is. A public address is first shown
  * to be reachable from the unlocked pod; then the per-pod allow policy (inert until the label
@@ -326,10 +351,14 @@ export async function lockPodEgress(
   podName: string,
   allow: EgressAllowEntry[],
   deps: EgressLockDeps,
-  mode: EgressLockMode = EGRESS_BLOCKED
+  mode: EgressLockMode = EGRESS_BLOCKED,
+  replace = false
 ): Promise<void> {
   const resolved = await resolveAllow(allow, deps.lookup);
-  const target = await pickReachableTarget(podName, deps, resolved);
+  const target =
+    replace && deps.allowedBefore
+      ? await pickTighteningTarget(podName, deps, resolved)
+      : await pickReachableTarget(podName, deps, resolved);
   if (resolved.length > 0) {
     const got = await deps.kubectl(podUidArgs(deps.namespace, podName));
     const uid = got.stdout.trim();
@@ -337,9 +366,18 @@ export async function lockPodEgress(
       throw new Error(`workspace ${podName}: could not read the pod's uid: ${got.stderr}`);
     }
     const policy = buildEgressAllowPolicy(podName, uid, deps.namespace, resolved, mode);
+    const manifest = replace
+      ? {
+          ...policy,
+          metadata: {
+            ...(policy.metadata as Record<string, unknown>),
+            name: `${egressPolicyName(podName)}-${mode}`,
+          },
+        }
+      : policy;
     const created = await deps.kubectl(
       ['create', '--namespace', deps.namespace, '-f', '-'],
-      JSON.stringify(policy)
+      JSON.stringify(manifest)
     );
     if (created.exitCode !== 0) {
       throw new Error(
@@ -364,6 +402,7 @@ export async function lockPodEgress(
     closedInARow = last === 'closed' ? closedInARow + 1 : 0;
     if (closedInARow >= 2) {
       await warnIfAllowedUnreachable(podName, resolved, deps);
+      deps.onVerifiedAllow?.(resolved);
       return;
     }
     if (last === 'notool' || last === 'error') {

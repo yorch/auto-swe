@@ -11,6 +11,20 @@ export const EGRESS_POLICIES = ['open', 'restricted', 'blocked'] as const;
 export const egressPolicySchema = z.enum(EGRESS_POLICIES);
 export type EgressPolicy = z.infer<typeof egressPolicySchema>;
 
+export const setupEgressPolicySchema = z.enum(['inherit', 'open', 'restricted']);
+export type SetupEgressPolicy = z.infer<typeof setupEgressPolicySchema>;
+
+export function effectiveSetupEgressPolicy(
+  agent: EgressPolicy,
+  setup: SetupEgressPolicy,
+  hasAllowlist = true
+): EgressPolicy {
+  if (setup === 'inherit' || (setup === 'restricted' && !hasAllowlist)) {
+    return agent;
+  }
+  return RANK[setup] < RANK[agent] ? setup : agent;
+}
+
 const RANK: Record<EgressPolicy, number> = { blocked: 2, open: 0, restricted: 1 };
 
 export const EGRESS_REPORT_MAX_AGE_MS = 30 * 60_000;

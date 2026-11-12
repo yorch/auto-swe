@@ -251,6 +251,7 @@ export async function runImplementerFixSession(
       }
     }
     await workspace.runSetup?.();
+    await workspace.finishSetup?.();
 
     // The commit the fixer starts from, so the test-integrity gate reads exactly what the session
     // changed — staged or committed by the agent itself. Fails closed here in block mode.

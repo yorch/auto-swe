@@ -35,7 +35,7 @@ import type {
   WorkspaceHandle,
   WorkspaceSpawnOptions,
 } from '../types.js';
-import { type EgressLockDeps, lockPodEgress } from './egressLock.js';
+import { type EgressLockDeps, lockPodEgress, type ResolvedAllow } from './egressLock.js';
 import { kubernetesKeeperPidProbeScript } from './keeperPidProbe.js';
 import {
   createFromStdinArgs,
@@ -126,6 +126,7 @@ async function captured(
  */
 export class KubernetesWorkspaceBackend implements WorkspaceBackend {
   readonly kind = 'kubernetes' as const;
+  private readonly egressAllows = new Map<string, ResolvedAllow[]>();
 
   constructor(
     private readonly config: () => KubernetesWorkspaceConfig,
@@ -327,6 +328,7 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
       allow,
       {
         ...this.lockOptions,
+        ...(opts?.replace ? { allowedBefore: this.egressAllows.get(h.id) } : {}),
         kubectl: (args, stdin) =>
           stdin === undefined
             ? spawnCaptureAsync(this.kubectl, args, {
@@ -338,13 +340,15 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
                 timeoutMs: 60_000,
               }),
         namespace,
+        onVerifiedAllow: (allow) => this.egressAllows.set(h.id, allow),
         probe: (script) =>
           this.exec(h, ['sh', '-c', script], {
             heartbeatLabel: 'workspace: verifying egress lock',
             timeoutMs: 30_000,
           }),
       },
-      opts?.mode ?? 'blocked'
+      opts?.mode ?? 'blocked',
+      opts?.replace
     );
   }
 
@@ -493,6 +497,7 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
   }
 
   async remove(idOrHandle: string | WorkspaceHandle): Promise<void> {
+    this.egressAllows.delete(typeof idOrHandle === 'string' ? idOrHandle : idOrHandle.id);
     try {
       const result = await spawnCaptureAsync(this.kubectl, deletePodArgs(this.ref(idOrHandle)), {
         heartbeatLabel: 'workspace: removing pod',

@@ -219,6 +219,15 @@ conntrack() { :; }
     expect(() => assertEgressLocked(strict)).not.toThrow();
     expect(strict).not.toContain('-A OUTPUT -j ASW_BASELINE');
     expect(strict).not.toContain('-A OUTPUT -m conntrack --ctstate');
+    const transitioned = execFileSync(
+      'sh',
+      [
+        '-c',
+        `${tables}\n${buildBaselineEgressScript([], [])}\n${buildEgressLockScript([{ ip: '203.0.113.7', port: 8792 }])}\necho final:\n${buildEgressLockScript([])}`,
+      ],
+      { encoding: 'utf8' }
+    );
+    expect(transitioned.split('final:\n')[1]).toBe(strict);
   });
 });
 

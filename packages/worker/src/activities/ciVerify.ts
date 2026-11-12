@@ -197,6 +197,7 @@ async function verify(input: {
     }
     try {
       await workspace.runSetup?.();
+      await workspace.finishSetup?.();
     } catch (err) {
       return unverified(`workspace setup failed (${getErrorMessage(err).slice(0, 200)})`, command);
     }

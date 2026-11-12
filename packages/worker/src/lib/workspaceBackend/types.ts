@@ -135,6 +135,11 @@ export interface WorkspaceSpawnOptions {
  *  - remove() is idempotent.
  */
 export interface WorkspaceBackend {
+  clearSetupProcesses?: (
+    h: WorkspaceHandle,
+    script: string,
+    mountNamespace: string
+  ) => Promise<void>;
   readonly kind: 'docker' | 'kubernetes';
   /**
    * Start the container, run the metadata-block sidecar when configured
@@ -248,6 +253,9 @@ export interface WorkspaceBackend {
  */
 export interface LockEgressOptions {
   mode?: 'blocked' | 'restricted';
+  /** Tighten after repository-controlled setup without a privileged workspace exec. */
+  replace?: boolean;
+  prepareOnly?: boolean;
 }
 
 /** A destination a locked-down workspace may still reach. A missing `port` means any port. */

@@ -492,7 +492,8 @@ export async function resolveInWorkspace(
   host: string,
   mapped: Map<string, string[]>,
   lookup: (host: string) => Promise<string[]> = async (name) =>
-    (await dns.lookup(name, { all: true })).map((a) => a.address)
+    (await dns.lookup(name, { all: true })).map((a) => a.address),
+  asRoot = true
 ): Promise<string[]> {
   if (mapped.has(host.toLowerCase())) {
     throw new Error(
@@ -503,7 +504,7 @@ export async function resolveInWorkspace(
   for (const db of ['ahosts', 'hosts']) {
     const r = await spawnCaptureAsync(
       'docker',
-      ['exec', '-u', 'root', containerId, 'getent', db, host],
+      ['exec', ...(asRoot ? ['-u', 'root'] : []), containerId, 'getent', db, host],
       { heartbeatLabel: `workspace: resolving ${host}`, timeoutMs: 30_000 }
     );
     if (r.exitCode === 0) {
@@ -612,7 +613,7 @@ async function workspaceResolutionContext(containerId: string) {
     trusted.set(alias, [aliasAddress]);
     mapped.delete(alias);
   }
-  return { mapped, trusted };
+  return { hostsText: current.stdout, mapped, trusted };
 }
 
 export async function installBaselineEgress(
@@ -912,6 +913,48 @@ export function workspaceBootstrapScript(): string {
  */
 class DockerWorkspaceBackend implements WorkspaceBackend {
   readonly kind = 'docker' as const;
+  private readonly egressPins = new Map<string, Map<string, string[]>>();
+
+  async clearSetupProcesses(
+    h: WorkspaceHandle,
+    script: string,
+    mountNamespace: string
+  ): Promise<void> {
+    if (!/^mnt:\[\d+\]$/.test(mountNamespace)) {
+      throw new Error('setup cleanup: invalid recorded mount namespace');
+    }
+    const check = `[ "$(readlink /proc/${h.keeperPid}/ns/mnt)" = ${shellQuote(mountNamespace)} ] || { echo 'setup cleanup: workspace PID namespace is not accessible to the trusted helper' >&2; exit 1; }`;
+    await execShellAsync(
+      [
+        'docker',
+        'run',
+        '--rm',
+        '--network=none',
+        `--pid=container:${h.id}`,
+        '--cap-drop=ALL',
+        '--cap-add=KILL',
+        '--cap-add=SYS_PTRACE',
+        '--security-opt=no-new-privileges',
+        '--read-only',
+        '--memory=128m',
+        '--pids-limit=64',
+        '--',
+        resolveWorkspaceInfra().metadataBlockImage,
+        '/usr/bin/env',
+        '-i',
+        'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+        '/bin/sh',
+        '-ec',
+        `${check}\n${script}`,
+      ]
+        .map(shellQuote)
+        .join(' '),
+      {
+        heartbeatLabel: 'workspace: verifying setup processes stopped',
+        timeoutMs: 60_000,
+      }
+    );
+  }
   private readonly bootstrapHandles = new Map<string, WorkspaceHandle>();
   private readonly bootstrapRunning = new Set<string>();
 
@@ -1219,6 +1262,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
 
   async remove(idOrHandle: string | WorkspaceHandle): Promise<void> {
     const id = typeof idOrHandle === 'string' ? idOrHandle : idOrHandle.id;
+    this.egressPins.delete(id);
     try {
       let owner = id;
       if (/^[a-f0-9]{64}$/i.test(id)) {
@@ -1456,25 +1500,39 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   async lockEgress(
     handle: WorkspaceHandle,
     allow: EgressAllowEntry[],
-    _opts?: LockEgressOptions
+    opts?: LockEgressOptions
   ): Promise<void> {
-    await this.installEgressLock(handle, allow);
+    this.egressPins.set(handle.id, await this.installEgressLock(handle, allow, undefined, opts));
   }
 
   private async installEgressLock(
     handle: WorkspaceHandle,
     allow: EgressAllowEntry[],
-    sidecarPort?: number
-  ): Promise<void> {
+    sidecarPort?: number,
+    opts?: LockEgressOptions
+  ): Promise<Map<string, string[]>> {
     // Fail closed: every error below propagates and the caller removes the workspace or holder.
     const image = resolveWorkspaceInfra().metadataBlockImage;
     // /etc/hosts belongs to the workspace container, not to its network namespace, so the helper
-    // cannot write it. Names are resolved from inside the workspace and pinned by a root
-    // `docker exec` into it, BEFORE the lock, while nothing is blocked yet.
-    const { mapped, trusted } = await workspaceResolutionContext(handle.id);
+    // cannot write it. Post-setup pinning uses the daemon, never a root workspace exec.
+    const { hostsText, mapped, trusted } = await workspaceResolutionContext(handle.id);
+    const prior = this.egressPins.get(handle.id) ?? new Map<string, string[]>();
+    if (opts?.replace) {
+      for (const [name, ips] of prior) {
+        if (JSON.stringify(trusted.get(name) ?? mapped.get(name)) !== JSON.stringify(ips)) {
+          throw new Error(`egress lock: workspace changed the recorded host pin for ${name}`);
+        }
+        trusted.set(name, ips);
+      }
+    }
     const { rules, hosts } = await resolveEgressTargets(
       allow,
-      (host) => resolveInWorkspace(handle.id, host, mapped),
+      (host) => {
+        if (opts?.replace && this.egressPins.has(handle.id)) {
+          throw new Error(`egress lock: no prepared host pin for ${host}`);
+        }
+        return resolveInWorkspace(handle.id, host, mapped, undefined, !opts?.replace);
+      },
       trusted
     );
     const incoming =
@@ -1487,21 +1545,85 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const script = buildEgressLockScript(rules, incoming);
     if (hosts.length > 0) {
       const lines = hosts.map(([ip, name]) => `${ip}\t${name}\n`).join('');
-      const written = await spawnWithStdinAsync(
-        'docker',
-        ['exec', '-i', '-u', 'root', handle.id, 'sh', '-c', 'cat >> /etc/hosts'],
-        lines,
-        { heartbeatLabel: 'workspace: pinning egress hosts', timeoutMs: 30_000 }
-      );
-      if (written.exitCode !== 0) {
-        throw new Error('egress lock: cannot write the workspace /etc/hosts');
+      if (opts?.replace) {
+        const inspected = await spawnCaptureAsync(
+          'docker',
+          ['inspect', '--format', '{{.Id}}\t{{.HostsPath}}', handle.id],
+          {
+            heartbeatLabel: 'workspace: locating daemon-owned hosts file',
+            timeoutMs: 30_000,
+          }
+        );
+        const [containerId, hostsPath] = inspected.stdout.trim().split('\t');
+        if (
+          inspected.exitCode !== 0 ||
+          !containerId ||
+          !/^[a-f0-9]{64}$/.test(containerId) ||
+          !hostsPath ||
+          !path.posix.isAbsolute(hostsPath) ||
+          /[,\r\n]/.test(hostsPath) ||
+          !hostsPath.endsWith(`/${containerId}/hosts`)
+        ) {
+          throw new Error('egress lock: cannot locate the daemon-owned workspace hosts file');
+        }
+        const written = await spawnWithStdinAsync(
+          'docker',
+          [
+            'run',
+            '--rm',
+            '-i',
+            '--network=none',
+            '--user=0:0',
+            '--cap-drop=ALL',
+            '--security-opt=no-new-privileges',
+            '--read-only',
+            '--memory=128m',
+            '--pids-limit=64',
+            '--mount',
+            `type=bind,src=${hostsPath},dst=/asw-hosts`,
+            '--',
+            image,
+            '/usr/bin/env',
+            '-i',
+            'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+            '/bin/sh',
+            '-ec',
+            'cat > /asw-hosts',
+          ],
+          `${hostsText}\n${lines}`,
+          { heartbeatLabel: 'workspace: pinning egress hosts', timeoutMs: 30_000 }
+        );
+        if (written.exitCode !== 0) {
+          throw new Error(
+            `egress lock: cannot write the workspace /etc/hosts: ${written.stderr.trim()}`
+          );
+        }
+      } else {
+        const written = await spawnWithStdinAsync(
+          'docker',
+          ['exec', '-i', '-u', 'root', handle.id, 'sh', '-c', 'cat >> /etc/hosts'],
+          lines,
+          { heartbeatLabel: 'workspace: pinning egress hosts', timeoutMs: 30_000 }
+        );
+        if (written.exitCode !== 0) {
+          throw new Error('egress lock: cannot write the workspace /etc/hosts');
+        }
       }
     }
-    const report = await execShellAsync(buildEgressHelperCommand(handle.id, image, script), {
-      heartbeatLabel: 'workspace: locking egress',
-    });
-    // The script read the policies back from the kernel; refuse anything but DROP.
-    assertEgressLocked(report);
+    if (!opts?.prepareOnly) {
+      const report = await execShellAsync(buildEgressHelperCommand(handle.id, image, script), {
+        heartbeatLabel: 'workspace: locking egress',
+      });
+      assertEgressLocked(report);
+    }
+    for (const [name, ips] of trusted) {
+      prior.set(name, ips);
+    }
+    for (const [ip, name] of hosts) {
+      const key = name.toLowerCase();
+      prior.set(key, [...(prior.get(key) ?? []), ip]);
+    }
+    return prior;
   }
 
   async sidecarBaseUrl(name: string, containerPort: number): Promise<string> {

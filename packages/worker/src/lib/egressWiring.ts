@@ -1,6 +1,6 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
+import type { EgressPolicy, SetupEgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 import { currentRequestContext } from './config/contextLookup.js';
@@ -152,13 +152,25 @@ export function assertStepEgressEnforceable(
  * is not seen.
  */
 export async function resolveRunEgressPolicy(teamId: string | null): Promise<EgressPolicy> {
+  return resolveRunNetworkSetting('workspace.egressPolicy', teamId);
+}
+
+export async function resolveRunSetupEgressPolicy(
+  teamId: string | null
+): Promise<SetupEgressPolicy> {
+  return resolveRunNetworkSetting('workspace.setupEgressPolicy', teamId);
+}
+
+async function resolveRunNetworkSetting<
+  K extends 'workspace.egressPolicy' | 'workspace.setupEgressPolicy',
+>(key: K, teamId: string | null) {
   const ctx = await currentRequestContext();
   let orgId = ctx.orgId;
   if (orgId === undefined && teamId) {
     const team = await prisma.team.findUnique({ select: { orgId: true }, where: { id: teamId } });
     orgId = team?.orgId ?? undefined;
   }
-  return resolveSetting('workspace.egressPolicy', {
+  return resolveSetting(key, {
     ...ctx,
     ...(orgId ? { orgId } : {}),
     ...(teamId ? { teamId } : {}),

@@ -3,6 +3,7 @@ import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { deleteArtifact, getArtifact, putArtifact } from '@auto-swe/shared/lib/artifactStore';
 import { decryptSecret } from '@auto-swe/shared/lib/crypto';
+import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import {
   DEFAULT_SETUP_STEP_TIMEOUT_SECONDS,
   isKeyFileGlob,
@@ -157,6 +158,7 @@ export interface RepoSetupInputs {
   cleanUrl: string;
   gitHost: string | null;
   image: string;
+  setupEgressPolicy?: EgressPolicy;
 }
 
 async function stackDefaultsEnabled(teamId: string | null): Promise<boolean> {
@@ -491,7 +493,7 @@ function cacheTarPaths(paths: readonly string[]): string {
 async function setupCacheKey(
   host: RepoSetupHost,
   setup: RepoSetup,
-  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId'>
+  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId' | 'setupEgressPolicy'>
 ): Promise<string> {
   const entries = setup.cache?.keyFiles ?? [];
   const globs = entries.filter(isKeyFileGlob);
@@ -518,6 +520,7 @@ async function setupCacheKey(
         image: inputs.image,
         repository: repositoryId(inputs.cleanUrl),
         setup: canonical(setup),
+        ...(inputs.setupEgressPolicy ? { setupEgressPolicy: inputs.setupEgressPolicy } : {}),
         team: inputs.teamId ?? null,
         v: 2,
       })
@@ -912,7 +915,7 @@ export async function runSetupGitPhase(
 export async function runSetupStepsPhase(
   host: RepoSetupHost,
   setup: RepoSetup,
-  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId'>,
+  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId' | 'setupEgressPolicy'>,
   /** The values of the secrets `setup.secrets` names, already resolved. */
   secretEnv: Record<string, string> = {}
 ): Promise<Pick<RepoSetupReport, 'cache' | 'steps'>> {
