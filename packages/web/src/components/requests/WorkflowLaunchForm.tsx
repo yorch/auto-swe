@@ -59,9 +59,11 @@ function hasText(value: unknown) {
 export function WorkflowLaunchForm({
   template,
   onLaunched,
+  showProcessSummary = true,
 }: {
   template: WorkflowTemplateSummary;
   onLaunched: (requestId: string) => void;
+  showProcessSummary?: boolean;
 }) {
   const taskNameId = useId();
   const schema = isInputSchema(template.inputSchema)
@@ -212,7 +214,7 @@ export function WorkflowLaunchForm({
               version.
             </Alert>
           )}
-          <WorkflowLaunchSummary templateId={template.id} />
+          {showProcessSummary && <WorkflowLaunchSummary templateId={template.id} />}
           <Alert variant="info">
             This workflow follows its configured steps, checks, and approvals. Review its process in
             the workflow library if you need to confirm what it may publish.

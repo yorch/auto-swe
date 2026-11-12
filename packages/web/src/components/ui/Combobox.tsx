@@ -1,6 +1,16 @@
 'use client';
 
-import { ComboBox as AriaComboBox, Button, Group, Input, ListBox } from 'react-aria-components';
+import {
+  ComboBox as AriaComboBox,
+  Button,
+  Collection,
+  Group,
+  Header,
+  Input,
+  ListBox,
+  ListBoxSection,
+  useFilter,
+} from 'react-aria-components';
 import { cn } from '@/lib/utils';
 import {
   Chevron,
@@ -11,15 +21,25 @@ import {
   FieldLabel,
   fieldBoxClass,
   fromKey,
+  optionText,
   toKey,
   validationProps,
   withIds,
 } from './dropdown';
 
-export type ComboboxOption = DropdownOption;
+export type ComboboxOption = DropdownOption & { searchText?: string };
+
+export interface ComboboxSection {
+  id: string;
+  label: string;
+  options: ComboboxOption[];
+}
+
+type CollectionItem = (ComboboxOption & { id: string }) | ComboboxSection;
 
 interface ComboboxProps {
-  options: ComboboxOption[];
+  options?: ComboboxOption[];
+  sections?: ComboboxSection[];
   /** The selected option's value; '' (or any value matching no option) means none. */
   value: string;
   onChange: (value: string) => void;
@@ -52,7 +72,8 @@ interface ComboboxProps {
  * value can only ever be one of the options, unless `allowsCustomValue` is set.
  */
 export function Combobox({
-  options,
+  options = [],
+  sections,
   value,
   onChange,
   label,
@@ -69,16 +90,24 @@ export function Combobox({
   className,
   allowsCustomValue = false,
 }: ComboboxProps) {
-  const selected = options.some((o) => o.value === value) ? toKey(value) : null;
+  const allOptions = sections ? sections.flatMap((section) => section.options) : options;
+  const { contains } = useFilter({ sensitivity: 'base' });
+  const selected = allOptions.some((o) => o.value === value) ? toKey(value) : null;
+  const items: CollectionItem[] = sections ?? withIds(options);
   return (
     <AriaComboBox
       allowsCustomValue={allowsCustomValue}
       allowsEmptyCollection
       aria-label={ariaLabel}
       className={cn('block', className)}
+      defaultFilter={(text, input) =>
+        allOptions.some(
+          (option) => optionText(option) === text && contains(option.searchText ?? text, input)
+        )
+      }
       // Uncontrolled items so React Aria filters them; it re-reads them every
       // render, so options that arrive after mount still appear.
-      defaultItems={withIds(options)}
+      defaultItems={items}
       id={id}
       isDisabled={disabled}
       isRequired={required}
@@ -113,7 +142,20 @@ export function Combobox({
             <p className="px-2.5 py-1.5 text-sm text-paper-500">{emptyMessage}</p>
           )}
         >
-          {(option: ComboboxOption) => <DropdownItem compact={compact} option={option} />}
+          {(item: CollectionItem) =>
+            'options' in item ? (
+              <ListBoxSection id={item.id}>
+                <Header className="px-2.5 pt-3 pb-1 text-xs font-semibold text-paper-400">
+                  {item.label}
+                </Header>
+                <Collection items={withIds(item.options)}>
+                  {(option) => <DropdownItem compact={compact} option={option} />}
+                </Collection>
+              </ListBoxSection>
+            ) : (
+              <DropdownItem compact={compact} option={item} />
+            )
+          }
         </ListBox>
       </DropdownPopover>
     </AriaComboBox>

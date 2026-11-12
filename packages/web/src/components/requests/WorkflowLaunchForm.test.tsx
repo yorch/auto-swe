@@ -66,6 +66,19 @@ function gateway() {
 }
 
 describe('workflow launch', () => {
+  it('omits the review process summary when the picker already shows it', async () => {
+    gateway();
+    render(
+      withQuery(
+        <WorkflowLaunchForm onLaunched={vi.fn()} showProcessSummary={false} template={template} />
+      )
+    );
+    fireEvent.change(screen.getByLabelText(/Task name/), { target: { value: 'Task' } });
+    fireEvent.change(screen.getByLabelText(/Description/), { target: { value: 'Brief' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+    expect(await screen.findByRole('button', { name: 'Launch workflow' })).toBeTruthy();
+    expect(screen.queryByText('Declared outputs')).toBeNull();
+  });
   it.each(['git_repo', null] as const)(
     'uses a default brief for schema-less %s templates',
     async (workspaceProvider) => {
