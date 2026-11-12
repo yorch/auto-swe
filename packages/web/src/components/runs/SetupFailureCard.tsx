@@ -1,7 +1,7 @@
 'use client';
 
 import type { ComponentProps } from 'react';
-import { useSetupBlockers } from '@/hooks/useRepositories';
+import { useWorkflowSetupBlocker } from '@/hooks/useRepositories';
 import { setupBlockerLabel } from '@/lib/setupBlockers';
 import { FailureCard } from './FailureCard';
 
@@ -15,10 +15,7 @@ export function SetupFailureCard({
   workflowId: string;
   compact: boolean;
 }) {
-  const query = useSetupBlockers(repositoryId, { includeResolved: true });
-  const blocker = query.isError
-    ? undefined
-    : query.data?.find((row) => row.lastWorkflowId === workflowId);
+  const blocker = useWorkflowSetupBlocker(repositoryId, workflowId);
   return (
     <>
       {compact && blocker && (

@@ -265,6 +265,11 @@ export function useSetupBlockers(
   });
 }
 
+export function useWorkflowSetupBlocker(connectionId: string, workflowId: string) {
+  const query = useSetupBlockers(connectionId, { includeResolved: true });
+  return query.isError ? undefined : query.data?.find((row) => row.lastWorkflowId === workflowId);
+}
+
 export function useDismissSetupBlocker(connectionId: string) {
   const queryClient = useQueryClient();
   return useMutation({
