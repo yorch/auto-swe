@@ -97,6 +97,7 @@ import {
   webhookRepositoryWhere,
 } from '../lib/repositoryHost.js';
 import { validateRunConnection } from '../lib/runConnection.js';
+import { runProvenance } from '../lib/runProvenance.js';
 import { postSlackMessage, prMergedNoticeText } from '../lib/slack.js';
 // The webhook handlers below undo their DB write and answer non-2xx when a
 // signal fails, so the delivery can be sent again — only ever useful for a
@@ -1863,6 +1864,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
               requestPayload: JSON.stringify(payload),
               workRequestId,
               workspaceProvider: template.workspaceProvider as WorkspaceProviderType | null,
+              ...runProvenance({ trigger: 'webhook' }),
             },
             templateId: template.id,
             templateVersion,
@@ -2091,6 +2093,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
               requestPayload,
               workRequestId,
               workspaceProvider: defaultTemplate.workspaceProvider as WorkspaceProviderType | null,
+              ...runProvenance({ trigger: 'webhook' }),
             },
             templateId: defaultTemplate.id,
             templateVersion,

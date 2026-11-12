@@ -1291,7 +1291,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           facts: facts.data,
           now: new Date(),
           ownerKey: fire.ownerKey,
-          retry: { fireId: fire.id, kind: 'manual' },
+          retry: { by: user.sub, fireId: fire.id, kind: 'manual' },
           startRetryDelayMs: 1_000,
           ...(targetUnavailable ? { targetUnavailable } : {}),
         });

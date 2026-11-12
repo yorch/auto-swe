@@ -27,6 +27,7 @@ import {
 } from '../lib/prismaErrors.js';
 import { queueReviewFixRetry } from '../lib/reviewFixRetry.js';
 import { validateRunConnection } from '../lib/runConnection.js';
+import { runProvenance } from '../lib/runProvenance.js';
 import { buildWorkflowRunControlFilter } from '../lib/runVisibility.js';
 import { teamMembershipFilter } from '../lib/templateLaunch.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
@@ -264,7 +265,10 @@ export const codeReviewRoutes: FastifyPluginAsync = async (fastify) => {
           },
           () =>
             fastify.temporal.startRunnableWorkflow(prepared.workflowId, {
-              request: prepared.request,
+              request: {
+                ...prepared.request,
+                ...runProvenance({ actor: user, trigger: 'code-review', triggerRefId: source.id }),
+              },
               templateId: prepared.template.id,
               templateVersion: prepared.templateVersion,
             }),

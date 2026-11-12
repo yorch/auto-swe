@@ -228,6 +228,9 @@ describe('POST /api/v1/agent-runs with a service principal token', () => {
     const request = started[0]?.input.request as Record<string, unknown>;
     // The platform credential: no launcher for the worker to act as.
     expect(request).not.toHaveProperty('launchedById');
+    // Provenance names the principal, and no person.
+    expect(request).toMatchObject({ initiatedByServiceId: SP, trigger: 'service-token' });
+    expect(request).not.toHaveProperty('initiatedById');
     expect(runInputs[0]).toMatchObject({ requestedById: null, requestedByServiceId: SP });
     // The launch took the principal's row lock inside the ledger transaction.
     expect(locks.some((sql) => sql.includes('FROM service_principals'))).toBe(true);

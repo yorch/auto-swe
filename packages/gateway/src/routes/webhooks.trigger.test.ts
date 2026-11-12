@@ -353,6 +353,10 @@ describe('POST /webhooks/:token', () => {
     expect(input.request.connectionId).toBe(connectionId);
     expect(input.request.repoId).toBe(connectionId);
     expect(input.request.externalTicketId).toBe('WEB-1');
+    expect(input.request.trigger).toBe('webhook');
+    expect(input.request).not.toHaveProperty('initiatedById');
+    expect(input.request).not.toHaveProperty('initiatedByServiceId');
+    expect(input.request).not.toHaveProperty('launchedById');
     expect(input.request.payload).toEqual(payload);
     expect(input.request.requestPayload).toBe(JSON.stringify(payload));
     // The connection decides billing, so the request is charged to no launch org.

@@ -19,6 +19,7 @@ import type { FastifyInstance } from 'fastify';
 import { resolveDefaultTemplate } from '../../routes/workRequests.js';
 import { authorizeLaunch, launchRefusalMessage } from '../launchAuthorization.js';
 import { asPlatformAdmin } from '../platformAdminScope.js';
+import { runProvenance } from '../runProvenance.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../systemTemplate.js';
 import { memberTeams, reachableConnections } from '../tenantScope.js';
 import { isValidTicketId, MAX_DESCRIPTION_LENGTH } from '../ticketId.js';
@@ -408,6 +409,7 @@ export async function handleRunModalSubmission(
     repoId: repo.id,
     requestPayload,
     workRequestId,
+    ...runProvenance({ actor: { sub: user.id }, trigger: 'slack' }),
   };
 
   // Ledger rows first, workflow second, rolled back if the start fails —

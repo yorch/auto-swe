@@ -74,6 +74,7 @@ import {
   withoutCallback,
 } from '../lib/runCallbackLaunch.js';
 import { validateRunConnection } from '../lib/runConnection.js';
+import { runProvenance } from '../lib/runProvenance.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import {
   idempotencyCallerScope,
@@ -2629,6 +2630,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         requestPayload,
         workRequestId,
         workspaceProvider: tpl.workspaceProvider as WorkspaceProviderType | null,
+        ...runProvenance({
+          actor: user,
+          serviceId: service?.servicePrincipalId,
+          trigger: service ? 'service-token' : 'template-run',
+        }),
       };
 
       // Ledger rows first, workflow second, rolled back if the start fails —

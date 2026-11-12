@@ -41,6 +41,7 @@ import { getErrorName } from '../../plugins/auth.js';
 import { authorizeLaunch } from '../launchAuthorization.js';
 import { isOrgOverBudget, isTeamOverBudget } from '../orgAccess.js';
 import { webhookRepositoryWhere } from '../repositoryHost.js';
+import { runProvenance } from '../runProvenance.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../systemTemplate.js';
 import { isValidTicketId } from '../ticketId.js';
 import { launchTrackedWorkflow } from '../workflowLaunch.js';
@@ -238,8 +239,11 @@ export const engineTeamSelect = {
 export type RetryScope =
   /** A redelivered webhook: only a `FAILED_TO_START` decision is taken again. */
   | { kind: 'redelivery' }
-  /** A manager's retry of one recorded decision that did not start a run. */
-  | { kind: 'manual'; fireId: string };
+  /**
+   * A manager's retry of one recorded decision that did not start a run. `by` is the person who
+   * clicked retry: provenance names them as the initiator, not the original event's actor.
+   */
+  | { kind: 'manual'; fireId: string; by?: string };
 
 /**
  * Decide one occurrence for one matched automation and start its run. Shared by the webhook
@@ -513,6 +517,18 @@ export async function decideAndStart<F, X>(
       // A run with no repository takes the workspace its template declares, as any template
       // run without a connection does.
       workspaceProvider: connection ? 'git_repo' : workspaceProviderOf(template.workspaceProvider),
+      // The user the source names (the same as `requestedById` below), or for a manual retry the
+      // person who retried it, who is the one who acted; provenance only.
+      ...runProvenance({
+        actor:
+          args.retry.kind === 'manual' && args.retry.by
+            ? { sub: args.retry.by }
+            : requestedById
+              ? { sub: requestedById }
+              : null,
+        trigger: 'automation',
+        triggerRefId: automation.id,
+      }),
     };
 
     let decided: { outcome: AutomationOutcome; reason: string } | null = null;

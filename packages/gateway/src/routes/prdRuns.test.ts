@@ -27,6 +27,7 @@ interface Harness {
   /** Any ActiveWorkflow write the route attempts — expected to stay empty. */
   activeWorkflowCreates: Array<Record<string, unknown>>;
   started: string[];
+  startedRequests: Array<Record<string, unknown>>;
   startError?: Error;
   /** Platform role the token carries. */
   role: 'ADMIN' | 'LEAD';
@@ -48,6 +49,7 @@ async function buildHarness(): Promise<Harness> {
     role: 'ADMIN',
     runInputs: [],
     started: [],
+    startedRequests: [],
     teamRole: 'LEAD',
   };
 
@@ -130,7 +132,7 @@ async function buildHarness(): Promise<Harness> {
   h.app.decorate('prisma', prismaMock as unknown as never);
 
   h.app.decorate('temporal', {
-    startRunnableWorkflow: async (id: string) => {
+    startRunnableWorkflow: async (id: string, input: { request: Record<string, unknown> }) => {
       h.order.push('start');
       if (h.startError) {
         throw h.startError;
@@ -144,6 +146,7 @@ async function buildHarness(): Promise<Harness> {
         throw err;
       }
       h.started.push(id);
+      h.startedRequests.push(input.request);
     },
   } as unknown as never);
 
@@ -178,6 +181,17 @@ describe('POST /prd-runs', () => {
     expect(res.statusCode).toBe(201);
     expect(h.order).toEqual(['ledger', 'start']);
     expect(h.runInputs).toHaveLength(1);
+  });
+
+  it('stamps the PRD door and the caller, beside the unchanged credential key', async () => {
+    await submit(h);
+
+    expect(h.startedRequests[0]).toMatchObject({
+      initiatedById: h.startedRequests[0]?.launchedById,
+      trigger: 'prd-run',
+    });
+    expect(h.startedRequests[0]?.initiatedById).toEqual(expect.any(String));
+    expect(h.startedRequests[0]).not.toHaveProperty('initiatedByServiceId');
   });
 
   it('records a DB-authored exact repo set and keeps the ambiguous parent source UNKNOWN', async () => {

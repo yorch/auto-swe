@@ -422,6 +422,13 @@ describe('POST /api/v1/work-requests', () => {
     const body = JSON.parse(res.payload);
     expect(body.data.workRequestId).toBeDefined();
     expect(startedWorkflowIds.at(-1)).toBe('eng-org-test-JIRA-1');
+    // Provenance names the submitter alongside the credential key; it is not a re-run.
+    expect(startedRequests.at(-1)).toMatchObject({
+      initiatedById: 'user-1',
+      launchedById: 'user-1',
+      trigger: 'work-request',
+    });
+    expect(startedRequests.at(-1)).not.toHaveProperty('rerunOfRunId');
   });
 
   it('accepts and carries normalized knowledge base overrides to the workflow', async () => {

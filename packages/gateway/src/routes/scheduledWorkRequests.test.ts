@@ -896,6 +896,10 @@ describe('/api/v1/scheduled-work-requests', () => {
       });
       expect(res.statusCode).toBe(201);
       expect(syncCalls[0].request.launchedById).toBe('user-1');
+      // Provenance of later fires: the schedule row, and no initiating person.
+      expect(syncCalls[0].request).toMatchObject({ trigger: 'schedule' });
+      expect(syncCalls[0].request.triggerRefId).toBe(scheduleCreates[0].id);
+      expect(syncCalls[0].request).not.toHaveProperty('initiatedById');
     });
 
     it('moves to whoever changes what the schedule does', async () => {

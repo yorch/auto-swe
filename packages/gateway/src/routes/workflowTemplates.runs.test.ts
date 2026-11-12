@@ -24,6 +24,8 @@ interface Harness {
   app: FastifyInstance;
   /** Every `temporalWorkflowId` the route asked Temporal to start. */
   started: string[];
+  /** The request each start carried, in order. */
+  startedRequests: Array<Record<string, unknown>>;
   /** Ordered log of ledger writes vs. workflow starts. */
   order: string[];
   runInputs: Array<Record<string, unknown>>;
@@ -52,6 +54,7 @@ function buildHarness(opts?: {
     order: [],
     runInputs: [],
     started: [],
+    startedRequests: [],
   };
 
   h.app.setValidatorCompiler(validatorCompiler);
@@ -152,12 +155,13 @@ function buildHarness(opts?: {
   h.app.decorate('prisma', prismaMock as unknown as never);
 
   h.app.decorate('temporal', {
-    startRunnableWorkflow: async (id: string) => {
+    startRunnableWorkflow: async (id: string, input: { request: Record<string, unknown> }) => {
       h.order.push('start');
       if (h.startError) {
         throw h.startError;
       }
       h.started.push(id);
+      h.startedRequests.push(input.request);
     },
   } as unknown as never);
 
@@ -194,6 +198,20 @@ describe('POST /workflow-templates/:id/runs for the Channel Assistant', () => {
     expect(res.json().error.code).toBe('SYSTEM_MANAGED_TEMPLATE');
     expect(h.started).toHaveLength(0);
     expect(h.runInputs).toHaveLength(0);
+  });
+});
+
+describe('POST /workflow-templates/:id/runs provenance', () => {
+  it('stamps the template-run door and the caller, beside the credential key', async () => {
+    const h = buildHarness();
+    await h.app.ready();
+    expect((await run(h)).statusCode).toBe(201);
+    expect(h.startedRequests[0]).toMatchObject({
+      initiatedById: 'user-1',
+      launchedById: 'user-1',
+      trigger: 'template-run',
+    });
+    expect(h.startedRequests[0]).not.toHaveProperty('initiatedByServiceId');
   });
 });
 

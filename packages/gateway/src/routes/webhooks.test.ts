@@ -3521,10 +3521,15 @@ describe('webhook routes', () => {
 
       expect(jiraStartCalls).toHaveLength(1);
       expect(jiraStartCalls[0].id).toBe('jira-PROJ-99');
+      // A webhook names no person, no service principal and no credential holder.
+      for (const key of ['initiatedById', 'initiatedByServiceId', 'launchedById']) {
+        expect((jiraStartCalls[0].args as { request: object }).request).not.toHaveProperty(key);
+      }
       expect(jiraStartCalls[0].args).toMatchObject({
         request: expect.objectContaining({
           externalTicketId: 'PROJ-99',
           repoId: 'conn-1',
+          trigger: 'webhook',
         }),
         templateId: 'tpl-1',
         templateVersion: 1,

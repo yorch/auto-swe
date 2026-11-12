@@ -35,6 +35,7 @@ function harness(s: State) {
   const app: FastifyInstance = Fastify();
   const runInputs: Array<Record<string, unknown>> = [];
   const started: string[] = [];
+  const startedRequests: Array<Record<string, unknown>> = [];
   const templateWheres: unknown[] = [];
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -170,8 +171,9 @@ function harness(s: State) {
   prisma.$transaction = async (action: (tx: unknown) => Promise<unknown>) => action(prisma);
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('temporal', {
-    startRunnableWorkflow: async (id: string) => {
+    startRunnableWorkflow: async (id: string, input: { request: Record<string, unknown> }) => {
       started.push(id);
+      startedRequests.push(input.request);
     },
   } as unknown as never);
   app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
@@ -190,7 +192,7 @@ function harness(s: State) {
       payload: { callback: { url }, payload: { description: 'write the notes' } },
       url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
     });
-  return { app, run, runInputs, runWithCallback, started, templateWheres };
+  return { app, run, runInputs, runWithCallback, started, startedRequests, templateWheres };
 }
 
 describe('POST /workflow-templates/:id/runs with a service principal token', () => {
@@ -214,6 +216,13 @@ describe('POST /workflow-templates/:id/runs with a service principal token', () 
       requestedByServiceId: SP,
       templateId: TEMPLATE_ID,
     });
+    // Provenance names the principal and no person; there is no credential key either.
+    expect(h.startedRequests[0]).toMatchObject({
+      initiatedByServiceId: SP,
+      trigger: 'service-token',
+    });
+    expect(h.startedRequests[0]).not.toHaveProperty('initiatedById');
+    expect(h.startedRequests[0]).not.toHaveProperty('launchedById');
     await h.app.close();
   });
 

@@ -385,6 +385,10 @@ function buildScheduleInput(
       scheduledWorkRequestId: row.id,
       source: 'schedule',
     }),
+    // Provenance for fires of schedules created from here on; the args are frozen, so an older
+    // schedule's fires carry neither until it is next saved.
+    trigger: 'schedule',
+    triggerRefId: row.id,
     workRequestId,
   };
   return {

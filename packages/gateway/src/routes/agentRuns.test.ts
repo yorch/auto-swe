@@ -52,6 +52,7 @@ const USER = 'user-1';
 const REPO = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const TEMPLATE = 'tttttttt-1111-4111-8111-tttttttttttt';
 const PREV_RUN = 'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb';
+const PREV_WORKFLOW_RUN = 'dddddddd-1111-4111-8111-dddddddddddd';
 
 interface State {
   /** Who is a member of the owning team / a shared team. */
@@ -296,10 +297,15 @@ describe('POST /api/v1/agent-runs', () => {
     const req = started[0]?.input.request as Record<string, unknown>;
     expect(req).toMatchObject({
       description: 'fix the typo',
+      // Provenance: the person who launched it, through the agent-run door; not a re-run.
+      initiatedById: USER,
       launchedById: USER,
       payload: { agentRef: 'contentWriter', deliver: 'none' },
       repoId: REPO,
+      trigger: 'agent-run',
     });
+    expect(req).not.toHaveProperty('initiatedByServiceId');
+    expect(req).not.toHaveProperty('rerunOfRunId');
     expect(req.externalTicketId).toMatch(/^agent-[0-9a-f]{32}$/);
     // The ledger row carries the repo: the worker derives team and org from it.
     expect(ledgers[0]).toMatchObject({ currentStatus: 'IMPLEMENTING', repoId: REPO });
@@ -652,6 +658,8 @@ describe('POST /api/v1/agent-runs', () => {
 
 describe('POST /api/v1/agent-runs/:id/rerun', () => {
   // The shared pipeline is covered above; these pin what is specific to a re-run.
+  const runLookups: unknown[] = [];
+
   async function build(prev: unknown, templateOk = true) {
     const started: Array<{ id: string; input: Record<string, unknown> }> = [];
     const app = Fastify();
@@ -699,6 +707,12 @@ describe('POST /api/v1/agent-runs/:id/rerun', () => {
       },
       teamMembership: { findUnique: async () => ({ role: 'LEAD' }) },
       user: { findUnique: async () => ({ id: 'user-2', isActive: true, role: 'ENGINEER' }) },
+      workflowRun: {
+        findFirst: async ({ where }: { where: unknown }) => {
+          runLookups.push(where);
+          return { id: PREV_WORKFLOW_RUN };
+        },
+      },
       workflowTemplate: {
         findFirst: async ({ where }: { where: Record<string, unknown> }) =>
           where.id !== undefined
@@ -739,9 +753,14 @@ describe('POST /api/v1/agent-runs/:id/rerun', () => {
     expect(req.externalTicketId).toMatch(/^agent-[0-9a-f]{32}$/);
     expect(req).toMatchObject({
       description: 'original prompt',
+      initiatedById: 'user-2',
       launchedById: 'user-2',
       payload: { agentRef: 'contentWriter', deliver: 'branch', maxSteps: 7 },
+      rerunOfRunId: PREV_WORKFLOW_RUN,
+      trigger: 'agent-run',
     });
+    // The repeated run is looked up on the re-run's own work request.
+    expect(runLookups).toContainEqual({ workRequestId: PREV_RUN });
     await app.close();
   });
 

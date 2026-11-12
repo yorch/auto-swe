@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import { runProvenance } from '../lib/runProvenance.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -174,6 +175,7 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
           repoId: primaryRepoId,
           requestPayload,
           workRequestId,
+          ...runProvenance({ actor: user, trigger: 'prd-run' }),
         },
         templateId: template.id,
         templateVersion: template.activeVersion,
