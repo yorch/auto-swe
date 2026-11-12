@@ -62,3 +62,25 @@ export function resolveWorkflowRunAttribution(
     attributedTeamId: team?.id ?? null,
   };
 }
+
+export interface RunTenantScope {
+  orgId?: string;
+  teamId?: string;
+}
+
+/// The team and org a run's settings, agents and credentials resolve at. The repository's team is
+/// authoritative; with no repository the team the run was billed to (`attributedTeam`) stands in.
+/// The run-start pin snapshots (`runSettingsContext`) and the per-activity lookup
+/// (`currentRequestContext`) both call this, so a pin cannot be taken at a different tenant than
+/// the one the activities resolve.
+export function resolveRunTenantScope(sources: {
+  attributedTeam?: RunAttributionTeam | null;
+  repositoryTeam?: { orgId?: string | null; teamId?: string | null } | null;
+}): RunTenantScope {
+  const repo = sources.repositoryTeam;
+  const billed = repo?.teamId ? null : sources.attributedTeam;
+  return {
+    orgId: repo?.orgId ?? billed?.orgId ?? undefined,
+    teamId: repo?.teamId ?? billed?.id ?? undefined,
+  };
+}

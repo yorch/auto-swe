@@ -1,6 +1,7 @@
 import type { ChildProcessByStdio } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import type { Readable, Writable } from 'node:stream';
+import { configCacheTtlMs } from '@auto-swe/shared/config/cache';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import {
   EXEC_TAG_ENV,
@@ -185,11 +186,15 @@ export function harnessRuntime<Report>(
     const accrued: SpentByModel = [];
     let debits: Promise<void> = Promise.resolve();
     let debitError: { error: unknown } | undefined;
+    // Bumped whenever a debit is queued; a passing pre-call check is reused until it changes.
+    let debitSeq = 0;
+    let precheckPassed: { at: number; seq: number } | undefined;
     const debit = (call: { modelSpec: string; usage: UsageTotals }) => {
       const spent = summedCallsUsage('', [{ model: call.modelSpec, usage: call.usage }]);
       if (!onCallSpent || spent.length === 0) {
         return;
       }
+      debitSeq += 1;
       debits = debits.then(async () => {
         if (debitError) {
           return;
@@ -289,8 +294,20 @@ export function harnessRuntime<Report>(
         if (debitError) {
           throw debitError.error;
         }
+        // A pass stands until the next debit lands or the config-cache window lapses (other runs
+        // spending against a shared cap), so a flood of calls costs one lookup, not one each.
+        // A refusal is never remembered as a pass.
+        if (
+          precheckPassed &&
+          precheckPassed.seq === debitSeq &&
+          Date.now() - precheckPassed.at < configCacheTtlMs()
+        ) {
+          return;
+        }
+        const seq = debitSeq;
         try {
           await beforeCall();
+          precheckPassed = { at: Date.now(), seq };
         } catch (error) {
           debitError ??= { error };
           abort.abort();

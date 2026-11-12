@@ -577,6 +577,40 @@ describe('precheck (beforeCall)', () => {
     expect(thrown).toBe(budget);
   });
 
+  it('reuses a passing check until a debit lands', async () => {
+    const beforeCall = vi.fn(async () => {});
+    await run(
+      async (turn) => {
+        await turn.precheck();
+        await turn.precheck();
+        await turn.precheck();
+        expect(beforeCall).toHaveBeenCalledTimes(1);
+        turn.callSpent('c1', 'fake/m', totals(10, 1));
+        await turn.precheck();
+        await turn.precheck();
+        expect(beforeCall).toHaveBeenCalledTimes(2);
+        return { usage: {} };
+      },
+      { beforeCall, onCallSpent: async () => {} }
+    );
+  });
+
+  it('never remembers a refusal as a pass', async () => {
+    const budget = new Error('Budget exhausted');
+    const beforeCall = vi.fn(async () => {
+      throw budget;
+    });
+    await run(
+      async (turn) => {
+        await turn.precheck().catch(() => undefined);
+        await expect(turn.precheck()).rejects.toBe(budget);
+        return { usage: {} };
+      },
+      { beforeCall }
+    ).catch(() => undefined);
+    expect(beforeCall).toHaveBeenCalledTimes(1);
+  });
+
   it('waits for the calls already reported to be debited before it checks', async () => {
     const order: string[] = [];
     await run(

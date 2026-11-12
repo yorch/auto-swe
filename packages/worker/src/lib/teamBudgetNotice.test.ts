@@ -20,7 +20,12 @@ const logWarnMock = vi.fn();
 vi.mock('./activityLog.js', () => ({ logWarn: (...a: unknown[]) => logWarnMock(...a) }));
 
 import { prisma } from '@auto-swe/shared/db';
-import { budgetPeriod, dueTeamBudgetLevel, evaluateTeamBudgetNotice } from './teamBudgetNotice.js';
+import {
+  budgetPeriod,
+  dueTeamBudgetLevel,
+  evaluateTeamBudgetNotice,
+  isPermanentSlackPostError,
+} from './teamBudgetNotice.js';
 
 const findTeam = vi.mocked(prisma.team.findUnique);
 const createNotice = vi.mocked(prisma.teamBudgetNotice.create);
@@ -179,6 +184,39 @@ describe('evaluateTeamBudgetNotice', () => {
       where: { teamId_period_level: { level: 'WARNING', period: '2026-11', teamId: 't1' } },
     });
     expect(logWarnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'channel_not_found',
+    'not_in_channel',
+    'is_archived',
+    'invalid_auth',
+    'account_inactive',
+  ])('keeps the claim and logs once on a permanent Slack error (%s)', async (code) => {
+    postMock.mockRejectedValue(
+      new Error(`postSlackChannelMessage: chat.postMessage failed: ${code}`)
+    );
+    await expect(evaluateTeamBudgetNotice('t1', 8, now)).resolves.toBeUndefined();
+    expect(deleteNotice).not.toHaveBeenCalled();
+    expect(logWarnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    'postSlackChannelMessage: chat.postMessage failed: ratelimited',
+    'postSlackChannelMessage: chat.postMessage failed: service_unavailable',
+    'fetch failed',
+    'The operation was aborted',
+  ])('releases the claim on a transient failure (%s)', async (message) => {
+    postMock.mockRejectedValue(new Error(message));
+    await evaluateTeamBudgetNotice('t1', 8, now);
+    expect(deleteNotice).toHaveBeenCalledTimes(1);
+  });
+
+  it('classifies only the listed Slack codes as permanent', () => {
+    const err = (code: string) => new Error(`x: chat.postMessage failed: ${code}`);
+    expect(isPermanentSlackPostError(err('is_archived'))).toBe(true);
+    expect(isPermanentSlackPostError(err('ratelimited'))).toBe(false);
+    expect(isPermanentSlackPostError('boom')).toBe(false);
   });
 
   it('swallows a database failure', async () => {
