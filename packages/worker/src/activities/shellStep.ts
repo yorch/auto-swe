@@ -477,9 +477,9 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   const auditNetwork = cap.capped
     ? `none (capped by egress policy ${egressPolicy})`
     : egressPolicy === 'restricted' && stepNetwork === 'egress'
-      ? 'egress (proxy-enforced only; not network-locked)'
+      ? 'egress (allowlist via proxy; network-locked)'
       : stepNetwork;
-  // Under `restricted` a step that keeps `egress` is held to the allowlist by the proxy alone.
+  // Restricted egress needs the proxy and a verified proxy-only lock before the command starts.
   assertStepEgressEnforceable(egressPolicy, stepNetwork);
 
   const { branchPrefix } = await resolveWorkflowDefaults();
@@ -591,6 +591,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
         command: input.command,
         cpus: input.cpus,
         egressAllowlist: effectiveEgressAllowlist,
+        egressPolicy,
         ...(registry
           ? {
               env: {

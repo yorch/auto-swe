@@ -6,6 +6,7 @@ import { BlockList, isIP } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { DOCKER_HOST_ALIAS, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
+import { egressPolicyFailure } from '../egressWiring.js';
 import {
   type CappedFileResult,
   type CapturedResult,
@@ -308,8 +309,17 @@ function checkRuleAddress(rule: ResolvedAllow): void {
  *
  * Pure: returns the script text, so it is testable without a daemon.
  */
-export function buildEgressLockScript(allow: ResolvedAllow[]): string {
+export function buildEgressLockScript(
+  allow: ResolvedAllow[],
+  incoming: ResolvedAllow[] = []
+): string {
   allow.forEach(checkRuleAddress);
+  incoming.forEach((entry) => {
+    checkRuleAddress(entry);
+    if (entry.port === undefined) {
+      throw new Error('egress lock: an incoming connection needs a port');
+    }
+  });
   const lines = [
     ...IPTABLES_PRELUDE,
     // allow_ip IP PORT: one ACCEPT rule in the right address family.
@@ -344,6 +354,13 @@ export function buildEgressLockScript(allow: ResolvedAllow[]): string {
     '  ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT',
     'fi',
     ...allow.map((e) => `allow_ip ${shellQuote(e.ip)} ${shellQuote(String(e.port ?? ''))}`),
+    ...incoming.flatMap(({ ip, port }) => {
+      const table = ip.includes(':') ? '[ "$v6" = 0 ] || ip6tables' : 'iptables';
+      return [
+        `${table} -A INPUT -s ${shellQuote(ip)} -p tcp --dport ${port} -m conntrack --ctstate NEW -j ACCEPT`,
+        `${table} -A OUTPUT -d ${shellQuote(ip)} -p tcp --sport ${port} -m conntrack --ctstate ESTABLISHED -j ACCEPT`,
+      ];
+    }),
     'iptables -P OUTPUT DROP',
     'iptables -P INPUT DROP',
     '[ "$v6" = 0 ] || { ip6tables -P OUTPUT DROP; ip6tables -P INPUT DROP; }',
@@ -1373,6 +1390,25 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       proxies,
       dnsServers.includes('127.0.0.2') ? infra.dns : undefined
     );
+    if (spec.egressPolicy === 'restricted') {
+      try {
+        if (!infra.egressProxy || !proxies.includes(infra.egressProxy.url)) {
+          throw new Error('the step has no wired egress proxy');
+        }
+        const allow = proxies.map((proxy) => {
+          const url = new URL(proxy);
+          return {
+            host: url.hostname.replace(/^\[|\]$/g, ''),
+            port: Number(url.port || (url.protocol === 'https:' ? 443 : 80)),
+          };
+        });
+        await this.installEgressLock(this.attach(holder), allow, spec.publishPort);
+      } catch (error) {
+        throw egressPolicyFailure(
+          `restricted step network lock could not be enforced: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
     return holder;
   }
 
@@ -1422,8 +1458,15 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     allow: EgressAllowEntry[],
     _opts?: LockEgressOptions
   ): Promise<void> {
-    // Fail closed: every error below propagates and the caller destroys the workspace. The lock
-    // is the same for both modes, so `_opts` is not read.
+    await this.installEgressLock(handle, allow);
+  }
+
+  private async installEgressLock(
+    handle: WorkspaceHandle,
+    allow: EgressAllowEntry[],
+    sidecarPort?: number
+  ): Promise<void> {
+    // Fail closed: every error below propagates and the caller removes the workspace or holder.
     const image = resolveWorkspaceInfra().metadataBlockImage;
     // /etc/hosts belongs to the workspace container, not to its network namespace, so the helper
     // cannot write it. Names are resolved from inside the workspace and pinned by a root
@@ -1434,7 +1477,14 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       (host) => resolveInWorkspace(handle.id, host, mapped),
       trusted
     );
-    const script = buildEgressLockScript(rules);
+    const incoming =
+      sidecarPort === undefined
+        ? []
+        : (trusted.get(DOCKER_HOST_ALIAS) ?? []).map((ip) => ({ ip, port: sidecarPort }));
+    if (sidecarPort !== undefined && incoming.length === 0) {
+      throw new Error('egress lock: cannot identify the sidecar worker gateway');
+    }
+    const script = buildEgressLockScript(rules, incoming);
     if (hosts.length > 0) {
       const lines = hosts.map(([ip, name]) => `${ip}\t${name}\n`).join('');
       const written = await spawnWithStdinAsync(

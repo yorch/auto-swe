@@ -1,4 +1,5 @@
 import type { ChildProcess, StdioOptions } from 'node:child_process';
+import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import type { CappedFileResult, CapturedResult, OnTimeout } from '../execUtils.js';
 import type { WorkspaceReapResult } from './orphans.js';
 
@@ -275,6 +276,8 @@ export interface EphemeralVolumeMount {
  * (`lib/ephemeralContainer.ts`) before a spec reaches the driver.
  */
 export interface EphemeralContainerSpec {
+  /** Run policy; restricted egress is locked to the wired proxies before author code starts. */
+  egressPolicy?: EgressPolicy;
   /** Container name (`--name`); only meaningful for sandboxed runs. */
   name?: string;
   image: string;

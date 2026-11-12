@@ -335,7 +335,9 @@ authenticated principal, and tenant keys on the tables joined through runs.
   held.
 - **Shell and container steps** default to `network: "none"` in the node. A step that sets
   `network: "egress"` is held to the team's `egressAllowlist` by a DNS filter (and the egress
-  proxy when configured); under `open`, an empty allowlist permits any host.
+  proxy when configured); under `open`, an empty allowlist permits any host. Under `restricted`
+  with an allowlist, a verified holder-netns lock confines the step and detached sidecars to the
+  egress proxy and any wired registry proxy. Direct public-IP sockets and `--noproxy` are blocked.
 - **Setting it to `restricted` or `blocked` at GLOBAL scope already makes the whole deployment
   default-deny**, for agent workspaces by a network lock (an `iptables` helper container on
   Docker; labelled pods and `NetworkPolicy` objects on Kubernetes), proven after it is applied.
@@ -372,9 +374,8 @@ setting itself:
 
 A fresh deployment is open by default. Setup readiness checks configured egress policies against
 fresh worker capability reports, and policy and team-allowlist saves warn without rejecting the save
-when enforcement is unavailable. A default-deny deployment profile remains opt-in. The
-literal-IP bypass for `restricted` with an allowlist on shell steps, the unfiltered
-`NO_PROXY` git host, and the worker-originated traffic that no policy governs remain as stated
+when enforcement is unavailable. A default-deny deployment profile remains opt-in. The unfiltered
+`NO_PROXY` git host and worker-originated traffic that no policy governs remain as stated
 in [run-activity.md](./run-activity.md) and [architecture.md](./architecture.md).
 
 ### Proposed child issues
@@ -386,11 +387,6 @@ in [run-activity.md](./run-activity.md) and [architecture.md](./architecture.md)
   allowlists the hosts they need deliberately.
 - The default for a fresh install stays `open` unless the issue decides otherwise; flipping it
   is a separate, breaking change with an upgrade note.
-- Owner: unassigned
-
-**IP-level lock for allowlisted shell and container steps** (size L; depends on nothing)
-- Under `restricted` with an allowlist, a step is confined by a network lock to the egress proxy
-  as agent workspaces are, so a client that ignores proxy variables reaches nothing.
 - Owner: unassigned
 
 ## 6. SOC 2 readiness path

@@ -1286,6 +1286,11 @@ sit on this seam, and so does the ephemeral shell/container-step sandbox:
   If the helper needs to install iptables under filtered DNS, it temporarily uses `WORKSPACE_DNS`
   and restores the filter before installing rules or starting author code.
   Detached container-step sidecars publish their loopback port from the holder and share its baseline.
+  Under `restricted` with a team allowlist, the holder receives the strict workspace rule builder's
+  verified default-deny lock before author startup, admitting only the wired egress and registry
+  proxy endpoints. Direct public-IP sockets and `--noproxy` fail. Detached sidecars share this lock;
+  their published port admits the Docker host gateway and established replies only, so outbound
+  requests must use the proxy too. Under `open`, the baseline alone applies.
   Foreground completion and sidecar teardown remove the holder; its workspace labels also make
   it eligible for orphan reaping. `network: none` does not create a holder. Kubernetes does not
   support ephemeral steps or detached container-step sidecars.
@@ -1635,8 +1640,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   hour, and a shell step clones before its command and commits and pushes after it. The worker caps
   the command's wall clock at 50 minutes so the activity cannot time out (and be retried) while the
   first attempt may still push; a stored spec asking for more is not rejected, it runs under the cap.
-- **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
-  allowlist entries are informational only. An in-path proxy or resolver would be required.
+- **Under `open`, shell-step allowlisting is cooperative.** The DNS filter does not restrict
+  literal public-IP connections. Under `restricted`, the holder's proxy-only network lock prevents
+  direct connections; wildcard allowlist matching happens in the proxy.
 - **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls an
   immediate-merge API and no seeded template merges (the opt-in `auto` mode of
   [pr-evaluation.md](./pr-evaluation.md) only asks GitHub to auto-merge later), but `shell` and `containerStep` nodes take

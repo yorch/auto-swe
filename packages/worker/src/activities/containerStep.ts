@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
+import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
@@ -96,7 +97,7 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
   const auditNetwork = cap.capped
     ? `none (capped by egress policy ${egressPolicy})`
     : egressPolicy === 'restricted' && stepNetwork === 'egress'
-      ? 'egress (proxy-enforced only; not network-locked)'
+      ? 'egress (allowlist via proxy; network-locked)'
       : stepNetwork;
 
   if (transport === 'sidecar') {
@@ -120,7 +121,7 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
       throw refusal;
     }
     assertStepEgressEnforceable(egressPolicy, 'egress');
-    return runSidecarTransport(input, egressAllowlist);
+    return runSidecarTransport(input, egressAllowlist, egressPolicy);
   }
 
   assertStepEgressEnforceable(egressPolicy, stepNetwork);
@@ -157,6 +158,7 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
   try {
     const started = performance.now();
     const res = await runEphemeralContainer({
+      egressPolicy,
       ...(command !== undefined ? { command } : {}),
       cpus: input.cpus,
       egressAllowlist,
@@ -225,17 +227,21 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
  */
 async function runSidecarTransport(
   input: ContainerStepInput,
-  egressAllowlist: string[]
+  egressAllowlist: string[],
+  egressPolicy: EgressPolicy
 ): Promise<ContainerStepResult> {
   if (!input.sidecar) {
     throw new Error("containerStep transport 'sidecar' requires a sidecar config (port)");
   }
   const volume = `cstep-${randomUUID()}`;
+  const auditNetwork =
+    egressPolicy === 'restricted' ? 'egress (allowlist via proxy; network-locked)' : 'egress';
   const backend = workspaceBackend();
   await backend.createVolume(volume);
   try {
     const started = performance.now();
     const res = await runSidecarContainer({
+      egressPolicy,
       ...(input.command ? { command: input.command } : {}),
       body: input.inputs ?? {},
       cpus: input.cpus,
@@ -263,7 +269,7 @@ async function runSidecarTransport(
         exitCode: out?.exitCode,
         image: input.image,
         name: 'container',
-        network: 'egress',
+        network: auditNetwork,
         stderr: out?.stderr ?? '',
         stdout: out?.stdout ?? '',
       });
@@ -275,7 +281,7 @@ async function runSidecarTransport(
       egressAllowlist,
       image: input.image,
       name: 'container',
-      network: 'egress',
+      network: auditNetwork,
       stderr: res.stderr ?? '',
       stdout: res.stdout ?? '',
     });
