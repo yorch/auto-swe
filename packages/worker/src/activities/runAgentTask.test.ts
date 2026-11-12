@@ -728,6 +728,8 @@ describe('delivery: trust boundary and gate-before-push', () => {
       checkout,
     ]);
     expect(vi.mocked(createWorkspace).mock.calls[1][6]).not.toHaveProperty('knowledgeBases');
+    expect(vi.mocked(createWorkspace).mock.calls[0][6]).not.toHaveProperty('trusted');
+    expect(vi.mocked(createWorkspace).mock.calls[1][6]).toHaveProperty('trusted', true);
     expect(vi.mocked(createWorkspace).mock.calls[0][6]).toHaveProperty('knowledgeBaseSnapshotIds', [
       'snapshot',
     ]);

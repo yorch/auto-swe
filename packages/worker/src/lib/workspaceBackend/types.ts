@@ -29,6 +29,8 @@ export interface WorkspaceContainerSpec {
   reachWorker: boolean;
   /** Git hosts that may need private-network access under the Docker baseline. */
   baselineAllow?: EgressAllowEntry[];
+  /** Trusted delivery only; never runs agent or repository setup code. */
+  trusted?: boolean;
   /** Non-secret `NAME=value` pairs, passed to the container as `docker run -e`. */
   env?: string[];
   /**

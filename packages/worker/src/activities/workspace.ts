@@ -817,6 +817,7 @@ export async function createWorkspace(
      * `.auto-swe/tools.yml`), if `workspace.toolInstall.enabled` is on.
      */
     toolsFor?: { connectionId: string };
+    trusted?: boolean;
   }
 ): Promise<Workspace> {
   // Container caps, default base image and metadata-blocking policy all come
@@ -1132,6 +1133,9 @@ export async function createWorkspace(
     ]);
   try {
     const spec = agentWorkspaceSpec(containerName, effectiveImage, infra, options?.services);
+    if (options?.trusted) {
+      spec.trusted = true;
+    }
     const gitHost = gitHostOf(cleanUrl);
     spec.baselineAllow = gitHost ? [{ host: gitHost }] : [];
     egress = await beginWorkspaceEgress(

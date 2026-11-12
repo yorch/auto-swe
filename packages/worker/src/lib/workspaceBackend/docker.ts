@@ -719,6 +719,7 @@ export function buildServiceContainerArgs(
     '-d',
     '--name',
     `${workspaceName}-svc-${service.name}`,
+    ...dockerRuntimeArgs(),
     '--label',
     `asw.workspace=${workspaceName}`,
     ...workspaceLabelArgs(),
@@ -846,6 +847,11 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const storage = infra.diskLimit
       ? ` --storage-opt ${shellQuote(`size=${infra.diskLimit}`)}`
       : '';
+    const runtime = spec.trusted
+      ? ''
+      : dockerRuntimeArgs()
+          .map((arg) => ` ${shellQuote(arg)}`)
+          .join('');
     // Hardening notes (unlike the locked-down `ephemeralContainer` runner, this
     // workspace intentionally keeps default bridge networking and omits
     // `--read-only`/`--tmpfs`: the implementer agent needs outbound git
@@ -874,7 +880,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     // `memory` is a config string, so shell-quote it (the numeric caps can't
     // carry shell metacharacters); '--' separates docker flags from the image.
     await execShellAsync(
-      `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
+      `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage}${runtime} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
       {
         heartbeatLabel: 'workspace: starting container',
         ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
@@ -1350,6 +1356,11 @@ function helperArgs(spec: HelperContainerSpec): string[] {
   ];
 }
 
+export function dockerRuntimeArgs(): string[] {
+  const runtime = resolveWorkspaceInfra().runtime;
+  return runtime ? [`--runtime=${runtime}`] : [];
+}
+
 export function ephemeralArgs(
   spec: EphemeralContainerSpec,
   detached: boolean,
@@ -1364,6 +1375,7 @@ export function ephemeralArgs(
     `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,
   ]);
   const flags = [
+    ...dockerRuntimeArgs(),
     `--network=${holder ? `container:${holder}` : spec.network === 'egress' ? 'bridge' : 'none'}`,
     ...(!holder ? (spec.dns ?? []).map((d) => `--dns=${d}`) : []),
     `--memory=${spec.memory ?? '512m'}`,
