@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execShellAsync, spawnCaptureAsync } from '../execUtils.js';
 import {
@@ -7,6 +8,11 @@ import {
   ephemeralNetworkHolderArgs,
 } from './docker.js';
 import type { EphemeralContainerSpec } from './types.js';
+
+vi.mock('node:crypto', async (original) => {
+  const actual = await original<typeof import('node:crypto')>();
+  return { ...actual, randomUUID: vi.fn(actual.randomUUID) };
+});
 
 vi.mock('../execUtils.js', async (original) => ({
   ...(await original<typeof import('../execUtils.js')>()),
@@ -119,9 +125,11 @@ afterEach(() => vi.unstubAllEnvs());
 
 describe('ephemeral network holder', () => {
   describe('restricted proxy lock', () => {
+    const collisionUuid = 'a00f8790-8791-4879-8792-000000000001';
     const locked =
       'v4:\n-P OUTPUT DROP\n-P INPUT DROP\nv6:\n-P OUTPUT DROP\n-P INPUT DROP\nv6disabled=0\n';
     beforeEach(() => {
+      vi.mocked(randomUUID).mockReturnValue(collisionUuid);
       vi.stubEnv('EGRESS_PROXY_PORT', '8792');
       vi.stubEnv('REGISTRY_PROXY_PORT', '8791');
       vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
@@ -176,9 +184,14 @@ describe('ephemeral network holder', () => {
           .mocked(execShellAsync)
           .mock.calls.find(([cmd]) => cmd.includes('iptables -P OUTPUT DROP'))?.[0] ?? '';
       expect(script).toContain(`--network container:${holder}`);
-      expect(script).toContain('8792');
-      expect(script).not.toContain('8791');
-      expect(script).not.toContain('8790');
+      expect(holder).toBe(`ephemeral-net-${collisionUuid}`);
+      const portRules = script
+        .split('\n')
+        .filter((line) => line.startsWith('allow_ip ') || /--[ds]port /.test(line))
+        .join('\n');
+      expect(portRules).toMatch(/\b8792\b/);
+      expect(portRules).not.toMatch(/\b8791\b/);
+      expect(portRules).not.toMatch(/\b8790\b/);
       expect(script).not.toContain('--sport');
     });
 
@@ -196,11 +209,16 @@ describe('ephemeral network holder', () => {
         vi
           .mocked(execShellAsync)
           .mock.calls.find(([cmd]) => cmd.includes('iptables -P OUTPUT DROP'))?.[0] ?? '';
-      expect(script).toContain('8791');
+      expect(holder).toBe(`ephemeral-net-${collisionUuid}`);
+      const portRules = script
+        .split('\n')
+        .filter((line) => line.startsWith('allow_ip ') || /--[ds]port /.test(line))
+        .join('\n');
+      expect(portRules).toMatch(/\b8791\b/);
       expect(script).toContain('--sport 8080 -m conntrack --ctstate ESTABLISHED -j ACCEPT');
       expect(script).toContain('--dport 8080 -m conntrack --ctstate NEW -j ACCEPT');
       expect(script).toContain('172.17.0.1');
-      expect(script).not.toContain('8790');
+      expect(portRules).not.toMatch(/\b8790\b/);
       expect(events.indexOf('lock')).toBeLessThan(events.indexOf('step'));
       await dockerWorkspaceBackend().remove(restricted.name);
     });
