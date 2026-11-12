@@ -16,7 +16,8 @@ export const INCIDENT_TRIAGE_INPUT_SCHEMA: InputSchema = {
     connectionId: { connectionType: 'git_repo', type: 'connection' },
     description: { type: 'string' },
     incidentId: {
-      description: 'The PagerDuty incident id, such as Q2ZH7Y2SD3X0RE.',
+      description:
+        'The PagerDuty incident id, such as Q2ZH7Y2SD3X0RE. An inbound.event automation fills it from /event/data/id; a run without one fails at reading the incident.',
       maxLength: 32,
       pattern: '^[A-Z0-9]{1,32}$',
       title: 'Incident id',
@@ -43,7 +44,7 @@ export const INCIDENT_TRIAGE_INPUT_SCHEMA: InputSchema = {
     },
     ticketId: { type: 'string' },
   },
-  required: ['connectionId', 'pagerdutyConnectionId', 'incidentId'],
+  required: ['connectionId', 'pagerdutyConnectionId'],
   type: 'object',
 };
 

@@ -5,7 +5,7 @@ import {
   type EventEndpointConfig,
   extractInboundEvent,
 } from './inboundEvent.js';
-import { buildAutomationPayload } from './inputs.js';
+import { automationOptionsProblem, buildAutomationPayload } from './inputs.js';
 import { sha256Hex } from './sha256.js';
 import {
   InboundEventFiltersSchema,
@@ -113,6 +113,22 @@ describe('a PagerDuty delivery through the recipe', () => {
     expect(
       inboundEventSource.mismatch(filters, build(body({ service: 'POTHER1' })).facts)
     ).toContain('/event/data/service/id');
+  });
+
+  it('saves with the incident id mapped from the event and no static value', () => {
+    expect(automationOptionsProblem(inboundEventSource, filters, schema, OPTIONS, true)).toBeNull();
+    expect(
+      automationOptionsProblem(
+        inboundEventSource,
+        filters,
+        schema,
+        {
+          ...OPTIONS,
+          incidentId: 'PSTATIC1',
+        },
+        true
+      )
+    ).toContain("'incidentId' is filled by each occurrence");
   });
 
   it('refuses an incident id that is not a PagerDuty id', () => {

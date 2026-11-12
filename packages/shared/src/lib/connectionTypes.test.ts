@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CONNECTION_TYPES,
   ConnectionTypeSchema,
+  connectionConfigProblem,
   GENERIC_STEP_CONNECTION_TYPES,
   genericStepRefusal,
   getConnectionTypeMetadata,
@@ -97,5 +98,20 @@ describe('generic step support', () => {
 
   it('points an mcp connection at the mcp node', () => {
     expect(genericStepRefusal('runTool', 'mcp')).toContain('`mcp` node');
+  });
+});
+
+describe('connectionConfigProblem', () => {
+  it('refuses a PagerDuty fromEmail that is not an email', () => {
+    expect(connectionConfigProblem('pagerduty', { fromEmail: 'not-an-email' })).toContain(
+      "'fromEmail'"
+    );
+    expect(connectionConfigProblem('pagerduty', { fromEmail: 'oncall@example.com' })).toBeNull();
+    expect(connectionConfigProblem('pagerduty', {})).toBeNull();
+    expect(connectionConfigProblem('pagerduty', null)).toBeNull();
+  });
+
+  it('accepts any config for a type without a config contract', () => {
+    expect(connectionConfigProblem('http_api', { fromEmail: 'not-an-email' })).toBeNull();
   });
 });

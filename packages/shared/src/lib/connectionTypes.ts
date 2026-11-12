@@ -218,6 +218,22 @@ export const PagerDutyConnectionConfigSchema = z.object({
 
 export type PagerDutyConnectionConfig = z.infer<typeof PagerDutyConnectionConfigSchema>;
 
+/**
+ * Why a connection's type-specific config cannot be saved, or null when it can. Types without a
+ * config contract accept any object.
+ */
+export function connectionConfigProblem(type: string, config: unknown): string | null {
+  if (type === 'pagerduty' && config != null) {
+    const parsed = PagerDutyConnectionConfigSchema.safeParse(config);
+    if (!parsed.success) {
+      return `Invalid PagerDuty config: ${parsed.error.issues
+        .map((i) => `'${i.path.join('.')}' ${i.message}`)
+        .join('; ')}`;
+    }
+  }
+  return null;
+}
+
 export function parsePagerDutyConnectionConfig(config: unknown): PagerDutyConnectionConfig {
   const parsed = PagerDutyConnectionConfigSchema.safeParse(config ?? {});
   return parsed.success ? parsed.data : {};

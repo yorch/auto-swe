@@ -478,8 +478,10 @@ them.
   `incident.resolved`, …), `occurred_at` and `data`, the incident: `id`, `title`, `status`,
   `service.id` and more.
 
-**The connection.** A `pagerduty` connection on the team holds a PagerDuty REST API key (in the
-API token field, stored encrypted like every connection token) and, in its config, `fromEmail`:
+**The connection.** A `pagerduty` connection on the team holds a PagerDuty REST API key (the
+connection's `apiToken`, set through `POST`/`PATCH /api/v1/repositories` and stored encrypted like
+every connection token; the dashboard's connection form has no token field) and, in its config,
+`fromEmail`, which is refused when it is not an email:
 the email of a PagerDuty user, which PagerDuty requires on a note write and shows as the note's
 author. A scoped key needs read access to incidents and `incidents.write` for notes. The worker
 calls `https://api.pagerduty.com` only.

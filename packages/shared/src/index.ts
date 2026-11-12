@@ -37,6 +37,7 @@ export {
   parseConfluenceConnectionConfig,
   parseIssueTrackerConnectionConfig,
   parseNotionConnectionConfig,
+  connectionConfigProblem,
   parsePagerDutyConnectionConfig,
   parseSlackConnectionConfig,
   parseZendeskConnectionConfig,
