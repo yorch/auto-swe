@@ -676,6 +676,15 @@ setup resolves all open blockers on that connection. **Dismiss** manually resolv
 recurs, setup reopens the same row and increments its occurrence count. Resolving a blocker
 does not change the setup definition or retry a run.
 
+When a run's blamed failed step reports `WORKSPACE_SETUP_FAILED`, the run and request panels
+look up that repository's blockers, including resolved rows, and match the run's workflow ID
+against `lastWorkflowId`. A match shows the kind, remedy, subject and setup step; the recorded
+error stays under diagnostics. The request panel also names the kind on its blocker line.
+Without a match, repository or workflow identity, permission to read blockers, or a successful
+lookup, the panels keep the recorded error without an additional error message. Blocker rows
+are deduplicated: a later workflow can replace `lastWorkflowId`, so an older run then falls back
+to its recorded error.
+
 `GET /api/v1/repositories/:id/setup-blockers` returns open blockers newest first; use
 `?includeResolved=true` to include resolved rows. `POST
 /api/v1/repositories/:id/setup-blockers/:blockerId/resolve` dismisses one. Both use the same

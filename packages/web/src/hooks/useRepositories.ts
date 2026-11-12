@@ -248,13 +248,20 @@ export function useGitHubAvailableRepos(enabled = false) {
   });
 }
 
-export function useSetupBlockers(connectionId: string) {
+export function useSetupBlockers(
+  connectionId: string,
+  options: { includeResolved?: boolean } = {}
+) {
+  const includeResolved = options.includeResolved ?? false;
   return useQuery({
     queryFn: () =>
       api
-        .get<RepoSetupBlockersResponse>(`/api/v1/repositories/${connectionId}/setup-blockers`)
+        .get<RepoSetupBlockersResponse>(
+          `/api/v1/repositories/${connectionId}/setup-blockers${includeResolved ? '?includeResolved=true' : ''}`
+        )
         .then((r) => r.blockers),
-    queryKey: ['repositories', connectionId, 'setup-blockers'],
+    queryKey: ['repositories', connectionId, 'setup-blockers', includeResolved],
+    ...(includeResolved ? { retry: false } : {}),
   });
 }
 

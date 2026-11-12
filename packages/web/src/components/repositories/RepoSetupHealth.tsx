@@ -1,26 +1,11 @@
 'use client';
 
-import type { SetupBlocker } from '@auto-swe/shared/lib/setupBlocker';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { useDismissSetupBlocker, useSetupBlockers } from '@/hooks/useRepositories';
 import { errMsg } from '@/lib/errors';
-
-const KIND_LABELS: Record<SetupBlocker['kind'], string> = {
-  egress_denied: 'Network access denied',
-  git_auth: 'Git authentication failed',
-  git_fetch: 'Git fetch failed',
-  internal: 'Workspace setup error',
-  invalid_config: 'Invalid configuration',
-  lfs_missing: 'Git LFS missing',
-  missing_secret: 'Missing secret',
-  missing_tool: 'Missing tool',
-  secret_decrypt_failed: 'Secret decryption failed',
-  secret_leak: 'Secret left on disk',
-  step_failed: 'Setup step failed',
-  step_timeout: 'Setup step timed out',
-};
+import { setupBlockerLabel } from '@/lib/setupBlockers';
 
 export function RepoSetupHealth({
   repositoryId,
@@ -47,7 +32,7 @@ export function RepoSetupHealth({
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0 text-sm text-paper-200">
                 <p>
-                  {KIND_LABELS[blocker.kind]}
+                  {setupBlockerLabel(blocker.kind)}
                   {blocker.subject && (
                     <>
                       : <span className="break-all font-mono">{blocker.subject}</span>
@@ -57,7 +42,7 @@ export function RepoSetupHealth({
                 {blocker.step && <p className="text-xs text-paper-400">Step: {blocker.step}</p>}
               </div>
               <Button
-                aria-label={`Dismiss ${KIND_LABELS[blocker.kind]} ${blocker.subject}`}
+                aria-label={`Dismiss ${setupBlockerLabel(blocker.kind)} ${blocker.subject}`}
                 disabled={disabled || dismiss.isPending}
                 onClick={() => {
                   setError(null);

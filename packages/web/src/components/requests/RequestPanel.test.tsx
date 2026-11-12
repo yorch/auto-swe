@@ -63,6 +63,36 @@ beforeEach(stubDialogPrototype);
 afterEach(() => vi.unstubAllGlobals());
 
 describe('request side panel', () => {
+  it('names the matching setup blocker on the request blocker line', async () => {
+    const setupRun = {
+      ...failed,
+      contextSnapshot: { request: { repoId: 'repo-setup' } },
+      steps: [{ ...failed.steps[0], error: 'WORKSPACE_SETUP_FAILED: missing foo' }],
+      workflowId: 'workflow-setup',
+    };
+    setupFetchMock({
+      'GET /api/v1/human-steps': () => ({ data: [] }),
+      'GET /api/v1/repositories/repo-setup/setup-blockers': () => ({
+        blockers: [
+          {
+            id: 'blocker',
+            kind: 'missing_tool',
+            lastWorkflowId: 'workflow-setup',
+            remedy: 'Install foo in the workspace image.',
+            subject: 'foo',
+          },
+        ],
+      }),
+      'GET /api/v1/workflow-runs': () => ({ data: [setupRun], meta: { total: 1 } }),
+      'GET /api/v1/workflow-runs/requests': () => ({ data: [], meta: { total: 0 } }),
+      'GET /api/v1/workflow-runs/run-failed': () => ({ data: setupRun }),
+    });
+    render(withQuery(<RequestPanel onClose={vi.fn()} requestId={REQUEST} />));
+    expect(await screen.findByText('Blocker: Missing tool')).toBeTruthy();
+    expect(screen.getByText('Install foo in the workspace image.')).toBeTruthy();
+    expect(screen.getByText('WORKSPACE_SETUP_FAILED: missing foo')).toBeTruthy();
+  });
+
   it('waits for a queued review request without reading its reserved run, then shows the execution', async () => {
     let started = false;
     const fetch = setupFetchMock({
