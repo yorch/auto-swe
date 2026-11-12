@@ -64,6 +64,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'SlackChannel',
   'SlackWorkspace',
   'Team',
+  'TeamBudgetNotice',
   'TeamMembership',
   'TeamSecret',
   'WorkflowHttpCall',

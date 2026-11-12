@@ -148,7 +148,7 @@ export function harnessRuntime<Report>(
   let prepared: Promise<string> | undefined;
 
   async function runTurn(input: ImplementerTurnInput) {
-    const { onCallSpent } = input;
+    const { beforeCall, onCallSpent } = input;
     if (provisioning) {
       if (!prepared) {
         const preparing = prepareContainer(workspace, provisioning);
@@ -280,6 +280,23 @@ export function harnessRuntime<Report>(
         });
       },
       heartbeat: () => heartbeat(adapter.kind),
+      async precheck() {
+        if (!beforeCall) {
+          return;
+        }
+        // The calls already finished are on the ledger before the next is judged.
+        await debits;
+        if (debitError) {
+          throw debitError.error;
+        }
+        try {
+          await beforeCall();
+        } catch (error) {
+          debitError ??= { error };
+          abort.abort();
+          throw error;
+        }
+      },
       spawn({ args, env, leadingEnv = [], secretEnv, signal }) {
         if (!provisioning) {
           throw new Error(`${adapter.label} runs in the worker; it has no binary to start.`);

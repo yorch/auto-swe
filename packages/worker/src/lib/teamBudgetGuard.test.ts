@@ -19,6 +19,10 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
 const currentSpendOwnerMock = vi.fn();
 vi.mock('./spendOwner.js', () => ({ currentSpendOwner: () => currentSpendOwnerMock() }));
 vi.mock('./activityLog.js', () => ({ logWarn: vi.fn() }));
+const evaluateNoticeMock = vi.fn();
+vi.mock('./teamBudgetNotice.js', () => ({
+  evaluateTeamBudgetNotice: (...a: unknown[]) => evaluateNoticeMock(...a),
+}));
 
 import { prisma } from '@auto-swe/shared/db';
 import { assertTeamBudgetAvailable, resolveBilledTeam } from './teamBudgetGuard.js';
@@ -134,5 +138,29 @@ describe('assertTeamBudgetAvailable', () => {
   it('fails open when the team cannot be read', async () => {
     findTeam.mockRejectedValue(new Error('db down'));
     await expect(assertTeamBudgetAvailable('wf-1', 'agent.x')).resolves.toBeUndefined();
+  });
+});
+
+describe('assertTeamBudgetAvailable budget notice', () => {
+  it('evaluates the notice once per cache window with the settled spend', async () => {
+    teamMonthSpendMock.mockResolvedValue(spend(7));
+    await assertTeamBudgetAvailable('wf-1', 'agent.x');
+    await assertTeamBudgetAvailable('wf-1', 'agent.x');
+    expect(evaluateNoticeMock).toHaveBeenCalledTimes(1);
+    expect(evaluateNoticeMock).toHaveBeenCalledWith('team-1', 7);
+  });
+
+  it('does not evaluate for a team with no cap', async () => {
+    findTeam.mockResolvedValue({ monthlyBudgetUsdCents: null } as never);
+    await assertTeamBudgetAvailable('wf-1', 'agent.x');
+    expect(evaluateNoticeMock).not.toHaveBeenCalled();
+  });
+
+  it('still blocks at the cap while the notice evaluation is pending', async () => {
+    evaluateNoticeMock.mockReturnValue(new Promise(() => undefined));
+    teamMonthSpendMock.mockResolvedValue(spend(10));
+    await expect(assertTeamBudgetAvailable('wf-1', 'agent.x')).rejects.toBeInstanceOf(
+      ApplicationFailure
+    );
   });
 });

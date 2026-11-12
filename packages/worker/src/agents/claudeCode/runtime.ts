@@ -1023,6 +1023,7 @@ export function claudeCodeAdapter(
                 status: exchange.status,
               });
             },
+            precheck: () => turn.precheck(),
             signal: turn.abort.signal,
             upstreamBaseUrl: baseUrl,
           })

@@ -4,6 +4,7 @@ import { teamMonthSpend, usdToCents } from '@auto-swe/shared/lib/billing';
 import { ApplicationFailure } from '@temporalio/activity';
 import { logWarn } from './activityLog.js';
 import { currentSpendOwner } from './spendOwner.js';
+import { evaluateTeamBudgetNotice } from './teamBudgetNotice.js';
 
 /**
  * The team whose own monthly cap this workflow's spend counts against: the team the run is
@@ -85,7 +86,10 @@ export async function assertTeamBudgetAvailable(workflowId: string, label: strin
       if (capCents == null) {
         return { capCents, spentUsd: 0 };
       }
-      return { capCents, spentUsd: (await teamMonthSpend(prisma, id)).totalUsd };
+      const spentUsd = (await teamMonthSpend(prisma, id)).totalUsd;
+      // Once per cache window per team; never awaited, so it cannot slow or fail the model call.
+      void evaluateTeamBudgetNotice(id, spentUsd);
+      return { capCents, spentUsd };
     });
   } catch (err) {
     logWarn('Team budget unreadable — the call is not capped by it', {

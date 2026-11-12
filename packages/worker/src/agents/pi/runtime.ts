@@ -306,6 +306,7 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
       });
       const streamFn = aiSdkStreamFn(
         {
+          beforeCall: () => turn.precheck(),
           heartbeat: () => turn.heartbeat(),
           model,
           onCall: ({ id, usage }) => {
