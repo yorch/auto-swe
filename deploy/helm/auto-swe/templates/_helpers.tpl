@@ -63,6 +63,9 @@ app.kubernetes.io/component: {{ .component }}
 {{- if and .Values.worker.enabled (not .Values.worker.proxies.modelPort) -}}
 {{- fail "worker.proxies.modelPort is required: the Kubernetes workspace backend refuses to start without the model proxy" -}}
 {{- end -}}
+{{- if and .Values.worker.enabled (or .Values.workspaces.requireRuntimeClass .Values.workspaces.kataRuntimeClass.create) (not .Values.workspaces.runtimeClassName) -}}
+{{- fail "workspaces.runtimeClassName is required when requiring a RuntimeClass or creating a Kata RuntimeClass" -}}
+{{- end -}}
 {{- end -}}
 
 {{/* Env shared by the gateway and the worker. */}}

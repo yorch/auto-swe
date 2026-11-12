@@ -6,7 +6,7 @@ description: >-
   through the worker's Kubernetes workspace backend.
 type: application
 # The chart's own version; bump it with any template or values change.
-version: 0.1.0
+version: 0.2.0
 # The default image tag for all three services. Pin a release tag or a digest in
 # production (image.*.tag / image.*.digest): `main` moves.
 appVersion: main

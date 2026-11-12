@@ -878,7 +878,7 @@ describe('systemConfig resolvers', () => {
     });
 
     describe('validateWorkspaceInfraEnv — the strict check the worker runs at boot', () => {
-      it.each(['runsc', 'runsc-host', 'io.containerd.runsc.v1', 'runc'])(
+      it.each(['runsc', 'runsc-host', 'io.containerd.runsc.v1', 'io.containerd.kata.v2', 'runc'])(
         'accepts runtime %s',
         (value) => {
           process.env.WORKSPACE_RUNTIME = value;
