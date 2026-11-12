@@ -4,6 +4,7 @@ import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
 import type { RepoSetup } from '@auto-swe/shared/lib/repoSetup';
 import type {
   RepoGateCommands,
+  RepoSetupBlockersResponse,
   RepoSetupFileProposalStatus,
   RepoSetupSecretSummary,
   RepositorySummary,
@@ -244,6 +245,29 @@ export function useGitHubAvailableRepos(enabled = false) {
         .then((r) => r.data),
     queryKey: ['github-available-repos'],
     staleTime: 30_000,
+  });
+}
+
+export function useSetupBlockers(connectionId: string) {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<RepoSetupBlockersResponse>(`/api/v1/repositories/${connectionId}/setup-blockers`)
+        .then((r) => r.blockers),
+    queryKey: ['repositories', connectionId, 'setup-blockers'],
+  });
+}
+
+export function useDismissSetupBlocker(connectionId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (blockerId: string) =>
+      api.post(
+        `/api/v1/repositories/${connectionId}/setup-blockers/${encodeURIComponent(blockerId)}/resolve`,
+        {}
+      ),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ['repositories', connectionId, 'setup-blockers'] }),
   });
 }
 

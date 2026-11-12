@@ -626,6 +626,40 @@ holds no value for, or one that cannot be decrypted, fails setup with `WORKSPACE
 name may not be both an `env` key and a secret. Saving and deleting are written to the audit log,
 by name only.
 
+### Setup blockers
+
+Workspace setup failures carry typed diagnostics and retain the `WORKSPACE_SETUP_FAILED`
+failure type and retry behavior. For a workspace associated with a repository connection, the
+worker records each blocker by kind and subject, incrementing its occurrence count when it
+recurs. Details contain a redacted output tail, capped at 2,000 characters; remedies are fixed
+hints computed from the kind, not instructions generated from the output.
+
+| Kind | Raised when |
+|---|---|
+| `missing_secret` | A named setup secret has no saved value. |
+| `secret_decrypt_failed` | A saved setup secret cannot be decrypted. |
+| `missing_tool` | A step exits 127 or its output indicates a shell command is missing. |
+| `egress_denied` | A failed step has a blocked egress-proxy audit row since its start. |
+| `git_auth` | A submodule or LFS fetch reports an authentication failure. |
+| `git_fetch` | A submodule or LFS fetch fails without an authentication indicator. |
+| `lfs_missing` | Setup enables LFS but the workspace lacks git-lfs. |
+| `step_failed` | A step exits unsuccessfully without a more specific classification. |
+| `step_timeout` | Capturing a setup step throws, including timeout. |
+| `invalid_config` | The definition is invalid, submodule configuration is refused, a secret is too short to scan, or secrets are requested without a repository connection. |
+| `secret_leak` | The secret scan finds secret-bearing files after cleanup. |
+| `internal` | Reading the setup file, cleanup, marker creation, process sweeping or completion of the secret scan fails. |
+
+The repository edit form's **Workspace setup** section includes a **Setup health** card with
+open blockers, remedies, expandable details and occurrence timestamps. The next successful
+setup resolves all open blockers on that connection. **Dismiss** manually resolves one; if it
+recurs, setup reopens the same row and increments its occurrence count. Resolving a blocker
+does not change the setup definition or retry a run.
+
+`GET /api/v1/repositories/:id/setup-blockers` returns open blockers newest first; use
+`?includeResolved=true` to include resolved rows. `POST
+/api/v1/repositories/:id/setup-blockers/:blockerId/resolve` dismisses one. Both use the same
+repository access and team-admin permission checks as setup secrets and editing setup.
+
 **Keeping secrets out of the tree.** A step that writes a secret to disk — an `.npmrc` with an auth
 token, say — lists that file under `cleanup` (`cleanup: [~/.npmrc]`; paths relative to the
 checkout, or `~/` under the home directory, at most 20). After the steps, every process they left
@@ -824,6 +858,11 @@ longer fit.
 ---
 
 ## Limitations
+
+- **Egress blocker detection relies on proxy audit rows.** Kernel-dropped traffic is not classified
+  as `egress_denied`, and only the first denied host is reported for a failed step.
+- **Missing-tool detection is heuristic.** Exit 127, `command not found` and shell missing-command
+  messages identify `missing_tool`; other failures remain `step_failed` unless another classifier applies.
 
 - **Workspace setup files that git tracks become part of the change.** Setup runs on the tree the
   agent then edits, so a step that rewrites a tracked file puts that rewrite in the diff. Keep setup

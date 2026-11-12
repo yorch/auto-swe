@@ -803,6 +803,7 @@ model Connection {
   /// Per-user GitHub tokens for this repository (see `ConnectionCredential`).
   credentials           ConnectionCredential[]
   setupSecrets          RepoSetupSecret[]
+  setupBlockers         RepoSetupBlocker[]
   /// Eval datasets whose cases read this repository's setup secrets.
   evalDatasetsUsingSetupSecrets EvalDataset[] @relation("EvalDatasetSetupSecrets")
   /// Further teams whose members may see and launch on this repository. The
@@ -999,6 +1000,24 @@ model ConnectionCredential {
   @@unique([connectionId, userId])
   @@index([userId])
   @@map("connection_credentials")
+}
+
+model RepoSetupBlocker {
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  connectionId   String     @map("connection_id") @db.Uuid
+  connection     Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  kind           String
+  subject        String
+  step           String?
+  detail         String
+  occurrences    Int        @default(1)
+  firstSeenAt    DateTime   @default(now()) @map("first_seen_at") @db.Timestamptz
+  lastSeenAt     DateTime   @default(now()) @map("last_seen_at") @db.Timestamptz
+  lastWorkflowId String?    @map("last_workflow_id")
+  resolvedAt     DateTime?  @map("resolved_at") @db.Timestamptz
+
+  @@unique([connectionId, kind, subject])
+  @@map("repo_setup_blockers")
 }
 
 /// A secret a repository's workspace setup names under `secrets:`. Set by team admins, write-only:
