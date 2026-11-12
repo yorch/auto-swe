@@ -12,7 +12,11 @@ const state = vi.hoisted(() => ({
     clientSecret: null as string | null,
     issuer: null as string | null,
   },
+  team: null as { id: string; orgId: string } | null,
 }));
+
+const enrollDefaultTeamMock = vi.hoisted(() => vi.fn());
+vi.mock('./defaultTeamMembership.js', () => ({ enrollDefaultTeam: enrollDefaultTeamMock }));
 
 // Building the auth instance seeds the MCP resource through the Prisma adapter, so every model
 // delegate the adapter touches must exist: an empty database that never returns a row will do.
@@ -24,7 +28,15 @@ vi.mock('@auto-swe/shared/db', () => {
     findMany: async () => [],
     findUnique: async () => null,
   };
-  return { prisma: new Proxy({}, { get: () => emptyModel }) };
+  return {
+    prisma: new Proxy(
+      {},
+      {
+        get: (_target, key) =>
+          key === 'team' ? { findUnique: async () => state.team } : emptyModel,
+      }
+    ),
+  };
 });
 vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/lib/systemConfig')>()),
@@ -36,6 +48,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
   resolveGitHubConfig: async () => state.gh,
   resolveGoogleOAuthConfig: () => ({ clientId: null, clientSecret: null }),
   resolveOktaOAuthConfig: () => state.okta,
+  resolveWorkflowDefaults: async () => ({ defaultTeamSlug: 'default' }),
 }));
 
 interface GenericPlugin {
@@ -72,6 +85,8 @@ function setGithub(partial: Partial<typeof state.gh>) {
 }
 
 afterEach(() => {
+  state.team = null;
+  enrollDefaultTeamMock.mockReset();
   vi.unstubAllGlobals();
   state.gh = {
     apiUrl: 'https://api.github.com',
@@ -81,6 +96,39 @@ afterEach(() => {
   };
   state.okta = { clientId: null, clientSecret: null, issuer: null };
   vi.restoreAllMocks();
+});
+
+describe('sign-up default-team enrollment', () => {
+  it.each(['success', 'missing', 'error'])(
+    'handles %s enrollment as a system action',
+    async (outcome) => {
+      state.team = outcome === 'missing' ? null : { id: 'default-team', orgId: 'default-org' };
+      const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      if (outcome === 'error') {
+        enrollDefaultTeamMock.mockRejectedValueOnce(new Error('audit failed'));
+      }
+      const built = await build();
+      const hook = built.mod.getAuth().options.databaseHooks?.user?.create?.after;
+      expect(hook).toBeDefined();
+      await hook?.({ email: 'new@example.com', id: 'new-user' } as Parameters<
+        NonNullable<typeof hook>
+      >[0]);
+      if (outcome === 'missing') {
+        expect(enrollDefaultTeamMock).not.toHaveBeenCalled();
+      } else {
+        expect(enrollDefaultTeamMock).toHaveBeenCalledWith(
+          expect.anything(),
+          state.team,
+          'new-user',
+          null
+        );
+      }
+      if (outcome === 'error') {
+        expect(error).toHaveBeenCalled();
+      }
+    }
+  );
 });
 
 describe('GitHub sign-in wiring', () => {

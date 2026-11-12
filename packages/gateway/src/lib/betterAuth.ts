@@ -32,6 +32,7 @@ import { APIError } from 'better-auth/api';
 import { jwt, magicLink } from 'better-auth/plugins';
 import { type GenericOAuthConfig, genericOAuth, okta } from 'better-auth/plugins/generic-oauth';
 import { authEmailAvailable, deliverAuthEmail } from './authEmail.js';
+import { enrollDefaultTeam } from './defaultTeamMembership.js';
 import { autoApproveGithubUser } from './githubAutoApprove.js';
 import { type GithubSignIn, resolveGithubSignIn } from './githubEnterpriseAuth.js';
 import { syncGithubLoginForAccount } from './githubIdentity.js';
@@ -471,11 +472,7 @@ function buildAuth() {
                 );
                 return;
               }
-              await prisma.teamMembership.upsert({
-                create: { role: 'ENGINEER', teamId: team.id, userId: user.id },
-                update: {},
-                where: { userId_teamId: { teamId: team.id, userId: user.id } },
-              });
+              await enrollDefaultTeam(prisma, team, user.id, null);
             } catch (err) {
               console.error(
                 `[better-auth] auto-team-membership hook failed for ${user.email}:`,

@@ -7,6 +7,7 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { enrollDefaultTeam } from '../lib/defaultTeamMembership.js';
 import { getDefaultClientOrigin } from '../lib/env.js';
 import { sendError } from '../lib/httpErrors.js';
 import { revokeMcpGrants } from '../lib/mcpGrants.js';
@@ -302,15 +303,11 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         where: { slug: defaultTeamSlug },
       });
       if (defaultTeam) {
-        await fastify.prisma.teamMembership
-          .upsert({
-            create: { role: Role.ENGINEER, teamId: defaultTeam.id, userId: user.id },
-            update: {},
-            where: { userId_teamId: { teamId: defaultTeam.id, userId: user.id } },
-          })
-          .catch((err: unknown) => {
+        await enrollDefaultTeam(fastify.prisma, defaultTeam, user.id, actor.sub).catch(
+          (err: unknown) => {
             request.log.warn({ err, userId: user.id }, 'default-team enrolment failed (non-fatal)');
-          });
+          }
+        );
       }
 
       // Send a magic-link via better-auth so the invitee can sign in

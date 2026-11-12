@@ -362,6 +362,12 @@ Adding a member through `POST /api/v1/teams/:id/members` requires that user to b
 organization (`400 ORG_MEMBERSHIP_REQUIRED` otherwise). A platform ADMIN can add a non-member;
 the gateway creates an audited `ORG_MEMBER` membership in the same transaction.
 
+Sign-up and platform user invitations enroll the user in the default team's organization as
+`ORG_MEMBER` and in the default team as `ENGINEER` in one audited transaction. Existing organization
+and team roles are preserved; repeated enrollment creates neither duplicate memberships nor audits.
+Enrollment failures are logged without failing account creation, and neither membership is committed
+if that enrollment transaction fails.
+
 ## Limitations
 
 - Organization admins manage linked GitHub installations from **Admin → Organizations → the
@@ -371,9 +377,6 @@ the gateway creates an audited `ORG_MEMBER` membership in the same transaction.
   installation already registered; see [GitHub App setup](./github-app-setup.md#connecting-an-organization).
 
 - Removing an organization membership does not remove that user's team memberships.
-- The sign-up hook and platform user-invite default-team enrollment create team memberships without ensuring organization membership;
-  the membership bound applies to the team creation and member-add API routes, not every writer.
-
 - **Engineers see failures only for runs they launched.** A lead does not see a failure on a
   teammate's run in the desk, and a run the caller controls but did not launch is excluded.
 - **Expired approvals are not in Needs you.** An expired step cannot be answered, so the actionable

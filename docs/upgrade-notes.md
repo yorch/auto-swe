@@ -1323,7 +1323,8 @@ organization.
 **Actions.** Run `yarn db:deploy` before starting the updated gateway. The migration inserts missing
 `ORG_MEMBER` rows without changing existing organization roles. It is idempotent and leaves HNSW
 indexes unchanged. Review the resulting organization access: existing team members gain organization
-membership. This does not change the sign-up default-team hook or cascade organization removal to teams.
+membership. Sign-up and platform user-invite default-team enrollment also ensure organization
+membership transactionally and preserve existing roles. Organization removal does not cascade to teams.
 
 **Verify.** Every existing team member has an organization membership for that team's organization
 immediately after the migration; a later organization removal can leave a team membership behind.
