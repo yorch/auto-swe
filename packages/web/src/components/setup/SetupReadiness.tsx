@@ -122,10 +122,12 @@ export function SetupBanner({
   items,
   here,
   inPage,
+  compact = false,
 }: {
   items: ReadinessItemId[];
   here?: string;
   inPage?: { label: string; onClick: () => void };
+  compact?: boolean;
 }) {
   const isAdmin = useHasRole('ADMIN');
   const { data } = useReadiness(isAdmin);
@@ -137,7 +139,7 @@ export function SetupBanner({
     'inline-flex items-center gap-1 rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
     FOCUS_RING
   );
-  return (
+  const banner = (
     <Alert title="Setup incomplete" variant="warning">
       <ul className="space-y-1">
         {missing.map((item) => (
@@ -161,5 +163,16 @@ export function SetupBanner({
         ))}
       </ul>
     </Alert>
+  );
+  return compact ? (
+    <details className="rounded-lg border border-warning-400/30 bg-warning-400/5 p-3">
+      <summary className="cursor-pointer text-sm text-warning-400">
+        Setup incomplete — {missing.length} {missing.length === 1 ? 'item needs' : 'items need'}{' '}
+        attention
+      </summary>
+      <div className="mt-3">{banner}</div>
+    </details>
+  ) : (
+    banner
   );
 }

@@ -16,6 +16,7 @@ import {
   runnableWorkflows,
   workflowPickerSections,
 } from '@/components/requests/workflowPicker';
+import { workflowGuide } from '@/components/requests/workflowProcess';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -28,6 +29,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useTeams } from '@/hooks/useTeams';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
+import { useWorkflowProcess } from '@/hooks/useWorkflowProcess';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { requestHref } from '@/lib/requestDisplay';
 import { hasRole } from '@/lib/roles';
@@ -45,7 +47,7 @@ interface ModeOption {
 }
 
 /** What each mode does once launched — the side rail's "what happens next". */
-const GUIDE: Record<Mode, { title: string; points: string[] }> = {
+const GUIDE: Record<Exclude<Mode, 'workflow'>, { title: string; points: string[] }> = {
   agent: {
     points: [
       'The agent works in an isolated workspace on a copy of the repository.',
@@ -61,14 +63,6 @@ const GUIDE: Record<Mode, { title: string; points: string[] }> = {
       'Each repository gets its own pull request to review.',
     ],
     title: 'Running an epic',
-  },
-  workflow: {
-    points: [
-      'The workflow runs its steps, checks and approvals in order.',
-      'You are asked when a step needs a person.',
-      'A pull request it opens is for you to review and merge.',
-    ],
-    title: 'Running a workflow',
   },
 };
 
@@ -88,14 +82,14 @@ function WorkModePicker({
   return (
     <fieldset>
       <legend className="sr-only">How do you want to work?</legend>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-2 sm:grid-cols-3 sm:gap-3">
         {options.map((option) => {
           const selected = option.value === value;
           return (
             <label
               className={cn(
                 // Mobile: icon | text | check in one row. From sm: icon and check on top, text below.
-                'relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 rounded-xl border p-4 transition-colors sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-3',
+                'relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 rounded-xl border p-3 transition-colors sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-3 sm:p-4',
                 'has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400',
                 selected
                   ? 'border-accent-400/70 bg-accent-400/[0.07]'
@@ -127,7 +121,7 @@ function WorkModePicker({
               </span>
               <span className="min-w-0 sm:col-span-2 sm:row-start-2">
                 <span className="block text-sm font-medium text-paper-100">{option.label}</span>
-                <span className="mt-1 block text-xs leading-relaxed text-paper-400">
+                <span className="mt-0.5 block truncate text-xs leading-relaxed text-paper-400 sm:mt-1 sm:whitespace-normal">
                   {option.description}
                 </span>
               </span>
@@ -282,6 +276,8 @@ export function StartWork({
     }),
   }));
   const template = runnable.find((item) => item.id === templateId);
+  const { summary } = useWorkflowProcess(mode === 'workflow' ? (template?.id ?? '') : '');
+  const workflowRail = workflowGuide(summary, template?.workspaceProvider);
   const unrunnableTemplate =
     !!initialTemplateId &&
     !teamsPending &&
@@ -292,29 +288,26 @@ export function StartWork({
   const onLaunched = (requestId: string) => router.push(requestHref(requestId));
   const options: ModeOption[] = [
     {
-      description: 'Follow a reusable process with defined steps, checks, and approvals.',
+      description: 'A reusable process with checks.',
       icon: 'workflows',
       label: 'Run a workflow',
       value: 'workflow',
     },
     {
-      description:
-        'Give one agent a task on a repository, with explicit execution and delivery limits.',
+      description: 'One focused task on one repository.',
       icon: 'agents',
       label: 'Run an agent',
       value: 'agent',
     },
     {
-      description: canStartEpic
-        ? 'Change several repositories at once. A planner splits the brief into ordered per-repository work.'
-        : epic.reason,
+      description: canStartEpic ? 'Coordinated work across repositories.' : epic.reason,
       disabled: !canStartEpic,
       icon: 'epics',
       label: 'Run a multi-repo epic',
       value: 'epic',
     },
   ];
-  const guide = GUIDE[mode];
+  const guide = mode === 'workflow' ? workflowRail : GUIDE[mode];
   const detailsStep = mode === 'workflow' ? 3 : 2;
   return (
     <div className="space-y-6">
@@ -337,8 +330,8 @@ export function StartWork({
       <HowItWorks />
       <StartScopeProvider value={scope}>
         <div className="grid gap-8 xl:grid-cols-[minmax(0,48rem)_18rem]">
-          <div className="min-w-0 space-y-8">
-            <SetupBanner items={['credentials', 'github', 'connections']} />
+          <div className="min-w-0 space-y-5 sm:space-y-8">
+            <SetupBanner compact items={['credentials', 'github', 'connections']} />
             {unrunnableTemplate && (
               <Alert variant="warning">
                 The workflow you picked is not available to run.{' '}
@@ -356,12 +349,19 @@ export function StartWork({
             )}
             <Step number={1} title="How do you want to work?">
               <WorkModePicker onChange={setMode} options={options} value={mode} />
-              <ModeChooser
-                canStartEpic={canStartEpic}
-                current={mode}
-                epicReason={epic.reason === BASE_EPIC_REASON ? undefined : epic.reason}
-                onChoose={setMode}
-              />
+              <details className="rounded-lg border border-ink-500/70 p-3">
+                <summary className="cursor-pointer text-sm text-paper-400">
+                  Need help choosing?
+                </summary>
+                <div className="mt-3">
+                  <ModeChooser
+                    canStartEpic={canStartEpic}
+                    current={mode}
+                    epicReason={epic.reason === BASE_EPIC_REASON ? undefined : epic.reason}
+                    onChoose={setMode}
+                  />
+                </div>
+              </details>
             </Step>
             <div className="space-y-8" hidden={mode !== 'workflow'}>
               <Step
@@ -466,9 +466,11 @@ export function StartWork({
                   </li>
                 ))}
               </ul>
-              <p className="mt-4 border-t border-ink-600 pt-3 text-xs text-paper-500">
-                No built-in step or template merges a pull request. Follow progress from Requests.
-              </p>
+              {(mode !== 'workflow' || workflowRail.producesPr) && (
+                <p className="mt-4 border-t border-ink-600 pt-3 text-xs text-paper-500">
+                  No built-in step or template merges a pull request. Follow progress from Requests.
+                </p>
+              )}
             </Card>
           </aside>
         </div>

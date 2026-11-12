@@ -43,11 +43,7 @@ export function LaunchCardHeader({
                       : 'border-ink-500 text-paper-500'
                 )}
               >
-                {done ? (
-                  <Icon name="check" size={11} strokeWidth={2.6} />
-                ) : (
-                  <span className="tabular">{index + 1}</span>
-                )}
+                {done ? <Icon name="check" size={11} strokeWidth={2.6} /> : null}
                 {step.label}
               </span>
             </li>
