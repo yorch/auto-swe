@@ -41,6 +41,7 @@ const TEAM = '7a000000-0000-4000-8000-000000000002';
 const CROWDED_REPO = '7a000000-0000-4000-8000-000000000003';
 const SMALL_REPO = '7a000000-0000-4000-8000-000000000004';
 const AGED_REPO = '7a000000-0000-4000-8000-000000000005';
+const QUARANTINE_REPO = '7a000000-0000-4000-8000-000000000006';
 const SPEC = 'test/embedding';
 const DIMS = 1536;
 
@@ -88,6 +89,7 @@ describe.skipIf(!enabled)('scoped vector search against pgvector', () => {
         { id: CROWDED_REPO, teamId: TEAM },
         { id: SMALL_REPO, teamId: TEAM },
         { id: AGED_REPO, teamId: TEAM },
+        { id: QUARANTINE_REPO, teamId: TEAM },
       ],
     });
     // The crowded repository fills the query's neighbourhood; the small one's
@@ -126,6 +128,57 @@ describe.skipIf(!enabled)('scoped vector search against pgvector', () => {
     const similarities = rows.map((r) => Number(r.similarity));
     expect(similarities).toEqual([...similarities].sort((a, b) => b - a));
   });
+
+  it('excludes quarantined nearest lessons before LIMIT and restores eligibility', async () =>
+    runUnscoped('bounded to the quarantine fixture repository', ['MemoryItem'], async () => {
+      await seed(QUARANTINE_REPO, 10, 0.01, query);
+      await prisma.memoryItem.updateMany({
+        data: {
+          quarantinedAt: new Date(),
+          quarantineReason: 'stale',
+          quarantineSource: 'FLAG_THRESHOLD',
+        },
+        where: { repoId: QUARANTINE_REPO },
+      });
+      expect(await search(QUARANTINE_REPO, 5)).toEqual([]);
+      await seed(QUARANTINE_REPO, 5, 1, null);
+      const active = await prisma.memoryItem.findMany({
+        select: { id: true },
+        where: { quarantinedAt: null, repoId: QUARANTINE_REPO },
+      });
+      const rows = await search(QUARANTINE_REPO, 5);
+      expect(new Set(rows.map((r) => r.id))).toEqual(new Set(active.map((r) => r.id)));
+      const quarantined = await prisma.memoryItem.findFirstOrThrow({
+        select: { id: true },
+        where: { quarantinedAt: { not: null }, repoId: QUARANTINE_REPO },
+      });
+      const { explainLesson } = await import('./lessonRecall.js');
+      expect(await explainLesson(QUARANTINE_REPO, quarantined.id)).toBeNull();
+      const root = active[0];
+      expect(root).toBeDefined();
+      if (!root) {
+        throw new Error('Missing active fixture lesson');
+      }
+      await prisma.memoryItem.update({
+        data: { metadata: { consolidatedFrom: [quarantined.id] } },
+        where: { id: root.id },
+      });
+      await prisma.memoryItem.update({
+        data: { supersededById: root.id },
+        where: { id: quarantined.id },
+      });
+      expect(await explainLesson(QUARANTINE_REPO, root.id)).toMatchObject({
+        mergedFrom: [],
+        replaced: [],
+      });
+      await prisma.memoryItem.updateMany({
+        data: { quarantinedAt: null, quarantineReason: null, quarantineSource: null },
+        where: { repoId: QUARANTINE_REPO },
+      });
+      expect(
+        (await search(QUARANTINE_REPO, 5)).every((r) => !active.some((a) => a.id === r.id))
+      ).toBe(true);
+    }));
 
   it('lists the rows another model embedded, and unlabelled ones, for re-embedding', async () => {
     const [other, unlabelled] = await prisma.$queryRawUnsafe<{ id: string }[]>(
@@ -198,7 +251,7 @@ async function cleanup() {
     'test fixture rows, by fixed id',
     ['MemoryItem', 'Connection', 'Team'],
     async () => {
-      const repos = [CROWDED_REPO, SMALL_REPO, AGED_REPO];
+      const repos = [CROWDED_REPO, SMALL_REPO, AGED_REPO, QUARANTINE_REPO];
       await prisma.memoryItem.deleteMany({ where: { repoId: { in: repos } } });
       await prisma.connection.deleteMany({ where: { id: { in: repos } } });
       await prisma.team.deleteMany({ where: { id: TEAM } });

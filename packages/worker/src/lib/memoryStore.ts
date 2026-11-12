@@ -164,6 +164,7 @@ export async function searchMemoryItemsByVector(opts: {
       AND embedding IS NOT NULL
       AND consolidated_at IS NULL
       AND superseded_at IS NULL
+      ${opts.scopeColumn === 'repo_id' ? "AND (scope <> 'swe-lessons' OR quarantined_at IS NULL)" : ''}
       AND (embedding_model IS NULL OR embedding_model = $5)
       AND 1 - (embedding <=> $1::vector) >= $3${ageFilter}
     ORDER BY embedding <=> $1::vector ASC

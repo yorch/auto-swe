@@ -11,9 +11,15 @@ const lesson = (over: Record<string, unknown> = {}) => ({
   consolidatedAt: null,
   createdAt: '2026-09-01T00:00:00.000Z',
   failureType: 'CI_FAILURE',
+  flagCount: 0,
   id: 'l1',
   lessonSummary: 'Run migrations before deploying',
   metadata: null,
+  myFlag: null,
+  quarantinedAt: null,
+  quarantinedById: null,
+  quarantineReason: null,
+  quarantineSource: null,
   rationale: null,
   repository: { id: 'r1', organizationName: 'acme', repoName: 'api' },
   workflow: null,
@@ -37,6 +43,8 @@ function mock(rows: unknown[], managedRepoIds?: string[]) {
     }),
     'POST /api/v1/lessons/consolidate': () => ({ data: { workflowId: 'wf-1' } }),
     'POST /api/v1/lessons/l1/flags': () => ({ data: { flagged: true } }),
+    'POST /api/v1/lessons/l1/quarantine': () => ({ data: {} }),
+    'POST /api/v1/lessons/l1/restore': () => ({ data: {} }),
   });
 }
 
@@ -184,6 +192,100 @@ describe('LessonsPage (lead of the repository team)', () => {
 });
 
 describe('LessonsPage flags', () => {
+  it('lets managers quarantine with a required reason', async () => {
+    const fetchSpy = mock([lesson()], ['r1']);
+    render(withQuery(<LessonsPage />));
+    fireEvent.click(await screen.findByRole('button', { name: 'Quarantine' }));
+    const submit = await screen.findByRole('button', { name: 'Quarantine lesson' });
+    expect(submit.hasAttribute('disabled')).toBe(true);
+    fireEvent.change(await screen.findByLabelText('What is wrong with it'), {
+      target: { value: '  Old migration advice  ' },
+    });
+    fireEvent.click(submit);
+    await vi.waitFor(() =>
+      expect(bodyOf(fetchSpy, '/api/v1/lessons/l1/quarantine')).toEqual({
+        reason: 'Old migration advice',
+      })
+    );
+  });
+
+  it('labels quarantine and lets managers restore with a clear-flags confirmation', async () => {
+    const fetchSpy = mock(
+      [
+        lesson({
+          quarantinedAt: '2026-10-01T00:00:00Z',
+          quarantineReason: '2 distinct flags',
+          quarantineSource: 'FLAG_THRESHOLD',
+        }),
+      ],
+      ['r1']
+    );
+    render(withQuery(<LessonsPage />));
+    expect(await screen.findByText('Quarantined')).toBeTruthy();
+    expect(screen.getByText(/Flag threshold/)).toBeTruthy();
+    expect(screen.getByText(/2 distinct flags/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Restore lesson' });
+    expect(within(dialog).getByText(/clear all its flags/)).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Restore' }));
+    await vi.waitFor(() => expect(bodyOf(fetchSpy, '/api/v1/lessons/l1/restore')).toEqual({}));
+  });
+
+  it('shows quarantine to readers without offering management controls', async () => {
+    useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'me' } });
+    mock([
+      lesson({
+        quarantinedAt: '2026-10-01T00:00:00Z',
+        quarantineReason: 'Retired API',
+        quarantineSource: 'MANUAL',
+      }),
+    ]);
+    render(withQuery(<LessonsPage />));
+    expect(await screen.findByText('Quarantined')).toBeTruthy();
+    expect(screen.getByText(/Retired API/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Quarantine' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Flag' })).toBeTruthy();
+  });
+
+  it('sends the quarantine filter and clears it', async () => {
+    const fetchSpy = mock([lesson()]);
+    render(withQuery(<LessonsPage />));
+    fireEvent.click(await screen.findByRole('button', { name: /quarantine filter/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Quarantined only' }));
+    await vi.waitFor(() =>
+      expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('quarantined=true'))).toBe(
+        true
+      )
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).toBeNull();
+  });
+
+  it('shows a quarantine failure without dismissing the reason', async () => {
+    mock([lesson()], ['r1']);
+    const fetchSpy = vi.mocked(fetch);
+    const baseFetch = fetchSpy.getMockImplementation();
+    if (!baseFetch) {
+      throw new Error('Missing fetch mock');
+    }
+    fetchSpy.mockImplementation(async (url, init) => {
+      if (String(url).endsWith('/quarantine')) {
+        throw new Error('quarantine unavailable');
+      }
+      return baseFetch(url, init);
+    });
+    render(withQuery(<LessonsPage />));
+    fireEvent.click(await screen.findByRole('button', { name: 'Quarantine' }));
+    fireEvent.change(await screen.findByLabelText('What is wrong with it'), {
+      target: { value: 'stale' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Quarantine lesson' }));
+    expect(await screen.findByText('quarantine unavailable')).toBeTruthy();
+    expect((screen.getByLabelText('What is wrong with it') as HTMLTextAreaElement).value).toBe(
+      'stale'
+    );
+  });
   beforeEach(() => {
     useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
   });

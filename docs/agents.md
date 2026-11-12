@@ -346,7 +346,8 @@ explainLesson({ lessonId: uuid }) → { found, lesson: { outcome, evidence, merg
 
 `searchLessons` returns what recall would for the agent's own query, under the same maximum age
 (`memory.lessonMaxAgeDays`); `explainLesson` reads a lesson of the same repository (any other id is
-not found), whatever its age, and withholds any field that matches an injection pattern. Recalled
+not found), whatever its age, and withholds any field that matches an injection pattern. Both tools
+exclude quarantined lessons, including source and superseded lineage in explanations. Recalled
 lessons carry their ids, so the agent can ask about one. See
 [memory.md §3](./memory.md#3-recalling-lessons).
 

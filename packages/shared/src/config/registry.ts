@@ -716,6 +716,19 @@ export const SETTING_DEFINITIONS = {
   }),
 
   // ── Semantic memory ────────────────────────────────────────────────────────
+  'memory.lessonFlagQuarantineThreshold': defineSetting({
+    defaultValue: 2,
+    description:
+      'Distinct flags that quarantine a repository lesson and exclude it from agent recall. 0 disables automatic quarantine. Resolved at the repository owning team and organization; changing it does not sweep existing lessons.',
+    group: 'memory',
+    label: 'Lesson flag quarantine threshold',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(20),
+    unit: 'flags',
+  }),
   'memory.lessonMaxAgeDays': defineSetting({
     defaultValue: 0,
     description:

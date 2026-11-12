@@ -111,6 +111,7 @@ describe('explainLesson', () => {
     await expect(explainLesson('repo-1', LESSON.lessonId)).resolves.toBeNull();
     expect(findFirstMock.mock.calls[0]?.[0]?.where).toEqual({
       id: LESSON.lessonId,
+      quarantinedAt: null,
       repoId: 'repo-1',
       scope: 'swe-lessons',
     });
@@ -135,7 +136,14 @@ describe('explainLesson', () => {
     // Sources are read within the same repository only.
     expect(findManyMock.mock.calls[0]?.[0]?.where).toEqual({
       id: { in: ['src-1'] },
+      quarantinedAt: null,
       repoId: 'repo-1',
+      scope: 'swe-lessons',
+    });
+    expect(findManyMock.mock.calls[1]?.[0]?.where).toMatchObject({
+      quarantinedAt: null,
+      scope: 'swe-lessons',
+      supersededById: LESSON.lessonId,
     });
   });
 });

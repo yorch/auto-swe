@@ -291,6 +291,11 @@ model ActiveWorkflow {
   @@map("active_workflows")
 }
 
+enum LessonQuarantineSource {
+  MANUAL
+  FLAG_THRESHOLD
+}
+
 // HNSW index on `embedding` is defined in raw SQL inside
 // migrations/20260618000001_custom_constraints_and_indexes/migration.sql.
 // Prisma's schema DSL cannot model pgvector index types, so `prisma migrate dev`
@@ -363,6 +368,11 @@ model MemoryItem {
   confidence     Float?
   /// People who think this lesson is wrong (repository lessons only; see `LessonFlag`).
   flags          LessonFlag[]
+  quarantinedAt    DateTime?                    @map("quarantined_at") @db.Timestamptz
+  quarantinedById  String?                      @map("quarantined_by_id") @db.Uuid
+  quarantinedBy    User?                        @relation("LessonQuarantineAuthor", fields: [quarantinedById], references: [id], onDelete: SetNull)
+  quarantineReason String?                      @map("quarantine_reason") @db.VarChar(500)
+  quarantineSource LessonQuarantineSource?      @map("quarantine_source")
 
   @@index([repoId, consolidatedAt])
   @@index([supersededById])
@@ -380,8 +390,8 @@ model MemoryItem {
 ///
 /// Raised by anyone who can read the lesson, one per person per lesson (flagging again replaces the
 /// reason). Read and cleared by whoever may delete the lesson: a lead of the repository's owning
-/// team, or a platform ADMIN. A flag changes nothing about recall; it is a queue for those people,
-/// who then delete the lesson or clear its flags. Deleting the lesson deletes its flags.
+/// team, or a platform ADMIN. Reaching the repository's flag threshold quarantines the lesson.
+/// Deleting the lesson deletes its flags.
 model LessonFlag {
   id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   memoryItemId String     @map("memory_item_id") @db.Uuid
@@ -1761,6 +1771,7 @@ model User {
   createdShares         ConnectionTeamShare[]    @relation("ConnectionShareCreator")
   createdCallbackEndpoints CallbackEndpoint[]    @relation("CallbackEndpointCreator")
   lessonFlags           LessonFlag[]             @relation("LessonFlagAuthor")
+  quarantinedLessons    MemoryItem[]             @relation("LessonQuarantineAuthor")
 
   @@map("users")
 }
