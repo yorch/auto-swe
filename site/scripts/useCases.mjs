@@ -393,6 +393,16 @@ export const USE_CASES = {
       'held for approval under the default autonomy policy.',
     title: 'File a tracker issue',
   },
+  'incident-triage': {
+    group: 'engineering',
+    maturity: 'seeded',
+    source: 'packages/shared/src/workflow/templates/incidentTriage.ts',
+    summary:
+      'Reads a PagerDuty incident with its alerts and log entries, diagnoses it against the ' +
+      'repository, and adds the diagnosis to the incident as a note. Fix mode also opens a ' +
+      'draft pull request when the cause is a code defect.',
+    title: 'Incident triage',
+  },
   'zendesk-ticket-reply': {
     group: 'support',
     maturity: 'seeded',

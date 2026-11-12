@@ -103,6 +103,7 @@ own row, with three exceptions that keep an edit to the parent row in force:
 | `gateFixer` | `implementer` | `executeGateFixImplementation` |
 | `mergeConflictResolver` | `implementer` | `resolveMergeConflict` |
 | `lessonConsolidator` | `commitToMemory` | `consolidateLessons` |
+| `incidentTriager` | `planner` | the `incident-triage` template's `agent` node ([inbound-events.md](./inbound-events.md)) |
 | `ciTriager` | `planner` | `triageCiFailure` ([ci-failure-triggers.md](./ci-failure-triggers.md)) |
 | `prFeedbackResponder` | `planner` | `respondToPrFeedback` ([pr-feedback.md](./pr-feedback.md)) |
 | `ticketContextGatherer` | `planner` | `gatherTicketContext` (§3.8) |

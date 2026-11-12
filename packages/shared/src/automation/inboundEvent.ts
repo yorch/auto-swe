@@ -209,6 +209,24 @@ export const EVENT_ENDPOINT_PRESETS: ReadonlyArray<{
     key: 'snyk',
     label: 'Snyk project snapshot',
   },
+  {
+    config: {
+      format: 'json',
+      idPointer: '/event/id',
+      scheme: 'hmac-sha256',
+      scopePointer: '/event/data/service/id',
+      signatureEncoding: 'hex',
+      signatureHeader: 'X-PagerDuty-Signature',
+      signaturePrefix: 'v1=',
+      subjectPointer: '/event/data/id',
+      timePointer: '/event/occurred_at',
+      typePointer: '/event/event_type',
+    },
+    description:
+      'PagerDuty v3 webhook subscriptions: an HMAC-SHA256 hex digest of the raw body in X-PagerDuty-Signature as v1=<hex>, one per signing secret while PagerDuty rotates it. The type is /event/event_type (incident.triggered, incident.resolved, …), the id /event/id, the subject the incident (/event/data/id) and the scope its service (/event/data/service/id), so the cooldown counts per service. PagerDuty generates the secret: paste it when creating the endpoint. Every automation on this endpoint should select incident.triggered only and match /event/data/service/id to the service its repository serves.',
+    key: 'pagerduty-v3',
+    label: 'PagerDuty v3 webhook',
+  },
 ];
 
 /** One verified event, as every automation of its endpoint reads it. Never stored whole. */

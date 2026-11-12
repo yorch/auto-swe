@@ -20,6 +20,7 @@ describe('connectionTypes', () => {
       'notion',
       'confluence',
       'zendesk',
+      'pagerduty',
       'hubspot',
       'slack_workspace',
       'http_api',

@@ -15,6 +15,7 @@ export const CONNECTION_TYPES = [
   'notion',
   'confluence',
   'zendesk',
+  'pagerduty',
   'hubspot',
   'slack_workspace',
   'http_api',
@@ -83,6 +84,13 @@ const METADATA: Record<ConnectionType, ConnectionTypeMetadata> = {
     label: 'Notion',
     supportsConfig: true,
   },
+  pagerduty: {
+    description: 'PagerDuty account for reading incidents and adding incident notes.',
+    isWorkspaceTarget: false,
+    key: 'pagerduty',
+    label: 'PagerDuty',
+    supportsConfig: true,
+  },
   slack_workspace: {
     description: 'Slack workspace-level connection for posting messages and reading channels.',
     isWorkspaceTarget: false,
@@ -135,9 +143,16 @@ export const GENERIC_STEP_CONNECTION_TYPES: Record<
   GenericConnectionStep,
   readonly ConnectionType[]
 > = {
-  readSource: ['notion', 'zendesk', 'issue_tracker', 'confluence'],
-  runTool: ['zendesk', 'slack_workspace', 'issue_tracker', 'confluence'],
-  writeOutcome: ['notion', 'zendesk', 'slack_workspace', 'issue_tracker', 'confluence'],
+  readSource: ['notion', 'zendesk', 'issue_tracker', 'confluence', 'pagerduty'],
+  runTool: ['zendesk', 'slack_workspace', 'issue_tracker', 'confluence', 'pagerduty'],
+  writeOutcome: [
+    'notion',
+    'zendesk',
+    'slack_workspace',
+    'issue_tracker',
+    'confluence',
+    'pagerduty',
+  ],
 };
 
 /** The non-retryable failure type the worker raises for a step with no implementation. */
@@ -189,6 +204,22 @@ export type ZendeskConnectionConfig = z.infer<typeof ZendeskConnectionConfigSche
 
 export function parseZendeskConnectionConfig(config: unknown): ZendeskConnectionConfig {
   const parsed = ZendeskConnectionConfigSchema.safeParse(config ?? {});
+  return parsed.success ? parsed.data : {};
+}
+
+/**
+ * PagerDuty-specific config stored in `Connection.config`. The REST API token is the encrypted
+ * `apiKey*` columns; `fromEmail` is the account user PagerDuty attributes a note to, which its API
+ * requires on every write.
+ */
+export const PagerDutyConnectionConfigSchema = z.object({
+  fromEmail: z.string().email().optional(),
+});
+
+export type PagerDutyConnectionConfig = z.infer<typeof PagerDutyConnectionConfigSchema>;
+
+export function parsePagerDutyConnectionConfig(config: unknown): PagerDutyConnectionConfig {
+  const parsed = PagerDutyConnectionConfigSchema.safeParse(config ?? {});
   return parsed.success ? parsed.data : {};
 }
 

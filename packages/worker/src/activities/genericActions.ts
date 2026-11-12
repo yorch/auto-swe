@@ -4,6 +4,7 @@ import {
   parseConfluenceConnectionConfig,
   parseIssueTrackerConnectionConfig,
   parseNotionConnectionConfig,
+  parsePagerDutyConnectionConfig,
   parseSlackConnectionConfig,
   parseZendeskConnectionConfig,
 } from '@auto-swe/shared';
@@ -29,6 +30,7 @@ import {
   type NotionBlock,
   readNotionPage,
 } from '../connectors/notion.js';
+import { fetchPagerDutyIncident, postPagerDutyNote } from '../connectors/pagerduty.js';
 import { postSlackMessage } from '../connectors/slack.js';
 import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
 import { assertConnectionAuthorized } from '../lib/connectionAccess.js';
@@ -195,6 +197,32 @@ async function zendeskReadSource(
   return { connectionType: 'zendesk', data: result, ok: true };
 }
 
+function pagerdutyConnection(connection: { config: unknown }, token: string | null) {
+  return {
+    apiToken: requireToken(token),
+    config: parsePagerDutyConnectionConfig(connection.config),
+  };
+}
+
+function stringField(value: unknown, key: string): unknown {
+  return typeof value === 'object' && value != null
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
+}
+
+async function pagerdutyReadSource(
+  connection: { config: unknown },
+  token: string | null,
+  query: unknown
+): Promise<ReadSourceResult> {
+  const incidentId = stringField(query, 'incidentId');
+  if (typeof incidentId !== 'string') {
+    throw ApplicationFailure.nonRetryable('PagerDuty readSource requires an incidentId in query');
+  }
+  const result = await fetchPagerDutyIncident(pagerdutyConnection(connection, token), incidentId);
+  return { connectionType: 'pagerduty', data: result, ok: true };
+}
+
 async function issueTrackerReadSource(
   connection: { config: unknown },
   token: string | null,
@@ -267,6 +295,8 @@ export async function readSource(input: ReadSourceInput): Promise<ReadSourceResu
       return notionReadSource(connection, token, query);
     case 'zendesk':
       return zendeskReadSource(connection, token, query);
+    case 'pagerduty':
+      return pagerdutyReadSource(connection, token, query);
     case 'issue_tracker':
       return issueTrackerReadSource(connection, token, query);
     case 'confluence':
@@ -369,6 +399,30 @@ async function zendeskWriteOutcome(
     { body, public: isPublic }
   );
   return { connectionType: 'zendesk', ok: true, reference: result.ticketId };
+}
+
+async function pagerdutyWriteOutcome(
+  connection: { config: unknown },
+  token: string | null,
+  data: unknown
+): Promise<WriteOutcomeResult> {
+  const incidentId = stringField(data, 'incidentId');
+  const content = stringField(data, 'content');
+  if (typeof incidentId !== 'string' || typeof content !== 'string') {
+    throw notSent('PagerDuty writeOutcome requires incidentId and content strings');
+  }
+  // A draft fix's pull request, when the run opened one: linked after the diagnosis.
+  const prUrl = stringField(data, 'prUrl');
+  // Why a fix the run attempted opened no pull request, when one was attempted.
+  const fixOutcome = stringField(data, 'fixOutcome');
+  let note = content;
+  if (typeof prUrl === 'string' && /^https:\/\/\S+$/.test(prUrl)) {
+    note = `${note}\n\nDraft fix: ${prUrl}`;
+  } else if (typeof fixOutcome === 'string' && fixOutcome.trim()) {
+    note = `${note}\n\nNo fix opened: ${fixOutcome.trim()}`;
+  }
+  const result = await postPagerDutyNote(pagerdutyConnection(connection, token), incidentId, note);
+  return { connectionType: 'pagerduty', ok: true, reference: result.noteId ?? result.incidentId };
 }
 
 async function issueTrackerWriteOutcome(
@@ -744,6 +798,8 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
         return notionWriteOutcome(connection, token, data);
       case 'zendesk':
         return zendeskWriteOutcome(connection, token, data);
+      case 'pagerduty':
+        return pagerdutyWriteOutcome(connection, token, data);
       case 'slack_workspace':
         return slackWriteOutcome(connection, token, data);
       case 'issue_tracker':
@@ -779,6 +835,35 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
   // produced, and one that may have reached the provider without recording anything refuses rather
   // than acting twice.
   return performOnce({ attempt: scope.attempt, dispatch: () => perform(prepared), key: ledgerKey });
+}
+
+async function pagerdutyRunTool(
+  connection: { config: unknown },
+  token: string | null,
+  tool: string,
+  inputs: unknown
+): Promise<RunToolResult> {
+  const incidentId = stringField(inputs, 'incidentId');
+  if (typeof incidentId !== 'string') {
+    throw notSent(`${tool} requires a string incidentId input`);
+  }
+  if (tool === 'fetchIncident') {
+    const result = await fetchPagerDutyIncident(pagerdutyConnection(connection, token), incidentId);
+    return { connectionType: 'pagerduty', ok: true, output: result };
+  }
+  if (tool === 'addNote') {
+    const content = stringField(inputs, 'content');
+    if (typeof content !== 'string') {
+      throw notSent('addNote requires a string content input');
+    }
+    const result = await postPagerDutyNote(
+      pagerdutyConnection(connection, token),
+      incidentId,
+      content
+    );
+    return { connectionType: 'pagerduty', ok: true, output: result };
+  }
+  throw notSent(`Unknown PagerDuty tool: ${tool} (expected fetchIncident or addNote)`);
 }
 
 async function zendeskRunTool(
@@ -978,6 +1063,8 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
     switch (connection.type) {
       case 'zendesk':
         return zendeskRunTool(connection, token, tool, inputs);
+      case 'pagerduty':
+        return pagerdutyRunTool(connection, token, tool, inputs);
       case 'slack_workspace':
         return slackRunTool(connection, token, tool, inputs);
       case 'issue_tracker':

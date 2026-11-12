@@ -99,12 +99,37 @@ describe('hmac-sha256', () => {
       reason: 'malformed',
     });
     expect(verify(e, { 'x-signature': 'sha256=zz' })).toEqual({ ok: false, reason: 'malformed' });
-    // Node joins a header sent twice into one value with ", ", which is not a digest.
-    expect(verify(e, { 'x-signature': `${good}, ${good}` })).toEqual({
+    expect(verify(e, { 'x-signature': 'sha256=zz, sha256=' })).toEqual({
       ok: false,
       reason: 'malformed',
     });
     expect(verify(e, {})).toEqual({ ok: false, reason: 'missing' });
+  });
+
+  it('accepts a list of signatures when any one of them matches', () => {
+    const e = endpoint('hmac-sha256', { signaturePrefix: 'v1=' });
+    const good = `v1=${hmac('whsec_current_secret_value', BODY)}`;
+    const other = `v1=${hmac('a-retired-secret-value', BODY)}`;
+    expect(verify(e, { 'x-signature': `${other}, ${good}` })).toEqual({ ok: true });
+    expect(verify(e, { 'x-signature': `${good},${other}` })).toEqual({ ok: true });
+    // An entry with another scheme version is skipped, never read as a digest.
+    expect(
+      verify(e, { 'x-signature': `v2=${hmac('whsec_current_secret_value', BODY)}, ${good}` })
+    ).toEqual({
+      ok: true,
+    });
+    expect(verify(e, { 'x-signature': `${other}, ${other}` })).toEqual({
+      ok: false,
+      reason: 'mismatch',
+    });
+    expect(verify(e, { 'x-signature': `v2=${hmac('whsec_current_secret_value', BODY)}` })).toEqual({
+      ok: false,
+      reason: 'malformed',
+    });
+    expect(verify(e, { 'x-signature': Array(9).fill(good).join(',') })).toEqual({
+      ok: false,
+      reason: 'malformed',
+    });
   });
 });
 

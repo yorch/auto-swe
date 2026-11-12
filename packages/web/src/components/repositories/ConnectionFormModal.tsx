@@ -670,7 +670,9 @@ export function ConnectionFormModal({
               hint={
                 connType === 'http_api'
                   ? 'e.g. {"baseUrl":"https://api.example.com","authType":"bearer"}'
-                  : 'Arbitrary key/value pairs for workflow use'
+                  : connType === 'pagerduty'
+                    ? 'e.g. {"fromEmail":"oncall-bot@example.com"}: the PagerDuty user notes are posted as. The REST API key goes in the API token field.'
+                    : 'Arbitrary key/value pairs for workflow use'
               }
               id="conn-config-json"
               label="Config (JSON)"
