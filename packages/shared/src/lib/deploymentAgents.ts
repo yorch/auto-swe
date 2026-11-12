@@ -71,10 +71,16 @@ export const STEP_REQUIRED_AGENTS: Record<string, readonly string[] | null> = {
   // The `prFeedbackResponder` persona, on the `planner` model it inherits.
   respondToPrFeedback: ['prFeedbackResponder', 'planner'],
   runAgentNode: null,
-  // The agent comes from the original agent run, but the gate is still fixed.
-  runAgentPrFeedbackTask: ['securityReview'],
-  // The agent comes from the launch payload, but the post-diff gate is fixed.
-  runAgentTask: ['securityReview'],
+  // The acting agent comes from the original agent run, which is an
+  // `implementer` session; the post-diff gate is fixed. A PR-feedback run started
+  // by some other launch path would still name its own agent, and the runtime
+  // signal in `recordLlmUsage` reports it rather than this list quietly guessing.
+  runAgentPrFeedbackTask: ['implementer', 'securityReview'],
+  // The acting agent comes from the launch payload, which names an `implementer`
+  // session; the post-diff gate is fixed. A payload naming any other agent is not
+  // covered by this entry and is meant to trip the runtime drift warning — the
+  // fix belongs in the launch path or in this list, not in a broader guess here.
+  runAgentTask: ['implementer', 'securityReview'],
   runChannelSubtasks: ['channelAssistant'],
   runEvalNode: ['evalJudge'],
   runReviewNetwork: ['securityReviewer', 'domainLogicReviewer', 'performanceReviewer', 'reviewer'],
