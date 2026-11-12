@@ -1372,7 +1372,7 @@ Existing approved accounts are not deactivated by clearing trust.
 
 ## Docker deployments whose worker addresses HAProxy or the socket directly
 
-**Fixed by:** `555febcd6194eaf04e7c835e2a3cd8992a26a042`.
+**Fixed by:** `ee6e3c39b4f5099074d39517f94c8810d8f853df`.
 
 **Affected:** custom Docker compose deployments whose worker's `DOCKER_HOST` names HAProxy or the
 host socket rather than `docker-policy-broker`. Identify the required build by the presence of
@@ -1400,7 +1400,7 @@ reconstruction; invalid state or permanent upstream policy failures stop it.
 
 ## Kubernetes workers without workspace Pod admission resources
 
-**Fixed by:** `79a9c80c323614d7966c56b26a6a1b288791c327`.
+**Fixed by:** `ee6e3c39b4f5099074d39517f94c8810d8f853df`.
 
 **Affected:** Kubernetes deployments without the `<workspace-namespace>-pods`
 ValidatingAdmissionPolicy and Deny binding, or without the worker's named-resource read grants.
