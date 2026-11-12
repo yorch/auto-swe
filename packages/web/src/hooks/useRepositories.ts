@@ -15,6 +15,11 @@ import { READINESS_KEY } from '@/hooks/useReadiness';
 import { api } from '@/lib/api';
 
 export interface GitHubRepoInfo {
+  installationId: string | null;
+  installationAccount: string | null;
+  githubUrl: string | null;
+  githubApiUrl: string | null;
+  access: 'readable' | 'unchecked';
   org: string;
   name: string;
   description: string | null;
@@ -244,11 +249,48 @@ export function useGitHubAvailableRepos(enabled = false) {
   return useQuery({
     enabled,
     queryFn: () =>
-      api
-        .get<{ data: GitHubRepoInfo[] }>('/api/v1/repositories/github/available')
-        .then((r) => r.data),
+      api.get<{ data: GitHubRepoInfo[]; sources: GitHubImportSource[] }>(
+        '/api/v1/repositories/github/available'
+      ),
     queryKey: ['github-available-repos'],
     staleTime: 30_000,
+  });
+}
+
+export interface GitHubImportSource {
+  installationId: string | null;
+  installationAccount: string | null;
+  githubUrl: string;
+  error?: string;
+}
+export interface GitHubImportResult {
+  organizationName: string;
+  repoName: string;
+  status: 'created' | 'failed';
+  id?: string;
+  code?: string;
+  message?: string;
+}
+export function useImportGitHubRepos() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      teamId: string;
+      repos: {
+        organizationName: string;
+        repoName: string;
+        installationId: string | null;
+        defaultBranch?: string;
+      }[];
+    }) =>
+      api
+        .post<{ data: GitHubImportResult[] }>('/api/v1/repositories/import', body)
+        .then((r) => r.data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['repositories'] });
+      qc.invalidateQueries({ queryKey: ['github-available-repos'] });
+      qc.invalidateQueries({ queryKey: READINESS_KEY });
+    },
   });
 }
 

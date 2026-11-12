@@ -30,7 +30,7 @@ Everything that names a repository by owner and name takes the host into account
 | Where | How |
 |---|---|
 | Onboarding (`POST /repositories`) | the duplicate check and the unique index include the host and compare owner and name case-insensitively |
-| Import from GitHub | the list comes from the instance host, so only repositories with no override count as already imported |
+| Import from GitHub | lists active installations and the default credential; imported identity includes the host as well as owner/name |
 | PR and CI webhooks, the access webhook | the delivery is first bound to the host its secret proved (see [Webhook secrets per host](#webhook-secrets-per-host)). Within that, when the owner/name is onboarded on more than one distinct host, the payload's `repository.html_url` picks which; otherwise the match is by name, as before. Owner and name match case-insensitively and literally (`_` and `%` in a name are not wildcards), whatever casing the payload uses |
 | Workflow ids | a repository with a `githubUrl` override gets the host in its id (`eng-<host>-<owner>-<name>-<ticket>`); one on the instance host keeps `eng-<owner>-<name>-<ticket>`. Owner and name are lowercased in the id; the ticket id keeps its casing. A run still in flight under an earlier form of the id (stored casing, or without the host) blocks a new one, as one under the current id does. So does a run of another row for the same repository — the same host (no override is the instance's host) and the same owner and name compared case-insensitively; a repository on another host with the same owner and name is a different repository and never blocks |
 | Dependency detection | a dependency URL that names a host matches only a repository on that host |
@@ -188,13 +188,28 @@ checks are still running keeps waiting while the others are signalled.
 
 ### Importing from GitHub
 
-Importing lists repositories from the instance's own host and onboards them with no override. The
-repository-level URLs a GitHub listing returns are not base URLs; stored as overrides they made every
-clone and API call land on a path that does not exist.
+Connections → **Import from GitHub** lists repositories from every active registered GitHub App
+installation, including other approved GitHub hosts, plus the instance's default PAT or singleton
+App installation. Installation entries take precedence when sources overlap. Each row identifies
+its installation account; a source that cannot be listed shows an error without hiding other sources.
+Already-imported identity includes the host, with case-insensitive owner and repository names.
+
+Select up to 50 repositories and one team, then import the batch. Imported rows are disabled;
+**Access unchecked** rows remain selectable because the server checks access again at creation.
+The result view shows created repositories and individual failures without rolling back successes.
+`POST /repositories/import` verifies each chosen installation against its repository listing and
+sets the installation and host base URL overrides server-side. Manually choosing an installation
+on the ordinary create or edit endpoint remains restricted to platform admins.
+
+For non-admins, discovery first tries the caller's linked GitHub sign-in token on its own host.
+A complete App-user-token installation listing is authoritative; other token-visible repositories
+are positive evidence only. Remaining repositories use the caller's verified GitHub login and
+platform-credential read-permission lookups. Known unreadable repositories are omitted. Platform
+admins see every listed repository without filtering.
 
 ### Who may onboard
 
-Onboarding (`POST /repositories`, which the import dialog also uses) requires a platform ADMIN,
+Onboarding (`POST /repositories` and `POST /repositories/import`) requires a platform ADMIN,
 LEAD or ADMIN membership in the active target team, or ORG_ADMIN membership in that team's
 organization. The caller's platform role need not be LEAD. These roles also govern editing,
 moving and sharing connections; moving requires permission in both the owning and target teams.
@@ -911,6 +926,17 @@ longer fit.
 - Preview connection overrides replace the entire file recipe; fields and services are not merged.
   Invalid overridden preview files are not read. Repository configuration files are limited to 64 KiB.
 
+- **Discovery permission checks are bounded.** A request makes at most 100 uncached per-repository
+  lookups. Missing linked identities, unanswered lookups and repositories beyond that cap are
+  **Access unchecked**, not readable. Reloading uses cached answers and checks further repositories.
+- **GitHub sign-in token evidence is best effort.** No additional OAuth scopes are requested.
+  OAuth-App sign-in tokens only see public repositories with the sign-in scopes; refused or expired
+  tokens fall back to platform-credential permission checks. A GitHub login is used only on its
+  linked account's host.
+- **Discovery caches can be stale for three minutes.** Source listings and access answers are
+  cached in-process, including unanswered permission lookups. Each source lists up to 500
+  repositories; a truncated user installation listing supplies positive evidence only. Creation
+  still performs the normal live onboarding read-access check.
 - **Egress blocker detection relies on proxy audit rows.** Kernel-dropped traffic is not classified
   as `egress_denied`, and only the first denied host is reported for a failed step.
 - **Missing-tool detection is heuristic.** Exit 127, `command not found` and shell missing-command

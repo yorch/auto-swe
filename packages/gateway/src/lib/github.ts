@@ -103,6 +103,7 @@ async function fetchAllPages<T>(
   for (let page = 1; page <= GITHUB_MAX_PAGES; page++) {
     const res = await fetch(urlForPage(page), {
       headers,
+      redirect: 'error',
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) {

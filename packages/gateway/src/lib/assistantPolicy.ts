@@ -439,6 +439,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/repositories/:id/test-access': 'confirm',
   'POST /api/v1/repositories/:id/test-pagerduty': 'confirm',
   'POST /api/v1/repositories/dependencies/scan': 'confirm',
+  'POST /api/v1/repositories/import': 'confirm',
   'POST /api/v1/scheduled-work-requests': 'confirm',
   'POST /api/v1/scheduled-work-requests/:id/fire': 'confirm',
   'POST /api/v1/teams': 'confirm',

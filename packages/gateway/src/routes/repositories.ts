@@ -58,7 +58,7 @@ import {
   probeRepositoryAccess,
 } from '../lib/connectionProbes.js';
 import { redactConnection } from '../lib/connectionRedaction.js';
-import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
+import { availableGitHubRepos, verifiedImportInstallation } from '../lib/githubImport.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
@@ -146,6 +146,30 @@ const CreateRepoSchema = z.object({
   type: ConnectionTypeSchema.refine((t) => t !== 'mcp', {
     message: 'MCP connections are managed at /mcp',
   }).default('git_repo'),
+});
+
+class RepositoryCreateError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string
+  ) {
+    super(message);
+  }
+}
+const ImportReposSchema = z.object({
+  repos: z
+    .array(
+      z.object({
+        defaultBranch: GitRefSchema.optional(),
+        installationId: z.string().uuid().nullable(),
+        organizationName: z.string().min(1),
+        repoName: z.string().min(1),
+      })
+    )
+    .min(1)
+    .max(50),
+  teamId: z.string().uuid(),
 });
 
 const ListReposQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 }).extend({
@@ -802,48 +826,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           'Requires a team lead or organization admin role'
         );
       }
-      let repos: Awaited<ReturnType<typeof listGitHubRepos>>;
-      try {
-        repos = await listGitHubRepos();
-      } catch (err) {
-        if (err instanceof GitHubTokenMissingError) {
-          return sendError(
-            reply,
-            503,
-            'GITHUB_NOT_CONFIGURED',
-            'GitHub integration not configured. Visit /admin/integrations to add a PAT or GitHub App.'
-          );
-        }
-        throw err;
-      }
-
-      // Deliberately every team's connections. This marks which GitHub repos
-      // are already imported; scoped to the caller's teams it would report a
-      // repo another team already imported as available, and importing it again
-      // creates a duplicate Connection for the same repository.
-      // The listing comes from the instance's own host, so only repositories on
-      // that host can be the same repository; `acme/api` on another host is a
-      // different one.
-      const onInstanceHost = await sameHostWhere(null);
-      const existing = await runUnscoped(
-        'import de-duplication must span every team',
-        ['Connection'],
-        () =>
-          fastify.prisma.connection.findMany({
-            select: { organizationName: true, repoName: true },
-            where: { ...onInstanceHost, type: 'git_repo' },
-          })
-      );
-      const importedSet = new Set(
-        existing.map((c) => `${c.organizationName}/${c.repoName}`.toLowerCase())
-      );
-
-      return {
-        data: repos.map((r) => ({
-          ...r,
-          alreadyImported: importedSet.has(`${r.org}/${r.name}`.toLowerCase()),
-        })),
-      };
+      return reply.send(await availableGitHubRepos(fastify.prisma, user));
     }
   );
 
@@ -980,6 +963,343 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // POST /api/v1/repositories — Onboard repository
+  async function createRepository(
+    body: z.output<typeof CreateRepoSchema>,
+    user: JwtPayload,
+    log: FastifyRequest['log'],
+    verifiedInstallation?: { host: string; installationId: string }
+  ) {
+    const {
+      apiToken,
+      organizationName,
+      repoName,
+      teamId,
+      type,
+      name,
+      config,
+      gateCommands: rawGateCommands,
+      previewConfig,
+      setup,
+      ...rest
+    } = body;
+
+    if (type === 'git_repo' && (!organizationName || !repoName)) {
+      throw new RepositoryCreateError(
+        400,
+        'VALIDATION_ERROR',
+        'organizationName and repoName are required for git_repo connections'
+      );
+    }
+
+    if (!verifiedInstallation && rejectsInstallationChange(user, body.installationId)) {
+      throw new RepositoryCreateError(
+        403,
+        'FORBIDDEN',
+        'Only a platform admin may choose the GitHub App installation'
+      );
+    }
+
+    const createConfigProblem = connectionConfigProblem(type ?? 'git_repo', config);
+    if (createConfigProblem) {
+      throw new RepositoryCreateError(400, 'VALIDATION_ERROR', createConfigProblem);
+    }
+
+    // Verify team exists
+    const team = await fastify.prisma.team.findUnique({
+      select: { id: true, isActive: true },
+      where: { id: teamId },
+    });
+    if (!team?.isActive) {
+      throw new RepositoryCreateError(404, 'TEAM_NOT_FOUND', 'Team not found or inactive');
+    }
+
+    // Non-admins may only onboard repos into teams they lead.
+    if (!(await canManageTeamRepos(fastify.prisma, user, teamId))) {
+      throw new RepositoryCreateError(403, 'FORBIDDEN', 'Requires LEAD role in the target team');
+    }
+
+    const imageProblem = executorImageProblem(user, body.executorImage, null);
+    if (imageProblem) {
+      throw new RepositoryCreateError(imageProblem.status, imageProblem.code, imageProblem.message);
+    }
+
+    // Judged as a change from none, the same rule an edit applies.
+    const gateCommands = normaliseGateCommands(rawGateCommands);
+    const gateProblem = await gateCommandsProblem(
+      fastify,
+      user,
+      { gateCommands: null, teamId, type: type ?? 'git_repo' },
+      gateCommands,
+      teamId
+    );
+    if (gateProblem) {
+      throw new RepositoryCreateError(gateProblem.status, gateProblem.code, gateProblem.message);
+    }
+    const previewProblem = await previewConfigProblem(
+      fastify,
+      user,
+      { previewConfig: null, teamId, type: type ?? 'git_repo' },
+      previewConfig ?? null,
+      teamId
+    );
+    if (previewProblem) {
+      throw new RepositoryCreateError(
+        previewProblem.status,
+        previewProblem.code,
+        previewProblem.message
+      );
+    }
+    const setupCreateProblem = await setupProblem(
+      fastify,
+      user,
+      { setup: null, teamId, type: type ?? 'git_repo' },
+      setup ?? null,
+      teamId
+    );
+    if (setupCreateProblem) {
+      throw new RepositoryCreateError(
+        setupCreateProblem.status,
+        setupCreateProblem.code,
+        setupCreateProblem.message
+      );
+    }
+
+    const urls = await normaliseRepositoryUrls({
+      githubApiUrl: body.githubApiUrl,
+      githubUrl: body.githubUrl,
+    });
+    if (!urls.ok) {
+      throw new RepositoryCreateError(400, urls.code ?? 'REPO_HOST_NOT_ALLOWED', urls.message);
+    }
+
+    const installationProblem = await installationHostProblem(fastify, body.installationId, {
+      githubApiUrl: urls.githubApiUrl ?? null,
+      githubUrl: urls.githubUrl ?? null,
+    });
+    if (installationProblem) {
+      throw new RepositoryCreateError(400, 'INSTALLATION_HOST_MISMATCH', installationProblem);
+    }
+
+    // Before the duplicate check, so someone without access to a repository
+    // does not learn whether it is already onboarded.
+    if (type === 'git_repo' && organizationName && repoName) {
+      const accessProblem = await onboardingAccessProblem(fastify.prisma, user, {
+        githubApiUrl: urls.githubApiUrl ?? null,
+        githubUrl: urls.githubUrl ?? null,
+        installation: verifiedInstallation ?? null,
+        organizationName,
+        repoName,
+      });
+      if (accessProblem) {
+        throw new RepositoryCreateError(
+          accessProblem.status,
+          accessProblem.code,
+          accessProblem.message
+        );
+      }
+    }
+
+    // Check for duplicate. Identity is (host, owner, name) — a partial,
+    // expression-based unique index scoped to git_repo connections — so query
+    // by fields rather than a compound unique. The host is the normalised web
+    // base, null meaning the instance's own.
+    if (type === 'git_repo' && organizationName && repoName) {
+      const existing = await fastify.prisma.connection.findFirst({
+        where: {
+          ...(await sameHostWhere(urls.githubUrl ?? null)),
+          // GitHub treats owner and name case-insensitively.
+          organizationName: insensitiveName(organizationName),
+          repoName: insensitiveName(repoName),
+          type: 'git_repo',
+        },
+      });
+      if (existing) {
+        throw new RepositoryCreateError(409, 'REPO_EXISTS', 'Repository already onboarded');
+      }
+    }
+
+    // The findFirst check above is a friendly pre-check, not a guarantee —
+    // it can't stop two concurrent onboard requests from racing past it. The
+    // partial unique index on (host, organizationName, repoName) for git_repo
+    // connections is the real guard; catch its violation here and translate
+    // it to the same 409 rather than a raw 500.
+    const tokenColumns = apiToken
+      ? encryptConnectionApiToken(apiToken)
+      : {
+          apiKeyAuthTag: null,
+          apiKeyCiphertext: null,
+          apiKeyNonce: null,
+          apiKeyVersion: 1,
+        };
+
+    let repo: Awaited<ReturnType<typeof fastify.prisma.connection.create>>;
+    try {
+      repo = await fastify.prisma.connection.create({
+        data: {
+          ...tokenColumns,
+          config: config != null ? (config as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
+          name: name ?? null,
+          organizationName: organizationName ?? null,
+          previewConfig:
+            previewConfig != null ? (previewConfig as Prisma.InputJsonValue) : Prisma.DbNull,
+          repoName: repoName ?? null,
+          setup: setup != null ? (setup as Prisma.InputJsonValue) : Prisma.DbNull,
+          teamId,
+          type: type ?? 'git_repo',
+          ...rest,
+          ...(gateCommands ? { gateCommands: gateCommands as Prisma.InputJsonValue } : {}),
+          githubApiUrl: urls.githubApiUrl ?? null,
+          githubUrl: urls.githubUrl ?? null,
+        },
+        include: { team: { select: { id: true, name: true, slug: true } } },
+      });
+    } catch (err) {
+      if (isUniqueConstraintError(err)) {
+        throw new RepositoryCreateError(409, 'REPO_EXISTS', 'Repository already onboarded');
+      }
+      throw err;
+    }
+    if (gateCommands) {
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor: user,
+        after: { gateCommands },
+        entityId: repo.id,
+        entityType: 'Connection',
+      });
+    }
+    if (previewConfig != null) {
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor: user,
+        after: { previewConfig },
+        entityId: repo.id,
+        entityType: 'Connection',
+      });
+    }
+    if (setup != null) {
+      await writeAuditLog(fastify, {
+        action: 'CREATE',
+        actor: user,
+        after: { setup },
+        entityId: repo.id,
+        entityType: 'Connection',
+      });
+    }
+
+    // Scan it now rather than at the next weekly sweep: the detected stack picks the gate
+    // commands, the test command and the executor image, so until a scan has run the repository
+    // gets the Node defaults whatever it is. Best-effort — the sweep scans it regardless, and a
+    // Temporal hiccup must not fail an onboarding that has already happened.
+    if ((type ?? 'git_repo') === 'git_repo') {
+      try {
+        await fastify.temporal.startRepoDependencyScan(repo.id);
+      } catch (err) {
+        log.warn(
+          { err, repoId: repo.id },
+          'onboarding scan not started; the weekly sweep will scan this repository'
+        );
+      }
+    }
+
+    return redactConnection(repo);
+  }
+
+  app.post(
+    '/import',
+    {
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      schema: { body: ImportReposSchema },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const results = [];
+      for (const item of request.body.repos) {
+        const identity = { organizationName: item.organizationName, repoName: item.repoName };
+        try {
+          const team = await fastify.prisma.team.findUnique({
+            select: { id: true, isActive: true },
+            where: { id: request.body.teamId },
+          });
+          if (!team?.isActive) {
+            throw new RepositoryCreateError(404, 'TEAM_NOT_FOUND', 'Team not found or inactive');
+          }
+          if (!(await canManageTeamRepos(fastify.prisma, user, request.body.teamId))) {
+            throw new RepositoryCreateError(
+              403,
+              'FORBIDDEN',
+              'Requires LEAD role in the target team'
+            );
+          }
+          let verified: Awaited<ReturnType<typeof verifiedImportInstallation>> = null;
+          if (item.installationId) {
+            try {
+              verified = await verifiedImportInstallation(
+                fastify.prisma,
+                item.installationId,
+                item.organizationName,
+                item.repoName
+              );
+            } catch (err) {
+              request.log.warn({ err, ...identity }, 'GitHub installation verification failed');
+              throw new RepositoryCreateError(
+                503,
+                'GITHUB_UNAVAILABLE',
+                `Your GitHub access to ${item.organizationName}/${item.repoName} could not be confirmed right now. Try again shortly.`
+              );
+            }
+          }
+          if (item.installationId && !verified) {
+            if (user.role !== Role.ADMIN) {
+              throw new RepositoryCreateError(
+                403,
+                'GITHUB_ACCESS_UNVERIFIED',
+                `GitHub did not confirm that you can read ${item.organizationName}/${item.repoName}: you have no access, it does not exist, or the platform's GitHub credential cannot see it. Ask a platform admin to onboard it.`
+              );
+            }
+            throw new RepositoryCreateError(
+              400,
+              'INSTALLATION_REPO_NOT_FOUND',
+              'Repository is not listed by that active installation'
+            );
+          }
+          const config = await resolveGitHubConfig();
+          const source = verified?.source;
+          const onInstance = !source || sameHostFamily(source.githubUrl, config.baseUrl);
+          const created = await createRepository(
+            CreateRepoSchema.parse({
+              ...identity,
+              defaultBranch: item.defaultBranch,
+              githubApiUrl: !onInstance ? source?.githubApiUrl : undefined,
+              githubUrl: !onInstance ? source?.githubUrl : undefined,
+              installationId: verified?.installation.id,
+              teamId: request.body.teamId,
+              type: 'git_repo',
+            }),
+            user,
+            request.log,
+            verified?.installation
+          );
+          results.push({ ...identity, id: created.id, status: 'created' as const });
+        } catch (err) {
+          if (!(err instanceof RepositoryCreateError)) {
+            request.log.warn({ err, ...identity }, 'Repository import failed');
+          }
+          results.push({
+            ...identity,
+            code: err instanceof RepositoryCreateError ? err.code : 'IMPORT_FAILED',
+            message:
+              err instanceof RepositoryCreateError
+                ? err.message
+                : 'Repository could not be imported. Check access and source availability.',
+            status: 'failed' as const,
+          });
+        }
+      }
+      return reply.send({ data: results });
+    }
+  );
+
   app.post(
     '/',
     {
@@ -987,238 +1307,15 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { body: CreateRepoSchema },
     },
     async (request, reply) => {
-      const user = requireUser(request);
-      const {
-        apiToken,
-        organizationName,
-        repoName,
-        teamId,
-        type,
-        name,
-        config,
-        gateCommands: rawGateCommands,
-        previewConfig,
-        setup,
-        ...rest
-      } = request.body;
-
-      if (type === 'git_repo' && (!organizationName || !repoName)) {
-        return sendError(
-          reply,
-          400,
-          'VALIDATION_ERROR',
-          'organizationName and repoName are required for git_repo connections'
-        );
-      }
-
-      if (rejectsInstallationChange(user, request.body.installationId)) {
-        return sendError(
-          reply,
-          403,
-          'FORBIDDEN',
-          'Only a platform admin may choose the GitHub App installation'
-        );
-      }
-
-      const createConfigProblem = connectionConfigProblem(type ?? 'git_repo', config);
-      if (createConfigProblem) {
-        return sendError(reply, 400, 'VALIDATION_ERROR', createConfigProblem);
-      }
-
-      // Verify team exists
-      const team = await fastify.prisma.team.findUnique({
-        select: { id: true, isActive: true },
-        where: { id: teamId },
-      });
-      if (!team?.isActive) {
-        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found or inactive');
-      }
-
-      // Non-admins may only onboard repos into teams they lead.
-      if (!(await canManageTeamRepos(fastify.prisma, user, teamId))) {
-        return sendError(reply, 403, 'FORBIDDEN', 'Requires LEAD role in the target team');
-      }
-
-      const imageProblem = executorImageProblem(user, request.body.executorImage, null);
-      if (imageProblem) {
-        return sendError(reply, imageProblem.status, imageProblem.code, imageProblem.message);
-      }
-
-      // Judged as a change from none, the same rule an edit applies.
-      const gateCommands = normaliseGateCommands(rawGateCommands);
-      const gateProblem = await gateCommandsProblem(
-        fastify,
-        user,
-        { gateCommands: null, teamId, type: type ?? 'git_repo' },
-        gateCommands,
-        teamId
-      );
-      if (gateProblem) {
-        return sendError(reply, gateProblem.status, gateProblem.code, gateProblem.message);
-      }
-      const previewProblem = await previewConfigProblem(
-        fastify,
-        user,
-        { previewConfig: null, teamId, type: type ?? 'git_repo' },
-        previewConfig ?? null,
-        teamId
-      );
-      if (previewProblem) {
-        return sendError(reply, previewProblem.status, previewProblem.code, previewProblem.message);
-      }
-      const setupCreateProblem = await setupProblem(
-        fastify,
-        user,
-        { setup: null, teamId, type: type ?? 'git_repo' },
-        setup ?? null,
-        teamId
-      );
-      if (setupCreateProblem) {
-        return sendError(
-          reply,
-          setupCreateProblem.status,
-          setupCreateProblem.code,
-          setupCreateProblem.message
-        );
-      }
-
-      const urls = await normaliseRepositoryUrls({
-        githubApiUrl: request.body.githubApiUrl,
-        githubUrl: request.body.githubUrl,
-      });
-      if (!urls.ok) {
-        return sendError(reply, 400, urls.code ?? 'REPO_HOST_NOT_ALLOWED', urls.message);
-      }
-
-      const installationProblem = await installationHostProblem(
-        fastify,
-        request.body.installationId,
-        { githubApiUrl: urls.githubApiUrl ?? null, githubUrl: urls.githubUrl ?? null }
-      );
-      if (installationProblem) {
-        return sendError(reply, 400, 'INSTALLATION_HOST_MISMATCH', installationProblem);
-      }
-
-      // Before the duplicate check, so someone without access to a repository
-      // does not learn whether it is already onboarded.
-      if (type === 'git_repo' && organizationName && repoName) {
-        const accessProblem = await onboardingAccessProblem(fastify.prisma, user, {
-          githubApiUrl: urls.githubApiUrl ?? null,
-          githubUrl: urls.githubUrl ?? null,
-          // Only a platform admin may choose one, and an admin is not asked.
-          installation: null,
-          organizationName,
-          repoName,
-        });
-        if (accessProblem) {
-          return sendError(reply, accessProblem.status, accessProblem.code, accessProblem.message);
-        }
-      }
-
-      // Check for duplicate. Identity is (host, owner, name) — a partial,
-      // expression-based unique index scoped to git_repo connections — so query
-      // by fields rather than a compound unique. The host is the normalised web
-      // base, null meaning the instance's own.
-      if (type === 'git_repo' && organizationName && repoName) {
-        const existing = await fastify.prisma.connection.findFirst({
-          where: {
-            ...(await sameHostWhere(urls.githubUrl ?? null)),
-            // GitHub treats owner and name case-insensitively.
-            organizationName: insensitiveName(organizationName),
-            repoName: insensitiveName(repoName),
-            type: 'git_repo',
-          },
-        });
-        if (existing) {
-          return sendConflict(reply, 'REPO_EXISTS', 'Repository already onboarded');
-        }
-      }
-
-      // The findFirst check above is a friendly pre-check, not a guarantee —
-      // it can't stop two concurrent onboard requests from racing past it. The
-      // partial unique index on (host, organizationName, repoName) for git_repo
-      // connections is the real guard; catch its violation here and translate
-      // it to the same 409 rather than a raw 500.
-      const tokenColumns = apiToken
-        ? encryptConnectionApiToken(apiToken)
-        : {
-            apiKeyAuthTag: null,
-            apiKeyCiphertext: null,
-            apiKeyNonce: null,
-            apiKeyVersion: 1,
-          };
-
-      let repo: Awaited<ReturnType<typeof fastify.prisma.connection.create>>;
       try {
-        repo = await fastify.prisma.connection.create({
-          data: {
-            ...tokenColumns,
-            config: config != null ? (config as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
-            name: name ?? null,
-            organizationName: organizationName ?? null,
-            previewConfig:
-              previewConfig != null ? (previewConfig as Prisma.InputJsonValue) : Prisma.DbNull,
-            repoName: repoName ?? null,
-            setup: setup != null ? (setup as Prisma.InputJsonValue) : Prisma.DbNull,
-            teamId,
-            type: type ?? 'git_repo',
-            ...rest,
-            ...(gateCommands ? { gateCommands: gateCommands as Prisma.InputJsonValue } : {}),
-            githubApiUrl: urls.githubApiUrl ?? null,
-            githubUrl: urls.githubUrl ?? null,
-          },
-          include: { team: { select: { id: true, name: true, slug: true } } },
-        });
+        const repo = await createRepository(request.body, requireUser(request), request.log);
+        return reply.code(201).send({ data: repo });
       } catch (err) {
-        if (isUniqueConstraintError(err)) {
-          return sendConflict(reply, 'REPO_EXISTS', 'Repository already onboarded');
+        if (err instanceof RepositoryCreateError) {
+          return sendError(reply, err.status, err.code, err.message);
         }
         throw err;
       }
-      if (gateCommands) {
-        await writeAuditLog(fastify, {
-          action: 'CREATE',
-          actor: user,
-          after: { gateCommands },
-          entityId: repo.id,
-          entityType: 'Connection',
-        });
-      }
-      if (previewConfig != null) {
-        await writeAuditLog(fastify, {
-          action: 'CREATE',
-          actor: user,
-          after: { previewConfig },
-          entityId: repo.id,
-          entityType: 'Connection',
-        });
-      }
-      if (setup != null) {
-        await writeAuditLog(fastify, {
-          action: 'CREATE',
-          actor: user,
-          after: { setup },
-          entityId: repo.id,
-          entityType: 'Connection',
-        });
-      }
-
-      // Scan it now rather than at the next weekly sweep: the detected stack picks the gate
-      // commands, the test command and the executor image, so until a scan has run the repository
-      // gets the Node defaults whatever it is. Best-effort — the sweep scans it regardless, and a
-      // Temporal hiccup must not fail an onboarding that has already happened.
-      if ((type ?? 'git_repo') === 'git_repo') {
-        try {
-          await fastify.temporal.startRepoDependencyScan(repo.id);
-        } catch (err) {
-          request.log.warn(
-            { err, repoId: repo.id },
-            'onboarding scan not started; the weekly sweep will scan this repository'
-          );
-        }
-      }
-
-      return reply.status(201).send({ data: redactConnection(repo) });
     }
   );
 

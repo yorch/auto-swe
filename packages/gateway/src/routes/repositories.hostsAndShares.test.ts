@@ -71,7 +71,7 @@ async function buildApp() {
       findFirst: vi.fn(),
       update: vi.fn().mockResolvedValue({}),
     },
-    gitHubInstallation: { findUnique: vi.fn() },
+    gitHubInstallation: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     knowledgeItem: { count: vi.fn().mockResolvedValue(0) },
     organizationMembership: { findUnique: vi.fn() },
     runInput: { findUnique: vi.fn() },
