@@ -165,6 +165,12 @@ run's Reviews panel. Templates with `kind: "automation"`, including CI triage, P
 and Channel Task, start through an automation or integration. This kind hides hand-launch
 actions without preventing API or CLI launches.
 
+The picker groups built-in workflows by outcome and shows readable titles, descriptions,
+default markers and team badges. Search matches titles and template names, not descriptions.
+Up to three recently run workflows appear first, without repeating in their categories.
+Without a workflow deep link, the selected team's default takes precedence over the global
+default. The process summary appears immediately after selection, before task details.
+
 A git-repository workflow without an input schema collects a required Repository and
 multi-line Description, plus an optional Ticket ID. Task name labels the request; Description
 is the agent's brief. Other workspace providers keep their own inputs. Free-text schema fields

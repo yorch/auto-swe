@@ -260,6 +260,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ticketId.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/workflowCatalog',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/workflowCatalog.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/skillScanner',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillScanner.ts'),
       },

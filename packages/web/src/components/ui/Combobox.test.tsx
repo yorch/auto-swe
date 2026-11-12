@@ -40,6 +40,48 @@ function ModelPicker({ onChange }: { onChange: (v: string) => void }) {
 }
 
 describe('Combobox', () => {
+  it('filters section options by title or alias, hides empty sections and ignores descriptions', () => {
+    const onChange = vi.fn();
+    render(
+      <Combobox
+        label="Workflow"
+        onChange={onChange}
+        sections={[
+          {
+            id: 'engineering',
+            label: 'Ship code changes',
+            options: [
+              {
+                description: 'Emergency patch',
+                label: 'Production hotfix',
+                searchText: 'Production hotfix hotfix',
+                value: 'hotfix',
+              },
+            ],
+          },
+          { id: 'people', label: 'People', options: [{ label: 'Approval', value: 'approval' }] },
+          { id: 'empty', label: 'Empty', options: [] },
+        ]}
+        value=""
+      />
+    );
+    const input = screen.getByRole('combobox', { name: 'Workflow' });
+    type(input, 'hotfix');
+    expect(screen.getByRole('option', { name: /Production hotfix/ })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Ship code changes' })).toBeTruthy();
+    expect(screen.queryByText('People')).toBeNull();
+    expect(screen.queryByText('Empty')).toBeNull();
+    type(input, 'Production');
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    type(input, 'Emergency');
+    expect(screen.queryByRole('option', { name: /Production hotfix/ })).toBeNull();
+    expect(screen.getByText('No matches')).toBeTruthy();
+    expect(screen.queryByText('Ship code changes')).toBeNull();
+    type(input, 'hotfix');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(onChange).toHaveBeenCalledWith('hotfix');
+  });
   it('is named by its label and filters options by typed text', () => {
     render(<Combobox label="User" onChange={() => {}} options={USERS} value="" />);
     const input = screen.getByRole('combobox', { name: /user/i });

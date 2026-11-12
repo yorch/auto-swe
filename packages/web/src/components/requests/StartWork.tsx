@@ -1,6 +1,7 @@
 'use client';
 
 import { handLaunchBlock } from '@auto-swe/shared/lib/channelTask';
+import { workflowPresentation } from '@auto-swe/shared/lib/workflowCatalog';
 import { useRouter } from 'next/navigation';
 import { type ReactNode, useState } from 'react';
 import { AgentRunForm } from '@/components/agentRuns/AgentRunForm';
@@ -9,8 +10,15 @@ import { HowItWorks } from '@/components/help/HowItWorks';
 import { ModeChooser } from '@/components/requests/ModeChooser';
 import { StartScopeProvider, type StartScopeValue } from '@/components/requests/StartScope';
 import { WorkflowLaunchForm } from '@/components/requests/WorkflowLaunchForm';
+import { WorkflowLaunchSummary } from '@/components/requests/WorkflowLaunchSummary';
+import {
+  defaultWorkflow,
+  runnableWorkflows,
+  workflowPickerSections,
+} from '@/components/requests/workflowPicker';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { Alert } from '@/components/ui/Alert';
+import { Badge } from '@/components/ui/Badge';
 import { ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
@@ -240,18 +248,39 @@ export function StartWork({
   };
   const [mode, setMode] = useState<Mode>(initialMode);
   const [visited, setVisited] = useState<string[]>(initialTemplateId ? [initialTemplateId] : []);
-  const [templateId, setTemplateId] = useState(initialTemplateId);
+  const [chosenTemplateId, setTemplateId] = useState(initialTemplateId);
   // With a `?team=` slug the templates wait for the team list, and stay unloaded when it failed,
   // so neither a flash of "no workflows" nor the all-teams list stands in for the team's.
   const teamsPending = !!initialTeamSlug && memberTeams.isLoading;
   const teamsFailed = !!initialTeamSlug && memberTeams.isError;
-  const templates = useWorkflowTemplates(scopeTeam?.id ?? null, {
+  const templates = useWorkflowTemplates(null, {
     enabled: !teamsPending && !teamsFailed,
   });
-  const runnable = (templates.data ?? []).filter(
-    (template) =>
-      template.status === 'ACTIVE' && template.activeVersion !== null && !handLaunchBlock(template)
+  const runnable = runnableWorkflows(
+    teamsPending || teamsFailed ? [] : (templates.data ?? []),
+    scopeTeam?.id ?? null
   );
+  const templateId = chosenTemplateId || defaultWorkflow(runnable, scopeTeam?.id ?? null)?.id || '';
+  const sections = workflowPickerSections(runnable).map((section) => ({
+    id: section.id,
+    label: section.label,
+    options: section.templates.map((item) => {
+      const { title } = workflowPresentation(item);
+      return {
+        description: <span className="block truncate">{item.description}</span>,
+        label: (
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate">{title}</span>
+            {item.isDefault && <Badge tone="accent">Default</Badge>}
+            {item.team && <Badge tone="neutral">{item.team.name}</Badge>}
+          </span>
+        ),
+        searchText: `${title} ${item.name}`,
+        textValue: title,
+        value: item.id,
+      };
+    }),
+  }));
   const template = runnable.find((item) => item.id === templateId);
   const unrunnableTemplate =
     !!initialTemplateId &&
@@ -367,10 +396,10 @@ export function StartWork({
                           label="Workflow"
                           onChange={(id) => {
                             setTemplateId(id);
-                            setVisited((prev) => (prev.includes(id) ? prev : [...prev, id]));
+                            setVisited((prev) => [...new Set([...prev, templateId, id])]);
                           }}
-                          options={runnable.map((item) => ({ label: item.name, value: item.id }))}
                           placeholder="Find a workflow…"
+                          sections={sections}
                           value={templateId}
                         />
                         {template && (
@@ -390,6 +419,11 @@ export function StartWork({
                         {template.description}
                       </p>
                     )}
+                    {template && (
+                      <div className="mt-4">
+                        <WorkflowLaunchSummary templateId={template.id} />
+                      </div>
+                    )}
                   </QueryBoundary>
                 </Card>
               </Step>
@@ -397,10 +431,14 @@ export function StartWork({
               <div hidden={!template}>
                 <Step number={detailsStep} title="Describe the task">
                   {runnable
-                    .filter((item) => visited.includes(item.id))
+                    .filter((item) => item.id === templateId || visited.includes(item.id))
                     .map((item) => (
                       <div hidden={templateId !== item.id} key={item.id}>
-                        <WorkflowLaunchForm onLaunched={onLaunched} template={item} />
+                        <WorkflowLaunchForm
+                          onLaunched={onLaunched}
+                          showProcessSummary={false}
+                          template={item}
+                        />
                       </div>
                     ))}
                 </Step>
