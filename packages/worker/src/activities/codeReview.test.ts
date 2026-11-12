@@ -78,7 +78,12 @@ function fixture() {
   );
   const destroy = vi.fn(async () => undefined);
   const gitAuthed = vi.fn(async () => '');
-  const workspace = { destroy, exec, gitAuthed } as unknown as Workspace;
+  const workspace = {
+    destroy,
+    exec,
+    gitAuthed,
+    readBaseFile: async () => null,
+  } as unknown as Workspace;
   const comment = vi.fn(
     async (_ref: unknown, _number: number, _marker: string, _body: string) => undefined
   );
@@ -181,6 +186,7 @@ describe('loadChangeForReview', () => {
           exec: f.exec,
           execCapture: capture,
           execStdin: apply,
+          readBaseFile: async () => null,
         }) as unknown as Workspace
     );
     f.change.loadRepo = async () => ({ ...repo, detectedStack: { primaryStack: 'node' } });
@@ -243,6 +249,7 @@ describe('loadChangeForReview', () => {
           exec: f.exec,
           execCapture: capture,
           gitAuthed: f.gitAuthed,
+          readBaseFile: async () => null,
         }) as unknown as Workspace
     );
     const req = request();

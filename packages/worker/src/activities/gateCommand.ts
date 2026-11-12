@@ -1,4 +1,5 @@
 import { detectedGateDefaults, YARN_GATE_DEFAULTS } from '@auto-swe/shared/lib/stackDetection';
+import { configuredGateCommand } from '../lib/repoConfigResolver.js';
 import type { GateName } from './qualityGates.js';
 
 /**
@@ -14,7 +15,7 @@ export const DEFAULT_COMMANDS: Record<GateName, string | null> = {
 
 /**
  * The command a gate runs, most specific first: the step's `command`, the repository's
- * `gateCommands`, the default for the stack its root was detected as, then the built-in.
+ * `gateCommands`, the trusted `.auto-swe/gates.yml`, the stack default, then the built-in.
  * Null when none applies, which the caller reports as a FAILED gate (`noCommandResult`): a
  * gate that cannot run has not verified anything, and its node's `onFail: 'warn'` is the
  * supported way to make it optional. `runPerfBench` has no built-in, and a gate a detected
@@ -26,15 +27,15 @@ export const DEFAULT_COMMANDS: Record<GateName, string | null> = {
 export function gateCommandFor(
   gate: GateName,
   override: string | null | undefined,
-  repo: { detectedStack?: unknown; gateCommands?: unknown }
+  repo: { detectedStack?: unknown; gateCommands?: unknown },
+  fileCommands?: unknown
 ): string | null {
   if (override && override.trim().length > 0) {
     return override;
   }
-  const repoOverrides = (repo.gateCommands ?? null) as Record<string, unknown> | null;
-  const configured = repoOverrides?.[gate];
-  if (typeof configured === 'string' && configured.trim().length > 0) {
-    return configured;
+  const configured = configuredGateCommand(gate, repo.gateCommands, fileCommands);
+  if (configured) {
+    return configured.command;
   }
   // A non-Node root gets its stack's command or none: running a `yarn` one in a Python
   // or JVM workspace exits 127 and reads as broken code.

@@ -269,7 +269,7 @@ own shape; `updateDomainState` returns `{ "status": … }`, so the example's val
 its smoke paths and optional E2E command. Its config accepts `mode` (`smoke`, `e2e` or `both`),
 `recordVideo` (default `true`), `failOnConsoleErrors` (default `true`), `timeoutMs` (default
 `1200000`) and `branch` (defaults to the implementation branch). When the repository has no
-`previewConfig`, it returns a successful skipped result. A configured repository uses its executor
+`previewConfig` or trusted `.auto-swe/preview.yml`, it returns a successful skipped result. A configured repository uses its executor
 image; an image without Playwright/Chromium returns a failed gate result. The output includes
 `passed`, `summary`, `exitCode`, `pages`, `evidenceIds`, optional `e2e`, and the `ui.log` evidence
 identifier as `artifactId`. When a configured cap drops an item instead of saving it, `notes` says

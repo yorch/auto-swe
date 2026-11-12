@@ -32,6 +32,7 @@ import {
   resumeCheckoutSha,
   resumeMessage,
 } from '../lib/pauseResume.js';
+import { resolveRepoGateCommands, workspaceConfigReader } from '../lib/repoConfigResolver.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
@@ -215,6 +216,7 @@ export async function runImplementerFixSession(
     resumeCheckoutSha(resume),
     undefined,
     {
+      ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
       detectedStack: repo.detectedStack,
       knowledgeBaseSnapshotIds: references.snapshotIds,
       knowledgeBases: references.checkouts,
@@ -272,8 +274,19 @@ export async function runImplementerFixSession(
     );
 
     const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
-    const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
-    const testSource = testCommandSource(packageJson, repo.gateCommands, repo.detectedStack);
+    const fileCommands = await resolveRepoGateCommands(workspaceConfigReader(workspace, repo.id));
+    const testCommand = detectTestCommand(
+      packageJson,
+      repo.gateCommands,
+      repo.detectedStack,
+      fileCommands
+    );
+    const testSource = testCommandSource(
+      packageJson,
+      repo.gateCommands,
+      repo.detectedStack,
+      fileCommands
+    );
 
     // The paused session's tree goes back after the guard starts (its changes are this
     // session's own and are guarded like the rest), before any turn.

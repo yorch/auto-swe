@@ -21,6 +21,7 @@ import {
   secretLookingEnvKeys,
 } from '@auto-swe/shared/lib/previewConfig';
 import { PR_TITLE_FORMATS } from '@auto-swe/shared/lib/prTitle';
+import { RepoGateCommandsSchema } from '@auto-swe/shared/lib/repoConfigFiles';
 import {
   lookupRepoPermission,
   PERMISSION_REPO_SELECT,
@@ -98,10 +99,7 @@ const GitRefSchema = z
   });
 
 /** A repository's gate commands in a request body; see `normaliseGateCommands`. */
-const GateCommandsSchema = z
-  .partialRecord(z.enum(REPO_GATE_COMMAND_KEYS), z.string().max(4000).nullable())
-  .nullable()
-  .optional();
+const GateCommandsSchema = RepoGateCommandsSchema.nullable().optional();
 
 const CreateRepoSchema = z.object({
   apiToken: z.string().optional(),

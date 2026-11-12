@@ -176,10 +176,14 @@ async function stackDefaultsEnabled(teamId: string | null): Promise<boolean> {
 }
 
 /** The text of `.auto-swe/setup.yml` at `ref`, or null when the commit has none. */
-export async function readSetupFile(host: RepoSetupHost, ref: string): Promise<string | null> {
-  const spec = shellQuote(`${ref}:${REPO_SETUP_FILE}`);
+export async function readSetupFile(
+  host: RepoSetupHost,
+  ref: string,
+  path = REPO_SETUP_FILE
+): Promise<string | null> {
+  const spec = shellQuote(`${ref}:${path}`);
   const result = await host.capture(
-    `if git cat-file -e ${spec} 2>/dev/null; then git cat-file blob ${spec}; else exit 3; fi`,
+    `if git --no-replace-objects cat-file -e ${spec} 2>/dev/null; then git --no-replace-objects cat-file -p ${spec}; else exit 3; fi`,
     { maxOutputBytes: REPO_SETUP_FILE_MAX_BYTES + 1, timeoutMs: 60_000 }
   );
   if (result.exitCode === 3) {
@@ -187,7 +191,7 @@ export async function readSetupFile(host: RepoSetupHost, ref: string): Promise<s
   }
   if (result.exitCode !== 0) {
     throw setupRunFailure(
-      `could not read ${REPO_SETUP_FILE}: ${tail(host, result)}`,
+      `could not read ${path}: ${tail(host, result)}`,
       blocker('internal', tail(host, result))
     );
   }

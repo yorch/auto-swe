@@ -26,6 +26,7 @@ const { fakeWorkspace } = vi.hoisted(() => ({
     exec: vi.fn(async () => ''),
     execCapture: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
     gitAuthed: vi.fn(async () => ''),
+    readBaseFile: vi.fn(async (_path: string): Promise<string | null> => null),
   },
 }));
 vi.mock('./workspace.js', async (importOriginal) => ({
@@ -85,7 +86,30 @@ afterEach(() => {
 
 describe('resolveCommand precedence', () => {
   beforeEach(() => {
+    fakeWorkspace.readBaseFile.mockResolvedValue(null);
     mockedFindUnique.mockResolvedValue({ gateCommands: null } as never);
+  });
+
+  it('uses repo-file commands per key below node and connection overrides', async () => {
+    mockedFindUnique.mockResolvedValue({
+      gateCommands: { runTests: 'admin tests' },
+      id: 'repo',
+    } as never);
+    fakeWorkspace.readBaseFile.mockResolvedValue('runTests: file tests\nrunLint: file lint');
+    try {
+      expect(await resolveCommand('runTests', baseRequest, undefined, fakeWorkspace as never)).toBe(
+        'admin tests'
+      );
+      expect(await resolveCommand('runLint', baseRequest, undefined, fakeWorkspace as never)).toBe(
+        'file lint'
+      );
+      expect(
+        await resolveCommand('runLint', baseRequest, 'node lint', fakeWorkspace as never)
+      ).toBe('node lint');
+      expect(fakeWorkspace.readBaseFile).toHaveBeenCalledWith('.auto-swe/gates.yml');
+    } finally {
+      fakeWorkspace.readBaseFile.mockResolvedValue(null);
+    }
   });
 
   it('uses the step config override when present (highest precedence)', async () => {
@@ -363,7 +387,7 @@ describe('executeGateFixImplementation re-run', () => {
     };
     const afterGenerate = session.afterGenerate;
     const execCapture = vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' }));
-    await afterGenerate({ execCapture }, { id: 'repo-1' });
+    await afterGenerate({ execCapture, readBaseFile: async () => null }, { id: 'repo-1' });
     return (execCapture.mock.calls[0] as unknown as [string])[0];
   }
 
@@ -590,6 +614,7 @@ describe('runQualityGates', () => {
         stdout: exitFor(command) === 0 ? 'ok' : '',
       })),
       gitAuthed: vi.fn(async () => ''),
+      readBaseFile: async () => null,
     };
   }
 

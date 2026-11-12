@@ -20,6 +20,20 @@ import {
   unrunnableTestCause,
 } from './utils.js';
 
+describe('repository-file test commands', () => {
+  it('labels file commands and preserves connection precedence', () => {
+    const file = { runTests: 'make test' };
+    expect(detectTestCommand('{}', {}, undefined, file)).toBe('make test');
+    expect(testCommandSource('{}', {}, undefined, file)).toBe('repo-file');
+    expect(detectTestCommand('{}', { runTests: 'admin tests' }, undefined, file)).toBe(
+      'admin tests'
+    );
+    expect(testCommandSource('{}', { runTests: 'admin tests' }, undefined, file)).toBe(
+      'configured'
+    );
+  });
+});
+
 describe('composite test output', () => {
   const section = (dir: string, body: string) => `${componentMarker(dir)}\n${body}\n`;
 

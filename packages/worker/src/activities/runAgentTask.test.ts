@@ -192,6 +192,8 @@ vi.mock('../lib/scm/index.js', () => ({
   getScmProvider: vi.fn(() => ({
     cloneCredentials: async () => ({ authedCloneUrl: 'https://x-access-token:T@h/o/r.git' }),
     createOrUpdatePullRequest: m.createPr,
+    fetchFileContent: async () => null,
+    resolveRef: async () => 'base-sha',
   })),
   toRepoRef: vi.fn(() => ({ organizationName: 'o', repoName: 'r' })),
 }));

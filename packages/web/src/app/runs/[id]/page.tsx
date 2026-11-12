@@ -526,6 +526,7 @@ export default function RunDetailPage({ params }: PageProps) {
       <RunVerdictBanner
         onGoToGate={() => setOverviewNonce((n) => n + 1)}
         onJumpToFailure={handleJumpToFailure}
+        run={run}
         verdict={verdict}
       />
       <RunWorkspace

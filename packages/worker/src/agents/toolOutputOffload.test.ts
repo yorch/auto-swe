@@ -12,6 +12,7 @@ function makeWorkspace(
   execStdinImpl: (command: string, stdin: string | Buffer) => Promise<string> = async () => ''
 ): Workspace {
   return {
+    baseSha: 'a'.repeat(40),
     containerId: 'workspace-test',
     copyFileOut: vi.fn(async () => ({
       cleanup: async () => {},
@@ -27,6 +28,7 @@ function makeWorkspace(
       author: { email: 'auto-swe@localhost', name: 'auto-swe' },
       committer: { email: 'auto-swe@localhost', name: 'auto-swe' },
     },
+    readBaseFile: vi.fn(async () => null),
     readFile: vi.fn(async () => Buffer.alloc(0)),
   };
 }

@@ -1,7 +1,6 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
-import { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 import {
@@ -46,6 +45,7 @@ import {
   resumeCheckoutSha,
   resumeMessage,
 } from '../lib/pauseResume.js';
+import { resolvePreviewFromScm } from '../lib/repoConfigResolver.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
 import { loadRunKnowledgeBases } from '../lib/runKnowledgeBases.js';
@@ -344,10 +344,9 @@ async function runInCheckout(args: {
     repoId: repo.id,
     teamId: repo.teamId,
   });
-  const services =
-    grantsBrowserTool(resolved.toolKeys) && repo.previewConfig
-      ? PreviewConfigSchema.parse(repo.previewConfig).services
-      : undefined;
+  const services = grantsBrowserTool(resolved.toolKeys)
+    ? (await resolvePreviewFromScm(repo, baseBranch))?.services
+    : undefined;
   const workspace = await createWorkspace(
     authedCloneUrl,
     branch,
@@ -357,6 +356,7 @@ async function runInCheckout(args: {
     resumeCheckoutSha(resume),
     undefined,
     {
+      ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
       detectedStack: repo.detectedStack,
       knowledgeBaseSnapshotIds: references.snapshotIds,
       knowledgeBases: references.checkouts,

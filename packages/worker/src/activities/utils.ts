@@ -8,6 +8,7 @@ import {
   PYTEST_NO_TESTS_STATUS,
 } from '@auto-swe/shared/lib/stackDetection';
 import type { FileChange, TestRunResult } from '@auto-swe/shared/types/workflow';
+import { configuredGateCommand } from '../lib/repoConfigResolver.js';
 
 /**
  * Wall-clock cap for a full test-suite run inside the workspace. `Workspace.exec`
@@ -24,7 +25,7 @@ export const TEST_RUN_TIMEOUT_MS = 600_000;
  * command wherever both have one (a layout the composite cannot cover — over 8 components, or
  * components that do not all have a test command — leaves the gate unconfigured and the loop on
  * its root guess, which then ends the loop as unrunnable): the repository's configured
- * `Connection.gateCommands.runTests` wins; then the default for the stack the
+ * `Connection.gateCommands.runTests` wins; then the trusted `.auto-swe/gates.yml`; then the default for the stack the
  * repository's root was detected as (a Python, JVM or Go root, not Node), or its only component
  * when the root has no stack (run in that directory), or the composite that runs the tests in
  * each of 2..8 components; then a guess from package.json's scripts
@@ -35,13 +36,14 @@ export const TEST_RUN_TIMEOUT_MS = 600_000;
 export function detectTestCommand(
   packageJsonStr: string,
   gateCommands?: unknown,
-  detectedStack?: unknown
+  detectedStack?: unknown,
+  fileCommands?: unknown
 ): string {
-  return resolveTestCommand(packageJsonStr, gateCommands, detectedStack).command;
+  return resolveTestCommand(packageJsonStr, gateCommands, detectedStack, fileCommands).command;
 }
 
-/** Where the test command came from: an admin, the detected stack, or the package.json guess. */
-export type TestCommandSource = 'configured' | 'stack' | 'node-guess';
+/** Where the test command came from: connection, repo file, stack, or package.json guess. */
+export type TestCommandSource = 'configured' | 'repo-file' | 'stack' | 'node-guess';
 
 /**
  * The test command {@link detectTestCommand} returns and the link in its chain that supplied
@@ -50,14 +52,12 @@ export type TestCommandSource = 'configured' | 'stack' | 'node-guess';
 function resolveTestCommand(
   packageJsonStr: string,
   gateCommands?: unknown,
-  detectedStack?: unknown
+  detectedStack?: unknown,
+  fileCommands?: unknown
 ): { command: string; source: TestCommandSource } {
-  const configured =
-    gateCommands && typeof gateCommands === 'object'
-      ? (gateCommands as Record<string, unknown>).runTests
-      : undefined;
-  if (typeof configured === 'string' && configured.trim().length > 0) {
-    return { command: configured, source: 'configured' };
+  const configured = configuredGateCommand('runTests', gateCommands, fileCommands);
+  if (configured) {
+    return configured;
   }
   // A Node target is not given its package manager's `npm test`: the package.json
   // guess below is better informed (a missing test script, a vitest dependency).
@@ -81,9 +81,10 @@ function resolveTestCommand(
 export function testCommandSource(
   packageJsonStr: string,
   gateCommands?: unknown,
-  detectedStack?: unknown
+  detectedStack?: unknown,
+  fileCommands?: unknown
 ): TestCommandSource {
-  return resolveTestCommand(packageJsonStr, gateCommands, detectedStack).source;
+  return resolveTestCommand(packageJsonStr, gateCommands, detectedStack, fileCommands).source;
 }
 
 /**

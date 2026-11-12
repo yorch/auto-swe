@@ -25,6 +25,7 @@
     "./lib/runEvidence": "./dist/lib/runEvidence.js",
     "./lib/previewConfig": "./dist/lib/previewConfig.js",
     "./lib/repoSetup": "./dist/lib/repoSetup.js",
+    "./lib/repoConfigFiles": "./dist/lib/repoConfigFiles.js",
     "./lib/setupBlocker": "./dist/lib/setupBlocker.js",
     "./lib/transcripts/normalize": "./dist/lib/transcripts/normalize.js",
     "./lib/transcripts/piiScrub": "./dist/lib/transcripts/piiScrub.js",

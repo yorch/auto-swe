@@ -4,8 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   createWorkspace: vi.fn(),
   evidence: vi.fn(),
+  fetchFileContent: vi.fn(async (): Promise<string | null> => null),
   findRepo: vi.fn(),
   preview: vi.fn(),
+  resolveRef: vi.fn(async () => 'base-sha'),
   resolveSetting: vi.fn(),
   startBrowser: vi.fn(),
   workspace: {
@@ -27,12 +29,19 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: async () => ({ branchPrefix: 'auto' }),
 }));
 vi.mock('@auto-swe/shared/lib/workflowId', () => ({ workBranchOf: () => 'auto/T-1' }));
-vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
+vi.mock('@temporalio/activity', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@temporalio/activity')>()),
+  heartbeat: vi.fn(),
+}));
 vi.mock('../lib/requireRepoId.js', () => ({ requireRepoId: () => 'repo-1' }));
 vi.mock('../lib/runBaseBranch.js', () => ({ resolveRequestBaseBranch: async () => 'main' }));
 vi.mock('../lib/runDetection.js', () => ({ withRunDetection: (repo: unknown) => repo }));
 vi.mock('../lib/scm/index.js', () => ({
-  getScmProvider: () => ({ cloneCredentials: async () => ({ authedCloneUrl: 'https://git/x' }) }),
+  getScmProvider: () => ({
+    cloneCredentials: async () => ({ authedCloneUrl: 'https://git/x' }),
+    fetchFileContent: mocks.fetchFileContent,
+    resolveRef: mocks.resolveRef,
+  }),
   toRepoRef: () => ({ host: 'github.com', owner: 'o', repo: 'r' }),
 }));
 vi.mock('./workspace.js', () => ({
@@ -99,6 +108,34 @@ describe('runUiVerify', () => {
       passed: true,
       skipped: true,
       summary: 'UI verification skipped: the repository has no app preview configured',
+    });
+    expect(mocks.createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('loads a preview file at the trusted base SHA before provisioning services', async () => {
+    mocks.findRepo.mockResolvedValue({ installation: null, previewConfig: null });
+    mocks.fetchFileContent.mockResolvedValueOnce(
+      'start: npm start\nreadyUrl: http://localhost:3000/\nservices:\n  - name: redis\n    image: redis:7'
+    );
+    mocks.startBrowser.mockResolvedValue(sessionWith(() => ({ ok: true, status: 200 })));
+    await runUiVerify({ request });
+    expect(mocks.resolveRef).toHaveBeenCalledWith(expect.anything(), 'main');
+    expect(mocks.fetchFileContent).toHaveBeenCalledWith(
+      expect.anything(),
+      '.auto-swe/preview.yml',
+      'base-sha'
+    );
+    expect(mocks.createWorkspace.mock.calls[0]?.[6]).toMatchObject({
+      services: [{ image: 'redis:7', name: 'redis' }],
+    });
+  });
+
+  it('rejects invalid preview.yml before creating a workspace', async () => {
+    mocks.findRepo.mockResolvedValue({ installation: null, previewConfig: null });
+    mocks.fetchFileContent.mockResolvedValueOnce('start: nope');
+    await expect(runUiVerify({ request })).rejects.toMatchObject({
+      message: expect.stringContaining('.auto-swe/preview.yml'),
+      type: 'REPO_CONFIG_INVALID',
     });
     expect(mocks.createWorkspace).not.toHaveBeenCalled();
   });

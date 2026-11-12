@@ -39,7 +39,7 @@ settings. The `uiValidation.agentRecordVideo` setting controls agent browser rec
 
 ## Workflow verification
 
-The `uiVerify` gate step reads the repository's `previewConfig`, starts the app preview inside a
+The `uiVerify` gate step reads the repository's effective preview recipe, starts the app preview inside a
 workspace made with the repository's configured executor image, and records evidence against the
 current workflow run. Its `mode` is `smoke`, `e2e` or `both`; by default it runs both when an `e2e`
 command is configured and smoke otherwise. `recordVideo` and `failOnConsoleErrors` default to true,
@@ -88,7 +88,26 @@ filesystem store: inline PR images are the one feature that always needs an obje
 
 ## Repository preview recipes
 
-A `git_repo` connection can hold a `previewConfig` JSON recipe. The shared strict schema checks the
+A `git_repo` connection can hold a `previewConfig` JSON recipe. A repository can instead commit
+`.auto-swe/preview.yml`, with the same fields in YAML. The connection recipe wins as a whole object;
+no fields or services are merged with the file. With neither source, UI verification skips preview
+checks. A missing file is unset; an invalid selected file fails with its path in the error.
+
+```yaml
+start: npm run dev -- --host 0.0.0.0
+readyUrl: http://localhost:3000/
+smoke:
+  - path: /
+```
+
+Files come only from trusted base-branch content. Before workspace creation, service consumers
+read through SCM at a resolved base-branch SHA. Inside a workspace, browser tools use the immutable
+base SHA captured during provisioning, never the working tree. Resumed work uses the trusted base
+branch for configuration rather than the agent snapshot's checkout pin. A base branch advancing
+between these reads can change which trusted version supplies the recipe. See
+[gate commands](./repositories.md#gate-commands) for the shared trust boundary.
+
+The shared strict schema checks the
 setup and start commands, local readiness and base URLs, environment variables, allowed browser
 hosts, smoke paths, optional end-to-end command and results directory, and service descriptions.
 Changing a recipe takes the same team shell-authoring role as changing gate commands; unchanged
@@ -171,6 +190,12 @@ are rejected under `restricted`. The workspace container remains non-root with a
 dropped.
 
 ## Limitations
+
+- Editing `.auto-swe/preview.yml` in an agent's working tree does not reconfigure its preview.
+  Preview files must be merged to the trusted base branch, and are limited to 64 KiB.
+- An existing connection recipe hides the entire repository recipe, including its services.
+  Clear that override to use the file. Service provisioning and lazy browser configuration can
+  observe different trusted base commits if the branch advances between reads.
 
 - Secret-looking `env` values are found by shape, not proven: a secret with an ordinary name, no
   known token prefix and a value that does not look random (a passphrase such as
