@@ -52,10 +52,31 @@ function mock(members: ReturnType<typeof member>[]) {
     [`GET /api/v1/platform/organizations/${ORG_ID}/members`]: () => ({ data: members }),
     [`PATCH /api/v1/platform/organizations/${ORG_ID}`]: () => ({ data: {} }),
     'GET /api/v1/users': () => ({ data: [] }),
+    [`GET /api/v1/organizations/${ORG_ID}/github/installations`]: () => ({ data: [] }),
   });
 }
 
 describe('organization admin page', () => {
+  it('offers GitHub connections to a platform engineer who is an organization admin', async () => {
+    useAuthStore.setState({
+      isAuthenticated: true,
+      user: { role: 'ENGINEER', sub: 'me' },
+    } as never);
+    mock([member('me', 'me@x.com', 'ORG_ADMIN')]);
+    render(withQuery(<OrgAdminPage params={params} />));
+    expect(await screen.findByRole('button', { name: 'Connect a GitHub org' })).toBeTruthy();
+    expect(await screen.findByText('No linked installations.')).toBeTruthy();
+  });
+  it('does not offer GitHub management to an ordinary organization member', async () => {
+    useAuthStore.setState({
+      isAuthenticated: true,
+      user: { role: 'ENGINEER', sub: 'me' },
+    } as never);
+    mock([member('me', 'me@x.com', 'ORG_MEMBER')]);
+    render(withQuery(<OrgAdminPage params={params} />));
+    await screen.findByRole('heading', { name: 'Acme' });
+    expect(screen.queryByRole('button', { name: 'Connect a GitHub org' })).toBeNull();
+  });
   it('asks before trusting organization admin invites, and saves only on confirmation', async () => {
     const spy = mock([member('me', 'me@x.com', 'ORG_ADMIN')]);
     render(withQuery(<OrgAdminPage params={params} />));

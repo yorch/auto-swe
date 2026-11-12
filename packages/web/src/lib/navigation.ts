@@ -113,12 +113,11 @@ export const APPROVALS_HREF = '/approvals';
 const ADMIN_PAGES: NavItem[] = [
   { href: '/admin/users', icon: 'users', label: 'Users', minRole: 'ADMIN', section: 'Access' },
   { href: '/admin/teams', icon: 'teams', label: 'Teams', minRole: 'ENGINEER', section: 'Access' },
-  // GET /platform/organizations and the organizations layout both require LEAD.
   {
     href: '/admin/organizations',
     icon: 'building',
     label: 'Organizations',
-    minRole: 'LEAD',
+    minRole: 'ENGINEER',
     section: 'Access',
   },
   {

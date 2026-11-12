@@ -2,6 +2,7 @@
 
 import { use, useEffect, useState } from 'react';
 import { MemberUserPicker } from '@/components/MemberUserPicker';
+import { OrganizationGithub } from '@/components/organizations/OrganizationGithub';
 import { BudgetMeter } from '@/components/teams/BudgetMeter';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
@@ -282,6 +283,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         }
         title={org?.name ?? 'Organization'}
       />
+      {canAdmin && orgId && <OrganizationGithub orgId={orgId} />}
 
       {error ? <Alert variant="error">{error}</Alert> : null}
 

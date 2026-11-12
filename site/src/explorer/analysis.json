@@ -6277,7 +6277,7 @@
     "GitHubConfig": "Schema entity; inspect fields and relationship declarations below.",
     "GitHubHostCredential": "Encrypted PAT and/or GitHub App credentials for one approved non-instance GitHub host family; sent only to that host.",
     "GitHubHostWebhookSecret": "Schema entity; inspect fields and relationship declarations below.",
-    "GitHubInstallation": "A GitHub App installation, identified by its host and installation id; repositories may point only at an installation on their own host. retiredReason marks a retirement a GitHub webhook made, which only a webhook reverses.",
+    "GitHubInstallation": "A GitHub App installation, identified by its host and installation id; repositories may point only at an installation on their own host. Its nullable indexed organizationId links an installation to an Organization (deleting the organization sets it null). The link scopes new imports and installation changes, never existing runs. Org admins connect only new installations of the instance App through signed, user-bound state and OAuth installation verification, and can retire their linked rows; platform admins alone unlink, relink or reactivate, with an outside-org repository count. Unlinked installations remain cross-organization. retiredReason marks a webhook retirement, which only a webhook reverses; manual retirement clears it.",
     "HarnessProfile": "A named, admin-approved Claude Code profile: the git repository it comes from; its versions are immutable.",
     "HarnessProfileVersion": "One approved, hash-pinned snapshot of a profile (pinned commit, content hash, stored archive) that an Agent version binds and a run pins.",
     "HumanApproval": "Distinct human response linked to a human step.",

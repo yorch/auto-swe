@@ -346,6 +346,12 @@ only by the mid-run guard.
 
 ## Limitations
 
+- Organization admins manage linked GitHub installations from **Admin → Organizations → the
+  organization → GitHub**. Connect authorizes a new installation of the instance App, and Retire
+  prevents new runs through it. Existing runs continue. Only platform admins can reactivate,
+  unlink or relink installations. Self-service does not support per-host Apps or claiming an
+  installation already registered; see [GitHub App setup](./github-app-setup.md#connecting-an-organization).
+
 - **Engineers see failures only for runs they launched.** A lead does not see a failure on a
   teammate's run in the desk, and a run the caller controls but did not launch is excluded.
 - **Expired approvals are not in Needs you.** An expired step cannot be answered, so the actionable

@@ -920,6 +920,17 @@ longer fit.
 
 ## Limitations
 
+- An organization-linked GitHub installation is offered only to platform admins and callers who
+  manage an active team in that organization. New imports and installation changes must target a
+  team in the linked organization. Unlinked, admin-registered installations remain available across
+  organizations. Linking an installation does not disconnect its existing repositories or block
+  their runs, even when their teams belong to another organization.
+  A registered singleton default App follows the same link scope; omitting an installation ID
+  does not bypass it. An independent default PAT remains a separate source.
+- Organization admins connect new installations from their organization's **GitHub** section.
+  They can retire their links, but only platform admins can unlink, relink or reactivate them.
+  Self-service uses only the instance's own App and host; see [GitHub App setup](./github-app-setup.md#connecting-an-organization).
+
 - Gate and preview file edits on a work branch do not change that run's commands or services;
   they must reach the trusted base branch first. Pre-provisioning preview reads and workspace
   provisioning can see different trusted commits if the base branch advances between them.

@@ -1151,6 +1151,8 @@ model PackageRegistry {
 /// credentials themselves — teams reach one by owning a Connection that points
 /// at it, not by owning the installation.
 model GitHubInstallation {
+  organizationId String? @map("organization_id") @db.Uuid
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
   id             String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   /// The GitHub host family the installation lives on: empty for the
   /// instance's own, otherwise the host key of a `GitHubHostCredential` (see
@@ -1179,6 +1181,7 @@ model GitHubInstallation {
   connections Connection[]
 
   @@unique([host, installationId])
+  @@index([organizationId])
   @@map("github_installations")
 }
 
@@ -1226,6 +1229,7 @@ model RepoDependency {
 /// `monthlyBudgetUsdCents` is optional; when set, work-request creation is rejected
 /// once the org's spend for the current calendar month meets or exceeds the cap.
 model Organization {
+  githubInstallations GitHubInstallation[]
   knowledgeBases              KnowledgeBase[]
   id                          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name                        String   @unique

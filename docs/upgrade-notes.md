@@ -1229,6 +1229,32 @@ HTTP URL and confirm success. A raw public-IP TCP connect and
 `egress (allowlist via proxy; network-locked)`. A missing proxy or unprovable strict lock refuses
 the step before author startup.
 
+### Organization GitHub connections (`8d4d3a64`)
+
+**Affected.** Deployments applying commit `8d4d3a64` or a descendant that use an existing GitHub
+App without OAuth during installation or with a Setup URL instead of the organization callback.
+
+**Actions.** In the instance GitHub App's settings, enable **Request user authorization (OAuth)
+during installation**. GitHub disables the Setup URL in this mode. Set the first user-authorization
+Callback URL to `<WEB_URL>/github/install/callback`; preserve any other callbacks needed by the App.
+Keep the App's client ID, client secret and private key configured in the platform. The web and API
+URLs must use HTTPS and belong to the same GitHub host family; the gateway verifies the App's slug
+through `GET /app`. The manifest creates a private App: an operator who wants installations on
+other GitHub accounts changes its installation availability to **Any account**.
+
+The standard migration deploy adds the nullable, indexed installation-to-organization link with
+`ON DELETE SET NULL`. Existing installations remain unlinked and available across organizations.
+Platform admins link or unlink installations through the installation editor; the confirmation
+shows the count of existing repositories whose teams belong to another organization.
+
+**Verification.** An organization admin connects a new, unregistered installation from the
+organization's GitHub section and confirms the OAuth callback. A registered installation cannot
+be claimed again; a platform admin changes its link instead. A callback without organization
+state returns to the existing admin installation form. Existing repositories continue working
+after linking, including repositories owned by teams outside the linked organization. Links scope
+only new imports and installation changes, not runs. See [GitHub App setup](./github-app-setup.md#connecting-an-organization)
+for the self-service flow and its limitations.
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,
