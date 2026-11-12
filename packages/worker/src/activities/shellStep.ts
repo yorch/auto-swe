@@ -41,6 +41,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import {
   assertStepEgressEnforceable,
   capStepNetwork,
+  resolveRunEgressAllowlist,
   resolveRunEgressPolicy,
 } from '../lib/egressWiring.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
@@ -496,8 +497,13 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   }
 
   // The run's egress policy caps what the node asked for: `blocked`, or `restricted` with no
-  // team allowlist, leaves the command no network at all.
+  // effective allowlist, leaves the command no network at all.
   const egressPolicy = await resolveRunEgressPolicy(meta.teamId || null);
+  meta.teamEgressAllowlist = await resolveRunEgressAllowlist(
+    meta.teamId || null,
+    meta.teamEgressAllowlist,
+    egressPolicy
+  );
   const cap = capStepNetwork(egressPolicy, meta.teamEgressAllowlist, input.network);
   const stepNetwork = cap.network;
   const auditNetwork = cap.capped

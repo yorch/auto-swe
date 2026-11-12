@@ -1,6 +1,10 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import type { EgressPolicy, SetupEgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
+import {
+  type EgressPolicy,
+  effectiveEgressAllowlist,
+  type SetupEgressPolicy,
+} from '@auto-swe/shared/lib/egressPolicy';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 import { z } from 'zod';
@@ -92,7 +96,8 @@ export function egressPolicyFailure(message: string): ApplicationFailure {
 
 /**
  * `policy` is the run's egress policy. `open` keeps the proxy's reading of an empty allowlist
- * (any public host). `restricted` makes the allowlist mandatory: a non-empty one needs the
+ * (any public host). Enforced lists merge the live baseline and team entries. `restricted` makes
+ * the allowlist mandatory: a non-empty one needs the
  * proxy (and refuses to run without it, since nothing else enforces it); an empty one reaches
  * nothing, so it needs no proxy and returns null — the caller locks the network exactly as for
  * `blocked`. `blocked` is enforced by the network (`lockEgress`), not here.
@@ -103,7 +108,7 @@ export function egressPolicyFailure(message: string): ApplicationFailure {
 export async function beginWorkspaceEgress(
   teamId: string | null,
   bypassHosts: string[] = [],
-  policy: EgressPolicy = 'open',
+  policy: EgressPolicy = 'restricted',
   expansion?: DraftEgressExpansion
 ) {
   if (policy === 'blocked') {
@@ -118,7 +123,9 @@ export async function beginWorkspaceEgress(
       : null;
   const allowlist = [
     ...new Set([
-      ...((team?.egressAllowlist as string[] | null) ?? []),
+      ...(expansion?.includeTeamAllowlist === false
+        ? []
+        : await resolveRunEgressAllowlist(teamId, team?.egressAllowlist ?? [], policy)),
       ...(expansion?.additionalHosts ?? []),
     ]),
   ];
@@ -226,6 +233,21 @@ export async function resolveRunEgressPolicy(teamId: string | null): Promise<Egr
   return resolveRunNetworkSetting('workspace.egressPolicy', teamId);
 }
 
+export async function resolveRunEgressAllowlist(
+  teamId: string | null,
+  team: readonly string[],
+  policy: EgressPolicy
+): Promise<string[]> {
+  if (policy === 'blocked' || (policy === 'open' && team.length === 0)) {
+    return [];
+  }
+  return effectiveEgressAllowlist(
+    policy,
+    team,
+    await resolveRunNetworkSetting('workspace.egressBaselineAllowlist', teamId)
+  );
+}
+
 export async function resolveRunSetupEgressPolicy(
   teamId: string | null
 ): Promise<SetupEgressPolicy> {
@@ -233,7 +255,10 @@ export async function resolveRunSetupEgressPolicy(
 }
 
 async function resolveRunNetworkSetting<
-  K extends 'workspace.egressPolicy' | 'workspace.setupEgressPolicy',
+  K extends
+    | 'workspace.egressPolicy'
+    | 'workspace.setupEgressPolicy'
+    | 'workspace.egressBaselineAllowlist',
 >(key: K, teamId: string | null) {
   return resolveSetting(key, await resolveEgressScope(teamId));
 }
@@ -254,7 +279,7 @@ async function resolveEgressScope(teamId: string | null) {
 
 /**
  * What a shell or container step's `network` becomes under `policy`. `blocked` forces `none`;
- * `restricted` with an empty team allowlist forces `none` (the proxy would deny everything
+ * `restricted` with an empty effective allowlist forces `none` (the proxy would deny everything
  * anyway, and `none` says so up front). `capped` is true only when the step asked for `egress`
  * and did not get it.
  */

@@ -3,6 +3,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('../config/index.js', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveSetting: vi.fn(async () => []),
+}));
+
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';

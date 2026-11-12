@@ -39,9 +39,10 @@ increment `http_capture.persist_failures` without failing the activity.
 
 ## Container egress proxy
 
-The worker hosts an optional authenticated forward proxy for agent workspaces, egress-enabled
-`shell` and `containerStep` nodes, and bridge-networked sidecars. Without `EGRESS_PROXY_PORT`,
-container networking retains its DNS-filter behaviour and has no forward-proxy capture.
+The worker hosts an authenticated forward proxy for agent workspaces, egress-enabled
+`shell` and `containerStep` nodes, and bridge-networked sidecars. Compose and Helm enable port 8792
+by default. Without `EGRESS_PROXY_PORT`, GLOBAL `restricted` refuses worker boot; configure the
+proxy or set GLOBAL `workspace.egressPolicy` to `open`. Scoped overrides fail at runtime if unenforceable.
 
 Configure the worker environment and restart it:
 
@@ -85,15 +86,22 @@ crash the worker; persistence failures log and increment `egress_proxy.persist_f
 ### Run egress policy
 
 The `workspace.egressPolicy` setting (ADMIN-only, run-pinned, overridable per workflow template,
-team and organization; default `open`) decides how much outbound access a run's containers get.
+team and organization; default `restricted`) decides how much outbound access a run's containers get.
 A launch may choose a stricter level for one run, never a looser one (see
 [Launch-time narrowing](#launch-time-narrowing)).
 
 | Level | Agent workspace | `shell` / `containerStep` with `network: "egress"` |
 |---|---|---|
-| `open` | Public internet stays open; Docker workspaces cannot reach private/non-public ranges except configured DNS, worker proxies, the git host and operator CIDRs. With the egress proxy configured, `HTTP_PROXY` holds cooperating clients to the team allowlist. | The Docker baseline blocks private/non-public ranges and metadata before author code starts; DNS, wired registry/egress proxies and operator CIDRs are exceptions, but metadata remains blocked. The team allowlist applies via the DNS filter (and the egress proxy when configured); an empty allowlist permits public hosts. |
-| `restricted` | The team allowlist is mandatory: an empty list leaves only what `blocked` allows, and a non-empty allowlist with no egress proxy configured refuses the workspace with `EGRESS_POLICY_UNENFORCEABLE`. Enforced by the egress proxy plus a network lock that confines the workspace to the model proxy, the registry proxy when wired, the repository's git host and, for a non-empty allowlist, the egress proxy. A raw socket or `--noproxy` reaches nothing else. | An empty allowlist forces `network` to `none`. With an allowlist, the holder is network-locked to the egress proxy and any wired registry proxy before author code starts. DNS filtering and host pins remain; direct sockets and `--noproxy` cannot reach public hosts, even allowlisted ones. A missing proxy or unprovable lock refuses the step. |
+| `open` | Public internet stays open; Docker workspaces cannot reach private/non-public ranges except configured DNS, worker proxies, the git host and operator CIDRs. With the proxy configured and a non-empty team list, cooperating clients use the baseline/team union. An empty team list stays unrestricted. | The Docker network baseline blocks private/non-public ranges and metadata before author code starts, with narrow DNS/proxy/operator exceptions. A non-empty team list merges the hostname baseline for DNS/proxy filtering; an empty team list permits public hosts. |
+| `restricted` | The baseline/team union is mandatory: an empty effective list leaves only what `blocked` allows. A non-empty effective list without a proxy refuses the workspace with `EGRESS_POLICY_UNENFORCEABLE`. A verified network lock confines traffic to model/registry proxies, the repository git host and the egress proxy when the effective list is non-empty. Raw sockets and `--noproxy` reach nothing else. | An empty effective list forces `network` to `none`. Otherwise the holder is network-locked to egress and wired registry proxies before author code starts. DNS filtering and host pins remain; direct sockets and `--noproxy` cannot reach public hosts, even allowlisted ones. A missing proxy or unprovable lock refuses the step. |
 | `blocked` | Only the model proxy, the registry proxy when wired, and the repository's git host (plus cluster DNS on Kubernetes). There is no forwarding proxy. | `network` is forced to `none`. |
+
+In this table, the enforced allowlist includes the exact dependency hosts in
+`workspace.egressBaselineAllowlist` plus the team's entries. The baseline is ADMIN-managed at GLOBAL
+or ORGANIZATION scope. An empty team list under `restricted` still includes the baseline; only an
+empty effective list is offline. Under `open`, an empty team list remains unrestricted and ignores
+the baseline; a non-empty team list merges it. Non-proxied destinations outside the narrow network
+exceptions are blocked under `restricted`, even when their hostname is allowlisted.
 
 A capped step records `none (capped by egress policy <level>)` as its network in its execution
 event. A `containerStep` sidecar needs network access, so it is refused where the policy forbids
@@ -113,8 +121,8 @@ proxy; a client using raw TCP needs explicit proxy CONNECT support. Its allowlis
 not directly reachable. The model proxy and git host are not step-network exceptions.
 
 Setup readiness evaluates every configured `workspace.egressPolicy` against worker capability reports.
-Every fresh worker needs a verified network lock for `blocked` or `restricted`; a non-empty team
-allowlist under `restricted` also needs the egress proxy. Registry proxy availability is reported
+Every fresh worker needs a verified network lock for `blocked` or `restricted`; a non-empty
+baseline/team allowlist under `restricted` also needs the egress proxy. Registry proxy availability is reported
 but is not a prerequisite for enforcement. Policy and team-allowlist saves return advisory warnings
 without refusing the save. No fresh worker report leaves readiness advisory, not failed.
 
@@ -310,6 +318,9 @@ transition rather than declaring it enforced.
   Kata requires usable KVM/nested virtualization and adds VM/helper startup and memory overhead.
   The tested Go shim is deprecated upstream. Docker policy-broker profiles for owned CRI sandbox
   annotations and trusted runc holders/helpers are not included.
+- Team and baseline allowlists are read live, not frozen per run. The template-code audit snapshot
+  includes both at sign-off, but does not pin execution. Changes apply to later registrations,
+  including retries; existing registrations retain their original list until teardown.
 - Looser setup runs **repository-controlled code**, not trusted dependency installation. It can read
   the checkout, mounted knowledge/dependency repositories, declared setup secrets, registry proxy tokens
   and credentials in workspace environment/config files, and any wired model/egress proxy credentials.

@@ -100,6 +100,9 @@ services:
       # HARNESS_MODEL_PROXY_PORT empty to turn the proxy off.
       HARNESS_MODEL_PROXY_PORT: ${HARNESS_MODEL_PROXY_PORT-8790}
       HARNESS_MODEL_PROXY_URL: ${HARNESS_MODEL_PROXY_URL:-http://{hostname}:${HARNESS_MODEL_PROXY_PORT:-8790}}
+      EGRESS_PROXY_PORT: ${EGRESS_PROXY_PORT-8792}
+      EGRESS_PROXY_URL: ${EGRESS_PROXY_URL:-http://{hostname}:${EGRESS_PROXY_PORT:-8792}}
+      EGRESS_PROXY_BIND: ${EGRESS_PROXY_BIND:-0.0.0.0}
       WORKSPACE_NETWORK: ${WORKSPACE_NETWORK:-auto-swe-workspaces}
       # The Docker CLI the worker shells out to talks to the socket proxy, not a socket.
       DOCKER_HOST: tcp://docker-socket-proxy:2375

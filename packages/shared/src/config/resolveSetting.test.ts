@@ -29,6 +29,19 @@ beforeEach(() => {
 });
 
 describe('resolveSetting', () => {
+  it('reads ORGANIZATION baseline live and ignores TEAM and pinned baseline entries', async () => {
+    rows(
+      { key: 'workspace.egressBaselineAllowlist', scope: 'GLOBAL', value: ['global.test'] },
+      { key: 'workspace.egressBaselineAllowlist', scope: 'ORGANIZATION', value: ['org.test'] },
+      { key: 'workspace.egressBaselineAllowlist', scope: 'TEAM', value: ['team.test'] }
+    );
+    await expect(
+      resolveSetting('workspace.egressBaselineAllowlist', {
+        ...TEAM_CTX,
+        pinnedSettings: { 'workspace.egressBaselineAllowlist': ['pinned.test'] },
+      })
+    ).resolves.toEqual(['org.test']);
+  });
   it('falls back to the definition default when nothing overrides it', async () => {
     await expect(resolveSetting('channel.historyMessageLimit')).resolves.toBe(30);
   });
@@ -175,7 +188,7 @@ describe('run pinning', () => {
       'workflow.maxNeedsInputRounds': 5,
       'workflow.maxTransitions': 500,
       'workflow.needsInputTimeoutSeconds': 86_400,
-      'workspace.egressPolicy': 'open',
+      'workspace.egressPolicy': 'restricted',
       'workspace.implementerRuntime': 'mastra',
       'workspace.setupEgressPolicy': 'inherit',
     });

@@ -1,5 +1,7 @@
 import type { Prisma, Role } from '@auto-swe/shared';
+import { resolveSetting } from '@auto-swe/shared/config';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
+import { egressAllowlistSchema } from '@auto-swe/shared/lib/egressPolicy';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -567,21 +569,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   );
 
   // ── Phase-9: per-team egress allowlist ──────────────────────────────────
-  const HOSTNAME_RE =
-    /^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
   const EgressAllowlistBody = z.object({
-    egressAllowlist: z
-      .array(
-        z
-          .string()
-          .min(1)
-          .max(256)
-          .regex(
-            HOSTNAME_RE,
-            'must be a valid hostname or wildcard hostname (e.g. registry.npmjs.org or *.github.com)'
-          )
-      )
-      .max(100),
+    egressAllowlist: egressAllowlistSchema,
   });
 
   app.get(
@@ -596,13 +585,16 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const team = await fastify.prisma.team.findUnique({
-        select: { egressAllowlist: true },
+        select: { egressAllowlist: true, orgId: true },
         where: { id: request.params.id },
       });
       if (!team) {
         return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
-      return { data: { egressAllowlist: team.egressAllowlist } };
+      const baselineAllowlist = await resolveSetting('workspace.egressBaselineAllowlist', {
+        orgId: team.orgId ?? undefined,
+      });
+      return { data: { baselineAllowlist, egressAllowlist: team.egressAllowlist } };
     }
   );
 

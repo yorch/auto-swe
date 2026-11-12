@@ -598,7 +598,7 @@ policy and never use this host list. See [Onboarding agent](./repositories.md#on
 
 ## Run activity and container egress
 
-The optional container egress proxy is configured by worker bootstrap env: `EGRESS_PROXY_PORT`,
+The container egress proxy is configured by worker bootstrap env: `EGRESS_PROXY_PORT`,
 `EGRESS_PROXY_URL`, and `EGRESS_PROXY_BIND`. Its networking, authentication and cooperative-proxy
 boundaries are described in [run activity](./run-activity.md#container-egress-proxy). HTTP capture
 and retention use `workflow.httpCaptureEnabled`, `workflow.httpCaptureBodyMaxBytes`, and
@@ -606,13 +606,22 @@ and retention use `workflow.httpCaptureEnabled`, `workflow.httpCaptureBodyMaxByt
 
 `workspace.egressPolicy` (`open`, `restricted` or `blocked`; ADMIN-only, run-pinned, overridable at
 workflow template, team and organization scope) sets how much outbound network access a run's
-containers get. A launch can only narrow it. See
+containers get. The default is `restricted`. A launch can only narrow it. See
 [run egress policy](./run-activity.md#run-egress-policy).
+
+`workspace.egressBaselineAllowlist` is an ADMIN-only, GLOBAL setting overridable at ORGANIZATION
+scope, not run-pinned. It uses the team's hostname / `*.example.com` syntax and is seeded with exact
+GitHub, npm/Yarn, PyPI, Rust, Maven/Gradle, Go, Docker Hub, RubyGems and NuGet dependency hosts.
+Under `restricted`, the effective list is baseline union team; under `open`, they merge only when
+the team list is non-empty. `open` with an empty team list remains unrestricted. The team settings
+editor displays the baseline read-only. Compose and Helm enable port 8792 by default. A worker
+refuses boot if GLOBAL policy is `restricted` without a proxy: configure the proxy or set GLOBAL
+`workspace.egressPolicy` to `open`. Scoped overrides retain runtime enforcement checks.
 
 `workspace.setupEgressPolicy` (`inherit`, `open`, `restricted`; default `inherit`) has the same
 ADMIN permission floor, override scopes and run pinning. A looser value applies only to agent-workspace
-setup; a stricter or equal value behaves as `inherit`. `open` uses only the baseline; `restricted`
-uses the team allowlist and existing proxy/lock enforcement. The worker terminates and verifies setup
+setup; a stricter or equal value behaves as `inherit`. `open` keeps the private-range/metadata network
+baseline; `restricted` uses the effective baseline/team allowlist and proxy/lock enforcement. The worker terminates and verifies setup
 processes before replacing the rules with the agent lock. The settings UI reads its enum directly from
 the registry. It is not a launch override and does not change shell/containerStep networking. See
 [setup and agent network phases](./run-activity.md#setup-and-agent-network-phases) for secrets and service
@@ -628,6 +637,11 @@ run-pinned and apply through the settings cache. Public PR screenshot copies req
 to enabling `uiValidation.prInlineImages`. The public bucket policy is operator-managed.
 
 ## Limitations
+
+- Egress allowlists, including the platform baseline, are read live through the settings cache,
+  not frozen per run. Template-code audit snapshots include baseline and team entries at sign-off;
+  those snapshots do not pin execution. A later edit can affect a retry or newly created workspace
+  or step in an existing run. Existing proxy registrations retain their registered list until teardown.
 
 - **Conventional titles carry no scope and no breaking-change marker.** The title is `type: summary`.
   A scope such as `fix(gateway):` or a `!` would come from model or ticket text and change what

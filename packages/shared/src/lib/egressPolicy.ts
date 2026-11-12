@@ -1,10 +1,63 @@
 import { z } from 'zod';
 
+export const egressAllowlistSchema = z
+  .array(
+    z
+      .string()
+      .min(1)
+      .max(256)
+      .regex(
+        /^(\*\.)?[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/,
+        'must be a valid hostname or wildcard hostname (e.g. registry.npmjs.org or *.github.com)'
+      )
+  )
+  .max(100);
+
+export const DEFAULT_EGRESS_BASELINE_ALLOWLIST = [
+  'github.com',
+  'api.github.com',
+  'codeload.github.com',
+  'objects.githubusercontent.com',
+  'raw.githubusercontent.com',
+  'ghcr.io',
+  'registry.npmjs.org',
+  'registry.yarnpkg.com',
+  'pypi.org',
+  'files.pythonhosted.org',
+  'crates.io',
+  'static.crates.io',
+  'index.crates.io',
+  'repo.maven.apache.org',
+  'repo1.maven.org',
+  'plugins.gradle.org',
+  'plugins-artifacts.gradle.org',
+  'services.gradle.org',
+  'proxy.golang.org',
+  'sum.golang.org',
+  'registry-1.docker.io',
+  'auth.docker.io',
+  'production.cloudflare.docker.com',
+  'rubygems.org',
+  'index.rubygems.org',
+  'api.nuget.org',
+  'globalcdn.nuget.org',
+];
+
+export function effectiveEgressAllowlist(
+  policy: EgressPolicy,
+  team: readonly string[],
+  baseline: readonly string[]
+): string[] {
+  return policy === 'blocked' || (policy === 'open' && team.length === 0)
+    ? []
+    : [...new Set([...baseline, ...team].map((host) => host.toLowerCase()))];
+}
+
 /**
  * How much outbound network access a run's containers get, loosest first.
  *
- * - `open`: today's behaviour — the team egress allowlist when one exists, any public host otherwise.
- * - `restricted`: the team allowlist is mandatory; an empty list reaches nothing.
+ * - `open`: baseline union team when a team list exists, any public host otherwise.
+ * - `restricted`: baseline union team is mandatory; an empty effective list reaches nothing.
  * - `blocked`: nothing but the platform's own proxies and the repository's git host.
  */
 export const EGRESS_POLICIES = ['open', 'restricted', 'blocked'] as const;

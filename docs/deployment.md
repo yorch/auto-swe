@@ -917,6 +917,13 @@ an admission-policy installation.
 
 ## Limitations
 
+- GLOBAL `workspace.egressPolicy` defaults to `restricted`; workers need an egress proxy to boot.
+  Both Compose overlays enable `EGRESS_PROXY_PORT=8792` with the existing worker-hostname URL and
+  `0.0.0.0` bind defaults. Custom deployments must configure a reachable proxy endpoint or explicitly
+  set GLOBAL policy to `open`. Restricted clients must use HTTP(S) proxy support for hosts in the
+  baseline/team union; non-proxied public sockets are blocked. Baseline and team lists are live,
+  not pinned per run. See [upgrade notes](./upgrade-notes.md#restricted-egress-default).
+
 - Egress readiness uses self-declared, freshness-based worker reports, not a gateway-side probe.
   A dead worker may influence the result for thirty minutes; a running worker is not re-probed
   until restart. Reports describe configured proxies, not proxy reachability or health.

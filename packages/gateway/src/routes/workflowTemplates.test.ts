@@ -15,7 +15,9 @@ import { workflowTemplateRoutes } from './workflowTemplates.js';
 // The signing policy setting is read from the database; no override anywhere here.
 vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  resolveSetting: vi.fn(async () => false),
+  resolveSetting: vi.fn(async (key: string) =>
+    key === 'workspace.egressBaselineAllowlist' ? ['registry.npmjs.org'] : false
+  ),
 }));
 
 type Mutable = Record<string, unknown>;

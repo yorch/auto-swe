@@ -98,7 +98,7 @@ GitHub App** registers the instance's App from a manifest ([`github-app-setup.md
 | `config.extraEnv`, `gateway.env`, `worker.env`, `web.env` | — | Further non-secret variables (`TRUST_PROXY`, `RATE_LIMIT_MAX`, `WORKSPACE_IMAGE`, …). `NODE_ENV` stays `production` |
 | `gateway.replicas`, `web.replicas` | 2 | Both are stateless |
 | `worker.enabled=false` | on | Leaves the worker out, to run it elsewhere against the same database and Temporal |
-| `worker.proxies.modelPort` / `registryPort` / `egressPort` | 8790 / off / off | The worker's proxy ports, served through `<release>-worker-proxy` |
+| `worker.proxies.modelPort` / `registryPort` / `egressPort` | 8790 / off / 8792 | The worker's proxy ports, served through `<release>-worker-proxy` |
 | `workspaces.namespace` | `auto-swe-workspaces` | Where workspace pods run (`K8S_WORKSPACE_NAMESPACE`) |
 | `workspaces.manage` | true | Render that namespace's resources (section 1) |
 | `workspaces.createNamespace` | true | Render the Namespace object itself; set `false` when the namespace already exists (for example applied from `infra/kubernetes/workspace-namespace.yaml`), which `helm install` would otherwise fail on. The other objects are still rendered into it, and its `pod-security.kubernetes.io/enforce=restricted` label is then yours to keep |
@@ -170,6 +170,11 @@ existing root-preview limitation.
   or CNI is validated by the Docker diagnostics. The tested Docker Go shim leaks past OUTPUT
   filtering and is refused by the worker gate; see [deployment](./deployment.md#kata-with-docker).
 
+- Egress defaults to `restricted`, using the platform baseline plus team hosts via the proxy.
+  The chart enables egress port 8792 and its Service URL. Custom worker environments must configure
+  the proxy or set GLOBAL `workspace.egressPolicy` to `open` before disabling it; otherwise worker
+  boot refuses. Clients must honor the proxy; an allowlisted hostname is not a direct-socket grant.
+  Allowlist edits are live for later registrations rather than frozen per run.
 - **Workspaces run on the Kubernetes backend only.** Shell steps, container steps and sidecars need
   the Docker backend and fail with `WORKSPACE_BACKEND_UNSUPPORTED` here. The chart deploys no
   Docker-backed worker and no `docker-socket-proxy`; a deployment that needs those steps sets

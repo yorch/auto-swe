@@ -13,6 +13,7 @@ import { activityNodeTagInterceptor } from './lib/activityNodeTag.js';
 import { activitySpanInterceptor } from './lib/activitySpans.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
 import { ignoredPriceOverrideVars } from './lib/costTracking.js';
+import { assertGlobalEgressReady } from './lib/egressBoot.js';
 import { probeEgressCapability, startEgressReporting } from './lib/egressCapability.js';
 import { activityHttpCaptureInterceptor, installHttpCapture } from './lib/httpCapture.js';
 import { startLivenessFile } from './lib/livenessFile.js';
@@ -72,6 +73,7 @@ async function run() {
   // must not throw), so a typo in the deploy environment would otherwise run
   // with different limits than the operator wrote. Fail the boot instead.
   assertWorkspaceInfraEnv();
+  await assertGlobalEgressReady();
   // Advisory, and deliberately so: this names the DNS cause behind a failure the
   // egress-capability probe below would only report generically. It must never
   // refuse the boot.

@@ -2,7 +2,9 @@ import { z } from 'zod';
 import { AGENT_RUN_MAX_WALL_CLOCK_SECONDS } from '../lib/agentRun.js';
 import { GlobListSchema } from '../lib/ciTrigger.js';
 import {
+  DEFAULT_EGRESS_BASELINE_ALLOWLIST,
   type EgressPolicy,
+  egressAllowlistSchema,
   egressPolicySchema,
   type SetupEgressPolicy,
   setupEgressPolicySchema,
@@ -1955,14 +1957,26 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.min(60).max(AGENT_RUN_MAX_WALL_CLOCK_SECONDS),
     unit: 'seconds',
   }),
+  'workspace.egressBaselineAllowlist': defineSetting({
+    defaultValue: DEFAULT_EGRESS_BASELINE_ALLOWLIST,
+    description:
+      'Platform dependency hosts included with the team allowlist under restricted, or open with a non-empty team list. Read live, including on retries; captured with the team list in template-code audit snapshots. Open with an empty team list remains unrestricted.',
+    group: 'workspace',
+    label: 'Egress baseline allowlist',
+    overridableAt: ['ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: egressAllowlistSchema,
+  }),
 
   // Pinned: a run's containers must not change network posture mid-run, and a retry or replay
   // must take the same path. A launcher may narrow it for one run (never widen); see
   // `narrowEgressPolicy`.
   'workspace.egressPolicy': defineSetting({
-    defaultValue: 'open' as EgressPolicy,
+    defaultValue: 'restricted' as EgressPolicy,
     description:
-      "How much outbound network access a run's containers get. `open` applies the team egress allowlist when one exists and permits any public host otherwise. `restricted` makes the team allowlist mandatory, so an empty allowlist leaves only what `blocked` allows. `blocked` leaves only the platform's own proxies and the repository's git host reachable. A run's launcher may choose a stricter level for that run but never a looser one. `restricted` is enforced by the egress proxy and by a network-level lock of the workspace to the proxies and the git host. `blocked` leaves only the model and registry proxies and the git host reachable. On Kubernetes, DNS to the cluster DNS service stays reachable, which is a low-bandwidth channel. The policy governs the workspace's own traffic only: MCP and worker-side connectors originate from the worker and are not affected.",
+      "How much outbound network access a run's containers get. Defaults to `restricted`, enforcing the platform baseline union team allowlist through the egress proxy and a network lock. An empty effective list leaves only what `blocked` allows. `open` merges the baseline only when the team list is non-empty; an empty team list permits any public host. `blocked` leaves only the platform's own proxies and the repository's git host reachable. A launch may narrow but never widen the policy. Policy is run-pinned, while baseline and team allowlists are read live. GLOBAL restricted without a proxy refuses worker boot; scoped overrides retain runtime enforcement checks. Kubernetes DNS remains reachable. Worker-originated MCP and connector traffic is outside this policy.",
     group: 'workspace',
     label: 'Run egress policy',
     overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],

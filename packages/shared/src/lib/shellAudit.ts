@@ -5,6 +5,8 @@
  * bundle installs one; `syncBuiltins` writes them for the built-in versions it ships.
  */
 
+import { resolveSetting } from '../config/index.js';
+import type { PrismaClient } from '../generated/prisma/client.js';
 import type { ShellNodeWithId } from '../workflow/containerCode.js';
 import { runUnscoped } from './tenantGuard.js';
 
@@ -38,7 +40,7 @@ export interface ShellAuditClient {
  * to reconcile later. A null author is the platform itself (`syncBuiltins`).
  */
 export async function recordShellAudit(
-  tx: Pick<ShellAuditClient, 'workflowShellAudit'>,
+  tx: Pick<ShellAuditClient, 'workflowShellAudit'> & Pick<PrismaClient, 'team'>,
   templateVersionId: string,
   teamId: string | null,
   authorUserId: string | null,
@@ -48,11 +50,20 @@ export async function recordShellAudit(
   if (auditNodes.length === 0) {
     return;
   }
+  const team = teamId
+    ? await tx.team.findUnique({ select: { orgId: true }, where: { id: teamId } })
+    : null;
+  const baseline = await resolveSetting('workspace.egressBaselineAllowlist', {
+    orgId: team?.orgId ?? undefined,
+  });
+  const snapshot = [
+    ...new Set([...baseline, ...egressAllowlist].map((host) => host.toLowerCase())),
+  ];
   await tx.workflowShellAudit.createMany({
     data: auditNodes.map(({ id, node }) => ({
       authorUserId,
       command: node.command,
-      egressAllowlistSnapshot: egressAllowlist,
+      egressAllowlistSnapshot: snapshot,
       image: node.image,
       network: node.network ?? 'none',
       nodeId: id,
