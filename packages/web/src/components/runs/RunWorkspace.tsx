@@ -285,7 +285,8 @@ export function RunWorkspace({
             .map(([id, node]) => (
               <button
                 className={cn(
-                  'flex w-full flex-col gap-1 border-b border-ink-600/40 px-4 py-3 text-left hover:bg-ink-700',
+                  'flex w-full flex-col border-b border-ink-600/40 px-4 text-left hover:bg-ink-700',
+                  steps.length ? 'gap-1 py-3' : 'py-2',
                   FOCUS_RING
                 )}
                 key={id}
@@ -293,7 +294,9 @@ export function RunWorkspace({
                 type="button"
               >
                 <span className="text-sm text-paper-400">{nodeDisplayName(node, id)}</span>
-                <span className="text-xs text-paper-500">No step recording</span>
+                {steps.length > 0 && (
+                  <span className="text-xs text-paper-500">No step recording</span>
+                )}
               </button>
             ))}
       </aside>

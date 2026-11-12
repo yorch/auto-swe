@@ -81,20 +81,31 @@ describe('Workflow library', () => {
       { ...base, id: 'automation', kind: 'automation', name: 'ci-triage-and-fix' },
     ];
     render(<TemplatesPage />);
-    expect(screen.getByText("Started from a finished run's Reviews panel")).toBeTruthy();
-    expect(screen.getByText('Started by an automation or integration')).toBeTruthy();
+    expect(screen.getByText('Review only').getAttribute('title')).toBe(
+      "Started from a finished run's Reviews panel"
+    );
+    expect(screen.getByText('Automatic').getAttribute('title')).toBe(
+      'Started by an automation or integration'
+    );
     expect(screen.queryByRole('link', { name: 'Run code-review' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Run ci-triage-and-fix' })).toBeNull();
   });
   it('says why a system-managed workflow has no Run button', () => {
     state.templates = [base, { ...base, id: 't-2', name: 'Channel Assistant', team: null }];
     render(<TemplatesPage />);
-    expect(
-      screen.getAllByText(
-        'No Run button: the platform starts this one itself, for channel assistants.'
-      )
-    ).toHaveLength(1);
+    expect(screen.getByText('Automatic').getAttribute('title')).toBe(
+      'Started automatically by the platform'
+    );
     expect(screen.getByRole('link', { name: 'Run Ticket to PR' })).toBeTruthy();
+  });
+  it('uses a compact explanation for workflows without a promoted version and secondary description text', () => {
+    state.templates = [{ ...base, activeVersion: null, description: 'Workflow description' }];
+    render(<TemplatesPage />);
+    expect(screen.getByText('Not ready').getAttribute('title')).toBe('Promote a version to run');
+    expect(screen.queryByRole('link', { name: 'Run Ticket to PR' })).toBeNull();
+    expect(screen.getByText('Workflow description').classList.contains('text-paper-400')).toBe(
+      true
+    );
   });
 
   it('explains active, draft and archived above the table, not in a header tip', () => {

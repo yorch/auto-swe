@@ -61,37 +61,36 @@ function Tickets() {
       />
       <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
       <div className="space-y-4">
-        <Card className="overflow-hidden p-0">
-          <Toolbar
-            className="mb-0 border-b border-ink-600 px-4 py-3"
-            end={
-              <WorkScopeControl
-                label="Ticket scope"
-                onChange={(value) => update({ offset: null, scope: value })}
-                value={scope}
-              />
-            }
-          >
-            <SearchInput
-              label="Search tickets"
-              onChange={(value) => setSearchDraft(value.slice(0, 200))}
-              placeholder="Ticket id or task…"
-              value={searchDraft}
+        <Toolbar
+          end={
+            <WorkScopeControl
+              label="Ticket scope"
+              onChange={(value) => update({ offset: null, scope: value })}
+              value={scope}
             />
-            <span className="inline-flex items-center gap-1.5 px-1">
-              <Checkbox
-                checked={includeAutomated}
-                label="Include automated runs"
-                onChange={(event) =>
-                  update({ automated: event.target.checked ? '1' : null, offset: null })
-                }
-              />
-              <HelpTip label="Automated runs">
-                Agent runs, channel tasks and template launches that have no ticket of their own.
-                They are hidden unless this is checked.
-              </HelpTip>
-            </span>
-          </Toolbar>
+          }
+        >
+          <SearchInput
+            label="Search tickets"
+            onChange={(value) => setSearchDraft(value.slice(0, 200))}
+            placeholder="Ticket id or task…"
+            value={searchDraft}
+          />
+          <span className="inline-flex items-center gap-1.5 px-1">
+            <Checkbox
+              checked={includeAutomated}
+              label="Include automated runs"
+              onChange={(event) =>
+                update({ automated: event.target.checked ? '1' : null, offset: null })
+              }
+            />
+            <HelpTip label="Automated runs">
+              Agent runs, channel tasks and template launches that have no ticket of their own. They
+              are hidden unless this is checked.
+            </HelpTip>
+          </span>
+        </Toolbar>
+        <Card className="overflow-hidden p-0">
           <QueryBoundary
             {...teamGatedBoundary(teamFilter, { error, isError, isFetching, isLoading, refetch })}
             label="tickets"

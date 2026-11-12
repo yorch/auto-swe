@@ -61,6 +61,15 @@ afterEach(() => {
 });
 
 describe('runs page filters', () => {
+  it('places the toolbar above, rather than inside, the list card with a concise search hint', () => {
+    search.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
+    render(<WorkflowRunsPage />);
+    const input = screen.getByRole('searchbox', { name: 'Search runs' });
+    const toolbar = input.parentElement?.parentElement;
+    expect(input.getAttribute('placeholder')).toBe('Search runs…');
+    expect(toolbar?.nextElementSibling?.classList.contains('rounded-xl')).toBe(true);
+    expect(toolbar?.parentElement?.classList.contains('rounded-xl')).toBe(false);
+  });
   it.each(['', 'scope=ALL', 'scope=TEAM'])(
     'keeps legacy team-wide scope semantics for %s',
     (query) => {

@@ -13,9 +13,9 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { Input } from '@/components/ui/Input';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
+import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import {
   type KnowledgeBase,
   useKnowledgeBaseAction,
@@ -63,26 +63,29 @@ export default function KnowledgeBasesPage() {
           Repository-backed reference material. Read-only, pinned for each run and always untrusted.
         </p>
       </PageHelp>
-      {eligible.length > 0 && (
-        <div className="flex justify-end">
-          <Button onClick={() => setDialog({ kind: 'create' })} variant="primary">
-            Create knowledge base
-          </Button>
-        </div>
-      )}
       {notice && <Alert variant="success">{notice}</Alert>}
       {action.isError && (
         <Alert>{errMsg(action.error, 'Could not update the knowledge base.')}</Alert>
       )}
-      <Input
-        label="Search knowledge bases"
-        onChange={(e) => {
-          setSearch(e.target.value);
-          setPage(0);
-        }}
-        type="search"
-        value={search}
-      />
+      <Toolbar
+        end={
+          eligible.length > 0 && (
+            <Button onClick={() => setDialog({ kind: 'create' })} variant="primary">
+              Create knowledge base
+            </Button>
+          )
+        }
+      >
+        <SearchInput
+          label="Search knowledge bases"
+          onChange={(value) => {
+            setSearch(value);
+            setPage(0);
+          }}
+          placeholder="Search knowledge bases…"
+          value={search}
+        />
+      </Toolbar>
       <QueryBoundary {...bases} label="knowledge bases" onRetry={() => void bases.refetch()}>
         {!rows.length && (
           <EmptyState

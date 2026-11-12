@@ -57,6 +57,7 @@ describe('RequestList', () => {
     expect(screen.getByTestId('team-label').textContent).toBe('Payments');
     expect(screen.getByText('2 attempts')).toBeTruthy();
     const review = screen.getByRole('link', { name: /Review pull request/ });
+    expect(review.classList.contains('whitespace-nowrap')).toBe(true);
     expect(review.getAttribute('href')).toBe('https://example.test/pr/1');
     expect(review.parentElement?.className).not.toContain('opacity-0');
   });

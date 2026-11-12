@@ -455,8 +455,11 @@ export function StartWork({
               </Step>
             </div>
           </div>
-          <aside aria-label="What happens next" className="space-y-4">
-            <Card className="p-5 xl:sticky xl:top-20" variant="inset">
+          <aside
+            aria-label="What happens next"
+            className="space-y-4 xl:sticky xl:top-6 xl:self-start"
+          >
+            <Card className="p-5" variant="inset">
               <h2 className="text-sm font-semibold text-paper-100">{guide.title}</h2>
               <ul className="mt-3 space-y-2.5">
                 {guide.points.map((point) => (

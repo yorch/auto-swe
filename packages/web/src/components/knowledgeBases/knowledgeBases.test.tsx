@@ -163,7 +163,9 @@ describe('knowledge base page', () => {
     ]);
     render(withQuery(<KnowledgeBasesPage />));
     await screen.findByText('Ops docs');
-    await screen.findByRole('button', { name: 'Create knowledge base' });
+    const create = await screen.findByRole('button', { name: 'Create knowledge base' });
+    const search = screen.getByRole('searchbox', { name: 'Search knowledge bases' });
+    expect(create.parentElement?.parentElement).toBe(search.parentElement?.parentElement);
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reindex' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();

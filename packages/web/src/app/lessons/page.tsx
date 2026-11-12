@@ -180,11 +180,6 @@ export default function LessonsPage() {
 
   return (
     <div className="space-y-6">
-      {isAdmin && (
-        <div className="flex justify-end">
-          <ConsolidateAllButton onAsk={() => setConsolidating('all')} />
-        </div>
-      )}
       <PageHelp>
         {isAdmin ? (
           <p>Consolidation merges semantically similar lessons to reduce redundancy.</p>
@@ -225,6 +220,7 @@ export default function LessonsPage() {
         <Toolbar
           end={
             <>
+              {isAdmin && <ConsolidateAllButton onAsk={() => setConsolidating('all')} />}
               {!isAdmin && filteredRepo && canManage(filteredRepo.id) && (
                 <Button
                   onClick={() =>

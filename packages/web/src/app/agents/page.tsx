@@ -624,22 +624,23 @@ function AgentLibraryContent() {
     },
     {
       cell: (a) => (
-        <>
-          <div className="flex flex-wrap items-center gap-1 max-sm:justify-end">
-            <Badge className="tabular-nums" tone="neutral" variant="outline">
-              v{a.version}
+        <div
+          className="flex flex-nowrap items-center gap-1 whitespace-nowrap max-sm:justify-end"
+          title={originLabel(a.origin)}
+        >
+          <Badge className="tabular-nums" tone="neutral" variant="outline">
+            v{a.version}
+          </Badge>
+          <Badge title={originLabel(a.origin)} tone={a.isVerified ? 'success' : 'warning'}>
+            {a.isVerified ? 'Verified' : 'Unverified'}
+          </Badge>
+          {!a.isActive && (
+            <Badge title="This agent is not in service" tone="muted">
+              Deactivated
             </Badge>
-            <Badge title={originLabel(a.origin)} tone={a.isVerified ? 'success' : 'warning'}>
-              {a.isVerified ? 'Verified' : 'Unverified'}
-            </Badge>
-            {!a.isActive && (
-              <Badge title="This agent is not in service" tone="muted">
-                Deactivated
-              </Badge>
-            )}
-          </div>
-          <div className="mt-1 text-xs text-paper-500">{originLabel(a.origin)}</div>
-        </>
+          )}
+          <span className="sr-only">Origin: {originLabel(a.origin)}</span>
+        </div>
       ),
       header: 'Version',
       id: 'version',

@@ -86,69 +86,67 @@ function RunsList() {
       <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
 
       <div className="scroll-mt-4" ref={tableTop}>
-        <Card className="overflow-hidden p-0">
-          <Toolbar
-            className="mb-0 border-b border-ink-600 px-4 py-3 sm:px-5"
-            end={
-              <>
-                {hasFilters && (
-                  <Button onClick={clearFilters} size="sm" variant="ghost">
-                    Clear filters
-                  </Button>
-                )}
-                {!listLoading && !listError && (
-                  <span className="tabular text-xs text-paper-500">
-                    {total > 0 && total > runs.length
-                      ? `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${plural(total, 'run')}`
-                      : plural(total, 'run')}
-                  </span>
-                )}
-                <WorkScopeControl
-                  label="Run scope"
-                  onChange={(value) =>
-                    update({ offset: null, scope: value === 'MINE' ? 'MINE' : null })
-                  }
-                  value={scope === 'MINE' ? 'MINE' : 'TEAM'}
-                />
-              </>
-            }
-          >
-            <SearchInput
-              label="Search runs"
-              onChange={(value) => setSearchDraft(value.slice(0, 200))}
-              placeholder="Search by task, ticket or workflow…"
-              value={searchDraft}
-            />
-            <Select
-              aria-label="Status"
-              className="w-full sm:w-44"
-              compact
-              id="status"
-              onChange={(v) => update({ offset: null, status: v })}
-              options={STATUS_OPTIONS}
-              value={status}
-            />
-            <div className="w-full sm:w-64">
-              <Combobox
-                aria-label="Workflow"
-                compact
-                id="template"
-                onChange={(v) => update({ offset: null, template: v })}
-                options={[
-                  { label: 'All workflows', value: '' },
-                  ...templates.map((t) => ({ label: t.name, value: t.id })),
-                ]}
-                value={templateId}
+        <Toolbar
+          end={
+            <>
+              {hasFilters && (
+                <Button onClick={clearFilters} size="sm" variant="ghost">
+                  Clear filters
+                </Button>
+              )}
+              {!listLoading && !listError && (
+                <span className="tabular text-xs text-paper-500">
+                  {total > 0 && total > runs.length
+                    ? `${offset + 1}–${Math.min(offset + PAGE_SIZE, total)} of ${plural(total, 'run')}`
+                    : plural(total, 'run')}
+                </span>
+              )}
+              <WorkScopeControl
+                label="Run scope"
+                onChange={(value) =>
+                  update({ offset: null, scope: value === 'MINE' ? 'MINE' : null })
+                }
+                value={scope === 'MINE' ? 'MINE' : 'TEAM'}
               />
-            </div>
-            <Checkbox
-              checked={includeChannel}
-              className="items-center text-sm sm:ml-1"
-              label="Include channel runs"
-              onChange={(e) => update({ channel: e.target.checked ? '1' : null, offset: null })}
+            </>
+          }
+        >
+          <SearchInput
+            label="Search runs"
+            onChange={(value) => setSearchDraft(value.slice(0, 200))}
+            placeholder="Search runs…"
+            value={searchDraft}
+          />
+          <Select
+            aria-label="Status"
+            className="w-full sm:w-44"
+            compact
+            id="status"
+            onChange={(v) => update({ offset: null, status: v })}
+            options={STATUS_OPTIONS}
+            value={status}
+          />
+          <div className="w-full sm:w-64">
+            <Combobox
+              aria-label="Workflow"
+              compact
+              id="template"
+              onChange={(v) => update({ offset: null, template: v })}
+              options={[
+                { label: 'All workflows', value: '' },
+                ...templates.map((t) => ({ label: t.name, value: t.id })),
+              ]}
+              value={templateId}
             />
-          </Toolbar>
-
+          </div>
+          <Checkbox
+            checked={includeChannel}
+            className="items-center text-sm sm:ml-1"
+            label="Include channel runs"
+            onChange={(e) => update({ channel: e.target.checked ? '1' : null, offset: null })}
+          />
+        </Toolbar>
+        <Card className="overflow-hidden p-0">
           {listLoading ? (
             <RunsTable isLoading runs={[]} />
           ) : (
