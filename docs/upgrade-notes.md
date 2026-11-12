@@ -1236,7 +1236,7 @@ repository (connection-less runs) while TEAM-scope credentials, agents or settin
 team the launch is billed to, that set a team monthly budget, or that use the in-app assistant
 with team caps.
 
-**Fix commit.** `<fixing commit SHA>`; migration `20261112140000_team_budget_notices`.
+**Fix commit.** `<fixing commit SHA>`; migration `20261112160000_team_budget_notices`.
 
 **Actions.**
 
