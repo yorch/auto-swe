@@ -224,7 +224,7 @@ describe('Docker quota startup probe', () => {
       );
       await assertDockerDiskLimit();
       expect(execShellAsync).toHaveBeenCalledWith(
-        `docker run --rm --storage-opt 'size=20g' -- '${resolveWorkspaceInfra().metadataBlockImage}' true`,
+        `docker run --rm --label auto-swe.profile=probe --cap-drop=ALL --security-opt=no-new-privileges --memory=128m --cpus=1 --pids-limit=64 --storage-opt 'size=20g' -- '${resolveWorkspaceInfra().metadataBlockImage}' true`,
         expect.anything()
       );
       vi.mocked(execShellAsync).mockRejectedValue(new Error('unsupported storage'));

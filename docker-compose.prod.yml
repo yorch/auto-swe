@@ -105,7 +105,8 @@ services:
       EGRESS_PROXY_BIND: ${EGRESS_PROXY_BIND:-0.0.0.0}
       WORKSPACE_NETWORK: ${WORKSPACE_NETWORK:-auto-swe-workspaces}
       # The Docker CLI the worker shells out to talks to the socket proxy, not a socket.
-      DOCKER_HOST: tcp://docker-socket-proxy:2375
+      DOCKER_HOST: tcp://docker-policy-broker:2375
+      DOCKER_BROKER_REQUIRED: ${DOCKER_BROKER_REQUIRED:-true}
     volumes:
       - artifacts:/var/lib/auto-swe/artifacts
     networks:
@@ -113,7 +114,7 @@ services:
       - workspaces
       - docker-proxy
     depends_on:
-      docker-socket-proxy:
+      docker-policy-broker:
         condition: service_started
       postgres:
         condition: service_healthy
@@ -129,12 +130,27 @@ services:
         condition: service_healthy
         required: false
 
-  # Docker API filter in front of the host socket: haproxy with the allowlist
-  # and timeouts in infra/docker-socket-proxy/haproxy.cfg, which says what each
-  # allowed path is for. The worker reaches the daemon only through this
-  # container (DOCKER_HOST), so it never holds the socket. It limits the API
-  # surface, NOT the options of a container the worker is allowed to create:
-  # see docs/deployment.md. Root only to open the socket; nothing else runs here.
+  docker-policy-broker:
+    image: ${APP_IMAGE_DOCKER_BROKER:-ghcr.io/yorch/auto-swe/docker-broker:main}
+    pull_policy: always
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    depends_on:
+      docker-socket-proxy:
+        condition: service_started
+    environment:
+      DOCKER_BROKER_UPSTREAM: http://docker-socket-proxy:2375
+      DOCKER_BROKER_ALLOWED_IMAGES: ${DOCKER_BROKER_ALLOWED_IMAGES:-docker.io/library/*,docker.io/alpine/git,mirror.gcr.io/library/*,ghcr.io/yorch/auto-swe/executor-*}
+      DOCKER_BROKER_HELPER_IMAGES: ${DOCKER_BROKER_HELPER_IMAGES:-${WORKSPACE_METADATA_BLOCK_IMAGE:-alpine:3.20}}
+      DOCKER_BROKER_NETWORKS: ${DOCKER_BROKER_NETWORKS:-bridge,${WORKSPACE_NETWORK:-auto-swe-workspaces}}
+      WORKSPACE_RUNTIME: ${WORKSPACE_RUNTIME:-}
+    volumes:
+      - docker-broker-state:/state
+    networks: [docker-proxy, docker-daemon]
+
+  # The path filter is a second layer behind the body/ownership policy broker.
   docker-socket-proxy:
     image: ${DOCKER_SOCKET_PROXY_IMAGE:-haproxy:3.4-alpine@sha256:2caaf8b1a1ef67f3f1ea9b721f2821675d3ba4500fb518e23884fecb93e8dbaa}
     restart: unless-stopped
@@ -148,7 +164,7 @@ services:
       - ./infra/docker-socket-proxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
-      - docker-proxy
+      - docker-daemon
 
   web:
     image: ${APP_IMAGE_WEB:-ghcr.io/yorch/auto-swe/web:main}
@@ -185,6 +201,7 @@ services:
         condition: service_healthy
 
 volumes:
+  docker-broker-state:
   # The filesystem artifact store, when ARTIFACT_FS_DIR is configured. Swap for
   # a host bind mount (and chown it to uid 1000) when the files must be visible
   # on the host — see docs/deployment.md §5c.
@@ -195,8 +212,8 @@ networks:
   # worker's model proxy here, never the database or Temporal.
   workspaces:
     name: ${WORKSPACE_NETWORK:-auto-swe-workspaces}
-  # The worker and the socket proxy, and nothing else. `internal` gives it no
-  # route out, so the unauthenticated Docker API on :2375 is reachable by
-  # exactly these two containers.
+  # The worker can reach the broker, never the daemon-facing proxy.
   docker-proxy:
+    internal: true
+  docker-daemon:
     internal: true

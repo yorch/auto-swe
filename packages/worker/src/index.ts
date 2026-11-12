@@ -26,6 +26,7 @@ import {
   assertDockerDaemonReachable,
   assertDockerDiskLimit,
 } from './lib/workspaceBackend/docker.js';
+import { assertDockerBroker } from './lib/workspaceBackend/dockerBroker.js';
 import { assertDockerRuntime } from './lib/workspaceBackend/dockerRuntime.js';
 import { workspaceBackend } from './lib/workspaceBackend/index.js';
 import { assertKubernetesReady } from './lib/workspaceBackend/kubernetes/ready.js';
@@ -81,6 +82,7 @@ async function run() {
   // A worker that cannot reach the daemon still starts and takes work, then
   // fails inside the first activity; refuse the boot instead.
   await assertDockerDaemonReachable();
+  await assertDockerBroker();
   await assertDockerDiskLimit();
   await assertDockerRuntime();
 

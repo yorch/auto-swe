@@ -5,6 +5,7 @@ description: >-
   PostgreSQL (with pgvector) and an external Temporal. Agent workspaces run as pods
   through the worker's Kubernetes workspace backend.
 type: application
+kubeVersion: ">=1.30.0"
 # The chart's own version; bump it with any template or values change.
 version: 0.2.0
 # The default image tag for all three services. Pin a release tag or a digest in

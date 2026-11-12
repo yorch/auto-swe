@@ -40,6 +40,7 @@ COPY .yarn/releases ./.yarn/releases
 COPY packages/cli/package.json packages/cli/
 COPY packages/gateway/package.json packages/gateway/
 COPY packages/sdk/package.json packages/sdk/
+COPY packages/docker-broker/package.json packages/docker-broker/
 COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
@@ -74,6 +75,7 @@ COPY .yarn/releases ./.yarn/releases
 COPY packages/cli/package.json packages/cli/
 COPY packages/gateway/package.json packages/gateway/
 COPY packages/sdk/package.json packages/sdk/
+COPY packages/docker-broker/package.json packages/docker-broker/
 COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/

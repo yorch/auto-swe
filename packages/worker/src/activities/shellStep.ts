@@ -521,9 +521,9 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   // activity, which is safe only while the command has not yet executed.
   const gitIdentity = await resolveGitIdentity({ teamId: meta.teamId || null });
 
-  const volumeName = `shellvol-${crypto.randomBytes(8).toString('hex')}`;
+  const requestedVolume = `shellvol-${crypto.randomBytes(8).toString('hex')}`;
   const backend = workspaceBackend();
-  await backend.createVolume(volumeName);
+  const volumeName = (await backend.createVolume(requestedVolume)) ?? requestedVolume;
   // Registry wiring only when the step opted into egress: 'none' gets
   // nothing, and a proxy advertised at a host other than the Docker alias is
   // unreachable on this network — warn and run without it.

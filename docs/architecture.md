@@ -1049,7 +1049,8 @@ flowchart LR
         GW2 -->|gRPC| TMP
         WK2 -->|gRPC| TMP
         WK2 -->|artifacts| GARAGE
-        WK2 -->|DOCKER_HOST tcp| DSP[docker-socket-proxy]
+        WK2 -->|DOCKER_HOST tcp| DBR[docker-policy-broker]
+        DBR -->|separate internal network| DSP[docker-socket-proxy]
         DSP -->|/var/run/docker.sock| HOST[Docker daemon]
         GW2 --> OTEL
         WK2 --> OTEL
@@ -1058,7 +1059,7 @@ flowchart LR
 ```
 
 `docker-compose.app.yml` is an overlay — it references infra services and is not runnable
-standalone. The worker creates workspaces through `docker-socket-proxy`, which alone mounts `/var/run/docker.sock`. The artifact
+standalone. The worker creates workspaces through the repo-owned `docker-policy-broker`, then HAProxy (`docker-socket-proxy`), which alone mounts `/var/run/docker.sock`. The worker cannot reach HAProxy's separate internal network. The broker validates methods, canonical/versioned paths, queries, bounded duplicate-free JSON and container profiles; injects private ownership labels; and permits only owned container, exec and volume operations. Its private persistent state reconstructs ownership and retains exec IDs and root phase state across restart. It serves nothing until reconstruction succeeds. Arbitrary host binds, privileged mode, devices, host namespaces, unconfined security options and unsafe runtime overrides are refused. Helper profiles have narrow capability sets and owned namespace targets; the hosts writer's sole bind is derived independently from daemon inspection. Images use operator-configured repository patterns, with exact helper references. See [deployment](./deployment.md#0-what-youre-deploying) for configuration and limits. Root exec admission is a phase-state heuristic (before the first non-root exec, or on already-root containers), not proof of execution provenance. A worker-selected profile is never proof of trusted intent. The artifact
 store is one of three: an S3-compatible bucket (the bundled Garage, behind the `objectstore` compose
 profile, or any hosted provider via `ARTIFACT_S3_ENDPOINT`), a mounted directory (`ARTIFACT_FS_DIR`,
 single host, read by the gateway and written by the worker), or Postgres inline blobs as the fallback
@@ -1786,6 +1787,16 @@ Current constraints of the system as built. Deliberate product boundaries are in
   in `CreateContainerConfigError` until its `activeDeadlineSeconds`, and the orphaned-workspace
   sweep deletes it ten minutes later. Every Secret that does exist
   is owned by its pod from creation, so no Secret can be orphaned.
+- **Kubernetes Pod admission is not Secret ownership authorization.** The namespace's
+  ValidatingAdmissionPolicy requires the NetworkPolicy role label, disabled token automount,
+  default/designated service accounts, safe volumes and the configured runtime class. Secret env
+  references must name the pod's own `<pod>-env` Secret; `envFrom` is forbidden, including in init
+  and ephemeral containers. CEL cannot check that Secret's owner UID. Regular workspace names
+  have 64 random bits and resist blind guessing but are discoverable through the worker's Pod
+  list/get rights; name reuse
+  during Secret garbage collection can expose a previous workspace's Secret. PodSecurity stays
+  `restricted`, so root/capability-adding preview services remain rejected without an operator
+  exception. The admission readiness gate runs at boot, not continuously.
 - **Kubernetes `copyOut` runs the agent's `tar`.** The archive is validated before it is
   extracted anywhere, but the export itself is produced by a binary in the agent-controlled
   container, so a hostile run can make it fail or produce an archive that is refused.

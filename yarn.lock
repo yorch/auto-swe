@@ -630,6 +630,15 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@auto-swe/docker-broker@workspace:packages/docker-broker":
+  version: 0.0.0-use.local
+  resolution: "@auto-swe/docker-broker@workspace:packages/docker-broker"
+  dependencies:
+    "@types/node": "npm:26.6.5"
+    typescript: "npm:7.0.2"
+  languageName: unknown
+  linkType: soft
+
 "@auto-swe/gateway@workspace:packages/gateway":
   version: 0.0.0-use.local
   resolution: "@auto-swe/gateway@workspace:packages/gateway"

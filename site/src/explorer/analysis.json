@@ -4757,13 +4757,13 @@
       "title": "Pi runs its agent loop in the worker"
     },
     {
-      "body": "The shipped compose file gives the worker a DOCKER_HOST on an internal proxy instead of the Docker socket.",
+      "body": "The shipped compose file gives the worker a DOCKER_HOST on a repository-owned policy broker, ahead of HAProxy and the Docker socket.",
       "category": "Isolation",
-      "detail": "The proxy is haproxy with a path allowlist (the API paths the worker uses: ping, version, containers, exec, images and volumes), refusing every other path, path tricks and bulk or data-moving operations inside allowed groups. It mounts the socket itself, runs read-only with every capability dropped, and sits on an internal network only the worker reaches. The proxy’s default image and the telemetry image in that file are pinned by digest.",
+      "detail": "The Node/TypeScript broker validates methods, canonical/versioned paths, query schemas, bounded duplicate-free JSON, container profiles and object ownership. Its private label and persistent state retain owned containers, volumes, exec IDs and root phase state across restart; it serves nothing until reconstruction succeeds. Ordinary image repositories are operator-allowlisted and privileged helpers use exact references. Host binds, privileged mode, devices, host namespaces and unconfined security options are refused, except a target hosts-file bind derived by the broker itself. Root exec admission is a phase-state heuristic, not proof of execution provenance. The worker cannot reach HAProxy's separate internal network. HAProxy alone mounts the socket and retains its path filter as defense in depth. Neither API port is published. The worker requires a signed privileged-create denial probe unless an operator explicitly disables it for direct-socket development.",
       "id": "dockerProxy",
-      "refs": ["dockerProxy", "infra"],
+      "refs": ["dockerProxy", "dockerBrokerPolicy", "infra"],
       "status": "Implemented",
-      "title": "The worker reaches Docker through a socket proxy"
+      "title": "The worker reaches Docker through a policy broker and socket proxy"
     },
     {
       "body": "A worker can run agent repository workspaces as Kubernetes pods instead of Docker containers, chosen by its environment.",
@@ -5289,7 +5289,7 @@
     {
       "body": "Restricted and blocked repository workspaces have network locks; restricted ephemeral steps are locked to wired proxies before author code starts.",
       "category": "Isolation",
-      "detail": "An explicitly open ephemeral step uses the private-range/metadata baseline, DNS filtering and host pins; direct public-IP traffic can bypass its cooperative proxy. Restricted is the default: baseline union team hosts are enforced through a verified IPv4/IPv6 default-deny holder lock before author startup, allowing only wired egress and registry proxy endpoints. Detached sidecars share that lock, with worker-gateway ingress and established replies for their published port. Blocked, or restricted with an empty effective baseline/team list, forces network none; sidecars are refused instead. Repository workspace locks also admit git and model proxies, unlike step locks. Allowlists are live, not frozen per run. Failed locks remove the workspace or step and holder. Policies govern container traffic, not worker-originated connector or MCP calls. Docker shares the host kernel, and the daemon's socket proxy allowlists API paths rather than container options, so the Docker host remains a privileged trust boundary.",
+      "detail": "An explicitly open ephemeral step uses the private-range/metadata baseline, DNS filtering and host pins; direct public-IP traffic can bypass its cooperative proxy. Restricted is the default: baseline union team hosts are enforced through a verified IPv4/IPv6 default-deny holder lock before author startup, allowing only wired egress and registry proxy endpoints. Detached sidecars share that lock, with worker-gateway ingress and established replies for their published port. Blocked, or restricted with an empty effective baseline/team list, forces network none; sidecars are refused instead. Repository workspace locks also admit git and model proxies, unlike step locks. Allowlists are live, not frozen per run. Failed locks remove the workspace or step and holder. Policies govern container traffic, not worker-originated connector or MCP calls. The Docker policy broker constrains container options and ownership, but Docker still shares the host kernel and per-object limits are not aggregate host quotas.",
       "id": "egress",
       "refs": [
         "sandbox",
@@ -13098,7 +13098,15 @@
       "id": "dockerProxy",
       "lines": 22,
       "path": "docker-compose.app.yml",
-      "title": "The worker reaches Docker through an allowlisting socket proxy"
+      "title": "HAProxy is the daemon-facing path filter behind the policy broker"
+    },
+    {
+      "anchor": "private async authorize(",
+      "before": 0,
+      "id": "dockerBrokerPolicy",
+      "lines": 65,
+      "path": "packages/docker-broker/src/server.ts",
+      "title": "Docker broker request policy and ownership checks"
     },
     {
       "anchor": "const response = await capturingFetch(createGuardedFetch({ allowPrivate }), 'connector')(",

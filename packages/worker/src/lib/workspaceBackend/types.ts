@@ -195,7 +195,7 @@ export interface WorkspaceBackend {
   reapOrphans(now: Date): Promise<WorkspaceReapResult>;
 
   /** Create a workspace volume (`docker volume create`). */
-  createVolume(name: string): Promise<void>;
+  createVolume(name: string): Promise<string> | Promise<void>;
   /** Remove a volume; never throws — it may already be gone. */
   removeVolume(name: string): Promise<void>;
   /**

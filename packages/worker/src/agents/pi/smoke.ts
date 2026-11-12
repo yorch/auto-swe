@@ -15,7 +15,7 @@ import { BUILTIN_SCANNER_PATTERNS } from '@auto-swe/shared/scannerPatterns';
 import { MockActivityEnvironment } from '@temporalio/testing';
 import { MockLanguageModelV4 } from 'ai/test';
 import type { AgentTracer } from '../../lib/agentTracer.js';
-import { installBaselineEgress } from '../../lib/workspaceBackend/docker.js';
+import { dockerRuntimeArgs, installBaselineEgress } from '../../lib/workspaceBackend/docker.js';
 import { secretEnvFlags } from '../../lib/workspaceBackend/secretEnvName.js';
 import { WORKSPACE_DIR } from '../harness/adapter.js';
 import { piRuntime } from './runtime.js';
@@ -489,7 +489,10 @@ async function startWorkspace(name: string, image: string, command: string[]) {
       '-d',
       '--name',
       name,
+      '--label=auto-swe.profile=workspace',
       '--init',
+      ...(infra.runAsRoot ? [] : ['--user=1000:1000', '-e', 'HOME=/workspace/.home']),
+      ...dockerRuntimeArgs(),
       ...infra.dns.map((server) => `--dns=${server}`),
       `--memory=${infra.memory}`,
       `--cpus=${infra.cpus}`,
@@ -506,6 +509,18 @@ async function startWorkspace(name: string, image: string, command: string[]) {
     ],
     { env: dockerEnv() }
   );
+  const skeleton = await mkdtemp(path.join(tmpdir(), 'pi-smoke-dirs-'));
+  try {
+    await mkdir(path.join(skeleton, 'workspace', '.home'), { recursive: true });
+    await mkdir(path.join(skeleton, 'workspace', 'target-repo'));
+    await run(
+      'docker',
+      ['cp', ...(infra.runAsRoot ? [] : ['-a']), path.join(skeleton, 'workspace'), `${name}:/`],
+      { env: dockerEnv() }
+    );
+  } finally {
+    await rm(skeleton, { force: true, recursive: true });
+  }
   await installBaselineEgress({ dns: infra.dns, name });
   // A secret is named with `-e NAME` and resolved from docker's own environment,
   // so its value is never on the command line.
@@ -666,24 +681,19 @@ export async function runSmoke(options: SmokeOptions): Promise<{
     );
     const workspace = await starting;
     interrupt.signal.throwIfAborted();
-    await run('docker', ['exec', containerName, 'mkdir', '-p', '/workspace'], {
-      env: dockerEnv(),
-      signal: interrupt.signal,
-    });
-    await run('docker', ['cp', `${checkout}/.`, `${containerName}:${WORKSPACE_DIR}`], {
-      env: dockerEnv(),
-      signal: interrupt.signal,
-      timeout: 120_000,
-    });
-    // `docker cp` keeps the host's uid, and the container's root has no
-    // CAP_DAC_OVERRIDE (`--cap-drop=ALL`), so a non-root host would leave a tree the
-    // agent cannot write. Hand it to root, as `createWorkspace`'s clone is: one fixed
-    // command, privileged for this exec alone, before the agent runs anything.
-    // `-h` re-owns a symlink itself, never its target.
     await run(
       'docker',
-      ['exec', '--privileged', '-u', '0', containerName, 'chown', '-R', '-h', '0:0', WORKSPACE_DIR],
-      { env: dockerEnv(), signal: interrupt.signal, timeout: 120_000 }
+      [
+        'cp',
+        ...(resolveWorkspaceInfra().runAsRoot ? [] : ['-a']),
+        `${checkout}/.`,
+        `${containerName}:${WORKSPACE_DIR}`,
+      ],
+      {
+        env: dockerEnv(),
+        signal: interrupt.signal,
+        timeout: 120_000,
+      }
     );
 
     const tracer = new MemoryTracer();

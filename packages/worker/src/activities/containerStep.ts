@@ -158,9 +158,9 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
   const command = input.command;
 
   // Stateless step → a throwaway empty volume for /workspace (no repo clone).
-  const volume = `cstep-${randomUUID()}`;
+  const requestedVolume = `cstep-${randomUUID()}`;
   const backend = workspaceBackend();
-  await backend.createVolume(volume);
+  const volume = (await backend.createVolume(requestedVolume)) ?? requestedVolume;
   try {
     const started = performance.now();
     const res = await runEphemeralContainer({
@@ -239,11 +239,11 @@ async function runSidecarTransport(
   if (!input.sidecar) {
     throw new Error("containerStep transport 'sidecar' requires a sidecar config (port)");
   }
-  const volume = `cstep-${randomUUID()}`;
+  const requestedVolume = `cstep-${randomUUID()}`;
   const auditNetwork =
     egressPolicy === 'restricted' ? 'egress (allowlist via proxy; network-locked)' : 'egress';
   const backend = workspaceBackend();
-  await backend.createVolume(volume);
+  const volume = (await backend.createVolume(requestedVolume)) ?? requestedVolume;
   try {
     const started = performance.now();
     const res = await runSidecarContainer({

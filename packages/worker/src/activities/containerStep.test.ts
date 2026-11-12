@@ -23,7 +23,9 @@ vi.mock('../lib/ephemeralContainer.js', () => ({
   runEphemeralContainer: vi.fn(),
   runSidecarContainer: vi.fn(),
 }));
-vi.mock('../lib/execUtils.js', () => ({ execShellAsync: vi.fn().mockResolvedValue({}) }));
+vi.mock('../lib/execUtils.js', () => ({
+  execShellAsync: vi.fn().mockResolvedValue('test-volume'),
+}));
 vi.mock('../lib/executionAudit.js', () => ({
   executionAudit: vi.fn().mockResolvedValue(undefined),
 }));

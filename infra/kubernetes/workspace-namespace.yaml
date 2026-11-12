@@ -14,6 +14,10 @@ metadata:
     # Workspace pods are built to pass `restricted`; the namespace enforces it.
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/enforce-version: latest
+    # When K8S_REQUIRE_RUNTIME_CLASS=true, uncomment and match K8S_WORKSPACE_RUNTIME_CLASS:
+    # asw/required-runtime-class: gvisor
+    # Optional additional workspace ServiceAccount (default remains allowed):
+    # asw/workspace-service-account: workspace
 ---
 # Default-deny, then allow exactly: DNS, the worker's proxies, and the public internet
 # minus every private and link-local range. The ipBlock exceptions are what keep a
