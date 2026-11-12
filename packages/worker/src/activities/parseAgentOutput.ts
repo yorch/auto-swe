@@ -1,5 +1,7 @@
+import { z } from 'zod';
 import {
   type DocReview,
+  extractJsonObject,
   parseDocReview,
   parseTicketPlan,
   type ReviewComment,
@@ -9,7 +11,7 @@ import {
   type TicketPlan,
 } from '../lib/documentReview.js';
 
-export type ParseAgentOutputKind = 'docReview' | 'ticketPlan';
+export type ParseAgentOutputKind = 'docReview' | 'ticketPlan' | 'incidentTriage';
 
 export interface ParseAgentOutputInput {
   kind: ParseAgentOutputKind;
@@ -38,6 +40,90 @@ export interface ParsedTicketPlan {
   markdown: string;
 }
 
+/** The incident triager's reply: see `INCIDENT_TRIAGER_PROMPT`. */
+export const IncidentTriageSchema = z.object({
+  category: z.enum([
+    'code',
+    'configuration',
+    'dependency',
+    'infrastructure',
+    'external',
+    'unknown',
+  ]),
+  confidence: z.number().min(0).max(1),
+  evidence: z.array(z.string().max(2000)).max(20).default([]),
+  fixable: z.boolean(),
+  rootCause: z.string().max(4000),
+  suggestedFix: z.string().max(4000).default(''),
+  summary: z.string().min(1).max(2000),
+});
+
+export type IncidentTriage = z.infer<typeof IncidentTriageSchema>;
+
+/** Longest raw reply carried as `markdown` when the triager's reply does not parse. */
+const MAX_UNPARSED_TRIAGE_CHARS = 8000;
+
+export interface ParsedIncidentTriage {
+  kind: 'incidentTriage';
+  valid: true;
+  /** The diagnosis as the implementer's task reads it, when a fix is attempted. */
+  brief: string;
+  confidence: number;
+  /** Only a code-category diagnosis is fixable, whatever the model said. */
+  fixable: boolean;
+  markdown: string;
+  summary: string;
+  triage: IncidentTriage;
+}
+
+export function renderIncidentTriageMarkdown(t: IncidentTriage): string {
+  const lines = [
+    `auto-swe incident triage (${t.category}, confidence ${Math.round(t.confidence * 100)}%)`,
+    '',
+    t.summary,
+    '',
+    `Root cause: ${t.rootCause}`,
+  ];
+  if (t.evidence.length > 0) {
+    lines.push('', 'Evidence:', ...t.evidence.map((e) => `- ${e}`));
+  }
+  if (t.suggestedFix) {
+    lines.push('', `Suggested fix: ${t.suggestedFix}`);
+  }
+  return lines.join('\n');
+}
+
+function parseIncidentTriage(text: string): ParsedIncidentTriage | UnparsedAgentOutput {
+  const json = extractJsonObject(text);
+  const parsed = json === undefined ? null : IncidentTriageSchema.safeParse(json);
+  if (!parsed?.success) {
+    const error =
+      json === undefined
+        ? 'The incident triager did not return a JSON object.'
+        : 'The incident triager returned JSON that does not match the triage shape.';
+    // Still worth posting: the responders read it, and the run routes it away from a fix.
+    const reply = text.trim().slice(0, MAX_UNPARSED_TRIAGE_CHARS);
+    return {
+      error,
+      kind: 'incidentTriage',
+      markdown: reply ? `auto-swe incident triage (unstructured)\n\n${reply}` : error,
+      valid: false,
+    };
+  }
+  const triage = parsed.data;
+  const markdown = renderIncidentTriageMarkdown(triage);
+  return {
+    brief: markdown,
+    confidence: triage.confidence,
+    fixable: triage.fixable && triage.category === 'code',
+    kind: 'incidentTriage',
+    markdown,
+    summary: triage.summary,
+    triage,
+    valid: true,
+  };
+}
+
 export interface UnparsedAgentOutput {
   kind: ParseAgentOutputKind;
   valid: false;
@@ -46,7 +132,11 @@ export interface UnparsedAgentOutput {
   markdown: string;
 }
 
-export type ParseAgentOutputResult = ParsedDocReview | ParsedTicketPlan | UnparsedAgentOutput;
+export type ParseAgentOutputResult =
+  | ParsedDocReview
+  | ParsedTicketPlan
+  | ParsedIncidentTriage
+  | UnparsedAgentOutput;
 
 /**
  * Turn a document-review agent's JSON reply into a checked value and the text a person reviews.
@@ -59,6 +149,9 @@ export async function parseAgentOutput(
   input: ParseAgentOutputInput
 ): Promise<ParseAgentOutputResult> {
   const text = typeof input.text === 'string' ? input.text : '';
+  if (input.kind === 'incidentTriage') {
+    return parseIncidentTriage(text);
+  }
   if (input.kind === 'docReview') {
     const parsed = parseDocReview(text);
     if (!parsed.ok) {

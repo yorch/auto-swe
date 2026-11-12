@@ -182,7 +182,7 @@ function sameText(a: string, b: string): boolean {
  * Whether the call proves it came from someone holding the endpoint's secret:
  * - `autoswe-v1`: `X-AutoSwe-Signature`, the platform's own scheme (timestamped, 300 s);
  * - `hmac-sha256`: an HMAC-SHA256 of the raw body bytes in the configured header, after its
- *   prefix, hex or base64;
+ *   prefix, hex or base64 — one signature or a comma-separated list of them;
  * - `shared-secret-header`: the secret itself in the configured header, after its prefix.
  * Each compares in constant time against the current and an unexpired previous secret.
  */
@@ -214,6 +214,9 @@ export function verifyEndpointCall(args: {
   if (header === 'repeated') {
     return { ok: false, reason: 'malformed' };
   }
+  if (scheme === 'hmac-sha256') {
+    return verifyHmacSignatures(header, endpoint, secrets, rawBody);
+  }
   const value = afterPrefix(header, endpoint.signaturePrefix);
   if (value === null || value === '') {
     return { ok: false, reason: 'malformed' };
@@ -226,20 +229,49 @@ export function verifyEndpointCall(args: {
     }
     return matched ? { ok: true } : { ok: false, reason: 'mismatch' };
   }
-  if (scheme === 'hmac-sha256') {
-    const encoding = (endpoint.signatureEncoding ?? 'hex') as SignatureEncoding;
-    const given = decodeDigest(value, encoding);
-    if (!given) {
-      return { ok: false, reason: 'malformed' };
-    }
-    let matched = false;
-    for (const secret of secrets) {
-      const expected = createHmac('sha256', Buffer.from(secret, 'utf8')).update(rawBody).digest();
-      matched = timingSafeEqual(expected, given) || matched;
-    }
-    return matched ? { ok: true } : { ok: false, reason: 'mismatch' };
-  }
   return { ok: false, reason: 'malformed' };
+}
+
+/** The most signatures one `hmac-sha256` header may carry. */
+export const MAX_HEADER_SIGNATURES = 8;
+
+/**
+ * An `hmac-sha256` header: one signature, or a comma-separated list of them, each after the
+ * prefix (`v1=a,v1=b`, the way PagerDuty signs with every secret during a rotation). Entries
+ * without the prefix are skipped, so a scheme version the endpoint was not set up for is never
+ * read as a digest. Verified when any listed signature matches any secret; every pair is
+ * compared, so the time taken does not say which one matched.
+ */
+function verifyHmacSignatures(
+  header: string,
+  endpoint: EndpointVerificationConfig,
+  secrets: string[],
+  rawBody: Buffer
+): EndpointVerification {
+  const entries = header.split(',');
+  if (entries.length > MAX_HEADER_SIGNATURES) {
+    return { ok: false, reason: 'malformed' };
+  }
+  const encoding = (endpoint.signatureEncoding ?? 'hex') as SignatureEncoding;
+  const given: Buffer[] = [];
+  for (const entry of entries) {
+    const value = afterPrefix(entry, endpoint.signaturePrefix);
+    const digest = value ? decodeDigest(value, encoding) : null;
+    if (digest) {
+      given.push(digest);
+    }
+  }
+  if (given.length === 0) {
+    return { ok: false, reason: 'malformed' };
+  }
+  let matched = false;
+  for (const secret of secrets) {
+    const expected = createHmac('sha256', Buffer.from(secret, 'utf8')).update(rawBody).digest();
+    for (const digest of given) {
+      matched = timingSafeEqual(expected, digest) || matched;
+    }
+  }
+  return matched ? { ok: true } : { ok: false, reason: 'mismatch' };
 }
 
 export type EventDocument =

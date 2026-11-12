@@ -1055,8 +1055,8 @@ register({
   configFields: [
     {
       description:
-        'What the agent returned: a review from the document reviewer (`docReview`) or a ticket plan from the ticket planner (`ticketPlan`).',
-      enumValues: ['docReview', 'ticketPlan'],
+        'What the agent returned: a review from the document reviewer (`docReview`), a ticket plan from the ticket planner (`ticketPlan`), or a diagnosis from the incident triager (`incidentTriage`).',
+      enumValues: ['docReview', 'ticketPlan', 'incidentTriage'],
       key: 'kind',
       label: 'Kind',
       required: true,
@@ -1068,7 +1068,7 @@ register({
     "Reads `inputs.text` (the agent node's `output.text`). Output: `valid` (false with a fixed `error` " +
     'when the reply is not the expected JSON, which the template can branch on), `markdown`, and by kind: ' +
     '`ready`, `summary`, `findingCount`, `blockingCount`, `comments` for a review (a review that lists a ' +
-    'blocker or a major finding is never ready), or `plan`, `ticketCount`, `subtaskCount` for a plan. Returns invalid output rather than throwing on malformed replies.',
+    'blocker or a major finding is never ready), or `plan`, `ticketCount`, `subtaskCount` for a plan, or `summary`, `fixable`, `confidence`, `brief` for an incident triage (whose invalid output carries the reply itself as `markdown`, so it can still be posted). Returns invalid output rather than throwing on malformed replies.',
   label: 'Check agent output',
   name: 'parseAgentOutput',
 });

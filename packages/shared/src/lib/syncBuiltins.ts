@@ -21,6 +21,7 @@ import {
   DOMAIN_LOGIC_REVIEWER_PROMPT,
   GATE_FIX_SYSTEM_PROMPT,
   IMPLEMENTER_SYSTEM_PROMPT,
+  INCIDENT_TRIAGER_PROMPT,
   ISSUE_DRAFTER_PROMPT,
   LESSON_CONSOLIDATOR_PROMPT,
   MEMORY_SUMMARIZER_PROMPT,
@@ -869,6 +870,20 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     key: 'ciTriager',
     name: 'CI Triager',
     systemPrompt: CI_TRIAGER_PROMPT,
+  },
+  // ── Incident triage ────────────────────────────────────────────────────────
+  {
+    // Diagnoses a PagerDuty incident against a throwaway checkout of the repository
+    // (`incident-triage`). Read-only tools: the checkout is discarded, and a fix, when the
+    // template attempts one, is the implementer's. Resolved on demand by the generic `agent`
+    // node, so it is not in MODEL_BACKED_AGENT_KEYS and does not gate worker boot.
+    description:
+      'Diagnoses a PagerDuty incident against the repository and says whether a code fix applies.',
+    inheritsModelFrom: 'planner',
+    key: 'incidentTriager',
+    name: 'Incident Triager',
+    systemPrompt: INCIDENT_TRIAGER_PROMPT,
+    toolKeys: ['readFile', 'listDirectory', 'bash'],
   },
   // ── Pull-request feedback ──────────────────────────────────────────────────
   {

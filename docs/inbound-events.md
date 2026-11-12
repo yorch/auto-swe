@@ -63,6 +63,7 @@ integrations: check them against what the sender actually posts.
 | CloudEvents | `autoswe-v1` | CloudEvents | the event's attributes (§3.2) |
 | HMAC-SHA256, GitHub-style header | `hmac-sha256` in `X-Hub-Signature-256` as `sha256=<hex>` | JSON | placeholders (`/action`, `/id`): set them to where the sender puts its type and id |
 | Snyk project snapshot | `hmac-sha256` in `X-Hub-Signature` as `sha256=<hex>` | JSON | constant type `project_snapshot/v0`, subject and scope `/project/id`, no id pointer (§6) |
+| PagerDuty v3 webhook | `hmac-sha256` in `X-PagerDuty-Signature` as `v1=<hex>` | JSON | type `/event/event_type`, id `/event/id`, subject `/event/data/id`, scope `/event/data/service/id`, time `/event/occurred_at` (§7) |
 
 ## 2. Signing a call
 
@@ -109,6 +110,12 @@ sig=$(printf '%s' "$body" | openssl dgst -sha256 -hmac "$secret" -hex | sed 's/^
 curl -X POST "$url" -H 'content-type: application/json' \
   -H "X-Signature: sha256=$sig" --data-binary "$body"
 ```
+
+The header may carry a comma-separated list of signatures (`v1=<hex>, v1=<hex>`), at most 8. This
+is how PagerDuty signs while one of its secrets rotates: once with each. Entries without the
+endpoint's prefix are skipped, so a scheme version the endpoint was not set up for is never read as
+a digest, and the call verifies when any listed signature matches any of the endpoint's secrets. A
+header with no entry that decodes is malformed.
 
 There is no timestamp in this scheme: a captured call verifies for as long as the secret does
 (see Limitations). A header sent twice is refused.
@@ -448,6 +455,68 @@ them, because a pointer that misses simply leaves its input unfilled.
   range; the agent works the range out from the advisory and the package's registry (its brief
   already has it check every value).
 
+## 7. Recipe: PagerDuty to `incident-triage`
+
+PagerDuty v3 webhook subscriptions post an event for each change to an incident. With a PagerDuty
+event endpoint, a `pagerduty` connection and one automation per repository, a newly triggered
+incident on a service starts the `incident-triage` template on the repository that service runs.
+The run reads the incident, its alerts and its log entries, has the `incidentTriager` agent
+diagnose it against a throwaway checkout, and adds the diagnosis to the incident as a note.
+
+**What was checked.** The signature, the envelope and the incident fields come from PagerDuty's
+developer documentation ("Verifying Signatures" and "V3 Webhooks Overview" for webhooks, and the
+REST API reference for incidents, alerts, log entries and notes). They are not confirmed against a
+recorded delivery or a live account: send a test and read the first real body before trusting
+them.
+
+**What PagerDuty sends** (documented):
+
+- `X-PagerDuty-Signature: v1=<hex>`, an HMAC-SHA256 of the raw body keyed with the subscription's
+  secret, with one signature per secret while PagerDuty rotates it (§2). PagerDuty generates the
+  secret when the subscription is created: paste it as the endpoint's secret.
+- A body of `event` with `id`, `event_type` (`incident.triggered`, `incident.acknowledged`,
+  `incident.resolved`, …), `occurred_at` and `data`, the incident: `id`, `title`, `status`,
+  `service.id` and more.
+
+**The connection.** A `pagerduty` connection on the team holds a PagerDuty REST API key (the
+connection's `apiToken`, set through `POST`/`PATCH /api/v1/repositories` and stored encrypted like
+every connection token; the dashboard's connection form has no token field) and, in its config,
+`fromEmail`, which is refused when it is not an email:
+the email of a PagerDuty user, which PagerDuty requires on a note write and shows as the note's
+author. A scoped key needs read access to incidents and `incidents.write` for notes. The worker
+calls `https://api.pagerduty.com` only.
+
+**The automation.** One `inbound.event` automation per repository, on the PagerDuty endpoint:
+
+| Setting | Value |
+|---|---|
+| Template | `incident-triage` |
+| Repository | the repository the service runs |
+| Event types | `incident.triggered` |
+| Match | `/event/data/service/id` `eq` the PagerDuty service id |
+| Fields | `incidentId` from `/event/data/id` |
+| Options | `pagerdutyConnectionId`: the team's `pagerduty` connection; `mode`: `triage` (the default) or `fix`; optionally `minFixConfidence` |
+
+The connection is an option of the automation, never a field read from the event, so a forged or
+forwarded body cannot choose the credential: the team's access to it is checked when the
+automation is saved and again at every fire. The id is the event's, so a redelivery is a
+duplicate; the subject is the incident and the scope its service, so the cooldown counts per
+service.
+
+**What the run does.**
+
+- `triage` mode: diagnose, then post the diagnosis as a note. The diagnosis names a category
+  (`code`, `configuration`, `dependency`, `infrastructure`, `external` or `unknown`), a root cause,
+  the evidence checked, a suggested fix and a confidence. A reply that is not the expected JSON is
+  still posted, marked unstructured.
+- `fix` mode: when the diagnosis is `code`, says it is fixable, and its confidence is at least
+  `minFixConfidence` (default 0.7), the implementer attempts the change with the diagnosis fenced
+  as untrusted data, the quality gates run, and a **draft** pull request opens. The note links it.
+  A fix that fails or changes nothing still posts the diagnosis, with the reason no fix opened.
+- The note is an `internal_write`: under the default autonomy policy it posts without waiting for
+  anyone. A team that wants a person to sign off requires approval for `internal_write` in its
+  policy ([autonomy-policies.md](./autonomy-policies.md)); the run then waits for that approval.
+
 ## Limitations
 
 - **Qodo is not an inbound-event sender.** Qodo emits no outbound webhooks, so there is nothing for
@@ -489,6 +558,16 @@ them, because a pointer that misses simply leaves its input unfilled.
   documented as able to change while the webhooks are in beta. Only `newIssues[0]` is handled: a
   delivery whose first new issue is a licence finding is dropped even when a later one is a
   vulnerability.
+- **The PagerDuty recipe is checked against documentation only (§7).** The signature, envelope
+  and REST calls follow PagerDuty's documentation; nothing was tested against a live PagerDuty
+  account or a recorded delivery.
+- **The PagerDuty recipe's rules are required, and nothing enforces them (§7).** An automation that
+  selects more than `incident.triggered` starts a run for each acknowledgement, escalation and
+  resolution of an incident it already triaged, bounded by its cooldown and `maxRunsPerDay`; one
+  without the service id rule triages every service's incidents against its one repository.
+- **A PagerDuty triage reads a bounded view.** The run reads the 25 most recent alerts and log
+  entries, each alert body cut to 4,000 characters, and posts at most 25,000 characters. Notes are
+  plain text: PagerDuty does not render Markdown in them.
 - **The recipe's two match rules are required, and nothing enforces them (§6).** An automation
   without `/newIssues/0` `exists` and `/newIssues/0/issueType` `eq` `vuln` starts a run for every
   snapshot and ping it selects, bounded only by its cooldown and `maxRunsPerDay`. Neither the

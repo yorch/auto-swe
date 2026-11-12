@@ -9,7 +9,7 @@ import {
 import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 // From the subpath, not the barrel: this module is pure (zod only), so a test that
 // mocks the barrel to avoid instantiating the Prisma client still gets the real one.
-import { isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
+import { connectionConfigProblem, isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import { credentialDestinationChanged } from '@auto-swe/shared/lib/credentialDestination';
 import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { type PermissionLookup, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
@@ -985,6 +985,11 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
 
+      const createConfigProblem = connectionConfigProblem(type ?? 'git_repo', config);
+      if (createConfigProblem) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', createConfigProblem);
+      }
+
       // Verify team exists
       const team = await fastify.prisma.team.findUnique({
         select: { id: true, isActive: true },
@@ -1420,6 +1425,11 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         teamId,
       } = request.body;
       const { githubApiUrl, githubUrl } = urls;
+
+      const updateConfigProblem = connectionConfigProblem(repo.type, config);
+      if (updateConfigProblem) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', updateConfigProblem);
+      }
 
       // The installation the row will hold must live on the host the row will
       // be on. Judged when either side changes, so repointing a repository to

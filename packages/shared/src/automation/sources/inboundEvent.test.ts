@@ -335,6 +335,7 @@ describe('extraction', () => {
       'cloudevents',
       'hmac-github-style',
       'snyk',
+      'pagerduty-v3',
     ]);
   });
 });

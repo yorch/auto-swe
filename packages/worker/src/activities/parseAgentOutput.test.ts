@@ -44,4 +44,38 @@ describe('parseAgentOutput', () => {
       }
     }
   });
+
+  it('checks an incident triage and only lets a code diagnosis be fixable', async () => {
+    const triage = {
+      category: 'code',
+      confidence: 0.8,
+      evidence: ['alert: TypeError in checkout.ts'],
+      fixable: true,
+      rootCause: 'checkout.ts reads a field the API stopped sending',
+      suggestedFix: 'Guard the missing field',
+      summary: 'Checkout fails on a missing field.',
+    };
+    const out = await parseAgentOutput({ kind: 'incidentTriage', text: JSON.stringify(triage) });
+    expect(out).toMatchObject({
+      confidence: 0.8,
+      fixable: true,
+      kind: 'incidentTriage',
+      valid: true,
+    });
+    if (out.valid && out.kind === 'incidentTriage') {
+      expect(out.markdown).toContain('Root cause: checkout.ts');
+      expect(out.brief).toBe(out.markdown);
+    }
+    const infra = await parseAgentOutput({
+      kind: 'incidentTriage',
+      text: JSON.stringify({ ...triage, category: 'infrastructure' }),
+    });
+    expect(infra).toMatchObject({ fixable: false, valid: true });
+  });
+
+  it('keeps an unparsed incident triage reply so it can still be posted', async () => {
+    const out = await parseAgentOutput({ kind: 'incidentTriage', text: 'The database is down.' });
+    expect(out).toMatchObject({ kind: 'incidentTriage', valid: false });
+    expect(out.markdown).toContain('The database is down.');
+  });
 });

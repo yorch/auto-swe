@@ -742,6 +742,24 @@ describe('repositoryRoutes', () => {
       expect(ctx.mockPrisma.team.findUnique).not.toHaveBeenCalled();
     });
 
+    it('returns 400 VALIDATION_ERROR for a PagerDuty fromEmail that is not an email', async () => {
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: {
+          config: { fromEmail: 'not-an-email' },
+          name: 'PagerDuty',
+          teamId: TEAM_ID,
+          type: 'pagerduty',
+        },
+        url: '/api/v1/repositories',
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(JSON.parse(res.payload).error.message).toContain('fromEmail');
+      expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+    });
+
     it('returns 404 TEAM_NOT_FOUND when the team is missing or inactive', async () => {
       ctx.mockPrisma.team.findUnique.mockResolvedValueOnce(null);
 
@@ -1112,6 +1130,13 @@ describe('repositoryRoutes', () => {
       const res = await patch({ tools: null });
       expect(res.statusCode).toBe(200);
       expect(written().tools).toBe(DB_NULL);
+    });
+
+    it('refuses a PagerDuty config whose fromEmail is not an email', async () => {
+      stored({ type: 'pagerduty' });
+      const res = await patch({ config: { fromEmail: 'not-an-email' } });
+      expect(res.statusCode).toBe(400);
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
     });
   });
 

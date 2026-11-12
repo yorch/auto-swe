@@ -22,6 +22,7 @@ import { FULLY_SUPERVISED_SPEC } from './fullySupervised.js';
 import { HOTFIX_SPEC } from './hotfix.js';
 import { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
 import { HUMAN_REVIEW_OF_RUN_SPEC } from './humanReviewOfRun.js';
+import { INCIDENT_TRIAGE_INPUT_SCHEMA, INCIDENT_TRIAGE_SPEC } from './incidentTriage.js';
 import { ISSUE_TO_CONFLUENCE_PAGE_SPEC } from './issueToConfluencePage.js';
 import { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
 import { NOTION_CONTENT_BRAND_REVIEW_SPEC } from './notionContentBrandReview.js';
@@ -130,6 +131,14 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     name: CI_TRIAGE_AND_FIX_SPEC.name,
     kind: 'automation',
     spec: CI_TRIAGE_AND_FIX_SPEC,
+  },
+  {
+    // Started by an inbound-event automation on a PagerDuty endpoint, or by hand with an
+    // incident id. Fix mode opens a draft into the repository's base branch.
+    description: INCIDENT_TRIAGE_SPEC.description,
+    inputSchema: INCIDENT_TRIAGE_INPUT_SCHEMA,
+    name: INCIDENT_TRIAGE_SPEC.name,
+    spec: INCIDENT_TRIAGE_SPEC,
   },
   {
     // Started by a pull-request feedback trigger (a repository's review/comment webhook).
@@ -425,6 +434,11 @@ export { FULLY_SUPERVISED_SPEC } from './fullySupervised.js';
 export { HOTFIX_SPEC } from './hotfix.js';
 export { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
 export { HUMAN_REVIEW_OF_RUN_SPEC } from './humanReviewOfRun.js';
+export {
+  INCIDENT_TRIAGE_DEFAULT_MIN_FIX_CONFIDENCE,
+  INCIDENT_TRIAGE_INPUT_SCHEMA,
+  INCIDENT_TRIAGE_SPEC,
+} from './incidentTriage.js';
 export { ISSUE_TO_CONFLUENCE_PAGE_SPEC } from './issueToConfluencePage.js';
 export { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
 export { NOTION_CONTENT_BRAND_REVIEW_SPEC } from './notionContentBrandReview.js';
