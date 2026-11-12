@@ -8,6 +8,7 @@ import { TopBar } from './TopBar';
 
 const status = vi.hoisted(() => ({ value: 'pending' as GatewayStatus }));
 const route = vi.hoisted(() => ({ pathname: '/' }));
+vi.mock('@/components/setup/SetupIndicator', () => ({ SetupIndicator: () => null }));
 
 vi.mock('@/hooks/useGatewayStatus', () => ({ useGatewayStatus: () => status.value }));
 vi.mock('@/hooks/useTeamNav', () => ({ useTeamNav: () => ({ entries: [], isLoading: false }) }));

@@ -7,6 +7,7 @@ import { HelpButton } from '@/components/help/HelpPanel';
 import { CommandPalette, CommandPaletteButton } from '@/components/layout/CommandPalette';
 import { SIDEBAR_ID } from '@/components/layout/Sidebar';
 import { ThemeToggle } from '@/components/layout/ThemeToggle';
+import { SetupIndicator } from '@/components/setup/SetupIndicator';
 import { TeamSwitcher } from '@/components/teams/TeamSwitcher';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
@@ -90,6 +91,7 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
 
         {/* Right side */}
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+          <SetupIndicator />
           <AssistantToggle />
           <CommandPaletteButton onClick={() => setPaletteOpen(true)} />
           {/* The user menu in the drawer carries the same control, so the bar drops it on a phone. */}

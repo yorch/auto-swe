@@ -28,7 +28,14 @@ const items = [
 function gateway(ready = false) {
   setupFetchMock({
     'GET /api/v1/platform/readiness': () => ({
-      data: { items: ready ? items.map((i) => ({ ...i, ok: true })) : items, providers: [], ready },
+      data: {
+        gaps: [
+          { blocking: true, problem: 'no-credential', provider: 'google', subject: 'reviewer' },
+        ],
+        items: ready ? items.map((i) => ({ ...i, ok: true })) : items,
+        providers: [],
+        ready,
+      },
     }),
   });
 }
@@ -39,6 +46,16 @@ afterEach(() => {
 });
 
 describe('SetupReadiness', () => {
+  it('summarizes provider gaps on Home and puts the full agent detail behind a disclosure', async () => {
+    gateway();
+    render(withQuery(<SetupReadiness />));
+    expect(await screen.findByText('1 agent needs a Google credential')).toBeTruthy();
+    const disclosure = screen.getByText('View affected agents').closest('details');
+    expect(disclosure?.hasAttribute('open')).toBe(false);
+    expect(disclosure?.textContent).toContain('No credential for google.');
+    fireEvent.click(screen.getByText('View affected agents'));
+    expect(disclosure?.hasAttribute('open')).toBe(true);
+  });
   it('collapses the compact banner without losing setup details or fix links', async () => {
     gateway();
     render(withQuery(<SetupBanner compact items={['credentials', 'connections']} />));
@@ -46,9 +63,9 @@ describe('SetupReadiness', () => {
     expect(summary.parentElement?.getAttribute('open')).toBeNull();
     fireEvent.click(summary);
     expect(summary.parentElement?.getAttribute('open')).toBe('');
-    expect(screen.getByText('No credential for google.')).toBeTruthy();
+    expect(screen.getByText(/1 agent needs a Google credential/)).toBeTruthy();
     expect(screen.getByText('Connect a repository.')).toBeTruthy();
-    expect(screen.getAllByRole('link', { name: /Fix this/ })).toHaveLength(2);
+    expect(screen.getAllByRole('link', { name: /Fix:/ })).toHaveLength(2);
   });
   it.each([false, true])(
     'shows the informational no-report note when ready=%s without expanding other done items',

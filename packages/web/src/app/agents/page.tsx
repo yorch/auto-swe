@@ -565,41 +565,26 @@ function AgentLibraryContent() {
       width: 'sm:max-w-[22rem]',
     },
     {
-      cell: (a) => {
-        const missingProvider = missingCredentialProvider(
-          a,
-          agents ?? [],
-          readiness?.providers ?? []
-        );
-        return (
-          <>
-            {a.modelSpec ? (
-              <span className="font-mono text-xs break-all text-paper-300">{a.modelSpec}</span>
-            ) : a.inheritsModelFrom ? (
-              <span className="text-xs text-paper-400">
-                Inherits <span className="font-mono text-paper-300">{a.inheritsModelFrom}</span>
-              </span>
-            ) : (
-              <span className="text-xs text-paper-500">{modelLabel(a)}</span>
-            )}
-            <div className="mt-1 flex flex-wrap gap-1 max-sm:justify-end">
-              {missingProvider ? (
-                <Badge
-                  dot
-                  title={`No ${missingProvider} credential. Runs that use this agent fail at their first model call. Add one under Model configuration.`}
-                  tone="danger"
-                >
-                  No credential
-                </Badge>
-              ) : a.credentialId ? (
-                <Badge title="Pinned to a specific provider credential" tone="neutral">
-                  {credentialNames.get(a.credentialId) ?? 'Pinned credential'}
-                </Badge>
-              ) : null}
-            </div>
-          </>
-        );
-      },
+      cell: (a) => (
+        <>
+          {a.modelSpec ? (
+            <span className="font-mono text-xs break-all text-paper-300">{a.modelSpec}</span>
+          ) : a.inheritsModelFrom ? (
+            <span className="text-xs text-paper-400">
+              Inherits <span className="font-mono text-paper-300">{a.inheritsModelFrom}</span>
+            </span>
+          ) : (
+            <span className="text-xs text-paper-500">{modelLabel(a)}</span>
+          )}
+          <div className="mt-1 flex flex-wrap gap-1 max-sm:justify-end">
+            {a.credentialId ? (
+              <Badge title="Pinned to a specific provider credential" tone="neutral">
+                {credentialNames.get(a.credentialId) ?? 'Pinned credential'}
+              </Badge>
+            ) : null}
+          </div>
+        </>
+      ),
       header: 'Model',
       id: 'model',
     },
