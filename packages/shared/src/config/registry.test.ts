@@ -19,6 +19,18 @@ describe('lesson quarantine threshold', () => {
   });
 });
 
+describe('setup egress setting', () => {
+  it('inherits by default and shares the agent policy permission floor, scopes and pinning', () => {
+    const setup = SETTING_DEFINITIONS['workspace.setupEgressPolicy'];
+    const agent = SETTING_DEFINITIONS['workspace.egressPolicy'];
+    expect(setup.defaultValue).toBe('inherit');
+    expect(setup.requiredRole).toBe(agent.requiredRole);
+    expect(setup.overridableAt).toEqual(agent.overridableAt);
+    expect(setup.runPinned).toBe(true);
+    expect(setup.restartRequired).toBe(false);
+  });
+});
+
 describe('review settings', () => {
   it('enables live ADMIN-managed reviews with team and organization overrides', () => {
     const setting = SETTING_DEFINITIONS['review.enabled'];

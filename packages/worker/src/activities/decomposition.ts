@@ -478,6 +478,7 @@ async function provisionMergeWorkspace(
   }
   try {
     await workspace.runSetup?.();
+    await workspace.finishSetup?.();
   } catch (err) {
     await workspace.destroy();
     throw err;

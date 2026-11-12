@@ -40,7 +40,12 @@ vi.mock('@auto-swe/shared/db', () => ({
     toolCatalogEntry: { findMany: catalogFindManyMock },
   },
 }));
-vi.mock('@auto-swe/shared/config', () => ({ resolveSettings: resolveSettingsMock }));
+vi.mock('@auto-swe/shared/config', () => ({
+  resolveSetting: vi.fn(async (key: string) =>
+    key === 'workspace.repoSetupStackDefaults' ? {} : 0
+  ),
+  resolveSettings: resolveSettingsMock,
+}));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: () => 'workflow',
   currentWorkflowRunId: async () => 'run',
@@ -49,7 +54,10 @@ vi.mock('../lib/activityContext.js', () => ({
 
 import { ApplicationFailure } from '@temporalio/activity';
 
-const policy = vi.hoisted(() => ({ value: 'open' as 'open' | 'restricted' | 'blocked' }));
+const policy = vi.hoisted(() => ({
+  setup: 'inherit' as 'inherit' | 'open' | 'restricted',
+  value: 'open' as 'open' | 'restricted' | 'blocked',
+}));
 vi.mock('../lib/egressWiring.js', () => ({
   beginWorkspaceEgress: vi.fn(async () => null),
   blockedEgressAllow: vi.fn(() => [{ host: 'github.com', port: 443 }]),
@@ -59,12 +67,14 @@ vi.mock('../lib/egressWiring.js', () => ({
   lfsStorageHostEntries: vi.fn(async () => []),
   lfsStorageHosts: vi.fn(() => []),
   resolveRunEgressPolicy: vi.fn(async () => policy.value),
+  resolveRunSetupEgressPolicy: vi.fn(async () => policy.setup),
 }));
 
 import { beginWorkspaceEgress, blockedEgressAllow } from '../lib/egressWiring.js';
 
 afterEach(() => {
   policy.value = 'open';
+  policy.setup = 'inherit';
 });
 
 vi.mock('../lib/execUtils.js', async (importOriginal) => {
@@ -142,6 +152,7 @@ import {
   authedGitScript,
   buildBaselineEgressScript,
   buildEgressHelperCommand,
+  clearSetupProcessesScript,
   cloneDependencyRepos,
   createWorkspace,
   fetchBranchesSubcommand,
@@ -495,10 +506,234 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
 
   describe('egress policy', () => {
     const backend = dockerWorkspaceBackend();
+    const deferredWorkspace = () =>
+      createWorkspace(
+        'https://github.com/acme/repo.git',
+        'b',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        { repoSetup: { connectionId: null, defer: true, field: null } }
+      );
     beforeEach(() => {
       policy.value = 'open';
       vi.mocked(execShellAsync).mockReset();
       vi.mocked(execShellAsync).mockImplementation(okExec);
+    });
+
+    it('runs open setup with the baseline only, then verifies processes and replaces the agent lock once', async () => {
+      policy.value = 'blocked';
+      policy.setup = 'open';
+      const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+      const exec = vi.spyOn(backend, 'execShell');
+      try {
+        const ws = await deferredWorkspace();
+        expect(lock).toHaveBeenCalledExactlyOnceWith(
+          expect.anything(),
+          [{ host: 'github.com', port: 443 }],
+          { mode: 'blocked', prepareOnly: true, replace: true }
+        );
+        expect(ws.setupEgressPolicy).toBe('open');
+        await ws.exec('nc -z public.example 443');
+        await Promise.all([ws.finishSetup?.(), ws.finishSetup?.()]);
+        const cleanup = exec.mock.calls.findIndex(
+          ([, , opts]) => opts.heartbeatLabel === 'workspace: verifying setup processes stopped'
+        );
+        expect(cleanup).toBeGreaterThanOrEqual(0);
+        expect(exec.mock.calls[cleanup]?.[1]).toContain('/bin/sh');
+        expect(exec.mock.invocationCallOrder[cleanup]).toBeLessThan(
+          lock.mock.invocationCallOrder[1]
+        );
+        expect(lock).toHaveBeenNthCalledWith(
+          2,
+          expect.anything(),
+          [{ host: 'github.com', port: 443 }],
+          { mode: 'blocked', replace: true }
+        );
+        await ws.destroy();
+      } finally {
+        lock.mockRestore();
+        exec.mockRestore();
+      }
+    });
+
+    it.each(['cleanup', 'lock'])(
+      'destroys the workspace if the setup transition %s fails',
+      async (failure) => {
+        policy.value = 'blocked';
+        policy.setup = 'open';
+        const lock = vi
+          .spyOn(backend, 'lockEgress')
+          .mockImplementation(async (_h, _allow, opts) => {
+            if (failure === 'lock' && !opts?.prepareOnly) {
+              throw new Error('bad final lock');
+            }
+          });
+        const realExec = backend.execShell.bind(backend);
+        const exec = vi.spyOn(backend, 'execShell').mockImplementation(async (h, argv, opts) => {
+          if (
+            failure === 'cleanup' &&
+            opts.heartbeatLabel === 'workspace: verifying setup processes stopped'
+          ) {
+            throw new Error('setup processes remain');
+          }
+          return realExec(h, argv, opts);
+        });
+        try {
+          const ws = await deferredWorkspace();
+          await expect(ws.finishSetup?.()).rejects.toMatchObject({
+            nonRetryable: true,
+            type: 'EGRESS_POLICY_UNENFORCEABLE',
+          });
+          expect(
+            vi
+              .mocked(execShellAsync)
+              .mock.calls.some(([cmd]) => cmd === `docker rm -f ${ws.containerId}`)
+          ).toBe(true);
+          expect(() => ws.exec('nc -z public.example 443')).toThrow('transition');
+          if (failure === 'cleanup') {
+            expect(lock).toHaveBeenCalledOnce();
+          }
+        } finally {
+          lock.mockRestore();
+          exec.mockRestore();
+        }
+      }
+    );
+
+    it.each(['absent', 'empty', 'command'])(
+      'finishes %s setup before returning a non-deferred workspace',
+      async (setup) => {
+        policy.value = 'blocked';
+        policy.setup = 'open';
+        const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+        try {
+          const ws = await createWorkspace(
+            'https://github.com/acme/repo.git',
+            'b',
+            'main',
+            undefined,
+            undefined,
+            undefined,
+            setup === 'absent'
+              ? undefined
+              : {
+                  repoSetup: {
+                    connectionId: null,
+                    field: { steps: setup === 'command' ? [{ run: 'printf setup' }] : [] },
+                  },
+                }
+          );
+          expect(lock).toHaveBeenNthCalledWith(2, expect.anything(), expect.anything(), {
+            mode: 'blocked',
+            replace: true,
+          });
+          await ws.finishSetup?.();
+          expect(lock).toHaveBeenCalledTimes(2);
+          await ws.destroy();
+        } finally {
+          lock.mockRestore();
+        }
+      }
+    );
+
+    it('does not return a non-deferred workspace if final enforcement fails', async () => {
+      policy.value = 'blocked';
+      policy.setup = 'open';
+      const lock = vi.spyOn(backend, 'lockEgress').mockImplementation(async (_h, _allow, opts) => {
+        if (!opts?.prepareOnly) {
+          throw new Error('bad final lock');
+        }
+      });
+      try {
+        await expect(
+          createWorkspace('https://github.com/acme/repo.git', 'b', 'main')
+        ).rejects.toMatchObject({ type: 'EGRESS_POLICY_UNENFORCEABLE' });
+        expect(
+          vi
+            .mocked(execShellAsync)
+            .mock.calls.some(([cmd]) => cmd.startsWith('docker rm -f workspace-'))
+        ).toBe(true);
+      } finally {
+        lock.mockRestore();
+      }
+    });
+
+    it('preserves the inherited path for equal and stricter setup policies', async () => {
+      policy.value = 'open';
+      policy.setup = 'restricted';
+      const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+      try {
+        const ws = await createWorkspace('https://github.com/acme/repo.git', 'b', 'main');
+        expect(ws.finishSetup).toBeUndefined();
+        expect(ws.setupEgressPolicy).toBe('open');
+        expect(lock).not.toHaveBeenCalled();
+        await ws.destroy();
+      } finally {
+        lock.mockRestore();
+      }
+    });
+
+    it('inherits blocked when restricted setup has an empty allowlist', async () => {
+      policy.value = 'blocked';
+      policy.setup = 'restricted';
+      const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+      try {
+        const ws = await createWorkspace('https://github.com/acme/repo.git', 'b', 'main');
+        expect(ws.finishSetup).toBeUndefined();
+        expect(ws.setupEgressPolicy).toBe('blocked');
+        expect(lock).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.anything(), {
+          mode: 'blocked',
+        });
+        await ws.destroy();
+      } finally {
+        lock.mockRestore();
+      }
+    });
+
+    it('refuses restricted setup before creating a container when the egress proxy is unavailable', async () => {
+      policy.value = 'blocked';
+      policy.setup = 'restricted';
+      vi.mocked(beginWorkspaceEgress).mockRejectedValueOnce(
+        ApplicationFailure.nonRetryable(
+          'restricted policy requires the egress proxy',
+          'EGRESS_POLICY_UNENFORCEABLE'
+        )
+      );
+      await expect(
+        createWorkspace('https://github.com/acme/repo.git', 'b', 'main')
+      ).rejects.toMatchObject({ type: 'EGRESS_POLICY_UNENFORCEABLE' });
+      expect(beginWorkspaceEgress).toHaveBeenLastCalledWith(null, ['github.com'], 'restricted');
+      expect(
+        vi.mocked(execShellAsync).mock.calls.some(([cmd]) => cmd.startsWith('docker run -d'))
+      ).toBe(false);
+    });
+
+    it('replaces a restricted setup lock with blocked and revokes the setup proxy token', async () => {
+      policy.value = 'blocked';
+      policy.setup = 'restricted';
+      const release = vi.fn(async () => {});
+      vi.mocked(beginWorkspaceEgress).mockResolvedValueOnce({
+        env: [],
+        registration: { release, token: 't', url: 'http://egress.internal:8792' },
+        secretEnv: { HTTP_PROXY: 'p', HTTPS_PROXY: 'p', http_proxy: 'p', https_proxy: 'p' },
+      });
+      const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+      try {
+        const ws = await createWorkspace('https://github.com/acme/repo.git', 'b', 'main');
+        expect(lock.mock.calls[0]?.[2]).toEqual({ mode: 'restricted', replace: true });
+        await ws.finishSetup?.();
+        expect(lock.mock.calls[1]?.[2]).toEqual({ mode: 'blocked', replace: true });
+        expect(blockedEgressAllow).toHaveBeenLastCalledWith(
+          'github.com',
+          expect.not.objectContaining({ egressProxyUrl: expect.anything() })
+        );
+        expect(release).toHaveBeenCalledOnce();
+        await ws.destroy();
+      } finally {
+        lock.mockRestore();
+      }
     });
 
     it('takes the run policy and passes it to the proxy wiring', async () => {
@@ -1648,6 +1883,15 @@ describe('fetchBranchesSubcommand', () => {
 });
 
 describe('killStrayProcessesScript', () => {
+  it('adds fail-closed process verification only for an explicit setup transition', () => {
+    const checked = clearSetupProcessesScript(42);
+    expect(checked).toContain(killStrayProcessesScript(42));
+    expect(checked).toContain('if asw_check; then exit 0; fi');
+    expect(checked).toContain('workspace processes remain or cannot be inspected');
+    expect(checked.trim()).toMatch(/exit 1$/);
+    expect(killStrayProcessesScript(42)).not.toContain('asw_check');
+    expect(clearSetupProcessesScript(42, true)).toContain('readlink "/proc/42/ns/mnt"');
+  });
   // The unfiltered sweep is not executed on the host, where it could signal
   // other processes owned by the test user. The real-process test filters its
   // signals to the spawned child.

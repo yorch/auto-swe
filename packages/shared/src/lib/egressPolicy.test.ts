@@ -1,14 +1,43 @@
 import { describe, expect, it } from 'vitest';
 import {
   EGRESS_POLICIES,
+  effectiveSetupEgressPolicy,
   egressEnforcementWarnings,
   egressPolicyNarrows,
   egressPolicySchema,
   narrowEgressPolicy,
+  setupEgressPolicySchema,
   stricterEgressPolicy,
   summarizeEgressCapabilities,
   type WorkerEgressReport,
 } from './egressPolicy.js';
+
+describe('setup egress policy', () => {
+  it.each([
+    ['open', 'inherit', 'open'],
+    ['open', 'open', 'open'],
+    ['open', 'restricted', 'open'],
+    ['restricted', 'inherit', 'restricted'],
+    ['restricted', 'open', 'open'],
+    ['restricted', 'restricted', 'restricted'],
+    ['blocked', 'inherit', 'blocked'],
+    ['blocked', 'open', 'open'],
+    ['blocked', 'restricted', 'restricted'],
+  ] as const)('%s agent with %s setup uses %s', (agent, setup, expected) => {
+    expect(effectiveSetupEgressPolicy(agent, setup)).toBe(expected);
+  });
+  it('treats restricted setup without a team allowlist as equal to blocked', () => {
+    expect(effectiveSetupEgressPolicy('blocked', 'restricted', false)).toBe('blocked');
+  });
+  it('accepts only the exact supported setup policy values', () => {
+    for (const value of ['inherit', 'open', 'restricted']) {
+      expect(setupEgressPolicySchema.parse(value)).toBe(value);
+    }
+    for (const value of ['', 'blocked', 'OPEN', null, false, 1]) {
+      expect(setupEgressPolicySchema.safeParse(value).success).toBe(false);
+    }
+  });
+});
 
 describe('worker egress capabilities', () => {
   const now = new Date('2026-11-11T00:00:00Z');

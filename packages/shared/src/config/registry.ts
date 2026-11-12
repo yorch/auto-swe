@@ -1,7 +1,12 @@
 import { z } from 'zod';
 import { AGENT_RUN_MAX_WALL_CLOCK_SECONDS } from '../lib/agentRun.js';
 import { GlobListSchema } from '../lib/ciTrigger.js';
-import { type EgressPolicy, egressPolicySchema } from '../lib/egressPolicy.js';
+import {
+  type EgressPolicy,
+  egressPolicySchema,
+  type SetupEgressPolicy,
+  setupEgressPolicySchema,
+} from '../lib/egressPolicy.js';
 import { hasGitNameCharacter } from '../lib/gitIdentityName.js';
 import {
   countGlobStars,
@@ -1995,6 +2000,19 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.number().int().min(0).max(8192),
     unit: 'MB',
+  }),
+
+  'workspace.setupEgressPolicy': defineSetting({
+    defaultValue: 'inherit' as SetupEgressPolicy,
+    description:
+      'Network policy for agent-workspace setup. `inherit` preserves the run egress policy and existing setup order. `open` gives setup the baseline only; `restricted` permits the team allowlist through the egress proxy. A stricter or equal setup policy is ignored. Before agent execution, setup processes are terminated and verified gone, then the run egress lock replaces the setup lock. Attached services remain running in separate containers. Repository-controlled setup can access its declared secrets and workspace proxy credentials under this policy. This is a pinned cascade setting, not a launcher override; shell/containerStep steps are unaffected.',
+    group: 'workspace',
+    label: 'Setup egress policy',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: true,
+    schema: setupEgressPolicySchema,
   }),
   'workspace.toolInstall.agentCallable': defineSetting({
     defaultValue: false,

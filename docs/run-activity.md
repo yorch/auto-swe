@@ -118,7 +118,8 @@ allowlist under `restricted` also needs the egress proxy. Registry proxy availab
 but is not a prerequisite for enforcement. Policy and team-allowlist saves return advisory warnings
 without refusing the save. No fresh worker report leaves readiness advisory, not failed.
 
-The strict lock is applied after provisioning (clone and registry wiring) and before any agent code runs.
+The strict lock is applied after provisioning (clone and registry wiring) and before any agent code runs,
+except for an explicitly looser setup phase described below.
 It covers the agent workspace only:
 
 - **Docker.** A short-lived helper container with `NET_ADMIN` shares the workspace's network
@@ -242,7 +243,76 @@ Active runs poll using `since`, with a 30-second overlap and periodic loaded-pag
 Terminal runs stop polling and receive a final refresh. Paging and browser content-visibility
 hints reduce rendering work; the section does not use a dedicated virtualization library.
 
+### Setup and agent network phases
+
+`workspace.setupEgressPolicy` is ADMIN-only, run-pinned, and overridable at the same workflow-template,
+team and organization scopes as the agent policy. Its default is `inherit`. It is a cascade setting,
+not a launcher override: a launcher can narrow the agent policy but cannot request a setup-policy
+override. Agent-run launch responses record both configured policies in `effective`; run-pinned
+settings retain them for retries. Workspace runtime events record the actual setup and agent policies.
+
+| Setup setting | Effective behavior |
+|---|---|
+| `inherit` | Preserves existing ordering and networking: provision, apply the agent policy, then run setup. No extra transition or sweep. |
+| `open` | When the agent policy is `restricted` or `blocked`, setup has the baseline only, without a cooperative team-allowlist proxy restriction. |
+| `restricted` | When the agent policy is `blocked` and the team allowlist is non-empty, setup gets the existing restricted proxy and verified network lock. A missing egress proxy refuses with `EGRESS_POLICY_UNENFORCEABLE`. An empty allowlist is already equivalent to `blocked`, so it inherits instead. |
+
+A setup setting stricter than or equal to the agent policy is ignored. This setting applies only to
+agent workspaces on Docker and Kubernetes; **shell/containerStep steps are unchanged**.
+
+Provisioning still clones the main repository, wires registries, installs configured catalog tools and
+clones knowledge bases before the setup lock. The looser setup phase covers repository setup scripts,
+dependency installs and cache restoration, Git LFS, submodules, and optional dependency-repository
+checkouts. Deferred setup still waits until the caller has reset to its work branch. Only these setup
+checkouts move earlier on the looser path; inherited runs keep their existing order. Harness preparation,
+agent turns, tests/gates and app previews run under the final agent policy. Setup cache keys distinguish
+the effective looser policy; inherited cache keys are unchanged.
+The transition is one-way: setup repeated after tests or agent execution stays under the final
+agent policy; it never reopens the looser network.
+
+Before tightening, the worker stops and kills setup processes, then verifies that no workspace process
+remains except init and the creation-time keeper. It fails closed and destroys the workspace if processes
+remain, cannot be inspected, or the final lock cannot be proved. UID 1000 cleanup uses trusted system
+paths without a root exec. Docker's root opt-out uses a trusted, networkless helper in the workspace PID
+namespace, with `KILL`/`SYS_PTRACE`, not a root exec in the modified workspace. The helper verifies the
+mount namespace recorded before repository code. Attached services are intentionally long-lived:
+their separate container/mount namespaces are exempt from process cleanup, but they receive the final
+workspace/pod network policy. Services using another UID cannot be created by the capability-dropped,
+no-new-privileges workspace user and are also exempt from its in-container sweep.
+
+The final Docker lock flushes and replaces the setup rules. Before repository setup, Docker resolves
+and records the agent destinations, using a trusted, networkless helper bound only to the daemon-owned
+hosts file. This prepares pins, not a network lock, for `open` setup. The transition verifies those
+pins are unchanged and reuses them without executing a setup-modified resolver or a late root
+workspace command. Kubernetes switches
+the pod's egress-mode label to a distinct, pod-owned agent allow policy. The old setup policy's selector
+no longer matches; its allows cannot stack onto the agent policy. Both policies are garbage-collected
+with the pod, without granting the worker NetworkPolicy update or delete permissions.
+When tightening from restricted setup, the worker first proves a removed allowlisted endpoint
+reachable, then verifies fresh connections to it are blocked. An already-blocked public destination
+does not prove that the setup proxy allowance was removed. An inconclusive pre-check refuses the
+transition rather than declaring it enforced.
+
 ## Limitations
+
+- Looser setup runs **repository-controlled code**, not trusted dependency installation. It can read
+  the checkout, mounted knowledge/dependency repositories, declared setup secrets, registry proxy tokens
+  and credentials in workspace environment/config files, and any wired model/egress proxy credentials.
+  `open` setup can send those to any public destination permitted by the baseline; `restricted` setup
+  can send them to allowed destinations and the wired proxies/git host. Clone and per-fetch git headers
+  are injected only for those calls rather than persisted for setup. Worker-side credentials not wired
+  into the workspace are not exposed by this setting. Do not use looser setup for untrusted repositories
+  with sensitive setup secrets. The final lock cannot undo data already sent or changes to files.
+- `open` means the configured baseline, not access to private networks: metadata remains rejected,
+  private/non-public ranges stay denied except configured DNS, worker proxy ports, the repository git
+  host and operator CIDRs. Kubernetes retains its namespace baseline and cluster DNS. Operator-disabled
+  baseline controls and operator exceptions still apply.
+- The Docker root opt-out needs a runtime that exposes the real workspace PID/mount namespaces to the
+  trusted cleanup helper. If it cannot prove that namespace identity, the transition refuses. The
+  runtime boot gate tests traffic and copy compatibility, not this optional setup-cleanup capability.
+- Intentionally long-lived services are outside the setup process-termination guarantee. Setup can
+  communicate with those services and influence their state; do not treat an attached service as a
+  separate trust boundary from repository code.
 
 - Egress capability reports are self-declared by workers. They refresh every ten minutes without
   re-probing, expire after thirty minutes, and do not prove continued enforcement after boot.

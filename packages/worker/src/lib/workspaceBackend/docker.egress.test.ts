@@ -34,6 +34,10 @@ beforeEach(() => {
   extraHosts = '["host.docker.internal:host-gateway"]';
   getent = { 'git.example.com': '203.0.113.7      STREAM git.example.com\n' };
   spawnCaptureAsync.mockImplementation(async (_f: string, args: string[]) => {
+    if (args[0] === 'inspect' && args[2] === '{{.Id}}\t{{.HostsPath}}') {
+      const id = 'a'.repeat(64);
+      return ok(`${id}\t/var/lib/docker/containers/${id}/hosts`);
+    }
     if (args[0] === 'inspect') {
       return ok(`${extraHosts}\n`);
     }
@@ -51,6 +55,115 @@ beforeEach(() => {
 });
 
 describe('lockEgress', () => {
+  it('prepares even an empty final allowlist without locking, and rejects changed worker alias pins', async () => {
+    const h = { ...handle, id: 'workspace-prepare-empty' };
+    try {
+      await dockerWorkspaceBackend().lockEgress(h, [], { prepareOnly: true, replace: true });
+      expect(execShellAsync).not.toHaveBeenCalled();
+      expect(spawnWithStdinAsync).not.toHaveBeenCalled();
+      hostsFile = hostsFile.replace('172.17.0.1', '203.0.113.66');
+      await expect(dockerWorkspaceBackend().lockEgress(h, [], { replace: true })).rejects.toThrow(
+        'changed the recorded host pin'
+      );
+    } finally {
+      await dockerWorkspaceBackend().remove(h);
+    }
+  });
+  it.each(['', `${'a'.repeat(64)}\t/etc/shadow`])(
+    'refuses an empty or unexpected daemon hosts path: %s',
+    async (metadata) => {
+      const base = spawnCaptureAsync.getMockImplementation();
+      if (!base) {
+        throw new Error('missing Docker fixture');
+      }
+      spawnCaptureAsync.mockImplementation(async (file: string, args: string[], opts: unknown) =>
+        args[0] === 'inspect' && args[2] === '{{.Id}}\t{{.HostsPath}}'
+          ? ok(metadata)
+          : base(file, args, opts)
+      );
+      await expect(
+        dockerWorkspaceBackend().lockEgress(
+          { ...handle, id: 'workspace-hosts-metadata-error' },
+          [{ host: 'git.example.com', port: 443 }],
+          { replace: true }
+        )
+      ).rejects.toThrow('cannot locate the daemon-owned workspace hosts file');
+      expect(spawnWithStdinAsync).not.toHaveBeenCalled();
+      expect(execShellAsync).not.toHaveBeenCalled();
+    }
+  );
+  it('pins post-setup hosts through a trusted daemon-file helper without a root workspace exec', async () => {
+    execShellAsync.mockResolvedValue(LOCKED);
+    const h = { ...handle, id: 'workspace-transition-copy' };
+    try {
+      await dockerWorkspaceBackend().lockEgress(h, [{ host: 'git.example.com', port: 443 }], {
+        mode: 'blocked',
+        replace: true,
+      });
+      expect(spawnCaptureAsync).toHaveBeenCalledWith(
+        'docker',
+        ['exec', h.id, 'getent', 'ahosts', 'git.example.com'],
+        expect.anything()
+      );
+      expect(spawnWithStdinAsync).toHaveBeenCalledWith(
+        'docker',
+        expect.arrayContaining([
+          '--network=none',
+          '--cap-drop=ALL',
+          '--user=0:0',
+          '--mount',
+          `type=bind,src=/var/lib/docker/containers/${'a'.repeat(64)}/hosts,dst=/asw-hosts`,
+        ]),
+        expect.stringContaining('203.0.113.7\tgit.example.com'),
+        expect.anything()
+      );
+      expect(spawnWithStdinAsync.mock.calls[0]?.[1]).not.toContain('--runtime');
+      expect(spawnCaptureAsync.mock.calls.some(([, args]) => args.includes('root'))).toBe(false);
+    } finally {
+      await dockerWorkspaceBackend().remove(h);
+    }
+  });
+
+  it('reuses only unchanged worker pins when tightening a setup lock', async () => {
+    execShellAsync.mockResolvedValue(LOCKED);
+    const h = { ...handle, id: 'workspace-transition-pins' };
+    try {
+      await dockerWorkspaceBackend().lockEgress(h, [{ host: 'git.example.com', port: 443 }], {
+        mode: 'blocked',
+        prepareOnly: true,
+        replace: true,
+      });
+      expect(execShellAsync).not.toHaveBeenCalled();
+      hostsFile += '203.0.113.7\tgit.example.com\n';
+      spawnCaptureAsync.mockClear();
+      await dockerWorkspaceBackend().lockEgress(h, [{ host: 'git.example.com', port: 443 }], {
+        mode: 'blocked',
+        replace: true,
+      });
+      expect(spawnCaptureAsync.mock.calls.some(([, args]) => args.includes('getent'))).toBe(false);
+      hostsFile = hostsFile.replace('203.0.113.7', '203.0.113.66');
+      await expect(
+        dockerWorkspaceBackend().lockEgress(h, [{ host: 'git.example.com', port: 443 }], {
+          mode: 'blocked',
+          replace: true,
+        })
+      ).rejects.toThrow('changed the recorded host pin');
+    } finally {
+      await dockerWorkspaceBackend().remove(h);
+    }
+  });
+
+  it('fails closed if daemon-side host pin writing fails', async () => {
+    execShellAsync.mockResolvedValue(LOCKED);
+    const h = { ...handle, id: 'workspace-transition-copy-error' };
+    spawnWithStdinAsync.mockResolvedValueOnce({ exitCode: 1, stderr: 'copy failed', stdout: '' });
+    await expect(
+      dockerWorkspaceBackend().lockEgress(h, [{ host: 'git.example.com', port: 443 }], {
+        replace: true,
+      })
+    ).rejects.toThrow('cannot write the workspace /etc/hosts');
+    expect(execShellAsync).not.toHaveBeenCalled();
+  });
   it('runs one NET_ADMIN helper in the workspace namespace and accepts a DROP read-back', async () => {
     execShellAsync.mockResolvedValue(LOCKED);
     await dockerWorkspaceBackend().lockEgress(handle, [{ host: '203.0.113.7', port: 443 }]);

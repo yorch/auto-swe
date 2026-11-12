@@ -23,11 +23,15 @@ const cfg = vi.hoisted(() => ({
     'workspace.agentRunMaxConcurrentPerTeam': 2,
     'workspace.agentRunMaxSteps': 50,
     'workspace.agentRunMaxWallClockSeconds': 1800,
+    'workspace.setupEgressPolicy': 'inherit',
   } as Record<string, number | string | boolean | string[]>,
 }));
 vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async () => cfg.egressCeiling),
-  resolveSettings: vi.fn(async () => cfg.settings),
+  resolveSettings: vi.fn(async () => ({
+    ...cfg.settings,
+    'workspace.egressPolicy': cfg.egressCeiling,
+  })),
 }));
 vi.mock('@auto-swe/shared/lib/connectionCredential', async (orig) => ({
   ...(await orig<typeof import('@auto-swe/shared/lib/connectionCredential')>()),
@@ -281,7 +285,13 @@ describe('POST /api/v1/agent-runs', () => {
     expect(res.statusCode).toBe(201);
     expect(events).toEqual(['runInput', 'ledger', 'start']);
     const body = res.json().data;
-    expect(body.effective).toEqual({ deliver: 'none', maxSteps: 50, maxWallClockSeconds: 1800 });
+    expect(body.effective).toEqual({
+      deliver: 'none',
+      egressPolicy: 'open',
+      maxSteps: 50,
+      maxWallClockSeconds: 1800,
+      setupEgressPolicy: 'inherit',
+    });
     expect(started[0]?.id).toMatch(/^agent-aaaaaaaa-[0-9a-f]{32}$/);
     const req = started[0]?.input.request as Record<string, unknown>;
     expect(req).toMatchObject({
@@ -407,12 +417,17 @@ describe('POST /api/v1/agent-runs', () => {
         egressPolicy: 'blocked',
       });
       expect(res.json().data.effective.egressPolicy).toBe('blocked');
+      expect(res.json().data.effective.setupEgressPolicy).toBe('inherit');
     });
 
     it('leaves the field off the workflow input when none is requested', async () => {
       const res = await post({});
       expect(res.statusCode).toBe(201);
       expect(started[0]?.input.request).not.toHaveProperty('egressPolicy');
+      expect(res.json().data.effective).toMatchObject({
+        egressPolicy: 'open',
+        setupEgressPolicy: 'inherit',
+      });
     });
 
     it('refuses a request looser than the configured policy', async () => {

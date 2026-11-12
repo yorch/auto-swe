@@ -382,6 +382,7 @@ async function runInCheckout(args: {
     }
   }
   await workspace.runSetup?.();
+  await workspace.finishSetup?.();
   // Where the checkout is before the agent runs: what a pause saves the tree against.
   // Read only for a node that may pause, so a read-only node runs no extra command.
   const startSha = input.allowPause ? (await workspace.exec('git rev-parse HEAD')).trim() : '';

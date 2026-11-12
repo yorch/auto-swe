@@ -31,8 +31,8 @@ than settings because the gateway applies them to Temporal once, at startup, so 
 would not take effect until a restart. Past boot the resolvers fall back to defaults instead of throwing, because they
 run on paths (the scanners) that must never abort their caller.
 
-Two workspace values besides the agent-run bounds live in the registry: `workspace.egressPolicy` (the run egress
-policy) and `workspace.gitHelperImage`, which cascades to team and
+Workspace values besides the agent-run bounds live in the registry: `workspace.egressPolicy` (the run egress
+policy), `workspace.setupEgressPolicy` (setup networking), and `workspace.gitHelperImage`, which cascades to team and
 organization because a team on an isolated network may need its own mirror. The bounds on agent runs
 (`workspace.agentRunMaxSteps`, `workspace.agentRunMaxWallClockSeconds`,
 `workspace.agentRunMaxConcurrentGlobal`, `workspace.agentRunMaxConcurrentPerTeam` and
@@ -583,6 +583,15 @@ and retention use `workflow.httpCaptureEnabled`, `workflow.httpCaptureBodyMaxByt
 workflow template, team and organization scope) sets how much outbound network access a run's
 containers get. A launch can only narrow it. See
 [run egress policy](./run-activity.md#run-egress-policy).
+
+`workspace.setupEgressPolicy` (`inherit`, `open`, `restricted`; default `inherit`) has the same
+ADMIN permission floor, override scopes and run pinning. A looser value applies only to agent-workspace
+setup; a stricter or equal value behaves as `inherit`. `open` uses only the baseline; `restricted`
+uses the team allowlist and existing proxy/lock enforcement. The worker terminates and verifies setup
+processes before replacing the rules with the agent lock. The settings UI reads its enum directly from
+the registry. It is not a launch override and does not change shell/containerStep networking. See
+[setup and agent network phases](./run-activity.md#setup-and-agent-network-phases) for secrets and service
+lifetime boundaries. Agent-run `effective` output records both configured policies.
 
 The `uiValidation` group contains ADMIN-only, GLOBAL-only settings for run evidence:
 `uiValidation.maxScreenshotBytes` (5,000,000 bytes), `uiValidation.maxVideoBytes` (50,000,000
