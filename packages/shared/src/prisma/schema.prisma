@@ -2120,6 +2120,8 @@ model EventEndpoint {
   subjectPointer           String?   @map("subject_pointer")
   scopePointer             String?   @map("scope_pointer")
   timePointer              String?   @map("time_pointer")
+  /// Event types that cancel the runs this endpoint started for the event's subject.
+  cancelOnTypes            String[]  @default([]) @map("cancel_on_types")
   secretCiphertext         Bytes     @map("secret_ciphertext")
   secretNonce              Bytes     @map("secret_nonce")
   secretAuthTag            Bytes     @map("secret_auth_tag")

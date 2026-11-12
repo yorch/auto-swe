@@ -41,6 +41,7 @@ const Prefix = z
   .refine((s) => !/[\r\n]/.test(s), 'one line');
 
 const ConfigFields = {
+  cancelOnTypes: z.array(FixedEventTypeSchema).max(10),
   fixedType: FixedEventTypeSchema.nullable(),
   format: z.enum(EVENT_ENDPOINT_FORMATS),
   idPointer: JsonPointerSchema.nullable(),
@@ -57,6 +58,7 @@ const ConfigFields = {
 
 const CreateBody = z.object({
   ...ConfigFields,
+  cancelOnTypes: ConfigFields.cancelOnTypes.optional(),
   enabled: z.boolean().default(true),
   fixedType: ConfigFields.fixedType.optional(),
   idPointer: ConfigFields.idPointer.optional(),
@@ -112,6 +114,7 @@ function normaliseScheme(
 
 /** What anyone who may read an endpoint sees: never a secret, only its last four characters. */
 const publicSelect = {
+  cancelOnTypes: true,
   createdAt: true,
   enabled: true,
   fixedType: true,
@@ -253,6 +256,7 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
         data: {
           ...scheme.value,
           ...secret.data,
+          cancelOnTypes: [...new Set(body.cancelOnTypes ?? [])],
           createdById: user.sub,
           enabled: body.enabled,
           fixedType: typeSource.fixedType,
@@ -351,7 +355,12 @@ export const eventEndpointRoutes: FastifyPluginAsync = async (fastify) => {
       } = body;
       const before = view({ ...row });
       const updated = await fastify.prisma.eventEndpoint.update({
-        data: { ...rest, ...(typeColumns ?? {}), ...(scheme?.ok ? scheme.value : {}) },
+        data: {
+          ...rest,
+          ...(rest.cancelOnTypes ? { cancelOnTypes: [...new Set(rest.cancelOnTypes)] } : {}),
+          ...(typeColumns ?? {}),
+          ...(scheme?.ok ? scheme.value : {}),
+        },
         select: publicSelect,
         where: { id: row.id },
       });
