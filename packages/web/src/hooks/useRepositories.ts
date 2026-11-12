@@ -47,6 +47,8 @@ export interface CreateConnectionBody {
   teamId: string;
   description?: string;
   config?: unknown;
+  /** Write-only; stored encrypted. */
+  apiToken?: string;
   // git_repo only
   organizationName?: string;
   repoName?: string;
@@ -73,6 +75,8 @@ export interface UpdateRepoBody {
   githubApiUrl?: string | null;
   name?: string | null;
   config?: unknown;
+  /** A new write-only token; leave out to keep the stored one. */
+  apiToken?: string;
 }
 
 export function useRepositories(

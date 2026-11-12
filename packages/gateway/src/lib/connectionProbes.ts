@@ -627,3 +627,69 @@ export async function probeRegistryRow(row: RegistryRow): Promise<ProbeResult> {
     upstreamUrl: row.upstreamUrl,
   });
 }
+
+const PAGERDUTY_API = 'https://api.pagerduty.com';
+
+/**
+ * A `pagerduty` connection: PagerDuty is asked for the users matching the configured `fromEmail`,
+ * which shows the REST API key is accepted and that notes would be posted as a real user (PagerDuty
+ * refuses a note whose `From` is no user of the account).
+ */
+export async function probePagerDutyConnection(
+  apiToken: string,
+  fromEmail: string | undefined,
+  doFetch: typeof fetch = createGuardedFetch({ allowPrivate: false })
+): Promise<ProbeResult> {
+  const startedAt = Date.now();
+  const query = new URLSearchParams({ limit: '25', query: fromEmail ?? '' });
+  let reply: Reply;
+  try {
+    const res = await doFetch(`${PAGERDUTY_API}/users?${query.toString()}`, {
+      headers: {
+        Accept: 'application/vnd.pagerduty+json;version=2',
+        Authorization: `Token token=${apiToken}`,
+      },
+      redirect: 'error',
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    reply = { body: res.ok ? await res.json().catch(() => null) : null, status: res.status };
+  } catch {
+    reply = { body: null, status: 0 };
+  }
+  if (reply.status === 0) {
+    return summarize(
+      [fail('API key', `PagerDuty could not be reached: ${UNREACHABLE}`)],
+      startedAt
+    );
+  }
+  if (reply.status < 200 || reply.status >= 300) {
+    return summarize(
+      [fail('API key', `PagerDuty refused the request: ${refusal(reply.status)}.`)],
+      startedAt
+    );
+  }
+  const checks = [pass('API key', 'PagerDuty accepted the REST API key.')];
+  if (!fromEmail) {
+    checks.push(
+      fail('From email', 'No fromEmail is configured, so runs cannot post incident notes.')
+    );
+    return summarize(checks, startedAt);
+  }
+  const users = asRecord(reply.body).users;
+  const wanted = fromEmail.toLowerCase();
+  const found =
+    Array.isArray(users) &&
+    users.some((u) => {
+      const email = asRecord(u).email;
+      return typeof email === 'string' && email.toLowerCase() === wanted;
+    });
+  checks.push(
+    found
+      ? pass('From email', 'Notes will be posted as a PagerDuty user of this account.')
+      : fail(
+          'From email',
+          'No PagerDuty user of this account has the configured fromEmail, so PagerDuty would refuse its notes.'
+        )
+  );
+  return summarize(checks, startedAt);
+}
