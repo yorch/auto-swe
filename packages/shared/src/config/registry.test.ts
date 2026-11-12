@@ -2,6 +2,35 @@ import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import { SETTING_DEFINITIONS } from './registry.js';
 
+describe('lesson recall experiment settings', () => {
+  it('pins validated recall modes with template and tenant overrides', () => {
+    const setting = SETTING_DEFINITIONS['memory.lessonRecall'];
+    expect(setting.defaultValue).toBe('on');
+    expect(setting.requiredRole).toBe('LEAD');
+    expect(setting.overridableAt).toEqual(['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION']);
+    expect(setting.runPinned).toBe(true);
+    for (const value of ['on', 'shadow', 'off']) {
+      expect(setting.schema.safeParse(value).success).toBe(true);
+    }
+    for (const value of ['ON', '', null, true]) {
+      expect(setting.schema.safeParse(value).success).toBe(false);
+    }
+  });
+  it('pins a tenant-only holdout bounded to integer percentages from zero to fifty', () => {
+    const setting = SETTING_DEFINITIONS['memory.lessonHoldoutPercent'];
+    expect(setting.defaultValue).toBe(0);
+    expect(setting.requiredRole).toBe('LEAD');
+    expect(setting.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
+    expect(setting.runPinned).toBe(true);
+    for (const value of [0, 1, 25, 50]) {
+      expect(setting.schema.safeParse(value).success).toBe(true);
+    }
+    for (const value of [-1, 51, 1.5, '2', null]) {
+      expect(setting.schema.safeParse(value).success).toBe(false);
+    }
+  });
+});
+
 describe('lesson quarantine threshold', () => {
   it('is live, LEAD-controlled, owner-scoped and bounded', () => {
     const setting = SETTING_DEFINITIONS['memory.lessonFlagQuarantineThreshold'];

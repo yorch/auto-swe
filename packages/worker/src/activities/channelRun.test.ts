@@ -204,6 +204,8 @@ describe('startChannelRun', () => {
     });
     const data = p.workflowRun.create.mock.calls[0][0].data;
     expect(data.pinnedSettings).toEqual({ 'workflow.maxTransitions': 500 });
+    expect(data).toMatchObject({ lessonRecallArm: 'ON', lessonRecallHeldOut: false });
+    expect(data.id).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it('pins at the supplied tenant without a channel scope when the channel is gone', async () => {

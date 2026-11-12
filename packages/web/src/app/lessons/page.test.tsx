@@ -36,6 +36,7 @@ function mock(rows: unknown[], managedRepoIds?: string[]) {
       data: rows,
       meta: { limit: 20, managedRepoIds, offset: 0, total: rows.length },
     }),
+    'GET /api/v1/lessons/recall-experiment': () => ({ data: null }),
     'GET /api/v1/lessons/stats': () => ({ data: [] }),
     'GET /api/v1/repositories': () => ({
       data: [{ id: 'r1', organizationName: 'acme', repoName: 'api', type: 'git_repo' }],
@@ -73,6 +74,7 @@ describe('LessonsPage', () => {
     expect(await screen.findByText('Run migrations before deploying')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Delete lesson' })).toBeTruthy();
     expect(await screen.findByText('Lessons by repository')).toBeTruthy();
+    expect(await screen.findByText('Lesson recall outcome comparison')).toBeTruthy();
     expect(requestedPaths(fetchSpy)).toContain('/api/v1/lessons/stats');
   });
 });
@@ -115,6 +117,8 @@ describe('LessonsPage (engineer)', () => {
     const paths = requestedPaths(fetchSpy);
     expect(paths).not.toContain('/api/v1/lessons/stats');
     expect(paths).not.toContain('/api/v1/admin/config/consolidation');
+    expect(paths).not.toContain('/api/v1/lessons/recall-experiment');
+    expect(screen.queryByText('Lesson recall outcome comparison')).toBeNull();
   });
 
   it('offers their own repositories as the filter', async () => {

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Prisma } from '@auto-swe/shared';
 import { snapshotPinnedSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
@@ -11,6 +12,7 @@ import {
 } from '@auto-swe/shared/workflow/runAttribution';
 import { logError } from '../lib/activityLog.js';
 import { endWorkflowRun } from '../lib/endRun.js';
+import { assignLessonRecall } from '../lib/lessonRecallAssignment.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import {
   snapshotAgentRuntimes,
@@ -268,9 +270,12 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
     workflowTemplateId: templateId,
   });
 
+  const runId = randomUUID();
   try {
     await prisma.workflowRun.create({
       data: {
+        id: runId,
+        ...assignLessonRecall(runId, pinnedSettings),
         agentRuntimes: agentRuntimes as Prisma.InputJsonObject,
         agentVersions,
         attributedOrgId: attribution.attributedOrgId,

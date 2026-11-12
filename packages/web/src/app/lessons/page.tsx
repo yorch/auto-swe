@@ -10,6 +10,7 @@ import {
   LessonQuarantineActions,
   LessonQuarantineBadge,
 } from '@/components/lessons/LessonFlags';
+import { LessonRecallExperiment } from '@/components/lessons/LessonRecallExperiment';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
@@ -194,6 +195,10 @@ export default function LessonsPage() {
           <DocLink {...HELP_LINKS.conceptsLessons} label="What is a lesson?" />
         </p>
       </PageHelp>
+
+      {(isAdmin || managed.size > 0) && (
+        <LessonRecallExperiment repositories={repoOptions.filter((repo) => canManage(repo.id))} />
+      )}
 
       {triggerNotice && (
         <div ref={noticeRef}>

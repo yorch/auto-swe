@@ -1,6 +1,7 @@
 import type { Prisma } from '@auto-swe/shared';
 import { forgetMemoryItems } from '@auto-swe/shared/lib/memoryForget';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { QUALITY_FIX_STEPS } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -12,6 +13,7 @@ import {
   RESTORED_LESSON,
   syncFlagQuarantine,
 } from '../lib/lessonQuarantine.js';
+import { lessonRecallExperiment } from '../lib/lessonRecallExperiment.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
@@ -89,6 +91,92 @@ const NOT_A_LEAD = "Only a lead of the repository's team can manage its lessons"
 
 export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  app.get(
+    '/recall-experiment',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: {
+        querystring: z
+          .object({
+            repoId: z.string().uuid().optional(),
+            since: z.coerce.date().optional(),
+            teamId: z.string().uuid().optional(),
+          })
+          .refine(
+            (query) => Boolean(query.repoId) !== Boolean(query.teamId),
+            'Specify exactly one of repoId or teamId'
+          ),
+      },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const { repoId, teamId } = request.query;
+      let ownerTeamId = teamId;
+      if (repoId) {
+        const repo = await fastify.prisma.connection.findFirst({
+          select: { teamId: true },
+          where: { id: repoId, type: 'git_repo' },
+        });
+        if (!repo) {
+          return sendError(reply, 404, 'NOT_FOUND', 'Repository not found');
+        }
+        ownerTeamId = repo.teamId;
+      }
+      if (!ownerTeamId || !(await canManageTeamRepos(fastify.prisma, user, ownerTeamId))) {
+        return sendError(reply, 403, 'FORBIDDEN', NOT_A_LEAD);
+      }
+      const since = request.query.since ?? new Date(Date.now() - 30 * 86_400_000);
+      const runs = await fastify.prisma.workflowRun.findMany({
+        orderBy: { startedAt: 'desc' },
+        select: {
+          attributedPullRequests: { select: { status: true } },
+          costUsdAccrued: true,
+          evalResults: {
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+            select: { passed: true, scorer: true, source: true },
+            where: { source: { in: ['GATE', 'MERGE'] } },
+          },
+          lessonRecallArm: true,
+          lessonRecallHeldOut: true,
+          status: true,
+          steps: {
+            select: { attempt: true, nodeId: true },
+            where: {
+              startedAt: { not: null },
+              status: { not: 'SKIPPED' },
+              stepName: { in: [...QUALITY_FIX_STEPS] },
+            },
+          },
+          traces: {
+            select: { outputJson: true, toolName: true },
+            where: {
+              toolName: { in: ['lessons.retrieved', 'lessons.shadow_retrieved'] },
+              type: 'activity_event',
+            },
+          },
+        },
+        take: 5001,
+        where: {
+          ...(repoId
+            ? { attributedRepoId: repoId }
+            : { attributedRepo: { teamId: ownerTeamId, type: 'git_repo' } }),
+          endedAt: { not: null },
+          lessonRecallArm: { not: null },
+          startedAt: { gte: since },
+        },
+      });
+      if (runs.length > 5000) {
+        return sendError(
+          reply,
+          422,
+          'WINDOW_TOO_LARGE',
+          'More than 5000 runs match; choose a later since date or a single repository.'
+        );
+      }
+      return { data: { ...lessonRecallExperiment(runs), since: since.toISOString() } };
+    }
+  );
 
   // GET /api/v1/lessons — List lessons
   app.get(

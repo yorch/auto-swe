@@ -734,6 +734,19 @@ export const SETTING_DEFINITIONS = {
     schema: z.number().int().min(0).max(20),
     unit: 'flags',
   }),
+  'memory.lessonHoldoutPercent': defineSetting({
+    defaultValue: 0,
+    description:
+      'Percentage of otherwise on runs deterministically assigned to shadow recall. Pinned at run creation; configured shadow/off runs are not held out.',
+    group: 'memory',
+    label: 'Lesson recall holdout',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: true,
+    schema: z.number().int().min(0).max(50),
+    unit: '%',
+  }),
   'memory.lessonMaxAgeDays': defineSetting({
     defaultValue: 0,
     description:
@@ -746,6 +759,18 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.number().int().min(0).max(36_500),
     unit: 'days',
+  }),
+  'memory.lessonRecall': defineSetting({
+    defaultValue: 'on',
+    description:
+      'Repository lesson recall: on supplies lessons, shadow measures retrieval without exposing lessons, off skips retrieval. Pinned for each new run.',
+    group: 'memory',
+    label: 'Lesson recall mode',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: true,
+    schema: z.enum(['on', 'shadow', 'off']),
   }),
   'memory.lessonTranscriptEvidence': defineSetting({
     defaultValue: true,

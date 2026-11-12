@@ -335,6 +335,10 @@ Use the `loadSkill` tool to load the full guidance for any skill before applying
 
 ### 3.2.1 Memory tools (`searchLessons`, `explainLesson`)
 
+The persisted workflow-run lesson recall arm controls both tools: SHADOW and OFF return an
+unavailable message without retrieving lesson text; ON and runless contexts retain normal access.
+See [memory.md](./memory.md#recall-modes-and-holdout) for assignment, tracing and outcome comparison.
+
 When the session works on a repository — the implementer, and every fix session (`ciFixer`,
 `reviewFixer`, `gateFixer`) — two read-only tools are added beside the workspace tools, like
 `loadSkill` outside `toolKeys`. Both are bound to the session's repository in code, never by an

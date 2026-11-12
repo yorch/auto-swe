@@ -6,15 +6,11 @@ import { logWarn } from '../activityLog.js';
 import { asPinnedSettings, backfillPinnedSettings, hasEveryPin } from './pinnedSettings.js';
 import type { ResolveCtx } from './types.js';
 
-/// Look up `{ teamId, workflowTemplateId }` for the currently-executing
-/// Temporal activity. Both fields may be undefined when the lookup races
-/// against `createWorkflowRun` or when the activity is invoked outside a
-/// real workflow (e.g. unit tests). Cached so repeated calls within one
-/// activity invocation don't re-hit Postgres.
-export async function currentRequestContext(): Promise<ResolveCtx> {
-  let wid: string | undefined;
+/** The workflow identity shared by pinned-settings and lesson-arm lookups. */
+export function currentRequestWorkflowId(): string | undefined {
+  let execution: ReturnType<typeof activityInfo>['workflowExecution'];
   try {
-    wid = activityInfo().workflowExecution?.workflowId;
+    execution = activityInfo().workflowExecution;
   } catch (err) {
     // `activityInfo()` throws with a specific message when called outside an
     // activity context (worker boot, unit tests). Any other error is a real
@@ -23,10 +19,23 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
       err instanceof Error &&
       /activity context (not initialized|is not available)/i.test(err.message)
     ) {
-      return {};
+      return undefined;
     }
     throw err;
   }
+  if (execution && !execution.workflowId) {
+    throw new Error('Activity workflow identity is unavailable');
+  }
+  return execution?.workflowId;
+}
+
+/// Look up `{ teamId, workflowTemplateId }` for the currently-executing
+/// Temporal activity. Both fields may be undefined when the lookup races
+/// against `createWorkflowRun` or when the activity is invoked outside a
+/// real workflow (e.g. unit tests). Cached so repeated calls within one
+/// activity invocation don't re-hit Postgres.
+export async function currentRequestContext(): Promise<ResolveCtx> {
+  const wid = currentRequestWorkflowId();
   if (!wid) {
     return {};
   }

@@ -3,6 +3,7 @@ import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { LessonSummary } from '@auto-swe/shared/types/workflow';
 import type { AgentTracer } from './agentTracer.js';
+import { currentLessonRecallArm } from './lessonRecallArm.js';
 import { retrieveSimilarLessons } from './lessonRetrieval.js';
 import { fenceRecalledMemory, memoryInjectionMatches } from './memoryGuard.js';
 
@@ -29,10 +30,19 @@ export async function recallLessonsBlock(input: {
   recalledFor: string;
 }): Promise<string> {
   const query = input.query.trim().slice(0, QUERY_LIMIT);
-  if (!input.repoId || !query) {
-    return '';
-  }
   try {
+    const arm = await currentLessonRecallArm();
+    if (arm === 'OFF' || !input.repoId || !query) {
+      input.tracer?.addActivityEvent({
+        name: 'lessons.recall_skipped',
+        outputJson: {
+          arm,
+          reason: arm === 'OFF' ? 'arm' : !input.repoId ? 'no_repository' : 'empty_query',
+          recalledFor: input.recalledFor,
+        },
+      });
+      return '';
+    }
     const defaults = await resolveWorkflowDefaults();
     const lessons = await retrieveSimilarLessons(
       query,
@@ -40,19 +50,30 @@ export async function recallLessonsBlock(input: {
       defaults.lessonRetrievalLimit,
       defaults.lessonRetrievalThreshold
     );
-    if (lessons.length === 0) {
-      return '';
-    }
     input.tracer?.addActivityEvent({
-      name: 'lessons.retrieved',
+      name: arm === 'SHADOW' ? 'lessons.shadow_retrieved' : 'lessons.retrieved',
       outputJson: {
+        arm,
         count: lessons.length,
-        lessons: lessons.map((l) => ({ failureType: l.failureType, lessonId: l.lessonId })),
+        lessons: lessons.map((l) => ({
+          failureType: l.failureType,
+          lessonId: l.lessonId,
+          similarity: l.similarity,
+        })),
+        promptInjected: arm === 'ON' && lessons.length > 0,
         recalledFor: input.recalledFor,
+        result: lessons.length ? 'matched' : 'no_match',
       },
     });
+    if (arm === 'SHADOW' || lessons.length === 0) {
+      return '';
+    }
     return `\n\n${fenceRecalledMemory('## Lessons from Previous Workflows', lessons.map(lessonLine))}`;
   } catch {
+    input.tracer?.addActivityEvent({
+      name: 'lessons.recall_error',
+      outputJson: { recalledFor: input.recalledFor },
+    });
     return '';
   }
 }
@@ -76,6 +97,9 @@ export function lowConfidence(confidence: number | null | undefined): boolean {
 
 /** What `searchLessons` returns: the same lessons recall would, for the agent's own query. */
 export async function searchLessons(repoId: string, query: string, limit: number) {
+  if ((await currentLessonRecallArm()) !== 'ON') {
+    return [];
+  }
   const defaults = await resolveWorkflowDefaults();
   const lessons = await retrieveSimilarLessons(
     query.slice(0, QUERY_LIMIT),
@@ -121,6 +145,9 @@ export async function explainLesson(
   repoId: string,
   lessonId: string
 ): Promise<LessonExplanation | null> {
+  if ((await currentLessonRecallArm()) !== 'ON') {
+    return null;
+  }
   const row = await runUnscoped(
     "bounded to the run's own repository by the where clause",
     ['MemoryItem'],
