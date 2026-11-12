@@ -234,7 +234,7 @@ describe('normalizeAnthropicBaseUrl', () => {
 });
 
 describe('preparing the container', () => {
-  it('installs bash and copies in the binary that matches the container, once per workspace', async () => {
+  it('checks bash and copies in the binary that matches the container, once per workspace', async () => {
     const { runtime, workspace, exec } = setup();
     h.script.push([[init('s1'), success('one')]], [[init('s1'), success('two')]]);
 
@@ -244,7 +244,8 @@ describe('preparing the container', () => {
     const commands = workspace.execCapture.mock.calls.map((c) => c[0]);
     // Platform probe + bash once; the binary's hash before every turn (and after the copy).
     expect(commands.filter((c) => c.startsWith('uname'))).toHaveLength(1);
-    expect(commands.filter((c) => c.includes('apk add --no-cache bash'))).toHaveLength(1);
+    expect(commands.filter((c) => c === 'command -v bash >/dev/null 2>&1')).toHaveLength(1);
+    expect(commands.some((c) => c.includes('apk add'))).toBe(false);
     expect(
       commands.filter((c) => c.startsWith('sha256sum /workspace/.harness/claude'))
     ).toHaveLength(3);

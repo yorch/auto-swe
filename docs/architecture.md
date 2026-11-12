@@ -1240,8 +1240,12 @@ anything else in the system. `createWorkspace()` (`activities/workspace.ts`) app
 | Provisioning failure | The container is named before `docker run`, and any failure from `docker run` onward removes it by that name |
 
 Repository setup, git configuration, package caches and catalog tool installation run as the
-workspace user. Executor images must carry git and, for Claude Code, bash; the curated images
-provide them. Catalog tools install without a package manager under `/workspace/.tools`, and
+workspace user. Docker preparation installs missing git and bash through a fixed root bootstrap,
+before any clone, setup or agent code. It uses absolute package-manager paths, a clean environment
+and a system-only PATH from `/`. Root bootstrap access is one-shot and closed before the workspace
+handle is returned; ordinary exec revokes it too, and attached handles have no bootstrap authority.
+Unsupported images or failed installs fail creation clearly. Curated images preinstall these tools.
+Catalog tools install without a package manager under `/workspace/.tools`, and
 Claude Code and Pi use writable paths under `/workspace/.harness`. Dependency-cache keys include
 the UID and HOME so an archive from a different execution identity is not reused. Trusted agent-run
 delivery stages imported files under `/workspace/.agent-stage`, not a root-owned directory at `/`.

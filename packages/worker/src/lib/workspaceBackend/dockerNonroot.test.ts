@@ -35,9 +35,80 @@ beforeEach(() => {
   );
   vi.mocked(spawnCaptureAsync).mockResolvedValue(ok);
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 describe('Docker workspace user', () => {
+  it('installs tools as root with a clean system PATH before returning the workspace', async () => {
+    const created = await backend.create({
+      ...spec,
+      env: ['PATH=/workspace/bin', 'LD_PRELOAD=/workspace/evil.so'],
+    });
+    const command = vi
+      .mocked(execShellAsync)
+      .mock.calls.find(([cmd]) => cmd.includes("'--user' '0'"))?.[0];
+    expect(command).toContain("'--workdir' '/'");
+    expect(command).toContain(
+      "'/usr/bin/env' '-i' 'PATH=/usr/sbin:/usr/bin:/sbin:/bin' 'HOME=/root' '/bin/sh'"
+    );
+    expect(command).toContain('LD_PRELOAD=');
+    expect(command).toContain('LD_AUDIT=');
+    expect(command).toContain('/sbin/apk add');
+    expect(command).toContain('/usr/bin/apt-get');
+    expect(command).not.toContain('/workspace');
+    await expect(backend.bootstrapTools(created)).rejects.toThrow('root execution is forbidden');
+    await backend.exec(created, ['sh', '-c', 'id'], { heartbeatLabel: 'test' });
+    await expect(backend.bootstrapTools(created)).rejects.toThrow('root execution is forbidden');
+    await expect(backend.bootstrapTools(backend.attach(created.id))).rejects.toThrow(
+      'root execution is forbidden'
+    );
+  });
+
+  it('revokes root access on the first ordinary exec even during preparation', async () => {
+    const bootstrap = backend.bootstrapTools.bind(backend);
+    vi.spyOn(backend, 'bootstrapTools').mockImplementationOnce(async (h) => {
+      await backend.execShell(backend.attach(h.id), ['sh', '-c', 'true'], {
+        heartbeatLabel: 'test',
+      });
+      await bootstrap(h);
+    });
+    await expect(backend.create(spec)).rejects.toThrow('root execution is forbidden');
+    expect(vi.mocked(execShellAsync).mock.calls.some(([cmd]) => cmd.includes("'--user' '0'"))).toBe(
+      false
+    );
+    expect(execShellAsync).toHaveBeenLastCalledWith(
+      "docker rm -f 'workspace-nonroot'",
+      expect.anything()
+    );
+  });
+
+  it('cleans up and reports tool bootstrap failures before handing off the workspace', async () => {
+    vi.mocked(execShellAsync).mockImplementation(async (cmd) => {
+      if (cmd.includes("'--user' '0'")) {
+        throw new Error('workspace bootstrap: cannot install git/bash');
+      }
+      return cmd.includes('PPid:') ? '7\n' : '';
+    });
+    await expect(backend.create(spec)).rejects.toThrow('cannot install git/bash');
+    expect(execShellAsync).toHaveBeenLastCalledWith(
+      "docker rm -f 'workspace-nonroot'",
+      expect.anything()
+    );
+  });
+
+  it('refuses concurrent ordinary execution while the root bootstrap is running', async () => {
+    vi.mocked(execShellAsync).mockImplementation(async (cmd) => {
+      if (cmd.includes("'--user' '0'")) {
+        await expect(
+          backend.exec(backend.attach(spec.name), ['sh', '-c', 'true'], { heartbeatLabel: 'test' })
+        ).rejects.toThrow('ordinary execution is forbidden during root preparation');
+      }
+      return cmd.includes('PPid:') ? '7\n' : '';
+    });
+    await backend.create(spec);
+  });
   it.each(['', 'false', 'TRUE'])('uses UID/GID 1000 and a writable HOME for %j', async (raw) => {
     vi.stubEnv('WORKSPACE_RUN_AS_ROOT', raw);
     let source = '';

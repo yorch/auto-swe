@@ -286,23 +286,19 @@ export function baseUrlMayCarryCredential(baseUrl: string): boolean {
 }
 
 /**
- * Make sure bash is there (Claude Code refuses to start a shell tool without
- * it, and Alpine ships only busybox `sh`), and make the harness's home.
+ * Verify the prepared shell and make the harness's home.
  */
 async function prepareContainer(workspace: Workspace): Promise<void> {
-  const bash = await workspace.execCapture(
-    'command -v bash >/dev/null 2>&1 || { [ "$(id -u)" = 0 ] && command -v apk >/dev/null 2>&1 && apk add --no-cache bash >/dev/null 2>&1; }; command -v bash >/dev/null 2>&1',
-    { timeoutMs: 120_000 }
-  );
+  const bash = await workspace.execCapture('command -v bash >/dev/null 2>&1', {
+    timeoutMs: 120_000,
+  });
   if (bash.exitCode !== 0) {
-    // The workspace's network was locked before this ran (`createWorkspace`), so `apk add` cannot
-    // reach a package mirror under these policies: the image itself must carry bash.
     const locked =
       workspace.egressPolicy === 'blocked' || workspace.egressPolicy === 'restricted'
-        ? ` Egress policy '${workspace.egressPolicy}' locks the workspace's network before bash could be installed from a package mirror: install bash in the image.`
+        ? ` Egress policy '${workspace.egressPolicy}' is already locked: install bash in the image.`
         : '';
     throw ApplicationFailure.nonRetryable(
-      `The workspace image has no bash and it could not be installed (it needs to run as root with network access on Alpine). Claude Code needs bash for its shell tool; use an executor image that includes it.${locked}`,
+      `The prepared workspace has no bash. Claude Code needs bash for its shell tool; install bash in the image or fix workspace bootstrap. Package installation is forbidden after preparation.${locked}`,
       'HARNESS_NO_SHELL'
     );
   }

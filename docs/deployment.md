@@ -60,11 +60,10 @@ Each build also records its settings on the connection (`executorImageBuild`). A
 (`cron: '0 6 * * 1'`) rebuilds every active repository that has such a record, so the workflow's
 `GATEWAY_TOKEN` must be able to list repositories as well as update them.
 
-The fallback `WORKSPACE_IMAGE` remains `node:24-alpine`, but a bare Node image does not ship git and
-cannot install it as UID 1000. Configure an executor image that meets the image contract, such as
-the curated Node image built from `defaults/Dockerfile.node`. It uses Node 26 and explicitly
-preinstalls Corepack, Yarn, pnpm, git and bash. The root opt-out retains the legacy package-install
-fallback for images that run as root; it is not required for the curated images.
+The fallback `WORKSPACE_IMAGE` is `node:24-alpine` and works without changing images: during Docker
+preparation the worker installs missing git and bash as root, before clone or repository code.
+The curated Node image built from `defaults/Dockerfile.node` uses Node 26 and preinstalls Corepack,
+Yarn, pnpm, git and bash, avoiding those package downloads at workspace creation.
 
 This is a harder constraint than "some target repos use Yarn". The built-in quality gates are `yarn` commands — `DEFAULT_COMMANDS` in `activities/qualityGates.ts` defines `runBuild`, `runLint`, `runTests`, `runTypecheck` and `runVulnScan` that way — and they run with `docker exec` inside this container. They are the fallback for a repository whose detected root is Yarn, Node with no recorded package manager, or undetected; a detected npm or pnpm root, or a Python, JVM or Go root, runs its own commands instead ([`repositories.md`](./repositories.md#detected-stack)). On an image without `yarn`, every gate that falls back exits `127`, and the failure reads as the agent producing broken code rather than as a missing tool. A per-connection `gateCommands` override sidesteps it, but that is opt-in.
 
@@ -703,6 +702,14 @@ without running a privileged chown in the workspace. Clones, git config, setup s
 caches, catalog tools and harness files are writable by the workspace user. Setup-cache keys include
 UID and HOME. Attached services keep their own user settings, and NET_ADMIN helpers are unchanged.
 
+Only worker-controlled preparation can use `docker exec --user 0`: it runs a fixed bootstrap from
+`/`, with an empty environment, a system-only PATH and absolute apk/apt-get paths. Bootstrap
+authority is revoked after installation, before the handle is returned; ordinary exec also revokes
+it. Attached handles cannot acquire it. There is no root repair or package installation after clone,
+setup or agent code. Claude Code checks for bash without installing packages at harness start.
+If the image lacks a supported package manager or installation fails, creation fails with a clear
+git/bash bootstrap error; preinstall those tools in such images.
+
 Build OS packages into custom executor images rather than running `sudo`, `apk` or `apt-get` in
 repository setup. All curated executor images select UID 1000; git and bash are preinstalled.
 Only the literal `WORKSPACE_RUN_AS_ROOT=true` opts Docker workspaces out: no user or HOME override
@@ -838,7 +845,7 @@ the ClusterRole with `resourceNames` to the configured class if required.
 - **Runtime enforcement is checked only at worker boot.** It does not monitor daemon/runtime, network or admission changes afterwards. Restart workers after changing those controls. A runtime name or RuntimeClass match alone does not prove a particular sandbox implementation; Kubernetes relies on the cluster's RuntimeClass handler configuration.
 - **The Docker runtime gate samples IPv4 HTTP and one public TCP target.** It is not an exhaustive isolation audit. An unreachable public pre-check refuses startup as inconclusive. Default runsc is incompatible with the namespace OUTPUT lock; runsc-host exposes the host kernel netstack. gVisor's internal `/tmp` tmpfs does not support Docker rootfs copy visibility, even with the required rootfs settings; copied workspace files belong under `/workspace`.
 
-- **The Docker UID control covers agent workspaces, not shell/containerStep images or services.** Author steps and their sidecars retain image-defined users and existing volume ownership; they can run as root. Services retain their explicit user/capability rules. The root opt-out preserves image behavior rather than forcing UID 0. Custom images with root-owned application files outside the prepared directories need rebuilding; a bare Node fallback image needs git preinstalled or the legacy root opt-out. Non-root does not replace network isolation or host hardening.
+- **The Docker UID control covers agent workspaces, not shell/containerStep images or services.** Author steps and their sidecars retain image-defined users and existing volume ownership; they can run as root. Services retain their explicit user/capability rules. The root opt-out preserves image behavior rather than forcing UID 0. Custom images with root-owned application files outside the prepared directories need rebuilding. Bootstrap needs package-mirror access when git/bash are missing; images without apk/apt-get must include them. Non-root does not replace network isolation or host hardening.
 - **The prebuilt executor images are amd64 only and rebuild only when `main` moves.** `docker.yml` builds for the platforms in `BUILD_PLATFORMS`, and has no schedule, so a base-image fix reaches `executor-*` at the next push to `main` rather than weekly; pin by digest and rebuild on your own cadence if you need one.
 - **Only `docker-compose.prod.yml` runs the production Temporal dynamic config.** It points Temporal at `infra/dynamicconfig/production-sql.yaml`, which omits the development-only `system.forceSearchAttributesCacheRefreshOnRead` (a search-attribute cache refresh on every read). A deployment built on `docker-compose.app.yml` instead keeps `development-sql.yaml`. The two files are kept identical otherwise by hand; nothing checks it.
 - **The Docker socket proxy narrows the API, not container options.** See §0: a worker that can create containers can still request privileged mode or host bind mounts.

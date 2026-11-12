@@ -292,9 +292,10 @@ clone credential. An executor image must meet the **image contract**: it
 provides `sh`, `git` and `tar`, runs `sleep infinity` under `--init`, and has
 a `/workspace` the exec user can write to. Docker workspaces use UID/GID 1000 and
 `HOME=/workspace/.home` unless `WORKSPACE_RUN_AS_ROOT=true` preserves the image's user and home.
-Missing git fails with an image-contract error for non-root users; only a root workspace tries
-to install it (`apk`, then `apt-get`). Claude Code also needs bash preinstalled for non-root use;
-the curated executor images provide both. `ripgrep` is optional but recommended — Pi's grep
+Docker preparation installs missing git and bash through absolute apk/apt-get paths as root before
+any repository code. That authority closes before returning the workspace; clone, setup and agent
+commands run as UID 1000. Images without a supported package manager must preinstall both tools,
+as must Kubernetes images. The curated images provide both. `ripgrep` is optional but recommended — Pi's grep
 honours `.gitignore` only through it.
 
 **An image per stack.** A deployer may map a detected stack to an image with `WORKSPACE_IMAGE_PYTHON`,
