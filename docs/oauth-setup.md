@@ -132,12 +132,14 @@ skips the approval queue:
 
 | Invited by | Account |
 |---|---|
-| A platform ADMIN (`POST /users/invite`, or an organization's invite) | active, approved (`approvalSource` `admin`), email marked verified |
+| A platform ADMIN (`POST /users/invite`, an organization's invite, or a team's invite) | active, approved (`approvalSource` `admin`), email marked verified |
 | An organization's `ORG_ADMIN` (`POST /platform/organizations/:orgId/members/invite`), organization **trusted** | active, approved (`approvalSource` `org_admin`), email marked verified |
 | An organization's `ORG_ADMIN` (`POST /platform/organizations/:orgId/members/invite`), organization not trusted (the default) | inactive and unapproved, email unverified — it waits in the queue at `/admin/users` like a sign-up |
+| A team's `LEAD` or `ADMIN` (`POST /teams/:id/members/invite`), organization **trusted and active** | active, approved (`approvalSource` `team_lead`), email marked verified |
+| A team's `LEAD` or `ADMIN`, organization untrusted or inactive | inactive and unapproved, email unverified — it waits in the approval queue |
 
 Administering an organization is not, by itself, authority to approve sign-ins, so by default an
-org admin's invitee gets the organization membership at once but cannot use the platform until a
+org admin's or team lead's invitee gets the memberships at once but cannot use the platform until a
 platform admin approves them. Following the magic link verifies the address and signs them in to
 the pending-approval screen.
 
@@ -145,13 +147,15 @@ A platform admin can delegate that decision per organization with the **Trust or
 invites** switch on the organization's page (`/admin/organizations/:orgId`), stored as
 `Organization.trustedInvites` and set through `PATCH /platform/organizations/:orgId`. Only a
 platform admin can change it; an `ORG_ADMIN` sending the field gets `403`, and each change is
-audited. Trust applies only while the organization is active, and it is read on every invite, so
+audited. This switch covers both organization-admin and team-lead invitations within the organization.
+Trust applies only while the organization is active, and it is read on every invite, so
 clearing it or deactivating the organization applies to the next one; accounts already approved
 stay approved. An approval made this way is audited as a `User` creation with its
 `approvalSource`, alongside the membership.
 
 **Limitations.** Trust is all-or-nothing per organization: it covers every `ORG_ADMIN` of the
-organization, present and future, and there is no per-inviter or per-domain restriction. Turning
+organization and every team `LEAD` and `ADMIN` within it, present and future, and there is no
+per-inviter or per-domain restriction. Turning
 it off does not deactivate accounts already created under it.
 
 ### Production-only extras

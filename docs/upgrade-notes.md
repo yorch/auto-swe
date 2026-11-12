@@ -1329,6 +1329,22 @@ membership transactionally and preserve existing roles. Organization removal doe
 **Verify.** Every existing team member has an organization membership for that team's organization
 immediately after the migration; a later organization removal can leave a team membership behind.
 
+### Trusted organizations also approve team invitations
+
+**Affected.** Deployments with `Organization.trustedInvites` enabled on any organization.
+
+**Fix commit.** Identified before its SHA is assigned by the shared `inviteUser` helper and
+`POST /api/v1/teams/:id/members/invite`; compare the source when commit ancestry is unavailable.
+
+**Actions.** Review the organization's team leads and team admins before deploying the gateway.
+Trust covers their team invitations as well as organization-admin invitations while the organization
+is active. Clear `trustedInvites` through `PATCH /platform/organizations/:orgId` before upgrading
+if those inviters must not approve new accounts. Platform ADMIN invitations approve regardless of trust.
+
+**Verify.** An invitation from a team lead in an active trusted organization records approval source
+`team_lead`. With trust cleared, that invitation creates an inactive account in the approval queue.
+Existing approved accounts are not deactivated by clearing trust.
+
 ## Limitations
 
 - **A SHA identifies code, not your deployed image.** The comparison in §1 holds only if your

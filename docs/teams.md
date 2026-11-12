@@ -368,6 +368,26 @@ and team roles are preserved; repeated enrollment creates neither duplicate memb
 Enrollment failures are logged without failing account creation, and neither membership is committed
 if that enrollment transaction fails.
 
+### Inviting someone directly into a team
+
+`POST /api/v1/teams/:id/members/invite` accepts `email` and an optional team `role`
+(`ADMIN`, `LEAD`, or `ENGINEER`, default `ENGINEER`). A team `LEAD` or `ADMIN` can invite, but
+cannot grant a role above their own. Platform ADMIN can invite into any team. The account's
+platform role is `ENGINEER`; the supplied role applies only to the team.
+As with member-add, other inviters also need platform `LEAD` or above.
+
+Organization admins can also supply optional `teamId` and `teamRole` on
+`POST /api/v1/platform/organizations/:orgId/members/invite` (including its admin-prefix alias).
+The team must belong to that organization (`400 TEAM_ORG_MISMATCH` otherwise); `teamRole`
+defaults to `ENGINEER` and is separate from the invite's `orgRole`.
+
+Both invitation routes create the account, organization membership and any team membership in one
+audited transaction, then send a magic link. Team invitations grant `ORG_MEMBER` in the team's
+organization. Existing email addresses return `409 USER_EXISTS`; use member-add for existing users.
+Platform ADMIN invitations approve the account immediately (`admin`). Other team invitations approve
+only in an active organization with `trustedInvites` enabled (`team_lead`); otherwise the account waits
+in the approval queue. See [invited users](./oauth-setup.md#invited-users) for the trust policy.
+
 ## Limitations
 
 - Organization admins manage linked GitHub installations from **Admin → Organizations → the
@@ -375,6 +395,9 @@ if that enrollment transaction fails.
   prevents new runs through it. Existing runs continue. Only platform admins can reactivate,
   unlink or relink installations. Self-service does not support per-host Apps or claiming an
   installation already registered; see [GitHub App setup](./github-app-setup.md#connecting-an-organization).
+
+- Team invitations require a new email address; existing users are added through the member-add
+  route. A failed invitation email does not roll back the account or memberships.
 
 - Removing an organization membership does not remove that user's team memberships.
 - **Engineers see failures only for runs they launched.** A lead does not see a failure on a
