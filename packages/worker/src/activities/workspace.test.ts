@@ -269,9 +269,17 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     await ws.destroy();
   });
 
-  it.each([false, true])(
-    'records setup failures without replacing them (defer=%s)',
-    async (defer) => {
+  it.each([
+    [false, 'inherit'],
+    [true, 'inherit'],
+    [false, 'open'],
+    [true, 'open'],
+  ] as const)(
+    'records setup failures without replacing them (defer=%s, setup=%s)',
+    async (defer, setup) => {
+      policy.value = 'blocked';
+      policy.setup = setup;
+      const lock = vi.spyOn(dockerWorkspaceBackend(), 'lockEgress').mockResolvedValue();
       setupBlockerUpsertMock.mockClear();
       vi.mocked(spawnCaptureAsync).mockImplementation(async (_file, args) => ({
         exitCode: args.join(' ').includes('setup-blocker-test-command') ? 1 : 0,
@@ -297,11 +305,17 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
         );
         return ws.runSetup?.();
       })().catch((error: unknown) => error);
+      lock.mockRestore();
       expect(error).toMatchObject({
         details: [{ kind: 'step_failed' }],
         type: 'WORKSPACE_SETUP_FAILED',
       });
       expect(setupBlockerUpsertMock).toHaveBeenCalledTimes(1);
+      if (setup === 'open') {
+        expect(
+          vi.mocked(execShellAsync).mock.calls.some(([cmd]) => cmd.includes('docker rm -f'))
+        ).toBe(true);
+      }
       await ws?.destroy();
     }
   );
