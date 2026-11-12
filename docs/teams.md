@@ -319,6 +319,12 @@ which stops with a non-retryable `BUDGET_EXCEEDED` once its owner team is at the
 at the cap with nothing spent, so it refuses every launch and also stops every in-flight run of the
 team at its next model call.
 
+The in-app assistant is subject to the cap for a user who is a member of exactly one active team:
+its calls count toward that team's month spend and stop at the cap (a cap of 0 stops them
+immediately), and when the team has a cap an assistant model with no catalog price is refused.
+A user in several teams is attributed to the organization only; their assistant calls are not gated
+by any team cap.
+
 ### Budget notifications
 
 A team is told when its spend crosses the cap's thresholds, without waiting for a report digest.
@@ -339,8 +345,11 @@ carries dollars; the channel is not checked against who may read the cap.
 The dedupe is durable: a `TeamBudgetNotice` row keyed `(team, month, level)` is claimed by an
 insert before the post, and a unique violation means another evaluation, in this or another
 worker, already holds the notice. The claim is taken only when the team has a channel and a bot
-token resolves, so a channel configured later in the month still gets that month's notice; it is
-released if the post fails, so the next evaluation retries. Evaluation runs in the guard's activity
+token resolves, so a channel configured later in the month still gets that month's notice. It is
+released if the post fails transiently (a rate limit, a 5xx, a network error), so the next
+evaluation retries; a permanent Slack failure (`channel_not_found`, `not_in_channel`,
+`is_archived`, `invalid_auth`, `account_inactive`, and similar token errors) keeps the claim and is
+logged once, so the notice is not retried for the rest of the month. Evaluation runs in the guard's activity
 path, not awaited and never inside the workflow isolate; any failure is logged and dropped and
 cannot fail or delay a model call. There is no setting to turn it off; a team with no notify
 channel gets none.
@@ -425,6 +434,12 @@ only by the mid-run guard.
   evaluation (a model call after the cache window), so a team that stops running may never be told.
   A notice is not evaluated by the launch gate: a team whose spend crosses a level with no run in
   flight hears of it at the next run's first model call.
+- **A permanent post failure suppresses that level for the month.** After one, fixing the channel
+  or the token sends nothing until the next month.
+- **The claim can outlive a failed send, or a send can repeat.** A worker that dies between taking
+  the claim and posting leaves the claim held, so that level is never sent that month. A post that
+  succeeds on Slack's side but throws locally (a timeout reading the response) releases the claim,
+  so the next evaluation sends the notice again.
 - **A level is sent once per month even if the cap changes.** Raising the cap after `CAP_REACHED`
   and reaching it again in the same month sends nothing further, and a team that jumps past its
   threshold to the cap in one window gets the cap notice and no warning.

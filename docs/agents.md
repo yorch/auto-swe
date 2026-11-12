@@ -783,12 +783,19 @@ container is good for that turn's model calls, at the proxy, until the turn ends
 the run's budget like any other call. Before it forwards a `POST /v1/messages` — after the token is
 validated, never for an unknown one — the proxy asks the turn's `precheck`, which waits for the calls
 already reported to be debited and then runs the same `assertBudgetAvailable` the debit path uses
-(organization cap, team cap, the run's tier; the guards' own config-cache window, no query of the
-proxy's own). A refusal answers the harness `400 invalid_request_error` with `x-should-retry: false`
+(organization cap, team cap, the run's tier). That check reads some state through the guards'
+config-cache window and some live on each call (the run's ledger row and its tier limits), so an
+uncached check costs a few database reads. A pass is remembered until the next debit is queued or
+the config-cache window (about 30 s) lapses, so a container sending a flood of calls costs one
+check, not one per request; a refusal is never remembered as a pass. A refusal answers the harness `400 invalid_request_error` with `x-should-retry: false`
 (the harness retries `429` and `5xx` with backoff, which would stall a turn that is ending), never
 contacts the provider, and aborts the turn, which fails with the guard's `BUDGET_EXCEEDED` so the run
-viewer shows the cap that bound. The check fails open exactly as the guards do on a read error. The
-Pi runtime asks the same `precheck` before each call it sends. A workspace reaches the proxy at `HARNESS_MODEL_PROXY_URL`: by
+viewer shows the cap that bound. Only a genuine refusal to spend ends the turn: `BUDGET_EXCEEDED`,
+`MODEL_UNPRICED` and `MODEL_PRICE_UNAVAILABLE`, the types the debit path treats as a spend refusal.
+Any other error from the check (a database error in one of its reads) is logged with
+`logWarn` and the call goes ahead, so a transient failure neither kills a long turn nor is reported
+to the harness as a spending limit; the debit after the call still counts the spend and enforces the
+cap. The Pi runtime asks the same `precheck` before each call it sends. A workspace reaches the proxy at `HARNESS_MODEL_PROXY_URL`: by
 default `host.docker.internal`, which `createWorkspace` maps to the Docker host gateway, or a worker
 that shares `WORKSPACE_NETWORK` with its workspaces, as the shipped compose files run it.
 
@@ -1905,7 +1912,12 @@ dependency inference the repository's team, and the eval harness the dataset's t
 organization, for an ORGANIZATION-scoped dataset). The in-app assistant and its titler charge the signed-in user (`ownerOfUser`): the user's team and
 organization when they are a member of exactly one team, so the team's monthly cap counts the spend
 (as runless spend, rows with a `teamId` and no run); the organization alone when they belong to
-several teams in it; nobody when they span several organizations.
+several teams in it; nobody when they span several organizations. Only teams that are active
+count. The attribution is also what gates the calls: a single-team user's assistant calls count
+toward the team's monthly cap and stop at it (`BUDGET_EXCEEDED`, a cap of 0 stops them at once), and
+when only the team has a USD cap an assistant model with no catalog price is refused
+(`MODEL_UNPRICED`), as for any run. A multi-team user's calls are attributed to the organization
+only and are not gated by any team cap.
 Resolution never fails an activity; a lookup that
 fails attributes the row to nobody.
 
@@ -1919,7 +1931,11 @@ carries a `teamId`/`orgId` predicate or declares itself with `runUnscoped`.
   channel and repositories are all unowned write null `teamId`/`orgId`.
 - **A multi-team user's assistant spend is organization-level.** An assistant conversation names no
   team, so for a user in several teams the rows carry the organization only and count against no
-  team's monthly cap.
+  team's monthly cap, which also does not stop their assistant calls.
+- **A single-team user's assistant stops at the team cap.** The same attribution that makes the
+  team's cap count the spend makes the cap refuse the call, for every conversation of that user,
+  including ones about other work, and an unpriced assistant model is refused while the team has a
+  cap.
 - **Rows that predate the columns are unattributed.** Nothing backfills them.
 
 The run viewer (`web/src/lib/traceLinkage.ts`) filters on these fields: a node selects all its

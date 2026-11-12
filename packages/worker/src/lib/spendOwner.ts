@@ -65,7 +65,12 @@ export async function ownerOfConnection(connectionId: string): Promise<SpendOwne
 export async function ownerOfUser(userId: string): Promise<SpendOwner> {
   const user = await prisma.user.findUnique({
     select: {
-      memberships: { select: { team: { select: { id: true, orgId: true } } } },
+      // An inactive team is not a team the user works in: counting it would make a single-team
+      // user look multi-team (org-level spend) or attribute their spend to a retired team.
+      memberships: {
+        select: { team: { select: { id: true, orgId: true } } },
+        where: { team: { isActive: true } },
+      },
       orgMemberships: { select: { orgId: true } },
     },
     where: { id: userId },

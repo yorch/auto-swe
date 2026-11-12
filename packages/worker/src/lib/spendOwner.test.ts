@@ -204,4 +204,33 @@ describe('ownerOfUser', () => {
     h.user.mockResolvedValue(user([], ['o']));
     expect(await ownerOfUser('u')).toEqual({ orgId: 'o' });
   });
+
+  describe('inactive teams', () => {
+    /** Applies the `where` the query passes, as the database would. */
+    const withTeams = (teams: { id: string; isActive: boolean }[], orgs: string[] = []) =>
+      h.user.mockImplementation(async (args: { select: { memberships: { where?: unknown } } }) => {
+        const wantsActive =
+          JSON.stringify(args.select.memberships.where) ===
+          JSON.stringify({ team: { isActive: true } });
+        return {
+          memberships: teams
+            .filter((t) => !wantsActive || t.isActive)
+            .map((t) => ({ team: team(t.id) })),
+          orgMemberships: orgs.map((orgId) => ({ orgId })),
+        };
+      });
+
+    it('treats a user whose other team is inactive as single-team', async () => {
+      withTeams([
+        { id: 'a', isActive: true },
+        { id: 'b', isActive: false },
+      ]);
+      expect(await ownerOfUser('u')).toEqual({ orgId: 'org-of-a', teamId: 'a' });
+    });
+
+    it('attributes a user whose only team is inactive to the org alone', async () => {
+      withTeams([{ id: 'a', isActive: false }], ['org-of-a']);
+      expect(await ownerOfUser('u')).toEqual({ orgId: 'org-of-a' });
+    });
+  });
 });
