@@ -24,6 +24,7 @@ import { isInputSchema, runAuthorizedConnectionIds } from '@auto-swe/shared/lib/
 import type { TrackerWriteback } from '@auto-swe/shared/lib/integrations/ticketFailure';
 import type { KnowledgeBaseOverrides } from '@auto-swe/shared/lib/knowledgeBaseResolution';
 import { loadReviewSource, reviewRunId } from '@auto-swe/shared/lib/reviewLaunch';
+import { isRunTrigger, type RunTrigger } from '@auto-swe/shared/lib/runTrigger';
 import { resolveIssueTrackerConfig, resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
@@ -317,6 +318,12 @@ export interface CreateWorkflowRunInput {
   /// Who started this execution (see `RunRequest.launchedById`). Absent for a
   /// webhook or cron start, which then uses only the platform credential.
   launchedById?: string;
+  /// Provenance, written once at create (see `RunRequest.trigger`); never a credential key.
+  trigger?: RunTrigger;
+  triggerRefId?: string;
+  initiatedById?: string;
+  initiatedByServiceId?: string;
+  rerunOfRunId?: string;
   /// Evals P2 canary: when set, this agent key is pinned to candidateVersion
   /// for the life of the run, and the run is tagged isCanary=true.
   canaryAgentKey?: string;
@@ -489,6 +496,87 @@ async function installationRetiredForRun(
     return null;
   }
   return `the GitHub App installation for ${connection.organizationName}/${connection.repoName} has been retired; point the repository at a current installation before starting new work`;
+}
+
+const PROVENANCE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The provenance columns are foreign keys, but they only describe the run: a user deleted
+ * or a service principal revoked between the launch and this activity, or a malformed id,
+ * must not make the insert throw and retire the launch. Each id that does not resolve is
+ * dropped to null with a warning, and an unknown trigger likewise.
+ */
+async function resolveProvenance(input: CreateWorkflowRunInput): Promise<{
+  initiatedById: string | null;
+  initiatedByServiceId: string | null;
+  rerunOfRunId: string | null;
+  trigger: RunTrigger | null;
+  triggerRefId: string | null;
+}> {
+  const keep = async (
+    field: string,
+    id: string | undefined,
+    exists: (id: string) => Promise<boolean>
+  ): Promise<string | null> => {
+    if (!id) {
+      return null;
+    }
+    if (!PROVENANCE_UUID_RE.test(id) || !(await exists(id))) {
+      logWarn('dropping a run provenance id that does not resolve', { field });
+      return null;
+    }
+    return id;
+  };
+  const trigger = input.trigger ?? null;
+  if (trigger !== null && !isRunTrigger(trigger)) {
+    logWarn('dropping an unknown run trigger', { trigger: String(trigger) });
+  }
+  return {
+    initiatedById: await keep(
+      'initiatedById',
+      input.initiatedById,
+      async (id) => (await prisma.user.count({ where: { id } })) > 0
+    ),
+    initiatedByServiceId: await keep(
+      'initiatedByServiceId',
+      input.initiatedByServiceId,
+      async (id) =>
+        (await runUnscoped(
+          'existence check of a service principal id the gateway already authorised at launch',
+          ['ServicePrincipal'],
+          () => prisma.servicePrincipal.count({ where: { id } })
+        )) > 0
+    ),
+    rerunOfRunId: await keep(
+      'rerunOfRunId',
+      input.rerunOfRunId,
+      async (id) => (await prisma.workflowRun.count({ where: { id } })) > 0
+    ),
+    ...derivedTrigger(input, isRunTrigger(trigger) ? trigger : null),
+  };
+}
+
+/**
+ * The trigger of a run whose request carries none, derived from what the worker can see: an
+ * epic child names its parent workflow; a schedule fire started before provenance existed holds
+ * frozen Temporal arguments without it, but its workflow id is `sched-<row id>…`. A trigger the
+ * request supplied is never overwritten, and neither is its `triggerRefId`.
+ */
+function derivedTrigger(
+  input: Pick<CreateWorkflowRunInput, 'parentWorkflowId' | 'triggerRefId' | 'workflowId'>,
+  trigger: RunTrigger | null
+): { trigger: RunTrigger | null; triggerRefId: string | null } {
+  if (trigger !== null) {
+    return { trigger, triggerRefId: input.triggerRefId ?? null };
+  }
+  if (input.parentWorkflowId) {
+    return { trigger: 'epic-child', triggerRefId: input.triggerRefId ?? input.parentWorkflowId };
+  }
+  const scheduleId = SCHEDULE_FIRE_ID_RE.exec(input.workflowId)?.[1];
+  if (scheduleId) {
+    return { trigger: 'schedule', triggerRefId: input.triggerRefId ?? scheduleId };
+  }
+  return { trigger: null, triggerRefId: input.triggerRefId ?? null };
 }
 
 /**
@@ -699,6 +787,7 @@ export async function createWorkflowRun(
     workspaceConnectionId: input.runConnectionId ?? input.repoId ?? scheduledRepoId ?? null,
   });
   const runId = reviewPayload?.success ? reviewRunId(input.workflowId) : randomUUID();
+  const provenance = await resolveProvenance(input);
   const runUpsert: Prisma.WorkflowRunUpsertArgs = {
     create: {
       id: runId,
@@ -730,10 +819,14 @@ export async function createWorkflowRun(
       // A scheduled fire's standing work request names no connection either.
       ...(scheduledRepoId ? { connectionId: scheduledRepoId } : {}),
       estimatedHumanTimeSaved: version.template?.estimatedHumanTimeSavedMinutes ?? null,
+      // Provenance (create only, so the first execution keeps naming who started it):
+      initiatedById: provenance.initiatedById,
+      initiatedByServiceId: provenance.initiatedByServiceId,
       isCanary,
       launchedById: input.launchedById ?? null,
       outcomeDomain: version.template?.workspaceProvider ?? null,
       pinnedSettings: pinnedSettings as Prisma.InputJsonObject,
+      rerunOfRunId: provenance.rerunOfRunId,
       skillRevisions,
       // SAFETY: spec was parsed by WorkflowSpecSchema immediately above.
       specSnapshot: spec as unknown as object,
@@ -741,6 +834,8 @@ export async function createWorkflowRun(
       templateId: input.templateId,
       templateVersion: input.templateVersion,
       temporalRunId: currentTemporalRunId(),
+      trigger: provenance.trigger,
+      triggerRefId: provenance.triggerRefId,
       workflowId: input.workflowId,
       workRequestId: input.workRequestId,
     },

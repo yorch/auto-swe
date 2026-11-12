@@ -173,6 +173,7 @@ vi.mock('@auto-swe/shared/db', () => {
       findUnique: vi.fn(async () => null),
     },
     scheduledWorkRequest: { findFirst: vi.fn(async () => ({ id: 'sched-row-1' })) },
+    servicePrincipal: { count: vi.fn(async () => 1) },
     // Run-start skill-revision snapshot: no skills means an empty pin map.
     skill: {
       findMany: vi.fn(async () => []),
@@ -181,6 +182,7 @@ vi.mock('@auto-swe/shared/db', () => {
     team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn(async () => null) },
     user: {
+      count: vi.fn(async () => 1),
       findUnique: vi.fn(async () => ({ id: 'user-admin', isActive: true, role: 'ADMIN' })),
     },
     workflowHumanStep: {
@@ -190,6 +192,7 @@ vi.mock('@auto-swe/shared/db', () => {
       findFirst: vi.fn(async () => null),
     },
     workflowRun: {
+      count: vi.fn(async () => 1),
       findUnique: vi.fn(async ({ where }: { where: { workflowId: string } }) =>
         where.workflowId === 'wf-1'
           ? { launchedById: 'user-admin', temporalRunId: 'temporal-run-1' }
@@ -1246,6 +1249,93 @@ describe('createWorkflowRun', () => {
     // Never rewritten: a row left by an earlier execution of a reused workflow
     // id must keep naming that execution, so its launcher is not inherited.
     expect(args.update).toEqual(UPDATE_REWRITES_ONLY_THE_PIN);
+  });
+
+  it('records provenance on create only, and stores an unknown trigger as null', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    const provenance = {
+      initiatedById: '11111111-1111-4111-8111-111111111111',
+      initiatedByServiceId: '22222222-2222-4222-8222-222222222222',
+      rerunOfRunId: '33333333-3333-4333-8333-333333333333',
+      triggerRefId: 'auto-1',
+    };
+    await createWorkflowRun({
+      ...provenance,
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      trigger: 'automation',
+      workflowId: 'wf-1',
+    });
+    await createWorkflowRun({
+      ...provenance,
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      // The activity input is deserialized JSON, so the type cannot promise the value.
+      trigger: 'not-a-trigger' as never,
+      workflowId: 'wf-1',
+    });
+    const first = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+    const second = upsertRun.mock.calls[1]?.[0] as Record<string, Record<string, unknown>>;
+    expect(first.create).toMatchObject({ ...provenance, trigger: 'automation' });
+    expect(second.create.trigger).toBeNull();
+    // The conflict path rewrites none of it: the first execution keeps its provenance.
+    expect(first.update).toEqual(UPDATE_REWRITES_ONLY_THE_PIN);
+    expect(second.update).toEqual(UPDATE_REWRITES_ONLY_THE_PIN);
+  });
+
+  it('derives epic-child provenance from the parent workflow when the request carries none', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    await createWorkflowRun({
+      parentWorkflowId: 'epic-JIRA-9',
+      repoId: 'repo-1',
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'epic-JIRA-9-repo-1',
+    });
+    const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+    expect(args.create).toMatchObject({ trigger: 'epic-child', triggerRefId: 'epic-JIRA-9' });
+  });
+
+  it('derives schedule provenance from a frozen sched- workflow id, never over a supplied trigger', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    const scheduleId = '3f2b8c1e-0a4d-4c55-9a77-1d2e3f4a5b6c';
+    await createWorkflowRun({
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: `sched-${scheduleId}-2026-10-04T12:00:00Z`,
+    });
+    await createWorkflowRun({
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      trigger: 'automation',
+      triggerRefId: 'auto-1',
+      workflowId: `sched-${scheduleId}-2026-10-04T12:00:00Z`,
+    });
+    const first = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+    const second = upsertRun.mock.calls[1]?.[0] as Record<string, Record<string, unknown>>;
+    expect(first.create).toMatchObject({ trigger: 'schedule', triggerRefId: scheduleId });
+    expect(second.create).toMatchObject({ trigger: 'automation', triggerRefId: 'auto-1' });
+  });
+
+  it('drops provenance ids that do not resolve instead of failing the launch', async () => {
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    vi.mocked(prisma.user.count).mockResolvedValueOnce(0);
+    vi.mocked(prisma.servicePrincipal.count).mockResolvedValueOnce(0);
+    await createWorkflowRun({
+      initiatedById: '11111111-1111-4111-8111-111111111111',
+      initiatedByServiceId: '22222222-2222-4222-8222-222222222222',
+      // Not a UUID at all (a workflow id, say): it must not reach the query.
+      rerunOfRunId: 'eng-acme-api-JIRA-1',
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'wf-1',
+    });
+    const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+    expect(args.create).toMatchObject({
+      initiatedById: null,
+      initiatedByServiceId: null,
+      rerunOfRunId: null,
+    });
   });
 
   it('records no launcher for a run started by nobody', async () => {

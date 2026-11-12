@@ -395,6 +395,22 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
     expect(reviewDispatches).toEqual(['run-test-1']);
   }, 120_000);
+  it('forwards the request provenance to run creation', async () => {
+    currentSpec = makeSpec({ done: { result: {}, status: 'SUCCESS', type: 'terminate' } }, 'done');
+    const provenance = {
+      initiatedById: '11111111-1111-4111-8111-111111111111',
+      initiatedByServiceId: '22222222-2222-4222-8222-222222222222',
+      rerunOfRunId: '33333333-3333-4333-8333-333333333333',
+      trigger: 'work-request-retry',
+      triggerRefId: 'ref-1',
+    } as const;
+    await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-provenance', { ...REQUEST, ...provenance })
+    );
+    expect(calls.createWorkflowRun.at(-1)).toMatchObject(provenance);
+  }, 120_000);
+
   it('keeps source success when the post-finalization review activity fails', async () => {
     currentSpec = makeSpec({ done: { result: {}, status: 'SUCCESS', type: 'terminate' } }, 'done');
     reviewDispatchFails = true;

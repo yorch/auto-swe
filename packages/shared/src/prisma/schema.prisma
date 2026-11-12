@@ -652,6 +652,7 @@ model ServicePrincipal {
 
   tokens      ApiToken[]
   runRequests RunInput[] @relation("RunInputServiceRequester")
+  initiatedRuns WorkflowRun[] @relation("WorkflowRunInitiatorService")
 
   @@unique([teamId, name])
   @@index([createdById])
@@ -1860,6 +1861,7 @@ model User {
   knowledgeApprovals    KnowledgeItem[]         @relation("KnowledgeItemApprover")
   knowledgeEvents       KnowledgeItemEvent[]    @relation("KnowledgeEventActor")
   launchedRuns          WorkflowRun[]            @relation("WorkflowRunLauncher")
+  initiatedRuns         WorkflowRun[]            @relation("WorkflowRunInitiator")
   createdShares         ConnectionTeamShare[]    @relation("ConnectionShareCreator")
   createdCallbackEndpoints CallbackEndpoint[]    @relation("CallbackEndpointCreator")
   lessonFlags           LessonFlag[]             @relation("LessonFlagAuthor")
@@ -2523,6 +2525,27 @@ model WorkflowRun {
   /// saved GitHub credential the run may use; null (webhook, cron) means none.
   launchedById      String?           @map("launched_by_id") @db.Uuid
   launchedBy        User?             @relation("WorkflowRunLauncher", fields: [launchedById], references: [id], onDelete: SetNull)
+  /// What started this run: a value of `RUN_TRIGGERS` (`shared/lib/runTrigger.ts`). Written once
+  /// at create, never rewritten on conflict. Null on a row that predates the column. Unlike
+  /// `launchedById` (a credential key), this and the fields below record provenance only.
+  trigger           String?
+  /// Opaque id of the automation, schedule, parent workflow or other source named by `trigger`.
+  /// Written once at create, never rewritten on conflict; carries no names.
+  triggerRefId      String?           @map("trigger_ref_id")
+  /// The person who initiated the run, when one did. Written once at create, never rewritten on
+  /// conflict. Distinct from `launchedById`, which is a credential key and is inherited by cron
+  /// fires and child runs.
+  initiatedById     String?           @map("initiated_by_id") @db.Uuid
+  initiatedBy       User?             @relation("WorkflowRunInitiator", fields: [initiatedById], references: [id], onDelete: SetNull)
+  /// The service principal that initiated the run, when one did. Written once at create, never
+  /// rewritten on conflict. Distinct from `launchedById`.
+  initiatedByServiceId String?        @map("initiated_by_service_id") @db.Uuid
+  initiatedByService   ServicePrincipal? @relation("WorkflowRunInitiatorService", fields: [initiatedByServiceId], references: [id], onDelete: SetNull)
+  /// The run this one re-runs, when it is a re-run. Written once at create, never rewritten on
+  /// conflict. Distinct from `launchedById`.
+  rerunOfRunId      String?           @map("rerun_of_run_id") @db.Uuid
+  rerunOfRun        WorkflowRun?      @relation("WorkflowRunRerun", fields: [rerunOfRunId], references: [id], onDelete: SetNull)
+  reruns            WorkflowRun[]     @relation("WorkflowRunRerun")
   /// Temporal's run id for the execution that created this row. A workflow id
   /// can be started again once its previous execution closes, and this row is
   /// upserted by workflow id and never rewritten — so `launchedById` is only
@@ -2592,6 +2615,9 @@ model WorkflowRun {
   @@index([attributedRepoId, startedAt])
   @@index([attributedOrgId, startedAt])
   @@index([launchedById])
+  @@index([initiatedById])
+  @@index([initiatedByServiceId])
+  @@index([rerunOfRunId])
   @@index([channelId])
   @@index([connectionId])
   // The run list (`GET /workflow-runs`) pages newest first, optionally by status.
