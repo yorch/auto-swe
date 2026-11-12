@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import dns from 'node:dns/promises';
+import fs from 'node:fs/promises';
 import { BlockList, isIP } from 'node:net';
 import os from 'node:os';
+import path from 'node:path';
 import { DOCKER_HOST_ALIAS, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import {
   type CappedFileResult,
@@ -858,6 +860,25 @@ function execCommand(h: WorkspaceHandle, argv: string[], opts: WorkspaceExecOpti
   return parts.join(' ');
 }
 
+export function workspaceBootstrapScript(): string {
+  return [
+    'set -eu',
+    'fail() { echo "workspace bootstrap: cannot install git/bash; provide them in the executor image" >&2; exit 1; }',
+    'missing=""',
+    'if [ ! -x /usr/bin/git ] && [ ! -x /bin/git ]; then missing="$missing git"; fi',
+    'if [ ! -x /bin/bash ] && [ ! -x /usr/bin/bash ]; then missing="$missing bash"; fi',
+    'if [ -n "$missing" ]; then',
+    '  if [ -x /sbin/apk ]; then',
+    '    /sbin/apk add --no-cache $missing || fail',
+    '  elif [ -x /usr/bin/apt-get ]; then',
+    '    /usr/bin/apt-get -o APT::Sandbox::User=root update && /usr/bin/apt-get -o APT::Sandbox::User=root install -y --no-install-recommends $missing || fail',
+    '  else fail; fi',
+    'fi',
+    '[ -x /usr/bin/git ] || [ -x /bin/git ] || fail',
+    '[ -x /bin/bash ] || [ -x /usr/bin/bash ] || fail',
+  ].join('\n');
+}
+
 /**
  * The Docker driver: workspaces are `docker run`d containers kept alive by
  * `sleep infinity`, reached through `docker exec`, `docker cp` and
@@ -874,6 +895,62 @@ function execCommand(h: WorkspaceHandle, argv: string[], opts: WorkspaceExecOpti
  */
 class DockerWorkspaceBackend implements WorkspaceBackend {
   readonly kind = 'docker' as const;
+  private readonly bootstrapHandles = new Map<string, WorkspaceHandle>();
+  private readonly bootstrapRunning = new Set<string>();
+
+  private sealBootstrap(handle: WorkspaceHandle): void {
+    if (this.bootstrapRunning.has(handle.id)) {
+      throw new Error(
+        'workspace bootstrap: ordinary execution is forbidden during root preparation'
+      );
+    }
+    this.bootstrapHandles.delete(handle.id);
+  }
+
+  async bootstrapTools(handle: WorkspaceHandle): Promise<void> {
+    if (this.bootstrapHandles.get(handle.id) !== handle || this.bootstrapRunning.has(handle.id)) {
+      throw new Error(
+        'workspace bootstrap: root execution is forbidden after preparation or ordinary execution'
+      );
+    }
+    this.bootstrapRunning.add(handle.id);
+    try {
+      await execShellAsync(
+        [
+          'docker',
+          'exec',
+          '--user',
+          '0',
+          '--workdir',
+          '/',
+          '-e',
+          'LD_PRELOAD=',
+          '-e',
+          'LD_LIBRARY_PATH=',
+          '-e',
+          'LD_AUDIT=',
+          '-e',
+          'ENV=',
+          '-e',
+          'BASH_ENV=',
+          handle.id,
+          '/usr/bin/env',
+          '-i',
+          'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+          'HOME=/root',
+          '/bin/sh',
+          '-ec',
+          workspaceBootstrapScript(),
+        ]
+          .map(shellQuote)
+          .join(' '),
+        { heartbeatLabel: 'workspace: installing bootstrap tools', timeoutMs: 600_000 }
+      );
+    } finally {
+      this.bootstrapRunning.delete(handle.id);
+      this.bootstrapHandles.delete(handle.id);
+    }
+  }
 
   async create(spec: WorkspaceContainerSpec): Promise<WorkspaceHandle> {
     const infra = resolveWorkspaceInfra();
@@ -909,11 +986,13 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const env = [
       ...(spec.env ?? []).map((pair) => ` -e ${shellQuote(pair)}`),
       ...secretEnvNames(spec.secretEnv).map((name) => ` -e ${name}`),
+      ...(infra.runAsRoot ? [] : [' -e HOME=/workspace/.home']),
     ].join('');
+    const user = infra.runAsRoot ? '' : ' --user 1000:1000';
     // `memory` is a config string, so shell-quote it (the numeric caps can't
     // carry shell metacharacters); '--' separates docker flags from the image.
     await execShellAsync(
-      `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage}${runtime} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
+      `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init${user} ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage}${runtime} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
       {
         heartbeatLabel: 'workspace: starting container',
         ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
@@ -944,6 +1023,11 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const handle: WorkspaceHandle = { id: spec.name, keeperPid };
 
     try {
+      if (!infra.runAsRoot) {
+        await this.prepareWorkspaceDirectories(handle);
+      }
+      this.bootstrapHandles.set(handle.id, handle);
+      await this.bootstrapTools(handle);
       await installBaselineEgress(spec);
     } catch (error) {
       await execShellAsync(`docker rm -f ${shellQuote(spec.name)}`, {
@@ -997,6 +1081,25 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     return handle;
   }
 
+  private async prepareWorkspaceDirectories(handle: WorkspaceHandle): Promise<void> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'workspace-dirs-'));
+    try {
+      const workspace = path.join(dir, 'workspace');
+      await fs.mkdir(path.join(workspace, '.home'), { recursive: true });
+      await fs.mkdir(path.join(workspace, 'target-repo'));
+      // Archive-mode imports use the container's configured UID/GID in the Docker daemon.
+      const copied = await spawnCaptureAsync('docker', ['cp', '-a', workspace, `${handle.id}:/`], {
+        heartbeatLabel: 'workspace: preparing writable directories',
+        timeoutMs: 120_000,
+      });
+      if (copied.exitCode !== 0) {
+        throw new Error(`workspace: preparing UID 1000 directories failed: ${copied.stderr}`);
+      }
+    } finally {
+      await fs.rm(dir, { force: true, recursive: true });
+    }
+  }
+
   attach(id: string, keeperPid = 0): WorkspaceHandle {
     return { id, keeperPid };
   }
@@ -1006,6 +1109,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     argv: string[],
     opts: WorkspaceExecOptions
   ): Promise<CapturedResult> {
+    this.sealBootstrap(h);
     const args = execArgv(h, argv, { ...opts, stdin: opts.stdin !== undefined });
     const runOpts = {
       heartbeatLabel: opts.heartbeatLabel,
@@ -1020,6 +1124,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   }
 
   async execShell(h: WorkspaceHandle, argv: string[], opts: WorkspaceExecOptions): Promise<string> {
+    this.sealBootstrap(h);
     return execShellAsync(execCommand(h, argv, opts), {
       heartbeatLabel: opts.heartbeatLabel,
       onTimeout: opts.onTimeout,
@@ -1029,6 +1134,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   }
 
   spawn(h: WorkspaceHandle, argv: string[], opts: WorkspaceSpawnOptions) {
+    this.sealBootstrap(h);
     assertNoCredentialEnvPairs(opts.env, 'docker exec env');
     const args = [
       'exec',
@@ -1066,7 +1172,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
 
   copyIn(h: WorkspaceHandle, srcTarFile: string, path: string): Promise<void> {
     return execShellAsync(
-      `docker cp - ${shellQuote(`${h.id}:${path}`)} < ${shellQuote(srcTarFile)}`,
+      `docker cp ${resolveWorkspaceInfra().runAsRoot ? '' : '-a '}- ${shellQuote(`${h.id}:${path}`)} < ${shellQuote(srcTarFile)}`,
       { heartbeatLabel: 'workspace: copying in', timeoutMs: 600_000 }
     ).then(() => undefined);
   }
@@ -1077,10 +1183,14 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     path: string,
     opts?: { timeoutMs?: number; heartbeatLabel?: string }
   ): Promise<CapturedResult> {
-    return spawnCaptureAsync('docker', ['cp', srcFile, `${h.id}:${path}`], {
-      heartbeatLabel: opts?.heartbeatLabel ?? 'workspace: copying a file in',
-      timeoutMs: opts?.timeoutMs ?? 120_000,
-    });
+    return spawnCaptureAsync(
+      'docker',
+      ['cp', ...(resolveWorkspaceInfra().runAsRoot ? [] : ['-a']), srcFile, `${h.id}:${path}`],
+      {
+        heartbeatLabel: opts?.heartbeatLabel ?? 'workspace: copying a file in',
+        timeoutMs: opts?.timeoutMs ?? 120_000,
+      }
+    );
   }
 
   pause(h: WorkspaceHandle): Promise<void> {
@@ -1463,6 +1573,6 @@ export function ephemeralNetworkHolderArgs(
 
 const driver = new DockerWorkspaceBackend();
 
-export function dockerWorkspaceBackend(): WorkspaceBackend {
+export function dockerWorkspaceBackend(): DockerWorkspaceBackend {
   return driver;
 }

@@ -1183,6 +1183,31 @@ sidecar remains reachable through its loopback-published holder port until teard
 
 ---
 
+### UN-24. Docker agent workspaces use UID/GID 1000 by default
+
+**Affected.** Docker deployments whose repository setup scripts or custom executor images need
+root for repository code. The bare `node:24-alpine` default needs no image change: the worker installs
+git and bash during trusted preparation, before clone/setup/agent execution. The code
+marker is `WORKSPACE_RUN_AS_ROOT` in the workspace configuration and `--user 1000:1000` in the
+Docker workspace driver. Kubernetes and shell/containerStep image users are unchanged.
+
+**Actions.** Build additional OS dependencies into the executor image, and make application
+files writable by UID/GID 1000. Images without apk/apt-get must include git and bash; curated images
+already do. Fix setup scripts to install
+dependencies into the checkout or HOME, without sudo or system package installs. The worker prepares
+the workspace directories and sets `HOME=/workspace/.home`; dependency caches from another UID or
+HOME are not reused. To retain legacy image-defined user, HOME and copy behavior while adapting an
+image or script, set exactly `WORKSPACE_RUN_AS_ROOT=true` on the worker and restart it. This preserves
+the image's USER: an image that selects a non-root user stays non-root. Root bootstrap authority is
+revoked before handing off the workspace and cannot be restored after ordinary execution.
+
+**Verify.** Start a real agent workspace, run `id -u; id -g` (both 1000 without the opt-out), write a
+file under `$HOME`, run the repository setup, edit and commit a tracked file, then export and read
+the diff. With the opt-out, verify the image's expected UID instead. Confirm trusted delivery can
+import and commit the exported tree. Remove the opt-out after adapting root-dependent images/scripts.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

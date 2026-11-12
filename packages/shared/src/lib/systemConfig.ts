@@ -913,6 +913,7 @@ export interface WorkspaceInfraConfig {
   /// string `false` turns it off, so a typo cannot disable a security control.
   blockMetadata: boolean;
   blockPrivateEgress: boolean;
+  runAsRoot: boolean;
   privateEgressAllow: string[];
   diskLimit: string | null;
   runtime: string | null;
@@ -1306,6 +1307,7 @@ export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
       .filter(isWorkspaceCidr),
     regexScanBudgetMs: boundedEnvInt('SCANNER_REGEX_BUDGET_MS', 250, 10, 60_000),
     registryProxy: resolveRegistryProxy(),
+    runAsRoot: process.env.WORKSPACE_RUN_AS_ROOT === 'true',
     runtime:
       validatedEnv('WORKSPACE_RUNTIME', '', DOCKER_RUNTIME_RE, 'a Docker runtime name') || null,
     stackImages: Object.fromEntries(
@@ -1350,6 +1352,7 @@ export function validateWorkspaceInfraEnv(): string[] {
     (raw) => raw === 'true' || raw === 'false',
     "'true' or 'false'"
   );
+  check('WORKSPACE_RUN_AS_ROOT', (raw) => raw === 'true' || raw === 'false', "'true' or 'false'");
   check(
     'WORKSPACE_PRIVATE_EGRESS_ALLOW',
     (raw) => raw.split(',').every((v) => isWorkspaceCidr(v.trim())),

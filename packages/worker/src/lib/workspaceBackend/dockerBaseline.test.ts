@@ -149,7 +149,9 @@ describe('Docker baseline create', () => {
       .mock.calls.find(([cmd]) => cmd.includes('--network container:'))?.[0];
     expect(cmd).toContain('169.254.169.254');
     expect(cmd).not.toContain('10.0.0.0/8');
-    expect(spawnCaptureAsync).not.toHaveBeenCalled();
+    expect(vi.mocked(spawnCaptureAsync).mock.calls.filter(([, args]) => args[0] !== 'cp')).toEqual(
+      []
+    );
   });
 
   it('trusts only the worker-added alias and omits public destination ACCEPT rules', async () => {

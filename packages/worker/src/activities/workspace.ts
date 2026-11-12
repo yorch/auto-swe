@@ -270,8 +270,8 @@ const HARDENED_GIT_CONFIG = [
 
 /**
  * Environment for a credential-bearing git call: ignore the system and global
- * config files (`/etc/gitconfig`, `~/.gitconfig` — both writable by an agent
- * running as root in its workspace), and never prompt.
+ * config files (`~/.gitconfig`, and `/etc/gitconfig` under the root opt-out),
+ * and never prompt.
  */
 const HARDENED_GIT_ENV = 'GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0';
 
@@ -534,7 +534,8 @@ export function killTaggedProcessesScript(execId: string): string {
  * fresh workspace. Three cases:
  *
  *  - git already ships in the image — nothing to do;
- *  - git is missing but a package manager can install it: `apk` on Alpine,
+ *  - git is missing and the workspace is non-root — fail naming the image contract;
+ *  - git is missing and root can install it: `apk` on Alpine,
  *    then `apt-get` on Debian/Ubuntu (with `APT::Sandbox::User=root`, because
  *    the container runs `--cap-drop=ALL` and apt's default privilege drop to
  *    the `_apt` user fails without it);
@@ -544,6 +545,10 @@ export function killTaggedProcessesScript(execId: string): string {
 export function gitBootstrapScript(image: string): string {
   return [
     'if ! command -v git >/dev/null 2>&1; then',
+    '  if [ "$(id -u)" != 0 ]; then',
+    `    echo ${shellQuote(`auto-swe: executor image '${image}' must ship git for non-root workspaces. Install git when building the image; repository setup and catalog tools run as the workspace user. See docs/repositories.md`)} >&2`,
+    '    exit 1',
+    '  fi',
     '  if command -v apk >/dev/null 2>&1; then',
     '    apk add --no-cache git',
     '  elif command -v apt-get >/dev/null 2>&1; then',
@@ -1159,7 +1164,7 @@ export async function createWorkspace(
     }
     handle = await backend.create(spec);
 
-    // Initial exec function (root of container)
+    // Initial exec function (container working directory).
     const rootExec = (
       command: string,
       timeoutMs?: number,

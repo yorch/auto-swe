@@ -11,7 +11,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  * exercised together. Everything else mocks one of them.
  *
  * Needs Docker, the `node:24-alpine` image (pulled if absent) and network for
- * `apk add bash` inside the container. No API key: the model is a local mock.
+ * bootstrap tool installation inside the container. No API key: the model is a local mock.
  *
  *   CLAUDE_CODE_DOCKER_TEST=1 yarn vitest run \
  *     packages/worker/src/agents/claudeCode/runtime.docker.test.ts
@@ -90,6 +90,7 @@ import { killStrayProcessesScript } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import type { ResolvedHarnessProfile } from '../../lib/config/harnessProfile.js';
 import { restoreWorkingTree, snapshotWorkingTree } from '../../lib/pauseSnapshot.js';
+import { workspaceBootstrapScript } from '../../lib/workspaceBackend/docker.js';
 import { HARNESS_HOME } from '../harness/adapter.js';
 import { type MockMessagesApi, startMockMessagesApi } from './mockMessagesApi.js';
 import { createModelProxy, type ModelProxy } from './modelProxy.js';
@@ -143,6 +144,21 @@ async function startWorkspace() {
     'infinity',
   ]);
   containers.push(name);
+  await run('docker', [
+    'exec',
+    '--user',
+    '0',
+    '--workdir',
+    '/',
+    name,
+    '/usr/bin/env',
+    '-i',
+    'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+    'HOME=/root',
+    '/bin/sh',
+    '-ec',
+    workspaceBootstrapScript(),
+  ]);
   await run('docker', ['exec', name, 'mkdir', '-p', REPO]);
 
   const exec = (command: string, stdin?: string | Buffer) =>
@@ -853,7 +869,6 @@ describe.skipIf(!enabled)('the Claude Code runtime against a real container', ()
 
 /** A repository with a fixed history, so two containers hold the same base commit. */
 async function seedRepo(ws: Awaited<ReturnType<typeof startWorkspace>>): Promise<string> {
-  await run('docker', ['exec', '-u', 'root', ws.name, 'apk', 'add', '--no-cache', 'git']);
   const env =
     'GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t ' +
     'GIT_AUTHOR_DATE=2020-01-01T00:00:00Z GIT_COMMITTER_DATE=2020-01-01T00:00:00Z';

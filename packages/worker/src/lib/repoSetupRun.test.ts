@@ -371,6 +371,26 @@ describe('runSetupStepsPhase', () => {
     expect(keys[2]).toBe(keys[3]);
   });
 
+  it('does not reuse dependency caches across workspace UID or HOME changes', async () => {
+    const keys: unknown[] = [];
+    for (const identity of ['0\n/root', '1000\n/root', '1000\n/workspace/.home']) {
+      const host = fakeHost({
+        capture: vi.fn(async (cmd: string) => ({
+          exitCode: 0,
+          stderr: '',
+          stdout: cmd.startsWith('uname -m') ? `x86_64\n${identity}` : '',
+        })),
+      });
+      await runSetupStepsPhase(host, setup, inputs);
+      expect(host.capture).toHaveBeenCalledWith(
+        expect.stringContaining('id -u; printf "%s\\n" "$HOME"'),
+        { timeoutMs: 60_000 }
+      );
+      keys.push(JSON.stringify(cache.findUnique.mock.calls.at(-1)));
+    }
+    expect(new Set(keys).size).toBe(3);
+  });
+
   it('keys on every tracked file a key file glob matches, by path and content', async () => {
     const globbed: RepoSetup = { ...setup, cache: { keyFiles: ['**/build.gradle'], paths: ['x'] } };
     const listing = (files: string[]) =>

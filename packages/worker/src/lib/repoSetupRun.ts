@@ -403,6 +403,8 @@ async function setupCacheKey(
     `if [ -f ${shellQuote(f)} ]; then sha256sum < ${shellQuote(f)}; else echo absent; fi`;
   const script = [
     'uname -m',
+    'id -u',
+    'printf "%s\\n" "$HOME"',
     ...entries.filter((e) => !isKeyFileGlob(e)).map(hash),
     // A matched file's path is part of the key, so adding or removing a subproject changes it.
     ...matched.map((f) => `printf '%s\\n' ${shellQuote(f)}; ${hash(f)}`),

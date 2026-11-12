@@ -179,7 +179,7 @@ describe('harnessRuntime', () => {
     await runtime.runTurn({ system: 'S', user: 'U' });
     expect(h.spawnCaptureAsync.mock.calls[0]?.slice(0, 2)).toEqual([
       'docker',
-      ['cp', '/host/fake-arm64-musl', 'workspace-xyz:/workspace/.harness/fake'],
+      ['cp', '-a', '/host/fake-arm64-musl', 'workspace-xyz:/workspace/.harness/fake'],
     ]);
     expect(
       ws.execCapture.mock.calls.filter((c) => c[0].startsWith('sha256sum /workspace/.harness/fake'))
