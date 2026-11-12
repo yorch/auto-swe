@@ -39,6 +39,7 @@ import {
   loadSetupSecrets,
   type RepoSetupHost,
   type RepoSetupReport,
+  readSetupFile,
   resolveWorkspaceSetup,
   runSetupGitPhase,
   runSetupStepsPhase,
@@ -83,6 +84,8 @@ export {
 export { shellQuote };
 
 export interface Workspace {
+  readonly baseSha: string;
+  readBaseFile: (path: string) => Promise<string | null>;
   knowledgeBaseSnapshotIds?: string[];
   knowledgeBases?: MountedKnowledgeBase[];
   containerId: string;
@@ -823,6 +826,8 @@ export async function createWorkspace(
    */
   existingBranch?: boolean,
   options?: {
+    /** Resume snapshot pins may contain agent commits; configuration still comes from this base branch. */
+    trustedBaseBranch?: string;
     knowledgeBaseSnapshotIds?: string[];
     knowledgeBases?: KnowledgeBaseCheckout[];
     teamId?: string | null;
@@ -1058,6 +1063,7 @@ export async function createWorkspace(
     }
   }
   let baseRef: () => Promise<string> = async () => 'HEAD';
+  let trustedBaseSha = '';
   let baseRefFetch: Promise<string> | undefined;
   // Secrets minted during setup (submodule credentials), scrubbed like the clone's own.
   const setupSecrets: string[] = [];
@@ -1426,7 +1432,14 @@ export async function createWorkspace(
     );
     // The commit the workspace was cut from: where the registry allowlist and the setup
     // definition are read from. HEAD is that commit until after provisioning.
-    const cutFrom = checkoutSha ? checkoutSha : existingBranch ? null : 'HEAD';
+    const cutFrom = options?.trustedBaseBranch
+      ? null
+      : checkoutSha
+        ? checkoutSha
+        : existingBranch
+          ? null
+          : 'HEAD';
+    const configBaseBranch = options?.trustedBaseBranch ?? defaultBranch;
     baseRef = async () => {
       if (cutFrom) {
         return cutFrom;
@@ -1434,7 +1447,7 @@ export async function createWorkspace(
       baseRefFetch ??= (async () => {
         const fetchScript = [
           killStrayProcessesScript(handle.keeperPid),
-          authedGitScript('/workspace/target-repo', fetchBranchesSubcommand([defaultBranch]), {
+          authedGitScript('/workspace/target-repo', fetchBranchesSubcommand([configBaseBranch]), {
             authed: Boolean(gitAuthHeader),
             cleanUrl,
           }),
@@ -1446,10 +1459,13 @@ export async function createWorkspace(
           heartbeatLabel: 'workspace: fetching the base branch',
           onTimeout: tag.onTimeout,
         });
-        return `origin/${defaultBranch}`;
+        return `origin/${configBaseBranch}`;
       })();
       return baseRefFetch;
     };
+    trustedBaseSha = (
+      await rootExec(`cd /workspace/target-repo && git rev-parse ${shellQuote(await baseRef())}`)
+    ).trim();
 
     // On-demand tools: installed as the exec user into `/workspace/.tools/bin`, then put LAST on
     // the PATH of every later exec (the image's own binaries always win). What a connection declares is read from the BASE ref before
@@ -1663,7 +1679,7 @@ export async function createWorkspace(
     if (options?.repoSetup) {
       resolvedSetup = await resolveWorkspaceSetup(setupHost, {
         ...setupInputs(),
-        baseRef: await baseRef(),
+        baseRef: trustedBaseSha,
       });
     }
 
@@ -1735,6 +1751,7 @@ export async function createWorkspace(
   }
 
   return {
+    baseSha: trustedBaseSha,
     containerId: containerName,
     copyFileOut: copyWorkspaceFileOut,
     destroy: async () => {
@@ -1743,6 +1760,7 @@ export async function createWorkspace(
       await backend.remove(containerName);
     },
     egressPolicy,
+    readBaseFile: (path) => readSetupFile(setupHost, trustedBaseSha, path),
     ...(setupPhase ? { finishSetup } : {}),
     exec: (command: string, options) => {
       const tag = newExecTag();

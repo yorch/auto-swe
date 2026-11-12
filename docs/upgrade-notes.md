@@ -1273,6 +1273,19 @@ Starting the gateway before applying the migration fails during that sync.
 
 ---
 
+### UN-26. Existing repository preview files become active configuration
+
+**Affected:** A connected repository already contains `.auto-swe/preview.yml` on its trusted base
+branch, has no connection `previewConfig` override, and uses UI verification or a browser-enabled
+agent. Previously ignored files supply the preview recipe, including service images and commands.
+
+**Action:** Review that file before running previews. Remove or rename a stray file if it is not
+intended to configure previews, or set an explicit connection recipe to override it. Invalid files
+fail preview resolution instead of behaving as an unconfigured repository.
+
+**Source marker:** `resolveRepoPreview` in `packages/worker/src/lib/repoConfigResolver.ts` reads
+`REPO_PREVIEW_FILE` when the connection recipe is unset.
+
 ## Limitations
 
 - **A SHA identifies code, not your deployed image.** The comparison in §1 holds only if your

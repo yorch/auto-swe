@@ -87,6 +87,7 @@ const gitAuthedMock = vi.fn((subcommand: string) =>
   execMock(`git -c http.extraheader='AUTHORIZATION: basic redacted' ${subcommand}`)
 );
 const destroyMock = vi.fn(async () => {});
+const readBaseFileMock = vi.hoisted(() => vi.fn(async (): Promise<string | null> => null));
 vi.mock('./workspace.js', () => ({
   createWorkspace: vi.fn(async () => ({
     containerId: 'workspace-test',
@@ -94,6 +95,7 @@ vi.mock('./workspace.js', () => ({
     exec: execMock,
     execCapture: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
     gitAuthed: gitAuthedMock,
+    readBaseFile: readBaseFileMock,
   })),
   fetchBranchesSubcommand: (branches: string[]) =>
     `fetch origin ${branches.map((b) => `'+refs/heads/${b}:refs/remotes/origin/${b}'`).join(' ')}`,
@@ -595,6 +597,14 @@ describe('runImplementerFixSession', () => {
     await runImplementerFixSession(input());
     const testCall = execMock.mock.calls.find((c) => c[1]?.timeoutMs === 600_000);
     expect(testCall?.[0]).toBe('{ pytest -q\n} 2>&1');
+  });
+
+  it('runs the trusted repository-file test command', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    readBaseFileMock.mockResolvedValueOnce('runTests: make test');
+    await runImplementerFixSession(input());
+    const testCall = execMock.mock.calls.find((c) => c[1]?.timeoutMs === 600_000);
+    expect(testCall?.[0]).toBe('{ make test\n} 2>&1');
   });
 
   describe('a stack command that finds no tests', () => {

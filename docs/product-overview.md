@@ -158,7 +158,7 @@ flowchart LR
 The preview check runs the repository's configured recipe in the workspace the implementation
 passed: it starts the app, visits the smoke paths, saves a screenshot, a recording, a trace and the
 app log as run evidence, and runs the e2e command when one is configured. A repository with no
-`previewConfig` skips it; the built-in template treats a failed check as a warning on the run
+`previewConfig` or trusted `.auto-swe/preview.yml` skips it; the built-in template treats a failed check as a warning on the run
 ([ui-validation.md](./ui-validation.md)).
 
 ### 5.2 Multi-repo epic

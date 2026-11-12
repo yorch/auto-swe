@@ -1,5 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const startPreview = vi.hoisted(() =>
+  vi.fn(async () => ({
+    baseUrl: 'http://localhost:3000',
+    logTail: async () => '',
+    stop: async () => {},
+  }))
+);
+vi.mock('../lib/appPreview.js', () => ({ startAppPreview: startPreview }));
+
 const { auditLog, evidence, findRepo, screenMcpResult, startBrowser, resolveSetting } = vi.hoisted(
   () => ({
     auditLog: vi.fn(),
@@ -72,14 +81,31 @@ describe('BrowserToolset', () => {
     });
   });
 
-  function createToolset() {
+  function createToolset(
+    readBaseFile: (path: string) => Promise<string | null> = async () => null
+  ) {
     return new BrowserToolset({
       containerId: 'workspace-123',
       repoId: 'repo-1',
       tracer,
-      workspace: {} as never,
+      workspace: { readBaseFile } as never,
     });
   }
+
+  it('starts a repository-file preview through the workspace trusted reader', async () => {
+    const readBaseFile = vi.fn(
+      async () => 'start: npm start\nreadyUrl: http://localhost:3000/\nallowedHosts: [localhost]'
+    );
+    const toolset = createToolset(readBaseFile);
+    await toolset.startApp();
+    expect(readBaseFile).toHaveBeenCalledWith('.auto-swe/preview.yml');
+    expect(startPreview).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ allowedHosts: ['localhost'], start: 'npm start' }),
+      expect.anything()
+    );
+    await toolset.close();
+  });
 
   it('screens page text and records an audit log and trace for each call', async () => {
     const toolset = createToolset();
@@ -94,7 +120,7 @@ describe('BrowserToolset', () => {
       expect.objectContaining({ toolName: 'browser:browser_snapshot' })
     );
     expect(startBrowser).toHaveBeenCalledWith(
-      {},
+      expect.objectContaining({ readBaseFile: expect.any(Function) }),
       expect.objectContaining({ allowedHosts: [], recordVideo: false, trace: true })
     );
   });

@@ -1,4 +1,5 @@
 import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
+import { resolveRepoGateCommands, workspaceConfigReader } from '../lib/repoConfigResolver.js';
 /**
  * Quality-gate activities — phase 2 of the configurable workflow engine.
  *
@@ -15,9 +16,10 @@ import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
  * Command resolution order (highest precedence first):
  *   1. `config.command` on the step node (template-author override)
  *   2. `Connection.gateCommands[step]` (git_repo connection override)
- *   3. Built-in default in `DEFAULT_COMMANDS` below
+ *   3. `.auto-swe/gates.yml` from the trusted base commit
+ *   4. Detected stack default, then the built-in default
  *
- * The first match always wins; we never silently merge.
+ * The first match for each key wins.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -101,9 +103,10 @@ export { DEFAULT_COMMANDS };
 
 export async function runReviewTestGate(
   workspace: Workspace,
-  repo: Parameters<typeof gateCommandFor>[2]
+  repo: Parameters<typeof gateCommandFor>[2] & { id?: string }
 ) {
-  const command = gateCommandFor('runTests', undefined, repo);
+  const fileCommands = await resolveRepoGateCommands(workspaceConfigReader(workspace, repo.id));
+  const command = gateCommandFor('runTests', undefined, repo, fileCommands);
   if (!command) {
     return parseTestOutput('Tests not run: no repository test gate is configured.', 0, 1);
   }
@@ -189,7 +192,7 @@ export function truncate(s: string, maxBytes: number): string {
 }
 
 /**
- * Resolve gate command from step config → repo override → default. Returns
+ * Resolve gate command from step config → connection → repo file → stack → built-in. Returns
  * null when no command is configured anywhere, which the caller reports as a
  * FAILED gate (see {@link noCommandResult}): a gate that cannot run has not
  * verified anything, and its node's `onFail: 'warn'` is the supported way to
@@ -198,9 +201,10 @@ export function truncate(s: string, maxBytes: number): string {
 export async function resolveCommand(
   gate: GateName,
   request: RepoWorkRequest,
-  override: string | undefined
+  override: string | undefined,
+  workspace?: Workspace
 ): Promise<string | null> {
-  if (override && override.trim().length > 0) {
+  if (!workspace && override && override.trim().length > 0) {
     return override;
   }
 
@@ -208,7 +212,10 @@ export async function resolveCommand(
     select: { detectedStack: true, gateCommands: true, id: true },
     where: { id: requireRepoId(request, 'qualityGate') },
   });
-  return gateCommandFor(gate, override, await withRunDetection(repo));
+  const fileCommands = workspace
+    ? await resolveRepoGateCommands(workspaceConfigReader(workspace, repo.id))
+    : undefined;
+  return gateCommandFor(gate, override, await withRunDetection(repo), fileCommands);
 }
 
 /**
@@ -461,14 +468,12 @@ async function runGateCommand({
  */
 async function runGate(gate: GateName, input: GateInput): Promise<GateResult> {
   heartbeat(`gate ${gate}: resolving command`);
-  const command = await resolveCommand(gate, input.request, input.command);
-
-  if (!command) {
-    return noCommandResult(gate);
-  }
-
   const { workspace } = await provisionGateWorkspace(input.request, gate, input.branch);
   try {
+    const command = await resolveCommand(gate, input.request, input.command, workspace);
+    if (!command) {
+      return noCommandResult(gate);
+    }
     return await runGateCommand({
       command,
       gate,
@@ -543,34 +548,19 @@ export async function runQualityGates(input: RunQualityGatesInput): Promise<RunQ
   let failed = 0;
   let stopped = false;
 
-  // Resolve every command up front: a gate with nothing to run fails the batch
-  // without provisioning a workspace for the rest.
-  const resolved: Array<
-    { gate: GateName; command: string } | { gate: GateName; result: GateResult }
-  > = [];
-  for (const { command: override, name } of requested) {
-    heartbeat(`quality gates: resolving ${name}`);
-    const command = await resolveCommand(name, input.request, override);
-    resolved.push(
-      command ? { command, gate: name } : { gate: name, result: noCommandResult(name) }
-    );
-  }
-
   if (isolation === 'per-gate') {
-    for (const entry of resolved) {
+    for (const entry of requested) {
       if (stopped) {
-        skipped.push(entry.gate);
+        skipped.push(entry.name);
         continue;
       }
-      const result =
-        'result' in entry
-          ? entry.result
-          : await runGate(entry.gate, {
-              command: entry.command,
-              request: input.request,
-              ...(input.branch ? { branch: input.branch } : {}),
-            });
-      gates[entry.gate] = result;
+      const result = await runGate(entry.name, {
+        command: entry.command,
+        request: input.request,
+        timeoutMs: entry.timeoutMs,
+        ...(input.branch ? { branch: input.branch } : {}),
+      });
+      gates[entry.name] = result;
       if (!result.passed) {
         failed += 1;
         stopped = input.stopOnFailure === true;
@@ -579,21 +569,21 @@ export async function runQualityGates(input: RunQualityGatesInput): Promise<RunQ
   } else {
     const { workspace } = await provisionGateWorkspace(input.request, 'runLint', input.branch);
     try {
-      for (const entry of resolved) {
+      for (const entry of requested) {
         if (stopped) {
-          skipped.push(entry.gate);
+          skipped.push(entry.name);
           continue;
         }
-        const result =
-          'result' in entry
-            ? entry.result
-            : await runGateCommand({
-                command: entry.command,
-                gate: entry.gate,
-                timeoutMs: requested.find((g) => g.name === entry.gate)?.timeoutMs,
-                workspace,
-              });
-        gates[entry.gate] = result;
+        const command = await resolveCommand(entry.name, input.request, entry.command, workspace);
+        const result = command
+          ? await runGateCommand({
+              command,
+              gate: entry.name,
+              timeoutMs: entry.timeoutMs,
+              workspace,
+            })
+          : noCommandResult(entry.name);
+        gates[entry.name] = result;
         if (!result.passed) {
           failed += 1;
           stopped = input.stopOnFailure === true;
@@ -712,7 +702,8 @@ export async function executeGateFixImplementation(
       const rerunCommand = await resolveCommand(
         gateName as GateName,
         { externalTicketId: '', repoId: repo.id } as RepoWorkRequest,
-        gateOutput.command
+        gateOutput.command,
+        workspace
       );
       if (!rerunCommand) {
         return `${gateName} not re-runnable (no command resolved)`;

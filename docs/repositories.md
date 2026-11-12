@@ -3,7 +3,8 @@
 A repository is a `Connection` with `type = 'git_repo'`. This document covers what identifies one,
 which hosts its URLs may point at, and which teams may use it.
 
-Repository settings also accept an optional `previewConfig` JSON recipe for UI validation. Only
+Repository settings also accept an optional `previewConfig` JSON recipe for UI validation, overriding
+the repository's `.auto-swe/preview.yml`. Only
 `git_repo` connections can store one, and changing it takes the same team shell-authoring role as
 changing gate commands; see [UI validation](./ui-validation.md) for its schema and runtime behavior.
 Preview sessions need a browser in the repository's executor image: `defaults/Dockerfile.node-browser`
@@ -236,11 +237,31 @@ find which private repositories the platform credential can see.
 
 A repository can give each gate step its own command (`Connection.gateCommands`): `runLint`,
 `runTypecheck`, `runTests`, `runBuild`, `runVulnScan` and `runPerfBench`. A gate step that sets no
-`command` of its own runs the repository's, else the worker's built-in default; the implementer's
-test loop reads `runTests` the same way. They are edited in the connection form's **Gate commands**
+`command` of its own resolves each key from the connection override, then `.auto-swe/gates.yml`,
+then the detected stack default, then the worker's built-in default. A connection override for
+`runTests` does not hide a file's `runLint`. The implementer's test loop reads `runTests` from the
+connection, then the file, then its stack/package-script detection. Overrides are edited in the connection form's **Gate commands**
 section (when onboarding or editing), with `POST /repositories` / `PATCH /repositories/:id`
 `{ gateCommands }` — a PATCH replaces the stored set; a gate left out, null or blank falls back to
-the default, and `null` clears them all — or with the CLI's `auto-swe repos gate-commands`.
+the next source, and `null` clears them all — or with the CLI's `auto-swe repos gate-commands`.
+
+The file uses the same command validation as the connection (4,000 characters per command);
+unknown keys are errors. Null or blank entries fall through to the next source.
+
+```yaml
+runTests: make test
+runLint: make lint
+runBuild: make build
+```
+
+Repository gate and preview files are read from trusted base-branch content, never the agent-editable
+working tree. Provisioning captures an immutable base commit SHA before setup or agents run;
+workspace consumers read files using `git cat-file` at that SHA, even after branch changes or agent
+commits. On resume, the saved snapshot's checkout pin restores the agent's work, but configuration
+comes from the run's trusted base branch, not that snapshot pin. Preview services needed before a
+workspace exists use the SCM provider at a resolved SHA of the same base branch. A missing file is
+unset. An invalid file names its path in a typed failure; workspace consumers attach an
+`invalid_config` setup blocker. Test-command evidence labels file-selected commands `repo-file`.
 
 The test loop runs `runTests` when set, else a command guessed from `package.json` that falls back to
 `npm test`. When the command cannot run in the workspace — exit status 127 or 126, npm's
@@ -858,6 +879,12 @@ longer fit.
 ---
 
 ## Limitations
+
+- Gate and preview file edits on a work branch do not change that run's commands or services;
+  they must reach the trusted base branch first. Pre-provisioning preview reads and workspace
+  provisioning can see different trusted commits if the base branch advances between them.
+- Preview connection overrides replace the entire file recipe; fields and services are not merged.
+  Invalid overridden preview files are not read. Repository configuration files are limited to 64 KiB.
 
 - **Egress blocker detection relies on proxy audit rows.** Kernel-dropped traffic is not classified
   as `egress_denied`, and only the first denied host is reported for a failed step.

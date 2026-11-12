@@ -83,6 +83,7 @@ type ToolDef<I, O> = { execute: (input: I) => Promise<O> };
 type WriteTool = ToolDef<{ path: string; content: string }, { result: string }>;
 
 const workspace = {
+  baseSha: 'a'.repeat(40),
   containerId: 'workspace-test',
   copyFileOut: vi.fn(async () => ({
     cleanup: async () => {},
@@ -98,6 +99,7 @@ const workspace = {
     author: { email: 'auto-swe@localhost', name: 'auto-swe' },
     committer: { email: 'auto-swe@localhost', name: 'auto-swe' },
   },
+  readBaseFile: vi.fn(async () => null),
   readFile: vi.fn(async () => Buffer.alloc(0)),
 } satisfies Workspace;
 

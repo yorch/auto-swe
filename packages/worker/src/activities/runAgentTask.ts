@@ -12,7 +12,7 @@ import {
 import { type AdmissionDecision, decideAdmission } from '@auto-swe/shared/lib/agentRunAdmission';
 import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import type { NeedsInputQuestion } from '@auto-swe/shared/lib/needsInput';
-import { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
+import type { PreviewConfigSchema } from '@auto-swe/shared/lib/previewConfig';
 import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
@@ -64,6 +64,7 @@ import {
   resumeCheckoutSha,
   resumeMessage,
 } from '../lib/pauseResume.js';
+import { resolvePreviewFromScm } from '../lib/repoConfigResolver.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { withRunDetection } from '../lib/runDetection.js';
@@ -282,9 +283,9 @@ export async function runAgentTaskCore(
       select: { previewConfig: true },
       where: { id: repo.id },
     });
-    services = previewRow?.previewConfig
-      ? PreviewConfigSchema.parse(previewRow.previewConfig).services
-      : undefined;
+    services = (
+      await resolvePreviewFromScm({ ...repo, previewConfig: previewRow?.previewConfig }, baseBranch)
+    )?.services;
   }
 
   // The run's pinned egress policy. The agent's container takes it as is. The trusted delivery
@@ -326,6 +327,7 @@ export async function runAgentTaskCore(
       resumeCheckoutSha(resume) ?? input.initialChange?.baseSha,
       undefined,
       {
+        ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
         detectedStack: repo.detectedStack,
         egressPolicy,
         knowledgeBaseSnapshotIds: references.snapshotIds,

@@ -145,6 +145,7 @@ import {
   resolveGitIdentity,
 } from '../lib/gitIdentity.js';
 import { beginWorkspaceRegistries } from '../lib/registryProxy/workspaceWiring.js';
+import { resolveRepoGateCommands, workspaceConfigReader } from '../lib/repoConfigResolver.js';
 import { resetToolCatalogCache } from '../lib/toolCatalogLoader.js';
 import { baselineRules, dockerWorkspaceBackend } from '../lib/workspaceBackend/docker.js';
 import { ToolRefusal } from '../lib/workspaceTools.js';
@@ -243,6 +244,86 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
   beforeEach(() => {
     vi.mocked(execShellAsync).mockReset();
     vi.mocked(execShellAsync).mockImplementation(okExec);
+  });
+
+  it('ignores gates.yml edits and commits after provisioning, reading the captured base SHA', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'repo-gates-trust-'));
+    const git = (...args: string[]) =>
+      execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).trim();
+    const capture = vi.mocked(spawnCaptureAsync).getMockImplementation();
+    let ws: Awaited<ReturnType<typeof createWorkspace>> | undefined;
+    try {
+      git('init', '-q');
+      mkdirSync(join(dir, '.auto-swe'));
+      writeFileSync(join(dir, '.auto-swe/gates.yml'), 'runTests: trusted tests\n');
+      git('add', '.auto-swe/gates.yml');
+      git('-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'base');
+      const base = git('rev-parse', 'HEAD');
+      vi.mocked(execShellAsync).mockImplementation(async (command) =>
+        command.includes('git rev-parse') ? git('rev-parse', 'HEAD') : okExec(command)
+      );
+      vi.mocked(spawnCaptureAsync).mockImplementation(async (_file, args) => {
+        const script = args.at(-1) ?? '';
+        if (!script.includes('cat-file')) {
+          return { exitCode: 0, stderr: '', stdout: '' };
+        }
+        const result = spawnSync('sh', ['-c', script], { cwd: dir, encoding: 'utf8' });
+        return { exitCode: result.status ?? 1, stderr: result.stderr, stdout: result.stdout };
+      });
+      ws = await createWorkspace('https://github.com/acme/repo.git', 'b', 'main');
+      expect(ws.baseSha).toBe(base);
+      writeFileSync(join(dir, '.auto-swe/gates.yml'), 'runTests: agent bypass\n');
+      expect(await resolveRepoGateCommands(workspaceConfigReader(ws))).toEqual({
+        runTests: 'trusted tests',
+      });
+      git('add', '.auto-swe/gates.yml');
+      git('-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'agent');
+      expect(await resolveRepoGateCommands(workspaceConfigReader(ws))).toEqual({
+        runTests: 'trusted tests',
+      });
+      git('replace', base, 'HEAD');
+      expect(await resolveRepoGateCommands(workspaceConfigReader(ws))).toEqual({
+        runTests: 'trusted tests',
+      });
+      expect(await ws.readBaseFile('.auto-swe/preview.yml')).toBeNull();
+    } finally {
+      await ws?.destroy();
+      if (capture) {
+        vi.mocked(spawnCaptureAsync).mockImplementation(capture);
+      }
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  it('reads resumed configuration from the trusted base branch, not the snapshot pin', async () => {
+    const base = 'a'.repeat(40);
+    vi.mocked(execShellAsync).mockImplementation(async (command) =>
+      command.includes('git rev-parse') ? `${base}\n` : okExec(command)
+    );
+    const ws = await createWorkspace(
+      'https://github.com/acme/repo.git',
+      'b',
+      'main',
+      undefined,
+      'b'.repeat(40),
+      undefined,
+      { trustedBaseBranch: 'main' }
+    );
+    try {
+      expect(ws.baseSha).toBe(base);
+      expect(
+        vi
+          .mocked(execShellAsync)
+          .mock.calls.some(
+            ([cmd]) =>
+              cmd.includes('git rev-parse') &&
+              cmd.includes('origin/main') &&
+              !cmd.includes('b'.repeat(40))
+          )
+      ).toBe(true);
+    } finally {
+      await ws.destroy();
+    }
   });
 
   it.each([false, true])('resolves blockers after successful setup (defer=%s)', async (defer) => {
