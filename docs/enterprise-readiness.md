@@ -340,6 +340,13 @@ authenticated principal, and tenant keys on the tables joined through runs.
   do not use this setting. Treat setup as repository-controlled code with access to its declared
   secrets and wired workspace/proxy credentials, not as a trusted package-install boundary; see
   [setup network phases](./run-activity.md#setup-and-agent-network-phases).
+- **Delivery git has a fresh trust boundary.** Implementer/TDD, fix sessions, resumed rebases and
+  merge/resolver delivery authenticate only in fresh trusted workspaces, on Docker and Kubernetes.
+  Capped bundles preserve commit history; trusted git verifies object integrity and ancestry and
+  pushes the exact imported SHA without forcing. The agent workspace sees only local bundles, not
+  the delivery credential. Review fetches, repeated CI-verification setup and dependency, submodule,
+  LFS and knowledge-base checkouts still authenticate in the workspace, including after repository
+  code has run; see [architecture limitations](./architecture.md#limitations).
 - **Shell and container steps** default to `network: "none"` in the node. A step that sets
   `network: "egress"` is held to the team's `egressAllowlist` by a DNS filter (and the egress
   proxy when configured); under `open`, an empty allowlist permits any host. Under `restricted`

@@ -284,6 +284,7 @@ import {
   subtaskBranchName,
 } from './decomposition.js';
 import { recordMergeInputs, startMerge } from './mergeResolution.js';
+import { createWorkspace } from './workspace.js';
 
 const baseRequest = {
   description: 'test',
@@ -387,6 +388,9 @@ describe('mergeBranches', () => {
     expect(result.conflicts).toEqual([]);
     // The sha the tracked merges ended at, not whatever a branch name resolves to afterwards.
     expect(result.headSha).toBe('merged-sha');
+    expect(vi.mocked(createWorkspace).mock.calls.at(-1)?.[6]).toMatchObject({
+      bundleDelivery: true,
+    });
 
     const cmds = fakeWorkspace.exec.mock.calls.map((c) => c[0] as string);
     // fetch + push now go through gitAuthed (credential injected per-call

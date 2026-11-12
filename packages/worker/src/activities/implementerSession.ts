@@ -230,6 +230,7 @@ export async function runImplementerFixSession(
       resumeCheckoutSha(resume),
       undefined,
       {
+        bundleDelivery: true,
         ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
         detectedStack: repo.detectedStack,
         knowledgeBaseSnapshotIds: references.snapshotIds,

@@ -287,6 +287,7 @@ export async function executeImplementation(
       resumeCheckoutSha(resume),
       undefined,
       {
+        bundleDelivery: true,
         ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
         detectedStack: repo.detectedStack,
         knowledgeBaseSnapshotIds: references.snapshotIds,

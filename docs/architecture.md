@@ -1351,6 +1351,24 @@ outcomes card reads `GET /api/v1/pull-requests/outcomes` ([work-views.md](./work
 The agent workspace container executes LLM-generated commands, so its posture matters more than
 anything else in the system. `createWorkspace()` (`activities/workspace.ts`) applies:
 
+**History-preserving delivery is a separate trust boundary.** Implementer/TDD, shared fix sessions
+(CI, review, gate and PR feedback), resumed rebases and decomposition merges opt into
+`bundleDelivery`. Their `gitAuthed` fetch, `ls-remote` and push run in a fresh `trusted: true`
+workspace without setup, tools, knowledge bases or services. The agent only creates or fetches local
+git bundles; it never receives the delivery credential. Docker copies the bundle through the daemon;
+Kubernetes uses the backend's capped single-file copy-out and copy-in. Both enforce a 512 MiB export
+limit. The trusted checkout starts shallow and deepens only when required to span the starting base.
+
+`lib/bundleDelivery.ts` verifies incoming bundles, fetches into a private ref with hooks disabled and
+object checking enabled, runs strict `git fsck`, checks the imported SHA against the requested SHA,
+and proves it descends from the remote branch tip read in the trusted container (or the original
+workspace base for a new branch). Only that immutable SHA is pushed. Existing delivery uses
+fast-forward pushes, including after resumed rebases; no force push is introduced. Commit and merge
+history is preserved, unlike agent-run tree delivery's single engine-authored commit. Remote fetches
+travel the opposite way: trusted fetch, bundle export, backend copy, credential-free local fetch.
+Trusted workspaces are destroyed on success and failure. Existing path and test-integrity checks
+remain in place, but bundle validation is not a substitute for reviewing the change's content.
+
 | Control | Detail |
 |---|---|
 | Capabilities | `--cap-drop=ALL`, `--security-opt=no-new-privileges` |
@@ -1718,11 +1736,13 @@ Current constraints of the system as built. Deliberate product boundaries are in
   sidecars need a volume shared by several containers in turn, which a pod's `emptyDir` cannot
   provide; with `WORKSPACE_BACKEND=kubernetes` they fail with a non-retryable
   `WORKSPACE_BACKEND_UNSUPPORTED` before touching anything. Run them on a Docker worker.
-- **Inside a workspace the git credential is visible to the call's own process tree.** The
+- **Remaining in-workspace authenticated git exposes the credential to its own process tree.** The
   in-container shell expands `$ASW_GIT_AUTH` into git's argv, and the variable is in the
   environment of every process the script starts. The stray-process sweep that opens each
   `gitAuthed` call is what keeps an agent's leftover processes from reading either; the initial
-  clone and dependency checkouts have no sweep, and rely on running before the agent's first turn.
+  clone and dependency checkouts have no sweep. Review fetches, repeated CI-verification setup,
+  dependency, submodule, LFS and knowledge-base operations still run in the workspace; some follow
+  repository setup or test execution. Trusted bundle delivery does not isolate those operations.
 - **A shell step's clone helper shows the git credential to the Docker host.** The helper's shell
   expands `$ASW_GIT_AUTH` into git's argv, so the header is in that process's command line for the
   length of the clone, visible in `ps` on the worker host. The `docker run` argument list carries
@@ -1896,7 +1916,7 @@ Current constraints of the system as built. Deliberate product boundaries are in
   root when that is its default. Shell/containerStep author containers and their sidecars still use
   image-defined users: their volumes can hold root-owned clones or operator host mounts, and this
   control does not change ownership of those mounts. Network holders and trusted helpers are unchanged.
-- **Authenticated git runs inside the container the agent controls.** The agent owns its checkout
+- **Non-delivery authenticated git still runs inside the workspace.** The agent owns its checkout
   and HOME; the root opt-out can also let it replace system binaries. The sweep before each
   authenticated call kills what the agent left running, but it is a
   scan of `/proc`, not a freeze of the container: a process that forks faster than the two stop
@@ -1906,9 +1926,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   the configuration routes, not that one. The same limit applies to the test-integrity guard of fix
   sessions, which reads the change with that `git` (see the Limitations of
   [ci-failure-triggers.md](./ci-failure-triggers.md#limitations)): tampering below git defeats every
-  git-based check. Closing it means performing the push from a separate trusted
-  container, which the workspace (a container layer, not a volume) does not support for those paths.
-  Agent runs are the exception: they check and push from a fresh container the agent never ran in
+  git-based check. Implementer/fix/merge delivery isolates the credential and validates object
+  integrity and ancestry in a fresh trusted container, but does not re-run those semantic guards
+  there. Review fetches, repeated CI-verification setup and dependency/submodule/LFS/knowledge-base
+  checkouts retain this in-workspace credential boundary. Agent runs additionally check content
+  and push from a fresh container the agent never ran in
   ([agent-runs.md §4](./agent-runs.md#4-delivery-and-the-trust-boundary)). The
   hardening also ignores `/etc/gitconfig`, so a custom workspace image that configures a private CA
   or proxy there must set it through the environment (`GIT_SSL_CAINFO`, `HTTPS_PROXY`) instead.

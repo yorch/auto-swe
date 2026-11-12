@@ -12,6 +12,7 @@ import { assertShellImageAllowed, DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/w
 import { currentWorkflowId } from '../lib/activityContext.js';
 import { auditLog, logWarn } from '../lib/activityLog.js';
 import { currentNodeTag } from '../lib/activityNodeTag.js';
+import { runBundleDeliveryGit } from '../lib/bundleDelivery.js';
 import {
   beginWorkspaceEgress,
   blockedEgressAllow,
@@ -140,7 +141,8 @@ export interface Workspace {
    * `.git/config` — see the scrub in `createWorkspace` after clone. The call
    * is hardened against anything the agent planted in `.git/` (hooks,
    * `insteadOf`, proxies …) — see `authedGitScript`; a `push origin …` goes to
-   * the scrubbed URL explicitly.
+   * the scrubbed URL explicitly. With `bundleDelivery`, delivery fetch/ls-remote/push
+   * run in a fresh trusted workspace instead; only local bundles enter this workspace.
    */
   gitAuthed: (subcommand: string) => Promise<string>;
   /**
@@ -917,6 +919,8 @@ export async function createWorkspace(
      * `.auto-swe/tools.yml`), if `workspace.toolInstall.enabled` is on.
      */
     toolsFor?: { connectionId: string };
+    /** Isolate delivery fetch/ls-remote/push from this workspace's processes and git state. */
+    bundleDelivery?: boolean;
     trusted?: boolean;
   }
 ): Promise<Workspace> {
@@ -1128,6 +1132,7 @@ export async function createWorkspace(
   }
   let baseRef: () => Promise<string> = async () => 'HEAD';
   let trustedBaseSha = '';
+  let deliveryBase: string | undefined;
   let baseRefFetch: Promise<string> | undefined;
   // Secrets minted during setup (submodule credentials), scrubbed like the clone's own.
   const setupSecrets: string[] = [];
@@ -1484,6 +1489,14 @@ export async function createWorkspace(
     await rootExec(
       `cd /workspace/target-repo && git remote set-url origin ${shellQuote(cleanUrl)}`
     );
+    if (options?.bundleDelivery) {
+      deliveryBase = (
+        await rootExec('cd /workspace/target-repo && git rev-parse --verify HEAD^{commit}')
+      ).trim();
+      if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(deliveryBase)) {
+        throw new Error('Could not capture the delivery base before workspace setup');
+      }
+    }
     // The commit the workspace was cut from: where the registry allowlist and the setup
     // definition are read from. HEAD is that commit until after provisioning.
     const cutFrom = options?.trustedBaseBranch
@@ -1811,6 +1824,7 @@ export async function createWorkspace(
 
   return {
     baseSha: trustedBaseSha,
+  const workspace: Workspace = {
     containerId: containerName,
     copyFileOut: copyWorkspaceFileOut,
     destroy: async () => {
@@ -1865,6 +1879,27 @@ export async function createWorkspace(
     },
     gitAuthed: async (subcommand: string) => {
       try {
+        if (deliveryBase) {
+          return await runBundleDeliveryGit(
+            workspace,
+            () =>
+              createWorkspace(
+                authedRepoUrl,
+                `delivery/${crypto.randomBytes(16).toString('hex')}`,
+                defaultBranch,
+                effectiveImage,
+                undefined,
+                undefined,
+                {
+                  egressPolicy: egressPolicy === 'open' ? 'open' : 'blocked',
+                  teamId: options?.teamId,
+                  trusted: true,
+                }
+              ),
+            deliveryBase,
+            subcommand
+          );
+        }
         // The repo has been writable by the agent since clone, so every
         // authenticated call rewrites its config and runs git hardened — see
         // `authedGitScript`. The credential is injected for this call only.
@@ -1942,4 +1977,5 @@ export async function createWorkspace(
       });
     },
   };
+  return workspace;
 }

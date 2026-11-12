@@ -522,6 +522,7 @@ async function provisionMergeWorkspace(
     undefined,
     undefined,
     {
+      bundleDelivery: true,
       detectedStack: repo.detectedStack,
       repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
       teamId: repo.teamId,
