@@ -66,6 +66,82 @@ function gateway() {
 }
 
 describe('workflow launch', () => {
+  it.each(['git_repo', null] as const)(
+    'uses a default brief for schema-less %s templates',
+    async (workspaceProvider) => {
+      const bodies: unknown[] = [];
+      setupFetchMock({
+        'GET /api/v1/repositories': () => ({
+          data: [
+            {
+              id: '11111111-1111-4111-8111-111111111111',
+              organizationName: 'acme',
+              repoName: 'api',
+              type: 'git_repo',
+            },
+            { id: '22222222-2222-4222-8222-222222222222', name: 'Notion', type: 'notion' },
+          ],
+        }),
+        'GET /api/v1/workflow-templates/template-1': () => ({
+          data: { ...template, activeVersionSpec: null },
+        }),
+        'POST /api/v1/workflow-templates/template-1/runs': (body) => {
+          bodies.push(body);
+          return { data: { workRequestId: 'request-1' } };
+        },
+      });
+      render(
+        withQuery(
+          <WorkflowLaunchForm
+            onLaunched={vi.fn()}
+            template={{ ...template, inputSchema: null, workspaceProvider }}
+          />
+        )
+      );
+      expect(screen.getByRole('textbox', { name: /Description/ }).tagName).toBe('TEXTAREA');
+      const picker = await screen.findByRole('combobox', { name: /Repository/ });
+      fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+      expect(screen.getAllByText('This field is required')).toHaveLength(2);
+      expect(bodies).toEqual([]);
+      fireEvent.click(screen.getByRole('button', { name: 'Try a sample task' }));
+      expect(
+        (screen.getByRole('textbox', { name: /Description/ }) as HTMLTextAreaElement).value
+      ).toMatch(/Troubleshooting/);
+      act(() => picker.focus());
+      fireEvent.change(picker, { target: { value: 'acme' } });
+      expect(screen.queryByRole('option', { name: 'Notion' })).toBeNull();
+      fireEvent.click(screen.getByRole('option', { name: 'acme/api' }));
+      fireEvent.change(screen.getByLabelText('Ticket ID'), { target: { value: 'bad..id' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+      expect(screen.getByText(/Enter a valid ticket ID/)).toBeTruthy();
+      fireEvent.change(screen.getByLabelText('Ticket ID'), { target: { value: '' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Launch workflow' }));
+      await waitFor(() => expect(bodies).toHaveLength(1));
+      expect(bodies[0]).toMatchObject({
+        payload: {
+          connectionId: '11111111-1111-4111-8111-111111111111',
+          description: expect.stringContaining('Troubleshooting'),
+        },
+      });
+      expect((bodies[0] as { payload: object }).payload).not.toHaveProperty('ticketId');
+    }
+  );
+
+  it('does not add a coding brief for a schema-less non-git workspace', () => {
+    gateway();
+    render(
+      withQuery(
+        <WorkflowLaunchForm
+          onLaunched={vi.fn()}
+          template={{ ...template, inputSchema: null, workspaceProvider: 'api_only' }}
+        />
+      )
+    );
+    expect(screen.queryByLabelText(/Description/)).toBeNull();
+    expect(screen.queryByLabelText('Ticket ID')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Try a sample task' })).toBeNull();
+  });
   it('sends knowledge base additions and refs for a repo-less team template', async () => {
     const bodies: unknown[] = [];
     setupFetchMock({

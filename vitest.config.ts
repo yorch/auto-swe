@@ -256,6 +256,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/channelTask.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/ticketId',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/ticketId.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/skillScanner',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillScanner.ts'),
       },

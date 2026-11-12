@@ -1210,6 +1210,23 @@ operator may already have acted on.
 
 ---
 
+### UN-24. Automation template kinds require the widened database constraint
+
+**Affected.** Deployments whose `workflow_templates_kind_check` accepts only null or `review`.
+
+**Fix commit.** Identified before its SHA is assigned by the migration
+`20261112040227_automation_template_kind`; compare the source when commit ancestry is unavailable.
+
+**Actions.** Apply `yarn db:deploy` before starting the updated gateway or running `yarn db:seed`.
+The migration widens the CHECK constraint to accept `automation`. The built-in sync fills null
+kinds on CI triage, PR feedback and Channel Task without changing explicit kinds or workflow versions.
+Starting the gateway before applying the migration fails during that sync.
+
+**Verify.** The gateway health endpoint returns 200. CI triage, PR feedback and Channel Task carry
+`kind: "automation"` and have no hand-launch action; integrations and the run API still launch them.
+
+---
+
 ## Limitations
 
 - **A SHA identifies code, not your deployed image.** The comparison in §1 holds only if your

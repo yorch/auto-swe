@@ -342,6 +342,7 @@ async function syncGlobalChannelTemplate(
   await syncBuiltinTemplate(prisma, {
     description: spec.description,
     isDefault: false,
+    kind: name === CHANNEL_TASK_TEMPLATE_NAME ? 'automation' : undefined,
     name,
     spec,
   });
@@ -1413,7 +1414,7 @@ async function syncBuiltinTemplate(
     isDefault?: boolean;
     inputSchema?: unknown;
     workspaceProvider?: string;
-    kind?: 'review';
+    kind?: 'review' | 'automation';
   }
 ): Promise<void> {
   const spec = tmpl.spec as object;

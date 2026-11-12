@@ -1,5 +1,6 @@
 'use client';
 
+import { handLaunchBlock } from '@auto-swe/shared/lib/channelTask';
 import Link from 'next/link';
 import { Suspense, use } from 'react';
 import { Alert } from '@/components/ui/Alert';
@@ -84,7 +85,8 @@ function TemplateAnalyticsContent({ params }: PageProps) {
     return <TemplateNotFound />;
   }
 
-  const runnable = template?.status === 'ACTIVE' && template.activeVersion !== null;
+  const runnable =
+    template?.status === 'ACTIVE' && template.activeVersion !== null && !handLaunchBlock(template);
   const maxVersionCount = stats ? Math.max(1, ...stats.perVersionCounts.map((v) => v.count)) : 1;
 
   return (

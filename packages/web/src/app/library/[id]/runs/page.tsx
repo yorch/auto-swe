@@ -1,5 +1,6 @@
 'use client';
 
+import { handLaunchBlock } from '@auto-swe/shared/lib/channelTask';
 import { Suspense, use } from 'react';
 import { RunsTable } from '@/components/runs/RunsTable';
 import { Button, ButtonLink } from '@/components/ui/Button';
@@ -76,7 +77,8 @@ function TemplateRuns({ id: rawId }: { id: string }) {
   }
 
   const filtering = Boolean(statusFilter || versionFilter || failedNodeId);
-  const runnable = template?.status === 'ACTIVE' && template.activeVersion !== null;
+  const runnable =
+    template?.status === 'ACTIVE' && template.activeVersion !== null && !handLaunchBlock(template);
 
   return (
     <div className="space-y-6">

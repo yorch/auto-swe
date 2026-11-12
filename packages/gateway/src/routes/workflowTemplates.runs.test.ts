@@ -37,6 +37,7 @@ function uniqueViolation(): Error {
 }
 
 function buildHarness(opts?: {
+  kind?: string | null;
   inputSchema?: unknown;
   name?: string;
   /** The template's owning team's org; absent means a global template. */
@@ -119,6 +120,7 @@ function buildHarness(opts?: {
         activeVersion: 3,
         id: TEMPLATE_ID,
         inputSchema: opts?.inputSchema ?? null,
+        kind: opts?.kind ?? null,
         name: opts?.name ?? 'Some workflow',
         ...(opts?.teamOrgId
           ? {
@@ -283,6 +285,14 @@ describe('POST /workflow-templates/:id/runs', () => {
     expect(h.order).toEqual(['ledger', 'start']);
     expect(h.runInputs).toHaveLength(1);
     expect(h.activeWorkflows).toHaveLength(1);
+  });
+
+  it('allows automation templates through the run API', async () => {
+    const automation = buildHarness({ kind: 'automation', name: 'ci-triage-and-fix' });
+    const res = await run(automation);
+    expect(res.statusCode, res.body).toBe(201);
+    expect(automation.started).toHaveLength(1);
+    await automation.app.close();
   });
 
   it('returns the ActiveWorkflow id it just wrote', async () => {

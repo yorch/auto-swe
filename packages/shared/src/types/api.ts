@@ -778,7 +778,7 @@ export type WorkflowStepRecordStatus = (typeof WORKFLOW_STEP_RECORD_STATUSES)[nu
 
 /** Shape returned by GET /api/v1/workflow-templates (list) */
 export interface WorkflowTemplateSummary {
-  kind?: 'review' | null;
+  kind?: 'review' | 'automation' | null;
   id: string;
   name: string;
   description: string;

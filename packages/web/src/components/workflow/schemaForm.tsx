@@ -10,6 +10,7 @@ import { Combobox } from '@/components/ui/Combobox';
 import { RequiredMark } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useIsViewOnly } from '@/hooks/useViewOnlyRepos';
 import { connectionLabel } from '@/lib/connectionDisplay';
@@ -244,6 +245,25 @@ export function SchemaFieldInput({
         step={prop.integer === true ? 1 : 'any'}
         type="number"
         value={typeof value === 'number' ? String(value) : ''}
+      />
+    );
+  }
+
+  if (
+    prop.type === 'string' &&
+    /^(description|brief|instructions|message|prdContent)$/i.test(name)
+  ) {
+    return (
+      <Textarea
+        error={error}
+        hint={hint}
+        id={fieldId}
+        label={base}
+        maxLength={prop.maxLength}
+        mono={false}
+        onChange={(e) => onChange(e.target.value)}
+        required={required}
+        value={typeof value === 'string' ? value : ''}
       />
     );
   }

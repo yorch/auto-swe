@@ -22,7 +22,7 @@ export function EditMetadataModal({
   templateId: string;
   initialName: string;
   initialDescription: string;
-  initialKind?: 'review' | null;
+  initialKind?: 'review' | 'automation' | null;
   isDefault: boolean;
   initialEstimatedHumanTimeSavedMinutes: number | null;
 }) {
@@ -70,7 +70,7 @@ export function EditMetadataModal({
         description: description.trim() || undefined,
         estimatedHumanTimeSavedMinutes: estimatedMinutes,
         isDefault: defaultChecked,
-        kind: reviewKind ? 'review' : null,
+        kind: reviewKind ? 'review' : initialKind === 'automation' ? 'automation' : null,
         name: trimmed,
       });
       onClose();

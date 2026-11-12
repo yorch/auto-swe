@@ -75,6 +75,17 @@ const base = {
 };
 
 describe('Workflow library', () => {
+  it('explains review and automation launch paths instead of offering Run', () => {
+    state.templates = [
+      { ...base, id: 'review', kind: 'review', name: 'code-review' },
+      { ...base, id: 'automation', kind: 'automation', name: 'ci-triage-and-fix' },
+    ];
+    render(<TemplatesPage />);
+    expect(screen.getByText("Started from a finished run's Reviews panel")).toBeTruthy();
+    expect(screen.getByText('Started by an automation or integration')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Run code-review' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Run ci-triage-and-fix' })).toBeNull();
+  });
   it('says why a system-managed workflow has no Run button', () => {
     state.templates = [base, { ...base, id: 't-2', name: 'Channel Assistant', team: null }];
     render(<TemplatesPage />);

@@ -14,6 +14,24 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 describe('review template metadata', () => {
+  it('preserves automation kind when editing its name', async () => {
+    render(
+      <EditMetadataModal
+        initialDescription=""
+        initialEstimatedHumanTimeSavedMinutes={null}
+        initialKind="automation"
+        initialName="CI triage"
+        isDefault={false}
+        onClose={vi.fn()}
+        open
+        templateId="template-1"
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() =>
+      expect(save).toHaveBeenCalledWith(expect.objectContaining({ kind: 'automation' }))
+    );
+  });
   it.each([null, 'review'] as const)(
     'saves changes to the review kind from %s',
     async (initialKind) => {

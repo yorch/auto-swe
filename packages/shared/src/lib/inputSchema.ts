@@ -65,6 +65,16 @@ export interface InputSchema {
   required?: string[];
 }
 
+export const DEFAULT_BRIEF_INPUT_SCHEMA: InputSchema = {
+  properties: {
+    connectionId: { connectionType: 'git_repo', title: 'Repository', type: 'connection' },
+    description: { title: 'Description', type: 'string' },
+    ticketId: { title: 'Ticket ID', type: 'string' },
+  },
+  required: ['connectionId', 'description'],
+  type: 'object',
+};
+
 export type InputValidationResult = { ok: true } | { ok: false; errors: string[] };
 
 /** Hard ceiling for `maxLength`. */

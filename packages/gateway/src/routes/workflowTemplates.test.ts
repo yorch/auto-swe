@@ -451,6 +451,7 @@ function buildApp(state: {
             experimentVersion: null,
             id,
             isDefault: false,
+            kind: (data.kind as string | null) ?? null,
             name: data.name as string,
             status: (data.status as string) ?? 'DRAFT',
             team: null,
@@ -720,6 +721,33 @@ describe('workflow-templates routes', () => {
       .configAudits;
     expect(audits.map((a) => a.entityType)).toContain('WorkflowTemplate');
     expect(audits[0]).toMatchObject({ action: 'CREATE', entityType: 'WorkflowTemplate' });
+  });
+
+  it.each(['review', 'automation', null])('creates and updates kind %s', async (kind) => {
+    const created = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'POST',
+      payload: {
+        kind,
+        name: 'kind-test',
+        spec: VALID_SPEC,
+        teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+      },
+      url: '/api/v1/workflow-templates',
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const id = created.json().data.id;
+    expect(state.templates.find((t) => t.id === id)?.kind).toBe(kind);
+    const updated = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'PATCH',
+      payload: { kind: kind === 'automation' ? null : 'automation' },
+      url: `/api/v1/workflow-templates/${id}`,
+    });
+    expect(updated.statusCode, updated.body).toBe(200);
+    expect(state.templates.find((t) => t.id === id)?.kind).toBe(
+      kind === 'automation' ? null : 'automation'
+    );
   });
 
   it('audits webhook regenerate and revoke without recording the token', async () => {

@@ -168,6 +168,24 @@ function versionsOf(tables: ReturnType<typeof makeFake>['tables'], templateId: s
 }
 
 describe('syncBuiltins — templates', () => {
+  it('creates and backfills automation kinds without replacing versions or explicit kinds', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const names = ['ci-triage-and-fix', 'address-pr-feedback', 'Channel Task'];
+    for (const name of names) {
+      expect(template(tables, name).kind).toBe('automation');
+      template(tables, name).kind = null;
+    }
+    const count = tables.workflowTemplateVersion.length;
+    await seedSweStarter(prisma);
+    for (const name of names) {
+      expect(template(tables, name).kind).toBe('automation');
+    }
+    expect(tables.workflowTemplateVersion).toHaveLength(count);
+    template(tables, names[0] as string).kind = 'review';
+    await seedSweStarter(prisma);
+    expect(template(tables, names[0] as string).kind).toBe('review');
+  });
   it('persists review kind on creation and fills it without changing existing specs', async () => {
     const { prisma, tables } = makeFake();
     await seedSweStarter(prisma);
