@@ -143,6 +143,10 @@ vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: () => 'wf-1',
   currentWorkflowRunId: async () => 'run-1',
   persistActivityTrace: (...args: unknown[]) => persistMock(...args),
+  startTraceFlushing: vi.fn(() => () => {}),
+  traceWorkspacePreparation: vi.fn(async (_tracer, _key, prepare: () => Promise<unknown>) =>
+    prepare()
+  ),
 }));
 
 const recordLlmUsageMock = vi.fn(async (..._args: unknown[]) => ({

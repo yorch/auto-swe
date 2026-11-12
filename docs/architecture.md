@@ -212,8 +212,8 @@ component reaches past the theme into a default Tailwind colour scale.
 workflows poll on an adaptive 3 s interval; terminal-state queries use 30 s. The run page loads its
 traces once, then each poll reads the run without traces and only the traces created since the
 newest one it holds (`GET /api/v1/workflow-runs/:id/traces?since=`), appending them. A trace's
-`createdAt` is the writing worker's clock, at millisecond precision, when it built the insert — not
-when the row committed — so a slow insert or a lagging worker clock can commit a row older than one
+`createdAt` is the writing worker's clock, at millisecond precision, when it recorded the event — not
+when the row committed — so buffering, a slow insert, or a lagging worker clock can commit a row older than one
 already read. The cursor trails the gateway's time at the previous tail read (the newest trace, on
 the first poll) by 10 s and the page merges by trace id, which covers the common case and lets an
 idle run's poll come back empty. For the rest, the tail also returns `total`, the run's trace count read in
@@ -222,6 +222,15 @@ trimmed trace instead. The page also re-reads them all once when the run turns t
 snapshot is fixed when a run starts, so the page reads it once and every later read passes
 `includeSpec=false` — the gateway then leaves the column out of the query — and carries the held
 copy over; the flag defaults to true for other callers. Nothing streams: updates arrive on the poll, not as they are written.
+
+Dispatch nodes record a `RUNNING` step before scheduling their activity and update the same
+node/attempt row on completion, preserving its start time. The command is Temporal-patched so
+existing histories replay with their original command sequence. Agent execution paths flush
+buffered traces at most once a second while active; workspace preparation emits start and
+completion events before the model loop. A live run opens Events without a node filter. Selecting
+a graph node or execution intentionally narrows the evidence until the selection is cleared.
+Launch acceptance is separate from worker execution: discovery continues at a slower interval
+after a delayed-start warning rather than assuming the worker has started or abandoning the run.
 
 ---
 

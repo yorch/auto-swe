@@ -28,6 +28,7 @@ vi.mock('../agents/reviewNetwork.js', () => ({
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowRunId: vi.fn(async () => 'run-1'),
   persistActivityTrace: vi.fn(async () => {}),
+  startTraceFlushing: vi.fn(() => () => {}),
 }));
 
 // Mirrors the seeded rows: every persona has its own prompt, and the parent

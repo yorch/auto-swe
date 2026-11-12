@@ -30,6 +30,7 @@ import {
   currentWorkflowId,
   persistActivityTrace,
   startTraceFlushing,
+  traceWorkspacePreparation,
 } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
@@ -271,27 +272,29 @@ export async function executeImplementation(
       )
     : undefined;
 
-  const workspace = await createWorkspace(
-    authedCloneUrl,
-    branch,
-    baseBranch,
-    executorImageFor(repo),
-    // A resumed run is cut from the commit its saved tree was taken against, not the branch tip.
-    resumeCheckoutSha(resume),
-    undefined,
-    {
-      ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
-      detectedStack: repo.detectedStack,
-      knowledgeBaseSnapshotIds: references.snapshotIds,
-      knowledgeBases: references.checkouts,
-      repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
-      services,
-      teamId: repo.teamId,
-      toolsFor: { connectionId: repo.id },
-    }
+  const tracer = new AgentTracer();
+  const workspace = await traceWorkspacePreparation(tracer, 'implementer', () =>
+    createWorkspace(
+      authedCloneUrl,
+      branch,
+      baseBranch,
+      executorImageFor(repo),
+      // A resumed run is cut from the commit its saved tree was taken against, not the branch tip.
+      resumeCheckoutSha(resume),
+      undefined,
+      {
+        ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
+        detectedStack: repo.detectedStack,
+        knowledgeBaseSnapshotIds: references.snapshotIds,
+        knowledgeBases: references.checkouts,
+        repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
+        services,
+        teamId: repo.teamId,
+        toolsFor: { connectionId: repo.id },
+      }
+    )
   );
 
-  const tracer = new AgentTracer();
   // The run viewer tails traces while this runs; the final persist in finally writes the rest.
   const stopTraceFlushing = startTraceFlushing(tracer, 'implementer');
   // Holds the MCP client open under the Mastra loop — closed in finally.

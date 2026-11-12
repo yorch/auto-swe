@@ -182,7 +182,8 @@ export function AgentRunForm({
     return (
       <Card className="space-y-5">
         <Alert title="Agent run started." variant="success">
-          The agent is working in its own workspace. Follow it from the request.
+          The launch was accepted. The worker prepares a workspace before the agent begins. Follow
+          progress from the request.
         </Alert>
         <ReviewList
           items={[
@@ -204,12 +205,15 @@ export function AgentRunForm({
               Diagnostics
             </ButtonLink>
           ) : started.timedOut ? (
-            <ButtonLink href="/runs" variant="ghost">
-              All runs
-            </ButtonLink>
+            <div aria-live="polite" className="text-sm text-paper-500" role="status">
+              The worker is taking longer to prepare the run. Still checking…{' '}
+              <ButtonLink href="/runs" variant="ghost">
+                All runs
+              </ButtonLink>
+            </div>
           ) : (
             <span aria-live="polite" className="text-sm text-paper-500" role="status">
-              Locating the run…
+              Waiting for the worker to prepare the run…
             </span>
           )}
           <Button

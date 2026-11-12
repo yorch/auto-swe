@@ -7,6 +7,7 @@ vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn().mockReturnValue('wf-1'),
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
+  startTraceFlushing: vi.fn(() => () => {}),
 }));
 vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: vi.fn(async () => 50) }));
 vi.mock('../lib/config/contextLookup.js', () => ({

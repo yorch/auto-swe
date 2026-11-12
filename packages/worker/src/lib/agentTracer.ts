@@ -144,6 +144,7 @@ export interface TracedAgent {
 }
 
 export interface TraceRecord {
+  createdAt: Date;
   /** Fixed when recorded, so a batch re-sent after an ambiguous failure inserts nothing twice. */
   id: string;
   seq: number;
@@ -182,27 +183,26 @@ export class AgentTracer {
   private seq = 0;
   private otelTraceId?: string;
   private otelSpanId?: string;
-  private recordListener?: () => void;
+  private recordListeners = new Set<() => void>();
 
   /**
-   * Called after every record is added. Single slot: a later call replaces the
-   * listener, so only one consumer (the live flusher) can watch a tracer.
+   * Called after every record is added. Subscribers are independent.
    * Returns a function that removes it. A throwing listener never breaks recording.
    */
   onRecord(listener: () => void): () => void {
-    this.recordListener = listener;
+    this.recordListeners.add(listener);
     return () => {
-      if (this.recordListener === listener) {
-        this.recordListener = undefined;
-      }
+      this.recordListeners.delete(listener);
     };
   }
 
   private notifyRecord(): void {
-    try {
-      this.recordListener?.();
-    } catch {
-      // Recording must never fail because a flush could not be scheduled.
+    for (const listener of this.recordListeners) {
+      try {
+        listener();
+      } catch {
+        // Recording must never fail because a flush could not be scheduled.
+      }
     }
   }
 
@@ -230,6 +230,7 @@ export class AgentTracer {
     error?: string;
   }): void {
     this.records.push({
+      createdAt: new Date(),
       durationMs: opts.durationMs,
       error: opts.error,
       id: randomUUID(),
@@ -267,6 +268,7 @@ export class AgentTracer {
     this.records.push({
       agent: opts.agent,
       costUsd: opts.costUsd,
+      createdAt: new Date(),
       durationMs: opts.durationMs,
       error: opts.error,
       id: randomUUID(),
@@ -304,6 +306,7 @@ export class AgentTracer {
     error?: string;
   }): void {
     this.records.push({
+      createdAt: new Date(),
       durationMs: opts.durationMs ?? 0,
       error: opts.error,
       id: randomUUID(),
@@ -360,6 +363,7 @@ export class AgentTracer {
           assistantMessageId: ids.assistantMessageId ?? null,
           attempt,
           costUsd: r.costUsd ?? null,
+          createdAt: r.createdAt,
           durationMs: r.durationMs,
           error: r.error ?? null,
           id: r.id,
