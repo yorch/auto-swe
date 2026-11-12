@@ -3208,7 +3208,7 @@
     {
       "body": "Choose open, restricted or blocked workspace egress; a launch may narrow the configured policy, never widen it.",
       "category": "Isolation",
-      "detail": "workspace.egressPolicy is run-pinned at the template/team/organization scope, with open as the default. The gateway rejects a widening request; the worker rechecks when pinning and retains the configured ceiling if another launch path asks for a looser policy. Restricted requires the team allowlist and a forwarding proxy when it is non-empty; an empty list locks down like blocked. Before setup or agent code, restricted and blocked repository workspaces are network-locked to the repository's git host and configured model/registry proxies, plus the forwarding proxy only for restricted and LFS storage hosts when setup needs them. Docker resolves destinations to IP rules, pins hostnames and verifies default-deny INPUT/OUTPUT policies; Kubernetes creates pod-owned allow policies, changes the pod's policy-selection label and verifies loss of direct access to a previously reachable public destination. A failed lock destroys the workspace. This does not impose the same firewall on ephemeral shell/container steps or on worker-originated MCP and connector calls.",
+      "detail": "workspace.egressPolicy is run-pinned at the template/team/organization scope, with open as the default. The gateway rejects a widening request; the worker rechecks when pinning and retains the configured ceiling if another launch path asks for a looser policy. Restricted requires the team allowlist and a forwarding proxy when it is non-empty; an empty list locks down like blocked. Before setup or agent code, restricted and blocked repository workspaces are network-locked to the repository's git host and configured model/registry proxies, plus the forwarding proxy only for restricted and LFS storage hosts when setup needs them. Docker resolves destinations to IP rules, pins hostnames and verifies default-deny INPUT/OUTPUT policies; Kubernetes creates pod-owned allow policies, changes the pod's policy-selection label and verifies loss of direct access to a previously reachable public destination. A failed lock destroys the workspace. Restricted ephemeral steps receive proxy-only holder locks instead; worker-originated MCP and connector calls remain outside this policy.",
       "id": "runEgressPolicy",
       "refs": [
         "egressLaunch",
@@ -3220,6 +3220,7 @@
         "dockerEgressResolve",
         "k8sEgressLock",
         "k8sEgressAllow",
+        "stepEgressHolder",
         "stepEgressPolicy"
       ],
       "status": "Implemented",
@@ -5283,15 +5284,16 @@
       "title": "Setup commands and caches inherit workspace trust"
     },
     {
-      "body": "Restricted and blocked repository workspaces have network locks; ephemeral shell/container-step egress does not have the same boundary.",
+      "body": "Restricted and blocked repository workspaces have network locks; restricted ephemeral steps are locked to wired proxies before author code starts.",
       "category": "Isolation",
-      "detail": "An ephemeral step that retains egress uses bridge networking with DNS filtering and add-host entries, not a network lock: direct-IP traffic can bypass its cooperative proxy, and wildcard DNS entries are skipped. Blocked, or restricted with an empty team allowlist, forces these steps to network none; a sidecar that needs bridge networking is refused instead. Restricted steps that retain egress require the forwarding proxy but remain cooperative. Repository workspaces differ: Docker locks restricted/blocked workspaces with IPv4/IPv6 rules, refuses its embedded DNS resolver, pins permitted hostnames and fails closed when the lock cannot be installed or verified. Open workspaces are not locked; WORKSPACE_DNS is a deployer's resolver choice, not a security boundary. Policies govern container traffic, not worker-originated connector or MCP calls. Docker shares the host kernel, and the daemon's socket proxy allowlists API paths rather than container options, so the Docker host remains a privileged trust boundary.",
+      "detail": "An open ephemeral step uses the private-range/metadata baseline, DNS filtering and host pins; direct public-IP traffic can bypass its cooperative proxy. A restricted step with a team allowlist receives a verified IPv4/IPv6 default-deny lock in its network holder before author startup, allowing only the wired egress and registry proxy endpoints. Detached sidecars share that lock, with worker-gateway ingress and established replies for their published port. Blocked, or restricted with an empty team allowlist, forces these steps to network none; sidecars are refused instead. Repository workspace locks also admit their git host and model proxy, unlike step locks. Failed locks remove the workspace or step and holder. Policies govern container traffic, not worker-originated connector or MCP calls. Docker shares the host kernel, and the daemon's socket proxy allowlists API paths rather than container options, so the Docker host remains a privileged trust boundary.",
       "id": "egress",
       "refs": [
         "sandbox",
         "stepNetworkCap",
         "stepEgressPolicy",
         "stepSidecarPolicy",
+        "stepEgressHolder",
         "dockerEgressRules",
         "dockerEgressResolve",
         "workspaceDnsRun",
@@ -7871,11 +7873,18 @@
       "title": "Restricted needs an allowlist and refuses a missing forwarding proxy"
     },
     {
-      "anchor": "export function buildEgressLockScript(allow: ResolvedAllow[]): string {",
+      "anchor": "export function buildEgressLockScript(",
       "id": "dockerEgressRules",
       "lines": 60,
       "path": "packages/worker/src/lib/workspaceBackend/docker.ts",
       "title": "Docker locks IPv4 and IPv6, blocks embedded DNS and reports kernel policies"
+    },
+    {
+      "anchor": "private async prepareEphemeralNetwork(",
+      "id": "stepEgressHolder",
+      "lines": 93,
+      "path": "packages/worker/src/lib/workspaceBackend/docker.ts",
+      "title": "Restricted steps install the verified proxy-only lock in the holder before author startup"
     },
     {
       "anchor": "export async function resolveEgressTargets(",
@@ -7905,7 +7914,7 @@
       "id": "stepEgressPolicy",
       "lines": 27,
       "path": "packages/worker/src/lib/egressWiring.ts",
-      "title": "Restricted ephemeral steps require a proxy but are not network-locked"
+      "title": "Restricted ephemeral steps require a proxy and a verified holder network lock"
     },
     {
       "anchor": "export function capStepNetwork(",

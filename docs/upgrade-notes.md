@@ -1208,6 +1208,27 @@ import and commit the exported tree. Remove the opt-out after adapting root-depe
 
 ---
 
+### UN-25 — Restricted shell/container steps bypassed the proxy with direct sockets
+
+**Affected condition.** Docker deployments running `shell` or `containerStep` nodes with
+`network: "egress"`, `workspace.egressPolicy=restricted` and a non-empty team allowlist, where the
+command or detached sidecar uses raw sockets or `--noproxy` to reach a public host directly.
+
+**Fix commit:** `b28e9bd4` — restricted step network holders receive a verified proxy-only lock
+before author code starts. Only the wired egress and registry proxies are outbound exceptions;
+the allowlisted destination itself is not directly reachable.
+
+**Action.** Configure commands and sidecars to honor `HTTP_PROXY` / `HTTPS_PROXY`. Raw TCP clients
+need explicit proxy CONNECT support. A sidecar's published-port request/reply path remains
+available, but does not grant arbitrary outbound access. `open`, `blocked`, and empty-allowlist
+behavior is unchanged.
+
+**Verification.** In a restricted egress step, use `curl --proxy "$HTTP_PROXY"` to an allowlisted
+HTTP URL and confirm success. A raw public-IP TCP connect and
+`curl --noproxy '*' --connect-timeout 3 https://1.1.1.1/` must fail. The execution event records
+`egress (allowlist via proxy; network-locked)`. A missing proxy or unprovable strict lock refuses
+the step before author startup.
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,
