@@ -73,6 +73,7 @@ async function buildApp() {
     },
     gitHubInstallation: { findUnique: vi.fn() },
     knowledgeItem: { count: vi.fn().mockResolvedValue(0) },
+    organizationMembership: { findUnique: vi.fn() },
     runInput: { findUnique: vi.fn() },
     scheduledWorkRequest: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -619,11 +620,16 @@ describe('repository sharing', () => {
         ctx.auth.role = 'LEAD';
         memberOf({ [TEAM]: 'ENGINEER' });
         expect((await setLaunch(false)).statusCode).toBe(403);
-        // A platform ENGINEER never reaches the handler at all.
         (ctx.auth as { role: string }).role = 'ENGINEER';
-        memberOf({ [TEAM]: 'LEAD' });
         expect((await setLaunch(false)).statusCode).toBe(403);
         expect(ctx.prisma.connectionTeamShare.update).not.toHaveBeenCalled();
+      });
+
+      it('allows a platform ENGINEER who leads the owning team', async () => {
+        (ctx.auth as { role: string }).role = 'ENGINEER';
+        memberOf({ [TEAM]: 'LEAD' });
+        expect((await setLaunch(false)).statusCode).toBe(200);
+        expect(ctx.prisma.connectionTeamShare.update).toHaveBeenCalled();
       });
 
       it('refuses a LEAD of an owning team that is no longer active', async () => {
