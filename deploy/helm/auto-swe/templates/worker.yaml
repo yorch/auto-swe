@@ -112,6 +112,10 @@ spec:
             - name: K8S_WORKSPACE_RUNTIME_CLASS
               value: {{ . | quote }}
             {{- end }}
+            {{- if .Values.workspaces.requireRuntimeClass }}
+            - name: K8S_REQUIRE_RUNTIME_CLASS
+              value: "true"
+            {{- end }}
             {{- with .Values.workspaces.imagePullSecrets }}
             - name: K8S_WORKSPACE_IMAGE_PULL_SECRETS
               value: {{ join "," . | quote }}

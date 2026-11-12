@@ -798,6 +798,56 @@ failure after it; and a visible `docker cp` round trip. Failed public TCP before
 private blocking, or a CIDR exception covering the probe peer can also refuse the gate. All probe
 containers and temporary files are removed in `finally`.
 
+#### Kata with Docker
+
+Kata provides a separate guest Linux kernel in a lightweight VM. **VM startup alone does not make
+it compatible with this Docker backend.** The tested Kata 4.2.0 Go shim boots, but both `tcfilter`
+and `macvtap` networking bypass the namespace OUTPUT rules. The runtime gate refuses
+`WORKSPACE_RUNTIME=io.containerd.kata.v2` on private-peer HTTP. A separate blocked-lock diagnostic
+also reaches public TCP after successful iptables read-back. Do not disable the gate or the
+private-range block to deploy this configuration.
+
+The following reproduces the host installation on x86-64 Docker 29.9.2 / containerd 2.4.2. It pins
+the official **Go** static release, not the Rust shim tarball. The Go runtime is supported but
+deprecated upstream; this is a diagnostic setup, not a production Docker recommendation. The
+host needs KVM, hardware virtualization exposed to the VM when nested, `tar` and `zstd`:
+
+```sh
+KATA_VERSION=4.2.0
+curl -fL "https://github.com/kata-containers/kata-containers/releases/download/${KATA_VERSION}/kata-go-static-${KATA_VERSION}-amd64.tar.zst" -o kata.tar.zst
+printf '7dda31ca54b397cbf8165f620d6041872d3c45b7a77383ce0e86f76a06e103d0  kata.tar.zst\n' | sha256sum -c -
+sudo tar --zstd -xf kata.tar.zst -C /
+sudo ln -s /opt/kata/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2
+sudo modprobe vhost_net
+sudo modprobe vhost_vsock
+printf 'vhost_net\nvhost_vsock\n' | sudo tee /etc/modules-load.d/kata-containers.conf
+sudo /opt/kata/bin/kata-runtime check --no-network-checks
+docker run --rm --runtime io.containerd.kata.v2 --memory=256m --pids-limit=64 \
+  --cap-drop=ALL --security-opt=no-new-privileges mirror.gcr.io/library/alpine:3.20 uname -r
+```
+
+Docker resolves the shim through the service's PATH; `/usr/local/bin` must be present there. This
+does not replace `/etc/docker/daemon.json`, change the default runtime, restart Docker, or remove
+existing `runsc` / `runsc-host` registrations. On the tested host both gVisor registrations still
+execute after installation. Review existing files before installing over them. The default Kata
+configuration is `/opt/kata/share/defaults/kata-containers/configuration-qemu.toml`; a temporary
+`/etc/kata-containers/configuration.toml` tested `internetworking_model="macvtap"` and was removed
+after the same traffic-gate refusal. Guest seccomp settings were not changed.
+
+The Docker diagnostics use real backend operations, not a full Temporal worker run. Non-root
+bootstrap, exec, `/workspace` copy in/out, pause/unpause and non-root process cleanup work. A
+same-network-namespace runc control is blocked while the VM reaches the same destination; live
+`tc` rules redirect interface traffic to `tap0_kata`. Sharing that namespace with another Kata VM
+(an author using a holder, a sidecar, or a preview service) fails with `Failed to add qdisc ...
+file exists`. These paths are not usable simply by selecting this runtime name.
+
+Single-host diagnostic timings with local images are about 3.8–4.7 seconds for a non-root Kata
+workspace create/bootstrap versus 1.2 seconds for the same image under runc; pause/unpause is
+about 0.1 seconds and a small copy round trip about 0.07–0.10 seconds. The runtime gate refuses
+in about 6.4 seconds. These are illustrative measurements, not workload or capacity guarantees.
+
+#### Kubernetes RuntimeClass
+
 For Kubernetes, `K8S_REQUIRE_RUNTIME_CLASS=true` requires `K8S_WORKSPACE_RUNTIME_CLASS`, a successful
 `kubectl get runtimeclass <name>`, and a probe pod that returns the same `spec.runtimeClassName`.
 The NetworkPolicy startup pod is reused when available; disabling that gate still creates a
@@ -805,6 +855,16 @@ RuntimeClass probe. The reference workspace manifest grants `get` on cluster-sco
 in API group `node.k8s.io` through a ClusterRole/ClusterRoleBinding for the worker ServiceAccount.
 Adjust the binding's ServiceAccount namespace/name along with the namespaced RoleBinding; narrow
 the ClusterRole with `resourceNames` to the configured class if required.
+
+Kata on Kubernetes uses the node's CRI handler and CNI, not Docker's shared-container network
+namespace arrangement. Install the upstream `kata-deploy` chart on suitable nodes, then reference
+its RuntimeClass, or configure a `kata` handler and apply
+[`infra/kubernetes/kata-runtimeclass.yaml`](../infra/kubernetes/kata-runtimeclass.yaml). The latter
+selects nodes labelled `katacontainers.io/kata-runtime=true` and accounts for 250m CPU / 160Mi memory
+per pod; adjust overhead to measured node/VMM behavior. The application chart can create the same
+class or reference an existing one and grant a named-resource read to the worker. See
+[Kata RuntimeClass](./kubernetes-helm.md#kata-runtimeclass). The RuntimeClass gate does not require
+an admission-policy installation.
 
 ## 10. Hardening checklist
 
@@ -843,6 +903,11 @@ the ClusterRole with `resourceNames` to the configured class if required.
   until restart. Reports describe configured proxies, not proxy reachability or health.
 
 - **Runtime enforcement is checked only at worker boot.** It does not monitor daemon/runtime, network or admission changes afterwards. Restart workers after changing those controls. A runtime name or RuntimeClass match alone does not prove a particular sandbox implementation; Kubernetes relies on the cluster's RuntimeClass handler configuration.
+- **Kata needs usable virtualization, not just a device filename.** Nested hosts must expose CPU
+  virtualization and permit KVM VM creation. The tested Docker Kata 4.2.0 Go profiles leak past
+  OUTPUT locks and remain refused; Rust Docker profiles are not validated. Kubernetes RuntimeClass
+  rendering does not install node binaries or prove VM isolation. Its Kata/CNI combination requires
+  validation on the target cluster, which is not exercised by the local Docker diagnostics.
 - **The Docker runtime gate samples IPv4 HTTP and one public TCP target.** It is not an exhaustive isolation audit. An unreachable public pre-check refuses startup as inconclusive. Default runsc is incompatible with the namespace OUTPUT lock; runsc-host exposes the host kernel netstack. gVisor's internal `/tmp` tmpfs does not support Docker rootfs copy visibility, even with the required rootfs settings; copied workspace files belong under `/workspace`.
 
 - **The Docker UID control covers agent workspaces, not shell/containerStep images or services.** Author steps and their sidecars retain image-defined users and existing volume ownership; they can run as root. Services retain their explicit user/capability rules. The root opt-out preserves image behavior rather than forcing UID 0. Custom images with root-owned application files outside the prepared directories need rebuilding. Bootstrap needs package-mirror access when git/bash are missing; images without apk/apt-get must include them. Non-root does not replace network isolation or host hardening.

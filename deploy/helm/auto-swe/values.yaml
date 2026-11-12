@@ -161,6 +161,17 @@ workspaces:
   # enforced. Only false skips that check (a local cluster with no policy CNI).
   requireNetworkPolicy: true
   runtimeClassName: ""
+  # Require the selected RuntimeClass and a matching startup probe pod.
+  requireRuntimeClass: false
+  # Opt-in cluster-scoped class. The nodes must already have the kata CRI handler.
+  # Set runtimeClassName to kata (or another unused name) before enabling create.
+  kataRuntimeClass:
+    create: false
+    overhead:
+      cpu: 250m
+      memory: 160Mi
+    nodeSelector:
+      katacontainers.io/kata-runtime: "true"
   storageLimit: 10Gi
   maxLifetimeSec: 86400
   # Secret names in the workspace namespace for pulling executor images.
