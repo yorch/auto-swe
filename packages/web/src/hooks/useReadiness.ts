@@ -3,9 +3,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-export type ReadinessItemId = 'credentials' | 'embeddings' | 'github' | 'connections';
+export type ReadinessItemId = 'credentials' | 'embeddings' | 'github' | 'connections' | 'egress';
 
 export interface ReadinessItem {
+  informational?: boolean;
   id: ReadinessItemId;
   label: string;
   ok: boolean;

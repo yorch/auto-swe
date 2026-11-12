@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { prisma } from '@auto-swe/shared/db';
 import { assertArtifactStorageReady } from '@auto-swe/shared/lib/artifactStore';
 import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
 import { assertWorkspaceInfraEnv, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
@@ -12,6 +13,7 @@ import { activityNodeTagInterceptor } from './lib/activityNodeTag.js';
 import { activitySpanInterceptor } from './lib/activitySpans.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
 import { ignoredPriceOverrideVars } from './lib/costTracking.js';
+import { probeEgressCapability, startEgressReporting } from './lib/egressCapability.js';
 import { activityHttpCaptureInterceptor, installHttpCapture } from './lib/httpCapture.js';
 import { startLivenessFile } from './lib/livenessFile.js';
 import { initMetrics } from './lib/metrics.js';
@@ -151,6 +153,12 @@ async function run() {
   });
 
   console.log('Worker started, polling task queue: engineering-workflow');
+  const capability = await probeEgressCapability();
+  const stopEgressReporting = await startEgressReporting(
+    prisma,
+    capability,
+    'engineering-workflow'
+  );
   // The image's HEALTHCHECK reads this file's mtime; it is refreshed only while
   // the worker is RUNNING, so a stopped or wedged worker goes unhealthy.
   const stopLiveness = startLivenessFile({ isRunning: () => worker.getState() === 'RUNNING' });
@@ -158,6 +166,7 @@ async function run() {
     await worker.run();
   } finally {
     stopLiveness();
+    await stopEgressReporting();
   }
   // A graceful stop flushes the batched spans, workflow spans included.
   await otel.shutdown();

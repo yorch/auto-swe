@@ -107,6 +107,12 @@ holder, and its labels cover orphan reaping. `network: none` steps remain offlin
 The baseline is not the stricter workspace lock: raw public-IP connections remain possible even
 under `restricted` when a step ignores the proxy.
 
+Setup readiness evaluates every configured `workspace.egressPolicy` against worker capability reports.
+Every fresh worker needs a verified network lock for `blocked` or `restricted`; a non-empty team
+allowlist under `restricted` also needs the egress proxy. Registry proxy availability is reported
+but is not a prerequisite for enforcement. Policy and team-allowlist saves return advisory warnings
+without refusing the save. No fresh worker report leaves readiness advisory, not failed.
+
 The strict lock is applied after provisioning (clone and registry wiring) and before any agent code runs.
 It covers the agent workspace only:
 
@@ -232,6 +238,9 @@ Terminal runs stop polling and receive a final refresh. Paging and browser conte
 hints reduce rendering work; the section does not use a dedicated virtualization library.
 
 ## Limitations
+
+- Egress capability reports are self-declared by workers. They refresh every ten minutes without
+  re-probing, expire after thirty minutes, and do not prove continued enforcement after boot.
 
 - The policy governs agent-controlled containers only. Worker-originated traffic (model calls, SCM,
   connectors, MCP) is not affected.

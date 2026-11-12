@@ -690,6 +690,16 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 
 ---
 
+After startup assertions, each Docker worker creates a throwaway workspace, verifies its baseline
+and strict blocked lock, then removes it. A probe failure records `networkLock=false` with a reason
+and a warning; it does not refuse worker startup. Kubernetes reports its NetworkPolicy boot-gate
+result; disabling that gate reports enforcement as unavailable. Each process upserts a capability
+report with its backend and configured egress/registry proxies, refreshes only its timestamp every
+ten minutes, and removes its row on graceful shutdown. Setup readiness reads reports fresh within
+thirty minutes and requires every fresh worker to support the configured policies at every scope.
+With no fresh report the check is advisory. Policy and team-allowlist saves warn without refusing
+the save. Edit the policy in Platform settings, Workspace.
+
 The Docker baseline helper runs on every workspace and every `network: egress` shell/container
 step by default, before author code starts. Steps start a locked-down network holder on the bridge
 and verify its baseline before joining that namespace. Detached container-step sidecars share
@@ -742,6 +752,10 @@ refused. The worker does not need `docker info` access.
 ---
 
 ## Limitations
+
+- Egress readiness uses self-declared, freshness-based worker reports, not a gateway-side probe.
+  A dead worker may influence the result for thirty minutes; a running worker is not re-probed
+  until restart. Reports describe configured proxies, not proxy reachability or health.
 
 - **The prebuilt executor images are amd64 only and rebuild only when `main` moves.** `docker.yml` builds for the platforms in `BUILD_PLATFORMS`, and has no schedule, so a base-image fix reaches `executor-*` at the next push to `main` rather than weekly; pin by digest and rebuild on your own cadence if you need one.
 - **Only `docker-compose.prod.yml` runs the production Temporal dynamic config.** It points Temporal at `infra/dynamicconfig/production-sql.yaml`, which omits the development-only `system.forceSearchAttributesCacheRefreshOnRead` (a search-attribute cache refresh on every read). A deployment built on `docker-compose.app.yml` instead keeps `development-sql.yaml`. The two files are kept identical otherwise by hand; nothing checks it.

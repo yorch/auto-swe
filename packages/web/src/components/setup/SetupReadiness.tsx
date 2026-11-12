@@ -12,8 +12,8 @@ import { cn, FOCUS_RING } from '@/lib/utils';
 /**
  * Home checklist for admins: every step a first run needs, with what is done ticked off and
  * each missing step linking to the page that fixes it. Renders nothing while loading, on error
- * and once everything is in place: a fully set-up admin never sees a placeholder flash and
- * collapse, and the card appears only when there is something to do.
+ * and once everything is in place without informational notes. A fully set-up admin never sees
+ * a placeholder flash and collapse.
  */
 export function SetupReadiness() {
   const isAdmin = useHasRole('ADMIN');
@@ -21,7 +21,7 @@ export function SetupReadiness() {
   if (!isAdmin) {
     return null;
   }
-  if (isLoading || !data || data.ready) {
+  if (isLoading || !data || (data.ready && !data.items.some((item) => item.informational))) {
     return null;
   }
   const done = data.items.filter((i) => i.ok).length;
@@ -38,9 +38,13 @@ export function SetupReadiness() {
           {done} of {total} done
         </span>
       }
-      subtitle={`${missing === 1 ? 'One step is' : `${missing} steps are`} left before runs can succeed.`}
+      subtitle={
+        data.ready
+          ? 'Setup is complete. Review the informational notes below.'
+          : `${missing === 1 ? 'One step is' : `${missing} steps are`} left before runs can succeed.`
+      }
       testId="setup-readiness"
-      title="Finish setting up"
+      title={data.ready ? 'Setup status' : 'Finish setting up'}
     >
       <div
         aria-label="Setup progress"
@@ -83,7 +87,9 @@ export function SetupReadiness() {
                 {item.label}
                 <span className="sr-only">{item.ok ? ' (done)' : ' (to do)'}</span>
               </div>
-              {!item.ok && <div className="mt-0.5 text-xs text-paper-400">{item.detail}</div>}
+              {(!item.ok || item.informational) && (
+                <div className="mt-0.5 text-xs text-paper-400">{item.detail}</div>
+              )}
             </div>
             {item.ok ? (
               <span className="shrink-0 text-xs text-success-400">Done</span>

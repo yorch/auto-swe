@@ -39,6 +39,63 @@ afterEach(() => {
 });
 
 describe('SetupReadiness', () => {
+  it.each([false, true])(
+    'shows the informational no-report note when ready=%s without expanding other done items',
+    async (ready) => {
+      const detail = 'No worker has reported its egress capabilities yet.';
+      setupFetchMock({
+        'GET /api/v1/platform/readiness': () => ({
+          data: {
+            items: [
+              ...items.map((item) => ({ ...item, ok: ready || item.ok })),
+              {
+                detail,
+                href: '/admin/platform-settings#group-workspace',
+                id: 'egress',
+                informational: true,
+                label: 'Workspace egress enforcement',
+                ok: true,
+              },
+            ],
+            providers: [],
+            ready,
+          },
+        }),
+      });
+      render(withQuery(<SetupReadiness />));
+      expect(await screen.findByText(detail)).toBeTruthy();
+      expect(screen.queryByText('ok')).toBeNull();
+      if (ready) {
+        expect(screen.getByText('Setup status')).toBeTruthy();
+        expect(screen.queryByText(/left before runs can succeed/)).toBeNull();
+        expect(screen.queryByRole('link', { name: /Fix this/ })).toBeNull();
+      }
+    }
+  );
+  it('renders the egress item and links to its settings group', async () => {
+    setupFetchMock({
+      'GET /api/v1/platform/readiness': () => ({
+        data: {
+          items: [
+            {
+              detail: 'No egress proxy',
+              href: '/admin/platform-settings#group-workspace',
+              id: 'egress',
+              label: 'Workspace egress enforcement',
+              ok: false,
+            },
+          ],
+          providers: [],
+          ready: false,
+        },
+      }),
+    });
+    render(withQuery(<SetupReadiness />));
+    expect(await screen.findByText('No egress proxy')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Fix this/ }).getAttribute('href')).toBe(
+      '/admin/platform-settings#group-workspace'
+    );
+  });
   it('renders nothing while loading, so a set-up admin never sees a placeholder flash', () => {
     gateway();
     const { container } = render(withQuery(<SetupReadiness />));

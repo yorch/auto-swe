@@ -67,7 +67,7 @@ function parseList(draft: string): string[] {
 /** What happened to this one row's last save or removal. */
 export type SettingRowStatus =
   | { phase: 'saving' }
-  | { phase: 'saved' }
+  | { phase: 'saved'; warnings?: string[] }
   | { phase: 'error'; message: string };
 
 export function SettingRow({
@@ -365,6 +365,13 @@ export function SettingRow({
               )}
             </div>
           )}
+          {status?.phase === 'saved' &&
+            !dirty &&
+            status.warnings?.map((warning) => (
+              <p className="mt-2 text-sm text-warning-400" key={warning} role="status">
+                {warning}
+              </p>
+            ))}
           {status?.phase === 'error' && (
             <p className="text-xs text-danger-400" role="alert">
               {status.message}

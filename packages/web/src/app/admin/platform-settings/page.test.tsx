@@ -7,7 +7,7 @@ import { stubDialogPrototype } from '@/test/rtl-helpers';
 const { state } = vi.hoisted(() => ({
   state: {
     params: new URLSearchParams(),
-    pending: null as { reject: (e: Error) => void; resolve: () => void } | null,
+    pending: null as { reject: (e: Error) => void; resolve: (value?: unknown) => void } | null,
   },
 }));
 
@@ -28,7 +28,7 @@ vi.mock('@/hooks/useConfigSettings', () => ({
   }),
   useSetConfigSetting: () => ({
     mutateAsync: () =>
-      new Promise<void>((resolve, reject) => {
+      new Promise<unknown>((resolve, reject) => {
         state.pending = { reject, resolve };
       }),
   }),
@@ -43,7 +43,7 @@ vi.mock('@/components/settings/SettingRow', () => ({
     onSave: (v: unknown) => void;
     onDirtyChange?: (key: string, dirty: boolean) => void;
     setting: { key: string };
-    status?: { phase: string };
+    status?: { phase: string; warnings?: string[] };
   }) => (
     <div>
       <button onClick={() => onSave(1)} type="button">
@@ -53,6 +53,9 @@ vi.mock('@/components/settings/SettingRow', () => ({
         edit
       </button>
       <span>status:{status?.phase ?? 'none'}</span>
+      {status?.warnings?.map((warning) => (
+        <span key={warning}>{warning}</span>
+      ))}
     </div>
   ),
 }));
@@ -100,6 +103,13 @@ describe('platform settings page', () => {
     expect(screen.getByText('status:saving')).toBeTruthy();
     await act(async () => state.pending?.resolve());
     expect(screen.getByText('status:saved')).toBeTruthy();
+  });
+  it('passes successful-save warnings to the setting row', async () => {
+    render(<Page />);
+    fireEvent.click(screen.getByText('save'));
+    await act(async () => state.pending?.resolve({ warnings: ['No egress proxy'] }));
+    expect(screen.getByText('status:saved')).toBeTruthy();
+    expect(screen.getByText('No egress proxy')).toBeTruthy();
   });
 
   it('ignores a save that settles after the scope changed', async () => {

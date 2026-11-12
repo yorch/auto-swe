@@ -370,22 +370,16 @@ setting itself:
 
 ### Gap
 
-A fresh deployment is open by default, and nothing guides an operator to the default-deny
-configuration or checks that their deployment can enforce it before they select it. The
+A fresh deployment is open by default. Setup readiness checks configured egress policies against
+fresh worker capability reports, and policy and team-allowlist saves warn without rejecting the save
+when enforcement is unavailable. A default-deny deployment profile remains opt-in. The
 literal-IP bypass for `restricted` with an allowlist on shell steps, the unfiltered
 `NO_PROXY` git host, and the worker-originated traffic that no policy governs remain as stated
 in [run-activity.md](./run-activity.md) and [architecture.md](./architecture.md).
 
 ### Proposed child issues
 
-**Egress enforceability readiness check** (size S; depends on nothing)
-- The setup-readiness view reports whether the egress proxy port,
-  the registry proxy and (on Kubernetes) the manifest are in place, and say which policy levels
-  the deployment can enforce.
-- Selecting `restricted` or `blocked` at save time warns when it cannot be enforced.
-- Owner: unassigned
-
-**Opt-in default-deny deployment profile** (size M; depends on the readiness check)
+**Opt-in default-deny deployment profile** (size M; depends on nothing)
 - A documented profile (environment values, registry settings and a seeded team allowlist for the
   git host, package mirrors and the model provider) that sets `restricted` at GLOBAL scope.
 - The templates in the library that need network access are identified, and the profile
@@ -469,6 +463,9 @@ None of these is implemented by the code, and an auditor will ask for each:
 - Owner: unassigned
 
 ## Limitations
+
+- Egress readiness is based on workers' self-declared reports. Reports expire after thirty
+  minutes and refresh every ten minutes without re-probing; they are not continuous attestation.
 
 - **No SAML and no SCIM.** Sign-in is OIDC, email and password, or magic link. Users are
   admitted through a queue and removed by an ADMIN. No identity-provider attribute sets a role or

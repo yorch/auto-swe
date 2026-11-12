@@ -4042,6 +4042,19 @@ model FigmaConfig {
   @@map("figma_config")
 }
 
+model WorkerEgressCapability {
+  id            String   @id
+  backend       String
+  egressProxy   Boolean  @map("egress_proxy")
+  registryProxy Boolean  @map("registry_proxy")
+  networkLock   Boolean  @map("network_lock")
+  detail        String
+  reportedAt    DateTime @map("reported_at")
+
+  @@index([reportedAt])
+  @@map("worker_egress_capabilities")
+}
+
 /// Audit trail for changes to ModelRoleConfig and ProviderCredential.
 /// Secret material is redacted in beforeJson/afterJson (only `lastFour` is
 /// recorded). Written from the gateway routes that mutate these rows.
