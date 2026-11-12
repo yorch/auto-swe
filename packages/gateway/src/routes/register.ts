@@ -62,7 +62,7 @@ import { slackChannelRoutes } from './slackChannels.js';
 import { systemConfigRoutes } from './systemConfig.js';
 import { teamBudgetRoutes } from './teamBudget.js';
 import { teamOverviewRoutes } from './teamOverview.js';
-import { teamRoutes } from './teams.js';
+import { orgTeamRoutes, teamRoutes } from './teams.js';
 import { ticketRoutes } from './tickets.js';
 import { tokenRoutes } from './tokens.js';
 import { toolCatalogRoutes } from './toolCatalog.js';
@@ -179,8 +179,10 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(assistantDiagnosticsRoutes, { prefix: '/api/v1/platform' });
   await app.register(readinessRoutes, { prefix: '/api/v1/platform' });
   await app.register(orgMembersRoutes, { prefix: '/api/v1/platform/organizations' });
+  await app.register(orgTeamRoutes, { prefix: '/api/v1/platform/organizations' });
   // Deprecated alias — kept for one release.
   await app.register(orgMembersRoutes, { prefix: '/api/v1/admin/organizations' });
+  await app.register(orgTeamRoutes, { prefix: '/api/v1/admin/organizations' });
   await app.register(orgBudgetRoutes, { prefix: '/api/v1/platform/organizations' });
   // Deprecated alias — kept for one release.
   await app.register(orgBudgetRoutes, { prefix: '/api/v1/admin/organizations' });

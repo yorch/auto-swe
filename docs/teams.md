@@ -344,6 +344,30 @@ only by the mid-run guard.
 
 ---
 
+## Creating teams and managing membership
+
+An organization's `ORG_ADMIN` creates a team with
+`POST /api/v1/platform/organizations/:orgId/teams` (also available under
+`/api/v1/admin/organizations/:orgId/teams`). Platform `ADMIN` can create in any organization.
+`POST /api/v1/teams` remains platform-ADMIN-only and accepts an optional `orgId`, falling back
+to the default organization. Team names and slugs are globally unique.
+
+Both routes accept `name`, `slug`, optional `description` and optional `adminUserId`. The creator
+becomes the first team `ADMIN` unless `adminUserId` selects another existing organization member.
+An out-of-organization selection returns `400 ORG_MEMBERSHIP_REQUIRED`. A platform ADMIN creating
+a team without selecting someone else receives an `ORG_MEMBER` membership if needed. Team creation,
+the first team membership and any automatic organization membership commit together with audits.
+
+Adding a member through `POST /api/v1/teams/:id/members` requires that user to belong to the team's
+organization (`400 ORG_MEMBERSHIP_REQUIRED` otherwise). A platform ADMIN can add a non-member;
+the gateway creates an audited `ORG_MEMBER` membership in the same transaction.
+
+Sign-up and platform user invitations enroll the user in the default team's organization as
+`ORG_MEMBER` and in the default team as `ENGINEER` in one audited transaction. Existing organization
+and team roles are preserved; repeated enrollment creates neither duplicate memberships nor audits.
+Enrollment failures are logged without failing account creation, and neither membership is committed
+if that enrollment transaction fails.
+
 ## Limitations
 
 - Organization admins manage linked GitHub installations from **Admin → Organizations → the
@@ -352,6 +376,7 @@ only by the mid-run guard.
   unlink or relink installations. Self-service does not support per-host Apps or claiming an
   installation already registered; see [GitHub App setup](./github-app-setup.md#connecting-an-organization).
 
+- Removing an organization membership does not remove that user's team memberships.
 - **Engineers see failures only for runs they launched.** A lead does not see a failure on a
   teammate's run in the desk, and a run the caller controls but did not launch is excluded.
 - **Expired approvals are not in Needs you.** An expired step cannot be answered, so the actionable

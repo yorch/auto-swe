@@ -1312,6 +1312,23 @@ fail preview resolution instead of behaving as an unconfigured repository.
 **Source marker:** `resolveRepoPreview` in `packages/worker/src/lib/repoConfigResolver.ts` reads
 `REPO_PREVIEW_FILE` when the connection recipe is unset.
 
+### Team members require organization membership backfill
+
+**Affected.** Deployments with team memberships whose users have no membership in the team's
+organization.
+
+**Fix commit.** Identified before its SHA is assigned by migration
+`20261112180000_team_member_organizations`; compare the source when commit ancestry is unavailable.
+
+**Actions.** Run `yarn db:deploy` before starting the updated gateway. The migration inserts missing
+`ORG_MEMBER` rows without changing existing organization roles. It is idempotent and leaves HNSW
+indexes unchanged. Review the resulting organization access: existing team members gain organization
+membership. Sign-up and platform user-invite default-team enrollment also ensure organization
+membership transactionally and preserve existing roles. Organization removal does not cascade to teams.
+
+**Verify.** Every existing team member has an organization membership for that team's organization
+immediately after the migration; a later organization removal can leave a team membership behind.
+
 ## Limitations
 
 - **A SHA identifies code, not your deployed image.** The comparison in §1 holds only if your
