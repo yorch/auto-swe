@@ -658,8 +658,8 @@ describe('systemConfig resolvers', () => {
         privateEgressAllow: [],
         regexScanBudgetMs: 250,
         registryProxy: null,
-        runtime: null,
         runAsRoot: false,
+        runtime: null,
         stackImages: {},
       });
     });

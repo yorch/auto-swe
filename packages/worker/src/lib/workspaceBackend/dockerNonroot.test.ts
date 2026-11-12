@@ -41,30 +41,41 @@ afterEach(() => {
 });
 
 describe('Docker workspace user', () => {
-  it('installs tools as root with a clean system PATH before returning the workspace', async () => {
-    const created = await backend.create({
-      ...spec,
-      env: ['PATH=/workspace/bin', 'LD_PRELOAD=/workspace/evil.so'],
-    });
-    const command = vi
-      .mocked(execShellAsync)
-      .mock.calls.find(([cmd]) => cmd.includes("'--user' '0'"))?.[0];
-    expect(command).toContain("'--workdir' '/'");
-    expect(command).toContain(
-      "'/usr/bin/env' '-i' 'PATH=/usr/sbin:/usr/bin:/sbin:/bin' 'HOME=/root' '/bin/sh'"
-    );
-    expect(command).toContain('LD_PRELOAD=');
-    expect(command).toContain('LD_AUDIT=');
-    expect(command).toContain('/sbin/apk add');
-    expect(command).toContain('/usr/bin/apt-get');
-    expect(command).not.toContain('/workspace');
-    await expect(backend.bootstrapTools(created)).rejects.toThrow('root execution is forbidden');
-    await backend.exec(created, ['sh', '-c', 'id'], { heartbeatLabel: 'test' });
-    await expect(backend.bootstrapTools(created)).rejects.toThrow('root execution is forbidden');
-    await expect(backend.bootstrapTools(backend.attach(created.id))).rejects.toThrow(
-      'root execution is forbidden'
-    );
-  });
+  it.each([undefined, 'runsc-host'])(
+    'installs tools as root with a clean system PATH before returning runtime %j',
+    async (runtime) => {
+      vi.stubEnv('WORKSPACE_RUNTIME', runtime ?? '');
+      const created = await backend.create({
+        ...spec,
+        env: ['PATH=/workspace/bin', 'LD_PRELOAD=/workspace/evil.so'],
+      });
+      const start = vi
+        .mocked(execShellAsync)
+        .mock.calls.find(([cmd]) => cmd.startsWith('docker run'))?.[0];
+      expect(start).toContain('--user 1000:1000');
+      if (runtime) {
+        expect(start).toContain("'--runtime=runsc-host'");
+      }
+      const command = vi
+        .mocked(execShellAsync)
+        .mock.calls.find(([cmd]) => cmd.includes("'--user' '0'"))?.[0];
+      expect(command).toContain("'--workdir' '/'");
+      expect(command).toContain(
+        "'/usr/bin/env' '-i' 'PATH=/usr/sbin:/usr/bin:/sbin:/bin' 'HOME=/root' '/bin/sh'"
+      );
+      expect(command).toContain('LD_PRELOAD=');
+      expect(command).toContain('LD_AUDIT=');
+      expect(command).toContain('/sbin/apk add');
+      expect(command).toContain('/usr/bin/apt-get');
+      expect(command).not.toContain('/workspace');
+      await expect(backend.bootstrapTools(created)).rejects.toThrow('root execution is forbidden');
+      await backend.exec(created, ['sh', '-c', 'id'], { heartbeatLabel: 'test' });
+      await expect(backend.bootstrapTools(created)).rejects.toThrow('root execution is forbidden');
+      await expect(backend.bootstrapTools(backend.attach(created.id))).rejects.toThrow(
+        'root execution is forbidden'
+      );
+    }
+  );
 
   it('revokes root access on the first ordinary exec even during preparation', async () => {
     const bootstrap = backend.bootstrapTools.bind(backend);

@@ -1307,9 +1307,9 @@ export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
       .filter(isWorkspaceCidr),
     regexScanBudgetMs: boundedEnvInt('SCANNER_REGEX_BUDGET_MS', 250, 10, 60_000),
     registryProxy: resolveRegistryProxy(),
+    runAsRoot: process.env.WORKSPACE_RUN_AS_ROOT === 'true',
     runtime:
       validatedEnv('WORKSPACE_RUNTIME', '', DOCKER_RUNTIME_RE, 'a Docker runtime name') || null,
-    runAsRoot: process.env.WORKSPACE_RUN_AS_ROOT === 'true',
     stackImages: Object.fromEntries(
       (['python', 'jvm', 'go'] as const)
         .map((stack) => [
