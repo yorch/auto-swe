@@ -93,10 +93,18 @@ export interface PagerDutyLogEntrySummary {
   type: string | null;
 }
 
+export interface PagerDutyIncidentNoteSummary {
+  author: string | null;
+  content: string | null;
+  createdAt: string | null;
+}
+
 export interface PagerDutyIncidentContext {
   alerts: PagerDutyAlertSummary[];
   incident: PagerDutyIncidentSummary;
   logEntries: PagerDutyLogEntrySummary[];
+  /** The incident's notes, oldest first: responders' and earlier runs' (a triage diagnosis). */
+  notes: PagerDutyIncidentNoteSummary[];
 }
 
 type Json = Record<string, unknown>;
@@ -119,6 +127,14 @@ function boundedBody(details: unknown): unknown {
   return `${text.slice(0, PAGERDUTY_ALERT_BODY_MAX_CHARS)}… (truncated)`;
 }
 
+/** Longest note content kept: a note can hold 25,000 characters. */
+export const PAGERDUTY_NOTE_CONTENT_MAX_CHARS = 4000;
+
+function boundedText(v: unknown, max: number): string | null {
+  const text = str(v);
+  return text !== null && text.length > max ? `${text.slice(0, max)}… (truncated)` : text;
+}
+
 function summarizeIncident(raw: Json, id: string): PagerDutyIncidentSummary {
   const service = obj(raw.service);
   return {
@@ -137,8 +153,9 @@ function summarizeIncident(raw: Json, id: string): PagerDutyIncidentSummary {
 }
 
 /**
- * An incident with its most recent alerts and log entries, reduced to the fields a triage reads.
- * The alert `body` is the monitoring tool's own payload and is returned as PagerDuty holds it.
+ * An incident with its most recent alerts, log entries and notes, reduced to the fields a triage
+ * or a postmortem reads. The alert `body` is the monitoring tool's own payload and is returned as
+ * PagerDuty holds it, bounded in length.
  */
 export async function fetchPagerDutyIncident(
   connection: PagerDutyConnectionLike,
@@ -146,10 +163,11 @@ export async function fetchPagerDutyIncident(
 ): Promise<PagerDutyIncidentContext> {
   const id = assertPagerDutyId(incidentId);
   const base = `/incidents/${id}`;
-  const [incident, alerts, logEntries] = await Promise.all([
+  const [incident, alerts, logEntries, notes] = await Promise.all([
     pagerdutyFetch<Json>(connection, base),
     pagerdutyFetch<Json>(connection, `${base}/alerts?limit=${CONTEXT_LIMIT}&include[]=body`),
     pagerdutyFetch<Json>(connection, `${base}/log_entries?limit=${CONTEXT_LIMIT}&is_overview=true`),
+    pagerdutyFetch<Json>(connection, `${base}/notes`),
   ]);
   return {
     alerts: list(alerts.alerts).map((a) => ({
@@ -165,6 +183,14 @@ export async function fetchPagerDutyIncident(
       summary: str(e.summary),
       type: str(e.type),
     })),
+    // The notes endpoint is not paginated: keep the most recent ones.
+    notes: list(notes.notes)
+      .slice(-CONTEXT_LIMIT)
+      .map((n) => ({
+        author: str(obj(n.user).summary),
+        content: boundedText(n.content, PAGERDUTY_NOTE_CONTENT_MAX_CHARS),
+        createdAt: str(n.created_at),
+      })),
   };
 }
 

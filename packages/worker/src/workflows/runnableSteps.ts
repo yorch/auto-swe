@@ -1192,6 +1192,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         kind:
           config.kind === 'ticketPlan' ||
           config.kind === 'incidentTriage' ||
+          config.kind === 'incidentPostmortem' ||
           config.kind === 'repoOnboardingDraft'
             ? config.kind
             : 'docReview',

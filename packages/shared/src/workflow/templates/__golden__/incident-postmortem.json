@@ -1,0 +1,291 @@
+{
+  "description": "Draft a postmortem for a resolved PagerDuty incident from its timeline, alerts and notes, read against the repository, and post it on the incident as a note. With a Confluence connection it is also published as a page, after approval under the default autonomy policy.",
+  "entry": "readIncident",
+  "name": "incident-postmortem",
+  "nodes": {
+    "autoWrite": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.pagerdutyConnectionId"
+        },
+        "content": {
+          "from": "nodes.parsePostmortem.output.markdown"
+        },
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        }
+      },
+      "next": "routePage",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "checkAuto": {
+      "expr": "nodes.publishOutcome.output.decision == 'require_approval'",
+      "onFalse": "autoWrite",
+      "onTrue": "humanApproval",
+      "type": "cond"
+    },
+    "done": {
+      "result": {
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        },
+        "noted": {
+          "literal": true
+        },
+        "published": {
+          "literal": false
+        },
+        "summary": {
+          "from": "nodes.parsePostmortem.output.summary"
+        },
+        "text": {
+          "from": "nodes.parsePostmortem.output.markdown"
+        },
+        "title": {
+          "from": "nodes.parsePostmortem.output.title"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "doneRejected": {
+      "result": {
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        },
+        "noted": {
+          "literal": false
+        },
+        "published": {
+          "literal": false
+        },
+        "summary": {
+          "from": "nodes.parsePostmortem.output.summary"
+        },
+        "text": {
+          "from": "nodes.parsePostmortem.output.markdown"
+        },
+        "title": {
+          "from": "nodes.parsePostmortem.output.title"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "draft": {
+      "agentRef": "incidentPostmortemWriter",
+      "inputs": {
+        "incident": {
+          "from": "nodes.readIncident.output.data"
+        }
+      },
+      "next": "parsePostmortem",
+      "spanName": "llm.incident_postmortem",
+      "type": "agent",
+      "workspace": true
+    },
+    "humanApproval": {
+      "approverCount": {
+        "from": "nodes.publishOutcome.output.approverCount"
+      },
+      "contextFrom": "nodes.parsePostmortem.output.markdown",
+      "description": "A postmortem draft is ready to be added to the PagerDuty incident as a note. Approve to post it, reject to discard it.",
+      "onApprove": "manualWrite",
+      "onReject": "doneRejected",
+      "onTimeout": "doneRejected",
+      "timeout": "24h",
+      "title": "Approve PagerDuty postmortem note",
+      "type": "humanApproval"
+    },
+    "manualWrite": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.pagerdutyConnectionId"
+        },
+        "content": {
+          "from": "nodes.parsePostmortem.output.markdown"
+        },
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        }
+      },
+      "next": "routePage",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "pageAutoWrite": {
+      "inputs": {
+        "bodyText": {
+          "from": "nodes.parsePostmortem.output.markdown"
+        },
+        "connectionId": {
+          "from": "request.payload.docConnectionId"
+        },
+        "parentPageId": {
+          "from": "request.payload.parentPageId"
+        },
+        "spaceKey": {
+          "from": "request.payload.spaceKey"
+        },
+        "title": {
+          "from": "nodes.parsePostmortem.output.title"
+        }
+      },
+      "next": "published",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "pageCheckAuto": {
+      "expr": "nodes.pagePublishOutcome.output.decision == 'require_approval'",
+      "onFalse": "pageAutoWrite",
+      "onTrue": "pageHumanApproval",
+      "type": "cond"
+    },
+    "pageDoneRejected": {
+      "result": {
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        },
+        "noted": {
+          "literal": true
+        },
+        "published": {
+          "literal": false
+        },
+        "summary": {
+          "from": "nodes.parsePostmortem.output.summary"
+        },
+        "text": {
+          "from": "nodes.parsePostmortem.output.markdown"
+        },
+        "title": {
+          "from": "nodes.parsePostmortem.output.title"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "pageHumanApproval": {
+      "approverCount": {
+        "from": "nodes.pagePublishOutcome.output.approverCount"
+      },
+      "contextFrom": "nodes.parsePostmortem.output.markdown",
+      "description": "A postmortem draft is ready to be published as a Confluence page. Approve to publish it, reject to leave it as the incident note only.",
+      "onApprove": "pageManualWrite",
+      "onReject": "pageDoneRejected",
+      "onTimeout": "pageDoneRejected",
+      "timeout": "24h",
+      "title": "Approve Confluence postmortem page",
+      "type": "humanApproval"
+    },
+    "pageManualWrite": {
+      "inputs": {
+        "bodyText": {
+          "from": "nodes.parsePostmortem.output.markdown"
+        },
+        "connectionId": {
+          "from": "request.payload.docConnectionId"
+        },
+        "parentPageId": {
+          "from": "request.payload.parentPageId"
+        },
+        "spaceKey": {
+          "from": "request.payload.spaceKey"
+        },
+        "title": {
+          "from": "nodes.parsePostmortem.output.title"
+        }
+      },
+      "next": "published",
+      "step": "writeOutcome",
+      "type": "step"
+    },
+    "pagePublishOutcome": {
+      "config": {
+        "action": "external_write"
+      },
+      "inputs": {
+        "description": {
+          "from": "nodes.parsePostmortem.output.title"
+        }
+      },
+      "next": "pageCheckAuto",
+      "step": "publishOutcome",
+      "type": "step"
+    },
+    "parsePostmortem": {
+      "config": {
+        "kind": "incidentPostmortem"
+      },
+      "inputs": {
+        "text": {
+          "from": "nodes.draft.output.text"
+        }
+      },
+      "next": "publishOutcome",
+      "step": "parseAgentOutput",
+      "type": "step"
+    },
+    "published": {
+      "result": {
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        },
+        "noted": {
+          "literal": true
+        },
+        "pageUrl": {
+          "expr": "nodes.pageAutoWrite.output.reference ?? nodes.pageManualWrite.output.reference"
+        },
+        "published": {
+          "literal": true
+        },
+        "summary": {
+          "from": "nodes.parsePostmortem.output.summary"
+        },
+        "text": {
+          "from": "nodes.parsePostmortem.output.markdown"
+        },
+        "title": {
+          "from": "nodes.parsePostmortem.output.title"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "publishOutcome": {
+      "config": {
+        "action": "internal_write"
+      },
+      "inputs": {
+        "description": {
+          "from": "nodes.parsePostmortem.output.summary"
+        }
+      },
+      "next": "checkAuto",
+      "step": "publishOutcome",
+      "type": "step"
+    },
+    "readIncident": {
+      "inputs": {
+        "connectionId": {
+          "from": "request.payload.pagerdutyConnectionId"
+        },
+        "incidentId": {
+          "from": "request.payload.incidentId"
+        }
+      },
+      "next": "draft",
+      "step": "readSource",
+      "type": "step"
+    },
+    "routePage": {
+      "expr": "nodes.parsePostmortem.output.valid == true && request.payload.docConnectionId != null && request.payload.docConnectionId != ''",
+      "onFalse": "done",
+      "onTrue": "pagePublishOutcome",
+      "type": "cond"
+    }
+  },
+  "schemaVersion": 1
+}

@@ -186,4 +186,35 @@ describe('parseAgentOutput', () => {
     expect(out).toMatchObject({ kind: 'incidentTriage', valid: false });
     expect(out.markdown).toContain('The database is down.');
   });
+  it('renders an incident postmortem as plain text with its title', async () => {
+    const postmortem = {
+      followUps: ['Add a contract test for the payments client'],
+      impact: 'Checkout failed for 18 minutes.',
+      resolution: 'The upgrade was reverted.',
+      rootCause: 'payments client 4.0 renamed a field checkout.ts reads',
+      summary: 'Checkout failed after a client upgrade until it was reverted.',
+      timeline: [{ at: '13:45', event: 'Incident triggered' }, { event: 'Resolved' }],
+      title: 'Postmortem: checkout errors',
+    };
+    const out = await parseAgentOutput({
+      kind: 'incidentPostmortem',
+      text: JSON.stringify(postmortem),
+    });
+    expect(out).toMatchObject({
+      kind: 'incidentPostmortem',
+      summary: postmortem.summary,
+      title: 'Postmortem: checkout errors',
+      valid: true,
+    });
+    expect(out.markdown).toContain('Timeline\n- 13:45: Incident triggered\n- Resolved');
+    expect(out.markdown).toContain('Follow-up actions\n- Add a contract test');
+    expect(out.markdown).not.toContain('#');
+  });
+
+  it('keeps an unparsed postmortem reply for the note, without a title', async () => {
+    const out = await parseAgentOutput({ kind: 'incidentPostmortem', text: 'It broke.' });
+    expect(out).toMatchObject({ kind: 'incidentPostmortem', valid: false });
+    expect(out.markdown).toContain('It broke.');
+    expect('title' in out).toBe(false);
+  });
 });

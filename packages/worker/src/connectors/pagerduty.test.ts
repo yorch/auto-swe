@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchPagerDutyIncident,
   PAGERDUTY_ALERT_BODY_MAX_CHARS,
+  PAGERDUTY_NOTE_CONTENT_MAX_CHARS,
   PAGERDUTY_NOTE_MAX_CHARS,
   postPagerDutyNote,
 } from './pagerduty.js';
@@ -26,7 +27,7 @@ describe('pagerduty connector', () => {
     vi.resetAllMocks();
   });
 
-  it('reads an incident with its alerts and log entries', async () => {
+  it('reads an incident with its alerts, log entries and notes', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (url.includes('/alerts')) {
         return respond({
@@ -37,6 +38,18 @@ describe('pagerduty connector', () => {
               id: 'A1',
               severity: 'critical',
               summary: 'High error rate',
+            },
+          ],
+        });
+      }
+      if (url.endsWith('/notes')) {
+        return respond({
+          notes: [
+            {
+              content: 'n'.repeat(PAGERDUTY_NOTE_CONTENT_MAX_CHARS + 10),
+              created_at: '2026-01-01T00:05:00Z',
+              id: 'N1',
+              user: { id: 'PU1', summary: 'Ada Responder' },
             },
           ],
         });
@@ -68,7 +81,17 @@ describe('pagerduty connector', () => {
     expect(result.logEntries).toEqual([
       { createdAt: null, summary: 'Triggered', type: 'trigger_log_entry' },
     ]);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.notes).toEqual([
+      {
+        author: 'Ada Responder',
+        content: `${'n'.repeat(PAGERDUTY_NOTE_CONTENT_MAX_CHARS)}… (truncated)`,
+        createdAt: '2026-01-01T00:05:00Z',
+      },
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.map((c) => c[0])).toContain(
+      'https://api.pagerduty.com/incidents/Q1ABC/notes'
+    );
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe('https://api.pagerduty.com/incidents/Q1ABC');
     expect(init.redirect).toBe('error');
