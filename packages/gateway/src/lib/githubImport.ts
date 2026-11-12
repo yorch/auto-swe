@@ -8,6 +8,8 @@ import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance } from 'fastify';
 import { type GitHubRepoInfo, listGitHubRepos } from './github.js';
+import { defaultGitHubInstallation } from './installationOrganization.js';
+import { repositoryManagementTeams } from './tenantScope.js';
 
 export const IMPORT_ACCESS_LOOKUP_CAP = 100;
 export const IMPORT_CACHE_TTL_MS = 180_000;
@@ -188,7 +190,17 @@ export async function availableGitHubRepos(
   const config = await resolveGitHubConfig();
   const rows = await prisma.gitHubInstallation.findMany({
     orderBy: { id: 'asc' },
-    where: { isActive: true },
+    where: {
+      isActive: true,
+      ...(user.role === 'ADMIN'
+        ? {}
+        : {
+            OR: [
+              { organizationId: null },
+              { organization: { teams: { some: repositoryManagementTeams(user) } } },
+            ],
+          }),
+    },
   });
   const sources: ImportSource[] = [];
   const merged = new Map<
@@ -214,17 +226,27 @@ export async function availableGitHubRepos(
     installationAccount: null,
     installationId: null,
   };
-  try {
-    const key = `default:${config.baseUrl}:${config.authMode}:${config.appInstallationId}`;
-    let repos = read(listings, key);
-    if (!repos) {
-      repos = await listGitHubRepos();
-      write(listings, key, repos, 100);
+  const defaultInstallation = await defaultGitHubInstallation(prisma, config);
+  const defaultAllowed =
+    !defaultInstallation ||
+    (defaultInstallation.isActive && rows.some((row) => row.id === defaultInstallation.id));
+  if (defaultInstallation) {
+    defaultSource.installationId = defaultInstallation.id;
+    defaultSource.installationAccount = defaultInstallation.accountLogin;
+  }
+  if (defaultAllowed) {
+    try {
+      const key = `default:${config.baseUrl}:${config.authMode}:${config.appInstallationId}`;
+      let repos = read(listings, key);
+      if (!repos) {
+        repos = await listGitHubRepos();
+        write(listings, key, repos, 100);
+      }
+      add(repos, defaultSource, defaultInstallation);
+      sources.push(defaultSource);
+    } catch {
+      sources.push({ ...defaultSource, error: 'Default GitHub source could not be listed.' });
     }
-    add(repos, defaultSource, null);
-    sources.push(defaultSource);
-  } catch {
-    sources.push({ ...defaultSource, error: 'Default GitHub source could not be listed.' });
   }
   for (const row of rows) {
     try {

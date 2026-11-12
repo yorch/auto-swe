@@ -177,11 +177,12 @@ describe('githubAppManifestRoutes', () => {
     expect(state?.endsWith(cookie?.value ?? 'missing')).toBe(true);
     expect(cookie?.value.split('.')[1]).toBe(hostBinding('https://api.github.com'));
     expect(data.manifest).toMatchObject({
+      callback_urls: ['https://app.example.com/github/install/callback'],
       hook_attributes: { active: true, url: 'https://gw.example.com/api/v1/webhooks/git' },
       name: 'auto-swe acme',
       public: false,
       redirect_url: `https://gw.example.com${CALLBACK}`,
-      setup_url: 'https://app.example.com/admin/integrations',
+      request_oauth_on_install: true,
       url: 'https://app.example.com',
     });
     expect(data.manifest.default_permissions).toMatchObject({

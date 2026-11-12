@@ -1,8 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { repositoryManagementTeams } from './tenantScope.js';
 
 const h = vi.hoisted(() => ({
-  config: { apiUrl: 'https://api.github.com', authMode: 'pat', baseUrl: 'https://github.com' },
+  config: {
+    apiUrl: 'https://api.github.com',
+    appInstallationId: null as string | null,
+    authMode: 'pat',
+    baseUrl: 'https://github.com',
+  },
   credential: vi.fn(),
   fetch: vi.fn(),
   list: vi.fn(),
@@ -86,6 +92,8 @@ beforeEach(() => {
   db = database();
   h.config.baseUrl = 'https://github.com';
   h.config.apiUrl = 'https://api.github.com';
+  h.config.authMode = 'pat';
+  h.config.appInstallationId = null;
   h.list.mockResolvedValue([repo('api')]);
   h.login.mockResolvedValue('octocat');
   h.lookup.mockResolvedValue({ ok: true, permission: 'read' });
@@ -133,6 +141,42 @@ describe('GitHub discovery', () => {
     ]);
   });
 
+  it('scopes org-linked sources to organizations with a managed active team', async () => {
+    await availableGitHubRepos(prisma(), { role: 'ENGINEER', sub: 'caller' });
+    expect(db.gitHubInstallation.findMany).toHaveBeenCalledWith({
+      orderBy: { id: 'asc' },
+      where: {
+        isActive: true,
+        OR: [
+          { organizationId: null },
+          {
+            organization: {
+              teams: { some: repositoryManagementTeams({ sub: 'caller' }) },
+            },
+          },
+        ],
+      },
+    });
+  });
+  it('does not expose a filtered installation again as the singleton default source', async () => {
+    h.config.authMode = 'app';
+    h.config.appInstallationId = '123';
+    db.gitHubInstallation.findUnique.mockResolvedValue({
+      ...installation,
+      organizationId: 'org-a',
+    } as never);
+    const result = await availableGitHubRepos(prisma(), actor);
+    expect(result.data).toEqual([]);
+    expect(result.sources).toEqual([]);
+    expect(h.list).not.toHaveBeenCalled();
+  });
+  it('keeps the singleton default source bound to its registered installation', async () => {
+    h.config.authMode = 'app';
+    h.config.appInstallationId = '123';
+    db.gitHubInstallation.findMany.mockResolvedValue([installation]);
+    const result = await availableGitHubRepos(prisma(), admin);
+    expect(result.data[0].installationId).toBe(installation.id);
+  });
   it('does not filter admins or look up their identity', async () => {
     h.lookup.mockResolvedValue({ ok: true, permission: 'none' });
     const result = await availableGitHubRepos(prisma(), admin);

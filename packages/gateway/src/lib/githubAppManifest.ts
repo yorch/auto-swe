@@ -75,7 +75,8 @@ export interface GitHubAppManifest {
   description: string;
   hook_attributes: { url: string; active: boolean };
   redirect_url: string;
-  setup_url: string;
+  callback_urls: string[];
+  request_oauth_on_install: true;
   public: false;
   default_permissions: Record<string, string>;
   default_events: string[];
@@ -109,6 +110,7 @@ export function buildGitHubAppManifest(input: {
   const publicUrl = input.publicUrl.replace(/\/$/, '');
   const webUrl = input.webUrl.replace(/\/$/, '');
   return {
+    callback_urls: [`${webUrl}/github/install/callback`],
     default_events: [...MANIFEST_EVENTS],
     default_permissions: { ...MANIFEST_PERMISSIONS },
     description: 'Durable, governed agent workflows: tickets in, reviewed draft pull requests out.',
@@ -119,8 +121,7 @@ export function buildGitHubAppManifest(input: {
     name: input.name,
     public: false,
     redirect_url: `${publicUrl}${MANIFEST_CALLBACK_PATH}`,
-    // GitHub appends `installation_id` and `setup_action` after an install.
-    setup_url: `${webUrl}/admin/integrations`,
+    request_oauth_on_install: true,
     url: webUrl,
   };
 }

@@ -650,6 +650,45 @@ describe('repositoryRoutes', () => {
       expect(ctx.mockPrisma.connection.create).toHaveBeenCalledTimes(2);
       expect(ctx.mockTemporal.startRepoDependencyScan).toHaveBeenCalledTimes(2);
     });
+    it.each(['ADMIN', 'ENGINEER'] as const)(
+      'refuses a cross-organization installation for %s',
+      async (role) => {
+        ctx.authState.role = role;
+        ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+          role: 'LEAD',
+          team: { isActive: true },
+        });
+        ctx.mockPrisma.gitHubInstallation.findUnique.mockResolvedValue({
+          host: '',
+          id: INSTALLATION,
+          installationId: '123',
+          isActive: true,
+          organizationId: 'another-org',
+        });
+        const verify = vi.spyOn(githubImport, 'verifiedImportInstallation').mockResolvedValue({
+          installation: { id: INSTALLATION } as never,
+          source: {
+            githubApiUrl: 'https://api.github.com',
+            githubUrl: 'https://github.com',
+            installationAccount: 'acme',
+            installationId: INSTALLATION,
+          },
+        });
+        try {
+          const response = await batch([item('api', INSTALLATION)]);
+          expect(response.json().data[0]).toMatchObject({
+            code: 'GITHUB_ACCESS_UNVERIFIED',
+            status: 'failed',
+          });
+          expect(response.json().data[0].message).toContain(
+            role === 'ADMIN' ? 'different organization' : 'GitHub did not confirm'
+          );
+          expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+        } finally {
+          verify.mockRestore();
+        }
+      }
+    );
     it('rejects unknown installations without creating a connection', async () => {
       ctx.mockPrisma.gitHubInstallation.findUnique.mockResolvedValue(null);
       const res = await batch([item('api', INSTALLATION)]);

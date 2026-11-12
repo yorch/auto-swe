@@ -34,13 +34,14 @@ async function buildApp(role: string) {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const prisma = {
-    connection: { findMany: vi.fn().mockResolvedValue([]) },
+    connection: { count: vi.fn().mockResolvedValue(3), findMany: vi.fn().mockResolvedValue([]) },
     gitHubInstallation: {
       create: vi.fn(),
       delete: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
     },
+    organization: { findUnique: vi.fn().mockResolvedValue({ id: 'org' }) },
   };
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('auth', {
@@ -136,5 +137,58 @@ describe('githubInstallationRoutes and the host an installation lives on', () =>
       isActive: false,
       retiredReason: null,
     });
+  });
+  it('links and unlinks installations, reporting existing outside-org repositories', async () => {
+    const organizationId = '22222222-2222-4222-8222-222222222222';
+    const id = '11111111-1111-4111-8111-111111111111';
+    admin.prisma.gitHubInstallation.update.mockImplementation(async ({ data }) => ({
+      id,
+      ...data,
+    }));
+    const linked = await admin.app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { organizationId },
+      url: `${BASE}/${id}`,
+    });
+    expect(linked.statusCode).toBe(200);
+    expect(linked.json().data).toMatchObject({
+      organizationId,
+      outsideOrganizationConnectionCount: 3,
+    });
+    expect(admin.prisma.connection.count).toHaveBeenCalledWith({
+      where: { installationId: id, team: { orgId: { not: organizationId } } },
+    });
+    const impact = await admin.app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `${BASE}/${id}/link-impact?organizationId=${organizationId}`,
+    });
+    expect(impact.json().data.outsideOrganizationConnectionCount).toBe(3);
+    const unlinked = await admin.app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { organizationId: null },
+      url: `${BASE}/${id}`,
+    });
+    expect(unlinked.json().data).toMatchObject({
+      organizationId: null,
+      outsideOrganizationConnectionCount: 0,
+    });
+  });
+  it('keeps linking platform-admin only', async () => {
+    const engineer = await buildApp('ENGINEER');
+    try {
+      const response = await engineer.app.inject({
+        headers: AUTH,
+        method: 'PATCH',
+        payload: { organizationId: null },
+        url: `${BASE}/11111111-1111-4111-8111-111111111111`,
+      });
+      expect(response.statusCode).toBe(403);
+      expect(engineer.prisma.gitHubInstallation.update).not.toHaveBeenCalled();
+    } finally {
+      await engineer.app.close();
+    }
   });
 });

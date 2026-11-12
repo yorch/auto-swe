@@ -60,6 +60,7 @@ import {
 import { redactConnection } from '../lib/connectionRedaction.js';
 import { availableGitHubRepos, verifiedImportInstallation } from '../lib/githubImport.js';
 import { sendError } from '../lib/httpErrors.js';
+import { installationOrganizationProblem } from '../lib/installationOrganization.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { REPOSITORY_SWEEP_CAP, sweepArmedPullRequests } from '../lib/prEvaluationSweep.js';
@@ -1072,6 +1073,24 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       throw new RepositoryCreateError(400, urls.code ?? 'REPO_HOST_NOT_ALLOWED', urls.message);
     }
 
+    if (
+      await installationOrganizationProblem(
+        fastify.prisma,
+        body.installationId,
+        teamId,
+        type === 'git_repo'
+          ? { githubApiUrl: urls.githubApiUrl ?? null, githubUrl: urls.githubUrl ?? null }
+          : undefined
+      )
+    ) {
+      throw new RepositoryCreateError(
+        403,
+        'GITHUB_ACCESS_UNVERIFIED',
+        user.role === Role.ADMIN
+          ? 'This installation is linked to a different organization than the target team.'
+          : `GitHub did not confirm that you can read ${organizationName}/${repoName}: you have no access, it does not exist, or the platform's GitHub credential cannot see it. Ask a platform admin to onboard it.`
+      );
+    }
     const installationProblem = await installationHostProblem(fastify, body.installationId, {
       githubApiUrl: urls.githubApiUrl ?? null,
       githubUrl: urls.githubUrl ?? null,
@@ -1557,6 +1576,31 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         teamId,
       } = request.body;
       const { githubApiUrl, githubUrl } = urls;
+
+      if (
+        installationId !== undefined &&
+        installationId !== repo.installationId &&
+        (await installationOrganizationProblem(
+          fastify.prisma,
+          installationId,
+          teamId ?? repo.teamId,
+          repo.type === 'git_repo'
+            ? {
+                githubApiUrl: githubApiUrl !== undefined ? githubApiUrl : repo.githubApiUrl,
+                githubUrl: githubUrl !== undefined ? githubUrl : repo.githubUrl,
+              }
+            : undefined
+        ))
+      ) {
+        return sendError(
+          reply,
+          403,
+          'GITHUB_ACCESS_UNVERIFIED',
+          user.role === Role.ADMIN
+            ? 'This installation is linked to a different organization than the target team.'
+            : `GitHub did not confirm that you can read ${repo.organizationName}/${repo.repoName}: you have no access, it does not exist, or the platform's GitHub credential cannot see it. Ask a platform admin to onboard it.`
+        );
+      }
 
       const updateConfigProblem = connectionConfigProblem(repo.type, config);
       if (updateConfigProblem) {
