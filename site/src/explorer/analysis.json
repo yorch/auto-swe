@@ -6260,7 +6260,7 @@
     "ConfigAuditLog": "Before/after change audit for configuration entities.",
     "ConfigPermission": "Scoped configuration write grant subject to role floors.",
     "ConfigSetting": "Validated registry value at a configuration scope.",
-    "Connection": "Team-owned typed integration target; repo coordinates or generic config plus an encrypted token and, for mcp connections, an encrypted set of custom request headers. Git repositories can also store a workspace setup definition that overrides the checked-in setup file.",
+    "Connection": "Team-owned typed integration target; repo coordinates or generic config plus an encrypted token and, for mcp connections, an encrypted set of custom request headers. Git repositories can also store a workspace setup definition that overrides the checked-in setup file. Nullable onboarding milestones record successful access testing, the onboarding pull request URL and number, and dismissal of the first-run checklist. List and detail responses derive stack, unresolved-blocker and first-run milestones from stored detection and relation counts; existing connections are migrated as dismissed. The Connections row menu proposes tools and pull request policy files through the onboarding workflow, with available catalog-tool suggestions from detected stacks.",
     "ConnectionCredential": "Schema entity; inspect fields and relationship declarations below.",
     "ConnectionTeamShare": "Shares a repository with another team; canLaunch off makes the share view only, so its members see the repository but cannot start new work on it.",
     "ContextSnapshot": "Captured request context: ticket, knowledge, Figma design and success criteria.",

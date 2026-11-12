@@ -16,9 +16,33 @@ import {
   detectStack,
   inDir,
   PYTEST_NO_TESTS_STATUS,
+  suggestedOnboardingTools,
   uncoveredComponents,
   YARN_GATE_DEFAULTS,
 } from './stackDetection.js';
+
+describe('suggested onboarding tools', () => {
+  it('selects only tools present in the catalog for the detected stacks', () => {
+    expect(suggestedOnboardingTools({ primary: 'python' }, ['uv', 'jq', 'ruff'])).toEqual([
+      'uv',
+      'ruff',
+    ]);
+    expect(suggestedOnboardingTools({ primary: 'node' }, ['jq'])).toEqual(['jq']);
+    expect(suggestedOnboardingTools({ primary: 'jvm' }, ['maven', 'gradle'])).toEqual([
+      'maven',
+      'gradle',
+    ]);
+    expect(suggestedOnboardingTools({ primary: 'go' }, ['golangci-lint'])).toEqual([
+      'golangci-lint',
+    ]);
+  });
+  it('does not guess tools for unknown, truncated, or empty detections/catalogs', () => {
+    for (const detection of [null, {}, { primary: 'python', treeTruncated: true }]) {
+      expect(suggestedOnboardingTools(detection, ['uv'])).toEqual([]);
+    }
+    expect(suggestedOnboardingTools({ primary: 'python' }, [])).toEqual([]);
+  });
+});
 
 describe('detectStack', () => {
   it('detects nothing for an empty repo', () => {

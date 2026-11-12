@@ -264,6 +264,69 @@ describe('repositoryRoutes', () => {
   });
 
   describe('GET /api/v1/repositories', () => {
+    it('derives checklist state in the list and detail without per-repository queries', async () => {
+      const repo = {
+        _count: { activeWorkflows: 0, setupBlockers: 1, workflowRuns: 2 },
+        accessVerifiedAt: new Date(),
+        detectedStackAt: new Date(),
+        id: REPO_ID,
+        onboardingChecklistDismissedAt: null,
+        onboardingPrUrl: 'https://github.com/acme/api/pull/1',
+        repoName: 'api',
+        team: LISTED_TEAM,
+        teamId: TEAM_ID,
+        type: 'git_repo',
+      };
+      ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([repo]);
+      ctx.mockPrisma.connection.count.mockResolvedValueOnce(1);
+      ctx.mockPrisma.connection.findFirst.mockResolvedValueOnce(repo);
+      const list = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/repositories',
+      });
+      const detail = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: `/api/v1/repositories/${REPO_ID}`,
+      });
+      expect(list.statusCode).toBe(200);
+      expect(detail.statusCode).toBe(200);
+      expect(list.json().data[0].onboardingChecklist).toEqual({
+        accessVerified: true,
+        dismissed: false,
+        firstRunLaunched: true,
+        onboardingPrOpened: true,
+        onboardingPrUrl: repo.onboardingPrUrl,
+        setupHealthy: false,
+        stackScanned: true,
+      });
+      expect(detail.json().data.onboardingChecklist).toEqual(
+        list.json().data[0].onboardingChecklist
+      );
+      expect(ctx.mockPrisma.connection.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: expect.objectContaining({
+            _count: {
+              select: {
+                activeWorkflows: true,
+                setupBlockers: { where: { resolvedAt: null } },
+                workflowRuns: true,
+              },
+            },
+          }),
+        })
+      );
+    });
+    it('does not disclose an unreachable repository detail', async () => {
+      ctx.mockPrisma.connection.findFirst.mockResolvedValueOnce(null);
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: `/api/v1/repositories/${REPO_ID}`,
+      });
+      expect(res.statusCode).toBe(404);
+    });
     it('returns a paginated list with meta.total/limit/offset', async () => {
       ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([
         { id: 'repo-1', repoName: 'alpha', team: LISTED_TEAM, teamId: TEAM_ID },

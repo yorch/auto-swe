@@ -543,6 +543,16 @@ export interface DetectedStack {
   treeTruncated?: boolean;
 }
 
+export interface RepositoryOnboardingChecklist {
+  accessVerified: boolean;
+  stackScanned: boolean;
+  setupHealthy: boolean;
+  onboardingPrOpened: boolean;
+  firstRunLaunched: boolean;
+  dismissed: boolean;
+  onboardingPrUrl: string | null;
+}
+
 /** Shape returned by GET /api/v1/repositories */
 export interface RepositorySummary {
   id: string;
@@ -583,6 +593,7 @@ export interface RepositorySummary {
   prTitleTemplate?: string | null;
   /** Stack detected from root manifests by the dependency scan; null until one ran. */
   detectedStack?: DetectedStack | null;
+  onboardingChecklist?: RepositoryOnboardingChecklist;
   language: string | null;
   description: string | null;
   team: TeamRef;

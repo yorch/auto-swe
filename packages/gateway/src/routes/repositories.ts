@@ -67,6 +67,10 @@ import { REPOSITORY_SWEEP_CAP, sweepArmedPullRequests } from '../lib/prEvaluatio
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { insensitiveName } from '../lib/repositoryHost.js';
+import {
+  onboardingChecklistCounts,
+  repositoryOnboardingChecklist,
+} from '../lib/repositoryOnboardingChecklist.js';
 import { repositoryTeamScope } from '../lib/runTeamScope.js';
 import { isShellAuthor } from '../lib/specCheck.js';
 import { ownerLaunchBudgets } from '../lib/teamBudgetStatus.js';
@@ -901,7 +905,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           Promise.all([
             fastify.prisma.connection.findMany({
               include: {
-                _count: { select: { activeWorkflows: true } },
+                _count: { select: onboardingChecklistCounts },
                 shares: {
                   select: {
                     canLaunch: true,
@@ -956,9 +960,39 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         data: repos.map(({ team: { orgId: _orgId, ...team }, ...repo }) => ({
           ...redactConnection(repo),
           launchBudget: launchableIds.has(repo.id) ? (launchBudgets.get(repo.id) ?? null) : null,
+          onboardingChecklist: repositoryOnboardingChecklist(repo),
           team,
         })),
         meta: { limit, offset, total },
+      };
+    }
+  );
+
+  app.get(
+    '/:id',
+    { onRequest: requireAuth(), schema: { params: RepoParamsSchema } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const repo = await fastify.prisma.connection.findFirst({
+        include: {
+          _count: { select: onboardingChecklistCounts },
+          team: { select: { id: true, name: true, slug: true } },
+        },
+        where: {
+          id: request.params.id,
+          ...(user.role === Role.ADMIN
+            ? {}
+            : manageableOrReachableConnections(user, request.repoAccessGate)),
+        },
+      });
+      if (!repo) {
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      return {
+        data: {
+          ...redactConnection(repo),
+          onboardingChecklist: repositoryOnboardingChecklist(repo),
+        },
       };
     }
   );
@@ -2155,7 +2189,14 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
-      return { data: await probeRepositoryAccess(fastify.prisma, repo, user.sub) };
+      const result = await probeRepositoryAccess(fastify.prisma, repo, user.sub);
+      if (result.ok) {
+        await fastify.prisma.connection.update({
+          data: { accessVerifiedAt: new Date() },
+          where: { id: repo.id },
+        });
+      }
+      return { data: result };
     }
   );
 

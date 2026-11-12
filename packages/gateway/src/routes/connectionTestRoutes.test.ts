@@ -67,7 +67,7 @@ async function buildApp(
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const prisma = {
-    connection: { findUnique: vi.fn() },
+    connection: { findUnique: vi.fn(), update: vi.fn() },
     gitHubHostCredential: { findUnique: vi.fn() },
     organizationMembership: { findUnique: vi.fn() },
     packageRegistry: { findUnique: vi.fn() },
@@ -209,6 +209,28 @@ describe('POST /repositories/:id/test-access', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toEqual({ data: RESULT });
     expect(probeRepositoryAccess).toHaveBeenCalledWith(prisma, repo, 'user-1');
+    expect(prisma.connection.update).toHaveBeenCalledWith({
+      data: { accessVerifiedAt: expect.any(Date) },
+      where: { id: ID },
+    });
+  });
+
+  it('does not record failed access checks', async () => {
+    const { app, prisma } = await buildApp('ADMIN', repositoryRoutes, '/api/v1/repositories');
+    prisma.connection.findUnique.mockResolvedValue(repo);
+    probeRepositoryAccess.mockResolvedValue({ ...RESULT, ok: false });
+    expect((await app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(200);
+    expect(prisma.connection.update).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('does not record checks that throw', async () => {
+    const { app, prisma } = await buildApp('ADMIN', repositoryRoutes, '/api/v1/repositories');
+    prisma.connection.findUnique.mockResolvedValue(repo);
+    probeRepositoryAccess.mockRejectedValue(new Error('probe unavailable'));
+    expect((await app.inject({ headers: AUTH, method: 'POST', url })).statusCode).toBe(500);
+    expect(prisma.connection.update).not.toHaveBeenCalled();
+    await app.close();
   });
 
   it('lets a platform admin check any team repository', async () => {

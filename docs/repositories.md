@@ -443,9 +443,18 @@ Installs happen before the egress policy locks the network; a tool an agent requ
 started (`provisionTool`) is refused under the `blocked` and `restricted` policies. An agent may not pin
 a `DEPRECATED` row, and a workspace stops running installers after `max(3, maxTools)` failed attempts.
 
-**Letting the platform propose the files.** A repository's owning-team lead (or a platform admin)
-can have the platform open a pull request that adds `.auto-swe/tools.yml`, `.auto-swe/pr-policy.yml`
-or both: `POST /api/v1/repositories/:id/onboarding-pr` with the files to include, and
+**Letting the platform propose the files.** In Connections, **Open onboarding PR** in a git
+repository's row menu opens a dialog for `.auto-swe/tools.yml` and `.auto-swe/pr-policy.yml`.
+Each file has its own include checkbox. The tools picker lists non-revoked catalog keys, allows
+up to 32 selections, and suggests only available keys from the detected stacks: Node suggests
+`jq`, Python `uv` and `ruff`, JVM `maven` and `gradle`, and Go `golangci-lint`. Unknown or truncated
+stack detection supplies no suggestions. Sensitive-path globs are editable, one per line; the
+defaults protect auth and migration directories. The dialog polls the workflow and shows whether
+the pull request is opened, updated, already matches, or fails, with a link when available.
+
+A repository's owning-team lead, the owning organization's admin, or a platform admin can propose
+these files; sharing does not grant management. The API is
+`POST /api/v1/repositories/:id/onboarding-pr` with the files to include, and
 `GET /api/v1/repositories/:id/onboarding-pr/:workflowId` for the outcome. A team the repository is only
 shared with cannot do this. The tools named must exist in the catalog and not be revoked. The files
 are rendered by the platform from that selection (the request supplies no path and no free-form
@@ -456,6 +465,24 @@ branch only, so a person reviews the diff. Nothing is ever merged or force-pushe
 request enables nothing: `toolsFileEnabled` stays an administrator's separate switch, so the file is
 inert until then. The pull request touches `.auto-swe/**`, a sensitive path in pull request
 evaluation, so it never qualifies for bot-approved auto-merge.
+
+### First-run checklist
+
+New git repositories show an expandable **First-run checklist** in Connections to their managers.
+It tracks the last successful **Test access**, a completed stack scan (`detectedStackAt`), no
+unresolved setup blockers, an opened or updated onboarding pull request, and at least one launched
+workflow run. The action links open access testing, repository settings (stack and setup health),
+the onboarding dialog or stored pull request, and the launch page. Stack scans run on onboarding
+and on the dependency schedule; the checklist does not run a scan itself. Setup operations retain
+their team-ADMIN or platform-ADMIN restriction.
+
+Access failures do not clear earlier success: this is a first-run milestone, not a live health
+indicator. The onboarding URL and number are recorded when its status endpoint observes an opened
+or updated pull request. The list and detail responses derive the checklist with relation counts,
+without per-repository client requests. Managers can dismiss it for everyone on the connection
+with `POST /api/v1/repositories/:id/onboarding-checklist/dismiss`; it also hides when all milestones
+are complete. Repositories present before checklist storage is introduced are backfilled as
+dismissed. New repositories start undismissed.
 
 ### Detected stack
 
@@ -1052,8 +1079,8 @@ longer fit.
   images. A row is as trustworthy as the person who wrote it: the platform verifies the download
   against the row's digest, not the digest against anything upstream.
 - **The onboarding pull request uses the platform credential only.** A user's own token
-  ([`user-github-credentials.md`](./user-github-credentials.md)) is not used for it, and the repository
-  settings screen has no button for it yet: it is an API call.
+  ([`user-github-credentials.md`](./user-github-credentials.md)) is not used for it. The checklist
+  records its URL only after a client reads the completed onboarding workflow status.
 - **A standalone gate run installs no tools.** The path that runs gates outside an implementation
   run has no connection to read tool declarations from, so a repository whose gates need an
   on-demand tool fails there with exit 127. Gates inside an implementation, CI verification and UI
