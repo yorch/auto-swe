@@ -29,7 +29,7 @@ export function EvalLessonCorpus({ lessons = [] }: { lessons?: EvalDatasetDetail
       <div className="space-y-3 p-4">
         {lessons.length ? (
           lessons.map((lesson) => (
-            <article className="rounded border border-paper-800 p-3" key={lesson.id}>
+            <article className="rounded border border-ink-400 p-3" key={lesson.id}>
               <p className="text-xs text-paper-400">
                 {lesson.source} · {lesson.failureType ?? 'GENERAL'}
               </p>

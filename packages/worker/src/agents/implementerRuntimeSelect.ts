@@ -129,7 +129,7 @@ export async function buildImplementerTurnRunner(input: {
       agentKey,
       input.repoId,
       bound.model,
-      input.evalLessonTools
+      ...(input.evalLessonTools ? ([input.evalLessonTools] as const) : [])
     );
     return runner({
       agent: bound.agent,

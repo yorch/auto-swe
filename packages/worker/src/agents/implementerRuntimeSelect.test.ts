@@ -171,8 +171,7 @@ describe('buildImplementerTurnRunner', () => {
       given.ctx,
       'ciFixer',
       'repo-9',
-      { sentinel: 'bound-model' },
-      undefined
+      { sentinel: 'bound-model' }
     );
   });
 
@@ -187,8 +186,7 @@ describe('buildImplementerTurnRunner', () => {
       'ciFixer',
       undefined,
       // The model that runs is the one the stamped Agent row resolved to.
-      { sentinel: 'bound-model' },
-      undefined
+      { sentinel: 'bound-model' }
     );
     expect(turns.promptSuffix).toBe(MENU);
     expect(turns.systemPrompt('BASE')).toBe(`BASE\n\n${MENU}`);
@@ -205,7 +203,16 @@ describe('buildImplementerTurnRunner', () => {
   });
 
   it('binds no harness on the Mastra branch', async () => {
+    const evalLessonTools: [] = [];
+    await buildImplementerTurnRunner(input({ evalLessonTools }));
+    expect(h.buildImplementerForActivity.mock.calls[0]?.[6]).toBe(evalLessonTools);
+    expect(h.claudeCodeRuntime).not.toHaveBeenCalled();
+    expect(h.piRuntime).not.toHaveBeenCalled();
+  });
+
+  it('keeps the legacy builder arity without eval tools', async () => {
     await buildImplementerTurnRunner(input());
+    expect(h.buildImplementerForActivity.mock.calls[0]).toHaveLength(6);
     expect(h.claudeCodeRuntime).not.toHaveBeenCalled();
     expect(h.piRuntime).not.toHaveBeenCalled();
   });
