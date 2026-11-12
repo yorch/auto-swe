@@ -31,6 +31,7 @@ vi.mock('@opentelemetry/api', () => ({
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn().mockReturnValue('wf-1'),
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
+  startTraceFlushing: vi.fn(() => () => {}),
 }));
 
 const { resolveSettingMock } = vi.hoisted(() => ({ resolveSettingMock: vi.fn(async () => 50) }));
@@ -51,7 +52,7 @@ vi.mock('../lib/usdCapGuard.js', () => ({ assertModelPricedForUsdCap: assertPric
 
 import { Agent } from '@mastra/core/agent';
 import { z } from 'zod';
-import { persistActivityTrace } from '../lib/activityContext.js';
+import { persistActivityTrace, startTraceFlushing } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import type { AgentSpec } from '../lib/config/agentSpec.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
@@ -107,6 +108,44 @@ describe('runAgent — conversation history and streaming', () => {
 });
 
 describe('runAgent', () => {
+  it.each([false, true])(
+    'flushes while the model is still working and stops on exit (fails=%s)',
+    async (fails) => {
+      const stop = vi.fn();
+      vi.mocked(startTraceFlushing).mockReturnValueOnce(stop);
+      let release: () => void = () => {};
+      const waiting = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let started: () => void = () => {};
+      const invoked = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      generateMock.mockImplementationOnce(async () => {
+        started();
+        await waiting;
+        if (fails) {
+          throw new Error('provider failed');
+        }
+        return { text: 'done' };
+      });
+      const running = runAgent(makeSpec(), 'USER_MSG');
+      await invoked;
+      const tracer = vi.mocked(startTraceFlushing).mock.calls[0]?.[0];
+      expect(startTraceFlushing).toHaveBeenCalledWith(tracer, 'validateContext');
+      expect(tracer?.size).toBe(1);
+      expect(stop).not.toHaveBeenCalled();
+      release();
+      if (fails) {
+        await expect(running).rejects.toThrow('provider failed');
+      } else {
+        await expect(running).resolves.toMatchObject({ text: 'done' });
+      }
+      expect(stop).toHaveBeenCalledTimes(1);
+      expect(mockedPersist).toHaveBeenCalledWith(tracer, 'validateContext');
+    }
+  );
+
   it('refuses to call the model when it is unpriced under a USD cap', async () => {
     assertPricedMock.mockRejectedValueOnce(new Error('MODEL_UNPRICED'));
     await expect(runAgent(makeSpec(), 'USER_MSG')).rejects.toThrow('MODEL_UNPRICED');
@@ -434,10 +473,11 @@ describe('runAgent', () => {
     await runAgent(makeSpec(), 'M', { selfRecordingTools: new Set(['mcp_search']), tracer });
 
     expect(mockedPersist).not.toHaveBeenCalled();
+    expect(startTraceFlushing).not.toHaveBeenCalled();
     // The tool that does not record itself still gets its row; the MCP one is not duplicated.
     expect(addToolCall.mock.calls.map(([c]) => c.toolName)).toEqual(['lookup']);
-    // The MCP row, the lookup row and the loop's response, numbered in one sequence.
-    expect(tracer.size).toBe(3);
+    // The generation event, MCP row, lookup row and loop response share one sequence.
+    expect(tracer.size).toBe(4);
   });
 
   it('does not read the step budget for a tool-free agent', async () => {

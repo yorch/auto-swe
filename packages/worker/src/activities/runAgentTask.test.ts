@@ -129,6 +129,10 @@ vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn(() => 'wf-1'),
   currentWorkflowRunId: vi.fn(async () => 'run-1'),
   persistActivityTrace: m.persist,
+  startTraceFlushing: vi.fn(() => () => {}),
+  traceWorkspacePreparation: vi.fn(async (_tracer, _key, prepare: () => Promise<unknown>) =>
+    prepare()
+  ),
 }));
 vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({

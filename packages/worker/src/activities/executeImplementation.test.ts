@@ -113,6 +113,9 @@ vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowRunId: vi.fn(async () => 'run-1'),
   persistActivityTrace: vi.fn(async () => {}),
   startTraceFlushing: vi.fn(() => () => {}),
+  traceWorkspacePreparation: vi.fn(async (_tracer, _key, prepare: () => Promise<unknown>) =>
+    prepare()
+  ),
 }));
 
 vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));

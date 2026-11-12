@@ -8,7 +8,11 @@ import {
   type ImplementerTurnRunner,
 } from '../agents/implementerRuntimeSelect.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
-import { persistActivityTrace } from '../lib/activityContext.js';
+import {
+  persistActivityTrace,
+  startTraceFlushing,
+  traceWorkspacePreparation,
+} from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { throwIfActivityCancelled } from '../lib/cancellation.js';
@@ -207,26 +211,29 @@ export async function runImplementerFixSession(
     repoId: repo.id,
     teamId: repo.teamId,
   });
-  const workspace = await createWorkspace(
-    authedCloneUrl,
-    previousCodeResult.branch,
-    baseBranch,
-    executorImageFor(repo),
-    // A resumed session is cut from the commit its saved tree was taken against, not the branch tip.
-    resumeCheckoutSha(resume),
-    undefined,
-    {
-      ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
-      detectedStack: repo.detectedStack,
-      knowledgeBaseSnapshotIds: references.snapshotIds,
-      knowledgeBases: references.checkouts,
-      repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
-      teamId: repo.teamId,
-      toolsFor: { connectionId: repo.id },
-    }
+  const tracer = new AgentTracer();
+  const workspace = await traceWorkspacePreparation(tracer, input.agentKey, () =>
+    createWorkspace(
+      authedCloneUrl,
+      previousCodeResult.branch,
+      baseBranch,
+      executorImageFor(repo),
+      // A resumed session is cut from the commit its saved tree was taken against, not the branch tip.
+      resumeCheckoutSha(resume),
+      undefined,
+      {
+        ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
+        detectedStack: repo.detectedStack,
+        knowledgeBaseSnapshotIds: references.snapshotIds,
+        knowledgeBases: references.checkouts,
+        repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },
+        teamId: repo.teamId,
+        toolsFor: { connectionId: repo.id },
+      }
+    )
   );
 
-  const tracer = new AgentTracer();
+  const stopTraceFlushing = startTraceFlushing(tracer, input.agentKey);
   if (input.startEvent) {
     tracer.addActivityEvent(input.startEvent);
   }
@@ -486,6 +493,7 @@ export async function runImplementerFixSession(
       testResults: testResult,
     };
   } finally {
+    stopTraceFlushing();
     // A runtime that fails to close must not leak the container or drop the trace.
     try {
       await turns?.close();

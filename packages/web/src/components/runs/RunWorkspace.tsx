@@ -156,6 +156,9 @@ export function RunWorkspace({
       return;
     }
     initialized.current = true;
+    if (!isTerminalWorkflowRunStatus(run.status)) {
+      return;
+    }
     const initial =
       findFailedStep(run.status, run.steps) ??
       run.steps.find((s) => s.status === 'RUNNING' || s.status === 'PENDING') ??
@@ -248,9 +251,13 @@ export function RunWorkspace({
         </div>
         {steps.length === 0 && (
           <EmptyState
-            hint="Steps appear as execution begins."
+            hint={
+              time.live
+                ? 'The worker is preparing this run. Its current step appears when execution begins.'
+                : 'No step transitions were recorded for this run.'
+            }
             icon="workflows"
-            title="No steps recorded yet"
+            title={time.live ? 'Preparing run' : 'No steps recorded yet'}
           />
         )}
         {steps.map((step) => (

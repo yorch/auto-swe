@@ -30,6 +30,7 @@ import {
   currentWorkflowId,
   currentWorkflowRunId,
   persistActivityTrace,
+  startTraceFlushing,
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { throwIfActivityCancelled } from '../lib/cancellation.js';
@@ -265,6 +266,7 @@ export async function resolveMergeConflict(
   const conflicts: Array<{ branch: string; output: string }> = [];
   const tracer = new AgentTracer();
   const resolutions: ResolverCommit[] = [];
+  const stopTraceFlushing = startTraceFlushing(tracer, 'mergeConflictResolver');
   // One resolver session for the whole activity, built at the first conflict: every
   // branch and attempt runs in this one workspace, and a runtime that resumes its
   // session (the harness) must not be rebuilt — and re-installed — per attempt.
@@ -354,10 +356,17 @@ export async function resolveMergeConflict(
       unmergedBranches: unmerged,
     };
   } finally {
-    await turns?.close();
-    const done = persistActivityTrace(tracer, 'mergeConflictResolver');
-    await workspace.destroy();
-    await done;
+    stopTraceFlushing();
+    try {
+      await turns?.close();
+    } finally {
+      const done = persistActivityTrace(tracer, 'mergeConflictResolver');
+      try {
+        await workspace.destroy();
+      } finally {
+        await done;
+      }
+    }
   }
 }
 

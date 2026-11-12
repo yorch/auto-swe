@@ -107,6 +107,7 @@ vi.mock('../agents/mcpTools.js', () => ({ loadMcpTools: vi.fn() }));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowRunId: vi.fn(async () => 'run-1'),
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
+  startTraceFlushing: vi.fn(() => () => {}),
 }));
 vi.mock('../lib/pauseSnapshot.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/pauseSnapshot.js')>()),

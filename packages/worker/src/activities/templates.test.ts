@@ -1482,6 +1482,25 @@ describe('createWorkflowRun', () => {
 });
 
 describe('recordWorkflowStep', () => {
+  it('preserves the start recorded before dispatch when the same attempt completes', async () => {
+    vi.useFakeTimers();
+    try {
+      upsertStep.mockResolvedValue({} as never);
+      const startedAt = new Date('2026-11-12T15:00:00Z');
+      vi.setSystemTime(startedAt);
+      await recordWorkflowStep({ attempt: 2, nodeId: 'a', runId: 'r1', status: 'RUNNING' });
+      vi.advanceTimersByTime(30_000);
+      await recordWorkflowStep({ attempt: 2, nodeId: 'a', runId: 'r1', status: 'PASSED' });
+      const [running, completed] = upsertStep.mock.calls.map(([args]) => args);
+      expect(running?.create.startedAt).toEqual(startedAt);
+      expect(completed?.where).toEqual(running?.where);
+      expect(completed?.update).not.toHaveProperty('startedAt');
+      expect(completed?.update.endedAt).toEqual(new Date(startedAt.getTime() + 30_000));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('sets endedAt only for terminal statuses', async () => {
     upsertStep.mockResolvedValue({} as never);
     await recordWorkflowStep({ nodeId: 'a', runId: 'r1', status: 'RUNNING' });

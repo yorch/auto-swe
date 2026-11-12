@@ -61,6 +61,7 @@ vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn().mockReturnValue(undefined),
   currentWorkflowRunId: vi.fn().mockResolvedValue(undefined),
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
+  startTraceFlushing: vi.fn(() => () => {}),
 }));
 
 vi.mock('@temporalio/activity', async (importOriginal) => ({

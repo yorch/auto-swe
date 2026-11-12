@@ -13,6 +13,35 @@ beforeEach(() => {
 });
 
 describe('AgentTracer.persist', () => {
+  it('persists event time rather than flush time, including after a failed write', async () => {
+    vi.useFakeTimers();
+    try {
+      const recordedAt = new Date('2026-11-12T15:00:00Z');
+      vi.setSystemTime(recordedAt);
+      const tracer = new AgentTracer();
+      tracer.addActivityEvent({ name: 'preparing' });
+      tracer.addToolCall({ durationMs: 1, inputJson: {}, toolName: 'bash' });
+      tracer.addLlmResponse({ agent: null, durationMs: 1, role: 'implementer' });
+      vi.setSystemTime(new Date('2026-11-12T15:01:00Z'));
+      createManyMock.mockRejectedValueOnce(new Error('offline'));
+      expect(await tracer.persist({ runId: 'r1', workflowId: 'wf-1' }, 'n', 'implementer')).toBe(
+        false
+      );
+      expect(await tracer.persist({ runId: 'r1', workflowId: 'wf-1' }, 'n', 'implementer')).toBe(
+        true
+      );
+      const data = createManyMock.mock.calls[1]?.[0].data;
+      expect(data).toHaveLength(3);
+      expect(data.map((row: { createdAt: Date }) => row.createdAt)).toEqual([
+        recordedAt,
+        recordedAt,
+        recordedAt,
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('writes runless traces keyed by workflowId instead of dropping them', async () => {
     const tracer = new AgentTracer();
     tracer.addLlmResponse({
@@ -242,6 +271,22 @@ describe('AgentTracer.persist', () => {
     });
     expect(() => tracer.addActivityEvent({ name: 'e' })).not.toThrow();
     expect(tracer.size).toBe(1);
+  });
+
+  it('keeps observers independent when one throws or unsubscribes', () => {
+    const tracer = new AgentTracer();
+    tracer.onRecord(() => {
+      throw new Error('observer failed');
+    });
+    const observer = vi.fn();
+    const remove = tracer.onRecord(observer);
+    const other = vi.fn();
+    tracer.onRecord(other);
+    tracer.addActivityEvent({ name: 'first' });
+    remove();
+    tracer.addActivityEvent({ name: 'second' });
+    expect(observer).toHaveBeenCalledTimes(1);
+    expect(other).toHaveBeenCalledTimes(2);
   });
 
   it('reports whether a span context was attached', () => {

@@ -155,14 +155,62 @@ const inFlight = new WeakMap<AgentTracer, Promise<void>>();
  * its rows as they happen instead of when the activity ends. A flush runs at
  * most once per `intervalMs`, after a record is added; it is best-effort, and a
  * failed one leaves the records buffered for the next flush or the final
- * `persistActivityTrace`. It takes the tracer's single `onRecord` slot. Returns a function that stops flushing — call it
- * before that final persist, which stays the caller's job.
+ * `persistActivityTrace`. Nested callers share one flusher; each releases its own
+ * subscription before its final persist, which stays the caller's job.
  */
 export function startTraceFlushing(
   tracer: AgentTracer,
   agentKey: string,
   intervalMs = 1000
 ): () => void {
+  let subscription = traceFlushers.get(tracer);
+  if (!subscription) {
+    subscription = { stop: createTraceFlusher(tracer, agentKey, intervalMs), users: 0 };
+    traceFlushers.set(tracer, subscription);
+  }
+  subscription.users++;
+  const held = subscription;
+  let released = false;
+  return () => {
+    if (released) {
+      return;
+    }
+    released = true;
+    if (--held.users === 0) {
+      traceFlushers.delete(tracer);
+      held.stop();
+    }
+  };
+}
+
+const traceFlushers = new WeakMap<AgentTracer, { stop: () => void; users: number }>();
+
+export async function traceWorkspacePreparation<T>(
+  tracer: AgentTracer,
+  agentKey: string,
+  prepare: () => Promise<T>
+): Promise<T> {
+  const stop = startTraceFlushing(tracer, agentKey);
+  const start = Date.now();
+  tracer.addActivityEvent({ name: 'workspace.preparing' });
+  try {
+    const workspace = await prepare();
+    tracer.addActivityEvent({ durationMs: Date.now() - start, name: 'workspace.ready' });
+    return workspace;
+  } catch (err) {
+    tracer.addActivityEvent({
+      durationMs: Date.now() - start,
+      error: 'Workspace preparation failed',
+      name: 'workspace.failed',
+    });
+    throw err;
+  } finally {
+    stop();
+    await persistActivityTrace(tracer, agentKey).catch(() => undefined);
+  }
+}
+
+function createTraceFlusher(tracer: AgentTracer, agentKey: string, intervalMs: number): () => void {
   let timer: NodeJS.Timeout | undefined;
   let flushing = false;
   let stopped = false;
@@ -187,6 +235,9 @@ export function startTraceFlushing(
     timer.unref();
   };
   const removeListener = tracer.onRecord(arm);
+  if (tracer.size > 0) {
+    arm();
+  }
   return () => {
     stopped = true;
     removeListener();

@@ -11,7 +11,11 @@ import {
   runReviewNetwork as runReview,
   summarizeRejections,
 } from '../agents/reviewNetwork.js';
-import { currentWorkflowRunId, persistActivityTrace } from '../lib/activityContext.js';
+import {
+  currentWorkflowRunId,
+  persistActivityTrace,
+  startTraceFlushing,
+} from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import { skillsToPromptSuffix } from '../lib/config/agentSkills.js';
@@ -127,6 +131,7 @@ async function runReviewNetworkImpl(
 ): Promise<AggregatedReviewResult> {
   heartbeat('starting review network');
   const tracer = new AgentTracer();
+  const stopTraceFlushing = startTraceFlushing(tracer, 'reviewer');
 
   // Everything after the tracer exists runs inside the try, so whatever it
   // records (the cross-repo context event) persists even when agent
@@ -254,6 +259,7 @@ async function runReviewNetworkImpl(
 
     return result;
   } finally {
+    stopTraceFlushing();
     await persistActivityTrace(tracer, 'reviewer');
   }
 }

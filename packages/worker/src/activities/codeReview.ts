@@ -21,7 +21,11 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import { z } from 'zod';
-import { currentWorkflowRunId, persistActivityTrace } from '../lib/activityContext.js';
+import {
+  currentWorkflowRunId,
+  persistActivityTrace,
+  startTraceFlushing,
+} from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { withHeartbeat } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
@@ -482,6 +486,7 @@ export async function publishReviewResultWith(
 
 export async function publishReviewResult(input: PublishReviewInput): Promise<ReviewSummary> {
   const tracer = new AgentTracer();
+  const stopTraceFlushing = startTraceFlushing(tracer, 'reviewer');
   try {
     return await withHeartbeat(
       'publishReviewResult',
@@ -499,6 +504,7 @@ export async function publishReviewResult(input: PublishReviewInput): Promise<Re
       )
     );
   } finally {
+    stopTraceFlushing();
     await persistActivityTrace(tracer, 'reviewer');
   }
 }

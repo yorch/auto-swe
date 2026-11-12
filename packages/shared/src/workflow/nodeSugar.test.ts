@@ -218,7 +218,10 @@ describe('onFailure', () => {
     const r = await runSpec(routed(), ctx0(), d);
     expect(calls).toEqual(['s', 'h']);
     expect(r.status).toBe('FAILED');
-    expect(records.filter((x) => x.nodeId === 'a')).toEqual([{ nodeId: 'a', status: 'FAILED' }]);
+    expect(records.filter((x) => x.nodeId === 'a')).toEqual([
+      { nodeId: 'a', status: 'RUNNING' },
+      { nodeId: 'a', status: 'FAILED' },
+    ]);
     const a = (r.finalContext.nodes as Record<string, { output: unknown; error: string }>).a;
     expect(a?.output).toBeNull();
     expect(a?.error).toContain('s boom');

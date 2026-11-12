@@ -461,10 +461,13 @@ describe('useRetriedRun', () => {
     expect(calls).toBeGreaterThanOrEqual(2);
   });
 
-  it('gives up after the bounded wait so the caller can fall back', async () => {
+  it('warns after the initial wait but still discovers a delayed worker-created run', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
-      setupFetchMock({ 'GET /api/v1/workflow-runs': () => runs(['wf-old']) });
+      let created = false;
+      setupFetchMock({
+        'GET /api/v1/workflow-runs': () => runs(created ? ['wf-new'] : ['wf-old']),
+      });
       const { wrapper } = setup();
 
       const { result } = renderHook(() => useRetriedRun('wr-1', 'wf-new'), { wrapper });
@@ -476,6 +479,12 @@ describe('useRetriedRun', () => {
 
       expect(result.current.timedOut).toBe(true);
       expect(result.current.runId).toBeNull();
+      created = true;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      await waitFor(() => expect(result.current.runId).toBe('run-of-wf-new'));
+      expect(result.current.timedOut).toBe(false);
     } finally {
       vi.useRealTimers();
     }

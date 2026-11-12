@@ -15,7 +15,7 @@ import { buildKnowledgeTools } from '../agents/knowledgeTools.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { createProvisionTool, grantsProvisionTool } from '../agents/provisionTool.js';
 import { buildWorkspaceTools } from '../agents/workspaceTools.js';
-import { persistActivityTrace } from '../lib/activityContext.js';
+import { persistActivityTrace, startTraceFlushing } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { boundToolKeys } from '../lib/boundToolKeys.js';
@@ -147,6 +147,7 @@ async function runAgentNodeImpl(
   // the binding or the run throws. Whatever the node opens (the MCP client, a
   // harness session, the checkout) is released in finally, last opened first.
   const tracer = new AgentTracer();
+  const stopTraceFlushing = startTraceFlushing(tracer, key);
   const opened: (() => Promise<void>)[] = [];
   const onOpen = (close: () => Promise<void>) => {
     opened.push(close);
@@ -234,6 +235,7 @@ async function runAgentNodeImpl(
     });
     return { object: result.object, text: result.text };
   } finally {
+    stopTraceFlushing();
     // Each release is independent: one that rejects (a harness session, an MCP
     // client) must not leak the checkout opened before it or drop the trace.
     for (const close of opened.reverse()) {
@@ -347,6 +349,8 @@ async function runInCheckout(args: {
   const services = grantsBrowserTool(resolved.toolKeys)
     ? (await resolvePreviewFromScm(repo, baseBranch))?.services
     : undefined;
+  tracer.addActivityEvent({ name: 'workspace.preparing' });
+  const preparationStarted = Date.now();
   const workspace = await createWorkspace(
     authedCloneUrl,
     branch,
@@ -367,6 +371,7 @@ async function runInCheckout(args: {
     }
   );
   onOpen(workspace.destroy);
+  tracer.addActivityEvent({ durationMs: Date.now() - preparationStarted, name: 'workspace.ready' });
   let checkedOut = branch;
   const pinnedSha = resumeCheckoutSha(resume);
   if (pinnedSha) {

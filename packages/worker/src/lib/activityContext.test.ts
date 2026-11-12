@@ -54,6 +54,7 @@ import {
   currentRunningWorkflowRunId,
   persistActivityTrace,
   startTraceFlushing,
+  traceWorkspacePreparation,
 } from './activityContext.js';
 import { AgentTracer } from './agentTracer.js';
 
@@ -192,6 +193,71 @@ describe('startTraceFlushing', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
+
+  it('shares one flusher without replacing listeners or stopping its owner', async () => {
+    const t = new AgentTracer();
+    const observer = vi.fn();
+    t.onRecord(observer);
+    const stopOwner = startTraceFlushing(t, 'implementer', 1000);
+    const stopNested = startTraceFlushing(t, 'reviewer', 1000);
+    t.addActivityEvent({ name: 'nested' });
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.rows.map((r) => [r.toolName, r.agentKey])).toEqual([['nested', 'implementer']]);
+    stopNested();
+    stopNested();
+    t.addActivityEvent({ name: 'after-nested' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.rows.map((r) => r.toolName)).toEqual(['nested', 'after-nested']);
+    stopOwner();
+    t.addActivityEvent({ name: 'after-owner' });
+    expect(observer).toHaveBeenCalledTimes(3);
+    expect(vi.getTimerCount()).toBe(0);
+    await persistActivityTrace(t, 'implementer');
+    expect(h.rows.map((r) => r.seq)).toEqual([0, 1, 2]);
+  });
+
+  it('flushes records collected before the flusher was attached', async () => {
+    const t = new AgentTracer();
+    t.addActivityEvent({ name: 'early' });
+    const stop = startTraceFlushing(t, 'implementer', 1000);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.rows.map((r) => r.toolName)).toEqual(['early']);
+    stop();
+  });
+
+  it.each([false, true])(
+    'shows preparation before workspace creation settles (fails=%s)',
+    async (fails) => {
+      const t = new AgentTracer();
+      let release: () => void = () => {};
+      const waiting = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const error = new Error('clone failed');
+      const preparation = traceWorkspacePreparation(t, 'implementer', async () => {
+        await waiting;
+        if (fails) {
+          throw error;
+        }
+        return 'workspace';
+      });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(h.rows.map((r) => r.toolName)).toEqual(['workspace.preparing']);
+      release();
+      if (fails) {
+        await expect(preparation).rejects.toBe(error);
+      } else {
+        await expect(preparation).resolves.toBe('workspace');
+      }
+      expect(h.rows.map((r) => r.toolName)).toEqual([
+        'workspace.preparing',
+        fails ? 'workspace.failed' : 'workspace.ready',
+      ]);
+      expect(h.rows[1]?.durationMs).toBe(1000);
+      expect(vi.getTimerCount()).toBe(0);
+    }
+  );
 
   it('writes records shortly after they are recorded, before any final persist', async () => {
     const t = new AgentTracer();
