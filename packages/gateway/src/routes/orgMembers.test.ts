@@ -9,11 +9,13 @@ vi.mock('../lib/betterAuth.js', () => ({
 
 import { makeAuthedApp } from '../test/authedApp.js';
 import { orgMembersRoutes } from './orgMembers.js';
+import { teamRoutes } from './teams.js';
 
 const ORG_ID = '00000000-0000-4000-8000-000000000001';
 const PREFIX = '/api/v1/admin/organizations';
 const USER_ID = '00000000-0000-4000-8000-0000000000aa';
 const TARGET_USER = '00000000-0000-4000-8000-0000000000bb';
+const TEAM_ID = '00000000-0000-4000-8000-0000000000cc';
 
 const orgLockCalls: string[] = [];
 
@@ -35,14 +37,23 @@ const userCreate = vi.fn(async ({ data }: { data: Record<string, unknown> }) => 
 }));
 
 const orgFindUnique = vi.fn();
+const userFindFirst = vi.fn();
+const teamFindUnique = vi.fn();
+const teamMemberCreate = vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+  id: 'team-member',
+  ...data,
+}));
 
 function buildApp(
   role: string,
   membershipRole: string | null = 'ORG_ADMIN',
   trustedInvites = false,
-  orgActive = true
+  orgActive = true,
+  teamRole = 'LEAD'
 ) {
   orgFindUnique.mockResolvedValue({ isActive: orgActive, trustedInvites });
+  userFindFirst.mockResolvedValue(null);
+  teamFindUnique.mockResolvedValue({ id: TEAM_ID, orgId: ORG_ID });
   let prisma: Record<string, unknown>;
   prisma = {
     $queryRaw: vi.fn(async () => {
@@ -67,11 +78,17 @@ function buildApp(
         }),
       update: vi.fn().mockResolvedValue({ ...MEMBER_ROW, role: 'ORG_MEMBER' }),
     },
-    user: { create: userCreate, findFirst: vi.fn().mockResolvedValue(null) },
+    team: { findUnique: teamFindUnique },
+    teamMembership: {
+      create: teamMemberCreate,
+      findUnique: vi.fn().mockResolvedValue({ role: teamRole }),
+    },
+    user: { create: userCreate, findFirst: userFindFirst },
   };
   const app = makeAuthedApp({ prisma, role, sub: USER_ID });
   // Register under the real prefix so a plugin that drops it is caught here.
   app.register(orgMembersRoutes, { prefix: PREFIX });
+  app.register(teamRoutes, { prefix: '/api/v1/teams' });
   return app;
 }
 
@@ -170,6 +187,43 @@ describe('POST /:orgId/members/invite', () => {
     });
   };
 
+  it.each([undefined, 'LEAD', 'ADMIN'] as const)(
+    'invites into an organization team with role %s',
+    async (teamRole) => {
+      const app = buildApp('ENGINEER');
+      const res = await app.inject({
+        method: 'POST',
+        payload: { email: 'team@example.com', teamId: TEAM_ID, ...(teamRole ? { teamRole } : {}) },
+        url: `${PREFIX}/${ORG_ID}/members/invite`,
+      });
+      expect(res.statusCode).toBe(201);
+      expect(teamMemberCreate).toHaveBeenCalledWith({
+        data: { role: teamRole ?? 'ENGINEER', teamId: TEAM_ID, userId: TARGET_USER },
+      });
+      expect(auditCreate.mock.calls.map((c) => c[0].data.entityType)).toEqual([
+        'OrganizationMembership',
+        'TeamMembership',
+        'User',
+      ]);
+      await app.close();
+    }
+  );
+
+  it('rejects a team from another organization without creating the user', async () => {
+    const app = buildApp('ENGINEER');
+    teamFindUnique.mockResolvedValue({ id: TEAM_ID, orgId: TARGET_USER });
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'team@example.com', teamId: TEAM_ID },
+      url: `${PREFIX}/${ORG_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('TEAM_ORG_MISMATCH');
+    expect(userCreate).not.toHaveBeenCalled();
+    expect(signInMagicLink).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it("leaves an org admin's invitee waiting for a platform admin's approval", async () => {
     const res = await invite('ENGINEER');
 
@@ -242,6 +296,144 @@ describe('POST /:orgId/members/invite', () => {
 
     const call = userCreate.mock.calls[0]?.[0] as { data: Record<string, unknown> };
     expect(call.data).toMatchObject({ approvalSource: 'admin' });
+  });
+});
+
+describe('POST /teams/:id/members/invite', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    orgLockCalls.length = 0;
+  });
+
+  it.each([
+    ['LEAD', 'LEAD', true, true, true, 'team_lead'],
+    ['LEAD', 'LEAD', false, true, false, null],
+    ['LEAD', 'LEAD', true, false, false, null],
+    ['ADMIN', 'LEAD', false, false, true, 'admin'],
+    ['LEAD', 'ADMIN', true, true, true, 'team_lead'],
+  ] as const)(
+    'applies approval policy for %s/%s, trust %s, active %s',
+    async (role, teamRole, trusted, active, approved, source) => {
+      const app = buildApp(role, null, trusted, active, teamRole);
+      const res = await app.inject({
+        method: 'POST',
+        payload: { email: ' New@Example.com ' },
+        url: `/api/v1/teams/${TEAM_ID}/members/invite`,
+      });
+      expect(res.statusCode).toBe(201);
+      expect(res.json().data).toMatchObject({ isActive: approved, teamRole: 'ENGINEER' });
+      expect(userCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            email: 'new@example.com',
+            emailVerified: approved,
+            isActive: approved,
+            role: 'ENGINEER',
+          }),
+        })
+      );
+      const data = userCreate.mock.calls[0]?.[0].data;
+      if (source) {
+        expect(data).toMatchObject({ approvalSource: source, approvedAt: expect.any(Date) });
+      } else {
+        expect(data).not.toHaveProperty('approvalSource');
+      }
+      expect(teamMemberCreate).toHaveBeenCalledWith({
+        data: { role: 'ENGINEER', teamId: TEAM_ID, userId: TARGET_USER },
+      });
+      expect(auditCreate.mock.calls.map((c) => c[0].data.entityType)).toEqual([
+        'OrganizationMembership',
+        'TeamMembership',
+        'User',
+      ]);
+      expect(orgLockCalls).toEqual([ORG_ID]);
+      expect(signInMagicLink).toHaveBeenCalledTimes(1);
+      await app.close();
+    }
+  );
+
+  it.each([
+    ['ENGINEER', 'ENGINEER', 'ENGINEER', 'FORBIDDEN'],
+    ['LEAD', 'LEAD', 'ADMIN', 'PRIVILEGE_ESCALATION'],
+  ])('rejects invitation by %s/%s granting %s', async (platformRole, teamRole, role, code) => {
+    const app = buildApp(platformRole, null, false, true, teamRole);
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'new@example.com', role },
+      url: `/api/v1/teams/${TEAM_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error.code).toBe(code);
+    expect(userCreate).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('refuses an existing email', async () => {
+    const app = buildApp('LEAD');
+    userFindFirst.mockResolvedValue({ id: TARGET_USER });
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'existing@example.com' },
+      url: `/api/v1/teams/${TEAM_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('USER_EXISTS');
+    expect(userCreate).not.toHaveBeenCalled();
+    expect(teamMemberCreate).not.toHaveBeenCalled();
+    expect(signInMagicLink).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('rejects an empty invitation', async () => {
+    const app = buildApp('LEAD');
+    const res = await app.inject({
+      method: 'POST',
+      payload: {},
+      url: `/api/v1/teams/${TEAM_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(userCreate).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('maps a concurrent email insertion to USER_EXISTS', async () => {
+    const app = buildApp('LEAD');
+    userCreate.mockRejectedValueOnce(Object.assign(new Error('unique email'), { code: 'P2002' }));
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'existing@example.com' },
+      url: `/api/v1/teams/${TEAM_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('USER_EXISTS');
+    expect(signInMagicLink).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('does not send the link when the membership audit fails', async () => {
+    const app = buildApp('LEAD');
+    auditCreate.mockRejectedValueOnce(new Error('audit failed'));
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'new@example.com' },
+      url: `/api/v1/teams/${TEAM_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(500);
+    expect(signInMagicLink).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('keeps the created account when email delivery fails', async () => {
+    const app = buildApp('LEAD');
+    signInMagicLink.mockRejectedValueOnce(new Error('mail offline'));
+    const res = await app.inject({
+      method: 'POST',
+      payload: { email: 'new@example.com', role: 'LEAD' },
+      url: `/api/v1/teams/${TEAM_ID}/members/invite`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.teamRole).toBe('LEAD');
+    await app.close();
   });
 });
 

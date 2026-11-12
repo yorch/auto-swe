@@ -8,6 +8,7 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import { sendConflict } from '../lib/conflict.js';
 import { loadEgressReadiness } from '../lib/egressReadiness.js';
 import { sendError } from '../lib/httpErrors.js';
+import { inviteUser } from '../lib/inviteUser.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
@@ -707,7 +708,48 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // POST /api/v1/teams/:id/members — Add member (requires LEAD in this team)
+  app.post(
+    '/:id/members/invite',
+    {
+      onRequest: requireAuth({ requiredRole: 'LEAD', requiredTeamRole: 'LEAD', teamIdParam: 'id' }),
+      schema: {
+        body: z.object({
+          email: z.string().trim().toLowerCase().email(),
+          role: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
+        }),
+        params: TeamParamsSchema,
+      },
+    },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const actorRole = (request.teamRole as Role | undefined) ?? actor.role;
+      if (roleMeets(request.body.role, actorRole) && request.body.role !== actorRole) {
+        return sendError(
+          reply,
+          403,
+          'PRIVILEGE_ESCALATION',
+          'Cannot grant a role higher than your own'
+        );
+      }
+      const team = await fastify.prisma.team.findUnique({ where: { id: request.params.id } });
+      if (!team) {
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
+      }
+      const result = await inviteUser(fastify, actor, {
+        email: request.body.email,
+        orgId: team.orgId,
+        orgRole: 'ORG_MEMBER',
+        source: 'team_lead',
+        teamId: team.id,
+        teamRole: request.body.role,
+      });
+      if (!result.ok) {
+        return sendError(reply, result.status, result.code, result.message);
+      }
+      return reply.status(201).send({ data: { ...result.user, teamRole: request.body.role } });
+    }
+  );
+
   app.post(
     '/:id/members',
     {

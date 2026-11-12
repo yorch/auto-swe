@@ -12,8 +12,8 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
-import { getDefaultClientOrigin } from '../lib/env.js';
 import { sendError } from '../lib/httpErrors.js';
+import { inviteUser } from '../lib/inviteUser.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 function memberAuditFields(row: { orgId: string; role: string; userId: string }) {
@@ -183,92 +183,27 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         body: z.object({
           email: z.string().trim().toLowerCase().email(),
           orgRole: z.enum(['ORG_ADMIN', 'ORG_MEMBER']).default('ORG_MEMBER'),
+          teamId: z.string().uuid().optional(),
+          teamRole: z.enum(['ADMIN', 'LEAD', 'ENGINEER']).default('ENGINEER'),
         }),
         params: OrgParamsSchema,
       },
     },
     async (request, reply) => {
       const { orgId } = request.params;
-      const { email, orgRole } = request.body;
-
-      const existing = await fastify.prisma.user.findFirst({
-        where: { email: { equals: email, mode: 'insensitive' } },
+      const { email, orgRole, teamId, teamRole } = request.body;
+      const result = await inviteUser(fastify, requireUser(request), {
+        email,
+        orgId,
+        orgRole,
+        source: 'org_admin',
+        teamId,
+        teamRole,
       });
-      if (existing) {
-        return sendError(reply, 409, 'USER_EXISTS', 'User with this email already exists');
+      if (!result.ok) {
+        return sendError(reply, result.status, result.code, result.message);
       }
-
-      // Approving a sign-in is a platform admin's decision (`PATCH /users/:id`),
-      // and an org admin is not one: otherwise anyone who administers an org
-      // could mint active accounts for any address, skipping the approval
-      // queue. Their invitee waits in that queue like any other sign-up, and
-      // the address is verified when the invitee follows the magic link, not
-      // vouched for by the inviter. A platform admin's invite is the approval,
-      // as it is on `POST /users/invite`. The exception is an organization a
-      // platform admin has marked `trustedInvites`: there an org admin's invite
-      // is the approval too, recorded as `org_admin`, while the organization
-      // is active. Trust is read here, per invite, so clearing it or
-      // deactivating the organization takes effect on the next one.
-      let approvalSource: 'admin' | 'org_admin' | null =
-        requireUser(request).role === 'ADMIN' ? 'admin' : null;
-      if (!approvalSource) {
-        const org = await fastify.prisma.organization.findUnique({
-          select: { isActive: true, trustedInvites: true },
-          where: { id: orgId },
-        });
-        approvalSource = org?.isActive && org.trustedInvites ? 'org_admin' : null;
-      }
-      const approved = approvalSource !== null;
-      const user = await fastify.prisma.user.create({
-        data: {
-          ...(approvalSource ? { approvalSource, approvedAt: new Date() } : {}),
-          email,
-          emailVerified: approved,
-          isActive: approved,
-          role: 'ENGINEER',
-        },
-        select: { email: true, id: true, isActive: true, role: true },
-      });
-      await withOrganizationMembershipLock(fastify, orgId, async (tx) => {
-        const created = await tx.organizationMembership.create({
-          data: { orgId, role: orgRole, userId: user.id },
-        });
-        await writeAuditLog(fastify, {
-          action: 'CREATE',
-          actor: requireUser(request),
-          after: memberAuditFields(created),
-          client: tx,
-          entityId: created.id,
-          entityType: 'OrganizationMembership',
-        });
-        // The approval itself, so a platform admin can see who admitted an
-        // account that skipped the queue.
-        if (approvalSource) {
-          await writeAuditLog(fastify, {
-            action: 'CREATE',
-            actor: requireUser(request),
-            after: { approvalSource, email: user.email, isActive: user.isActive, orgId },
-            client: tx,
-            entityId: user.id,
-            entityType: 'User',
-          });
-        }
-      });
-
-      try {
-        const { getAuth } = await import('../lib/betterAuth.js');
-        const clientOrigin = getDefaultClientOrigin();
-        await getAuth().api.signInMagicLink({
-          body: { callbackURL: `${clientOrigin}/login?bridge=1`, email },
-          headers: new Headers(),
-        });
-      } catch (err) {
-        fastify.log.warn({ err }, 'org invite magic-link send failed — user row was created');
-      }
-
-      return reply.status(201).send({
-        data: { ...user, orgRole },
-      });
+      return reply.status(201).send({ data: { ...result.user, orgRole } });
     }
   );
 
