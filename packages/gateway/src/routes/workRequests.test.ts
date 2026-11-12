@@ -276,6 +276,7 @@ describe('POST /api/v1/work-requests', () => {
       isWorkflowRunning: async () => false,
       nameAssistantConversation: async () => {},
       probeExecutorImage: async () => ({ checks: [], image: 'x', ok: true }),
+      replaceEvalLessons: async () => 0,
       sendAssistantTurn: async () => {},
       signalWorkflow: async () => {},
       startChannelAssistant: async () => {},

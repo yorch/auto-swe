@@ -1,3 +1,10 @@
+import type { EvalMemoryMode } from '@auto-swe/shared';
+import {
+  type EvalMemoryContext,
+  evalLessonRecall,
+  loadEvalCorpus,
+  verifyEvalCorpus,
+} from '../lib/evalLessonRecall.js';
 /**
  * Offline eval harness (docs/evals.md §3).
  *
@@ -79,6 +86,9 @@ export interface UnscreenedCasesSummary {
 }
 
 export interface HarnessInput {
+  candidateMemoryMode?: EvalMemoryMode;
+  baselineMemoryMode?: EvalMemoryMode;
+  corpusHash?: string | null;
   evalRunId: string;
   datasetId: string;
   candidateRef: string;
@@ -94,6 +104,7 @@ export interface HarnessInput {
 
 /** One arm of one case: its floor outcome and the runtime that produced it. */
 export interface CaseOutcome {
+  lessonExposureCount?: number;
   /** 1 when the golden test passed, 0 when it did not. */
   score: 0 | 1;
   /** The implementer runtime the arm actually ran on. */
@@ -107,7 +118,8 @@ export interface HarnessDeps {
   runCase: (
     caseRow: EvalCaseRow,
     ref: string,
-    runtime?: ImplementerRuntimeKind
+    runtime?: ImplementerRuntimeKind,
+    memoryMode?: EvalMemoryMode
   ) => Promise<CaseOutcome>;
   /** Persist one normalized signal (defaults to the real capture writer). */
   record?: typeof recordEvalResult;
@@ -227,7 +239,8 @@ export async function runCaseDefault(
   caseRow: EvalCaseRow,
   ref: string,
   scope: Pick<ResolveCtx, 'orgId' | 'teamId'> = {},
-  runtime?: ImplementerRuntimeKind
+  runtime?: ImplementerRuntimeKind,
+  memory?: EvalMemoryContext
 ): Promise<CaseOutcome> {
   const parsed = parseAgentRef(ref);
   const ctx: ResolveCtx = {
@@ -254,6 +267,7 @@ export async function runCaseDefault(
   // by the dataset's case count in `runEvalHarness`), summed over the whole eval
   // execution from its trace rows.
   const tracer = new AgentTracer();
+  const recall = memory ? evalLessonRecall(memory, caseRow.id, ref, tracer) : undefined;
   let workspace: Workspace | undefined;
   let turns: ImplementerTurnRunner | undefined;
   try {
@@ -278,7 +292,18 @@ export async function runCaseDefault(
     // under different conditions than production is not measuring production.
     // Chosen once for the whole case: a runtime that resumes its session across
     // iterations must not be rebuilt per iteration.
-    turns = await buildImplementerTurnRunner({ agentKey: parsed.key, ctx, tracer, workspace });
+    const lessonBlock = recall
+      ? await recall.prompt(
+          typeof caseRow.input === 'string' ? caseRow.input : JSON.stringify(caseRow.input)
+        )
+      : '';
+    turns = await buildImplementerTurnRunner({
+      agentKey: parsed.key,
+      ctx,
+      tracer,
+      workspace,
+      ...(recall?.tools.length ? { evalLessonTools: recall.tools } : {}),
+    });
     // A pin the resolver did not honour would grade the wrong runtime under the
     // requested one's name.
     if (runtime && turns.kind !== runtime) {
@@ -290,9 +315,8 @@ export async function runCaseDefault(
     // The model spec the turn is priced at and the version's own system prompt.
     const resolved = await resolveAgent(parsed.key, ctx);
 
-    const systemPrompt = turns.systemPrompt(
-      resolved.model.systemPrompt ?? IMPLEMENTER_SYSTEM_PROMPT
-    );
+    const systemPrompt =
+      turns.systemPrompt(resolved.model.systemPrompt ?? IMPLEMENTER_SYSTEM_PROMPT) + lessonBlock;
     const taskDescription =
       typeof caseRow.input === 'string' ? caseRow.input : JSON.stringify(caseRow.input);
 
@@ -330,10 +354,18 @@ export async function runCaseDefault(
       // gives the next iteration an empty repair signal.
       lastTestOutput = [gt.stdout, gt.stderr].filter(Boolean).join('\n');
       if (gt.exitCode === 0) {
-        return { runtime: turns.kind, score: 1 };
+        return {
+          runtime: turns.kind,
+          score: 1,
+          ...(recall ? { lessonExposureCount: Number(recall.exposed) } : {}),
+        };
       }
     }
-    return { runtime: turns.kind, score: 0 };
+    return {
+      runtime: turns.kind,
+      score: 0,
+      ...(recall ? { lessonExposureCount: Number(recall.exposed) } : {}),
+    };
   } finally {
     await turns?.close();
     // Always — a case that threw is exactly the one whose trace is needed.
@@ -392,6 +424,12 @@ const isOrgBudgetStop = (err: unknown) =>
 export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
   const record = deps.record ?? recordEvalResult;
   const finalize = deps.finalize ?? defaultFinalize;
+  const memorySummary = {
+    baselineMode: input.baselineMemoryMode ?? 'OFF',
+    candidateMode: input.candidateMemoryMode ?? 'OFF',
+    corpusHash: input.corpusHash ?? null,
+    exposureCounts: { baseline: 0, candidate: 0 },
+  };
   // A case whose reference was never screened, or failed its screen, is not
   // scored: a flaky floor would move the verdict for reasons that are not the agent's.
   const { cases, unscreened } = partitionScreened(await deps.loadCases(input.datasetId));
@@ -416,6 +454,7 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
     };
     await finalize(input.evalRunId, 'INCONCLUSIVE', {
       inconclusive,
+      memory: memorySummary,
       summary: `inconclusive: no case is flake-screened yet — ${inconclusive.awaitingScreen} await screening, ${inconclusive.screenFailed} failed their screen`,
       unscreened,
     });
@@ -432,8 +471,18 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
       // Settled, not `all`: an arm that fails must not leave the other running
       // (and spending) unobserved.
       const [baselineArm, candidateArm] = await Promise.allSettled([
-        deps.runCase(c, input.baselineRef, input.baselineRuntime ?? undefined),
-        deps.runCase(c, input.candidateRef, input.candidateRuntime ?? undefined),
+        deps.runCase(
+          c,
+          input.baselineRef,
+          input.baselineRuntime ?? undefined,
+          input.baselineMemoryMode
+        ),
+        deps.runCase(
+          c,
+          input.candidateRef,
+          input.candidateRuntime ?? undefined,
+          input.candidateMemoryMode
+        ),
       ]);
       if (baselineArm.status === 'rejected' || candidateArm.status === 'rejected') {
         const reasons = [baselineArm, candidateArm].flatMap((a) =>
@@ -455,6 +504,8 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
       }
       const baseline = baselineArm.value;
       const candidate = candidateArm.value;
+      memorySummary.exposureCounts.baseline += baseline.lessonExposureCount ?? 0;
+      memorySummary.exposureCounts.candidate += candidate.lessonExposureCount ?? 0;
       pairs.push({
         baseline: baseline.score,
         candidate: candidate.score,
@@ -483,6 +534,7 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
     const verdict = regressionVerdict(pairs);
     await finalize(input.evalRunId, verdict.regression ? 'REGRESSION' : 'SUCCESS', {
       byTag: verdict.byTag,
+      memory: memorySummary,
       overall: verdict.overall,
       runtimes: { baseline: [...runtimes.baseline], candidate: [...runtimes.candidate] },
       summary: verdict.summary,
@@ -507,9 +559,20 @@ export async function runEvalHarnessActivity(input: HarnessInput): Promise<void>
     const owner = ownerOfDataset(input.datasetId);
     await withSpendOwner(owner, async () => {
       const scope = await owner;
-      return runEvalHarness(input, {
+      const run = await prisma.evalRun.findUniqueOrThrow({ where: { id: input.evalRunId } });
+      const corpus = await loadEvalCorpus(run.datasetId);
+      verifyEvalCorpus(corpus, run.corpusHash, [run.candidateMemoryMode, run.baselineMemoryMode]);
+      const pinnedInput = {
+        ...input,
+        baselineMemoryMode: run.baselineMemoryMode,
+        candidateMemoryMode: run.candidateMemoryMode,
+        corpusHash: run.corpusHash,
+        datasetId: run.datasetId,
+      };
+      return runEvalHarness(pinnedInput, {
         loadCases: defaultLoadCases,
-        runCase: (caseRow, ref, runtime) => runCaseDefault(caseRow, ref, scope, runtime),
+        runCase: (caseRow, ref, runtime, mode) =>
+          runCaseDefault(caseRow, ref, scope, runtime, { corpus, mode: mode ?? 'OFF' }),
         startScreen: startDatasetScreen,
       });
     });

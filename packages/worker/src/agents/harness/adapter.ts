@@ -5,6 +5,7 @@ import type { Workspace } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import type { ResolvedHarnessProfile } from '../../lib/config/harnessProfile.js';
 import type { McpConnectionTarget } from '../../lib/config/mcpConnection.js';
+import type { EvalLessonTool } from '../../lib/evalLessonRecall.js';
 import type { BrowserToolset } from '../browserTools.js';
 import type { ContainerPlatform } from './binary.js';
 import type { ToolDecision } from './policy.js';
@@ -269,6 +270,7 @@ export interface HarnessRuntimeOptions<Access> {
   mcp?: McpConnectionTarget | null;
   /** Available only for an explicit `browser` tool grant. */
   browserToolset?: BrowserToolset;
+  evalLessonTools?: EvalLessonTool[];
   /**
    * The approved harness profile the Agent is bound to (`resolveHarnessProfile`),
    * for a harness that loads one (Claude Code); ignored by the rest.

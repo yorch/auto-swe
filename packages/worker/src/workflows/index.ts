@@ -19,6 +19,7 @@ export {
 export { onboardingPrWorkflow } from './onboardingPr.js';
 export { prEvaluationWorkflow } from './prEvaluation.js';
 export { ReembedMemoryWorkflow, ReembedStaleMemoryWorkflow } from './reembedMemory.js';
+export { ReplaceEvalLessonsWorkflow } from './replaceEvalLessons.js';
 export { RepoDependencyScanOneWorkflow } from './repoDependencyScanOne.js';
 export { RepoSetupFileProposalWorkflow } from './repoSetupFileProposal.js';
 export { reviewFixRetryWorkflow } from './reviewFixRetry.js';

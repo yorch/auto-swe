@@ -171,7 +171,8 @@ describe('buildImplementerTurnRunner', () => {
       given.ctx,
       'ciFixer',
       'repo-9',
-      { sentinel: 'bound-model' }
+      { sentinel: 'bound-model' },
+      undefined
     );
   });
 
@@ -186,7 +187,8 @@ describe('buildImplementerTurnRunner', () => {
       'ciFixer',
       undefined,
       // The model that runs is the one the stamped Agent row resolved to.
-      { sentinel: 'bound-model' }
+      { sentinel: 'bound-model' },
+      undefined
     );
     expect(turns.promptSuffix).toBe(MENU);
     expect(turns.systemPrompt('BASE')).toBe(`BASE\n\n${MENU}`);

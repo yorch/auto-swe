@@ -354,6 +354,9 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 
 ## Limitations
 
+- **Offline lesson experiments use a separate static corpus.** Dataset-backed ON/SHADOW/OFF arms
+  do not read or write production lessons; see [dataset lesson memory](./evals.md#dataset-lesson-memory).
+
 - **Outcome comparisons are observational.** Configuration arms are not randomized; task mix,
   templates and time can confound comparisons. Holdout randomizes only runs configured as `on`,
   and the report pools configured-shadow and held-out shadow runs (showing held-out counts).

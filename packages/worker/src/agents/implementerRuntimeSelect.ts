@@ -6,6 +6,7 @@ import { type AgentRuntimeSource, resolveAgentRuntime } from '../lib/config/agen
 import { type ResolvedSkill, skillsToPromptSuffix } from '../lib/config/agentSkills.js';
 import { resolveProfileForRuntime } from '../lib/config/harnessProfile.js';
 import type { ResolveCtx } from '../lib/config/types.js';
+import type { EvalLessonTool } from '../lib/evalLessonRecall.js';
 import { getBoundModel } from '../lib/models.js';
 import { pausable } from '../lib/pauseResume.js';
 import { BrowserToolset } from './browserTools.js';
@@ -96,6 +97,7 @@ export async function buildImplementerTurnRunner(input: {
    * read-only memory tools over its lessons; the harness has its own tool set.
    */
   repoId?: string;
+  evalLessonTools?: EvalLessonTool[];
 }): Promise<ImplementerTurnRunner> {
   const agentKey = input.agentKey ?? 'implementer';
   const { runtime: kind, source: kindSource } = await resolveAgentRuntime(
@@ -126,7 +128,8 @@ export async function buildImplementerTurnRunner(input: {
       input.ctx,
       agentKey,
       input.repoId,
-      bound.model
+      bound.model,
+      input.evalLessonTools
     );
     return runner({
       agent: bound.agent,
@@ -164,6 +167,7 @@ export async function buildImplementerTurnRunner(input: {
         })
       : undefined;
   const runtime = harness.bind(agentKey, model).build({
+    ...(input.evalLessonTools ? { evalLessonTools: input.evalLessonTools } : {}),
     // The repository's own harness configuration (Claude Code's CLAUDE.md and
     // `.claude` settings) applies, so a flow ported from a developer machine
     // behaves as it did there. Its hooks run in the container; the worker-side

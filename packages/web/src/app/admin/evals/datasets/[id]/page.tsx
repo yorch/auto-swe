@@ -1,6 +1,7 @@
 'use client';
 
 import { use, useState } from 'react';
+import { EvalLessonCorpus } from '@/components/evals/EvalMemory';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -118,6 +119,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
       >
         {ds && (
           <>
+            <EvalLessonCorpus lessons={ds.lessons} />
             <PageHeader className="mb-2" subtitle={ds.description ?? undefined} title={ds.name} />
             <dl className="flex flex-wrap gap-x-8 gap-y-3 text-sm">
               <div>

@@ -53,6 +53,7 @@ export {
 } from './lib/credentialScope.js';
 export type { EncryptedSecret } from './lib/crypto.js';
 export { decryptSecret, encryptSecret } from './lib/crypto.js';
+export { type EvalLessonInput, type EvalMemoryMode, evalCorpusHash } from './lib/evalLessons.js';
 export type { IssueTrackerProvider } from './lib/integrations/issueTracker.js';
 export type { KnowledgeBaseProvider } from './lib/integrations/knowledgeBase.js';
 export {
