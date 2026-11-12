@@ -11,7 +11,11 @@ import { sendError } from '../lib/httpErrors.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
-import { memberTeams, permissionRequirement } from '../lib/tenantScope.js';
+import {
+  memberTeams,
+  permissionRequirement,
+  repositoryManagementTeams,
+} from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import { teamScopedConfigRoutes } from './modelConfig.js';
 
@@ -221,7 +225,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       // `memberTeams(user)` is a literal AND element so the tenant guard's static check sees the
       // membership predicate; `{}` (no restriction) is only reachable for a platform ADMIN.
       const where: Prisma.TeamWhereInput = {
-        AND: [{ isActive: true }, memberOnly ? memberTeams(user) : {}],
+        AND: [
+          { isActive: true },
+          memberOnly
+            ? request.query.member
+              ? memberTeams(user)
+              : { OR: [memberTeams(user), repositoryManagementTeams(user)] }
+            : {},
+        ],
       };
 
       // Unscoped only for a platform admin who did not ask for `member=true`, which is the

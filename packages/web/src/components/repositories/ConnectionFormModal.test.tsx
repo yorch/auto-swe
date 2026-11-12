@@ -11,6 +11,8 @@ const update = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
 const create = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
 const evalDatasets = vi.hoisted(() => ({ data: [] as unknown[] }));
 
+vi.mock('@/hooks/useAdmin', () => ({ useUserOrgs: () => ({ data: [] }) }));
+
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: (select: (s: { user: { role: string } }) => unknown) =>
     select({ user: { role: auth.role } }),

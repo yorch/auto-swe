@@ -44,6 +44,7 @@ async function buildApp() {
   const mockPrisma = {
     connection: { findMany: vi.fn(), findUnique: vi.fn() },
     connectionTeamShare: { findFirst: vi.fn().mockResolvedValue(null) },
+    organizationMembership: { findUnique: vi.fn() },
     repoDependency: {
       create: vi.fn(),
       delete: vi.fn(),
@@ -51,6 +52,7 @@ async function buildApp() {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
   };
 

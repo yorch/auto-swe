@@ -41,12 +41,12 @@ import {
 } from '@/hooks/useRepoDependencies';
 import type { GitHubRepoInfo } from '@/hooks/useRepositories';
 import { useMyCredentials, useRepositories } from '@/hooks/useRepositories';
-import { useLedTeamIds, useTeams } from '@/hooks/useTeams';
+import { useRepositoryTeams } from '@/hooks/useRepositoryTeams';
+import { useTeams } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
-import { canWriteTeamResource, repoLeadReason, repoManageReason } from '@/lib/teamPermissions';
-import { useAuthStore } from '@/stores/authStore';
+import { repoLeadReason, repoManageReason } from '@/lib/teamPermissions';
 
 type ModalMode =
   | { kind: 'create'; prefill?: ConnectionPrefill }
@@ -73,22 +73,16 @@ function ConnectionTypeBadge({ type }: { type: string }) {
 const PAGE_SIZE = 30;
 
 export default function ConnectionsPage() {
-  // Connection writes are LEAD routes that also require LEAD membership on the
-  // connection's team (canManageTeamRepos); a platform ADMIN bypasses that.
-  // `canManage` gates the page-level controls — add, import, show inactive —
-  // which need at least one led team; each row gates on its own team.
-  const isLead = useHasRole('LEAD');
   const isAdmin = useHasRole('ADMIN');
-  const platformRole = useAuthStore((s) => s.user?.role);
-  const ledTeamIds = useLedTeamIds();
+  const managedTeams = useRepositoryTeams();
   const canManageTeam = useCallback(
-    (teamId: string | null | undefined) => canWriteTeamResource(platformRole, teamId, ledTeamIds),
-    [platformRole, ledTeamIds]
+    (teamId: string | null | undefined) => isAdmin || managedTeams.some((t) => t.id === teamId),
+    [isAdmin, managedTeams]
   );
   // The owner chip names a team the viewer is looking at from outside; their own team's repository
   // is not "owned by" someone else.
   const myTeamIds = new Set((useTeams({ memberOnly: true }).data ?? []).map((t) => t.id));
-  const canManage = isAdmin || (isLead && (ledTeamIds?.size ?? 0) > 0);
+  const canManage = isAdmin || managedTeams.length > 0;
   // Deactivating a connection must not make it vanish for the people who can
   // reactivate it — they can opt into seeing inactive rows.
   const [showInactive, setShowInactive] = useState(false);

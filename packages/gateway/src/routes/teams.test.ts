@@ -41,6 +41,7 @@ interface State {
   userId: string;
   teams: TeamRow[];
   memberships: MembershipRow[];
+  orgAdminIds?: string[];
   /** Row locks taken on the team (`SELECT … FOR UPDATE`), in order. */
   locks?: string[];
   /** When true, `teamMembership.create` loses a concurrent race (P2002). */
@@ -52,6 +53,14 @@ interface State {
   teamQueries?: Array<{ include: Record<string, unknown>; where: Record<string, unknown> }>;
   /** Rows written to the configuration audit log. */
   audits?: Array<{ action: string; entityType: string; [key: string]: unknown }>;
+}
+
+interface TeamClause {
+  AND?: TeamClause[];
+  OR?: TeamClause[];
+  isActive?: boolean;
+  memberships?: { some: { userId: string; role?: { in: string[] } } };
+  organization?: unknown;
 }
 
 const TEAM_ID = '00000000-0000-4000-8000-000000000001';
@@ -141,7 +150,7 @@ function buildApp(state: State): FastifyInstance {
         );
       },
       findMany: async (args: {
-        where: { AND?: Array<{ isActive?: boolean; memberships?: { some: { userId: string } } }> };
+        where: { AND?: Array<TeamClause> };
         include: { memberships: { where: { userId: string } } };
       }) => {
         const { where, include } = args;
@@ -149,17 +158,20 @@ function buildApp(state: State): FastifyInstance {
         const clauses = where.AND ?? [];
         // Apply isActive from each row's own flag, not by trusting the shape of the clause.
         const wantsActive = clauses.some((c) => c.isActive === true);
+        const matches = (clause: TeamClause, team: TeamRow): boolean =>
+          (!clause.AND || clause.AND.every((c) => matches(c, team))) &&
+          (!clause.OR || clause.OR.some((c) => matches(c, team))) &&
+          (!clause.organization || (state.orgAdminIds ?? []).includes(team.orgId ?? '')) &&
+          (!clause.memberships ||
+            state.memberships.some(
+              (m) =>
+                m.teamId === team.id &&
+                m.userId === clause.memberships?.some.userId &&
+                (!clause.memberships.some.role || clause.memberships.some.role.in.includes(m.role))
+            ));
         return state.teams
           .filter((t) => !wantsActive || (t.isActive ?? true))
-          .filter((t) =>
-            clauses.every(
-              (c) =>
-                !c.memberships ||
-                state.memberships.some(
-                  (m) => m.teamId === t.id && m.userId === c.memberships?.some.userId
-                )
-            )
-          )
+          .filter((t) => clauses.every((c) => matches(c, t)))
           .map(({ orgName, ...t }) => ({
             ...t,
             _count: { memberships: 0, repositories: 0 },
@@ -342,6 +354,18 @@ describe('GET /api/v1/teams', () => {
       [TEAM_ID, 'LEAD'],
       [OTHER_TEAM_ID, null],
     ]);
+  });
+
+  it('lists an ENGINEER org administrator’s active teams without inventing team membership', async () => {
+    const state = twoTeams({ userRole: 'ENGINEER' });
+    state.orgAdminIds = [state.teams[1].orgId ?? ''];
+    expect((await list(state)).map((t) => [t.id, t.myRole])).toEqual([
+      [TEAM_ID, 'LEAD'],
+      [OTHER_TEAM_ID, null],
+    ]);
+    expect((await list(state, '?member=true')).map((t) => t.id)).toEqual([TEAM_ID]);
+    state.teams[1].isActive = false;
+    expect((await list(state)).map((t) => t.id)).toEqual([TEAM_ID]);
   });
 
   it('narrows a platform ADMIN to their own teams with member=true', async () => {

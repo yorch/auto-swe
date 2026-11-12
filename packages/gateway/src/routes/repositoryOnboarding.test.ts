@@ -52,6 +52,8 @@ async function buildApp() {
   const prisma = {
     configAuditLog: { create: vi.fn() },
     connection: { findFirst: vi.fn() },
+    organizationMembership: { findUnique: vi.fn() },
+    team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
     toolCatalogEntry: { findMany: vi.fn() },
   };
@@ -133,6 +135,17 @@ describe('repository onboarding routes', () => {
       expect(ctx.temporal.startOnboardingPrWorkflow).not.toHaveBeenCalled();
     });
 
+    it.each(['own-org', 'other-org'])(
+      'checks an ENGINEER organization admin against %s',
+      async (orgId) => {
+        ctx.prisma.team.findUnique.mockResolvedValue({ isActive: true, orgId });
+        ctx.prisma.organizationMembership.findUnique.mockImplementation(async ({ where }) =>
+          where.userId_orgId.orgId === 'own-org' ? { role: 'ORG_ADMIN' } : null
+        );
+        expect((await post()).statusCode).toBe(orgId === 'own-org' ? 202 : 403);
+      }
+    );
+
     it('is 403 for a LEAD whose team only has the repository shared with it', async () => {
       ctx.authState.role = 'LEAD';
       leadOfOwningTeam(false);
@@ -151,7 +164,7 @@ describe('repository onboarding routes', () => {
     });
 
     it('starts the workflow for a LEAD of the owning team and answers 202', async () => {
-      ctx.authState.role = 'LEAD';
+      ctx.authState.role = 'ENGINEER';
       leadOfOwningTeam(true);
       const res = await post();
       expect(res.statusCode).toBe(202);
@@ -340,6 +353,13 @@ describe('repository onboarding routes', () => {
         status: 'failed',
       });
       expect((await get()).json().data.status).toBe('failed');
+    });
+
+    it('returns status to an ENGINEER who administers the owning organization', async () => {
+      ctx.prisma.team.findUnique.mockResolvedValue({ isActive: true, orgId: 'own-org' });
+      ctx.prisma.organizationMembership.findUnique.mockResolvedValue({ role: 'ORG_ADMIN' });
+      ctx.temporal.getOnboardingPrStatus.mockResolvedValue({ status: 'running' });
+      expect((await get()).statusCode).toBe(200);
     });
 
     it('is 404 when Temporal does not know the run', async () => {

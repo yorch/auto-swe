@@ -194,8 +194,14 @@ clone and API call land on a path that does not exist.
 
 ### Who may onboard
 
-Onboarding (`POST /repositories`, which the import dialog also uses) needs the LEAD role in the
-target team. A caller who is not a platform ADMIN must also be able to **read the repository on
+Onboarding (`POST /repositories`, which the import dialog also uses) requires a platform ADMIN,
+LEAD or ADMIN membership in the active target team, or ORG_ADMIN membership in that team's
+organization. The caller's platform role need not be LEAD. These roles also govern editing,
+moving and sharing connections; moving requires permission in both the owning and target teams.
+GitHub discovery (`GET /repositories/github/available`) requires a platform ADMIN or permission
+to manage repositories in at least one active team.
+
+A caller who is not a platform ADMIN must also be able to **read the repository on
 GitHub themselves**: once the row exists, the team's members can launch runs that clone and push
 with the platform's credential, so a lead naming any `owner/name` that credential can see would
 otherwise give their team a repository nobody on it can open. The check is made live on every
@@ -229,7 +235,7 @@ it, because that token is the identity their runs act as. The answer is always `
 `{ ok, detail, checks[], durationMs }`; a failing step is a check, not an error, and the wording is
 fixed per status class.
 
-Only a platform ADMIN or a lead of the owning team may ask, the rule that governs editing the
+Only a platform ADMIN, a lead of the owning team or its organization's ORG_ADMIN may ask, the rule that governs editing the
 repository. The check is about a repository that is already connected, so it cannot be used to
 find which private repositories the platform credential can see.
 
@@ -574,6 +580,12 @@ dependencies, fetch its submodules and Git LFS objects, run a code generator. Ev
 it — the agent's, the quality gates', UI and CI verification, merges and evals — so each sees the
 tree the agent worked in.
 
+Managing setup requires the owning team's ADMIN role or platform ADMIN. Team LEAD and
+ORG_ADMIN alone do not grant shell-authoring permission. This restriction covers changing the
+setup definition, proposing its pull request, managing setup secrets, moving preview environment
+values to secrets, and reading or dismissing setup blockers. Non-platform administrators also
+need the owning team to be active.
+
 The definition is one schema (`RepoSetupSchema`, in `@auto-swe/shared/lib/repoSetup`), read from
 the first of:
 
@@ -790,8 +802,8 @@ the same organization (`ConnectionTeamShare`).
 | Save a personal GitHub token for it | yes | yes |
 | Be a channel-assistant code task's repository, by name | yes | yes, unless the team owns one by that name |
 | Be a channel-assistant code task's repository by default (no name given) | if it is the team's only repository | never |
-| Edit, deactivate or move the repository | lead | no |
-| Change who it is shared with | lead | no |
+| Edit, deactivate or move the repository | team lead or owning organization's ORG_ADMIN | no |
+| Change who it is shared with | team lead or owning organization's ORG_ADMIN | no |
 | Create a schedule | lead | lead |
 | Edit, fire or delete a schedule | any schedule on the repository (lead) | the team's own schedules only (lead) |
 | Add or confirm dependency edges | lead | no |
@@ -806,7 +818,11 @@ The team list (`GET /api/v1/teams`) tells the caller their own role in each team
 (`ADMIN`, `LEAD`, `ENGINEER`, or `null` for a team they do not belong to, which a platform admin
 sees), plus the owning organization's `orgId` and `orgName`; it never carries another member's
 role. `?member=true` restricts the list to the caller's own teams, even for a platform admin. The
-dashboard derives which teams the caller leads from this list, with no per-team request.
+dashboard derives which teams the caller leads from this list, with no per-team request. The
+default list also includes active teams of organizations the caller administers, with a null
+`myRole` when they are not a team member. Connection controls combine `myRole` with the caller's
+organization roles from `GET /api/v1/platform/organizations`; platform ADMIN-only controls remain
+restricted to platform administrators.
 
 On the connections list, a row's "More actions" menu keeps **Share with teams** and
 **Deactivate** (or **Reactivate**) for everyone and shows them disabled, with the owning team's
@@ -869,9 +885,9 @@ Sharing is managed from the repository card on the **Connections** page, or over
 
 | Route | Who | Does |
 |---|---|---|
-| `GET /api/v1/repositories/:id/share-candidates` | the owning team's leads, platform admins | Active teams in the owning team's organization, other than the owner |
-| `PUT /api/v1/repositories/:id/shares` | the owning team's leads, platform admins | Replace the set of teams it is shared with; audited. A team that stays keeps its `canLaunch`, a new team starts with `true`. Answers each share with its `canLaunch` |
-| `PATCH /api/v1/repositories/:id/shares/:teamId` | the owning team's leads, platform admins | Body `{ "canLaunch": boolean }`: make one share view-only or launching again; audited; `404 SHARE_NOT_FOUND` for a team the repository is not shared with |
+| `GET /api/v1/repositories/:id/share-candidates` | the owning team's leads, its organization's ORG_ADMINs, platform admins | Active teams in the owning team's organization, other than the owner |
+| `PUT /api/v1/repositories/:id/shares` | the owning team's leads, its organization's ORG_ADMINs, platform admins | Replace the set of teams it is shared with; audited. A team that stays keeps its `canLaunch`, a new team starts with `true`. Answers each share with its `canLaunch` |
+| `PATCH /api/v1/repositories/:id/shares/:teamId` | the owning team's leads, its organization's ORG_ADMINs, platform admins | Body `{ "canLaunch": boolean }`: make one share view-only or launching again; audited; `404 SHARE_NOT_FOUND` for a team the repository is not shared with |
 
 `GET /api/v1/repositories?teamId=<team>` lists only the repositories that team owns or that are
 shared to it. The filter is its own `AND` term beside reachability, so it only narrows; the caller

@@ -81,7 +81,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
   // List organizations the current user is a member of, with budget + alert state.
-  app.get('/', { onRequest: requireAuth({ requiredRole: 'LEAD' }) }, async (request) => {
+  app.get('/', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, async (request) => {
     const user = requireUser(request);
     // Scoped by `userId` (the caller's own memberships), but the tenant guard
     // only recognises org/team keys as scoping — `userId` alone is a false

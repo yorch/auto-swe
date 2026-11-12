@@ -65,7 +65,9 @@ async function buildApp(
   const prisma = {
     connection: { findUnique: vi.fn() },
     gitHubHostCredential: { findUnique: vi.fn() },
+    organizationMembership: { findUnique: vi.fn() },
     packageRegistry: { findUnique: vi.fn() },
+    team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
   };
   app.decorate('prisma', prisma as unknown as never);
@@ -169,11 +171,12 @@ describe('POST /repositories/:id/test-access', () => {
   const url = `/api/v1/repositories/${ID}/test-access`;
   const repo = { defaultBranch: 'main', id: ID, teamId: TEAM_ID, type: 'git_repo' };
 
-  it('refuses a platform ENGINEER before reading the repository', async () => {
+  it('refuses a platform ENGINEER who cannot manage the repository', async () => {
     const { app, prisma } = await buildApp('ENGINEER', repositoryRoutes, '/api/v1/repositories');
+    prisma.connection.findUnique.mockResolvedValue(repo);
     const res = await app.inject({ headers: AUTH, method: 'POST', url });
     expect(res.statusCode).toBe(403);
-    expect(prisma.connection.findUnique).not.toHaveBeenCalled();
+    expect(probeRepositoryAccess).not.toHaveBeenCalled();
   });
 
   it('is 404 for a connection that is not a git repository', async () => {
@@ -194,7 +197,7 @@ describe('POST /repositories/:id/test-access', () => {
   });
 
   it("runs the check for a lead of the repository's team, as that user", async () => {
-    const { app, prisma } = await buildApp('LEAD', repositoryRoutes, '/api/v1/repositories');
+    const { app, prisma } = await buildApp('ENGINEER', repositoryRoutes, '/api/v1/repositories');
     prisma.connection.findUnique.mockResolvedValue(repo);
     prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD', team: { isActive: true } });
     probeRepositoryAccess.mockResolvedValue(RESULT);
