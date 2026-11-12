@@ -453,7 +453,7 @@ describe('repository onboarding routes', () => {
       if (status === 200) {
         expect(ctx.prisma.connection.updateMany).toHaveBeenCalledWith({
           data: { onboardingChecklistDismissedAt: expect.any(Date) },
-          where: { id: REPO, onboardingChecklistDismissedAt: null },
+          where: { id: REPO, onboardingChecklistDismissedAt: null, teamId: TEAM },
         });
       } else {
         expect(ctx.prisma.connection.updateMany).not.toHaveBeenCalled();

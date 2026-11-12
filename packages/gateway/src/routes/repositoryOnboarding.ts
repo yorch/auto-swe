@@ -302,7 +302,7 @@ export const repositoryOnboardingRoutes: FastifyPluginAsync = async (fastify) =>
       }
       await fastify.prisma.connection.updateMany({
         data: { onboardingChecklistDismissedAt: new Date() },
-        where: { id: repo.id, onboardingChecklistDismissedAt: null },
+        where: { id: repo.id, onboardingChecklistDismissedAt: null, teamId: repo.teamId },
       });
       return { data: { dismissed: true } };
     }
