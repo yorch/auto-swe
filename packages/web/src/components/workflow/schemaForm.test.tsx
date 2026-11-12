@@ -48,6 +48,27 @@ vi.mock('@/hooks/useViewOnlyRepos', () => ({
 }));
 
 describe('SchemaFieldInput', () => {
+  it.each(['description', 'brief', 'instructions', 'message', 'prdContent'])(
+    'renders %s as multiline prose',
+    (name) => {
+      render(
+        <SchemaFieldInput name={name} onChange={vi.fn()} prop={{ type: 'string' }} value="" />
+      );
+      expect(screen.getByRole('textbox').tagName).toBe('TEXTAREA');
+    }
+  );
+  it('keeps fixed-choice descriptions as a select', () => {
+    render(
+      <SchemaFieldInput
+        name="description"
+        onChange={vi.fn()}
+        prop={{ enum: ['short', 'long'], type: 'string' }}
+        value=""
+      />
+    );
+    expect(screen.getByRole('button', { name: /Description/ })).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
+  });
   it('renders a connection picker filtered by connectionType', () => {
     render(
       <SchemaFieldInput

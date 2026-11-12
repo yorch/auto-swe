@@ -280,7 +280,7 @@ const VersionParam = z.object({ id: z.string().uuid(), version: z.coerce.number(
 
 const CreateTemplateBody = z.object({
   description: z.string().max(2000).optional(),
-  kind: z.literal('review').nullable().optional(),
+  kind: z.enum(['review', 'automation']).nullable().optional(),
   name: z.string().min(1).max(120),
   spec: z.unknown(),
   teamId: z.string().uuid().nullable().optional(),
@@ -304,7 +304,7 @@ const UpdateTemplateBody = z.object({
       }
     }),
   isDefault: z.boolean().optional(),
-  kind: z.literal('review').nullable().optional(),
+  kind: z.enum(['review', 'automation']).nullable().optional(),
   name: z.string().min(1).max(120).optional(),
   status: z.enum(WORKFLOW_TEMPLATE_STATUSES).optional(),
   workspaceProvider: WorkspaceProviderTypeSchema.nullable().optional(),
@@ -386,7 +386,7 @@ async function createTemplateWithInitialVersion(
     egressAllowlist: string[];
     workspaceProvider: string | null;
     generatedBy?: string | null;
-    kind?: 'review' | null;
+    kind?: 'review' | 'automation' | null;
   }
 ): Promise<TemplateWithIncludes> {
   return prisma.$transaction(async (tx) => {

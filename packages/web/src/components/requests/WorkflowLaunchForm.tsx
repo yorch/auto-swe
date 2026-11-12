@@ -1,6 +1,7 @@
 'use client';
 
-import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
+import { DEFAULT_BRIEF_INPUT_SCHEMA, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
+import { isValidTicketId } from '@auto-swe/shared/lib/ticketId';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -63,7 +64,12 @@ export function WorkflowLaunchForm({
   onLaunched: (requestId: string) => void;
 }) {
   const taskNameId = useId();
-  const schema = isInputSchema(template.inputSchema) ? template.inputSchema : null;
+  const schema = isInputSchema(template.inputSchema)
+    ? template.inputSchema
+    : template.inputSchema == null &&
+        (template.workspaceProvider == null || template.workspaceProvider === 'git_repo')
+      ? DEFAULT_BRIEF_INPUT_SCHEMA
+      : null;
   const [payload, setPayload] = useState<Record<string, unknown>>(
     schema ? buildInitialPayload(schema) : {}
   );
@@ -84,6 +90,14 @@ export function WorkflowLaunchForm({
   const unchanged = failure?.runAnyway ? failure : null;
   const sampleField = pickSampleField(schema);
   const errors = schema ? validatePayload(schema, payload) : {};
+  if (
+    schema === DEFAULT_BRIEF_INPUT_SCHEMA &&
+    typeof payload.ticketId === 'string' &&
+    payload.ticketId !== '' &&
+    !isValidTicketId(payload.ticketId)
+  ) {
+    errors.ticketId = 'Enter a valid ticket ID (letters, digits, ".", "_", "#", "/" and "-")';
+  }
   const required = new Set(schema?.required ?? []);
   // A workspace provider can need a target connection the input schema never asks for; the
   // launch is refused without one, so the form has to collect it.
@@ -118,7 +132,10 @@ export function WorkflowLaunchForm({
     try {
       const result = await launch.mutateAsync({
         label: label.trim(),
-        payload,
+        payload:
+          schema === DEFAULT_BRIEF_INPUT_SCHEMA && payload.ticketId === ''
+            ? Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'ticketId'))
+            : payload,
         ...knowledgeBaseOverrideBody(references),
         ...egressPolicyFor(networkAccess),
         ...(acknowledgeUnchanged ? { acknowledgeUnchanged } : {}),

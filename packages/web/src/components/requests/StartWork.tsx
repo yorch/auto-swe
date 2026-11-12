@@ -1,6 +1,6 @@
 'use client';
 
-import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
+import { handLaunchBlock } from '@auto-swe/shared/lib/channelTask';
 import { useRouter } from 'next/navigation';
 import { type ReactNode, useState } from 'react';
 import { AgentRunForm } from '@/components/agentRuns/AgentRunForm';
@@ -250,9 +250,7 @@ export function StartWork({
   });
   const runnable = (templates.data ?? []).filter(
     (template) =>
-      template.status === 'ACTIVE' &&
-      template.activeVersion !== null &&
-      !isSystemManagedTemplate(template)
+      template.status === 'ACTIVE' && template.activeVersion !== null && !handLaunchBlock(template)
   );
   const template = runnable.find((item) => item.id === templateId);
   const unrunnableTemplate =
@@ -314,8 +312,17 @@ export function StartWork({
             <SetupBanner items={['credentials', 'github', 'connections']} />
             {unrunnableTemplate && (
               <Alert variant="warning">
-                The workflow you picked is not available to run. It may be inactive, archived or not
-                visible to your team. Choose another workflow below.
+                The workflow you picked is not available to run.{' '}
+                {
+                  handLaunchBlock(
+                    templates.data?.find((item) => item.id === initialTemplateId) ?? {
+                      name: '',
+                      team: null,
+                    }
+                  )?.reason
+                }{' '}
+                It may be inactive, archived or not visible to your team. Choose another workflow
+                below.
               </Alert>
             )}
             <Step number={1} title="How do you want to work?">

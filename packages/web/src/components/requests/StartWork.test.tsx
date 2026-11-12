@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 
@@ -68,6 +68,32 @@ async function epicEnabled() {
 }
 
 describe('StartWork', () => {
+  it('offers only hand-launchable templates and explains blocked deep links', async () => {
+    const templates = [
+      { id: 'hotfix', kind: null, name: 'hotfix' },
+      { id: 'review', kind: 'review', name: 'code-review' },
+      { id: 'review-qodo', kind: 'review', name: 'code-review-qodo' },
+      { id: 'human-review', kind: 'review', name: 'human-review-of-run' },
+      { id: 'ci', kind: 'automation', name: 'ci-triage-and-fix' },
+      { id: 'pr', kind: 'automation', name: 'address-pr-feedback' },
+      { id: 'task', kind: 'automation', name: 'Channel Task' },
+      { id: 'assistant', kind: null, name: 'Channel Assistant' },
+    ].map((t) => ({ ...t, activeVersion: 1, status: 'ACTIVE', team: null }));
+    setupFetchMock({
+      'GET /api/v1/teams': () => ({ data: [] }),
+      'GET /api/v1/workflow-templates': () => ({ data: templates }),
+    });
+    render(withQuery(<StartWork initialTemplateId="ci" />));
+    expect(await screen.findByText(/Started by an automation or integration/)).toBeTruthy();
+    const picker = screen.getByRole('combobox', { name: /Workflow/ });
+    act(() => picker.focus());
+    fireEvent.change(picker, { target: { value: 'hot' } });
+    expect(await screen.findByRole('option', { name: 'hotfix' })).toBeTruthy();
+    fireEvent.change(picker, { target: { value: '' } });
+    for (const template of templates.slice(1)) {
+      expect(screen.queryByRole('option', { name: template.name })).toBeNull();
+    }
+  });
   it('disables the epic option below lead and says why', () => {
     auth.role = 'ENGINEER';
     gateway();

@@ -1,6 +1,6 @@
 'use client';
 
-import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
+import { handLaunchBlock, isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
@@ -426,8 +426,12 @@ function matchesSearch(t: WorkflowTemplateSummary, query: string): boolean {
  * a disabled Run that says why (the reason is read out, not only shown on hover).
  */
 function RunAction({ template }: { template: WorkflowTemplateSummary }) {
-  if (template.status === 'ARCHIVED' || isSystemManagedTemplate(template)) {
+  if (template.status === 'ARCHIVED') {
     return null;
+  }
+  const block = handLaunchBlock(template);
+  if (block) {
+    return <span className="text-paper-500 text-xs">{block.reason}</span>;
   }
   if (template.status === 'ACTIVE' && template.activeVersion !== null) {
     return (

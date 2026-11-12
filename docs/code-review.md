@@ -150,7 +150,10 @@ routes require ENGINEER, with source control and repository checks on launch.
 | `POST /platform/review-presets/:id/attachments` | Exactly `{ "templateId": "<uuid>" }` or `{ "connectionId": "<uuid>" }`. |
 | `DELETE /platform/review-presets/:id/attachments` | The same target body removes the attachment. |
 
-Template create/update accepts `kind: "review"` or `null` under the existing template permissions.
+Template create/update accepts `kind: "review"`, `"automation"` or `null` under the existing template permissions.
+Review templates are excluded from the Start work picker and have no library Run link; they
+start from a finished run's Reviews panel. Automation templates start through an automation
+or integration and likewise have no hand-launch action, but remain callable through the run API.
 Preset and attachment writes produce audit entries. The ordinary template-run endpoint rejects a
 review template with `REVIEW_TEMPLATE_NEEDS_SOURCE`.
 

@@ -159,6 +159,18 @@ switching templates or paths within the page. **Approvals**, the **Workflow libr
 **Connections** remain directly available in the main navigation. **All runs** (`/runs`) is the
 linkable execution-history screen for diagnostics.
 
+The workflow picker and the library's Run links offer only hand-launchable templates.
+System-managed templates run through the platform; review templates start from a finished
+run's Reviews panel. Templates with `kind: "automation"`, including CI triage, PR feedback
+and Channel Task, start through an automation or integration. This kind hides hand-launch
+actions without preventing API or CLI launches.
+
+A git-repository workflow without an input schema collects a required Repository and
+multi-line Description, plus an optional Ticket ID. Task name labels the request; Description
+is the agent's brief. Other workspace providers keep their own inputs. Free-text schema fields
+named description, brief, instructions, message or prdContent use multi-line inputs unless
+they declare fixed choices.
+
 ### In-app help
 
 Terms in this vocabulary are defined once, in the dashboard's glossary, and surfaced where they
