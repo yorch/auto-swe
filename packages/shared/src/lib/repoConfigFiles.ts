@@ -1,7 +1,7 @@
-import { parse as parseYaml } from 'yaml';
+import { parse as parseYaml, stringify } from 'yaml';
 import { z } from 'zod';
 import { REPO_GATE_COMMAND_KEYS } from '../types/api.js';
-import { PreviewConfigSchema } from './previewConfig.js';
+import { type PreviewConfigInput, PreviewConfigSchema } from './previewConfig.js';
 
 export const REPO_GATES_FILE = '.auto-swe/gates.yml';
 export const REPO_PREVIEW_FILE = '.auto-swe/preview.yml';
@@ -39,4 +39,12 @@ export function parseRepoGatesYaml(text: string) {
 
 export function parseRepoPreviewYaml(text: string) {
   return parseConfigYaml(text, PreviewConfigSchema);
+}
+
+export function repoGatesToYaml(commands: RepoGateFileCommands): string {
+  return stringify(RepoGateCommandsSchema.parse(commands), { lineWidth: 0, sortMapEntries: true });
+}
+
+export function repoPreviewToYaml(config: PreviewConfigInput): string {
+  return stringify(PreviewConfigSchema.parse(config), { lineWidth: 0, sortMapEntries: true });
 }

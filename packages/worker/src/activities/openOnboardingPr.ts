@@ -123,7 +123,7 @@ async function assertDiffIsExactly(ws: Workspace, expected: readonly string[]): 
 }
 
 /**
- * The two files go in `.auto-swe/`. Refuse when that directory or either file is, in the tree we
+ * The files go in `.auto-swe/`. Refuse when that directory or any file is, in the tree we
  * are about to commit on, a symlink, a submodule or the wrong kind of entry, or is a symlink on
  * disk: `cat >` would follow it out of the repository and `git add` would record a link.
  */
@@ -167,15 +167,31 @@ export function contentHashOf(files: readonly { path: string; content: string }[
 }
 
 export function onboardingPrBody(paths: readonly string[]): string {
+  const active = paths.filter((path) => /^\.auto-swe\/(?:setup|gates|preview)\.yml$/.test(path));
+  const legacy = paths.some(
+    (path) => path === '.auto-swe/tools.yml' || path === '.auto-swe/pr-policy.yml'
+  );
   return [
     'This pull request was proposed from the auto-swe repository settings. It only adds or updates',
     'configuration files:',
     '',
     ...paths.map((p) => `- \`${p}\``),
     '',
-    '**Merging this pull request does not enable anything.** It does not install tools and it does',
-    'not change how pull requests are evaluated. An administrator still has to turn on',
-    '`toolsFileEnabled` for the repository before the tools file is read.',
+    ...(active.length
+      ? [
+          `**On merge, ${active.map((path) => `\`${path}\``).join(', ')} take effect unless a connection override wins.**`,
+          'Setup and preview use whole-object connection overrides; gate commands are overridden per key.',
+          '',
+        ]
+      : []),
+    ...(legacy
+      ? [
+          ...(active.length ? ['For tools and pull request policy configuration:'] : []),
+          '**Merging this pull request does not enable anything.** It does not install tools and it does',
+          'not change how pull requests are evaluated. An administrator still has to turn on',
+          '`toolsFileEnabled` for the repository before the tools file is read.',
+        ]
+      : []),
     '',
     'A person reviews and merges this pull request; the platform never merges it.',
   ].join('\n');

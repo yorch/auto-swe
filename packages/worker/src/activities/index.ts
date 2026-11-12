@@ -260,6 +260,7 @@ export type {
   ReembedStaleMemoryBatchResult,
 } from './reembedMemory.js';
 export { reembedMemoryItemActivity, reembedStaleMemoryBatch } from './reembedMemory.js';
+export { repoOnboardingPr } from './repoOnboardingPr.js';
 export type {
   ResolveWorkspaceInput,
   WorkspaceContext,

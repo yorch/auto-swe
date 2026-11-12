@@ -126,5 +126,6 @@ export const BUILTIN_STEPS = [
   'runTool',
   // Checks a document-review agent's JSON reply (a review or a ticket plan) for a person to read
   'parseAgentOutput',
+  'repoOnboardingPr',
 ] as const;
 export type BuiltinStepName = (typeof BUILTIN_STEPS)[number];

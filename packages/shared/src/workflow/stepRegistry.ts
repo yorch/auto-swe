@@ -1055,8 +1055,8 @@ register({
   configFields: [
     {
       description:
-        'What the agent returned: a review from the document reviewer (`docReview`), a ticket plan from the ticket planner (`ticketPlan`), or a diagnosis from the incident triager (`incidentTriage`).',
-      enumValues: ['docReview', 'ticketPlan', 'incidentTriage'],
+        'What the agent returned: a document review (`docReview`), ticket plan (`ticketPlan`), incident diagnosis (`incidentTriage`), or repository setup draft (`repoOnboardingDraft`).',
+      enumValues: ['docReview', 'ticketPlan', 'incidentTriage', 'repoOnboardingDraft'],
       key: 'kind',
       label: 'Kind',
       required: true,
@@ -1068,9 +1068,18 @@ register({
     "Reads `inputs.text` (the agent node's `output.text`). Output: `valid` (false with a fixed `error` " +
     'when the reply is not the expected JSON, which the template can branch on), `markdown`, and by kind: ' +
     '`ready`, `summary`, `findingCount`, `blockingCount`, `comments` for a review (a review that lists a ' +
-    'blocker or a major finding is never ready), or `plan`, `ticketCount`, `subtaskCount` for a plan, or `summary`, `fixable`, `confidence`, `brief` for an incident triage (whose invalid output carries the reply itself as `markdown`, so it can still be posted). Returns invalid output rather than throwing on malformed replies.',
+    'blocker or a major finding is never ready), or `plan`, `ticketCount`, `subtaskCount` for a plan, or `summary`, `fixable`, `confidence`, `brief` for an incident triage (whose invalid output carries the reply itself as `markdown`, so it can still be posted), or a validated `draft` from the last fenced JSON block for repository onboarding. Returns invalid output rather than throwing on malformed replies.',
   label: 'Check agent output',
   name: 'parseAgentOutput',
+});
+
+register({
+  category: 'vcs',
+  configFields: [],
+  description:
+    'Open one configuration pull request from inputs.draft (validated setup, gateCommands and optional previewConfig) for inputs.connectionId or the run workspace connection. Derives its content hash and proposer from the current run; never merges.',
+  label: 'Propose repository onboarding',
+  name: 'repoOnboardingPr',
 });
 
 /** Get metadata for a step name. Throws on unknown step. */

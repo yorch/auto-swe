@@ -44,6 +44,7 @@ import {
   mcpNodeActivities,
   memoryActivities,
   mergeActivities,
+  onboardingPrActivities,
   prdActivities,
   prFeedbackActivities,
   prFeedbackAgentTaskActivities,
@@ -1188,10 +1189,20 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     ({ config, inputs }) =>
       genericActivities.parseAgentOutput({
         kind:
-          config.kind === 'ticketPlan' || config.kind === 'incidentTriage'
+          config.kind === 'ticketPlan' ||
+          config.kind === 'incidentTriage' ||
+          config.kind === 'repoOnboardingDraft'
             ? config.kind
             : 'docReview',
         text: inputs.text,
+      }),
+  ],
+  [
+    'repoOnboardingPr',
+    ({ ctx, inputs }) =>
+      onboardingPrActivities.repoOnboardingPr({
+        connectionId: resolveConnectionId('repoOnboardingPr', ctx, inputs),
+        draft: inputs.draft,
       }),
   ],
   [

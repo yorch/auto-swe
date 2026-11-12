@@ -67,6 +67,18 @@ export const genericActivities = proxyActivities<
   startToCloseTimeout: T_1M,
 });
 
+export const onboardingPrActivities = proxyActivities<
+  Pick<typeof activitiesType, 'repoOnboardingPr'>
+>({
+  retry: {
+    backoffCoefficient: 2,
+    initialInterval: '10s',
+    maximumAttempts: 3,
+    maximumInterval: '1m',
+  },
+  startToCloseTimeout: T_10M,
+});
+
 export const agentActivities = proxyActivities<
   Pick<
     typeof activitiesType,
