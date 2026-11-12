@@ -152,6 +152,7 @@ describe('run pinning', () => {
       'workflow.needsInputTimeoutSeconds': 86_400,
       'workspace.egressPolicy': 'open',
       'workspace.implementerRuntime': 'mastra',
+      'workspace.setupEgressPolicy': 'inherit',
     });
   });
 });
