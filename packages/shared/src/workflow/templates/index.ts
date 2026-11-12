@@ -22,6 +22,10 @@ import { FULLY_SUPERVISED_SPEC } from './fullySupervised.js';
 import { HOTFIX_SPEC } from './hotfix.js';
 import { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
 import { HUMAN_REVIEW_OF_RUN_SPEC } from './humanReviewOfRun.js';
+import {
+  INCIDENT_POSTMORTEM_INPUT_SCHEMA,
+  INCIDENT_POSTMORTEM_SPEC,
+} from './incidentPostmortem.js';
 import { INCIDENT_TRIAGE_INPUT_SCHEMA, INCIDENT_TRIAGE_SPEC } from './incidentTriage.js';
 import { ISSUE_TO_CONFLUENCE_PAGE_SPEC } from './issueToConfluencePage.js';
 import { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
@@ -140,6 +144,14 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     inputSchema: INCIDENT_TRIAGE_INPUT_SCHEMA,
     name: INCIDENT_TRIAGE_SPEC.name,
     spec: INCIDENT_TRIAGE_SPEC,
+  },
+  {
+    // Started by an inbound-event automation on a second PagerDuty endpoint that receives
+    // `incident.resolved`, or by hand with an incident id.
+    description: INCIDENT_POSTMORTEM_SPEC.description,
+    inputSchema: INCIDENT_POSTMORTEM_INPUT_SCHEMA,
+    name: INCIDENT_POSTMORTEM_SPEC.name,
+    spec: INCIDENT_POSTMORTEM_SPEC,
   },
   {
     // Started by a pull-request feedback trigger (a repository's review/comment webhook).
@@ -441,6 +453,10 @@ export { FULLY_SUPERVISED_SPEC } from './fullySupervised.js';
 export { HOTFIX_SPEC } from './hotfix.js';
 export { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
 export { HUMAN_REVIEW_OF_RUN_SPEC } from './humanReviewOfRun.js';
+export {
+  INCIDENT_POSTMORTEM_INPUT_SCHEMA,
+  INCIDENT_POSTMORTEM_SPEC,
+} from './incidentPostmortem.js';
 export {
   INCIDENT_TRIAGE_DEFAULT_MIN_FIX_CONFIDENCE,
   INCIDENT_TRIAGE_INPUT_SCHEMA,

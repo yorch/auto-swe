@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { INCIDENT_POSTMORTEM_INPUT_SCHEMA } from '../workflow/templates/incidentPostmortem.js';
 import { INCIDENT_TRIAGE_INPUT_SCHEMA as schema } from '../workflow/templates/incidentTriage.js';
 import {
   EVENT_ENDPOINT_PRESETS,
@@ -55,11 +56,11 @@ const filters = InboundEventFiltersSchema.parse({
 
 const OPTIONS = { mode: 'triage', pagerdutyConnectionId: PD_CONNECTION };
 
-function extract(document: unknown) {
+function extract(document: unknown, endpointId = ENDPOINT) {
   const got = extractInboundEvent({
     bodyDigest: 'abc123',
     document,
-    endpointId: ENDPOINT,
+    endpointId,
     hash: sha256Hex,
     pointers: preset,
   });
@@ -135,5 +136,55 @@ describe('a PagerDuty delivery through the recipe', () => {
     for (const id of ['q2zh7y2', '../../users', 'Q2ZH 7Y2', 'A'.repeat(33)]) {
       expect(build(body({ incident: id })).built.ok, id).toBe(false);
     }
+  });
+});
+
+describe('a PagerDuty delivery through the postmortem recipe (§8)', () => {
+  const POSTMORTEM_ENDPOINT = '33333333-3333-4333-8333-333333333333';
+  const CONFLUENCE = '44444444-4444-4444-8444-444444444444';
+  const postmortemFilters = InboundEventFiltersSchema.parse({
+    endpointId: POSTMORTEM_ENDPOINT,
+    eventTypes: ['incident.resolved'],
+    fields: { incidentId: '/event/data/id' },
+    match: [{ op: 'eq', pointer: '/event/data/service/id', value: SERVICE }],
+  });
+  const options = { docConnectionId: CONFLUENCE, pagerdutyConnectionId: PD_CONNECTION };
+
+  it('selects a resolved incident and builds the postmortem inputs', () => {
+    const facts = inboundEventFacts(
+      extract(body({ type: 'incident.resolved' }), POSTMORTEM_ENDPOINT),
+      postmortemFilters
+    );
+    expect(inboundEventSource.mismatch(postmortemFilters, facts)).toBeNull();
+    const built = buildAutomationPayload(
+      inboundEventSource,
+      INCIDENT_POSTMORTEM_INPUT_SCHEMA,
+      options,
+      REPO,
+      facts
+    );
+    expect(built.ok && built.payload).toMatchObject({
+      connectionId: REPO,
+      docConnectionId: CONFLUENCE,
+      incidentId: 'Q2ZH7Y2SD3X0RE',
+      pagerdutyConnectionId: PD_CONNECTION,
+    });
+  });
+
+  it('does not select the triggered event', () => {
+    const facts = inboundEventFacts(extract(body(), POSTMORTEM_ENDPOINT), postmortemFilters);
+    expect(inboundEventSource.mismatch(postmortemFilters, facts)).not.toBeNull();
+  });
+
+  it('saves without a Confluence connection', () => {
+    expect(
+      automationOptionsProblem(
+        inboundEventSource,
+        postmortemFilters,
+        INCIDENT_POSTMORTEM_INPUT_SCHEMA,
+        { pagerdutyConnectionId: PD_CONNECTION },
+        true
+      )
+    ).toBeNull();
   });
 });

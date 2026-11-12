@@ -538,6 +538,42 @@ service.
 cancelled, and since the automations select `incident.triggered` only, the event starts nothing.
 Clear the field to let a triage finish after its incident resolves.
 
+## 8. Recipe: PagerDuty to `incident-postmortem`
+
+When an incident resolves, the `incident-postmortem` template drafts its postmortem and adds it to
+the incident as a note. The run reads the incident, its alerts, its log entries and its notes (the
+triage diagnosis among them), and the `incidentPostmortemWriter` agent drafts against a throwaway
+checkout of the repository: a title, summary, impact, timeline, root cause, resolution and
+follow-up actions.
+
+**A second endpoint.** The postmortem needs its own endpoint, fed by a second PagerDuty webhook
+subscription that sends `incident.resolved` only. On the triage endpoint the resolution has the
+same subject as the triage that ran for it, so the same-subject guard drops it, and the endpoint's
+`cancelOnTypes` uses it to cancel that triage (§7). The second endpoint has decided nothing for the
+incident yet, so its resolution starts the postmortem. Create it from the **PagerDuty v3 webhook**
+preset and clear **Cancel on**: there is no triage on this endpoint to cancel.
+
+**The automation.** One `inbound.event` automation per repository, on the postmortem endpoint:
+
+| Setting | Value |
+|---|---|
+| Template | `incident-postmortem` |
+| Repository | the repository the service runs |
+| Event types | `incident.resolved` |
+| Match | `/event/data/service/id` `eq` the PagerDuty service id |
+| Fields | `incidentId` from `/event/data/id` |
+| Options | `pagerdutyConnectionId`: the team's `pagerduty` connection; optionally `docConnectionId`: a `confluence` connection, with `spaceKey` and `parentPageId` (the connection's own when unset) |
+
+**What the run does.**
+
+- It posts the draft as a note, an `internal_write`: under the default autonomy policy it posts
+  without waiting. A reply that is not the expected JSON is still posted, marked unstructured.
+- With a `docConnectionId`, and a draft that parsed, it then creates a Confluence page with the
+  draft's title and body. That is an `external_write`, which waits for approval under the default
+  policy. Rejecting the page leaves the note; rejecting the note (when a team requires approval for
+  `internal_write`) ends the run, so no page is published either.
+- The result carries `noted`, `published` and, once a page exists, its `pageUrl`.
+
 ## Limitations
 
 - **Qodo is not an inbound-event sender.** Qodo emits no outbound webhooks, so there is nothing for
@@ -586,6 +622,13 @@ Clear the field to let a triage finish after its incident resolves.
   selects more than `incident.triggered` starts a run for each acknowledgement, escalation and
   resolution of an incident it already triaged, bounded by its cooldown and `maxRunsPerDay`; one
   without the service id rule triages every service's incidents against its one repository.
+- **A postmortem is a draft from a bounded view (§8).** It reads the same 25 alerts and log
+  entries as a triage, plus the 25 most recent notes, each cut to 4,000 characters: a long incident's
+  early timeline can be missing. It reads the repository, not the pull requests or deploys, so it
+  names a change only when a note or the checkout shows it. Every run creates a new Confluence page;
+  there is no update of an earlier one.
+- **The postmortem recipe needs its own subscription (§8).** An `incident.resolved` on the triage
+  endpoint never starts a postmortem, and nothing checks that a second endpoint exists.
 - **A PagerDuty triage reads a bounded view.** The run reads the 25 most recent alerts and log
   entries, each alert body cut to 4,000 characters, and posts at most 25,000 characters. Notes are
   plain text: PagerDuty does not render Markdown in them.

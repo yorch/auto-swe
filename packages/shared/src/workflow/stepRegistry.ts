@@ -1055,8 +1055,14 @@ register({
   configFields: [
     {
       description:
-        'What the agent returned: a document review (`docReview`), ticket plan (`ticketPlan`), incident diagnosis (`incidentTriage`), or repository setup draft (`repoOnboardingDraft`).',
-      enumValues: ['docReview', 'ticketPlan', 'incidentTriage', 'repoOnboardingDraft'],
+        'What the agent returned: a document review (`docReview`), ticket plan (`ticketPlan`), incident diagnosis (`incidentTriage`), incident postmortem (`incidentPostmortem`), or repository setup draft (`repoOnboardingDraft`).',
+      enumValues: [
+        'docReview',
+        'ticketPlan',
+        'incidentTriage',
+        'incidentPostmortem',
+        'repoOnboardingDraft',
+      ],
       key: 'kind',
       label: 'Kind',
       required: true,
@@ -1068,7 +1074,7 @@ register({
     "Reads `inputs.text` (the agent node's `output.text`). Output: `valid` (false with a fixed `error` " +
     'when the reply is not the expected JSON, which the template can branch on), `markdown`, and by kind: ' +
     '`ready`, `summary`, `findingCount`, `blockingCount`, `comments` for a review (a review that lists a ' +
-    'blocker or a major finding is never ready), or `plan`, `ticketCount`, `subtaskCount` for a plan, or `summary`, `fixable`, `confidence`, `brief` for an incident triage (whose invalid output carries the reply itself as `markdown`, so it can still be posted), or a validated `draft` from the last fenced JSON block for repository onboarding. Returns invalid output rather than throwing on malformed replies.',
+    'blocker or a major finding is never ready), or `plan`, `ticketCount`, `subtaskCount` for a plan, or `summary`, `fixable`, `confidence`, `brief` for an incident triage (whose invalid output carries the reply itself as `markdown`, so it can still be posted), or `title` and `summary` for an incident postmortem (invalid output likewise carries the reply as `markdown`), or a validated `draft` from the last fenced JSON block for repository onboarding. Returns invalid output rather than throwing on malformed replies.',
   label: 'Check agent output',
   name: 'parseAgentOutput',
 });

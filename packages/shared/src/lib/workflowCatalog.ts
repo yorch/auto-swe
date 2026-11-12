@@ -60,6 +60,7 @@ const entries: [string, { title: string; group: WorkflowGroup }][] = [
   ['create-issue-from-brief', { group: 'product', title: 'Brief to tracker issue' }],
   ['create-issue', { group: 'product', title: 'File a tracker issue' }],
   ['incident-triage', { group: 'engineering', title: 'Incident triage' }],
+  ['incident-postmortem', { group: 'engineering', title: 'Incident postmortem draft' }],
   ['zendesk-ticket-reply', { group: 'support', title: 'Support ticket reply' }],
   ['notion-content-draft', { group: 'content', title: 'Draft an update in Notion' }],
   ['notion-content-brand-review', { group: 'content', title: 'Draft with a brand review' }],

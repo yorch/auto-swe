@@ -531,8 +531,9 @@ are added as data, not code. Seeded built-ins split by how they bind a model:
   `repo-onboarder` (repository setup, gate commands and preview proposals).
 - **Sub-role personas** (`inheritsModelFrom`): `securityReviewer` /
   `domainLogicReviewer` / `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` /
-  `prdDecomposer` / `ciTriager` / `incidentTriager` / `ticketContextGatherer` / `prFeedbackResponder` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
-  `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`).
+  `prdDecomposer` / `ciTriager` / `incidentTriager` / `incidentPostmortemWriter` /
+  `ticketContextGatherer` / `prFeedbackResponder` (← `planner`); `ciFixer` / `reviewFixer` /
+  `gateFixer` / `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`).
 
 Both lists are complete as written, and `yarn docs:check` fails if one stops being — see
 [`docs/agents.md`](./docs/agents.md) for what calls each agent and its default model.

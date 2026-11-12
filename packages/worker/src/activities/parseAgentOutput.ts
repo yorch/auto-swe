@@ -20,6 +20,7 @@ export type ParseAgentOutputKind =
   | 'docReview'
   | 'ticketPlan'
   | 'incidentTriage'
+  | 'incidentPostmortem'
   | 'repoOnboardingDraft';
 
 export interface ParsedRepoOnboardingDraft {
@@ -198,6 +199,79 @@ function parseIncidentTriage(text: string): ParsedIncidentTriage | UnparsedAgent
   };
 }
 
+/** The postmortem writer's reply: see `INCIDENT_POSTMORTEM_WRITER_PROMPT`. */
+export const IncidentPostmortemSchema = z.object({
+  followUps: z.array(z.string().min(1).max(1000)).max(20).default([]),
+  impact: z.string().max(4000),
+  resolution: z.string().max(4000).default(''),
+  rootCause: z.string().max(4000),
+  summary: z.string().min(1).max(2000),
+  timeline: z
+    .array(z.object({ at: z.string().max(100).default(''), event: z.string().min(1).max(1000) }))
+    .max(40)
+    .default([]),
+  title: z.string().trim().min(1).max(200),
+});
+
+export type IncidentPostmortem = z.infer<typeof IncidentPostmortemSchema>;
+
+export interface ParsedIncidentPostmortem {
+  kind: 'incidentPostmortem';
+  valid: true;
+  markdown: string;
+  postmortem: IncidentPostmortem;
+  summary: string;
+  title: string;
+}
+
+/** Plain text: PagerDuty shows a note as written, and Confluence takes it paragraph by paragraph. */
+export function renderIncidentPostmortem(p: IncidentPostmortem): string {
+  const section = (heading: string, body: string) => (body.trim() ? ['', heading, body] : []);
+  const list = (heading: string, items: string[]) =>
+    items.length > 0 ? ['', heading, ...items.map((i) => `- ${i}`)] : [];
+  return [
+    `auto-swe postmortem draft: ${p.title}`,
+    '',
+    p.summary,
+    ...section('Impact', p.impact),
+    ...list(
+      'Timeline',
+      p.timeline.map((t) => (t.at ? `${t.at}: ${t.event}` : t.event))
+    ),
+    ...section('Root cause', p.rootCause),
+    ...section('Resolution', p.resolution),
+    ...list('Follow-up actions', p.followUps),
+  ].join('\n');
+}
+
+function parseIncidentPostmortem(text: string): ParsedIncidentPostmortem | UnparsedAgentOutput {
+  const json = extractJsonObject(text);
+  const parsed = json === undefined ? null : IncidentPostmortemSchema.safeParse(json);
+  if (!parsed?.success) {
+    const error =
+      json === undefined
+        ? 'The postmortem writer did not return a JSON object.'
+        : 'The postmortem writer returned JSON that does not match the postmortem shape.';
+    // Posted as the note all the same, marked unstructured; the run publishes no page from it.
+    const reply = text.trim().slice(0, MAX_UNPARSED_TRIAGE_CHARS);
+    return {
+      error,
+      kind: 'incidentPostmortem',
+      markdown: reply ? `auto-swe postmortem draft (unstructured)\n\n${reply}` : error,
+      valid: false,
+    };
+  }
+  const postmortem = parsed.data;
+  return {
+    kind: 'incidentPostmortem',
+    markdown: renderIncidentPostmortem(postmortem),
+    postmortem,
+    summary: postmortem.summary,
+    title: postmortem.title,
+    valid: true,
+  };
+}
+
 export interface UnparsedAgentOutput {
   kind: ParseAgentOutputKind;
   valid: false;
@@ -210,6 +284,7 @@ export type ParseAgentOutputResult =
   | ParsedDocReview
   | ParsedTicketPlan
   | ParsedIncidentTriage
+  | ParsedIncidentPostmortem
   | ParsedRepoOnboardingDraft
   | UnparsedAgentOutput;
 
@@ -229,6 +304,9 @@ export async function parseAgentOutput(
   }
   if (input.kind === 'incidentTriage') {
     return parseIncidentTriage(text);
+  }
+  if (input.kind === 'incidentPostmortem') {
+    return parseIncidentPostmortem(text);
   }
   if (input.kind === 'docReview') {
     const parsed = parseDocReview(text);

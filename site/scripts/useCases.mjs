@@ -411,6 +411,16 @@ export const USE_CASES = {
       'draft pull request when the cause is a code defect.',
     title: 'Incident triage',
   },
+  'incident-postmortem': {
+    group: 'engineering',
+    maturity: 'seeded',
+    source: 'packages/shared/src/workflow/templates/incidentPostmortem.ts',
+    summary:
+      'Drafts a postmortem when a PagerDuty incident resolves, from its timeline, alerts and ' +
+      'notes read against the repository, and adds it to the incident as a note. With a ' +
+      'Confluence connection it is also published as a page after approval.',
+    title: 'Incident postmortem draft',
+  },
   'zendesk-ticket-reply': {
     group: 'support',
     maturity: 'seeded',
@@ -491,16 +501,6 @@ export const WORKFLOW_IDEAS = [
       'Draft release notes from the pull requests merged since the last tag, for a person to ' +
       'edit before they are published.',
     title: 'Release notes',
-  },
-  {
-    builtFrom:
-      'The template webhook, fired by the incident tool with the timeline as its payload; an ' +
-      '`agent` node to draft; a `humanReview` node for the incident lead; `writeOutcome` to ' +
-      'a Notion page.',
-    summary:
-      'Turn an incident timeline into a first-draft postmortem the incident lead corrects, ' +
-      'rather than writes from a blank page.',
-    title: 'Incident postmortem draft',
   },
   {
     builtFrom:

@@ -21,6 +21,7 @@ import {
   DOMAIN_LOGIC_REVIEWER_PROMPT,
   GATE_FIX_SYSTEM_PROMPT,
   IMPLEMENTER_SYSTEM_PROMPT,
+  INCIDENT_POSTMORTEM_WRITER_PROMPT,
   INCIDENT_TRIAGER_PROMPT,
   ISSUE_DRAFTER_PROMPT,
   LESSON_CONSOLIDATOR_PROMPT,
@@ -893,6 +894,18 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     key: 'incidentTriager',
     name: 'Incident Triager',
     systemPrompt: INCIDENT_TRIAGER_PROMPT,
+    toolKeys: ['readFile', 'listDirectory', 'bash'],
+  },
+  {
+    // Drafts a resolved PagerDuty incident's postmortem against a throwaway checkout
+    // (`incident-postmortem`). Read-only tools, resolved on demand by the generic `agent` node
+    // like the triager.
+    description:
+      'Drafts a blameless postmortem for a resolved PagerDuty incident from its timeline and notes.',
+    inheritsModelFrom: 'planner',
+    key: 'incidentPostmortemWriter',
+    name: 'Incident Postmortem Writer',
+    systemPrompt: INCIDENT_POSTMORTEM_WRITER_PROMPT,
     toolKeys: ['readFile', 'listDirectory', 'bash'],
   },
   // ── Pull-request feedback ──────────────────────────────────────────────────
