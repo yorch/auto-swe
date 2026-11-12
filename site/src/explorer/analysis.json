@@ -6308,7 +6308,7 @@
     "OauthConsent": "Scopes a user granted a client; its update time marks the grant generation.",
     "OauthRefreshToken": "Hashed refresh token tied to the user and granting session.",
     "OauthResource": "Protected resource the authorization server issues tokens for.",
-    "Organization": "Organization ownership, governance and budget grouping; trustedInvites lets an org admin’s invite approve the account.",
+    "Organization": "Organization ownership, governance and budget grouping; trustedInvites lets organization-admin and team-lead/admin invites approve accounts while the organization is active.",
     "OrganizationMembership": "Schema entity; inspect fields and relationship declarations below.",
     "OrgMonthlyUsage": "Schema entity; inspect fields and relationship declarations below.",
     "OutboundDelivery": "Run-callback outbox row written with the event it reports; holds the last status code and a fixed error class, never a response body.",
@@ -13045,12 +13045,12 @@
       "title": "A run over cases none of which is screened ends INCONCLUSIVE"
     },
     {
-      "anchor": "let approvalSource: 'admin' | 'org_admin' | null =",
+      "anchor": "let approvalSource: string | null =",
       "before": 6,
       "id": "trustedInvites",
       "lines": 20,
-      "path": "packages/gateway/src/routes/orgMembers.ts",
-      "title": "An org admin’s invite is approved only in a trusted, active organization"
+      "path": "packages/gateway/src/lib/inviteUser.ts",
+      "title": "Non-platform-admin org and team invites are approved only in a trusted, active organization"
     },
     {
       "anchor": "export async function runPostDiffSecurityGate(",
