@@ -16,10 +16,9 @@ contains, who sees what, and how its counts agree with the lists behind them.
 | `needsYou.items` | Up to 25 things waiting on the caller, most urgent first |
 | `needsYou.total` | How many there were before the 25-item cap |
 
-When the user has opened a team space before, My desk shows a **Continue in <Team>** link to it.
-The link comes from the stored `lastTeamSlug` preference ([§3](#navigation)) and is resolved
-through the teams the caller is a **member** of: a slug that is stale, unknown or names a team they
-are not in shows nothing, with no error, and so does a team list that has not loaded.
+My desk's header offers **Take the tour**, **Browse workflows** and **Start work**. Its In flight
+and Recent results sections span the page width. Member team spaces are reachable through the
+sidebar and team switcher ([§3](#navigation)); Home remains a cross-team desk.
 
 A platform ADMIN's desk is member-scoped like anyone's: it lists only the teams they belong to and
 only the work of those teams. Their visibility and control filters are unrestricted, so every desk
@@ -227,16 +226,19 @@ the switcher, the sidebar and the badges list only the teams they belong to.
 
 ### Navigation
 
-- **Team switcher.** The top bar holds a switcher that lists **My desk** first and then the teams
+- **Team switcher.** The top bar holds a switcher that lists **All my teams** first and then the teams
   the caller is a member of, sorted by name, each with the caller's role in it and a badge with what
   is waiting on them there (the team's `needsYou` from `GET /api/v1/me/summary`). Choosing a team
   opens its space on the tab the caller is already on. The switcher is for moving around; it narrows
-  nothing.
+  nothing. It appears on Home, work lists, Start work and team spaces, plus the team-aware Workflow
+  library, Knowledge, Automations and Reports pages. Other configuration, account, Docs and Admin
+  pages, and focused editor/run/diff routes, omit both the top-bar switcher and its mobile strip.
+  The Home page title remains **My desk**.
 - **Sidebar Teams group.** The sidebar lists the member teams as links to their spaces, each with the
   same badge: the teams the user pinned first, in pin order, else the member teams up to a limit.
 - **Preferences.** `PATCH /api/v1/me/preferences` stores two per-user hints beside the run-detail
-  layout. `lastTeamSlug` is the last member team space the user opened; My desk's **Continue in <Team>**
-  link reads it. `pinnedTeamSlugs` is an ordered list of up to 20 slugs that the sidebar shows, set
+  layout. `lastTeamSlug` records the last member team space the user opened; it does not redirect
+  Home. `pinnedTeamSlugs` is an ordered list of up to 20 slugs that the sidebar shows, set
   by the pin toggle beside each team in the team switcher menu (a new pin goes last; the toggle is
   disabled at 20). The sidebar shows every pinned team and caps only its default list. Neither is checked against existing teams or
   the caller's membership: the dashboard resolves a slug through the member team list, so a stale or
@@ -361,8 +363,8 @@ only by the mid-run guard.
   only under it is in neither the list nor the counts, nor in `mine=true`.
 - **Platform ADMIN approvals are wider elsewhere.** The approvals page and the sidebar badge are
   platform-wide for an ADMIN; the desk is member-scoped, so the two totals differ for them.
-- **`lastTeamSlug` does not choose the landing page.** My desk offers a link to the last team space
-  opened, but the dashboard always lands on My desk, never in that team's space.
+- **`lastTeamSlug` does not choose the landing page.** The dashboard lands on My desk, not the last
+  team space opened.
 - **Overview of a deactivated team.** The overview endpoint answers for a deactivated team to a
   member; the dashboard's team lists leave deactivated teams out.
 - **The desk refreshes by polling.** It re-reads every 20 seconds and after the caller answers an
