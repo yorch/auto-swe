@@ -21,10 +21,14 @@ import { OtelForwardingLogger } from './lib/otelLogger.js';
 import { initTemporalClient } from './lib/temporalClient.js';
 import { activityTranscriptInterceptor } from './lib/transcriptRecorder.js';
 import { createWorkflowSpanSinks } from './lib/workflowSpanSink.js';
-import { assertDockerDiskLimit } from './lib/workspaceBackend/docker.js';
+import {
+  assertDockerDaemonReachable,
+  assertDockerDiskLimit,
+} from './lib/workspaceBackend/docker.js';
 import { assertDockerRuntime } from './lib/workspaceBackend/dockerRuntime.js';
 import { workspaceBackend } from './lib/workspaceBackend/index.js';
 import { assertKubernetesReady } from './lib/workspaceBackend/kubernetes/ready.js';
+import { warnIfWorkspaceDnsUnreachable } from './lib/workspaceDns.js';
 
 async function run() {
   installHttpCapture();
@@ -68,6 +72,13 @@ async function run() {
   // must not throw), so a typo in the deploy environment would otherwise run
   // with different limits than the operator wrote. Fail the boot instead.
   assertWorkspaceInfraEnv();
+  // Advisory, and deliberately so: this names the DNS cause behind a failure the
+  // egress-capability probe below would only report generically. It must never
+  // refuse the boot.
+  await warnIfWorkspaceDnsUnreachable();
+  // A worker that cannot reach the daemon still starts and takes work, then
+  // fails inside the first activity; refuse the boot instead.
+  await assertDockerDaemonReachable();
   await assertDockerDiskLimit();
   await assertDockerRuntime();
 
