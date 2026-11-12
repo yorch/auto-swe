@@ -7,7 +7,6 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { MyTeams } from '@/components/desk/MyTeams';
 import { NeedsYouList } from '@/components/desk/NeedsYouList';
-import { ResumeTeamLink } from '@/components/desk/ResumeTeamLink';
 import { HowItWorks } from '@/components/help/HowItWorks';
 import { RequestList } from '@/components/requests/RequestList';
 import { FirstRunChecklist } from '@/components/setup/FirstRunChecklist';
@@ -152,68 +151,10 @@ function DeskSummary({ summary }: { summary: UseQueryResult<MeSummary> }) {
       {summary.data && (
         <div className="space-y-8">
           <NeedsYouList items={summary.data.needsYou.items} total={summary.data.needsYou.total} />
-          <MyTeams teams={summary.data.teams} />
+          {summary.data.teams.length > 1 && <MyTeams teams={summary.data.teams} />}
         </div>
       )}
     </QueryBoundary>
-  );
-}
-
-const START_OPTIONS: { href: string; icon: IconName; title: string; hint: string }[] = [
-  {
-    hint: 'A reusable process with checks and approvals',
-    href: '/start?mode=workflow',
-    icon: 'workflows',
-    title: 'Run a workflow',
-  },
-  {
-    hint: 'One agent, one task, on one repository',
-    href: '/start?mode=agent',
-    icon: 'agents',
-    title: 'Run an agent',
-  },
-  {
-    hint: 'One brief across several repositories',
-    href: '/start?mode=epic',
-    icon: 'epics',
-    title: 'Run a multi-repo epic',
-  },
-];
-
-function QuickStart() {
-  return (
-    <Card className="p-5">
-      <h2 className="text-lg font-semibold tracking-tight text-paper-100">Start something new</h2>
-      <p className="mt-1 text-sm text-paper-400">
-        Pick how you want to work. You review everything before it launches.
-      </p>
-      <ul className="mt-4 space-y-1">
-        {START_OPTIONS.map((option) => (
-          <li key={option.href}>
-            <Link
-              className={cn(
-                'group flex items-center gap-3 rounded-lg px-2.5 py-2 transition-colors hover:bg-ink-600/50',
-                FOCUS_RING
-              )}
-              href={option.href}
-            >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-ink-400 bg-ink-800 text-paper-300">
-                <Icon name={option.icon} size={16} />
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-paper-100">{option.title}</span>
-                <span className="block text-xs text-paper-500">{option.hint}</span>
-              </span>
-              <Icon
-                className="text-paper-600 transition-colors group-hover:text-paper-300"
-                name="chevronRight"
-                size={16}
-              />
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </Card>
   );
 }
 
@@ -248,13 +189,6 @@ function AccessDeniedNotice() {
 
 export default function HomePage() {
   const summary = useMeSummary();
-  const inFlight = useMine('active');
-  // QuickStart only once both are known to be empty: never flash it while loading or on error.
-  const nothingToDo =
-    summary.isSuccess &&
-    summary.data.needsYou.total === 0 &&
-    inFlight.isSuccess &&
-    inFlight.data.meta.total === 0;
   return (
     <div className="space-y-8">
       <Suspense fallback={null}>
@@ -263,7 +197,6 @@ export default function HomePage() {
       <PageHeader
         actions={
           <>
-            <ResumeTeamLink />
             <TourLauncher />
             <ButtonLink href="/library" variant="secondary">
               Browse workflows
@@ -282,16 +215,9 @@ export default function HomePage() {
       <SetupReadiness />
       <FirstRunChecklist />
       <DeskSummary summary={summary} />
-      <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_20rem]">
-        <div className="min-w-0 space-y-8">
-          <WorkSection spec={IN_FLIGHT} />
-          <WorkSection spec={RECENT} />
-        </div>
-        {nothingToDo && (
-          <aside aria-label="Get started" className="space-y-6">
-            <QuickStart />
-          </aside>
-        )}
+      <div className="min-w-0 space-y-8">
+        <WorkSection spec={IN_FLIGHT} />
+        <WorkSection spec={RECENT} />
       </div>
       <GovernanceGuide />
       <RestoreGuides />

@@ -3,6 +3,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
+import { PageHelp } from '@/components/help/PageHelp';
 import {
   LessonFlagActions,
   LessonFlagReasons,
@@ -16,11 +17,11 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { DataTable } from '@/components/ui/DataTable';
+import { DocLink } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { IconButton } from '@/components/ui/IconButton';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
@@ -179,25 +180,20 @@ export default function LessonsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        actions={
-          isAdmin ? <ConsolidateAllButton onAsk={() => setConsolidating('all')} /> : undefined
-        }
-        help={
-          isAdmin ? (
-            <p>Consolidation merges semantically similar lessons to reduce redundancy.</p>
-          ) : (
-            <p>
-              These are the lessons of the repositories you can reach. Later runs on a repository
-              recall its lessons as context. A lead of a repository's team can delete its lessons
-              and merge similar ones; filter to the repository to consolidate it.
-            </p>
-          )
-        }
-        learnMore={{ ...HELP_LINKS.conceptsLessons, label: 'What is a lesson?' }}
-        subtitle="Agent lessons captured from completed workflows."
-        title="Lessons"
-      />
+      <PageHelp>
+        {isAdmin ? (
+          <p>Consolidation merges semantically similar lessons to reduce redundancy.</p>
+        ) : (
+          <p>
+            These are the lessons of the repositories you can reach. Later runs on a repository
+            recall its lessons as context. A lead of a repository's team can delete its lessons and
+            merge similar ones; filter to the repository to consolidate it.
+          </p>
+        )}
+        <p>
+          <DocLink {...HELP_LINKS.conceptsLessons} label="What is a lesson?" />
+        </p>
+      </PageHelp>
 
       {triggerNotice && (
         <div ref={noticeRef}>
@@ -224,6 +220,7 @@ export default function LessonsPage() {
         <Toolbar
           end={
             <>
+              {isAdmin && <ConsolidateAllButton onAsk={() => setConsolidating('all')} />}
               {!isAdmin && filteredRepo && canManage(filteredRepo.id) && (
                 <Button
                   onClick={() =>

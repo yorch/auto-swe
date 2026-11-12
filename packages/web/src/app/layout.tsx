@@ -9,6 +9,7 @@ import { ThemeSync } from '@/components/ThemeSync';
 import { PATHNAME_HEADER } from '@/lib/config';
 import { routeDocumentTitle } from '@/lib/documentTitle';
 import { publicApiUrl, supportInfo, temporalUiUrl } from '@/lib/env';
+import { SIDEBAR_INIT_SCRIPT } from '@/lib/sidebar';
 import { THEME_INIT_SCRIPT } from '@/lib/theme';
 
 // Served from the repository, not fetched from Google Fonts at build time: a
@@ -71,6 +72,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head suppressHydrationWarning>
         {/* Applies the saved theme before first paint, so a light-theme user never sees a dark flash. */}
         <InlineHeadScript id="__THEME__" source={THEME_INIT_SCRIPT} />
+        <InlineHeadScript id="__SIDEBAR__" source={SIDEBAR_INIT_SCRIPT} />
         <AppConfigScript appConfig={appConfig} />
         <style>{`
           :root {

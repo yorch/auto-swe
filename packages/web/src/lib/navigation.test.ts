@@ -3,10 +3,12 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Role } from '@auto-swe/shared';
 import { describe, expect, it } from 'vitest';
+import { ICON_PATHS, isIconName } from '@/components/ui/Icon';
 import { hasRole } from '@/lib/roles';
 import {
   ADMIN_HREF,
   activeNavHref,
+  detailParent,
   flattenNavItems,
   isStartWorkPath,
   knownPageTitle,
@@ -16,8 +18,80 @@ import {
   navSections,
   pageSection,
   pageTitle,
+  showsTeamSwitcher,
+  USER_NAV_ITEMS,
   visibleNavGroups,
 } from './navigation';
+
+describe('team switcher scope', () => {
+  it.each([
+    '/',
+    '/approvals',
+    '/requests',
+    '/runs',
+    '/pull-requests',
+    '/tickets',
+    '/epics',
+    '/start',
+    '/teams/default',
+    '/teams/default/work',
+    '/library',
+    '/knowledge',
+    '/admin/automations',
+    '/admin/reports',
+  ])('shows on team-aware route %s', (path) => {
+    expect(showsTeamSwitcher(path)).toBe(true);
+  });
+  it.each([
+    '/admin/users',
+    '/settings',
+    '/docs',
+    '/docs/architecture',
+    '/connections',
+    '/models',
+    '/mcp',
+    '/bundles',
+    '/agents',
+    '/skills',
+    '/review-presets',
+    '/knowledge-bases',
+    '/lessons',
+    '/library/id',
+    '/library/id/diff',
+    '/runs/id',
+    '/pull-requests/id',
+    '/requests/id',
+    '/epics/id',
+    '/teams-not-a-space',
+  ])('hides on unscoped route %s', (path) => {
+    expect(showsTeamSwitcher(path)).toBe(false);
+  });
+});
+
+describe('detail parents', () => {
+  it.each([
+    ['/runs/id', '/runs'],
+    ['/requests/id', '/requests'],
+    ['/library/id', '/library'],
+    ['/library/id/diff', '/library'],
+    ['/library/id/analytics', '/library'],
+    ['/library/id/runs', '/library'],
+    ['/pull-requests/id', '/pull-requests'],
+    ['/docs/architecture', '/docs'],
+    ['/epics/id', '/epics'],
+    ['/teams/default', '/admin/teams'],
+    ['/teams/default/settings', '/admin/teams'],
+    ['/admin/teams/id', '/admin/teams'],
+    ['/admin/organizations/id', '/admin/organizations'],
+    ['/admin/slack-channels/id', '/admin/slack-channels'],
+    ['/admin/evals/datasets/id', '/admin/evals'],
+    ['/admin/evals/runs/id', '/admin/evals'],
+  ])('links %s to %s', (path, href) => expect(detailParent(path)?.href).toBe(href));
+  it.each(['/', '/requests', '/library', '/agents', '/knowledge-bases', '/not-found'])(
+    'adds no detail chrome on %s',
+    (path) => expect(detailParent(path)).toBeNull()
+  );
+});
 
 const APP_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
 const RANK: Record<Role, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };
@@ -48,6 +122,58 @@ function layoutFloor(href: string): Role {
 }
 
 describe('NAV_GROUPS', () => {
+  it('places Epics after Requests and keeps each destination active independently', () => {
+    const work = NAV_GROUPS.find((group) => group.label === 'Work')?.items ?? [];
+    const requests = work.findIndex((item) => item.href === '/requests');
+    expect(work[requests + 1]).toMatchObject({ href: '/epics', minRole: 'ENGINEER' });
+    for (const path of ['/epics', '/epics/id']) {
+      expect(activeNavHref(path, work)).toBe('/epics');
+    }
+    for (const path of ['/requests', '/requests/id']) {
+      expect(activeNavHref(path, work)).toBe('/requests');
+    }
+  });
+  it('uses visually distinct glyphs for every sidebar destination', () => {
+    const glyphs = NAV_GROUPS.flatMap((group) =>
+      group.items.map((item) => {
+        if (!isIconName(item.icon)) {
+          throw new Error(`Unknown sidebar icon: ${item.icon}`);
+        }
+        return ICON_PATHS[item.icon];
+      })
+    );
+    expect(new Set(glyphs).size).toBe(glyphs.length);
+  });
+  it('has one Knowledge destination while keeping each tab discoverable', () => {
+    const items = NAV_GROUPS.find((group) => group.label === 'Knowledge')?.items ?? [];
+    expect(items.map((item) => item.href)).toEqual(['/knowledge']);
+    for (const href of ['/knowledge', '/knowledge-bases', '/lessons']) {
+      expect(activeNavHref(`${href}/detail`, items)).toBe('/knowledge');
+      expect(pageSection(`${href}/detail`)).toBe('Knowledge');
+      expect(NAV_ITEMS.some((item) => item.href === href)).toBe(true);
+    }
+    expect(activeNavHref('/lessons-other', items)).toBe('');
+    expect(pageTitle('/lessons')).toBe('Lessons');
+    expect(pageTitle('/knowledge-bases/detail')).toBe('Knowledge bases');
+  });
+  it('separates authoring from connections and keeps account pages in the user menu', () => {
+    expect(NAV_GROUPS.find((g) => g.label === 'Build')?.items.map((i) => i.href)).toEqual([
+      '/library',
+      '/agents',
+      '/skills',
+      '/review-presets',
+    ]);
+    expect(NAV_GROUPS.find((g) => g.label === 'Connect')?.items.map((i) => i.href)).toEqual([
+      '/connections',
+      '/models',
+      '/mcp',
+      '/bundles',
+    ]);
+    expect(USER_NAV_ITEMS.map((i) => i.href)).toEqual(['/settings', '/docs']);
+    expect(navLabel('/review-presets')).toBe('Review presets');
+    expect(navLabel('/admin/review-presets')).toBe('Platform review presets');
+    expect(pageSection('/connections')).toBe('Connect');
+  });
   it.each(NAV_ITEMS.map((i) => [i.href, i.minRole] as const))(
     '%s is offered to exactly the roles its layout admits',
     (href, minRole) => {
@@ -73,13 +199,13 @@ describe('visibleNavGroups', () => {
   const hrefsFor = (role: string, scoped?: boolean) =>
     visibleNavGroups(role, scoped).flatMap((g) => flattenNavItems(g.items).map((i) => i.href));
 
-  it('groups the sidebar into Work, Build, Knowledge and Admin, plus the account links', () => {
+  it('groups the sidebar into Work, Build, Connect, Knowledge and Admin', () => {
     expect(NAV_GROUPS.map((g) => g.label)).toEqual([
       'Work',
       'Build',
+      'Connect',
       'Knowledge',
       'Admin',
-      'Account',
     ]);
   });
 
@@ -117,7 +243,7 @@ describe('visibleNavGroups', () => {
   });
 
   it('shows an ADMIN everything', () => {
-    expect(hrefsFor('ADMIN').length).toBe(NAV_ITEMS.length);
+    expect(hrefsFor('ADMIN').length).toBe(NAV_ITEMS.length - USER_NAV_ITEMS.length);
   });
 
   it('shows nothing to an unknown role', () => {
@@ -183,10 +309,10 @@ describe('activeNavHref', () => {
     expect(activeNavHref('/admin/evals/runs/r1', sidebar)).toBe(ADMIN_HREF);
   });
 
-  it('highlights All runs on a run page, Requests on an epic and Automations on a schedule', () => {
+  it('highlights All runs on a run page, Epics on an epic and Automations on a schedule', () => {
     expect(activeNavHref('/runs', NAV_ITEMS)).toBe('/runs');
     expect(activeNavHref('/runs/abc', NAV_ITEMS)).toBe('/runs');
-    expect(activeNavHref('/epics/wf-1', NAV_ITEMS)).toBe('/requests');
+    expect(activeNavHref('/epics/wf-1', NAV_ITEMS)).toBe('/epics');
     expect(activeNavHref('/admin/schedules', NAV_ITEMS)).toBe('/admin/automations');
   });
 

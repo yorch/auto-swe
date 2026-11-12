@@ -11,10 +11,10 @@ import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { PullRequestTable } from '@/components/work/PullRequestTable';
+import { WorkScopeControl } from '@/components/work/WorkScopeControl';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useTeamParam } from '@/hooks/useTeamParam';
@@ -22,7 +22,6 @@ import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { usePullRequests } from '@/hooks/useWorkViews';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { teamGatedBoundary } from '@/lib/teamGate';
-import { WORK_SCOPE_OPTIONS } from '@/lib/workScope';
 
 const PAGE_SIZE = 30;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -124,77 +123,71 @@ function PullRequests() {
       />
       <TeamChip onRemove={teamFilter.clear} team={teamFilter.team} />
       <div className="space-y-4">
+        <Toolbar
+          end={
+            <WorkScopeControl
+              label="Pull request scope"
+              onChange={(value) => update({ offset: null, scope: value })}
+              value={scope}
+            />
+          }
+        >
+          <SearchInput
+            label="Filter by ticket"
+            onChange={(value) => setTicketDraft(value.slice(0, 200))}
+            placeholder="Filter by ticket id…"
+            value={ticketDraft}
+          />
+          <Select
+            appearance="pill"
+            aria-label="Order"
+            onChange={(value) => update({ offset: null, order: value === 'newest' ? null : value })}
+            options={[...ORDERS]}
+            prefix="Order:"
+            value={order}
+          />
+          {order === 'newest' && (
+            <Select
+              appearance="pill"
+              aria-label="State"
+              onChange={(value) => update({ offset: null, state: value === 'OPEN' ? null : value })}
+              options={STATES}
+              prefix="State:"
+              value={state}
+            />
+          )}
+          <Select
+            appearance="pill"
+            aria-label="Draft"
+            onChange={(value) => update({ draft: value === 'any' ? null : value, offset: null })}
+            options={[...DRAFTS]}
+            prefix="Draft:"
+            value={draft}
+          />
+          <Combobox
+            aria-label="Repository"
+            className="w-full sm:w-56"
+            compact
+            onChange={(value) => update({ offset: null, repo: value })}
+            options={[
+              { label: 'All repositories', value: '' },
+              ...repositories
+                .filter((repo) => repo.type === 'git_repo')
+                .map((repo) => ({
+                  label: `${repo.organizationName}/${repo.repoName}`,
+                  value: repo.id,
+                })),
+            ]}
+            placeholder="All repositories"
+            value={repoId}
+          />
+          {filtered && (
+            <Button onClick={clearFilters} size="sm" variant="ghost">
+              Clear filters
+            </Button>
+          )}
+        </Toolbar>
         <Card className="overflow-hidden p-0">
-          <Toolbar
-            className="mb-0 border-b border-ink-600 px-4 py-3"
-            end={
-              <SegmentedControl
-                ariaLabel="Pull request scope"
-                onChange={(value) => update({ offset: null, scope: value })}
-                options={WORK_SCOPE_OPTIONS}
-                value={scope}
-              />
-            }
-          >
-            <SearchInput
-              label="Filter by ticket"
-              onChange={(value) => setTicketDraft(value.slice(0, 200))}
-              placeholder="Filter by ticket id…"
-              value={ticketDraft}
-            />
-            <Select
-              appearance="pill"
-              aria-label="Order"
-              onChange={(value) =>
-                update({ offset: null, order: value === 'newest' ? null : value })
-              }
-              options={[...ORDERS]}
-              prefix="Order:"
-              value={order}
-            />
-            {order === 'newest' && (
-              <Select
-                appearance="pill"
-                aria-label="State"
-                onChange={(value) =>
-                  update({ offset: null, state: value === 'OPEN' ? null : value })
-                }
-                options={STATES}
-                prefix="State:"
-                value={state}
-              />
-            )}
-            <Select
-              appearance="pill"
-              aria-label="Draft"
-              onChange={(value) => update({ draft: value === 'any' ? null : value, offset: null })}
-              options={[...DRAFTS]}
-              prefix="Draft:"
-              value={draft}
-            />
-            <Combobox
-              aria-label="Repository"
-              className="w-full sm:w-56"
-              compact
-              onChange={(value) => update({ offset: null, repo: value })}
-              options={[
-                { label: 'All repositories', value: '' },
-                ...repositories
-                  .filter((repo) => repo.type === 'git_repo')
-                  .map((repo) => ({
-                    label: `${repo.organizationName}/${repo.repoName}`,
-                    value: repo.id,
-                  })),
-              ]}
-              placeholder="All repositories"
-              value={repoId}
-            />
-            {filtered && (
-              <Button onClick={clearFilters} size="sm" variant="ghost">
-                Clear filters
-              </Button>
-            )}
-          </Toolbar>
           {repositories.length >= REPOSITORY_PAGE && (
             <p className="border-b border-ink-600 px-4 py-2 text-xs text-paper-500">
               The repository filter lists the first {REPOSITORY_PAGE} repositories only.

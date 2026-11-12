@@ -17,9 +17,11 @@ export interface BreadcrumbItem {
 export function Breadcrumbs({
   className,
   items,
+  compactAncestors = false,
 }: {
   className?: string;
   items: readonly BreadcrumbItem[];
+  compactAncestors?: boolean;
 }) {
   return (
     <nav aria-label="Breadcrumb" className={cn('min-w-[5rem] text-sm text-paper-400', className)}>
@@ -28,9 +30,18 @@ export function Breadcrumbs({
           const leaf = i === items.length - 1;
           return (
             <Fragment key={item.label}>
-              <li className={cn(leaf ? 'min-w-0' : 'shrink-0')}>
+              <li
+                className={cn(
+                  leaf ? 'min-w-0' : 'shrink-0',
+                  !leaf && compactAncestors && 'max-sm:hidden'
+                )}
+              >
                 {leaf ? (
-                  <span aria-current="page" className="block truncate font-semibold text-paper-100">
+                  <span
+                    aria-current="page"
+                    className="block truncate font-semibold text-paper-100"
+                    title={item.label}
+                  >
                     {item.label}
                   </span>
                 ) : item.href ? (
@@ -48,7 +59,13 @@ export function Breadcrumbs({
                 )}
               </li>
               {!leaf && (
-                <li aria-hidden="true" className="shrink-0 px-1.5 text-paper-600">
+                <li
+                  aria-hidden="true"
+                  className={cn(
+                    'shrink-0 px-1.5 text-paper-600',
+                    compactAncestors && 'max-sm:hidden'
+                  )}
+                >
                   ›
                 </li>
               )}

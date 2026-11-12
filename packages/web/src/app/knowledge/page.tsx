@@ -2,6 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { PageHelp } from '@/components/help/PageHelp';
 import { TeamChip } from '@/components/teams/TeamChip';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -9,10 +10,10 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DocLink } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { SkeletonDetail } from '@/components/ui/LoadingState';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
@@ -550,12 +551,15 @@ function Knowledge() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        help={<p>Published summaries do not expose private source evidence.</p>}
-        learnMore={{ ...HELP_LINKS.knowledge, label: 'About knowledge' }}
-        subtitle="Curated references, decisions and policies that agents recall. Lessons are captured from runs; knowledge is reviewed by people before it is trusted."
-        title="Knowledge"
-      />
+      <PageHelp>
+        <p>
+          Curated references, decisions and policies that agents recall. Knowledge is reviewed by
+          people before it is trusted. Published summaries do not expose private source evidence.
+        </p>
+        <p>
+          <DocLink {...HELP_LINKS.knowledge} label="About knowledge" />
+        </p>
+      </PageHelp>
       <TeamChip onRemove={teamFromSlug.clear} team={teamFromSlug.team} />
       <Card>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">

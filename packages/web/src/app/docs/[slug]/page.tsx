@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { DocToc } from '@/components/docs/DocToc';
 import { Markdown } from '@/components/docs/Markdown';
+import { EntityTitle } from '@/components/layout/EntityTitle';
 import { ButtonLink } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { type DocMeta, getDoc, listDocs, servedDocSlugs } from '@/lib/docs';
@@ -42,24 +43,7 @@ export default async function DocPage({ params }: { params: Promise<Params> }) {
 
   return (
     <div className="space-y-6">
-      <nav aria-label="Breadcrumb">
-        <ol className="flex min-w-0 items-center gap-1.5 text-sm text-paper-500">
-          <li>
-            <Link
-              className={cn('rounded-sm transition-colors hover:text-paper-100', FOCUS_RING)}
-              href="/docs"
-            >
-              Docs
-            </Link>
-          </li>
-          <li aria-hidden="true">
-            <Icon className="text-paper-600" name="chevronRight" size={13} />
-          </li>
-          <li aria-current="page" className="truncate text-paper-300">
-            {doc.title}
-          </li>
-        </ol>
-      </nav>
+      <EntityTitle title={doc.title} />
 
       <div
         className={cn(

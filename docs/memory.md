@@ -227,7 +227,8 @@ drop is listed under `MEMORY_RECALL_DROPPED` too, as `memory.transcript_digest_d
 
 ## 6. Administration
 
-`/lessons` lists and searches lessons for every role. An engineer or lead sees the lessons of
+The **Lessons** tab in the sidebar's **Knowledge** destination (`/lessons`) lists and searches
+lessons for every role. An engineer or lead sees the lessons of
 the repositories they can reach — the owning team's or a team it is shared with, under the access
 gate — each with its failure type, the run's outcome, a `Low confidence` label below 0.5, and a link
 to the run it was written from. Managing a repository's lessons — deleting one, starting

@@ -493,7 +493,8 @@ deployment. They are read on each request and passed to the browser with the res
 
 A value that fails its rule is dropped, and the web container logs one warning per process for
 each distinct message. The rest still show. With none set, nothing is rendered. The contact appears on the sign-in screen, including
-the awaiting-approval screen, on the error and not-found pages, and in the sidebar footer. The
+the awaiting-approval screen, on the error and not-found pages, and in the expanded sidebar footer
+or the collapsed sidebar's user menu. The
 compose files pass the three variables through, because the web container does not receive `.env`.
 
 ## 9. Extra issue-tracker repositories

@@ -1,14 +1,65 @@
 import type { Role } from '@auto-swe/shared';
 import { hasRole } from '@/lib/roles';
 
+/** URL-scoped lists, the cross-team desk, and team spaces support team navigation. */
+export function showsTeamSwitcher(pathname: string): boolean {
+  return (
+    /^\/teams\/[^/]+(?:\/|$)/.test(pathname) ||
+    [
+      '/',
+      '/approvals',
+      '/requests',
+      '/runs',
+      '/pull-requests',
+      '/tickets',
+      '/epics',
+      '/start',
+      '/library',
+      '/knowledge',
+      '/admin/automations',
+      '/admin/reports',
+    ].includes(pathname.replace(/\/$/, '') || '/')
+  );
+}
+
+export interface DetailParent {
+  href: string;
+  label: string;
+  section?: string;
+}
+
+/** Route families with real detail pages; dialog-only entities stay on their list. */
+export function detailParent(pathname: string): DetailParent | null {
+  const parents: [RegExp, DetailParent][] = [
+    [/^\/library\/[^/]+(?:\/|$)/, { href: '/library', label: 'Workflow library' }],
+    [/^\/runs\/[^/]+\/?$/, { href: '/runs', label: 'All runs' }],
+    [/^\/requests\/[^/]+\/?$/, { href: '/requests', label: 'Requests' }],
+    [/^\/pull-requests\/[^/]+\/?$/, { href: '/pull-requests', label: 'Pull requests' }],
+    [/^\/epics\/[^/]+\/?$/, { href: '/epics', label: 'Epics' }],
+    [/^\/docs\/[^/]+\/?$/, { href: '/docs', label: 'Docs' }],
+    [/^\/teams\/[^/]+(?:\/|$)/, { href: '/admin/teams', label: 'Teams', section: 'Teams' }],
+    [/^\/admin\/teams\/[^/]+\/?$/, { href: '/admin/teams', label: 'Teams' }],
+    [
+      /^\/admin\/organizations\/[^/]+\/?$/,
+      { href: '/admin/organizations', label: 'Organizations' },
+    ],
+    [
+      /^\/admin\/slack-channels\/[^/]+\/?$/,
+      { href: '/admin/slack-channels', label: 'Slack channels' },
+    ],
+    [/^\/admin\/evals\/(?:runs|datasets)\/[^/]+\/?$/, { href: '/admin/evals', label: 'Evals' }],
+  ];
+  return parents.find(([pattern]) => pattern.test(pathname))?.[1] ?? null;
+}
+
 /**
  * The dashboard's page map: what the sidebar offers, to whom, and what each
  * page is called. One list, so the three things that used to drift apart —
  * the sidebar label, the TopBar title and the page's own H1 — read from the
  * same string.
  *
- * The sidebar has three working groups: Work (daily use), Build (authoring) and
- * Admin. Admin is a single sidebar entry that opens a settings area at `/admin`
+ * Work, Build, Connect and Knowledge lead to pages; Admin is a single sidebar
+ * entry that opens a settings area at `/admin`
  * with its own sub-navigation; its pages are the entry's `children`, grouped by
  * `section`. A group's label is the first segment of its URLs only for Admin:
  * Work and Build pages sit at the top level, so a page keeps its address when it
@@ -17,7 +68,7 @@ import { hasRole } from '@/lib/roles';
  * Heading convention: a page reachable from the navigation is titled with its nav
  * label, verbatim — no trailing period, no "Admin —" prefix. The TopBar shows
  * the same string. A detail page (one template, one team, one run) titles its
- * H1 with the entity's name and the TopBar keeps the section's label.
+ * H1 with the entity's name and publishes it to the TopBar breadcrumb.
  *
  * `minRole` must match what actually serves the page: the route's
  * `RoleLayout` guard and the gateway `requiredRole` of the API it reads.
@@ -174,7 +225,7 @@ const ADMIN_PAGES: NavItem[] = [
   {
     href: '/admin/review-presets',
     icon: 'checkCircle',
-    label: 'Review presets',
+    label: 'Platform review presets',
     minRole: 'ADMIN',
     section: 'Configuration',
   },
@@ -234,18 +285,24 @@ const ADMIN_PAGES: NavItem[] = [
   },
 ];
 
+export const KNOWLEDGE_PAGES: NavItem[] = [
+  { href: '/knowledge', icon: 'repository', label: 'Knowledge', minRole: 'ENGINEER' },
+  { href: '/knowledge-bases', icon: 'memory', label: 'Knowledge bases', minRole: 'ENGINEER' },
+  { href: '/lessons', icon: 'edit', label: 'Lessons', minRole: 'ENGINEER' },
+];
+
 export const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       { href: '/', icon: 'dashboard', label: 'Home', minRole: 'ENGINEER' },
       { href: APPROVALS_HREF, icon: 'inbox', label: 'Approvals', minRole: 'ENGINEER' },
       {
-        alsoActiveFor: ['/epics'],
         href: '/requests',
         icon: 'canvas',
         label: 'Requests',
         minRole: 'ENGINEER',
       },
+      { href: '/epics', icon: 'epics', label: 'Epics', minRole: 'ENGINEER' },
       { href: '/runs', icon: 'runs', label: 'All runs', minRole: 'ENGINEER' },
       {
         href: '/pull-requests',
@@ -260,34 +317,36 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       { href: '/library', icon: 'templates', label: 'Workflow library', minRole: 'ENGINEER' },
-      { href: '/connections', icon: 'connections', label: 'Connections', minRole: 'ENGINEER' },
       // The authoring pages below are ADMIN-only: each route has its own ADMIN layout.
       { href: '/agents', icon: 'agents', label: 'Agents', minRole: 'ADMIN' },
       { href: '/skills', icon: 'skills', label: 'Skills', minRole: 'ADMIN' },
-      { href: '/models', icon: 'sliders', label: 'Model configuration', minRole: 'ADMIN' },
-      { href: '/mcp', icon: 'plug', label: 'MCP connections', minRole: 'ADMIN' },
-      { href: '/bundles', icon: 'package', label: 'Bundles', minRole: 'ADMIN' },
       {
         href: '/review-presets',
         icon: 'checkCircle',
-        label: 'Team review presets',
+        label: 'Review presets',
         minRole: 'LEAD',
       },
     ],
     label: 'Build',
   },
   {
+    items: [
+      { href: '/connections', icon: 'connections', label: 'Connections', minRole: 'ENGINEER' },
+      { href: '/models', icon: 'sliders', label: 'Model configuration', minRole: 'ADMIN' },
+      { href: '/mcp', icon: 'plug', label: 'MCP connections', minRole: 'ADMIN' },
+      { href: '/bundles', icon: 'package', label: 'Bundles', minRole: 'ADMIN' },
+    ],
+    label: 'Connect',
+  },
+  {
     // What the agents carry from one run to the next. Every role reads it, scoped to what
     // they can reach; each page keeps its own management controls for those who hold them.
     items: [
-      { href: '/knowledge', icon: 'layers', label: 'Knowledge', minRole: 'ENGINEER' },
       {
-        href: '/knowledge-bases',
-        icon: 'repositories',
-        label: 'Knowledge bases',
-        minRole: 'ENGINEER',
+        ...KNOWLEDGE_PAGES[0],
+        alsoActiveFor: ['/knowledge-bases', '/lessons'],
+        children: KNOWLEDGE_PAGES.slice(1),
       },
-      { href: '/lessons', icon: 'memory', label: 'Lessons', minRole: 'ENGINEER' },
     ],
     label: 'Knowledge',
   },
@@ -303,13 +362,11 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
     label: 'Admin',
   },
-  {
-    items: [
-      { href: '/settings', icon: 'settings', label: 'Settings', minRole: 'ENGINEER' },
-      { href: '/docs', icon: 'docs', label: 'Docs', minRole: 'ENGINEER' },
-    ],
-    label: 'Account',
-  },
+];
+
+export const USER_NAV_ITEMS: NavItem[] = [
+  { href: '/settings', icon: 'settings', label: 'Settings', minRole: 'ENGINEER' },
+  { href: '/docs', icon: 'docs', label: 'Docs', minRole: 'ENGINEER' },
 ];
 
 /** `items` and, depth first, every child below them. */
@@ -318,7 +375,10 @@ export function flattenNavItems(items: NavItem[]): NavItem[] {
 }
 
 /** Every page with a navigation entry, sidebar and sub-navigation alike. */
-export const NAV_ITEMS: NavItem[] = flattenNavItems(NAV_GROUPS.flatMap((g) => g.items));
+export const NAV_ITEMS: NavItem[] = flattenNavItems([
+  ...NAV_GROUPS.flatMap((g) => g.items),
+  ...USER_NAV_ITEMS,
+]);
 
 function visibleItems(items: NavItem[], role: string | null | undefined, hasUsageScope: boolean) {
   return items.flatMap((item): NavItem[] => {
@@ -380,14 +440,17 @@ export function activeNavHref(pathname: string, items: NavItem[]): string {
   }
   const owns = (prefix: string) => pathname === prefix || pathname.startsWith(`${prefix}/`);
   const match = items
-    .flatMap((item) =>
-      item.href === '/'
-        ? []
-        : [item.href, ...(item.alsoActiveFor ?? [])]
-            .filter(owns)
-            .map((prefix) => ({ href: item.href, length: prefix.length }))
-    )
-    .sort((a, b) => b.length - a.length)[0];
+    .flatMap((item) => {
+      if (item.href === '/') {
+        return [];
+      }
+      return [item.href, ...(item.alsoActiveFor ?? [])].filter(owns).map((prefix) => ({
+        direct: prefix === item.href,
+        href: item.href,
+        length: prefix.length,
+      }));
+    })
+    .sort((a, b) => b.length - a.length || Number(b.direct) - Number(a.direct))[0];
   return match?.href ?? '';
 }
 
@@ -444,6 +507,8 @@ export function navLabel(href: string): string {
 
 /** Sections for the pages that have no navigation entry of their own. */
 const EXTRA_PAGE_SECTIONS: [string, string][] = [
+  ['/docs', 'Help'],
+  ['/settings', 'Account'],
   ['/start', 'Work'],
   ['/epics', 'Work'],
 ];
@@ -454,7 +519,7 @@ const EXTRA_PAGE_SECTIONS: [string, string][] = [
  */
 export function pageSection(pathname: string): string | null {
   const href = activeNavHref(pathname, NAV_ITEMS);
-  // Docs sits in the Account sidebar group but is help, not account management.
+  // Docs is a user-menu destination and belongs to Help, not account management.
   if (href === '/docs') {
     return 'Help';
   }

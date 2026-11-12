@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SIDEBAR_STORAGE_KEY } from '@/lib/sidebar';
+import { useSidebarStore } from '@/stores/sidebarStore';
+import { installMemoryStorage } from '@/test/memoryStorage';
 import { resetNavigation } from '@/test/mockNavigation';
 
 vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
@@ -11,10 +14,21 @@ vi.mock('@/hooks/useApprovals', () => ({
 }));
 vi.mock('@/components/assistant/AssistantPanel', () => ({ AssistantPanel: () => null }));
 vi.mock('@/components/layout/Sidebar', () => ({
-  Sidebar: ({ closeButtonRef }: { closeButtonRef: React.RefObject<HTMLButtonElement | null> }) => (
-    <aside>
+  Sidebar: ({
+    closeButtonRef,
+    collapsed,
+    onToggle,
+  }: {
+    closeButtonRef: React.RefObject<HTMLButtonElement | null>;
+    collapsed: boolean;
+    onToggle: () => void;
+  }) => (
+    <aside data-collapsed={collapsed}>
       <button ref={closeButtonRef} type="button">
         close
+      </button>
+      <button onClick={onToggle} type="button">
+        toggle sidebar
       </button>
       <a href="/x">last</a>
     </aside>
@@ -30,7 +44,14 @@ vi.mock('@/components/layout/TopBar', () => ({
 
 import { AppShell, isFullscreenRoute } from './AppShell';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+beforeEach(() => {
+  installMemoryStorage();
+  useSidebarStore.setState({ collapsed: false });
+});
 
 function openDrawer() {
   resetNavigation('', '/');
@@ -49,19 +70,20 @@ describe('AppShell mobile drawer focus trap', () => {
       expect(document.activeElement).toBe(screen.getByRole('button', { name: 'close' }))
     );
   });
-  it('uses compact navigation on workspace routes and makes it inert while the drawer is open', () => {
+  it('uses the same sidebar on workspace routes and makes the page inert while the drawer is open', () => {
     resetNavigation('', '/runs/run-1');
     render(
       <AppShell>
         <p>workspace</p>
       </AppShell>
     );
-    const rail = screen.getByRole('navigation', { name: 'Focused navigation' });
-    expect(rail.hasAttribute('inert')).toBe(false);
+    expect(screen.queryByRole('navigation', { name: 'Focused navigation' })).toBeNull();
+    const content = screen.getByText('workspace').closest('main')?.parentElement;
+    expect(content?.hasAttribute('inert')).toBe(false);
     fireEvent.click(screen.getByRole('button', { name: 'menu' }));
-    expect(rail.hasAttribute('inert')).toBe(true);
+    expect(content?.hasAttribute('inert')).toBe(true);
     fireEvent.keyDown(document.body, { key: 'Escape' });
-    expect(rail.hasAttribute('inert')).toBe(false);
+    expect(content?.hasAttribute('inert')).toBe(false);
   });
   it('pulls Tab from outside the drawer back into it', () => {
     openDrawer();
@@ -94,6 +116,64 @@ describe('AppShell mobile drawer focus trap', () => {
     document.body.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
   });
+});
+
+describe('desktop sidebar preference', () => {
+  it('persists an ordinary-route toggle and restores it on mount', () => {
+    resetNavigation('', '/requests');
+    const { unmount } = render(
+      <AppShell>
+        <p>requests</p>
+      </AppShell>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'toggle sidebar' }));
+    expect(localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBe('collapsed');
+    expect(document.querySelector('aside')?.getAttribute('data-collapsed')).toBe('true');
+    unmount();
+    useSidebarStore.setState({ collapsed: false });
+    render(
+      <AppShell>
+        <p>requests</p>
+      </AppShell>
+    );
+    expect(document.querySelector('aside')?.getAttribute('data-collapsed')).toBe('true');
+  });
+
+  it.each(['expanded', 'collapsed'])(
+    'focused visits ignore and preserve the %s preference',
+    (saved) => {
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, saved);
+      resetNavigation('', '/library/t1');
+      const { rerender } = render(
+        <AppShell>
+          <p>editor</p>
+        </AppShell>
+      );
+      expect(document.querySelector('aside')?.getAttribute('data-collapsed')).toBe('true');
+      fireEvent.click(screen.getByRole('button', { name: 'toggle sidebar' }));
+      expect(document.querySelector('[data-sidebar-shell]')?.getAttribute('data-focused')).toBe(
+        'expanded'
+      );
+      expect(localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBe(saved);
+      resetNavigation('', '/runs/r1');
+      rerender(
+        <AppShell>
+          <p>run</p>
+        </AppShell>
+      );
+      expect(document.querySelector('aside')?.getAttribute('data-collapsed')).toBe('true');
+      resetNavigation('', '/requests');
+      rerender(
+        <AppShell>
+          <p>requests</p>
+        </AppShell>
+      );
+      expect(document.querySelector('aside')?.getAttribute('data-collapsed')).toBe(
+        String(saved === 'collapsed')
+      );
+      expect(localStorage.getItem(SIDEBAR_STORAGE_KEY)).toBe(saved);
+    }
+  );
 });
 
 describe('isFullscreenRoute', () => {

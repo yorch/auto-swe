@@ -14,7 +14,6 @@ import { Skeleton } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
@@ -227,8 +226,10 @@ function GovernApprovals() {
               placeholder="Search by title or ticket…"
               value={searchDraft}
             />
-            <SegmentedControl<KindFilter>
-              ariaLabel="Step kind"
+            <Select
+              aria-label="Step kind"
+              className="w-full sm:w-44"
+              compact
               onChange={(value) => update({ kind: value === 'all' ? null : value, page: null })}
               options={KIND_OPTIONS}
               value={kind}

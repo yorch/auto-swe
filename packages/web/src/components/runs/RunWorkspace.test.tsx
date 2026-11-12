@@ -200,6 +200,17 @@ function Harness({
   );
 }
 describe('linked run workspace', () => {
+  it('shows one empty state and compact node names when no steps have recordings', () => {
+    render(<Harness currentRun={{ ...run, steps: [], traces: [] }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Steps' }));
+    const execution = screen.getByRole('complementary', { name: 'Execution steps' });
+    expect(within(execution).getAllByText('No steps recorded yet')).toHaveLength(1);
+    expect(within(execution).queryByText('No step recording')).toBeNull();
+    for (const name of ['fan', 'Implement', 'done']) {
+      const node = within(execution).getByRole('button', { name });
+      expect(node.classList.contains('py-2')).toBe(true);
+    }
+  });
   it.each(['RUNNING', 'SUCCESS'] as const)(
     'does not infer reachability from missing step recordings in a %s run',
     (status) => {

@@ -112,14 +112,22 @@ through the **scope cascade**, so one platform can behave differently per team.
 
 ## Dashboard workspace
 
-The sidebar groups the dashboard into **Work** (Home, Approvals, Requests, All runs, Pull requests,
-Tickets), **Build** (the Workflow library, Connections, and for administrators Agents, Skills,
-Model configuration, MCP connections and Bundles) and **Admin**. Admin is one sidebar entry that
-opens an area at `/admin` with its own menu, grouped into Access, Security, Spend & insights,
-Configuration, Credentials and Knowledge; each role sees only the Admin pages it may open, and an
-engineer's Admin holds Teams, Analytics, Automations and Knowledge. Settings and Docs sit at the
-foot of the sidebar. Pages that moved keep their old addresses as permanent redirects, so a
+The sidebar groups the dashboard into **Work** (Home, Approvals, Requests, Epics, All runs, Pull
+requests and Tickets), **Teams** (member team spaces), **Build** (Workflow library, Agents, Skills
+and Review presets), **Connect** (Connections, Model configuration, MCP connections and Bundles),
+**Knowledge** and **Admin**. Each role sees only the destinations it may open. The single Knowledge
+destination has role-filtered **Knowledge**, **Knowledge bases** and **Lessons** tabs at `/knowledge`,
+`/knowledge-bases` and `/lessons`. Admin opens `/admin` with its own role-gated sub-navigation;
+its **Platform review presets** label distinguishes it from Build's **Review presets**.
+Settings and Docs are in the sidebar's user menu; Docs is also reachable from Help and the command
+palette. Pages that moved keep their old addresses as permanent redirects, so a
 bookmark to `/workflows`, `/govern/…` or `/studio/…` still opens the page.
+
+On desktop, the sidebar toggles between expanded navigation and a complete icon rail, including
+team initials, Start work and the user menu, with accessible labels and hover/focus tooltips.
+The preference persists in local storage. Focused workflow-editor, run-detail and diff routes start
+collapsed; expanding one applies only to that visit and does not change the saved preference.
+Mobile uses an off-canvas drawer with focus trapping and Escape dismissal.
 
 **Home** is the personal desk described in [teams.md](./teams.md): the signed-in engineer's teams and what is waiting on them across all of them.
 Beneath it, Home lists the signed-in engineer's own requests in flight and their recent successful

@@ -6,7 +6,10 @@ import { useAuthStore } from '@/stores/authStore';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import OrgAdminPage from './page';
 
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/admin/organizations/11111111-1111-4111-8111-111111111111',
+  useRouter: () => ({ push: vi.fn() }),
+}));
 
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
 const params = Object.assign(Promise.resolve({ orgId: ORG_ID }), {

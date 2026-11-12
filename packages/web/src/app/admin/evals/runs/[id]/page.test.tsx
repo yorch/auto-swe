@@ -3,12 +3,16 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { Suspense } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DetailBackLink } from '@/components/layout/DetailBackLink';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import EvalRunPage from './page';
 
 afterEach(() => vi.unstubAllGlobals());
 
 const RUN_ID = 'bbbbbbbb-2222-4222-8222-222222222222';
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/admin/evals/runs/bbbbbbbb-2222-4222-8222-222222222222',
+}));
 
 /** A promise React's `use` reads synchronously, as it does one it has already seen settle. */
 function resolvedParams<T>(value: T): Promise<T> {
@@ -45,6 +49,7 @@ function renderPage(
   render(
     withQuery(
       <Suspense fallback={null}>
+        <DetailBackLink />
         <EvalRunPage params={resolvedParams({ id: RUN_ID })} />
       </Suspense>
     )

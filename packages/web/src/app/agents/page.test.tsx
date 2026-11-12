@@ -85,6 +85,18 @@ beforeEach(() => {
 });
 
 describe('agent library — activation', () => {
+  it('keeps version and verification together with the origin available as a tooltip', () => {
+    state.agents = [{ ...row('a1', 'Alpha', 'alpha'), origin: 'swe-starter' }];
+    render(withQuery(<AgentLibraryPage />));
+    const version = screen.getByText('v1');
+    const line = version.parentElement;
+    expect(line?.classList.contains('flex-nowrap')).toBe(true);
+    expect(line?.textContent).toContain('Verified');
+    expect(line?.getAttribute('title')).toBe('Engineering starter');
+    expect(screen.getByText('Origin: Engineering starter').classList.contains('sr-only')).toBe(
+      true
+    );
+  });
   it('marks inactive rows and leaves active rows unmarked', () => {
     state.agents = [row('a1', 'Alpha', 'alpha'), { ...row('b1', 'Beta', 'beta'), isActive: false }];
     render(withQuery(<AgentLibraryPage />));

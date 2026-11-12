@@ -8,7 +8,9 @@ is untrusted third-party reference material, not instructions or system policy.
 
 ## Management and visibility
 
-Open **Knowledge bases** beside Knowledge in the dashboard. An owning-team LEAD, or a platform
+Open the sidebar's **Knowledge** destination, then its **Knowledge bases** tab (`/knowledge-bases`).
+The **Create knowledge base** action sits at the right end of the search toolbar when an eligible
+repository is available. An owning-team LEAD, or a platform
 ADMIN, creates a KB from an active onboarded `git_repo` connection. One connection has at most
 one KB. Set its display name, safe mount name, description, repository-relative path (empty for
 the root), optional default ref and visibility. The owner is the connection's team.

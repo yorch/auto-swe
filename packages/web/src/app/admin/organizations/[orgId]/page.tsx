@@ -5,7 +5,6 @@ import { MemberUserPicker } from '@/components/MemberUserPicker';
 import { BudgetMeter } from '@/components/teams/BudgetMeter';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
-import { BackLink } from '@/components/ui/BackLink';
 import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -21,6 +20,7 @@ import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { RoleSelectCell } from '@/components/users/RoleSelectCell';
 import { useDataTableSort } from '@/hooks/useDataTableSort';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useHasRole } from '@/hooks/useHasRole';
 import {
   type OrgRole,
@@ -68,6 +68,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   const orgQuery = useOrg(orgId ?? '');
   const members = membersQuery.data;
   const org = orgQuery.data;
+  useEntityTitle(org?.name);
   const upsertMember = useUpsertOrgMember(orgId ?? '');
   const patchMember = usePatchOrgMember(orgId ?? '');
   const removeMember = useRemoveOrgMember(orgId ?? '');
@@ -148,7 +149,6 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   if (!orgId) {
     return (
       <div className="space-y-6">
-        <BackLink href="/admin/organizations" label="Organizations" />
         <EmptyState
           action={<ButtonLink href="/admin/organizations">Back to organizations</ButtonLink>}
           bordered
@@ -266,7 +266,6 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
 
   return (
     <div className="space-y-6">
-      <BackLink href="/admin/organizations" label="Organizations" />
       <PageHeader
         subtitle={
           org ? (

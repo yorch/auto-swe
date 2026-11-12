@@ -7,6 +7,23 @@ import { Breadcrumbs } from './Breadcrumbs';
 afterEach(cleanup);
 
 describe('Breadcrumbs', () => {
+  it('truncates the leaf with its full name available as a title, and hides ancestors on mobile when requested', () => {
+    const { container } = render(
+      <Breadcrumbs
+        compactAncestors
+        items={[
+          { label: 'Work' },
+          { href: '/runs', label: 'All runs' },
+          { label: 'A very long request title' },
+        ]}
+      />
+    );
+    expect(screen.getByTitle('A very long request title').className).toContain('truncate');
+    expect(screen.getByRole('link', { name: 'All runs' }).closest('li')?.className).toContain(
+      'max-sm:hidden'
+    );
+    expect(container.querySelectorAll('[aria-current="page"]').length).toBe(1);
+  });
   it('links ancestors that have an href and marks only the leaf as current', () => {
     render(
       <Breadcrumbs

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { visibleNavGroups } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
@@ -33,16 +33,59 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Sidebar structure', () => {
+  it.each(['/knowledge/item', '/knowledge-bases/item', '/lessons/item'])(
+    'keeps Knowledge active on %s without separate sidebar links',
+    (pathname) => {
+      resetNavigation('', pathname);
+      render(<Sidebar collapsed onClose={() => undefined} open />);
+      expect(screen.getByRole('link', { name: 'Knowledge' }).getAttribute('aria-current')).toBe(
+        'page'
+      );
+      expect(screen.queryByRole('link', { name: 'Knowledge bases' })).toBeNull();
+      expect(screen.queryByRole('link', { name: 'Lessons' })).toBeNull();
+    }
+  );
+  it('keeps every visible destination and team in the rail with accessible labels and hover/focus tips', () => {
+    teamNav.entries = [
+      { needsYou: 2, team: { id: 't', myRole: 'ADMIN', name: 'Platform Team', slug: 'platform' } },
+    ];
+    teamNav.pinned = [];
+    resetNavigation('', '/requests');
+    const onToggle = vi.fn();
+    const { container } = render(
+      <Sidebar collapsed onClose={() => undefined} onToggle={onToggle} open={false} />
+    );
+    for (const item of visibleNavGroups('ADMIN', true).flatMap((g) => g.items)) {
+      const link = screen.getByRole('link', { name: item.label });
+      expect(link.getAttribute('data-sidebar-label')).toBe(item.label);
+    }
+    expect(screen.getByRole('link', { name: 'Platform Team' }).textContent).toContain('PT');
+    const request = screen.getByRole('link', { name: 'Requests' });
+    expect(request.getAttribute('aria-current')).toBe('page');
+    fireEvent.mouseOver(request);
+    expect(screen.getByRole('tooltip').textContent).toBe('Requests');
+    fireEvent.mouseLeave(container.querySelector('aside') as HTMLElement);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    fireEvent.focus(screen.getByRole('link', { name: 'Start work' }));
+    expect(screen.getByRole('tooltip').textContent).toBe('Start work');
+    fireEvent.blur(screen.getByRole('link', { name: 'Start work' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar' }));
+    expect(onToggle).toHaveBeenCalledOnce();
+    fireEvent.click(screen.getByRole('button', { name: 'User menu: a' }));
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Docs' })).toBeTruthy();
+    teamNav.entries = [];
+  });
   it('makes the drawer immediately visible on open before the initial focus frame', () => {
     resetNavigation('', '/library/tpl-1');
-    const props = { drawerOnly: true, onClose: () => undefined };
+    const props = { onClose: () => undefined };
     const { container, rerender } = render(<Sidebar {...props} open={false} />);
     const drawer = container.querySelector('aside') as HTMLElement;
-    expect(drawer.classList.contains('transition-[transform,visibility]')).toBe(true);
+    expect(drawer.classList.contains('max-md:transition-[transform,visibility]')).toBe(true);
     rerender(<Sidebar {...props} open />);
-    expect(drawer.classList.contains('visible')).toBe(true);
-    expect(drawer.classList.contains('transition-transform')).toBe(true);
-    expect(drawer.classList.contains('transition-[transform,visibility]')).toBe(false);
+    expect(drawer.classList.contains('max-md:visible')).toBe(true);
+    expect(drawer.classList.contains('max-md:transition-transform')).toBe(true);
+    expect(drawer.classList.contains('max-md:transition-[transform,visibility]')).toBe(false);
   });
   it('shows the Work and Build groups and one Admin entry, not the Admin pages', () => {
     resetNavigation('', '/');

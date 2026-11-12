@@ -12,14 +12,13 @@ import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Toolbar } from '@/components/ui/Toolbar';
+import { WorkScopeControl } from '@/components/work/WorkScopeControl';
 import { useEpics } from '@/hooks/useEpics';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useTeamParam } from '@/hooks/useTeamParam';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { teamGatedBoundary } from '@/lib/teamGate';
-import { WORK_SCOPE_OPTIONS } from '@/lib/workScope';
 
 const PAGE_SIZE = 30;
 
@@ -39,10 +38,6 @@ function Epics() {
 
   return (
     <div className="space-y-6">
-      <ButtonLink className="-ml-3" href="/requests" size="sm" variant="ghost">
-        <Icon name="arrowLeft" size={14} />
-        Requests
-      </ButtonLink>
       <PageHeader
         actions={
           canCreate &&
@@ -68,10 +63,9 @@ function Epics() {
         <Toolbar
           className="mb-0"
           end={
-            <SegmentedControl
-              ariaLabel="Epic scope"
+            <WorkScopeControl
+              label="Epic scope"
               onChange={(value) => update({ offset: null, scope: value })}
-              options={WORK_SCOPE_OPTIONS}
               value={scope}
             />
           }

@@ -13,6 +13,7 @@ import { SkeletonDetail } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useEpic } from '@/hooks/useEpics';
 import { useRunsForWorkRequest } from '@/hooks/useRuns';
 import { epicChildRunCell } from '@/lib/epicChildRun';
@@ -42,6 +43,7 @@ export default function EpicDetailPage({ params }: PageProps) {
     return () => clearTimeout(timer);
   }, []);
   const { data: epic, isLoading, error, refetch } = useEpic(workflowId ?? '');
+  useEntityTitle(epic?.externalTicketId);
   // Every child run shares the epic's work request. The child's ActiveWorkflow
   // row is self-registered without a repository, so /requests/:id cannot show
   // it; its WorkflowRun (keyed by the same Temporal workflow ID) can.

@@ -39,7 +39,7 @@ const ADMIN_ONLY: Role[] = ['ADMIN'];
 export const TOUR_STEPS: TourStep[] = [
   {
     anchor: 'sidebar',
-    body: 'The sidebar lists the pages you can open, grouped into Work, Build and Admin. What appears depends on your role.',
+    body: 'The sidebar lists the pages you can open, grouped into Work, Teams, Build, Connect, Knowledge and Admin. Collapse it to an icon rail when you need more room. What appears depends on your role.',
     id: 'sidebar',
     roles: ALL,
     title: 'Main navigation',
@@ -100,8 +100,8 @@ export const TOUR_STEPS: TourStep[] = [
     title: navLabel('/admin'),
   },
   {
-    anchor: 'nav:/docs',
-    body: 'How auto-swe works and how to run it: concepts, setup guides and references.',
+    anchor: 'sidebar:user-menu',
+    body: 'Open your user menu for Docs: how auto-swe works and how to run it, with concepts, setup guides and references. Settings lives here too.',
     id: 'docs',
     roles: ALL,
     title: navLabel('/docs'),

@@ -9,6 +9,7 @@ import { Icon } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { StatusBadge } from '@/components/ui/StatusBadge';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useWorkflow } from '@/hooks/useRuns';
 import { useTemporalWorkflowUrl } from '@/hooks/useTemporalUi';
 import { requestHref } from '@/lib/requestDisplay';
@@ -25,6 +26,13 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   const id = validateRouteParam(rawId);
   const router = useRouter();
   const { data: workflow, error, isError, isFetching, isLoading, refetch } = useWorkflow(id ?? '');
+  useEntityTitle(
+    workflow
+      ? workflow.repository
+        ? `Run for ${workflow.repository.organizationName}/${workflow.repository.repoName}`
+        : 'Run'
+      : null
+  );
   const requestId = workflow?.workRequest?.id;
   const temporalUrl = useTemporalWorkflowUrl(workflow?.temporalWorkflowId ?? '');
 
@@ -79,10 +87,6 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
   const prUrl = safeHttpUrl(workflow.pullRequests.find((candidate) => candidate.url)?.url);
   return (
     <div className="space-y-6">
-      <ButtonLink className="-ml-3" href="/requests" size="sm" variant="ghost">
-        <Icon name="arrowLeft" size={14} />
-        Requests
-      </ButtonLink>
       <PageHeader
         actions={
           <>

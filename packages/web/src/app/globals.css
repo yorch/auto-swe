@@ -1,5 +1,59 @@
 @import 'tailwindcss';
 
+@media (min-width: 768px) {
+  [data-sidebar-shell] {
+    grid-template-columns: 234px minmax(0, 1fr);
+  }
+
+  :is(html[data-sidebar='collapsed'] [data-focused='ordinary'], [data-focused='collapsed']) {
+    grid-template-columns: 64px minmax(0, 1fr);
+
+    & .sidebar {
+      width: 64px;
+    }
+    & [data-rail-label],
+    & [data-rail-heading],
+    & .sidebar-user-chevron,
+    & .sidebar-brand,
+    & .sidebar-support {
+      display: none;
+    }
+    & .sidebar-toggle {
+      margin: 12px auto;
+    }
+    & .sidebar-user {
+      margin-inline: 10px;
+    }
+    & [data-rail-item] {
+      justify-content: center;
+      min-height: 36px;
+      padding-inline: 0;
+      margin-inline: 10px;
+    }
+    & .sidebar-user [data-rail-item] {
+      margin-inline: 0;
+    }
+    & [data-rail-group] {
+      padding-top: 8px;
+      margin-top: 12px;
+      border-top: 1px solid var(--color-ink-500);
+    }
+    & .sidebar-team-initials {
+      display: block;
+      font-size: var(--text-xs);
+    }
+    & .sidebar-user-menu {
+      top: 0;
+      right: auto;
+      left: 54px;
+      width: 234px;
+    }
+    & [data-tour='nav:/start'] {
+      margin-inline: -4px;
+    }
+  }
+}
+
 /* Tailwind v4 scans relative to the stylesheet; be explicit so it picks up
    our app + components trees regardless of monorepo cwd quirks. */
 @source '../**/*.{ts,tsx}';
