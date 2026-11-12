@@ -666,6 +666,39 @@ export async function installBaselineEgress(
   assertBaselineEgress(report, needed, cidrs, infra.blockPrivateEgress, infra.blockMetadata);
 }
 
+/**
+ * Refuse to boot when the worker cannot reach the Docker API.
+ *
+ * Without this, an unreachable daemon still lets the worker start and accept
+ * workflows, so the first symptom is `docker run` failing inside an activity —
+ * after the run exists and has spent time. The usual causes are a worker process
+ * whose groups do not include `docker` (a systemd user service, or one started
+ * before the group was added) and a worker container that never received the
+ * socket. Both surface here as the same connection error, and both are worth
+ * refusing the boot over.
+ */
+export async function assertDockerDaemonReachable(): Promise<void> {
+  const infra = resolveWorkspaceInfra();
+  if (infra.backend !== 'docker') {
+    return;
+  }
+  const socket = process.env.DOCKER_HOST?.trim() || 'unix:///var/run/docker.sock';
+  try {
+    await execShellAsync("docker info --format '{{.ServerVersion}}'", {
+      heartbeatLabel: 'workspace: probing Docker API reachability',
+    });
+  } catch (cause) {
+    throw new Error(
+      `The Docker API could not be reached at ${socket}. A process that is not in the ` +
+        '`docker` group — or a worker container whose socket is not mounted — fails exactly ' +
+        'this way: add the worker user to `docker` and restart it, or mount ' +
+        '/var/run/docker.sock (or point DOCKER_HOST at the proxy) and restart the container. ' +
+        (cause instanceof Error ? cause.message : String(cause)),
+      { cause }
+    );
+  }
+}
+
 export async function assertDockerDiskLimit(): Promise<void> {
   const infra = resolveWorkspaceInfra();
   if (infra.backend !== 'docker' || !infra.diskLimit) {
