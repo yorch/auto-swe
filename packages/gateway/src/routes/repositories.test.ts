@@ -659,6 +659,70 @@ describe('repositoryRoutes', () => {
       });
       expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
     });
+    it('does not reveal installation visibility to a team lead', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+        role: 'LEAD',
+        team: { isActive: true },
+      });
+      ctx.mockPrisma.gitHubInstallation.findUnique.mockResolvedValue(null);
+      github.lookupRepoPermission.mockResolvedValue({ ok: true, permission: 'none' });
+      const warn = vi.spyOn(ctx.app.log, 'warn');
+      try {
+        const unlisted = await batch([item('api', INSTALLATION)]);
+        const unreadable = await batch([item('api')]);
+        expect(unlisted.json().data).toEqual(unreadable.json().data);
+        expect(unlisted.json().data[0]).toMatchObject({
+          code: 'GITHUB_ACCESS_UNVERIFIED',
+          message:
+            "GitHub did not confirm that you can read acme/api: you have no access, it does not exist, or the platform's GitHub credential cannot see it. Ask a platform admin to onboard it.",
+          status: 'failed',
+        });
+        expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+        expect(warn).not.toHaveBeenCalledWith(
+          expect.objectContaining({ organizationName: 'acme', repoName: 'api' }),
+          expect.any(String)
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    });
+    it.each(['ADMIN', 'ENGINEER'] as const)(
+      'reports installation listing failures as unavailable for %s and continues the batch',
+      async (role) => {
+        ctx.authState.role = role;
+        ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+          role: 'LEAD',
+          team: { isActive: true },
+        });
+        const err = new Error('private installation listing details');
+        const verify = vi.spyOn(githubImport, 'verifiedImportInstallation').mockRejectedValue(err);
+        const warn = vi.spyOn(ctx.app.log, 'warn');
+        try {
+          const res = await batch([item('api', INSTALLATION), item('good')]);
+          expect(res.statusCode).toBe(200);
+          expect(res.json().data).toEqual([
+            {
+              code: 'GITHUB_UNAVAILABLE',
+              message:
+                'Your GitHub access to acme/api could not be confirmed right now. Try again shortly.',
+              organizationName: 'acme',
+              repoName: 'api',
+              status: 'failed',
+            },
+            { id: REPO_ID, organizationName: 'acme', repoName: 'good', status: 'created' },
+          ]);
+          expect(res.payload).not.toContain(err.message);
+          expect(warn).toHaveBeenCalledWith(
+            { err, organizationName: 'acme', repoName: 'api' },
+            'GitHub installation verification failed'
+          );
+        } finally {
+          verify.mockRestore();
+          warn.mockRestore();
+        }
+      }
+    );
     it('authorizes the target team before checking an installation or creating anything', async () => {
       ctx.authState.role = 'ENGINEER';
       ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue(null);
@@ -722,13 +786,24 @@ describe('repositoryRoutes', () => {
       }
     });
     it('continues after unexpected per-repository errors without exposing their bodies', async () => {
-      ctx.mockPrisma.connection.create.mockRejectedValueOnce(new Error('secret database body'));
-      const res = await batch([item('failed'), item('good')]);
-      expect(res.json().data.map((r: { status: string }) => r.status)).toEqual([
-        'failed',
-        'created',
-      ]);
-      expect(res.payload).not.toContain('secret database body');
+      const err = new Error('secret database body');
+      ctx.mockPrisma.connection.create.mockRejectedValueOnce(err);
+      const warn = vi.spyOn(ctx.app.log, 'warn');
+      try {
+        const res = await batch([item('failed'), item('good')]);
+        expect(res.json().data.map((r: { status: string }) => r.status)).toEqual([
+          'failed',
+          'created',
+        ]);
+        expect(res.json().data[0].code).toBe('IMPORT_FAILED');
+        expect(res.payload).not.toContain(err.message);
+        expect(warn).toHaveBeenCalledWith(
+          { err, organizationName: 'acme', repoName: 'failed' },
+          'Repository import failed'
+        );
+      } finally {
+        warn.mockRestore();
+      }
     });
     it('rejects empty and oversized batches', async () => {
       expect((await batch([])).statusCode).toBe(400);

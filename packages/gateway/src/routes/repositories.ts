@@ -1222,15 +1222,32 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
               'Requires LEAD role in the target team'
             );
           }
-          const verified = item.installationId
-            ? await verifiedImportInstallation(
+          let verified: Awaited<ReturnType<typeof verifiedImportInstallation>> = null;
+          if (item.installationId) {
+            try {
+              verified = await verifiedImportInstallation(
                 fastify.prisma,
                 item.installationId,
                 item.organizationName,
                 item.repoName
-              )
-            : null;
+              );
+            } catch (err) {
+              request.log.warn({ err, ...identity }, 'GitHub installation verification failed');
+              throw new RepositoryCreateError(
+                503,
+                'GITHUB_UNAVAILABLE',
+                `Your GitHub access to ${item.organizationName}/${item.repoName} could not be confirmed right now. Try again shortly.`
+              );
+            }
+          }
           if (item.installationId && !verified) {
+            if (user.role !== Role.ADMIN) {
+              throw new RepositoryCreateError(
+                403,
+                'GITHUB_ACCESS_UNVERIFIED',
+                `GitHub did not confirm that you can read ${item.organizationName}/${item.repoName}: you have no access, it does not exist, or the platform's GitHub credential cannot see it. Ask a platform admin to onboard it.`
+              );
+            }
             throw new RepositoryCreateError(
               400,
               'INSTALLATION_REPO_NOT_FOUND',
@@ -1256,6 +1273,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           );
           results.push({ ...identity, id: created.id, status: 'created' as const });
         } catch (err) {
+          if (!(err instanceof RepositoryCreateError)) {
+            request.log.warn({ err, ...identity }, 'Repository import failed');
+          }
           results.push({
             ...identity,
             code: err instanceof RepositoryCreateError ? err.code : 'IMPORT_FAILED',
