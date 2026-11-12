@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 
 const replace = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ replace }) }));
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/requests/request-1',
+  useRouter: () => ({ replace }),
+}));
 
 import WorkflowDetailPage from './page';
 

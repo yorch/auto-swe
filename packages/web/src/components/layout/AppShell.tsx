@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AssistantPanel } from '@/components/assistant/AssistantPanel';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { DetailBackLink } from '@/components/layout/DetailBackLink';
 import { PageContainer } from '@/components/layout/PageContainer';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
@@ -108,11 +109,14 @@ function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscree
             shell standing, and navigating away clears it. */}
           {fullscreen ? (
             <main
-              className="min-w-0 flex-1 overflow-hidden outline-none"
+              className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden outline-none"
               id="main-content"
               tabIndex={-1}
             >
-              <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
+              <DetailBackLink focused />
+              <div className="min-h-0 flex-1">
+                <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
+              </div>
             </main>
           ) : (
             <main
@@ -121,6 +125,7 @@ function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscree
               tabIndex={-1}
             >
               <PageContainer>
+                {!pathname.startsWith('/admin/') && <DetailBackLink />}
                 <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
               </PageContainer>
             </main>

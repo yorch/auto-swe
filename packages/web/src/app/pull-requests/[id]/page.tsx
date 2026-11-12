@@ -3,9 +3,9 @@
 import { use } from 'react';
 import { PullRequestReview } from '@/components/review/PullRequestReview';
 import { Alert } from '@/components/ui/Alert';
-import { BackLink } from '@/components/ui/BackLink';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useDocumentTitle } from '@/hooks/useDocumentTitle';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { usePullRequestCockpit } from '@/hooks/usePullRequestCockpit';
 import { validateRouteParam } from '@/lib/routeParams';
 import { visibleText } from '@/lib/visibleText';
@@ -19,6 +19,11 @@ export default function PullRequestReviewPage({ params }: PageProps) {
   const id = validateRouteParam(rawId);
   const { data, error, isError, isFetching, isLoading, refetch } = usePullRequestCockpit(id ?? '');
   const pull = data?.pull;
+  useEntityTitle(
+    pull
+      ? `${pull.prNumber !== null ? `#${pull.prNumber} ` : ''}${visibleText(pull.title ?? 'Pull request')}`
+      : null
+  );
   useDocumentTitle(
     pull
       ? `Review · ${pull.prNumber !== null ? `#${pull.prNumber} ` : ''}${visibleText(pull.title ?? 'Pull request')}`
@@ -27,7 +32,6 @@ export default function PullRequestReviewPage({ params }: PageProps) {
 
   return (
     <div className="space-y-5">
-      <BackLink href="/pull-requests" label="Pull requests" />
       {id === null ? (
         <Alert variant="error">That is not a pull request address.</Alert>
       ) : (

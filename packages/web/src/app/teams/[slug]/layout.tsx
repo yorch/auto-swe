@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { TabBar } from '@/components/ui/TabBar';
 import { useUserOrgs } from '@/hooks/useAdmin';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useTeams } from '@/hooks/useTeams';
 import { useUserPreferences } from '@/hooks/useUserPreferences';
 import { hasRole } from '@/lib/roles';
@@ -55,6 +56,7 @@ export default function TeamSpaceLayout({
     (slug ? memberTeams.data?.find((t) => t.slug === slug) : undefined) ??
     (isPlatformAdmin && slug ? allTeams.data?.find((t) => t.slug === slug) : undefined);
 
+  useEntityTitle(team?.name);
   // Remember the visit as the user's last team. Written once per slug: a failed write must not
   // be retried on every render.
   const written = useRef<string | null>(null);

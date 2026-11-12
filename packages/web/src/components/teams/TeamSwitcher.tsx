@@ -22,7 +22,7 @@ const MENU_ID = 'team-switcher-menu';
 /**
  * Where the team switcher is the way around, not a filter: it lists the teams the caller is a
  * member of, with their role and what is waiting on them, and choosing one opens that team's
- * space (on the tab the caller is already on, when the team has it). "My desk" is first.
+ * space (on the tab the caller is already on, when the team has it). "All my teams" is first.
  * `strip` is the full-width form for the phone's second row.
  */
 export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' }) {
@@ -88,7 +88,9 @@ export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' 
         type="button"
       >
         <span className="text-paper-500">team:</span>
-        <span className="min-w-0 flex-1 truncate text-left">{current?.team.name ?? 'My desk'}</span>
+        <span className="min-w-0 flex-1 truncate text-left">
+          {current?.team.name ?? 'All my teams'}
+        </span>
         {!current && <NeedsYouBadge count={totalNeeds} />}
         <Icon
           className={cn('shrink-0 text-paper-500 transition-transform', open && 'rotate-180')}
@@ -110,7 +112,7 @@ export function TeamSwitcher({ variant = 'pill' }: { variant?: 'pill' | 'strip' 
               onClick={() => setOpen(false)}
             >
               <Icon className="text-paper-500" name="dashboard" size={14} />
-              <span className="flex-1">My desk</span>
+              <span className="flex-1">All my teams</span>
             </Link>
           </li>
           {entries.map(({ needsYou, team }) => {

@@ -13,7 +13,8 @@ import { Breadcrumbs } from '@/components/ui/Breadcrumbs';
 import { Icon } from '@/components/ui/Icon';
 import { IconButton } from '@/components/ui/IconButton';
 import { type GatewayStatus, useGatewayStatus } from '@/hooks/useGatewayStatus';
-import { pageSection, pageTitle } from '@/lib/navigation';
+import { detailParent, pageSection, pageTitle, showsTeamSwitcher } from '@/lib/navigation';
+import { useEntityTitleStore } from '@/stores/entityTitleStore';
 
 const GATEWAY_TONE: Record<GatewayStatus, BadgeTone> = {
   offline: 'danger',
@@ -41,6 +42,19 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
   const gatewayStatus = useGatewayStatus();
   const title = pageTitle(pathname);
   const section = pageSection(pathname);
+  const published = useEntityTitleStore((s) => s.entry);
+  const entity = published?.pathname === pathname ? published : null;
+  const parent = entity?.parent ?? detailParent(pathname);
+  const entitySection = parent?.section ?? (parent ? pageSection(parent.href) : section);
+  const crumbs =
+    entity && parent
+      ? [
+          ...(entitySection && entitySection !== parent.label ? [{ label: entitySection }] : []),
+          { href: parent.href, label: parent.label },
+          { label: entity.title },
+        ]
+      : [...(section && section !== title ? [{ label: section }] : []), { label: title }];
+  const showTeam = showsTeamSwitcher(pathname);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   return (
@@ -61,19 +75,18 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
 
         {/* Where you are. A breadcrumb, not a heading: the page's own <h1> carries the
           title, so repeating it as a heading made two identical headings per page. */}
-        <Breadcrumbs
-          className="min-w-0"
-          items={[...(section && section !== title ? [{ label: section }] : []), { label: title }]}
-        />
+        <Breadcrumbs className="min-w-0 max-sm:flex-1" compactAncestors items={crumbs} />
 
         {/* Team switcher: navigation between team spaces. Below sm it moves to its own strip
           under the bar, so it cannot crowd the breadcrumb out. */}
-        <div className="max-sm:hidden sm:ml-2">
-          <TeamSwitcher />
-        </div>
+        {showTeam && (
+          <div className="max-sm:hidden sm:ml-2">
+            <TeamSwitcher />
+          </div>
+        )}
 
         {/* Spacer */}
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
 
         {/* Right side */}
         <div className="flex shrink-0 items-center gap-2 sm:gap-3">
@@ -96,9 +109,11 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
           </Badge>
         </div>
       </div>
-      <div className="flex min-h-10 items-center gap-2 border-t border-ink-500/50 px-3 py-1 sm:hidden">
-        <TeamSwitcher variant="strip" />
-      </div>
+      {showTeam && (
+        <div className="flex min-h-10 items-center gap-2 border-t border-ink-500/50 px-3 py-1 sm:hidden">
+          <TeamSwitcher variant="strip" />
+        </div>
+      )}
       <CommandPalette onOpenChange={setPaletteOpen} open={paletteOpen} />
     </header>
   );

@@ -1,6 +1,57 @@
 import type { Role } from '@auto-swe/shared';
 import { hasRole } from '@/lib/roles';
 
+/** URL-scoped lists, the cross-team desk, and team spaces support team navigation. */
+export function showsTeamSwitcher(pathname: string): boolean {
+  return (
+    /^\/teams\/[^/]+(?:\/|$)/.test(pathname) ||
+    [
+      '/',
+      '/approvals',
+      '/requests',
+      '/runs',
+      '/pull-requests',
+      '/tickets',
+      '/epics',
+      '/start',
+      '/library',
+      '/knowledge',
+      '/admin/automations',
+      '/admin/reports',
+    ].includes(pathname.replace(/\/$/, '') || '/')
+  );
+}
+
+export interface DetailParent {
+  href: string;
+  label: string;
+  section?: string;
+}
+
+/** Route families with real detail pages; dialog-only entities stay on their list. */
+export function detailParent(pathname: string): DetailParent | null {
+  const parents: [RegExp, DetailParent][] = [
+    [/^\/library\/[^/]+(?:\/|$)/, { href: '/library', label: 'Workflow library' }],
+    [/^\/runs\/[^/]+\/?$/, { href: '/runs', label: 'All runs' }],
+    [/^\/requests\/[^/]+\/?$/, { href: '/requests', label: 'Requests' }],
+    [/^\/pull-requests\/[^/]+\/?$/, { href: '/pull-requests', label: 'Pull requests' }],
+    [/^\/epics\/[^/]+\/?$/, { href: '/epics', label: 'Epics' }],
+    [/^\/docs\/[^/]+\/?$/, { href: '/docs', label: 'Docs' }],
+    [/^\/teams\/[^/]+(?:\/|$)/, { href: '/admin/teams', label: 'Teams', section: 'Teams' }],
+    [/^\/admin\/teams\/[^/]+\/?$/, { href: '/admin/teams', label: 'Teams' }],
+    [
+      /^\/admin\/organizations\/[^/]+\/?$/,
+      { href: '/admin/organizations', label: 'Organizations' },
+    ],
+    [
+      /^\/admin\/slack-channels\/[^/]+\/?$/,
+      { href: '/admin/slack-channels', label: 'Slack channels' },
+    ],
+    [/^\/admin\/evals\/(?:runs|datasets)\/[^/]+\/?$/, { href: '/admin/evals', label: 'Evals' }],
+  ];
+  return parents.find(([pattern]) => pattern.test(pathname))?.[1] ?? null;
+}
+
 /**
  * The dashboard's page map: what the sidebar offers, to whom, and what each
  * page is called. One list, so the three things that used to drift apart —
@@ -17,7 +68,7 @@ import { hasRole } from '@/lib/roles';
  * Heading convention: a page reachable from the navigation is titled with its nav
  * label, verbatim — no trailing period, no "Admin —" prefix. The TopBar shows
  * the same string. A detail page (one template, one team, one run) titles its
- * H1 with the entity's name and the TopBar keeps the section's label.
+ * H1 with the entity's name and publishes it to the TopBar breadcrumb.
  *
  * `minRole` must match what actually serves the page: the route's
  * `RoleLayout` guard and the gateway `requiredRole` of the API it reads.

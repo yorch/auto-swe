@@ -2,11 +2,11 @@
 
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, use, useEffect } from 'react';
-import { BackLink } from '@/components/ui/BackLink';
 import { ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useTeam, useTeams } from '@/hooks/useTeams';
 import { ApiError } from '@/lib/api';
 import { validateRouteParam } from '@/lib/routeParams';
@@ -18,7 +18,6 @@ const SETTINGS_TABS = new Set(['service-principals', 'automation', 'sandbox']);
 function Frame({ children }: { children: React.ReactNode }) {
   return (
     <div className="space-y-6">
-      <BackLink href="/admin/teams" label="Teams" />
       <PageHeader title="Team" />
       {children}
     </div>
@@ -39,6 +38,7 @@ function TeamRedirect({ id }: { id: string | null }) {
   const missingFromList = !!id && !!teams.data && !listed;
   const direct = useTeam(missingFromList ? id : '');
   const team = listed ?? direct.data;
+  useEntityTitle(team?.name);
   const tab = params.get('tab') ?? '';
   const target = team
     ? SETTINGS_TABS.has(tab)

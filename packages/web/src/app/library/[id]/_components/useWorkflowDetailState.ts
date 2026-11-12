@@ -11,6 +11,7 @@ import {
   CONTAINER_AUTHORING_RULE,
   describeAuthoredCode,
 } from '@/components/workflow/containerNodes';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useRolePricing } from '@/hooks/useModelCatalog';
 import { useAdminTeamIds, useLedTeamIds } from '@/hooks/useTeams';
 import {
@@ -72,6 +73,7 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     refetch,
     error,
   } = useWorkflowTemplate(id ?? '');
+  useEntityTitle(template?.name);
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const effectiveVersion = selectedVersion ?? template?.activeVersion ?? null;
   // The newest version this page knew of when it loaded the template. The server check compares it

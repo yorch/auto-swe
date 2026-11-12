@@ -8,6 +8,7 @@ import { hasRole } from '@/lib/roles';
 import {
   ADMIN_HREF,
   activeNavHref,
+  detailParent,
   flattenNavItems,
   isStartWorkPath,
   knownPageTitle,
@@ -17,9 +18,80 @@ import {
   navSections,
   pageSection,
   pageTitle,
+  showsTeamSwitcher,
   USER_NAV_ITEMS,
   visibleNavGroups,
 } from './navigation';
+
+describe('team switcher scope', () => {
+  it.each([
+    '/',
+    '/approvals',
+    '/requests',
+    '/runs',
+    '/pull-requests',
+    '/tickets',
+    '/epics',
+    '/start',
+    '/teams/default',
+    '/teams/default/work',
+    '/library',
+    '/knowledge',
+    '/admin/automations',
+    '/admin/reports',
+  ])('shows on team-aware route %s', (path) => {
+    expect(showsTeamSwitcher(path)).toBe(true);
+  });
+  it.each([
+    '/admin/users',
+    '/settings',
+    '/docs',
+    '/docs/architecture',
+    '/connections',
+    '/models',
+    '/mcp',
+    '/bundles',
+    '/agents',
+    '/skills',
+    '/review-presets',
+    '/knowledge-bases',
+    '/lessons',
+    '/library/id',
+    '/library/id/diff',
+    '/runs/id',
+    '/pull-requests/id',
+    '/requests/id',
+    '/epics/id',
+    '/teams-not-a-space',
+  ])('hides on unscoped route %s', (path) => {
+    expect(showsTeamSwitcher(path)).toBe(false);
+  });
+});
+
+describe('detail parents', () => {
+  it.each([
+    ['/runs/id', '/runs'],
+    ['/requests/id', '/requests'],
+    ['/library/id', '/library'],
+    ['/library/id/diff', '/library'],
+    ['/library/id/analytics', '/library'],
+    ['/library/id/runs', '/library'],
+    ['/pull-requests/id', '/pull-requests'],
+    ['/docs/architecture', '/docs'],
+    ['/epics/id', '/epics'],
+    ['/teams/default', '/admin/teams'],
+    ['/teams/default/settings', '/admin/teams'],
+    ['/admin/teams/id', '/admin/teams'],
+    ['/admin/organizations/id', '/admin/organizations'],
+    ['/admin/slack-channels/id', '/admin/slack-channels'],
+    ['/admin/evals/datasets/id', '/admin/evals'],
+    ['/admin/evals/runs/id', '/admin/evals'],
+  ])('links %s to %s', (path, href) => expect(detailParent(path)?.href).toBe(href));
+  it.each(['/', '/requests', '/library', '/agents', '/knowledge-bases', '/not-found'])(
+    'adds no detail chrome on %s',
+    (path) => expect(detailParent(path)).toBeNull()
+  );
+});
 
 const APP_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
 const RANK: Record<Role, number> = { ADMIN: 3, ENGINEER: 1, LEAD: 2 };

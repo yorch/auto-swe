@@ -13,12 +13,9 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { PromoteVersionModal } from '@/components/workflow/PromoteVersionModal';
-import {
-  TemplateBackLink,
-  TemplateNotFound,
-  TemplateSubNav,
-} from '@/components/workflow/templateNav';
+import { TemplateNotFound, TemplateSubNav } from '@/components/workflow/templateNav';
 import { type DiffKind, WorkflowDag } from '@/components/workflow/WorkflowDag';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useLedTeamIds } from '@/hooks/useTeams';
 import { useWorkflowSpecDiff, useWorkflowTemplate } from '@/hooks/useTemplates';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
@@ -153,6 +150,7 @@ function TemplateDiffContent({ params }: PageProps) {
     refetch: refetchTemplate,
     error: templateErr,
   } = useWorkflowTemplate(id ?? '');
+  useEntityTitle(template?.name);
   const platformRole = useAuthStore((s) => s.user?.role);
   const ledTeamIds = useLedTeamIds();
   const canManage = canWriteTeamResource(platformRole, template?.team?.id, ledTeamIds);
@@ -235,7 +233,6 @@ function TemplateDiffContent({ params }: PageProps) {
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-[1280px] space-y-6 px-4 py-6 md:px-10 md:py-8">
         <div>
-          <TemplateBackLink href={`/library/${id}`} label={template?.name ?? 'Workflow'} />
           <PageHeader
             actions={
               canPromote ? (

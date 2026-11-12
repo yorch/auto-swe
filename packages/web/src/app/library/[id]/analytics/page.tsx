@@ -16,12 +16,9 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
-import {
-  TemplateBackLink,
-  TemplateNotFound,
-  TemplateSubNav,
-} from '@/components/workflow/templateNav';
+import { TemplateNotFound, TemplateSubNav } from '@/components/workflow/templateNav';
 import { VersionTags } from '@/components/workflow/VersionTags';
+import { useEntityTitle } from '@/hooks/useEntityTitle';
 import { useWorkflowTemplate, useWorkflowTemplateAnalytics } from '@/hooks/useTemplates';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { humanizeKey, outcomeTypeLabel } from '@/lib/govLabels';
@@ -64,6 +61,7 @@ function TemplateAnalyticsContent({ params }: PageProps) {
   const setWindowDays = (n: number) => update({ window: n === 30 ? null : String(n) });
   const setMinRuns = (n: number) => update({ minRuns: n === 5 ? null : String(n) });
   const { data: template } = useWorkflowTemplate(id ?? '');
+  useEntityTitle(template?.name);
   const {
     data: stats,
     error,
@@ -92,7 +90,6 @@ function TemplateAnalyticsContent({ params }: PageProps) {
   return (
     <div className="space-y-6">
       <div>
-        <TemplateBackLink href={`/library/${id}`} label={template?.name ?? 'Workflow'} />
         <PageHeader
           actions={
             <SegmentedControl
