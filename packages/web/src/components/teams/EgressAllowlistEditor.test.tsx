@@ -17,6 +17,7 @@ describe('EgressAllowlistEditor', () => {
         data: {
           egressAllowlist: (body as { egressAllowlist: string[] }).egressAllowlist,
         },
+        warnings: ['restricted requires an egress proxy'],
       }),
     });
 
@@ -37,6 +38,7 @@ describe('EgressAllowlistEditor', () => {
     await waitFor(() => {
       expect(screen.getByText(/saved/i)).toBeTruthy();
     });
+    expect(screen.getByText('restricted requires an egress proxy')).toBeTruthy();
 
     const putCall = spy.mock.calls.find(
       ([, init]) => (init as RequestInit | undefined)?.method === 'PUT'

@@ -43,12 +43,21 @@ import {
   gitHostOf,
   lfsStorageHosts,
   resolveRunEgressPolicy,
+  resolveRunSetupEgressPolicy,
 } from './egressWiring.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
   h.enabled = true;
   h.modelProxy = false;
+});
+it('resolves the setup setting with the same pinned scope as the agent setting', async () => {
+  settings.resolveSetting.mockResolvedValueOnce('restricted');
+  expect(await resolveRunSetupEgressPolicy('team')).toBe('restricted');
+  expect(settings.resolveSetting).toHaveBeenLastCalledWith(
+    'workspace.setupEgressPolicy',
+    expect.objectContaining({ pinnedSettings: { 'workspace.egressPolicy': 'x' }, teamId: 'team' })
+  );
 });
 it('does nothing when disabled without querying the team', async () => {
   h.enabled = false;

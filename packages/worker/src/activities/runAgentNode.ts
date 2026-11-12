@@ -386,6 +386,7 @@ async function runInCheckout(args: {
   // the setup command, which runs the repository's own code.
   const startSha = input.allowPause ? (await workspace.exec('git rev-parse HEAD')).trim() : '';
   await workspace.runSetup?.();
+  await workspace.finishSetup?.();
   tracer.addActivityEvent({
     name: 'agent.runtime',
     outputJson: {

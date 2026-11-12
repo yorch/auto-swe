@@ -1343,14 +1343,28 @@ anything else in the system. `createWorkspace()` (`activities/workspace.ts`) app
 | Control | Detail |
 |---|---|
 | Capabilities | `--cap-drop=ALL`, `--security-opt=no-new-privileges` |
+| User and writable paths | Docker agent workspaces use `--user 1000:1000`, matching the default Kubernetes UID/GID. The daemon prepares `/workspace`, `/workspace/target-repo` and `HOME=/workspace/.home` for that user before provisioning; archive-mode `docker cp` imports belong to the configured container user. Only `WORKSPACE_RUN_AS_ROOT=true` restores image-defined `USER` and `HOME` |
 | Resources | Memory, CPU, and PID caps from `WORKSPACE_MEMORY` / `WORKSPACE_CPUS` / `WORKSPACE_PIDS_LIMIT` |
 | Network | Docker workspaces keep public internet access under `open`, but a verified OUTPUT baseline rejects private, link-local, multicast, reserved and IPv4-embedding IPv6 ranges. Loopback and established replies are accepted first, then cloud metadata is rejected before exceptions for worker proxy ports, configured DNS, the repository git host and operator CIDRs (`WORKSPACE_PRIVATE_EGRESS_ALLOW`). `WORKSPACE_BLOCK_PRIVATE_EGRESS=false` disables private-range blocking. The later restricted/blocked lock detaches this baseline and defaults INPUT and OUTPUT to DROP |
 | Clone credential | Scrubbed from `.git/config` immediately after clone, then re-injected per-call by `gitAuthed` via `http.extraheader` for push and fetch only, so it never sits at rest in the workspace. The header value is never in the script: the script reads it from `$ASW_GIT_AUTH`, which the caller supplies as `secretEnv` (Docker `-e NAME` from the client's environment; Kubernetes a stdin preamble), because a Kubernetes exec's argv is an apiserver URL kept in audit logs. The script names it as `${ASW_GIT_AUTH:?…}`, so a variable that was not delivered aborts the script instead of sending the request unauthenticated. Dependency checkouts (`cloneDependencyRepos`) clone the same way: from the clean URL, hardened, with the header as `secretEnv` |
 | Authenticated git calls | Each one (`authedGitScript`) first rewrites `.git/config` from an allow-list — repository format, `origin` pinned to the scrubbed URL, plain `origin` fetch refspecs — so a planted `url.*.insteadOf`, `http.<url>.proxy`, `include.path`, `credential.helper` or rewritten remote cannot redirect the header; refuses a `.git` that is a gitfile or symlink; pins `GIT_DIR` / `GIT_WORK_TREE` to the repository and refuses unless `git rev-parse --absolute-git-dir` names exactly that `.git`, so a `.git` broken on purpose is an error rather than a fallback to a parent `/workspace/.git` or `/.git` whose config was never rewritten; in the agent workspace, first SIGKILLs every process except PID 1, the container's keeper and the call's own process tree, so nothing the agent left running can read the header from `/proc/<pid>/cmdline` or rewrite the config between the rewrite and the call; runs with hooks off (`core.hooksPath=/dev/null`), system and global config ignored, `core.fsmonitor`/`ext::`/submodule recursion disabled, automatic `gc` and `maintenance` off (`gc.auto=0`, `maintenance.auto=false`: either can detach a background process that keeps the call's environment, header included, after the call returns); and pushes to the scrubbed URL explicitly with `--no-verify`. A built-in `SENSITIVE_FILE` pattern also hard-blocks `writeFile` and shell redirects into `.git/` |
 | Cloud metadata | A short-lived `NET_ADMIN` helper installs IPv4 and IPv6 iptables REJECTs in the workspace netns, before any allow entry. The worker verifies kernel read-back and removes the workspace on failure. `WORKSPACE_BLOCK_METADATA` defaults on; when private blocking is off, the verified metadata-only baseline still applies |
 | Docker socket | **Not** mounted into the workspace — there is no daemon-level escape path |
+| Sandbox runtime | Optional Docker `WORKSPACE_RUNTIME` applies to agent/author containers, their sidecars and egress network holders, not trusted helpers or fresh delivery. Worker boot fails unless runtime inspection, real baseline/blocked traffic tests and a `/workspace` copy round trip pass. Default runsc bypasses OUTPUT filtering and is refused; runsc-host requires the host Linux netstack and copy-visible rootfs settings (see deployment) |
 | Timed-out commands | Every `docker exec` carries a per-call `AUTO_SWE_EXEC_ID` tag; when a command overruns its timeout, its whole in-container process tree (found by that tag in `/proc/*/environ`) is stopped and killed, not just the local `docker exec` client. The container runs under `--init`, so the killed processes are reaped rather than left holding PIDs |
 | Provisioning failure | The container is named before `docker run`, and any failure from `docker run` onward removes it by that name |
+
+Repository setup, git configuration, package caches and catalog tool installation run as the
+workspace user. Docker preparation installs missing git and bash through a fixed root bootstrap,
+before any clone, setup or agent code. It uses absolute package-manager paths, a clean environment
+and a system-only PATH from `/`. Root bootstrap access is one-shot and closed before the workspace
+handle is returned; ordinary exec revokes it too, and attached handles have no bootstrap authority.
+Unsupported images or failed installs fail creation clearly. Curated images preinstall these tools.
+Catalog tools install without a package manager under `/workspace/.tools`, and
+Claude Code and Pi use writable paths under `/workspace/.harness`. Dependency-cache keys include
+the UID and HOME so an archive from a different execution identity is not reused. Trusted agent-run
+delivery stages imported files under `/workspace/.agent-stage`, not a root-owned directory at `/`.
+The NET_ADMIN helper and attached services retain their separate user/capability contracts.
 
 **The browser runs inside that same container.** UI validation does not get a privileged sidecar or
 the Docker socket: a driver daemon starts beside the app under test, Chromium reaches the preview over
@@ -1366,7 +1380,7 @@ Everything the worker does to a workspace goes through `WorkspaceBackend`
 out/in, pause, remove. `WORKSPACE_BACKEND` picks the driver for the whole worker process: Docker
 (the default) or Kubernetes (`kubernetes`, any other value is Docker). Both meet the same
 obligations: `create()` applies the hardening itself (Docker: `--init`, `--cap-drop=ALL`,
-`no-new-privileges`, the metadata add-hosts, `sleep infinity`, the verified baseline before services,
+`no-new-privileges`, UID/GID 1000 unless opted out, the metadata add-hosts, `sleep infinity`, the verified baseline before services,
 and the optional `WORKSPACE_DISK_LIMIT` storage cap; Kubernetes: the pod spec below) and
 records the keeper's in-container PID once, right after start ("the only child of PID 1" cannot
 be found reliably later); secret env (`secretEnv` on `exec`, `execShell`, `spawn` and `runHelper`)
@@ -1387,6 +1401,11 @@ sit on this seam, and so does the ephemeral shell/container-step sandbox:
   If the helper needs to install iptables under filtered DNS, it temporarily uses `WORKSPACE_DNS`
   and restores the filter before installing rules or starting author code.
   Detached container-step sidecars publish their loopback port from the holder and share its baseline.
+  Under `restricted` with a team allowlist, the holder receives the strict workspace rule builder's
+  verified default-deny lock before author startup, admitting only the wired egress and registry
+  proxy endpoints. Direct public-IP sockets and `--noproxy` fail. Detached sidecars share this lock;
+  their published port admits the Docker host gateway and established replies only, so outbound
+  requests must use the proxy too. Under `open`, the baseline alone applies.
   Foreground completion and sidecar teardown remove the holder; its workspace labels also make
   it eligible for orphan reaping. `network: none` does not create a holder. Kubernetes does not
   support ephemeral steps or detached container-step sidecars.
@@ -1451,6 +1470,7 @@ runbook.
 | Pause | `kill -STOP -1` in the pod: SIGSTOP cannot be caught, and the tree is quiescent for the copy |
 | Cloud metadata and egress | The namespace's NetworkPolicy, not a sidecar (`NET_ADMIN` is forbidden under `restricted`). The GCP metadata hostnames also resolve to `0.0.0.0` through `hostAliases` |
 | Start-up check | A worker refuses to start unless it holds the RBAC it needs and a probe pod cannot reach the metadata endpoint or the cluster API address, which proves the CNI enforces the policy. `K8S_REQUIRE_NETWORK_POLICY=false` skips only the second check, for a local cluster |
+| Required sandbox | `K8S_REQUIRE_RUNTIME_CLASS=true` requires a configured `K8S_WORKSPACE_RUNTIME_CLASS`, cluster-scoped `get runtimeclasses` permission, and a probe pod returning the expected `runtimeClassName`. It reuses the NetworkPolicy probe pod or creates its own if that probe is disabled |
 | Proxies | Workspaces reach the worker's model, registry and egress proxies at the URLs the deployment advertises (`HARNESS_MODEL_PROXY_URL`, `REGISTRY_PROXY_URL`, `EGRESS_PROXY_URL`): a Service name, not the Docker host alias. The model proxy is required: `assertWorkspaceInfraEnv()` fails the boot unless `HARNESS_MODEL_PROXY_PORT` is set and `HARNESS_MODEL_PROXY_URL` is set to something other than the Docker host alias, a loopback or unspecified host (`localhost`, `127.0.0.0/8`, `[::1]`, `0.0.0.0`, which from a pod is the pod itself) or the `{hostname}` placeholder, so the provider key never enters a workspace pod. The registry and egress proxies are optional: when `REGISTRY_PROXY_PORT` or `EGRESS_PROXY_PORT` is set, the boot likewise fails unless its URL is set and passes the same rule. It does not check that the Service exists or is reachable |
 
 Package installs go through a second seam: when `REGISTRY_PROXY_PORT` is set the worker runs a
@@ -1563,6 +1583,8 @@ The load-bearing ones, with rationale:
 ---
 
 ## 10. Limitations
+
+- **Sandbox runtime gates run only at worker boot.** They do not continuously verify runtime or network changes. Docker's gate samples IPv4 private HTTP and public TCP and refuses an inconclusive public pre-check. Default runsc's netstack bypasses namespace OUTPUT rules despite verified read-back. runsc-host restores Linux namespace filtering by exposing the host kernel netstack, so its isolation differs from default gVisor. Copy visibility requires disabling gVisor's root overlay and shared rootfs access; copies into internal tmpfs mounts such as `/tmp` remain unsupported. Kubernetes validates the returned RuntimeClass name, not the cluster's handler implementation.
 
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
@@ -1846,16 +1868,24 @@ Current constraints of the system as built. Deliberate product boundaries are in
   hour, and a shell step clones before its command and commits and pushes after it. The worker caps
   the command's wall clock at 50 minutes so the activity cannot time out (and be retried) while the
   first attempt may still push; a stored spec asking for more is not rejected, it runs under the cap.
-- **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
-  allowlist entries are informational only. An in-path proxy or resolver would be required.
+- **Under `open`, shell-step allowlisting is cooperative.** The DNS filter does not restrict
+  literal public-IP connections. Under `restricted`, the holder's proxy-only network lock prevents
+  direct connections; wildcard allowlist matching happens in the proxy.
 - **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls an
   immediate-merge API and no seeded template merges (the opt-in `auto` mode of
   [pr-evaluation.md](./pr-evaluation.md) only asks GitHub to auto-merge later), but `shell` and `containerStep` nodes take
   `network: 'egress'` against the team's allowlist. A team that allowlists the GitHub API host and
   supplies a token can author a DAG that merges. The guarantee covers what the platform ships; it
   is not enforced against what a team authors.
-- **Authenticated git runs inside the container the agent controls.** The agent runs as root in its
-  workspace. The sweep before each authenticated call kills what the agent left running, but it is a
+- **Non-root workspaces do not make arbitrary images safe.** Custom images must provide tools and
+  writable application paths for UID/GID 1000; image files outside the prepared workspace directories
+  are not recursively reassigned. `WORKSPACE_RUN_AS_ROOT=true` preserves the image's user, including
+  root when that is its default. Shell/containerStep author containers and their sidecars still use
+  image-defined users: their volumes can hold root-owned clones or operator host mounts, and this
+  control does not change ownership of those mounts. Network holders and trusted helpers are unchanged.
+- **Authenticated git runs inside the container the agent controls.** The agent owns its checkout
+  and HOME; the root opt-out can also let it replace system binaries. The sweep before each
+  authenticated call kills what the agent left running, but it is a
   scan of `/proc`, not a freeze of the container: a process that forks faster than the two stop
   passes can reach it may survive, and a process started by another `docker exec` in the instant
   between the sweep and the call is not covered. A replaced `git` binary (or `sh`, `sed`) is not

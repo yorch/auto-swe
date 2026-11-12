@@ -1,4 +1,5 @@
 import type { ChildProcess, StdioOptions } from 'node:child_process';
+import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import type { CappedFileResult, CapturedResult, OnTimeout } from '../execUtils.js';
 import type { WorkspaceReapResult } from './orphans.js';
 
@@ -29,6 +30,8 @@ export interface WorkspaceContainerSpec {
   reachWorker: boolean;
   /** Git hosts that may need private-network access under the Docker baseline. */
   baselineAllow?: EgressAllowEntry[];
+  /** Trusted delivery only; never runs agent or repository setup code. */
+  trusted?: boolean;
   /** Non-secret `NAME=value` pairs, passed to the container as `docker run -e`. */
   env?: string[];
   /**
@@ -132,6 +135,11 @@ export interface WorkspaceSpawnOptions {
  *  - remove() is idempotent.
  */
 export interface WorkspaceBackend {
+  clearSetupProcesses?: (
+    h: WorkspaceHandle,
+    script: string,
+    mountNamespace: string
+  ) => Promise<void>;
   readonly kind: 'docker' | 'kubernetes';
   /**
    * Start the container, run the metadata-block sidecar when configured
@@ -245,6 +253,9 @@ export interface WorkspaceBackend {
  */
 export interface LockEgressOptions {
   mode?: 'blocked' | 'restricted';
+  /** Tighten after repository-controlled setup without a privileged workspace exec. */
+  replace?: boolean;
+  prepareOnly?: boolean;
 }
 
 /** A destination a locked-down workspace may still reach. A missing `port` means any port. */
@@ -273,6 +284,8 @@ export interface EphemeralVolumeMount {
  * (`lib/ephemeralContainer.ts`) before a spec reaches the driver.
  */
 export interface EphemeralContainerSpec {
+  /** Run policy; restricted egress is locked to the wired proxies before author code starts. */
+  egressPolicy?: EgressPolicy;
   /** Container name (`--name`); only meaningful for sandboxed runs. */
   name?: string;
   image: string;

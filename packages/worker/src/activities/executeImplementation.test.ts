@@ -561,6 +561,47 @@ describe('executeImplementation success criteria', () => {
 });
 
 describe('executeImplementation cross-repo context', () => {
+  it('checks out dependencies before tightening a looser setup phase, before any agent turn', async () => {
+    const phase = workspaceMock as typeof workspaceMock & {
+      runSetup?: () => Promise<void>;
+      finishSetup?: () => Promise<void>;
+    };
+    const setup = vi.fn(async () => {});
+    const finish = vi.fn(async () => {});
+    phase.runSetup = setup;
+    phase.finishSetup = finish;
+    loadMock.mockResolvedValue('BLOCK');
+    checkoutMock.mockResolvedValue('SOURCES');
+    try {
+      await executeImplementation(REQUEST, undefined, undefined, { crossRepoCheckout: true });
+      expect(setup.mock.invocationCallOrder[0]).toBeLessThan(
+        checkoutMock.mock.invocationCallOrder[0] ?? 0
+      );
+      expect(checkoutMock.mock.invocationCallOrder[0]).toBeLessThan(
+        finish.mock.invocationCallOrder[0] ?? 0
+      );
+      expect(finish.mock.invocationCallOrder[0]).toBeLessThan(
+        generateMock.mock.invocationCallOrder[0] ?? 0
+      );
+    } finally {
+      delete phase.runSetup;
+      delete phase.finishSetup;
+    }
+  });
+
+  it('destroys the workspace and never starts the agent if tightening fails', async () => {
+    const phase = workspaceMock as typeof workspaceMock & { finishSetup?: () => Promise<void> };
+    phase.finishSetup = vi.fn(async () => {
+      throw new Error('setup transition failed');
+    });
+    try {
+      await expect(executeImplementation(REQUEST)).rejects.toThrow('setup transition failed');
+      expect(workspaceMock.destroy).toHaveBeenCalled();
+      expect(generateMock).not.toHaveBeenCalled();
+    } finally {
+      delete phase.finishSetup;
+    }
+  });
   it('appends the dependency block to the implementer system prompt', async () => {
     loadMock.mockResolvedValue('\n\n## Cross-Repo Dependency Context\n- acme/web — kinds: code');
 

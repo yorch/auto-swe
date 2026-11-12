@@ -38,6 +38,7 @@ import {
   RepoSetupSchema,
   RepoSetupSecretNameSchema,
 } from '@auto-swe/shared/lib/repoSetup';
+import { SetupBlockerKindSchema, setupBlockerRemedy } from '@auto-swe/shared/lib/setupBlocker';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { ToolKeySchema } from '@auto-swe/shared/lib/toolCatalog';
@@ -2057,6 +2058,72 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'NOT_FOUND', 'Setup file request not found');
       }
       return { data: await fastify.temporal.getRepoSetupFileProposalStatus(requestId) };
+    }
+  );
+
+  app.get(
+    '/:id/setup-blockers',
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: {
+        params: RepoParamsSchema,
+        querystring: z.object({ includeResolved: booleanQueryParam(false) }),
+      },
+    },
+    async (request, reply) => {
+      const found = await setupFileRepo(request, request.params.id);
+      if (!found.ok) {
+        return sendSetupFileRepoError(reply, found.error);
+      }
+      const rows = await fastify.prisma.repoSetupBlocker.findMany({
+        orderBy: { lastSeenAt: 'desc' },
+        where: {
+          connectionId: found.repo.id,
+          ...(request.query.includeResolved ? {} : { resolvedAt: null }),
+        },
+      });
+      return {
+        blockers: rows.map(({ connectionId: _connectionId, ...row }) => {
+          const kind = SetupBlockerKindSchema.safeParse(row.kind);
+          return {
+            ...row,
+            remedy: setupBlockerRemedy({
+              ...row,
+              kind: kind.success ? kind.data : 'internal',
+              step: row.step ?? undefined,
+            }),
+          };
+        }),
+      };
+    }
+  );
+
+  app.post(
+    '/:id/setup-blockers/:blockerId/resolve',
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: { params: RepoParamsSchema.extend({ blockerId: z.string().uuid() }) },
+    },
+    async (request, reply) => {
+      const found = await setupFileRepo(request, request.params.id);
+      if (!found.ok) {
+        return sendSetupFileRepoError(reply, found.error);
+      }
+      const { count } = await fastify.prisma.repoSetupBlocker.updateMany({
+        data: { resolvedAt: new Date() },
+        where: { connectionId: found.repo.id, id: request.params.blockerId },
+      });
+      if (!count) {
+        return sendError(reply, 404, 'NOT_FOUND', 'Setup blocker not found');
+      }
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: found.user,
+        after: { resolvedSetupBlocker: request.params.blockerId },
+        entityId: found.repo.id,
+        entityType: 'Connection',
+      });
+      return reply.status(204).send();
     }
   );
 

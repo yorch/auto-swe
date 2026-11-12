@@ -10,11 +10,13 @@ import { Combobox } from '@/components/ui/Combobox';
 import { RequiredMark } from '@/components/ui/FieldWrapper';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useIsViewOnly } from '@/hooks/useViewOnlyRepos';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { groupedRepoOptions } from '@/lib/repoGroups';
 import { VIEW_ONLY_REASON } from '@/lib/repoLaunch';
+import { humanizeWorkflowKey, workflowFieldLabel } from '@/lib/workflowLabels';
 
 export function ConnectionPicker({
   id,
@@ -108,10 +110,7 @@ export function SchemaFieldInput({
   const fieldId = useId();
   // A template's schema is team-authored JSON: read each keyword only when it has the type
   // it is rendered as, so a malformed one degrades to the plain field instead of a crash.
-  const base =
-    typeof prop.title === 'string'
-      ? prop.title
-      : name.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
+  const base = workflowFieldLabel(name, prop);
   const hint = typeof prop.description === 'string' ? prop.description : undefined;
   const options = Array.isArray(prop.enum) ? prop.enum : undefined;
 
@@ -169,7 +168,7 @@ export function SchemaFieldInput({
             <Checkbox
               checked={selected.includes(choice)}
               key={String(choice)}
-              label={String(choice).replace(/_/g, ' ')}
+              label={humanizeWorkflowKey(String(choice))}
               onChange={(e) =>
                 onChange(
                   e.target.checked
@@ -200,7 +199,10 @@ export function SchemaFieldInput({
         onChange={(v) => onChange(options.find((opt) => String(opt) === v) ?? '')}
         options={[
           { label: 'Select…', value: '' },
-          ...options.map((opt) => ({ label: String(opt), value: String(opt) })),
+          ...options.map((opt) => ({
+            label: humanizeWorkflowKey(String(opt)),
+            value: String(opt),
+          })),
         ]}
         required={required}
         value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
@@ -244,6 +246,25 @@ export function SchemaFieldInput({
         step={prop.integer === true ? 1 : 'any'}
         type="number"
         value={typeof value === 'number' ? String(value) : ''}
+      />
+    );
+  }
+
+  if (
+    prop.type === 'string' &&
+    /^(description|brief|instructions|message|prdContent)$/i.test(name)
+  ) {
+    return (
+      <Textarea
+        error={error}
+        hint={hint}
+        id={fieldId}
+        label={base}
+        maxLength={prop.maxLength}
+        mono={false}
+        onChange={(e) => onChange(e.target.value)}
+        required={required}
+        value={typeof value === 'string' ? value : ''}
       />
     );
   }

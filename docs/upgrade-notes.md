@@ -1183,6 +1183,127 @@ sidecar remains reachable through its loopback-published holder port until teard
 
 ---
 
+### UN-24. Docker agent workspaces use UID/GID 1000 by default
+
+**Affected.** Docker deployments whose repository setup scripts or custom executor images need
+root for repository code. The bare `node:24-alpine` default needs no image change: the worker installs
+git and bash during trusted preparation, before clone/setup/agent execution. The code
+marker is `WORKSPACE_RUN_AS_ROOT` in the workspace configuration and `--user 1000:1000` in the
+Docker workspace driver. Kubernetes and shell/containerStep image users are unchanged.
+
+**Actions.** Build additional OS dependencies into the executor image, and make application
+files writable by UID/GID 1000. Images without apk/apt-get must include git and bash; curated images
+already do. Fix setup scripts to install
+dependencies into the checkout or HOME, without sudo or system package installs. The worker prepares
+the workspace directories and sets `HOME=/workspace/.home`; dependency caches from another UID or
+HOME are not reused. To retain legacy image-defined user, HOME and copy behavior while adapting an
+image or script, set exactly `WORKSPACE_RUN_AS_ROOT=true` on the worker and restart it. This preserves
+the image's USER: an image that selects a non-root user stays non-root. Root bootstrap authority is
+revoked before handing off the workspace and cannot be restored after ordinary execution.
+
+**Verify.** Start a real agent workspace, run `id -u; id -g` (both 1000 without the opt-out), write a
+file under `$HOME`, run the repository setup, edit and commit a tracked file, then export and read
+the diff. With the opt-out, verify the image's expected UID instead. Confirm trusted delivery can
+import and commit the exported tree. Remove the opt-out after adapting root-dependent images/scripts.
+
+---
+
+### UN-25 — Restricted shell/container steps bypassed the proxy with direct sockets
+
+**Affected condition.** Docker deployments running `shell` or `containerStep` nodes with
+`network: "egress"`, `workspace.egressPolicy=restricted` and a non-empty team allowlist, where the
+command or detached sidecar uses raw sockets or `--noproxy` to reach a public host directly.
+
+**Fix commit:** `b28e9bd4` — restricted step network holders receive a verified proxy-only lock
+before author code starts. Only the wired egress and registry proxies are outbound exceptions;
+the allowlisted destination itself is not directly reachable.
+
+**Action.** Configure commands and sidecars to honor `HTTP_PROXY` / `HTTPS_PROXY`. Raw TCP clients
+need explicit proxy CONNECT support. A sidecar's published-port request/reply path remains
+available, but does not grant arbitrary outbound access. `open`, `blocked`, and empty-allowlist
+behavior is unchanged.
+
+**Verification.** In a restricted egress step, use `curl --proxy "$HTTP_PROXY"` to an allowlisted
+HTTP URL and confirm success. A raw public-IP TCP connect and
+`curl --noproxy '*' --connect-timeout 3 https://1.1.1.1/` must fail. The execution event records
+`egress (allowlist via proxy; network-locked)`. A missing proxy or unprovable strict lock refuses
+the step before author startup.
+
+---
+
+
+## 4. If you cannot tell
+
+If you cannot establish which commit your workers ran, whether per-user credentials were on,
+or whether anything logged command lines: rotate first, then clean up.
+
+1. Rotate the PAT, every per-host PAT, and ask users to rotate their own tokens (UN-1 steps 1 and
+   2); treat stored traces and transcripts as credential-bearing (UN-7). An App needs no rotation (see the quick reference for its caveat).
+2. Rotate any provider `apiBase` token (UN-3).
+3. Upgrade the worker to a build that contains `3200071c` and, on Kubernetes, apply the RBAC in
+   `infra/kubernetes/workspace-namespace.yaml`.
+4. Purge or redact audit entries and command-line records that match the patterns above, per
+   your retention policy. If the logs are immutable or held for compliance, record that they
+   contain credentials that have been revoked, and restrict who can read them.
+
+---
+
+## 5. How these notes are maintained
+
+A change that needs an operator to act on a deployment that ran earlier code adds an entry here
+in the same change. That covers rotating a credential, purging logs, running a migration by hand,
+and changing configuration. An entry is keyed by the condition that makes a deployment affected and
+by the SHA of the fixing commit. An entry states conditions and facts in the present tense, not a
+history of the change; it is corrected by adding a note or a new entry, not by rewriting what an
+operator may already have acted on.
+
+---
+
+### UN-24. Automation template kinds require the widened database constraint
+
+**Affected.** Deployments whose `workflow_templates_kind_check` accepts only null or `review`.
+
+**Fix commit.** Identified before its SHA is assigned by the migration
+`20261112040227_automation_template_kind`; compare the source when commit ancestry is unavailable.
+
+**Actions.** Apply `yarn db:deploy` before starting the updated gateway or running `yarn db:seed`.
+The migration widens the CHECK constraint to accept `automation`. The built-in sync fills null
+kinds on CI triage, PR feedback and Channel Task without changing explicit kinds or workflow versions.
+Starting the gateway before applying the migration fails during that sync.
+
+**Verify.** The gateway health endpoint returns 200. CI triage, PR feedback and Channel Task carry
+`kind: "automation"` and have no hand-launch action; integrations and the run API still launch them.
+
+---
+
+## Limitations
+
+- **A SHA identifies code, not your deployed image.** The comparison in §1 holds only if your
+  image really was built from the commit you think. An image built without the build arguments
+  reports `unknown`.
+- **The notes cannot tell you whether anyone read your logs.** They tell you where a value was
+  recorded and how long it is good; whether it was used is a question for your own audit trail,
+  on GitHub as well as in your cluster.
+- **They cannot enumerate your log sinks.** Load balancers, managed control planes, SIEM
+  forwarders, backups and host agents are yours to check.
+- **How long your deployment ran each build is unknown.** The start commits in UN-4 date the code,
+  not your rollout; only your own deployment records say which build ran when.
+- **Host-level capture of git inside a workspace is standing.** No fix removes the header from
+  git's argument list there; whether your audit pipeline records it is yours to check.
+- **The container-step item has no commit cited.** It is identified by the code marker in UN-4,
+  which you check in your build's source.
+- **The fixes narrow where a value travels; they do not remove every copy.** What remains is
+  listed in the Limitations of [`architecture.md`](./architecture.md) and
+  [`package-registries.md`](./package-registries.md).
+- **Some host behaviour is not verified here.** Whether your Docker version records exec commands
+  in its event stream and which consumers you run, whether your network exposes the registry proxy,
+  what your log pipeline does to an encoded command line, and whether the lingering process of
+  UN-6 occurred, are properties of your environment.
+- **They cannot tell you what a leaked token did.** For an App installation token, which has the
+  installation's full permissions, the only record is GitHub's audit log.
+
+---
+
 ### Workspace commits skip repository hooks and global git config; steps record their base first (`<fixing commit SHA>`)
 
 **Affected.** Deployments whose repositories rely on a commit hook running inside the agent
@@ -1228,56 +1349,3 @@ credential rotation.
 `pre-commit` hook, and a pushed branch tip equals the run's reported `headSha`.
 
 ---
-
-## 4. If you cannot tell
-
-If you cannot establish which commit your workers ran, whether per-user credentials were on,
-or whether anything logged command lines: rotate first, then clean up.
-
-1. Rotate the PAT, every per-host PAT, and ask users to rotate their own tokens (UN-1 steps 1 and
-   2); treat stored traces and transcripts as credential-bearing (UN-7). An App needs no rotation (see the quick reference for its caveat).
-2. Rotate any provider `apiBase` token (UN-3).
-3. Upgrade the worker to a build that contains `3200071c` and, on Kubernetes, apply the RBAC in
-   `infra/kubernetes/workspace-namespace.yaml`.
-4. Purge or redact audit entries and command-line records that match the patterns above, per
-   your retention policy. If the logs are immutable or held for compliance, record that they
-   contain credentials that have been revoked, and restrict who can read them.
-
----
-
-## 5. How these notes are maintained
-
-A change that needs an operator to act on a deployment that ran earlier code adds an entry here
-in the same change. That covers rotating a credential, purging logs, running a migration by hand,
-and changing configuration. An entry is keyed by the condition that makes a deployment affected and
-by the SHA of the fixing commit. An entry states conditions and facts in the present tense, not a
-history of the change; it is corrected by adding a note or a new entry, not by rewriting what an
-operator may already have acted on.
-
----
-
-## Limitations
-
-- **A SHA identifies code, not your deployed image.** The comparison in §1 holds only if your
-  image really was built from the commit you think. An image built without the build arguments
-  reports `unknown`.
-- **The notes cannot tell you whether anyone read your logs.** They tell you where a value was
-  recorded and how long it is good; whether it was used is a question for your own audit trail,
-  on GitHub as well as in your cluster.
-- **They cannot enumerate your log sinks.** Load balancers, managed control planes, SIEM
-  forwarders, backups and host agents are yours to check.
-- **How long your deployment ran each build is unknown.** The start commits in UN-4 date the code,
-  not your rollout; only your own deployment records say which build ran when.
-- **Host-level capture of git inside a workspace is standing.** No fix removes the header from
-  git's argument list there; whether your audit pipeline records it is yours to check.
-- **The container-step item has no commit cited.** It is identified by the code marker in UN-4,
-  which you check in your build's source.
-- **The fixes narrow where a value travels; they do not remove every copy.** What remains is
-  listed in the Limitations of [`architecture.md`](./architecture.md) and
-  [`package-registries.md`](./package-registries.md).
-- **Some host behaviour is not verified here.** Whether your Docker version records exec commands
-  in its event stream and which consumers you run, whether your network exposes the registry proxy,
-  what your log pipeline does to an encoded command line, and whether the lingering process of
-  UN-6 occurred, are properties of your environment.
-- **They cannot tell you what a leaked token did.** For an App installation token, which has the
-  installation's full permissions, the only record is GitHub's audit log.

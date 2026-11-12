@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { prisma } from '@auto-swe/shared/db';
-import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
+import { type EgressPolicy, effectiveSetupEgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import { GITHUB_SCM_PROVIDER } from '@auto-swe/shared/lib/githubHostScope';
 import { MAX_DEPENDENCY_CHECKOUTS } from '@auto-swe/shared/lib/knowledgeBaseResolution';
 import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
@@ -18,6 +18,7 @@ import {
   lfsStorageHostEntries,
   lfsStorageHosts,
   resolveRunEgressPolicy,
+  resolveRunSetupEgressPolicy,
 } from '../lib/egressWiring.js';
 import type { CapturedResult, OnTimeout } from '../lib/execUtils.js';
 import {
@@ -46,6 +47,7 @@ import {
 import type { KnowledgeBaseCheckout, MountedKnowledgeBase } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import type { RepoRef } from '../lib/scm/types.js';
+import { recordSetupFailure, resolveSetupBlockers } from '../lib/setupBlockerRecorder.js';
 import { shellQuote } from '../lib/shellQuote.js';
 import { loadToolCatalog } from '../lib/toolCatalogLoader.js';
 import {
@@ -87,6 +89,8 @@ export interface Workspace {
   containerId: string;
   /** The network posture this workspace was created under (absent on test doubles). */
   egressPolicy?: EgressPolicy;
+  setupEgressPolicy?: EgressPolicy;
+  finishSetup?: () => Promise<void>;
   /** The author and committer every platform commit in this workspace carries. */
   gitIdentity: GitIdentity;
   /**
@@ -271,8 +275,8 @@ const HARDENED_GIT_CONFIG = [
 
 /**
  * Environment for a credential-bearing git call: ignore the system and global
- * config files (`/etc/gitconfig`, `~/.gitconfig` — both writable by an agent
- * running as root in its workspace), and never prompt.
+ * config files (`~/.gitconfig`, and `/etc/gitconfig` under the root opt-out),
+ * and never prompt.
  */
 const HARDENED_GIT_ENV = 'GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0';
 
@@ -463,12 +467,14 @@ export function fetchBranchesSubcommand(branches: string[]): string {
  * move into another mount namespace and evade the sweep. Uses `/proc`,
  * `readlink`, `sed` and `kill`.
  */
-export function killStrayProcessesScript(keeperPid: number): string {
+export function killStrayProcessesScript(keeperPid: number, useKeeperNamespace = false): string {
   if (!Number.isInteger(keeperPid) || keeperPid <= 0) {
     throw new Error(`invalid keeper pid: ${keeperPid}`);
   }
   return [
-    'asw_mnt=$(readlink "/proc/$$/ns/mnt" 2>/dev/null) || asw_mnt=',
+    useKeeperNamespace
+      ? `asw_mnt=$(readlink "/proc/${keeperPid}/ns/mnt" 2>/dev/null) || asw_mnt=`
+      : 'asw_mnt=$(readlink "/proc/$$/ns/mnt" 2>/dev/null) || asw_mnt=',
     'if [ -z "$asw_mnt" ]; then echo "stray-process sweep: cannot read own mount namespace" >&2; exit 1; fi',
     'asw_ppid() { sed -n \'s/^PPid:[[:space:]]*//p\' "/proc/$1/status" 2>/dev/null; }',
     'asw_mine() {',
@@ -492,6 +498,33 @@ export function killStrayProcessesScript(keeperPid: number): string {
     'asw_sweep STOP',
     'asw_sweep STOP',
     'asw_sweep KILL',
+  ].join('\n');
+}
+
+export function clearSetupProcessesScript(keeperPid: number, useKeeperNamespace = false): string {
+  return [
+    killStrayProcessesScript(keeperPid, useKeeperNamespace),
+    'asw_uid=$(id -u) || exit 1',
+    'asw_check() {',
+    '  for asw_d in /proc/[0-9]*; do',
+    `    asw_p=\${asw_d#/proc/}`,
+    '    if [ "$asw_p" = 1 ] || [ "$asw_p" = "$asw_keeper" ] || asw_mine "$asw_p"; then continue; fi',
+    '    asw_ns=$(readlink "$asw_d/ns/mnt" 2>/dev/null) || {',
+    '      [ ! -d "$asw_d" ] && continue',
+    '      asw_owner=$(sed -n \'s/^Uid:[[:space:]]*\\([0-9]*\\).*/\\1/p\' "$asw_d/status" 2>/dev/null)',
+    '      if [ -n "$asw_owner" ] && [ "$asw_owner" != "$asw_uid" ]; then continue; fi',
+    '      return 1',
+    '    }',
+    '    [ "$asw_ns" != "$asw_mnt" ] || return 1',
+    '  done',
+    '  return 0',
+    '}',
+    'for asw_retry in 1 2 3 4 5; do',
+    '  if asw_check; then exit 0; fi',
+    '  asw_sweep STOP; asw_sweep KILL; sleep 0.1',
+    'done',
+    'echo "setup transition: workspace processes remain or cannot be inspected" >&2',
+    'exit 1',
   ].join('\n');
 }
 
@@ -571,7 +604,8 @@ export function killTaggedProcessesScript(execId: string): string {
  * fresh workspace. Three cases:
  *
  *  - git already ships in the image — nothing to do;
- *  - git is missing but a package manager can install it: `apk` on Alpine,
+ *  - git is missing and the workspace is non-root — fail naming the image contract;
+ *  - git is missing and root can install it: `apk` on Alpine,
  *    then `apt-get` on Debian/Ubuntu (with `APT::Sandbox::User=root`, because
  *    the container runs `--cap-drop=ALL` and apt's default privilege drop to
  *    the `_apt` user fails without it);
@@ -581,6 +615,10 @@ export function killTaggedProcessesScript(execId: string): string {
 export function gitBootstrapScript(image: string): string {
   return [
     'if ! command -v git >/dev/null 2>&1; then',
+    '  if [ "$(id -u)" != 0 ]; then',
+    `    echo ${shellQuote(`auto-swe: executor image '${image}' must ship git for non-root workspaces. Install git when building the image; repository setup and catalog tools run as the workspace user. See docs/repositories.md`)} >&2`,
+    '    exit 1',
+    '  fi',
     '  if command -v apk >/dev/null 2>&1; then',
     '    apk add --no-cache git',
     '  elif command -v apt-get >/dev/null 2>&1; then',
@@ -854,6 +892,7 @@ export async function createWorkspace(
      * `.auto-swe/tools.yml`), if `workspace.toolInstall.enabled` is on.
      */
     toolsFor?: { connectionId: string };
+    trusted?: boolean;
   }
 ): Promise<Workspace> {
   // Container caps, default base image and metadata-blocking policy all come
@@ -863,6 +902,33 @@ export async function createWorkspace(
   const effectiveImage = image ?? infra.image;
   const egressPolicy =
     options?.egressPolicy ?? (await resolveRunEgressPolicy(options?.teamId ?? null));
+  let setupEgressPolicy = effectiveSetupEgressPolicy(
+    egressPolicy,
+    options?.trusted ? 'inherit' : await resolveRunSetupEgressPolicy(options?.teamId ?? null)
+  );
+  let setupPhase = setupEgressPolicy !== egressPolicy;
+  let transitioning = false;
+  let transitionFailed = false;
+  const phaseSecrets = (secretEnv?: Record<string, string>) => {
+    const clearProxy =
+      setupEgressPolicy !== egressPolicy &&
+      ((setupPhase && setupEgressPolicy === 'open') || (!setupPhase && egressPolicy === 'blocked'));
+    return clearProxy
+      ? {
+          secretEnv: {
+            ALL_PROXY: '',
+            all_proxy: '',
+            HTTP_PROXY: '',
+            HTTPS_PROXY: '',
+            http_proxy: '',
+            https_proxy: '',
+            ...secretEnv,
+          },
+        }
+      : secretEnv
+        ? { secretEnv }
+        : {};
+  };
 
   if (!DOCKER_IMAGE_REF_RE.test(effectiveImage)) {
     throw new Error(`Invalid Docker image name: ${effectiveImage}`);
@@ -917,6 +983,9 @@ export async function createWorkspace(
   // that tag. Killing the local `docker exec` client alone — all a timeout used
   // to do — leaves the command running inside the container.
   const newExecTag = (): { env: string; onTimeout: OnTimeout } => {
+    if (transitioning || transitionFailed) {
+      throw egressPolicyFailure('workspace setup transition is incomplete or failed');
+    }
     const execId = crypto.randomBytes(8).toString('hex');
     return {
       env: `${EXEC_TAG_ENV}=${execId}`,
@@ -1037,7 +1106,7 @@ export async function createWorkspace(
         heartbeatLabel: 'workspace: setup',
         onTimeout: tag.onTimeout,
         ...(opts.maxOutputBytes !== undefined ? { maxOutputBytes: opts.maxOutputBytes } : {}),
-        ...(opts.secretEnv ? { secretEnv: opts.secretEnv } : {}),
+        ...phaseSecrets(opts.secretEnv),
         timeoutMs: opts.timeoutMs,
         workdir: '/workspace/target-repo',
       });
@@ -1056,7 +1125,7 @@ export async function createWorkspace(
           env: [tag.env],
           heartbeatLabel: 'workspace: setup (git)',
           onTimeout: tag.onTimeout,
-          ...(secretEnv ? { secretEnv } : {}),
+          ...phaseSecrets(secretEnv),
           timeoutMs,
         }
       );
@@ -1080,6 +1149,7 @@ export async function createWorkspace(
       return backend.execShell(handle, ['sh', '-c', command], {
         env: [tag.env],
         heartbeatLabel: 'workspace: setup',
+        ...phaseSecrets(),
         onTimeout: tag.onTimeout,
         timeoutMs,
       });
@@ -1087,6 +1157,7 @@ export async function createWorkspace(
     stdin: async (command, body) => {
       const result = await backend.exec(handle, ['sh', '-c', command], {
         heartbeatLabel: 'workspace: restoring the dependency cache',
+        ...phaseSecrets(),
         stdin: body,
         timeoutMs: 900_000,
       });
@@ -1110,6 +1181,7 @@ export async function createWorkspace(
     field: options?.repoSetup?.field,
     gitHost: gitHostOf(cleanUrl),
     image: effectiveImage,
+    ...(setupPhase ? { setupEgressPolicy } : {}),
     teamId: options?.teamId ?? null,
   });
   let setupReport: Promise<RepoSetupReport | null> | undefined;
@@ -1119,6 +1191,9 @@ export async function createWorkspace(
   // Submodules, LFS, cache and steps: all after the lock, on the tree the workspace works on.
   const runResolvedSetup = async (): Promise<RepoSetupReport | null> => {
     if (!resolvedSetup) {
+      if (options?.repoSetup?.connectionId) {
+        await resolveSetupBlockers(options.repoSetup.connectionId);
+      }
       return null;
     }
     const started = Date.now();
@@ -1139,6 +1214,9 @@ export async function createWorkspace(
       submodules: git.submodules,
     };
     auditLog(`workspace.setup ${containerName} ${JSON.stringify(report)}`);
+    if (options?.repoSetup?.connectionId) {
+      await resolveSetupBlockers(options.repoSetup.connectionId);
+    }
     return report;
   };
   // `PATH=…` pair put on every agent-facing exec once tools are installed; empty otherwise.
@@ -1155,15 +1233,111 @@ export async function createWorkspace(
       registry?.token,
       egress?.registration.token,
     ]);
+  const applyPolicy = async (policy: EgressPolicy, replace = false, prepareOnly = false) => {
+    if (policy === 'open') {
+      return;
+    }
+    try {
+      await backend.lockEgress(
+        handle,
+        blockedEgressAllow(gitHostOf(cleanUrl), {
+          cleanUrl,
+          ...(policy === 'restricted' && egress ? { egressProxyUrl: egress.registration.url } : {}),
+          ...(resolvedSetup?.setup.lfs
+            ? { lfsHosts: lfsStorageHosts(gitHostOf(cleanUrl), await lfsStorageHostEntries()) }
+            : {}),
+          registryUrl: registry?.baseUrl,
+        }),
+        {
+          mode: policy,
+          ...(replace ? { replace: true } : {}),
+          ...(prepareOnly ? { prepareOnly: true } : {}),
+        }
+      );
+    } catch (err) {
+      throw egressPolicyFailure(
+        `egress policy '${policy}' could not be enforced: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  };
+  let transition: Promise<void> | undefined;
+  let setupMountNamespace: string | undefined;
+  const finishSetup = () => {
+    transition ??= (async () => {
+      try {
+        await setupReport;
+        transitioning = true;
+        if (backend.kind === 'docker' && infra.runAsRoot) {
+          if (!setupMountNamespace || !backend.clearSetupProcesses) {
+            throw new Error('trusted setup process cleanup is unavailable');
+          }
+          await backend.clearSetupProcesses(
+            handle,
+            clearSetupProcessesScript(handle.keeperPid, true),
+            setupMountNamespace
+          );
+        } else {
+          await backend.execShell(
+            handle,
+            [
+              '/usr/bin/env',
+              '-i',
+              'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+              '/bin/sh',
+              '-c',
+              clearSetupProcessesScript(handle.keeperPid),
+            ],
+            {
+              heartbeatLabel: 'workspace: verifying setup processes stopped',
+              secretEnv: {
+                BASH_ENV: '',
+                ENV: '',
+                LD_AUDIT: '',
+                LD_LIBRARY_PATH: '',
+                LD_PRELOAD: '',
+              },
+              timeoutMs: 60_000,
+            }
+          );
+        }
+        await applyPolicy(egressPolicy, true);
+        if (egressPolicy === 'blocked') {
+          await egress?.registration.release();
+        }
+        setupPhase = false;
+        transitioning = false;
+        auditLog(
+          `workspace.egress ${containerName} ${JSON.stringify({ egressPolicy, setupEgressPolicy })}`
+        );
+      } catch (err) {
+        transitionFailed = true;
+        await egress?.registration.release().catch(() => {});
+        await registry?.registration.release().catch(() => {});
+        await backend.remove(containerName);
+        redactExecError(err, [...cloneSecrets, ...setupSecrets]);
+        throw egressPolicyFailure(
+          `setup transition failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    })();
+    return transition;
+  };
   try {
     const spec = agentWorkspaceSpec(containerName, effectiveImage, infra, options?.services);
+    if (options?.trusted) {
+      spec.trusted = true;
+    }
     const gitHost = gitHostOf(cleanUrl);
     spec.baselineAllow = gitHost ? [{ host: gitHost }] : [];
     egress = await beginWorkspaceEgress(
       options?.teamId ?? null,
       gitHost ? [gitHost] : [],
-      egressPolicy
+      setupEgressPolicy === 'restricted' ? setupEgressPolicy : egressPolicy
     );
+    if (setupEgressPolicy === 'restricted' && setupPhase && !egress) {
+      setupEgressPolicy = egressPolicy;
+      setupPhase = false;
+    }
     if (egress) {
       spec.reachWorker = true;
       spec.env = [...(spec.env ?? []), ...egress.env];
@@ -1179,8 +1353,28 @@ export async function createWorkspace(
       spec.secretEnv = { ...spec.secretEnv, ...secretEnv };
     }
     handle = await backend.create(spec);
+    if (setupPhase && backend.kind === 'docker' && infra.runAsRoot) {
+      setupMountNamespace = (
+        await backend.execShell(
+          handle,
+          [
+            '/usr/bin/env',
+            '-i',
+            'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+            '/bin/readlink',
+            `/proc/${handle.keeperPid}/ns/mnt`,
+          ],
+          {
+            heartbeatLabel: 'workspace: recording setup mount namespace',
+          }
+        )
+      ).trim();
+      if (!/^mnt:\[\d+\]$/.test(setupMountNamespace)) {
+        throw egressPolicyFailure('cannot record the workspace setup mount namespace');
+      }
+    }
 
-    // Initial exec function (root of container)
+    // Initial exec function (container working directory).
     const rootExec = (
       command: string,
       timeoutMs?: number,
@@ -1191,7 +1385,7 @@ export async function createWorkspace(
         env: [tag.env],
         heartbeatLabel: 'workspace: provisioning',
         onTimeout: tag.onTimeout,
-        ...(secretEnv ? { secretEnv } : {}),
+        ...phaseSecrets(secretEnv),
         timeoutMs,
       });
     };
@@ -1509,7 +1703,12 @@ export async function createWorkspace(
     // network is confined to the proxy's address (plus the model/registry proxies and git host)
     // and `--noproxy` or a raw socket reaches nothing. `restricted` with an empty team allowlist
     // has no proxy (`egress` is null) and is locked exactly as `blocked`.
-    if (egressPolicy === 'blocked' || egressPolicy === 'restricted') {
+    if (setupPhase) {
+      if (backend.kind === 'docker' && setupEgressPolicy === 'open') {
+        await applyPolicy(egressPolicy, true, true);
+      }
+      await applyPolicy(setupEgressPolicy, true);
+    } else if (egressPolicy === 'blocked' || egressPolicy === 'restricted') {
       try {
         await backend.lockEgress(
           handle,
@@ -1537,6 +1736,9 @@ export async function createWorkspace(
       setupReport = Promise.resolve(await runResolvedSetup());
     }
   } catch (err) {
+    if (options?.repoSetup?.connectionId) {
+      await recordSetupFailure(options.repoSetup.connectionId, err);
+    }
     await registry?.registration.release().catch(() => {});
     await egress?.registration.release().catch(() => {});
     await backend.remove(containerName);
@@ -1553,6 +1755,10 @@ export async function createWorkspace(
     throw err;
   }
 
+  if (setupPhase && !options?.repoSetup?.defer) {
+    await finishSetup();
+  }
+
   return {
     containerId: containerName,
     copyFileOut: copyWorkspaceFileOut,
@@ -1562,13 +1768,14 @@ export async function createWorkspace(
       await backend.remove(containerName);
     },
     egressPolicy,
+    ...(setupPhase ? { finishSetup } : {}),
     exec: (command: string, options) => {
       const tag = newExecTag();
       return backend.execShell(handle, ['sh', '-c', command], {
         env: [tag.env, ...toolsEnv],
         heartbeatLabel: 'workspace: exec',
         onTimeout: tag.onTimeout,
-        ...(options?.secretEnv ? { secretEnv: options.secretEnv } : {}),
+        ...phaseSecrets(options?.secretEnv),
         timeoutMs: options?.timeoutMs,
         workdir: '/workspace/target-repo',
       });
@@ -1578,6 +1785,7 @@ export async function createWorkspace(
       return backend.exec(handle, ['sh', '-c', command], {
         env: [tag.env, ...toolsEnv],
         heartbeatLabel: 'workspace: exec (capture)',
+        ...phaseSecrets(),
         onTimeout: tag.onTimeout,
         timeoutMs: options?.timeoutMs ?? 600_000,
         workdir: '/workspace/target-repo',
@@ -1588,6 +1796,7 @@ export async function createWorkspace(
       const result = await backend.exec(handle, ['sh', '-c', command], {
         env: [tag.env, ...toolsEnv],
         heartbeatLabel: 'workspace: exec (stdin)',
+        ...phaseSecrets(),
         onTimeout: tag.onTimeout,
         stdin,
         workdir: '/workspace/target-repo',
@@ -1621,7 +1830,7 @@ export async function createWorkspace(
         const secretEnv = gitAuthSecretEnv(gitAuthHeader);
         return await backend.execShell(handle, ['sh', '-c', script], {
           env: [tag.env],
-          ...(secretEnv ? { secretEnv } : {}),
+          ...phaseSecrets(secretEnv),
           heartbeatLabel: 'workspace: git',
           onTimeout: tag.onTimeout,
         });
@@ -1640,6 +1849,7 @@ export async function createWorkspace(
         []),
     ],
     knowledgeBases: mountedKnowledgeBases,
+    setupEgressPolicy,
     ...(installLate ? { installTools: installLate } : {}),
     readFile: readWorkspaceFile,
     ...(options?.repoSetup
@@ -1652,6 +1862,15 @@ export async function createWorkspace(
               try {
                 return await runResolvedSetup();
               } catch (err) {
+                if (options.repoSetup?.connectionId) {
+                  await recordSetupFailure(options.repoSetup.connectionId, err);
+                }
+                if (setupPhase) {
+                  transitionFailed = true;
+                  await egress?.registration.release().catch(() => {});
+                  await registry?.registration.release().catch(() => {});
+                  await backend.remove(containerName);
+                }
                 redactExecError(err, [...cloneSecrets, ...setupSecrets]);
                 throw err;
               }

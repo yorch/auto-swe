@@ -306,6 +306,26 @@ export async function executeImplementation(
     // non-fatal — omit if workspace exec fails
   }
 
+  let crossRepoContext = '';
+  const prepareCrossRepoContext = async () => {
+    if (!wantsCrossRepoContext(crossRepoOptions)) {
+      return;
+    }
+    try {
+      crossRepoContext = await loadRepoDependencyContext(repo.id, activityCtx.orgId);
+      if (crossRepoContext && wantsCrossRepoCheckout(crossRepoOptions)) {
+        crossRepoContext += await checkoutUpstreamRepos(workspace, repo.id, activityCtx.orgId);
+      }
+      if (crossRepoContext) {
+        tracer.addActivityEvent({
+          name: 'crossRepo.context_loaded',
+          outputJson: { chars: crossRepoContext.length },
+        });
+      }
+    } catch {
+      crossRepoContext = '';
+    }
+  };
   try {
     heartbeat('workspace provisioned');
 
@@ -337,6 +357,10 @@ export async function executeImplementation(
     // previous attempt's pushed tree. Every fact above is recorded, so that code cannot pick the
     // base the change is measured from or the tree the integrity gate compares.
     await workspace.runSetup?.();
+    if (workspace.finishSetup) {
+      await prepareCrossRepoContext();
+      await workspace.finishSetup();
+    }
 
     // The paused run's tree goes back after the guard starts, so the restored changes are
     // this session's own and are guarded like the rest, and before any turn.
@@ -414,24 +438,8 @@ export async function executeImplementation(
     // loader swallows its own failures. The optional `full_checkout` tier
     // additionally clones the upstream repos into /workspace/deps (opt-in, off
     // by default) and appends the paths to the same block.
-    let crossRepoContext = '';
-    if (wantsCrossRepoContext(crossRepoOptions)) {
-      try {
-        crossRepoContext = await loadRepoDependencyContext(repo.id, activityCtx.orgId);
-        if (crossRepoContext && wantsCrossRepoCheckout(crossRepoOptions)) {
-          crossRepoContext += await checkoutUpstreamRepos(workspace, repo.id, activityCtx.orgId);
-        }
-        if (crossRepoContext) {
-          tracer.addActivityEvent({
-            name: 'crossRepo.context_loaded',
-            outputJson: { chars: crossRepoContext.length },
-          });
-        }
-      } catch {
-        // Both helpers already swallow their own failures; this is the outer
-        // belt — cross-repo context must never block implementation.
-        crossRepoContext = '';
-      }
+    if (!workspace.finishSetup) {
+      await prepareCrossRepoContext();
     }
 
     // Fire-and-forget tracker sync — never blocks implementation

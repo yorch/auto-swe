@@ -1,36 +1,12 @@
 'use client';
 
-import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
-import { useMemo } from 'react';
 import { ReviewList } from '@/components/requests/LaunchSteps';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { nodeDisplayName } from '@/components/workflow/nodeDisplay';
-import { phasesOf } from '@/components/workflow/workflowPhases';
-import { useWorkflowTemplate } from '@/hooks/useTemplates';
+import { useWorkflowProcess } from '@/hooks/useWorkflowProcess';
+import { humanizeWorkflowKey } from '@/lib/workflowLabels';
 
 export function WorkflowLaunchSummary({ templateId }: { templateId: string }) {
-  const query = useWorkflowTemplate(templateId);
-  const summary = useMemo(() => {
-    try {
-      const spec = parseWorkflowSpec(query.data?.activeVersionSpec?.spec);
-      const humanSteps = Object.entries(spec.nodes)
-        .filter(([, node]) => node.type.startsWith('human'))
-        .map(([id, node]) => nodeDisplayName(node, id));
-      const signals = Object.values(spec.nodes)
-        .filter((node) => node.type === 'signal')
-        .map((node) => node.name);
-      const outputs = [
-        ...new Set(
-          Object.values(spec.nodes).flatMap((node) =>
-            node.type === 'terminate' && node.result ? Object.keys(node.result) : []
-          )
-        ),
-      ];
-      return { humanSteps, outputs, phases: phasesOf(spec), signals };
-    } catch {
-      return null;
-    }
-  }, [query.data?.activeVersionSpec?.spec]);
+  const { query, summary } = useWorkflowProcess(templateId);
   return (
     <QueryBoundary
       error={query.error}
@@ -50,7 +26,7 @@ export function WorkflowLaunchSummary({ templateId }: { templateId: string }) {
             {
               label: 'Declared outputs',
               value: summary.outputs.length ? (
-                summary.outputs.map((output) => output.replace(/([A-Z])/g, ' $1')).join(', ')
+                summary.outputs.map(humanizeWorkflowKey).join(', ')
               ) : (
                 <span className="text-paper-400">
                   This workflow does not declare a structured result.
@@ -68,7 +44,14 @@ export function WorkflowLaunchSummary({ templateId }: { templateId: string }) {
               ),
             },
             ...(summary.signals.length > 0
-              ? [{ label: 'Waits for external events', value: summary.signals.join(', ') }]
+              ? [
+                  {
+                    label: 'Waits for external events',
+                    value: summary.signals
+                      .map((signal) => humanizeWorkflowKey(signal).replace(/ signal$/i, ''))
+                      .join(', '),
+                  },
+                ]
               : []),
           ]}
         />

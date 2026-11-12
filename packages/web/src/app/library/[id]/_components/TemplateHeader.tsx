@@ -1,3 +1,4 @@
+import { handLaunchBlock } from '@auto-swe/shared/lib/channelTask';
 import type { WorkflowTemplateDetail } from '@auto-swe/shared/types/api';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Badge } from '@/components/ui/Badge';
@@ -33,7 +34,8 @@ export function TemplateHeader({
   onEditInputs,
   compact = false,
 }: TemplateHeaderProps) {
-  const runnable = template.status === 'ACTIVE' && template.activeVersion !== null;
+  const runnable =
+    template.status === 'ACTIVE' && template.activeVersion !== null && !handLaunchBlock(template);
   return (
     <div>
       {!compact && <TemplateBackLink href="/library" label="Workflow library" />}

@@ -22,6 +22,18 @@ const spec: EphemeralContainerSpec & { name: string } = {
   secretEnv: { HTTP_PROXY: 'http://token@host.docker.internal:8792' },
   volumes: [{ source: 'step-volume', target: '/workspace' }],
 };
+
+describe('ephemeral runtime arguments', () => {
+  it('selects the runtime for foreground/detached authors, sidecars and network holders', () => {
+    vi.stubEnv('WORKSPACE_RUNTIME', 'runsc-host');
+    expect(ephemeralArgs(spec, false, 'holder')).toContain('--runtime=runsc-host');
+    expect(ephemeralArgs(spec, true, 'holder')).toContain('--runtime=runsc-host');
+    expect(ephemeralNetworkHolderArgs(spec, 'holder')).toContain('--runtime=runsc-host');
+    expect(ephemeralArgs({ image: 'img', network: 'none' }, false)).toContain(
+      '--runtime=runsc-host'
+    );
+  });
+});
 const result = { exitCode: 7, stderr: 'author-error\n', stdout: 'author-output\n' };
 const events: string[] = [];
 let holder = '';
@@ -106,6 +118,125 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('ephemeral network holder', () => {
+  describe('restricted proxy lock', () => {
+    const locked =
+      'v4:\n-P OUTPUT DROP\n-P INPUT DROP\nv6:\n-P OUTPUT DROP\n-P INPUT DROP\nv6disabled=0\n';
+    beforeEach(() => {
+      vi.stubEnv('EGRESS_PROXY_PORT', '8792');
+      vi.stubEnv('REGISTRY_PROXY_PORT', '8791');
+      vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+      allows = [{ ip: '172.17.0.1', port: 8792 }];
+      const spawn = vi.mocked(spawnCaptureAsync).getMockImplementation();
+      const exec = vi.mocked(execShellAsync).getMockImplementation();
+      vi.mocked(spawnCaptureAsync).mockImplementation(async (bin, args, opts) => {
+        if (args[0] === 'inspect') {
+          return { exitCode: 0, stderr: '', stdout: '["host.docker.internal:host-gateway"]' };
+        }
+        if (args.includes('cat')) {
+          return {
+            exitCode: 0,
+            stderr: '',
+            stdout: '127.0.0.1 localhost\n172.17.0.1 host.docker.internal\n',
+          };
+        }
+        return spawn
+          ? spawn(bin, args, opts)
+          : { exitCode: 1, stderr: 'missing fixture', stdout: '' };
+      });
+      vi.mocked(execShellAsync).mockImplementation(async (cmd, opts) => {
+        if (cmd.includes('iptables -P OUTPUT DROP')) {
+          events.push('lock');
+          return locked;
+        }
+        return exec ? exec(cmd, opts) : '';
+      });
+    });
+    const restricted = {
+      ...spec,
+      dns: [],
+      egressPolicy: 'restricted' as const,
+      reachWorker: true,
+    };
+
+    it('locks only wired proxy ports after the baseline, before author code, preserving result and cleanup', async () => {
+      const output = await dockerWorkspaceBackend().runEphemeral(restricted, {
+        heartbeatLabel: 'test',
+      });
+      expect(output).toEqual(result);
+      expect(events).toEqual([
+        'holder',
+        'baseline',
+        'lock',
+        'step',
+        'holder-removed',
+        'step-removed',
+      ]);
+      const script =
+        vi
+          .mocked(execShellAsync)
+          .mock.calls.find(([cmd]) => cmd.includes('iptables -P OUTPUT DROP'))?.[0] ?? '';
+      expect(script).toContain(`--network container:${holder}`);
+      expect(script).toContain('8792');
+      expect(script).not.toContain('8791');
+      expect(script).not.toContain('8790');
+      expect(script).not.toContain('--sport');
+    });
+
+    it('admits a wired registry, and only established sidecar replies to the worker gateway', async () => {
+      allows.unshift({ ip: '172.17.0.1', port: 8791 });
+      await dockerWorkspaceBackend().startDetached(
+        {
+          ...restricted,
+          env: ['NPM_CONFIG_REGISTRY=http://host.docker.internal:8791/npm/'],
+          publishPort: 8080,
+        },
+        { heartbeatLabel: 'test' }
+      );
+      const script =
+        vi
+          .mocked(execShellAsync)
+          .mock.calls.find(([cmd]) => cmd.includes('iptables -P OUTPUT DROP'))?.[0] ?? '';
+      expect(script).toContain('8791');
+      expect(script).toContain('--sport 8080 -m conntrack --ctstate ESTABLISHED -j ACCEPT');
+      expect(script).toContain('--dport 8080 -m conntrack --ctstate NEW -j ACCEPT');
+      expect(script).toContain('172.17.0.1');
+      expect(script).not.toContain('8790');
+      expect(events.indexOf('lock')).toBeLessThan(events.indexOf('step'));
+      await dockerWorkspaceBackend().remove(restricted.name);
+    });
+
+    it.each(['foreground', 'detached'])(
+      'refuses bad kernel read-back before starting a %s author',
+      async (mode) => {
+        const exec = vi.mocked(execShellAsync).getMockImplementation();
+        vi.mocked(execShellAsync).mockImplementation(async (cmd, opts) =>
+          cmd.includes('iptables -P OUTPUT DROP')
+            ? 'v4:\n-P OUTPUT ACCEPT'
+            : exec
+              ? exec(cmd, opts)
+              : ''
+        );
+        const backend = dockerWorkspaceBackend();
+        await expect(
+          mode === 'foreground'
+            ? backend.runEphemeral(restricted, {})
+            : backend.startDetached(restricted, {})
+        ).rejects.toMatchObject({ type: 'EGRESS_POLICY_UNENFORCEABLE' });
+        expect(events).not.toContain('step');
+        expect(events).toContain('holder-removed');
+        expect(events).toContain('step-removed');
+      }
+    );
+
+    it('refuses an unwired proxy before author code runs', async () => {
+      allows = [];
+      await expect(
+        dockerWorkspaceBackend().runEphemeral({ ...restricted, secretEnv: {} }, {})
+      ).rejects.toMatchObject({ type: 'EGRESS_POLICY_UNENFORCEABLE' });
+      expect(events).not.toContain('step');
+      expect(events).toContain('holder-removed');
+    });
+  });
   it('moves DNS, host pins and sidecar publishing to a locked-down labeled holder, without author env or mounts', () => {
     const sidecar = {
       ...spec,

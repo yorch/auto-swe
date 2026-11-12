@@ -6,8 +6,10 @@ import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock } from '@/test/rtl-helpers';
 import { useUpdateGitHubConfig } from './useAdminConfig';
+import { useSetConfigSetting } from './useConfigSettings';
 import { useCreateRepository } from './useRepositories';
 import { useRestoreSkillRevision } from './useSkills';
+import { useUpdateTeamEgressAllowlist } from './useTeams';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -24,6 +26,28 @@ const invalidated = (spy: ReturnType<typeof setup>['spy']) =>
   spy.mock.calls.map(([f]) => JSON.stringify((f as { queryKey: unknown }).queryKey));
 
 describe('cache invalidation', () => {
+  it('refreshes readiness after an egress policy save', async () => {
+    setupFetchMock({
+      'PUT /api/v1/platform/config/settings/workspace.egressPolicy': () => ({ data: {} }),
+    });
+    const { spy, wrapper } = setup();
+    const { result } = renderHook(() => useSetConfigSetting({ scope: 'GLOBAL' }), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync({ key: 'workspace.egressPolicy', value: 'blocked' });
+    });
+    expect(invalidated(spy)).toContain(JSON.stringify(['platform-readiness']));
+  });
+  it('refreshes readiness after a team egress allowlist save', async () => {
+    setupFetchMock({
+      'PUT /api/v1/teams/t1/egress-allowlist': () => ({ data: { egressAllowlist: [] } }),
+    });
+    const { spy, wrapper } = setup();
+    const { result } = renderHook(() => useUpdateTeamEgressAllowlist('t1'), { wrapper });
+    await act(async () => {
+      await result.current.mutateAsync(['example.com']);
+    });
+    expect(invalidated(spy)).toContain(JSON.stringify(['platform-readiness']));
+  });
   it('refreshes setup readiness when GitHub config is saved', async () => {
     setupFetchMock({ 'PUT /api/v1/platform/config/github': () => ({ data: {} }) });
     const { spy, wrapper } = setup();

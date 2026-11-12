@@ -36,6 +36,22 @@ function row(scopeKey: string, onSave = vi.fn()) {
 }
 
 describe('SettingRow', () => {
+  it('shows advisory warnings alongside a successful save', () => {
+    render(
+      <SettingRow
+        canWriteHere
+        onClear={() => {}}
+        onEdit={() => {}}
+        onSave={() => {}}
+        scope="TEAM"
+        scopeKey="TEAM:a"
+        setting={setting}
+        status={{ phase: 'saved', warnings: ['No egress proxy'] }}
+      />
+    );
+    expect(screen.getByText('No egress proxy')).toBeTruthy();
+    expect(screen.getByText('Saved')).toBeTruthy();
+  });
   it('drops a dirty draft when the viewed scope changes even though the inherited value is equal', () => {
     const { rerender } = render(row('TEAM:a'));
     const input = screen.getByLabelText('Max things') as HTMLInputElement;

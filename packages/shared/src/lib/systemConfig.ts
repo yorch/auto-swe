@@ -913,8 +913,10 @@ export interface WorkspaceInfraConfig {
   /// string `false` turns it off, so a typo cannot disable a security control.
   blockMetadata: boolean;
   blockPrivateEgress: boolean;
+  runAsRoot: boolean;
   privateEgressAllow: string[];
   diskLimit: string | null;
+  runtime: string | null;
   /// Cap on Temporal activity tasks one worker runs at once (read at boot).
   maxConcurrentActivities: number;
   /// Per-target wall-clock budget for a scanner pattern, in milliseconds.
@@ -965,6 +967,7 @@ export interface KubernetesWorkspaceConfig {
   /// Refuse to start unless a probe pod proves NetworkPolicy is enforced.
   /// Only the literal `false` turns it off, so a typo cannot disable it.
   requireNetworkPolicy: boolean;
+  requireRuntimeClass: boolean;
 }
 
 export interface HarnessModelProxyConfig {
@@ -1221,6 +1224,7 @@ export function resolveGatewayInternalUrl(): string {
 const IMAGE_HINT = 'a valid Docker image reference';
 const DOCKER_MEMORY_RE = /^\d+[bkmg]?$/i;
 const DOCKER_DISK_RE = /^(?=[0-9]*[1-9])[0-9]+[bkmg]?$/i;
+const DOCKER_RUNTIME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 
 /// Deploy-time sizing and sidecar images for agent workspaces, plus the worker
 /// and scanner bounds. These were admin-editable; they are infrastructure
@@ -1270,6 +1274,7 @@ export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
         'a Kubernetes namespace name'
       ),
       requireNetworkPolicy: process.env.K8S_REQUIRE_NETWORK_POLICY !== 'false',
+      requireRuntimeClass: process.env.K8S_REQUIRE_RUNTIME_CLASS === 'true',
       runAsUser: boundedEnvInt('K8S_WORKSPACE_RUN_AS_UID', 1000, 1, 2_147_483_647),
       runtimeClassName:
         validatedEnv('K8S_WORKSPACE_RUNTIME_CLASS', '', K8S_NAME_RE, 'a RuntimeClass name') || null,
@@ -1302,6 +1307,9 @@ export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
       .filter(isWorkspaceCidr),
     regexScanBudgetMs: boundedEnvInt('SCANNER_REGEX_BUDGET_MS', 250, 10, 60_000),
     registryProxy: resolveRegistryProxy(),
+    runAsRoot: process.env.WORKSPACE_RUN_AS_ROOT === 'true',
+    runtime:
+      validatedEnv('WORKSPACE_RUNTIME', '', DOCKER_RUNTIME_RE, 'a Docker runtime name') || null,
     stackImages: Object.fromEntries(
       (['python', 'jvm', 'go'] as const)
         .map((stack) => [
@@ -1344,6 +1352,7 @@ export function validateWorkspaceInfraEnv(): string[] {
     (raw) => raw === 'true' || raw === 'false',
     "'true' or 'false'"
   );
+  check('WORKSPACE_RUN_AS_ROOT', (raw) => raw === 'true' || raw === 'false', "'true' or 'false'");
   check(
     'WORKSPACE_PRIVATE_EGRESS_ALLOW',
     (raw) => raw.split(',').every((v) => isWorkspaceCidr(v.trim())),
@@ -1385,6 +1394,7 @@ export function validateWorkspaceInfraEnv(): string[] {
   check('REGISTRY_PROXY_BIND', (raw) => raw.length > 0 && !raw.includes(' '), 'a listen address');
   check('REGISTRY_PROXY_CACHE_MAX_BYTES', positiveInt, 'a positive integer (bytes)');
   check('WORKSPACE_NETWORK', (raw) => DOCKER_NETWORK_RE.test(raw), 'a Docker network name');
+  check('WORKSPACE_RUNTIME', (raw) => DOCKER_RUNTIME_RE.test(raw), 'a Docker runtime name');
   check('WORKSPACE_DNS', (raw) => parseDnsList(raw) !== null, DNS_HINT);
   check(
     'WORKSPACE_BACKEND',
@@ -1393,6 +1403,11 @@ export function validateWorkspaceInfraEnv(): string[] {
   );
   check('K8S_WORKSPACE_NAMESPACE', (raw) => K8S_LABEL_RE.test(raw), 'a Kubernetes namespace name');
   check('K8S_WORKSPACE_RUNTIME_CLASS', (raw) => K8S_NAME_RE.test(raw), 'a RuntimeClass name');
+  check(
+    'K8S_REQUIRE_RUNTIME_CLASS',
+    (raw) => raw === 'true' || raw === 'false',
+    "'true' or 'false'"
+  );
   check('K8S_WORKSPACE_RUN_AS_UID', positiveInt, 'a positive integer');
   check(
     'K8S_WORKSPACE_STORAGE_LIMIT',

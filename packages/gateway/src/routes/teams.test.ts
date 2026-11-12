@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { teamRoutes } from './teams.js';
 
 /**
@@ -237,6 +237,7 @@ function buildApp(state: State): FastifyInstance {
         );
       },
     },
+    workerEgressCapability: { findMany: async () => [] },
   };
   app.decorate('prisma', prisma as unknown as never);
 
@@ -712,6 +713,41 @@ describe('GET /api/v1/teams/:id/egress-allowlist', () => {
 });
 
 describe('PUT /api/v1/teams/:id/egress-allowlist', () => {
+  it('saves an allowlist with an advisory warning when restricted lacks a proxy', async () => {
+    const state = adminState();
+    const app = buildApp(state);
+    vi.spyOn(app.prisma.workerEgressCapability, 'findMany').mockResolvedValue([
+      {
+        backend: 'docker',
+        detail: '',
+        egressProxy: false,
+        id: 'worker',
+        networkLock: true,
+        registryProxy: false,
+        reportedAt: new Date(),
+      },
+    ]);
+    Object.assign(app.prisma, {
+      configSetting: {
+        findMany: async () => [{ scope: 'TEAM', teamId: TEAM_ID, value: 'restricted' }],
+      },
+    });
+    vi.spyOn(app.prisma.team, 'findMany').mockResolvedValue([
+      { egressAllowlist: [], id: TEAM_ID, orgId: 'org' },
+    ] as never);
+    const response = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'PUT',
+      payload: { egressAllowlist: ['example.com'] },
+      url: `/api/v1/teams/${TEAM_ID}/egress-allowlist`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      data: { egressAllowlist: ['example.com'] },
+      warnings: [expect.stringContaining('no egress proxy')],
+    });
+    expect(state.teams[0].egressAllowlist).toEqual(['example.com']);
+  });
   it('persists the new egress allowlist and returns it', async () => {
     const state = adminState();
     const app = buildApp(state);

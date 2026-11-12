@@ -408,6 +408,14 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     } else if (await refuseWideningEgressPolicy(reply, input.egressPolicy, egressScope)) {
       return reply;
     }
+    const networkPolicies = await resolveSettings(
+      ['workspace.egressPolicy', 'workspace.setupEgressPolicy'],
+      {
+        orgId: orgId ?? undefined,
+        teamId: repo.teamId ?? undefined,
+        workflowTemplateId: template.id,
+      }
+    );
 
     // Concurrency. Friendly early refusal; the worker admits by rank and is the authority.
     // A ledger row only holds a slot while its workflow is still running in
@@ -579,12 +587,13 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         ...(callback.target ? { callback: { target: callback.target } } : {}),
         effective: {
           deliver: payload.deliver,
-          ...(egressPolicy ? { egressPolicy } : {}),
+          egressPolicy: egressPolicy ?? networkPolicies['workspace.egressPolicy'],
           maxSteps: Math.min(payload.maxSteps ?? ceilings.maxSteps, ceilings.maxSteps),
           maxWallClockSeconds: Math.min(
             payload.maxWallClockSeconds ?? ceilings.maxWallClockSeconds,
             ceilings.maxWallClockSeconds
           ),
+          setupEgressPolicy: networkPolicies['workspace.setupEgressPolicy'],
         },
         temporalWorkflowId,
         workflowId: result.activeWorkflowId,

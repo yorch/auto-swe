@@ -560,6 +560,7 @@ async function provisionMergeWorkspace(
     inputs = recordInputs ? await recordMergeInputs(workspace, sourceBranches) : undefined;
     if (runSetup) {
       await workspace.runSetup?.();
+      await workspace.finishSetup?.();
     }
   } catch (err) {
     await workspace.destroy();

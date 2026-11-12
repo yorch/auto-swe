@@ -51,6 +51,23 @@ export function isSystemManagedTemplate(t: { name: string; team: unknown | null 
   return t.team === null && t.name === CHANNEL_ASSISTANT_TEMPLATE_NAME;
 }
 
+export function handLaunchBlock(template: {
+  name: string;
+  team: unknown | null;
+  kind?: string | null;
+}): { reason: string } | null {
+  if (isSystemManagedTemplate(template)) {
+    return { reason: 'Started automatically by the platform' };
+  }
+  if (template.kind === 'review') {
+    return { reason: "Started from a finished run's Reviews panel" };
+  }
+  if (template.kind === 'automation') {
+    return { reason: 'Started by an automation or integration' };
+  }
+  return null;
+}
+
 /**
  * Minimal valid `WorkflowSpec` for the Channel Assistant template: a single
  * terminal node. The `/runs` trace viewer renders the AgentTrace event stream

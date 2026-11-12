@@ -333,9 +333,18 @@ authenticated principal, and tenant keys on the tables joined through runs.
   and package installs need it). With the worker's egress proxy configured, `HTTP_PROXY` holds
   cooperating clients to the team allowlist, and a client that ignores proxy variables is not
   held.
+- **Setup can be looser than the agent.** The ADMIN-only, run-pinned `workspace.setupEgressPolicy`
+  defaults to `inherit`. `open` or `restricted` can temporarily loosen agent-workspace setup, with
+  verified process termination and replacement of the final network rules before agent execution.
+  Attached services intentionally remain running under the final policy. Shell/containerStep steps
+  do not use this setting. Treat setup as repository-controlled code with access to its declared
+  secrets and wired workspace/proxy credentials, not as a trusted package-install boundary; see
+  [setup network phases](./run-activity.md#setup-and-agent-network-phases).
 - **Shell and container steps** default to `network: "none"` in the node. A step that sets
   `network: "egress"` is held to the team's `egressAllowlist` by a DNS filter (and the egress
-  proxy when configured); under `open`, an empty allowlist permits any host.
+  proxy when configured); under `open`, an empty allowlist permits any host. Under `restricted`
+  with an allowlist, a verified holder-netns lock confines the step and detached sidecars to the
+  egress proxy and any wired registry proxy. Direct public-IP sockets and `--noproxy` are blocked.
 - **Setting it to `restricted` or `blocked` at GLOBAL scope already makes the whole deployment
   default-deny**, for agent workspaces by a network lock (an `iptables` helper container on
   Docker; labelled pods and `NetworkPolicy` objects on Kubernetes), proven after it is applied.
@@ -370,33 +379,21 @@ setting itself:
 
 ### Gap
 
-A fresh deployment is open by default, and nothing guides an operator to the default-deny
-configuration or checks that their deployment can enforce it before they select it. The
-literal-IP bypass for `restricted` with an allowlist on shell steps, the unfiltered
-`NO_PROXY` git host, and the worker-originated traffic that no policy governs remain as stated
+A fresh deployment is open by default. Setup readiness checks configured egress policies against
+fresh worker capability reports, and policy and team-allowlist saves warn without rejecting the save
+when enforcement is unavailable. A default-deny deployment profile remains opt-in. The unfiltered
+`NO_PROXY` git host and worker-originated traffic that no policy governs remain as stated
 in [run-activity.md](./run-activity.md) and [architecture.md](./architecture.md).
 
 ### Proposed child issues
 
-**Egress enforceability readiness check** (size S; depends on nothing)
-- The setup-readiness view reports whether the egress proxy port,
-  the registry proxy and (on Kubernetes) the manifest are in place, and say which policy levels
-  the deployment can enforce.
-- Selecting `restricted` or `blocked` at save time warns when it cannot be enforced.
-- Owner: unassigned
-
-**Opt-in default-deny deployment profile** (size M; depends on the readiness check)
+**Opt-in default-deny deployment profile** (size M; depends on nothing)
 - A documented profile (environment values, registry settings and a seeded team allowlist for the
   git host, package mirrors and the model provider) that sets `restricted` at GLOBAL scope.
 - The templates in the library that need network access are identified, and the profile
   allowlists the hosts they need deliberately.
 - The default for a fresh install stays `open` unless the issue decides otherwise; flipping it
   is a separate, breaking change with an upgrade note.
-- Owner: unassigned
-
-**IP-level lock for allowlisted shell and container steps** (size L; depends on nothing)
-- Under `restricted` with an allowlist, a step is confined by a network lock to the egress proxy
-  as agent workspaces are, so a client that ignores proxy variables reaches nothing.
 - Owner: unassigned
 
 ## 6. SOC 2 readiness path
@@ -469,6 +466,13 @@ None of these is implemented by the code, and an auditor will ask for each:
 - Owner: unassigned
 
 ## Limitations
+
+- A looser setup policy can expose setup secrets and workspace/proxy credentials to repository code
+  with broader network access. Final process termination and agent locking cannot undo exfiltration
+  or file changes; intentionally long-lived attached services remain outside that cleanup guarantee.
+
+- Egress readiness is based on workers' self-declared reports. Reports expire after thirty
+  minutes and refresh every ten minutes without re-probing; they are not continuous attestation.
 
 - **No SAML and no SCIM.** Sign-in is OIDC, email and password, or magic link. Users are
   admitted through a queue and removed by an ADMIN. No identity-provider attribute sets a role or

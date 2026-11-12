@@ -324,6 +324,34 @@ beforeEach(() => {
 });
 
 describe('authority checks (the worker does not trust the gateway)', () => {
+  it('tightens setup networking before the agent can execute', async () => {
+    const ws = m.agentWs as typeof m.agentWs & { finishSetup?: () => Promise<void> };
+    const finish = vi.fn(async () => {});
+    ws.finishSetup = finish;
+    try {
+      await runAgentTask({ request: request() });
+      expect(finish).toHaveBeenCalledOnce();
+      expect(finish.mock.invocationCallOrder[0]).toBeLessThan(
+        m.runAgent.mock.invocationCallOrder[0] ?? 0
+      );
+    } finally {
+      delete ws.finishSetup;
+    }
+  });
+
+  it('never runs the agent after a failed setup transition', async () => {
+    const ws = m.agentWs as typeof m.agentWs & { finishSetup?: () => Promise<void> };
+    ws.finishSetup = vi.fn(async () => {
+      throw new Error('setup transition failed');
+    });
+    try {
+      await expect(runAgentTask({ request: request() })).rejects.toThrow('setup transition failed');
+      expect(m.runAgent).not.toHaveBeenCalled();
+      expect(ws.destroy).toHaveBeenCalled();
+    } finally {
+      delete ws.finishSetup;
+    }
+  });
   it('refuses to run for any template that is not the system template', async () => {
     for (const run of [
       { template: { name: 'Agent Run', origin: null, teamId: null }, templateId: 't' },
@@ -750,6 +778,8 @@ describe('delivery: trust boundary and gate-before-push', () => {
       checkout,
     ]);
     expect(vi.mocked(createWorkspace).mock.calls[1][6]).not.toHaveProperty('knowledgeBases');
+    expect(vi.mocked(createWorkspace).mock.calls[0][6]).not.toHaveProperty('trusted');
+    expect(vi.mocked(createWorkspace).mock.calls[1][6]).toHaveProperty('trusted', true);
     expect(vi.mocked(createWorkspace).mock.calls[0][6]).toHaveProperty('knowledgeBaseSnapshotIds', [
       'snapshot',
     ]);

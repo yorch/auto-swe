@@ -1,9 +1,12 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import dns from 'node:dns/promises';
+import fs from 'node:fs/promises';
 import { BlockList, isIP } from 'node:net';
 import os from 'node:os';
+import path from 'node:path';
 import { DOCKER_HOST_ALIAS, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
+import { egressPolicyFailure } from '../egressWiring.js';
 import {
   type CappedFileResult,
   type CapturedResult,
@@ -306,8 +309,17 @@ function checkRuleAddress(rule: ResolvedAllow): void {
  *
  * Pure: returns the script text, so it is testable without a daemon.
  */
-export function buildEgressLockScript(allow: ResolvedAllow[]): string {
+export function buildEgressLockScript(
+  allow: ResolvedAllow[],
+  incoming: ResolvedAllow[] = []
+): string {
   allow.forEach(checkRuleAddress);
+  incoming.forEach((entry) => {
+    checkRuleAddress(entry);
+    if (entry.port === undefined) {
+      throw new Error('egress lock: an incoming connection needs a port');
+    }
+  });
   const lines = [
     ...IPTABLES_PRELUDE,
     // allow_ip IP PORT: one ACCEPT rule in the right address family.
@@ -342,6 +354,13 @@ export function buildEgressLockScript(allow: ResolvedAllow[]): string {
     '  ip6tables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT',
     'fi',
     ...allow.map((e) => `allow_ip ${shellQuote(e.ip)} ${shellQuote(String(e.port ?? ''))}`),
+    ...incoming.flatMap(({ ip, port }) => {
+      const table = ip.includes(':') ? '[ "$v6" = 0 ] || ip6tables' : 'iptables';
+      return [
+        `${table} -A INPUT -s ${shellQuote(ip)} -p tcp --dport ${port} -m conntrack --ctstate NEW -j ACCEPT`,
+        `${table} -A OUTPUT -d ${shellQuote(ip)} -p tcp --sport ${port} -m conntrack --ctstate ESTABLISHED -j ACCEPT`,
+      ];
+    }),
     'iptables -P OUTPUT DROP',
     'iptables -P INPUT DROP',
     '[ "$v6" = 0 ] || { ip6tables -P OUTPUT DROP; ip6tables -P INPUT DROP; }',
@@ -473,7 +492,8 @@ export async function resolveInWorkspace(
   host: string,
   mapped: Map<string, string[]>,
   lookup: (host: string) => Promise<string[]> = async (name) =>
-    (await dns.lookup(name, { all: true })).map((a) => a.address)
+    (await dns.lookup(name, { all: true })).map((a) => a.address),
+  asRoot = true
 ): Promise<string[]> {
   if (mapped.has(host.toLowerCase())) {
     throw new Error(
@@ -484,7 +504,7 @@ export async function resolveInWorkspace(
   for (const db of ['ahosts', 'hosts']) {
     const r = await spawnCaptureAsync(
       'docker',
-      ['exec', '-u', 'root', containerId, 'getent', db, host],
+      ['exec', ...(asRoot ? ['-u', 'root'] : []), containerId, 'getent', db, host],
       { heartbeatLabel: `workspace: resolving ${host}`, timeoutMs: 30_000 }
     );
     if (r.exitCode === 0) {
@@ -593,7 +613,7 @@ async function workspaceResolutionContext(containerId: string) {
     trusted.set(alias, [aliasAddress]);
     mapped.delete(alias);
   }
-  return { mapped, trusted };
+  return { hostsText: current.stdout, mapped, trusted };
 }
 
 export async function installBaselineEgress(
@@ -666,6 +686,39 @@ export async function installBaselineEgress(
   assertBaselineEgress(report, needed, cidrs, infra.blockPrivateEgress, infra.blockMetadata);
 }
 
+/**
+ * Refuse to boot when the worker cannot reach the Docker API.
+ *
+ * Without this, an unreachable daemon still lets the worker start and accept
+ * workflows, so the first symptom is `docker run` failing inside an activity —
+ * after the run exists and has spent time. The usual causes are a worker process
+ * whose groups do not include `docker` (a systemd user service, or one started
+ * before the group was added) and a worker container that never received the
+ * socket. Both surface here as the same connection error, and both are worth
+ * refusing the boot over.
+ */
+export async function assertDockerDaemonReachable(): Promise<void> {
+  const infra = resolveWorkspaceInfra();
+  if (infra.backend !== 'docker') {
+    return;
+  }
+  const socket = process.env.DOCKER_HOST?.trim() || 'unix:///var/run/docker.sock';
+  try {
+    await execShellAsync("docker info --format '{{.ServerVersion}}'", {
+      heartbeatLabel: 'workspace: probing Docker API reachability',
+    });
+  } catch (cause) {
+    throw new Error(
+      `The Docker API could not be reached at ${socket}. A process that is not in the ` +
+        '`docker` group — or a worker container whose socket is not mounted — fails exactly ' +
+        'this way: add the worker user to `docker` and restart it, or mount ' +
+        '/var/run/docker.sock (or point DOCKER_HOST at the proxy) and restart the container. ' +
+        (cause instanceof Error ? cause.message : String(cause)),
+      { cause }
+    );
+  }
+}
+
 export async function assertDockerDiskLimit(): Promise<void> {
   const infra = resolveWorkspaceInfra();
   if (infra.backend !== 'docker' || !infra.diskLimit) {
@@ -719,6 +772,7 @@ export function buildServiceContainerArgs(
     '-d',
     '--name',
     `${workspaceName}-svc-${service.name}`,
+    ...dockerRuntimeArgs(),
     '--label',
     `asw.workspace=${workspaceName}`,
     ...workspaceLabelArgs(),
@@ -824,6 +878,25 @@ function execCommand(h: WorkspaceHandle, argv: string[], opts: WorkspaceExecOpti
   return parts.join(' ');
 }
 
+export function workspaceBootstrapScript(): string {
+  return [
+    'set -eu',
+    'fail() { echo "workspace bootstrap: cannot install git/bash; provide them in the executor image" >&2; exit 1; }',
+    'missing=""',
+    'if [ ! -x /usr/bin/git ] && [ ! -x /bin/git ]; then missing="$missing git"; fi',
+    'if [ ! -x /bin/bash ] && [ ! -x /usr/bin/bash ]; then missing="$missing bash"; fi',
+    'if [ -n "$missing" ]; then',
+    '  if [ -x /sbin/apk ]; then',
+    '    /sbin/apk add --no-cache $missing || fail',
+    '  elif [ -x /usr/bin/apt-get ]; then',
+    '    /usr/bin/apt-get -o APT::Sandbox::User=root update && /usr/bin/apt-get -o APT::Sandbox::User=root install -y --no-install-recommends $missing || fail',
+    '  else fail; fi',
+    'fi',
+    '[ -x /usr/bin/git ] || [ -x /bin/git ] || fail',
+    '[ -x /bin/bash ] || [ -x /usr/bin/bash ] || fail',
+  ].join('\n');
+}
+
 /**
  * The Docker driver: workspaces are `docker run`d containers kept alive by
  * `sleep infinity`, reached through `docker exec`, `docker cp` and
@@ -840,12 +913,115 @@ function execCommand(h: WorkspaceHandle, argv: string[], opts: WorkspaceExecOpti
  */
 class DockerWorkspaceBackend implements WorkspaceBackend {
   readonly kind = 'docker' as const;
+  private readonly egressPins = new Map<string, Map<string, string[]>>();
+
+  async clearSetupProcesses(
+    h: WorkspaceHandle,
+    script: string,
+    mountNamespace: string
+  ): Promise<void> {
+    if (!/^mnt:\[\d+\]$/.test(mountNamespace)) {
+      throw new Error('setup cleanup: invalid recorded mount namespace');
+    }
+    const check = `[ "$(readlink /proc/${h.keeperPid}/ns/mnt)" = ${shellQuote(mountNamespace)} ] || { echo 'setup cleanup: workspace PID namespace is not accessible to the trusted helper' >&2; exit 1; }`;
+    await execShellAsync(
+      [
+        'docker',
+        'run',
+        '--rm',
+        '--network=none',
+        `--pid=container:${h.id}`,
+        '--cap-drop=ALL',
+        '--cap-add=KILL',
+        '--cap-add=SYS_PTRACE',
+        '--security-opt=no-new-privileges',
+        '--read-only',
+        '--memory=128m',
+        '--pids-limit=64',
+        '--',
+        resolveWorkspaceInfra().metadataBlockImage,
+        '/usr/bin/env',
+        '-i',
+        'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+        '/bin/sh',
+        '-ec',
+        `${check}\n${script}`,
+      ]
+        .map(shellQuote)
+        .join(' '),
+      {
+        heartbeatLabel: 'workspace: verifying setup processes stopped',
+        timeoutMs: 60_000,
+      }
+    );
+  }
+  private readonly bootstrapHandles = new Map<string, WorkspaceHandle>();
+  private readonly bootstrapRunning = new Set<string>();
+
+  private sealBootstrap(handle: WorkspaceHandle): void {
+    if (this.bootstrapRunning.has(handle.id)) {
+      throw new Error(
+        'workspace bootstrap: ordinary execution is forbidden during root preparation'
+      );
+    }
+    this.bootstrapHandles.delete(handle.id);
+  }
+
+  async bootstrapTools(handle: WorkspaceHandle): Promise<void> {
+    if (this.bootstrapHandles.get(handle.id) !== handle || this.bootstrapRunning.has(handle.id)) {
+      throw new Error(
+        'workspace bootstrap: root execution is forbidden after preparation or ordinary execution'
+      );
+    }
+    this.bootstrapRunning.add(handle.id);
+    try {
+      await execShellAsync(
+        [
+          'docker',
+          'exec',
+          '--user',
+          '0',
+          '--workdir',
+          '/',
+          '-e',
+          'LD_PRELOAD=',
+          '-e',
+          'LD_LIBRARY_PATH=',
+          '-e',
+          'LD_AUDIT=',
+          '-e',
+          'ENV=',
+          '-e',
+          'BASH_ENV=',
+          handle.id,
+          '/usr/bin/env',
+          '-i',
+          'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+          'HOME=/root',
+          '/bin/sh',
+          '-ec',
+          workspaceBootstrapScript(),
+        ]
+          .map(shellQuote)
+          .join(' '),
+        { heartbeatLabel: 'workspace: installing bootstrap tools', timeoutMs: 600_000 }
+      );
+    } finally {
+      this.bootstrapRunning.delete(handle.id);
+      this.bootstrapHandles.delete(handle.id);
+    }
+  }
 
   async create(spec: WorkspaceContainerSpec): Promise<WorkspaceHandle> {
     const infra = resolveWorkspaceInfra();
     const storage = infra.diskLimit
       ? ` --storage-opt ${shellQuote(`size=${infra.diskLimit}`)}`
       : '';
+    const runtime = spec.trusted
+      ? ''
+      : dockerRuntimeArgs()
+          .map((arg) => ` ${shellQuote(arg)}`)
+          .join('');
     // Hardening notes (unlike the locked-down `ephemeralContainer` runner, this
     // workspace intentionally keeps default bridge networking and omits
     // `--read-only`/`--tmpfs`: the implementer agent needs outbound git
@@ -870,11 +1046,13 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const env = [
       ...(spec.env ?? []).map((pair) => ` -e ${shellQuote(pair)}`),
       ...secretEnvNames(spec.secretEnv).map((name) => ` -e ${name}`),
+      ...(infra.runAsRoot ? [] : [' -e HOME=/workspace/.home']),
     ].join('');
+    const user = infra.runAsRoot ? '' : ' --user 1000:1000';
     // `memory` is a config string, so shell-quote it (the numeric caps can't
     // carry shell metacharacters); '--' separates docker flags from the image.
     await execShellAsync(
-      `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
+      `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init${user} ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage}${runtime} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
       {
         heartbeatLabel: 'workspace: starting container',
         ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
@@ -905,6 +1083,11 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const handle: WorkspaceHandle = { id: spec.name, keeperPid };
 
     try {
+      if (!infra.runAsRoot) {
+        await this.prepareWorkspaceDirectories(handle);
+      }
+      this.bootstrapHandles.set(handle.id, handle);
+      await this.bootstrapTools(handle);
       await installBaselineEgress(spec);
     } catch (error) {
       await execShellAsync(`docker rm -f ${shellQuote(spec.name)}`, {
@@ -958,6 +1141,25 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     return handle;
   }
 
+  private async prepareWorkspaceDirectories(handle: WorkspaceHandle): Promise<void> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'workspace-dirs-'));
+    try {
+      const workspace = path.join(dir, 'workspace');
+      await fs.mkdir(path.join(workspace, '.home'), { recursive: true });
+      await fs.mkdir(path.join(workspace, 'target-repo'));
+      // Archive-mode imports use the container's configured UID/GID in the Docker daemon.
+      const copied = await spawnCaptureAsync('docker', ['cp', '-a', workspace, `${handle.id}:/`], {
+        heartbeatLabel: 'workspace: preparing writable directories',
+        timeoutMs: 120_000,
+      });
+      if (copied.exitCode !== 0) {
+        throw new Error(`workspace: preparing UID 1000 directories failed: ${copied.stderr}`);
+      }
+    } finally {
+      await fs.rm(dir, { force: true, recursive: true });
+    }
+  }
+
   attach(id: string, keeperPid = 0): WorkspaceHandle {
     return { id, keeperPid };
   }
@@ -967,6 +1169,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     argv: string[],
     opts: WorkspaceExecOptions
   ): Promise<CapturedResult> {
+    this.sealBootstrap(h);
     const args = execArgv(h, argv, { ...opts, stdin: opts.stdin !== undefined });
     const runOpts = {
       heartbeatLabel: opts.heartbeatLabel,
@@ -981,6 +1184,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   }
 
   async execShell(h: WorkspaceHandle, argv: string[], opts: WorkspaceExecOptions): Promise<string> {
+    this.sealBootstrap(h);
     return execShellAsync(execCommand(h, argv, opts), {
       heartbeatLabel: opts.heartbeatLabel,
       onTimeout: opts.onTimeout,
@@ -990,6 +1194,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   }
 
   spawn(h: WorkspaceHandle, argv: string[], opts: WorkspaceSpawnOptions) {
+    this.sealBootstrap(h);
     assertNoCredentialEnvPairs(opts.env, 'docker exec env');
     const args = [
       'exec',
@@ -1027,7 +1232,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
 
   copyIn(h: WorkspaceHandle, srcTarFile: string, path: string): Promise<void> {
     return execShellAsync(
-      `docker cp - ${shellQuote(`${h.id}:${path}`)} < ${shellQuote(srcTarFile)}`,
+      `docker cp ${resolveWorkspaceInfra().runAsRoot ? '' : '-a '}- ${shellQuote(`${h.id}:${path}`)} < ${shellQuote(srcTarFile)}`,
       { heartbeatLabel: 'workspace: copying in', timeoutMs: 600_000 }
     ).then(() => undefined);
   }
@@ -1038,10 +1243,14 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     path: string,
     opts?: { timeoutMs?: number; heartbeatLabel?: string }
   ): Promise<CapturedResult> {
-    return spawnCaptureAsync('docker', ['cp', srcFile, `${h.id}:${path}`], {
-      heartbeatLabel: opts?.heartbeatLabel ?? 'workspace: copying a file in',
-      timeoutMs: opts?.timeoutMs ?? 120_000,
-    });
+    return spawnCaptureAsync(
+      'docker',
+      ['cp', ...(resolveWorkspaceInfra().runAsRoot ? [] : ['-a']), srcFile, `${h.id}:${path}`],
+      {
+        heartbeatLabel: opts?.heartbeatLabel ?? 'workspace: copying a file in',
+        timeoutMs: opts?.timeoutMs ?? 120_000,
+      }
+    );
   }
 
   pause(h: WorkspaceHandle): Promise<void> {
@@ -1053,6 +1262,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
 
   async remove(idOrHandle: string | WorkspaceHandle): Promise<void> {
     const id = typeof idOrHandle === 'string' ? idOrHandle : idOrHandle.id;
+    this.egressPins.delete(id);
     try {
       let owner = id;
       if (/^[a-f0-9]{64}$/i.test(id)) {
@@ -1224,6 +1434,25 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       proxies,
       dnsServers.includes('127.0.0.2') ? infra.dns : undefined
     );
+    if (spec.egressPolicy === 'restricted') {
+      try {
+        if (!infra.egressProxy || !proxies.includes(infra.egressProxy.url)) {
+          throw new Error('the step has no wired egress proxy');
+        }
+        const allow = proxies.map((proxy) => {
+          const url = new URL(proxy);
+          return {
+            host: url.hostname.replace(/^\[|\]$/g, ''),
+            port: Number(url.port || (url.protocol === 'https:' ? 443 : 80)),
+          };
+        });
+        await this.installEgressLock(this.attach(holder), allow, spec.publishPort);
+      } catch (error) {
+        throw egressPolicyFailure(
+          `restricted step network lock could not be enforced: ${error instanceof Error ? error.message : String(error)}`
+        );
+      }
+    }
     return holder;
   }
 
@@ -1271,38 +1500,130 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   async lockEgress(
     handle: WorkspaceHandle,
     allow: EgressAllowEntry[],
-    _opts?: LockEgressOptions
+    opts?: LockEgressOptions
   ): Promise<void> {
-    // Fail closed: every error below propagates and the caller destroys the workspace. The lock
-    // is the same for both modes, so `_opts` is not read.
+    this.egressPins.set(handle.id, await this.installEgressLock(handle, allow, undefined, opts));
+  }
+
+  private async installEgressLock(
+    handle: WorkspaceHandle,
+    allow: EgressAllowEntry[],
+    sidecarPort?: number,
+    opts?: LockEgressOptions
+  ): Promise<Map<string, string[]>> {
+    // Fail closed: every error below propagates and the caller removes the workspace or holder.
     const image = resolveWorkspaceInfra().metadataBlockImage;
     // /etc/hosts belongs to the workspace container, not to its network namespace, so the helper
-    // cannot write it. Names are resolved from inside the workspace and pinned by a root
-    // `docker exec` into it, BEFORE the lock, while nothing is blocked yet.
-    const { mapped, trusted } = await workspaceResolutionContext(handle.id);
-    const { rules, hosts } = await resolveEgressTargets(
-      allow,
-      (host) => resolveInWorkspace(handle.id, host, mapped),
-      trusted
-    );
-    const script = buildEgressLockScript(rules);
-    if (hosts.length > 0) {
-      const lines = hosts.map(([ip, name]) => `${ip}\t${name}\n`).join('');
-      const written = await spawnWithStdinAsync(
-        'docker',
-        ['exec', '-i', '-u', 'root', handle.id, 'sh', '-c', 'cat >> /etc/hosts'],
-        lines,
-        { heartbeatLabel: 'workspace: pinning egress hosts', timeoutMs: 30_000 }
-      );
-      if (written.exitCode !== 0) {
-        throw new Error('egress lock: cannot write the workspace /etc/hosts');
+    // cannot write it. Post-setup pinning uses the daemon, never a root workspace exec.
+    const { hostsText, mapped, trusted } = await workspaceResolutionContext(handle.id);
+    const prior = this.egressPins.get(handle.id) ?? new Map<string, string[]>();
+    if (opts?.replace) {
+      for (const [name, ips] of prior) {
+        if (JSON.stringify(trusted.get(name) ?? mapped.get(name)) !== JSON.stringify(ips)) {
+          throw new Error(`egress lock: workspace changed the recorded host pin for ${name}`);
+        }
+        trusted.set(name, ips);
       }
     }
-    const report = await execShellAsync(buildEgressHelperCommand(handle.id, image, script), {
-      heartbeatLabel: 'workspace: locking egress',
-    });
-    // The script read the policies back from the kernel; refuse anything but DROP.
-    assertEgressLocked(report);
+    const { rules, hosts } = await resolveEgressTargets(
+      allow,
+      (host) => {
+        if (opts?.replace && this.egressPins.has(handle.id)) {
+          throw new Error(`egress lock: no prepared host pin for ${host}`);
+        }
+        return resolveInWorkspace(handle.id, host, mapped, undefined, !opts?.replace);
+      },
+      trusted
+    );
+    const incoming =
+      sidecarPort === undefined
+        ? []
+        : (trusted.get(DOCKER_HOST_ALIAS) ?? []).map((ip) => ({ ip, port: sidecarPort }));
+    if (sidecarPort !== undefined && incoming.length === 0) {
+      throw new Error('egress lock: cannot identify the sidecar worker gateway');
+    }
+    const script = buildEgressLockScript(rules, incoming);
+    if (hosts.length > 0) {
+      const lines = hosts.map(([ip, name]) => `${ip}\t${name}\n`).join('');
+      if (opts?.replace) {
+        const inspected = await spawnCaptureAsync(
+          'docker',
+          ['inspect', '--format', '{{.Id}}\t{{.HostsPath}}', handle.id],
+          {
+            heartbeatLabel: 'workspace: locating daemon-owned hosts file',
+            timeoutMs: 30_000,
+          }
+        );
+        const [containerId, hostsPath] = inspected.stdout.trim().split('\t');
+        if (
+          inspected.exitCode !== 0 ||
+          !containerId ||
+          !/^[a-f0-9]{64}$/.test(containerId) ||
+          !hostsPath ||
+          !path.posix.isAbsolute(hostsPath) ||
+          /[,\r\n]/.test(hostsPath) ||
+          !hostsPath.endsWith(`/${containerId}/hosts`)
+        ) {
+          throw new Error('egress lock: cannot locate the daemon-owned workspace hosts file');
+        }
+        const written = await spawnWithStdinAsync(
+          'docker',
+          [
+            'run',
+            '--rm',
+            '-i',
+            '--network=none',
+            '--user=0:0',
+            '--cap-drop=ALL',
+            '--security-opt=no-new-privileges',
+            '--read-only',
+            '--memory=128m',
+            '--pids-limit=64',
+            '--mount',
+            `type=bind,src=${hostsPath},dst=/asw-hosts`,
+            '--',
+            image,
+            '/usr/bin/env',
+            '-i',
+            'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+            '/bin/sh',
+            '-ec',
+            'cat > /asw-hosts',
+          ],
+          `${hostsText}\n${lines}`,
+          { heartbeatLabel: 'workspace: pinning egress hosts', timeoutMs: 30_000 }
+        );
+        if (written.exitCode !== 0) {
+          throw new Error(
+            `egress lock: cannot write the workspace /etc/hosts: ${written.stderr.trim()}`
+          );
+        }
+      } else {
+        const written = await spawnWithStdinAsync(
+          'docker',
+          ['exec', '-i', '-u', 'root', handle.id, 'sh', '-c', 'cat >> /etc/hosts'],
+          lines,
+          { heartbeatLabel: 'workspace: pinning egress hosts', timeoutMs: 30_000 }
+        );
+        if (written.exitCode !== 0) {
+          throw new Error('egress lock: cannot write the workspace /etc/hosts');
+        }
+      }
+    }
+    if (!opts?.prepareOnly) {
+      const report = await execShellAsync(buildEgressHelperCommand(handle.id, image, script), {
+        heartbeatLabel: 'workspace: locking egress',
+      });
+      assertEgressLocked(report);
+    }
+    for (const [name, ips] of trusted) {
+      prior.set(name, ips);
+    }
+    for (const [ip, name] of hosts) {
+      const key = name.toLowerCase();
+      prior.set(key, [...(prior.get(key) ?? []), ip]);
+    }
+    return prior;
   }
 
   async sidecarBaseUrl(name: string, containerPort: number): Promise<string> {
@@ -1350,6 +1671,11 @@ function helperArgs(spec: HelperContainerSpec): string[] {
   ];
 }
 
+export function dockerRuntimeArgs(): string[] {
+  const runtime = resolveWorkspaceInfra().runtime;
+  return runtime ? [`--runtime=${runtime}`] : [];
+}
+
 export function ephemeralArgs(
   spec: EphemeralContainerSpec,
   detached: boolean,
@@ -1364,6 +1690,7 @@ export function ephemeralArgs(
     `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,
   ]);
   const flags = [
+    ...dockerRuntimeArgs(),
     `--network=${holder ? `container:${holder}` : spec.network === 'egress' ? 'bridge' : 'none'}`,
     ...(!holder ? (spec.dns ?? []).map((d) => `--dns=${d}`) : []),
     `--memory=${spec.memory ?? '512m'}`,
@@ -1418,6 +1745,6 @@ export function ephemeralNetworkHolderArgs(
 
 const driver = new DockerWorkspaceBackend();
 
-export function dockerWorkspaceBackend(): WorkspaceBackend {
+export function dockerWorkspaceBackend(): DockerWorkspaceBackend {
   return driver;
 }

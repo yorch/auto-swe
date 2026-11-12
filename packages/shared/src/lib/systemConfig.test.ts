@@ -557,6 +557,7 @@ describe('systemConfig resolvers', () => {
       'WORKSPACE_METADATA_BLOCK_IMAGE',
       'WORKSPACE_BLOCK_METADATA',
       'WORKSPACE_BLOCK_PRIVATE_EGRESS',
+      'WORKSPACE_RUN_AS_ROOT',
       'WORKSPACE_PRIVATE_EGRESS_ALLOW',
       'WORKSPACE_DISK_LIMIT',
       'WORKER_MAX_CONCURRENT_ACTIVITIES',
@@ -578,6 +579,8 @@ describe('systemConfig resolvers', () => {
       'K8S_WORKSPACE_MAX_LIFETIME_SEC',
       'K8S_WORKSPACE_IMAGE_PULL_SECRETS',
       'K8S_REQUIRE_NETWORK_POLICY',
+      'K8S_REQUIRE_RUNTIME_CLASS',
+      'WORKSPACE_RUNTIME',
     ];
     beforeEach(() => {
       for (const key of KEYS) {
@@ -642,6 +645,7 @@ describe('systemConfig resolvers', () => {
           maxLifetimeSec: 86_400,
           namespace: 'auto-swe-workspaces',
           requireNetworkPolicy: true,
+          requireRuntimeClass: false,
           runAsUser: 1000,
           runtimeClassName: null,
           storageLimit: '10Gi',
@@ -654,8 +658,23 @@ describe('systemConfig resolvers', () => {
         privateEgressAllow: [],
         regexScanBudgetMs: 250,
         registryProxy: null,
+        runAsRoot: false,
+        runtime: null,
         stackImages: {},
       });
+    });
+
+    it('opts out of UID 1000 only for literal true and validates the switch strictly', () => {
+      for (const raw of ['', 'false', 'TRUE', 'True', '1', 'yes', ' true ']) {
+        vi.stubEnv('WORKSPACE_RUN_AS_ROOT', raw);
+        expect(resolveWorkspaceInfra().runAsRoot).toBe(false);
+        expect(validateWorkspaceInfraEnv().some((p) => p.includes('WORKSPACE_RUN_AS_ROOT'))).toBe(
+          raw !== '' && raw !== 'false'
+        );
+      }
+      vi.stubEnv('WORKSPACE_RUN_AS_ROOT', 'true');
+      expect(resolveWorkspaceInfra().runAsRoot).toBe(true);
+      expect(validateWorkspaceInfraEnv()).toEqual([]);
     });
 
     describe('the Kubernetes backend', () => {
@@ -682,6 +701,7 @@ describe('systemConfig resolvers', () => {
           maxLifetimeSec: 7200,
           namespace: 'agents',
           requireNetworkPolicy: true,
+          requireRuntimeClass: false,
           runAsUser: 2000,
           runtimeClassName: 'gvisor',
           storageLimit: '20Gi',
@@ -858,6 +878,30 @@ describe('systemConfig resolvers', () => {
     });
 
     describe('validateWorkspaceInfraEnv — the strict check the worker runs at boot', () => {
+      it.each(['runsc', 'runsc-host', 'io.containerd.runsc.v1', 'runc'])(
+        'accepts runtime %s',
+        (value) => {
+          process.env.WORKSPACE_RUNTIME = value;
+          expect(resolveWorkspaceInfra().runtime).toBe(value);
+          expect(validateWorkspaceInfraEnv()).toEqual([]);
+        }
+      );
+      it.each([' runsc', 'runsc ', '../runsc', '--privileged', 'runsc;true', 'a'.repeat(129)])(
+        'rejects runtime %j',
+        (value) => {
+          process.env.WORKSPACE_RUNTIME = value;
+          expect(validateWorkspaceInfraEnv().join()).toContain('WORKSPACE_RUNTIME');
+          expect(() => assertWorkspaceInfraEnv()).toThrow('WORKSPACE_RUNTIME');
+        }
+      );
+      it('requires an explicit boolean for the opt-in RuntimeClass gate', () => {
+        process.env.K8S_REQUIRE_RUNTIME_CLASS = 'true';
+        expect(resolveWorkspaceInfra().kubernetes.requireRuntimeClass).toBe(true);
+        process.env.K8S_REQUIRE_RUNTIME_CLASS = 'false';
+        expect(resolveWorkspaceInfra().kubernetes.requireRuntimeClass).toBe(false);
+        process.env.K8S_REQUIRE_RUNTIME_CLASS = 'yes';
+        expect(validateWorkspaceInfraEnv().join()).toContain('K8S_REQUIRE_RUNTIME_CLASS');
+      });
       it('is clean when nothing is set, and when everything is valid', () => {
         expect(validateWorkspaceInfraEnv()).toEqual([]);
         vi.stubEnv('WORKSPACE_MEMORY', '512m');

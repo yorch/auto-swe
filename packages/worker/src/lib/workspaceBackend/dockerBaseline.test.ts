@@ -72,6 +72,20 @@ afterEach(() => {
 });
 
 describe('Docker baseline create', () => {
+  it('applies the runtime to workspaces and their services, not trusted helpers or delivery', async () => {
+    vi.stubEnv('WORKSPACE_RUNTIME', 'runsc-host');
+    await dockerWorkspaceBackend().create(spec);
+    let cmds = vi.mocked(execShellAsync).mock.calls.map(([cmd]) => cmd);
+    expect(cmds[0]).toContain("'--runtime=runsc-host'");
+    expect(cmds.find((cmd) => cmd.includes('workspace-baseline-svc-db'))).toContain(
+      '--runtime=runsc-host'
+    );
+    expect(cmds.find((cmd) => cmd.includes('--network container:'))).not.toContain('--runtime');
+    vi.mocked(execShellAsync).mockClear();
+    await dockerWorkspaceBackend().create({ ...spec, services: [], trusted: true });
+    cmds = vi.mocked(execShellAsync).mock.calls.map(([cmd]) => cmd);
+    expect(cmds[0]).not.toContain('--runtime');
+  });
   it('verifies the helper before starting services and adds the opt-in storage cap', async () => {
     vi.stubEnv('WORKSPACE_DISK_LIMIT', '20g');
     await dockerWorkspaceBackend().create(spec);
@@ -135,7 +149,9 @@ describe('Docker baseline create', () => {
       .mock.calls.find(([cmd]) => cmd.includes('--network container:'))?.[0];
     expect(cmd).toContain('169.254.169.254');
     expect(cmd).not.toContain('10.0.0.0/8');
-    expect(spawnCaptureAsync).not.toHaveBeenCalled();
+    expect(vi.mocked(spawnCaptureAsync).mock.calls.filter(([, args]) => args[0] !== 'cp')).toEqual(
+      []
+    );
   });
 
   it('trusts only the worker-added alias and omits public destination ACCEPT rules', async () => {

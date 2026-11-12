@@ -6,6 +6,7 @@ import type { ReviewRouting, RoutingReason } from '../lib/prEvaluation/reviewRou
 import type { PreviewConfig } from '../lib/previewConfig.js';
 import type { PullRequestState } from '../lib/pullRequest.js';
 import type { RepoSetup } from '../lib/repoSetup.js';
+import type { SetupBlocker } from '../lib/setupBlocker.js';
 import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
 import type { BudgetTier, WorkflowStatus } from './workflow.js';
 
@@ -14,6 +15,21 @@ export type { BudgetTier } from './workflow.js';
 export interface ApiResponse<T> {
   data: T;
   error?: { code: string; message: string };
+}
+
+export interface RepoSetupBlockerSummary extends Omit<SetupBlocker, 'step'> {
+  id: string;
+  step: string | null;
+  remedy: string;
+  occurrences: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  lastWorkflowId: string | null;
+  resolvedAt: string | null;
+}
+
+export interface RepoSetupBlockersResponse {
+  blockers: RepoSetupBlockerSummary[];
 }
 
 export const RUN_ACTIVITY_KINDS = [
@@ -778,7 +794,7 @@ export type WorkflowStepRecordStatus = (typeof WORKFLOW_STEP_RECORD_STATUSES)[nu
 
 /** Shape returned by GET /api/v1/workflow-templates (list) */
 export interface WorkflowTemplateSummary {
-  kind?: 'review' | null;
+  kind?: 'review' | 'automation' | null;
   id: string;
   name: string;
   description: string;

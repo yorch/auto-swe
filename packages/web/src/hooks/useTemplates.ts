@@ -199,7 +199,7 @@ export function useUpdateWorkflowTemplate(templateId: string) {
   return useMutation({
     mutationFn: (
       body: Partial<{
-        kind: 'review' | null;
+        kind: 'review' | 'automation' | null;
         name: string;
         description: string;
         isDefault: boolean;

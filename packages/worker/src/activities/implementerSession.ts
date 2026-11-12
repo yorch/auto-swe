@@ -274,6 +274,7 @@ export async function runImplementerFixSession(
     // earlier agent pushed to this branch. Every fact above is recorded, so that code cannot pick
     // the base the change is measured from or the tree the integrity gate compares.
     await workspace.runSetup?.();
+    await workspace.finishSetup?.();
 
     const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
     const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);

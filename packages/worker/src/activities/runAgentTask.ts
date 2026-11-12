@@ -336,6 +336,7 @@ export async function runAgentTaskCore(
         toolsFor: { connectionId: repo.id },
       }
     );
+    await agentWs.finishSetup?.();
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
     // Only now: the repository's setup command runs its own code, which on a run built on an
     // earlier agent's branch includes what that agent pushed. The commit the change is measured
@@ -350,7 +351,13 @@ export async function runAgentTaskCore(
 
     tracer.addActivityEvent({
       name: 'agent.runtime',
-      outputJson: { agentKey: key, runtime: loop.runtime, source: loop.source },
+      outputJson: {
+        agentKey: key,
+        egressPolicy: agentWs.egressPolicy,
+        runtime: loop.runtime,
+        setupEgressPolicy: agentWs.setupEgressPolicy,
+        source: loop.source,
+      },
     });
     // The paused run's tree goes back into the agent's container before its first turn;
     // delivery still judges it from a fresh container, as for any run.
@@ -452,6 +459,7 @@ export async function runAgentTaskCore(
         detectedStack: repo.detectedStack,
         egressPolicy: egressPolicy === 'open' ? 'open' : 'blocked',
         teamId: repo.teamId,
+        trusted: true,
       }
     );
     await importAgentTree(agentWs, trusted);

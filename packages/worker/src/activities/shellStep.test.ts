@@ -820,7 +820,7 @@ describe('runShellStep — registry wiring', () => {
     }
   );
 
-  it('leaves an egress step alone under restricted with an allowlist', async () => {
+  it('passes restricted egress to the network-locked runner with an allowlist', async () => {
     egressPolicy.value = 'restricted';
     findUniqueOrThrow.mockResolvedValue({
       defaultBranch: 'main',
@@ -837,6 +837,7 @@ describe('runShellStep — registry wiring', () => {
       request: REQUEST,
     });
     expect(vi.mocked(runEphemeralContainer).mock.calls.at(-1)?.[0]).toMatchObject({
+      egressPolicy: 'restricted',
       network: 'egress',
     });
   });

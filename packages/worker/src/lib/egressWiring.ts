@@ -1,6 +1,6 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
+import type { EgressPolicy, SetupEgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 import { currentRequestContext } from './config/contextLookup.js';
@@ -127,13 +127,9 @@ export async function beginWorkspaceEgress(
 
 /**
  * A shell or container step that will run with `network: 'egress'` under `restricted` is held to
- * the team allowlist by the egress proxy alone. Without the proxy it would run with only the
- * network's DNS filter, so refuse instead. A no-op under any other policy or network.
- *
- * Limitation: this is cooperative enforcement only. A step runs on a bridge network with
- * `HTTP_PROXY`, DNS filtering and `--add-host` pins, and is NOT network-locked the way a
- * `restricted` workspace is (`lockEgress`), so a raw socket or `--noproxy` bypasses the proxy. The
- * step's audit record says so (`egress (proxy-enforced only; not network-locked)`).
+ * the team allowlist by the egress proxy and a verified proxy-only lock in its network holder.
+ * Without the proxy the allowlist cannot be enforced, so refuse instead.
+ * A no-op under any other policy or network.
  */
 export function assertStepEgressEnforceable(
   policy: EgressPolicy,
@@ -156,13 +152,25 @@ export function assertStepEgressEnforceable(
  * is not seen.
  */
 export async function resolveRunEgressPolicy(teamId: string | null): Promise<EgressPolicy> {
+  return resolveRunNetworkSetting('workspace.egressPolicy', teamId);
+}
+
+export async function resolveRunSetupEgressPolicy(
+  teamId: string | null
+): Promise<SetupEgressPolicy> {
+  return resolveRunNetworkSetting('workspace.setupEgressPolicy', teamId);
+}
+
+async function resolveRunNetworkSetting<
+  K extends 'workspace.egressPolicy' | 'workspace.setupEgressPolicy',
+>(key: K, teamId: string | null) {
   const ctx = await currentRequestContext();
   let orgId = ctx.orgId;
   if (orgId === undefined && teamId) {
     const team = await prisma.team.findUnique({ select: { orgId: true }, where: { id: teamId } });
     orgId = team?.orgId ?? undefined;
   }
-  return resolveSetting('workspace.egressPolicy', {
+  return resolveSetting(key, {
     ...ctx,
     ...(orgId ? { orgId } : {}),
     ...(teamId ? { teamId } : {}),

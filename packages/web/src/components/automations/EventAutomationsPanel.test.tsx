@@ -122,7 +122,7 @@ describe('EventAutomationsPanel', () => {
     ).toBe(false);
     // The options come from the template's declared schema, at its defaults.
     expect(screen.getByText('Minimum confidence to fix')).toBeTruthy();
-    expect((screen.getByLabelText('regression') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Regression') as HTMLInputElement).checked).toBe(true);
   });
 
   it('saves the source, its filters, and only the options that differ from the defaults', () => {
@@ -130,7 +130,7 @@ describe('EventAutomationsPanel', () => {
     render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
     fireEvent.click(screen.getByRole('button', { name: ADD }));
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'mainline' } });
-    fireEvent.click(screen.getByLabelText('dependency'));
+    fireEvent.click(screen.getByLabelText('Dependency'));
     fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
     expect(state.created).toEqual([
       expect.objectContaining({

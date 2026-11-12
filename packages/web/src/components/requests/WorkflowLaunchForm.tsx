@@ -1,6 +1,8 @@
 'use client';
 
-import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
+import { DEFAULT_BRIEF_INPUT_SCHEMA, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
+import { isValidTicketId } from '@auto-swe/shared/lib/ticketId';
+import { workflowPresentation } from '@auto-swe/shared/lib/workflowCatalog';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -41,15 +43,7 @@ import {
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { pickSampleField, WORKFLOW_SAMPLE } from '@/lib/sampleTasks';
-
-/** `targetBranch` → "Target branch". */
-function humanize(key: string) {
-  const spaced = key
-    .replace(/([A-Z])/g, ' $1')
-    .replace(/[_-]+/g, ' ')
-    .trim();
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
-}
+import { humanizeWorkflowKey, workflowFieldLabel } from '@/lib/workflowLabels';
 
 function hasText(value: unknown) {
   return typeof value === 'string' && value.trim() !== '';
@@ -58,12 +52,19 @@ function hasText(value: unknown) {
 export function WorkflowLaunchForm({
   template,
   onLaunched,
+  showProcessSummary = true,
 }: {
   template: WorkflowTemplateSummary;
   onLaunched: (requestId: string) => void;
+  showProcessSummary?: boolean;
 }) {
   const taskNameId = useId();
-  const schema = isInputSchema(template.inputSchema) ? template.inputSchema : null;
+  const schema = isInputSchema(template.inputSchema)
+    ? template.inputSchema
+    : template.inputSchema == null &&
+        (template.workspaceProvider == null || template.workspaceProvider === 'git_repo')
+      ? DEFAULT_BRIEF_INPUT_SCHEMA
+      : null;
   const [payload, setPayload] = useState<Record<string, unknown>>(
     schema ? buildInitialPayload(schema) : {}
   );
@@ -84,6 +85,14 @@ export function WorkflowLaunchForm({
   const unchanged = failure?.runAnyway ? failure : null;
   const sampleField = pickSampleField(schema);
   const errors = schema ? validatePayload(schema, payload) : {};
+  if (
+    schema === DEFAULT_BRIEF_INPUT_SCHEMA &&
+    typeof payload.ticketId === 'string' &&
+    payload.ticketId !== '' &&
+    !isValidTicketId(payload.ticketId)
+  ) {
+    errors.ticketId = 'Enter a valid ticket ID (letters, digits, ".", "_", "#", "/" and "-")';
+  }
   const required = new Set(schema?.required ?? []);
   // A workspace provider can need a target connection the input schema never asks for; the
   // launch is refused without one, so the form has to collect it.
@@ -102,7 +111,21 @@ export function WorkflowLaunchForm({
       const connection = connections.find((item) => item.id === value);
       return connection ? connectionLabel(connection) : 'Selected connection';
     }
+    const property = schema?.properties[key];
+    if (
+      Array.isArray(property?.enum) &&
+      (typeof value === 'string' || typeof value === 'number') &&
+      property.enum.includes(value)
+    ) {
+      return humanizeWorkflowKey(String(value));
+    }
+    if (property?.type === 'array' && Array.isArray(property.items?.enum) && Array.isArray(value)) {
+      return value.map((item) => humanizeWorkflowKey(String(item))).join(', ');
+    }
     return typeof value === 'string' ? value : JSON.stringify(value);
+  }
+  function fieldLabel(key: string) {
+    return workflowFieldLabel(key, schema?.properties[key]);
   }
   function reviewInputs() {
     setAttempted(true);
@@ -118,7 +141,10 @@ export function WorkflowLaunchForm({
     try {
       const result = await launch.mutateAsync({
         label: label.trim(),
-        payload,
+        payload:
+          schema === DEFAULT_BRIEF_INPUT_SCHEMA && payload.ticketId === ''
+            ? Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'ticketId'))
+            : payload,
         ...knowledgeBaseOverrideBody(references),
         ...egressPolicyFor(networkAccess),
         ...(acknowledgeUnchanged ? { acknowledgeUnchanged } : {}),
@@ -134,7 +160,7 @@ export function WorkflowLaunchForm({
         description={
           review
             ? 'Check what will run, then launch it.'
-            : `Name this task and fill in what ${template.name} needs.`
+            : `Name this task and fill in what ${workflowPresentation(template).title} needs.`
         }
         stage={review ? 'review' : 'details'}
         title={review ? 'Review and launch' : 'Task details'}
@@ -175,10 +201,7 @@ export function WorkflowLaunchForm({
                 value: `${template.name} · active version ${template.activeVersion}`,
               },
               ...Object.entries(payload).map(([key, value]) => ({
-                label:
-                  schema?.properties[key]?.type === 'connection' || key === 'connectionId'
-                    ? 'Target connection'
-                    : humanize(key),
+                label: fieldLabel(key),
                 multiline: true,
                 value: displayValue(key, value),
               })),
@@ -195,7 +218,7 @@ export function WorkflowLaunchForm({
               version.
             </Alert>
           )}
-          <WorkflowLaunchSummary templateId={template.id} />
+          {showProcessSummary && <WorkflowLaunchSummary templateId={template.id} />}
           <Alert variant="info">
             This workflow follows its configured steps, checks, and approvals. Review its process in
             the workflow library if you need to confirm what it may publish.
@@ -222,7 +245,7 @@ export function WorkflowLaunchForm({
           {sampleField && (
             <SampleTaskButton
               blocked={label.trim() !== '' || hasText(payload[sampleField])}
-              caption={`Fills in the task name and the “${humanize(sampleField)}” field with a small documentation request. Other fields stay as they are.`}
+              caption={`Fills in the task name and the “${fieldLabel(sampleField)}” field with a small documentation request. Other fields stay as they are.`}
               onFill={() => {
                 setLabel(WORKFLOW_SAMPLE.label);
                 setPayload((prev) => ({ ...prev, [sampleField]: WORKFLOW_SAMPLE.text }));
@@ -240,17 +263,19 @@ export function WorkflowLaunchForm({
             value={label}
           />
           {schema &&
-            Object.entries(schema.properties).map(([key, prop]) => (
-              <SchemaFieldInput
-                error={attempted ? errors[key] : undefined}
-                key={key}
-                name={key}
-                onChange={(value) => setPayload((prev) => ({ ...prev, [key]: value }))}
-                prop={prop}
-                required={required.has(key)}
-                value={payload[key]}
-              />
-            ))}
+            Object.entries(schema.properties)
+              .sort(([a], [b]) => Number(required.has(b)) - Number(required.has(a)))
+              .map(([key, prop]) => (
+                <SchemaFieldInput
+                  error={attempted ? errors[key] : undefined}
+                  key={key}
+                  name={key}
+                  onChange={(value) => setPayload((prev) => ({ ...prev, [key]: value }))}
+                  prop={prop}
+                  required={required.has(key)}
+                  value={payload[key]}
+                />
+              ))}
           {needsConnection && (
             <ConnectionPicker
               connectionTypes={providerConnectionTypes}

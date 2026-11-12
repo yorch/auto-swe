@@ -1,6 +1,12 @@
 'use client';
 
 import Link from 'next/link';
+import {
+  LessonFlagActions,
+  LessonFlagReasons,
+  LessonQuarantineActions,
+  LessonQuarantineBadge,
+} from '@/components/lessons/LessonFlags';
 import { Badge } from '@/components/ui/Badge';
 import { type RunLesson, useRunLessons } from '@/hooks/useLessons';
 import { RunPanel } from './RunPanel';
@@ -34,6 +40,12 @@ function LessonLine({ lesson, recalledFor }: { lesson: RunLesson; recalledFor?: 
           <span title="Merged into or replaced by a newer lesson">No longer recalled</span>
         )}
         {recalledFor && recalledFor.length > 0 && <span>Recalled by {recalledFor.join(', ')}</span>}
+      </div>
+      <LessonQuarantineBadge lesson={lesson} />
+      <LessonFlagReasons lesson={lesson} />
+      <div className="mt-1 flex flex-wrap gap-1">
+        {lesson.canFlag && <LessonFlagActions lesson={lesson} manages={lesson.canManage} />}
+        {lesson.canManage && <LessonQuarantineActions lesson={lesson} />}
       </div>
     </li>
   );

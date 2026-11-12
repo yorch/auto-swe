@@ -6,6 +6,7 @@ import { DOCKER_HOST_ALIAS } from '@auto-swe/shared/lib/systemConfig';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   assertBaselineEgress,
+  assertDockerDaemonReachable,
   assertEgressLocked,
   baselineRules,
   buildBaselineEgressScript,
@@ -218,6 +219,15 @@ conntrack() { :; }
     expect(() => assertEgressLocked(strict)).not.toThrow();
     expect(strict).not.toContain('-A OUTPUT -j ASW_BASELINE');
     expect(strict).not.toContain('-A OUTPUT -m conntrack --ctstate');
+    const transitioned = execFileSync(
+      'sh',
+      [
+        '-c',
+        `${tables}\n${buildBaselineEgressScript([], [])}\n${buildEgressLockScript([{ ip: '203.0.113.7', port: 8792 }])}\necho final:\n${buildEgressLockScript([])}`,
+      ],
+      { encoding: 'utf8' }
+    );
+    expect(transitioned.split('final:\n')[1]).toBe(strict);
   });
 });
 
@@ -763,5 +773,73 @@ describe('egress script and helper', () => {
     ).toThrow(/IPv6/);
     expect(() => assertEgressLocked(`${v4}v6:\nv6-unavailable\nv6disabled=0\n`)).toThrow(/IPv6/);
     expect(() => assertEgressLocked('')).toThrow();
+  });
+});
+
+describe('Docker API reachability', () => {
+  // A stand-in `docker` on PATH, the same way the create tests above stub the
+  // command runner: the probe only runs `docker info`, so one script decides
+  // whether it succeeds.
+  const FAILED =
+    '#!/bin/sh\n' +
+    "echo 'permission denied while trying to connect to the docker API at " +
+    "unix:///var/run/docker.sock' >&2\n" +
+    'exit 1\n';
+  const OK = '#!/bin/sh\n[ "$1" = info ] || exit 0\necho 27.0.3\n';
+  let dir: string | undefined;
+  let oldPath: string | undefined;
+
+  async function useFakeDocker(script: string): Promise<void> {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-info-'));
+    await fs.writeFile(path.join(dir, 'docker'), script, { mode: 0o755 });
+    oldPath = process.env.PATH;
+    process.env.PATH = `${dir}${path.delimiter}${oldPath ?? ''}`;
+  }
+
+  beforeEach(() => {
+    vi.stubEnv('WORKSPACE_BACKEND', 'docker');
+    vi.stubEnv('DOCKER_HOST', '');
+  });
+
+  afterEach(async () => {
+    if (oldPath !== undefined) {
+      process.env.PATH = oldPath;
+      oldPath = undefined;
+    }
+    if (dir) {
+      await fs.rm(dir, { force: true, recursive: true });
+      dir = undefined;
+    }
+    vi.unstubAllEnvs();
+  });
+
+  it('stays silent when the daemon answers', async () => {
+    await useFakeDocker(OK);
+    await expect(assertDockerDaemonReachable()).resolves.toBeUndefined();
+  });
+
+  it('names the socket and the docker group when the daemon refuses the connection', async () => {
+    await useFakeDocker(FAILED);
+    await expect(assertDockerDaemonReachable()).rejects.toThrow(/Docker API could not be reached/);
+    await expect(assertDockerDaemonReachable()).rejects.toThrow(
+      /unix:\/\/\/var\/run\/docker\.sock/
+    );
+    await expect(assertDockerDaemonReachable()).rejects.toThrow(/`docker` group/);
+    // The underlying diagnostic stays in the message and on the error's cause.
+    await expect(assertDockerDaemonReachable()).rejects.toThrow(/permission denied/);
+  });
+
+  it('names DOCKER_HOST when the socket is configured that way', async () => {
+    vi.stubEnv('DOCKER_HOST', 'tcp://docker-socket-proxy:2375');
+    await useFakeDocker(FAILED);
+    await expect(assertDockerDaemonReachable()).rejects.toThrow(/tcp:\/\/docker-socket-proxy:2375/);
+  });
+
+  it('does not probe on a Kubernetes backend', async () => {
+    // A stand-in that always fails: the clean resolve proves the backend check
+    // returns before the probe, not that this host happens to have a daemon.
+    await useFakeDocker(FAILED);
+    vi.stubEnv('WORKSPACE_BACKEND', 'kubernetes');
+    await expect(assertDockerDaemonReachable()).resolves.toBeUndefined();
   });
 });

@@ -291,6 +291,11 @@ model ActiveWorkflow {
   @@map("active_workflows")
 }
 
+enum LessonQuarantineSource {
+  MANUAL
+  FLAG_THRESHOLD
+}
+
 // HNSW index on `embedding` is defined in raw SQL inside
 // migrations/20260618000001_custom_constraints_and_indexes/migration.sql.
 // Prisma's schema DSL cannot model pgvector index types, so `prisma migrate dev`
@@ -363,6 +368,11 @@ model MemoryItem {
   confidence     Float?
   /// People who think this lesson is wrong (repository lessons only; see `LessonFlag`).
   flags          LessonFlag[]
+  quarantinedAt    DateTime?                    @map("quarantined_at") @db.Timestamptz
+  quarantinedById  String?                      @map("quarantined_by_id") @db.Uuid
+  quarantinedBy    User?                        @relation("LessonQuarantineAuthor", fields: [quarantinedById], references: [id], onDelete: SetNull)
+  quarantineReason String?                      @map("quarantine_reason") @db.VarChar(500)
+  quarantineSource LessonQuarantineSource?      @map("quarantine_source")
 
   @@index([repoId, consolidatedAt])
   @@index([supersededById])
@@ -380,8 +390,8 @@ model MemoryItem {
 ///
 /// Raised by anyone who can read the lesson, one per person per lesson (flagging again replaces the
 /// reason). Read and cleared by whoever may delete the lesson: a lead of the repository's owning
-/// team, or a platform ADMIN. A flag changes nothing about recall; it is a queue for those people,
-/// who then delete the lesson or clear its flags. Deleting the lesson deletes its flags.
+/// team, or a platform ADMIN. Reaching the repository's flag threshold quarantines the lesson.
+/// Deleting the lesson deletes its flags.
 model LessonFlag {
   id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   memoryItemId String     @map("memory_item_id") @db.Uuid
@@ -799,6 +809,7 @@ model Connection {
   /// Per-user GitHub tokens for this repository (see `ConnectionCredential`).
   credentials           ConnectionCredential[]
   setupSecrets          RepoSetupSecret[]
+  setupBlockers         RepoSetupBlocker[]
   /// Eval datasets whose cases read this repository's setup secrets.
   evalDatasetsUsingSetupSecrets EvalDataset[] @relation("EvalDatasetSetupSecrets")
   /// Further teams whose members may see and launch on this repository. The
@@ -995,6 +1006,24 @@ model ConnectionCredential {
   @@unique([connectionId, userId])
   @@index([userId])
   @@map("connection_credentials")
+}
+
+model RepoSetupBlocker {
+  id             String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  connectionId   String     @map("connection_id") @db.Uuid
+  connection     Connection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  kind           String
+  subject        String
+  step           String?
+  detail         String
+  occurrences    Int        @default(1)
+  firstSeenAt    DateTime   @default(now()) @map("first_seen_at") @db.Timestamptz
+  lastSeenAt     DateTime   @default(now()) @map("last_seen_at") @db.Timestamptz
+  lastWorkflowId String?    @map("last_workflow_id")
+  resolvedAt     DateTime?  @map("resolved_at") @db.Timestamptz
+
+  @@unique([connectionId, kind, subject])
+  @@map("repo_setup_blockers")
 }
 
 /// A secret a repository's workspace setup names under `secrets:`. Set by team admins, write-only:
@@ -1767,6 +1796,7 @@ model User {
   createdShares         ConnectionTeamShare[]    @relation("ConnectionShareCreator")
   createdCallbackEndpoints CallbackEndpoint[]    @relation("CallbackEndpointCreator")
   lessonFlags           LessonFlag[]             @relation("LessonFlagAuthor")
+  quarantinedLessons    MemoryItem[]             @relation("LessonQuarantineAuthor")
 
   @@map("users")
 }
@@ -4046,6 +4076,19 @@ model FigmaConfig {
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@map("figma_config")
+}
+
+model WorkerEgressCapability {
+  id            String   @id
+  backend       String
+  egressProxy   Boolean  @map("egress_proxy")
+  registryProxy Boolean  @map("registry_proxy")
+  networkLock   Boolean  @map("network_lock")
+  detail        String
+  reportedAt    DateTime @map("reported_at")
+
+  @@index([reportedAt])
+  @@map("worker_egress_capabilities")
 }
 
 /// Audit trail for changes to ModelRoleConfig and ProviderCredential.

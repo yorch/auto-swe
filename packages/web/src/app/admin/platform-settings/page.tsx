@@ -163,7 +163,18 @@ export default function GovernSettingsPage() {
     const stillHere = () => viewKeyRef.current === startedAt;
     setRowStatus((prev) => ({ ...prev, [key]: { phase: 'saving' } }));
     run().then(
-      () => stillHere() && setRowStatus((prev) => ({ ...prev, [key]: { phase: 'saved' } })),
+      (response) => {
+        const warnings =
+          response &&
+          typeof response === 'object' &&
+          'warnings' in response &&
+          Array.isArray(response.warnings)
+            ? response.warnings.filter((warning): warning is string => typeof warning === 'string')
+            : [];
+        if (stillHere()) {
+          setRowStatus((prev) => ({ ...prev, [key]: { phase: 'saved', warnings } }));
+        }
+      },
       (err: unknown) =>
         stillHere() &&
         setRowStatus((prev) => ({

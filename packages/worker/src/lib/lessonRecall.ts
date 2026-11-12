@@ -139,7 +139,7 @@ export async function explainLesson(
           supersededAt: true,
           workflowRunId: true,
         },
-        where: { id: lessonId, repoId, scope: 'swe-lessons' },
+        where: { id: lessonId, quarantinedAt: null, repoId, scope: 'swe-lessons' },
       })
   );
   if (!row) {
@@ -156,11 +156,11 @@ export async function explainLesson(
       Promise.all([
         prisma.memoryItem.findMany({
           select: { id: true, lessonSummary: true },
-          where: { id: { in: sourceIds }, repoId },
+          where: { id: { in: sourceIds }, quarantinedAt: null, repoId, scope: 'swe-lessons' },
         }),
         prisma.memoryItem.findMany({
           select: { id: true, lessonSummary: true },
-          where: { repoId, supersededById: row.id },
+          where: { quarantinedAt: null, repoId, scope: 'swe-lessons', supersededById: row.id },
         }),
       ])
   );

@@ -3208,7 +3208,7 @@
     {
       "body": "Choose open, restricted or blocked workspace egress; a launch may narrow the configured policy, never widen it.",
       "category": "Isolation",
-      "detail": "workspace.egressPolicy is run-pinned at the template/team/organization scope, with open as the default. The gateway rejects a widening request; the worker rechecks when pinning and retains the configured ceiling if another launch path asks for a looser policy. Restricted requires the team allowlist and a forwarding proxy when it is non-empty; an empty list locks down like blocked. Before setup or agent code, restricted and blocked repository workspaces are network-locked to the repository's git host and configured model/registry proxies, plus the forwarding proxy only for restricted and LFS storage hosts when setup needs them. Docker resolves destinations to IP rules, pins hostnames and verifies default-deny INPUT/OUTPUT policies; Kubernetes creates pod-owned allow policies, changes the pod's policy-selection label and verifies loss of direct access to a previously reachable public destination. A failed lock destroys the workspace. This does not impose the same firewall on ephemeral shell/container steps or on worker-originated MCP and connector calls.",
+      "detail": "workspace.egressPolicy is run-pinned at the template/team/organization scope, with open as the default. The gateway rejects a widening request; the worker rechecks when pinning and retains the configured ceiling if another launch path asks for a looser policy. Restricted requires the team allowlist and a forwarding proxy when it is non-empty; an empty list locks down like blocked. Before setup or agent code, restricted and blocked repository workspaces are network-locked to the repository's git host and configured model/registry proxies, plus the forwarding proxy only for restricted and LFS storage hosts when setup needs them. Docker resolves destinations to IP rules, pins hostnames and verifies default-deny INPUT/OUTPUT policies; Kubernetes creates pod-owned allow policies, changes the pod's policy-selection label and verifies loss of direct access to a previously reachable public destination. A failed lock destroys the workspace. Restricted ephemeral steps receive proxy-only holder locks instead; worker-originated MCP and connector calls remain outside this policy.",
       "id": "runEgressPolicy",
       "refs": [
         "egressLaunch",
@@ -3220,6 +3220,7 @@
         "dockerEgressResolve",
         "k8sEgressLock",
         "k8sEgressAllow",
+        "stepEgressHolder",
         "stepEgressPolicy"
       ],
       "status": "Implemented",
@@ -5283,15 +5284,16 @@
       "title": "Setup commands and caches inherit workspace trust"
     },
     {
-      "body": "Restricted and blocked repository workspaces have network locks; ephemeral shell/container-step egress does not have the same boundary.",
+      "body": "Restricted and blocked repository workspaces have network locks; restricted ephemeral steps are locked to wired proxies before author code starts.",
       "category": "Isolation",
-      "detail": "An ephemeral step that retains egress uses bridge networking with DNS filtering and add-host entries, not a network lock: direct-IP traffic can bypass its cooperative proxy, and wildcard DNS entries are skipped. Blocked, or restricted with an empty team allowlist, forces these steps to network none; a sidecar that needs bridge networking is refused instead. Restricted steps that retain egress require the forwarding proxy but remain cooperative. Repository workspaces differ: Docker locks restricted/blocked workspaces with IPv4/IPv6 rules, refuses its embedded DNS resolver, pins permitted hostnames and fails closed when the lock cannot be installed or verified. Open workspaces are not locked; WORKSPACE_DNS is a deployer's resolver choice, not a security boundary. Policies govern container traffic, not worker-originated connector or MCP calls. Docker shares the host kernel, and the daemon's socket proxy allowlists API paths rather than container options, so the Docker host remains a privileged trust boundary.",
+      "detail": "An open ephemeral step uses the private-range/metadata baseline, DNS filtering and host pins; direct public-IP traffic can bypass its cooperative proxy. A restricted step with a team allowlist receives a verified IPv4/IPv6 default-deny lock in its network holder before author startup, allowing only the wired egress and registry proxy endpoints. Detached sidecars share that lock, with worker-gateway ingress and established replies for their published port. Blocked, or restricted with an empty team allowlist, forces these steps to network none; sidecars are refused instead. Repository workspace locks also admit their git host and model proxy, unlike step locks. Failed locks remove the workspace or step and holder. Policies govern container traffic, not worker-originated connector or MCP calls. Docker shares the host kernel, and the daemon's socket proxy allowlists API paths rather than container options, so the Docker host remains a privileged trust boundary.",
       "id": "egress",
       "refs": [
         "sandbox",
         "stepNetworkCap",
         "stepEgressPolicy",
         "stepSidecarPolicy",
+        "stepEgressHolder",
         "dockerEgressRules",
         "dockerEgressResolve",
         "workspaceDnsRun",
@@ -6320,6 +6322,7 @@
     "RepoDependency": "Directed repository dependency with source/provenance and contracts.",
     "ReportDigestDelivery": "One subscription/period/target delivery ledger with status, attempt count, last error and sent timestamp.",
     "ReportDigestSubscription": "Scoped report-digest configuration: Slack/email targets, email opt-outs, enablement and last scheduled/test delivery metadata.",
+    "RepoSetupBlocker": "Repository setup failure deduplicated by connection, kind and subject, with redacted diagnostics, occurrence count, first/last seen timestamps and workflow identity. Successful setup or manual dismissal resolves it; recurrence reopens it. Remedies are computed rather than stored, and deleting the connection cascades to its blockers.",
     "RepoSetupSecret": "One repository's named setup credential: encrypted value, nonce, authentication tag and key version, plus a last-four display marker and timestamps. Unique by repository and name, cascade-deleted with the connection; management returns metadata rather than plaintext, and setup decrypts only named entries for command secret environment.",
     "ReviewLaunchIntent": "Durable source-run/preset automatic-review decision with claim state, attempts, prepared launch identity and a started, skipped or failed outcome.",
     "ReviewPreset": "Global or team-owned named review configuration: review-kind template, optional reviewer prompt, test-gate choice, enabled state and report/fix action. Names are unique per team or global scope.",
@@ -6350,6 +6353,7 @@
     "User": "Platform identity with role, team/org memberships and authentication relations; a recorded GitHub login also records the linked account it was read from. approvedAt and approvalSource record when and how a waiting sign-up was approved: by an admin, or on a first GitHub sign-in by membership of an organization the github.signInAutoApproveOrgs setting lists.",
     "UserActivityEvent": "First-party record of a signed-in person's refusals, allowlisted sensitive reads and exports, and (when enabled) page views: a route template, method, status, credential path and truncated address, never a URL, body or query string. No relation to User, so a row outlives the person; pruned by a scheduled, switchable sweep after a configurable number of days.",
     "Verification": "Schema entity; inspect fields and relationship declarations below.",
+    "WorkerEgressCapability": "Per-process worker report of configured proxies and boot-probed network locking, with a refreshed timestamp for deployment readiness and advisory policy-save warnings.",
     "WorkflowArtifact": "Large blob in PostgreSQL or S3-compatible storage.",
     "WorkflowArtifactChunk": "An ordered PostgreSQL bytea chunk (up to 1 MiB) belonging to a workflow artifact; deleting the artifact cascades to its chunks.",
     "WorkflowDefaults": "Schema entity; inspect fields and relationship declarations below.",
@@ -6379,6 +6383,7 @@
       "KnowledgeBaseConfig",
       "FigmaConfig",
       "ConfigSetting",
+      "WorkerEgressCapability",
       "ConfigPermission",
       "ConfigAuditLog",
       "Skill",
@@ -6443,6 +6448,7 @@
       "RepoAccess",
       "ConnectionTeamShare",
       "ConnectionCredential",
+      "RepoSetupBlocker",
       "RepoSetupSecret",
       "GitHubHostWebhookSecret",
       "GitHubHostCredential",
@@ -7869,11 +7875,18 @@
       "title": "Restricted needs an allowlist and refuses a missing forwarding proxy"
     },
     {
-      "anchor": "export function buildEgressLockScript(allow: ResolvedAllow[]): string {",
+      "anchor": "export function buildEgressLockScript(",
       "id": "dockerEgressRules",
       "lines": 60,
       "path": "packages/worker/src/lib/workspaceBackend/docker.ts",
       "title": "Docker locks IPv4 and IPv6, blocks embedded DNS and reports kernel policies"
+    },
+    {
+      "anchor": "private async prepareEphemeralNetwork(",
+      "id": "stepEgressHolder",
+      "lines": 93,
+      "path": "packages/worker/src/lib/workspaceBackend/docker.ts",
+      "title": "Restricted steps install the verified proxy-only lock in the holder before author startup"
     },
     {
       "anchor": "export async function resolveEgressTargets(",
@@ -7903,7 +7916,7 @@
       "id": "stepEgressPolicy",
       "lines": 27,
       "path": "packages/worker/src/lib/egressWiring.ts",
-      "title": "Restricted ephemeral steps require a proxy but are not network-locked"
+      "title": "Restricted ephemeral steps require a proxy and a verified holder network lock"
     },
     {
       "anchor": "export function capStepNetwork(",

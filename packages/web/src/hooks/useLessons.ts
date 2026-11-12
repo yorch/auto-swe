@@ -14,7 +14,14 @@ export interface LessonRepoStats {
   lastConsolidatedAt: string | null;
 }
 
-export interface Lesson {
+export interface LessonQuarantine {
+  quarantinedAt: string | null;
+  quarantinedById: string | null;
+  quarantineReason: string | null;
+  quarantineSource: 'MANUAL' | 'FLAG_THRESHOLD' | null;
+}
+
+export interface Lesson extends LessonQuarantine {
   id: string;
   lessonSummary: string;
   rationale: string | null;
@@ -55,6 +62,7 @@ export interface LessonListOptions extends ListOptions {
   q?: string;
   /** Only lessons someone has flagged as wrong. */
   flagged?: boolean;
+  quarantined?: boolean;
   repoId?: string;
 }
 
@@ -67,7 +75,7 @@ export interface LessonListMeta extends ListMeta {
 }
 
 export function useLessons(includeConsolidated = false, opts: LessonListOptions = {}) {
-  const { flagged, q, repoId, ...page } = opts;
+  const { flagged, quarantined, q, repoId, ...page } = opts;
   const base = new URLSearchParams({ includeConsolidated: includeConsolidated ? 'true' : 'false' });
   if (repoId) {
     base.set('repoId', repoId);
@@ -77,6 +85,9 @@ export function useLessons(includeConsolidated = false, opts: LessonListOptions 
   }
   if (flagged) {
     base.set('flagged', 'true');
+  }
+  if (quarantined) {
+    base.set('quarantined', 'true');
   }
   const query = useListQuery<Lesson>({
     queryFn: () => api.get(listUrl(`/api/v1/lessons?${base.toString()}`, page)),
@@ -102,7 +113,10 @@ export function useFlagLesson() {
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
       api.post<{ data: { flagged: boolean } }>(`/api/v1/lessons/${id}/flags`, { reason }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['lessons'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lessons'] });
+      qc.invalidateQueries({ queryKey: ['run-lessons'] });
+    },
   });
 }
 
@@ -112,7 +126,10 @@ export function useWithdrawLessonFlag() {
   return useMutation({
     mutationFn: (id: string) =>
       api.delete<{ data: { withdrawn: boolean } }>(`/api/v1/lessons/${id}/flags/mine`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['lessons'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lessons'] });
+      qc.invalidateQueries({ queryKey: ['run-lessons'] });
+    },
   });
 }
 
@@ -122,7 +139,33 @@ export function useClearLessonFlags() {
   return useMutation({
     mutationFn: (id: string) =>
       api.delete<{ data: { cleared: number } }>(`/api/v1/lessons/${id}/flags`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['lessons'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lessons'] });
+      qc.invalidateQueries({ queryKey: ['run-lessons'] });
+    },
+  });
+}
+
+export function useQuarantineLesson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.post(`/api/v1/lessons/${id}/quarantine`, { reason }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lessons'] });
+      qc.invalidateQueries({ queryKey: ['run-lessons'] });
+    },
+  });
+}
+
+export function useRestoreLesson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post(`/api/v1/lessons/${id}/restore`, {}),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['lessons'] });
+      qc.invalidateQueries({ queryKey: ['run-lessons'] });
+    },
   });
 }
 
@@ -131,7 +174,12 @@ export function triggerRepoConsolidation(repoId: string) {
 }
 
 /** One lesson as the run page shows it. */
-export interface RunLesson {
+export interface RunLesson extends LessonQuarantine {
+  canFlag: boolean;
+  canManage: boolean;
+  flagCount: Lesson['flagCount'];
+  flags?: Lesson['flags'];
+  myFlag: Lesson['myFlag'];
   id: string;
   lessonSummary: string;
   rationale: string | null;

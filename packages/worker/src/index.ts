@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { prisma } from '@auto-swe/shared/db';
 import { assertArtifactStorageReady } from '@auto-swe/shared/lib/artifactStore';
 import { assertEncryptionKeyConfigured } from '@auto-swe/shared/lib/crypto';
 import { assertWorkspaceInfraEnv, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
@@ -12,6 +13,7 @@ import { activityNodeTagInterceptor } from './lib/activityNodeTag.js';
 import { activitySpanInterceptor } from './lib/activitySpans.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
 import { ignoredPriceOverrideVars } from './lib/costTracking.js';
+import { probeEgressCapability, startEgressReporting } from './lib/egressCapability.js';
 import { activityHttpCaptureInterceptor, installHttpCapture } from './lib/httpCapture.js';
 import { startLivenessFile } from './lib/livenessFile.js';
 import { initMetrics } from './lib/metrics.js';
@@ -19,9 +21,14 @@ import { OtelForwardingLogger } from './lib/otelLogger.js';
 import { initTemporalClient } from './lib/temporalClient.js';
 import { activityTranscriptInterceptor } from './lib/transcriptRecorder.js';
 import { createWorkflowSpanSinks } from './lib/workflowSpanSink.js';
-import { assertDockerDiskLimit } from './lib/workspaceBackend/docker.js';
+import {
+  assertDockerDaemonReachable,
+  assertDockerDiskLimit,
+} from './lib/workspaceBackend/docker.js';
+import { assertDockerRuntime } from './lib/workspaceBackend/dockerRuntime.js';
 import { workspaceBackend } from './lib/workspaceBackend/index.js';
 import { assertKubernetesReady } from './lib/workspaceBackend/kubernetes/ready.js';
+import { warnIfWorkspaceDnsUnreachable } from './lib/workspaceDns.js';
 
 async function run() {
   installHttpCapture();
@@ -65,7 +72,15 @@ async function run() {
   // must not throw), so a typo in the deploy environment would otherwise run
   // with different limits than the operator wrote. Fail the boot instead.
   assertWorkspaceInfraEnv();
+  // Advisory, and deliberately so: this names the DNS cause behind a failure the
+  // egress-capability probe below would only report generically. It must never
+  // refuse the boot.
+  await warnIfWorkspaceDnsUnreachable();
+  // A worker that cannot reach the daemon still starts and takes work, then
+  // fails inside the first activity; refuse the boot instead.
+  await assertDockerDaemonReachable();
   await assertDockerDiskLimit();
+  await assertDockerRuntime();
 
   // A Kubernetes worker proves its cluster can hold the line before it takes
   // work: the RBAC it needs, and that NetworkPolicy is actually enforced (the
@@ -151,6 +166,12 @@ async function run() {
   });
 
   console.log('Worker started, polling task queue: engineering-workflow');
+  const capability = await probeEgressCapability();
+  const stopEgressReporting = await startEgressReporting(
+    prisma,
+    capability,
+    'engineering-workflow'
+  );
   // The image's HEALTHCHECK reads this file's mtime; it is refreshed only while
   // the worker is RUNNING, so a stopped or wedged worker goes unhealthy.
   const stopLiveness = startLivenessFile({ isRunning: () => worker.getState() === 'RUNNING' });
@@ -158,6 +179,7 @@ async function run() {
     await worker.run();
   } finally {
     stopLiveness();
+    await stopEgressReporting();
   }
   // A graceful stop flushes the batched spans, workflow spans included.
   await otel.shutdown();

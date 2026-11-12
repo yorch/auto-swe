@@ -16,6 +16,7 @@ import {
   type WriteDenial,
 } from '@auto-swe/shared/config';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { loadEgressReadiness } from './egressReadiness.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
 
 // NOTE ON CACHE SCOPE: `invalidateSettingsCache()` below clears only THIS
@@ -321,6 +322,7 @@ async function resolveWriteTarget(
 }
 
 export interface SettingWriteResult {
+  warnings?: string[];
   denial?: WriteDenial & { allowed: false };
   before?: unknown;
   after?: unknown;
@@ -352,6 +354,10 @@ export async function setSetting(
     return target;
   }
   const { columns, existing } = target;
+  const warnings =
+    key === 'workspace.egressPolicy' && parsed.data !== 'open'
+      ? (await loadEgressReadiness(prisma, { policy: parsed.data, selector })).warnings
+      : [];
 
   if (existing) {
     // updateMany, not update: a concurrent clear may have deleted the row since
@@ -365,7 +371,11 @@ export async function setSetting(
     });
     if (count > 0) {
       invalidateSettingsCache();
-      return { after: parsed.data, before: existing.value };
+      return {
+        after: parsed.data,
+        before: existing.value,
+        ...(warnings.length ? { warnings } : {}),
+      };
     }
   }
   try {
@@ -396,11 +406,11 @@ export async function setSetting(
       where: { id: winner.id, ...columns, teamId: columns.teamId ?? null },
     });
     invalidateSettingsCache();
-    return { after: parsed.data, before: winner.value };
+    return { after: parsed.data, before: winner.value, ...(warnings.length ? { warnings } : {}) };
   }
 
   invalidateSettingsCache();
-  return { after: parsed.data, before: undefined };
+  return { after: parsed.data, before: undefined, ...(warnings.length ? { warnings } : {}) };
 }
 
 /// Removes an override so the key falls back to the next scope down. Returns

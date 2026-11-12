@@ -48,6 +48,53 @@ vi.mock('@/hooks/useViewOnlyRepos', () => ({
 }));
 
 describe('SchemaFieldInput', () => {
+  it('keeps a declared title ahead of the inferred label', () => {
+    render(
+      <SchemaFieldInput
+        name="ticketId"
+        onChange={vi.fn()}
+        prop={{ title: 'Case reference', type: 'string' }}
+        value=""
+      />
+    );
+    expect(screen.getByLabelText('Case reference')).toBeTruthy();
+    expect(screen.queryByLabelText('Ticket ID')).toBeNull();
+  });
+  it('humanizes enum labels but submits their raw values', () => {
+    const onChange = vi.fn();
+    render(
+      <SchemaFieldInput
+        name="delivery"
+        onChange={onChange}
+        prop={{ enum: ['none', 'draft_pr'], type: 'string' }}
+        value="none"
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Delivery/ }));
+    fireEvent.click(screen.getByRole('option', { name: 'Draft PR' }));
+    expect(onChange).toHaveBeenCalledWith('draft_pr');
+  });
+  it.each(['description', 'brief', 'instructions', 'message', 'prdContent'])(
+    'renders %s as multiline prose',
+    (name) => {
+      render(
+        <SchemaFieldInput name={name} onChange={vi.fn()} prop={{ type: 'string' }} value="" />
+      );
+      expect(screen.getByRole('textbox').tagName).toBe('TEXTAREA');
+    }
+  );
+  it('keeps fixed-choice descriptions as a select', () => {
+    render(
+      <SchemaFieldInput
+        name="description"
+        onChange={vi.fn()}
+        prop={{ enum: ['short', 'long'], type: 'string' }}
+        value=""
+      />
+    );
+    expect(screen.getByRole('button', { name: /Description/ })).toBeTruthy();
+    expect(screen.queryByRole('textbox')).toBeNull();
+  });
   it('renders a connection picker filtered by connectionType', () => {
     render(
       <SchemaFieldInput
@@ -57,7 +104,7 @@ describe('SchemaFieldInput', () => {
         value=""
       />
     );
-    const input = screen.getByRole('combobox', { name: /Connection id/i });
+    const input = screen.getByRole('combobox', { name: /Notion connection/i });
     expect(input).toBeTruthy();
     // Focus alone no longer opens the list; the chevron shows every option.
     fireEvent.click(screen.getByRole('button', { name: /show options/i }));
@@ -100,8 +147,8 @@ describe('SchemaFieldInput', () => {
       />
     );
     expect(screen.getByText('Fix these')).toBeTruthy();
-    expect((screen.getByLabelText('regression') as HTMLInputElement).checked).toBe(true);
-    fireEvent.click(screen.getByLabelText('test bug'));
+    expect((screen.getByLabelText('Regression') as HTMLInputElement).checked).toBe(true);
+    fireEvent.click(screen.getByLabelText('Test bug'));
     expect(onChange).toHaveBeenCalledWith(['regression', 'test_bug']);
   });
 });

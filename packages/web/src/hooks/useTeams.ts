@@ -210,9 +210,16 @@ export function useUpdateTeamEgressAllowlist(teamId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (egressAllowlist: string[]) =>
-      api.put<{ data: { egressAllowlist: string[] } }>(`/api/v1/teams/${teamId}/egress-allowlist`, {
-        egressAllowlist,
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['team-egress-allowlist', teamId] }),
+      api.put<{ data: { egressAllowlist: string[] }; warnings?: string[] }>(
+        `/api/v1/teams/${teamId}/egress-allowlist`,
+        {
+          egressAllowlist,
+        }
+      ),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ['team-egress-allowlist', teamId] }),
+        qc.invalidateQueries({ queryKey: ['platform-readiness'] }),
+      ]),
   });
 }

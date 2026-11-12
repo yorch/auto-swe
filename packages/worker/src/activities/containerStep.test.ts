@@ -230,9 +230,11 @@ describe('egress policy', () => {
     expect(mockedRun).toHaveBeenLastCalledWith(expect.objectContaining({ network: 'none' }));
     withAllowlist(['a.com']);
     await runContainerStep({ ...base, network: 'egress' });
-    expect(mockedRun).toHaveBeenLastCalledWith(expect.objectContaining({ network: 'egress' }));
+    expect(mockedRun).toHaveBeenLastCalledWith(
+      expect.objectContaining({ egressPolicy: 'restricted', network: 'egress' })
+    );
     expect(vi.mocked(executionAudit)).toHaveBeenLastCalledWith(
-      expect.objectContaining({ network: 'egress (proxy-enforced only; not network-locked)' })
+      expect.objectContaining({ network: 'egress (allowlist via proxy; network-locked)' })
     );
   });
   it('refuses a sidecar when the policy forbids egress', async () => {
@@ -252,6 +254,18 @@ describe('egress policy', () => {
         name: 'container',
         network: 'none',
       })
+    );
+  });
+  it('passes the restricted lock to sidecars and records their actual network', async () => {
+    policy.value = 'restricted';
+    withAllowlist(['a.com']);
+    mockedSidecar.mockResolvedValueOnce({ result: {}, status: 200 });
+    await runContainerStep({ ...base, sidecar: { port: 8080 }, transport: 'sidecar' });
+    expect(mockedSidecar).toHaveBeenLastCalledWith(
+      expect.objectContaining({ egressPolicy: 'restricted', network: 'egress' })
+    );
+    expect(vi.mocked(executionAudit)).toHaveBeenLastCalledWith(
+      expect.objectContaining({ network: 'egress (allowlist via proxy; network-locked)' })
     );
   });
   it('refuses a restricted egress step when the egress proxy is not configured', async () => {

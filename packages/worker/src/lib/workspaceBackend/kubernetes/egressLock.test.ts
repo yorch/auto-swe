@@ -155,6 +155,80 @@ describe('buildEgressAllowPolicy mode', () => {
 });
 
 describe('lockPodEgress', () => {
+  it('switches from setup rules to only the direct blocked rules without update/delete RBAC', async () => {
+    const { d, kubectl } = deps();
+    d.onVerifiedAllow = (allow) => {
+      d.allowedBefore = allow;
+    };
+    d.probe = async (script) => {
+      const labelled = kubectl.mock.calls.filter(([a]) => a[0] === 'label');
+      if (script.includes('H=10.0.0.5; P=8792')) {
+        return labelled.length < 2 ? REACHED : BLOCKED;
+      }
+      return labelled.length ? BLOCKED : REACHED;
+    };
+    await lockPodEgress(
+      'workspace-a',
+      [
+        { host: 'github.com', port: 443 },
+        { host: '10.0.0.5', port: 8792 },
+      ],
+      d,
+      'restricted'
+    );
+    await lockPodEgress('workspace-a', [{ host: 'github.com', port: 443 }], d, 'blocked', true);
+    const manifests = kubectl.mock.calls
+      .filter(([args]) => args[0] === 'create')
+      .map(([, stdin]) => JSON.parse(stdin ?? '{}'));
+    expect(manifests).toHaveLength(2);
+    expect(manifests[0].metadata.name).not.toBe(manifests[1].metadata.name);
+    expect(manifests[0].spec.podSelector.matchLabels['asw/egress']).toBe('restricted');
+    expect(manifests[1].spec).toEqual(
+      (
+        buildEgressAllowPolicy('workspace-a', UID, 'ns', [{ ip: '140.82.112.3', port: 443 }]) as {
+          spec: unknown;
+        }
+      ).spec
+    );
+    expect(
+      kubectl.mock.calls.some(([args]) => ['delete', 'update', 'patch'].includes(args[0]))
+    ).toBe(false);
+    expect(kubectl.mock.calls.at(-1)?.[0]).toEqual(labelBlockedArgs('ns', 'workspace-a'));
+  });
+  it('does not mistake an already-blocked public target for proof that the setup allowlist was removed', async () => {
+    const { d, kubectl } = deps();
+    d.onVerifiedAllow = (allow) => {
+      d.allowedBefore = allow;
+    };
+    d.probe = async (script) =>
+      script.includes('H=10.0.0.5; P=8792') || !kubectl.mock.calls.some(([a]) => a[0] === 'label')
+        ? REACHED
+        : BLOCKED;
+    await lockPodEgress(
+      'workspace-a',
+      [
+        { host: 'github.com', port: 443 },
+        { host: '10.0.0.5', port: 8792 },
+      ],
+      d,
+      'restricted',
+      true
+    );
+    await expect(
+      lockPodEgress('workspace-a', [{ host: 'github.com', port: 443 }], d, 'blocked', true)
+    ).rejects.toThrow('egress is not blocked');
+  });
+
+  it('refuses an inconclusive transition before changing the policy or label', async () => {
+    const { d, kubectl } = deps({
+      allowedBefore: [{ ip: '10.0.0.5', port: 8792 }],
+      probe: async () => BLOCKED,
+    });
+    await expect(lockPodEgress('workspace-a', [], d, 'blocked', true)).rejects.toThrow(
+      'no formerly allowed destination was reachable'
+    );
+    expect(kubectl).not.toHaveBeenCalled();
+  });
   it('proves reachability, creates the pod-owned policy, labels, then verifies the same target', async () => {
     const { d, kubectl, probe } = deps();
     await lockPodEgress('workspace-a', [{ host: 'github.com', port: 443 }], d);

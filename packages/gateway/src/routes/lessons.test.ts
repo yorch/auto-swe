@@ -1,3 +1,4 @@
+import { resolveSetting } from '@auto-swe/shared/config';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,9 +10,11 @@ const { forgetMock } = vi.hoisted(() => ({
   forgetMock: vi.fn(async (_tx: unknown, ids: string[]) => ({ deleted: ids, restored: ['r-1'] })),
 }));
 vi.mock('@auto-swe/shared/lib/memoryForget', () => ({ forgetMemoryItems: forgetMock }));
+vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: vi.fn().mockResolvedValue(2) }));
 
 function newMockPrisma() {
   const prisma = {
+    $executeRaw: vi.fn().mockResolvedValue(1),
     $transaction: vi.fn(),
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: {
@@ -20,6 +23,7 @@ function newMockPrisma() {
       findUnique: vi.fn(),
     },
     lessonFlag: {
+      count: vi.fn().mockResolvedValue(0),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
       findMany: vi.fn().mockResolvedValue([]),
       upsert: vi.fn().mockResolvedValue({}),
@@ -29,6 +33,7 @@ function newMockPrisma() {
       delete: vi.fn().mockResolvedValue({}),
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
+      update: vi.fn().mockResolvedValue({}),
     },
     teamMembership: { findUnique: vi.fn().mockResolvedValue(null) },
   };
@@ -59,7 +64,10 @@ function lastListWhere(prisma: ReturnType<typeof newMockPrisma>) {
   return prisma.memoryItem.findMany.mock.calls[0][0].where as Record<string, unknown>;
 }
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.mocked(resolveSetting).mockResolvedValue(2);
+});
 
 describe('GET /lessons (list)', () => {
   it('lists repository lessons only, never channel memory — even for an admin', async () => {
@@ -374,10 +382,16 @@ describe('GET /workflow-runs/:id/lessons', () => {
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const prisma = {
+      ...newMockPrisma(),
       agentTrace: { findMany: vi.fn().mockResolvedValue([]) },
       memoryItem: { findMany: vi.fn().mockResolvedValue([]) },
       workflowRun: { findFirst: vi.fn().mockResolvedValue({ id: RUN_ID }) },
     };
+    prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
+    prisma.teamMembership.findUnique.mockResolvedValue({
+      role: 'ENGINEER',
+      team: { isActive: true },
+    });
     app.decorate('prisma', prisma as unknown as never);
     app.decorate('auth', {
       verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'user-1' }),
@@ -389,6 +403,18 @@ describe('GET /workflow-runs/:id/lessons', () => {
 
   const get = (app: Awaited<ReturnType<typeof buildRunApp>>['app']) =>
     app.inject({ headers: AUTH, method: 'GET', url: `/api/v1/workflow-runs/${RUN_ID}/lessons` });
+
+  const row = (summary: string) => ({
+    _count: { flags: 0 },
+    flags: [],
+    id: L1,
+    lessonSummary: summary,
+    quarantinedAt: null,
+    quarantinedById: null,
+    quarantineReason: null,
+    quarantineSource: null,
+    repoId: REPO_ID,
+  });
 
   it('404s a run the caller cannot see, before reading any lesson', async () => {
     const { app, prisma } = await buildRunApp();
@@ -409,13 +435,20 @@ describe('GET /workflow-runs/:id/lessons', () => {
     ]);
     prisma.memoryItem.findMany
       .mockResolvedValueOnce([]) // written by this run
-      .mockResolvedValueOnce([{ id: L1, lessonSummary: 'Run migrations first' }]);
+      .mockResolvedValueOnce([row('Run migrations first')]);
     const res = await get(app);
     expect(res.statusCode).toBe(200);
     const { recalled } = JSON.parse(res.payload).data;
     expect(recalled).toEqual([
       {
-        lesson: { id: L1, lessonSummary: 'Run migrations first' },
+        lesson: expect.objectContaining({
+          canFlag: true,
+          canManage: false,
+          flagCount: 0,
+          id: L1,
+          lessonSummary: 'Run migrations first',
+          myFlag: null,
+        }),
         lessonId: L1,
         recalledFor: ['implementer', 'reviewer'],
       },
@@ -448,16 +481,71 @@ describe('GET /workflow-runs/:id/lessons', () => {
 
   it('lists the lessons this run wrote', async () => {
     const { app, prisma } = await buildRunApp();
-    prisma.memoryItem.findMany.mockResolvedValueOnce([{ id: L1, lessonSummary: 'Pin the image' }]);
+    prisma.memoryItem.findMany.mockResolvedValueOnce([row('Pin the image')]);
     const res = await get(app);
     expect(JSON.parse(res.payload).data.written).toEqual([
-      { id: L1, lessonSummary: 'Pin the image' },
+      expect.objectContaining({
+        canFlag: true,
+        canManage: false,
+        id: L1,
+        lessonSummary: 'Pin the image',
+      }),
     ]);
     expect(prisma.memoryItem.findMany.mock.calls[0][0].where).toEqual({
       scope: 'swe-lessons',
       workflowRunId: RUN_ID,
     });
     expect(prisma.memoryItem.findMany.mock.calls[0][0].select.embedding).toBeUndefined();
+  });
+
+  it.each(['ADMIN', 'ENGINEER'] as const)(
+    'labels historical quarantine and scopes triage details for %s',
+    async (role) => {
+      const { app, prisma } = await buildRunApp(role);
+      prisma.memoryItem.findMany.mockResolvedValue([
+        {
+          ...row('Stale advice'),
+          _count: { flags: 1 },
+          flags: [
+            {
+              createdAt: new Date(),
+              flaggedBy: { email: 'other@x.test' },
+              flaggedById: 'other',
+              reason: 'private flag',
+            },
+          ],
+          quarantinedAt: new Date(),
+          quarantineReason: 'obsolete',
+          quarantineSource: 'MANUAL',
+        },
+      ]);
+      const res = await get(app);
+      expect(res.statusCode).toBe(200);
+      const [lesson] = res.json().data.written;
+      expect(lesson).toMatchObject({
+        canFlag: true,
+        canManage: role === 'ADMIN',
+        flagCount: 1,
+        quarantineReason: 'obsolete',
+        quarantineSource: 'MANUAL',
+      });
+      expect(lesson.flags).toEqual(
+        role === 'ADMIN' ? [expect.objectContaining({ reason: 'private flag' })] : undefined
+      );
+      expect(lesson._count).toBeUndefined();
+    }
+  );
+
+  it('keeps historical text but offers no triage when repository access is lost', async () => {
+    const { app, prisma } = await buildRunApp();
+    prisma.memoryItem.findMany.mockResolvedValue([row('Historical advice')]);
+    prisma.connection.findFirst.mockResolvedValue(null);
+    const res = await get(app);
+    expect(res.json().data.written[0]).toMatchObject({
+      canFlag: false,
+      canManage: false,
+      lessonSummary: 'Historical advice',
+    });
   });
 });
 
@@ -476,6 +564,248 @@ describe('lesson flags', () => {
     });
     return built;
   }
+
+  const mutate = (
+    app: Awaited<ReturnType<typeof buildApp>>['app'],
+    action: string,
+    method: 'POST' | 'DELETE' = 'POST',
+    payload?: { reason: string }
+  ) =>
+    app.inject({
+      headers: AUTH,
+      method,
+      ...(payload === undefined ? {} : { payload }),
+      url: `/api/v1/lessons/${LESSON_ID}/${action}`,
+    });
+
+  it.each([0, 1, 2, 3])(
+    'quarantines at threshold, not below it (%i distinct flags)',
+    async (count) => {
+      const { app, prisma } = await reader();
+      prisma.lessonFlag.count.mockResolvedValue(count);
+      prisma.connection.findUnique.mockResolvedValue({
+        team: { orgId: 'org-1' },
+        teamId: 'team-1',
+      });
+      expect((await mutate(app, 'flags', 'POST', { reason: 'wrong' })).statusCode).toBe(201);
+      expect(resolveSetting).toHaveBeenCalledWith('memory.lessonFlagQuarantineThreshold', {
+        orgId: 'org-1',
+        teamId: 'team-1',
+      });
+      expect(prisma.$executeRaw.mock.calls[0]?.[1]).toBe(`lesson-quarantine:${LESSON_ID}`);
+      expect(prisma.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.lessonFlag.upsert.mock.invocationCallOrder[0]
+      );
+      expect(prisma.lessonFlag.count).toHaveBeenCalledWith({ where: { memoryItemId: LESSON_ID } });
+      if (count >= 2) {
+        expect(prisma.memoryItem.update).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            quarantinedAt: expect.any(Date),
+            quarantinedById: null,
+            quarantineSource: 'FLAG_THRESHOLD',
+          }),
+          where: { id: LESSON_ID },
+        });
+        expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            actorId: null,
+            afterJson: expect.objectContaining({
+              event: 'lesson.quarantined',
+              flagCount: count,
+              threshold: 2,
+            }),
+          }),
+        });
+      } else {
+        expect(prisma.memoryItem.update).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it('does not automatically quarantine when disabled', async () => {
+    const { app, prisma } = await reader();
+    vi.mocked(resolveSetting).mockResolvedValueOnce(0);
+    prisma.lessonFlag.count.mockResolvedValue(20);
+    expect((await mutate(app, 'flags', 'POST', { reason: 'wrong' })).statusCode).toBe(201);
+    expect(prisma.memoryItem.update).not.toHaveBeenCalled();
+  });
+
+  it.each(['MANUAL', 'FLAG_THRESHOLD'])(
+    'preserves an existing %s quarantine when a flag reaches threshold',
+    async (source) => {
+      const { app, prisma } = await reader();
+      prisma.memoryItem.findFirst.mockResolvedValue({
+        ...lessonRow,
+        quarantinedAt: new Date(),
+        quarantineSource: source,
+      });
+      prisma.lessonFlag.count.mockResolvedValue(2);
+      expect((await mutate(app, 'flags', 'POST', { reason: 'wrong' })).statusCode).toBe(201);
+      expect(prisma.memoryItem.update).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each([
+    ['FLAG_THRESHOLD', 1, true],
+    ['FLAG_THRESHOLD', 2, false],
+    ['MANUAL', 1, false],
+  ])(
+    'withdrawal changes %s at %i flags only when automatic and below threshold',
+    async (source, count, lifts) => {
+      const { app, prisma } = await reader();
+      prisma.memoryItem.findFirst.mockResolvedValue({
+        ...lessonRow,
+        quarantinedAt: new Date(),
+        quarantineSource: source,
+      });
+      prisma.lessonFlag.count.mockResolvedValue(count);
+      expect((await mutate(app, 'flags/mine', 'DELETE')).statusCode).toBe(200);
+      expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+      if (lifts) {
+        expect(prisma.memoryItem.update).toHaveBeenCalledWith({
+          data: {
+            quarantinedAt: null,
+            quarantinedById: null,
+            quarantineReason: null,
+            quarantineSource: null,
+          },
+          where: { id: LESSON_ID },
+        });
+        expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            actorId: null,
+            afterJson: expect.objectContaining({ event: 'lesson.restored' }),
+          }),
+        });
+      } else {
+        expect(prisma.memoryItem.update).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it.each(['MANUAL', 'FLAG_THRESHOLD'])(
+    'clear flags preserves manual quarantine and lifts automatic (%s)',
+    async (source) => {
+      const { app, prisma } = await reader(true);
+      prisma.memoryItem.findFirst.mockResolvedValue({
+        ...lessonRow,
+        quarantinedAt: new Date(),
+        quarantineSource: source,
+      });
+      expect((await mutate(app, 'flags', 'DELETE')).statusCode).toBe(200);
+      expect(prisma.memoryItem.update).toHaveBeenCalledTimes(source === 'MANUAL' ? 0 : 1);
+    }
+  );
+
+  it.each(['quarantine', 'restore'])(
+    'denies reader-only %s and hides inaccessible lessons',
+    async (action) => {
+      const { app, prisma } = await reader();
+      expect((await mutate(app, action, 'POST', { reason: 'wrong' })).statusCode).toBe(403);
+      prisma.connection.findFirst.mockResolvedValue(null);
+      expect((await mutate(app, action, 'POST', { reason: 'wrong' })).statusCode).toBe(404);
+      prisma.memoryItem.findFirst.mockResolvedValue(null);
+      expect((await mutate(app, action, 'POST', { reason: 'wrong' })).statusCode).toBe(404);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['', ' ', 'x'.repeat(501)])(
+    'rejects an empty or oversized quarantine reason',
+    async (reason) => {
+      const { app, prisma } = await reader(true);
+      expect((await mutate(app, 'quarantine', 'POST', { reason })).statusCode).toBe(400);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    }
+  );
+
+  it('lets an owning-team lead manually quarantine, recording their reason and identity', async () => {
+    const { app, prisma } = await reader(true);
+    expect((await mutate(app, 'quarantine', 'POST', { reason: ' stale ' })).statusCode).toBe(200);
+    expect(prisma.memoryItem.findFirst.mock.calls[0]?.[0]?.where).toMatchObject({
+      scope: 'swe-lessons',
+    });
+    expect(prisma.memoryItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          quarantinedAt: expect.any(Date),
+          quarantinedById: 'admin-1',
+          quarantineReason: 'stale',
+          quarantineSource: 'MANUAL',
+        },
+      })
+    );
+    expect(prisma.lessonFlag.deleteMany).not.toHaveBeenCalled();
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        actorId: 'admin-1',
+        afterJson: expect.objectContaining({ event: 'lesson.quarantined' }),
+      }),
+    });
+  });
+
+  it.each([0, 2])('lets an admin restore and audit all %i cleared flag reasons', async (count) => {
+    const { app, prisma } = await buildApp('ADMIN');
+    prisma.memoryItem.findFirst.mockResolvedValue({
+      ...lessonRow,
+      quarantinedAt: new Date(),
+      quarantineSource: 'MANUAL',
+    });
+    const flags = Array.from({ length: count }, (_, i) => ({
+      flaggedById: `u-${i}`,
+      reason: `reason ${i}`,
+    }));
+    prisma.lessonFlag.findMany.mockResolvedValue(flags);
+    expect((await mutate(app, 'restore')).statusCode).toBe(200);
+    expect(prisma.lessonFlag.deleteMany).toHaveBeenCalledWith({
+      where: { memoryItemId: LESSON_ID },
+    });
+    expect(prisma.memoryItem.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          quarantinedAt: null,
+          quarantinedById: null,
+          quarantineReason: null,
+          quarantineSource: null,
+        },
+      })
+    );
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        afterJson: expect.objectContaining({ event: 'lesson.restored' }),
+        beforeJson: expect.objectContaining({ flagCount: count, flags }),
+      }),
+    });
+    expect(prisma.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.lessonFlag.deleteMany.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('filters quarantines without losing repository visibility, while false is not truthy', async () => {
+    const { app, prisma } = await reader();
+    const row = {
+      ...lessonRow,
+      _count: { flags: 0 },
+      flags: [],
+      quarantinedAt: new Date(),
+      quarantineReason: 'stale',
+      quarantineSource: 'MANUAL',
+    };
+    prisma.memoryItem.findMany.mockResolvedValue([row]);
+    const res = await app.inject({ headers: AUTH, url: '/api/v1/lessons?quarantined=true' });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data[0]).toMatchObject({
+      quarantineReason: 'stale',
+      quarantineSource: 'MANUAL',
+    });
+    expect(lastListWhere(prisma)).toMatchObject({
+      quarantinedAt: { not: null },
+      repository: expect.anything(),
+      scope: 'swe-lessons',
+    });
+    await app.inject({ headers: AUTH, url: '/api/v1/lessons?quarantined=false' });
+    expect(prisma.memoryItem.findMany.mock.calls.at(-1)?.[0]?.where.quarantinedAt).toBeUndefined();
+  });
 
   it('lets anyone who reads a lesson flag it, once, with an audited reason', async () => {
     const { app, prisma } = await reader();

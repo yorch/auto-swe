@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 
@@ -11,7 +11,19 @@ vi.mock('@/stores/authStore', () => ({
   useAuthStore: (selector: (s: { user: { role: string } | null }) => unknown) =>
     selector({ user: { role: auth.role } }),
 }));
-vi.mock('@/components/requests/WorkflowLaunchForm', () => ({ WorkflowLaunchForm: () => null }));
+vi.mock('@/components/requests/WorkflowLaunchForm', () => ({
+  WorkflowLaunchForm: ({
+    template,
+    showProcessSummary,
+  }: {
+    template: { id: string };
+    showProcessSummary: boolean;
+  }) => (
+    <div data-summary={String(showProcessSummary)} data-testid={`form-${template.id}`}>
+      Launch form
+    </div>
+  ),
+}));
 vi.mock('@/components/agentRuns/AgentRunForm', () => ({
   AgentRunForm: () => <div>agent form</div>,
 }));
@@ -68,6 +80,228 @@ async function epicEnabled() {
 }
 
 describe('StartWork', () => {
+  const workflow = (name: string, extra: Record<string, unknown> = {}) => ({
+    activeVersion: 1,
+    description: 'A description that is not searchable',
+    id: name,
+    isDefault: false,
+    lastRun: null,
+    name,
+    status: 'ACTIVE',
+    team: null,
+    ...extra,
+  });
+  const summarySpec = {
+    entry: 'approve',
+    name: 'Example',
+    nodes: {
+      approve: {
+        group: 'Check the change',
+        onApprove: 'done',
+        onReject: 'done',
+        onTimeout: 'done',
+        timeout: '24h',
+        title: 'Approve the change',
+        type: 'humanApproval',
+      },
+      done: {
+        result: { pullRequestUrl: { literal: 'url' } },
+        status: 'SUCCESS',
+        type: 'terminate',
+      },
+    },
+    schemaVersion: 1,
+  };
+  function workflowsGateway(templates: ReturnType<typeof workflow>[], spec: unknown = summarySpec) {
+    return setupFetchMock({
+      'GET /api/v1/teams': () => ({ data: [team('payments', 'Payments', 'LEAD')] }),
+      'GET /api/v1/workflow-templates': () => ({ data: templates }),
+      ...Object.fromEntries(
+        templates.map((template) => [
+          `GET /api/v1/workflow-templates/${template.id}`,
+          () => ({ data: { ...template, activeVersionSpec: { spec } } }),
+        ])
+      ),
+    });
+  }
+
+  it('shows recent workflows first, catalog order next, and descriptive badges without duplicates', async () => {
+    workflowsGateway([
+      workflow('docs-refresh'),
+      workflow('hotfix', { isDefault: true }),
+      workflow('custom', {
+        lastRun: { startedAt: '2026-11-01T00:00:00Z' },
+        team: ref('payments', 'Payments'),
+      }),
+    ]);
+    render(withQuery(<StartWork />));
+    const input = await screen.findByRole('combobox', { name: 'Workflow' });
+    await waitFor(() => expect(input).toHaveProperty('value', 'Production hotfix'));
+    fireEvent.click(screen.getByRole('button', { name: /Show options/ }));
+    expect(within(screen.getByRole('listbox')).getAllByRole('group')).toHaveLength(2);
+    const options = screen.getAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual([
+      expect.stringContaining('custom'),
+      expect.stringContaining('Production hotfix'),
+      expect.stringContaining('Documentation refresh'),
+    ]);
+    expect(
+      within(screen.getByRole('option', { name: /custom/ })).getByText('Payments')
+    ).toBeTruthy();
+    const hotfix = within(screen.getByRole('option', { name: /Production hotfix/ }));
+    expect(hotfix.getByText('Default')).toBeTruthy();
+    expect(hotfix.getByText('A description that is not searchable')).toBeTruthy();
+    act(() => input.focus());
+    fireEvent.change(input, { target: { value: 'docs-refresh' } });
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByRole('option', { name: /Documentation refresh/ })).toBeTruthy();
+    fireEvent.change(input, { target: { value: 'not searchable' } });
+    expect(screen.queryByRole('option', { name: /Production hotfix/ })).toBeNull();
+    expect(screen.getByText('No matches')).toBeTruthy();
+  });
+
+  it('uses a non-git workflow rail without promising a pull request or merge', async () => {
+    workflowsGateway(
+      [workflow('zendesk-ticket-reply', { isDefault: true, workspaceProvider: 'api_only' })],
+      {
+        entry: 'done',
+        name: 'Reply',
+        nodes: {
+          done: { result: { ticketUrl: { literal: 'url' } }, status: 'SUCCESS', type: 'terminate' },
+        },
+        schemaVersion: 1,
+      }
+    );
+    render(withQuery(<StartWork />));
+    expect(await screen.findByText('Ticket URL')).toBeTruthy();
+    const rail = screen.getByLabelText('What happens next').textContent ?? '';
+    expect(rail).toContain('record or document');
+    expect(rail).not.toMatch(/pull request/i);
+    expect(rail).not.toContain('Human steps:');
+  });
+
+  it.each([
+    ['', '', 'Production hotfix'],
+    ['payments', '', 'Custom team flow'],
+    ['payments', 'hotfix', 'Production hotfix'],
+  ])('preselects for team %s and link %s', async (initialTeamSlug, initialTemplateId, expected) => {
+    workflowsGateway([
+      workflow('hotfix', { isDefault: true }),
+      workflow('Custom team flow', { isDefault: true, team: ref('payments', 'Payments') }),
+      workflow('Foreign default', { isDefault: true, team: ref('foreign', 'Foreign') }),
+    ]);
+    render(
+      withQuery(
+        <StartWork initialTeamSlug={initialTeamSlug} initialTemplateId={initialTemplateId} />
+      )
+    );
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Workflow' })).toHaveProperty('value', expected)
+    );
+    expect(
+      await screen.findByTestId(`form-${expected === 'Production hotfix' ? 'hotfix' : expected}`)
+    ).toBeTruthy();
+  });
+
+  it('falls back to a global default when a scoped team has none', async () => {
+    workflowsGateway([workflow('hotfix', { isDefault: true })]);
+    render(withQuery(<StartWork initialTeamSlug="payments" />));
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Workflow' })).toHaveProperty(
+        'value',
+        'Production hotfix'
+      )
+    );
+  });
+
+  it('leaves the picker empty without an applicable default and honors an invalid deep link', async () => {
+    workflowsGateway([workflow('hotfix', { isDefault: true })]);
+    render(withQuery(<StartWork initialTemplateId="missing" />));
+    expect(await screen.findByText(/not available to run/)).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Workflow' })).toHaveProperty('value', '');
+    expect(screen.queryByTestId('form-hotfix')).toBeNull();
+  });
+
+  it('shows phases, human steps and outputs before the form as soon as a workflow is selected', async () => {
+    workflowsGateway([workflow('hotfix')]);
+    render(withQuery(<StartWork />));
+    const input = await screen.findByRole('combobox', { name: 'Workflow' });
+    expect(input).toHaveProperty('value', '');
+    act(() => input.focus());
+    fireEvent.change(input, { target: { value: 'hotfix' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Production hotfix/ }));
+    const phase = await screen.findByText('Check the change');
+    expect(screen.getByText('Approve the change')).toBeTruthy();
+    expect(screen.getByText('Pull request URL')).toBeTruthy();
+    const rail = screen.getByLabelText('What happens next').textContent ?? '';
+    expect(rail).toContain('Approve the change');
+    expect(rail).toContain('opens a pull request');
+    expect(rail).toContain('No built-in step or template merges');
+    const form = screen.getByTestId('form-hotfix');
+    expect(phase.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(form.getAttribute('data-summary')).toBe('false');
+  });
+
+  it('keeps the form available when a process summary cannot be parsed', async () => {
+    workflowsGateway([workflow('hotfix', { isDefault: true })], null);
+    render(withQuery(<StartWork />));
+    expect(await screen.findByText(/The process summary is unavailable/)).toBeTruthy();
+    expect(screen.getByTestId('form-hotfix')).toBeTruthy();
+  });
+
+  it('humanizes external event names without exposing their Signal suffixes', async () => {
+    workflowsGateway([workflow('hotfix', { isDefault: true })], {
+      ...summarySpec,
+      nodes: {
+        ...summarySpec.nodes,
+        ci: {
+          name: 'ciPipelineSignal',
+          onReceive: 'merge',
+          onTimeout: 'done',
+          timeout: '1h',
+          type: 'signal',
+        },
+        merge: {
+          name: 'humanMergeSignal',
+          onReceive: 'done',
+          onTimeout: 'done',
+          timeout: '1h',
+          type: 'signal',
+        },
+      },
+    });
+    render(withQuery(<StartWork />));
+    expect(await screen.findByText('CI pipeline, Human merge')).toBeTruthy();
+    expect(screen.queryByText('ciPipelineSignal, humanMergeSignal')).toBeNull();
+    expect(screen.getByText('Waits for external events')).toBeTruthy();
+  });
+
+  it('offers only hand-launchable templates and explains blocked deep links', async () => {
+    const templates = [
+      { id: 'hotfix', kind: null, name: 'hotfix' },
+      { id: 'review', kind: 'review', name: 'code-review' },
+      { id: 'review-qodo', kind: 'review', name: 'code-review-qodo' },
+      { id: 'human-review', kind: 'review', name: 'human-review-of-run' },
+      { id: 'ci', kind: 'automation', name: 'ci-triage-and-fix' },
+      { id: 'pr', kind: 'automation', name: 'address-pr-feedback' },
+      { id: 'task', kind: 'automation', name: 'Channel Task' },
+      { id: 'assistant', kind: null, name: 'Channel Assistant' },
+    ].map((t) => ({ ...t, activeVersion: 1, status: 'ACTIVE', team: null }));
+    setupFetchMock({
+      'GET /api/v1/teams': () => ({ data: [] }),
+      'GET /api/v1/workflow-templates': () => ({ data: templates }),
+    });
+    render(withQuery(<StartWork initialTemplateId="ci" />));
+    expect(await screen.findByText(/Started by an automation or integration/)).toBeTruthy();
+    const picker = screen.getByRole('combobox', { name: /Workflow/ });
+    act(() => picker.focus());
+    fireEvent.change(picker, { target: { value: 'hot' } });
+    expect(await screen.findByRole('option', { name: /Production hotfix/ })).toBeTruthy();
+    fireEvent.change(picker, { target: { value: '' } });
+    for (const template of templates.slice(1)) {
+      expect(screen.queryByRole('option', { name: template.name })).toBeNull();
+    }
+  });
   it('disables the epic option below lead and says why', () => {
     auth.role = 'ENGINEER';
     gateway();
@@ -106,6 +340,7 @@ describe('StartWork', () => {
     auth.role = 'LEAD';
     gateway();
     render(withQuery(<StartWork />));
+    expect(screen.getByText('Need help choosing?').parentElement?.getAttribute('open')).toBeNull();
     expect(screen.getByText(/Not sure\?/)).toBeTruthy();
     expect(screen.getByText('How auto-swe works')).toBeTruthy();
   });
@@ -115,6 +350,7 @@ describe('StartWork', () => {
     gateway();
     render(withQuery(<StartWork />));
     await epicEnabled();
+    fireEvent.click(screen.getByText('Need help choosing?'));
     const chooser = within(screen.getByTestId('mode-hint'));
     const checked = (name: RegExp) =>
       (screen.getByRole('radio', { name }) as HTMLInputElement).checked;
@@ -142,6 +378,7 @@ describe('StartWork', () => {
     auth.role = 'ENGINEER';
     gateway();
     render(withQuery(<StartWork />));
+    fireEvent.click(screen.getByText('Need help choosing?'));
     const chooser = within(screen.getByTestId('mode-hint'));
     expect(chooser.queryByRole('button', { name: /epic/i })).toBeNull();
     expect(chooser.getByText(/Only team leads and administrators can start an epic/)).toBeTruthy();

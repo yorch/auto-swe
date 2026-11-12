@@ -391,11 +391,13 @@ describe('importAgentTree', () => {
     await importAgentTree(agent.ws, trusted.ws);
     expect(shell.commands[0]).toBe("docker pause 'agent-1'");
     expect(shell.commands[1]).toBe('docker cp agent-1:/workspace/target-repo/. -');
-    expect(shell.commands[2]).toContain("docker cp - 'trusted-1:/stage'");
+    expect(shell.commands[2]).toContain("docker cp -a - 'trusted-1:/workspace/.agent-stage'");
     expect(agent.ws.gitAuthed).not.toHaveBeenCalled();
     // The trusted tree is replaced and the copied .git is dropped.
-    const replace = trusted.log.find((c) => c.includes('cp -a /stage/. .')) as string;
-    expect(replace).toContain('rm -rf /stage/.git');
+    const replace = trusted.log.find((c) =>
+      c.includes('cp -a /workspace/.agent-stage/. .')
+    ) as string;
+    expect(replace).toContain('rm -rf /workspace/.agent-stage/.git');
   });
 
   it('refuses an archive over the size limit, measured on the host', async () => {
@@ -405,7 +407,7 @@ describe('importAgentTree', () => {
     );
     expect(f.type).toBe('AGENT_RUN_EXPORT_TOO_LARGE');
     // Nothing was imported into the trusted container.
-    expect(shell.commands.some((c) => c.startsWith('docker cp - '))).toBe(false);
+    expect(shell.commands.some((c) => c.startsWith('docker cp -a - '))).toBe(false);
   });
 
   it('hands the cap to the streaming copy and removes the partial archive', async () => {

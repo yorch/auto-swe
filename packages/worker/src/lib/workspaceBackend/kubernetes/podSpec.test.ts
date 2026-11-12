@@ -16,6 +16,7 @@ const config: KubernetesWorkspaceConfig = {
   maxLifetimeSec: 3600,
   namespace: 'auto-swe-workspaces',
   requireNetworkPolicy: true,
+  requireRuntimeClass: false,
   runAsUser: 1000,
   runtimeClassName: null,
   storageLimit: '10Gi',

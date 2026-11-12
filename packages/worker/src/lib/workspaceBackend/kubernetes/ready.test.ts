@@ -1,13 +1,125 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { spawnCaptureAsync } from '../../execUtils.js';
 import type { WorkspaceBackend } from '../types.js';
-import { assertNetworkPolicyEnforced, assertWorkspaceRbac, wasBlocked } from './ready.js';
+import {
+  assertKubernetesReady,
+  assertNetworkPolicyEnforced,
+  assertWorkspaceRbac,
+  wasBlocked,
+} from './ready.js';
 
 vi.mock('../../execUtils.js', () => ({ spawnCaptureAsync: vi.fn() }));
 vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/lib/systemConfig')>()),
-  resolveWorkspaceInfra: () => ({ kubernetes: { kubectl: 'kubectl', namespace: 'ns' } }),
+  resolveWorkspaceInfra: () => ({
+    kubernetes: {
+      kubectl: 'kubectl',
+      namespace: 'ns',
+      requireNetworkPolicy: process.env.K8S_REQUIRE_NETWORK_POLICY !== 'false',
+      requireRuntimeClass: process.env.K8S_REQUIRE_RUNTIME_CLASS === 'true',
+      runtimeClassName: process.env.K8S_WORKSPACE_RUNTIME_CLASS || null,
+    },
+  }),
 }));
+
+describe('required RuntimeClass startup gate', () => {
+  beforeEach(() => {
+    vi.stubEnv('K8S_REQUIRE_RUNTIME_CLASS', 'true');
+    vi.stubEnv('K8S_WORKSPACE_RUNTIME_CLASS', 'gvisor');
+    vi.stubEnv('K8S_REQUIRE_NETWORK_POLICY', 'false');
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.mocked(spawnCaptureAsync).mockImplementation(async (_bin, args) => ({
+      exitCode: 0,
+      stderr: '',
+      stdout:
+        args[0] === 'auth'
+          ? 'yes'
+          : args[1] === 'pod'
+            ? 'gvisor'
+            : 'runtimeclass.node.k8s.io/gvisor',
+    }));
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+    vi.resetAllMocks();
+  });
+
+  it('checks a real returned pod even with the NetworkPolicy gate disabled', async () => {
+    const { backend, create, remove } = fakeBackend(() => BLOCKED);
+    await assertKubernetesReady(backend);
+    expect(create).toHaveBeenCalledOnce();
+    expect(remove).toHaveBeenCalledOnce();
+    expect(spawnCaptureAsync).toHaveBeenCalledWith(
+      'kubectl',
+      ['get', 'runtimeclass', 'gvisor', '-o', 'name'],
+      expect.anything()
+    );
+    expect(spawnCaptureAsync).toHaveBeenCalledWith(
+      'kubectl',
+      expect.arrayContaining(['get', 'pod', 'jsonpath={.spec.runtimeClassName}']),
+      expect.anything()
+    );
+  });
+  it('reuses the NetworkPolicy startup pod when that gate is enabled', async () => {
+    vi.stubEnv('K8S_REQUIRE_NETWORK_POLICY', 'true');
+    const { backend, create, exec, remove } = fakeBackend(() => BLOCKED);
+    await assertKubernetesReady(backend);
+    expect(create).toHaveBeenCalledOnce();
+    expect(exec).toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledOnce();
+  });
+  it('requires a configured class', async () => {
+    vi.stubEnv('K8S_WORKSPACE_RUNTIME_CLASS', '');
+    const { backend, create } = fakeBackend(() => BLOCKED);
+    await expect(assertKubernetesReady(backend)).rejects.toThrow(
+      'requires K8S_WORKSPACE_RUNTIME_CLASS'
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
+  it('fails when kubectl cannot get the class (including missing RBAC)', async () => {
+    vi.mocked(spawnCaptureAsync).mockImplementation(async (_bin, args) => ({
+      exitCode: args[1] === 'runtimeclass' ? 1 : 0,
+      stderr: 'Forbidden',
+      stdout: 'yes',
+    }));
+    const { backend, create } = fakeBackend(() => BLOCKED);
+    await expect(assertKubernetesReady(backend)).rejects.toThrow(
+      'RuntimeClass gvisor is unavailable: Forbidden'
+    );
+    expect(create).not.toHaveBeenCalled();
+  });
+  it.each(['', 'runc', 'error'])(
+    'refuses returned pod class %j and removes the pod',
+    async (value) => {
+      vi.mocked(spawnCaptureAsync).mockImplementation(async (_bin, args) => ({
+        exitCode: args[1] === 'pod' && value === 'error' ? 1 : 0,
+        stderr: '',
+        stdout: args[0] === 'auth' ? 'yes' : args[1] === 'pod' ? value : 'gvisor',
+      }));
+      const { backend, remove } = fakeBackend(() => BLOCKED);
+      await expect(assertKubernetesReady(backend)).rejects.toThrow(
+        'did not return runtimeClassName=gvisor'
+      );
+      expect(remove).toHaveBeenCalledOnce();
+    }
+  );
+  it('cleans partial pod creation failures', async () => {
+    const { backend, create, remove } = fakeBackend(() => BLOCKED);
+    create.mockRejectedValueOnce(new Error('pod rejected'));
+    await expect(assertKubernetesReady(backend)).rejects.toThrow('pod rejected');
+    expect(remove).toHaveBeenCalledOnce();
+  });
+  it('keeps the class optional by default', async () => {
+    vi.stubEnv('K8S_REQUIRE_RUNTIME_CLASS', 'false');
+    const { backend, create } = fakeBackend(() => BLOCKED);
+    await assertKubernetesReady(backend);
+    expect(create).not.toHaveBeenCalled();
+    expect(vi.mocked(spawnCaptureAsync).mock.calls.every(([, args]) => args[0] === 'auth')).toBe(
+      true
+    );
+  });
+});
 
 describe('wasBlocked', () => {
   it.each([

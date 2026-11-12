@@ -2,6 +2,35 @@ import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import { SETTING_DEFINITIONS } from './registry.js';
 
+describe('lesson quarantine threshold', () => {
+  it('is live, LEAD-controlled, owner-scoped and bounded', () => {
+    const setting = SETTING_DEFINITIONS['memory.lessonFlagQuarantineThreshold'];
+    expect(setting.defaultValue).toBe(2);
+    expect(setting.requiredRole).toBe('LEAD');
+    expect(setting.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
+    expect(setting.runPinned).toBe(false);
+    expect(setting.restartRequired).toBe(false);
+    for (const value of [0, 2, 20]) {
+      expect(setting.schema.safeParse(value).success).toBe(true);
+    }
+    for (const value of [-1, 21, 1.5, '2', null]) {
+      expect(setting.schema.safeParse(value).success).toBe(false);
+    }
+  });
+});
+
+describe('setup egress setting', () => {
+  it('inherits by default and shares the agent policy permission floor, scopes and pinning', () => {
+    const setup = SETTING_DEFINITIONS['workspace.setupEgressPolicy'];
+    const agent = SETTING_DEFINITIONS['workspace.egressPolicy'];
+    expect(setup.defaultValue).toBe('inherit');
+    expect(setup.requiredRole).toBe(agent.requiredRole);
+    expect(setup.overridableAt).toEqual(agent.overridableAt);
+    expect(setup.runPinned).toBe(true);
+    expect(setup.restartRequired).toBe(false);
+  });
+});
+
 describe('review settings', () => {
   it('enables live ADMIN-managed reviews with team and organization overrides', () => {
     const setting = SETTING_DEFINITIONS['review.enabled'];

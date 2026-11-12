@@ -65,13 +65,17 @@ export function useSetConfigSetting(selection: ScopeSelection) {
   const query = scopeQuery(selection);
   return useMutation({
     mutationFn: ({ key, value }: { key: string; value: unknown }) =>
-      api.put<{ data: unknown }>(
+      api.put<{ data: unknown; warnings?: string[] }>(
         `/api/v1/platform/config/settings/${encodeURIComponent(key)}?${query}`,
         { value }
       ),
     // A write at one scope changes what broader scopes resolve to, so refresh
     // every cached scope rather than only the one just written.
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['config-settings'] }),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ['config-settings'] }),
+        qc.invalidateQueries({ queryKey: ['platform-readiness'] }),
+      ]),
   });
 }
 
@@ -83,7 +87,11 @@ export function useClearConfigSetting(selection: ScopeSelection) {
       api.delete<{ data: { cleared: boolean } }>(
         `/api/v1/platform/config/settings/${encodeURIComponent(key)}?${query}`
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['config-settings'] }),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ['config-settings'] }),
+        qc.invalidateQueries({ queryKey: ['platform-readiness'] }),
+      ]),
   });
 }
 

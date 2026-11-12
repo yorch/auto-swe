@@ -3,6 +3,7 @@ import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { deleteArtifact, getArtifact, putArtifact } from '@auto-swe/shared/lib/artifactStore';
 import { decryptSecret } from '@auto-swe/shared/lib/crypto';
+import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import {
   DEFAULT_SETUP_STEP_TIMEOUT_SECONDS,
   isKeyFileGlob,
@@ -14,8 +15,10 @@ import {
   type RepoSetupSource,
   resolveRepoSetup,
 } from '@auto-swe/shared/lib/repoSetup';
+import { classifySetupStepFailure, type SetupBlocker } from '@auto-swe/shared/lib/setupBlocker';
 import { resolveStorageConfig } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
+import { currentWorkflowId, currentWorkflowRunId } from './activityContext.js';
 import { logWarn } from './activityLog.js';
 import { currentRequestContext } from './config/contextLookup.js';
 import type { CapturedResult } from './execUtils.js';
@@ -38,13 +41,66 @@ const SUBMODULE_TIMEOUT_MS = 600_000;
 const OUTPUT_TAIL_CHARS = 2000;
 
 /** A non-retryable failure: the definition, not the moment, is wrong. */
-export function setupConfigFailure(message: string): ApplicationFailure {
-  return ApplicationFailure.nonRetryable(`workspace setup: ${message}`, WORKSPACE_SETUP_FAILED);
+export function setupConfigFailure(message: string, blocker: SetupBlocker): ApplicationFailure {
+  return ApplicationFailure.create({
+    details: [blocker],
+    message: `workspace setup: ${message}`,
+    nonRetryable: true,
+    type: WORKSPACE_SETUP_FAILED,
+  });
 }
 
 /** A retryable failure: a step can fail on a registry hiccup and pass on the next attempt. */
-function setupRunFailure(message: string): ApplicationFailure {
-  return ApplicationFailure.retryable(`workspace setup: ${message}`, WORKSPACE_SETUP_FAILED);
+function setupRunFailure(message: string, blocker: SetupBlocker): ApplicationFailure {
+  return ApplicationFailure.create({
+    details: [blocker],
+    message: `workspace setup: ${message}`,
+    nonRetryable: false,
+    type: WORKSPACE_SETUP_FAILED,
+  });
+}
+
+function blocker(
+  kind: SetupBlocker['kind'],
+  detail: string,
+  subject = '',
+  step?: string
+): SetupBlocker {
+  return { detail: detail.slice(-OUTPUT_TAIL_CHARS), kind, subject, ...(step ? { step } : {}) };
+}
+
+function gitBlocker(detail: string, subject: string): SetupBlocker {
+  return blocker(
+    /\b(?:401|403)\b|Authentication failed|could not read Username/i.test(detail)
+      ? 'git_auth'
+      : 'git_fetch',
+    detail,
+    subject
+  );
+}
+
+async function failedStepBlocker(started: number, fallback: SetupBlocker): Promise<SetupBlocker> {
+  try {
+    const workflowId = currentWorkflowId();
+    const runId = await currentWorkflowRunId();
+    if (workflowId) {
+      const denied = await prisma.workflowHttpCall.findFirst({
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { host: true },
+        where: {
+          blocked: true,
+          createdAt: { gte: new Date(started) },
+          runId: runId ?? null,
+          source: 'egress_proxy',
+          workflowId,
+        },
+      });
+      if (denied) {
+        return { ...fallback, kind: 'egress_denied', subject: denied.host };
+      }
+    }
+  } catch {}
+  return fallback;
 }
 
 /** What `createWorkspace` hands the setup: its execs, bound to one container. */
@@ -102,6 +158,7 @@ export interface RepoSetupInputs {
   cleanUrl: string;
   gitHost: string | null;
   image: string;
+  setupEgressPolicy?: EgressPolicy;
 }
 
 async function stackDefaultsEnabled(teamId: string | null): Promise<boolean> {
@@ -129,7 +186,10 @@ export async function readSetupFile(host: RepoSetupHost, ref: string): Promise<s
     return null;
   }
   if (result.exitCode !== 0) {
-    throw setupRunFailure(`could not read ${REPO_SETUP_FILE}: ${tail(host, result)}`);
+    throw setupRunFailure(
+      `could not read ${REPO_SETUP_FILE}: ${tail(host, result)}`,
+      blocker('internal', tail(host, result))
+    );
   }
   return result.stdout;
 }
@@ -150,7 +210,10 @@ export async function resolveWorkspaceSetup(
     stackDefaults,
   });
   if (!resolved.ok) {
-    throw setupConfigFailure(resolved.error);
+    throw setupConfigFailure(
+      resolved.error,
+      blocker('invalid_config', host.redact(resolved.error))
+    );
   }
   return resolved.resolved.source === null
     ? null
@@ -263,31 +326,59 @@ export async function fetchSubmodules(
     for (const sub of parseGitmodules(listing)) {
       const label = `submodule "${sub.name}"`;
       if (!sub.path || !sub.url) {
-        throw setupConfigFailure(`${label} has no path or url in .gitmodules`);
+        throw setupConfigFailure(
+          `${label} has no path or url in .gitmodules`,
+          blocker(
+            'invalid_config',
+            host.redact(`${label} has no path or url in .gitmodules`),
+            sub.name
+          )
+        );
       }
       if (
         !SUBMODULE_PATH_RE.test(sub.path) ||
         sub.path.split('/').some((s) => s === '..' || s === '.' || s === '')
       ) {
-        throw setupConfigFailure(`${label} has an unsafe path`);
+        throw setupConfigFailure(
+          `${label} has an unsafe path`,
+          blocker('invalid_config', host.redact(`${label} has an unsafe path`), sub.name)
+        );
       }
       const repo = submoduleRepo(sub.url, level.parentUrl, gitHost);
       if ('error' in repo) {
-        throw setupConfigFailure(`${label} URL ${repo.error}`);
+        throw setupConfigFailure(
+          `${label} URL ${repo.error}`,
+          blocker('invalid_config', host.redact(`${label} URL ${repo.error}`), sub.name)
+        );
       }
       if (fetched.length >= MAX_SUBMODULES) {
-        throw setupConfigFailure(`more than ${MAX_SUBMODULES} submodules`);
+        throw setupConfigFailure(
+          `more than ${MAX_SUBMODULES} submodules`,
+          blocker('invalid_config', `more than ${MAX_SUBMODULES} submodules`)
+        );
       }
       let credential: { cleanUrl: string; authHeader?: string };
       try {
         credential = await host.mintCredential(repo.organizationName, repo.repoName);
       } catch (err) {
         throw setupConfigFailure(
-          `${label} (${repo.organizationName}/${repo.repoName}): no credential for it: ${host.redact(err instanceof Error ? err.message : String(err))}`
+          `${label} (${repo.organizationName}/${repo.repoName}): no credential for it: ${host.redact(err instanceof Error ? err.message : String(err))}`,
+          blocker(
+            'invalid_config',
+            host.redact(err instanceof Error ? err.message : String(err)),
+            sub.name
+          )
         );
       }
       if (new URL(credential.cleanUrl).host.toLowerCase() !== gitHost?.toLowerCase()) {
-        throw setupConfigFailure(`${label}: its credential is for another host`);
+        throw setupConfigFailure(
+          `${label}: its credential is for another host`,
+          blocker(
+            'invalid_config',
+            host.redact(`${label}: its credential is for another host`),
+            sub.name
+          )
+        );
       }
       const key = `submodule.${sub.name}`;
       await host.root(
@@ -302,7 +393,8 @@ export async function fetchSubmodules(
         );
       } catch (err) {
         throw setupRunFailure(
-          `${label} could not be fetched: ${host.redact(err instanceof Error ? err.message : String(err))}`
+          `${label} could not be fetched: ${host.redact(err instanceof Error ? err.message : String(err))}`,
+          gitBlocker(host.redact(err instanceof Error ? err.message : String(err)), gitHost ?? '')
         );
       }
       const dir = `${level.dir}/${sub.path}`;
@@ -339,7 +431,10 @@ export async function pullLfs(
 ) {
   const version = await host.capture('git lfs version', { timeoutMs: 30_000 });
   if (version.exitCode !== 0) {
-    throw setupConfigFailure('lfs: true needs git-lfs in the workspace image');
+    throw setupConfigFailure(
+      'lfs: true needs git-lfs in the workspace image',
+      blocker('lfs_missing', 'lfs: true needs git-lfs in the workspace image', 'git-lfs')
+    );
   }
   for (const { authHeader, cleanUrl, dir } of checkouts) {
     // Each checkout's endpoint is pinned to its own repository, so a `.lfsconfig` in it cannot
@@ -355,7 +450,11 @@ export async function pullLfs(
     } catch (err) {
       const where = dir === REPO_DIR ? '' : ` in ${dir.slice(REPO_DIR.length + 1)}`;
       throw setupRunFailure(
-        `git lfs pull${where} failed: ${host.redact(err instanceof Error ? err.message : String(err))}`
+        `git lfs pull${where} failed: ${host.redact(err instanceof Error ? err.message : String(err))}`,
+        gitBlocker(
+          host.redact(err instanceof Error ? err.message : String(err)),
+          new URL(cleanUrl).host
+        )
       );
     }
   }
@@ -394,7 +493,7 @@ function cacheTarPaths(paths: readonly string[]): string {
 async function setupCacheKey(
   host: RepoSetupHost,
   setup: RepoSetup,
-  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId'>
+  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId' | 'setupEgressPolicy'>
 ): Promise<string> {
   const entries = setup.cache?.keyFiles ?? [];
   const globs = entries.filter(isKeyFileGlob);
@@ -403,6 +502,8 @@ async function setupCacheKey(
     `if [ -f ${shellQuote(f)} ]; then sha256sum < ${shellQuote(f)}; else echo absent; fi`;
   const script = [
     'uname -m',
+    'id -u',
+    'printf "%s\\n" "$HOME"',
     ...entries.filter((e) => !isKeyFileGlob(e)).map(hash),
     // A matched file's path is part of the key, so adding or removing a subproject changes it.
     ...matched.map((f) => `printf '%s\\n' ${shellQuote(f)}; ${hash(f)}`),
@@ -419,6 +520,7 @@ async function setupCacheKey(
         image: inputs.image,
         repository: repositoryId(inputs.cleanUrl),
         setup: canonical(setup),
+        ...(inputs.setupEgressPolicy ? { setupEgressPolicy: inputs.setupEgressPolicy } : {}),
         team: inputs.teamId ?? null,
         v: 2,
       })
@@ -542,7 +644,12 @@ export async function loadSetupSecrets(
   }
   if (!connectionId) {
     throw setupRunFailure(
-      `setup names secrets (${names.join(', ')}), but this workspace has no repository to read them from`
+      `setup names secrets (${names.join(', ')}), but this workspace has no repository to read them from`,
+      blocker(
+        'invalid_config',
+        'setup names secrets but this workspace has no repository',
+        [...names].sort().join(', ')
+      )
     );
   }
   const rows = await prisma.repoSetupSecret.findMany({
@@ -551,7 +658,12 @@ export async function loadSetupSecrets(
   const missing = names.filter((n) => !rows.some((r) => r.name === n));
   if (missing.length) {
     throw setupRunFailure(
-      `setup secret${missing.length > 1 ? 's' : ''} not set on the repository: ${missing.join(', ')}`
+      `setup secret${missing.length > 1 ? 's' : ''} not set on the repository: ${missing.join(', ')}`,
+      blocker(
+        'missing_secret',
+        `setup secrets not set: ${[...missing].sort().join(', ')}`,
+        [...missing].sort().join(', ')
+      )
     );
   }
   const values: Record<string, string> = {};
@@ -564,7 +676,14 @@ export async function loadSetupSecrets(
         nonce: row.valueNonce,
       });
     } catch {
-      throw setupRunFailure(`setup secret ${row.name} could not be decrypted; save it again`);
+      throw setupRunFailure(
+        `setup secret ${row.name} could not be decrypted; save it again`,
+        blocker(
+          'secret_decrypt_failed',
+          `setup secret ${row.name} could not be decrypted; save it again`,
+          row.name
+        )
+      );
     }
   }
   return values;
@@ -591,12 +710,30 @@ async function runSteps(
       });
     } catch (err) {
       throw setupRunFailure(
-        `"${name}" did not finish: ${host.redact(err instanceof Error ? err.message : String(err))}`
+        `"${name}" did not finish: ${host.redact(err instanceof Error ? err.message : String(err))}`,
+        await failedStepBlocker(
+          started,
+          blocker(
+            'step_timeout',
+            host.redact(err instanceof Error ? err.message : String(err)),
+            name,
+            name
+          )
+        )
       );
     }
     if (result.exitCode !== 0) {
       throw setupRunFailure(
-        `"${name}" failed (exit ${result.exitCode}${result.signal ? `, ${result.signal}` : ''}): ${tail(host, result)}`
+        `"${name}" failed (exit ${result.exitCode}${result.signal ? `, ${result.signal}` : ''}): ${tail(host, result)}`,
+        await failedStepBlocker(
+          started,
+          classifySetupStepFailure({
+            command: host.redact(step.run),
+            exitCode: result.exitCode,
+            output: tail(host, result),
+            step: name,
+          })
+        )
       );
     }
     done.push({ durationMs: Date.now() - started, name });
@@ -624,7 +761,10 @@ async function runCleanup(host: RepoSetupHost, setup: RepoSetup): Promise<void> 
     timeoutMs: 120_000,
   });
   if (result.exitCode !== 0) {
-    throw setupRunFailure(`cleanup failed: ${tail(host, result)}`);
+    throw setupRunFailure(
+      `cleanup failed: ${tail(host, result)}`,
+      blocker('internal', tail(host, result))
+    );
   }
 }
 
@@ -690,7 +830,10 @@ const SCAN_MARKER = '/tmp/.auto-swe-setup-started';
 async function markStepsStart(host: RepoSetupHost): Promise<void> {
   const result = await host.capture(`date +%s > ${SCAN_MARKER}`, { timeoutMs: 30_000 });
   if (result.exitCode !== 0) {
-    throw setupRunFailure(`marking the start of the steps failed: ${tail(host, result)}`);
+    throw setupRunFailure(
+      `marking the start of the steps failed: ${tail(host, result)}`,
+      blocker('internal', tail(host, result))
+    );
   }
 }
 
@@ -726,7 +869,8 @@ async function scanForSecrets(
     result = await host.capture(script, { secretEnv: scanEnv, timeoutMs: SCAN_TIMEOUT_MS });
   } catch (err) {
     throw setupRunFailure(
-      `the secret scan did not finish: ${host.redact(err instanceof Error ? err.message : String(err))}`
+      `the secret scan did not finish: ${host.redact(err instanceof Error ? err.message : String(err))}`,
+      blocker('internal', host.redact(err instanceof Error ? err.message : String(err)))
     );
   }
   const files = result.stdout
@@ -735,7 +879,8 @@ async function scanForSecrets(
     .filter(Boolean);
   if (files.length) {
     throw setupConfigFailure(
-      `setup left a secret value in ${host.redact(files.join(', '))}; list those files under cleanup, or have the step not write the value to disk`
+      `setup left a secret value in ${host.redact(files.join(', '))}; list those files under cleanup, or have the step not write the value to disk`,
+      blocker('secret_leak', host.redact(files.join(', ')))
     );
   }
 }
@@ -770,7 +915,7 @@ export async function runSetupGitPhase(
 export async function runSetupStepsPhase(
   host: RepoSetupHost,
   setup: RepoSetup,
-  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId'>,
+  inputs: Pick<RepoSetupInputs, 'cleanUrl' | 'image' | 'teamId' | 'setupEgressPolicy'>,
   /** The values of the secrets `setup.secrets` names, already resolved. */
   secretEnv: Record<string, string> = {}
 ): Promise<Pick<RepoSetupReport, 'cache' | 'steps'>> {
@@ -793,7 +938,12 @@ export async function runSetupStepsPhase(
     .map(([name]) => name);
   if (short.length) {
     throw setupConfigFailure(
-      `setup secret${short.length > 1 ? 's' : ''} ${short.join(', ')} ${short.length > 1 ? 'are' : 'is'} shorter than ${MIN_SCANNED_SECRET_CHARS} characters, too short to scan for; save a longer value`
+      `setup secret${short.length > 1 ? 's' : ''} ${short.join(', ')} ${short.length > 1 ? 'are' : 'is'} shorter than ${MIN_SCANNED_SECRET_CHARS} characters, too short to scan for; save a longer value`,
+      blocker(
+        'invalid_config',
+        `setup secrets too short to scan: ${[...short].sort().join(', ')}`,
+        [...short].sort().join(', ')
+      )
     );
   }
   if (Object.keys(secretEnv).length) {
@@ -805,7 +955,8 @@ export async function runSetupStepsPhase(
       await host.sweepProcesses();
     } catch (err) {
       throw setupRunFailure(
-        `stopping the processes setup left running failed: ${host.redact(err instanceof Error ? err.message : String(err))}`
+        `stopping the processes setup left running failed: ${host.redact(err instanceof Error ? err.message : String(err))}`,
+        blocker('internal', host.redact(err instanceof Error ? err.message : String(err)))
       );
     }
   }

@@ -43,7 +43,7 @@ import {
 import { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';
 
 export interface BuiltinTemplate {
-  kind?: 'review';
+  kind?: 'review' | 'automation';
   name: string;
   description: string;
   spec: WorkflowSpec;
@@ -128,6 +128,7 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     description: CI_TRIAGE_AND_FIX_SPEC.description,
     inputSchema: CI_TRIAGE_INPUT_SCHEMA,
     name: CI_TRIAGE_AND_FIX_SPEC.name,
+    kind: 'automation',
     spec: CI_TRIAGE_AND_FIX_SPEC,
   },
   {
@@ -135,6 +136,7 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     description: ADDRESS_PR_FEEDBACK_SPEC.description,
     inputSchema: PR_FEEDBACK_INPUT_SCHEMA,
     name: ADDRESS_PR_FEEDBACK_SPEC.name,
+    kind: 'automation',
     spec: ADDRESS_PR_FEEDBACK_SPEC,
   },
   {
