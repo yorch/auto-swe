@@ -1643,6 +1643,32 @@ describe('killStrayProcessesScript', () => {
 });
 
 describe('gitBootstrapScript', () => {
+  it('names the image contract without trying package managers as a non-root user', () => {
+    const script = gitBootstrapScript('custom:1');
+    const run = () =>
+      execFileSync(
+        '/bin/sh',
+        [
+          '-c',
+          `
+command() { return 1; }
+id() { echo 1000; }
+apk() { echo unexpected-package-install >&2; }
+${script}
+`,
+        ],
+        { stdio: 'pipe' }
+      );
+    try {
+      run();
+      throw new Error('expected the image contract to fail');
+    } catch (error) {
+      const stderr = String((error as { stderr?: Buffer }).stderr);
+      expect(stderr).toContain("executor image 'custom:1' must ship git for non-root workspaces");
+      expect(stderr).not.toContain('unexpected-package-install');
+    }
+  });
+
   it('uses git when present, installs via apk then apt-get, else fails naming the contract', () => {
     const script = gitBootstrapScript('alpine:3.20');
     expect(script).toContain('command -v git');

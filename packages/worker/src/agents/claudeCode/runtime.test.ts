@@ -254,6 +254,7 @@ describe('preparing the container', () => {
       'docker',
       [
         'cp',
+        '-a',
         '/app/node_modules/sdk-linux-x64-musl/claude',
         'workspace-abc123:/workspace/.harness/claude',
       ],

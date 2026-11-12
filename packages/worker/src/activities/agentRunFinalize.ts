@@ -28,7 +28,7 @@ import { shellQuote, type Workspace } from './workspace.js';
 /**
  * The trusted half of an agent run.
  *
- * The agent runs as root in its own container and can replace `git`, `sh` or
+ * An agent with the root opt-out can replace `git`, `sh` or
  * `sed` there, rewrite `.git/config`, add `refs/replace/*`, set a textconv
  * driver or mark every file `-diff`. So nothing about WHAT may be published is
  * decided in that container, and the push credential never enters it. Instead:
@@ -137,17 +137,18 @@ export async function importAgentTree(
       );
     }
     const size = copied.bytes;
-    await trusted.exec('rm -rf /stage && mkdir /stage');
-    await backend.copyIn(backend.attach(trusted.containerId), archive, '/stage');
+    const stage = '/workspace/.agent-stage';
+    await trusted.exec(`rm -rf ${stage} && mkdir ${stage}`);
+    await backend.copyIn(backend.attach(trusted.containerId), archive, stage);
     // Replace the clean checkout's tree with the copied one. `.git` of the
     // checkout is the trusted repository; a `.git` inside the copy is dropped.
     await trusted.exec(
       [
         'set -e',
-        'rm -rf /stage/.git',
+        `rm -rf ${stage}/.git`,
         'find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +',
-        'cp -a /stage/. .',
-        'rm -rf /stage',
+        `cp -a ${stage}/. .`,
+        `rm -rf ${stage}`,
       ].join('\n'),
       { timeoutMs: 600_000 }
     );

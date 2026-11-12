@@ -1228,6 +1228,7 @@ anything else in the system. `createWorkspace()` (`activities/workspace.ts`) app
 | Control | Detail |
 |---|---|
 | Capabilities | `--cap-drop=ALL`, `--security-opt=no-new-privileges` |
+| User and writable paths | Docker agent workspaces use `--user 1000:1000`, matching the default Kubernetes UID/GID. The daemon prepares `/workspace`, `/workspace/target-repo` and `HOME=/workspace/.home` for that user before provisioning; archive-mode `docker cp` imports belong to the configured container user. Only `WORKSPACE_RUN_AS_ROOT=true` restores image-defined `USER` and `HOME` |
 | Resources | Memory, CPU, and PID caps from `WORKSPACE_MEMORY` / `WORKSPACE_CPUS` / `WORKSPACE_PIDS_LIMIT` |
 | Network | Docker workspaces keep public internet access under `open`, but a verified OUTPUT baseline rejects private, link-local, multicast, reserved and IPv4-embedding IPv6 ranges. Loopback and established replies are accepted first, then cloud metadata is rejected before exceptions for worker proxy ports, configured DNS, the repository git host and operator CIDRs (`WORKSPACE_PRIVATE_EGRESS_ALLOW`). `WORKSPACE_BLOCK_PRIVATE_EGRESS=false` disables private-range blocking. The later restricted/blocked lock detaches this baseline and defaults INPUT and OUTPUT to DROP |
 | Clone credential | Scrubbed from `.git/config` immediately after clone, then re-injected per-call by `gitAuthed` via `http.extraheader` for push and fetch only, so it never sits at rest in the workspace. The header value is never in the script: the script reads it from `$ASW_GIT_AUTH`, which the caller supplies as `secretEnv` (Docker `-e NAME` from the client's environment; Kubernetes a stdin preamble), because a Kubernetes exec's argv is an apiserver URL kept in audit logs. The script names it as `${ASW_GIT_AUTH:?…}`, so a variable that was not delivered aborts the script instead of sending the request unauthenticated. Dependency checkouts (`cloneDependencyRepos`) clone the same way: from the clean URL, hardened, with the header as `secretEnv` |
@@ -1237,6 +1238,14 @@ anything else in the system. `createWorkspace()` (`activities/workspace.ts`) app
 | Sandbox runtime | Optional Docker `WORKSPACE_RUNTIME` applies to agent/author containers, their sidecars and egress network holders, not trusted helpers or fresh delivery. Worker boot fails unless runtime inspection, real baseline/blocked traffic tests and a `/workspace` copy round trip pass. Default runsc bypasses OUTPUT filtering and is refused; runsc-host requires the host Linux netstack and copy-visible rootfs settings (see deployment) |
 | Timed-out commands | Every `docker exec` carries a per-call `AUTO_SWE_EXEC_ID` tag; when a command overruns its timeout, its whole in-container process tree (found by that tag in `/proc/*/environ`) is stopped and killed, not just the local `docker exec` client. The container runs under `--init`, so the killed processes are reaped rather than left holding PIDs |
 | Provisioning failure | The container is named before `docker run`, and any failure from `docker run` onward removes it by that name |
+
+Repository setup, git configuration, package caches and catalog tool installation run as the
+workspace user. Executor images must carry git and, for Claude Code, bash; the curated images
+provide them. Catalog tools install without a package manager under `/workspace/.tools`, and
+Claude Code and Pi use writable paths under `/workspace/.harness`. Dependency-cache keys include
+the UID and HOME so an archive from a different execution identity is not reused. Trusted agent-run
+delivery stages imported files under `/workspace/.agent-stage`, not a root-owned directory at `/`.
+The NET_ADMIN helper and attached services retain their separate user/capability contracts.
 
 **The browser runs inside that same container.** UI validation does not get a privileged sidecar or
 the Docker socket: a driver daemon starts beside the app under test, Chromium reaches the preview over
@@ -1252,7 +1261,7 @@ Everything the worker does to a workspace goes through `WorkspaceBackend`
 out/in, pause, remove. `WORKSPACE_BACKEND` picks the driver for the whole worker process: Docker
 (the default) or Kubernetes (`kubernetes`, any other value is Docker). Both meet the same
 obligations: `create()` applies the hardening itself (Docker: `--init`, `--cap-drop=ALL`,
-`no-new-privileges`, the metadata add-hosts, `sleep infinity`, the verified baseline before services,
+`no-new-privileges`, UID/GID 1000 unless opted out, the metadata add-hosts, `sleep infinity`, the verified baseline before services,
 and the optional `WORKSPACE_DISK_LIMIT` storage cap; Kubernetes: the pod spec below) and
 records the keeper's in-container PID once, right after start ("the only child of PID 1" cannot
 be found reliably later); secret env (`secretEnv` on `exec`, `execShell`, `spawn` and `runHelper`)
@@ -1630,8 +1639,15 @@ Current constraints of the system as built. Deliberate product boundaries are in
   `network: 'egress'` against the team's allowlist. A team that allowlists the GitHub API host and
   supplies a token can author a DAG that merges. The guarantee covers what the platform ships; it
   is not enforced against what a team authors.
-- **Authenticated git runs inside the container the agent controls.** The agent runs as root in its
-  workspace. The sweep before each authenticated call kills what the agent left running, but it is a
+- **Non-root workspaces do not make arbitrary images safe.** Custom images must provide tools and
+  writable application paths for UID/GID 1000; image files outside the prepared workspace directories
+  are not recursively reassigned. `WORKSPACE_RUN_AS_ROOT=true` preserves the image's user, including
+  root when that is its default. Shell/containerStep author containers and their sidecars still use
+  image-defined users: their volumes can hold root-owned clones or operator host mounts, and this
+  control does not change ownership of those mounts. Network holders and trusted helpers are unchanged.
+- **Authenticated git runs inside the container the agent controls.** The agent owns its checkout
+  and HOME; the root opt-out can also let it replace system binaries. The sweep before each
+  authenticated call kills what the agent left running, but it is a
   scan of `/proc`, not a freeze of the container: a process that forks faster than the two stop
   passes can reach it may survive, and a process started by another `docker exec` in the instant
   between the sweep and the call is not covered. A replaced `git` binary (or `sh`, `sed`) is not

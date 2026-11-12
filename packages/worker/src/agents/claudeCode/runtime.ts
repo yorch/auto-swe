@@ -291,7 +291,7 @@ export function baseUrlMayCarryCredential(baseUrl: string): boolean {
  */
 async function prepareContainer(workspace: Workspace): Promise<void> {
   const bash = await workspace.execCapture(
-    'command -v bash >/dev/null 2>&1 || { command -v apk >/dev/null 2>&1 && apk add --no-cache bash >/dev/null 2>&1; }; command -v bash >/dev/null 2>&1',
+    'command -v bash >/dev/null 2>&1 || { [ "$(id -u)" = 0 ] && command -v apk >/dev/null 2>&1 && apk add --no-cache bash >/dev/null 2>&1; }; command -v bash >/dev/null 2>&1',
     { timeoutMs: 120_000 }
   );
   if (bash.exitCode !== 0) {

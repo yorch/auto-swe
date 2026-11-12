@@ -60,7 +60,11 @@ Each build also records its settings on the connection (`executorImageBuild`). A
 (`cron: '0 6 * * 1'`) rebuilds every active repository that has such a record, so the workflow's
 `GATEWAY_TOKEN` must be able to list repositories as well as update them.
 
-The workspace image tracks its own major, not the services'. It stays on `node:24-alpine` while the gateway, worker and web images run Node 26, because that image puts `yarn`, `pnpm` and `corepack` on `PATH` and the Node 26 image puts none of them there — Corepack is no longer bundled with the Node distribution.
+The fallback `WORKSPACE_IMAGE` remains `node:24-alpine`, but a bare Node image does not ship git and
+cannot install it as UID 1000. Configure an executor image that meets the image contract, such as
+the curated Node image built from `defaults/Dockerfile.node`. It uses Node 26 and explicitly
+preinstalls Corepack, Yarn, pnpm, git and bash. The root opt-out retains the legacy package-install
+fallback for images that run as root; it is not required for the curated images.
 
 This is a harder constraint than "some target repos use Yarn". The built-in quality gates are `yarn` commands — `DEFAULT_COMMANDS` in `activities/qualityGates.ts` defines `runBuild`, `runLint`, `runTests`, `runTypecheck` and `runVulnScan` that way — and they run with `docker exec` inside this container. They are the fallback for a repository whose detected root is Yarn, Node with no recorded package manager, or undetected; a detected npm or pnpm root, or a Python, JVM or Go root, runs its own commands instead ([`repositories.md`](./repositories.md#detected-stack)). On an image without `yarn`, every gate that falls back exits `127`, and the failure reads as the agent producing broken code rather than as a missing tool. A per-connection `gateCommands` override sidesteps it, but that is opt-in.
 
@@ -233,6 +237,7 @@ WEB_URL=https://app.example.com      # base URL for the "Open approvals" link (t
 # WORKSPACE_CPUS=2
 # WORKSPACE_PIDS_LIMIT=512
 # WORKSPACE_IMAGE=node:24-alpine
+# WORKSPACE_RUN_AS_ROOT=false          # Docker agent workspaces: UID/GID 1000; true restores image USER/HOME
 # WORKSPACE_IMAGE_PYTHON=registry.example/executor-python:1   # per-stack executor images (optional)
 # WORKSPACE_IMAGE_JVM=registry.example/executor-jvm:1
 # WORKSPACE_IMAGE_GO=registry.example/executor-go:1
@@ -690,6 +695,22 @@ Two stateful datastores, plus the artifact store when it is not Postgres:
 
 Container workspaces are ephemeral — never back them up. The Docker daemon on the worker host can be restored from scratch.
 
+Docker agent workspaces run as UID/GID `1000:1000`, like the default Kubernetes workspace pod.
+Before provisioning, the Docker daemon assigns `/workspace`, `/workspace/target-repo` and
+`/workspace/.home` to that user; `HOME` is `/workspace/.home`. File and archive imports use
+archive-mode `docker cp`, which assigns the configured container user's ownership in the daemon,
+without running a privileged chown in the workspace. Clones, git config, setup scripts, package
+caches, catalog tools and harness files are writable by the workspace user. Setup-cache keys include
+UID and HOME. Attached services keep their own user settings, and NET_ADMIN helpers are unchanged.
+
+Build OS packages into custom executor images rather than running `sudo`, `apk` or `apt-get` in
+repository setup. All curated executor images select UID 1000; git and bash are preinstalled.
+Only the literal `WORKSPACE_RUN_AS_ROOT=true` opts Docker workspaces out: no user or HOME override
+or directory preparation is applied, and file imports keep their legacy behavior. This restores
+the image's `USER`, not necessarily UID 0; an image with `USER node` still runs as node. The switch
+does not alter Kubernetes, whose `runAsUser`, `runAsGroup` and `fsGroup` remain configured by
+`K8S_WORKSPACE_RUN_AS_UID`.
+
 ---
 
 After startup assertions, each Docker worker creates a throwaway workspace, verifies its baseline
@@ -780,6 +801,7 @@ the ClusterRole with `resourceNames` to the configured class if required.
 
 ## 10. Hardening checklist
 
+- [ ] `WORKSPACE_RUN_AS_ROOT` is unset or `false`; a real workspace reports `id -u` and `id -g` as 1000, can write to `$HOME`, and can clone, commit and export changes. Custom images ship git and required OS tools, and setup scripts need no root.
 - [ ] Docker private-range and metadata blocking remain on; internal exceptions are narrow and deliberate.
 - [ ] The baseline helper image has iptables/ip6tables preinstalled and is available to the daemon.
 - [ ] An optional Docker runtime passes the boot traffic/copy gate; runsc-host uses host netstack, no root overlay and shared rootfs validation. The daemon default remains runc for trusted helpers.
@@ -816,6 +838,7 @@ the ClusterRole with `resourceNames` to the configured class if required.
 - **Runtime enforcement is checked only at worker boot.** It does not monitor daemon/runtime, network or admission changes afterwards. Restart workers after changing those controls. A runtime name or RuntimeClass match alone does not prove a particular sandbox implementation; Kubernetes relies on the cluster's RuntimeClass handler configuration.
 - **The Docker runtime gate samples IPv4 HTTP and one public TCP target.** It is not an exhaustive isolation audit. An unreachable public pre-check refuses startup as inconclusive. Default runsc is incompatible with the namespace OUTPUT lock; runsc-host exposes the host kernel netstack. gVisor's internal `/tmp` tmpfs does not support Docker rootfs copy visibility, even with the required rootfs settings; copied workspace files belong under `/workspace`.
 
+- **The Docker UID control covers agent workspaces, not shell/containerStep images or services.** Author steps and their sidecars retain image-defined users and existing volume ownership; they can run as root. Services retain their explicit user/capability rules. The root opt-out preserves image behavior rather than forcing UID 0. Custom images with root-owned application files outside the prepared directories need rebuilding; a bare Node fallback image needs git preinstalled or the legacy root opt-out. Non-root does not replace network isolation or host hardening.
 - **The prebuilt executor images are amd64 only and rebuild only when `main` moves.** `docker.yml` builds for the platforms in `BUILD_PLATFORMS`, and has no schedule, so a base-image fix reaches `executor-*` at the next push to `main` rather than weekly; pin by digest and rebuild on your own cadence if you need one.
 - **Only `docker-compose.prod.yml` runs the production Temporal dynamic config.** It points Temporal at `infra/dynamicconfig/production-sql.yaml`, which omits the development-only `system.forceSearchAttributesCacheRefreshOnRead` (a search-attribute cache refresh on every read). A deployment built on `docker-compose.app.yml` instead keeps `development-sql.yaml`. The two files are kept identical otherwise by hand; nothing checks it.
 - **The Docker socket proxy narrows the API, not container options.** See §0: a worker that can create containers can still request privileged mode or host bind mounts.

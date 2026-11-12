@@ -557,6 +557,7 @@ describe('systemConfig resolvers', () => {
       'WORKSPACE_METADATA_BLOCK_IMAGE',
       'WORKSPACE_BLOCK_METADATA',
       'WORKSPACE_BLOCK_PRIVATE_EGRESS',
+      'WORKSPACE_RUN_AS_ROOT',
       'WORKSPACE_PRIVATE_EGRESS_ALLOW',
       'WORKSPACE_DISK_LIMIT',
       'WORKER_MAX_CONCURRENT_ACTIVITIES',
@@ -658,8 +659,22 @@ describe('systemConfig resolvers', () => {
         regexScanBudgetMs: 250,
         registryProxy: null,
         runtime: null,
+        runAsRoot: false,
         stackImages: {},
       });
+    });
+
+    it('opts out of UID 1000 only for literal true and validates the switch strictly', () => {
+      for (const raw of ['', 'false', 'TRUE', 'True', '1', 'yes', ' true ']) {
+        vi.stubEnv('WORKSPACE_RUN_AS_ROOT', raw);
+        expect(resolveWorkspaceInfra().runAsRoot).toBe(false);
+        expect(validateWorkspaceInfraEnv().some((p) => p.includes('WORKSPACE_RUN_AS_ROOT'))).toBe(
+          raw !== '' && raw !== 'false'
+        );
+      }
+      vi.stubEnv('WORKSPACE_RUN_AS_ROOT', 'true');
+      expect(resolveWorkspaceInfra().runAsRoot).toBe(true);
+      expect(validateWorkspaceInfraEnv()).toEqual([]);
     });
 
     describe('the Kubernetes backend', () => {

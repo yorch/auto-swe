@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import dns from 'node:dns/promises';
+import fs from 'node:fs/promises';
 import { BlockList, isIP } from 'node:net';
 import os from 'node:os';
+import path from 'node:path';
 import { DOCKER_HOST_ALIAS, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import {
   type CappedFileResult,
@@ -876,11 +878,13 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const env = [
       ...(spec.env ?? []).map((pair) => ` -e ${shellQuote(pair)}`),
       ...secretEnvNames(spec.secretEnv).map((name) => ` -e ${name}`),
+      ...(infra.runAsRoot ? [] : [' -e HOME=/workspace/.home']),
     ].join('');
+    const user = infra.runAsRoot ? '' : ' --user 1000:1000';
     // `memory` is a config string, so shell-quote it (the numeric caps can't
     // carry shell metacharacters); '--' separates docker flags from the image.
     await execShellAsync(
-      `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage}${runtime} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
+      `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init${user} ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit}${storage}${runtime} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
       {
         heartbeatLabel: 'workspace: starting container',
         ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
@@ -911,6 +915,9 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const handle: WorkspaceHandle = { id: spec.name, keeperPid };
 
     try {
+      if (!infra.runAsRoot) {
+        await this.prepareWorkspaceDirectories(handle);
+      }
       await installBaselineEgress(spec);
     } catch (error) {
       await execShellAsync(`docker rm -f ${shellQuote(spec.name)}`, {
@@ -962,6 +969,26 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     }
 
     return handle;
+  }
+
+  private async prepareWorkspaceDirectories(handle: WorkspaceHandle): Promise<void> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'workspace-dirs-'));
+    try {
+      const workspace = path.join(dir, 'workspace');
+      await fs.mkdir(path.join(workspace, '.home'), { recursive: true });
+      await fs.mkdir(path.join(workspace, 'target-repo'));
+      // Archive-mode imports use the container's configured UID/GID in the Docker daemon.
+      // No elevated process runs in the workspace, even for a root-owned image WORKDIR.
+      const copied = await spawnCaptureAsync('docker', ['cp', '-a', workspace, `${handle.id}:/`], {
+        heartbeatLabel: 'workspace: preparing writable directories',
+        timeoutMs: 120_000,
+      });
+      if (copied.exitCode !== 0) {
+        throw new Error(`workspace: preparing UID 1000 directories failed: ${copied.stderr}`);
+      }
+    } finally {
+      await fs.rm(dir, { force: true, recursive: true });
+    }
   }
 
   attach(id: string, keeperPid = 0): WorkspaceHandle {
@@ -1033,7 +1060,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
 
   copyIn(h: WorkspaceHandle, srcTarFile: string, path: string): Promise<void> {
     return execShellAsync(
-      `docker cp - ${shellQuote(`${h.id}:${path}`)} < ${shellQuote(srcTarFile)}`,
+      `docker cp ${resolveWorkspaceInfra().runAsRoot ? '' : '-a '}- ${shellQuote(`${h.id}:${path}`)} < ${shellQuote(srcTarFile)}`,
       { heartbeatLabel: 'workspace: copying in', timeoutMs: 600_000 }
     ).then(() => undefined);
   }
@@ -1044,10 +1071,14 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     path: string,
     opts?: { timeoutMs?: number; heartbeatLabel?: string }
   ): Promise<CapturedResult> {
-    return spawnCaptureAsync('docker', ['cp', srcFile, `${h.id}:${path}`], {
-      heartbeatLabel: opts?.heartbeatLabel ?? 'workspace: copying a file in',
-      timeoutMs: opts?.timeoutMs ?? 120_000,
-    });
+    return spawnCaptureAsync(
+      'docker',
+      ['cp', ...(resolveWorkspaceInfra().runAsRoot ? [] : ['-a']), srcFile, `${h.id}:${path}`],
+      {
+        heartbeatLabel: opts?.heartbeatLabel ?? 'workspace: copying a file in',
+        timeoutMs: opts?.timeoutMs ?? 120_000,
+      }
+    );
   }
 
   pause(h: WorkspaceHandle): Promise<void> {
