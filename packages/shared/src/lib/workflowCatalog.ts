@@ -36,6 +36,7 @@ const entries: [string, { title: string; group: WorkflowGroup }][] = [
   ['hotfix', { group: 'engineering', title: 'Production hotfix' }],
   ['dependency-update', { group: 'engineering', title: 'Dependency update' }],
   ['docs-refresh', { group: 'engineering', title: 'Documentation refresh' }],
+  ['repo-onboarding', { group: 'engineering', title: 'Repository onboarding' }],
   ['vulnerability-remediation', { group: 'engineering', title: 'Vulnerability remediation' }],
   ['model-catalog-refresh', { group: 'engineering', title: 'Model catalog refresh' }],
   ['code-and-ci', { group: 'engineering', title: 'Code and CI only' }],

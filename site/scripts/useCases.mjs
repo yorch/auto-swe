@@ -175,6 +175,14 @@ export const USE_CASES = {
       'nothing. Put it on a repository schedule so the docs are rechecked every week.',
     title: 'Documentation refresh',
   },
+  'repo-onboarding': {
+    group: 'engineering',
+    maturity: 'seeded',
+    source: 'packages/shared/src/workflow/templates/repoOnboarding.ts',
+    summary:
+      'An agent explores a repository and proposes setup, check commands and an optional preview. A fresh checkout trials the proposal under the real network policy, with up to two repair rounds. A person reviews the reports before one configuration pull request is opened. Trial failures and operator blockers remain visible; approval does not require a passing trial.',
+    title: 'Repository onboarding',
+  },
   'vulnerability-remediation': {
     group: 'engineering',
     maturity: 'composed',

@@ -29,6 +29,7 @@ library at `/agents`.
 | `implementer` | `executeImplementation` | `anthropic/claude-opus-5-5` |
 | `reviewer` | `runReviewNetwork` (all three sub-agents) | `anthropic/claude-opus-5-5` |
 | `planner` | `planDecomposition`, epic planning | `anthropic/claude-sonnet-5-5` |
+| `repo-onboarder` | `repo-onboarding` workspace draft node; bash, file reads and directory listing (search through bash), with no PR/push tools | `anthropic/claude-sonnet-5-5` |
 | `securityReview` | `scanDiffForSecurityIssues` — the post-diff gate on `executeImplementation` + the three fix paths | `anthropic/claude-sonnet-5-5` |
 | `validateContext` | `validateContext` | `anthropic/claude-sonnet-5-5` |
 | `commitToMemory` | `commitToMemory` | `anthropic/claude-opus-5-5` |

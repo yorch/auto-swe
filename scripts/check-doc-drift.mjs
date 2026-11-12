@@ -478,7 +478,7 @@ const staleExemptions = [...GAP_EXEMPT_DOCS].filter((d) => !existsSync(join(ROOT
 const ROSTER_DOCS = ['AGENTS.md', 'docs/agents.md'];
 
 const builtinAgentsSrc = read('packages/shared/src/lib/syncBuiltins.ts');
-const seededAgentKeys = [...builtinAgentsSrc.matchAll(/^\s+key: '([a-zA-Z]+)',$/gm)].map(
+const seededAgentKeys = [...builtinAgentsSrc.matchAll(/^\s+key: '([a-zA-Z0-9_-]+)',$/gm)].map(
   (m) => m[1]
 );
 // A roster check over zero agents passes by checking nothing. If the shape of the `key:` lines in

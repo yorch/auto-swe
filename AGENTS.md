@@ -527,7 +527,8 @@ are added as data, not code. Seeded built-ins split by how they bind a model:
   conversations. `prTitler` picks the type and summary of a Conventional Commits pull request title. The rest exist because the
   platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
   `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product),
-  `docsMaintainer`, `docReviewer`, `ticketPlanner` (documentation and document review).
+  `docsMaintainer`, `docReviewer`, `ticketPlanner` (documentation and document review), and
+  `repo-onboarder` (repository setup, gate commands and preview proposals).
 - **Sub-role personas** (`inheritsModelFrom`): `securityReviewer` /
   `domainLogicReviewer` / `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` /
   `prdDecomposer` / `ciTriager` / `incidentTriager` / `ticketContextGatherer` / `prFeedbackResponder` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /

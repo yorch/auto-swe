@@ -30,6 +30,7 @@ import { NOTION_CONTENT_DRAFT_SPEC } from './notionContentDraft.js';
 import { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
 import { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';
 import { PRODUCT_PRD_DRAFT_SPEC } from './productPrdDraft.js';
+import { REPO_ONBOARDING_INPUT_SCHEMA, REPO_ONBOARDING_SPEC } from './repoOnboarding.js';
 import { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 import { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
 import { SEND_SLACK_UPDATE_SPEC } from './sendSlackUpdate.js';
@@ -407,6 +408,12 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     name: PRD_DECOMPOSITION_SPEC.name,
     spec: PRD_DECOMPOSITION_SPEC,
   },
+  {
+    name: REPO_ONBOARDING_SPEC.name,
+    description: REPO_ONBOARDING_SPEC.description,
+    spec: REPO_ONBOARDING_SPEC,
+    inputSchema: REPO_ONBOARDING_INPUT_SCHEMA,
+  },
   ...[CODE_REVIEW_SPEC, CODE_REVIEW_QODO_SPEC, HUMAN_REVIEW_OF_RUN_SPEC].map((spec) => ({
     description: spec.description,
     kind: 'review' as const,
@@ -446,6 +453,7 @@ export { NOTION_CONTENT_DRAFT_SPEC } from './notionContentDraft.js';
 export { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
 export { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';
 export { PRODUCT_PRD_DRAFT_SPEC } from './productPrdDraft.js';
+export { REPO_ONBOARDING_INPUT_SCHEMA, REPO_ONBOARDING_SPEC } from './repoOnboarding.js';
 export { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 export { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
 export { SEND_SLACK_UPDATE_SPEC } from './sendSlackUpdate.js';

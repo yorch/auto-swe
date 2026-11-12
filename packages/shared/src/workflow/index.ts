@@ -227,6 +227,7 @@ export { CODE_AND_CI_SPEC } from './templates/codeAndCi.js';
 export { CONSENSUS_REVIEW_SPEC } from './templates/consensusReview.js';
 export { DEPENDENCY_UPDATE_SPEC } from './templates/dependencyUpdate.js';
 export { FOUR_EYES_SPEC } from './templates/fourEyes.js';
+export { REPO_ONBOARDING_INPUT_SCHEMA, REPO_ONBOARDING_SPEC } from './templates/repoOnboarding.js';
 export { TICKET_TO_MERGE_SPEC } from './templates/ticketToMerge.js';
 export type {
   ValidateSpecOptions,

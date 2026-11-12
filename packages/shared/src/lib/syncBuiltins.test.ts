@@ -168,6 +168,46 @@ function versionsOf(tables: ReturnType<typeof makeFake>['tables'], templateId: s
 }
 
 describe('syncBuiltins — templates', () => {
+  it('seeds the onboarding agent and template with trusted builtin provenance', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const row = template(tables, 'repo-onboarding');
+    expect(row).toMatchObject({
+      activeVersion: 1,
+      origin: 'swe-starter',
+      teamId: null,
+      workspaceProvider: 'git_repo',
+    });
+    expect(row.kind ?? null).toBeNull();
+    expect(row.inputSchema).toMatchObject({
+      properties: { connectionId: { connectionType: 'git_repo', type: 'connection' } },
+      required: ['connectionId'],
+    });
+    expect(versionsOf(tables, row.id)).toEqual([
+      expect.objectContaining({ createdBy: null, generatedBy: null, version: 1 }),
+    ]);
+    const agent = tables.agent.find(({ key }) => key === 'repo-onboarder');
+    expect(agent).toMatchObject({
+      modelSpec: 'anthropic/claude-sonnet-5-5',
+      origin: 'swe-starter',
+      scope: 'GLOBAL',
+      toolKeys: ['bash', 'readFile', 'listDirectory'],
+    });
+    const prompt = String(agent?.systemPrompt);
+    for (const text of [
+      'AGENTS.md',
+      'lockfiles',
+      'runLint',
+      'runTypecheck',
+      'runTests',
+      'runBuild',
+      'setup.secrets',
+      'exactly one fenced JSON block',
+      'do not commit, push',
+    ]) {
+      expect(prompt).toContain(text);
+    }
+  });
   it('creates and backfills automation kinds without replacing versions or explicit kinds', async () => {
     const { prisma, tables } = makeFake();
     await seedSweStarter(prisma);

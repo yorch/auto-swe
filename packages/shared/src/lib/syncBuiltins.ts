@@ -34,6 +34,7 @@ import {
   PRD_DECOMPOSER_PROMPT,
   PRD_WRITER_PROMPT,
   PRODUCT_ANALYST_PROMPT,
+  REPO_ONBOARDER_PROMPT,
   REVIEW_FIX_SYSTEM_PROMPT,
   SECURITY_AUDITOR_PROMPT,
   SECURITY_REVIEW_PROMPT,
@@ -549,6 +550,15 @@ You MUST respond with valid JSON matching this schema:
 }`;
 
 export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
+  {
+    description:
+      'Explores a repository and trials setup, gates and preview commands before proposing configuration for review.',
+    key: 'repo-onboarder',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
+    name: 'Repository Onboarder',
+    systemPrompt: REPO_ONBOARDER_PROMPT,
+    toolKeys: ['bash', 'readFile', 'listDirectory'],
+  },
   {
     description: 'Writes code in the workspace via the TDD loop.',
     key: 'implementer',
