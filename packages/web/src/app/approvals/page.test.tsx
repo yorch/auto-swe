@@ -140,7 +140,8 @@ describe('approvals page filters and state', () => {
   it('keeps the tab, kind and overdue choices in the address', () => {
     steps.rows = [step('a', 'APPROVAL', 'One')];
     render(<GovernApprovalsPage />);
-    fireEvent.click(screen.getByRole('button', { name: 'Decision' }));
+    fireEvent.click(screen.getByRole('button', { name: /Step kind/ }));
+    fireEvent.click(screen.getByRole('option', { name: 'Decision' }));
     expect(nav.replace).toHaveBeenLastCalledWith('/approvals?kind=DECISION', { scroll: false });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Overdue only' }));
     expect(nav.replace).toHaveBeenLastCalledWith('/approvals?overdue=1', { scroll: false });

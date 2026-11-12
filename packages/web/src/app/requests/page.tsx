@@ -15,16 +15,15 @@ import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { WorkScopeControl } from '@/components/work/WorkScopeControl';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useEpics } from '@/hooks/useEpics';
 import { type RequestState, useRequests } from '@/hooks/useRequests';
 import { useTeamParam } from '@/hooks/useTeamParam';
 import { parseOffset } from '@/hooks/useUrlFilters';
 import { teamGatedBoundary } from '@/lib/teamGate';
-import { WORK_SCOPE_OPTIONS } from '@/lib/workScope';
 
 const PAGE_SIZE = 30;
 const STATES: { label: string; value: RequestState }[] = [
@@ -96,15 +95,10 @@ function RequestsWorkspace() {
     <div className="space-y-6">
       <PageHeader
         actions={
-          <>
-            <ButtonLink href="/epics" variant="secondary">
-              Multi-repo epics
-            </ButtonLink>
-            <ButtonLink href="/start" variant="primary">
-              <Icon name="plus" size={14} />
-              Start work
-            </ButtonLink>
-          </>
+          <ButtonLink href="/start" variant="primary">
+            <Icon name="plus" size={14} />
+            Start work
+          </ButtonLink>
         }
         help={
           <p>
@@ -119,10 +113,9 @@ function RequestsWorkspace() {
       <div>
         <Toolbar
           end={
-            <SegmentedControl
-              ariaLabel="Request scope"
+            <WorkScopeControl
+              label="Request scope"
               onChange={(value) => update({ offset: null, scope: value })}
-              options={WORK_SCOPE_OPTIONS}
               value={scope}
             />
           }

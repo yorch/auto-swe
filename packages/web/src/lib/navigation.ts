@@ -297,12 +297,12 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/', icon: 'dashboard', label: 'Home', minRole: 'ENGINEER' },
       { href: APPROVALS_HREF, icon: 'inbox', label: 'Approvals', minRole: 'ENGINEER' },
       {
-        alsoActiveFor: ['/epics'],
         href: '/requests',
         icon: 'canvas',
         label: 'Requests',
         minRole: 'ENGINEER',
       },
+      { href: '/epics', icon: 'epics', label: 'Epics', minRole: 'ENGINEER' },
       { href: '/runs', icon: 'runs', label: 'All runs', minRole: 'ENGINEER' },
       {
         href: '/pull-requests',

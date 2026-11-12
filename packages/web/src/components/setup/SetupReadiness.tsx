@@ -15,7 +15,13 @@ import { cn, FOCUS_RING } from '@/lib/utils';
  * and once everything is in place without informational notes. A fully set-up admin never sees
  * a placeholder flash and collapse.
  */
-export function SetupReadiness({ onNavigate }: { onNavigate?: () => void }) {
+export function SetupReadiness({
+  embedded = false,
+  onNavigate,
+}: {
+  embedded?: boolean;
+  onNavigate?: () => void;
+}) {
   const isAdmin = useHasRole('ADMIN');
   const { data, isLoading } = useReadiness(isAdmin);
   if (!isAdmin) {
@@ -32,7 +38,7 @@ export function SetupReadiness({ onNavigate }: { onNavigate?: () => void }) {
   const nextId = data.items.find((i) => !i.ok)?.id;
   return (
     <OnboardingCard
-      className="border-warning-400/30"
+      className={embedded ? 'border-0 bg-transparent p-0 sm:p-0' : 'border-warning-400/30'}
       status={
         <span className="tabular text-sm text-paper-300">
           {done} of {total} done

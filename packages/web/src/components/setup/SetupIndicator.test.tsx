@@ -63,6 +63,8 @@ describe('global setup indicator', () => {
     expect(trigger.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByRole('dialog', { name: 'Setup checklist' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Finish setting up' })).toBeTruthy();
+    expect(screen.getByTestId('setup-readiness').classList.contains('border-0')).toBe(true);
+    expect(screen.getByTestId('setup-readiness').classList.contains('bg-transparent')).toBe(true);
     expect(
       screen
         .getByRole('link', { name: 'Fix this: Model provider credentials' })

@@ -12,9 +12,9 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { WorkScopeControl } from '@/components/work/WorkScopeControl';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useTeamParam } from '@/hooks/useTeamParam';
 import { useWorkflowTemplates } from '@/hooks/useTemplates';
@@ -103,6 +103,13 @@ function RunsList() {
                       : plural(total, 'run')}
                   </span>
                 )}
+                <WorkScopeControl
+                  label="Run scope"
+                  onChange={(value) =>
+                    update({ offset: null, scope: value === 'MINE' ? 'MINE' : null })
+                  }
+                  value={scope === 'MINE' ? 'MINE' : 'TEAM'}
+                />
               </>
             }
           >
@@ -111,17 +118,6 @@ function RunsList() {
               onChange={(value) => setSearchDraft(value.slice(0, 200))}
               placeholder="Search by task, ticket or workflow…"
               value={searchDraft}
-            />
-            <SegmentedControl
-              ariaLabel="Run scope"
-              onChange={(value) =>
-                update({ offset: null, scope: value === 'MINE' ? 'MINE' : null })
-              }
-              options={[
-                { label: 'All runs', title: 'Every run you can see', value: 'ALL' },
-                { label: 'My runs', title: 'Runs of requests you made', value: 'MINE' },
-              ]}
-              value={scope}
             />
             <Select
               aria-label="Status"

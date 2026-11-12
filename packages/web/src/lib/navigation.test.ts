@@ -122,6 +122,17 @@ function layoutFloor(href: string): Role {
 }
 
 describe('NAV_GROUPS', () => {
+  it('places Epics after Requests and keeps each destination active independently', () => {
+    const work = NAV_GROUPS.find((group) => group.label === 'Work')?.items ?? [];
+    const requests = work.findIndex((item) => item.href === '/requests');
+    expect(work[requests + 1]).toMatchObject({ href: '/epics', minRole: 'ENGINEER' });
+    for (const path of ['/epics', '/epics/id']) {
+      expect(activeNavHref(path, work)).toBe('/epics');
+    }
+    for (const path of ['/requests', '/requests/id']) {
+      expect(activeNavHref(path, work)).toBe('/requests');
+    }
+  });
   it('uses visually distinct glyphs for every sidebar destination', () => {
     const glyphs = NAV_GROUPS.flatMap((group) =>
       group.items.map((item) => {
@@ -298,10 +309,10 @@ describe('activeNavHref', () => {
     expect(activeNavHref('/admin/evals/runs/r1', sidebar)).toBe(ADMIN_HREF);
   });
 
-  it('highlights All runs on a run page, Requests on an epic and Automations on a schedule', () => {
+  it('highlights All runs on a run page, Epics on an epic and Automations on a schedule', () => {
     expect(activeNavHref('/runs', NAV_ITEMS)).toBe('/runs');
     expect(activeNavHref('/runs/abc', NAV_ITEMS)).toBe('/runs');
-    expect(activeNavHref('/epics/wf-1', NAV_ITEMS)).toBe('/requests');
+    expect(activeNavHref('/epics/wf-1', NAV_ITEMS)).toBe('/epics');
     expect(activeNavHref('/admin/schedules', NAV_ITEMS)).toBe('/admin/automations');
   });
 

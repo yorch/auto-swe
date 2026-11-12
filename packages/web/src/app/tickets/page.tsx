@@ -11,15 +11,14 @@ import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { TicketTable } from '@/components/work/TicketTable';
+import { WorkScopeControl } from '@/components/work/WorkScopeControl';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useTeamParam } from '@/hooks/useTeamParam';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { useTickets } from '@/hooks/useWorkViews';
 import { teamGatedBoundary } from '@/lib/teamGate';
-import { WORK_SCOPE_OPTIONS } from '@/lib/workScope';
 
 const PAGE_SIZE = 30;
 
@@ -66,10 +65,9 @@ function Tickets() {
           <Toolbar
             className="mb-0 border-b border-ink-600 px-4 py-3"
             end={
-              <SegmentedControl
-                ariaLabel="Ticket scope"
+              <WorkScopeControl
+                label="Ticket scope"
                 onChange={(value) => update({ offset: null, scope: value })}
-                options={WORK_SCOPE_OPTIONS}
                 value={scope}
               />
             }

@@ -61,6 +61,27 @@ afterEach(() => {
 });
 
 describe('runs page filters', () => {
+  it.each(['', 'scope=ALL', 'scope=TEAM'])(
+    'keeps legacy team-wide scope semantics for %s',
+    (query) => {
+      nav.search = query;
+      search.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
+      render(<WorkflowRunsPage />);
+      expect(search.mock.calls[0][0].scope).toBeUndefined();
+      expect(screen.getByRole('button', { name: 'My team' }).getAttribute('aria-pressed')).toBe(
+        'true'
+      );
+    }
+  );
+  it('switches back to team-wide work without losing the other URL filters', () => {
+    nav.search = 'scope=MINE&team=payments&status=FAILED&offset=50';
+    search.mockReturnValue({ ...settled, data: { data: [], meta: { total: 0 } } });
+    render(<WorkflowRunsPage />);
+    fireEvent.click(screen.getByRole('button', { name: 'My team' }));
+    expect(nav.replace).toHaveBeenLastCalledWith('/runs?team=payments&status=FAILED', {
+      scroll: false,
+    });
+  });
   it('searches by the address and asks for my runs only when scoped', () => {
     nav.search = 'q=login&scope=MINE';
     search.mockReturnValue({
@@ -72,9 +93,7 @@ describe('runs page filters', () => {
     expect((screen.getByRole('searchbox', { name: 'Search runs' }) as HTMLInputElement).value).toBe(
       'login'
     );
-    expect(screen.getByRole('button', { name: 'My runs' }).getAttribute('aria-pressed')).toBe(
-      'true'
-    );
+    expect(screen.getByRole('button', { name: 'Mine' }).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('puts the scope in the address and offers to clear every filter', () => {
@@ -85,7 +104,7 @@ describe('runs page filters', () => {
     });
     render(<WorkflowRunsPage />);
     expect(screen.getByText('No runs match these filters')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'My runs' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Mine' }));
     expect(nav.replace).toHaveBeenLastCalledWith('/runs?q=login&scope=MINE', { scroll: false });
   });
 

@@ -85,7 +85,7 @@ export function SetupIndicator() {
       {open && (
         <div
           aria-label="Setup checklist"
-          className="fixed top-16 right-3 z-50 max-h-[calc(100dvh-5rem)] w-[min(36rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl border border-ink-400 bg-ink-900 p-3 shadow-2xl"
+          className="fixed top-16 right-3 z-50 max-h-[calc(100dvh-5rem)] w-[min(36rem,calc(100vw-1.5rem))] overflow-y-auto rounded-xl border border-ink-400 bg-ink-700 p-4 shadow-2xl sm:p-6"
           id={panelId}
           role="dialog"
         >
@@ -99,7 +99,7 @@ export function SetupIndicator() {
               <Icon name="close" size={16} />
             </IconButton>
           </div>
-          <SetupReadiness onNavigate={() => setOpenFor(null)} />
+          <SetupReadiness embedded onNavigate={() => setOpenFor(null)} />
         </div>
       )}
     </div>
