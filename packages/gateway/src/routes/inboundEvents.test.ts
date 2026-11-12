@@ -6,12 +6,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 process.env.CONFIG_ENCRYPTION_KEY ??= Buffer.alloc(32, 3).toString('base64');
 
 const m = vi.hoisted(() => ({
+  cancel: vi.fn(async (..._args: unknown[]) => 0),
   enabled: true as unknown,
   handle: vi.fn(),
 }));
 vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: vi.fn(async () => m.enabled) }));
 vi.mock('../lib/automations/inboundEvent.js', () => ({ handleInboundEvent: m.handle }));
+vi.mock('../lib/automations/cancelOnEvent.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/automations/cancelOnEvent.js')>()),
+  cancelRunsOnEvent: m.cancel,
+}));
 
+import { RunCancelError } from '../lib/automations/cancelOnEvent.js';
 import { AutomationStartError } from '../lib/automations/engine.js';
 import { newSecretColumns } from '../lib/eventEndpoints.js';
 import { inboundEventRoutes } from './inboundEvents.js';
@@ -23,6 +29,7 @@ const SECRET = 'whsec_inbound_test_secret';
 function row(over: Record<string, unknown> = {}) {
   return {
     ...newSecretColumns(SECRET).data,
+    cancelOnTypes: [],
     enabled: true,
     format: 'json',
     id: ID,
@@ -78,6 +85,8 @@ const BODY = '{"type":"alert.fired","id":"e-1","secret":"do-not-store"}';
 beforeEach(() => {
   m.enabled = true;
   m.handle.mockReset();
+  m.cancel.mockReset();
+  m.cancel.mockResolvedValue(0);
   m.handle.mockResolvedValue({ automationId: 'a', outcome: 'STARTED' });
 });
 
@@ -192,6 +201,27 @@ describe('POST /api/v1/webhooks/events/:endpointId', () => {
     const { app } = await build(row({ idPointer: null }));
     await app.inject(signed('{"type":"t"}'));
     expect(m.handle.mock.calls[0]?.[2].id).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  it('cancels runs before deciding, and says how many', async () => {
+    m.cancel.mockResolvedValue(2);
+    const { app } = await build(row({ cancelOnTypes: ['alert.fired'] }));
+    const res = await app.inject(signed(BODY));
+    expect(res.statusCode).toBe(202);
+    expect(res.json()).toEqual({ data: { cancelled: 2, eventId: 'e-1', outcome: 'STARTED' } });
+    expect(m.cancel.mock.calls[0]?.[1]).toMatchObject({ cancelOnTypes: ['alert.fired'], id: ID });
+    expect(m.cancel.mock.invocationCallOrder[0]).toBeLessThan(
+      m.handle.mock.invocationCallOrder[0] ?? 0
+    );
+  });
+
+  it('answers 503 without deciding when a run could not be cancelled', async () => {
+    m.cancel.mockRejectedValue(new RunCancelError('down'));
+    const { app } = await build();
+    const res = await app.inject(signed(BODY));
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error.code).toBe('RUN_CANCEL_FAILED');
+    expect(m.handle).not.toHaveBeenCalled();
   });
 
   it('answers 503 when the run could not be started, so the sender retries', async () => {

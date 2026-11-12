@@ -11,6 +11,7 @@
 import { extractInboundEvent, MAX_EVENT_BODY_BYTES } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import type { FastifyPluginAsync } from 'fastify';
+import { cancelRunsOnEvent, RunCancelError } from '../lib/automations/cancelOnEvent.js';
 import { AutomationStartError, engineTeamSelect } from '../lib/automations/engine.js';
 import { handleInboundEvent } from '../lib/automations/inboundEvent.js';
 import {
@@ -117,6 +118,22 @@ export const inboundEventRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 422, extracted.code, extracted.message);
       }
       const { event } = extracted;
+      // Before the decision, so a redelivery after a failed cancel reaches it again.
+      let cancelled: number;
+      try {
+        cancelled = await cancelRunsOnEvent(fastify, endpoint, event);
+      } catch (err) {
+        if (err instanceof RunCancelError) {
+          request.log.error({ endpointId, err }, 'an inbound event could not cancel its runs');
+          return sendError(
+            reply,
+            503,
+            'RUN_CANCEL_FAILED',
+            'A run could not be cancelled; send the event again'
+          );
+        }
+        throw err;
+      }
       let result: Awaited<ReturnType<typeof handleInboundEvent>>;
       try {
         result = await handleInboundEvent(
@@ -144,7 +161,7 @@ export const inboundEventRoutes: FastifyPluginAsync = async (fastify) => {
           : 'duplicate' in result
             ? { duplicate: true, eventId: event.id }
             : { eventId: event.id, outcome: result.outcome };
-      return reply.status(202).send({ data });
+      return reply.status(202).send({ data: cancelled > 0 ? { ...data, cancelled } : data });
     }
   );
 };

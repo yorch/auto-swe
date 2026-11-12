@@ -248,6 +248,27 @@ describe('event endpoint management', () => {
     expect(JSON.stringify(audit.at(-1))).toContain('snyk.project');
   });
 
+  it('stores the cancel-on types once each, and refuses one that is not an event type', async () => {
+    const { app } = await build();
+    const created = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { ...CREATE, cancelOnTypes: ['incident.resolved', 'incident.resolved'] },
+      url: URL,
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().data.cancelOnTypes).toEqual(['incident.resolved']);
+    const patch = (payload: Record<string, unknown>) =>
+      app.inject({ headers: AUTH, method: 'PATCH', payload, url: `${URL}/${EP}` });
+    const cleared = await patch({ cancelOnTypes: [] });
+    expect(cleared.statusCode).toBe(200);
+    expect(cleared.json().data.cancelOnTypes).toEqual([]);
+    expect((await patch({ cancelOnTypes: ['has space'] })).statusCode).toBe(400);
+    expect(
+      (await patch({ cancelOnTypes: Array.from({ length: 11 }, (_, i) => `t${i}`) })).statusCode
+    ).toBe(400);
+  });
+
   it('switches an endpoint between a pointer and a fixed type on update', async () => {
     const { app } = await build();
     const patch = (payload: Record<string, unknown>) =>

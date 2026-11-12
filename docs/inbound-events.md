@@ -26,6 +26,7 @@ An endpoint (`EventEndpoint`) has:
 | `signatureHeader`, `signaturePrefix`, `signatureEncoding` | For `hmac-sha256` and `shared-secret-header`: the header the value is in, text before it (`sha256=`, `Bearer `), and for an HMAC whether it is `hex` or `base64` |
 | `format` | `json`, or `cloudevents` (§3.2) |
 | `typePointer` or `fixedType`, `idPointer`, `subjectPointer`, `scopePointer`, `timePointer` | Where in the event its type, id, subject, scope and time are, or for the type a constant `fixedType` instead (§3.1.1). Exactly one of `typePointer` and `fixedType` is set |
+| `cancelOnTypes` | Event types that cancel runs (at most 10, empty by default): an event of one of them first cancels every run this endpoint's automations started for the same subject that is still running, then is decided as usual |
 | the secret | Sealed with the same AES-256-GCM envelope as every other stored credential; only its last four characters are ever shown |
 
 Its receiver is `POST /api/v1/webhooks/events/<endpoint id>`. The id is not a credential: a call
@@ -39,9 +40,18 @@ on/off switch, **Rotate secret**, and **Automations**, which opens the team's au
 |---|---|
 | `GET /api/v1/teams/:teamId/event-endpoints` | A member of the team, or ADMIN. Never a secret. The response says whether the caller may manage them (`canManage`) |
 | `POST /api/v1/teams/:teamId/event-endpoints` | ADMIN, or a LEAD of the team. Returns a generated secret **once**; a `secret` the caller sends (16–512 characters, for a sender that generates its own) is stored and never returned |
-| `PATCH /api/v1/teams/:teamId/event-endpoints/:id` | The same: name, switch, scheme settings and pointers. The secret is changed only by rotating it |
+| `PATCH /api/v1/teams/:teamId/event-endpoints/:id` | The same: name, switch, scheme settings, pointers and `cancelOnTypes`. The secret is changed only by rotating it |
 | `POST /api/v1/teams/:teamId/event-endpoints/:id/secret/rotate` | The same. A new secret (generated and returned once, or the one sent); the one it replaces is still accepted for **24 hours** |
 | `DELETE /api/v1/teams/:teamId/event-endpoints/:id` | The same. Refused (`409 EVENT_ENDPOINT_IN_USE`) while an automation reacts to the endpoint |
+
+**Cancelling on an event.** A run is matched to the event by the endpoint and the subject the
+run's decision recorded, so another endpoint's runs and another subject's are never touched. Each
+run is cancelled in Temporal first, as the dashboard's **Cancel** does: a run that already ended
+is left as it is, and the run's own cancellation path records its end and cost. A run Temporal
+refuses to cancel stays `RUNNING`, and the receiver answers `503 RUN_CANCEL_FAILED` without deciding
+the event, so the sender's retry tries again; a redelivery after a cancel that succeeded finds
+nothing still running. Each cancelled run is written to the audit log (entity `WorkflowRun`) with
+the endpoint and the event that cancelled it.
 
 A non-member gets `404`. Every create, change, rotation and removal is written to the audit log
 (entity `EventEndpoint`) with the endpoint's settings and the secret's last four characters, never
@@ -228,10 +238,13 @@ In order — each check runs only when every earlier one passed:
 | `401 SIGNATURE_INVALID` | The call is not verified |
 | `409 EVENT_ENDPOINT_DISABLED`, `409 TEAM_INACTIVE`, `409 INBOUND_EVENTS_DISABLED` | The endpoint is off, its team inactive, or the switch off for the team |
 | `400 INVALID_EVENT`, `415 UNSUPPORTED_EVENT`, `422 EVENT_TYPE_MISSING` | The body cannot be read as an event |
+| `503 RUN_CANCEL_FAILED` | The event's type is one of the endpoint's `cancelOnTypes` and a run could not be cancelled: send the same event again |
 | `503 AUTOMATION_START_FAILED` | A run was decided but could not be started: send the same event again |
 | `202 { eventId, outcome }` | Decided: the outcome of the decision (`STARTED`, `SUPPRESSED_…`, `FAILED_TO_START`) |
 | `202 { eventId, duplicate: true }` | The event was decided before |
 | `202 { eventId, ignored: true }` | No enabled automation of the team selects it |
+
+Any `202` after a cancel also carries `cancelled`, the number of runs the event cancelled.
 
 The answer never says why a decision was made; the team sees that in the automation's history.
 The receiver is rate-limited to 120 calls a minute per client address.
@@ -519,6 +532,11 @@ service.
 - The note is an `internal_write`: under the default autonomy policy it posts without waiting for
   anyone. A team that wants a person to sign off requires approval for `internal_write` in its
   policy ([autonomy-policies.md](./autonomy-policies.md)); the run then waits for that approval.
+
+**When the incident resolves.** The PagerDuty preset sets the endpoint's `cancelOnTypes` to
+`incident.resolved` (§1): when the incident resolves while its triage is still running, that run is
+cancelled, and since the automations select `incident.triggered` only, the event starts nothing.
+Clear the field to let a triage finish after its incident resolves.
 
 ## Limitations
 
