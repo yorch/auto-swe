@@ -44,13 +44,19 @@ describe('createLessonTools', () => {
   );
   it('never reads lessons if the arm lookup fails', async () => {
     armMock.mockRejectedValue(new Error('db unavailable'));
-    const tools = createLessonTools('repo-1');
+    const tracer = { addActivityEvent: vi.fn(), addToolCall: vi.fn() };
+    const tools = createLessonTools('repo-1', tracer as never);
     await expect(exec(tools.searchLessons)({ query: 'test' })).rejects.toThrow('db unavailable');
     await expect(
       exec(tools.explainLesson)({ lessonId: '11111111-1111-4111-8111-111111111111' })
     ).rejects.toThrow('db unavailable');
     expect(searchMock).not.toHaveBeenCalled();
     expect(explainMock).not.toHaveBeenCalled();
+    expect(tracer.addActivityEvent).toHaveBeenCalledTimes(2);
+    expect(tracer.addActivityEvent).toHaveBeenCalledWith({
+      name: 'lessons.recall_error',
+      outputJson: { reason: 'run_context_unavailable', recalledFor: 'lesson_tools' },
+    });
   });
   it('searches only the repository it was built for', async () => {
     const lesson = {
