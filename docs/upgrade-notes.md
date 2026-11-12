@@ -1318,7 +1318,7 @@ fail preview resolution instead of behaving as an unconfigured repository.
 organization.
 
 **Fix commit.** Identified before its SHA is assigned by migration
-`20261112130000_team_member_organizations`; compare the source when commit ancestry is unavailable.
+`20261112180000_team_member_organizations`; compare the source when commit ancestry is unavailable.
 
 **Actions.** Run `yarn db:deploy` before starting the updated gateway. The migration inserts missing
 `ORG_MEMBER` rows without changing existing organization roles. It is idempotent and leaves HNSW
