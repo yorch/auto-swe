@@ -48,6 +48,20 @@ const REQUEST: OnboardingRequest = {
 };
 const RENDERED = renderOnboardingFiles(REQUEST);
 
+describe('trial report body', () => {
+  it('is bounded, credential-redacted and optional', () => {
+    const body = onboardingPrBody(
+      ['.auto-swe/setup.yml'],
+      `NPM_TOKEN=secret-value\n${'x'.repeat(20_000)}`
+    );
+    expect(body).toContain('## Trial report');
+    expect(body).not.toContain('secret-value');
+    expect(body.split('## Trial report\n\n')[1]?.length).toBeLessThanOrEqual(12_000);
+    expect(onboardingPrBody([], '')).not.toContain('## Trial report');
+    expect(onboardingPrBody([])).not.toContain('## Trial report');
+  });
+});
+
 function hashOf(files: readonly { path: string; content: string }[]): string {
   const canonical = files
     .map((f) => `${f.path}\0${f.content}`)
@@ -163,6 +177,18 @@ beforeEach(() => {
   m.createPr.mockResolvedValue({ prNumber: 7, prUrl: 'https://github.com/acme/api/pull/7' });
   m.createWorkspace.mockImplementation(async () => fakeWorkspace());
   m.persist.mockResolvedValue(true);
+});
+
+it('includes the report in the PR and redacts known delivery credentials', async () => {
+  diffFiles = RENDERED;
+  await openOnboardingPr({
+    ...INPUT,
+    trialReport: 'Trial failed: SECRET-TOKEN; NPM_TOKEN=another-secret',
+  });
+  const body = m.createPr.mock.calls[0]?.[0].body;
+  expect(body).toContain('## Trial report');
+  expect(body).not.toContain('SECRET-TOKEN');
+  expect(body).not.toContain('another-secret');
 });
 
 type FileChange = { path: string; previousPath?: string; status?: string };
@@ -490,6 +516,16 @@ describe('openOnboardingPr', () => {
       expect(result.pullRequestUrl).toBe('https://github.com/acme/api/pull/7');
       expect(commands.filter((c) => c.startsWith('AUTHED push'))).toEqual([]);
       expect(m.createPr).not.toHaveBeenCalled();
+    });
+
+    it('refreshes the trial report on an identical open PR without another commit or push', async () => {
+      existing();
+      head = Object.fromEntries(RENDERED.map((f) => [f.path, f.content]));
+      const result = await openOnboardingPr({ ...INPUT, trialReport: 'Latest trial: passed' });
+      expect(result.status).toBe('updated');
+      expect(m.createPr.mock.calls[0]?.[0].body).toContain('Latest trial: passed');
+      expect(commands.filter((c) => c.startsWith('AUTHED push'))).toEqual([]);
+      expect(commands.some((c) => c.includes('commit -m'))).toBe(false);
     });
 
     it('judges identical against the default branch, not the branch tip', async () => {

@@ -1077,7 +1077,7 @@ register({
   category: 'vcs',
   configFields: [],
   description:
-    'Open one configuration pull request from inputs.draft (validated setup, gateCommands and optional previewConfig) for inputs.connectionId or the run workspace connection. Derives its content hash and proposer from the current run; never merges.',
+    'Open one configuration pull request from inputs.draft (validated setup, gateCommands and optional previewConfig) for inputs.connectionId or the run workspace connection. Optional inputs.trialReport supplies a bounded, redacted PR-body report, excluded from the content hash. Derives its content hash and proposer from the current run; never merges.',
   label: 'Propose repository onboarding',
   name: 'repoOnboardingPr',
 });

@@ -840,6 +840,18 @@ export const SETTING_DEFINITIONS = {
     schema: hostList,
     sensitive: true,
   }),
+  'onboarding.autoRunOnConnect': defineSetting({
+    defaultValue: false,
+    description:
+      'Start the builtin repository onboarding workflow when a Git repository connects. Uses the creating user and normal launch authorization and budgets; failures do not undo connection creation.',
+    group: 'onboarding',
+    label: 'Run onboarding on connect',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'onboarding.draftEgressHosts': defineSetting({
     defaultValue: [
       'registry.npmjs.org',

@@ -21,6 +21,21 @@ beforeEach(() => {
 });
 
 describe('repoOnboardingPr', () => {
+  it('passes the trial report separately from the hashed files', async () => {
+    await repoOnboardingPr({
+      connectionId: 'repo-1',
+      draft,
+      trialReport: 'Trial failed: missing secret TOKEN',
+    });
+    expect(m.open.mock.calls[0]?.[0]).toMatchObject({
+      contentHash: 'derived-hash',
+      proposedById: 'launcher-1',
+      trialReport: 'Trial failed: missing secret TOKEN',
+    });
+    const first = m.hash.mock.calls[0]?.[0];
+    await repoOnboardingPr({ connectionId: 'repo-1', draft, trialReport: 'Trial passed' });
+    expect(m.hash.mock.calls[1]?.[0]).toEqual(first);
+  });
   it('derives hash and proposer, ignoring caller-supplied attribution and hash', async () => {
     const input = {
       connectionId: 'repo-1',

@@ -822,7 +822,10 @@ them; the preview's `setup` is for what only a running app needs, such as seedin
 ### Onboarding agent
 
 The built-in `repo-onboarding` workflow takes a required `connectionId` for a Git repository.
-Run it through the workflow library's normal launch form. The `repo-onboarder` agent explores
+Choose **Run onboarding** in a Git repository's Connections row menu or beside **Setup health**
+in its setup editor. These controls require LEAD access and repository shell-author/team-admin
+permission, matching setup editing. The workflow library's normal launch form also accepts it.
+The `repo-onboarder` agent explores
 the trusted base checkout, reads repository guidance and build evidence, tries commands and
 returns a structured proposal for `.auto-swe/setup.yml`, `.auto-swe/gates.yml` and an optional
 `.auto-swe/preview.yml`.
@@ -846,7 +849,24 @@ review without an automatic repair. A person sees both the draft summary and the
 including blockers. They can approve even a failed trial, request changes within the same draft
 visit budget, or reject. Exhaustion still reaches review; an invalid draft is explicitly marked
 and cannot reach delivery even when approved. Approval opens one configuration PR; it does not
-merge it. On merge, connection overrides retain precedence over the files.
+merge it. The PR body includes the latest trial report, bounded to 12,000 characters and redacted
+for credential shapes and known delivery credentials; report text does not change the file hash
+or branch identity. On merge, connection overrides retain precedence over the files.
+
+`POST /api/v1/repositories/:id/onboarding-runs` starts the active global builtin and accepts
+`Idempotency-Key`. It uses normal tracked launch authorization, budgets, attribution and ledger
+rows. The response contains `workflowId` (the active-workflow row), `temporalWorkflowId`,
+`workRequestId` and `runId`. The worker creates the run-detail row asynchronously, so `runId`
+can be null at first; the UI links to the request while it is pending and to the run when known.
+A repeated key for the same creator and repository joins the recorded launch.
+
+`onboarding.autoRunOnConnect` is off by default. An admin can enable it for a team or organization.
+After a Git repository connects and its dependency scan is kicked off, onboarding starts with
+the creator's identity and normal permissions and budgets. A deterministic per-connection key
+prevents retry duplicates. Failure is logged and audited without undoing connection creation.
+Bulk GitHub import follows the same path: each imported Git repository auto-runs onboarding
+when the setting is enabled. A failed auto-launch does not fail that import or prevent later
+repositories in the batch from being imported and launching onboarding.
 
 ### Pull request titles
 
@@ -976,6 +996,9 @@ longer fit.
 
 ## Limitations
 
+- **Bulk import can start many onboarding runs at once.** With `onboarding.autoRunOnConnect`
+  enabled, each imported Git repository starts its own run, subject to the creator's permissions
+  and normal launch budgets. The import does not impose an additional concurrency limit.
 - **Onboarding preview readiness is only an HTTP check.** A response below 500 counts as ready,
   including authentication errors and missing pages. The trial does not perform browser or
   functional end-to-end verification, or run a preview recipe's smoke/e2e checks.
@@ -986,8 +1009,9 @@ longer fit.
   Changes requested after all draft visits return to review without another agent visit.
   Bash is a general-purpose tool, not a technical read-only or no-push boundary; the seeded
   agent is instructed not to push and has no dedicated PR/push tools.
-- **Onboarding trial reports remain in the run.** The configuration delivery activity renders
-  the proposed files; it does not copy the trial report or its blockers into the PR body.
+- **Trial report redaction is not general-purpose data-loss prevention.** Trial command output
+  is redacted before reporting, and delivery masks known credentials and credential-shaped text;
+  arbitrary sensitive prose is not guaranteed to be recognized.
 
 - An organization-linked GitHub installation is offered only to platform admins and callers who
   manage an active team in that organization. New imports and installation changes must target a

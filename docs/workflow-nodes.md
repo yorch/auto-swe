@@ -1687,7 +1687,9 @@ log tails. Preview and workspace resources are always cleaned up. The activity h
 and a heartbeat, so retry does not silently repeat side effects.
 
 `repoOnboardingPr` takes the same connection and validated draft, and proposes deterministic
-setup/gates/optional-preview files in one PR. The worker derives the content hash and attribution
+setup/gates/optional-preview files in one PR. Optional `inputs.trialReport` supplies the latest
+trial markdown for a bounded, redacted **Trial report** PR-body section, outside the file hash.
+The worker derives the content hash and attribution
 from the execution-verified run launcher; inputs cannot supply them. It does not merge.
 
 The built-in `repo-onboarding` template bounds `draft` to three visits, then routes to review.

@@ -1204,6 +1204,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       onboardingPrActivities.repoOnboardingPr({
         connectionId: resolveConnectionId('repoOnboardingPr', ctx, inputs),
         draft: inputs.draft,
+        ...(typeof inputs.trialReport === 'string' ? { trialReport: inputs.trialReport } : {}),
       }),
   ],
   [

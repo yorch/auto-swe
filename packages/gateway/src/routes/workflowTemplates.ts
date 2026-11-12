@@ -118,9 +118,9 @@ import {
 } from '../lib/templateWebhookSigning.js';
 import { memberOrgs } from '../lib/tenantScope.js';
 import { isValidTicketId } from '../lib/ticketId.js';
+import { launchTrackedTemplateRun } from '../lib/trackedTemplateLaunch.js';
 import { refuseUnchangedRerun } from '../lib/unchangedRerun.js';
 import { planWindow } from '../lib/usageWindows.js';
-import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import {
   resolveWorkflowRunAttributionScope,
   workflowRunAttributionWhere,
@@ -2633,44 +2633,23 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Ledger rows first, workflow second, rolled back if the start fails —
       // see `launchTrackedWorkflow`.
-      const launch = await launchTrackedWorkflow(
-        fastify.prisma,
+      const launch = await launchTrackedTemplateRun(
+        fastify,
         {
-          ...(connectionResult.source
+          billingOrgId,
+          billingTeamId,
+          callback: callback.create,
+          request: repoWorkRequest,
+          requestedByServiceId: service?.servicePrincipalId,
+          source: connectionResult.source
             ? { knowledgeSourceRepo: connectionResult.source }
             : !connectionId && tpl.teamId && tpl.team?.orgId
               ? { knowledgeSourceTeam: { orgId: tpl.team.orgId, teamId: tpl.teamId } }
-              : {}),
-          activeWorkflow: {
-            budgetTier,
-            currentStatus: 'IMPLEMENTING',
-            repoId: connectionId ?? null,
-            temporalWorkflowId,
-            workRequestId,
-          },
-          runInput: {
-            billingOrgId,
-            billingTeamId,
-            connectionId,
-            description,
-            externalTicketId,
-            id: workRequestId,
-            payload: payload as object,
-            requestedById: user?.sub ?? null,
-            requestedByServiceId: service?.servicePrincipalId ?? null,
-            requestPayload,
-            templateId: tpl.id,
-            templateVersion: resolvedVersion,
-            ticketIsSynthetic: externalTicketId === workRequestId,
-            ...(callback.create ? { callback: { create: callback.create } } : {}),
-          },
+              : {},
+          templateId: tpl.id,
+          templateVersion: resolvedVersion,
+          temporalWorkflowId,
         },
-        () =>
-          fastify.temporal.startRunnableWorkflow(temporalWorkflowId, {
-            request: repoWorkRequest,
-            templateId: tpl.id,
-            templateVersion: resolvedVersion,
-          }),
         {
           ...(service
             ? {

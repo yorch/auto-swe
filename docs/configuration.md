@@ -574,6 +574,12 @@ touch them.
 
 ## Repository onboarding
 
+`onboarding.autoRunOnConnect` is an ADMIN-only boolean, default `false`, overridable at TEAM and
+ORGANIZATION scope. It is live, not run-pinned. When enabled, Git connection creation starts the
+builtin onboarding workflow best-effort after the dependency scan kick-off, attributed to the
+creating user. Normal repository permissions and budgets still apply. A deterministic key per
+connection prevents retry duplicates; launch failure is logged and audited without failing creation.
+
 `onboarding.draftEgressHosts` is an ADMIN-only hostname list, overridable at ORGANIZATION and
 TEAM scope. It is live rather than run-pinned; a workspace uses the value resolved at provisioning.
 The defaults cover npm/Yarn, PyPI, Go modules, Maven, crates.io, RubyGems and GitHub download

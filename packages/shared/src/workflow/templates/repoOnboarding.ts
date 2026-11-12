@@ -136,6 +136,7 @@ export const REPO_ONBOARDING_SPEC: WorkflowSpec = {
       inputs: {
         connectionId: { from: 'request.payload.connectionId' },
         draft: { from: 'nodes.parse.output.draft' },
+        trialReport: { from: 'nodes.trial.output.markdown', default: '' },
       },
       next: 'done',
     },

@@ -2,6 +2,23 @@ import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import { SETTING_DEFINITIONS } from './registry.js';
 
+describe('automatic onboarding', () => {
+  it('is an opt-in, live, admin-only team/organization boolean', () => {
+    const setting = SETTING_DEFINITIONS['onboarding.autoRunOnConnect'];
+    expect(setting).toMatchObject({
+      defaultValue: false,
+      group: 'onboarding',
+      overridableAt: ['TEAM', 'ORGANIZATION'],
+      requiredRole: 'ADMIN',
+      restartRequired: false,
+      runPinned: false,
+    });
+    expect(setting.schema.parse(true)).toBe(true);
+    expect(setting.schema.parse(false)).toBe(false);
+    expect(setting.schema.safeParse('true').success).toBe(false);
+  });
+});
+
 describe('onboarding draft hosts', () => {
   const setting = SETTING_DEFINITIONS['onboarding.draftEgressHosts'];
   it('is live, admin-only and organization/team scoped, with curated defaults', () => {

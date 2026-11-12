@@ -39,7 +39,7 @@ export const GROUP_BLURBS: Record<string, string> = {
   models:
     'Which internal hosts a provider credential may point at, for LLM endpoints on a private network.',
   onboarding:
-    'Temporary download access for repository onboarding draft workspaces; trials retain the real run policy.',
+    'Automatic repository onboarding and temporary draft-workspace download access; trials retain the real run policy.',
   prEvaluation:
     'Risk class, approver counts and the auto-merge gate for the pull requests the platform opens.',
   qodo: "Whether the platform may read Qodo's review of pull requests through a team's Qodo connection.",

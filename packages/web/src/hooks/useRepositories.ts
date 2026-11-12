@@ -10,9 +10,40 @@ import type {
   RepositorySummary,
 } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useRef } from 'react';
 import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
 import { READINESS_KEY } from '@/hooks/useReadiness';
 import { api } from '@/lib/api';
+
+export interface RepoOnboardingRun {
+  workflowId: string | null;
+  temporalWorkflowId: string;
+  workRequestId: string;
+  runId: string | null;
+  deduplicated: boolean;
+}
+
+export function useRunRepoOnboarding() {
+  const keys = useRef(new Map<string, string>());
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (connectionId: string) => {
+      const key = keys.current.get(connectionId) ?? crypto.randomUUID();
+      keys.current.set(connectionId, key);
+      return (
+        await api.fetch<{ data: RepoOnboardingRun }>(
+          `/api/v1/repositories/${connectionId}/onboarding-runs`,
+          { body: '{}', headers: { 'Idempotency-Key': key }, method: 'POST' }
+        )
+      ).data;
+    },
+    onSuccess: (_, connectionId) => {
+      keys.current.delete(connectionId);
+      void queryClient.invalidateQueries({ queryKey: ['workflow-runs'] });
+      void queryClient.invalidateQueries({ queryKey: ['work-requests'] });
+    },
+  });
+}
 
 export interface GitHubRepoInfo {
   installationId: string | null;

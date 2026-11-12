@@ -12,6 +12,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 // singleton (which requires DATABASE_URL at import) — same pattern as
 // humanSteps.test.ts / slack.test.ts.
 const DB_NULL = vi.hoisted(() => ({ __sentinel: 'DB_NULL' }));
+const autoOnboarding = vi.hoisted(() => ({ enabled: false }));
+vi.mock('@auto-swe/shared/config', () => ({
+  resolveSettings: async () => ({ 'onboarding.autoRunOnConnect': autoOnboarding.enabled }),
+}));
 vi.mock('@auto-swe/shared', () => ({
   ConnectionTypeSchema,
   encryptConnectionApiToken: (token: string) => ({
@@ -995,6 +999,34 @@ describe('repositoryRoutes', () => {
       expect(res.statusCode).toBe(201);
       expect(ctx.mockTemporal.startRepoDependencyScan).toHaveBeenCalledTimes(1);
       expect(ctx.mockTemporal.startRepoDependencyScan).toHaveBeenCalledWith(REPO_ID);
+    });
+
+    it('keeps creation successful and audits a refused automatic onboarding launch', async () => {
+      autoOnboarding.enabled = true;
+      try {
+        ctx.mockPrisma.team.findUnique.mockResolvedValue({
+          id: TEAM_ID,
+          isActive: true,
+          orgId: 'org-1',
+        });
+        ctx.mockPrisma.connection.findFirst.mockResolvedValueOnce(null);
+        ctx.mockPrisma.connection.create.mockResolvedValueOnce({ id: REPO_ID, teamId: TEAM_ID });
+        ctx.mockPrisma.connection.findUnique.mockResolvedValue(null);
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'POST',
+          payload: validBody,
+          url: '/api/v1/repositories',
+        });
+        expect(res.statusCode).toBe(201);
+        expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ afterJson: { onboardingAutoRun: 'failed' } }),
+          })
+        );
+      } finally {
+        autoOnboarding.enabled = false;
+      }
     });
 
     it('still onboards when the scan cannot be started (the weekly sweep covers it)', async () => {

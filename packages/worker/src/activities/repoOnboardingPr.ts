@@ -11,6 +11,7 @@ import { contentHashOf, openOnboardingPr } from './openOnboardingPr.js';
 export interface RepoOnboardingPrInput {
   connectionId: string;
   draft: unknown;
+  trialReport?: string;
 }
 
 export async function repoOnboardingPr(input: RepoOnboardingPrInput): Promise<OnboardingPrResult> {
@@ -50,5 +51,6 @@ export async function repoOnboardingPr(input: RepoOnboardingPrInput): Promise<On
     contentHash: contentHashOf(rendered),
     files,
     proposedById,
+    ...(typeof input.trialReport === 'string' ? { trialReport: input.trialReport } : {}),
   });
 }

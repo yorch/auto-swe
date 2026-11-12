@@ -80,6 +80,21 @@ describe('onboarding spec steps', () => {
     await dispatchStepImpl('repoOnboardingPr', ctx, request, {}, {}, 'deliver');
     expect(m.deliver).toHaveBeenCalledWith({ connectionId: 'run-repo', draft: undefined });
   });
+  it('passes the display-only trial report without accepting attribution or hash', async () => {
+    await dispatchStepImpl(
+      'repoOnboardingPr',
+      ctx,
+      request,
+      {},
+      { contentHash: 'spoofed', draft: {}, proposedById: 'spoofed', trialReport: 'Trial markdown' },
+      'deliver'
+    );
+    expect(m.deliver).toHaveBeenCalledExactlyOnceWith({
+      connectionId: 'run-repo',
+      draft: {},
+      trialReport: 'Trial markdown',
+    });
+  });
 
   it('refuses a missing connection rather than inventing a target', async () => {
     await expect(

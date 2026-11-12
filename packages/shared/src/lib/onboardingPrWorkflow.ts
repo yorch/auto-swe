@@ -15,6 +15,8 @@ export interface OnboardingPrInput {
   proposedById: string;
   /** First 16 hex digits of a sha256 over the rendered files, computed by the gateway. */
   contentHash: string;
+  /** Bounded, redacted display-only report; excluded from the rendered-file hash. */
+  trialReport?: string;
 }
 
 export interface OnboardingPrResult {

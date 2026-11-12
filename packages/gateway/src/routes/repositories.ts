@@ -60,12 +60,19 @@ import {
 import { redactConnection } from '../lib/connectionRedaction.js';
 import { availableGitHubRepos, verifiedImportInstallation } from '../lib/githubImport.js';
 import { sendError } from '../lib/httpErrors.js';
+import { IdempotencyHeaderSchema } from '../lib/idempotency.js';
 import { installationOrganizationProblem } from '../lib/installationOrganization.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { REPOSITORY_SWEEP_CAP, sweepArmedPullRequests } from '../lib/prEvaluationSweep.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
+import {
+  autoRunRepoOnboarding,
+  launchRepoOnboarding,
+  OnboardingLaunchError,
+} from '../lib/repoOnboardingLaunch.js';
+import { canManageTeamRepos } from '../lib/repoPermissions.js';
 import { insensitiveName } from '../lib/repositoryHost.js';
 import {
   onboardingChecklistCounts,
@@ -76,7 +83,7 @@ import { isShellAuthor } from '../lib/specCheck.js';
 import { ownerLaunchBudgets } from '../lib/teamBudgetStatus.js';
 import { assertTeamParam } from '../lib/teamParam.js';
 import { manageableOrReachableConnections, repositoryManagementTeams } from '../lib/tenantScope.js';
-import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { deactivateSchedulesOutsideTeams } from './scheduledWorkRequests.js';
 
 /**
@@ -270,38 +277,7 @@ const UpdateRepoSchema = z.object({
   toolsFileEnabled: z.boolean().optional(),
 });
 
-/**
- * Whether a user may manage repositories owned by `teamId`. Platform ADMINs can
- * manage any team's repos; everyone else must lead that active team or
- * administer its owning organization.
- */
-export async function canManageTeamRepos(
-  prisma: FastifyInstance['prisma'],
-  user: { sub: string; role: string },
-  teamId: string
-): Promise<boolean> {
-  if (user.role === Role.ADMIN) {
-    return true;
-  }
-  const membership = await prisma.teamMembership.findUnique({
-    include: { team: { select: { isActive: true } } },
-    where: { userId_teamId: { teamId, userId: user.sub } },
-  });
-  if (membership?.team.isActive && hasRole(membership.role, Role.LEAD)) {
-    return true;
-  }
-  const team = await prisma.team.findUnique({
-    select: { isActive: true, orgId: true },
-    where: { id: teamId },
-  });
-  if (!team?.isActive || !team.orgId) {
-    return false;
-  }
-  const orgMembership = await prisma.organizationMembership.findUnique({
-    where: { userId_orgId: { orgId: team.orgId, userId: user.sub } },
-  });
-  return orgMembership?.role === 'ORG_ADMIN';
-}
+export { canManageTeamRepos };
 
 /** The overrides that run something: blank and null entries dropped; none at all is null. */
 function normaliseGateCommands(value: unknown): RepoGateCommands | null {
@@ -1000,10 +976,11 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /api/v1/repositories — Onboard repository
   async function createRepository(
     body: z.output<typeof CreateRepoSchema>,
-    user: JwtPayload,
-    log: FastifyRequest['log'],
+    request: FastifyRequest,
     verifiedInstallation?: { host: string; installationId: string }
   ) {
+    const user = requireUser(request);
+    const log = request.log;
     const {
       apiToken,
       organizationName,
@@ -1253,6 +1230,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           'onboarding scan not started; the weekly sweep will scan this repository'
         );
       }
+      await autoRunRepoOnboarding(fastify, request, repo.id, repo.teamId);
     }
 
     return redactConnection(repo);
@@ -1329,8 +1307,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
               teamId: request.body.teamId,
               type: 'git_repo',
             }),
-            user,
-            request.log,
+            request,
             verified?.installation
           );
           results.push({ ...identity, id: created.id, status: 'created' as const });
@@ -1361,7 +1338,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       try {
-        const repo = await createRepository(request.body, requireUser(request), request.log);
+        const repo = await createRepository(request.body, request);
         return reply.code(201).send({ data: repo });
       } catch (err) {
         if (err instanceof RepositoryCreateError) {
@@ -2284,6 +2261,30 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           'REPO_SETUP_FORBIDDEN',
           "Changing a repository's workspace setup requires team-admin role"
         );
+
+  app.post(
+    '/:id/onboarding-runs',
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: { headers: IdempotencyHeaderSchema, params: RepoParamsSchema },
+    },
+    async (request, reply) => {
+      try {
+        const result = await launchRepoOnboarding(
+          fastify,
+          request,
+          request.params.id,
+          request.headers['idempotency-key']
+        );
+        return reply.status(result.deduplicated ? 200 : 201).send({ data: result });
+      } catch (error) {
+        if (error instanceof OnboardingLaunchError) {
+          return reply.status(error.statusCode).send(error.body);
+        }
+        throw error;
+      }
+    }
+  );
 
   app.post(
     '/:id/setup/pull-request',

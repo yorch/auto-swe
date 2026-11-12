@@ -190,6 +190,29 @@ const INTENDED_CHANGES: Record<
   string,
   { reason: string; apply: (g: WorkflowSpec) => WorkflowSpec }
 > = {
+  'repo-onboarding': {
+    reason:
+      'include the latest trial report in the configuration PR without changing its file hash',
+    apply: (g) => {
+      const deliver = g.nodes.deliver;
+      if (deliver?.type !== 'step') {
+        throw new Error('Expected onboarding delivery step');
+      }
+      return {
+        ...g,
+        nodes: {
+          ...g.nodes,
+          deliver: {
+            ...deliver,
+            inputs: {
+              ...deliver.inputs,
+              trialReport: { from: 'nodes.trial.output.markdown', default: '' },
+            },
+          },
+        },
+      };
+    },
+  },
   'notion-content-draft': {
     apply: withNotionDraftPolicyGate,
     reason:

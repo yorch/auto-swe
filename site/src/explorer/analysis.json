@@ -10237,11 +10237,11 @@
       "title": "Scheduled work request ticket id flagged as generated"
     },
     {
-      "anchor": "ticketIsSynthetic: externalTicketId === workRequestId,",
+      "anchor": "ticketIsSynthetic: request.externalTicketId === request.workRequestId,",
       "before": 6,
       "id": "ticketSynth",
       "lines": 12,
-      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "path": "packages/gateway/src/lib/trackedTemplateLaunch.ts",
       "title": "Synthetic ticket flag recorded at template launch"
     },
     {

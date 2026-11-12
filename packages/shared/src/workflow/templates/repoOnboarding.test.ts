@@ -109,7 +109,11 @@ describe('repository onboarding', () => {
         trialAppliesToCurrentDraft: true,
       }),
     ]);
-    expect(outcome.delivered[0]?.inputs).toEqual({ connectionId: 'repo-1', draft });
+    expect(outcome.delivered[0]?.inputs).toEqual({
+      connectionId: 'repo-1',
+      draft,
+      trialReport: success.markdown,
+    });
     expect(outcome.result.status).toBe('SUCCESS');
     expect(outcome.draftCalls[0]?.config).not.toHaveProperty('userMessage');
     expect(outcome.draftCalls[0]?.inputs).toMatchObject({

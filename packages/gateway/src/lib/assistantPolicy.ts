@@ -444,6 +444,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/repositories/:id/executor-image/probe': { never: 'runsWorkload' },
   'POST /api/v1/repositories/:id/onboarding-checklist/dismiss': 'confirm',
   'POST /api/v1/repositories/:id/onboarding-pr': 'confirm',
+  'POST /api/v1/repositories/:id/onboarding-runs': 'confirm',
   'POST /api/v1/repositories/:id/preview/env-to-secrets': { never: 'secret' },
   'POST /api/v1/repositories/:id/setup-blockers/:blockerId/resolve': 'confirm',
   'POST /api/v1/repositories/:id/setup/pull-request': 'confirm',

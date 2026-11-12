@@ -14,6 +14,7 @@ import { RepoAutomationsModal } from '@/components/repositories/RepoAutomationsM
 import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
 import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
 import { RepoOnboardingChecklist } from '@/components/repositories/RepoOnboardingChecklist';
+import { OnboardingRunLink } from '@/components/repositories/RunOnboardingButton';
 import { ShareRepoModal } from '@/components/repositories/ShareRepoModal';
 import { ToggleConnectionActiveModal } from '@/components/repositories/ToggleConnectionActiveModal';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
@@ -41,13 +42,14 @@ import {
   useRepoDependencySuggestions,
   useTriggerRepoDependencyScan,
 } from '@/hooks/useRepoDependencies';
-import { useMyCredentials, useRepositories } from '@/hooks/useRepositories';
+import { useMyCredentials, useRepositories, useRunRepoOnboarding } from '@/hooks/useRepositories';
 import { useRepositoryTeams } from '@/hooks/useRepositoryTeams';
-import { useTeams } from '@/hooks/useTeams';
+import { useAdminTeamIds, useTeams } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
-import { repoLeadReason, repoManageReason } from '@/lib/teamPermissions';
+import { canAuthorTeamCode, repoLeadReason, repoManageReason } from '@/lib/teamPermissions';
+import { useAuthStore } from '@/stores/authStore';
 
 type ModalMode =
   | { kind: 'create'; prefill?: ConnectionPrefill }
@@ -76,6 +78,9 @@ function ConnectionTypeBadge({ type }: { type: string }) {
 const PAGE_SIZE = 30;
 
 export default function ConnectionsPage() {
+  const onboarding = useRunRepoOnboarding();
+  const adminTeamIds = useAdminTeamIds();
+  const platformRole = useAuthStore((s) => s.user?.role);
   const isAdmin = useHasRole('ADMIN');
   const managedTeams = useRepositoryTeams();
   const canManageTeam = useCallback(
@@ -134,6 +139,14 @@ export default function ConnectionsPage() {
 
   return (
     <div className="space-y-8">
+      {onboarding.isError && (
+        <Alert variant="error">{errMsg(onboarding.error, 'Could not start onboarding')}</Alert>
+      )}
+      {onboarding.data && (
+        <Alert variant="info">
+          <OnboardingRunLink run={onboarding.data} />
+        </Alert>
+      )}
       <PageHeader
         actions={
           canManage ? (
@@ -267,6 +280,19 @@ export default function ConnectionsPage() {
                   const isGitRepo = !r.type || r.type === 'git_repo';
                   const label = connectionLabel(r);
                   const menu: ActionMenuItem[] = [
+                    ...(isGitRepo &&
+                    r.isActive &&
+                    canAuthorTeamCode(platformRole, r.team?.id, adminTeamIds)
+                      ? [
+                          {
+                            disabledReason: onboarding.isPending ? 'Starting onboarding' : null,
+                            icon: 'workflows' as const,
+                            id: 'onboarding',
+                            label: 'Run onboarding',
+                            onAction: () => onboarding.mutate(r.id),
+                          },
+                        ]
+                      : []),
                     ...(isGitRepo
                       ? [
                           {
