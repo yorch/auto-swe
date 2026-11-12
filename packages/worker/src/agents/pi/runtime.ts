@@ -285,6 +285,7 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
       const { runAgentLoop } = await import('@mariozechner/pi-agent-core');
       const streamFn = aiSdkStreamFn(
         {
+          beforeCall: () => turn.precheck(),
           heartbeat: () => turn.heartbeat(),
           model,
           onCall: ({ id, usage }) => {

@@ -1304,6 +1304,7 @@ model Team {
   updatedAt            DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   memberships           TeamMembership[]
+  budgetNotices         TeamBudgetNotice[]
   repositories          Connection[]
   servicePrincipals     ServicePrincipal[]
   /// Repositories other teams have shared with this one (see `ConnectionTeamShare`).
@@ -5065,6 +5066,21 @@ model AssistantMessage {
   // The admin failure feed: FAILED replies, newest first.
   @@index([status, createdAt])
   @@map("assistant_messages")
+}
+
+/// The once-per-month marker for a team's budget notifications: one row per (team, UTC month,
+/// level), claimed by inserting it. The unique key is the dedupe, so concurrent evaluations send
+/// one notice. `period` is `YYYY-MM`; `level` is WARNING (the alert threshold) or CAP_REACHED.
+model TeamBudgetNotice {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId    String   @map("team_id") @db.Uuid
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  period    String
+  level     String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([teamId, period, level])
+  @@map("team_budget_notices")
 }
 
 /// Where a conversation's title came from. A USER title is never replaced by a model's.

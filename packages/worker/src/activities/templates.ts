@@ -35,6 +35,7 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
 import {
   attributionTeamSelect,
+  resolveRunTenantScope,
   resolveWorkflowRunAttribution,
   runInputAttributionSelect,
 } from '@auto-swe/shared/workflow/runAttribution';
@@ -608,12 +609,40 @@ export async function createWorkflowRun(
     agentVersions[canaryAgentKey] = canaryVersion;
   }
 
+  // Resolved before the pins: the billed team is the tenant they fall back to when the run has no
+  // repository (see `runSettingsContext`).
+  const attributionConnectionId = input.runConnectionId ?? input.repoId ?? scheduledRepoId ?? null;
+  const [attributionConnection, attributionWorkRequest] = await Promise.all([
+    attributionConnectionId
+      ? prisma.connection.findUnique({
+          select: { team: { select: attributionTeamSelect } },
+          where: { id: attributionConnectionId },
+        })
+      : null,
+    input.workRequestId
+      ? prisma.runInput.findUnique({
+          select: runInputAttributionSelect,
+          where: { id: input.workRequestId },
+        })
+      : null,
+  ]);
+  const activeWorkflow = await prisma.activeWorkflow.findUnique({
+    select: { repoId: true },
+    where: { temporalWorkflowId: input.workflowId },
+  });
+  const attribution = resolveWorkflowRunAttribution({
+    activeWorkflowRepoId: activeWorkflow?.repoId,
+    connection: attributionConnection,
+    connectionId: (input.parentWorkflowId && input.repoId ? input.repoId : scheduledRepoId) ?? null,
+    template: { team: version.template?.team ?? null },
+    workRequest: attributionWorkRequest,
+  });
   // Freeze the registry settings marked `runPinned` for the life of this run,
   // alongside the agent-version pin. The interpreter runs in the V8 isolate and
   // cannot read the database, and a run that started under one transition
   // ceiling must finish under the same one or its replay history stops matching
   // its code — so these are resolved once, here, and carried forward.
-  const settingsCtx = await runSettingsContext(input, scheduledRepoId);
+  const settingsCtx = await runSettingsContext(input, scheduledRepoId, attribution);
   const pinnedSettings = narrowPinnedEgressPolicy(
     await snapshotPinnedSettings(settingsCtx),
     input.egressPolicy,
@@ -656,32 +685,6 @@ export async function createWorkflowRun(
   // and the later execution gets no user credential — never the earlier
   // launcher's.
   const sourceSnapshot = await knowledgeSourceSnapshot(input);
-  const attributionConnectionId = input.runConnectionId ?? input.repoId ?? scheduledRepoId ?? null;
-  const [attributionConnection, attributionWorkRequest] = await Promise.all([
-    attributionConnectionId
-      ? prisma.connection.findUnique({
-          select: { team: { select: attributionTeamSelect } },
-          where: { id: attributionConnectionId },
-        })
-      : null,
-    input.workRequestId
-      ? prisma.runInput.findUnique({
-          select: runInputAttributionSelect,
-          where: { id: input.workRequestId },
-        })
-      : null,
-  ]);
-  const activeWorkflow = await prisma.activeWorkflow.findUnique({
-    select: { repoId: true },
-    where: { temporalWorkflowId: input.workflowId },
-  });
-  const attribution = resolveWorkflowRunAttribution({
-    activeWorkflowRepoId: activeWorkflow?.repoId,
-    connection: attributionConnection,
-    connectionId: (input.parentWorkflowId && input.repoId ? input.repoId : scheduledRepoId) ?? null,
-    template: { team: version.template?.team ?? null },
-    workRequest: attributionWorkRequest,
-  });
   // The connections this run may use, resolved now and pinned on the row. A node that
   // resolves anything else is refused where it is used, which is what makes a template's
   // declared schema a boundary rather than a hint. Computed here because this activity is
@@ -968,7 +971,8 @@ export function narrowPinnedEgressPolicy(
 /// `currentRequestContext()` reads the latter, so this reads both.
 async function runSettingsContext(
   input: CreateWorkflowRunInput,
-  scheduledRepoId: string | null = null
+  scheduledRepoId: string | null = null,
+  attribution?: { attributedOrgId: string | null; attributedTeamId: string | null }
 ): Promise<SettingResolveCtx> {
   const ctx: SettingResolveCtx = { workflowTemplateId: input.templateId };
 
@@ -994,8 +998,17 @@ async function runSettingsContext(
   ]);
 
   const team = request?.connection ?? active?.repository ?? fireRepo;
-  ctx.teamId = team?.teamId ?? undefined;
-  ctx.orgId = team?.team?.orgId ?? undefined;
+  // A run with no repository falls back to the team it is attributed to, through the helper
+  // `currentRequestContext()` uses, so the pins and the activities resolve one tenant.
+  const scope = resolveRunTenantScope({
+    attributedTeam:
+      attribution?.attributedTeamId && attribution.attributedOrgId
+        ? { id: attribution.attributedTeamId, orgId: attribution.attributedOrgId }
+        : null,
+    repositoryTeam: team ? { orgId: team.team?.orgId, teamId: team.teamId } : null,
+  });
+  ctx.teamId = scope.teamId;
+  ctx.orgId = scope.orgId;
   return ctx;
 }
 

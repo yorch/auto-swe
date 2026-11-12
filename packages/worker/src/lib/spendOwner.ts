@@ -57,13 +57,20 @@ export async function ownerOfConnection(connectionId: string): Promise<SpendOwne
 
 /**
  * The owner of a user's own work (the in-app assistant): their organization, when they belong to
- * exactly one — directly or through their teams. A user in several has no single answer, so their
- * spend is attributed to nobody rather than to a guess.
+ * exactly one — directly or through their teams — and, when they are a member of exactly one team
+ * in it, that team too (so the team's monthly cap sees the spend). The assistant conversation
+ * carries no team, so a user in several teams has no single answer and is attributed to the
+ * organization only; a user in several organizations to nobody rather than to a guess.
  */
 export async function ownerOfUser(userId: string): Promise<SpendOwner> {
   const user = await prisma.user.findUnique({
     select: {
-      memberships: { select: { team: { select: { orgId: true } } } },
+      // An inactive team is not a team the user works in: counting it would make a single-team
+      // user look multi-team (org-level spend) or attribute their spend to a retired team.
+      memberships: {
+        select: { team: { select: { id: true, orgId: true } } },
+        where: { team: { isActive: true } },
+      },
       orgMemberships: { select: { orgId: true } },
     },
     where: { id: userId },
@@ -73,7 +80,12 @@ export async function ownerOfUser(userId: string): Promise<SpendOwner> {
     ...(user?.memberships ?? []).map((m) => m.team.orgId),
   ]);
   const [orgId] = orgIds;
-  return orgIds.size === 1 && orgId ? { orgId } : {};
+  if (orgIds.size !== 1 || !orgId) {
+    return {};
+  }
+  const teams = new Map((user?.memberships ?? []).map((m) => [m.team.id, m.team]));
+  const [only] = teams.values();
+  return teams.size === 1 && only ? fromTeam(only) : { orgId };
 }
 
 /** The owner of an eval dataset: its team, else its organization, else nobody (GLOBAL). */

@@ -1229,6 +1229,36 @@ HTTP URL and confirm success. A raw public-IP TCP connect and
 `egress (allowlist via proxy; network-locked)`. A missing proxy or unprovable strict lock refuses
 the step before author startup.
 
+### UN-26. Team spend caps: billing-team scope for repository-less runs, assistant gating, notices
+
+**Affected.** Deployments that run templates, service-principal launches or automations with no
+repository (connection-less runs) while TEAM-scope credentials, agents or settings exist for the
+team the launch is billed to, that set a team monthly budget, or that use the in-app assistant
+with team caps.
+
+**Fix commit.** `<fixing commit SHA>`; migration `20261112160000_team_budget_notices`.
+
+**Actions.**
+
+- Apply `yarn db:deploy` before starting the updated worker and gateway. The migration creates the
+  `TeamBudgetNotice` table the budget notices claim rows in.
+- A connection-less run now resolves its billing team's TEAM-scope credential, agent versions and
+  settings, and takes its run-start pins (settings, skill revisions, agent runtimes, harness
+  profiles) at that team. A team's own provider key now pays for such runs, where the organization
+  or GLOBAL key did before. Review TEAM-scope credentials and agents that were never exercised by
+  repository-less runs. Runs started before the update keep the pins they took.
+- A user who is a member of exactly one active team has the in-app assistant counted toward, and
+  stopped by, that team's monthly cap; a cap of 0 stops it. An assistant model with no catalog price
+  is refused while the team has a cap. Add the price or raise the cap if assistant use should
+  continue.
+- Budget notices go only to a team with `Team.slackNotifyChannel` set and a Slack bot token that
+  resolves; set the channel for each team that should be told.
+
+**Verify.** `\d team_budget_notices` shows the table. A template run with no repository, billed to a
+team, shows that team's agent and credential in its run trace.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

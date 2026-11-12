@@ -483,6 +483,13 @@ jobs:
           TEAM_BUDGET_PG_TEST: '1'
         run: yarn test packages/gateway/src/lib/teamBudget.pg.test.ts
 
+      # The once-per-month team budget notice marker: concurrent evaluations send one notice only
+      # because of the unique key, which a mocked Prisma cannot show.
+      - name: Team budget notices (database-backed tests)
+        env:
+          TEAM_BUDGET_NOTICE_PG_TEST: '1'
+        run: yarn test packages/worker/src/lib/teamBudgetNotice.pg.test.ts
+
       # The personal desk: its approval, failure and pull-request counts against the lists they
       # summarise, the platform ADMIN's member scope, and the per-team buckets, all relational
       # predicates a mocked Prisma would not evaluate.

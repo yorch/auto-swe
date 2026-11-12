@@ -1335,9 +1335,10 @@ describe('through the worker’s model proxy', () => {
   const PROXY_URL = 'http://host.docker.internal:8790';
   const TOKEN = 'sk-ant-proxy-turn-token';
 
-  function fakeProxy(onRegistered?: (reg: { onCall: (call: unknown) => void }) => void) {
+  type Registered = { onCall: (call: unknown) => void; precheck?: () => Promise<void> };
+  function fakeProxy(onRegistered?: (reg: Registered) => void) {
     const release = vi.fn(async () => {});
-    const register = vi.fn(async (reg: { onCall: (call: unknown) => void }) => {
+    const register = vi.fn(async (reg: Registered) => {
       onRegistered?.(reg);
       return { baseUrl: PROXY_URL, release, token: TOKEN };
     });
@@ -1479,6 +1480,33 @@ describe('through the worker’s model proxy', () => {
     ]);
     // Every call was debited as it ended, so the turn owes nothing more.
     expect(outcome.usageByModel).toEqual([]);
+  });
+
+  it('hands the proxy a precheck that asks the turn’s beforeCall and fails the turn with its error', async () => {
+    let registered: Registered | undefined;
+    const { proxy } = fakeProxy((reg) => {
+      registered = reg;
+    });
+    const { runtime } = setup({ modelProxy: proxy });
+    const budget = Object.assign(new Error('Budget exhausted'), { type: 'BUDGET_EXCEEDED' });
+    const beforeCall = vi.fn(async () => {
+      throw budget;
+    });
+    let proxySaw: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      proxySaw = resolve;
+    });
+    h.script.push([[init('s'), success('done', {})], undefined, gate]);
+
+    const turn = runtime.runTurn({ beforeCall, system: 'S', user: 'U' });
+    await vi.waitFor(() => expect(registered?.precheck).toBeDefined());
+    const refused = await registered?.precheck?.().catch((e: unknown) => e);
+    proxySaw();
+    const thrown = await turn.catch((e: unknown) => e);
+
+    expect(beforeCall).toHaveBeenCalledTimes(1);
+    expect(refused).toBe(budget);
+    expect(thrown).toBe(budget);
   });
 });
 

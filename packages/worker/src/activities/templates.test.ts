@@ -1,6 +1,7 @@
 import { Prisma } from '@auto-swe/shared';
 import { reviewRunId } from '@auto-swe/shared/lib/reviewLaunch';
 import { SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
+import { resolveRunTenantScope } from '@auto-swe/shared/workflow/runAttribution';
 import { Context } from '@temporalio/activity';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assignLessonRecall } from '../lib/lessonRecallAssignment.js';
@@ -861,6 +862,63 @@ describe('createWorkflowRun', () => {
     );
     const keysQuery = findAgents.mock.calls.at(-1)?.[0] as { distinct: string[] };
     expect(keysQuery.distinct).toEqual(['key']);
+  });
+
+  describe('run-start pins resolve the tenant the activities resolve', () => {
+    const billed = { id: 'team-billed', orgId: 'org-billed' };
+    const runInputRow = (extra: Record<string, unknown> = {}) =>
+      ({
+        billingOrgId: 'org-billed',
+        billingTeam: billed,
+        connection: null,
+        requestedByService: null,
+        ...extra,
+      }) as never;
+    const pinnedCtx = () =>
+      (resolveAgentRuntimeChoice.mock.calls as unknown[][]).at(-1)?.[1] as Record<string, unknown>;
+    const launch = () =>
+      createWorkflowRun({
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-1',
+        workRequestId: 'req-1',
+      });
+    beforeEach(() => {
+      findVersion.mockResolvedValue({ spec: validSpec, template: { origin: null } } as never);
+      findAgents
+        .mockResolvedValueOnce([{ key: 'implementer', version: 1 }] as never)
+        .mockResolvedValueOnce([{ key: 'implementer' }] as never);
+      resolveAgentRuntimeChoice.mockClear();
+    });
+
+    it('pins a repository-less run at its billing team, like currentRequestContext', async () => {
+      vi.mocked(prisma.runInput.findUnique).mockResolvedValue(runInputRow());
+      await launch();
+      expect(pinnedCtx()).toMatchObject({ orgId: 'org-billed', teamId: 'team-billed' });
+      // Same fixture through the activity-side helper both sides share.
+      expect(resolveRunTenantScope({ attributedTeam: billed, repositoryTeam: null })).toEqual({
+        orgId: 'org-billed',
+        teamId: 'team-billed',
+      });
+    });
+
+    it("keeps the repository's team for a run that has one", async () => {
+      vi.mocked(prisma.runInput.findUnique).mockResolvedValue(
+        runInputRow({
+          connection: { team: { id: 'team-repo', orgId: 'org-repo' }, teamId: 'team-repo' },
+        })
+      );
+      await launch();
+      expect(pinnedCtx()).toMatchObject({ orgId: 'org-repo', teamId: 'team-repo' });
+    });
+
+    it('leaves a run with no team anywhere at GLOBAL', async () => {
+      vi.mocked(prisma.runInput.findUnique).mockResolvedValue(
+        runInputRow({ billingOrgId: null, billingTeam: null })
+      );
+      await launch();
+      expect(pinnedCtx().teamId).toBeUndefined();
+    });
   });
 
   it('pins the OK profile version behind each bound agent at run start', async () => {

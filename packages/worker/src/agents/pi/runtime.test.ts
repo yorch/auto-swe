@@ -139,6 +139,7 @@ function fakeTurn(adapter: HarnessAdapter<unknown>, exec: HarnessTurn['exec']) {
     exec,
     failed: vi.fn(),
     heartbeat: vi.fn(),
+    precheck: vi.fn(async () => {}),
     spawn: vi.fn(() => {
       throw new Error('no binary');
     }),
@@ -317,6 +318,23 @@ describe('a Pi turn', () => {
       'call-2-0',
       expect.objectContaining({ error: expect.stringContaining('exited with code 1') })
     );
+  });
+
+  it('asks the turn before each model call, and a refusal stops the turn before the model is reached', async () => {
+    const { model, prompts } = scriptedModel([{ text: 'never sent' }]);
+    const adapter = adapterFor(model);
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+    const budget = Object.assign(new Error('Budget exhausted'), { type: 'BUDGET_EXCEEDED' });
+    turn.precheck.mockRejectedValueOnce(budget);
+
+    const thrown = await adapter
+      .runTurn(turn as unknown as HarnessTurn, { system: '', user: 'go' })
+      .catch((e: unknown) => e);
+
+    expect(turn.precheck).toHaveBeenCalledTimes(1);
+    expect(prompts).toHaveLength(0);
+    expect(thrown).toBe(budget);
+    expect(turn.callSpent).not.toHaveBeenCalled();
   });
 
   it('debits each model call as it completes, at the Agent spec', async () => {

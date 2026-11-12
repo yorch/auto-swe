@@ -780,7 +780,22 @@ credential's host with the real key — through the same SSRF guard as every mod
 `apiBase` that resolves or redirects to an internal address is refused — and streams the answer back
 unchanged. A token read out of the
 container is good for that turn's model calls, at the proxy, until the turn ends, and spends against
-the run's budget like any other call. A workspace reaches the proxy at `HARNESS_MODEL_PROXY_URL`: by
+the run's budget like any other call. Before it forwards a `POST /v1/messages` — after the token is
+validated, never for an unknown one — the proxy asks the turn's `precheck`, which waits for the calls
+already reported to be debited and then runs the same `assertBudgetAvailable` the debit path uses
+(organization cap, team cap, the run's tier). That check reads some state through the guards'
+config-cache window and some live on each call (the run's ledger row and its tier limits), so an
+uncached check costs a few database reads. A pass is remembered until the next debit is queued or
+the config-cache window (about 30 s) lapses, so a container sending a flood of calls costs one
+check, not one per request; a refusal is never remembered as a pass. A refusal answers the harness `400 invalid_request_error` with `x-should-retry: false`
+(the harness retries `429` and `5xx` with backoff, which would stall a turn that is ending), never
+contacts the provider, and aborts the turn, which fails with the guard's `BUDGET_EXCEEDED` so the run
+viewer shows the cap that bound. Only a genuine refusal to spend ends the turn: `BUDGET_EXCEEDED`,
+`MODEL_UNPRICED` and `MODEL_PRICE_UNAVAILABLE`, the types the debit path treats as a spend refusal.
+Any other error from the check (a database error in one of its reads) is logged with
+`logWarn` and the call goes ahead, so a transient failure neither kills a long turn nor is reported
+to the harness as a spending limit; the debit after the call still counts the spend and enforces the
+cap. The Pi runtime asks the same `precheck` before each call it sends. A workspace reaches the proxy at `HARNESS_MODEL_PROXY_URL`: by
 default `host.docker.internal`, which `createWorkspace` maps to the Docker host gateway, or a worker
 that shares `WORKSPACE_NETWORK` with its workspaces, as the shipped compose files run it.
 
@@ -1894,7 +1909,16 @@ organization, the one billing names, keeping its channel's or template's team on
 belongs to it. A workflow with no run names its owner itself with
 `withSpendOwner`: authoring and explaining charge the requesting team, lesson consolidation and
 dependency inference the repository's team, and the eval harness the dataset's team (or its
-organization, for an ORGANIZATION-scoped dataset). Resolution never fails an activity; a lookup that
+organization, for an ORGANIZATION-scoped dataset). The in-app assistant and its titler charge the signed-in user (`ownerOfUser`): the user's team and
+organization when they are a member of exactly one team, so the team's monthly cap counts the spend
+(as runless spend, rows with a `teamId` and no run); the organization alone when they belong to
+several teams in it; nobody when they span several organizations. Only teams that are active
+count. The attribution is also what gates the calls: a single-team user's assistant calls count
+toward the team's monthly cap and stop at it (`BUDGET_EXCEEDED`, a cap of 0 stops them at once), and
+when only the team has a USD cap an assistant model with no catalog price is refused
+(`MODEL_UNPRICED`), as for any run. A multi-team user's calls are attributed to the organization
+only and are not gated by any team cap.
+Resolution never fails an activity; a lookup that
 fails attributes the row to nobody.
 
 With these columns `AgentTrace` is a tenant-scoped model for the `tenantGuard`: a mass query on it
@@ -1905,6 +1929,13 @@ carries a `teamId`/`orgId` predicate or declares itself with `runUnscoped`.
 - **Some rows have no owner.** A GLOBAL eval dataset, an epic's planning call (its work request
   spans repositories), repository-access sync, a memory re-embed, and a run whose template,
   channel and repositories are all unowned write null `teamId`/`orgId`.
+- **A multi-team user's assistant spend is organization-level.** An assistant conversation names no
+  team, so for a user in several teams the rows carry the organization only and count against no
+  team's monthly cap, which also does not stop their assistant calls.
+- **A single-team user's assistant stops at the team cap.** The same attribution that makes the
+  team's cap count the spend makes the cap refuse the call, for every conversation of that user,
+  including ones about other work, and an unpriced assistant model is refused while the team has a
+  cap.
 - **Rows that predate the columns are unattributed.** Nothing backfills them.
 
 The run viewer (`web/src/lib/traceLinkage.ts`) filters on these fields: a node selects all its
@@ -2439,7 +2470,12 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   `HARNESS_UNSUPPORTED_MODEL`.
 - **A harness turn stops one call late.** The budget is re-checked after each call is debited, so
   an exhausted budget stops the turn after the call that exhausted it (and any running beside it),
-  as the Mastra loop stops one step late. Without the model proxy the gap is wider: a streamed call
+  as the Mastra loop stops one step late. With the model proxy (and in the Pi runtime) a call is
+  refused before it is sent once a cap is exhausted, so the overshoot is bounded by the calls in
+  flight at the moment the cap is crossed — those already started, N for N parallel harness calls,
+  each finishing at full size — plus any call whose debit had not yet landed when the next was
+  checked. The check is a gate, not a reservation: a run just under a cap is allowed one more call
+  of unknown size. Without the model proxy the gap is wider: a streamed call
   is debited only once the next one begins, the calls the harness makes without streaming a message
   (a small-model side task) are charged only from the turn's final totals and never trigger the
   check, and a turn stopped by its deadline or whose process died has no totals, so it is metered
