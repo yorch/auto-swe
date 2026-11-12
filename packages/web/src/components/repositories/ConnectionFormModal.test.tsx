@@ -32,6 +32,7 @@ vi.mock('@/hooks/useRepositories', () => ({
   useMovePreviewEnvToSecrets: () => ({ isPending: false, mutate: vi.fn() }),
   useProposeSetupFile: () => ({ data: undefined, isPending: false, mutate: vi.fn() }),
   useRepoEvalDatasets: () => ({ data: evalDatasets.data, isError: false, isLoading: false }),
+  useRunRepoOnboarding: () => ({ isError: false, isPending: false, mutate: vi.fn() }),
   useSaveSetupSecret: () => ({ isPending: false, mutate: vi.fn() }),
   useSetupBlockers: () => ({ data: [], isError: false, isLoading: false }),
   useSetupFileProposalStatus: () => ({ data: undefined, isError: false }),

@@ -13,6 +13,7 @@ import { persistActivityTrace } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
 import { withCoAuthorTrailer } from '../lib/gitIdentity.js';
+import { maskCredentialShapes } from '../lib/redactToken.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { createWorkspace, shellQuote, type Workspace } from './workspace.js';
 
@@ -123,7 +124,7 @@ async function assertDiffIsExactly(ws: Workspace, expected: readonly string[]): 
 }
 
 /**
- * The two files go in `.auto-swe/`. Refuse when that directory or either file is, in the tree we
+ * The files go in `.auto-swe/`. Refuse when that directory or any file is, in the tree we
  * are about to commit on, a symlink, a submodule or the wrong kind of entry, or is a symlink on
  * disk: `cat >` would follow it out of the repository and `git add` would record a link.
  */
@@ -166,18 +167,42 @@ export function contentHashOf(files: readonly { path: string; content: string }[
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }
 
-export function onboardingPrBody(paths: readonly string[]): string {
+export function onboardingPrBody(paths: readonly string[], trialReport?: string): string {
+  const active = paths.filter((path) => /^\.auto-swe\/(?:setup|gates|preview)\.yml$/.test(path));
+  const legacy = paths.some(
+    (path) => path === '.auto-swe/tools.yml' || path === '.auto-swe/pr-policy.yml'
+  );
   return [
     'This pull request was proposed from the auto-swe repository settings. It only adds or updates',
     'configuration files:',
     '',
     ...paths.map((p) => `- \`${p}\``),
     '',
-    '**Merging this pull request does not enable anything.** It does not install tools and it does',
-    'not change how pull requests are evaluated. An administrator still has to turn on',
-    '`toolsFileEnabled` for the repository before the tools file is read.',
+    ...(active.length
+      ? [
+          `**On merge, ${active.map((path) => `\`${path}\``).join(', ')} take effect unless a connection override wins.**`,
+          'Setup and preview use whole-object connection overrides; gate commands are overridden per key.',
+          '',
+        ]
+      : []),
+    ...(legacy
+      ? [
+          ...(active.length ? ['For tools and pull request policy configuration:'] : []),
+          '**Merging this pull request does not enable anything.** It does not install tools and it does',
+          'not change how pull requests are evaluated. An administrator still has to turn on',
+          '`toolsFileEnabled` for the repository before the tools file is read.',
+        ]
+      : []),
     '',
     'A person reviews and merges this pull request; the platform never merges it.',
+    ...(trialReport?.trim()
+      ? [
+          '',
+          '## Trial report',
+          '',
+          maskCredentialShapes(trialReport.slice(0, 100_000)).slice(0, 12_000),
+        ]
+      : []),
   ].join('\n');
 }
 
@@ -310,6 +335,7 @@ async function run(input: OnboardingPrInput): Promise<OnboardingPrResult> {
       rendered,
       repoRef,
       scm,
+      trialReport: typeof input.trialReport === 'string' ? redact(input.trialReport) : undefined,
     });
   } catch (err) {
     if (err instanceof ApplicationFailure) {
@@ -335,6 +361,7 @@ async function propose(
     rendered: { path: string; content: string }[];
     repoRef: ReturnType<typeof toRepoRef>;
     scm: ReturnType<typeof getScmProvider>;
+    trialReport?: string;
   }
 ): Promise<OnboardingPrResult> {
   const paths = args.rendered.map((f) => f.path);
@@ -360,6 +387,24 @@ async function propose(
   }
   if (toWrite.length === 0) {
     await assertDiffIsExactly(ws, changed);
+    if (args.openPr && changed.length > 0 && args.trialReport?.trim()) {
+      const pr = await args.scm.createOrUpdatePullRequest({
+        baseBranch: args.baseBranch,
+        body: onboardingPrBody(changed, args.trialReport),
+        headBranch: args.branch,
+        repo: args.repoRef,
+        reuseExisting: true,
+        title: ONBOARDING_PR_TITLE,
+        updateExisting: true,
+      });
+      return {
+        changed,
+        pullRequestNumber: pr.prNumber,
+        pullRequestUrl: pr.prUrl,
+        skipped,
+        status: 'updated',
+      };
+    }
     // Everything is already on the default branch, or already on the open pull request's branch.
     return {
       changed,
@@ -391,7 +436,7 @@ async function propose(
 
   const pr = await args.scm.createOrUpdatePullRequest({
     baseBranch: args.baseBranch,
-    body: onboardingPrBody(changed),
+    body: onboardingPrBody(changed, args.trialReport),
     headBranch: args.branch,
     repo: args.repoRef,
     reuseExisting: true,

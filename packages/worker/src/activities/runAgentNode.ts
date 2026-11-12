@@ -33,6 +33,7 @@ import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { knowledgeBasePromptBlock } from '../lib/knowledgeBasePrompt.js';
+import { isOnboardingDraftAgent } from '../lib/onboardingEgress.js';
 import {
   checkSurfaceState,
   cloneCredentialSecrets,
@@ -362,6 +363,7 @@ async function runInCheckout(args: {
     {
       ...(resumeCheckoutSha(resume) ? { trustedBaseBranch: baseBranch } : {}),
       detectedStack: repo.detectedStack,
+      ...((await isOnboardingDraftAgent(key)) ? { onboardingDraft: true } : {}),
       knowledgeBaseSnapshotIds: references.snapshotIds,
       knowledgeBases: references.checkouts,
       repoSetup: { connectionId: repo.id, defer: true, field: repo.setup },

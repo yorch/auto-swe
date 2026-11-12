@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { api } from '@/lib/api';
 import { withQuery } from '@/test/rtl-helpers';
 
 const auth = vi.hoisted(() => ({
@@ -22,6 +23,7 @@ vi.mock('@/stores/authStore', () => ({
     select({ user: { role: auth.role } }),
 }));
 vi.mock('@/hooks/useTeams', () => ({
+  useAdminTeamIds: () => new Set(auth.teamRole === 'ADMIN' ? ['t1'] : []),
   useLedTeamIds: () => new Set(auth.role === 'LEAD' ? ['t1'] : []),
   useTeams: (options?: { memberOnly?: boolean }) => ({
     data: options?.memberOnly
@@ -56,6 +58,62 @@ import ConnectionsPage from './page';
 afterEach(cleanup);
 
 describe('Connections page', () => {
+  it.each(['ADMIN', 'LEAD', 'ENGINEER'])(
+    'offers onboarding only to eligible setup authors: %s',
+    (role) => {
+      auth.role = role;
+      auth.teamRole = 'ADMIN';
+      repos.list = [
+        {
+          _count: { activeWorkflows: 0 },
+          id: 'r1',
+          isActive: true,
+          name: 'api',
+          organizationName: 'acme',
+          repoName: 'api',
+          team: { id: 't1', name: 'Payments', slug: 'payments' },
+          type: 'git_repo',
+        },
+      ];
+      try {
+        render(withQuery(<ConnectionsPage />));
+        fireEvent.click(screen.getByRole('button', { name: /More actions for acme\/api/ }));
+        expect(Boolean(screen.queryByRole('menuitem', { name: 'Run onboarding' }))).toBe(
+          role !== 'ENGINEER'
+        );
+      } finally {
+        repos.list = [];
+        auth.role = 'ENGINEER';
+        auth.teamRole = 'ENGINEER';
+      }
+    }
+  );
+  it('runs onboarding from the row menu and shows launch failure', async () => {
+    auth.role = 'ADMIN';
+    repos.list = [
+      {
+        _count: { activeWorkflows: 0 },
+        id: 'r1',
+        isActive: true,
+        name: 'api',
+        organizationName: 'acme',
+        repoName: 'api',
+        team: { id: 't1', name: 'Payments', slug: 'payments' },
+        type: 'git_repo',
+      },
+    ];
+    const post = vi.spyOn(api, 'fetch').mockRejectedValue(new Error('Onboarding launch refused'));
+    try {
+      render(withQuery(<ConnectionsPage />));
+      fireEvent.click(screen.getByRole('button', { name: /More actions for acme\/api/ }));
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Run onboarding' }));
+      expect(await screen.findByText('Onboarding launch refused')).toBeTruthy();
+    } finally {
+      post.mockRestore();
+      repos.list = [];
+      auth.role = 'ENGINEER';
+    }
+  });
   it.each(['team', 'organization'])('allows an ENGINEER who manages the %s', (scope) => {
     auth.role = 'ENGINEER';
     auth.teamRole = scope === 'team' ? 'LEAD' : 'ENGINEER';

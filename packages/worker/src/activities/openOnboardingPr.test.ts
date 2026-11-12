@@ -48,6 +48,20 @@ const REQUEST: OnboardingRequest = {
 };
 const RENDERED = renderOnboardingFiles(REQUEST);
 
+describe('trial report body', () => {
+  it('is bounded, credential-redacted and optional', () => {
+    const body = onboardingPrBody(
+      ['.auto-swe/setup.yml'],
+      `NPM_TOKEN=secret-value\n${'x'.repeat(20_000)}`
+    );
+    expect(body).toContain('## Trial report');
+    expect(body).not.toContain('secret-value');
+    expect(body.split('## Trial report\n\n')[1]?.length).toBeLessThanOrEqual(12_000);
+    expect(onboardingPrBody([], '')).not.toContain('## Trial report');
+    expect(onboardingPrBody([])).not.toContain('## Trial report');
+  });
+});
+
 function hashOf(files: readonly { path: string; content: string }[]): string {
   const canonical = files
     .map((f) => `${f.path}\0${f.content}`)
@@ -165,6 +179,18 @@ beforeEach(() => {
   m.persist.mockResolvedValue(true);
 });
 
+it('includes the report in the PR and redacts known delivery credentials', async () => {
+  diffFiles = RENDERED;
+  await openOnboardingPr({
+    ...INPUT,
+    trialReport: 'Trial failed: SECRET-TOKEN; NPM_TOKEN=another-secret',
+  });
+  const body = m.createPr.mock.calls[0]?.[0].body;
+  expect(body).toContain('## Trial report');
+  expect(body).not.toContain('SECRET-TOKEN');
+  expect(body).not.toContain('another-secret');
+});
+
 type FileChange = { path: string; previousPath?: string; status?: string };
 
 function comparison(changes: FileChange[]) {
@@ -203,6 +229,92 @@ const rejected = async (input: OnboardingPrInput): Promise<ApplicationFailure> =
 };
 
 describe('openOnboardingPr', () => {
+  const onboardingFiles: OnboardingRequest['files'] = [
+    { kind: 'setup', setup: { steps: [{ name: 'install', run: 'npm ci' }] } },
+    { gateCommands: { runTests: 'npm test' }, kind: 'gates' },
+    {
+      kind: 'preview',
+      previewConfig: {
+        baseUrl: 'http://localhost:3000',
+        readyTimeoutMs: 180000,
+        readyUrl: 'http://localhost:3000/',
+        start: 'npm start',
+      },
+    },
+  ];
+  const newRendered = renderOnboardingFiles({ files: onboardingFiles });
+  const newInput = { ...INPUT, contentHash: contentHashOf(newRendered), files: onboardingFiles };
+
+  it('hashes, guards and opens one PR containing the new configuration files', async () => {
+    diffFiles = newRendered;
+    const result = await openOnboardingPr(newInput);
+    expect(result.changed).toEqual(newRendered.map((file) => file.path));
+    expect(written).toEqual(
+      Object.fromEntries(newRendered.map((file) => [file.path, file.content]))
+    );
+    expect(m.createWorkspace.mock.calls[0]?.[1]).toBe(`auto/onboard-${hashOf(newRendered)}`);
+    expect(m.createPr.mock.calls[0]?.[0].body).toContain(
+      'take effect unless a connection override wins'
+    );
+    expect(m.createPr.mock.calls[0]?.[0].body).not.toContain('does not enable anything');
+    expect(destroyed).toBe(1);
+  });
+
+  it('includes every new kind in the hash, independent of rendered file order', () => {
+    expect(contentHashOf(newRendered)).toBe(hashOf(newRendered));
+    expect(contentHashOf([...newRendered].reverse())).toBe(contentHashOf(newRendered));
+    for (const file of newRendered) {
+      expect(
+        contentHashOf(
+          newRendered.map((entry) =>
+            entry === file ? { ...entry, content: `${entry.content}\n` } : entry
+          )
+        )
+      ).not.toBe(contentHashOf(newRendered));
+    }
+  });
+
+  it.each(['.auto-swe/setup.yml', '.auto-swe/gates.yml', '.auto-swe/preview.yml'])(
+    'rejects a nonregular new file: %s',
+    async (path) => {
+      lsTree = `120000 blob ${'a'.repeat(40)}\t${path}\n`;
+      const error = await rejected(newInput);
+      expect(error.type).toBe('ONBOARDING_PR_REFUSED');
+      expect(m.createPr).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects extra paths in a new-kind delivery diff', async () => {
+    diffFiles = newRendered;
+    diffOverride = `${newRendered.map((file) => `A\t${file.path}`).join('\n')}\nA\tsrc/extra.ts`;
+    expect((await rejected(newInput)).type).toBe('ONBOARDING_PR_REFUSED');
+    expect(m.createPr).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unexpected path on a pre-existing new-kind branch', async () => {
+    m.findBranchWork.mockResolvedValue({
+      aheadBy: 1,
+      branchExists: true,
+      openPr: { prNumber: 7, prUrl: 'https://github.com/acme/api/pull/7' },
+    });
+    m.compareCommits.mockResolvedValue(
+      comparison([...newRendered.map((file) => ({ path: file.path })), { path: 'src/extra.ts' }])
+    );
+    expect((await rejected(newInput)).type).toBe('ONBOARDING_PR_REFUSED');
+    expect(m.createWorkspace).not.toHaveBeenCalled();
+  });
+
+  it('keeps legacy tools and policy wording scoped when mixed with active configuration', () => {
+    const body = onboardingPrBody([
+      '.auto-swe/tools.yml',
+      '.auto-swe/pr-policy.yml',
+      '.auto-swe/setup.yml',
+    ]);
+    expect(body).toContain('take effect unless a connection override wins');
+    expect(body).toContain('For tools and pull request policy configuration:');
+    expect(body).toContain('does not enable anything');
+    expect(body).toContain('toolsFileEnabled');
+  });
   it('opens a pull request for new files and removes the workspace', async () => {
     const result = await openOnboardingPr(INPUT);
     expect(result).toEqual({
@@ -404,6 +516,16 @@ describe('openOnboardingPr', () => {
       expect(result.pullRequestUrl).toBe('https://github.com/acme/api/pull/7');
       expect(commands.filter((c) => c.startsWith('AUTHED push'))).toEqual([]);
       expect(m.createPr).not.toHaveBeenCalled();
+    });
+
+    it('refreshes the trial report on an identical open PR without another commit or push', async () => {
+      existing();
+      head = Object.fromEntries(RENDERED.map((f) => [f.path, f.content]));
+      const result = await openOnboardingPr({ ...INPUT, trialReport: 'Latest trial: passed' });
+      expect(result.status).toBe('updated');
+      expect(m.createPr.mock.calls[0]?.[0].body).toContain('Latest trial: passed');
+      expect(commands.filter((c) => c.startsWith('AUTHED push'))).toEqual([]);
+      expect(commands.some((c) => c.includes('commit -m'))).toBe(false);
     });
 
     it('judges identical against the default branch, not the branch tip', async () => {

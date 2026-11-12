@@ -1,6 +1,114 @@
 import { describe, expect, it } from 'vitest';
 import { parseAgentOutput } from './parseAgentOutput.js';
 
+describe('repository onboarding draft', () => {
+  const draft = {
+    gateCommands: { runTests: 'npm test' },
+    notes: 'Requires Node.',
+    previewConfig: { readyUrl: 'http://localhost:3000/', start: 'npm start' },
+    setup: { steps: [{ name: 'install', run: 'npm ci' }] },
+  };
+  const fenced = (value: unknown) => `Draft:\n\n\`\`\`json\n${JSON.stringify(value)}\n\`\`\``;
+  const parse = (text: unknown) => parseAgentOutput({ kind: 'repoOnboardingDraft', text });
+
+  it('validates and summarizes all configuration for approval', async () => {
+    const result = await parse(fenced(draft));
+    expect(result).toMatchObject({
+      draft: {
+        ...draft,
+        previewConfig: {
+          ...draft.previewConfig,
+          baseUrl: 'http://localhost:3000',
+          readyTimeoutMs: 180000,
+        },
+      },
+      valid: true,
+    });
+    expect(result).not.toHaveProperty('passed');
+    for (const text of [
+      '.auto-swe/setup.yml',
+      '.auto-swe/gates.yml',
+      '.auto-swe/preview.yml',
+      'npm ci',
+      'npm test',
+      'Requires Node.',
+    ]) {
+      expect(result.markdown).toContain(text);
+    }
+  });
+
+  it('accepts empty setup and gates and normalizes omitted optional fields', async () => {
+    expect(await parse(fenced({ gateCommands: {}, setup: {} }))).toMatchObject({
+      draft: { gateCommands: {}, notes: '', previewConfig: null, setup: {} },
+      valid: true,
+    });
+    expect(await parse(fenced({ gateCommands: {}, previewConfig: null, setup: {} }))).toMatchObject(
+      { valid: true }
+    );
+  });
+
+  it.each([undefined, null, 42, '', 'No draft.', JSON.stringify(draft)])(
+    'rejects a reply without a block: %j',
+    async (text) => {
+      const result = await parse(text);
+      expect(result).toMatchObject({ error: expect.stringContaining('fenced JSON'), valid: false });
+      if (!result.valid) {
+        expect(result.markdown).toBe(result.error);
+      }
+    }
+  );
+
+  it('rejects invalid JSON', async () => {
+    expect(await parse('```json\n{bad json}\n```')).toMatchObject({
+      error: expect.stringContaining('invalid JSON'),
+      valid: false,
+    });
+  });
+
+  it.each([
+    {},
+    { gateCommands: { unknown: 'echo nope' }, setup: {} },
+    { ...draft, setup: { steps: [{ run: 42 }] } },
+    { ...draft, previewConfig: { readyUrl: 'https://example.com', start: 'npm start' } },
+    { ...draft, notes: 42 },
+    { ...draft, contentHash: 'spoofed' },
+  ])('rejects schema violations: %j', async (value) => {
+    expect(await parse(fenced(value))).toMatchObject({
+      error: expect.stringContaining('invalid fields'),
+      valid: false,
+    });
+  });
+
+  it('takes the last JSON block, ignoring earlier drafts and other languages', async () => {
+    const result = await parse(
+      `${fenced({ ...draft, notes: 'old' })}\n${fenced(draft)}\n\`\`\`text\nignore\n\`\`\``
+    );
+    expect(result).toMatchObject({ draft: { notes: 'Requires Node.' }, valid: true });
+  });
+
+  it('does not fall back to an earlier valid block when the last is invalid', async () => {
+    expect(await parse(`${fenced(draft)}\n\`\`\`json\nnot JSON\n\`\`\``)).toMatchObject({
+      valid: false,
+    });
+    expect(await parse(`${fenced(draft)}\n${fenced({})}`)).toMatchObject({ valid: false });
+  });
+
+  it('supports CRLF and uppercase JSON fences', async () => {
+    expect(
+      await parse(fenced(draft).replace('```json', '```JSON').replaceAll('\n', '\r\n'))
+    ).toMatchObject({ valid: true });
+  });
+
+  it('returns invalid rather than throwing if the rendered recipe exceeds the file parser limit', async () => {
+    const env = Object.fromEntries(
+      Array.from({ length: 30 }, (_, i) => [`VALUE_${i}`, 'x'.repeat(4000)])
+    );
+    expect(
+      await parse(fenced({ ...draft, previewConfig: { ...draft.previewConfig, env } }))
+    ).toMatchObject({ error: expect.stringContaining('cannot be rendered'), valid: false });
+  });
+});
+
 describe('parseAgentOutput', () => {
   it('checks a review and reports readiness, counts and the comments to post', async () => {
     const out = await parseAgentOutput({

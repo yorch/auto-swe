@@ -3,7 +3,40 @@ import {
   parseRepoGatesYaml,
   parseRepoPreviewYaml,
   REPO_CONFIG_FILE_MAX_BYTES,
+  repoGatesToYaml,
+  repoPreviewToYaml,
 } from './repoConfigFiles.js';
+
+describe('repository configuration serializers', () => {
+  it('renders empty gates and preserves nullable and blank values', () => {
+    expect(parseRepoGatesYaml(repoGatesToYaml({}))).toEqual({ ok: true, value: {} });
+    const commands = { runBuild: '', runLint: null, runTests: 'make test' };
+    expect(parseRepoGatesYaml(repoGatesToYaml(commands))).toEqual({ ok: true, value: commands });
+    expect(repoGatesToYaml(commands)).toBe(
+      repoGatesToYaml({ runBuild: '', runLint: null, runTests: 'make test' })
+    );
+  });
+
+  it('normalizes preview defaults and sorts nested map entries', () => {
+    const config = {
+      env: { A: 'first', Z: 'last' },
+      readyUrl: 'http://localhost:3000/',
+      start: 'npm start',
+    };
+    expect(parseRepoPreviewYaml(repoPreviewToYaml(config))).toEqual({
+      ok: true,
+      value: { ...config, baseUrl: 'http://localhost:3000', readyTimeoutMs: 180000 },
+    });
+    expect(repoPreviewToYaml(config)).toBe(
+      repoPreviewToYaml({ ...config, env: { A: 'first', Z: 'last' } })
+    );
+  });
+
+  it('rejects invalid configuration before serialization', () => {
+    expect(() => repoGatesToYaml({ runTests: 42 } as never)).toThrow();
+    expect(() => repoPreviewToYaml({} as never)).toThrow();
+  });
+});
 
 describe('parseRepoGatesYaml', () => {
   it('accepts the connection command schema, including nullable and blank entries', () => {

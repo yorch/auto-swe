@@ -79,7 +79,10 @@ function gitBlocker(detail: string, subject: string): SetupBlocker {
   );
 }
 
-async function failedStepBlocker(started: number, fallback: SetupBlocker): Promise<SetupBlocker> {
+export async function failedStepBlocker(
+  started: number,
+  fallback: SetupBlocker
+): Promise<SetupBlocker> {
   try {
     const workflowId = currentWorkflowId();
     const runId = await currentWorkflowRunId();

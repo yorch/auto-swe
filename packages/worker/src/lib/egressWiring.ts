@@ -3,8 +3,11 @@ import { prisma } from '@auto-swe/shared/db';
 import type { EgressPolicy, SetupEgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
+import { z } from 'zod';
+import { logWarn } from './activityLog.js';
 import { currentRequestContext } from './config/contextLookup.js';
 import { workerEgressProxy } from './egressProxy.js';
+import { loadToolCatalog } from './toolCatalogLoader.js';
 import type { EgressAllowEntry } from './workspaceBackend/types.js';
 
 const HOSTNAME = /^[a-z0-9][a-z0-9.-]*$/;
@@ -100,7 +103,8 @@ export function egressPolicyFailure(message: string): ApplicationFailure {
 export async function beginWorkspaceEgress(
   teamId: string | null,
   bypassHosts: string[] = [],
-  policy: EgressPolicy = 'open'
+  policy: EgressPolicy = 'open',
+  expansion?: DraftEgressExpansion
 ) {
   if (policy === 'blocked') {
     return null;
@@ -108,10 +112,16 @@ export async function beginWorkspaceEgress(
   if (policy === 'open' && !workerEgressProxy()) {
     return null;
   }
-  const team = teamId
-    ? await prisma.team.findUnique({ select: { egressAllowlist: true }, where: { id: teamId } })
-    : null;
-  const allowlist = (team?.egressAllowlist as string[] | null) ?? [];
+  const team =
+    teamId && expansion?.includeTeamAllowlist !== false
+      ? await prisma.team.findUnique({ select: { egressAllowlist: true }, where: { id: teamId } })
+      : null;
+  const allowlist = [
+    ...new Set([
+      ...((team?.egressAllowlist as string[] | null) ?? []),
+      ...(expansion?.additionalHosts ?? []),
+    ]),
+  ];
   if (policy === 'restricted') {
     if (allowlist.length === 0) {
       return null;
@@ -123,6 +133,67 @@ export async function beginWorkspaceEgress(
     }
   }
   return beginEgressAccess(allowlist, bypassHosts);
+}
+
+export interface DraftEgressExpansion {
+  additionalHosts: string[];
+  includeTeamAllowlist: boolean;
+}
+
+export async function resolveOnboardingDraftEgress(
+  teamId: string | null,
+  policy: EgressPolicy
+): Promise<DraftEgressExpansion | null> {
+  if (policy === 'open') {
+    return null;
+  }
+  if (!workerEgressProxy()) {
+    logWarn('onboarding draft egress unchanged: worker egress proxy is not configured', {
+      policy,
+      teamId,
+    });
+    return null;
+  }
+  const [configured, registries, tools] = await Promise.all([
+    resolveSetting('onboarding.draftEgressHosts', await resolveEgressScope(teamId)),
+    prisma.packageRegistry.findMany({
+      select: {
+        isActive: true,
+        teamId: true,
+        upstreamUrl: true,
+      },
+      where: { isActive: true, OR: [{ teamId: null }, ...(teamId ? [{ teamId }] : [])] },
+    }),
+    loadToolCatalog(),
+  ]);
+  const urls = [
+    ...registries
+      .filter(
+        (registry) => registry.isActive && (registry.teamId === null || registry.teamId === teamId)
+      )
+      .map((registry) => registry.upstreamUrl),
+    ...tools
+      .filter((tool) => tool.status !== 'REVOKED')
+      .flatMap((tool) =>
+        Object.values(tool.archs).flatMap((download) => (download ? [download.url] : []))
+      ),
+  ];
+  const hosts = new Set(configured);
+  for (const raw of urls) {
+    let hostname: string;
+    try {
+      hostname = new URL(raw).hostname.toLowerCase();
+    } catch {
+      continue;
+    }
+    const parsed = z.hostname().safeParse(hostname);
+    if (parsed.success) {
+      hosts.add(parsed.data);
+    }
+  }
+  return hosts.size
+    ? { additionalHosts: [...hosts].sort(), includeTeamAllowlist: policy === 'restricted' }
+    : null;
 }
 
 /**
@@ -164,17 +235,21 @@ export async function resolveRunSetupEgressPolicy(
 async function resolveRunNetworkSetting<
   K extends 'workspace.egressPolicy' | 'workspace.setupEgressPolicy',
 >(key: K, teamId: string | null) {
+  return resolveSetting(key, await resolveEgressScope(teamId));
+}
+
+async function resolveEgressScope(teamId: string | null) {
   const ctx = await currentRequestContext();
   let orgId = ctx.orgId;
   if (orgId === undefined && teamId) {
     const team = await prisma.team.findUnique({ select: { orgId: true }, where: { id: teamId } });
     orgId = team?.orgId ?? undefined;
   }
-  return resolveSetting(key, {
+  return {
     ...ctx,
     ...(orgId ? { orgId } : {}),
     ...(teamId ? { teamId } : {}),
-  });
+  };
 }
 
 /**

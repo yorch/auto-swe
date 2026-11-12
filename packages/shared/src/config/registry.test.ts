@@ -2,6 +2,68 @@ import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import { SETTING_DEFINITIONS } from './registry.js';
 
+describe('automatic onboarding', () => {
+  it('is an opt-in, live, admin-only team/organization boolean', () => {
+    const setting = SETTING_DEFINITIONS['onboarding.autoRunOnConnect'];
+    expect(setting).toMatchObject({
+      defaultValue: false,
+      group: 'onboarding',
+      overridableAt: ['TEAM', 'ORGANIZATION'],
+      requiredRole: 'ADMIN',
+      restartRequired: false,
+      runPinned: false,
+    });
+    expect(setting.schema.parse(true)).toBe(true);
+    expect(setting.schema.parse(false)).toBe(false);
+    expect(setting.schema.safeParse('true').success).toBe(false);
+  });
+});
+
+describe('onboarding draft hosts', () => {
+  const setting = SETTING_DEFINITIONS['onboarding.draftEgressHosts'];
+  it('is live, admin-only and organization/team scoped, with curated defaults', () => {
+    expect(setting).toMatchObject({
+      group: 'onboarding',
+      overridableAt: ['ORGANIZATION', 'TEAM'],
+      requiredRole: 'ADMIN',
+      restartRequired: false,
+      runPinned: false,
+    });
+    expect(setting.defaultValue).toEqual([
+      'registry.npmjs.org',
+      'registry.yarnpkg.com',
+      'pypi.org',
+      'files.pythonhosted.org',
+      'proxy.golang.org',
+      'sum.golang.org',
+      'repo.maven.apache.org',
+      'repo1.maven.org',
+      'crates.io',
+      'static.crates.io',
+      'index.crates.io',
+      'rubygems.org',
+      'github.com',
+      'objects.githubusercontent.com',
+      'codeload.github.com',
+    ]);
+    expect(setting.schema.safeParse(setting.defaultValue).success).toBe(true);
+    expect(setting.schema.parse([])).toEqual([]);
+    expect(setting.schema.parse(['EXAMPLE.com'])).toEqual(['example.com']);
+  });
+  it.each([
+    'https://example.com',
+    '*.example.com',
+    'example.com:443',
+    'a..b',
+    '-bad.example',
+    'bad example',
+    'user@example.com',
+    'a,b',
+  ])('refuses a non-hostname: %s', (host) => {
+    expect(setting.schema.safeParse([host]).success).toBe(false);
+  });
+});
+
 describe('lesson recall experiment settings', () => {
   it('pins validated recall modes with template and tenant overrides', () => {
     const setting = SETTING_DEFINITIONS['memory.lessonRecall'];

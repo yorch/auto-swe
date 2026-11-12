@@ -216,15 +216,19 @@ describe('syncAgents — seeded model default upgrade', () => {
     let reads = 0;
     readHead.mockImplementation(async (args: unknown) => {
       const row = await realFindFirst(args);
+      if (row?.key !== v1.key) {
+        return row;
+      }
       reads += 1;
       // The read that decides the migration sees it active; the one under the lock does not.
-      return reads === 1 || !row ? row : { ...row, isActive: false };
+      return reads === 1 ? row : { ...row, isActive: false };
     });
 
     await seedSweStarter(prisma);
 
     // The deactivation wins, as it does for an edit: switching an agent on is a decision of its own.
     expect(lineage(agents, 'implementer').map((r) => r.version)).toEqual([1]);
+    expect(reads).toBe(2);
     expect(prisma.$executeRaw).toHaveBeenCalled();
   });
 

@@ -819,6 +819,55 @@ it runs only in preview sessions, after workspace setup, with the recipe's `env`
 secrets). Dependency installs belong in workspace setup, where every workspace and the cache get
 them; the preview's `setup` is for what only a running app needs, such as seeding its database.
 
+### Onboarding agent
+
+The built-in `repo-onboarding` workflow takes a required `connectionId` for a Git repository.
+Choose **Run onboarding** in a Git repository's Connections row menu or beside **Setup health**
+in its setup editor. These controls require LEAD access and repository shell-author/team-admin
+permission, matching setup editing. The workflow library's normal launch form also accepts it.
+The `repo-onboarder` agent explores
+the trusted base checkout, reads repository guidance and build evidence, tries commands and
+returns a structured proposal for `.auto-swe/setup.yml`, `.auto-swe/gates.yml` and an optional
+`.auto-swe/preview.yml`.
+
+The draft workspace has temporary download access controlled by
+`onboarding.draftEgressHosts`, applicable active package-registry upstreams and non-revoked
+tool-catalog download hosts. Open policy is unchanged. Restricted policy adds these hosts to
+the team allowlist; blocked policy uses only these hosts plus the existing Git/platform access.
+The proxy registration belongs to that workspace and is revoked on destruction. Without the
+egress proxy there is no widening. Worker verification requires the onboarder agent in the
+seeded global template and a seeded version; copying or editing the template does not grant it.
+
+A deterministic trial provisions a fresh base-branch workspace under the **real run policy**,
+with no setup-only widening. It applies the proposed setup in memory, runs the exact drafted
+gate commands and checks optional preview readiness. Trial setup neither records nor resolves
+the repository's **Setup health** blockers; it returns typed blockers in the trial report instead.
+
+Invalid proposals and repairable trial failures return to the drafter, up to three draft visits
+(two repair rounds). Operator-only blockers, such as missing secrets or denied egress, go to
+review without an automatic repair. A person sees both the draft summary and the trial report,
+including blockers. They can approve even a failed trial, request changes within the same draft
+visit budget, or reject. Exhaustion still reaches review; an invalid draft is explicitly marked
+and cannot reach delivery even when approved. Approval opens one configuration PR; it does not
+merge it. The PR body includes the latest trial report, bounded to 12,000 characters and redacted
+for credential shapes and known delivery credentials; report text does not change the file hash
+or branch identity. On merge, connection overrides retain precedence over the files.
+
+`POST /api/v1/repositories/:id/onboarding-runs` starts the active global builtin and accepts
+`Idempotency-Key`. It uses normal tracked launch authorization, budgets, attribution and ledger
+rows. The response contains `workflowId` (the active-workflow row), `temporalWorkflowId`,
+`workRequestId` and `runId`. The worker creates the run-detail row asynchronously, so `runId`
+can be null at first; the UI links to the request while it is pending and to the run when known.
+A repeated key for the same creator and repository joins the recorded launch.
+
+`onboarding.autoRunOnConnect` is off by default. An admin can enable it for a team or organization.
+After a Git repository connects and its dependency scan is kicked off, onboarding starts with
+the creator's identity and normal permissions and budgets. A deterministic per-connection key
+prevents retry duplicates. Failure is logged and audited without undoing connection creation.
+Bulk GitHub import follows the same path: each imported Git repository auto-runs onboarding
+when the setting is enabled. A failed auto-launch does not fail that import or prevent later
+repositories in the batch from being imported and launching onboarding.
+
 ### Pull request titles
 
 A repository can choose how the pull requests opened for it are titled (`Connection.prTitleFormat`
@@ -946,6 +995,23 @@ longer fit.
 ---
 
 ## Limitations
+
+- **Bulk import can start many onboarding runs at once.** With `onboarding.autoRunOnConnect`
+  enabled, each imported Git repository starts its own run, subject to the creator's permissions
+  and normal launch budgets. The import does not impose an additional concurrency limit.
+- **Onboarding preview readiness is only an HTTP check.** A response below 500 counts as ready,
+  including authentication errors and missing pages. The trial does not perform browser or
+  functional end-to-end verification, or run a preview recipe's smoke/e2e checks.
+- **Secrets are not independently verified against their upstream services.** Existing secrets
+  are resolved and may be used by commands; the agent only names requirements in `setup.secrets`
+  and does not invent, create or validate new secret values.
+- **Onboarding is bounded, not a guarantee of correctness.** Approval can accept a failed trial.
+  Changes requested after all draft visits return to review without another agent visit.
+  Bash is a general-purpose tool, not a technical read-only or no-push boundary; the seeded
+  agent is instructed not to push and has no dedicated PR/push tools.
+- **Trial report redaction is not general-purpose data-loss prevention.** Trial command output
+  is redacted before reporting, and delivery masks known credentials and credential-shaped text;
+  arbitrary sensitive prose is not guaranteed to be recognized.
 
 - An organization-linked GitHub installation is offered only to platform admins and callers who
   manage an active team in that organization. New imports and installation changes must target a

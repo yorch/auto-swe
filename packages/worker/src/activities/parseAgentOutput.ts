@@ -1,3 +1,8 @@
+import {
+  type RepoOnboardingDraft,
+  RepoOnboardingDraftSchema,
+  renderOnboardingFiles,
+} from '@auto-swe/shared/lib/onboardingPr';
 import { z } from 'zod';
 import {
   type DocReview,
@@ -11,7 +16,76 @@ import {
   type TicketPlan,
 } from '../lib/documentReview.js';
 
-export type ParseAgentOutputKind = 'docReview' | 'ticketPlan' | 'incidentTriage';
+export type ParseAgentOutputKind =
+  | 'docReview'
+  | 'ticketPlan'
+  | 'incidentTriage'
+  | 'repoOnboardingDraft';
+
+export interface ParsedRepoOnboardingDraft {
+  kind: 'repoOnboardingDraft';
+  valid: true;
+  draft: RepoOnboardingDraft;
+  markdown: string;
+}
+
+function parseRepoOnboardingDraft(text: string): ParsedRepoOnboardingDraft | UnparsedAgentOutput {
+  const invalid = (error: string): UnparsedAgentOutput => ({
+    error,
+    kind: 'repoOnboardingDraft',
+    markdown: error,
+    valid: false,
+  });
+  const blocks = [
+    ...text.matchAll(/^ {0,3}```json[^\S\r\n]*\r?\n([\s\S]*?)^ {0,3}```[^\S\r\n]*\r?$/gim),
+  ];
+  const block = blocks.at(-1)?.[1];
+  if (block === undefined) {
+    return invalid('The onboarding agent did not return a fenced JSON block.');
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(block);
+  } catch {
+    return invalid('The onboarding agent returned invalid JSON in its last JSON block.');
+  }
+  const parsed = RepoOnboardingDraftSchema.safeParse(json);
+  if (!parsed.success) {
+    const paths = [...new Set(parsed.error.issues.map((issue) => issue.path.join('.') || 'draft'))];
+    return invalid(`The onboarding draft has invalid fields: ${paths.join(', ')}.`);
+  }
+  const draft = parsed.data;
+  let files: ReturnType<typeof renderOnboardingFiles>;
+  try {
+    files = renderOnboardingFiles({
+      files: [
+        { kind: 'setup', setup: draft.setup },
+        { gateCommands: draft.gateCommands, kind: 'gates' },
+        ...(draft.previewConfig
+          ? [{ kind: 'preview' as const, previewConfig: draft.previewConfig }]
+          : []),
+      ],
+    });
+  } catch {
+    return invalid(
+      'The onboarding draft cannot be rendered as valid repository configuration files.'
+    );
+  }
+  const markdown = [
+    '## Repository onboarding draft',
+    '',
+    ...files.flatMap((file) => {
+      const longest = Math.max(
+        2,
+        ...[...file.content.matchAll(/`+/g)].map((match) => match[0].length)
+      );
+      const fence = '`'.repeat(longest + 1);
+      return [`### ${file.path}`, '', `${fence}yaml`, file.content.trimEnd(), fence, ''];
+    }),
+    ...(draft.notes ? ['### Notes', '', draft.notes] : []),
+  ].join('\n');
+  return { draft, kind: 'repoOnboardingDraft', markdown, valid: true };
+}
 
 export interface ParseAgentOutputInput {
   kind: ParseAgentOutputKind;
@@ -136,6 +210,7 @@ export type ParseAgentOutputResult =
   | ParsedDocReview
   | ParsedTicketPlan
   | ParsedIncidentTriage
+  | ParsedRepoOnboardingDraft
   | UnparsedAgentOutput;
 
 /**
@@ -149,6 +224,9 @@ export async function parseAgentOutput(
   input: ParseAgentOutputInput
 ): Promise<ParseAgentOutputResult> {
   const text = typeof input.text === 'string' ? input.text : '';
+  if (input.kind === 'repoOnboardingDraft') {
+    return parseRepoOnboardingDraft(text);
+  }
   if (input.kind === 'incidentTriage') {
     return parseIncidentTriage(text);
   }

@@ -840,6 +840,46 @@ export const SETTING_DEFINITIONS = {
     schema: hostList,
     sensitive: true,
   }),
+  'onboarding.autoRunOnConnect': defineSetting({
+    defaultValue: false,
+    description:
+      'Start the builtin repository onboarding workflow when a Git repository connects. Uses the creating user and normal launch authorization and budgets; failures do not undo connection creation.',
+    group: 'onboarding',
+    label: 'Run onboarding on connect',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'onboarding.draftEgressHosts': defineSetting({
+    defaultValue: [
+      'registry.npmjs.org',
+      'registry.yarnpkg.com',
+      'pypi.org',
+      'files.pythonhosted.org',
+      'proxy.golang.org',
+      'sum.golang.org',
+      'repo.maven.apache.org',
+      'repo1.maven.org',
+      'crates.io',
+      'static.crates.io',
+      'index.crates.io',
+      'rubygems.org',
+      'github.com',
+      'objects.githubusercontent.com',
+      'codeload.github.com',
+    ],
+    description:
+      'Additional hosts for the repo-onboarder draft workspace in a seeded repo-onboarding run. Combined with configured package-registry upstreams and usable tool-catalog download hosts. Requires the egress proxy; never applies to onboarding trials.',
+    group: 'onboarding',
+    label: 'Onboarding draft download hosts',
+    overridableAt: ['ORGANIZATION', 'TEAM'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.array(z.hostname().toLowerCase()).max(200),
+  }),
 
   // ── Pull request evaluation ────────────────────────────────────────────────
   // Risk class, approver counts and the auto-merge gate for the pull requests the

@@ -1670,6 +1670,35 @@ The read-only graph of a template folds a use into one card. In the template edi
 Macro section edits a use's arguments, re-expands it, or detaches it. The nodes of a use cannot be
 deleted or renamed one at a time, and a node a use routes to cannot be deleted.
 
+## Repository onboarding steps
+
+`parseAgentOutput` with `config.kind: repoOnboardingDraft` extracts the last fenced JSON block
+from `inputs.text`. It validates `{setup, gateCommands, previewConfig?, notes?}` with the shared
+repository schemas and returns `{valid, draft, markdown}` or `{valid:false, error, markdown}`.
+Malformed model output is a result rather than an activity failure. Neither this parser nor the
+trial uses a top-level `passed` key, so normal gate-failure routing does not intercept them.
+
+`repoOnboardingTrial` takes `inputs.connectionId` and `inputs.draft`, validates again and provisions
+a fresh base-branch workspace. Drafted setup, exact gate commands and optional preview readiness
+run under the real run policy, without persisting Setup health blockers. Results contain
+`trialPassed`, `repairable`, per-item `items`, typed `blockers` and `markdown`. Setup failure skips
+the remaining items; operator-only blockers stop automatic repair. Commands have bounded redacted
+log tails. Preview and workspace resources are always cleaned up. The activity has one attempt
+and a heartbeat, so retry does not silently repeat side effects.
+
+`repoOnboardingPr` takes the same connection and validated draft, and proposes deterministic
+setup/gates/optional-preview files in one PR. Optional `inputs.trialReport` supplies the latest
+trial markdown for a bounded, redacted **Trial report** PR-body section, outside the file hash.
+The worker derives the content hash and attribution
+from the execution-verified run launcher; inputs cannot supply them. It does not merge.
+
+The built-in `repo-onboarding` template bounds `draft` to three visits, then routes to review.
+Its agent prompt uses resolved `inputs` (including previous parse errors, trial markdown and
+human feedback); `userMessage` is literal, not a context-interpolated template. The approval
+context is a structured object containing the two markdown reports and their applicability.
+A post-approval condition refuses delivery without a valid current draft. See
+[repository onboarding](./repositories.md#onboarding-agent) for policy and limitations.
+
 ## Limitations
 
 - **`readSource`, `writeOutcome` and `runTool` act on a subset of connection types.** `readSource`
