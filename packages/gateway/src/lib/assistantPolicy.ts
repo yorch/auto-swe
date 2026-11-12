@@ -213,6 +213,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/reports/outcomes/latest': 'read',
   'GET /api/v1/reports/quality': 'read',
   'GET /api/v1/repositories': 'read',
+  'GET /api/v1/repositories/:id': 'read',
   'GET /api/v1/repositories/:id/dependencies': 'read',
   'GET /api/v1/repositories/:id/knowledge-bases/effective': 'read',
   'GET /api/v1/repositories/:id/onboarding-pr/:workflowId': 'read',
@@ -440,6 +441,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/repositories/:id/dependencies/infer': 'confirm',
   // Starts a workspace container on a candidate image — it may not be driven by a tool call.
   'POST /api/v1/repositories/:id/executor-image/probe': { never: 'runsWorkload' },
+  'POST /api/v1/repositories/:id/onboarding-checklist/dismiss': 'confirm',
   'POST /api/v1/repositories/:id/onboarding-pr': 'confirm',
   'POST /api/v1/repositories/:id/preview/env-to-secrets': { never: 'secret' },
   'POST /api/v1/repositories/:id/setup-blockers/:blockerId/resolve': 'confirm',
