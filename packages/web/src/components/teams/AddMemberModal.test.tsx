@@ -88,29 +88,43 @@ describe('AddMemberModal', () => {
     expect(submit.disabled).toBe(true);
   });
 
-  it('lets a LEAD, who cannot list users, add one by exact email', async () => {
+  it('lets a LEAD pick only organization members not already in the team', async () => {
     signInAs('LEAD');
     const onClose = vi.fn();
     const spy = setupFetchMock({
-      '/api/v1/users/lookup': () => ({
-        data: { email: 'eligible@example.com', id: 'u1', name: 'Eli' },
+      '/api/v1/platform/organizations/o1/members': () => ({
+        data: [
+          { user: { email: 'eligible@example.com' }, userId: 'u1' },
+          { user: { email: 'already-member@example.com' }, userId: 'u2' },
+        ],
       }),
       [`/api/v1/teams/${TEAM_ID}/members`]: () => ({ data: { ok: true } }),
     });
 
     render(
       withQuery(
-        <AddMemberModal existingUserIds={['u2']} onClose={onClose} open={true} teamId={TEAM_ID} />
+        <AddMemberModal
+          existingUserIds={['u2']}
+          grantableRoles={['ENGINEER', 'LEAD']}
+          onClose={onClose}
+          open={true}
+          orgId="o1"
+          teamId={TEAM_ID}
+        />
       )
     );
 
     const submit = screen.getByRole('button', { name: /add member/i }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText(/user/i), {
-      target: { value: 'eligible@example.com' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /find/i }));
-    await waitFor(() => expect(screen.getByText(/eligible@example.com · Eli/)).toBeTruthy());
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: /organization member/i }) as HTMLButtonElement).disabled
+      ).toBe(false)
+    );
+    fireEvent.click(screen.getByRole('button', { name: /organization member/i }));
+    expect(await screen.findByRole('option', { name: 'eligible@example.com' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'already-member@example.com' })).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: 'eligible@example.com' }));
 
     fireEvent.click(submit);
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));

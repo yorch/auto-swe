@@ -124,9 +124,21 @@ export function useRemoveOrgMember(orgId: string) {
 export function useInviteOrgMember(orgId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { email: string; orgRole: OrgRole }) =>
-      api.post<OrgMemberRow>(`/api/v1/platform/organizations/${orgId}/members/invite`, body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['org-members', orgId] }),
+    mutationFn: (body: {
+      email: string;
+      orgRole: OrgRole;
+      teamId?: string;
+      teamRole?: 'ADMIN' | 'LEAD' | 'ENGINEER';
+    }) =>
+      api.post<{ data: { id: string; email: string; isActive: boolean } }>(
+        `/api/v1/platform/organizations/${orgId}/members/invite`,
+        body
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['org-members', orgId] });
+      qc.invalidateQueries({ queryKey: ['teams'] });
+      qc.invalidateQueries({ queryKey: ['team'] });
+    },
   });
 }
 

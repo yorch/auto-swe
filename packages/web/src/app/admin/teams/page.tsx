@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { useOrganizationDirectory } from '@/hooks/useAdmin';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useTeams } from '@/hooks/useTeams';
 import { navLabel } from '@/lib/navigation';
@@ -22,8 +23,9 @@ const SEARCH_THRESHOLD = 3;
 
 export default function TeamsPage() {
   const { data: teams, isLoading, isError, isFetching, refetch, error: loadError } = useTeams();
-  // POST /teams is ADMIN-only.
-  const canCreate = useHasRole('ADMIN');
+  const platformAdmin = useHasRole('ADMIN');
+  const organizations = useOrganizationDirectory();
+  const canCreate = platformAdmin || (organizations.data ?? []).some((o) => o.role === 'ORG_ADMIN');
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState('');
 
@@ -79,7 +81,7 @@ export default function TeamsPage() {
             hint={
               canCreate
                 ? 'Create a team to group members and repositories.'
-                : 'Only platform admins create teams. Ask one to create a team or add you to one.'
+                : 'Organization admins and platform admins create teams. Ask one to create a team or add you to one.'
             }
             icon="teams"
             title="No teams yet"
