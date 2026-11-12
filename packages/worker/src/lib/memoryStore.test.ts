@@ -229,6 +229,28 @@ describe('searchMemoryItemsByVector', () => {
     expect(params[5]).toBe(30);
   });
 
+  it('excludes quarantined repository lessons before LIMIT', async () => {
+    queryRawUnsafeMock.mockResolvedValue([]);
+    expect(await search()).toEqual([]);
+    const sql = queryRawUnsafeMock.mock.calls[0]?.[0] as string;
+    expect(sql).toContain("AND (scope <> 'swe-lessons' OR quarantined_at IS NULL)");
+    expect(sql.indexOf('quarantined_at IS NULL')).toBeLessThan(sql.indexOf('LIMIT'));
+  });
+
+  it('does not apply repository quarantine to channel memory', async () => {
+    queryRawUnsafeMock.mockResolvedValue([]);
+    await searchMemoryItemsByVector({
+      limit: 5,
+      precomputed: { embedding: [0.1], spec: 'spec' },
+      queryText: 'q',
+      scopeColumn: 'channel_id',
+      scopeId: 'channel-1',
+      selectColumns: ['id'],
+      similarityThreshold: 0.7,
+    });
+    expect(queryRawUnsafeMock.mock.calls[0]?.[0]).not.toContain('quarantined_at');
+  });
+
   it('adds no age filter when the maximum age is 0 or absent', async () => {
     queryRawUnsafeMock.mockResolvedValue([]);
     await search(0);

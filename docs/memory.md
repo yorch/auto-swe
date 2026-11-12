@@ -243,6 +243,30 @@ reasons and who gave them, and either delete the lesson or clear its flags (`DEL
 keeps the reasons in the audit row); everyone else sees the count and their own flag. The list takes
 `?flagged=true`, and the page offers it as a filter. Deleting a lesson deletes its flags.
 
+**Quarantine stops repository-lesson recall without deleting the evidence.** `MemoryItem` records
+`quarantinedAt`, `quarantinedById` (null for automatic quarantine), `quarantineReason` (up to 500
+characters) and `quarantineSource` (`MANUAL` or `FLAG_THRESHOLD`). The live setting
+`memory.lessonFlagQuarantineThreshold` defaults to 2 distinct flaggers; 0 disables automatic
+quarantine, and values up to 20 are supported. It resolves against the repository's owning team and
+organization, with LEAD-controlled overrides. Flag creation, replacement, withdrawal and clearing
+serialize per lesson in a transaction. Reaching the threshold quarantines; dropping below it (or
+disabling the threshold and then changing a flag) restores only automatic quarantine. Flag changes
+never lift manual quarantine. These transitions write `lesson.quarantined` / `lesson.restored`
+audit entries. Changing the setting alone does not sweep existing lessons.
+
+Managers use `POST /api/v1/lessons/:id/quarantine` with a required reason, or `POST …/restore`.
+Restore lifts quarantine and clears existing flags, preserving their reasons and count in the audit
+entry. A manager can convert automatic quarantine to manual quarantine. Clearing flags alone does
+not lift manual quarantine. Restore does not reactivate a consolidated or superseded lesson.
+
+Vector recall excludes quarantined repository lessons before its result limit; `searchLessons`,
+`explainLesson` (including its source/replacement summaries) and consolidation also exclude them.
+Readers still see the lesson and its quarantine source/reason in `/lessons`, the gateway's substring
+search, and historical run panels. `/lessons` supports `?quarantined=true` and a quarantine filter;
+both lesson and run pages offer flag actions to authorized readers and quarantine/restore controls
+to managers. Run readers who no longer have access to the lesson's repository see its historical
+text but cannot flag or manage it. Channel memory is unaffected.
+
 Channel memory is
 edited and deleted per channel ([channel-assistant.md §6](./channel-assistant.md#6-memory)).
 
@@ -277,9 +301,11 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 
 ## Limitations
 
-- **A flag does not change recall.** A flagged lesson is still recalled, unlabelled, until a lead or
-  an administrator deletes it; nothing reminds them that a flag is waiting beyond the `Flagged`
-  filter on `/lessons`. A lead's delete is final, like an admin's.
+- **Flags send no notification.** Managers discover flags and quarantines through lesson and run
+  pages, not an assigned inbox or push notification. Below the configured threshold a flagged
+  lesson remains eligible for recall. The threshold is re-evaluated on flag mutations, not by a
+  background sweep. Quarantine prevents future retrieval; it cannot remove text already given to
+  an in-flight agent or automatically retract an earlier consolidated derivative.
 - **A flagger is named only to the people who act on it.** Readers see how many flags a lesson has
   and their own; the reasons and who wrote them are shown to its managers and kept in the audit row
   when they clear the flags. At most the 20 newest reasons are listed per lesson.

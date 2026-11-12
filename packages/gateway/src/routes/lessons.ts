@@ -6,6 +6,12 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
+import {
+  LESSON_QUARANTINE_SELECT,
+  lockLesson,
+  RESTORED_LESSON,
+  syncFlagQuarantine,
+} from '../lib/lessonQuarantine.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
@@ -26,6 +32,7 @@ const LessonListQuery = paginationQuery({ defaultLimit: 100, maxLimit: 200 }).ex
   includeConsolidated: booleanQueryParam(false),
   // Narrow to one repository, and/or to lessons whose summary or rationale contains `q`.
   q: z.string().trim().min(1).max(200).optional(),
+  quarantined: booleanQueryParam(false),
   repoId: z.string().uuid().optional(),
 });
 
@@ -92,7 +99,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { flagged, includeConsolidated, limit, offset, q, repoId } = request.query;
+      const { flagged, quarantined, includeConsolidated, limit, offset, q, repoId } = request.query;
 
       const accessFilter: Prisma.MemoryItemWhereInput =
         user.role === 'ADMIN'
@@ -107,6 +114,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         // reach matches nothing rather than widening the result.
         ...(repoId && { repoId }),
         ...(flagged && { flags: { some: {} } }),
+        ...(quarantined && { quarantinedAt: { not: null } }),
         ...(q && {
           OR: [
             { lessonSummary: { contains: q, mode: 'insensitive' } },
@@ -127,6 +135,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
               orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
               select: {
                 _count: { select: { flags: true } },
+                ...LESSON_QUARANTINE_SELECT,
                 confidence: true,
                 consolidatedAt: true,
                 createdAt: true,
@@ -233,6 +242,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
             orderBy: { createdAt: 'desc' },
             select: {
               createdAt: true,
+              ...LESSON_QUARANTINE_SELECT,
               failureType: true,
               id: true,
               lessonSummary: true,
@@ -391,6 +401,84 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     return access === 'none' ? null : { access, lesson };
   }
 
+  async function auditFlagQuarantine(tx: Prisma.TransactionClient, id: string) {
+    const change = await syncFlagQuarantine(tx, id);
+    if (change) {
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: null,
+        ...change,
+        client: tx,
+        entityId: id,
+        entityType: 'MemoryItem',
+      });
+    }
+  }
+
+  for (const action of ['quarantine', 'restore'] as const) {
+    app.post(
+      `/:id/${action}`,
+      {
+        onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+        schema: { params: LessonIdParams, ...(action === 'quarantine' ? { body: FlagBody } : {}) },
+      },
+      async (request, reply) => {
+        const actor = requireUser(request);
+        const found = await readableLesson(actor, request.repoAccessGate, request.params.id);
+        if (!found) {
+          return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
+        }
+        if (found.access !== 'manage') {
+          return sendError(reply, 403, 'FORBIDDEN', NOT_A_LEAD);
+        }
+        const data = await fastify.prisma.$transaction(async (tx) => {
+          await lockLesson(tx, found.lesson.id);
+          const before = await tx.memoryItem.findFirst({
+            select: LESSON_QUARANTINE_SELECT,
+            where: { id: found.lesson.id, scope: LESSON_SCOPE },
+          });
+          const flags =
+            action === 'restore'
+              ? await tx.lessonFlag.findMany({
+                  select: { flaggedById: true, reason: true },
+                  where: { memoryItemId: found.lesson.id },
+                })
+              : [];
+          if (action === 'restore') {
+            await tx.lessonFlag.deleteMany({ where: { memoryItemId: found.lesson.id } });
+          }
+          const data = await tx.memoryItem.update({
+            data:
+              action === 'restore'
+                ? RESTORED_LESSON
+                : {
+                    quarantinedAt: new Date(),
+                    quarantinedById: actor.sub,
+                    quarantineReason: (request.body as z.infer<typeof FlagBody>).reason,
+                    quarantineSource: 'MANUAL',
+                  },
+            select: LESSON_QUARANTINE_SELECT,
+            where: { id: found.lesson.id },
+          });
+          await writeAuditLog(fastify, {
+            action: 'UPDATE',
+            actor,
+            after: {
+              ...data,
+              event: action === 'restore' ? 'lesson.restored' : 'lesson.quarantined',
+            },
+            before: { ...before, flagCount: flags.length, flags },
+            client: tx,
+            entityId: found.lesson.id,
+            entityType: 'MemoryItem',
+          });
+          return data;
+        });
+        return { data };
+      }
+    );
+  }
+
   // POST /api/v1/lessons/:id/flags — Flag a lesson as wrong, or replace your reason
   app.post(
     '/:id/flags',
@@ -406,7 +494,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const { reason } = request.body;
       await fastify.prisma.$transaction(async (tx) => {
-        // `(memoryItemId, flaggedById)` is a plain unique index, so an upsert is safe here.
+        await lockLesson(tx, found.lesson.id);
         await tx.lessonFlag.upsert({
           create: { flaggedById: actor.sub, memoryItemId: found.lesson.id, reason },
           update: { reason },
@@ -422,6 +510,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
           entityId: found.lesson.id,
           entityType: 'MemoryItem',
         });
+        await auditFlagQuarantine(tx, found.lesson.id);
       });
       return reply.status(201).send({ data: { flagged: true } });
     }
@@ -437,8 +526,21 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       if (!found) {
         return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
       }
-      const { count } = await fastify.prisma.lessonFlag.deleteMany({
-        where: { flaggedById: actor.sub, memoryItemId: found.lesson.id },
+      const { count } = await fastify.prisma.$transaction(async (tx) => {
+        await lockLesson(tx, found.lesson.id);
+        const result = await tx.lessonFlag.deleteMany({
+          where: { flaggedById: actor.sub, memoryItemId: found.lesson.id },
+        });
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor,
+          after: { count: result.count, event: 'lesson.flag_withdrawn' },
+          client: tx,
+          entityId: found.lesson.id,
+          entityType: 'MemoryItem',
+        });
+        await auditFlagQuarantine(tx, found.lesson.id);
+        return result;
       });
       return { data: { withdrawn: count > 0 } };
     }
@@ -459,11 +561,13 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // The reasons go into the audit row: clearing them is the decision that the lesson stands.
       const cleared = await fastify.prisma.$transaction(async (tx) => {
+        await lockLesson(tx, found.lesson.id);
         const flags = await tx.lessonFlag.findMany({
           select: { flaggedById: true, reason: true },
           where: { memoryItemId: found.lesson.id },
         });
         await tx.lessonFlag.deleteMany({ where: { memoryItemId: found.lesson.id } });
+        await auditFlagQuarantine(tx, found.lesson.id);
         await writeAuditLog(fastify, {
           action: 'UPDATE',
           actor,
@@ -538,14 +642,27 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
 
 /** What a run's lesson panel shows of one lesson. */
 const RUN_LESSON_SELECT = {
+  ...LESSON_QUARANTINE_SELECT,
+  _count: { select: { flags: true } },
   confidence: true,
   consolidatedAt: true,
   createdAt: true,
   failureType: true,
+  flags: {
+    orderBy: { createdAt: 'desc' },
+    select: {
+      createdAt: true,
+      flaggedBy: { select: { email: true } },
+      flaggedById: true,
+      reason: true,
+    },
+    take: 20,
+  },
   id: true,
   lessonSummary: true,
   metadata: true,
   rationale: true,
+  repoId: true,
   supersededAt: true,
 } satisfies Prisma.MemoryItemSelect;
 
@@ -649,15 +766,48 @@ export const runLessonRoutes: FastifyPluginAsync = async (fastify) => {
             );
       const byId = new Map(rows.map((r) => [r.id, r]));
 
+      const accessByRepo = new Map<string | null, ReturnType<typeof lessonRepoAccess>>();
+      async function presentLesson(row: (typeof written)[number]) {
+        if (!accessByRepo.has(row.repoId)) {
+          accessByRepo.set(
+            row.repoId,
+            lessonRepoAccess(fastify, user, request.repoAccessGate, row.repoId)
+          );
+        }
+        const access = await accessByRepo.get(row.repoId);
+        const { flags, _count, ...lesson } = row;
+        const mine = flags.find((f) => f.flaggedById === user.sub);
+        return {
+          ...lesson,
+          canFlag: access !== 'none',
+          canManage: access === 'manage',
+          flagCount: _count.flags,
+          flags:
+            access === 'manage'
+              ? flags.map((f) => ({
+                  createdAt: f.createdAt,
+                  email: f.flaggedBy.email,
+                  reason: f.reason,
+                }))
+              : undefined,
+          myFlag: mine ? { createdAt: mine.createdAt, reason: mine.reason } : null,
+        };
+      }
+
       return {
         data: {
           // `lesson` is null once the lesson has been deleted: the run still recalled it.
-          recalled: recalledIds.map((lessonId) => ({
-            lesson: byId.get(lessonId) ?? null,
-            lessonId,
-            recalledFor: [...(recalledBy.get(lessonId) ?? [])],
-          })),
-          written,
+          recalled: await Promise.all(
+            recalledIds.map(async (lessonId) => {
+              const row = byId.get(lessonId);
+              return {
+                lesson: row ? await presentLesson(row) : null,
+                lessonId,
+                recalledFor: [...(recalledBy.get(lessonId) ?? [])],
+              };
+            })
+          ),
+          written: await Promise.all(written.map(presentLesson)),
         },
       };
     }

@@ -3,7 +3,12 @@
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { LessonFlagActions, LessonFlagReasons } from '@/components/lessons/LessonFlags';
+import {
+  LessonFlagActions,
+  LessonFlagReasons,
+  LessonQuarantineActions,
+  LessonQuarantineBadge,
+} from '@/components/lessons/LessonFlags';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
@@ -96,6 +101,7 @@ export default function LessonsPage() {
   );
   const [repoFilter, setRepoFilter] = useState('');
   const [flaggedOnly, setFlaggedOnly] = useState(false);
+  const [quarantinedOnly, setQuarantinedOnly] = useState(false);
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [offset, setOffset] = useState(0);
@@ -120,6 +126,7 @@ export default function LessonsPage() {
     limit: PAGE_SIZE,
     offset,
     q: query || undefined,
+    quarantined: quarantinedOnly || undefined,
     repoId: repoFilter || undefined,
   });
   const deleteLesson = useDeleteLesson();
@@ -142,12 +149,13 @@ export default function LessonsPage() {
       noticeRef.current?.scrollIntoView?.({ block: 'nearest' });
     }
   }, [triggerNotice]);
-  const filtersActive = !!(query || repoFilter || flaggedOnly);
+  const filtersActive = !!(query || repoFilter || flaggedOnly || quarantinedOnly);
   const clearFilters = () => {
     setSearch('');
     setQuery('');
     setRepoFilter('');
     setFlaggedOnly(false);
+    setQuarantinedOnly(false);
     setOffset(0);
   };
 
@@ -283,6 +291,19 @@ export default function LessonsPage() {
             ]}
             value={flaggedOnly ? 'flagged' : ''}
           />
+          <Select
+            appearance="pill"
+            aria-label="Quarantine filter"
+            onChange={(v) => {
+              setQuarantinedOnly(v === 'quarantined');
+              setOffset(0);
+            }}
+            options={[
+              { label: 'Any quarantine status', value: '' },
+              { label: 'Quarantined only', value: 'quarantined' },
+            ]}
+            value={quarantinedOnly ? 'quarantined' : ''}
+          />
         </Toolbar>
 
         <QueryBoundary
@@ -377,9 +398,13 @@ export default function LessonsPage() {
                       )}
                     </div>
                     <LessonFlagReasons lesson={lesson} />
+                    <LessonQuarantineBadge lesson={lesson} />
                   </div>
                   <div className="flex flex-wrap items-center gap-1 sm:max-w-xs sm:shrink-0 sm:justify-end">
                     <LessonFlagActions lesson={lesson} manages={canManage(lesson.repository?.id)} />
+                    {canManage(lesson.repository?.id) && (
+                      <LessonQuarantineActions lesson={lesson} />
+                    )}
                     {canManage(lesson.repository?.id) && (
                       <IconButton
                         aria-label="Delete lesson"

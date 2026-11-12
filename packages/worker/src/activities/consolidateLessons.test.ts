@@ -140,6 +140,8 @@ describe('consolidateLessons', () => {
 
     const [sql, ...params] = mockQueryRaw.mock.calls[0] as unknown as [string, ...unknown[]];
     expect(sql).toContain('make_interval(days => $3::int)');
+    expect(sql).toContain("AND scope = 'swe-lessons'");
+    expect(sql).toContain('AND quarantined_at IS NULL');
     expect(params).toEqual(['repo-1', expect.anything(), 30]);
   });
 

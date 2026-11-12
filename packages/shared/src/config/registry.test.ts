@@ -2,6 +2,23 @@ import { describe, expect, it } from 'vitest';
 import type { z } from 'zod';
 import { SETTING_DEFINITIONS } from './registry.js';
 
+describe('lesson quarantine threshold', () => {
+  it('is live, LEAD-controlled, owner-scoped and bounded', () => {
+    const setting = SETTING_DEFINITIONS['memory.lessonFlagQuarantineThreshold'];
+    expect(setting.defaultValue).toBe(2);
+    expect(setting.requiredRole).toBe('LEAD');
+    expect(setting.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
+    expect(setting.runPinned).toBe(false);
+    expect(setting.restartRequired).toBe(false);
+    for (const value of [0, 2, 20]) {
+      expect(setting.schema.safeParse(value).success).toBe(true);
+    }
+    for (const value of [-1, 21, 1.5, '2', null]) {
+      expect(setting.schema.safeParse(value).success).toBe(false);
+    }
+  });
+});
+
 describe('review settings', () => {
   it('enables live ADMIN-managed reviews with team and organization overrides', () => {
     const setting = SETTING_DEFINITIONS['review.enabled'];
