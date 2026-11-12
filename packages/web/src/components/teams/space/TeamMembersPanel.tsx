@@ -3,7 +3,9 @@
 import type { TeamSummary } from '@auto-swe/shared/types/api';
 import { useState } from 'react';
 import { AddMemberModal } from '@/components/teams/AddMemberModal';
+import { InviteTeamMemberModal } from '@/components/teams/InviteTeamMemberModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
+import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -42,6 +44,8 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
     summary.myRole
   );
   const [adding, setAdding] = useState(false);
+  const [inviting, setInviting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [confirmRemoveEmail, setConfirmRemoveEmail] = useState<string | null>(null);
   const [memberSearch, setMemberSearch] = useState('');
@@ -69,9 +73,15 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
 
   return (
     <>
+      {notice && <Alert variant="success">{notice}</Alert>}
       <Card className="p-4 sm:p-6">
         <CardHeader>
           <CardTitle>Members</CardTitle>
+          {canManage && (
+            <Button onClick={() => setInviting(true)} size="sm">
+              Invite by email
+            </Button>
+          )}
           {canManage && memberships.length > 0 && (
             <Button onClick={() => setAdding(true)} size="sm" variant="primary">
               <Icon name="plus" size={14} />
@@ -200,6 +210,14 @@ export function TeamMembersPanel({ team: summary }: { team: TeamSummary }) {
         grantableRoles={grantableRoles}
         onClose={() => setAdding(false)}
         open={adding}
+        orgId={summary.orgId}
+        teamId={id}
+      />
+      <InviteTeamMemberModal
+        grantableRoles={grantableRoles}
+        onClose={() => setInviting(false)}
+        onInvited={setNotice}
+        open={inviting}
         teamId={id}
       />
       <ConfirmModal

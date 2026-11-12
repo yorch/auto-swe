@@ -2,11 +2,19 @@
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ApiError, api } from '@/lib/api';
+import { useAuthStore } from '@/stores/authStore';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import { TeamFormModal } from './TeamFormModal';
 
-beforeEach(stubDialogPrototype);
-afterEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  stubDialogPrototype();
+  useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'me' } });
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe('TeamFormModal — create', () => {
   it('auto-derives a slug from the name when the slug field is left blank', async () => {
@@ -73,5 +81,78 @@ describe('TeamFormModal — edit', () => {
       )
     );
     expect((screen.getByLabelText(/^name/i) as HTMLInputElement).value).toBe('Payments Platform');
+  });
+});
+
+describe('TeamFormModal — organization admin', () => {
+  it.each([
+    ['TEAM_EXISTS', 'A team with this name or slug already exists. Choose another name or slug.'],
+    [
+      'ORG_MEMBERSHIP_REQUIRED',
+      'The first admin must belong to the selected organization. Choose an organization member.',
+    ],
+  ])('explains %s without closing the dialog', async (code, message) => {
+    const onClose = vi.fn();
+    vi.spyOn(api, 'post').mockRejectedValue(new ApiError('refused', 400, code));
+    render(withQuery(<TeamFormModal mode={{ kind: 'create' }} onClose={onClose} open />));
+    fireEvent.change(screen.getByLabelText(/Name/), { target: { value: 'Payments' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create team' }));
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('skips the single-org picker, defaults admin to creator and uses the scoped endpoint', async () => {
+    useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'me' } });
+    const onClose = vi.fn();
+    const spy = setupFetchMock({
+      '/api/v1/platform/organizations': () => ({
+        data: [
+          { id: 'o1', name: 'Acme', role: 'ORG_ADMIN' },
+          { id: 'o2', name: 'Other', role: 'ORG_MEMBER' },
+        ],
+      }),
+      '/api/v1/platform/organizations/o1/members': () => ({ data: [] }),
+      '/api/v1/platform/organizations/o1/teams': () => ({ data: { id: 't1' } }),
+    });
+    render(withQuery(<TeamFormModal mode={{ kind: 'create' }} onClose={onClose} open />));
+    await screen.findByRole('button', { name: /first team admin/i });
+    expect(screen.queryByRole('button', { name: /^organization/i })).toBeNull();
+    fireEvent.change(screen.getByLabelText(/Name/), { target: { value: 'Payments' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create team' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(bodyOf(spy, '/organizations/o1/teams')).toEqual({ name: 'Payments', slug: 'payments' });
+  });
+
+  it('offers only administered orgs and sends the selected first admin', async () => {
+    useAuthStore.setState({ user: { role: 'LEAD', sub: 'me' } });
+    const onClose = vi.fn();
+    const spy = setupFetchMock({
+      '/api/v1/platform/organizations': () => ({
+        data: [
+          { id: 'o1', name: 'Acme', role: 'ORG_ADMIN' },
+          { id: 'o2', name: 'Beta', role: 'ORG_ADMIN' },
+          { id: 'o3', name: 'Foreign', role: 'ORG_MEMBER' },
+        ],
+      }),
+      '/api/v1/platform/organizations/o2/members': () => ({
+        data: [{ user: { email: 'admin@beta.com' }, userId: 'u1' }],
+      }),
+      '/api/v1/platform/organizations/o2/teams': () => ({ data: { id: 't1' } }),
+    });
+    render(withQuery(<TeamFormModal mode={{ kind: 'create' }} onClose={onClose} open />));
+    fireEvent.click(await screen.findByRole('button', { name: /organization/i }));
+    expect(screen.queryByRole('option', { name: 'Foreign' })).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: 'Beta' }));
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: /first team admin/i }) as HTMLButtonElement).disabled
+      ).toBe(false)
+    );
+    fireEvent.click(screen.getByRole('button', { name: /first team admin/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'admin@beta.com' }));
+    fireEvent.change(screen.getByLabelText(/Name/), { target: { value: 'Beta team' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create team' }));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(bodyOf(spy, '/organizations/o2/teams')).toMatchObject({ adminUserId: 'u1' });
   });
 });

@@ -4,6 +4,7 @@ import { use, useEffect, useState } from 'react';
 import { MemberUserPicker } from '@/components/MemberUserPicker';
 import { OrganizationGithub } from '@/components/organizations/OrganizationGithub';
 import { BudgetMeter } from '@/components/teams/BudgetMeter';
+import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -38,6 +39,7 @@ import {
 } from '@/hooks/useOrg';
 import { usePagedRows } from '@/hooks/usePagedRows';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
+import { useTeams } from '@/hooks/useTeams';
 import { buildBudgetPatch, centsToDollarsInput, removeCapPatch } from '@/lib/budgetPatch';
 import { errMsg } from '@/lib/errors';
 import { ORG_ROLE_OPTIONS, orgRoleLabel, platformRoleLabel } from '@/lib/govLabels';
@@ -114,6 +116,10 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   const [addUserId, setAddUserId] = useState('');
   const [addRole, setAddRole] = useState<OrgRole>('ORG_MEMBER');
   const [inviteEmail, setInviteEmail] = useState('');
+  const teams = useTeams({ enabled: canAdmin });
+  const [creatingTeam, setCreatingTeam] = useState(false);
+  const [inviteTeamId, setInviteTeamId] = useState('');
+  const [inviteTeamRole, setInviteTeamRole] = useState<'ADMIN' | 'LEAD' | 'ENGINEER'>('ENGINEER');
   const [inviteRole, setInviteRole] = useState<OrgRole>('ORG_MEMBER');
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteNotice, setInviteNotice] = useState<string | null>(null);
@@ -186,14 +192,20 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       return;
     }
     try {
-      await inviteMember.mutateAsync({ email, orgRole: inviteRole });
+      const result = await inviteMember.mutateAsync({
+        email,
+        orgRole: inviteRole,
+        ...(inviteTeamId ? { teamId: inviteTeamId, teamRole: inviteTeamRole } : {}),
+      });
       setInviteNotice(
-        isPlatformAdmin || org?.trustedInvites
+        result.data.isActive
           ? `Invite sent to ${email}. Their account is approved when they follow the link.`
           : `Invite sent to ${email}. They wait in the platform approval queue until an admin approves them.`
       );
       setInviteEmail('');
       setInviteRole('ORG_MEMBER');
+      setInviteTeamId('');
+      setInviteTeamRole('ENGINEER');
     } catch (e) {
       setInviteError(errMsg(e, 'Failed to invite member'));
     }
@@ -268,6 +280,13 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
   return (
     <div className="space-y-6">
       <PageHeader
+        actions={
+          canAdmin && (
+            <Button onClick={() => setCreatingTeam(true)} variant="primary">
+              New team
+            </Button>
+          )
+        }
         subtitle={
           org ? (
             <>
@@ -284,6 +303,11 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
         title={org?.name ?? 'Organization'}
       />
       {canAdmin && orgId && <OrganizationGithub orgId={orgId} />}
+      <TeamFormModal
+        mode={{ kind: 'create', orgId }}
+        onClose={() => setCreatingTeam(false)}
+        open={creatingTeam}
+      />
 
       {error ? <Alert variant="error">{error}</Alert> : null}
 
@@ -504,6 +528,32 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                       type="email"
                       value={inviteEmail}
                     />
+                    <Select
+                      disabled={teams.isLoading || teams.isError}
+                      error={teams.isError ? 'Unable to load teams.' : undefined}
+                      label="Team (optional)"
+                      onChange={setInviteTeamId}
+                      options={[
+                        { label: 'No team', value: '' },
+                        ...(teams.data ?? [])
+                          .filter((t) => t.orgId === orgId)
+                          .map((t) => ({ label: t.name, value: t.id })),
+                      ]}
+                      value={inviteTeamId}
+                    />
+                    {inviteTeamId && (
+                      <Select
+                        label="Team role"
+                        onChange={(value) =>
+                          setInviteTeamRole(value as 'ADMIN' | 'LEAD' | 'ENGINEER')
+                        }
+                        options={['ENGINEER', 'LEAD', 'ADMIN'].map((role) => ({
+                          label: platformRoleLabel(role),
+                          value: role,
+                        }))}
+                        value={inviteTeamRole}
+                      />
+                    )}
                     <div className="flex flex-wrap items-end gap-3">
                       <div className="min-w-0 flex-1">
                         <Select
@@ -800,7 +850,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 <ToggleSwitch
                   checked={org.trustedInvites ?? false}
                   disabled={patchOrg.isPending}
-                  label="Trust organization admin invites"
+                  label="Trust organization and team invites"
                   onChange={() => {
                     if (org.trustedInvites) {
                       void applyTrust(false).catch(() => undefined);
@@ -811,8 +861,9 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 />
                 {trustError ? <Alert variant="error">{trustError}</Alert> : null}
                 <p className="text-xs leading-relaxed text-paper-500">
-                  When on, an invite from any of this organization&apos;s admins creates an active,
-                  approved account instead of waiting in the approval queue.
+                  When on and the organization is active, invitations from its organization admins
+                  and team leads or team admins create approved accounts instead of waiting in the
+                  approval queue.
                 </p>
               </div>
             </Card>
@@ -823,11 +874,11 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       <ConfirmModal
         confirmLabel="Trust invites"
         dangerous
-        message={`Organization admins of ${org?.name ?? 'this organization'} will be able to create active accounts by invite, without a platform admin approving them first. Turn it off again at any time; accounts already created stay active.`}
+        message={`Organization admins and team leads or team admins of ${org?.name ?? 'this organization'} can create active accounts by invite while the organization is active, without platform approval. Turn it off again at any time; accounts already created stay active.`}
         onClose={() => setConfirmTrust(false)}
         onConfirm={() => applyTrust(true)}
         open={confirmTrust}
-        title="Trust organization admin invites?"
+        title="Trust organization and team invites?"
       />
 
       <ConfirmModal

@@ -212,6 +212,7 @@ describe('visibleNavGroups', () => {
   it('shows an ENGINEER only ENGINEER pages', () => {
     const hrefs = hrefsFor('ENGINEER');
     expect(hrefs).toContain('/admin/automations');
+    expect(hrefs).toContain('/admin/organizations');
     expect(hrefs).not.toContain('/admin/baselines');
     expect(hrefs).not.toContain('/admin/review-presets');
     expect(hrefs).toContain('/connections');

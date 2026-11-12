@@ -224,6 +224,16 @@ answers for them (`team.myRole` is `null`) and the global pages' `?team=` filter
 for them ([§4](#4-the-team-filter-on-global-pages)). That does not put the team in their navigation:
 the switcher, the sidebar and the badges list only the teams they belong to.
 
+### Team setup checklist
+
+The Overview shows **Team setup** to team LEAD/ADMIN and platform ADMIN while any setup item
+is incomplete: another member besides the first admin, at least one active owned or shared
+repository, and a team budget. Each item links to Members, Connections, or Settings → Budget.
+A zero-dollar budget counts as set and refuses launches. A team or organization admin sets the
+budget; a team lead who cannot edit it asks one of those admins. The checklist reads the existing
+team detail and disappears when every item is complete. It does not check model readiness:
+models resolve per agent through the configuration cascade rather than a single team setting.
+
 ### Navigation
 
 - **Team switcher.** The top bar holds a switcher that lists **All my teams** first and then the teams
@@ -345,6 +355,19 @@ only by the mid-run guard.
 ---
 
 ## Creating teams and managing membership
+
+On `/admin/teams`, **New team** is available to platform ADMINs and anyone who administers an
+organization. Organization admins choose among their administered organizations (the picker is
+omitted for a single organization). The optional **First team admin** lists that organization's
+members and defaults to the creator. The organization detail page at `/admin/organizations/:orgId`
+offers the same action for its admins and platform ADMINs. Name/slug conflicts and first-admin
+organization-membership errors stay in the dialog with guidance.
+
+The team space's **Members** tab offers **Add member** and **Invite by email** to platform ADMINs
+and team leads/admins who also hold platform LEAD or above. Add-member lists organization members;
+platform ADMINs can choose any active user. Both forms restrict team roles to the caller's own
+role or below. An invitation reports the response's active or waiting-for-approval state. The
+organization's invite form also offers an optional team from that organization and a team role.
 
 An organization's `ORG_ADMIN` creates a team with
 `POST /api/v1/platform/organizations/:orgId/teams` (also available under

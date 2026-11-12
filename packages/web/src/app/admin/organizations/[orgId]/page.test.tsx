@@ -51,8 +51,17 @@ function mock(members: ReturnType<typeof member>[]) {
     }),
     [`GET /api/v1/platform/organizations/${ORG_ID}/members`]: () => ({ data: members }),
     [`PATCH /api/v1/platform/organizations/${ORG_ID}`]: () => ({ data: {} }),
+    'GET /api/v1/teams': () => ({
+      data: [
+        { id: 't1', name: 'Payments', orgId: ORG_ID },
+        { id: 't2', name: 'Foreign', orgId: 'other' },
+      ],
+    }),
     'GET /api/v1/users': () => ({ data: [] }),
     [`GET /api/v1/organizations/${ORG_ID}/github/installations`]: () => ({ data: [] }),
+    [`POST /api/v1/platform/organizations/${ORG_ID}/members/invite`]: () => ({
+      data: { email: 'new@acme.com', isActive: false },
+    }),
   });
 }
 
@@ -65,6 +74,7 @@ describe('organization admin page', () => {
     mock([member('me', 'me@x.com', 'ORG_ADMIN')]);
     render(withQuery(<OrgAdminPage params={params} />));
     expect(await screen.findByRole('button', { name: 'Connect a GitHub org' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'New team' })).toBeTruthy();
     expect(await screen.findByText('No linked installations.')).toBeTruthy();
   });
   it('does not offer GitHub management to an ordinary organization member', async () => {
@@ -76,14 +86,15 @@ describe('organization admin page', () => {
     render(withQuery(<OrgAdminPage params={params} />));
     await screen.findByRole('heading', { name: 'Acme' });
     expect(screen.queryByRole('button', { name: 'Connect a GitHub org' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New team' })).toBeNull();
   });
   it('asks before trusting organization admin invites, and saves only on confirmation', async () => {
     const spy = mock([member('me', 'me@x.com', 'ORG_ADMIN')]);
     render(withQuery(<OrgAdminPage params={params} />));
     fireEvent.click(
-      await screen.findByRole('switch', { name: 'Trust organization admin invites' })
+      await screen.findByRole('switch', { name: 'Trust organization and team invites' })
     );
-    expect(await screen.findByText('Trust organization admin invites?')).toBeTruthy();
+    expect(await screen.findByText('Trust organization and team invites?')).toBeTruthy();
     expect(spy.mock.calls.some(([, init]) => (init as RequestInit)?.method === 'PATCH')).toBe(
       false
     );
@@ -131,5 +142,31 @@ describe('organization admin page', () => {
     expect(save.disabled).toBe(true);
     fireEvent.change(screen.getByLabelText('Monthly cap'), { target: { value: '50' } });
     expect(save.disabled).toBe(false);
+  });
+
+  it('offers team creation to an ENGINEER org admin and sends optional invite team and role', async () => {
+    useAuthStore.setState({ user: { role: 'ENGINEER', sub: 'me' } });
+    const spy = mock([member('me', 'me@x.com', 'ORG_ADMIN')]);
+    render(withQuery(<OrgAdminPage params={params} />));
+    expect(await screen.findByRole('button', { name: 'New team' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'new@acme.com' } });
+    await waitFor(() =>
+      expect(
+        (screen.getByRole('button', { name: /team \(optional\)/i }) as HTMLButtonElement).disabled
+      ).toBe(false)
+    );
+    fireEvent.click(screen.getByRole('button', { name: /team \(optional\)/i }));
+    expect(screen.queryByRole('option', { name: 'Foreign' })).toBeNull();
+    fireEvent.click(screen.getByRole('option', { name: 'Payments' }));
+    fireEvent.click(screen.getByRole('button', { name: /Team role/ }));
+    fireEvent.click(screen.getByRole('option', { name: 'Lead' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send invite' }));
+    await screen.findByText(/wait in the platform approval queue/);
+    expect(bodyOf(spy, `/organizations/${ORG_ID}/members/invite`)).toEqual({
+      email: 'new@acme.com',
+      orgRole: 'ORG_MEMBER',
+      teamId: 't1',
+      teamRole: 'LEAD',
+    });
   });
 });
