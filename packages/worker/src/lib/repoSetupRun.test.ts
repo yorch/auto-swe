@@ -25,10 +25,18 @@ const artifacts = vi.hoisted(() => ({
 const setupSecrets = vi.hoisted(() => ({
   findMany: vi.fn(async (): Promise<Array<Record<string, unknown>>> => []),
 }));
+const deniedCall = vi.hoisted(() => ({
+  findFirst: vi.fn(async (): Promise<{ host: string } | null> => null),
+}));
+vi.mock('./activityContext.js', () => ({
+  currentWorkflowId: () => 'workflow',
+  currentWorkflowRunId: async () => 'run',
+}));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     repoSetupSecret: setupSecrets,
     team: { findUnique: vi.fn(async () => null) },
+    workflowHttpCall: deniedCall,
     workspaceSetupCache: cache,
   },
 }));
@@ -457,7 +465,76 @@ describe('runSetupStepsPhase', () => {
     const err = await runSetupStepsPhase(host, setup, inputs).catch((e) => e);
     expect(err).toMatchObject({ type: WORKSPACE_SETUP_FAILED });
     expect(String(err.message)).toContain('"install" failed (exit 1): boom [REDACTED]');
+    expect(err.details[0]).toMatchObject({
+      detail: 'boom [REDACTED]',
+      kind: 'step_failed',
+      subject: 'install',
+    });
     expect(artifacts.putArtifact).not.toHaveBeenCalled();
+  });
+});
+
+describe('step blocker classification', () => {
+  const inputs = { cleanUrl: PARENT, image: 'img', teamId: null };
+  const setup = { steps: [{ name: 'install', run: 'foo install' }] };
+
+  it('classifies exit 127 with no output', async () => {
+    const host = fakeHost({
+      capture: vi.fn(async () => ({ exitCode: 127, stderr: '', stdout: '' })),
+    });
+    await expect(runSetupStepsPhase(host, setup, inputs)).rejects.toMatchObject({
+      details: [{ detail: '', kind: 'missing_tool', step: 'install', subject: 'foo' }],
+      nonRetryable: false,
+      type: WORKSPACE_SETUP_FAILED,
+    });
+  });
+
+  it('classifies a thrown capture as timeout and redacts detail', async () => {
+    const host = fakeHost({
+      capture: vi.fn(async () => {
+        throw new Error('timeout sekret');
+      }),
+    });
+    await expect(runSetupStepsPhase(host, setup, inputs)).rejects.toMatchObject({
+      details: [
+        { detail: 'timeout [REDACTED]', kind: 'step_timeout', step: 'install', subject: 'install' },
+      ],
+      nonRetryable: false,
+    });
+  });
+
+  it('prefers a denied host since this step started', async () => {
+    deniedCall.findFirst.mockResolvedValueOnce({ host: 'registry.example.com' });
+    const host = fakeHost({
+      capture: vi.fn(async () => ({ exitCode: 1, stderr: '403', stdout: '' })),
+    });
+    const error = await runSetupStepsPhase(host, setup, inputs).catch((error) => error);
+    expect(error.details[0]).toMatchObject({
+      kind: 'egress_denied',
+      step: 'install',
+      subject: 'registry.example.com',
+    });
+    expect(deniedCall.findFirst).toHaveBeenCalledWith({
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { host: true },
+      where: {
+        blocked: true,
+        createdAt: { gte: expect.any(Date) },
+        runId: 'run',
+        source: 'egress_proxy',
+        workflowId: 'workflow',
+      },
+    });
+  });
+
+  it('falls back to step classification if the audit lookup fails', async () => {
+    deniedCall.findFirst.mockRejectedValueOnce(new Error('db unavailable'));
+    const host = fakeHost({
+      capture: vi.fn(async () => ({ exitCode: 127, stderr: 'sh: foo: not found', stdout: '' })),
+    });
+    await expect(runSetupStepsPhase(host, setup, inputs)).rejects.toMatchObject({
+      details: [{ kind: 'missing_tool', subject: 'foo' }],
+    });
   });
 });
 
@@ -641,6 +718,7 @@ describe('cleanup and the secret scan', () => {
     ).catch((e) => e);
     expect(err).toMatchObject({ nonRetryable: true, type: WORKSPACE_SETUP_FAILED });
     expect(String(err.message)).toContain('left a secret value in .npmrc, ~/.yarnrc.yml');
+    expect(err.details[0].kind).toBe('secret_leak');
     expect(String(err.message)).not.toContain('npm_abcdef123');
     expect(artifacts.putArtifact).not.toHaveBeenCalled();
   });
@@ -696,6 +774,7 @@ describe('setup secrets', () => {
   it('fails setup on a secret the repository does not hold', async () => {
     setupSecrets.findMany.mockResolvedValueOnce([row('NPM_TOKEN')]);
     await expect(loadSetupSecrets('repo-1', ['NPM_TOKEN', 'PIP_TOKEN'])).rejects.toMatchObject({
+      details: [{ detail: expect.any(String), kind: 'missing_secret', subject: 'PIP_TOKEN' }],
       message: expect.stringContaining('not set on the repository: PIP_TOKEN'),
       type: WORKSPACE_SETUP_FAILED,
     });
@@ -703,6 +782,7 @@ describe('setup secrets', () => {
 
   it('fails setup without a repository to read from', async () => {
     await expect(loadSetupSecrets(null, ['NPM_TOKEN'])).rejects.toMatchObject({
+      details: [{ detail: expect.any(String), kind: 'invalid_config', subject: 'NPM_TOKEN' }],
       type: WORKSPACE_SETUP_FAILED,
     });
   });
@@ -712,6 +792,7 @@ describe('setup secrets', () => {
     const err = await loadSetupSecrets('repo-1', ['NPM_TOKEN']).catch((e: Error) => e);
     expect(String((err as Error).message)).toContain('could not be decrypted');
     expect(String((err as Error).message)).not.toContain('corrupt');
+    expect(err).toMatchObject({ details: [{ kind: 'secret_decrypt_failed' }] });
   });
 
   it('hands values to the steps as secret environment, never as plain env', async () => {

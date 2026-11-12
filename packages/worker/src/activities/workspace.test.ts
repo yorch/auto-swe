@@ -17,6 +17,8 @@ const {
   connectionFindUniqueMock,
   persistTraceMock,
   resolveSettingsMock,
+  setupBlockerUpsertMock,
+  setupBlockerResolveMock,
   teamFindUniqueMock,
 } = vi.hoisted(() => ({
   catalogFindManyMock: vi.fn(async () => [] as unknown[]),
@@ -26,17 +28,24 @@ const {
     'workspace.toolInstall.enabled': false,
     'workspace.toolInstall.maxTools': 8,
   })),
+  setupBlockerResolveMock: vi.fn(async () => ({ count: 0 })),
+  setupBlockerUpsertMock: vi.fn(async () => ({})),
   teamFindUniqueMock: vi.fn(async () => null),
 }));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     connection: { findUnique: connectionFindUniqueMock },
+    repoSetupBlocker: { updateMany: setupBlockerResolveMock, upsert: setupBlockerUpsertMock },
     team: { findUnique: teamFindUniqueMock },
     toolCatalogEntry: { findMany: catalogFindManyMock },
   },
 }));
 vi.mock('@auto-swe/shared/config', () => ({ resolveSettings: resolveSettingsMock }));
-vi.mock('../lib/activityContext.js', () => ({ persistActivityTrace: persistTraceMock }));
+vi.mock('../lib/activityContext.js', () => ({
+  currentWorkflowId: () => 'workflow',
+  currentWorkflowRunId: async () => 'run',
+  persistActivityTrace: persistTraceMock,
+}));
 
 import { ApplicationFailure } from '@temporalio/activity';
 
@@ -223,6 +232,84 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
   beforeEach(() => {
     vi.mocked(execShellAsync).mockReset();
     vi.mocked(execShellAsync).mockImplementation(okExec);
+  });
+
+  it.each([false, true])('resolves blockers after successful setup (defer=%s)', async (defer) => {
+    setupBlockerResolveMock.mockClear();
+    const ws = await createWorkspace(
+      'https://github.com/acme/repo.git',
+      'b',
+      'main',
+      undefined,
+      undefined,
+      false,
+      {
+        repoSetup: { connectionId: 'repo', defer, field: {} },
+      }
+    );
+    if (defer) {
+      expect(setupBlockerResolveMock).not.toHaveBeenCalled();
+      await ws.runSetup?.();
+    }
+    expect(setupBlockerResolveMock).toHaveBeenCalledWith({
+      data: { resolvedAt: expect.any(Date) },
+      where: { connectionId: 'repo', resolvedAt: null },
+    });
+    await ws.destroy();
+  });
+
+  it.each([false, true])(
+    'records setup failures without replacing them (defer=%s)',
+    async (defer) => {
+      setupBlockerUpsertMock.mockClear();
+      vi.mocked(spawnCaptureAsync).mockImplementation(async (_file, args) => ({
+        exitCode: args.join(' ').includes('setup-blocker-test-command') ? 1 : 0,
+        stderr: args.join(' ').includes('setup-blocker-test-command') ? 'setup failed' : '',
+        stdout: '',
+      }));
+      let ws: Awaited<ReturnType<typeof createWorkspace>> | undefined;
+      const error = await (async () => {
+        ws = await createWorkspace(
+          'https://github.com/acme/repo.git',
+          'b',
+          'main',
+          undefined,
+          undefined,
+          false,
+          {
+            repoSetup: {
+              connectionId: 'repo',
+              defer,
+              field: { steps: [{ name: 'install', run: 'setup-blocker-test-command' }] },
+            },
+          }
+        );
+        return ws.runSetup?.();
+      })().catch((error: unknown) => error);
+      expect(error).toMatchObject({
+        details: [{ kind: 'step_failed' }],
+        type: 'WORKSPACE_SETUP_FAILED',
+      });
+      expect(setupBlockerUpsertMock).toHaveBeenCalledTimes(1);
+      await ws?.destroy();
+    }
+  );
+
+  it('does not persist setup results without a connection', async () => {
+    setupBlockerResolveMock.mockClear();
+    const ws = await createWorkspace(
+      'https://github.com/acme/repo.git',
+      'b',
+      'main',
+      undefined,
+      undefined,
+      false,
+      {
+        repoSetup: { field: {} },
+      }
+    );
+    expect(setupBlockerResolveMock).not.toHaveBeenCalled();
+    await ws.destroy();
   });
 
   it('starts the workspace unprivileged (--cap-drop=ALL, no --cap-add) and runs a distinct metadata-block sidecar', async () => {

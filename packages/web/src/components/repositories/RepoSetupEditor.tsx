@@ -21,6 +21,7 @@ import {
   setupDraft,
 } from '@/lib/repoSetupDraft';
 import { RepoEvalDatasets } from './RepoEvalDatasets';
+import { RepoSetupHealth } from './RepoSetupHealth';
 import { RepoSetupSecrets } from './RepoSetupSecrets';
 
 const SUBMODULE_OPTIONS: Array<{ label: string; value: SubmodulesChoice }> = [
@@ -286,6 +287,7 @@ export function RepoSetupEditor({
       )}
 
       {repositoryId && <RepoSetupSecrets disabled={disabled} repositoryId={repositoryId} />}
+      {repositoryId && <RepoSetupHealth disabled={disabled} repositoryId={repositoryId} />}
       {repositoryId && <RepoEvalDatasets repositoryId={repositoryId} />}
 
       <SetupFilePanel

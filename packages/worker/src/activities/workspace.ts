@@ -45,6 +45,7 @@ import {
 import type { KnowledgeBaseCheckout, MountedKnowledgeBase } from '../lib/runKnowledgeBases.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import type { RepoRef } from '../lib/scm/types.js';
+import { recordSetupFailure, resolveSetupBlockers } from '../lib/setupBlockerRecorder.js';
 import { shellQuote } from '../lib/shellQuote.js';
 import { loadToolCatalog } from '../lib/toolCatalogLoader.js';
 import {
@@ -1100,6 +1101,9 @@ export async function createWorkspace(
   // Submodules, LFS, cache and steps: all after the lock, on the tree the workspace works on.
   const runResolvedSetup = async (): Promise<RepoSetupReport | null> => {
     if (!resolvedSetup) {
+      if (options?.repoSetup?.connectionId) {
+        await resolveSetupBlockers(options.repoSetup.connectionId);
+      }
       return null;
     }
     const started = Date.now();
@@ -1120,6 +1124,9 @@ export async function createWorkspace(
       submodules: git.submodules,
     };
     auditLog(`workspace.setup ${containerName} ${JSON.stringify(report)}`);
+    if (options?.repoSetup?.connectionId) {
+      await resolveSetupBlockers(options.repoSetup.connectionId);
+    }
     return report;
   };
   // `PATH=…` pair put on every agent-facing exec once tools are installed; empty otherwise.
@@ -1521,6 +1528,9 @@ export async function createWorkspace(
       setupReport = Promise.resolve(await runResolvedSetup());
     }
   } catch (err) {
+    if (options?.repoSetup?.connectionId) {
+      await recordSetupFailure(options.repoSetup.connectionId, err);
+    }
     await registry?.registration.release().catch(() => {});
     await egress?.registration.release().catch(() => {});
     await backend.remove(containerName);
@@ -1636,6 +1646,9 @@ export async function createWorkspace(
               try {
                 return await runResolvedSetup();
               } catch (err) {
+                if (options.repoSetup?.connectionId) {
+                  await recordSetupFailure(options.repoSetup.connectionId, err);
+                }
                 redactExecError(err, [...cloneSecrets, ...setupSecrets]);
                 throw err;
               }

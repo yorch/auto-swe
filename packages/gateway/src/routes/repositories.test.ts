@@ -113,6 +113,7 @@ async function buildApp() {
       findUnique: vi.fn(),
     },
     prEvaluation: { findMany: vi.fn() },
+    repoSetupBlocker: { findMany: vi.fn(), updateMany: vi.fn() },
     repoSetupSecret: {
       count: vi.fn(),
       create: vi.fn(),
@@ -2159,6 +2160,127 @@ describe('repositoryRoutes', () => {
         name: 'NPM_TOKEN',
         updatedAt,
         valueLastFour: 'cdef',
+      });
+    });
+
+    describe('setup blockers', () => {
+      const blockerId = '00000000-0000-4000-8000-000000000099';
+      const base = `/api/v1/repositories/${REPO_ID}/setup-blockers`;
+      const get = (query = '') =>
+        ctx.app.inject({ headers: AUTH_HEADER, method: 'GET', url: `${base}${query}` });
+      const dismiss = () =>
+        ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'POST',
+          url: `${base}/${blockerId}/resolve`,
+        });
+
+      beforeEach(() => {
+        ctx.mockPrisma.repoSetupBlocker.findMany.mockReset().mockResolvedValue([]);
+        ctx.mockPrisma.repoSetupBlocker.updateMany.mockReset().mockResolvedValue({ count: 1 });
+      });
+
+      it('lists open blockers newest first with a computed remedy', async () => {
+        ctx.mockPrisma.repoSetupBlocker.findMany.mockResolvedValue([
+          {
+            connectionId: REPO_ID,
+            detail: 'missing TOKEN',
+            firstSeenAt: updatedAt,
+            id: blockerId,
+            kind: 'missing_secret',
+            lastSeenAt: updatedAt,
+            lastWorkflowId: 'workflow',
+            occurrences: 2,
+            resolvedAt: null,
+            step: null,
+            subject: 'TOKEN',
+          },
+        ]);
+        const response = await get();
+        expect(response.statusCode).toBe(200);
+        expect(response.json().blockers[0]).toEqual({
+          detail: 'missing TOKEN',
+          firstSeenAt: updatedAt.toISOString(),
+          id: blockerId,
+          kind: 'missing_secret',
+          lastSeenAt: updatedAt.toISOString(),
+          lastWorkflowId: 'workflow',
+          occurrences: 2,
+          remedy: "Add secret TOKEN under the repository's setup secrets.",
+          resolvedAt: null,
+          step: null,
+          subject: 'TOKEN',
+        });
+        expect(ctx.mockPrisma.repoSetupBlocker.findMany).toHaveBeenCalledWith({
+          orderBy: { lastSeenAt: 'desc' },
+          where: { connectionId: REPO_ID, resolvedAt: null },
+        });
+      });
+
+      it('returns an empty list', async () => {
+        expect((await get()).json()).toEqual({ blockers: [] });
+      });
+
+      it('uses the internal remedy for a kind written by a newer worker', async () => {
+        ctx.mockPrisma.repoSetupBlocker.findMany.mockResolvedValue([
+          {
+            connectionId: REPO_ID,
+            detail: 'future diagnostic',
+            firstSeenAt: updatedAt,
+            id: blockerId,
+            kind: 'future_kind',
+            lastSeenAt: updatedAt,
+            lastWorkflowId: null,
+            occurrences: 1,
+            resolvedAt: null,
+            step: null,
+            subject: 'future subject',
+          },
+        ]);
+        const response = await get();
+        expect(response.statusCode).toBe(200);
+        expect(response.json().blockers[0]).toMatchObject({
+          kind: 'future_kind',
+          remedy: 'Check the workspace setup diagnostics and retry setup.',
+        });
+      });
+
+      it.each([
+        ['true', false],
+        ['false', true],
+      ])('parses includeResolved=%s', async (value, openOnly) => {
+        expect((await get(`?includeResolved=${value}`)).statusCode).toBe(200);
+        expect(ctx.mockPrisma.repoSetupBlocker.findMany).toHaveBeenCalledWith({
+          orderBy: { lastSeenAt: 'desc' },
+          where: { connectionId: REPO_ID, ...(openOnly ? { resolvedAt: null } : {}) },
+        });
+      });
+
+      it('dismisses only a blocker on this repository and audits it', async () => {
+        expect((await dismiss()).statusCode).toBe(204);
+        expect(ctx.mockPrisma.repoSetupBlocker.updateMany).toHaveBeenCalledWith({
+          data: { resolvedAt: expect.any(Date) },
+          where: { connectionId: REPO_ID, id: blockerId },
+        });
+        expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalled();
+      });
+
+      it("returns 404 for another connection's blocker", async () => {
+        ctx.mockPrisma.repoSetupBlocker.updateMany.mockResolvedValue({ count: 0 });
+        expect((await dismiss()).statusCode).toBe(404);
+      });
+
+      it('refuses a team lead for reads and dismissals', async () => {
+        ctx.authState.role = 'LEAD';
+        ctx.authState.sub = 'lead-1';
+        ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+          role: 'LEAD',
+          team: { isActive: true },
+        });
+        expect((await get()).statusCode).toBe(403);
+        expect((await dismiss()).statusCode).toBe(403);
+        expect(ctx.mockPrisma.repoSetupBlocker.findMany).not.toHaveBeenCalled();
+        expect(ctx.mockPrisma.repoSetupBlocker.updateMany).not.toHaveBeenCalled();
       });
     });
 
