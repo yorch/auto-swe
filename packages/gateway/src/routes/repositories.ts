@@ -9,8 +9,13 @@ import {
 import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 // From the subpath, not the barrel: this module is pure (zod only), so a test that
 // mocks the barrel to avoid instantiating the Prisma client still gets the real one.
-import { connectionConfigProblem, isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
+import {
+  connectionConfigProblem,
+  isConnectionType,
+  parsePagerDutyConnectionConfig,
+} from '@auto-swe/shared/lib/connectionTypes';
 import { credentialDestinationChanged } from '@auto-swe/shared/lib/credentialDestination';
+import { decryptSecret } from '@auto-swe/shared/lib/crypto';
 import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { type PermissionLookup, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import {
@@ -46,7 +51,11 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendConflict } from '../lib/conflict.js';
-import { probeRepositoryAccess } from '../lib/connectionProbes.js';
+import {
+  failed,
+  probePagerDutyConnection,
+  probeRepositoryAccess,
+} from '../lib/connectionProbes.js';
 import { redactConnection } from '../lib/connectionRedaction.js';
 import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
 import { sendError } from '../lib/httpErrors.js';
@@ -1980,6 +1989,58 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
       return { data: await probeRepositoryAccess(fastify.prisma, repo, user.sub) };
+    }
+  );
+
+  // POST /api/v1/repositories/:id/test-pagerduty — a `pagerduty` connection's stored REST API key
+  // and `fromEmail`, checked against PagerDuty. The same role as editing the connection. Always 200
+  // with `ok` so the page can show the reason; the key is decrypted only for the check.
+  app.post(
+    '/:id/test-pagerduty',
+    {
+      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      schema: { params: RepoParamsSchema },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const conn = await fastify.prisma.connection.findUnique({
+        select: {
+          apiKeyAuthTag: true,
+          apiKeyCiphertext: true,
+          apiKeyNonce: true,
+          apiKeyVersion: true,
+          config: true,
+          teamId: true,
+          type: true,
+        },
+        where: { id: request.params.id },
+      });
+      if (conn?.type !== 'pagerduty') {
+        return sendError(reply, 404, 'NOT_FOUND', 'PagerDuty connection not found');
+      }
+      if (!(await canManageTeamRepos(fastify.prisma, user, conn.teamId))) {
+        return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this connection's team");
+      }
+      if (!(conn.apiKeyCiphertext && conn.apiKeyNonce && conn.apiKeyAuthTag)) {
+        return {
+          data: failed('API key', 'No REST API key is saved. Edit the connection to add one.'),
+        };
+      }
+      let apiToken: string;
+      try {
+        apiToken = decryptSecret({
+          authTag: conn.apiKeyAuthTag,
+          ciphertext: conn.apiKeyCiphertext,
+          keyVersion: conn.apiKeyVersion,
+          nonce: conn.apiKeyNonce,
+        });
+      } catch {
+        return {
+          data: failed('API key', 'The saved API key could not be read. Enter it again and save.'),
+        };
+      }
+      const { fromEmail } = parsePagerDutyConnectionConfig(conn.config);
+      return { data: await probePagerDutyConnection(apiToken, fromEmail) };
     }
   );
 

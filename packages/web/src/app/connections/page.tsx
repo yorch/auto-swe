@@ -57,6 +57,7 @@ type ModalMode =
   | { kind: 'credential'; repo: RepositorySummary }
   | { kind: 'share'; repo: RepositorySummary }
   | { kind: 'test'; repo: RepositorySummary }
+  | { kind: 'test-pagerduty'; repo: RepositorySummary }
   | { kind: 'toggle'; repo: RepositorySummary }
   | { kind: 'import' }
   | null;
@@ -362,6 +363,21 @@ export default function ConnectionsPage() {
                           Test access
                         </GuardedButton>
                       )}
+                      {r.type === 'pagerduty' && (
+                        <GuardedButton
+                          aria-label={`Test connection ${label}`}
+                          blockedReason={
+                            canManageTeam(r.team?.id)
+                              ? null
+                              : repoManageReason(r.team?.name, 'test')
+                          }
+                          onClick={() => setMode({ kind: 'test-pagerduty', repo: r })}
+                          size="sm"
+                          variant="ghost"
+                        >
+                          Test connection
+                        </GuardedButton>
+                      )}
                       <GuardedButton
                         aria-label={`Edit ${label}`}
                         blockedReason={
@@ -569,6 +585,15 @@ export default function ConnectionsPage() {
           path={`/api/v1/repositories/${mode.repo.id}/test-access`}
           subtitle={connectionLabel(mode.repo)}
           title="Test repository access"
+        />
+      )}
+
+      {mode?.kind === 'test-pagerduty' && (
+        <ProbeModal
+          onClose={() => setMode(null)}
+          path={`/api/v1/repositories/${mode.repo.id}/test-pagerduty`}
+          subtitle={connectionLabel(mode.repo)}
+          title="Test PagerDuty connection"
         />
       )}
 

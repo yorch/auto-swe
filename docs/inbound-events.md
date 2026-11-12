@@ -479,12 +479,15 @@ them.
   `service.id` and more.
 
 **The connection.** A `pagerduty` connection on the team holds a PagerDuty REST API key (the
-connection's `apiToken`, set through `POST`/`PATCH /api/v1/repositories` and stored encrypted like
-every connection token; the dashboard's connection form has no token field) and, in its config,
+connection's `apiToken`: the connection form's write-only **REST API key** field, or `POST`/`PATCH
+/api/v1/repositories`, stored encrypted like every connection token) and, in its config,
 `fromEmail`, which is refused when it is not an email:
 the email of a PagerDuty user, which PagerDuty requires on a note write and shows as the note's
 author. A scoped key needs read access to incidents and `incidents.write` for notes. The worker
 calls `https://api.pagerduty.com` only.
+**Test connection** on the connections page (`POST /api/v1/repositories/:id/test-pagerduty`, the
+role that edits the connection) lists the account's users matching `fromEmail` with the stored key:
+it passes when PagerDuty accepts the key and one of those users has exactly that email.
 
 **The automation.** One `inbound.event` automation per repository, on the PagerDuty endpoint:
 

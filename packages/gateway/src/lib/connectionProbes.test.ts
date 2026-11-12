@@ -39,6 +39,7 @@ const {
   probeAppInstallation,
   probeGitHubCredentialSet,
   probePackageRegistry,
+  probePagerDutyConnection,
   probeRepositoryAccess,
   probeApproverApp,
 } = await import('./connectionProbes.js');
@@ -453,5 +454,51 @@ describe('probeApproverApp', () => {
       detail: 'The approver App is not fully configured.',
       ok: false,
     });
+  });
+});
+
+describe('probePagerDutyConnection', () => {
+  const users = (emails: string[]) =>
+    json(200, { users: emails.map((email, i) => ({ email, id: `P${i}` })) });
+
+  it('passes when the key is accepted and a user has the fromEmail', async () => {
+    fetchMock.mockResolvedValueOnce(users(['Other@example.com', 'OnCall@Example.com']));
+    const result = await probePagerDutyConnection('pd-key', 'oncall@example.com', fetchMock);
+    expect(result.ok).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://api.pagerduty.com/users?limit=25&query=oncall%40example.com');
+    expect((init.headers as Record<string, string>).Authorization).toBe('Token token=pd-key');
+    expect(init.redirect).toBe('error');
+  });
+
+  it('fails the email check when no user has exactly that email', async () => {
+    fetchMock.mockResolvedValueOnce(users(['oncall@example.com.evil']));
+    const result = await probePagerDutyConnection('pd-key', 'oncall@example.com', fetchMock);
+    expect(result.ok).toBe(false);
+    expect(result.checks.map((c) => [c.name, c.ok])).toEqual([
+      ['API key', true],
+      ['From email', false],
+    ]);
+  });
+
+  it('fails without a fromEmail, since notes need one', async () => {
+    fetchMock.mockResolvedValueOnce(users([]));
+    const result = await probePagerDutyConnection('pd-key', undefined, fetchMock);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toMatch(/No fromEmail/);
+  });
+
+  it('reports a rejected key with fixed wording, never the body', async () => {
+    fetchMock.mockResolvedValueOnce(json(401, { error: { message: 'secret detail pd-key' } }));
+    const result = await probePagerDutyConnection('pd-key', 'oncall@example.com', fetchMock);
+    expect(result.ok).toBe(false);
+    expect(result.detail).toBe('PagerDuty refused the request: the credential was rejected.');
+  });
+
+  it('reports an unreachable PagerDuty without the error text', async () => {
+    fetchMock.mockRejectedValueOnce(new Error('connect ECONNREFUSED 10.0.0.7:443'));
+    const result = await probePagerDutyConnection('pd-key', 'oncall@example.com', fetchMock);
+    expect(result.ok).toBe(false);
+    expect(result.detail).not.toMatch(/10\.0\.0\.7/);
   });
 });

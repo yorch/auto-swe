@@ -552,6 +552,8 @@ export interface RepositorySummary {
   name: string | null;
   /** Type-specific config JSON (for non-git_repo connections) */
   config: unknown;
+  /** Whether a write-only API token is stored for the connection (never the token itself). */
+  hasApiToken?: boolean;
   organizationName: string | null;
   repoName: string | null;
   defaultBranch: string;

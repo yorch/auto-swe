@@ -130,6 +130,8 @@ export function ConnectionFormModal({
   const [configJson, setConfigJson] = useState(() =>
     initial?.config != null ? JSON.stringify(initial.config, null, 2) : ''
   );
+  // Write-only: never prefilled, sent only when typed.
+  const [apiToken, setApiToken] = useState('');
 
   // shared fields
   const [teamId, setTeamId] = useState(initial?.team?.id ?? '');
@@ -183,6 +185,7 @@ export function ConnectionFormModal({
       setPrTitleTemplate(initial?.prTitleTemplate ?? '');
       setName(initial?.name ?? '');
       setConfigJson(initial?.config != null ? JSON.stringify(initial.config, null, 2) : '');
+      setApiToken('');
       setDescription(initial?.description ?? prefill?.description ?? '');
       setIsActive(initial?.isActive ?? true);
       setConsolidationEnabled(initial?.consolidationEnabled ?? true);
@@ -265,6 +268,7 @@ export function ConnectionFormModal({
           });
         } else {
           await create.mutateAsync({
+            ...(connType === 'pagerduty' && apiToken.trim() ? { apiToken: apiToken.trim() } : {}),
             // The create schema is optional, not nullable: omit a blank config.
             config: parsedConfig ?? undefined,
             description: description.trim() || undefined,
@@ -292,6 +296,7 @@ export function ConnectionFormModal({
           });
         } else {
           await update.mutateAsync({
+            ...(connType === 'pagerduty' && apiToken.trim() ? { apiToken: apiToken.trim() } : {}),
             config: parsedConfig,
             description: description.trim() || null,
             isActive,
@@ -664,6 +669,25 @@ export function ConnectionFormModal({
               required
               value={teamId}
             />
+            {connType === 'pagerduty' && (
+              <Input
+                autoComplete="off"
+                hint={
+                  initial?.hasApiToken
+                    ? 'A key is saved. Leave blank to keep it, or enter a new one to replace it.'
+                    : 'A PagerDuty REST API key. Stored encrypted and never shown again.'
+                }
+                id="conn-api-token"
+                label={initial?.hasApiToken ? 'Replace REST API key' : 'REST API key'}
+                onChange={(e) => {
+                  setTouched(true);
+                  setApiToken(e.target.value);
+                }}
+                spellCheck={false}
+                type="password"
+                value={apiToken}
+              />
+            )}
             <Textarea
               compact
               error={configJsonError ?? undefined}
@@ -671,7 +695,7 @@ export function ConnectionFormModal({
                 connType === 'http_api'
                   ? 'e.g. {"baseUrl":"https://api.example.com","authType":"bearer"}'
                   : connType === 'pagerduty'
-                    ? 'e.g. {"fromEmail":"oncall-bot@example.com"}: the PagerDuty user notes are posted as. Set the REST API key as the connection\'s apiToken through the API, never in this config.'
+                    ? 'e.g. {"fromEmail":"oncall-bot@example.com"}: the PagerDuty user notes are posted as. The REST API key goes in its own field, never in this config.'
                     : 'Arbitrary key/value pairs for workflow use'
               }
               id="conn-config-json"
