@@ -66,6 +66,74 @@ function gateway() {
 }
 
 describe('workflow launch', () => {
+  it('renders required schema fields first, preserving declared order within each group', () => {
+    gateway();
+    render(
+      withQuery(
+        <WorkflowLaunchForm
+          onLaunched={vi.fn()}
+          template={{
+            ...template,
+            inputSchema: {
+              properties: Object.fromEntries([
+                ['ticketId', { type: 'string' }],
+                ['githubRunId', { type: 'string' }],
+                ['prdContent', { type: 'string' }],
+                ['description', { type: 'string' }],
+              ]),
+              required: ['description', 'githubRunId'],
+              type: 'object',
+            },
+            workspaceProvider: 'api_only',
+          }}
+        />
+      )
+    );
+    const fields = [
+      screen.getByLabelText(/Task name/),
+      screen.getByLabelText(/GitHub run ID/),
+      screen.getByLabelText(/Description/),
+      screen.getByLabelText(/Ticket ID/),
+      screen.getByLabelText(/PRD content/),
+    ];
+    for (let index = 1; index < fields.length; index++) {
+      expect(fields[index - 1]?.compareDocumentPosition(fields[index] as Node)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING
+      );
+    }
+  });
+  it('uses the declared field title and humanized enum in review, keeping the raw payload', async () => {
+    const bodies = gateway();
+    render(
+      withQuery(
+        <WorkflowLaunchForm
+          onLaunched={vi.fn()}
+          template={{
+            ...template,
+            inputSchema: {
+              properties: {
+                delivery: {
+                  default: 'draft_pr',
+                  enum: ['draft_pr'],
+                  title: 'Delivery mode',
+                  type: 'string',
+                },
+              },
+              type: 'object',
+            },
+            workspaceProvider: 'api_only',
+          }}
+        />
+      )
+    );
+    fireEvent.change(screen.getByLabelText(/Task name/), { target: { value: 'Task' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+    expect(await screen.findByText('Delivery mode')).toBeTruthy();
+    expect(screen.getByText('Draft PR')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Launch workflow' }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).toMatchObject({ payload: { delivery: 'draft_pr' } });
+  });
   it('omits the review process summary when the picker already shows it', async () => {
     gateway();
     render(

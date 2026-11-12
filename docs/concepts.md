@@ -170,6 +170,12 @@ default markers and team badges. Search matches titles and template names, not d
 Up to three recently run workflows appear first, without repeating in their categories.
 Without a workflow deep link, the selected team's default takes precedence over the global
 default. The process summary appears immediately after selection, before task details.
+The side rail uses its declared phases, outputs and human steps: it mentions a pull request
+only when the workflow declares one, and describes non-git work as updating a record or document.
+Schema labels and enum choices use readable names while payload keys and values remain unchanged.
+Required schema fields precede optional fields, preserving declared order within each group.
+The outer sections carry the step numbers; Details and Review identify the form's current state.
+Setup warnings and mode guidance expand from compact disclosures without losing their details.
 
 A git-repository workflow without an input schema collects a required Repository and
 multi-line Description, plus an optional Ticket ID. Task name labels the request; Description
@@ -216,7 +222,7 @@ Guided paths build on those pieces:
   page, a card that points at the palette, canvas, node inspector, Check workflow and status bar of
   the editor, or at the verdict, layout switch and trace of a run. A page tour ends, without
   counting as the product tour, when the viewer leaves the page.
-- **Start work** carries a "Not sure?" chooser that recommends a mode, and a "Try a sample task"
+- **Start work** carries a collapsible "Need help choosing?" guide that recommends a mode, and a "Try a sample task"
   button on each form that only fills the fields, never launches, and leaves the review screen in
   place. The agent sample asks for a read-only explanation; the epic and workflow samples ask for a
   small README change, which a launched run can turn into a real pull request. The epic sample gets

@@ -42,15 +42,7 @@ import {
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { pickSampleField, WORKFLOW_SAMPLE } from '@/lib/sampleTasks';
-
-/** `targetBranch` → "Target branch". */
-function humanize(key: string) {
-  const spaced = key
-    .replace(/([A-Z])/g, ' $1')
-    .replace(/[_-]+/g, ' ')
-    .trim();
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
-}
+import { humanizeWorkflowKey, workflowFieldLabel } from '@/lib/workflowLabels';
 
 function hasText(value: unknown) {
   return typeof value === 'string' && value.trim() !== '';
@@ -118,7 +110,21 @@ export function WorkflowLaunchForm({
       const connection = connections.find((item) => item.id === value);
       return connection ? connectionLabel(connection) : 'Selected connection';
     }
+    const property = schema?.properties[key];
+    if (
+      Array.isArray(property?.enum) &&
+      (typeof value === 'string' || typeof value === 'number') &&
+      property.enum.includes(value)
+    ) {
+      return humanizeWorkflowKey(String(value));
+    }
+    if (property?.type === 'array' && Array.isArray(property.items?.enum) && Array.isArray(value)) {
+      return value.map((item) => humanizeWorkflowKey(String(item))).join(', ');
+    }
     return typeof value === 'string' ? value : JSON.stringify(value);
+  }
+  function fieldLabel(key: string) {
+    return workflowFieldLabel(key, schema?.properties[key]);
   }
   function reviewInputs() {
     setAttempted(true);
@@ -194,10 +200,7 @@ export function WorkflowLaunchForm({
                 value: `${template.name} · active version ${template.activeVersion}`,
               },
               ...Object.entries(payload).map(([key, value]) => ({
-                label:
-                  schema?.properties[key]?.type === 'connection' || key === 'connectionId'
-                    ? 'Target connection'
-                    : humanize(key),
+                label: fieldLabel(key),
                 multiline: true,
                 value: displayValue(key, value),
               })),
@@ -241,7 +244,7 @@ export function WorkflowLaunchForm({
           {sampleField && (
             <SampleTaskButton
               blocked={label.trim() !== '' || hasText(payload[sampleField])}
-              caption={`Fills in the task name and the “${humanize(sampleField)}” field with a small documentation request. Other fields stay as they are.`}
+              caption={`Fills in the task name and the “${fieldLabel(sampleField)}” field with a small documentation request. Other fields stay as they are.`}
               onFill={() => {
                 setLabel(WORKFLOW_SAMPLE.label);
                 setPayload((prev) => ({ ...prev, [sampleField]: WORKFLOW_SAMPLE.text }));
@@ -259,17 +262,19 @@ export function WorkflowLaunchForm({
             value={label}
           />
           {schema &&
-            Object.entries(schema.properties).map(([key, prop]) => (
-              <SchemaFieldInput
-                error={attempted ? errors[key] : undefined}
-                key={key}
-                name={key}
-                onChange={(value) => setPayload((prev) => ({ ...prev, [key]: value }))}
-                prop={prop}
-                required={required.has(key)}
-                value={payload[key]}
-              />
-            ))}
+            Object.entries(schema.properties)
+              .sort(([a], [b]) => Number(required.has(b)) - Number(required.has(a)))
+              .map(([key, prop]) => (
+                <SchemaFieldInput
+                  error={attempted ? errors[key] : undefined}
+                  key={key}
+                  name={key}
+                  onChange={(value) => setPayload((prev) => ({ ...prev, [key]: value }))}
+                  prop={prop}
+                  required={required.has(key)}
+                  value={payload[key]}
+                />
+              ))}
           {needsConnection && (
             <ConnectionPicker
               connectionTypes={providerConnectionTypes}

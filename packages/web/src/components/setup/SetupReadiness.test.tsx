@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import { SetupBanner, SetupReadiness } from './SetupReadiness';
@@ -39,6 +39,17 @@ afterEach(() => {
 });
 
 describe('SetupReadiness', () => {
+  it('collapses the compact banner without losing setup details or fix links', async () => {
+    gateway();
+    render(withQuery(<SetupBanner compact items={['credentials', 'connections']} />));
+    const summary = await screen.findByText('Setup incomplete — 2 items need attention');
+    expect(summary.parentElement?.getAttribute('open')).toBeNull();
+    fireEvent.click(summary);
+    expect(summary.parentElement?.getAttribute('open')).toBe('');
+    expect(screen.getByText('No credential for google.')).toBeTruthy();
+    expect(screen.getByText('Connect a repository.')).toBeTruthy();
+    expect(screen.getAllByRole('link', { name: /Fix this/ })).toHaveLength(2);
+  });
   it.each([false, true])(
     'shows the informational no-report note when ready=%s without expanding other done items',
     async (ready) => {

@@ -160,6 +160,26 @@ describe('StartWork', () => {
     expect(screen.getByText('No matches')).toBeTruthy();
   });
 
+  it('uses a non-git workflow rail without promising a pull request or merge', async () => {
+    workflowsGateway(
+      [workflow('zendesk-ticket-reply', { isDefault: true, workspaceProvider: 'api_only' })],
+      {
+        entry: 'done',
+        name: 'Reply',
+        nodes: {
+          done: { result: { ticketUrl: { literal: 'url' } }, status: 'SUCCESS', type: 'terminate' },
+        },
+        schemaVersion: 1,
+      }
+    );
+    render(withQuery(<StartWork />));
+    expect(await screen.findByText('Ticket URL')).toBeTruthy();
+    const rail = screen.getByLabelText('What happens next').textContent ?? '';
+    expect(rail).toContain('record or document');
+    expect(rail).not.toMatch(/pull request/i);
+    expect(rail).not.toContain('Human steps:');
+  });
+
   it.each([
     ['', '', 'Production hotfix'],
     ['payments', '', 'Custom team flow'],
@@ -212,7 +232,11 @@ describe('StartWork', () => {
     fireEvent.click(await screen.findByRole('option', { name: /Production hotfix/ }));
     const phase = await screen.findByText('Check the change');
     expect(screen.getByText('Approve the change')).toBeTruthy();
-    expect(screen.getByText('pull Request Url')).toBeTruthy();
+    expect(screen.getByText('Pull request URL')).toBeTruthy();
+    const rail = screen.getByLabelText('What happens next').textContent ?? '';
+    expect(rail).toContain('Approve the change');
+    expect(rail).toContain('opens a pull request');
+    expect(rail).toContain('No built-in step or template merges');
     const form = screen.getByTestId('form-hotfix');
     expect(phase.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(form.getAttribute('data-summary')).toBe('false');
@@ -289,6 +313,7 @@ describe('StartWork', () => {
     auth.role = 'LEAD';
     gateway();
     render(withQuery(<StartWork />));
+    expect(screen.getByText('Need help choosing?').parentElement?.getAttribute('open')).toBeNull();
     expect(screen.getByText(/Not sure\?/)).toBeTruthy();
     expect(screen.getByText('How auto-swe works')).toBeTruthy();
   });
@@ -298,6 +323,7 @@ describe('StartWork', () => {
     gateway();
     render(withQuery(<StartWork />));
     await epicEnabled();
+    fireEvent.click(screen.getByText('Need help choosing?'));
     const chooser = within(screen.getByTestId('mode-hint'));
     const checked = (name: RegExp) =>
       (screen.getByRole('radio', { name }) as HTMLInputElement).checked;
@@ -325,6 +351,7 @@ describe('StartWork', () => {
     auth.role = 'ENGINEER';
     gateway();
     render(withQuery(<StartWork />));
+    fireEvent.click(screen.getByText('Need help choosing?'));
     const chooser = within(screen.getByTestId('mode-hint'));
     expect(chooser.queryByRole('button', { name: /epic/i })).toBeNull();
     expect(chooser.getByText(/Only team leads and administrators can start an epic/)).toBeTruthy();
