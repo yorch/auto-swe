@@ -35,6 +35,8 @@ function newMockPrisma() {
       findMany: vi.fn().mockResolvedValue([]),
       update: vi.fn().mockResolvedValue({}),
     },
+    organizationMembership: { findUnique: vi.fn().mockResolvedValue(null) },
+    team: { findUnique: vi.fn().mockResolvedValue(null) },
     teamMembership: { findUnique: vi.fn().mockResolvedValue(null) },
   };
   prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => unknown) => fn(prisma));

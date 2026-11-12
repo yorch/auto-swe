@@ -4,7 +4,12 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withQuery } from '@/test/rtl-helpers';
 
-const auth = vi.hoisted(() => ({ myTeams: [] as string[], role: 'ENGINEER' }));
+const auth = vi.hoisted(() => ({
+  myTeams: [] as string[],
+  orgRole: 'ORG_MEMBER',
+  role: 'ENGINEER',
+  teamRole: 'ENGINEER',
+}));
 const repos = vi.hoisted(() => ({ list: [] as unknown[] }));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/connections',
@@ -18,7 +23,14 @@ vi.mock('@/stores/authStore', () => ({
 }));
 vi.mock('@/hooks/useTeams', () => ({
   useLedTeamIds: () => new Set(auth.role === 'LEAD' ? ['t1'] : []),
-  useTeams: () => ({ data: auth.myTeams.map((id) => ({ id })) }),
+  useTeams: (options?: { memberOnly?: boolean }) => ({
+    data: options?.memberOnly
+      ? auth.myTeams.map((id) => ({ id }))
+      : [{ id: 't1', myRole: auth.role === 'LEAD' ? 'LEAD' : auth.teamRole, orgId: 'o1' }],
+  }),
+}));
+vi.mock('@/hooks/useAdmin', () => ({
+  useUserOrgs: () => ({ data: [{ id: 'o1', role: auth.orgRole }] }),
 }));
 vi.mock('@/hooks/useRepositories', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -44,6 +56,19 @@ import ConnectionsPage from './page';
 afterEach(cleanup);
 
 describe('Connections page', () => {
+  it.each(['team', 'organization'])('allows an ENGINEER who manages the %s', (scope) => {
+    auth.role = 'ENGINEER';
+    auth.teamRole = scope === 'team' ? 'LEAD' : 'ENGINEER';
+    auth.orgRole = scope === 'organization' ? 'ORG_ADMIN' : 'ORG_MEMBER';
+    try {
+      render(withQuery(<ConnectionsPage />));
+      expect(screen.getAllByRole('button', { name: 'Import from GitHub' })).toHaveLength(2);
+      expect(screen.queryByRole('link', { name: 'GitHub App setup' })).toBeNull();
+    } finally {
+      auth.teamRole = 'ENGINEER';
+      auth.orgRole = 'ORG_MEMBER';
+    }
+  });
   it('defines a connection, and offers the GitHub App guide only to administrators', () => {
     auth.role = 'ENGINEER';
     const { unmount } = render(withQuery(<ConnectionsPage />));

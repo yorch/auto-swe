@@ -60,7 +60,7 @@ import { repositoryTeamScope } from '../lib/runTeamScope.js';
 import { isShellAuthor } from '../lib/specCheck.js';
 import { ownerLaunchBudgets } from '../lib/teamBudgetStatus.js';
 import { assertTeamParam } from '../lib/teamParam.js';
-import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
+import { manageableOrReachableConnections, repositoryManagementTeams } from '../lib/tenantScope.js';
 import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { deactivateSchedulesOutsideTeams } from './scheduledWorkRequests.js';
 
@@ -236,12 +236,8 @@ const UpdateRepoSchema = z.object({
 
 /**
  * Whether a user may manage repositories owned by `teamId`. Platform ADMINs can
- * manage any team's repos; everyone else must be a LEAD (or higher) member of
- * that specific team AND the team must be active. The route-level
- * `requiredRole: 'LEAD'` gate only checks the *platform* role, so this
- * team-scoped check is what stops a LEAD on team A from onboarding/reassigning
- * repos into team B — and the isActive check keeps it consistent with the
- * create path (a LEAD of a deactivated team can't keep editing its repos).
+ * manage any team's repos; everyone else must lead that active team or
+ * administer its owning organization.
  */
 export async function canManageTeamRepos(
   prisma: FastifyInstance['prisma'],
@@ -255,7 +251,20 @@ export async function canManageTeamRepos(
     include: { team: { select: { isActive: true } } },
     where: { userId_teamId: { teamId, userId: user.sub } },
   });
-  return !!membership && membership.team.isActive && hasRole(membership.role, Role.LEAD);
+  if (membership?.team.isActive && hasRole(membership.role, Role.LEAD)) {
+    return true;
+  }
+  const team = await prisma.team.findUnique({
+    select: { isActive: true, orgId: true },
+    where: { id: teamId },
+  });
+  if (!team?.isActive || !team.orgId) {
+    return false;
+  }
+  const orgMembership = await prisma.organizationMembership.findUnique({
+    where: { userId_orgId: { orgId: team.orgId, userId: user.sub } },
+  });
+  return orgMembership?.role === 'ORG_ADMIN';
 }
 
 /** The overrides that run something: blank and null entries dropped; none at all is null. */
@@ -769,8 +778,23 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /api/v1/repositories/github/available — List importable GitHub repos
   app.get(
     '/github/available',
-    { onRequest: requireAuth({ requiredRole: 'LEAD' }) },
-    async (_request, reply) => {
+    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) },
+    async (request, reply) => {
+      const user = requireUser(request);
+      if (
+        user.role !== Role.ADMIN &&
+        !(await fastify.prisma.team.findFirst({
+          select: { id: true },
+          where: repositoryManagementTeams(user),
+        }))
+      ) {
+        return sendError(
+          reply,
+          403,
+          'FORBIDDEN',
+          'Requires a team lead or organization admin role'
+        );
+      }
       let repos: Awaited<ReturnType<typeof listGitHubRepos>>;
       try {
         repos = await listGitHubRepos();
@@ -827,17 +851,19 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     async (request) => {
       const user = requireUser(request);
       const { includeInactive, limit, offset, q, teamId } = request.query;
-      if (teamId) {
+      if (teamId && !(await canManageTeamRepos(fastify.prisma, user, teamId))) {
         await assertTeamParam(fastify.prisma, user, teamId);
       }
-      const showInactive = includeInactive && hasRole(user.role, Role.LEAD);
+      const showInactive = includeInactive;
       // A deactivated connection is listed only to someone who could reactivate
       // it: a platform ADMIN, or a LEAD/ADMIN of the owning team (the bar
       // `canManageTeamRepos` sets for the write). The platform LEAD role alone
       // is not that — on a team where they are a plain ENGINEER they would be
       // shown rows they can do nothing with.
       const reach =
-        user.role === Role.ADMIN ? null : reachableConnections(user, request.repoAccessGate);
+        user.role === Role.ADMIN
+          ? null
+          : manageableOrReachableConnections(user, request.repoAccessGate);
       // Combined, never blindly spread: the reachability predicate is itself an
       // `AND` of `OR`s, and spreading two objects that set the same key keeps
       // only whichever came last — silently dropping either the reachability
@@ -850,7 +876,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       } else if (reach === null) {
         where = {};
       } else {
-        where = { AND: [reach, { OR: [{ isActive: true }, { team: ledTeams(user) }] }] };
+        where = {
+          AND: [reach, { OR: [{ isActive: true }, { team: repositoryManagementTeams(user) }] }],
+        };
       }
       if (q) {
         const contains = { contains: q, mode: 'insensitive' as const };
@@ -948,7 +976,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { body: CreateRepoSchema },
     },
     async (request, reply) => {
@@ -1191,7 +1219,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { body: UpdateRepoSchema, params: RepoParamsSchema },
     },
     async (request, reply) => {
@@ -1763,7 +1791,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/share-candidates',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { params: RepoParamsSchema },
     },
     async (request, reply) => {
@@ -1794,7 +1822,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/:id/shares',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { body: SharesSchema, params: RepoParamsSchema },
     },
     async (request, reply) => {
@@ -1893,7 +1921,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.patch(
     '/:id/shares/:teamId',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { body: ShareLaunchSchema, params: ShareParamsSchema },
     },
     async (request, reply) => {
@@ -1958,7 +1986,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/test-access',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { params: RepoParamsSchema },
     },
     async (request, reply) => {
@@ -1998,6 +2026,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     if (repo?.type !== 'git_repo') {
       return { error: 404 as const, ok: false as const };
     }
+    if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
+      return { error: 403 as const, ok: false as const };
+    }
     if (!(await isShellAuthor(fastify, user, repo.teamId))) {
       return { error: 403 as const, ok: false as const };
     }
@@ -2016,7 +2047,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/setup/pull-request',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { body: z.object({ setup: RepoSetupSchema }), params: RepoParamsSchema },
     },
     async (request, reply) => {
@@ -2043,7 +2074,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/setup/pull-request/:requestId',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: {
         params: RepoParamsSchema.extend({ requestId: z.string().max(100) }),
       },
@@ -2066,7 +2097,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id/setup-blockers',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: {
         params: RepoParamsSchema,
         querystring: z.object({ includeResolved: booleanQueryParam(false) }),
@@ -2103,7 +2134,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/setup-blockers/:blockerId/resolve',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { params: RepoParamsSchema.extend({ blockerId: z.string().uuid() }) },
     },
     async (request, reply) => {
@@ -2142,7 +2173,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   // GET /api/v1/repositories/:id/setup/secrets — the repository's setup secrets, without values.
   app.get(
     '/:id/setup/secrets',
-    { onRequest: requireAuth({ requiredRole: Role.LEAD }), schema: { params: RepoParamsSchema } },
+    {
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
+      schema: { params: RepoParamsSchema },
+    },
     async (request, reply) => {
       const found = await setupFileRepo(request, request.params.id);
       if (!found.ok) {
@@ -2161,7 +2195,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/:id/setup/secrets/:name',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: {
         body: z.object({
           value: z
@@ -2228,7 +2262,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/preview/env-to-secrets',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: {
         body: z
           .object({
@@ -2517,7 +2551,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/:id/setup/secrets/:name',
     {
-      onRequest: requireAuth({ requiredRole: Role.LEAD }),
+      onRequest: requireAuth({ requiredRole: Role.ENGINEER }),
       schema: { params: SetupSecretParamsSchema },
     },
     async (request, reply) => {

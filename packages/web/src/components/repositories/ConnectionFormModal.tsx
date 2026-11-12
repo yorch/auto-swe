@@ -23,7 +23,8 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useCreateRepository, useUpdateRepository } from '@/hooks/useRepositories';
-import { useAdminTeamIds, useLedTeamIds, useTeams } from '@/hooks/useTeams';
+import { useRepositoryTeams } from '@/hooks/useRepositoryTeams';
+import { useAdminTeamIds } from '@/hooks/useTeams';
 import { useUnsavedChangesGuard } from '@/hooks/useUnsavedChangesGuard';
 import { api } from '@/lib/api';
 import { connectionLabel } from '@/lib/connectionDisplay';
@@ -42,7 +43,7 @@ import {
   gateCommandsPatch,
 } from '@/lib/gateCommandsForm';
 import { draftToSetup, type RepoSetupDraft, setupDraft } from '@/lib/repoSetupDraft';
-import { canAuthorTeamCode, canWriteTeamResource } from '@/lib/teamPermissions';
+import { canAuthorTeamCode } from '@/lib/teamPermissions';
 import { useAuthStore } from '@/stores/authStore';
 
 export interface ConnectionPrefill {
@@ -81,17 +82,9 @@ export function ConnectionFormModal({
   onClose: () => void;
   mode: Mode;
 }) {
-  const { data: allTeams } = useTeams();
-  // Only teams the caller may write connections for (canManageTeamRepos): a
-  // platform LEAD sees every team they belong to in the list, but can only
-  // onboard into or reassign to one they lead.
+  const teams = useRepositoryTeams();
   const platformRole = useAuthStore((s) => s.user?.role);
-  const ledTeamIds = useLedTeamIds();
   const adminTeamIds = useAdminTeamIds();
-  const teams = useMemo(
-    () => (allTeams ?? []).filter((t) => canWriteTeamResource(platformRole, t.id, ledTeamIds)),
-    [allTeams, platformRole, ledTeamIds]
-  );
   const create = useCreateRepository();
   const update = useUpdateRepository(mode.kind === 'edit' ? mode.repo.id : '');
 
