@@ -32,6 +32,7 @@ export const SETTING_GROUPS = [
   'mcp',
   'memory',
   'models',
+  'onboarding',
   'prEvaluation',
   'qodo',
   'repoAccess',

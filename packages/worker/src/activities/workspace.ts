@@ -8,7 +8,9 @@ import { MAX_DEPENDENCY_CHECKOUTS } from '@auto-swe/shared/lib/knowledgeBaseReso
 import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { assertShellImageAllowed, DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
+import { currentWorkflowId } from '../lib/activityContext.js';
 import { auditLog, logWarn } from '../lib/activityLog.js';
+import { currentNodeTag } from '../lib/activityNodeTag.js';
 import {
   beginWorkspaceEgress,
   blockedEgressAllow,
@@ -16,6 +18,7 @@ import {
   gitHostOf,
   lfsStorageHostEntries,
   lfsStorageHosts,
+  resolveOnboardingDraftEgress,
   resolveRunEgressPolicy,
   resolveRunSetupEgressPolicy,
 } from '../lib/egressWiring.js';
@@ -852,6 +855,8 @@ export async function createWorkspace(
     egressPolicy?: EgressPolicy;
     /** Internal trials must test setup under the real run policy, without setup-phase widening. */
     inheritSetupEgress?: boolean;
+    /** Set only by the worker after verifying the seeded onboarding run and agent. */
+    onboardingDraft?: boolean;
     /**
      * Run the repository's setup (`.auto-swe/setup.yml`, or `field` — the repository's
      * `Connection.setup` — which overrides it). Absent, the workspace gets none: only the trusted
@@ -877,11 +882,16 @@ export async function createWorkspace(
   // override).
   const infra = resolveWorkspaceInfra();
   const effectiveImage = image ?? infra.image;
-  const egressPolicy =
+  const realEgressPolicy =
     options?.egressPolicy ?? (await resolveRunEgressPolicy(options?.teamId ?? null));
+  const onboardingEgress =
+    options?.onboardingDraft && !options.inheritSetupEgress
+      ? await resolveOnboardingDraftEgress(options.teamId ?? null, realEgressPolicy)
+      : null;
+  const egressPolicy: EgressPolicy = onboardingEgress ? 'restricted' : realEgressPolicy;
   let setupEgressPolicy = effectiveSetupEgressPolicy(
     egressPolicy,
-    options?.trusted || options?.inheritSetupEgress
+    options?.trusted || options?.inheritSetupEgress || onboardingEgress
       ? 'inherit'
       : await resolveRunSetupEgressPolicy(options?.teamId ?? null)
   );
@@ -1324,7 +1334,8 @@ export async function createWorkspace(
     egress = await beginWorkspaceEgress(
       options?.teamId ?? null,
       gitHost ? [gitHost] : [],
-      setupEgressPolicy === 'restricted' ? setupEgressPolicy : egressPolicy
+      setupEgressPolicy === 'restricted' ? setupEgressPolicy : egressPolicy,
+      ...(onboardingEgress ? ([onboardingEgress] as const) : ([] as const))
     );
     if (setupEgressPolicy === 'restricted' && setupPhase && !egress) {
       setupEgressPolicy = egressPolicy;
@@ -1734,6 +1745,11 @@ export async function createWorkspace(
     }
     // Setup runs after the lock, as the workspace user: package installs reach the registry
     // proxy, submodules the git host, and nothing else a restricting policy forbids.
+    if (onboardingEgress && egress) {
+      auditLog(
+        `workspace.onboardingDraftEgress ${JSON.stringify({ containerName, draftHostCount: onboardingEgress.additionalHosts.length, nodeId: currentNodeTag()?.specNodeId ?? null, workflowId: currentWorkflowId() })}`
+      );
+    }
     if (options?.repoSetup && !options.repoSetup.defer) {
       setupReport = Promise.resolve(await runResolvedSetup());
     }
