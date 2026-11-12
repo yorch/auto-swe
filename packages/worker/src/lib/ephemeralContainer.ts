@@ -20,6 +20,7 @@
 import crypto from 'node:crypto';
 import { promises as dnsPromises } from 'node:dns';
 import path from 'node:path';
+import type { EgressPolicy } from '@auto-swe/shared/lib/egressPolicy';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { activityCancellationSignal } from './cancellation.js';
@@ -31,6 +32,8 @@ import type { EphemeralContainerSpec } from './workspaceBackend/types.js';
 export type EphemeralRunResult = CapturedResult;
 
 export interface EphemeralRunInput {
+  /** Resolved run policy; callers cap blocked/empty-allowlist steps to network none. */
+  egressPolicy?: EgressPolicy;
   /** Docker image to run. Caller is expected to have already enforced the allowlist. */
   image: string;
   /**
@@ -169,7 +172,7 @@ function lockdownFlags(input: Omit<EphemeralRunInput, 'command'>): {
   // DNS-based egress filtering: when an allowlist is present, point DNS at an
   // unreachable address so name-based lookups fail for non-allowlisted hosts.
   // --add-host entries for resolved IPs are injected in the runners.
-  // Does not block IP-direct connections; wildcard entries are informational only.
+  // Restricted runs also receive a proxy-only IP lock in the network holder.
   const dnsArgs =
     network === 'egress' && input.egressAllowlist && input.egressAllowlist.length > 0
       ? ['--dns=127.0.0.2']
@@ -346,6 +349,7 @@ async function ephemeralSpecFromInput(
   }
   return {
     addHosts,
+    ...(input.egressPolicy ? { egressPolicy: input.egressPolicy } : {}),
     argv: input.command ? ['sh', '-c', input.command] : undefined,
     cpus: input.cpus,
     dns:
