@@ -1,5 +1,7 @@
 // Import the real schema from the subpath so it is not intercepted by the
 // barrel mock below (the subpath has no PrismaClient dependency).
+
+import * as connectionCredential from '@auto-swe/shared/lib/connectionCredential';
 import { ConnectionTypeSchema } from '@auto-swe/shared/lib/connectionTypes';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
@@ -66,6 +68,7 @@ vi.mock('../lib/teamBudgetStatus.js', () => ({
 }));
 
 import '../test/warmAuthImports.js';
+import * as githubImport from '../lib/githubImport.js';
 import { resetSweepDebounceForTests } from '../lib/prEvaluationSweep.js';
 import { manageableOrReachableConnections, repositoryManagementTeams } from '../lib/tenantScope.js';
 import { canManageTeamRepos, repositoryRoutes } from './repositories.js';
@@ -100,6 +103,7 @@ async function buildApp() {
             team: { findUnique: (...args: unknown[]) => mockPrisma.team.findUnique(...args) },
           })
     ),
+    account: { findMany: vi.fn().mockResolvedValue([]) },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: {
       count: vi.fn(),
@@ -112,6 +116,7 @@ async function buildApp() {
     },
     connectionTeamShare: { deleteMany: vi.fn() },
     evalDataset: { findMany: vi.fn(), findUnique: vi.fn(), update: vi.fn() },
+    gitHubInstallation: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     knowledgeItem: { count: vi.fn().mockResolvedValue(0) },
     organizationMembership: {
       findUnique: vi.fn(),
@@ -134,6 +139,7 @@ async function buildApp() {
       findMany: vi.fn(),
       findUnique: vi.fn(),
     },
+    user: { findUnique: vi.fn().mockResolvedValue(null) },
   };
 
   const mockAuth = {
@@ -183,6 +189,7 @@ describe('repositoryRoutes', () => {
   });
   afterAll(() => ctx.app.close());
   beforeEach(() => {
+    githubImport.clearGitHubImportCaches();
     ctx.authState.role = 'ADMIN';
     ctx.authState.sub = 'admin-1';
     ctx.mockPrisma.$transaction.mockClear();
@@ -595,6 +602,140 @@ describe('repositoryRoutes', () => {
         url: '/api/v1/repositories',
       });
       expect(res.statusCode).toBe(401);
+    });
+  });
+
+  describe('POST /api/v1/repositories/import', () => {
+    const INSTALLATION = '66666666-6666-4666-8666-666666666666';
+    const item = (repoName: string, installationId: string | null = null) => ({
+      installationId,
+      organizationName: 'acme',
+      repoName,
+    });
+    const batch = (repos: ReturnType<typeof item>[]) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: { repos, teamId: TEAM_ID },
+        url: '/api/v1/repositories/import',
+      });
+    beforeEach(() => {
+      ctx.mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM_ID, isActive: true });
+      ctx.mockPrisma.connection.create.mockImplementation(async ({ data }) => ({
+        ...data,
+        id: REPO_ID,
+      }));
+    });
+    it('keeps successes and reports duplicates and denied access independently', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+        role: 'LEAD',
+        team: { isActive: true },
+      });
+      github.lookupRepoPermission.mockImplementation(async (r) => ({
+        ok: true,
+        permission: r.repoName === 'denied' ? 'none' : 'read',
+      }));
+      ctx.mockPrisma.connection.findFirst.mockImplementation(async ({ where }) =>
+        where.repoName.equals === 'duplicate' ? { id: REPO_ID } : null
+      );
+      const res = await batch([item('first'), item('denied'), item('duplicate'), item('last')]);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toEqual([
+        { id: REPO_ID, organizationName: 'acme', repoName: 'first', status: 'created' },
+        expect.objectContaining({ repoName: 'denied', status: 'failed' }),
+        expect.objectContaining({ code: 'REPO_EXISTS', repoName: 'duplicate', status: 'failed' }),
+        { id: REPO_ID, organizationName: 'acme', repoName: 'last', status: 'created' },
+      ]);
+      expect(ctx.mockPrisma.connection.create).toHaveBeenCalledTimes(2);
+      expect(ctx.mockTemporal.startRepoDependencyScan).toHaveBeenCalledTimes(2);
+    });
+    it('rejects unknown installations without creating a connection', async () => {
+      ctx.mockPrisma.gitHubInstallation.findUnique.mockResolvedValue(null);
+      const res = await batch([item('api', INSTALLATION)]);
+      expect(res.json().data[0]).toMatchObject({
+        code: 'INSTALLATION_REPO_NOT_FOUND',
+        status: 'failed',
+      });
+      expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+    });
+    it('authorizes the target team before checking an installation or creating anything', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue(null);
+      ctx.mockPrisma.gitHubInstallation.findUnique.mockClear();
+      const res = await batch([item('api', INSTALLATION), item('other')]);
+      expect(res.json().data.map((r: { code: string }) => r.code)).toEqual([
+        'FORBIDDEN',
+        'FORBIDDEN',
+      ]);
+      expect(ctx.mockPrisma.gitHubInstallation.findUnique).not.toHaveBeenCalled();
+      expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+    });
+    it('fails every item for an inactive target team', async () => {
+      ctx.mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM_ID, isActive: false });
+      const res = await batch([item('api')]);
+      expect(res.json().data[0].code).toBe('TEAM_NOT_FOUND');
+    });
+    it('allows team leads to attach only server-verified installations with derived host bases', async () => {
+      ctx.authState.role = 'ENGINEER';
+      ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+        role: 'LEAD',
+        team: { isActive: true },
+      });
+      ctx.mockPrisma.gitHubInstallation.findUnique.mockResolvedValue({
+        host: 'ghe.corp',
+        installationId: '123',
+      });
+      const verify = vi.spyOn(githubImport, 'verifiedImportInstallation').mockResolvedValue({
+        installation: {
+          accountLogin: 'acme',
+          host: 'ghe.corp',
+          id: INSTALLATION,
+          installationId: '123',
+          isActive: true,
+        } as never,
+        source: {
+          githubApiUrl: 'https://ghe.corp/api/v3',
+          githubUrl: 'https://ghe.corp',
+          installationAccount: 'acme',
+          installationId: INSTALLATION,
+        },
+      });
+      const hosts = vi
+        .spyOn(connectionCredential, 'repositoryHostsAllowed')
+        .mockResolvedValue({ ok: true });
+      try {
+        const res = await batch([item('api', INSTALLATION)]);
+        expect(res.json().data[0].status).toBe('created');
+        expect(ctx.mockPrisma.connection.create.mock.calls[0][0].data).toMatchObject({
+          githubApiUrl: 'https://ghe.corp/api/v3',
+          githubUrl: 'https://ghe.corp',
+          installationId: INSTALLATION,
+        });
+        expect(github.lookupRepoPermission.mock.calls[0][0]).toMatchObject({
+          installation: { host: 'ghe.corp', installationId: '123' },
+        });
+        expect(verify).toHaveBeenCalledWith(ctx.app.prisma, INSTALLATION, 'acme', 'api');
+      } finally {
+        verify.mockRestore();
+        hosts.mockRestore();
+      }
+    });
+    it('continues after unexpected per-repository errors without exposing their bodies', async () => {
+      ctx.mockPrisma.connection.create.mockRejectedValueOnce(new Error('secret database body'));
+      const res = await batch([item('failed'), item('good')]);
+      expect(res.json().data.map((r: { status: string }) => r.status)).toEqual([
+        'failed',
+        'created',
+      ]);
+      expect(res.payload).not.toContain('secret database body');
+    });
+    it('rejects empty and oversized batches', async () => {
+      expect((await batch([])).statusCode).toBe(400);
+      expect((await batch(Array.from({ length: 51 }, (_, i) => item(`repo${i}`)))).statusCode).toBe(
+        400
+      );
+      expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
     });
   });
 
