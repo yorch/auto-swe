@@ -403,6 +403,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/platform/model-catalog/suggestions/:id/undismiss': 'confirm',
   'POST /api/v1/platform/organizations/:orgId/members': { never: 'identity' },
   'POST /api/v1/platform/organizations/:orgId/members/invite': { never: 'identity' },
+  'POST /api/v1/platform/organizations/:orgId/teams': 'confirm',
   'POST /api/v1/platform/review-presets': 'confirm',
   'POST /api/v1/platform/review-presets/:id/attachments': 'confirm',
   'POST /api/v1/platform/scanner-patterns': 'confirm',

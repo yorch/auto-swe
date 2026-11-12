@@ -105,6 +105,8 @@ then asks GitHub whether that user is a member of a listed organization
   an account stamps `approvedAt`, so deactivation sticks: that person cannot sign in again and be
   re-approved by the rule. It does not change an account that is already active.
 - **Default team.** Every new user, auto-approved or not, is added to the default team on creation.
+  This hook does not create an organization membership; see [team membership](./teams.md#creating-teams-and-managing-membership)
+  for the organization bound on explicit team creation and member-add API calls.
   With `repoAccess.mode` off, team membership alone grants that team's repositories, so set
   `repoAccess.mode` to `enforce` or point the default team slug (`/admin/workflow-defaults`) at a team with nothing
   sensitive before listing a large organization.

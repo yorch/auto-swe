@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { teamRoutes } from './teams.js';
+import { orgTeamRoutes, teamRoutes } from './teams.js';
 
 /**
  * Tiny in-memory harness covering just the two endpoints these tests target:
@@ -36,6 +36,7 @@ interface TeamRow {
 }
 
 interface State {
+  orgMemberships?: Array<{ id: string; userId: string; orgId: string; role: string }>;
   userRole: 'ADMIN' | 'LEAD' | 'ENGINEER';
   /** sub claim on the fake JWT — must match a membership row to pass team RBAC. */
   userId: string;
@@ -84,6 +85,11 @@ function freshState(overrides?: Partial<State>): State {
         teamId: TEAM_ID,
         userId: TARGET_USER_ID,
       },
+    ],
+    orgMemberships: [
+      { id: 'org-caller', orgId: TEAM_ID, role: 'ORG_ADMIN', userId: ADMIN_USER_ID },
+      { id: 'org-target', orgId: TEAM_ID, role: 'ORG_MEMBER', userId: TARGET_USER_ID },
+      { id: 'default-caller', orgId: 'org-default', role: 'ORG_MEMBER', userId: ADMIN_USER_ID },
     ],
     teams: [
       {
@@ -135,12 +141,39 @@ function buildApp(state: State): FastifyInstance {
     organization: {
       findUnique: async ({ where }: { where: { id?: string; slug?: string } }) =>
         // Single default org for the create-path test.
-        where.slug === 'default' || where.id === 'org-default'
-          ? { id: 'org-default', slug: 'default' }
+        where.slug === 'default' || where.id === 'org-default' || where.id === TEAM_ID
+          ? { id: where.id ?? 'org-default', slug: 'default' }
           : null,
     },
+    organizationMembership: {
+      createMany: async ({ data }: { data: { userId: string; orgId: string; role: string } }) => {
+        state.orgMemberships = [...(state.orgMemberships ?? []), { id: 'auto-org', ...data }];
+        return { count: 1 };
+      },
+      findUnique: async ({
+        where,
+      }: {
+        where: { userId_orgId: { userId: string; orgId: string } };
+      }) =>
+        state.orgMemberships?.find(
+          (m) => m.userId === where.userId_orgId.userId && m.orgId === where.userId_orgId.orgId
+        ) ?? null,
+      findUniqueOrThrow: async ({
+        where,
+      }: {
+        where: { userId_orgId: { userId: string; orgId: string } };
+      }) =>
+        state.orgMemberships?.find(
+          (m) => m.userId === where.userId_orgId.userId && m.orgId === where.userId_orgId.orgId
+        ),
+    },
     team: {
-      create: async ({ data }: { data: Record<string, unknown> }) => ({ id: 'new-team', ...data }),
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        if (state.teams.some((team) => team.name === data.name || team.slug === data.slug)) {
+          throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+        }
+        return { id: 'new-team', ...data };
+      },
       findFirst: async ({ where }: { where: { OR?: { name?: string; slug?: string }[] } }) => {
         const ors = where.OR ?? [];
         return (
@@ -184,6 +217,7 @@ function buildApp(state: State): FastifyInstance {
       },
       findUnique: async ({ where }: { where: { id?: string; slug?: string } }) =>
         state.teams.find((t) => (where.id ? t.id === where.id : t.slug === where.slug)) ?? null,
+      findUniqueOrThrow: async () => ({ orgId: TEAM_ID }),
       update: async ({
         where,
         data,
@@ -257,11 +291,175 @@ function buildApp(state: State): FastifyInstance {
   // else needs the verify-PAT path so we leave that decorator out.
 
   app.register(teamRoutes, { prefix: '/api/v1/teams' });
+  app.register(orgTeamRoutes, { prefix: '/api/v1/platform/organizations' });
+  app.register(orgTeamRoutes, { prefix: '/api/v1/admin/organizations' });
   return app;
 }
 
 afterEach(() => {
   // App instances are throwaway per-test; nothing to clean.
+});
+
+describe('organization-bounded team creation', () => {
+  it.each([
+    [{}, 400, undefined],
+    [{ name: 'platform', slug: 'platform' }, 409, 'TEAM_EXISTS'],
+  ])('rejects invalid or duplicate organization teams: %j', async (payload, status, code) => {
+    const state = freshState();
+    const app = buildApp(state);
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test' },
+      method: 'POST',
+      payload,
+      url: `/api/v1/platform/organizations/${TEAM_ID}/teams`,
+    });
+    expect(res.statusCode).toBe(status);
+    if (code) {
+      expect(res.json().error.code).toBe(code);
+    }
+    await app.close();
+  });
+
+  it('keeps the unscoped create route platform-ADMIN-only', async () => {
+    const app = buildApp(freshState());
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test' },
+      method: 'POST',
+      payload: { name: 'New', slug: 'new' },
+      url: '/api/v1/teams',
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('adds an existing organization member without changing their organization role', async () => {
+    const state = freshState({
+      memberships: [{ id: 'caller', role: 'LEAD', teamId: TEAM_ID, userId: ADMIN_USER_ID }],
+    });
+    const app = buildApp(state);
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test' },
+      method: 'POST',
+      payload: { userId: TARGET_USER_ID },
+      url: `/api/v1/teams/${TEAM_ID}/members`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(state.audits?.map((a) => a.entityType)).toEqual(['TeamMembership']);
+    await app.close();
+  });
+
+  for (const prefix of ['/api/v1/platform/organizations', '/api/v1/admin/organizations']) {
+    it.each([
+      ['ORG_ADMIN', TEAM_ID, 201],
+      ['ORG_MEMBER', TEAM_ID, 403],
+      ['ORG_ADMIN', TARGET_USER_ID, 403],
+    ])(`%s in %s creates through ${prefix} with status %s`, async (role, orgId, status) => {
+      const state = freshState({
+        orgMemberships: [{ id: 'org', orgId, role, userId: ADMIN_USER_ID }],
+      });
+      const app = buildApp(state);
+      const res = await app.inject({
+        headers: { authorization: 'Bearer test' },
+        method: 'POST',
+        payload: { name: 'New', slug: 'new' },
+        url: `${prefix}/${TEAM_ID}/teams`,
+      });
+      expect(res.statusCode).toBe(status);
+      if (status === 201) {
+        expect(state.memberships).toContainEqual(
+          expect.objectContaining({ role: 'ADMIN', teamId: 'new-team', userId: ADMIN_USER_ID })
+        );
+        expect(state.audits?.map((a) => a.entityType)).toEqual(['Team', 'TeamMembership']);
+      }
+      await app.close();
+    });
+  }
+
+  for (const url of ['/api/v1/teams', `/api/v1/platform/organizations/${TEAM_ID}/teams`]) {
+    it.each([true, false])(
+      `validates selected admin organization for ${url} (%s)`,
+      async (inOrg) => {
+        const state = freshState({
+          orgMemberships: inOrg
+            ? [
+                {
+                  id: 'org',
+                  orgId: url === '/api/v1/teams' ? 'org-default' : TEAM_ID,
+                  role: 'ORG_MEMBER',
+                  userId: TARGET_USER_ID,
+                },
+              ]
+            : [],
+          userRole: 'ADMIN',
+        });
+        const app = buildApp(state);
+        const res = await app.inject({
+          headers: { authorization: 'Bearer test' },
+          method: 'POST',
+          payload: { adminUserId: TARGET_USER_ID, name: 'New', slug: 'new' },
+          url,
+        });
+        expect(res.statusCode).toBe(inOrg ? 201 : 400);
+        if (inOrg) {
+          expect(state.memberships).toContainEqual(
+            expect.objectContaining({ role: 'ADMIN', teamId: 'new-team', userId: TARGET_USER_ID })
+          );
+        } else {
+          expect(res.json().error.code).toBe('ORG_MEMBERSHIP_REQUIRED');
+        }
+        await app.close();
+      }
+    );
+
+    it(`auto-enrolls the platform ADMIN creator for ${url}`, async () => {
+      const state = freshState({ orgMemberships: [], userRole: 'ADMIN' });
+      const app = buildApp(state);
+      const res = await app.inject({
+        headers: { authorization: 'Bearer test' },
+        method: 'POST',
+        payload: { name: 'New', slug: 'new' },
+        url,
+      });
+      expect(res.statusCode).toBe(201);
+      expect(state.orgMemberships).toContainEqual(
+        expect.objectContaining({ role: 'ORG_MEMBER', userId: ADMIN_USER_ID })
+      );
+      expect(state.audits?.map((a) => a.entityType)).toEqual([
+        'OrganizationMembership',
+        'Team',
+        'TeamMembership',
+      ]);
+      await app.close();
+    });
+  }
+
+  it.each(['LEAD', 'ADMIN'] as const)('bounds member additions by org for %s', async (userRole) => {
+    const state = freshState({
+      memberships: [{ id: 'caller', role: 'LEAD', teamId: TEAM_ID, userId: ADMIN_USER_ID }],
+      orgMemberships: [],
+      userRole,
+    });
+    const app = buildApp(state);
+    const res = await app.inject({
+      headers: { authorization: 'Bearer test' },
+      method: 'POST',
+      payload: { userId: TARGET_USER_ID },
+      url: `/api/v1/teams/${TEAM_ID}/members`,
+    });
+    expect(res.statusCode).toBe(userRole === 'ADMIN' ? 201 : 400);
+    if (userRole === 'ADMIN') {
+      expect(state.orgMemberships).toContainEqual(
+        expect.objectContaining({ orgId: TEAM_ID, role: 'ORG_MEMBER', userId: TARGET_USER_ID })
+      );
+      expect(state.audits?.map((a) => a.entityType)).toEqual([
+        'OrganizationMembership',
+        'TeamMembership',
+      ]);
+    } else {
+      expect(res.json().error.code).toBe('ORG_MEMBERSHIP_REQUIRED');
+    }
+    await app.close();
+  });
 });
 
 describe('GET /api/v1/teams/:id shared repositories', () => {
@@ -475,7 +673,10 @@ describe('POST /api/v1/teams', () => {
 
     expect(res.statusCode).toBe(201);
     expect(res.json().data.orgId).toBe('org-default');
-    expect(state.audits).toMatchObject([{ action: 'CREATE', entityType: 'Team' }]);
+    expect(state.audits).toMatchObject([
+      { action: 'CREATE', entityType: 'Team' },
+      { action: 'CREATE', entityType: 'TeamMembership' },
+    ]);
   });
 
   it('400s when the requested org does not exist (P5)', async () => {
@@ -598,7 +799,12 @@ describe('POST /api/v1/teams/:id/members', () => {
   const NEW_USER_ID = '00000000-0000-4000-8000-0000000000cc';
 
   it('answers 409 MEMBER_EXISTS when a concurrent add wins the unique index', async () => {
-    const state = freshState({ createConflict: true });
+    const state = freshState({
+      createConflict: true,
+      orgMemberships: [
+        { id: 'new-user-org', orgId: TEAM_ID, role: 'ORG_MEMBER', userId: NEW_USER_ID },
+      ],
+    });
     const app = buildApp(state);
 
     const res = await app.inject({
