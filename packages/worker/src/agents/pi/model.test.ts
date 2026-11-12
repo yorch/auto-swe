@@ -2,7 +2,7 @@ import type { AgentTool } from '@mariozechner/pi-agent-core';
 import type { AssistantMessage, Message } from '@mariozechner/pi-ai';
 import { wrapLanguageModel } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { reasoningMiddleware } from '../../lib/reasoning.js';
 import {
   aiSdkStreamFn,
@@ -233,6 +233,37 @@ describe('aiSdkStreamFn', () => {
     ]);
     // Reasoning is output: both calls are metered at their whole output.
     expect(spent).toEqual([50, 50]);
+  });
+});
+
+describe('aiSdkStreamFn beforeCall', () => {
+  it('refuses the call without contacting the model, and reports the error', async () => {
+    const doGenerate = vi.fn();
+    const model = new MockLanguageModelV4({ doGenerate });
+    const refusal = new Error('Budget exhausted');
+    const onError = vi.fn();
+    const streamFn = aiSdkStreamFn(
+      {
+        beforeCall: async () => {
+          throw refusal;
+        },
+        heartbeat: () => {},
+        model,
+        onCall: () => {},
+        onError,
+        spec: 'anthropic/claude-opus-5-5',
+      },
+      () => []
+    );
+    const message = (await (
+      await streamFn(piModelDescriptor('anthropic/claude-opus-5-5'), {
+        messages: [{ content: 'go', role: 'user', timestamp: 0 }],
+        systemPrompt: 'S',
+      })
+    ).result()) as AssistantMessage;
+    expect(doGenerate).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledWith(refusal);
+    expect(message.stopReason).toBe('error');
   });
 });
 

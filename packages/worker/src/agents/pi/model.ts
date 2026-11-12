@@ -218,6 +218,8 @@ export interface AiSdkStreamOptions {
   spec: string;
   /** Called with each model call's usage once the call is complete. */
   onCall: (call: { id: string; usage: UsageTotals }) => void;
+  /** Asked before each call is sent; throws to refuse it (an exhausted budget). */
+  beforeCall?: () => Promise<void>;
   /** Keeps the activity alive while a call is in flight. */
   heartbeat: () => void;
   /**
@@ -275,6 +277,7 @@ export function aiSdkStreamFn(options: AiSdkStreamOptions, tools: () => AgentToo
     }, 10_000);
     pulse.unref?.();
     try {
+      await options.beforeCall?.();
       const result = await generateText({
         abortSignal: callOptions?.signal,
         messages: toModelMessages(context.messages),

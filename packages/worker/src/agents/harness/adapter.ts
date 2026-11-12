@@ -156,6 +156,14 @@ export interface HarnessTurn {
    * debited at once; the adapter reports such calls instead of `callUsage`.
    */
   callSpent(callId: string, modelSpec: string, usage: UsageTotals): void;
+  /**
+   * Asked before a model call is sent. Waits for the calls already reported to be
+   * debited, then checks the caps (`ImplementerTurnInput.beforeCall`). A cap that
+   * is exhausted aborts the turn, which fails with the budget stop, and the same
+   * error is thrown here so the adapter refuses the call. Resolves at once for a
+   * turn without `beforeCall`.
+   */
+  precheck(): Promise<void>;
 }
 
 /** What the adapter's turn reports, before its usage is normalised. */

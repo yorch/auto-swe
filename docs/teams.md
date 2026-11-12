@@ -319,6 +319,32 @@ which stops with a non-retryable `BUDGET_EXCEEDED` once its owner team is at the
 at the cap with nothing spent, so it refuses every launch and also stops every in-flight run of the
 team at its next model call.
 
+### Budget notifications
+
+A team is told when its spend crosses the cap's thresholds, without waiting for a report digest.
+The mid-run guard reads the team's month spend once per cache window (about 30 s) per worker
+process; each read evaluates two levels:
+
+- `WARNING`, when spend reaches `budgetAlertThresholdPercent` of the cap. A team with no threshold
+  has no warning.
+- `CAP_REACHED`, when spend reaches the cap (a cap of 0 is reached at once). New runs are blocked
+  from this point.
+
+Each level is sent at most once per team per UTC calendar month, to the team's Slack notify
+channel (`Team.slackNotifyChannel`, the channel step-failure notices use). The message names the
+team (escaped), the month, the percent used, and spend and cap in dollars, and links to the team
+settings page where the budget is managed. It is a message to a channel the team chose, so it
+carries dollars; the channel is not checked against who may read the cap.
+
+The dedupe is durable: a `TeamBudgetNotice` row keyed `(team, month, level)` is claimed by an
+insert before the post, and a unique violation means another evaluation, in this or another
+worker, already holds the notice. The claim is taken only when the team has a channel and a bot
+token resolves, so a channel configured later in the month still gets that month's notice; it is
+released if the post fails, so the next evaluation retries. Evaluation runs in the guard's activity
+path, not awaited and never inside the workflow isolate; any failure is logged and dropped and
+cannot fail or delay a model call. There is no setting to turn it off; a team with no notify
+channel gets none.
+
 ### View-only shares
 
 A share carries `canLaunch` (default `true`). A share with `canLaunch` `false` lets the sharing
@@ -394,6 +420,14 @@ only by the mid-run guard.
 - **The team cap is best-effort under concurrency**, exactly like the organization's. Spend is
   recorded after a launch returns, so launches that arrive together read the same total, and a
   running run can spend past the cap until the mid-run guard's cache window (about 30 s) catches up.
+- **Budget notifications are best-effort and Slack only.** A team without `slackNotifyChannel`, or a
+  deployment without a Slack bot token, gets none, and a post that fails is retried only at the next
+  evaluation (a model call after the cache window), so a team that stops running may never be told.
+  A notice is not evaluated by the launch gate: a team whose spend crosses a level with no run in
+  flight hears of it at the next run's first model call.
+- **A level is sent once per month even if the cap changes.** Raising the cap after `CAP_REACHED`
+  and reaching it again in the same month sends nothing further, and a team that jumps past its
+  threshold to the cap in one window gets the cap notice and no warning.
 - **Runs without an owning team count against no team cap.** A run with no `attributedTeamId` (a
   row from before the column, or a run no team can be derived for) is in the organization's spend
   and in no team's.

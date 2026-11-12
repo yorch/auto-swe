@@ -59,6 +59,7 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
         prisma.workflowRun.findUnique({
           select: {
             agentVersions: true,
+            attributedTeam: { select: { id: true, orgId: true } },
             channel: { select: { id: true, orgId: true, teamId: true } },
             id: true,
             pinnedSettings: true,
@@ -76,11 +77,16 @@ export async function currentRequestContext(): Promise<ResolveCtx> {
         run?.skillRevisions && typeof run.skillRevisions === 'object'
           ? (run.skillRevisions as Record<string, number>)
           : undefined;
+      // A run with no repository (template, service-principal or connection-less launch) has no
+      // repository team; the team its launch was billed to stands in, so the TEAM tiers apply to it
+      // too. The repository's team stays authoritative when present, and a channel run keeps the
+      // scope its caller adds from the channel.
+      const billed = !active?.repository?.teamId && !run?.channel ? run?.attributedTeam : null;
       const scope = {
         // Org is derived transitively (team → org); the ORGANIZATION cascade
         // tier sits between TEAM and GLOBAL.
-        orgId: active?.repository?.team?.orgId,
-        teamId: active?.repository?.teamId,
+        orgId: active?.repository?.team?.orgId ?? billed?.orgId,
+        teamId: active?.repository?.teamId ?? billed?.id,
         workflowTemplateId: run?.templateId,
       };
       // Run-start snapshot of the registry settings marked `runPinned`, completed

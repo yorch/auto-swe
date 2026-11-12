@@ -109,6 +109,7 @@ describe('runImplementerTurn', () => {
     const result = await runImplementerTurn(turn(runtime, { iteration: 2 }));
 
     expect(runtime.runTurn).toHaveBeenCalledWith({
+      beforeCall: expect.any(Function),
       chargeCall: expect.any(Function),
       onCallSpent: expect.any(Function),
       system: 'SYS',

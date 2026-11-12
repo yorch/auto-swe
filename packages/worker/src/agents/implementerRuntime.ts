@@ -95,6 +95,13 @@ export interface ImplementerTurnInput {
    * follows. A runtime that meters per call and has none uses `onCallSpent`.
    */
   chargeCall?: (spent: SpentByModel) => Promise<void>;
+  /**
+   * Asked before a model call is sent, for a runtime that sees its calls start
+   * (a metering proxy, an in-process loop). It throws the budget stop
+   * (`BUDGET_EXCEEDED`) when a cap is already exhausted, and the turn then fails
+   * with that error without making the call. It only reads; nothing is debited.
+   */
+  beforeCall?: () => Promise<void>;
   /** The spec the caller bound for the turn; a runtime that meters per call prices at it. */
   modelSpec?: string;
 }
@@ -468,6 +475,7 @@ export async function runImplementerTurn(turn: ImplementerTurn): Promise<{
   let outcome: ImplementerTurnOutcome;
   try {
     outcome = await turn.runtime.runTurn({
+      beforeCall: () => assertBudgetAvailable(`agent.${turn.role}`),
       chargeCall: accounting.charge,
       onCallSpent: accounting.onCallSpent,
       ...(turn.boundModelSpec ? { modelSpec: turn.boundModelSpec } : {}),

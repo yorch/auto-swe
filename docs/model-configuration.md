@@ -26,6 +26,8 @@ Per-role model selection lives on `Agent.modelSpec` (`<provider>/<model>`); sub-
 WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL → ConfigMissingError
 ```
 
+A run's team for this cascade is its repository's team. A run with no repository (a template, service-principal or connection-less launch) uses the team its launch was billed to (`WorkflowRun.attributedTeamId`), so TEAM-scope credentials, agents and settings apply to it as they do to a repository run; a repository's team always wins when present, and a channel run keeps its channel's scope.
+
 A missing GLOBAL row is a startup error, not a runtime condition — `assertConfigReady()` at worker boot catches it before any activity runs.
 
 `ProviderCredential` rows are scoped `GLOBAL`, `ORGANIZATION`, or `TEAM` — enforced by a DB CHECK, so there is deliberately no channel- or template-level credential tier. Credential resolution cascades `TEAM → ORGANIZATION → GLOBAL`. Templates and channels that want to pin a specific credential do so via `Agent.credentialId` pointing at one of those rows. The singleton `EmbeddingConfig` row covers the system-wide embedding model — no scope cascade (only one embedding role in the system).
