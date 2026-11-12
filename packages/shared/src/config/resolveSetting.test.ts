@@ -104,6 +104,29 @@ describe('overridableAt is enforced on read, not only on write', () => {
 });
 
 describe('run pinning', () => {
+  it('pins template recall and tenant holdout and ignores later live changes', async () => {
+    rows(
+      { key: 'memory.lessonRecall', scope: 'TEAM', value: 'off' },
+      { key: 'memory.lessonRecall', scope: 'WORKFLOW_TEMPLATE', value: 'on' },
+      { key: 'memory.lessonHoldoutPercent', scope: 'ORGANIZATION', value: 10 },
+      { key: 'memory.lessonHoldoutPercent', scope: 'TEAM', value: 25 },
+      { key: 'memory.lessonHoldoutPercent', scope: 'WORKFLOW_TEMPLATE', value: 50 }
+    );
+    const ctx = { ...TEAM_CTX, workflowTemplateId: 'template-1' };
+    const pins = await snapshotPinnedSettings(ctx);
+    expect(pins).toMatchObject({ 'memory.lessonHoldoutPercent': 25, 'memory.lessonRecall': 'on' });
+    rows(
+      { key: 'memory.lessonRecall', scope: 'WORKFLOW_TEMPLATE', value: 'shadow' },
+      { key: 'memory.lessonHoldoutPercent', scope: 'TEAM', value: 50 }
+    );
+    invalidateSettingsCache();
+    expect(await resolveSetting('memory.lessonRecall', { ...ctx, pinnedSettings: pins })).toBe(
+      'on'
+    );
+    expect(
+      await resolveSetting('memory.lessonHoldoutPercent', { ...ctx, pinnedSettings: pins })
+    ).toBe(25);
+  });
   it('reads a pinned value instead of the live cascade', async () => {
     rows({ key: 'workflow.maxTransitions', scope: 'GLOBAL', value: 900 });
     await expect(
@@ -146,6 +169,8 @@ describe('run pinning', () => {
     rows({ key: 'workflow.fanoutConcurrency', scope: 'TEAM', value: 8 });
     const snapshot = await snapshotPinnedSettings(TEAM_CTX);
     expect(snapshot).toEqual({
+      'memory.lessonHoldoutPercent': 0,
+      'memory.lessonRecall': 'on',
       'workflow.fanoutConcurrency': 8,
       'workflow.maxNeedsInputRounds': 5,
       'workflow.maxTransitions': 500,

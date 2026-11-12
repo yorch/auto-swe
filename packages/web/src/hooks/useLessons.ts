@@ -14,6 +14,55 @@ export interface LessonRepoStats {
   lastConsolidatedAt: string | null;
 }
 
+export interface RecallArmOutcomes {
+  runCount: number;
+  heldOutCount: number;
+  outcomeKnownCount: number;
+  successRate: number | null;
+  failureRate: number | null;
+  mergeKnownCount: number;
+  mergeRate: number | null;
+  gateKnownCount: number;
+  gatePassRate: number | null;
+  meanFixLoopIterations: number | null;
+  meanCostUsd: number | null;
+}
+
+export interface RecallRateDifference {
+  difference: number;
+  lower95: number;
+  upper95: number;
+}
+
+interface RecallComparison {
+  smallSample: boolean;
+  successRateDifference: RecallRateDifference | null;
+  mergeRateDifference: RecallRateDifference | null;
+  gatePassRateDifference: RecallRateDifference | null;
+}
+
+export interface LessonRecallExperiment {
+  arms: Record<'ON' | 'SHADOW' | 'OFF', RecallArmOutcomes>;
+  comparison: RecallComparison;
+  likeForLike: Record<'ON' | 'SHADOW', RecallArmOutcomes> & { comparison: RecallComparison };
+  caveat: string;
+  smallSampleWarning: string;
+  since: string;
+}
+
+export function useLessonRecallExperiment(repoId: string | undefined, since: string) {
+  return useQuery({
+    enabled: Boolean(repoId && since),
+    queryFn: () =>
+      api
+        .get<{ data: LessonRecallExperiment }>(
+          `/api/v1/lessons/recall-experiment?${new URLSearchParams({ repoId: repoId ?? '', since: `${since}T00:00:00.000Z` })}`
+        )
+        .then((response) => response.data),
+    queryKey: ['lesson-recall-experiment', repoId, since],
+  });
+}
+
 export interface LessonQuarantine {
   quarantinedAt: string | null;
   quarantinedById: string | null;

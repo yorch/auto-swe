@@ -2319,9 +2319,17 @@ model TrustedKnowledgeEvidence {
   @@map("trusted_knowledge_evidence")
 }
 
+enum LessonRecallArm {
+  ON
+  SHADOW
+  OFF
+}
+
 /// One execution of a template. `specSnapshot` is the parsed WorkflowSpec at
 /// start time, so live edits to the template do not affect this run.
 model WorkflowRun {
+  lessonRecallArm     LessonRecallArm? @map("lesson_recall_arm")
+  lessonRecallHeldOut Boolean          @default(false) @map("lesson_recall_held_out")
   reviewOfRunId         String?              @map("review_of_run_id") @db.Uuid
   reviewOfRun           WorkflowRun?         @relation("RunReviews", fields: [reviewOfRunId], references: [id], onDelete: SetNull)
   reviews               WorkflowRun[]        @relation("RunReviews")

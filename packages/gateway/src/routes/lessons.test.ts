@@ -38,6 +38,7 @@ function newMockPrisma() {
     organizationMembership: { findUnique: vi.fn().mockResolvedValue(null) },
     team: { findUnique: vi.fn().mockResolvedValue(null) },
     teamMembership: { findUnique: vi.fn().mockResolvedValue(null) },
+    workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
   };
   prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => unknown) => fn(prisma));
   return prisma;
@@ -61,6 +62,109 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
 
 const AUTH = { authorization: 'Bearer fake' };
 const REPO_ID = '11111111-1111-4111-8111-111111111111';
+
+describe('GET /lessons/recall-experiment', () => {
+  const url = `/api/v1/lessons/recall-experiment?repoId=${REPO_ID}&since=2026-11-01T00:00:00.000Z`;
+  it('requires authentication and exactly one repository/team scope and a valid date', async () => {
+    const { app } = await buildApp();
+    expect((await app.inject({ url })).statusCode).toBe(401);
+    for (const suffix of [
+      '',
+      `?repoId=${REPO_ID}&teamId=${REPO_ID}`,
+      '?repoId=invalid',
+      `?teamId=${REPO_ID}&since=invalid`,
+    ]) {
+      expect(
+        (await app.inject({ headers: AUTH, url: `/api/v1/lessons/recall-experiment${suffix}` }))
+          .statusCode
+      ).toBe(400);
+    }
+  });
+  it('refuses readers, inactive-team managers and managers of another team before reading outcomes', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.connection.findFirst.mockResolvedValue({ teamId: 'owning-team' });
+    for (const membership of [
+      null,
+      { role: 'ENGINEER', team: { isActive: true } },
+      { role: 'LEAD', team: { isActive: false } },
+    ]) {
+      prisma.teamMembership.findUnique.mockResolvedValue(membership);
+      expect((await app.inject({ headers: AUTH, url })).statusCode).toBe(403);
+    }
+    expect(prisma.workflowRun.findMany).not.toHaveBeenCalled();
+  });
+  it.each(['LEAD', 'ADMIN'])(
+    'allows an owning-team %s and scopes the result to the selected repository and window',
+    async (role) => {
+      const { app, prisma } = await buildApp('ENGINEER');
+      prisma.connection.findFirst.mockResolvedValue({ teamId: 'owning-team' });
+      prisma.teamMembership.findUnique.mockResolvedValue({ role, team: { isActive: true } });
+      const response = await app.inject({ headers: AUTH, url });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data.arms.ON).toMatchObject({ runCount: 0, successRate: null });
+      expect(prisma.workflowRun.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            attributedRepoId: REPO_ID,
+            endedAt: { not: null },
+            lessonRecallArm: { not: null },
+            startedAt: { gte: new Date('2026-11-01T00:00:00.000Z') },
+          },
+        })
+      );
+    }
+  );
+  it('allows platform admins without team membership and returns aggregate exposure/outcomes', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.connection.findFirst.mockResolvedValue({ teamId: 'another-team' });
+    prisma.workflowRun.findMany.mockResolvedValue([
+      {
+        attributedPullRequests: [{ status: 'MERGED' }],
+        costUsdAccrued: 1.5,
+        evalResults: [],
+        lessonRecallArm: 'ON',
+        lessonRecallHeldOut: false,
+        status: 'SUCCESS',
+        steps: [],
+        traces: [{ outputJson: { lessons: [{ lessonId: 'l-1' }] }, toolName: 'lessons.retrieved' }],
+      },
+    ] as never);
+    const response = await app.inject({ headers: AUTH, url });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({
+      arms: { ON: { meanCostUsd: 1.5, mergeRate: 1, runCount: 1, successRate: 1 } },
+      comparison: { smallSample: true },
+      likeForLike: { ON: { runCount: 1 } },
+    });
+    expect(prisma.teamMembership.findUnique).not.toHaveBeenCalled();
+  });
+  it('supports team scope only for that team manager, and excludes repositories merely shared with the team', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    const teamUrl = `/api/v1/lessons/recall-experiment?teamId=${REPO_ID}`;
+    expect((await app.inject({ headers: AUTH, url: teamUrl })).statusCode).toBe(403);
+    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD', team: { isActive: true } });
+    const response = await app.inject({ headers: AUTH, url: teamUrl });
+    expect(response.statusCode).toBe(200);
+    expect(prisma.teamMembership.findUnique).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { userId_teamId: { teamId: REPO_ID, userId: 'admin-1' } } })
+    );
+    expect(prisma.workflowRun.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ attributedRepo: { teamId: REPO_ID, type: 'git_repo' } }),
+      })
+    );
+  });
+  it('reports a nonexistent repository, oversize window, and database failure without fabricating results', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.connection.findFirst.mockResolvedValue(null);
+    expect((await app.inject({ headers: AUTH, url })).statusCode).toBe(404);
+    prisma.connection.findFirst.mockResolvedValue({ teamId: 'owning-team' });
+    prisma.workflowRun.findMany.mockResolvedValue(new Array(5001).fill({}) as never);
+    expect((await app.inject({ headers: AUTH, url })).statusCode).toBe(422);
+    prisma.workflowRun.findMany.mockRejectedValue(new Error('database unavailable'));
+    expect((await app.inject({ headers: AUTH, url })).statusCode).toBe(500);
+  });
+});
 
 function lastListWhere(prisma: ReturnType<typeof newMockPrisma>) {
   return prisma.memoryItem.findMany.mock.calls[0][0].where as Record<string, unknown>;

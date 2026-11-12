@@ -101,6 +101,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/knowledge/permissions': 'read',
   'GET /api/v1/knowledge/search': 'read',
   'GET /api/v1/lessons': 'read',
+  'GET /api/v1/lessons/recall-experiment': 'read',
   'GET /api/v1/lessons/search': 'read',
   'GET /api/v1/lessons/stats': 'read',
   'GET /api/v1/me/mcp-grants': { never: 'secret' },
