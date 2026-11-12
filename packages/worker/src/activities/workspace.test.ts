@@ -401,6 +401,51 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
     }
   );
 
+  it.each([false, true])(
+    'trial setup neither records failures nor resolves blockers (defer=%s)',
+    async (defer) => {
+      setupBlockerUpsertMock.mockClear();
+      setupBlockerResolveMock.mockClear();
+      for (const failed of [false, true]) {
+        vi.mocked(spawnCaptureAsync).mockImplementation(async (_file, args) => ({
+          exitCode: failed && args.join(' ').includes('trial-setup-command') ? 1 : 0,
+          stderr: '',
+          stdout: '',
+        }));
+        let ws: Awaited<ReturnType<typeof createWorkspace>> | undefined;
+        const work = async () => {
+          ws = await createWorkspace(
+            'https://github.com/acme/repo.git',
+            'b',
+            'main',
+            undefined,
+            undefined,
+            false,
+            {
+              repoSetup: {
+                connectionId: 'repo',
+                defer,
+                field: { steps: [{ name: 'trial', run: 'trial-setup-command' }] },
+                recordBlockers: false,
+              },
+            }
+          );
+          if (defer) {
+            await ws.runSetup?.();
+          }
+        };
+        if (failed) {
+          await expect(work()).rejects.toMatchObject({ type: 'WORKSPACE_SETUP_FAILED' });
+        } else {
+          await work();
+        }
+        await ws?.destroy();
+      }
+      expect(setupBlockerUpsertMock).not.toHaveBeenCalled();
+      expect(setupBlockerResolveMock).not.toHaveBeenCalled();
+    }
+  );
+
   it('does not persist setup results without a connection', async () => {
     setupBlockerResolveMock.mockClear();
     const ws = await createWorkspace(
@@ -616,6 +661,34 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
       vi.mocked(execShellAsync).mockReset();
       vi.mocked(execShellAsync).mockImplementation(okExec);
     });
+
+    it.each(['blocked', 'restricted'] as const)(
+      'trial disables open setup widening under %s',
+      async (realPolicy) => {
+        policy.value = realPolicy;
+        policy.setup = 'open';
+        const lock = vi.spyOn(backend, 'lockEgress').mockResolvedValue();
+        try {
+          const ws = await createWorkspace(
+            'https://github.com/acme/repo.git',
+            'b',
+            'main',
+            undefined,
+            undefined,
+            false,
+            { inheritSetupEgress: true, repoSetup: { defer: true, field: {} } }
+          );
+          expect(ws.setupEgressPolicy).toBe(realPolicy);
+          expect(ws.egressPolicy).toBe(realPolicy);
+          expect(lock.mock.calls.every(([, , options]) => !options?.prepareOnly)).toBe(true);
+          await ws.runSetup?.();
+          await ws.finishSetup?.();
+          await ws.destroy();
+        } finally {
+          lock.mockRestore();
+        }
+      }
+    );
 
     it('runs open setup with the baseline only, then verifies processes and replaces the agent lock once', async () => {
       policy.value = 'blocked';

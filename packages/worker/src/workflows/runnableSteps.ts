@@ -45,6 +45,7 @@ import {
   memoryActivities,
   mergeActivities,
   onboardingPrActivities,
+  onboardingTrialActivities,
   prdActivities,
   prFeedbackActivities,
   prFeedbackAgentTaskActivities,
@@ -1202,6 +1203,14 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     ({ ctx, inputs }) =>
       onboardingPrActivities.repoOnboardingPr({
         connectionId: resolveConnectionId('repoOnboardingPr', ctx, inputs),
+        draft: inputs.draft,
+      }),
+  ],
+  [
+    'repoOnboardingTrial',
+    ({ ctx, inputs }) =>
+      onboardingTrialActivities.repoOnboardingTrial({
+        connectionId: resolveConnectionId('repoOnboardingTrial', ctx, inputs),
         draft: inputs.draft,
       }),
   ],

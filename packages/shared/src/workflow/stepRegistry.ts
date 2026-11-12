@@ -1082,6 +1082,15 @@ register({
   name: 'repoOnboardingPr',
 });
 
+register({
+  category: 'shell',
+  configFields: [],
+  description:
+    'Test inputs.draft in a fresh base-branch workspace for inputs.connectionId or the run workspace connection, under the real run network policy without persisting setup blockers. Returns trialPassed, repairable, items, blockers and markdown.',
+  label: 'Trial repository onboarding',
+  name: 'repoOnboardingTrial',
+});
+
 /** Get metadata for a step name. Throws on unknown step. */
 export function getStepMetadata(name: string): StepMetadata {
   const meta = REGISTRY.get(name);

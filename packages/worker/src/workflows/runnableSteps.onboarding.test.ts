@@ -1,12 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const m = vi.hoisted(() => ({ deliver: vi.fn(), parse: vi.fn() }));
+const m = vi.hoisted(() => ({ deliver: vi.fn(), parse: vi.fn(), trial: vi.fn() }));
 vi.mock('./runnableActivities.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./runnableActivities.js')>();
   return {
     ...actual,
     genericActivities: { ...actual.genericActivities, parseAgentOutput: m.parse },
     onboardingPrActivities: { repoOnboardingPr: m.deliver },
+    onboardingTrialActivities: { repoOnboardingTrial: m.trial },
   };
 });
 
@@ -19,6 +20,31 @@ const request = {} as never;
 beforeEach(() => vi.clearAllMocks());
 
 describe('onboarding spec steps', () => {
+  it.each([undefined, 'bound-repo'])(
+    'dispatches trial draft and bound or workspace connection (%s)',
+    async (connectionId) => {
+      const draft = { gateCommands: {}, setup: {} };
+      m.trial.mockResolvedValue({ repairable: true, trialPassed: false });
+      expect(
+        await dispatchStepImpl(
+          'repoOnboardingTrial',
+          ctx,
+          request,
+          {},
+          { connectionId, draft },
+          'trial'
+        )
+      ).toEqual({ repairable: true, trialPassed: false });
+      expect(m.trial).toHaveBeenCalledWith({ connectionId: connectionId ?? 'run-repo', draft });
+    }
+  );
+
+  it('refuses trial without a repository', async () => {
+    await expect(
+      dispatchStepImpl('repoOnboardingTrial', { context: {} } as never, request, {}, {}, 'trial')
+    ).rejects.toThrow('requires inputs.connectionId');
+    expect(m.trial).not.toHaveBeenCalled();
+  });
   it('dispatches the onboarding parser kind and text', async () => {
     m.parse.mockResolvedValue({ markdown: 'invalid', valid: false });
     expect(

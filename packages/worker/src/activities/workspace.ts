@@ -84,6 +84,8 @@ export {
 export { shellQuote };
 
 export interface Workspace {
+  /** Scrub credentials known to this workspace before publishing diagnostics. */
+  redact?: (text: string) => string;
   readonly baseSha: string;
   readBaseFile: (path: string) => Promise<string | null>;
   knowledgeBaseSnapshotIds?: string[];
@@ -848,13 +850,20 @@ export async function createWorkspace(
      * `open` (see `runAgentTask`).
      */
     egressPolicy?: EgressPolicy;
+    /** Internal trials must test setup under the real run policy, without setup-phase widening. */
+    inheritSetupEgress?: boolean;
     /**
      * Run the repository's setup (`.auto-swe/setup.yml`, or `field` — the repository's
      * `Connection.setup` — which overrides it). Absent, the workspace gets none: only the trusted
      * delivery workspace leaves it out. With `defer`, setup waits for `workspace.runSetup()`, for
      * a caller that moves the checkout to another branch first.
      */
-    repoSetup?: { field: unknown; defer?: boolean; connectionId?: string | null };
+    repoSetup?: {
+      field: unknown;
+      defer?: boolean;
+      connectionId?: string | null;
+      recordBlockers?: boolean;
+    };
     /**
      * Install what this connection declares (its admin list and, when enabled, the base ref's
      * `.auto-swe/tools.yml`), if `workspace.toolInstall.enabled` is on.
@@ -872,7 +881,9 @@ export async function createWorkspace(
     options?.egressPolicy ?? (await resolveRunEgressPolicy(options?.teamId ?? null));
   let setupEgressPolicy = effectiveSetupEgressPolicy(
     egressPolicy,
-    options?.trusted ? 'inherit' : await resolveRunSetupEgressPolicy(options?.teamId ?? null)
+    options?.trusted || options?.inheritSetupEgress
+      ? 'inherit'
+      : await resolveRunSetupEgressPolicy(options?.teamId ?? null)
   );
   let setupPhase = setupEgressPolicy !== egressPolicy;
   let transitioning = false;
@@ -1172,7 +1183,7 @@ export async function createWorkspace(
   // Submodules, LFS, cache and steps: all after the lock, on the tree the workspace works on.
   const runResolvedSetup = async (): Promise<RepoSetupReport | null> => {
     if (!resolvedSetup) {
-      if (options?.repoSetup?.connectionId) {
+      if (options?.repoSetup?.connectionId && options.repoSetup.recordBlockers !== false) {
         await resolveSetupBlockers(options.repoSetup.connectionId);
       }
       return null;
@@ -1195,7 +1206,7 @@ export async function createWorkspace(
       submodules: git.submodules,
     };
     auditLog(`workspace.setup ${containerName} ${JSON.stringify(report)}`);
-    if (options?.repoSetup?.connectionId) {
+    if (options?.repoSetup?.connectionId && options.repoSetup.recordBlockers !== false) {
       await resolveSetupBlockers(options.repoSetup.connectionId);
     }
     return report;
@@ -1727,7 +1738,7 @@ export async function createWorkspace(
       setupReport = Promise.resolve(await runResolvedSetup());
     }
   } catch (err) {
-    if (options?.repoSetup?.connectionId) {
+    if (options?.repoSetup?.connectionId && options.repoSetup.recordBlockers !== false) {
       await recordSetupFailure(options.repoSetup.connectionId, err);
     }
     await registry?.registration.release().catch(() => {});
@@ -1842,6 +1853,7 @@ export async function createWorkspace(
         []),
     ],
     knowledgeBases: mountedKnowledgeBases,
+    redact: (text) => redactSecrets(redactForRecord(text), setupSecrets),
     setupEgressPolicy,
     ...(installLate ? { installTools: installLate } : {}),
     readFile: readWorkspaceFile,
@@ -1855,7 +1867,7 @@ export async function createWorkspace(
               try {
                 return await runResolvedSetup();
               } catch (err) {
-                if (options.repoSetup?.connectionId) {
+                if (options.repoSetup?.connectionId && options.repoSetup.recordBlockers !== false) {
                   await recordSetupFailure(options.repoSetup.connectionId, err);
                 }
                 if (setupPhase) {
