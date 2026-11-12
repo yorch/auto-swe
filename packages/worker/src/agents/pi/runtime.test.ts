@@ -1,5 +1,6 @@
 import { MockLanguageModelV4 } from 'ai/test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 const { checkSensitiveFilePath, openMcpRelay, scanShellCommand } = vi.hoisted(() => ({
   checkSensitiveFilePath: vi.fn(async (_p: string): Promise<string | null> => null),
@@ -185,6 +186,32 @@ describe('a Pi turn', () => {
         type: 'image',
       },
     ]);
+  });
+  it('executes a bound eval corpus tool through worker policy', async () => {
+    const call = vi.fn(async () => ({ lessons: [] }));
+    const { model } = scriptedModel([
+      { calls: [{ input: { query: 'task' }, name: 'searchLessons' }] },
+      { text: 'done' },
+    ]);
+    const adapter = adapterFor(model, {
+      evalLessonTools: [
+        {
+          call,
+          description: 'Search eval corpus',
+          name: 'searchLessons',
+          schema: z.object({ query: z.string() }),
+        },
+      ],
+    });
+    const turn = fakeTurn(adapter, fakeContainer().exec);
+    await adapter.runTurn(turn as unknown as HarnessTurn, { system: 'S', user: 'U' });
+    expect(call).toHaveBeenCalledWith({ query: 'task' });
+    expect(turn.decide).toHaveBeenCalledWith(
+      expect.any(String),
+      'searchLessons',
+      { query: 'task' },
+      REPO
+    );
   });
 
   it.each([false, true])('offers a pinned AgentTool with governed grant=%s', async (granted) => {

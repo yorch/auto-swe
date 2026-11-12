@@ -19,6 +19,7 @@ import {
 } from '../lib/config/mcpConnection.js';
 import { skillMenuLine, skillPromptBlock } from '../lib/config/skillPrompt.js';
 import type { ResolveCtx } from '../lib/config/types.js';
+import type { EvalLessonTool } from '../lib/evalLessonRecall.js';
 import { getModel, type LanguageModel } from '../lib/models.js';
 import { BrowserToolset, createMastraBrowserTools } from './browserTools.js';
 import { buildKnowledgeTools } from './knowledgeTools.js';
@@ -74,6 +75,7 @@ export interface ImplementerAgentOptions {
    * tools may read. Omitted, the agent gets no memory tools.
    */
   lessonRepoId?: string;
+  evalLessonTools?: EvalLessonTool[];
   /** Knowledge tools require explicit Agent.toolKeys grants; null never enables them. */
   knowledgeToolKeys?: string[];
   /** Browser access is supplied only when `browser` is explicitly granted. */
@@ -192,6 +194,17 @@ export async function createImplementerAgent(
     ...resolvedWorkspaceTools,
     ...(hasSkills ? { loadSkill } : {}),
     ...(options?.lessonRepoId ? createLessonTools(options.lessonRepoId, tracer) : {}),
+    ...Object.fromEntries(
+      (options?.evalLessonTools ?? []).map((entry) => [
+        entry.name,
+        createTool({
+          description: entry.description,
+          execute: (args) => entry.call(args),
+          id: entry.name,
+          inputSchema: entry.schema,
+        }),
+      ])
+    ),
     // Like `browser`, granted only by name: a null or unlisted grant never binds it.
     ...(tools?.includes('provisionTool')
       ? {
@@ -423,7 +436,8 @@ export async function buildImplementerForActivity(
   /** The repository whose lessons the memory tools read; omitted, there are none. */
   lessonRepoId?: string,
   /** A model bound by the caller (see `getBoundModel`); omitted, the agent binds its own. */
-  modelOverride?: LanguageModel
+  modelOverride?: LanguageModel,
+  evalLessonTools?: EvalLessonTool[]
 ): Promise<{
   agent: Agent;
   promptSuffix: string;
@@ -455,6 +469,7 @@ export async function buildImplementerForActivity(
       skills,
       {
         agentKey,
+        evalLessonTools,
         ...(lessonRepoId ? { lessonRepoId } : {}),
         // The effective keys already fold a persona into the implementer's set, so the
         // knowledge grant is read from there and never widened by a persona.

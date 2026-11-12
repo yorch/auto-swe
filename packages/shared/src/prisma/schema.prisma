@@ -2891,6 +2891,7 @@ model EvalDataset {
 
   cases EvalCase[]
   runs  EvalRun[]
+  lessons EvalLesson[]
 
   /// The repository whose setup secrets the cases' workspace setup reads; null reads none.
   setupSecretsConnectionId String?     @map("setup_secrets_connection_id") @db.Uuid
@@ -2946,6 +2947,9 @@ model EvalCase {
 /// One harness run: a candidate agent/model/prompt scored against a baseline
 /// over a dataset, with the paired-stats verdict in `summary` (P1).
 model EvalRun {
+  candidateMemoryMode LessonRecallArm @default(OFF) @map("candidate_memory_mode")
+  baselineMemoryMode LessonRecallArm @default(OFF) @map("baseline_memory_mode")
+  corpusHash String? @map("corpus_hash")
   id               String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   datasetId        String      @map("dataset_id") @db.Uuid
   dataset          EvalDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
@@ -2969,6 +2973,29 @@ model EvalRun {
 
   @@index([datasetId, startedAt])
   @@map("eval_runs")
+}
+
+enum EvalLessonSource {
+  AUTHORED
+  IMPORTED
+}
+
+model EvalLesson {
+  id String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  datasetId String @map("dataset_id") @db.Uuid
+  dataset EvalDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  content String
+  failureType String? @map("failure_type")
+  tags String[] @default([])
+  embedding Unsupported("vector(1536)")
+  embeddingModel String @map("embedding_model")
+  source EvalLessonSource @default(AUTHORED)
+  sourceMemoryItemId String? @map("source_memory_item_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([datasetId])
+  @@map("eval_lessons")
 }
 
 /// An admin-extensible judge rubric (P2). Versioned + scoped like ScannerPattern;

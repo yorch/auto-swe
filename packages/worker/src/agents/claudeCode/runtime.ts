@@ -447,7 +447,12 @@ export function claudeCodeAdapter(
     options.toolKeys?.includes('searchKnowledge') ?? false
   );
   const policy: PolicyContext = {
-    browserTools: options.browserToolset ? BROWSER_RELAYED_TOOL_NAMES : [],
+    browserTools: [
+      ...(options.browserToolset ? BROWSER_RELAYED_TOOL_NAMES : []),
+      ...(options.evalLessonTools ?? []).map(
+        (entry) => `mcp__${BROWSER_MCP_SERVER}__${entry.name}`
+      ),
+    ],
     containerId: workspace.containerId,
     cwd: WORKSPACE_DIR,
     home: HARNESS_HOME,
@@ -949,31 +954,41 @@ export function claudeCodeAdapter(
       const mcpServer = mcpRelay
         ? { instance: mcpRelay.createServer(), timeout: mcpRelay.callTimeoutMs }
         : undefined;
-      const browserServer = options.browserToolset
-        ? createSdkMcpServer({
-            name: BROWSER_MCP_SERVER,
-            timeout: 1_200_000,
-            tools: BROWSER_TOOLS.map((entry) =>
-              tool(entry.name, entry.description, entry.schema.shape, async (args) => {
-                const result = await options.browserToolset?.call(entry.name, args);
-                return {
-                  content: [
-                    { text: result?.text ?? '', type: 'text' },
-                    ...(result?.image
-                      ? [
-                          {
-                            data: result.image.data.toString('base64'),
-                            mimeType: result.image.mimeType,
-                            type: 'image' as const,
-                          },
-                        ]
-                      : []),
-                  ],
-                };
-              })
-            ),
-          })
-        : undefined;
+      const browserServer =
+        options.browserToolset || options.evalLessonTools?.length
+          ? createSdkMcpServer({
+              name: BROWSER_MCP_SERVER,
+              timeout: 1_200_000,
+              tools: [
+                ...(options.browserToolset ? BROWSER_TOOLS : []).map((entry) =>
+                  tool(entry.name, entry.description, entry.schema.shape, async (args) => {
+                    const result = await options.browserToolset?.call(entry.name, args);
+                    return {
+                      content: [
+                        { text: result?.text ?? '', type: 'text' },
+                        ...(result?.image
+                          ? [
+                              {
+                                data: result.image.data.toString('base64'),
+                                mimeType: result.image.mimeType,
+                                type: 'image' as const,
+                              },
+                            ]
+                          : []),
+                      ],
+                    };
+                  })
+                ),
+                ...(options.evalLessonTools ?? []).map((entry) =>
+                  tool(entry.name, entry.description, entry.schema.shape, async (args) => ({
+                    content: [
+                      { text: JSON.stringify(await entry.call(args)), type: 'text' as const },
+                    ],
+                  }))
+                ),
+              ],
+            })
+          : undefined;
       // Through the worker's model proxy when the deployment runs one: the
       // container gets a token good only for this turn's model calls, never the
       // credential, and every call — the small-model side calls the harness

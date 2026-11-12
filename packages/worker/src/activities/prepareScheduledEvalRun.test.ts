@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const prismaMock = vi.hoisted(() => ({
   evalDataset: { findFirst: vi.fn() },
+  evalLesson: { findMany: vi.fn(async () => []) },
   evalRun: { create: vi.fn() },
 }));
 vi.mock('@auto-swe/shared/db', () => ({ prisma: prismaMock }));

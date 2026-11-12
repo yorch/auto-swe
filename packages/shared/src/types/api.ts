@@ -1671,6 +1671,13 @@ export interface EvalDatasetSummary {
 }
 
 export interface EvalDatasetDetail extends EvalDatasetSummary {
+  lessons?: {
+    id: string;
+    content: string;
+    failureType: string | null;
+    tags: string[];
+    source: 'AUTHORED' | 'IMPORTED';
+  }[];
   cases: EvalCaseDto[];
   /** The repository whose setup secrets the cases' workspace setup reads; null reads none. */
   setupSecretsRepository: { id: string; name: string } | null;
@@ -1681,6 +1688,9 @@ export interface EvalDatasetDetail extends EvalDatasetSummary {
 }
 
 export interface EvalRunDto {
+  candidateMemoryMode?: 'ON' | 'SHADOW' | 'OFF';
+  baselineMemoryMode?: 'ON' | 'SHADOW' | 'OFF';
+  corpusHash?: string | null;
   id: string;
   datasetId: string;
   /** The benchmark's name and slug. */

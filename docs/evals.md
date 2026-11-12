@@ -396,7 +396,41 @@ verdicts into trends per template, model, and prompt version.
 
 ---
 
+## Dataset lesson memory
+
+Each dataset owns an isolated, static lesson corpus in `eval_lessons`. Production recall,
+search, explanation and consolidation do not read this table. Eval recall and its tools do not
+read `memory_items`. Platform admins list the corpus with
+`GET /api/v1/platform/evals/:id/lessons`, replace it with
+`PUT /api/v1/platform/evals/:id/lessons` (`{lessons: [{content, failureType, tags}]}`), or snapshot
+repository lessons with `POST /api/v1/platform/evals/:id/lessons/import` (`{repoId, limit}`).
+Replacement clears a corpus when `lessons` is empty. The maximum is 50 lessons, each at most
+5,000 characters. Replacement embeds through the worker's configured embedding helper before
+atomically swapping the corpus. Import copies only active, non-quarantined, non-superseded
+repository SWE lessons, retaining source IDs as provenance, not live links. Imported lessons are
+replaceable just like authored lessons. Authoring requires a connected Temporal worker.
+
+`POST /api/v1/platform/evals/runs` accepts `candidateMemoryMode` and `baselineMemoryMode`
+(`on`, `shadow`, `off`), both defaulting to `off`. ON retrieves using the case input, injects the
+production memory fence, and binds corpus-backed `searchLessons` and `explainLesson`. SHADOW
+performs the same retrieval and traces matches without prompt or tool exposure. OFF does neither.
+ON and SHADOW require a nonempty corpus. Retrieval uses the production limit and similarity
+threshold with exact cosine ranking. An incompatible embedding model fails clearly.
+
+Launch pins a SHA-256 hash of sorted content/failure-type tuples, including duplicates. The
+harness verifies it before executing cases and fails if the corpus changes. It holds the loaded
+corpus for the entire comparison. The summary records both modes, the hash and per-arm counts
+of cases receiving (or in SHADOW, potentially receiving) at least one lesson. Retrieval traces
+include mode, case ID, agent ref, lesson IDs, similarities, and matched/no-match results. Paired
+statistics are unchanged. The dataset page lists the corpus; run detail shows modes and hash.
+CLI equivalents are `--candidate-memory=on` and `--against-memory=off` on `evals run`.
+
 ## 8. Limitations
+
+- **Eval memory is static.** Evals never write lessons back. Scheduled evals remain OFF/OFF.
+  Content/failure type are hashed; metadata, embeddings and live model/config settings are not.
+  Replacing identical text with different embeddings does not change the hash. A run fails on
+  an incompatible embedding model; freeze provider/settings externally for stricter reproduction.
 
 - **A case's stack is set at creation through the API only.** `stack` is accepted on a case when a
   dataset is created, through the dataset create API; the dashboard cannot add a case. A stored

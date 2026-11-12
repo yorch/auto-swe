@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import type { EvalLessonInput } from '@auto-swe/shared';
 import {
   type ClosedLedgerStatus,
   closedLedgerStatusFor,
@@ -446,6 +448,7 @@ declare module 'fastify' {
           baselineRuntime?: ImplementerRuntimeKind | null;
         }
       ) => Promise<void>;
+      replaceEvalLessons: (datasetId: string, lessons: EvalLessonInput[]) => Promise<number>;
       /**
        * Flake-screen a dataset's never-screened cases (EvalScreenWorkflow). Joins
        * a screen already running under the same id instead of failing.
@@ -1262,6 +1265,15 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         workflowExecutionTimeout: '11 minutes',
         workflowId,
       })) as ExecutorImageProbeResult;
+    },
+
+    async replaceEvalLessons(datasetId, lessons) {
+      return (await client.workflow.execute('ReplaceEvalLessonsWorkflow', {
+        args: [{ datasetId, lessons }],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: '6m',
+        workflowId: `eval-corpus-${randomUUID()}`,
+      })) as number;
     },
 
     async sendAssistantTurn(input, turn) {

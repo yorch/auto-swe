@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 /** The part of the SDK's `query()` options these tests read back. */
 interface HookOutput {
@@ -350,6 +351,33 @@ describe('preparing the container', () => {
 });
 
 describe('browser screenshot MCP output', () => {
+  it('binds eval corpus tools without granting browser access', async () => {
+    const call = vi.fn(async () => ({ lessons: [{ lessonId: 'eval-only' }] }));
+    const { runtime } = setup({
+      evalLessonTools: [
+        {
+          call,
+          description: 'Search eval corpus',
+          name: 'searchLessons',
+          schema: z.object({ query: z.string() }),
+        },
+      ],
+    });
+    h.script.push([[init('eval-tools'), success('done')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    const options = h.queryCalls[0]?.options as QueryOptions & {
+      mcpServers: Record<
+        string,
+        { instance: { tools: { name: string; handler(input: unknown): Promise<unknown> }[] } }
+      >;
+    };
+    const tools = options.mcpServers[BROWSER_MCP_SERVER].instance.tools;
+    expect(tools.map((entry) => entry.name)).toEqual(['searchLessons']);
+    expect(await tools[0].handler({ query: 'task' })).toMatchObject({
+      content: [{ text: JSON.stringify({ lessons: [{ lessonId: 'eval-only' }] }) }],
+    });
+    expect(call).toHaveBeenCalledWith({ query: 'task' });
+  });
   it('returns JPEG pixels as an MCP image content item', async () => {
     const browserToolset = {
       call: vi.fn(async () => ({

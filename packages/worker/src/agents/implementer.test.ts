@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import type { Workspace } from '../activities/workspace.js';
 
 /**
@@ -122,6 +123,30 @@ beforeEach(() => {
 });
 
 describe('Mastra knowledge search binding', () => {
+  it('binds a corpus tool independently of production repository lessons', async () => {
+    const call = vi.fn(async () => ({ lessons: [] }));
+    const { agent } = await createImplementerAgent(
+      workspace,
+      undefined,
+      null,
+      [],
+      {
+        evalLessonTools: [
+          {
+            call,
+            description: 'Search eval corpus',
+            name: 'searchLessons',
+            schema: z.object({ query: z.string() }),
+          },
+        ],
+      },
+      {} as never
+    );
+    const tools = (agent as unknown as { tools: Record<string, ToolDef<unknown, unknown>> }).tools;
+    await tools.searchLessons.execute({ query: 'task' });
+    expect(call).toHaveBeenCalledWith({ query: 'task' });
+    expect(tools).not.toHaveProperty('explainLesson');
+  });
   it.each([false, true])('binds pinned KBs with governed grant=%s', async (granted) => {
     const ids = ['pin-a'];
     const { agent } = await createImplementerAgent(

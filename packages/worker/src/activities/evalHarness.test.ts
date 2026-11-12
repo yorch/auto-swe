@@ -1,3 +1,5 @@
+import { evalCorpusHash } from '@auto-swe/shared';
+import { prisma } from '@auto-swe/shared/db';
 import { ApplicationFailure } from '@temporalio/activity';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -69,9 +71,18 @@ const evalCaseFindMany = vi.fn(async () => [] as unknown[]);
 const evalDatasetFindUnique = vi.fn(async () => null as unknown);
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
+    $queryRaw: vi.fn(async () => []),
     evalCase: { findMany: (...a: unknown[]) => evalCaseFindMany(...(a as [])) },
     evalDataset: { findUnique: (...a: unknown[]) => evalDatasetFindUnique(...(a as [])) },
-    evalRun: { updateMany: (...a: unknown[]) => evalRunUpdateMany(...(a as [])) },
+    evalRun: {
+      findUniqueOrThrow: vi.fn(async () => ({
+        baselineMemoryMode: 'OFF',
+        candidateMemoryMode: 'OFF',
+        corpusHash: null,
+        datasetId: 'd1',
+      })),
+      updateMany: (...a: unknown[]) => evalRunUpdateMany(...(a as [])),
+    },
   },
 }));
 vi.mock('../lib/evalCapture.js', () => ({ recordEvalResult: vi.fn(async () => {}) }));
@@ -85,7 +96,17 @@ vi.mock('../lib/metrics.js', () => ({
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/lib/systemConfig')>()),
-  resolveWorkflowDefaults: vi.fn(async () => ({ maxEvalIterations: 3 })),
+  resolveWorkflowDefaults: vi.fn(async () => ({
+    lessonRetrievalLimit: 5,
+    lessonRetrievalThreshold: 0.7,
+    maxEvalIterations: 3,
+  })),
+}));
+vi.mock('../lib/embeddings.js', () => ({
+  generateEmbeddingWithSpec: vi.fn(async () => ({ embedding: [1, 0], spec: 'test' })),
+}));
+vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
+  scanSkillContent: vi.fn(async () => ({ incomplete: false, safe: true, warnings: [] })),
 }));
 // The harness resolves the implementer's tool-output budget the same way it
 // resolves the model; without this the registry resolver reaches for Prisma.
@@ -204,6 +225,39 @@ describe('defaultFinalize', () => {
 });
 
 describe('runEvalHarness', () => {
+  it('passes independent modes even for identical refs and records exposure counts', async () => {
+    const d = deps({
+      runCase: vi.fn(async (_c, _ref, _runtime, mode) => ({
+        ...outcome(1),
+        lessonExposureCount: mode === 'SHADOW' ? 1 : 0,
+      })),
+    });
+    await runEvalHarness(
+      {
+        ...input,
+        baselineMemoryMode: 'SHADOW',
+        baselineRef: 'same',
+        candidateMemoryMode: 'OFF',
+        candidateRef: 'same',
+        corpusHash: 'hash',
+      },
+      d
+    );
+    expect(
+      vi
+        .mocked(d.runCase)
+        .mock.calls.slice(0, 2)
+        .map((args) => args[3])
+    ).toEqual(['SHADOW', 'OFF']);
+    expect(d.finals[0].summary).toMatchObject({
+      memory: {
+        baselineMode: 'SHADOW',
+        candidateMode: 'OFF',
+        corpusHash: 'hash',
+        exposureCounts: { baseline: 3, candidate: 0 },
+      },
+    });
+  });
   it('records one gate row per case (candidate arm) and finalizes', async () => {
     const d = deps();
     await runEvalHarness(input, d);
@@ -453,6 +507,51 @@ describe('runEvalHarness', () => {
 });
 
 describe('runCaseDefault iteration cap', () => {
+  it.each(['ON', 'SHADOW', 'OFF'] as const)(
+    '%s wires only the intended prompt and tools into the real runner',
+    async (mode) => {
+      buildImplementerForActivity.mockClear();
+      generate.mockClear();
+      const corpus = [
+        {
+          content: 'Use transactions.',
+          embedding: [1, 0],
+          embeddingModel: 'test',
+          failureType: 'TEST',
+          id: '11111111-1111-4111-8111-111111111111',
+        },
+      ];
+      await runCaseDefault(cases[0], 'implementer', undefined, undefined, { corpus, mode });
+      const tools = buildImplementerForActivity.mock.calls[0][6] as { name: string }[] | undefined;
+      expect(tools?.map((t) => t.name) ?? []).toEqual(
+        mode === 'ON' ? ['searchLessons', 'explainLesson'] : []
+      );
+      expect(JSON.stringify(generate.mock.calls)).toContain(
+        mode === 'ON' ? 'Use transactions.' : 'description'
+      );
+      if (mode !== 'ON') {
+        expect(JSON.stringify(generate.mock.calls)).not.toContain('Use transactions.');
+      }
+    }
+  );
+  it('fails an activity clearly before cases execute when the pinned corpus hash changes', async () => {
+    evalRunUpdateMany.mockResolvedValue({ count: 1 });
+    vi.mocked(prisma.evalRun.findUniqueOrThrow).mockResolvedValueOnce({
+      baselineMemoryMode: 'OFF',
+      candidateMemoryMode: 'ON',
+      corpusHash: evalCorpusHash([{ content: 'old' }]),
+      datasetId: 'd1',
+    } as never);
+    await expect(runEvalHarnessActivity(input)).rejects.toThrow('changed since launch');
+    expect(evalRunUpdateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'FAILED',
+          summary: { error: expect.stringContaining('changed since launch') },
+        }),
+      })
+    );
+  });
   beforeEach(() => {
     generate.mockClear();
     execCapture.mockClear();
@@ -518,8 +617,6 @@ describe('runCaseDefault iteration cap', () => {
     // The production builder: persona tool narrowing, MCP headers and private-network
     // opt-in all come with it. Built once, not per iteration.
     expect(buildImplementerForActivity).toHaveBeenCalledTimes(1);
-    // No repository is passed: an eval case gets no memory tools, so both
-    // sides of a comparison see the same tool set.
     expect(buildImplementerForActivity).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),

@@ -1,6 +1,7 @@
 'use client';
 
 import { use, useState } from 'react';
+import { EvalMemoryPins } from '@/components/evals/EvalMemory';
 import { EvalResultsTable } from '@/components/evals/EvalResultsTable';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
 import { Alert } from '@/components/ui/Alert';
@@ -242,6 +243,7 @@ export default function EvalRunPage({ params }: { params: Promise<{ id: string }
               subtitle={`${formatArm(run.candidateRef, run.candidateRuntime)} vs ${formatArm(run.baselineRef, run.baselineRuntime)} · started ${formatDate(run.startedAt)}${run.endedAt ? ` · ended ${formatDate(run.endedAt)}` : ''}`}
               title={run.datasetName ? `${run.datasetName} benchmark run` : 'Benchmark run'}
             />
+            <EvalMemoryPins run={run} />
             <Card>
               <CardHeader>
                 <CardTitle hint="Candidate vs baseline">Verdict</CardTitle>

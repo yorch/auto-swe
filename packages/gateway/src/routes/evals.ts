@@ -8,6 +8,7 @@
  * cases, and result/run reads.
  */
 
+import { evalCorpusHash } from '@auto-swe/shared';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { evalScreenWorkflowId } from '@auto-swe/shared/lib/workflowId';
@@ -123,6 +124,7 @@ const CreateDatasetBody = z.object({
 const SetupSecretsRepoBody = z.object({ connectionId: z.string().uuid().nullable() }).strict();
 
 const StartRunBody = z.object({
+  baselineMemoryMode: z.enum(['on', 'shadow', 'off']).default('off'),
   baselineRef: z.string().min(1).max(200),
   /**
    * Per-side implementer runtime override. Omitted or null, that side runs on
@@ -130,6 +132,7 @@ const StartRunBody = z.object({
    * `runtime`, else `workspace.implementerRuntime`.
    */
   baselineRuntime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
+  candidateMemoryMode: z.enum(['on', 'shadow', 'off']).default('off'),
   candidateRef: z.string().min(1).max(200),
   candidateRuntime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
   datasetId: z.string().uuid(),
@@ -185,6 +188,9 @@ function hasPartialVerdict(summary: unknown): boolean {
 }
 
 function toRunDto(run: {
+  candidateMemoryMode?: 'ON' | 'SHADOW' | 'OFF';
+  baselineMemoryMode?: 'ON' | 'SHADOW' | 'OFF';
+  corpusHash?: string | null;
   dataset?: { name: string; slug: string } | null;
   id: string;
   datasetId: string;
@@ -198,10 +204,13 @@ function toRunDto(run: {
   endedAt: Date | null;
 }): EvalRunDto {
   return {
+    baselineMemoryMode: run.baselineMemoryMode ?? 'OFF',
     baselineRef: run.baselineRef,
     baselineRuntime: toImplementerRuntime(run.baselineRuntime),
+    candidateMemoryMode: run.candidateMemoryMode ?? 'OFF',
     candidateRef: run.candidateRef,
     candidateRuntime: toImplementerRuntime(run.candidateRuntime),
+    corpusHash: run.corpusHash ?? null,
     datasetId: run.datasetId,
     ...(run.dataset ? { datasetName: run.dataset.name, datasetSlug: run.dataset.slug } : {}),
     endedAt: run.endedAt?.toISOString() ?? null,
@@ -258,6 +267,107 @@ function toCaseDto(c: {
 export const evalRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+
+  const LessonInput = z.object({
+    content: z.string().trim().min(1).max(5000),
+    failureType: z.string().max(100).nullable().optional(),
+    tags: z.array(z.string().max(100)).max(20).optional(),
+  });
+  app.get(
+    '/evals/:id/lessons',
+    { onRequest: adminOnly, schema: { params: IdParam } },
+    async (request, reply) => {
+      const datasetId = request.params.id;
+      if (!(await fastify.prisma.evalDataset.findUnique({ where: { id: datasetId } }))) {
+        return sendError(reply, 404, 'DATASET_NOT_FOUND', 'Eval dataset not found');
+      }
+      const lessons = await fastify.prisma.evalLesson.findMany({
+        orderBy: [{ content: 'asc' }, { id: 'asc' }],
+        where: { datasetId },
+      });
+      return { data: { corpusHash: evalCorpusHash(lessons), count: lessons.length, lessons } };
+    }
+  );
+  app.put(
+    '/evals/:id/lessons',
+    {
+      onRequest: adminOnly,
+      schema: { body: z.object({ lessons: z.array(LessonInput).max(50) }), params: IdParam },
+    },
+    async (request, reply) => {
+      const datasetId = request.params.id;
+      if (!(await fastify.prisma.evalDataset.findUnique({ where: { id: datasetId } }))) {
+        return sendError(reply, 404, 'DATASET_NOT_FOUND', 'Eval dataset not found');
+      }
+      if (!temporalConnected(fastify)) {
+        return sendTemporalUnavailable(reply);
+      }
+      const count = await fastify.temporal.replaceEvalLessons(datasetId, request.body.lessons);
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: requireUser(request),
+        after: { lessonCount: count },
+        entityId: datasetId,
+        entityType: 'EvalDataset',
+      });
+      return { data: { count } };
+    }
+  );
+  app.post(
+    '/evals/:id/lessons/import',
+    {
+      onRequest: adminOnly,
+      schema: {
+        body: z.object({
+          limit: z.number().int().min(1).max(50).default(50),
+          repoId: z.string().uuid(),
+        }),
+        params: IdParam,
+      },
+    },
+    async (request, reply) => {
+      const datasetId = request.params.id;
+      if (!(await fastify.prisma.evalDataset.findUnique({ where: { id: datasetId } }))) {
+        return sendError(reply, 404, 'DATASET_NOT_FOUND', 'Eval dataset not found');
+      }
+      if (!temporalConnected(fastify)) {
+        return sendTemporalUnavailable(reply);
+      }
+      const rows = await runUnscoped(
+        'admin snapshots lessons from the explicitly selected repository',
+        ['MemoryItem'],
+        () =>
+          fastify.prisma.memoryItem.findMany({
+            orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+            select: { content: true, failureType: true, id: true, lessonSummary: true, tags: true },
+            take: request.body.limit,
+            where: {
+              consolidatedAt: null,
+              quarantinedAt: null,
+              repoId: request.body.repoId,
+              scope: 'swe-lessons',
+              supersededAt: null,
+            },
+          })
+      );
+      const lessons = rows.map((row) => ({
+        content: (row.lessonSummary ?? row.content).slice(0, 5000),
+        failureType: row.failureType,
+        source: 'IMPORTED' as const,
+        sourceMemoryItemId: row.id,
+        tags: row.tags,
+      }));
+      const count = await fastify.temporal.replaceEvalLessons(datasetId, lessons);
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor: requireUser(request),
+        after: { lessonCount: count, sourceRepoId: request.body.repoId },
+        entityId: datasetId,
+        entityType: 'EvalDataset',
+      });
+      return { data: { count } };
+    }
+  );
 
   // ── List datasets ──
   app.get('/evals', { onRequest: adminOnly }, async () => {
@@ -352,6 +462,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         include: {
           _count: { select: { cases: true } },
           cases: { orderBy: { createdAt: 'asc' } },
+          lessons: true,
           setupSecretsConnection: { select: { id: true, organizationName: true, repoName: true } },
         },
         where: { id: request.params.id },
@@ -365,6 +476,13 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         createdAt: ds.createdAt.toISOString(),
         description: ds.description,
         id: ds.id,
+        lessons: (ds.lessons ?? []).map((lesson) => ({
+          content: lesson.content,
+          failureType: lesson.failureType,
+          id: lesson.id,
+          source: lesson.source,
+          tags: lesson.tags,
+        })),
         name: ds.name,
         orgId: ds.orgId,
         scope: ds.scope,
@@ -876,12 +994,37 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       if (!ds) {
         return sendError(reply, 404, 'DATASET_NOT_FOUND', 'Eval dataset not found');
       }
+      const corpus = await fastify.prisma.evalLesson.findMany({
+        select: { content: true, failureType: true },
+        where: { datasetId },
+      });
+      if (
+        corpus.length === 0 &&
+        (request.body.candidateMemoryMode !== 'off' || request.body.baselineMemoryMode !== 'off')
+      ) {
+        return sendError(
+          reply,
+          400,
+          'EMPTY_EVAL_CORPUS',
+          'ON and SHADOW require a nonempty lesson corpus'
+        );
+      }
+      const corpusHash = evalCorpusHash(corpus);
       const run = await fastify.prisma.evalRun.create({
         data: {
+          baselineMemoryMode: request.body.baselineMemoryMode.toUpperCase() as
+            | 'ON'
+            | 'SHADOW'
+            | 'OFF',
           baselineRef,
           baselineRuntime,
+          candidateMemoryMode: request.body.candidateMemoryMode.toUpperCase() as
+            | 'ON'
+            | 'SHADOW'
+            | 'OFF',
           candidateRef,
           candidateRuntime,
+          corpusHash,
           datasetId,
           status: 'RUNNING',
         },
