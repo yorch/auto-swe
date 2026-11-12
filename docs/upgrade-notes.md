@@ -5,7 +5,7 @@
 **Affected:** deployments relying on the implicit `open` egress policy, custom worker environments
 without an egress proxy, and repositories calling hosts outside the dependency baseline/team list.
 
-**Fixing commit:** the restricted-default implementation commit (identified by this heading in source).
+**Fixing commit:** `48423c5fdcabd5d2c08bfe80ea24365fa42b27a6`.
 
 `workspace.egressPolicy` defaults to `restricted`. Compose and Helm enable the proxy on port 8792;
 custom deployments must configure `EGRESS_PROXY_PORT` and a container-reachable `EGRESS_PROXY_URL`
