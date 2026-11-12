@@ -9,9 +9,11 @@ import type { ConnectionPrefill } from '@/components/repositories/ConnectionForm
 import { ConnectionFormModal } from '@/components/repositories/ConnectionFormModal';
 import { ImportFromGitHubModal } from '@/components/repositories/ImportFromGitHubModal';
 import { MyCredentialModal } from '@/components/repositories/MyCredentialModal';
+import { OnboardingPrModal } from '@/components/repositories/OnboardingPrModal';
 import { RepoAutomationsModal } from '@/components/repositories/RepoAutomationsModal';
 import { RepoDependenciesModal } from '@/components/repositories/RepoDependenciesModal';
 import { RepoDependencySuggestions } from '@/components/repositories/RepoDependencySuggestions';
+import { RepoOnboardingChecklist } from '@/components/repositories/RepoOnboardingChecklist';
 import { ShareRepoModal } from '@/components/repositories/ShareRepoModal';
 import { ToggleConnectionActiveModal } from '@/components/repositories/ToggleConnectionActiveModal';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
@@ -56,6 +58,7 @@ type ModalMode =
   | { kind: 'credential'; repo: RepositorySummary }
   | { kind: 'share'; repo: RepositorySummary }
   | { kind: 'test'; repo: RepositorySummary }
+  | { kind: 'onboarding-pr'; repo: RepositorySummary }
   | { kind: 'test-pagerduty'; repo: RepositorySummary }
   | { kind: 'toggle'; repo: RepositorySummary }
   | { kind: 'import' }
@@ -267,6 +270,15 @@ export default function ConnectionsPage() {
                     ...(isGitRepo
                       ? [
                           {
+                            disabledReason: canManageTeam(r.team?.id)
+                              ? null
+                              : repoManageReason(r.team?.name, 'open an onboarding PR for'),
+                            icon: 'pullRequest' as const,
+                            id: 'onboarding-pr',
+                            label: 'Open onboarding PR',
+                            onAction: () => setMode({ kind: 'onboarding-pr', repo: r }),
+                          },
+                          {
                             icon: 'layers' as const,
                             id: 'dependencies',
                             label: 'Dependencies',
@@ -380,18 +392,30 @@ export default function ConnectionsPage() {
                       const myCredential = credentialFor(r.id);
                       const showCredential = showsCredential(r);
                       const image = !r.type || r.type === 'git_repo' ? r.executorImage : null;
-                      return r.description || showCredential || image ? (
-                        <span className="block truncate">
-                          {r.description}
-                          {r.description && (showCredential || image) && ' · '}
-                          {image && `Image ${image}`}
-                          {image && showCredential && ' · '}
-                          {showCredential &&
-                            (myCredential
-                              ? `Your token …${myCredential.lastFour || '????'}${credentialsEnabled ? '' : ' (unused)'}`
-                              : 'Platform credential')}
-                        </span>
-                      ) : null;
+                      return (
+                        <>
+                          {(r.description || showCredential || image) && (
+                            <span className="block truncate">
+                              {r.description}
+                              {r.description && (showCredential || image) && ' · '}
+                              {image && `Image ${image}`}
+                              {image && showCredential && ' · '}
+                              {showCredential &&
+                                (myCredential
+                                  ? `Your token …${myCredential.lastFour || '????'}${credentialsEnabled ? '' : ' (unused)'}`
+                                  : 'Platform credential')}
+                            </span>
+                          )}
+                          <RepoOnboardingChecklist
+                            canManage={canManageTeam(r.team?.id)}
+                            onOnboardingPr={() => setMode({ kind: 'onboarding-pr', repo: r })}
+                            onSetup={() => setMode({ kind: 'edit', repo: r })}
+                            onStack={() => setMode({ kind: 'edit', repo: r })}
+                            onTestAccess={() => setMode({ kind: 'test', repo: r })}
+                            repo={r}
+                          />
+                        </>
+                      );
                     },
                     width: 'sm:max-w-md',
                   },
@@ -549,11 +573,18 @@ export default function ConnectionsPage() {
 
       {mode?.kind === 'test' && (
         <ProbeModal
-          onClose={() => setMode(null)}
+          onClose={() => {
+            setMode(null);
+            refetch();
+          }}
           path={`/api/v1/repositories/${mode.repo.id}/test-access`}
           subtitle={connectionLabel(mode.repo)}
           title="Test repository access"
         />
+      )}
+
+      {mode?.kind === 'onboarding-pr' && (
+        <OnboardingPrModal onClose={() => setMode(null)} repo={mode.repo} />
       )}
 
       {mode?.kind === 'test-pagerduty' && (
