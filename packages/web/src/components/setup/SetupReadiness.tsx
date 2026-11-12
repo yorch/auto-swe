@@ -166,7 +166,7 @@ export function SetupBanner({
   );
   return compact ? (
     <details className="rounded-lg border border-warning-400/30 bg-warning-400/5 p-3">
-      <summary className="cursor-pointer text-sm text-warning-300">
+      <summary className="cursor-pointer text-sm text-warning-400">
         Setup incomplete — {missing.length} {missing.length === 1 ? 'item needs' : 'items need'}{' '}
         attention
       </summary>
