@@ -44,7 +44,14 @@ export function WorkflowLaunchSummary({ templateId }: { templateId: string }) {
               ),
             },
             ...(summary.signals.length > 0
-              ? [{ label: 'Waits for external events', value: summary.signals.join(', ') }]
+              ? [
+                  {
+                    label: 'Waits for external events',
+                    value: summary.signals
+                      .map((signal) => humanizeWorkflowKey(signal).replace(/ signal$/i, ''))
+                      .join(', '),
+                  },
+                ]
               : []),
           ]}
         />

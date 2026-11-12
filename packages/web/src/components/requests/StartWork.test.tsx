@@ -249,6 +249,33 @@ describe('StartWork', () => {
     expect(screen.getByTestId('form-hotfix')).toBeTruthy();
   });
 
+  it('humanizes external event names without exposing their Signal suffixes', async () => {
+    workflowsGateway([workflow('hotfix', { isDefault: true })], {
+      ...summarySpec,
+      nodes: {
+        ...summarySpec.nodes,
+        ci: {
+          name: 'ciPipelineSignal',
+          onReceive: 'merge',
+          onTimeout: 'done',
+          timeout: '1h',
+          type: 'signal',
+        },
+        merge: {
+          name: 'humanMergeSignal',
+          onReceive: 'done',
+          onTimeout: 'done',
+          timeout: '1h',
+          type: 'signal',
+        },
+      },
+    });
+    render(withQuery(<StartWork />));
+    expect(await screen.findByText('CI pipeline, Human merge')).toBeTruthy();
+    expect(screen.queryByText('ciPipelineSignal, humanMergeSignal')).toBeNull();
+    expect(screen.getByText('Waits for external events')).toBeTruthy();
+  });
+
   it('offers only hand-launchable templates and explains blocked deep links', async () => {
     const templates = [
       { id: 'hotfix', kind: null, name: 'hotfix' },

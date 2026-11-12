@@ -66,6 +66,14 @@ function gateway() {
 }
 
 describe('workflow launch', () => {
+  it.each([
+    ['zendesk-ticket-reply', 'Support ticket reply'],
+    ['My custom workflow', 'My custom workflow'],
+  ])('uses the display title for %s in the task subtitle', (name, title) => {
+    gateway();
+    render(withQuery(<WorkflowLaunchForm onLaunched={vi.fn()} template={{ ...template, name }} />));
+    expect(screen.getByText(`Name this task and fill in what ${title} needs.`)).toBeTruthy();
+  });
   it('renders required schema fields first, preserving declared order within each group', () => {
     gateway();
     render(

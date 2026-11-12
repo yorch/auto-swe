@@ -2,6 +2,7 @@
 
 import { DEFAULT_BRIEF_INPUT_SCHEMA, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { isValidTicketId } from '@auto-swe/shared/lib/ticketId';
+import { workflowPresentation } from '@auto-swe/shared/lib/workflowCatalog';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -159,7 +160,7 @@ export function WorkflowLaunchForm({
         description={
           review
             ? 'Check what will run, then launch it.'
-            : `Name this task and fill in what ${template.name} needs.`
+            : `Name this task and fill in what ${workflowPresentation(template).title} needs.`
         }
         stage={review ? 'review' : 'details'}
         title={review ? 'Review and launch' : 'Task details'}
